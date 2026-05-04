@@ -16,7 +16,7 @@ export default async function handler(req, res) {
     });
     const d = await r.json();
     res.status(r.status).json(d);
-  } catch (e) {
-    res.status(500).json({ error: "서버 오류" });
+  } catch(e) {
+    res.status(500).json({error:"서버 오류"});
   }
 }
