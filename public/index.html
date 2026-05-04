@@ -1,1 +1,768 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>MRI ACADEMY — 실력이 곧 권력이다</title>
+<meta name="description" content="MRI ACADEMY PUBG 코칭 아카데미. 마스터 달성률 87.5%. 레벨테스트 합격자 한정 1:1 맞춤 코칭."/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#07070F;color:#E8E2D4;font-family:'Noto Sans KR',sans-serif;overflow-x:hidden}
+::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:#FFB800;border-radius:2px}
+@keyframes fadeUp{from{opacity:0;transform:translateY(32px)}to{opacity:1;transform:none}}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,184,0,.5)}60%{box-shadow:0 0 0 14px rgba(255,184,0,0)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
+@keyframes glow{0%,100%{text-shadow:0 0 20px rgba(255,184,0,.3)}50%{text-shadow:0 0 50px rgba(255,184,0,.7)}}
+@keyframes dot{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+@keyframes slidein{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+@keyframes countup{from{opacity:0}to{opacity:1}}
+.fab-pulse{animation:pulse 2.5s infinite}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useRef, useEffect } = React;
+
+const LINKS = {
+  discord_clan:    "https://discord.gg/YfZD8d22wJ",
+  discord_academy: "https://discord.gg/szFa7teEJs",
+  kakao:           "https://open.kakao.com/o/sAUU6OGf",
+  youtube:         "https://youtube.com/@mriacademy-w6v",
+  hook_video:      "https://youtube.com/shorts/29HMASCtxcQ",
+  hook_embed:      "https://www.youtube.com/embed/29HMASCtxcQ?rel=0&playsinline=1&loop=1&playlist=29HMASCtxcQ",
+  bank:            "토스뱅크 1002-4781-4797 (이주형)",
+};
+
+const SYSTEM = `당신은 MRI ACADEMY 공식 AI 상담봇입니다. PUBG(배틀그라운드) 코칭 전문 아카데미입니다.
+
+[핵심 성과]
+- 마스터 달성률 87.5% (14명 중 12명)
+- 평균 딜량 +116 (282→398), 평균 KDA +1.68
+
+[레슨 가격 — 이것만 공개]
+- 10판 40,000원 / 21판 80,000원 / 33판 120,000원
+- 정규·개인강의 가격 절대 공개 X
+
+[상담 안내]
+- 강의상담: 20,000원 → 결제 후 AI 진단 → 트레이너 배정
+- 레슨상담: 15,000원 → 결제 후 AI 진단 → 트레이너 배정
+- 클랜상담: 무료
+- 결제: 토스뱅크 1002-4781-4797 (이주형)
+
+[등록 조건]
+- 레벨테스트 합격자에 한해 등록 가능
+- 상담 후 티어·성향 파악 → 트레이너 자동 배정
+
+[연락처]
+- 카카오 오픈채팅: https://open.kakao.com/o/sAUU6OGf
+- 아카데미 디스코드: https://discord.gg/szFa7teEJs
+- 클랜 디스코드: https://discord.gg/YfZD8d22wJ
+- 유튜브: https://youtube.com/@mriacademy-w6v
+
+[응답 규칙]
+1. 한국어, 3-4문장 이내, 친근하고 전문적
+2. 상담 문의엔 반드시 카카오 링크 포함
+3. 레슨 가격 외 가격 절대 공개 X
+4. 레벨테스트 조건 항상 강조`;
+
+const PROOF = [
+  {name:"세인",    from:"골드3",    delta:"+81",  season:"30→32",kda:"4.2"},
+  {name:"수강생A", from:"플래티넘1", delta:"+67",  season:"26→28",kda:"4.1"},
+  {name:"수강생B", from:"플래티넘1", delta:"+114", season:"27→31",kda:"5.98"},
+  {name:"수강생C", from:"다이아3",   delta:"+120", season:"29→32",kda:"5.1"},
+  {name:"수강생D", from:"다이아3",   delta:"+97",  season:"25→26",kda:"4.9"},
+  {name:"수강생E", from:"다이아4",   delta:"+47",  season:"25→31",kda:"4.5"},
+  {name:"수강생F", from:"다이아5",   delta:"+200", season:"30→32",kda:"4.8"},
+  {name:"수강생G", from:"다이아5",   delta:"+51",  season:"30→31",kda:"4.3"},
+];
+
+const PLANS = [
+  {판수:"10판",price:"40,000",desc:"단기 집중 교정",popular:false,
+   features:["에임 정밀 분석","포지셔닝 교정","즉시 배정","빠른 피드백"]},
+  {판수:"21판",price:"80,000",desc:"마스터 달성 과정",popular:true,
+   features:["게임 리뷰 포함","실시간 동행","전술 훈련","수업 후 리포트"]},
+  {판수:"33판",price:"120,000",desc:"풀 시즌 패키지",popular:false,
+   features:["시즌 전체 관리","주간 성장 리포트","무제한 Q&A","클랜 입단 추천"]},
+];
+
+const GLD="#FFB800", BG="#07070F", S="#11111C", S2="#18181F", MT="#55556A", TX="#E8E2D4";
+
+function useCountUp(target,dur=1400){
+  const [v,setV]=useState(0);
+  const started=useRef(false);
+  const ref=useRef(null);
+  useEffect(()=>{
+    const obs=new IntersectionObserver(([e])=>{
+      if(e.isIntersecting&&!started.current){
+        started.current=true;
+        const t0=Date.now();
+        const tick=()=>{
+          const p=Math.min((Date.now()-t0)/dur,1);
+          setV(Math.floor(p*p*target));
+          if(p<1)requestAnimationFrame(tick);else setV(target);
+        };
+        requestAnimationFrame(tick);
+      }
+    },{threshold:.3});
+    if(ref.current)obs.observe(ref.current);
+    return()=>obs.disconnect();
+  },[target,dur]);
+  return[v,ref];
+}
+
+function useReveal(){
+  const ref=useRef(null);
+  const[vis,setVis]=useState(false);
+  useEffect(()=>{
+    const obs=new IntersectionObserver(([e])=>{if(e.isIntersecting)setVis(true)},{threshold:.08});
+    if(ref.current)obs.observe(ref.current);
+    return()=>obs.disconnect();
+  },[]);
+  return[ref,vis];
+}
+
+function App(){
+  const[chatOpen,setChatOpen]=useState(false);
+  const[msgs,setMsgs]=useState([{role:"assistant",content:"안녕하세요! MRI ACADEMY 상담봇입니다 🎮\n레슨·클랜·레벨테스트 뭐든 물어보세요!"}]);
+  const[input,setInput]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[tab,setTab]=useState("레슨상담");
+  const chatRef=useRef(null);
+  const[d1,r1]=useCountUp(116);
+  const[d2,r2]=useCountUp(168);
+  const[d3,r3]=useCountUp(875);
+  const[heroRef,heroVis]=useReveal();
+  const[proofRef,proofVis]=useReveal();
+  const[planRef,planVis]=useReveal();
+
+  useEffect(()=>{if(chatRef.current)chatRef.current.scrollTop=chatRef.current.scrollHeight;},[msgs,loading]);
+
+  const send=async(txt)=>{
+    const m=txt||input.trim();if(!m||loading)return;
+    setInput("");
+    const next=[...msgs,{role:"user",content:m}];
+    setMsgs(next);setLoading(true);
+    try{
+      const r=await fetch("/api/chat",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:SYSTEM,
+          messages:next.map(x=>({role:x.role,content:x.content}))})
+      });
+      const d=await r.json();
+      setMsgs(p=>[...p,{role:"assistant",content:d.content?.[0]?.text||"잠시 후 다시 시도해주세요."}]);
+    }catch{
+      setMsgs(p=>[...p,{role:"assistant",content:`연결 오류입니다.\n카카오로 문의해 주세요 👉 ${LINKS.kakao}`}]);
+    }
+    setLoading(false);
+  };
+
+  const QRS=["레벨테스트 어떻게 해요?","상담비 얼마예요?","클랜 가입하고싶어요","트레이너 소개해줘"];
+
+  return (
+    <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:BG,color:TX,overflowX:"hidden",minHeight:"100vh"}}>
+      <style>{`
+        a{text-decoration:none}
+        .nl{transition:color .2s}.nl:hover{color:#FFB800!important}
+        .pc{transition:all .25s}.pc:hover{transform:translateY(-7px)!important;box-shadow:0 16px 40px rgba(255,184,0,.15)!important}
+        .rc{transition:all .2s}.rc:hover{transform:translateY(-4px)!important;border-color:#FFB800!important}
+        .qb{transition:all .2s}.qb:hover{background:#FFB800!important;color:#000!important}
+        .eb{transition:all .2s}.eb:hover{transform:translateY(-2px)}
+        .ch-inp::placeholder{color:#44445A}
+        .dot1,.dot2,.dot3{width:6px;height:6px;border-radius:50%;background:#55556A;display:inline-block;margin:0 2px;animation:dot .85s infinite}
+        .dot2{animation-delay:.14s}.dot3{animation-delay:.28s}
+        .cmsg{animation:slidein .25s ease}
+        .hbar{transition:width 1.2s ease}
+        @media(max-width:768px){
+          .hero-grid{grid-template-columns:1fr!important}
+          .plans-grid{grid-template-columns:1fr!important}
+          .clan-grid{grid-template-columns:1fr!important}
+          .hub-grid{grid-template-columns:1fr!important}
+          .footer-grid{grid-template-columns:1fr!important}
+          .stats-grid{grid-template-columns:repeat(2,1fr)!important}
+          .nav-links{display:none!important}
+        }
+      `}</style>
+
+      {/* GRID BG */}
+      <div style={{position:"fixed",inset:0,zIndex:0,pointerEvents:"none",
+        backgroundImage:"linear-gradient(rgba(255,184,0,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,184,0,.018) 1px,transparent 1px)",
+        backgroundSize:"60px 60px"}}/>
+
+      {/* ── NAV ── */}
+      <nav style={{position:"fixed",top:0,left:0,right:0,zIndex:300,
+        background:"rgba(7,7,15,.97)",backdropFilter:"blur(20px)",
+        borderBottom:"1px solid rgba(255,184,0,.1)",height:"58px",
+        display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 28px"}}>
+        <a href="#hero" style={{display:"flex",alignItems:"center",gap:"10px"}}>
+          <div style={{width:"30px",height:"30px",borderRadius:"6px",
+            background:"linear-gradient(135deg,#FFB800,#FF3D3D)",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            fontWeight:900,color:"#000",fontSize:"12px"}}>MR</div>
+          <div>
+            <div style={{fontWeight:900,fontSize:".9rem",letterSpacing:"2px",color:GLD}}>MRI ACADEMY</div>
+            <div style={{fontSize:".5rem",letterSpacing:"3px",color:MT}}>PUBG COACHING</div>
+          </div>
+        </a>
+        <div className="nav-links" style={{display:"flex",gap:"22px",alignItems:"center"}}>
+          {[["성과","#proof"],["레슨","#plans"],["상담","#consult"],["클랜","#clan"],["영상","#youtube"]].map(([l,h])=>(
+            <a key={l} href={h} className="nl" style={{color:MT,fontSize:".78rem",letterSpacing:"1px"}}>{l}</a>
+          ))}
+          <a href={LINKS.kakao} target="_blank" rel="noreferrer" className="eb"
+            style={{background:"#FEE500",color:"#000",padding:"6px 14px",borderRadius:"4px",fontWeight:700,fontSize:".72rem",letterSpacing:"1px"}}>카카오</a>
+          <a href={LINKS.discord_academy} target="_blank" rel="noreferrer" className="eb"
+            style={{background:"#5865F2",color:"#fff",padding:"6px 14px",borderRadius:"4px",fontWeight:700,fontSize:".72rem",letterSpacing:"1px"}}>Discord</a>
+        </div>
+      </nav>
+
+      {/* ── HERO ── */}
+      <section id="hero" ref={heroRef} style={{minHeight:"100vh",display:"flex",alignItems:"center",
+        padding:"80px 28px 60px",maxWidth:"1160px",margin:"0 auto",position:"relative",zIndex:1}}>
+        <div style={{position:"absolute",top:"30%",right:"5%",width:"500px",height:"500px",
+          background:"radial-gradient(ellipse,rgba(255,184,0,.05) 0%,transparent 70%)",pointerEvents:"none"}}/>
+        <div className="hero-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"60px",alignItems:"center",width:"100%"}}>
+          {/* Left text */}
+          <div>
+            <div style={{opacity:heroVis?1:0,animation:heroVis?"fadeUp .7s ease both":"none"}}>
+              <div style={{display:"inline-flex",alignItems:"center",gap:"8px",marginBottom:"22px",
+                background:"rgba(255,184,0,.07)",border:"1px solid rgba(255,184,0,.25)",
+                padding:"5px 14px",borderRadius:"2px"}}>
+                <span style={{width:"5px",height:"5px",borderRadius:"50%",background:GLD,
+                  display:"inline-block",animation:"blink 1.5s infinite"}}/>
+                <span style={{fontSize:".65rem",letterSpacing:"3px",color:GLD}}>2024 실제 데이터 기반</span>
+              </div>
+            </div>
+            <h1 style={{opacity:heroVis?1:0,animation:heroVis?"fadeUp .7s .1s ease both":"none",
+              fontSize:"clamp(2.8rem,5vw,4.6rem)",fontWeight:900,lineHeight:1.0,
+              letterSpacing:"-2px",marginBottom:"20px",animationName:"glow",animationDuration:"3s",animationIterationCount:"infinite"}}>
+              실력이<br/>
+              <span style={{color:GLD}}>곧</span><br/>
+              권력이다
+            </h1>
+            <p style={{opacity:heroVis?1:0,animation:heroVis?"fadeUp .7s .2s ease both":"none",
+              fontSize:".92rem",color:MT,lineHeight:1.9,marginBottom:"32px",maxWidth:"400px"}}>
+              마스터 달성률 <span style={{color:GLD,fontWeight:700}}>87.5%</span> — 데이터로만 말합니다.<br/>
+              레벨테스트 합격자에 한해 등록 가능합니다.
+            </p>
+            <div style={{opacity:heroVis?1:0,animation:heroVis?"fadeUp .7s .3s ease both":"none",
+              display:"flex",gap:"10px",flexWrap:"wrap"}}>
+              <a href="#consult" className="fab-pulse" style={{background:GLD,color:"#000",padding:"13px 26px",
+                borderRadius:"4px",fontWeight:700,fontSize:".88rem",letterSpacing:"1px",display:"inline-block"}}>
+                상담 신청하기 →
+              </a>
+              <a href={LINKS.hook_video} target="_blank" rel="noreferrer"
+                style={{background:"transparent",color:TX,border:"1px solid rgba(255,255,255,.18)",
+                  padding:"13px 26px",borderRadius:"4px",fontWeight:500,fontSize:".88rem",
+                  letterSpacing:"1px",display:"inline-flex",alignItems:"center",gap:"7px"}}>
+                ▶ 변화 영상 보기
+              </a>
+            </div>
+          </div>
+
+          {/* Right — phone mockup Shorts */}
+          <div style={{opacity:heroVis?1:0,animation:heroVis?"fadeUp .7s .2s ease both":"none",
+            display:"flex",flexDirection:"column",alignItems:"center",gap:"14px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+              <span style={{width:"6px",height:"6px",borderRadius:"50%",background:"#FF3D3D",
+                display:"inline-block",animation:"blink 1s infinite"}}/>
+              <span style={{fontSize:".65rem",letterSpacing:"3px",color:MT}}>실제 수강생 변화 영상</span>
+            </div>
+            {/* Phone frame */}
+            <div style={{width:"220px",background:"#0A0A14",borderRadius:"36px",padding:"12px 8px",
+              border:"2px solid rgba(255,184,0,.35)",
+              boxShadow:"0 0 0 1px rgba(0,0,0,.8),0 32px 80px rgba(0,0,0,.7),0 0 40px rgba(255,184,0,.07)"}}>
+              <div style={{width:"60px",height:"5px",background:"#1A1A24",borderRadius:"3px",
+                margin:"0 auto 8px",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <div style={{width:"7px",height:"7px",borderRadius:"50%",background:"#2A2A34"}}/>
+              </div>
+              <div style={{borderRadius:"20px",overflow:"hidden",position:"relative",paddingBottom:"177.77%",background:"#000"}}>
+                <iframe src={LINKS.hook_embed} title="수강생 변화 영상"
+                  style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen/>
+              </div>
+              <div style={{width:"80px",height:"4px",background:"rgba(255,184,0,.25)",
+                borderRadius:"2px",margin:"10px auto 0"}}/>
+            </div>
+            <a href={LINKS.hook_video} target="_blank" rel="noreferrer"
+              style={{fontSize:".7rem",color:MT,letterSpacing:"1px",transition:"color .2s"}}
+              onMouseEnter={e=>e.target.style.color=GLD}
+              onMouseLeave={e=>e.target.style.color=MT}>
+              ▶ YouTube Shorts에서 보기
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* ── STATS ── */}
+      <div ref={r1} style={{background:S,borderTop:"1px solid rgba(255,184,0,.1)",
+        borderBottom:"1px solid rgba(255,184,0,.1)",padding:"32px 28px",position:"relative",zIndex:1}}>
+        <div className="stats-grid" style={{maxWidth:"1160px",margin:"0 auto",
+          display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"1px",background:"rgba(255,184,0,.07)"}}>
+          {[
+            {label:"평균 딜량 상승",val:`+${d1}`,sub:"282 → 398",ref:r1},
+            {label:"평균 KDA 상승",val:`+${(d2/100).toFixed(2)}`,sub:"2.79 → 4.47",ref:r2},
+            {label:"마스터 달성률",val:`${Math.floor(d3/10)}.${d3%10}%`,sub:"14명 중 12명",ref:r3},
+            {label:"레벨테스트 필수",val:"선발제",sub:"엄격한 수강생 관리",ref:null},
+          ].map((s,i)=>(
+            <div key={i} ref={s.ref} style={{background:S,padding:"24px",textAlign:"center"}}>
+              <div style={{fontWeight:900,fontSize:"2rem",color:GLD,lineHeight:1}}>{s.val}</div>
+              <div style={{fontSize:".68rem",color:MT,letterSpacing:"2px",margin:"5px 0 2px"}}>{s.label}</div>
+              <div style={{fontSize:".65rem",color:"#333348"}}>{s.sub}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── PROOF ── */}
+      <section id="proof" ref={proofRef} style={{padding:"80px 28px",maxWidth:"1160px",margin:"0 auto",position:"relative",zIndex:1}}>
+        <div style={{marginBottom:"40px"}}>
+          <div style={{fontSize:".65rem",letterSpacing:"4px",color:GLD,marginBottom:"10px"}}>PROVEN RESULTS</div>
+          <h2 style={{fontSize:"clamp(1.8rem,3.5vw,2.6rem)",fontWeight:900,marginBottom:"8px"}}>실제 수강생 성과</h2>
+          <p style={{fontSize:".85rem",color:MT}}>2024년 25~32시즌 실제 기록 — 모든 수치는 인게임 검증 데이터</p>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:"12px",marginBottom:"32px"}}>
+          {PROOF.map((p,i)=>{
+            const tc=p.from.includes("골드")?"#FFD700":p.from.includes("플래티넘")?"#C0C0C0":"#30B0FF";
+            return(
+            <div key={i} className="rc" style={{background:S2,border:"1px solid rgba(255,184,0,.1)",
+              borderRadius:"10px",padding:"18px",position:"relative",overflow:"hidden",
+              opacity:proofVis?1:0,transform:proofVis?"none":"translateY(20px)",
+              transition:`all .5s ease ${i*.06}s`}}>
+              <div style={{position:"absolute",top:0,left:0,right:0,height:"2px",
+                background:`linear-gradient(90deg,${tc},#FF3D3D)`}}/>
+              <div style={{fontSize:".6rem",color:MT,letterSpacing:"2px",marginBottom:"10px"}}>{p.season}시즌</div>
+              <div style={{fontWeight:700,fontSize:"1rem",marginBottom:"6px"}}>{p.name}</div>
+              <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"12px"}}>
+                <span style={{fontSize:".75rem",color:tc,fontWeight:600}}>{p.from}</span>
+                <span style={{color:GLD}}>→</span>
+                <span style={{fontSize:".75rem",color:"#FFD700",fontWeight:700}}>마스터1</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{background:"rgba(255,61,61,.12)",border:"1px solid rgba(255,61,61,.25)",
+                  color:"#FF3D3D",fontSize:".72rem",fontWeight:700,padding:"3px 9px",borderRadius:"20px"}}>
+                  딜량 {p.delta}
+                </span>
+                <span style={{fontSize:".62rem",color:MT}}>KDA {p.kda}</span>
+              </div>
+            </div>
+          )})}
+        </div>
+        {/* Bar chart */}
+        <div style={{background:S,border:"1px solid rgba(255,184,0,.1)",borderRadius:"12px",padding:"24px"}}>
+          <div style={{fontSize:".68rem",color:GLD,letterSpacing:"3px",marginBottom:"16px"}}>딜량 성장 시각화</div>
+          {PROOF.slice(0,6).map((p,i)=>(
+            <div key={i} style={{marginBottom:"12px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:".7rem",color:MT,marginBottom:"4px"}}>
+                <span>{p.name} ({p.from}→마스터)</span>
+                <span style={{color:GLD}}>{p.delta}</span>
+              </div>
+              <div style={{height:"5px",background:"rgba(255,255,255,.04)",borderRadius:"3px",overflow:"hidden"}}>
+                <div className="hbar" style={{height:"100%",borderRadius:"3px",
+                  width:proofVis?`${Math.min((parseInt(p.delta.replace("+",""))/220)*100,100)}%`:"0%",
+                  background:"linear-gradient(90deg,#FFB800,#FF3D3D)"}}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div style={{height:"1px",background:"rgba(255,184,0,.08)"}}/>
+
+      {/* ── PLANS ── */}
+      <section id="plans" ref={planRef} style={{padding:"80px 28px",maxWidth:"1000px",margin:"0 auto",position:"relative",zIndex:1}}>
+        <div style={{textAlign:"center",marginBottom:"40px"}}>
+          <div style={{fontSize:".65rem",letterSpacing:"4px",color:GLD,marginBottom:"10px"}}>LESSON PLANS</div>
+          <h2 style={{fontSize:"clamp(1.8rem,3.5vw,2.6rem)",fontWeight:900,marginBottom:"10px"}}>레슨 플랜</h2>
+          <div style={{display:"flex",justifyContent:"center",alignItems:"center",gap:"10px"}}>
+            <span style={{fontSize:".85rem",color:MT}}>레벨테스트 합격 후 등록 가능</span>
+            <span style={{background:"rgba(255,184,0,.1)",border:"1px solid rgba(255,184,0,.3)",
+              color:GLD,fontSize:".65rem",padding:"3px 10px",borderRadius:"20px"}}>필수 조건</span>
+          </div>
+        </div>
+        <div className="plans-grid" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"16px"}}>
+          {PLANS.map((p,i)=>(
+            <div key={i} className="pc" style={{background:S,
+              border:`2px solid ${p.popular?"#FFB800":"rgba(255,184,0,.12)"}`,
+              borderRadius:"12px",padding:"28px 22px",position:"relative",overflow:"hidden",
+              opacity:planVis?1:0,transform:planVis?"none":"translateY(24px)",
+              transition:`all .6s ease ${i*.12}s`}}>
+              {p.popular&&<div style={{position:"absolute",top:0,left:0,right:0,height:"3px",
+                background:"linear-gradient(90deg,#FFB800,#FF3D3D)"}}/>}
+              {p.popular&&<div style={{position:"absolute",top:"16px",right:"16px",
+                background:"rgba(255,184,0,.1)",border:"1px solid rgba(255,184,0,.3)",
+                color:GLD,fontSize:".6rem",padding:"3px 8px",borderRadius:"20px"}}>인기 1위</div>}
+              <div style={{fontWeight:900,fontSize:"2.2rem",color:p.popular?GLD:"#888",marginBottom:"4px"}}>{p.판수}</div>
+              <div style={{fontWeight:900,fontSize:"1.5rem",marginBottom:"6px"}}>{p.price}<span style={{fontSize:".8rem",fontWeight:400,color:MT}}>원</span></div>
+              <div style={{fontSize:".8rem",color:MT,marginBottom:"20px"}}>{p.desc}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:"8px",marginBottom:"22px"}}>
+                {p.features.map(f=>(
+                  <div key={f} style={{display:"flex",gap:"8px",fontSize:".78rem"}}>
+                    <span style={{color:GLD,fontWeight:700}}>✓</span>
+                    <span style={{color:"#B0B0C0"}}>{f}</span>
+                  </div>
+                ))}
+              </div>
+              <a href="#consult" style={{display:"block",textAlign:"center",
+                background:p.popular?GLD:"transparent",color:p.popular?"#000":TX,
+                border:`1px solid ${p.popular?GLD:"rgba(255,184,0,.3)"}`,
+                padding:"11px",borderRadius:"6px",fontWeight:700,fontSize:".8rem",letterSpacing:"1px",
+                transition:"all .2s"}}>
+                레벨테스트 신청 →
+              </a>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div style={{height:"1px",background:"rgba(255,184,0,.08)"}}/>
+
+      {/* ── CONSULTATION ── */}
+      <section id="consult" style={{padding:"80px 28px",maxWidth:"900px",margin:"0 auto",position:"relative",zIndex:1}}>
+        <div style={{textAlign:"center",marginBottom:"40px"}}>
+          <div style={{fontSize:".65rem",letterSpacing:"4px",color:GLD,marginBottom:"10px"}}>CONSULTATION</div>
+          <h2 style={{fontSize:"clamp(1.8rem,3.5vw,2.6rem)",fontWeight:900,marginBottom:"8px"}}>상담 신청</h2>
+          <p style={{fontSize:".85rem",color:MT}}>상담 결제 → AI 진단 → 트레이너 자동 배정</p>
+        </div>
+        {/* Tabs */}
+        <div style={{display:"flex",background:S,borderRadius:"10px",padding:"4px",
+          maxWidth:"400px",margin:"0 auto 32px",gap:"4px"}}>
+          {["레슨상담","강의상담","클랜상담"].map(t=>(
+            <button key={t} onClick={()=>setTab(t)}
+              style={{flex:1,padding:"10px",borderRadius:"7px",border:"none",cursor:"pointer",
+                background:tab===t?GLD:"transparent",color:tab===t?"#000":MT,
+                fontWeight:tab===t?700:400,fontSize:".75rem",letterSpacing:"1px",
+                fontFamily:"inherit",transition:"all .2s"}}>
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {/* Consult content */}
+        {(tab==="레슨상담"||tab==="강의상담")&&(
+          <div style={{background:S2,border:"1px solid rgba(255,184,0,.2)",borderRadius:"12px",padding:"28px"}}>
+            <div className="clan-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"24px",alignItems:"center"}}>
+              <div>
+                <span style={{background:"rgba(255,184,0,.1)",border:"1px solid rgba(255,184,0,.3)",
+                  color:GLD,fontSize:".62rem",padding:"3px 10px",borderRadius:"20px"}}>{tab}</span>
+                <div style={{fontSize:"2rem",fontWeight:900,margin:"12px 0 4px"}}>
+                  {tab==="레슨상담"?"15,000":"20,000"}<span style={{fontSize:".9rem",fontWeight:400,color:MT}}>원</span>
+                </div>
+                <p style={{fontSize:".82rem",color:MT,lineHeight:1.8}}>
+                  {tab==="레슨상담"
+                    ?"판수 레슨 전 1:1 진단 상담.\n현재 티어·플레이 성향 분석 후 최적 트레이너 자동 배정."
+                    :"정규강의 수강 전 맞춤 진단.\n학습 방향·커리큘럼 설계 후 배정."}
+                </p>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
+                {[["1️⃣","상담비 결제","토스뱅크 1002-4781-4797"],
+                  ["2️⃣","AI 챗봇 진단","성향·티어·목표 분석"],
+                  ["3️⃣","트레이너 배정","24시간 내 자동 배정"]].map(([n,t2,s])=>(
+                  <div key={t2} style={{display:"flex",gap:"12px",alignItems:"center",
+                    background:S,borderRadius:"8px",padding:"12px 14px"}}>
+                    <span>{n}</span>
+                    <div>
+                      <div style={{fontSize:".8rem",fontWeight:700}}>{t2}</div>
+                      <div style={{fontSize:".68rem",color:MT}}>{s}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{marginTop:"20px",display:"flex",gap:"10px",flexWrap:"wrap"}}>
+              <a href={LINKS.kakao} target="_blank" rel="noreferrer"
+                style={{flex:1,textAlign:"center",background:"#FEE500",color:"#000",
+                  padding:"13px",borderRadius:"6px",fontWeight:700,fontSize:".85rem",
+                  letterSpacing:"1px",minWidth:"140px"}}>
+                카카오로 신청하기
+              </a>
+              <button onClick={()=>setChatOpen(true)}
+                style={{flex:1,background:GLD,color:"#000",border:"none",
+                  padding:"13px",borderRadius:"6px",fontWeight:700,fontSize:".85rem",
+                  cursor:"pointer",letterSpacing:"1px",fontFamily:"inherit",minWidth:"140px"}}>
+                AI 챗봇 상담 →
+              </button>
+            </div>
+          </div>
+        )}
+        {tab==="클랜상담"&&(
+          <div style={{background:S2,border:"1px solid rgba(255,184,0,.2)",borderRadius:"12px",padding:"28px"}}>
+            <div style={{fontSize:"2rem",fontWeight:900,marginBottom:"8px"}}>무료</div>
+            <p style={{fontSize:".85rem",color:MT,marginBottom:"20px"}}>GmI 클랜 가입 문의는 무료입니다.</p>
+            <div style={{display:"flex",gap:"10px",flexWrap:"wrap"}}>
+              <a href={LINKS.discord_clan} target="_blank" rel="noreferrer"
+                style={{flex:1,textAlign:"center",background:"#5865F2",color:"#fff",
+                  padding:"13px",borderRadius:"6px",fontWeight:700,fontSize:".85rem",letterSpacing:"1px",minWidth:"140px"}}>
+                클랜 Discord 입장
+              </a>
+              <button onClick={()=>setChatOpen(true)}
+                style={{flex:1,background:GLD,color:"#000",border:"none",
+                  padding:"13px",borderRadius:"6px",fontWeight:700,fontSize:".85rem",
+                  cursor:"pointer",letterSpacing:"1px",fontFamily:"inherit",minWidth:"140px"}}>
+                AI 챗봇 문의 →
+              </button>
+            </div>
+          </div>
+        )}
+        <div style={{marginTop:"14px",textAlign:"center",
+          background:S,border:"1px solid rgba(255,184,0,.1)",borderRadius:"8px",padding:"12px"}}>
+          <span style={{fontSize:".75rem",color:MT}}>입금계좌 </span>
+          <span style={{fontSize:".8rem",color:GLD,fontWeight:700}}>토스뱅크 1002-4781-4797 (이주형)</span>
+        </div>
+      </section>
+
+      <div style={{height:"1px",background:"rgba(255,184,0,.08)"}}/>
+
+      {/* ── CLAN ── */}
+      <section id="clan" style={{padding:"80px 28px",background:S,
+        borderTop:"1px solid rgba(255,184,0,.08)",borderBottom:"1px solid rgba(255,184,0,.08)"}}>
+        <div className="clan-grid" style={{maxWidth:"1000px",margin:"0 auto",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"48px",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:".65rem",letterSpacing:"4px",color:GLD,marginBottom:"10px"}}>CLAN RECRUIT</div>
+            <h2 style={{fontSize:"clamp(1.8rem,3.5vw,2.6rem)",fontWeight:900,marginBottom:"16px"}}>
+              GmI 클랜<br/>멤버 모집
+            </h2>
+            <p style={{fontSize:".88rem",color:MT,lineHeight:1.9,marginBottom:"28px"}}>
+              아카데미 수료 또는 레벨테스트 합격자 대상.<br/>
+              마스터급 멤버들과 스크림·전술·팀플레이를 훈련합니다.
+            </p>
+            <div style={{display:"flex",gap:"10px",flexWrap:"wrap"}}>
+              <a href={LINKS.discord_clan} target="_blank" rel="noreferrer"
+                style={{background:"#5865F2",color:"#fff",padding:"12px 20px",
+                  borderRadius:"6px",fontWeight:700,fontSize:".82rem",letterSpacing:"1px"}}>
+                Discord 클랜 입장
+              </a>
+              <a href={LINKS.discord_academy} target="_blank" rel="noreferrer"
+                style={{background:"transparent",color:TX,border:"1px solid rgba(255,255,255,.15)",
+                  padding:"12px 20px",borderRadius:"6px",fontWeight:500,fontSize:".82rem",letterSpacing:"1px"}}>
+                아카데미 Discord
+              </a>
+            </div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+            {[["🎖️","레벨테스트 필수","가입 전 실력 검증 진행"],
+              ["⚔️","정기 스크림","팀 전술·로테이션 실전 훈련"],
+              ["📊","성과 공유","멤버별 시즌 성장 데이터 공개"],
+              ["🔔","자동 알림","스크림 1시간 전 Discord 푸시 발송"]].map(([icon,t,d])=>(
+              <div key={t} style={{display:"flex",gap:"14px",alignItems:"flex-start",
+                background:S2,border:"1px solid rgba(255,184,0,.08)",borderRadius:"8px",padding:"14px 16px"}}>
+                <span style={{fontSize:"1.3rem"}}>{icon}</span>
+                <div>
+                  <div style={{fontWeight:700,fontSize:".85rem",marginBottom:"3px"}}>{t}</div>
+                  <div style={{fontSize:".75rem",color:MT}}>{d}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── YOUTUBE HUB ── */}
+      <section id="youtube" style={{padding:"80px 28px",maxWidth:"1000px",margin:"0 auto",position:"relative",zIndex:1}}>
+        <div style={{textAlign:"center",marginBottom:"40px"}}>
+          <div style={{fontSize:".65rem",letterSpacing:"4px",color:GLD,marginBottom:"10px"}}>CONTENT HUB</div>
+          <h2 style={{fontSize:"clamp(1.8rem,3.5vw,2.6rem)",fontWeight:900,marginBottom:"8px"}}>콘텐츠 허브</h2>
+          <p style={{fontSize:".85rem",color:MT}}>이무리가 직접 상담하고 편집한 수강생 변화 영상</p>
+        </div>
+        <div className="hub-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"20px",alignItems:"start"}}>
+          <div style={{display:"flex",justifyContent:"center"}}>
+            <div style={{width:"260px",background:"#0A0A14",borderRadius:"36px",padding:"12px 8px",
+              border:"2px solid rgba(255,184,0,.25)",boxShadow:"0 24px 60px rgba(0,0,0,.6)"}}>
+              <div style={{width:"60px",height:"5px",background:"#1A1A24",borderRadius:"3px",margin:"0 auto 8px"}}/>
+              <div style={{borderRadius:"20px",overflow:"hidden",position:"relative",paddingBottom:"177.77%",background:"#000"}}>
+                <iframe src={LINKS.hook_embed} title="MRI Academy Shorts"
+                  style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen/>
+              </div>
+              <div style={{width:"80px",height:"4px",background:"rgba(255,184,0,.2)",borderRadius:"2px",margin:"10px auto 0"}}/>
+            </div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+            <div style={{background:S2,border:"1px solid rgba(255,61,61,.25)",borderRadius:"10px",padding:"18px"}}>
+              <div style={{fontSize:".62rem",color:"#FF3D3D",letterSpacing:"2px",marginBottom:"8px"}}>▶ 수강생 변화 SHORTS</div>
+              <div style={{fontWeight:700,fontSize:".9rem",marginBottom:"6px"}}>실력 변화의 순간</div>
+              <p style={{fontSize:".75rem",color:MT,lineHeight:1.7,marginBottom:"14px"}}>
+                이무리가 직접 상담하고 편집한 수강생 비포&애프터. 텍스트보다 강력한 증거입니다.
+              </p>
+              <a href={LINKS.hook_video} target="_blank" rel="noreferrer"
+                style={{display:"inline-block",background:"#FF0000",color:"#fff",
+                  padding:"9px 18px",borderRadius:"6px",fontSize:".78rem",fontWeight:700,letterSpacing:"1px"}}>
+                YouTube에서 보기 →
+              </a>
+            </div>
+            {["강의 샘플 영상","전술·로테이션 가이드","클랜 스크림 하이라이트"].map((t,i)=>(
+              <a key={i} href={LINKS.youtube} target="_blank" rel="noreferrer"
+                style={{background:S2,border:"1px solid rgba(255,184,0,.08)",borderRadius:"8px",
+                  padding:"14px 16px",display:"flex",alignItems:"center",gap:"12px",transition:"border-color .2s"}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor=GLD}
+                onMouseLeave={e=>e.currentTarget.style.borderColor="rgba(255,184,0,.08)"}>
+                <span style={{color:"#FF0000"}}>▶</span>
+                <span style={{fontSize:".8rem",fontWeight:600}}>{t}</span>
+                <span style={{marginLeft:"auto",fontSize:".62rem",color:MT}}>채널 바로가기</span>
+              </a>
+            ))}
+            <a href={LINKS.youtube} target="_blank" rel="noreferrer"
+              style={{background:"#FF0000",color:"#fff",textAlign:"center",padding:"13px",
+                borderRadius:"8px",fontWeight:700,fontSize:".82rem",letterSpacing:"1px"}}>
+              📺 채널 구독하기
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* ── FOOTER ── */}
+      <footer style={{borderTop:"1px solid rgba(255,184,0,.1)",padding:"48px 28px",position:"relative",zIndex:1}}>
+        <div className="footer-grid" style={{maxWidth:"1000px",margin:"0 auto",
+          display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"32px"}}>
+          <div>
+            <div style={{fontWeight:900,fontSize:"1.1rem",color:GLD,letterSpacing:"2px",marginBottom:"12px"}}>MRI ACADEMY</div>
+            <p style={{fontSize:".75rem",color:MT,lineHeight:2}}>
+              PUBG 1:1 맞춤 코칭<br/>마스터 달성률 87.5%<br/>레벨테스트 합격자 한정
+            </p>
+          </div>
+          <div>
+            <div style={{fontSize:".62rem",letterSpacing:"3px",color:GLD,marginBottom:"14px"}}>CHANNELS</div>
+            {[
+              {l:"카카오 오픈채팅",h:LINKS.kakao,c:"#FEE500"},
+              {l:"아카데미 Discord",h:LINKS.discord_academy,c:"#5865F2"},
+              {l:"GmI 클랜 Discord",h:LINKS.discord_clan,c:"#5865F2"},
+              {l:"공식 유튜브",h:LINKS.youtube,c:"#FF0000"},
+            ].map(({l,h,c})=>(
+              <a key={l} href={h} target="_blank" rel="noreferrer"
+                style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"10px"}}>
+                <span style={{width:"6px",height:"6px",borderRadius:"50%",background:c,display:"inline-block"}}/>
+                <span style={{fontSize:".78rem",color:MT,transition:"color .2s"}}
+                  onMouseEnter={e=>e.target.style.color=GLD}
+                  onMouseLeave={e=>e.target.style.color=MT}>{l}</span>
+              </a>
+            ))}
+          </div>
+          <div>
+            <div style={{fontSize:".62rem",letterSpacing:"3px",color:GLD,marginBottom:"14px"}}>PAYMENT</div>
+            <div style={{background:S,border:"1px solid rgba(255,184,0,.1)",borderRadius:"8px",padding:"16px"}}>
+              <div style={{fontSize:".68rem",color:MT,marginBottom:"4px"}}>입금계좌</div>
+              <div style={{fontWeight:900,color:GLD}}>토스뱅크</div>
+              <div style={{fontSize:".9rem",fontWeight:700,marginTop:"2px"}}>1002-4781-4797</div>
+              <div style={{fontSize:".7rem",color:MT,marginTop:"2px"}}>예금주: 이주형</div>
+            </div>
+          </div>
+        </div>
+        <div style={{maxWidth:"1000px",margin:"24px auto 0",paddingTop:"20px",
+          borderTop:"1px solid rgba(255,255,255,.04)",textAlign:"center",
+          fontSize:".62rem",color:"#2A2A3A"}}>
+          © 2024 MRI ACADEMY. All rights reserved.
+        </div>
+      </footer>
+
+      {/* ── FAB ── */}
+      {!chatOpen&&(
+        <button onClick={()=>setChatOpen(true)} className="fab-pulse"
+          style={{position:"fixed",bottom:"24px",right:"24px",zIndex:400,
+            width:"56px",height:"56px",borderRadius:"50%",background:GLD,
+            color:"#000",border:"none",fontSize:"1.4rem",cursor:"pointer",
+            boxShadow:"0 4px 24px rgba(255,184,0,.5)",
+            display:"flex",alignItems:"center",justifyContent:"center"}}>💬</button>
+      )}
+
+      {/* ── CHAT MODAL ── */}
+      {chatOpen&&(
+        <div onClick={e=>e.target===e.currentTarget&&setChatOpen(false)}
+          style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.65)",
+            backdropFilter:"blur(6px)",display:"flex",alignItems:"flex-end",
+            justifyContent:"flex-end",padding:"24px"}}>
+          <div style={{width:"380px",maxHeight:"88vh",background:S,
+            border:"1px solid rgba(255,184,0,.2)",borderRadius:"16px",
+            overflow:"hidden",display:"flex",flexDirection:"column",
+            boxShadow:"0 24px 60px rgba(0,0,0,.8)",animation:"fadeUp .25s ease"}}>
+            {/* Header */}
+            <div style={{background:S2,padding:"14px 16px",display:"flex",
+              alignItems:"center",gap:"10px",borderBottom:"1px solid rgba(255,184,0,.1)",flexShrink:0}}>
+              <div style={{width:"34px",height:"34px",borderRadius:"50%",flexShrink:0,
+                background:"linear-gradient(135deg,#FFB800,#FF3D3D)",
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontWeight:900,color:"#000",fontSize:"12px"}}>MR</div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:".82rem"}}>MRI 상담봇 (AI)</div>
+                <div style={{fontSize:".62rem",color:"#4ADE80",display:"flex",alignItems:"center",gap:"4px"}}>
+                  <span style={{width:"5px",height:"5px",borderRadius:"50%",background:"#4ADE80",display:"inline-block"}}/>
+                  Claude AI · 24/7 온라인
+                </div>
+              </div>
+              <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
+                <a href={LINKS.kakao} target="_blank" rel="noreferrer"
+                  style={{background:"#FEE500",color:"#000",padding:"4px 8px",borderRadius:"4px",fontSize:".62rem",fontWeight:700}}>KK</a>
+                <a href={LINKS.discord_academy} target="_blank" rel="noreferrer"
+                  style={{background:"#5865F2",color:"#fff",padding:"4px 8px",borderRadius:"4px",fontSize:".62rem",fontWeight:700}}>DC</a>
+                <button onClick={()=>setChatOpen(false)}
+                  style={{background:"transparent",border:"none",color:MT,fontSize:"1rem",cursor:"pointer",lineHeight:1}}>✕</button>
+              </div>
+            </div>
+            {/* Body */}
+            <div ref={chatRef} style={{flex:1,overflowY:"auto",padding:"14px",
+              display:"flex",flexDirection:"column",gap:"10px",minHeight:0}}>
+              {msgs.map((m,i)=>(
+                <div key={i} className="cmsg" style={{display:"flex",
+                  flexDirection:m.role==="user"?"row-reverse":"row",alignItems:"flex-end"}}>
+                  <div style={{maxWidth:"85%",padding:"9px 12px",borderRadius:"10px",
+                    fontSize:".78rem",lineHeight:1.7,whiteSpace:"pre-wrap",
+                    background:m.role==="user"?GLD:S2,color:m.role==="user"?"#000":TX,
+                    border:m.role==="user"?"none":"1px solid rgba(255,184,0,.1)",
+                    borderBottomRightRadius:m.role==="user"?"3px":"10px",
+                    borderBottomLeftRadius:m.role==="assistant"?"3px":"10px"}}>
+                    {m.content}
+                  </div>
+                </div>
+              ))}
+              {loading&&(
+                <div style={{display:"flex"}}>
+                  <div style={{background:S2,border:"1px solid rgba(255,184,0,.1)",
+                    borderRadius:"10px",borderBottomLeftRadius:"3px",padding:"10px 14px"}}>
+                    <span className="dot1"/><span className="dot2"/><span className="dot3"/>
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* Quick replies */}
+            <div style={{padding:"0 12px 8px",display:"flex",gap:"6px",flexWrap:"wrap",flexShrink:0}}>
+              {QRS.map(q=>(
+                <button key={q} onClick={()=>send(q)} className="qb"
+                  style={{background:"transparent",border:"1px solid rgba(255,184,0,.28)",
+                    color:GLD,fontSize:".65rem",padding:"4px 9px",borderRadius:"20px",
+                    cursor:"pointer",fontFamily:"inherit"}}>
+                  {q}
+                </button>
+              ))}
+            </div>
+            {/* Input */}
+            <div style={{padding:"10px 12px 14px",borderTop:"1px solid rgba(255,184,0,.1)",
+              display:"flex",gap:"8px",flexShrink:0}}>
+              <input className="ch-inp" value={input} onChange={e=>setInput(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&send()}
+                placeholder="무엇이든 물어보세요..."
+                style={{flex:1,background:"#0A0A14",border:"1px solid rgba(255,184,0,.15)",
+                  color:TX,padding:"9px 12px",borderRadius:"6px",fontSize:".78rem",
+                  fontFamily:"inherit",outline:"none",transition:"border-color .2s"}}
+                onFocus={e=>e.target.style.borderColor=GLD}
+                onBlur={e=>e.target.style.borderColor="rgba(255,184,0,.15)"}/>
+              <button onClick={()=>send()} disabled={loading}
+                style={{background:GLD,color:"#000",border:"none",width:"38px",height:"38px",
+                  borderRadius:"6px",cursor:"pointer",fontSize:"1rem",opacity:loading?.5:1}}>↑</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
 
