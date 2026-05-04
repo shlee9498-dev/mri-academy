@@ -72,14 +72,14 @@ const SYSTEM = `당신은 MRI ACADEMY 공식 AI 상담봇입니다. PUBG(배틀�
 4. 레벨테스트 조건 항상 강조`;
 
 const PROOF = [
-  {name:"세인",    from:"골드3",    delta:"+81",  season:"30→32",kda:"4.2"},
-  {name:"수강생A", from:"플래티넘1", delta:"+67",  season:"26→28",kda:"4.1"},
-  {name:"수강생B", from:"플래티넘1", delta:"+114", season:"27→31",kda:"5.98"},
-  {name:"수강생C", from:"다이아3",   delta:"+120", season:"29→32",kda:"5.1"},
-  {name:"수강생D", from:"다이아3",   delta:"+97",  season:"25→26",kda:"4.9"},
-  {name:"수강생E", from:"다이아4",   delta:"+47",  season:"25→31",kda:"4.5"},
-  {name:"수강생F", from:"다이아5",   delta:"+200", season:"30→32",kda:"4.8"},
-  {name:"수강생G", from:"다이아5",   delta:"+51",  season:"30→31",kda:"4.3"},
+  {name:"세인",    from:"골드3",    to:"마스터",  rp:3620, delta:"+81",  season:"30→32",kda:"4.2"},
+  {name:"수강생A", from:"플래티넘1", to:"마스터",  rp:3609, delta:"+67",  season:"26→28",kda:"4.1"},
+  {name:"수강생B", from:"플래티넘1", to:"서바이버",rp:3777, delta:"+114", season:"27→31",kda:"5.98"},
+  {name:"수강생C", from:"다이아3",   to:"서바이버",rp:3820, delta:"+120", season:"29→32",kda:"5.1"},
+  {name:"수강생D", from:"다이아3",   to:"마스터",  rp:3616, delta:"+97",  season:"25→26",kda:"4.9"},
+  {name:"수강생E", from:"다이아4",   to:"마스터",  rp:3705, delta:"+47",  season:"25→31",kda:"4.5"},
+  {name:"수강생F", from:"다이아5",   to:"서바이버",rp:3958, delta:"+200", season:"30→32",kda:"4.8"},
+  {name:"수강생G", from:"다이아5",   to:"마스터",  rp:3613, delta:"+51",  season:"30→31",kda:"4.3"},
 ];
 
 const PLANS = [
@@ -341,7 +341,8 @@ function App(){
               <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"12px"}}>
                 <span style={{fontSize:".75rem",color:tc,fontWeight:600}}>{p.from}</span>
                 <span style={{color:GLD}}>→</span>
-                <span style={{fontSize:".75rem",color:"#FFD700",fontWeight:700}}>마스터1</span>
+                <span style={{fontSize:".75rem",color:p.to==="서바이버"?"#FF3D3D":"#FFD700",fontWeight:700}}>
+                  {p.to} {p.rp>=3700?`(${p.rp}RP)`:""}</span>
               </div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <span style={{background:"rgba(255,61,61,.12)",border:"1px solid rgba(255,61,61,.25)",
