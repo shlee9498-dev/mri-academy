@@ -40,36 +40,123 @@ const LINKS = {
 };
 
 const SYSTEM = `당신은 MRI ACADEMY 공식 AI 상담봇입니다. PUBG(배틀그라운드) 코칭 전문 아카데미입니다.
+상담자가 편하게 대화할 수 있도록 친근하고 따뜻하게 응대하되, 핵심은 간결하게 전달하세요.
 
-[핵심 성과]
-- 마스터 달성률 87.5% (14명 중 12명)
-- 평균 딜량 +116 (282→398), 평균 KDA +1.68
+[아카데미 소개]
+- 마스터 달성률 87.5% (14명 중 12명), 평균 딜량 +116, 평균 KDA +1.68
+- 매 시즌 데이터 업데이트, 2023년~현재 운영 중
+- 모든 트레이너는 최소 1시즌 이상 서바이버 티어 마무리 경력자
 
-[레슨 가격 — 이것만 공개]
-- 10판 40,000원 / 21판 80,000원 / 33판 120,000원
-- 정규·개인강의 가격 절대 공개 X
+[트레이너 소개 - 확정 3명 + 예비 1명]
+1. 안현태 - 포지셔닝/에임/결정력 전문. 서바이버 달성. 수강생 평균 딜량 +97
+2. 권준구(레빗) - 전술/로테이션/KDA 전문. 서바이버 달성. 수강생 평균 KDA +1.5
+3. 도은 - 클랜 전술/팀플레이 전문. 서바이버 달성. 클랜 상담 담당
+※ 예비 트레이너 1명 추가 예정
+※ 상담 후 성향/목표에 맞게 자동 배정, 또는 직접 픽 가능
 
-[상담 안내]
-- 강의상담: 20,000원 → 결제 후 AI 진단 → 트레이너 배정
-- 레슨상담: 15,000원 → 결제 후 AI 진단 → 트레이너 배정
-- 클랜상담: 무료
+[레슨 가격 - 이것만 공개]
+- 10판: 40,000원 (단기 집중 교정)
+- 21판: 80,000원 (마스터 달성 과정) - 인기
+- 33판: 120,000원 (풀 시즌 패키지)
+- 정규강의/개인강의 가격은 상담 후 안내 (절대 공개 X)
+
+[상담 종류 & 비용]
+- 레슨상담: 15,000원 / 결제 후 AI 진단 / 트레이너 배정
+- 강의상담: 20,000원 / 결제 후 AI 진단 / 강사(이무리) 직접 담당
+- 클랜상담: 무료 / 디스코드로 바로 연결
 - 결제: 토스뱅크 1002-4781-4797 [무리 아카데미]
 
 [등록 조건]
 - 레벨테스트 합격자에 한해 등록 가능
-- 상담 후 티어·성향 파악 → 트레이너 자동 배정
+- 레벨테스트: 인게임 전적 또는 플레이 영상 확인 후 코칭 적합 여부 판단
+- 합격 후: 상담 결제 → AI 진단 → 트레이너 배정 순서
+
+[레슨 운영 방식 - 핵심]
+- 기본: 판수제 (실전 게임 속 실시간 피드백이 가장 효과적)
+- 집중 최적화 세션(시간제 환산 가능):
+  · 1시간 집중 레슨 = 5판 차감
+  · 30분 집중 레슨 = 2판 차감
+- 피킹, 투척물, 감도 교정, 에임 등 특정 기술 집중 교정 시 시간제 권장
+- "판수가 헷갈려요" 질문엔: "1시간에 5판 차감 방식으로도 가능합니다!" 안내
+
+[자주 묻는 질문]
+Q 트레이너 직접 고를 수 있나요?
+A 네! 추천 트레이너 안내드리며 직접 픽도 가능합니다. 안현태(에임/포지셔닝), 권준구(전술/KDA), 도은(클랜/팀플레이) 중 선택하세요.
+
+Q 레벨테스트는 어떻게 하나요?
+A 카카오 오픈채팅(https://open.kakao.com/o/sAUU6OGf)으로 연락 주시면 됩니다. 인게임 전적 링크나 최근 플레이 영상 공유해 주시면 24시간 내 결과 안내드려요.
+
+Q 현재 티어가 낮아도 되나요?
+A 티어 제한 없습니다. 다만 레벨테스트로 코칭 효과 가능 여부를 확인해요. 골드~다이아 구간에서 성과가 가장 잘 나오고 있습니다.
+
+Q 수업은 어떻게 진행되나요?
+A 1:1 인게임 동행 또는 영상 분석 방식입니다. 디스코드/카카오로 트레이너와 일정 조율 후 진행되며, 수업 1시간 전 자동 알림도 발송돼요.
+
+Q 환불은 되나요?
+A 진행하지 않은 잔여 판수는 환불 가능합니다. 수업 진행률(1/3, 1/2 기준)에 따라 금액이 자동 계산됩니다.
+
+Q 결과가 보장되나요?
+A 100% 보장은 어렵지만 실제 수강생 87.5%가 마스터 또는 서바이버를 달성했습니다. 수강생 의지와 참여도가 핵심이에요.
+
+Q 클랜 가입은 어떻게 하나요?
+A 클랜상담은 무료입니다. 디스코드(https://discord.gg/YfZD8d22wJ)로 오시거나 카카오 오픈채팅으로 문의 주세요. 아래 가입 신청서를 작성해서 보내주시면 됩니다.
+
+[GmI 클랜 가입 신청서 - 챗봇 안내용]
+클랜 가입 희망 시 아래 항목을 디스코드 또는 카카오 오픈채팅에 복사해서 보내주세요.
+
+📋 기본 정보
+1. 디스코드 닉네임:
+2. 인게임 닉네임:
+3. 스팀 프로필 링크: (공개 설정 필수)
+4. 나이:
+5. 주 활동 시간대: (평일/주말 상세히)
+6. 현재 시즌 경쟁전 판수:
+7. 현재 시즌 평균 딜량:
+8. 전적 스크린샷: (이미지 첨부 필수)
+9. 가입 동기 및 각오:
+10. 환불용 계좌(은행명 + 계좌번호):
+
+⚠️ 필수 동의 항목 (모두 "동의합니다" 작성 필수)
+A. [대리 금지] 금전 거래를 통한 대리 부스팅을 1회라도 받은 적이 없으며, 향후에도 하지 않겠습니다. 위반 시 즉시 추방에 동의합니다. → 동의 여부:
+B. [계정거래 금지] 클랜 가입 이후 계정 거래를 하지 않겠습니다. 위반 확인 시 즉시 추방에 동의합니다. 현재 본인 명의 계정임을 확인합니다. → 동의 여부:
+C. [계정공유 제한] 계정 공유는 동일 주소지 직계가족(부모/형제)에 한해서만 허용됨을 확인합니다. → 동의 여부:
+D. [개인정보처리 동의] 클랜 운영 목적으로 디스코드 닉네임, 인게임 닉네임, 스팀 정보를 수집·보관함에 동의합니다. 탈퇴 시 관련 정보를 파기 요청할 수 있습니다. → 동의 여부:
+E. [클랜 규정 준수] 위 모든 규정을 숙지하였으며, 위반 시 제재(추방 등)에 이의를 제기하지 않겠습니다. → 동의 여부:
+
+※ 대리 여부는 가입 후에도 확인 가능하며, 사후 적발 시 즉시 추방 처분합니다.
+※ 본인 명의가 아닌 계정은 인게임 클랜 가입 자체가 불가합니다.
+※ 허위 작성 시 즉시 반려 및 향후 재가입 불가합니다.
+
+[MRI 아카데미 수강 신청서 - 챗봇 안내용]
+레슨/강의 수강 희망 시 아래 항목을 작성해서 보내주세요.
+[기본 정보]
+• 이름/성별:
+• 디스코드 계정:
+• 연락처:
+• 환불용 계좌(은행명 + 계좌번호):
+• MBTI:
+[수강 정보]
+• 신청 구분: (레슨 / 강의 중 택 1)
+• 유입 경로: (유튜브/지인/트레이너 로비 등)
+• 추천 트레이너: (로비 받은 경우 이름 기재)
+[배그 정보]
+• 스팀 닉네임:
+• 최근 2시즌 최고 티어:
+• 주 플레이 시간대:
+• 집중 교정 희망 사항: (교전/샷/운영판단 등)
 
 [연락처]
 - 카카오 오픈채팅: https://open.kakao.com/o/sAUU6OGf
 - 아카데미 디스코드: https://discord.gg/szFa7teEJs
-- 클랜 디스코드: https://discord.gg/YfZD8d22wJ
-- 유튜브: https://youtube.com/@mriacademy-w6v
+- GmI 클랜 디스코드: https://discord.gg/YfZD8d22wJ
 
 [응답 규칙]
-1. 한국어, 3-4문장 이내, 친근하고 전문적
-2. 상담 문의엔 반드시 카카오 링크 포함
-3. 레슨 가격 외 가격 절대 공개 X
-4. 레벨테스트 조건 항상 강조`;
+1. 한국어, 따뜻하고 친근한 말투, 4문장 이내
+2. 상담/결제 문의엔 반드시 카카오 링크 포함
+3. 트레이너 픽 질문엔 3명 특징 간략 소개
+4. 정규/개인강의 가격 절대 공개 X
+5. 레벨테스트 조건 항상 언급
+6. 답변 끝에 추가 질문 유도`;
 
 const PROOF = [
   {name:"세인",    from:"골드3",    to:"마스터",  rp:3620, delta:"+81",  season:"30→32",kda:"4.2"},
@@ -150,7 +237,7 @@ function App(){
     setMsgs(next);setLoading(true);
     try{
       const r=await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST",headers:{"Content-Type":"application/json","x-api-key":"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","anthropic-version":"2023-06-01"},
+        method:"POST",headers:{"Content-Type":"application/json","x-api-key":"API_KEY_HERE","anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
         body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:SYSTEM,
           messages:next.map(x=>({role:x.role,content:x.content}))})
       });
@@ -162,7 +249,7 @@ function App(){
     setLoading(false);
   };
 
-  const QRS=["레벨테스트 어떻게 해요?","상담비 얼마예요?","클랜 가입하고싶어요","트레이너 소개해줘"];
+  const QRS=["레벨테스트 어떻게 해요?","트레이너 직접 고를 수 있나요?","클랜 가입하고싶어요","환불 되나요?","수업은 어떻게 진행해요?"];
 
   return (
     <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:BG,color:TX,overflowX:"hidden",minHeight:"100vh"}}>
@@ -199,18 +286,21 @@ function App(){
         background:"rgba(7,7,15,.97)",backdropFilter:"blur(20px)",
         borderBottom:"1px solid rgba(255,184,0,.1)",height:"58px",
         display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 28px"}}>
-        <a href="#hero" style={{display:"flex",alignItems:"center",gap:"10px"}}>
-          <div style={{width:"30px",height:"30px",borderRadius:"6px",
-            background:"linear-gradient(135deg,#FFB800,#FF3D3D)",
-            display:"flex",alignItems:"center",justifyContent:"center",
-            fontWeight:900,color:"#000",fontSize:"12px"}}>MR</div>
+        <a href="#hero" style={{display:"flex",alignItems:"center",gap:"12px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"0px"}}>
+            <div style={{width:"38px",height:"38px",borderRadius:"8px",
+              background:"linear-gradient(135deg,#FFB800 0%,#FF6B00 50%,#FF3D3D 100%)",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              fontWeight:900,color:"#000",fontSize:"13px",letterSpacing:"-1px",
+              boxShadow:"0 0 16px rgba(255,184,0,.4)"}}>MRI</div>
+          </div>
           <div>
-            <div style={{fontWeight:900,fontSize:".9rem",letterSpacing:"2px",color:GLD}}>MRI ACADEMY</div>
-            <div style={{fontSize:".5rem",letterSpacing:"3px",color:MT}}>PUBG COACHING</div>
+            <div style={{fontWeight:900,fontSize:"1rem",letterSpacing:"3px",color:"#FFFFFF"}}>MRI <span style={{color:GLD}}>ACADEMY</span></div>
+            <div style={{fontSize:".52rem",letterSpacing:"4px",color:"rgba(255,184,0,.6)",marginTop:"-1px"}}>PUBG COACHING</div>
           </div>
         </a>
         <div className="nav-links" style={{display:"flex",gap:"22px",alignItems:"center"}}>
-          {[["성과","#proof"],["레슨","#plans"],["상담","#consult"],["클랜","#clan"],["영상","#youtube"]].map(([l,h])=>(
+          {[["성과","#proof"],["레슨","#plans"],["상담","#consult"],["트레이너","#trainers"],["클랜","#clan"],["영상","#youtube"]].map(([l,h])=>(
             <a key={l} href={h} className="nl" style={{color:MT,fontSize:".78rem",letterSpacing:"1px"}}>{l}</a>
           ))}
           <a href={LINKS.kakao} target="_blank" rel="noreferrer" className="eb"
@@ -223,43 +313,56 @@ function App(){
       {/* ── HERO ── */}
       <section id="hero" ref={heroRef} style={{minHeight:"100vh",display:"flex",alignItems:"center",
         padding:"80px 28px 60px",maxWidth:"1160px",margin:"0 auto",position:"relative",zIndex:1}}>
-        <div style={{position:"absolute",top:"30%",right:"5%",width:"500px",height:"500px",
-          background:"radial-gradient(ellipse,rgba(255,184,0,.05) 0%,transparent 70%)",pointerEvents:"none"}}/>
+        <div style={{position:"absolute",top:"20%",right:"0%",width:"600px",height:"600px",
+          background:"radial-gradient(ellipse,rgba(255,184,0,.07) 0%,transparent 70%)",pointerEvents:"none"}}/>
         <div className="hero-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"60px",alignItems:"center",width:"100%"}}>
           {/* Left text */}
           <div>
             <div style={{opacity:heroVis?1:0,animation:heroVis?"fadeUp .7s ease both":"none"}}>
-              <div style={{display:"inline-flex",alignItems:"center",gap:"8px",marginBottom:"22px",
-                background:"rgba(255,184,0,.07)",border:"1px solid rgba(255,184,0,.25)",
-                padding:"5px 14px",borderRadius:"2px"}}>
-                <span style={{width:"5px",height:"5px",borderRadius:"50%",background:GLD,
-                  display:"inline-block",animation:"blink 1.5s infinite"}}/>
-                <span style={{fontSize:".65rem",letterSpacing:"3px",color:GLD}}>매 시즌 업데이트 · 2023~ 실전 데이터</span>
+              <div style={{display:"inline-flex",alignItems:"center",gap:"8px",marginBottom:"24px",
+                background:"rgba(255,184,0,.12)",border:"1px solid rgba(255,184,0,.4)",
+                padding:"7px 16px",borderRadius:"3px"}}>
+                <span style={{width:"6px",height:"6px",borderRadius:"50%",background:GLD,
+                  display:"inline-block",animation:"blink 1.5s infinite",flexShrink:0}}/>
+                <span style={{fontSize:".72rem",letterSpacing:"2px",color:GLD,fontWeight:600}}>매 시즌 업데이트 · 2023~ 실전 데이터</span>
               </div>
             </div>
             <h1 style={{opacity:heroVis?1:0,animation:heroVis?"fadeUp .7s .1s ease both":"none",
-              fontSize:"clamp(2.8rem,5vw,4.6rem)",fontWeight:900,lineHeight:1.0,
-              letterSpacing:"-2px",marginBottom:"20px",animationName:"glow",animationDuration:"3s",animationIterationCount:"infinite"}}>
-              당신의 다음 시즌은<br/>
+              fontSize:"clamp(3.4rem,6vw,5.6rem)",fontWeight:900,lineHeight:1.0,
+              letterSpacing:"-2px",marginBottom:"24px",animationName:"glow",animationDuration:"3s",animationIterationCount:"infinite"}}>
+              당신의 다음<br/>
+              시즌은<br/>
               <span style={{color:GLD}}>달라질 수</span><br/>
               있습니다
             </h1>
             <p style={{opacity:heroVis?1:0,animation:heroVis?"fadeUp .7s .2s ease both":"none",
-              fontSize:".92rem",color:MT,lineHeight:1.9,marginBottom:"32px",maxWidth:"400px"}}>
+              fontSize:"1rem",color:"#9090A8",lineHeight:1.9,marginBottom:"36px",maxWidth:"420px"}}>
               마스터 달성률 <span style={{color:GLD,fontWeight:700}}>87.5%</span> — 당신이 막힌 이유, 저는 알고 있습니다.<br/>
-              레벨테스트 합격자에 한해 등록 가능합니다.
+              <span style={{color:"rgba(255,184,0,.7)",fontSize:".88rem"}}>레벨테스트 합격자에 한해 등록 가능합니다.</span>
             </p>
             <div style={{opacity:heroVis?1:0,animation:heroVis?"fadeUp .7s .3s ease both":"none",
-              display:"flex",gap:"10px",flexWrap:"wrap"}}>
-              <a href="#consult" className="fab-pulse" style={{background:GLD,color:"#000",padding:"13px 26px",
-                borderRadius:"4px",fontWeight:700,fontSize:".88rem",letterSpacing:"1px",display:"inline-block"}}>
-                상담 신청하기 →
-              </a>
+              display:"flex",flexDirection:"column",gap:"12px"}}>
+              {/* Primary CTAs */}
+              <div style={{display:"flex",gap:"12px",flexWrap:"wrap"}}>
+                <a href="#consult" className="fab-pulse" style={{
+                  background:GLD,color:"#000",padding:"16px 28px",
+                  borderRadius:"6px",fontWeight:700,fontSize:"1rem",letterSpacing:"1px",
+                  display:"inline-flex",alignItems:"center",gap:"8px",flexShrink:0}}>
+                  🎯 레슨 상담 신청
+                </a>
+                <a href={LINKS.discord_clan} target="_blank" rel="noreferrer" style={{
+                  background:"#5865F2",color:"#fff",padding:"16px 28px",
+                  borderRadius:"6px",fontWeight:700,fontSize:"1rem",letterSpacing:"1px",
+                  display:"inline-flex",alignItems:"center",gap:"8px",flexShrink:0}}>
+                  🛡 클랜 가입하기
+                </a>
+              </div>
+              {/* Secondary CTA */}
               <a href={LINKS.hook_video} target="_blank" rel="noreferrer"
-                style={{background:"transparent",color:TX,border:"1px solid rgba(255,255,255,.18)",
-                  padding:"13px 26px",borderRadius:"4px",fontWeight:500,fontSize:".88rem",
-                  letterSpacing:"1px",display:"inline-flex",alignItems:"center",gap:"7px"}}>
-                ▶ 변화 영상 보기
+                style={{background:"transparent",color:"rgba(255,255,255,.7)",
+                  fontSize:".85rem",letterSpacing:"1px",
+                  display:"inline-flex",alignItems:"center",gap:"6px"}}>
+                ▶ 수강생 변화 영상 보기
               </a>
             </div>
           </div>
@@ -370,6 +473,48 @@ function App(){
               </div>
             </div>
           ))}
+        </div>
+      </section>
+
+      <div style={{height:"1px",background:"rgba(255,184,0,.08)"}}/>
+
+      {/* ── WHY MRI ── */}
+      <section style={{padding:"64px 28px",background:S,
+        borderTop:"1px solid rgba(255,184,0,.08)",borderBottom:"1px solid rgba(255,184,0,.08)"}}>
+        <div style={{maxWidth:"1000px",margin:"0 auto"}}>
+          <div style={{textAlign:"center",marginBottom:"40px"}}>
+            <div style={{fontSize:".65rem",letterSpacing:"4px",color:GLD,marginBottom:"10px"}}>WHY MRI</div>
+            <h2 style={{fontSize:"clamp(1.6rem,3vw,2.2rem)",fontWeight:900,marginBottom:"8px"}}>왜 MRI ACADEMY인가요?</h2>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:"16px"}}>
+            {[
+              {icon:"💰",title:"압도적인 가격 경쟁력",
+               desc:"1:3 그룹 레슨 기준, 1시간에 2~4판 소진. 타 아카데미 1:1 레슨(39,000원/시간)의 절반 이하 비용으로 서바이버급 트레이너와 실전 게임을 함께합니다.",
+               tag:"타 대비 50% 이하"},
+              {icon:"🤝",title:"신뢰 기반 운영",
+               desc:"핵·버그 등으로 의미 없이 터진 게임은 의무는 아니지만 원칙적으로 무효 처리합니다. 당신의 판수가 헛되이 소모되지 않도록 함께 관리합니다.",
+               tag:"불량 게임 무효 처리"},
+              {icon:"🏆",title:"배틀그라운드 강의서버 최초",
+               desc:"MRI ACADEMY는 배틀그라운드 강의서버 문화를 국내 최초로 만든 곳입니다. 우리가 만든 기준이 업계 표준이 되었습니다.",
+               tag:"국내 최초 강의서버"},
+              {icon:"📊",title:"실전 데이터 50명+",
+               desc:"실제 수강생 50명 이상의 시즌별 데이터를 보유합니다. 마스터 달성률 87.5%, 평균 딜량 +116 — 숫자가 증명합니다.",
+               tag:"50명+ 검증 데이터"},
+            ].map((item,i)=>(
+              <div key={i} style={{background:S2,border:"1px solid rgba(255,184,0,.08)",borderRadius:"12px",padding:"22px",
+                transition:"border-color .2s"}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor=GLD}
+                onMouseLeave={e=>e.currentTarget.style.borderColor="rgba(255,184,0,.08)"}>
+                <div style={{fontSize:"1.8rem",marginBottom:"10px"}}>{item.icon}</div>
+                <div style={{fontWeight:700,fontSize:".95rem",marginBottom:"6px"}}>{item.title}</div>
+                <p style={{fontSize:".78rem",color:MT,lineHeight:1.7,marginBottom:"10px"}}>{item.desc}</p>
+                <span style={{background:"rgba(255,184,0,.1)",border:"1px solid rgba(255,184,0,.25)",
+                  color:GLD,fontSize:".62rem",padding:"3px 10px",borderRadius:"20px",fontWeight:600}}>
+                  {item.tag}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -519,6 +664,350 @@ function App(){
 
       <div style={{height:"1px",background:"rgba(255,184,0,.08)"}}/>
 
+      {/* ── TRAINERS ── */}
+      <section id="trainers" style={{padding:"80px 28px",maxWidth:"1160px",margin:"0 auto",position:"relative",zIndex:1}}>
+        <div style={{textAlign:"center",marginBottom:"48px"}}>
+          <div style={{fontSize:".65rem",letterSpacing:"4px",color:GLD,marginBottom:"10px"}}>MEET THE TEAM</div>
+          <h2 style={{fontSize:"clamp(1.8rem,3.5vw,2.6rem)",fontWeight:900,marginBottom:"8px"}}>강사 · 트레이너 소개</h2>
+          <p style={{fontSize:".85rem",color:MT}}>모든 트레이너는 최소 1시즌 이상 서바이버 티어 마무리 경력자 · 직접 픽 가능합니다</p>
+        </div>
+
+        {/* 대표강사 이무리 - featured card */}
+        <div style={{background:`linear-gradient(135deg,rgba(255,184,0,.08),rgba(255,61,61,.04))`,
+          border:"1px solid rgba(255,184,0,.3)",borderRadius:"16px",padding:"32px",
+          marginBottom:"20px",position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",top:0,left:0,right:0,height:"3px",
+            background:"linear-gradient(90deg,#FFB800,#FF6B00,#FF3D3D)"}}/>
+          <div style={{position:"absolute",top:"16px",right:"20px",
+            background:"rgba(255,184,0,.15)",border:"1px solid rgba(255,184,0,.4)",
+            color:GLD,fontSize:".65rem",fontWeight:700,padding:"4px 12px",borderRadius:"20px",letterSpacing:"2px"}}>
+            대표강사
+          </div>
+          <div style={{display:"flex",gap:"28px",alignItems:"flex-start",flexWrap:"wrap"}}>
+            <div style={{display:"flex",alignItems:"center",gap:"16px",flexShrink:0}}>
+              <div style={{width:"72px",height:"72px",borderRadius:"50%",flexShrink:0,
+                background:"linear-gradient(135deg,#FFB800,#FF3D3D)",
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontWeight:900,color:"#000",fontSize:"1.6rem",
+                boxShadow:"0 0 24px rgba(255,184,0,.3)"}}>이</div>
+              <div>
+                <div style={{fontWeight:900,fontSize:"1.3rem",marginBottom:"4px"}}>이무리 <span style={{fontSize:".75rem",color:GLD,fontWeight:400}}>(LeeMuri)</span></div>
+                <div style={{fontSize:".72rem",color:GLD,letterSpacing:"2px",marginBottom:"6px"}}>대표강사 · GmI 클랜장</div>
+                <div style={{fontSize:".75rem",color:MT}}>배틀그라운드 강의서버 문화 최초 창시 · 서바이버 달성</div>
+              </div>
+            </div>
+            <div style={{flex:1,minWidth:"200px"}}>
+              <p style={{fontSize:".85rem",color:"#C0C0D0",lineHeight:1.8,marginBottom:"16px"}}>
+                전문적인 분석과 전략을 통해 상위 1%의 실력으로 도약하는 집중 강의. 
+                클래스별 멤버 구성 후 <strong style={{color:TX}}>3시간 집중 교육</strong>으로 진행됩니다.
+                레벨테스트 합격자에 한해 수강 가능합니다.
+              </p>
+              <div style={{display:"flex",gap:"10px",flexWrap:"wrap"}}>
+                {[["🎓","강의상담 20,000원"],["⏱","1회 3시간 집중"],["👑","레벨테스트 필수"],["📊","50명+ 수강 이력"]].map(([ic,lb])=>(
+                  <span key={lb} style={{background:"rgba(255,184,0,.08)",border:"1px solid rgba(255,184,0,.2)",
+                    color:"#C8C0A8",fontSize:".72rem",padding:"5px 12px",borderRadius:"20px",
+                    display:"flex",alignItems:"center",gap:"5px"}}>
+                    <span>{ic}</span>{lb}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <button onClick={()=>setChatOpen(true)}
+              style={{background:GLD,color:"#000",border:"none",padding:"13px 22px",
+                borderRadius:"8px",fontWeight:700,fontSize:".82rem",cursor:"pointer",
+                fontFamily:"inherit",letterSpacing:"1px",alignSelf:"center",flexShrink:0,
+                transition:"all .2s"}}
+              onMouseEnter={e=>e.target.style.opacity=".85"}
+              onMouseLeave={e=>e.target.style.opacity="1"}>
+              강의 상담하기 →
+            </button>
+            <div style={{display:"flex",gap:"8px",marginTop:"8px"}}>
+              <a href="https://discord.com/users/318774590795022336" target="_blank" rel="noreferrer"
+                style={{background:"#5865F2",color:"#fff",padding:"8px 16px",borderRadius:"6px",
+                  fontWeight:700,fontSize:".75rem",letterSpacing:"1px"}}>
+                💬 DM 보내기
+              </a>
+              <a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noreferrer"
+                style={{background:"rgba(0,163,255,.12)",border:"1px solid rgba(0,163,255,.3)",
+                  color:"#00A3FF",padding:"8px 16px",borderRadius:"6px",
+                  fontWeight:700,fontSize:".75rem",letterSpacing:"1px"}}>
+                📺 SOOP 채널
+              </a>
+            </div>
+          </div>
+        </div>
+
+        {/* 트레이너 3인 — 풀 프로필 카드 */}
+        <div style={{display:"flex",flexDirection:"column",gap:"24px",marginBottom:"16px"}}>
+
+          {/* ── 안현태 ── */}
+          <div style={{background:S2,border:"1px solid rgba(255,184,0,.15)",borderRadius:"20px",
+            overflow:"hidden",transition:"border-color .2s"}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor="#FFB800"}
+            onMouseLeave={e=>e.currentTarget.style.borderColor="rgba(255,184,0,.15)"}>
+            <div style={{height:"3px",background:"linear-gradient(90deg,#FFB800,#FF6B00)"}}/>
+            <div style={{padding:"28px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"28px"}}
+              className="clan-grid">
+              {/* Left */}
+              <div>
+                <div style={{display:"flex",alignItems:"center",gap:"14px",marginBottom:"16px"}}>
+                  <div style={{width:"60px",height:"60px",borderRadius:"50%",flexShrink:0,
+                    background:"linear-gradient(135deg,#FFB80088,#FFB800)",
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    fontWeight:900,color:"#000",fontSize:"1.4rem",
+                    boxShadow:"0 0 20px rgba(255,184,0,.25)"}}>현</div>
+                  <div>
+                    <div style={{fontWeight:900,fontSize:"1.15rem"}}>안현태</div>
+                    <div style={{fontSize:".68rem",color:"#FFB800",letterSpacing:"1px",marginBottom:"2px"}}>서바이버 · 수석 트레이너</div>
+                    <div style={{fontSize:".65rem",color:MT}}>🎮 x_Hye0n_x</div>
+                  </div>
+                </div>
+                {/* 슬로건 */}
+                <div style={{background:"rgba(255,184,0,.06)",border:"1px solid rgba(255,184,0,.2)",
+                  borderRadius:"8px",padding:"12px 14px",marginBottom:"14px"}}>
+                  <div style={{fontSize:".62rem",color:"#FFB800",letterSpacing:"2px",marginBottom:"4px"}}>SLOGAN</div>
+                  <div style={{fontSize:".88rem",fontWeight:700,fontStyle:"italic",color:TX}}>
+                    "가슴은 뜨겁게, 머리는 차갑게"
+                  </div>
+                </div>
+                {/* 뱃지 */}
+                <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"14px"}}>
+                  {["프로팀 2군 주전","서바이버 4600pt","이스포츠 서버","24시간 상시 가능"].map(b=>(
+                    <span key={b} style={{background:"rgba(255,184,0,.1)",border:"1px solid rgba(255,184,0,.3)",
+                      color:"#FFB800",fontSize:".6rem",padding:"3px 9px",borderRadius:"20px",fontWeight:600}}>{b}</span>
+                  ))}
+                </div>
+                {/* 스탯 */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px",marginBottom:"14px"}}>
+                  {[["전문","운영·교전"],["스타일","친절 레슨"],["서바이버","4600pt"]].map(([l,v])=>(
+                    <div key={l} style={{textAlign:"center",background:S,borderRadius:"8px",padding:"10px 4px"}}>
+                      <div style={{fontSize:".82rem",fontWeight:700,color:"#FFB800"}}>{v}</div>
+                      <div style={{fontSize:".56rem",color:MT,marginTop:"2px"}}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* 레슨 시간 */}
+                <div style={{fontSize:".72rem",color:MT,marginBottom:"14px",
+                  background:S,borderRadius:"8px",padding:"10px 12px"}}>
+                  ⏰ <span style={{color:TX}}>평일 04:00~08:00 제외 24시간 상시 가능</span>
+                </div>
+                {/* 메시지 */}
+                <div style={{fontSize:".78rem",color:"#B0B0C0",lineHeight:1.7,
+                  borderLeft:"3px solid #FFB800",paddingLeft:"12px",marginBottom:"16px",fontStyle:"italic"}}>
+                  "원하시는 목표를 이룰 수 있도록 최선을 다해 노력하겠습니다!"
+                </div>
+              </div>
+              {/* Right */}
+              <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
+                <div style={{fontSize:".65rem",letterSpacing:"3px",color:"#FFB800",marginBottom:"4px"}}>장비 & 세팅</div>
+                <div style={{background:S,borderRadius:"10px",padding:"14px",fontSize:".75rem",color:MT,lineHeight:2}}>
+                  🖱️ 로지텍 G304 (지슈라2 미니)<br/>
+                  🎯 DPI 800 / 일반 33 / 수직 1.2 / 조준 30<br/>
+                  🖱️ AXG게이밍 마우스패드
+                </div>
+                <div style={{fontSize:".65rem",letterSpacing:"3px",color:"#FFB800",marginTop:"6px",marginBottom:"4px"}}>실력 영상</div>
+                {[
+                  ["영상 1","https://www.youtube.com/watch?v=-R2p-C4kUl0"],
+                  ["영상 2","https://www.youtube.com/watch?v=U3BB3SzNlA0"],
+                  ["영상 3","https://www.youtube.com/watch?v=BcU22_DPWHw"],
+                ].map(([l,u])=>(
+                  <a key={l} href={u} target="_blank" rel="noreferrer"
+                    style={{background:"rgba(255,0,0,.08)",border:"1px solid rgba(255,0,0,.2)",
+                      color:"#FF4444",padding:"8px 12px",borderRadius:"8px",fontSize:".72rem",
+                      fontWeight:600,transition:"background .2s"}}
+                    onMouseEnter={e=>e.currentTarget.style.background="rgba(255,0,0,.18)"}
+                    onMouseLeave={e=>e.currentTarget.style.background="rgba(255,0,0,.08)"}>
+                    ▶ YouTube — {l}
+                  </a>
+                ))}
+                <a href="https://dak.gg/pubg/profile/steam/x_Hye0n_x" target="_blank" rel="noreferrer"
+                  style={{background:"rgba(0,200,130,.08)",border:"1px solid rgba(0,200,130,.25)",
+                    color:"#00C882",padding:"8px 12px",borderRadius:"8px",fontSize:".72rem",
+                    fontWeight:600,transition:"background .2s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="rgba(0,200,130,.18)"}
+                  onMouseLeave={e=>e.currentTarget.style.background="rgba(0,200,130,.08)"}>
+                  📊 전적 확인 — dak.gg
+                </a>
+                <div style={{display:"flex",gap:"8px",marginTop:"4px"}}>
+                  <a href="https://discord.com/users/272226486600335370" target="_blank" rel="noreferrer"
+                    style={{flex:1,textAlign:"center",background:"#5865F2",color:"#fff",
+                      padding:"10px",borderRadius:"8px",fontWeight:700,fontSize:".75rem",letterSpacing:"1px"}}>
+                    💬 DM
+                  </a>
+                  <a href="https://ch.sooplive.co.kr/gusxo3874" target="_blank" rel="noreferrer"
+                    style={{flex:1,textAlign:"center",background:"rgba(0,163,255,.12)",
+                      border:"1px solid rgba(0,163,255,.3)",color:"#00A3FF",
+                      padding:"10px",borderRadius:"8px",fontWeight:700,fontSize:".75rem",letterSpacing:"1px"}}>
+                    📺 SOOP
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── 권준구 (레빗) ── */}
+          <div style={{background:S2,border:"1px solid rgba(88,101,242,.2)",borderRadius:"20px",
+            overflow:"hidden",transition:"border-color .2s"}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor="#5865F2"}
+            onMouseLeave={e=>e.currentTarget.style.borderColor="rgba(88,101,242,.2)"}>
+            <div style={{height:"3px",background:"linear-gradient(90deg,#5865F2,#9B59B6)"}}/>
+            <div style={{padding:"28px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"28px"}}
+              className="clan-grid">
+              {/* Left */}
+              <div>
+                <div style={{display:"flex",alignItems:"center",gap:"14px",marginBottom:"16px"}}>
+                  <div style={{width:"60px",height:"60px",borderRadius:"50%",flexShrink:0,
+                    background:"linear-gradient(135deg,#5865F288,#5865F2)",
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    fontWeight:900,color:"#fff",fontSize:"1.4rem",
+                    boxShadow:"0 0 20px rgba(88,101,242,.3)"}}>준</div>
+                  <div>
+                    <div style={{fontWeight:900,fontSize:"1.15rem"}}>권준구 <span style={{color:"#5865F2",fontSize:".8rem"}}>(레빗)</span></div>
+                    <div style={{fontSize:".68rem",color:"#5865F2",letterSpacing:"1px",marginBottom:"2px"}}>서바이버 · 트레이너</div>
+                    <div style={{fontSize:".65rem",color:MT}}>🎮 GmI_rabbit</div>
+                  </div>
+                </div>
+                {/* 슬로건 */}
+                <div style={{background:"rgba(88,101,242,.07)",border:"1px solid rgba(88,101,242,.25)",
+                  borderRadius:"8px",padding:"12px 14px",marginBottom:"14px"}}>
+                  <div style={{fontSize:".62rem",color:"#5865F2",letterSpacing:"2px",marginBottom:"4px"}}>SLOGAN</div>
+                  <div style={{fontSize:".88rem",fontWeight:700,fontStyle:"italic",color:TX}}>
+                    "노력은 배신하지 않습니다."
+                  </div>
+                </div>
+                {/* 뱃지 */}
+                <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"14px"}}>
+                  {["서바이버 4365RP","PWS컵 진출","PLS본선 진출","이스포츠 서버"].map(b=>(
+                    <span key={b} style={{background:"rgba(88,101,242,.1)",border:"1px solid rgba(88,101,242,.3)",
+                      color:"#5865F2",fontSize:".6rem",padding:"3px 9px",borderRadius:"20px",fontWeight:600}}>{b}</span>
+                  ))}
+                </div>
+                {/* 스탯 */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px",marginBottom:"14px"}}>
+                  {[["서바이버","4365RP"],["PWS/PLS","대회경력"],["전문","교전 피드백"]].map(([l,v])=>(
+                    <div key={l} style={{textAlign:"center",background:S,borderRadius:"8px",padding:"10px 4px"}}>
+                      <div style={{fontSize:".82rem",fontWeight:700,color:"#5865F2"}}>{v}</div>
+                      <div style={{fontSize:".56rem",color:MT,marginTop:"2px"}}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* 레슨 시간 */}
+                <div style={{fontSize:".72rem",background:S,borderRadius:"8px",padding:"10px 12px",marginBottom:"14px"}}>
+                  ⏰ <span style={{color:TX}}>평일 18:00~익일 01:00</span><br/>
+                  ⏰ <span style={{color:TX}}>주말 15:00~익일 01:00</span>
+                </div>
+                {/* 메시지 */}
+                <div style={{fontSize:".78rem",color:"#B0B0C0",lineHeight:1.7,
+                  borderLeft:"3px solid #5865F2",paddingLeft:"12px",marginBottom:"16px",fontStyle:"italic"}}>
+                  "제가 배워온 지식을 아낌없이 나누어, 여러분이 배틀그라운드에서 진정한 재미와 보람을 느끼실 수 있도록 최선을 다하겠습니다."
+                </div>
+              </div>
+              {/* Right */}
+              <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
+                <div style={{fontSize:".65rem",letterSpacing:"3px",color:"#5865F2",marginBottom:"4px"}}>장비 & 세팅</div>
+                <div style={{background:S,borderRadius:"10px",padding:"14px",fontSize:".75rem",color:MT,lineHeight:2}}>
+                  🖱️ 로지텍 G PRO WIRELESS<br/>
+                  ⌨️ 로지텍 KDA에디션 키보드<br/>
+                  🖥️ 벤큐 조위 XL2746K<br/>
+                  💻 라이젠 7 5700X3D / RAM 32GB / RTX 3070Ti<br/>
+                  🎯 DPI 400 / 일반 55 / 수직 1.0 / 조준 45
+                </div>
+                <div style={{fontSize:".65rem",letterSpacing:"3px",color:"#5865F2",marginTop:"6px",marginBottom:"4px"}}>실력 영상</div>
+                {[
+                  ["영상 1","https://youtu.be/LkHHjpjKQbU"],
+                  ["영상 2","https://youtu.be/U5KVawiJkk8"],
+                  ["영상 3","https://youtu.be/vhYOuOxw9N4"],
+                ].map(([l,u])=>(
+                  <a key={l} href={u} target="_blank" rel="noreferrer"
+                    style={{background:"rgba(255,0,0,.08)",border:"1px solid rgba(255,0,0,.2)",
+                      color:"#FF4444",padding:"8px 12px",borderRadius:"8px",fontSize:".72rem",
+                      fontWeight:600,transition:"background .2s"}}
+                    onMouseEnter={e=>e.currentTarget.style.background="rgba(255,0,0,.18)"}
+                    onMouseLeave={e=>e.currentTarget.style.background="rgba(255,0,0,.08)"}>
+                    ▶ YouTube — {l}
+                  </a>
+                ))}
+                <a href="https://dak.gg/pubg/profile/steam/GmI_rabbit/" target="_blank" rel="noreferrer"
+                  style={{background:"rgba(0,200,130,.08)",border:"1px solid rgba(0,200,130,.25)",
+                    color:"#00C882",padding:"8px 12px",borderRadius:"8px",fontSize:".72rem",
+                    fontWeight:600,transition:"background .2s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="rgba(0,200,130,.18)"}
+                  onMouseLeave={e=>e.currentTarget.style.background="rgba(0,200,130,.08)"}>
+                  📊 전적 확인 — dak.gg
+                </a>
+                <div style={{display:"flex",gap:"8px",marginTop:"4px"}}>
+                  <a href="https://discord.com/users/444839015125090304" target="_blank" rel="noreferrer"
+                    style={{flex:1,textAlign:"center",background:"#5865F2",color:"#fff",
+                      padding:"10px",borderRadius:"8px",fontWeight:700,fontSize:".75rem",letterSpacing:"1px"}}>
+                    💬 DM
+                  </a>
+                  <a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noreferrer"
+                    style={{flex:1,textAlign:"center",background:"rgba(0,163,255,.12)",
+                      border:"1px solid rgba(0,163,255,.3)",color:"#00A3FF",
+                      padding:"10px",borderRadius:"8px",fontWeight:700,fontSize:".75rem",letterSpacing:"1px"}}>
+                    📺 SOOP
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── 한도은 ── */}
+          <div style={{background:S2,border:"1px solid rgba(74,222,128,.15)",borderRadius:"20px",
+            overflow:"hidden",transition:"border-color .2s"}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor="#4ADE80"}
+            onMouseLeave={e=>e.currentTarget.style.borderColor="rgba(74,222,128,.15)"}>
+            <div style={{height:"3px",background:"linear-gradient(90deg,#4ADE80,#22C55E)"}}/>
+            <div style={{padding:"28px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:"14px",marginBottom:"16px"}}>
+                <div style={{width:"60px",height:"60px",borderRadius:"50%",flexShrink:0,
+                  background:"linear-gradient(135deg,#4ADE8088,#4ADE80)",
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  fontWeight:900,color:"#000",fontSize:"1.4rem",
+                  boxShadow:"0 0 20px rgba(74,222,128,.2)"}}>도</div>
+                <div>
+                  <div style={{fontWeight:900,fontSize:"1.15rem"}}>한도은</div>
+                  <div style={{fontSize:".68rem",color:"#4ADE80",letterSpacing:"1px",marginBottom:"2px"}}>서바이버 · 트레이너</div>
+                  <div style={{fontSize:".65rem",color:MT}}>🎮 lsmGmI</div>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"14px"}}>
+                {["서바이버 달성","클랜전 전문","팀플레이 코칭","클랜 상담 전담"].map(b=>(
+                  <span key={b} style={{background:"rgba(74,222,128,.1)",border:"1px solid rgba(74,222,128,.3)",
+                    color:"#4ADE80",fontSize:".6rem",padding:"3px 9px",borderRadius:"20px",fontWeight:600}}>{b}</span>
+                ))}
+              </div>
+              <p style={{fontSize:".82rem",color:"#B0B0C0",lineHeight:1.7,
+                borderLeft:"3px solid #4ADE80",paddingLeft:"12px"}}>
+                클랜전과 팀플레이 전문. 솔로 플레이어도 팀과 함께 성장할 수 있도록 밀착 지도합니다.
+                상세 프로필은 준비 중입니다.
+              </p>
+              <div style={{display:"flex",gap:"8px",marginTop:"14px"}}>
+                <a href="https://discord.com/users/835729481851076619" target="_blank" rel="noreferrer"
+                  style={{flex:1,maxWidth:"120px",textAlign:"center",background:"#5865F2",color:"#fff",
+                    padding:"10px",borderRadius:"8px",fontWeight:700,fontSize:".75rem",letterSpacing:"1px"}}>
+                  💬 DM
+                </a>
+                <a href="https://ch.sooplive.co.kr/paperhann99" target="_blank" rel="noreferrer"
+                  style={{flex:1,maxWidth:"120px",textAlign:"center",background:"rgba(0,163,255,.12)",
+                    border:"1px solid rgba(0,163,255,.3)",color:"#00A3FF",
+                    padding:"10px",borderRadius:"8px",fontWeight:700,fontSize:".75rem",letterSpacing:"1px"}}>
+                  📺 SOOP
+                </a>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        {/* 예비 트레이너 */}
+        <div style={{background:S,border:"1px dashed rgba(255,184,0,.15)",borderRadius:"10px",
+          padding:"18px",textAlign:"center"}}>
+          <span style={{fontSize:".78rem",color:MT}}>🔜 서바이버 경력 예비 트레이너 1명 추가 예정 · 곧 공개됩니다</span>
+        </div>
+      </section>
+
+      <div style={{height:"1px",background:"rgba(255,184,0,.08)"}}/>
+
       {/* ── CLAN ── */}
       <section id="clan" style={{padding:"80px 28px",background:S,
         borderTop:"1px solid rgba(255,184,0,.08)",borderBottom:"1px solid rgba(255,184,0,.08)"}}>
@@ -613,6 +1102,50 @@ function App(){
                 borderRadius:"8px",fontWeight:700,fontSize:".82rem",letterSpacing:"1px"}}>
               📺 채널 구독하기
             </a>
+          </div>
+        </div>
+      </section>
+
+      {/* ── SOOP LIVE ── */}
+      <section style={{padding:"64px 28px",background:S,
+        borderTop:"1px solid rgba(255,184,0,.08)",borderBottom:"1px solid rgba(255,184,0,.08)"}}>
+        <div style={{maxWidth:"1000px",margin:"0 auto"}}>
+          <div style={{textAlign:"center",marginBottom:"32px"}}>
+            <div style={{fontSize:".65rem",letterSpacing:"4px",color:"#00A3FF",marginBottom:"10px"}}>SOOP LIVE</div>
+            <h2 style={{fontSize:"clamp(1.5rem,3vw,2rem)",fontWeight:900,marginBottom:"8px"}}>SOOP 채널</h2>
+            <p style={{fontSize:".82rem",color:MT}}>강사·트레이너의 실시간 방송과 VOD를 확인하세요</p>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:"14px"}}>
+            {[
+              {name:"이무리",role:"대표강사",soop:"zmdk1373",pubg:"GmI_mri",color:"#FFB800"},
+              {name:"안현태",role:"수석 트레이너",soop:"gusxo3874",pubg:"x_Hye0n_x",color:"#FFB800"},
+              {name:"권준구",role:"트레이너 (레빗)",soop:"kyupab1122",pubg:"GmI_rabbit",color:"#5865F2"},
+              {name:"한도은",role:"트레이너",soop:"paperhann99",pubg:"lsmGmI",color:"#4ADE80"},
+            ].map((s,i)=>(
+              <a key={i} href={`https://ch.sooplive.co.kr/${s.soop}`} target="_blank" rel="noreferrer"
+                style={{background:S2,border:"1px solid rgba(0,163,255,.15)",borderRadius:"12px",
+                  padding:"20px",display:"block",transition:"all .2s",textDecoration:"none"}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor="#00A3FF";e.currentTarget.style.transform="translateY(-3px)"}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(0,163,255,.15)";e.currentTarget.style.transform="none"}}>
+                <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"10px"}}>
+                  <div style={{width:"36px",height:"36px",borderRadius:"50%",flexShrink:0,
+                    background:`linear-gradient(135deg,${s.color}88,${s.color})`,
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    fontWeight:900,color:"#000",fontSize:".9rem"}}>
+                    {s.name[0]}
+                  </div>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:".85rem"}}>{s.name}</div>
+                    <div style={{fontSize:".62rem",color:MT}}>{s.role}</div>
+                  </div>
+                </div>
+                <div style={{fontSize:".7rem",color:MT,marginBottom:"6px"}}>🎮 {s.pubg}</div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <span style={{fontSize:".68rem",color:"#00A3FF",fontWeight:600}}>📺 @{s.soop}</span>
+                  <span style={{fontSize:".65rem",color:MT}}>채널 바로가기 →</span>
+                </div>
+              </a>
+            ))}
           </div>
         </div>
       </section>
