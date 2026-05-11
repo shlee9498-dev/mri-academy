@@ -1063,7 +1063,7 @@ async function sendMsg(txt){
   try{
     const r = await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':'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','anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      headers:{'Content-Type':'application/json','x-api-key':'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','anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:800,system:SYSTEM,messages:msgs.map(x=>({role:x.role,content:x.content}))})
     });
     const d = await r.json();
