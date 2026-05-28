@@ -12,9 +12,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// ── 진단용 라우트 (키 확인 후 삭제할 것) ──
+// 새 이름의 변수 사용 (기존 ANTHROPIC_API_KEY 덮어쓰기 회피)
+const API_KEY = process.env.CLAUDE_KEY;
+
+// 진단용 라우트 (확인 후 삭제 가능)
 app.get("/api/keycheck", (req, res) => {
-  const k = process.env.ANTHROPIC_API_KEY || "";
+  const k = API_KEY || "";
   res.json({
     hasKey: k.length > 0,
     length: k.length,
@@ -31,7 +34,7 @@ app.post("/api/chat", async (req, res) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "x-api-key": API_KEY,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify(req.body),
