@@ -1064,7 +1064,7 @@ async function sendMsg(txt){
     const r = await fetch('https://mri-academy-production.up.railway.app/api/chat',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:800,system:SYSTEM,messages:msgs.map(x=>({role:x.role,content:x.content}))})
+      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:800,system:SYSTEM,messages:msgs.map(x=>({role:x.role,content:x.content}))})
     });
     const d = await r.json();
     msgs.push({role:'assistant',content:d.content?.[0]?.text||'잠시 후 다시 시도해주세요.'});
