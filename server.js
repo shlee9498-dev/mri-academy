@@ -1,41 +1,40 @@
-// MRI ACADEMY 상담 챗봇 프록시 (Railway)
-// - POST /api/chat  : 브라우저 → 이 서버 → Anthropic API (키는 서버에만)
-// - 키: Railway Variables의 CLAUDE_KEY  (코드/깃허브에 절대 노출 금지)
-// - 모델: claude-haiku-4-5-20251001  (만료 시 최신 문자열로 교체)
-// - keycheck 진단 라우트는 보안상 제거됨
+// MRI ACADEMY 통합 서버 (Railway)
+// - POST /api/chat   : 상담 챗봇 (Anthropic 프록시, CLAUDE_KEY 사용)
+// - GET  /api/stats  : 디스코드 역할별 멤버 현황 (DISCORD_TOKEN + GUILD_ID 사용)
+// 한 프로세스에서 둘 다 굴림. 누락된 env는 해당 기능만 비활성화되고 다른 기능은 정상.
 
 const express = require("express");
+const { Client, GatewayIntentBits } = require("discord.js");
+
 const app = express();
 app.use(express.json({ limit: "64kb" }));
 
-// ---- CORS (허용 도메인만) ----
+// ─── CORS (공통) ──────────────────────────────────────────
 const ALLOWED = [
   "https://shlee9498-dev.github.io",
   "https://mriacademy.gg",
   "https://www.mriacademy.gg",
 ];
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (ALLOWED.includes(origin)) res.setHeader("Access-Control-Allow-Origin", origin);
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  const o = req.headers.origin;
+  if (ALLOWED.includes(o)) res.setHeader("Access-Control-Allow-Origin", o);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
 
-// ---- 간단 레이트리밋 (IP당 분당 10건, 비용 방어) ----
+// ─── 레이트리밋 (챗봇 보호, IP당 분당 10건) ────────────────
 const hits = new Map();
 function rateLimited(ip) {
-  const now = Date.now();
-  const win = 60_000, max = 10;
+  const now = Date.now(), win = 60_000, max = 10;
   const arr = (hits.get(ip) || []).filter((t) => now - t < win);
-  arr.push(now);
-  hits.set(ip, arr);
-  if (hits.size > 5000) hits.clear(); // 메모리 방어
+  arr.push(now); hits.set(ip, arr);
+  if (hits.size > 5000) hits.clear();
   return arr.length > max;
 }
 
-// ---- 상담 챗봇 지식 / 페르소나 (FAQ 내장) ----
+// ─── 챗봇 시스템 프롬프트 (FAQ 내장) ──────────────────────
 const SYSTEM = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우미입니다. 친절하고 간결하게 존댓말로 답하세요.
 
 [핵심 사실]
@@ -57,24 +56,20 @@ const SYSTEM = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우미입니
 - 모르는 내용은 지어내지 말고 상담 연결로 안내하세요. 욕설/장난에는 정중히 상담 안내로 마무리하세요.
 - 답변은 보통 2~4문장으로 간결하게.`;
 
-// ---- 메인 챗 라우트 ----
+// ─── 챗 라우트 ────────────────────────────────────────────
 app.post("/api/chat", async (req, res) => {
   try {
     const KEY = process.env.CLAUDE_KEY;
-    if (!KEY) return res.status(500).json({ error: "server_misconfigured" });
-
+    if (!KEY) return res.status(500).json({ error: "chat_disabled_no_key" });
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
     if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
 
-    // 입력: { messages: [{role, content}, ...] } 또는 { message: "..." }
     let messages = Array.isArray(req.body?.messages) ? req.body.messages : null;
     if (!messages && typeof req.body?.message === "string") {
       messages = [{ role: "user", content: req.body.message }];
     }
-    if (!messages || messages.length === 0) {
-      return res.status(400).json({ error: "no_message" });
-    }
-    // 최근 20턴만 + 역할/길이 정리
+    if (!messages || messages.length === 0) return res.status(400).json({ error: "no_message" });
+
     messages = messages
       .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
       .slice(-20)
@@ -82,37 +77,78 @@ app.post("/api/chat", async (req, res) => {
 
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 600,
-        system: SYSTEM,
-        messages,
-      }),
+      headers: { "content-type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 600, system: SYSTEM, messages }),
     });
-
     const data = await r.json();
     if (!r.ok) {
       console.error("anthropic_error", r.status, data?.error?.type);
       return res.status(502).json({ error: "upstream_error", detail: data?.error?.type });
     }
-    const text = (data.content || [])
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("\n")
-      .trim();
+    const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
     res.json({ reply: text || "잠시 후 다시 시도해 주세요!" });
   } catch (e) {
-    console.error("server_error", e);
+    console.error("chat_error", e);
     res.status(500).json({ error: "server_error" });
   }
 });
 
-app.get("/", (_req, res) => res.send("MRI ACADEMY chat proxy OK"));
+// ─── 디스코드 현황 ─────────────────────────────────────────
+const TARGETS = [
+  { key: "muri",       match: (n) => n.includes("담당") && n.includes("무리") },
+  { key: "hyuntae",    match: (n) => n.includes("트레이너") && n.includes("현태") },
+  { key: "jungu",      match: (n) => n.includes("준구") },
+  { key: "suganseng",  match: (n) => n.trim() === "수강생" },
+  { key: "lessonseng", match: (n) => n.trim() === "레슨생" },
+  { key: "sangdam",    match: (n) => n.trim() === "상담" },
+  { key: "cho",        match: (n) => n.trim() === "초급반" },
+  { key: "jung",       match: (n) => n.trim() === "중급반" },
+  { key: "sim",        match: (n) => n.trim() === "심화반" },
+];
+let CACHE = { updatedAt: null, counts: {}, status: "initializing" };
+
+async function refresh(client) {
+  try {
+    const guild = process.env.GUILD_ID
+      ? await client.guilds.fetch(process.env.GUILD_ID)
+      : client.guilds.cache.first();
+    if (!guild) { CACHE.status = "guild_not_found"; return; }
+    await guild.members.fetch();
+    const roles = await guild.roles.fetch();
+    const counts = {};
+    for (const t of TARGETS) counts[t.key] = 0;
+    roles.forEach((role) => {
+      const t = TARGETS.find((x) => x.match(role.name));
+      if (t) counts[t.key] = role.members.size;
+    });
+    CACHE = { updatedAt: new Date().toISOString(), counts, status: "ok" };
+    console.log("stats refreshed", JSON.stringify(counts));
+  } catch (e) {
+    console.error("refresh_error", e?.message);
+    CACHE.status = "refresh_error";
+  }
+}
+
+if (process.env.DISCORD_TOKEN) {
+  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+  client.once("ready", () => {
+    console.log("bot ready:", client.user.tag);
+    refresh(client);
+    setInterval(() => refresh(client), 5 * 60 * 1000);
+  });
+  client.login(process.env.DISCORD_TOKEN).catch((e) => {
+    console.error("discord_login_failed", e?.message);
+    CACHE.status = "login_failed";
+  });
+} else {
+  CACHE.status = "discord_disabled_no_token";
+  console.log("DISCORD_TOKEN 없음 — 현황 기능 비활성. 챗봇만 동작.");
+}
+
+app.get("/api/stats", (_req, res) => res.json(CACHE));
+app.get("/", (_req, res) =>
+  res.send("MRI ACADEMY server OK · chat=" + (process.env.CLAUDE_KEY ? "on" : "off") + " · stats=" + CACHE.status)
+);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("listening on " + PORT));

@@ -1,16 +1,13 @@
 {
-  "name": "mri-academy-chat",
-  "version": "1.0.0",
+  "name": "mri-academy-server",
+  "version": "1.1.0",
   "private": true,
-  "description": "MRI ACADEMY 상담 챗봇 프록시 (Anthropic API)",
+  "description": "MRI ACADEMY 통합 서버 — 챗봇(Anthropic) + 디스코드 현황",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "discord.js": "^14.16.3"
   }
 }
