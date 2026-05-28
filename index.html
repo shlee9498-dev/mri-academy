@@ -246,6 +246,10 @@ footer b{color:var(--gold)}
 .cb-foot button{background:var(--gold);color:#0a0a0c;border:none;border-radius:8px;padding:0 14px;font-weight:800;cursor:pointer;font-size:13px}
 .cb-foot button:disabled{opacity:.4;cursor:not-allowed}
 .cb-note{padding:4px 14px 10px;font-size:10.5px;color:var(--ink-faint);text-align:center}
+.cb-sugs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px}
+.cb-sugs .cbl{width:100%;font-size:10.5px;color:var(--ink-faint);margin-bottom:2px;letter-spacing:.04em}
+.cb-chip{background:rgba(245,197,24,.06);border:1px solid var(--gold-soft);color:var(--ink);padding:7px 11px;border-radius:99px;font-size:12px;cursor:pointer;font-family:var(--body);text-align:left;line-height:1.3;transition:background .15s}
+.cb-chip:hover{background:rgba(245,197,24,.13)}
 </style>
 </head>
 <body>
@@ -675,6 +679,14 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
   </div>
   <div class="cb-body" id="cbBody">
     <div class="cb-msg bot">안녕하세요! MRI ACADEMY 상담봇입니다. 레슨/강의 차이, 요금, 절차 등 궁금한 점을 편하게 물어봐 주세요. 결제·일정 확정 등 실제 처리는 디스코드/카카오 상담으로 안내해 드립니다. 🎯</div>
+    <div class="cb-sugs" id="cbSugs">
+      <span class="cbl">이런 걸 물어볼 수 있어요</span>
+      <button class="cb-chip" data-q="레슨이랑 강의 차이가 뭔가요?">레슨 vs 강의 차이</button>
+      <button class="cb-chip" data-q="요금이 어떻게 되나요?">요금이 궁금해요</button>
+      <button class="cb-chip" data-q="다이아 2 정도인데 뭐부터 시작하면 좋을까요?">제 티어에 뭐부터?</button>
+      <button class="cb-chip" data-q="상담 절차가 어떻게 되나요?">상담 절차</button>
+      <button class="cb-chip" data-q="환불 규정이 어떻게 되나요?">환불 규정</button>
+    </div>
   </div>
   <div class="cb-foot">
     <textarea id="cbInput" placeholder="메시지를 입력하세요 (Enter 전송, Shift+Enter 줄바꿈)" rows="1"></textarea>
@@ -697,6 +709,7 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
   function typing(on){let t=document.getElementById("cbTyp");if(on&&!t){t=document.createElement("div");t.id="cbTyp";t.className="cb-typing";t.innerHTML="<span></span><span></span><span></span>";body.appendChild(t);body.scrollTop=body.scrollHeight;}else if(!on&&t){t.remove();}}
   async function ask(){
     const msg=input.value.trim(); if(!msg) return;
+    const s=document.getElementById("cbSugs"); if(s) s.remove();
     input.value=""; input.style.height="38px"; push("me",msg); history.push({role:"user",content:msg});
     send.disabled=true; typing(true);
     try{
@@ -710,6 +723,9 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
   send.addEventListener("click",ask);
   input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask();}});
   input.addEventListener("input",()=>{input.style.height="38px";input.style.height=Math.min(input.scrollHeight,90)+"px";});
+  document.querySelectorAll(".cb-chip").forEach(c=>c.addEventListener("click",()=>{
+    input.value=c.dataset.q; const s=document.getElementById("cbSugs"); if(s) s.remove(); ask();
+  }));
 })();
 </script>
 </body>
