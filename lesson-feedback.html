@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>레슨생 코칭 기록 · MRI ACADEMY</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<style>
+:root{--bg:#0a0a0c;--bg-card:#1a1a20;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--golddeep:#caa00f;--green:#10b981;--blue:#5ac8fa;--purple:#a855f7;--red:#e63946;--line:#27272a;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;background-image:radial-gradient(circle at 50% 0,rgba(245,197,24,.06),transparent 60%),linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);background-size:auto,37px 37px,37px 37px}
+.wrap{max-width:760px;margin:0 auto;padding:30px 18px 70px}
+.top{text-align:center;margin-bottom:8px}
+.kick{color:var(--gold);font-weight:800;font-size:12px;letter-spacing:.16em;text-transform:uppercase}
+h1{font-family:var(--display);font-size:clamp(24px,6vw,34px);margin:8px 0 6px}
+.sub{color:var(--ink-dim);font-size:14px}
+.bar{display:flex;gap:10px;justify-content:center;margin:20px 0 8px;flex-wrap:wrap}
+.stat{background:var(--bg-card);border:1px solid var(--line);border-radius:10px;padding:12px 20px;text-align:center}
+.stat b{font-family:var(--display);font-size:22px;color:var(--gold);display:block}
+.stat span{font-size:11px;color:var(--ink-faint)}
+.legend{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin:16px 0 26px;padding:14px;background:var(--bg-card);border:1px solid var(--line);border-radius:10px}
+.legend .lt{width:100%;text-align:center;font-size:11px;color:var(--ink-faint);margin-bottom:4px}
+.tg{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:99px;white-space:nowrap;border:1px solid}
+.tg.gold{color:var(--gold);border-color:var(--gold-soft);background:rgba(245,197,24,.08)}
+.tg.blue{color:var(--blue);border-color:rgba(90,200,250,.3);background:rgba(90,200,250,.08)}
+.tg.purple{color:var(--purple);border-color:rgba(168,85,247,.3);background:rgba(168,85,247,.08)}
+.tg.red{color:var(--red);border-color:rgba(230,57,70,.3);background:rgba(230,57,70,.08)}
+.tg.green{color:var(--green);border-color:rgba(16,185,129,.3);background:rgba(16,185,129,.08)}
+.tg.golddeep{color:var(--golddeep);border-color:var(--gold-soft);background:rgba(245,197,24,.06)}
+.tg.faint{color:var(--ink-faint);border-color:var(--line);background:transparent}
+.grp-title{font-family:var(--display);font-size:16px;margin:26px 0 12px;display:flex;align-items:center;gap:10px}
+.grp-title span{font-family:var(--body);font-size:12px;font-weight:700;color:var(--gold);background:rgba(245,197,24,.08);border:1px solid var(--gold-soft);padding:2px 9px;border-radius:99px}
+.cards{display:flex;flex-direction:column;gap:10px}
+.sc{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;overflow:hidden;transition:border-color .2s}
+.sc[open]{border-color:var(--gold-soft)}
+.sc summary{list-style:none;cursor:pointer;padding:15px 17px}
+.sc summary::-webkit-details-marker{display:none}
+.hd{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.nk{font-family:var(--display);font-size:16px;margin-right:9px}
+.ow{font-size:11.5px;color:var(--ink-faint)}
+.cnt{font-size:11px;font-weight:800;color:var(--gold);background:rgba(245,197,24,.08);border:1px solid var(--gold-soft);padding:3px 10px;border-radius:99px;flex-shrink:0}
+.cnt.pubb{color:var(--green);background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.35)}
+.trend{font-size:12.5px;color:var(--ink-dim);margin-top:8px}
+.stages{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px}
+.timeline{border-top:1px solid var(--line);padding:6px 17px 14px}
+.sess{display:flex;gap:13px;padding:12px 0;border-bottom:1px solid rgba(39,39,42,.6)}
+.sess:last-child{border-bottom:none}
+.sd{font-family:var(--display);font-size:12px;color:var(--gold);min-width:42px;padding-top:2px}
+.sb{flex:1}
+.sb ul{margin:8px 0 0;padding-left:17px}
+.sb li{font-size:13px;color:var(--ink-dim);margin-bottom:3px}
+.sb .tg{margin:0 4px 4px 0;display:inline-block}
+.note{margin-top:28px;font-size:12px;color:var(--ink-faint);text-align:center;line-height:1.7}
+.back{display:inline-block;margin-top:22px;color:var(--gold);text-decoration:none;font-weight:700;font-size:14px}
+</style></head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="kick">Growth Cases</div>
+    <h1>레슨생 성장 사례</h1>
+    <p class="sub">수강 종료 또는 목표 달성 레슨생의 코칭 여정을 공개합니다. 모든 코칭은 <b style="color:var(--gold)">주도권 → 우선순위 → 포지션 → 강제</b> 커리큘럼을 따릅니다.</p>
+  </div>
+  <div class="bar">
+    <div class="stat"><b>3</b><span>공개 성장 사례</span></div>
+    <div class="stat"><b>20</b><span>공개 코칭 세션</span></div>
+    <div class="stat"><b>4단계</b><span>체계 커리큘럼</span></div>
+  </div>
+  <div class="legend"><div class="lt">커리큘럼 단계 태그</div><span class="tg gold">주도권</span><span class="tg blue">우선순위</span><span class="tg purple">포지션</span><span class="tg red">강제</span><span class="tg green">교전·투척</span><span class="tg golddeep">운영·빌드업</span><span class="tg blue">오더·브리핑</span><span class="tg gold">시야·판단</span><span class="tg faint">피지컬</span><span class="tg faint">기본기</span></div>
+  <div class="grp-title">고티어 그룹 <span>1명</span></div>
+<div class="cards">
+<details class="sc" open>
+<summary>
+  <div class="hd">
+    <div><span class="nk">근이</span><span class="ow">담당 현태 · 다이아·33판</span></div>
+    <span class="cnt pubb">✓ 성장 사례</span>
+  </div>
+  <div class="trend">기초 개념(주도권·우선순위)에서 시작해 시야·턴 운영까지 단계적으로 완성. 본대 합류 판단과 빌드업을 자력으로 수행하는 수준에 도달했습니다.</div>
+  <div class="stages"><span class="tg gold">주도권</span><span class="tg blue">우선순위</span><span class="tg purple">포지션</span><span class="tg gold">시야·판단</span><span class="tg golddeep">운영·빌드업</span><span class="tg green">교전·투척</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/23</div><div class="sb"><span class="tg gold">주도권</span><span class="tg blue">우선순위</span><ul><li>1·2·3티어 자리와 주도권 개념 정립, 방어/공격 우선순위 학습 시작</li><li>딜 전 적 전체 시야 확보 후 우선순위 선정, 정보 누락 방지</li></ul></div></div>
+<div class="sess"><div class="sd">04/28</div><div class="sb"><span class="tg purple">포지션</span><span class="tg gold">시야·판단</span><ul><li>본대 차량 운용 시 합류 판단, 날개 죽을 각 재점검</li><li>정리 가능 상황에서 선제적으로 시야 열어주기</li></ul></div></div>
+<div class="sess"><div class="sd">05/04</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg gold">시야·판단</span><ul><li>시야 밖으로 서클 변동 시 대비책 수립, 빈집 진입 차선책</li><li>오더에게 정보 콜, 한 템포 빠른 시야 확보</li></ul></div></div>
+<div class="sess"><div class="sd">05/12</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg green">교전·투척</span><ul><li>고지대 스플릿 근거 수립, 연막+폭 후 연속 압박</li><li>4페 날개 버티며 밀어내기, acc·dcc 피킹</li></ul></div></div>
+</div>
+</details>
+</div>
+<div class="grp-title">그룹 레슨 <span>2명</span></div>
+<div class="cards">
+<details class="sc" open>
+<summary>
+  <div class="hd">
+    <div><span class="nk">배로</span><span class="ow">담당 레빗·현태 · 골드·33판</span></div>
+    <span class="cnt pubb">✓ 성장 사례</span>
+  </div>
+  <div class="trend">골드에서 출발해 포지션·피지컬 기초부터 교전·운영 디테일까지 12회 누적 코칭. 가장 꾸준히 성장한 레슨생으로, 연막 운용·끝각 판단이 안정 단계에 진입했습니다.</div>
+  <div class="stages"><span class="tg purple">포지션</span><span class="tg faint">피지컬</span><span class="tg blue">우선순위</span><span class="tg green">교전·투척</span><span class="tg golddeep">운영·빌드업</span><span class="tg blue">오더·브리핑</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/24</div><div class="sb"><span class="tg purple">포지션</span><ul><li>방어/공격 포지션 4역할 정립, 빽업·합류 규칙, 방어 시 연막 선행</li></ul></div></div>
+<div class="sess"><div class="sd">04/25</div><div class="sb"><span class="tg faint">피지컬</span><ul><li>템포·공격성 향상, 무빙 사격·차량 자리이동 따닥, 견착 조준 루틴</li></ul></div></div>
+<div class="sess"><div class="sd">05/01</div><div class="sb"><span class="tg blue">우선순위</span><span class="tg green">교전·투척</span><ul><li>자기장 변동 후 우선순위 선택, 연막 안 플레이·수류탄 은폐 보완</li></ul></div></div>
+<div class="sess"><div class="sd">05/02</div><div class="sb"><span class="tg green">교전·투척</span><span class="tg golddeep">운영·빌드업</span><ul><li>견착 싸움, 끝각 역할 유지, 일반/경쟁 자기장 속도 차, 날개 오더 콜</li></ul></div></div>
+<div class="sess"><div class="sd">05/07</div><div class="sb"><span class="tg green">교전·투척</span><ul><li>차량 교전 시 연막 선행·시야 체크, 투척 회피</li></ul></div></div>
+<div class="sess"><div class="sd">05/14</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg green">교전·투척</span><ul><li>연막 공격적 운용, 땅 확보, 1·2·3티어 대비 수</li><li>폭랜딩·5발 후 엄폐, 날개 역할 소멸 시 합류</li></ul></div></div>
+<div class="sess"><div class="sd">05/16</div><div class="sb"><span class="tg purple">포지션</span><ul><li>1선 다운 시 공격적 어그로 전환, 2선 신규 라인, 날개 끝각 적극성</li></ul></div></div>
+<div class="sess"><div class="sd">05/21</div><div class="sb"><span class="tg purple">포지션</span><span class="tg blue">오더·브리핑</span><ul><li>포지션 겹침 시 방향 공유, 시야 확장 적극성, 오더 우선순위 맞춤</li></ul></div></div>
+<div class="sess"><div class="sd">05/24</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>1선 끝각 클리어→2·3선 충원, 비알디엠 운영(날개 견제)</li></ul></div></div>
+<div class="sess"><div class="sd">05/26</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>날개 부러질 때 후방 재라인, 서클 변동 시 필요한 교전</li></ul></div></div>
+<div class="sess"><div class="sd">05/28</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg green">교전·투척</span><ul><li>고지대 선점 콜, 180도 양각 시 개입 고려, 턴 살리기</li><li>라이딩 1선 결정, 자리 방어 3분할 연막 (준구 레슨)</li></ul></div></div>
+</div>
+</details>
+<details class="sc" open>
+<summary>
+  <div class="hd">
+    <div><span class="nk">다다</span><span class="ow">담당 현태 · 자영업·유동</span></div>
+    <span class="cnt pubb">✓ 성장 사례</span>
+  </div>
+  <div class="trend">정보·브리핑 습관화에서 출발해 짧은 기간 내 판단·운영까지 빠르게 성장. 본대 판단과 후방 경계가 자리잡아 트레이너가 성장 속도 최상으로 평가했습니다.</div>
+  <div class="stages"><span class="tg blue">오더·브리핑</span><span class="tg gold">시야·판단</span><span class="tg green">교전·투척</span><span class="tg purple">포지션</span><span class="tg golddeep">운영·빌드업</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">05/17</div><div class="sb"><span class="tg blue">오더·브리핑</span><span class="tg gold">시야·판단</span><ul><li>배그=정보 싸움, 생각 브리핑, 시야 분담, 단차 어그로 활용</li></ul></div></div>
+<div class="sess"><div class="sd">05/20</div><div class="sb"><span class="tg green">교전·투척</span><span class="tg purple">포지션</span><ul><li>집 공략 순서, 포지션 4역할, 평지 교전 연막 루틴, 폭턴</li></ul></div></div>
+<div class="sess"><div class="sd">05/22</div><div class="sb"><span class="tg gold">시야·판단</span><ul><li>팀·맵 상시 확인, 빈자리 능동 충원</li></ul></div></div>
+<div class="sess"><div class="sd">05/25</div><div class="sb"><span class="tg gold">시야·판단</span><ul><li>본대 충원 우선, 맵 기반 판단, 지리 학습</li></ul></div></div>
+<div class="sess"><div class="sd">05/26</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>신뢰 기반 버티기, 후방 동선 경계, 6페 이후 도구 활용 교전</li></ul></div></div>
+</div>
+</details>
+</div>
+
+  <p class="note">※ 본인 동의 하에 공개된 닉네임 기반 성장 사례입니다. 더 많은 레슨생이 동일한 커리큘럼으로 코칭받고 있습니다.</p>
+  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
+</div>
+</body></html>

@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="ko"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>레슨생 코칭 기록 · MRI ACADEMY</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<style>
+:root{--bg:#0a0a0c;--bg-card:#1a1a20;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--golddeep:#caa00f;--green:#10b981;--blue:#5ac8fa;--purple:#a855f7;--red:#e63946;--line:#27272a;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;background-image:radial-gradient(circle at 50% 0,rgba(245,197,24,.06),transparent 60%),linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);background-size:auto,37px 37px,37px 37px}
+.wrap{max-width:760px;margin:0 auto;padding:30px 18px 70px}
+.top{text-align:center;margin-bottom:8px}
+.kick{color:var(--gold);font-weight:800;font-size:12px;letter-spacing:.16em;text-transform:uppercase}
+h1{font-family:var(--display);font-size:clamp(24px,6vw,34px);margin:8px 0 6px}
+.sub{color:var(--ink-dim);font-size:14px}
+.bar{display:flex;gap:10px;justify-content:center;margin:20px 0 8px;flex-wrap:wrap}
+.stat{background:var(--bg-card);border:1px solid var(--line);border-radius:10px;padding:12px 20px;text-align:center}
+.stat b{font-family:var(--display);font-size:22px;color:var(--gold);display:block}
+.stat span{font-size:11px;color:var(--ink-faint)}
+.legend{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin:16px 0 26px;padding:14px;background:var(--bg-card);border:1px solid var(--line);border-radius:10px}
+.legend .lt{width:100%;text-align:center;font-size:11px;color:var(--ink-faint);margin-bottom:4px}
+.tg{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:99px;white-space:nowrap;border:1px solid}
+.tg.gold{color:var(--gold);border-color:var(--gold-soft);background:rgba(245,197,24,.08)}
+.tg.blue{color:var(--blue);border-color:rgba(90,200,250,.3);background:rgba(90,200,250,.08)}
+.tg.purple{color:var(--purple);border-color:rgba(168,85,247,.3);background:rgba(168,85,247,.08)}
+.tg.red{color:var(--red);border-color:rgba(230,57,70,.3);background:rgba(230,57,70,.08)}
+.tg.green{color:var(--green);border-color:rgba(16,185,129,.3);background:rgba(16,185,129,.08)}
+.tg.golddeep{color:var(--golddeep);border-color:var(--gold-soft);background:rgba(245,197,24,.06)}
+.tg.faint{color:var(--ink-faint);border-color:var(--line);background:transparent}
+.grp-title{font-family:var(--display);font-size:16px;margin:26px 0 12px;display:flex;align-items:center;gap:10px}
+.grp-title span{font-family:var(--body);font-size:12px;font-weight:700;color:var(--gold);background:rgba(245,197,24,.08);border:1px solid var(--gold-soft);padding:2px 9px;border-radius:99px}
+.cards{display:flex;flex-direction:column;gap:10px}
+.sc{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;overflow:hidden;transition:border-color .2s}
+.sc[open]{border-color:var(--gold-soft)}
+.sc summary{list-style:none;cursor:pointer;padding:15px 17px}
+.sc summary::-webkit-details-marker{display:none}
+.hd{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.nk{font-family:var(--display);font-size:16px;margin-right:9px}
+.ow{font-size:11.5px;color:var(--ink-faint)}
+.cnt{font-size:11px;font-weight:800;color:var(--gold);background:rgba(245,197,24,.08);border:1px solid var(--gold-soft);padding:3px 10px;border-radius:99px;flex-shrink:0}
+.cnt.pubb{color:var(--green);background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.35)}
+.trend{font-size:12.5px;color:var(--ink-dim);margin-top:8px}
+.stages{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px}
+.timeline{border-top:1px solid var(--line);padding:6px 17px 14px}
+.sess{display:flex;gap:13px;padding:12px 0;border-bottom:1px solid rgba(39,39,42,.6)}
+.sess:last-child{border-bottom:none}
+.sd{font-family:var(--display);font-size:12px;color:var(--gold);min-width:42px;padding-top:2px}
+.sb{flex:1}
+.sb ul{margin:8px 0 0;padding-left:17px}
+.sb li{font-size:13px;color:var(--ink-dim);margin-bottom:3px}
+.sb .tg{margin:0 4px 4px 0;display:inline-block}
+.note{margin-top:28px;font-size:12px;color:var(--ink-faint);text-align:center;line-height:1.7}
+.back{display:inline-block;margin-top:22px;color:var(--gold);text-decoration:none;font-weight:700;font-size:14px}
+</style></head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="kick">Coaching Log · 내부 관리용</div>
+    <h1>레슨생 코칭 기록 (관리)</h1>
+    <p class="sub">전체 레슨생의 그날 수업 피드백·성장 동향 관리 화면입니다. <b style="color:var(--red)">대외 공개 링크 아님</b> — 공개 전환은 build_feedback.py의 PUBLIC에 추가.</p>
+  </div>
+  <div class="bar">
+    <div class="stat"><b>19</b><span>관리 중 레슨생</span></div>
+    <div class="stat"><b>72</b><span>누적 코칭 세션</span></div>
+    <div class="stat"><b>4단계</b><span>체계 커리큘럼</span></div>
+  </div>
+  <div class="legend"><div class="lt">커리큘럼 단계 태그</div><span class="tg gold">주도권</span><span class="tg blue">우선순위</span><span class="tg purple">포지션</span><span class="tg red">강제</span><span class="tg green">교전·투척</span><span class="tg golddeep">운영·빌드업</span><span class="tg blue">오더·브리핑</span><span class="tg gold">시야·판단</span><span class="tg faint">피지컬</span><span class="tg faint">기본기</span></div>
+  <div class="grp-title">고티어 그룹 <span>5명</span></div>
+<div class="cards">
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">근이</span><span class="ow">담당 현태 · 다이아·33판</span></div>
+    <span class="cnt">4세션</span>
+  </div>
+  <div class="trend">기초 개념(주도권/우선순위)에서 출발 → 시야·턴 운영 단계로 안정적 발전</div>
+  <div class="stages"><span class="tg gold">주도권</span><span class="tg blue">우선순위</span><span class="tg purple">포지션</span><span class="tg gold">시야·판단</span><span class="tg golddeep">운영·빌드업</span><span class="tg green">교전·투척</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/23</div><div class="sb"><span class="tg gold">주도권</span><span class="tg blue">우선순위</span><ul><li>1·2·3티어 자리와 주도권 개념 정립, 방어/공격 우선순위 학습 시작</li><li>딜 전 적 전체 시야 확보 후 우선순위 선정, 정보 누락 방지</li></ul></div></div>
+<div class="sess"><div class="sd">04/28</div><div class="sb"><span class="tg purple">포지션</span><span class="tg gold">시야·판단</span><ul><li>본대 차량 운용 시 합류 판단, 날개 죽을 각 재점검</li><li>정리 가능 상황에서 선제적으로 시야 열어주기</li></ul></div></div>
+<div class="sess"><div class="sd">05/04</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg gold">시야·판단</span><ul><li>시야 밖으로 서클 변동 시 대비책 수립, 빈집 진입 차선책</li><li>오더에게 정보 콜, 한 템포 빠른 시야 확보</li></ul></div></div>
+<div class="sess"><div class="sd">05/12</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg green">교전·투척</span><ul><li>고지대 스플릿 근거 수립, 연막+폭 후 연속 압박</li><li>4페 날개 버티며 밀어내기, acc·dcc 피킹</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">덕덕</span><span class="ow">담당 현태 · 마스터·33판·오더</span></div>
+    <span class="cnt">3세션</span>
+  </div>
+  <div class="trend">오더 역량 집중 트랙 — 우선순위 파악 → 위기 오더 지속 → 다각도 플랜</div>
+  <div class="stages"><span class="tg green">교전·투척</span><span class="tg blue">오더·브리핑</span><span class="tg blue">우선순위</span><span class="tg golddeep">운영·빌드업</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/23</div><div class="sb"><span class="tg green">교전·투척</span><span class="tg blue">오더·브리핑</span><ul><li>교전 디테일(투척·연막) 보완, 베이팅 대응, 피킹 길이 조절</li><li>팀 콜 강도 우수</li></ul></div></div>
+<div class="sess"><div class="sd">04/28</div><div class="sb"><span class="tg blue">오더·브리핑</span><span class="tg blue">우선순위</span><ul><li>오더 시 팀 우선순위 정확히 파악, 본대 복귀 원칙</li><li>각 인지 강화</li></ul></div></div>
+<div class="sess"><div class="sd">05/04</div><div class="sb"><span class="tg blue">오더·브리핑</span><span class="tg golddeep">운영·빌드업</span><ul><li>폭거리 인지, 선제 정보 수집, 위기 상황에도 오더 유지</li><li>메인오더 중심 유지, 다각도 플랜 수립</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">엄티</span><span class="ow">담당 현태 · 다이아·33판</span></div>
+    <span class="cnt">4세션</span>
+  </div>
+  <div class="trend">브리핑·소통 → 포지션·운영으로 확장, 피지컬 보완 단계</div>
+  <div class="stages"><span class="tg blue">오더·브리핑</span><span class="tg blue">우선순위</span><span class="tg gold">시야·판단</span><span class="tg purple">포지션</span><span class="tg golddeep">운영·빌드업</span><span class="tg faint">피지컬</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/23</div><div class="sb"><span class="tg blue">오더·브리핑</span><span class="tg blue">우선순위</span><ul><li>자기주도적 브리핑 강화, 턴 잡는 속도 개선</li><li>막을 우선순위·유리 지형 선점</li></ul></div></div>
+<div class="sess"><div class="sd">04/25</div><div class="sb"><span class="tg gold">시야·판단</span><span class="tg purple">포지션</span><ul><li>급할 때 맵·팀원 위치 확인 습관화</li><li>포지션 개념(엔트리/트레이드/커버) 정립</li></ul></div></div>
+<div class="sess"><div class="sd">04/28</div><div class="sb"><span class="tg blue">오더·브리핑</span><span class="tg golddeep">운영·빌드업</span><ul><li>라인 잡고 정보 공유·역할 분담으로 과부하 방지</li><li>우선순위 기반 자기 역할 수행</li></ul></div></div>
+<div class="sess"><div class="sd">05/05</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg faint">피지컬</span><ul><li>주도권 라인 진행 방향, 시야 밖 서클 대비</li><li>수류탄·피지컬 다듬기</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">레드</span><span class="ow">담당 현태 · 오더·빌드업</span></div>
+    <span class="cnt">9세션</span>
+  </div>
+  <div class="trend">교전 디테일 → 오더·빌드업·강제까지 폭넓게, 1:1 쇼부 습관 교정 진행 중</div>
+  <div class="stages"><span class="tg golddeep">운영·빌드업</span><span class="tg red">강제</span><span class="tg blue">오더·브리핑</span><span class="tg purple">포지션</span><span class="tg green">교전·투척</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">05/05</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg red">강제</span><ul><li>푸쉬 시 폭턴·엄폐, 수비 우선순위 예측 포지션</li><li>본대 선확보 후 교전, 이이제이 대기</li></ul></div></div>
+<div class="sess"><div class="sd">05/09</div><div class="sb"><span class="tg blue">오더·브리핑</span><ul><li>방향성·우선순위 명확 전달, 필드 교전도 우선순위 기반, 익절 판단</li></ul></div></div>
+<div class="sess"><div class="sd">05/10</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>서클 예측 빌드업, 반대 전개 대비, 4페 이후 빌드업 수행</li></ul></div></div>
+<div class="sess"><div class="sd">05/15</div><div class="sb"><span class="tg purple">포지션</span><ul><li>무리한 각 벌리기 자제, 팀원과 같은 각 활용</li></ul></div></div>
+<div class="sess"><div class="sd">05/16</div><div class="sb"><span class="tg red">강제</span><ul><li>강제 개념(상대 선택지 축소), 포지션으로 강제 성립, 1티어 고지대 경험</li></ul></div></div>
+<div class="sess"><div class="sd">05/18</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>다음 서클 주도권용 포지션, 밀기 전 팀 인지, 회전 시 고지대 시야</li></ul></div></div>
+<div class="sess"><div class="sd">05/20</div><div class="sb"><span class="tg blue">오더·브리핑</span><span class="tg green">교전·투척</span><ul><li>겹칠 팀 인지·본대 의도 전달, 인포 수용, 교전 포탑면·속도 맞춤</li><li>후반 급해지는 버릇 교정, DMR 피킹 룰 정립</li></ul></div></div>
+<div class="sess"><div class="sd">05/21</div><div class="sb"><span class="tg red">강제</span><span class="tg golddeep">운영·빌드업</span><ul><li>1선 강제 대처 사전 인지, 1:1 쇼부 습관 교정, 4~8페 빌드업 보완</li></ul></div></div>
+<div class="sess"><div class="sd">05/23</div><div class="sb"><span class="tg blue">오더·브리핑</span><ul><li>다양한 오더 방식·구도 고민, 셀프 피드백 습관</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">해주</span><span class="ow">담당 현태 · 마스터</span></div>
+    <span class="cnt">4세션</span>
+  </div>
+  <div class="trend">본대 판단·자리 확신 강화, 브리핑 질 상승 단계</div>
+  <div class="stages"><span class="tg purple">포지션</span><span class="tg gold">시야·판단</span><span class="tg golddeep">운영·빌드업</span><span class="tg green">교전·투척</span><span class="tg blue">오더·브리핑</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">05/19</div><div class="sb"><span class="tg purple">포지션</span><span class="tg gold">시야·판단</span><ul><li>본대 인식 속도, 본대 합류 vs 날개 판단</li><li>자리 확신, 시야 따는 타이밍(3페까지), 위기 콜</li></ul></div></div>
+<div class="sess"><div class="sd">05/19</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>미라마 레드바위·창고 시야 가치 이해, 안→밖 진행 용이성 개념</li></ul></div></div>
+<div class="sess"><div class="sd">05/20</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg green">교전·투척</span><ul><li>인포 타이밍 확보, 소극성 교정</li><li>연막 공격적 운용(준구 피드백)</li></ul></div></div>
+<div class="sess"><div class="sd">05/23</div><div class="sb"><span class="tg blue">오더·브리핑</span><ul><li>동선 제시형 브리핑(핑 의존 탈피), 팀 콜 신뢰·세이브</li></ul></div></div>
+</div>
+</details>
+</div>
+<div class="grp-title">그룹 레슨 <span>13명</span></div>
+<div class="cards">
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">배로</span><span class="ow">담당 레빗·현태 · 골드·33판</span></div>
+    <span class="cnt">11세션</span>
+  </div>
+  <div class="trend">포지션·피지컬 기초 → 교전·운영 디테일로 꾸준히 심화, 가장 성실한 레슨생</div>
+  <div class="stages"><span class="tg purple">포지션</span><span class="tg faint">피지컬</span><span class="tg blue">우선순위</span><span class="tg green">교전·투척</span><span class="tg golddeep">운영·빌드업</span><span class="tg blue">오더·브리핑</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/24</div><div class="sb"><span class="tg purple">포지션</span><ul><li>방어/공격 포지션 4역할 정립, 빽업·합류 규칙, 방어 시 연막 선행</li></ul></div></div>
+<div class="sess"><div class="sd">04/25</div><div class="sb"><span class="tg faint">피지컬</span><ul><li>템포·공격성 향상, 무빙 사격·차량 자리이동 따닥, 견착 조준 루틴</li></ul></div></div>
+<div class="sess"><div class="sd">05/01</div><div class="sb"><span class="tg blue">우선순위</span><span class="tg green">교전·투척</span><ul><li>자기장 변동 후 우선순위 선택, 연막 안 플레이·수류탄 은폐 보완</li></ul></div></div>
+<div class="sess"><div class="sd">05/02</div><div class="sb"><span class="tg green">교전·투척</span><span class="tg golddeep">운영·빌드업</span><ul><li>견착 싸움, 끝각 역할 유지, 일반/경쟁 자기장 속도 차, 날개 오더 콜</li></ul></div></div>
+<div class="sess"><div class="sd">05/07</div><div class="sb"><span class="tg green">교전·투척</span><ul><li>차량 교전 시 연막 선행·시야 체크, 투척 회피</li></ul></div></div>
+<div class="sess"><div class="sd">05/14</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg green">교전·투척</span><ul><li>연막 공격적 운용, 땅 확보, 1·2·3티어 대비 수</li><li>폭랜딩·5발 후 엄폐, 날개 역할 소멸 시 합류</li></ul></div></div>
+<div class="sess"><div class="sd">05/16</div><div class="sb"><span class="tg purple">포지션</span><ul><li>1선 다운 시 공격적 어그로 전환, 2선 신규 라인, 날개 끝각 적극성</li></ul></div></div>
+<div class="sess"><div class="sd">05/21</div><div class="sb"><span class="tg purple">포지션</span><span class="tg blue">오더·브리핑</span><ul><li>포지션 겹침 시 방향 공유, 시야 확장 적극성, 오더 우선순위 맞춤</li></ul></div></div>
+<div class="sess"><div class="sd">05/24</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>1선 끝각 클리어→2·3선 충원, 비알디엠 운영(날개 견제)</li></ul></div></div>
+<div class="sess"><div class="sd">05/26</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>날개 부러질 때 후방 재라인, 서클 변동 시 필요한 교전</li></ul></div></div>
+<div class="sess"><div class="sd">05/28</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg green">교전·투척</span><ul><li>고지대 선점 콜, 180도 양각 시 개입 고려, 턴 살리기</li><li>라이딩 1선 결정, 자리 방어 3분할 연막 (준구 레슨)</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">콩가</span><span class="ow">담당 현태 · 실버·33판</span></div>
+    <span class="cnt">6세션</span>
+  </div>
+  <div class="trend">기본기(클리어·투척)부터 차근차근, 수비 운영까지 확장</div>
+  <div class="stages"><span class="tg purple">포지션</span><span class="tg gold">주도권</span><span class="tg green">교전·투척</span><span class="tg blue">오더·브리핑</span><span class="tg golddeep">운영·빌드업</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/24</div><div class="sb"><span class="tg purple">포지션</span><span class="tg gold">주도권</span><ul><li>주도권·우선순위·포지션 3축 정립, 방어/공격 포지션</li></ul></div></div>
+<div class="sess"><div class="sd">04/30</div><div class="sb"><span class="tg green">교전·투척</span><ul><li>1:1 대치 투척 활용, 건물 클리어 순서(1층부터)</li></ul></div></div>
+<div class="sess"><div class="sd">05/08</div><div class="sb"><span class="tg blue">오더·브리핑</span><span class="tg green">교전·투척</span><ul><li>기절 후 적극 브리핑, V자 방어주차, 투척 거리, 위치·지명 학습</li></ul></div></div>
+<div class="sess"><div class="sd">05/14</div><div class="sb"><span class="tg green">교전·투척</span><ul><li>견착 피킹 습관, 포탑 시야 내 교전, 1·2·3티어 자리 인지</li></ul></div></div>
+<div class="sess"><div class="sd">05/20</div><div class="sb"><span class="tg purple">포지션</span><ul><li>1선-포탑 역할 교차 전진, 클리어 시 백업 동선 예측</li></ul></div></div>
+<div class="sess"><div class="sd">05/26</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>위협사격 자리 방어, 인서클 사주경계, 끝각 관리, 차량 돌입 대응</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">다다</span><span class="ow">담당 현태 · 자영업·유동</span></div>
+    <span class="cnt">5세션</span>
+  </div>
+  <div class="trend">브리핑·정보 습관화 → 판단·운영으로 빠르게 성장 (&quot;너무 잘하고 있음&quot; 코멘트)</div>
+  <div class="stages"><span class="tg blue">오더·브리핑</span><span class="tg gold">시야·판단</span><span class="tg green">교전·투척</span><span class="tg purple">포지션</span><span class="tg golddeep">운영·빌드업</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">05/17</div><div class="sb"><span class="tg blue">오더·브리핑</span><span class="tg gold">시야·판단</span><ul><li>배그=정보 싸움, 생각 브리핑, 시야 분담, 단차 어그로 활용</li></ul></div></div>
+<div class="sess"><div class="sd">05/20</div><div class="sb"><span class="tg green">교전·투척</span><span class="tg purple">포지션</span><ul><li>집 공략 순서, 포지션 4역할, 평지 교전 연막 루틴, 폭턴</li></ul></div></div>
+<div class="sess"><div class="sd">05/22</div><div class="sb"><span class="tg gold">시야·판단</span><ul><li>팀·맵 상시 확인, 빈자리 능동 충원</li></ul></div></div>
+<div class="sess"><div class="sd">05/25</div><div class="sb"><span class="tg gold">시야·판단</span><ul><li>본대 충원 우선, 맵 기반 판단, 지리 학습</li></ul></div></div>
+<div class="sess"><div class="sd">05/26</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>신뢰 기반 버티기, 후방 동선 경계, 6페 이후 도구 활용 교전</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">감자</span><span class="ow">담당 현태·레빗 · 교대근무</span></div>
+    <span class="cnt">4세션</span>
+  </div>
+  <div class="trend">기본기 → 서브오더·운영 판단으로 발전</div>
+  <div class="stages"><span class="tg faint">기본기</span><span class="tg blue">오더·브리핑</span><span class="tg golddeep">운영·빌드업</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">05/14</div><div class="sb"><span class="tg faint">기본기</span><span class="tg blue">오더·브리핑</span><ul><li>소통, 자리 기본 개념(티어), 우선순위 인지, 기본기(엄폐·턴)</li></ul></div></div>
+<div class="sess"><div class="sd">05/19</div><div class="sb"><span class="tg blue">오더·브리핑</span><ul><li>경청·반응, 상대 윗각, 서브오더 역할(정보·선택지), 포탑각</li></ul></div></div>
+<div class="sess"><div class="sd">05/22</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>단차 체크 루틴(연막·포탑·시야), 빈 포지션 충원, 1:1 쇼부 자제</li></ul></div></div>
+<div class="sess"><div class="sd">05/25</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><ul><li>우선순위 기반 치킨각, 포탑각 요청·시야 확보</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">구름</span><span class="ow">담당 현태</span></div>
+    <span class="cnt">3세션</span>
+  </div>
+  <div class="trend">기본기 → 주도권·포지션 개념 정립</div>
+  <div class="stages"><span class="tg faint">기본기</span><span class="tg purple">포지션</span><span class="tg gold">주도권</span><span class="tg blue">우선순위</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/27</div><div class="sb"><span class="tg faint">기본기</span><span class="tg purple">포지션</span><ul><li>앉아쏘기, 포지션 개념, 딜보다 기본기 우선</li></ul></div></div>
+<div class="sess"><div class="sd">05/17</div><div class="sb"><span class="tg gold">주도권</span><span class="tg blue">우선순위</span><ul><li>주도권·우선순위, 뒷각·끝각, 페이즈별 티어 자리</li></ul></div></div>
+<div class="sess"><div class="sd">05/26</div><div class="sb"><span class="tg purple">포지션</span><ul><li>공/수 포지션, 끝각 원칙(브리핑에 안 빨림), 능동적 위치 탐색</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">지훈</span><span class="ow">담당 현태</span></div>
+    <span class="cnt">2세션</span>
+  </div>
+  <div class="trend">포지션 개념 → 시야·자리 운용</div>
+  <div class="stages"><span class="tg purple">포지션</span><span class="tg green">교전·투척</span><span class="tg gold">시야·판단</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">05/19</div><div class="sb"><span class="tg purple">포지션</span><span class="tg green">교전·투척</span><ul><li>공/수 포지션 순환, 라이딩보다 팀 콜 활용, 차량 활용</li></ul></div></div>
+<div class="sess"><div class="sd">05/26</div><div class="sb"><span class="tg gold">시야·판단</span><ul><li>뒷각 클리어 후 전방 시야·자리 충원, 본대 외 자리는 시야용</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">성인</span><span class="ow">담당 현태</span></div>
+    <span class="cnt">2세션</span>
+  </div>
+  <div class="trend">브리핑·자아 → 수비 운영</div>
+  <div class="stages"><span class="tg blue">오더·브리핑</span><span class="tg golddeep">운영·빌드업</span><span class="tg blue">우선순위</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">05/08</div><div class="sb"><span class="tg blue">오더·브리핑</span><ul><li>전체 브리핑, 시야 공유, 자아 있는 플레이, 과감성 균형</li></ul></div></div>
+<div class="sess"><div class="sd">05/14</div><div class="sb"><span class="tg golddeep">운영·빌드업</span><span class="tg blue">우선순위</span><ul><li>티어 서클, 본대 생존, 우선순위 빽업, 마지노선</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">미쯔</span><span class="ow">담당 현태 · 플레·10판</span></div>
+    <span class="cnt">1세션</span>
+  </div>
+  <div class="trend">입문 — 핵심 개념 일괄 정립</div>
+  <div class="stages"><span class="tg gold">주도권</span><span class="tg purple">포지션</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/25</div><div class="sb"><span class="tg gold">주도권</span><span class="tg purple">포지션</span><ul><li>근거 있는 플레이, 주도권·우선순위, 1234선 포지션, 끝각 원칙</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">제이</span><span class="ow">담당 현태 · 10판</span></div>
+    <span class="cnt">2세션</span>
+  </div>
+  <div class="trend">멀티·소통 보완 진행</div>
+  <div class="stages"><span class="tg gold">시야·판단</span><span class="tg green">교전·투척</span><span class="tg blue">오더·브리핑</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/22</div><div class="sb"><span class="tg gold">시야·판단</span><ul><li>뇌정지·멀티 보완, 3티어 자리 인지, 불필요 SR 피킹 자제</li></ul></div></div>
+<div class="sess"><div class="sd">05/01</div><div class="sb"><span class="tg green">교전·투척</span><span class="tg blue">오더·브리핑</span><ul><li>눈먼 공투 자제·쿠킹 투척, 적극 정보 공유, 라이딩 욕심 자제</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">불리</span><span class="ow">담당 현태 · 마스터·10판</span></div>
+    <span class="cnt">4세션</span>
+  </div>
+  <div class="trend">교전 습관 교정 → 전체 이론 체계 정립</div>
+  <div class="stages"><span class="tg green">교전·투척</span><span class="tg blue">오더·브리핑</span><span class="tg gold">주도권</span><span class="tg red">강제</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/30</div><div class="sb"><span class="tg green">교전·투척</span><ul><li>차량 교전 연막 선행, 엄폐 없는 교전 자제, 콜에 안 빨림</li></ul></div></div>
+<div class="sess"><div class="sd">05/01</div><div class="sb"><span class="tg blue">오더·브리핑</span><ul><li>행동 브리핑 후 이동, 각 이해 보완, 소통</li></ul></div></div>
+<div class="sess"><div class="sd">05/10</div><div class="sb"><span class="tg green">교전·투척</span><ul><li>연막·엄폐 습관화</li></ul></div></div>
+<div class="sess"><div class="sd">05/16</div><div class="sb"><span class="tg gold">주도권</span><span class="tg red">강제</span><ul><li>주도권→우선순위→포지셔닝→강제 체계, 서클 주도권·티어 경쟁 동선</li><li>끝각 역할, 딜 위치(1티어끼리)</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">victor lee</span><span class="ow">담당 현태 · C그룹</span></div>
+    <span class="cnt">3세션</span>
+  </div>
+  <div class="trend">주도권·지형 입문 → 포지션</div>
+  <div class="stages"><span class="tg gold">주도권</span><span class="tg gold">시야·판단</span><span class="tg purple">포지션</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">05/06</div><div class="sb"><span class="tg gold">주도권</span><span class="tg gold">시야·판단</span><ul><li>주도적·사전 공유, 시야 각 인지, 지형·투척</li></ul></div></div>
+<div class="sess"><div class="sd">05/08</div><div class="sb"><span class="tg gold">주도권</span><ul><li>거점 주도권·1·2·3티어, 지형 숙지, 사전 공유</li></ul></div></div>
+<div class="sess"><div class="sd">05/20</div><div class="sb"><span class="tg purple">포지션</span><ul><li>공/수 포지션, 2층 집 공략, 팀 공유</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">록라니</span><span class="ow">담당 현태</span></div>
+    <span class="cnt">1세션</span>
+  </div>
+  <div class="trend">개념 정립 입문</div>
+  <div class="stages"><span class="tg gold">주도권</span><span class="tg red">강제</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">05/19</div><div class="sb"><span class="tg gold">주도권</span><span class="tg red">강제</span><ul><li>행동 전 브리핑, 주도권·우선순위, 날개 실수 교정, 강제 시도</li></ul></div></div>
+</div>
+</details>
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">건희</span><span class="ow">담당 현태</span></div>
+    <span class="cnt">1세션</span>
+  </div>
+  <div class="trend">우선순위·서브오더 입문</div>
+  <div class="stages"><span class="tg blue">우선순위</span><span class="tg blue">오더·브리핑</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">05/19</div><div class="sb"><span class="tg blue">우선순위</span><span class="tg blue">오더·브리핑</span><ul><li>수비 우선순위, 서브오더 역할, 본대 빨림 방지</li></ul></div></div>
+</div>
+</details>
+</div>
+<div class="grp-title">개인 레슨 <span>1명</span></div>
+<div class="cards">
+<details class="sc">
+<summary>
+  <div class="hd">
+    <div><span class="nk">쭌</span><span class="ow">담당 현태</span></div>
+    <span class="cnt">3세션</span>
+  </div>
+  <div class="trend">개인레슨 — 지형·포지션 이론 정립</div>
+  <div class="stages"><span class="tg purple">포지션</span><span class="tg green">교전·투척</span></div>
+</summary>
+<div class="timeline"><div class="sess"><div class="sd">04/27</div><div class="sb"><span class="tg purple">포지션</span><span class="tg green">교전·투척</span><ul><li>지형 명칭, 투척·팀원 활용, 안전 포탑</li></ul></div></div>
+<div class="sess"><div class="sd">05/15</div><div class="sb"><span class="tg purple">포지션</span><ul><li>포탑 시야 푸쉬, 날개 안 빨림</li></ul></div></div>
+<div class="sess"><div class="sd">05/18</div><div class="sb"><span class="tg green">교전·투척</span><ul><li>연막 선행</li></ul></div></div>
+</div>
+</details>
+</div>
+
+  <p class="note">※ 내부 관리용 전체 기록. 공개 페이지(lesson-feedback.html)에는 PUBLIC 지정 레슨생만 노출됩니다.<br>생성일 {{DATE}}</p>
+  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
+</div>
+</body></html>
