@@ -1,7 +1,17 @@
-// MRI ACADEMY 통합 서버 (Railway)
-// - POST /api/chat   : 상담 챗봇 (Anthropic 프록시, CLAUDE_KEY 사용)
-// - GET  /api/stats  : 디스코드 역할별 멤버 현황 (DISCORD_TOKEN + GUILD_ID 사용)
-// 한 프로세스에서 둘 다 굴림. 누락된 env는 해당 기능만 비활성화되고 다른 기능은 정상.
+// MRI ACADEMY 통합 서버 (Railway · robust-embrace 서비스)
+// ─────────────────────────────────────────────────────────
+// POST /api/chat              — 상담 챗봇 (Anthropic 프록시, CLAUDE_KEY)
+// GET  /api/stats             — 디스코드 역할별 현황 (DISCORD_TOKEN + GUILD_ID)
+// GET  /api/seasons           — PUBG 시즌 목록 (PUBG_API_KEY)
+// GET  /api/player            — 닉네임 → accountId
+// GET  /api/bpi-suggest       — 단일 플랫폼 BPI 자동 추천
+// GET  /api/bpi-suggest-auto  — ★ 카카오·스팀 동시 조회 + 추천
+// GET  /api/bpi-info          — BPI 산정 기준
+// ─────────────────────────────────────────────────────────
+// 한 프로세스. 누락 env는 해당 기능만 비활성, 나머지는 정상 동작.
+//   CLAUDE_KEY    없으면 /api/chat 비활성
+//   DISCORD_TOKEN 없으면 /api/stats 비활성
+//   PUBG_API_KEY  없으면 PUBG 라우트 비활성
 
 const express = require("express");
 const { Client, GatewayIntentBits } = require("discord.js");
@@ -9,7 +19,7 @@ const { Client, GatewayIntentBits } = require("discord.js");
 const app = express();
 app.use(express.json({ limit: "64kb" }));
 
-// ─── CORS (공통) ──────────────────────────────────────────
+// ─── CORS ─────────────────────────────────────────────────
 const ALLOWED = [
   "https://shlee9498-dev.github.io",
   "https://mriacademy.gg",
@@ -24,7 +34,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── 레이트리밋 (챗봇 보호, IP당 분당 10건) ────────────────
+// ─── 레이트리밋 (챗봇 보호) ───────────────────────────────
 const hits = new Map();
 function rateLimited(ip) {
   const now = Date.now(), win = 60_000, max = 10;
@@ -34,7 +44,7 @@ function rateLimited(ip) {
   return arr.length > max;
 }
 
-// ─── 챗봇 시스템 프롬프트 (FAQ 내장) ──────────────────────
+// ═══════════════════ 챗봇 ═══════════════════════════════════
 const SYSTEM = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우미입니다. 친절하고 간결하게 존댓말로 답하세요.
 
 [핵심 사실]
@@ -56,11 +66,10 @@ const SYSTEM = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우미입니
 - 모르는 내용은 지어내지 말고 상담 연결로 안내하세요. 욕설/장난에는 정중히 상담 안내로 마무리하세요.
 - 답변은 보통 2~4문장으로 간결하게.`;
 
-// ─── 챗 라우트 ────────────────────────────────────────────
 app.post("/api/chat", async (req, res) => {
   try {
     const KEY = process.env.CLAUDE_KEY;
-    if (!KEY) return res.status(500).json({ error: "chat_disabled_no_key" });
+    if (!KEY) return res.status(503).json({ error: "chat_disabled_no_key" });
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
     if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
 
@@ -69,7 +78,6 @@ app.post("/api/chat", async (req, res) => {
       messages = [{ role: "user", content: req.body.message }];
     }
     if (!messages || messages.length === 0) return res.status(400).json({ error: "no_message" });
-
     messages = messages
       .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
       .slice(-20)
@@ -93,7 +101,7 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// ─── 디스코드 현황 ─────────────────────────────────────────
+// ═══════════════════ 디스코드 현황 ════════════════════════
 const TARGETS = [
   { key: "muri",       match: (n) => n.includes("담당") && n.includes("무리") },
   { key: "hyuntae",    match: (n) => n.includes("트레이너") && n.includes("현태") },
@@ -146,8 +154,220 @@ if (process.env.DISCORD_TOKEN) {
 }
 
 app.get("/api/stats", (_req, res) => res.json(CACHE));
+
+// ═══════════════════ PUBG API ═══════════════════════════════
+const PUBG_API_BASE = "https://api.pubg.com";
+const VALID_PLATFORMS = ["kakao", "steam", "psn", "xbox"];
+const TIERS = [
+  { min: 350, t: "T1", bpi: 10, label: "에이스" },
+  { min: 300, t: "T2", bpi: 6,  label: "준에이스" },
+  { min: 200, t: "T3", bpi: 4,  label: "중위" },
+  { min: 100, t: "T4", bpi: 2,  label: "받쳐주기" },
+  { min: 0,   t: "T5", bpi: 1,  label: "신예" },
+];
+
+function suggestBPI(avgDamage, rankedTier, isTeamLeader) {
+  const found = TIERS.find((x) => avgDamage >= x.min);
+  let { t: tier, bpi, label } = found;
+  let leaderPenalty = 0;
+  if (tier === "T1" && isTeamLeader) { leaderPenalty = 1; bpi += 1; }
+  return {
+    suggested: { tier, bpi, label, leaderPenalty },
+    basis: { avgDamage, rankedTier: rankedTier || null, isTeamLeader: !!isTeamLeader },
+    confirmedBy: null,
+  };
+}
+
+const pubgCache = new Map(); // key -> { data, exp }
+function cacheGet(k) {
+  const v = pubgCache.get(k);
+  if (!v) return null;
+  if (v.exp < Date.now()) { pubgCache.delete(k); return null; }
+  return v.data;
+}
+function cacheSet(k, data, ttlMs) { pubgCache.set(k, { data, exp: Date.now() + ttlMs }); }
+
+async function pubgGet(path, ttlMs) {
+  const key = "pubg:" + path;
+  const c = cacheGet(key); if (c) return c;
+  const KEY = process.env.PUBG_API_KEY;
+  if (!KEY) { const e = new Error("PUBG_API_KEY 미설정"); e.status = 503; throw e; }
+  const r = await fetch(PUBG_API_BASE + path, {
+    headers: { "Authorization": "Bearer " + KEY, "Accept": "application/vnd.api+json" },
+  });
+  if (r.status === 404) { const e = new Error(`PUBG 404: ${path}`); e.status = 404; throw e; }
+  if (r.status === 429) { const e = new Error("PUBG rate limit"); e.status = 429; throw e; }
+  if (!r.ok) { const e = new Error(`PUBG ${r.status}`); e.status = 502; throw e; }
+  const data = await r.json();
+  cacheSet(key, data, ttlMs || 3600_000);
+  return data;
+}
+
+async function currentSeasonId(platform) {
+  const key = `season-current:${platform}`;
+  const c = cacheGet(key); if (c) return c;
+  const data = await pubgGet(`/shards/${platform}/seasons`, 86400_000);
+  const cur = data.data.find((s) => s.attributes.isCurrentSeason);
+  if (!cur) { const e = new Error("현재 시즌 없음"); e.status = 500; throw e; }
+  cacheSet(key, cur.id, 86400_000);
+  return cur.id;
+}
+
+async function findPlayer(platform, nickname) {
+  const p = `/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(nickname)}`;
+  const data = await pubgGet(p, 3600_000);
+  if (!data.data || data.data.length === 0) {
+    const e = new Error(`닉네임 "${nickname}" 못 찾음 (${platform})`); e.status = 404; throw e;
+  }
+  return data.data[0];
+}
+
+async function computeBPI(platform, nickname, isLeader) {
+  const player = await findPlayer(platform, nickname);
+  const accountId = player.id;
+  const seasonId = await currentSeasonId(platform);
+
+  const seasonData = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}`, 3600_000);
+
+  let rankedTier = null, rankedStats = null;
+  try {
+    const rd = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}/ranked`, 3600_000);
+    const modes = rd.data.attributes.rankedGameModeStats || {};
+    const sq = modes["squad-fpp"] || modes["squad"];
+    if (sq?.currentTier?.tier) {
+      rankedTier = sq.currentTier.tier + (sq.currentTier.subTier ? " " + sq.currentTier.subTier : "");
+      rankedStats = {
+        currentRankPoint: sq.currentRankPoint,
+        bestRankPoint: sq.bestRankPoint,
+        roundsPlayed: sq.roundsPlayed,
+        kda: sq.kda,
+        avgDamage: sq.roundsPlayed ? Math.round(sq.damageDealt / sq.roundsPlayed) : null,
+      };
+    }
+  } catch (_) { /* 랭크 미참여 무시 */ }
+
+  const gm = seasonData.data.attributes.gameModeStats || {};
+  const order = ["squad-fpp", "squad", "duo-fpp", "duo", "solo-fpp", "solo"];
+  let mode = null, stats = null;
+  for (const m of order) {
+    if (gm[m] && gm[m].roundsPlayed > 0) { mode = m; stats = gm[m]; break; }
+  }
+  if (!stats) { const e = new Error(`${platform}: 현재 시즌 매치 기록 없음`); e.status = 404; throw e; }
+
+  const rp = stats.roundsPlayed || 0;
+  const dmg = stats.damageDealt || 0;
+  const avgDamage = rp ? Math.round(dmg / rp) : 0;
+  const wins = stats.wins || 0;
+
+  const bpi = suggestBPI(avgDamage, rankedTier, isLeader);
+  const lowConfidence = rp < 10;
+
+  return {
+    nickname: player.attributes.name, accountId, platform, seasonId,
+    sample: {
+      mode, roundsPlayed: rp, avgDamage,
+      kills: stats.kills || 0, wins, top10s: stats.top10s || 0,
+      kda: stats.kda || null, winRate: rp ? wins / rp : 0,
+    },
+    ranked: rankedStats, rankedTier,
+    ...bpi, lowConfidence,
+    warnings: lowConfidence ? [`매치 ${rp}판 — 표본 적음, 운영진 재검증 필요`] : [],
+  };
+}
+
+function pubgError(res, e) {
+  console.error("pubg_error", e?.status, e?.message);
+  res.status(e?.status || 500).json({ error: e?.message || "pubg_error" });
+}
+
+app.get("/api/seasons", async (req, res) => {
+  const platform = (req.query.platform || "kakao").toString().toLowerCase();
+  if (!VALID_PLATFORMS.includes(platform)) return res.status(400).json({ error: "invalid platform" });
+  try {
+    const data = await pubgGet(`/shards/${platform}/seasons`, 86400_000);
+    res.json({
+      platform,
+      seasons: data.data.map((s) => ({
+        id: s.id,
+        isCurrentSeason: s.attributes.isCurrentSeason,
+        isOffseason: s.attributes.isOffseason,
+      })),
+    });
+  } catch (e) { pubgError(res, e); }
+});
+
+app.get("/api/player", async (req, res) => {
+  const platform = (req.query.platform || "kakao").toString().toLowerCase();
+  const nickname = (req.query.nickname || "").toString().trim();
+  if (!VALID_PLATFORMS.includes(platform)) return res.status(400).json({ error: "invalid platform" });
+  if (!nickname) return res.status(400).json({ error: "nickname required" });
+  try {
+    const p = await findPlayer(platform, nickname);
+    res.json({ platform, accountId: p.id, nickname: p.attributes.name });
+  } catch (e) { pubgError(res, e); }
+});
+
+app.get("/api/bpi-suggest", async (req, res) => {
+  const platform = (req.query.platform || "kakao").toString().toLowerCase();
+  const nickname = (req.query.nickname || "").toString().trim();
+  const leader = req.query.leader === "1" || req.query.leader === "true";
+  if (!VALID_PLATFORMS.includes(platform)) return res.status(400).json({ error: "invalid platform" });
+  if (!nickname) return res.status(400).json({ error: "nickname required" });
+  try {
+    const result = await computeBPI(platform, nickname, leader);
+    res.json(result);
+  } catch (e) { pubgError(res, e); }
+});
+
+app.get("/api/bpi-suggest-auto", async (req, res) => {
+  const nickname = (req.query.nickname || "").toString().trim();
+  const leader = req.query.leader === "1" || req.query.leader === "true";
+  const platformsRaw = (req.query.platforms || "kakao,steam").toString();
+  if (!nickname) return res.status(400).json({ error: "nickname required" });
+  const platforms = platformsRaw.split(",").map((p) => p.trim().toLowerCase())
+    .filter((p) => VALID_PLATFORMS.includes(p));
+  if (!platforms.length) return res.status(400).json({ error: "no valid platforms" });
+
+  const results = await Promise.allSettled(platforms.map((p) => computeBPI(p, nickname, leader)));
+  const found = [], notFound = [];
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") found.push(r.value);
+    else notFound.push({ platform: platforms[i], reason: r.reason?.message || "unknown" });
+  });
+
+  if (!found.length) {
+    return res.status(404).json({
+      error: `닉네임 "${nickname}" 어느 서버에서도 못 찾음`,
+      searched: platforms, notFound,
+    });
+  }
+  found.sort((a, b) => b.suggested.bpi - a.suggested.bpi || b.sample.avgDamage - a.sample.avgDamage);
+  const recommended = found.length > 1 ? found[0].platform : null;
+  res.json({ nickname, searched: platforms, found, notFound, recommended });
+});
+
+app.get("/api/bpi-info", (_req, res) => {
+  res.json({
+    tiers: [
+      { tier: "T1", avgDmg: "350+",    bpi: 10, label: "에이스",   leaderPenalty: "+1 (T1만)" },
+      { tier: "T2", avgDmg: "300~349", bpi: 6,  label: "준에이스" },
+      { tier: "T3", avgDmg: "200~299", bpi: 4,  label: "중위" },
+      { tier: "T4", avgDmg: "100~199", bpi: 2,  label: "받쳐주기" },
+      { tier: "T5", avgDmg: "0~99",    bpi: 1,  label: "신예" },
+    ],
+    modeOrder: ["squad-fpp", "squad", "duo-fpp", "duo", "solo-fpp", "solo"],
+    lowConfidenceUnder: 10,
+  });
+});
+
+// ─── 상태 확인 ────────────────────────────────────────────
 app.get("/", (_req, res) =>
-  res.send("MRI ACADEMY server OK · chat=" + (process.env.CLAUDE_KEY ? "on" : "off") + " · stats=" + CACHE.status)
+  res.send(
+    "MRI ACADEMY server OK" +
+    " · chat=" + (process.env.CLAUDE_KEY ? "on" : "off") +
+    " · stats=" + CACHE.status +
+    " · pubg=" + (process.env.PUBG_API_KEY ? "on" : "off")
+  )
 );
 
 const PORT = process.env.PORT || 3000;
