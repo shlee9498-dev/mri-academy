@@ -1,0 +1,53 @@
+<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>딜·티어 그래프 미리보기</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<style>
+:root{--bg:#0a0a0c;--bg-card:#1a1a20;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--golddeep:#caa00f;--green:#10b981;--blue:#5ac8fa;--purple:#a855f7;--red:#e63946;--line:#27272a;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);padding:30px 18px;background-image:radial-gradient(circle at 50% 0,rgba(245,197,24,.06),transparent 60%)}
+.wrap{max-width:520px;margin:0 auto}
+h1{font-family:var(--display);font-size:22px;margin-bottom:6px}
+.sub{color:var(--ink-dim);font-size:13px;margin-bottom:22px}
+.warn{background:rgba(245,197,24,.08);border:1px solid var(--gold-soft);border-radius:8px;padding:11px 13px;font-size:12px;color:var(--gold);margin-bottom:20px}
+.democard{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+.demotitle{font-family:var(--display);font-size:13px;margin-bottom:10px;color:var(--ink)}
+.dchart{margin:0;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:8px}
+.dctop{display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
+.dctitle{font-size:10.5px;color:var(--ink-faint);letter-spacing:.04em}
+.dcdelta{font-size:13px;font-weight:800}
+.dcsvg{width:100%;height:auto;display:block;max-width:320px;margin:0 auto}
+.dctier{display:flex;align-items:center;gap:8px;justify-content:center;margin-top:2px;font-size:11.5px;font-weight:800}
+.tarr{color:var(--ink-faint);font-weight:400}
+</style></head><body>
+<div class="wrap">
+  <h1>딜·티어 그래프 미리보기</h1>
+  <p class="sub">코칭기록 카드에 들어갈 미니 그래프 형태입니다.</p>
+  <div class="warn">⚠ 아래 수치는 <b>형태 시연용 예시</b>입니다. 실제 데이터는 PUBG 연동(또는 시즌별 딜 입력) 시 자동으로 채워집니다.</div>
+  <div class="democard"><div class="demotitle">예시 A · 골드→크리스탈</div><div class="dchart">
+  <div class="dctop"><span class="dctitle">시즌별 평균딜 추이</span><span class="dcdelta" style="color:var(--green)">+160</span></div>
+  <svg viewBox="0 0 280 74" class="dcsvg" preserveAspectRatio="xMidYMid meet">
+    <polyline points="26.0,52.0 102.0,39.7 178.0,27.8 254.0,18.0" fill="none" stroke="var(--gold)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="26.0" cy="52.0" r="3" fill="var(--gold)"/><circle cx="102.0" cy="39.7" r="3" fill="var(--gold)"/><circle cx="178.0" cy="27.8" r="3" fill="var(--gold)"/><circle cx="254.0" cy="18.0" r="3" fill="var(--gold)"/><text x="26.0" y="45.0" text-anchor="middle" font-size="9" fill="var(--gold)" font-weight="700">198</text><text x="26.0" y="68" text-anchor="middle" font-size="8" fill="var(--ink-faint)">33S</text><text x="102.0" y="32.7" text-anchor="middle" font-size="9" fill="var(--gold)" font-weight="700">256</text><text x="102.0" y="68" text-anchor="middle" font-size="8" fill="var(--ink-faint)">34S</text><text x="178.0" y="20.8" text-anchor="middle" font-size="9" fill="var(--gold)" font-weight="700">312</text><text x="178.0" y="68" text-anchor="middle" font-size="8" fill="var(--ink-faint)">35S</text><text x="254.0" y="11.0" text-anchor="middle" font-size="9" fill="var(--gold)" font-weight="700">358</text><text x="254.0" y="68" text-anchor="middle" font-size="8" fill="var(--ink-faint)">36S</text>
+  </svg>
+  <div class="dctier"><span class="tchip" style="color:#f5c518">골드</span><span class="tarr">→</span><span class="tchip" style="color:#a855f7">크리스탈</span></div>
+</div></div>
+<div class="democard"><div class="demotitle">예시 B · 다이아 정체→돌파</div><div class="dchart">
+  <div class="dctop"><span class="dctitle">시즌별 평균딜 추이</span><span class="dcdelta" style="color:var(--green)">+57</span></div>
+  <svg viewBox="0 0 280 74" class="dcsvg" preserveAspectRatio="xMidYMid meet">
+    <polyline points="26.0,50.8 140.0,52.0 254.0,18.0" fill="none" stroke="var(--gold)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="26.0" cy="50.8" r="3" fill="var(--gold)"/><circle cx="140.0" cy="52.0" r="3" fill="var(--gold)"/><circle cx="254.0" cy="18.0" r="3" fill="var(--gold)"/><text x="26.0" y="43.8" text-anchor="middle" font-size="9" fill="var(--gold)" font-weight="700">290</text><text x="26.0" y="68" text-anchor="middle" font-size="8" fill="var(--ink-faint)">34S</text><text x="140.0" y="45.0" text-anchor="middle" font-size="9" fill="var(--gold)" font-weight="700">288</text><text x="140.0" y="68" text-anchor="middle" font-size="8" fill="var(--ink-faint)">35S</text><text x="254.0" y="11.0" text-anchor="middle" font-size="9" fill="var(--gold)" font-weight="700">347</text><text x="254.0" y="68" text-anchor="middle" font-size="8" fill="var(--ink-faint)">36S</text>
+  </svg>
+  <div class="dctier"><span class="tchip" style="color:#38bdf8">다이아</span><span class="tarr">→</span><span class="tchip" style="color:#a855f7">크리스탈</span></div>
+</div></div>
+<div class="democard"><div class="demotitle">예시 C · 단기 2시즌</div><div class="dchart">
+  <div class="dctop"><span class="dctitle">시즌별 평균딜 추이</span><span class="dcdelta" style="color:var(--green)">+61</span></div>
+  <svg viewBox="0 0 280 74" class="dcsvg" preserveAspectRatio="xMidYMid meet">
+    <polyline points="26.0,52.0 254.0,18.0" fill="none" stroke="var(--gold)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="26.0" cy="52.0" r="3" fill="var(--gold)"/><circle cx="254.0" cy="18.0" r="3" fill="var(--gold)"/><text x="26.0" y="45.0" text-anchor="middle" font-size="9" fill="var(--gold)" font-weight="700">240</text><text x="26.0" y="68" text-anchor="middle" font-size="8" fill="var(--ink-faint)">35S</text><text x="254.0" y="11.0" text-anchor="middle" font-size="9" fill="var(--gold)" font-weight="700">301</text><text x="254.0" y="68" text-anchor="middle" font-size="8" fill="var(--ink-faint)">36S</text>
+  </svg>
+  <div class="dctier"><span class="tchip" style="color:#5ac8fa">플래티넘</span><span class="tarr">→</span><span class="tchip" style="color:#38bdf8">다이아</span></div>
+</div></div>
+
+</div></body></html>
