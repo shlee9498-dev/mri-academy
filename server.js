@@ -29,7 +29,7 @@ app.use((req, res, next) => {
   const o = req.headers.origin;
   if (ALLOWED.includes(o)) res.setHeader("Access-Control-Allow-Origin", o);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
@@ -43,6 +43,204 @@ function rateLimited(ip) {
   if (hits.size > 5000) hits.clear();
   return arr.length > max;
 }
+
+// ═══════════════════ 후기/동향/답글 시스템 ═══════════════════
+// 디스코드 OAuth 로그인 + Supabase 저장 (기존 MRI 봇 앱 재활용)
+// env: DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, SUPABASE_URL,
+//      SUPABASE_SERVICE_ROLE_KEY, SESSION_SECRET, STAFF_DISCORD_IDS(선택, 쉼표구분)
+const crypto = require("crypto");
+const OAUTH_REDIRECT = "https://mri-academy-production.up.railway.app/api/auth/callback";
+const STAFF_IDS = (process.env.STAFF_DISCORD_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const reviewsReady = () =>
+  !!(process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET &&
+     process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SESSION_SECRET);
+
+// ── 경량 JWT (HS256, 의존성 0) ──
+const b64u = (buf) => Buffer.from(buf).toString("base64url");
+function signJWT(payload, expSec = 60 * 60 * 24 * 30) {
+  const h = b64u(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const body = { ...payload, exp: Math.floor(Date.now() / 1000) + expSec };
+  const p = b64u(JSON.stringify(body));
+  const sig = crypto.createHmac("sha256", process.env.SESSION_SECRET).update(`${h}.${p}`).digest("base64url");
+  return `${h}.${p}.${sig}`;
+}
+function verifyJWT(token) {
+  const [h, p, sig] = (token || "").split(".");
+  if (!h || !p || !sig) throw new Error("malformed");
+  const expect = crypto.createHmac("sha256", process.env.SESSION_SECRET).update(`${h}.${p}`).digest("base64url");
+  const a = Buffer.from(sig), b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new Error("bad_sig");
+  const body = JSON.parse(Buffer.from(p, "base64url").toString());
+  if (body.exp && body.exp < Math.floor(Date.now() / 1000)) throw new Error("expired");
+  return body;
+}
+// 요청에서 로그인 유저 추출 (실패 시 null)
+function getUser(req) {
+  try {
+    const m = (req.headers.authorization || "").match(/^Bearer (.+)$/);
+    if (!m) return null;
+    const u = verifyJWT(m[1]);
+    return { id: u.sub, name: u.name, isStaff: STAFF_IDS.includes(u.sub) };
+  } catch { return null; }
+}
+
+// ── Supabase REST (PostgREST) ──
+function sbHeaders(extra = {}) {
+  const k = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  return { apikey: k, Authorization: `Bearer ${k}`, "Content-Type": "application/json", ...extra };
+}
+async function sbSelect(table, query) {
+  const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?${query}`, { headers: sbHeaders() });
+  if (!r.ok) throw new Error(`supabase_select_${r.status}`);
+  return r.json();
+}
+async function sbInsert(table, row) {
+  const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}`, {
+    method: "POST", headers: sbHeaders({ Prefer: "return=representation" }), body: JSON.stringify(row),
+  });
+  if (!r.ok) throw new Error(`supabase_insert_${r.status}`);
+  return (await r.json())[0];
+}
+async function sbPatch(table, idFilter, patch) {
+  const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?${idFilter}`, {
+    method: "PATCH", headers: sbHeaders({ Prefer: "return=representation" }), body: JSON.stringify(patch),
+  });
+  if (!r.ok) throw new Error(`supabase_patch_${r.status}`);
+  return r.json();
+}
+
+// ── 디스코드 OAuth ──
+const safeReturn = (u) => {
+  try { const url = new URL(u); return ALLOWED.includes(url.origin) ? u : ALLOWED[0]; }
+  catch { return ALLOWED[0]; }
+};
+// 로그인 시작 → 디스코드 동의화면으로
+app.get("/api/auth/login", (req, res) => {
+  if (!reviewsReady()) return res.status(503).send("reviews disabled");
+  const ret = safeReturn(req.query.return || ALLOWED[0]);
+  const url = "https://discord.com/api/oauth2/authorize?" + new URLSearchParams({
+    client_id: process.env.DISCORD_CLIENT_ID, redirect_uri: OAUTH_REDIRECT,
+    response_type: "code", scope: "identify", state: ret,
+  });
+  res.redirect(url);
+});
+// 콜백 → 토큰교환 → 유저정보 → JWT 발급 → 사이트로 #token= 리다이렉트
+app.get("/api/auth/callback", async (req, res) => {
+  try {
+    const { code, state } = req.query;
+    if (!code) return res.status(400).send("no code");
+    const tok = await fetch("https://discord.com/api/oauth2/token", {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: process.env.DISCORD_CLIENT_ID, client_secret: process.env.DISCORD_CLIENT_SECRET,
+        grant_type: "authorization_code", code, redirect_uri: OAUTH_REDIRECT,
+      }),
+    }).then((r) => r.json());
+    if (!tok.access_token) return res.status(401).send("token exchange failed");
+    const me = await fetch("https://discord.com/api/users/@me", {
+      headers: { Authorization: `Bearer ${tok.access_token}` },
+    }).then((r) => r.json());
+    const name = me.global_name || me.username || "익명";
+    const jwt = signJWT({ sub: me.id, name });
+    res.redirect(`${safeReturn(state)}#token=${jwt}`);
+  } catch (e) {
+    console.error("oauth_callback", e); res.status(500).send("auth error");
+  }
+});
+// 현재 로그인 유저 확인
+app.get("/api/auth/me", (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.status(401).json({ error: "unauthorized" });
+  res.json({ id: u.id, name: u.name, isStaff: u.isStaff });
+});
+
+// ── 후기 ──
+app.get("/api/reviews", async (_req, res) => {
+  if (!reviewsReady()) return res.status(503).json({ error: "disabled" });
+  try { res.json(await sbSelect("reviews", "select=*&hidden=eq.false&order=created_at.desc&limit=200")); }
+  catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+app.post("/api/reviews", async (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.status(401).json({ error: "login_required" });
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
+  if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
+  const b = req.body || {};
+  const content = String(b.content || "").trim();
+  if (content.length < 5) return res.status(400).json({ error: "내용을 5자 이상 입력해 주세요." });
+  const rating = Math.min(5, Math.max(1, parseInt(b.rating) || 5));
+  try {
+    const row = await sbInsert("reviews", {
+      discord_id: u.id, discord_name: u.name,
+      trainer: String(b.trainer || "").slice(0, 30) || null,
+      rating, content: content.slice(0, 2000),
+    });
+    res.json(row);
+  } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+
+// ── 레슨 동향 ──
+app.get("/api/progress", async (_req, res) => {
+  if (!reviewsReady()) return res.status(503).json({ error: "disabled" });
+  try { res.json(await sbSelect("progress_logs", "select=*&hidden=eq.false&order=created_at.desc&limit=200")); }
+  catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+app.post("/api/progress", async (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.status(401).json({ error: "login_required" });
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
+  if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
+  const b = req.body || {};
+  const content = String(b.content || "").trim();
+  if (content.length < 5) return res.status(400).json({ error: "내용을 5자 이상 입력해 주세요." });
+  try {
+    const row = await sbInsert("progress_logs", {
+      discord_id: u.id, discord_name: u.name,
+      title: String(b.title || "").slice(0, 80) || null, content: content.slice(0, 4000),
+    });
+    res.json(row);
+  } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+
+// ── 답글 (후기·동향 공통) ──
+app.get("/api/replies", async (req, res) => {
+  if (!reviewsReady()) return res.status(503).json({ error: "disabled" });
+  const pt = req.query.parent_type, pid = parseInt(req.query.parent_id);
+  if (!["review", "progress"].includes(pt) || !pid) return res.status(400).json({ error: "bad_params" });
+  try { res.json(await sbSelect("replies", `select=*&parent_type=eq.${pt}&parent_id=eq.${pid}&hidden=eq.false&order=created_at.asc`)); }
+  catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+app.post("/api/replies", async (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.status(401).json({ error: "login_required" });
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
+  if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
+  const b = req.body || {};
+  const content = String(b.content || "").trim();
+  const pt = b.parent_type, pid = parseInt(b.parent_id);
+  if (!["review", "progress"].includes(pt) || !pid) return res.status(400).json({ error: "bad_params" });
+  if (content.length < 1) return res.status(400).json({ error: "내용을 입력해 주세요." });
+  try {
+    const row = await sbInsert("replies", {
+      parent_type: pt, parent_id: pid, discord_id: u.id, discord_name: u.name,
+      is_staff: u.isStaff, content: content.slice(0, 1000),
+    });
+    res.json(row);
+  } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+
+// ── 운영진: 숨김 처리 ──
+app.post("/api/moderate", async (req, res) => {
+  const u = getUser(req);
+  if (!u || !u.isStaff) return res.status(403).json({ error: "staff_only" });
+  const b = req.body || {};
+  const table = { review: "reviews", progress: "progress_logs", reply: "replies" }[b.type];
+  const id = parseInt(b.id);
+  if (!table || !id) return res.status(400).json({ error: "bad_params" });
+  try { await sbPatch(table, `id=eq.${id}`, { hidden: true }); res.json({ ok: true }); }
+  catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+
 
 // ═══════════════════ 챗봇 ═══════════════════════════════════
 const SYSTEM = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우미입니다. 친절하고 간결하게 존댓말로 답하세요.
@@ -129,8 +327,16 @@ async function refresh(client) {
       const t = TARGETS.find((x) => x.match(role.name));
       if (t) counts[t.key] = role.members.size;
     });
-    CACHE = { updatedAt: new Date().toISOString(), counts, status: "ok" };
-    console.log("stats refreshed", JSON.stringify(counts));
+    // 실수강생 = 레슨생 ∪ 수강생 (중복 제거). ROLE_ENROLL_IDS 있으면 ID 기반, 없으면 역할명 기반
+    const enrollIds = (process.env.ROLE_ENROLL_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const enrollSet = new Set();
+    roles.forEach((role) => {
+      const n = role.name.trim();
+      const hit = enrollIds.length ? enrollIds.includes(role.id) : (n === "수강생" || n === "레슨생");
+      if (hit) role.members.forEach((m) => enrollSet.add(m.id));
+    });
+    CACHE = { updatedAt: new Date().toISOString(), counts, enrollment: enrollSet.size, status: "ok" };
+    console.log("stats refreshed", JSON.stringify(counts), "enrollment=" + enrollSet.size);
   } catch (e) {
     console.error("refresh_error", e?.message);
     CACHE.status = "refresh_error";
@@ -154,6 +360,16 @@ if (process.env.DISCORD_TOKEN) {
 }
 
 app.get("/api/stats", (_req, res) => res.json(CACHE));
+
+// 실수강생 카운터 (레슨생 ∪ 수강생 중복 제외) — 사이트 런칭 특가 배너용
+app.get("/api/enrollment", (_req, res) =>
+  res.json({
+    count: typeof CACHE.enrollment === "number" ? CACHE.enrollment : null,
+    target: Number(process.env.ENROLL_TARGET || 50),
+    status: CACHE.status,
+    updatedAt: CACHE.updatedAt,
+  })
+);
 
 // ═══════════════════ PUBG API ═══════════════════════════════
 const PUBG_API_BASE = "https://api.pubg.com";
@@ -360,13 +576,84 @@ app.get("/api/bpi-info", (_req, res) => {
   });
 });
 
+// ═══════════════════ 수강 신청 자동 전송 ═══════════════════
+// POST /api/apply — 신청서를 디스코드 운영진 채널(웹훅)로 전송 + BPI 자동 첨부
+// env: DISCORD_APPLY_WEBHOOK (디스코드 채널 → 연동 → 웹훅 URL)
+app.post("/api/apply", async (req, res) => {
+  try {
+    const WEBHOOK = process.env.DISCORD_APPLY_WEBHOOK;
+    if (!WEBHOOK) return res.status(503).json({ error: "apply_disabled_no_webhook" });
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
+    if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
+
+    const b = req.body || {};
+    const required = ["name", "gender", "discord", "phone", "applyType", "source", "platform", "nickname", "playtime", "focus"];
+    for (const k of required) {
+      if (!b[k] || String(b[k]).trim() === "") return res.status(400).json({ error: `필수 항목 누락: ${k}` });
+    }
+    const clip = (s, n) => String(s || "").slice(0, n);
+
+    // 스팀/카카오 닉이 있으면 BPI 자동 진단 (PUBG 키 있을 때만)
+    let bpiText = "PUBG 키 미설정 — 진단 생략";
+    if (process.env.PUBG_API_KEY) {
+      try {
+        const r = await computeBPI(b.platform, clip(b.nickname, 40), false);
+        const s = r.suggested;
+        bpiText = `**${s.tier} ${s.label}** (BPI ${s.bpi}) · 평균딜 ${r.sample.avgDamage} · ${r.sample.roundsPlayed}판`
+          + (r.lowConfidence ? " ⚠표본부족" : "");
+      } catch (e) {
+        bpiText = `자동 진단 실패: ${clip(e.message, 60)}`;
+      }
+    }
+
+    const embed = {
+      title: "📥 새 수강 신청 — " + clip(b.name, 30),
+      color: 0xf5c518,
+      fields: [
+        { name: "신청 구분", value: clip(b.applyType, 50), inline: true },
+        { name: "유입 경로", value: clip(b.source, 50), inline: true },
+        { name: "플랫폼/닉", value: `${clip(b.platform, 10)} / ${clip(b.nickname, 40)}`, inline: true },
+        { name: "🎯 BPI 자동진단", value: bpiText, inline: false },
+        { name: "최고 티어", value: clip(b.tier, 40) || "—", inline: true },
+        { name: "플레이 시간", value: clip(b.playtime, 80), inline: true },
+        { name: "집중 교정", value: clip(b.focus, 100), inline: false },
+        { name: "추천 트레이너", value: clip(b.trainer, 30) || "—", inline: true },
+        { name: "성별/생년", value: `${clip(b.gender, 10)} / ${clip(b.birth, 10) || "—"}`, inline: true },
+        { name: "📞 연락처", value: clip(b.phone, 20), inline: true },
+        { name: "💬 디스코드", value: clip(b.discord, 40), inline: true },
+      ],
+      timestamp: new Date().toISOString(),
+      footer: { text: "MRI ACADEMY 온라인 신청" },
+    };
+    if (b.memo && String(b.memo).trim()) {
+      embed.fields.push({ name: "메모", value: clip(b.memo, 300), inline: false });
+    }
+
+    const wr = await fetch(WEBHOOK, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "수강신청봇", embeds: [embed] }),
+    });
+    if (!wr.ok) {
+      console.error("webhook_error", wr.status);
+      return res.status(502).json({ error: "webhook_failed" });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("apply_error", e);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
 // ─── 상태 확인 ────────────────────────────────────────────
 app.get("/", (_req, res) =>
   res.send(
     "MRI ACADEMY server OK" +
     " · chat=" + (process.env.CLAUDE_KEY ? "on" : "off") +
     " · stats=" + CACHE.status +
-    " · pubg=" + (process.env.PUBG_API_KEY ? "on" : "off")
+    " · pubg=" + (process.env.PUBG_API_KEY ? "on" : "off") +
+    " · apply=" + (process.env.DISCORD_APPLY_WEBHOOK ? "on" : "off") +
+    " · reviews=" + (reviewsReady() ? "on" : "off")
   )
 );
 
