@@ -44,3 +44,18 @@ alter table reviews enable row level security;
 alter table progress_logs enable row level security;
 alter table replies enable row level security;
 -- (정책 미생성 = service_role 외 모두 차단. server.js만 읽고 씀)
+
+-- ═══════════════════ PUBG 닉 레지스트리 (실력 분포 집계용) ═══════════════════
+-- /전적등록 슬래시 명령 + /api/pubg-dist 가 사용. 디코ID 기준 upsert.
+create table if not exists pubg_nicks (
+  discord_id   text primary key,
+  discord_name text,
+  name         text,          -- 실명(선택, 강의생만)
+  grade        text,          -- 등급(선택)
+  steam        text,
+  kakao        text,
+  role         text default '클랜',
+  updated_at   timestamptz default now()
+);
+alter table pubg_nicks enable row level security;
+-- (정책 미생성 = service_role 외 모두 차단. server.js만 접근)

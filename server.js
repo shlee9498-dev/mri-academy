@@ -108,6 +108,15 @@ async function sbPatch(table, idFilter, patch) {
   if (!r.ok) throw new Error(`supabase_patch_${r.status}`);
   return r.json();
 }
+async function sbUpsert(table, row, onConflict) {
+  const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?on_conflict=${onConflict}`, {
+    method: "POST",
+    headers: sbHeaders({ Prefer: "return=representation,resolution=merge-duplicates" }),
+    body: JSON.stringify(row),
+  });
+  if (!r.ok) throw new Error(`supabase_upsert_${r.status}`);
+  return (await r.json())[0];
+}
 
 // ── 디스코드 OAuth ──
 const safeReturn = (u) => {
@@ -345,10 +354,49 @@ async function refresh(client) {
 
 if (process.env.DISCORD_TOKEN) {
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
-  client.once("ready", () => {
+  client.once("ready", async () => {
     console.log("bot ready:", client.user.tag);
     refresh(client);
     setInterval(() => refresh(client), 5 * 60 * 1000);
+    // /전적등록 슬래시 명령 등록 (길드 한정 · 봇에 applications.commands 스코프 필요)
+    try {
+      const cmd = {
+        name: "전적등록",
+        description: "PUBG 인게임 닉을 등록/수정합니다 (클랜 실력 분포 집계용)",
+        options: [
+          { name: "스팀", description: "스팀(스배) 인게임 닉", type: 3, required: false },
+          { name: "카카오", description: "카카오(카배) 인게임 닉", type: 3, required: false },
+        ],
+      };
+      if (process.env.GUILD_ID) await client.application.commands.set([cmd], process.env.GUILD_ID);
+      else await client.application.commands.set([cmd]);
+      console.log("slash command /전적등록 registered");
+    } catch (e) { console.error("slash_register_failed", e?.message); }
+  });
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "전적등록") return;
+    const steam = (itx.options.getString("스팀") || "").trim();
+    const kakao = (itx.options.getString("카카오") || "").trim();
+    if (!steam && !kakao)
+      return itx.reply({ content: "스팀 또는 카카오 닉 중 하나는 입력해줘.", ephemeral: true });
+    if (!reviewsReady())
+      return itx.reply({ content: "닉 저장소가 아직 설정 전이야. 운영진에게 문의해줘.", ephemeral: true });
+    try {
+      await sbUpsert("pubg_nicks", {
+        discord_id: itx.user.id,
+        discord_name: itx.user.globalName || itx.user.username,
+        steam: steam || null,
+        kakao: kakao || null,
+        updated_at: new Date().toISOString(),
+      }, "discord_id");
+      await itx.reply({
+        content: `✅ 등록 완료!\n· 스팀: ${steam || "—"}\n· 카카오: ${kakao || "—"}\n클랜 실력 분포 집계에 반영돼.`,
+        ephemeral: true,
+      });
+    } catch (e) {
+      console.error("nick_register_failed", e?.message);
+      await itx.reply({ content: "저장 중 오류가 났어. 잠시 후 다시 시도해줘.", ephemeral: true });
+    }
   });
   client.login(process.env.DISCORD_TOKEN).catch((e) => {
     console.error("discord_login_failed", e?.message);
@@ -576,6 +624,57 @@ app.get("/api/bpi-info", (_req, res) => {
   });
 });
 
+// ═══════════════════ 클랜 실력 분포 (PUBG) ════════════════
+// GET /api/pubg-dist — 등록된 닉들의 시즌 평균딜 → 티어(T1~T5)·딜구간 분포 (집계만, 개인정보 X)
+// PUBG_API_KEY + Supabase(pubg_nicks) 둘 다 있어야 동작. 6시간마다 백그라운드 갱신.
+let DIST = { updatedAt: null, total: 0, byTier: {}, byDamage: {}, status: "init" };
+const DMG_BUCKETS = [
+  { key: "0-150", min: 0, max: 150 },
+  { key: "150-200", min: 150, max: 200 },
+  { key: "200-300", min: 200, max: 300 },
+  { key: "300+", min: 300, max: Infinity },
+];
+function dmgBucket(d) {
+  return (DMG_BUCKETS.find((b) => d >= b.min && d < b.max) || DMG_BUCKETS[DMG_BUCKETS.length - 1]).key;
+}
+async function refreshDist() {
+  if (!process.env.PUBG_API_KEY || !reviewsReady()) { DIST.status = "disabled"; return; }
+  try {
+    const rows = await sbSelect("pubg_nicks", "select=steam,kakao&order=updated_at.desc");
+    const byTier = { T1: 0, T2: 0, T3: 0, T4: 0, T5: 0 };
+    const byDamage = Object.fromEntries(DMG_BUCKETS.map((b) => [b.key, 0]));
+    let total = 0;
+    for (const row of rows) {
+      const nick = row.steam || row.kakao;
+      const platform = row.steam ? "steam" : "kakao";
+      if (!nick) continue;
+      try {
+        const r = await computeBPI(platform, nick, false);
+        byTier[r.suggested.tier] = (byTier[r.suggested.tier] || 0) + 1;
+        byDamage[dmgBucket(r.sample.avgDamage)]++;
+        total++;
+      } catch { /* 닉 못 찾음/표본 없음 → 스킵 */ }
+      await new Promise((res) => setTimeout(res, 7000)); // 레이트리밋 보호(~8.5/min)
+    }
+    DIST = { updatedAt: new Date().toISOString(), total, byTier, byDamage, status: "ok" };
+    console.log("dist refreshed", JSON.stringify(DIST.byTier), "total=" + total);
+  } catch (e) { console.error("dist_error", e?.message); DIST.status = "error"; }
+}
+if (process.env.PUBG_API_KEY) {
+  setTimeout(refreshDist, 30_000);                 // 부팅 30초 후 1차
+  setInterval(refreshDist, 6 * 60 * 60 * 1000);    // 6시간마다
+}
+app.get("/api/pubg-dist", (_req, res) => res.json(DIST));
+
+// GET /api/nicks — 운영진 전용(닉 레지스트리 조회). 개인정보라 스태프만.
+app.get("/api/nicks", async (req, res) => {
+  const u = getUser(req);
+  if (!u || !u.isStaff) return res.status(403).json({ error: "staff_only" });
+  if (!reviewsReady()) return res.status(503).json({ error: "disabled" });
+  try { res.json(await sbSelect("pubg_nicks", "select=*&order=updated_at.desc")); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ═══════════════════ 수강 신청 자동 전송 ═══════════════════
 // POST /api/apply — 신청서를 디스코드 운영진 채널(웹훅)로 전송 + BPI 자동 첨부
 // env: DISCORD_APPLY_WEBHOOK (디스코드 채널 → 연동 → 웹훅 URL)
@@ -653,7 +752,8 @@ app.get("/", (_req, res) =>
     " · stats=" + CACHE.status +
     " · pubg=" + (process.env.PUBG_API_KEY ? "on" : "off") +
     " · apply=" + (process.env.DISCORD_APPLY_WEBHOOK ? "on" : "off") +
-    " · reviews=" + (reviewsReady() ? "on" : "off")
+    " · reviews=" + (reviewsReady() ? "on" : "off") +
+    " · dist=" + DIST.status
   )
 );
 

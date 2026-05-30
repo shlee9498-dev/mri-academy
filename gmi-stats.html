@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>클랜 실력 분포 · MRI ACADEMY</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<style>
+  :root{
+    --bg:#0a0a0c; --bg-card:#1a1a20; --bg-elev:#20202a;
+    --ink:#f4f4f5; --ink-dim:#a1a1aa; --ink-faint:#71717a;
+    --gold:#f5c518; --gold-deep:#caa00f; --green:#10b981; --blue:#5ac8fa; --line:#27272a;
+    --display:'Archivo Black',sans-serif; --body:'Pretendard Variable',sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:var(--bg); color:var(--ink); font-family:var(--body);
+    min-height:100vh; line-height:1.6;
+    background-image:radial-gradient(circle at 50% 0%, rgba(245,197,24,.08), transparent 60%),
+      linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);
+    background-size:auto, 37px 37px, 37px 37px;
+  }
+  .wrap{max-width:760px; margin:0 auto; padding:48px 20px 80px}
+  .kick{font-size:12px; font-weight:800; letter-spacing:.18em; color:var(--gold); text-transform:uppercase}
+  h1{font-family:var(--display); font-size:30px; margin:8px 0 6px; letter-spacing:-.5px}
+  .sub{color:var(--ink-dim); font-size:14px; margin-bottom:6px}
+  .state{display:inline-flex; align-items:center; gap:7px; font-size:11.5px; font-weight:800; color:var(--green); margin:18px 0 26px}
+  .dot{width:8px; height:8px; border-radius:99px; background:var(--green); box-shadow:0 0 8px var(--green); animation:p 1.6s infinite}
+  @keyframes p{0%,100%{opacity:1}50%{opacity:.35}}
+  .sec{background:var(--bg-card); border:1px solid var(--line); border-radius:16px; padding:22px 22px 24px; margin-bottom:18px}
+  .sec h2{font-size:16px; margin-bottom:4px}
+  .sec .note{font-size:12px; color:var(--ink-faint); margin-bottom:18px}
+  .bar{margin-bottom:14px}
+  .bar:last-child{margin-bottom:0}
+  .bar-top{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:7px}
+  .bar-name{font-weight:800; font-size:14px}
+  .bar-name small{color:var(--ink-faint); font-weight:600; margin-left:6px; font-size:11.5px}
+  .bar-val{font-size:12.5px; color:var(--ink-dim)}
+  .bar-val b{font-family:var(--display); color:var(--ink); font-size:16px; margin-right:3px}
+  .track{height:11px; border-radius:99px; background:#2a2a30; overflow:hidden}
+  .fill{height:100%; width:0; border-radius:99px; transition:width 1s ease}
+  .t1 .fill{background:linear-gradient(90deg,var(--gold),var(--gold-deep))}
+  .t2 .fill{background:linear-gradient(90deg,#f5c518,#d98a2b)}
+  .t3 .fill{background:linear-gradient(90deg,var(--blue),#2b9fd4)}
+  .t4 .fill{background:linear-gradient(90deg,#7aa7c7,#4d7e9e)}
+  .t5 .fill{background:linear-gradient(90deg,#6b7280,#4b5563)}
+  .dmg .fill{background:linear-gradient(90deg,var(--blue),var(--gold))}
+  .empty{text-align:center; color:var(--ink-faint); padding:30px 10px; font-size:14px}
+  .back{display:inline-block; margin-top:10px; color:var(--gold); text-decoration:none; font-weight:700; font-size:14px}
+  .foot{margin-top:24px; font-size:11px; color:var(--ink-faint); line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kick">GmI CLAN · LIVE</div>
+  <h1>클랜 실력 분포</h1>
+  <p class="sub">PUBG 시즌 데이터로 집계한 클랜원 실력 분포입니다.</p>
+  <div class="state"><span class="dot"></span><span id="state">집계 불러오는 중…</span></div>
+
+  <div class="sec">
+    <h2>티어 분포</h2>
+    <p class="note">시즌 평균 딜 기준 (T1 에이스 → T5 신예)</p>
+    <div id="tierBox"><div class="empty">집계 준비 중입니다.</div></div>
+  </div>
+
+  <div class="sec">
+    <h2>평균 딜 구간</h2>
+    <p class="note">랭크 시즌 라운드당 평균 데미지</p>
+    <div id="dmgBox"><div class="empty">집계 준비 중입니다.</div></div>
+  </div>
+
+  <a class="back" href="index.html">← MRI ACADEMY 홈</a>
+  <p class="foot">집계는 6시간마다 갱신됩니다. 개인 닉·실명은 공개되지 않으며 인원수 분포만 표시합니다.<br>
+  닉 등록: 디스코드에서 <b>/전적등록</b> 명령으로 본인 인게임 닉을 등록할 수 있습니다.</p>
+</div>
+
+<script>
+const API="https://mri-academy-production.up.railway.app";
+const TIERS=[
+  ["T1","에이스","t1"],["T2","준에이스","t2"],["T3","중위","t3"],
+  ["T4","받쳐주기","t4"],["T5","신예","t5"]
+];
+const DMG=["0-150","150-200","200-300","300+"];
+function bars(box, items, total, cls){
+  if(!total){ box.innerHTML='<div class="empty">아직 집계된 인원이 없습니다.</div>'; return; }
+  box.innerHTML = items.map(function(it){
+    const n=it.n||0, pct=total?Math.round(n/total*100):0;
+    return '<div class="bar '+(it.cls||cls)+'">'
+      +'<div class="bar-top"><span class="bar-name">'+it.label
+      +(it.sub?'<small>'+it.sub+'</small>':'')+'</span>'
+      +'<span class="bar-val"><b>'+n+'</b>명 · '+pct+'%</span></div>'
+      +'<div class="track"><div class="fill" style="width:'+pct+'%"></div></div></div>';
+  }).join("");
+}
+(async function(){
+  const st=document.getElementById("state");
+  try{
+    const r=await fetch(API+"/api/pubg-dist",{cache:"no-store"});
+    const d=await r.json();
+    if(d.status!=="ok"){
+      st.textContent = d.status==="disabled" ? "PUBG 연동 준비 중 — 곧 공개됩니다" : "집계 준비 중";
+      return;
+    }
+    const total=d.total||0;
+    st.textContent = "실시간 집계 · 총 "+total+"명"+(d.updatedAt?" · "+new Date(d.updatedAt).toLocaleString("ko-KR"):"");
+    bars(document.getElementById("tierBox"),
+      TIERS.map(function(t){return {label:t[0],sub:t[1],n:(d.byTier||{})[t[0]]||0,cls:t[2]};}), total);
+    bars(document.getElementById("dmgBox"),
+      DMG.map(function(k){return {label:k+" 딜",n:(d.byDamage||{})[k]||0};}), total, "dmg");
+  }catch(e){
+    st.textContent="집계를 불러오지 못했어요.";
+  }
+})();
+</script>
+</body>
+</html>
