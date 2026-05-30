@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>수강생 후기 · 레슨 동향 — MRI ACADEMY</title>
+<meta name="description" content="MRI ACADEMY 수강생들의 실제 후기와 레슨 성장 동향. 디스코드 로그인 후 작성·답글이 가능합니다.">
+<meta property="og:title" content="수강생 후기 · 레슨 동향 — MRI ACADEMY">
+<meta property="og:description" content="검증된 수강생 후기와 성장 기록.">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<style>
+:root{--bg:#0a0a0c;--bg-card:#1a1a20;--bg-elev:#20202a;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--gold-deep:#caa00f;--green:#10b981;--blue:#5ac8fa;--purple:#a855f7;--red:#e63946;--line:#27272a;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;background-image:radial-gradient(circle at 50% 0,rgba(245,197,24,.06),transparent 60%),linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);background-size:auto,37px 37px,37px 37px}
+.wrap{max-width:720px;margin:0 auto;padding:30px 18px 70px}
+.top{text-align:center;margin-bottom:22px}
+.kick{color:var(--gold);font-weight:800;font-size:12px;letter-spacing:.16em;text-transform:uppercase}
+h1{font-family:var(--display);font-size:clamp(24px,6vw,34px);margin:8px 0 6px}
+.sub{color:var(--ink-dim);font-size:13.5px}
+/* 로그인 바 */
+.authbar{display:flex;align-items:center;justify-content:center;gap:12px;background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin-bottom:18px;flex-wrap:wrap}
+.authbar .who{font-size:13.5px;color:var(--ink-dim)}
+.authbar .who b{color:var(--gold)}
+.btn{border:none;border-radius:8px;padding:11px 18px;font-weight:800;font-size:13.5px;cursor:pointer;font-family:var(--body);transition:transform .15s}
+.btn:hover{transform:translateY(-1px)}
+.btn-disc{background:#5865F2;color:#fff}
+.btn-ghost{background:transparent;color:var(--ink-dim);border:1px solid var(--line)}
+.btn-gold{background:linear-gradient(135deg,var(--gold),var(--gold-deep));color:#0a0a0c}
+/* 탭 */
+.tabs{display:flex;gap:8px;margin-bottom:18px}
+.tab{flex:1;background:var(--bg-card);border:1px solid var(--line);border-radius:9px;padding:12px;font-weight:800;font-size:14px;cursor:pointer;text-align:center;color:var(--ink-dim)}
+.tab.on{border-color:var(--gold-soft);background:rgba(245,197,24,.08);color:var(--gold)}
+/* 작성 폼 */
+.composer{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:18px}
+.composer.locked{opacity:.55;pointer-events:none}
+.composer label{display:block;font-size:12px;font-weight:700;margin-bottom:6px;color:var(--ink-dim)}
+.composer input,.composer textarea,.composer select{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:10px 12px;font-family:var(--body);font-size:14px;margin-bottom:12px}
+.composer textarea{resize:vertical;min-height:70px}
+.stars{display:flex;gap:4px;margin-bottom:12px}
+.stars span{font-size:24px;cursor:pointer;color:var(--ink-faint);line-height:1}
+.stars span.act{color:var(--gold)}
+.lockmsg{font-size:12.5px;color:var(--ink-faint);text-align:center;padding:6px}
+/* 목록 */
+.list{display:flex;flex-direction:column;gap:12px}
+.item{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.ihead{display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap}
+.iname{font-weight:800;font-size:14px}
+.istar{color:var(--gold);font-size:13px;letter-spacing:1px}
+.itrainer{font-size:11px;color:var(--blue);background:rgba(90,200,250,.1);padding:2px 8px;border-radius:99px}
+.idate{font-size:11px;color:var(--ink-faint);margin-left:auto}
+.ititle{font-weight:800;font-size:15px;margin-bottom:4px}
+.ibody{font-size:13.5px;color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.iacts{display:flex;gap:12px;margin-top:10px;align-items:center}
+.linkbtn{background:none;border:none;color:var(--ink-faint);font-size:12px;cursor:pointer;font-family:var(--body);font-weight:600}
+.linkbtn:hover{color:var(--gold)}
+.del{color:var(--red)}
+/* 답글 */
+.replies{margin-top:12px;border-top:1px solid var(--line);padding-top:12px;display:none}
+.replies.open{display:block}
+.reply{padding:8px 0;border-bottom:1px solid var(--line)}
+.reply:last-of-type{border-bottom:none}
+.rhead{display:flex;align-items:center;gap:6px;margin-bottom:2px}
+.rname{font-weight:700;font-size:12.5px}
+.staff{font-size:10px;color:#0a0a0c;background:var(--gold);padding:1px 6px;border-radius:99px;font-weight:800}
+.rdate{font-size:10.5px;color:var(--ink-faint);margin-left:auto}
+.rbody{font-size:13px;color:var(--ink-dim);white-space:pre-wrap;word-break:break-word}
+.replyform{display:flex;gap:7px;margin-top:10px}
+.replyform input{flex:1;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:9px 11px;font-family:var(--body);font-size:13px}
+.empty{text-align:center;color:var(--ink-faint);font-size:13px;padding:30px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--bg-elev);border:1px solid var(--line);color:var(--ink);padding:12px 20px;border-radius:9px;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:50}
+.toast.show{opacity:1}
+.back{display:inline-block;margin-top:24px;color:var(--gold);text-decoration:none;font-weight:700;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="kick">Community</div>
+    <h1>수강생 후기 · 레슨 동향</h1>
+    <p class="sub">실제 수강생이 남긴 후기와 성장 기록입니다. 작성·답글은 <b style="color:var(--gold)">디스코드 로그인</b> 후 가능합니다.</p>
+  </div>
+
+  <div class="authbar" id="authbar"><span class="who">로그인 상태 확인 중…</span></div>
+
+  <div class="tabs">
+    <div class="tab on" id="tab-reviews" onclick="switchTab('reviews')">⭐ 후기</div>
+    <div class="tab" id="tab-progress" onclick="switchTab('progress')">📈 레슨 동향</div>
+  </div>
+
+  <!-- 후기 -->
+  <div id="view-reviews">
+    <div class="composer locked" id="rv-composer">
+      <label>별점</label>
+      <div class="stars" id="rv-stars">
+        <span data-v="1">★</span><span data-v="2">★</span><span data-v="3">★</span><span data-v="4">★</span><span data-v="5">★</span>
+      </div>
+      <label>담당 트레이너 (선택)</label>
+      <select id="rv-trainer">
+        <option value="">선택 안 함</option>
+        <option>이무리</option><option>안현태</option><option>권준구(레빗)</option><option>한도은</option>
+      </select>
+      <label>후기 내용</label>
+      <textarea id="rv-content" placeholder="레슨 경험을 자유롭게 남겨주세요 (5자 이상)"></textarea>
+      <button class="btn btn-gold" style="width:100%" onclick="submitReview()">후기 등록</button>
+    </div>
+    <div class="list" id="rv-list"><div class="empty">불러오는 중…</div></div>
+  </div>
+
+  <!-- 동향 -->
+  <div id="view-progress" style="display:none">
+    <div class="composer locked" id="pg-composer">
+      <label>제목 (선택)</label>
+      <input id="pg-title" placeholder="예: 5월 3주차 — 운영 판단 교정 후">
+      <label>내용</label>
+      <textarea id="pg-content" placeholder="이번 주 무엇을 배웠고 어떻게 달라졌는지 기록해보세요 (5자 이상)"></textarea>
+      <button class="btn btn-gold" style="width:100%" onclick="submitProgress()">동향 등록</button>
+    </div>
+    <div class="list" id="pg-list"><div class="empty">불러오는 중…</div></div>
+  </div>
+
+  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const API = "https://mri-academy-production.up.railway.app";
+let ME = null, RATING = 5;
+
+// ── 토큰: 콜백 #token= 수신 → localStorage ──
+(function captureToken(){
+  if (location.hash.startsWith("#token=")) {
+    localStorage.setItem("mri_token", location.hash.slice(7));
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+})();
+const token = () => localStorage.getItem("mri_token");
+const authHeaders = () => token() ? { Authorization: "Bearer " + token() } : {};
+
+function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2600); }
+function esc(s){ const d=document.createElement("div"); d.textContent=s==null?"":String(s); return d.innerHTML; }
+function fmtDate(iso){ try{ const d=new Date(iso); return `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,"0")}.${String(d.getDate()).padStart(2,"0")}`; }catch{return"";} }
+
+// ── 로그인 상태 ──
+async function checkAuth(){
+  const bar = document.getElementById("authbar");
+  if (!token()) { ME=null; renderAuthedUI(); bar.innerHTML = `<span class="who">로그인하면 후기·동향을 작성할 수 있어요</span><button class="btn btn-disc" onclick="login()">디스코드로 로그인</button>`; return; }
+  try {
+    const r = await fetch(`${API}/api/auth/me`, { headers: authHeaders() });
+    if (!r.ok) throw 0;
+    ME = await r.json();
+    bar.innerHTML = `<span class="who">👋 <b>${esc(ME.name)}</b>${ME.isStaff?' · 운영진':''} 님</span><button class="btn btn-ghost" onclick="logout()">로그아웃</button>`;
+  } catch { localStorage.removeItem("mri_token"); ME=null; bar.innerHTML = `<span class="who">세션이 만료됐어요</span><button class="btn btn-disc" onclick="login()">디스코드로 다시 로그인</button>`; }
+  renderAuthedUI();
+}
+function renderAuthedUI(){
+  const locked = !ME;
+  document.getElementById("rv-composer").classList.toggle("locked", locked);
+  document.getElementById("pg-composer").classList.toggle("locked", locked);
+}
+function login(){ location.href = `${API}/api/auth/login?return=${encodeURIComponent(location.href.split("#")[0])}`; }
+function logout(){ localStorage.removeItem("mri_token"); checkAuth(); toast("로그아웃됐습니다"); }
+
+// ── 탭 ──
+function switchTab(t){
+  const rv = t==="reviews";
+  document.getElementById("tab-reviews").classList.toggle("on", rv);
+  document.getElementById("tab-progress").classList.toggle("on", !rv);
+  document.getElementById("view-reviews").style.display = rv?"block":"none";
+  document.getElementById("view-progress").style.display = rv?"none":"block";
+}
+
+// ── 별점 ──
+document.getElementById("rv-stars").addEventListener("click", (e)=>{
+  if (e.target.dataset.v){ RATING = +e.target.dataset.v; paintStars(); }
+});
+function paintStars(){ document.querySelectorAll("#rv-stars span").forEach(s=>s.classList.toggle("act", +s.dataset.v <= RATING)); }
+paintStars();
+
+// ── 후기 ──
+async function loadReviews(){
+  const el = document.getElementById("rv-list");
+  try {
+    const rows = await (await fetch(`${API}/api/reviews`)).json();
+    if (!rows.length) { el.innerHTML = `<div class="empty">아직 후기가 없습니다. 첫 후기를 남겨주세요!</div>`; return; }
+    el.innerHTML = rows.map(r => itemReview(r)).join("");
+  } catch { el.innerHTML = `<div class="empty">후기를 불러오지 못했습니다.</div>`; }
+}
+function itemReview(r){
+  const stars = "★".repeat(r.rating||0) + "☆".repeat(5-(r.rating||0));
+  const del = (ME&&ME.isStaff) ? `<button class="linkbtn del" onclick="hide('review',${r.id})">숨김</button>` : "";
+  return `<div class="item">
+    <div class="ihead"><span class="iname">${esc(r.discord_name)}</span><span class="istar">${stars}</span>${r.trainer?`<span class="itrainer">${esc(r.trainer)}</span>`:""}<span class="idate">${fmtDate(r.created_at)}</span></div>
+    <div class="ibody">${esc(r.content)}</div>
+    <div class="iacts"><button class="linkbtn" onclick="toggleReplies('review',${r.id},this)">💬 답글</button>${del}</div>
+    <div class="replies" id="rep-review-${r.id}"></div>
+  </div>`;
+}
+async function submitReview(){
+  if (!ME) return toast("로그인이 필요합니다");
+  const content = document.getElementById("rv-content").value.trim();
+  if (content.length<5) return toast("내용을 5자 이상 입력해 주세요");
+  const trainer = document.getElementById("rv-trainer").value;
+  try {
+    const r = await fetch(`${API}/api/reviews`, { method:"POST", headers:{...authHeaders(),"Content-Type":"application/json"}, body:JSON.stringify({content,rating:RATING,trainer}) });
+    if (!r.ok) throw new Error((await r.json()).error||"오류");
+    document.getElementById("rv-content").value=""; RATING=5; paintStars();
+    toast("후기가 등록됐습니다!"); loadReviews();
+  } catch(e){ toast(e.message); }
+}
+
+// ── 동향 ──
+async function loadProgress(){
+  const el = document.getElementById("pg-list");
+  try {
+    const rows = await (await fetch(`${API}/api/progress`)).json();
+    if (!rows.length) { el.innerHTML = `<div class="empty">아직 작성된 레슨 동향이 없습니다.</div>`; return; }
+    el.innerHTML = rows.map(r => itemProgress(r)).join("");
+  } catch { el.innerHTML = `<div class="empty">불러오지 못했습니다.</div>`; }
+}
+function itemProgress(r){
+  const del = (ME&&ME.isStaff) ? `<button class="linkbtn del" onclick="hide('progress',${r.id})">숨김</button>` : "";
+  return `<div class="item">
+    <div class="ihead"><span class="iname">${esc(r.discord_name)}</span><span class="idate">${fmtDate(r.created_at)}</span></div>
+    ${r.title?`<div class="ititle">${esc(r.title)}</div>`:""}
+    <div class="ibody">${esc(r.content)}</div>
+    <div class="iacts"><button class="linkbtn" onclick="toggleReplies('progress',${r.id},this)">💬 답글</button>${del}</div>
+    <div class="replies" id="rep-progress-${r.id}"></div>
+  </div>`;
+}
+async function submitProgress(){
+  if (!ME) return toast("로그인이 필요합니다");
+  const content = document.getElementById("pg-content").value.trim();
+  if (content.length<5) return toast("내용을 5자 이상 입력해 주세요");
+  const title = document.getElementById("pg-title").value;
+  try {
+    const r = await fetch(`${API}/api/progress`, { method:"POST", headers:{...authHeaders(),"Content-Type":"application/json"}, body:JSON.stringify({content,title}) });
+    if (!r.ok) throw new Error((await r.json()).error||"오류");
+    document.getElementById("pg-content").value=""; document.getElementById("pg-title").value="";
+    toast("레슨 동향이 등록됐습니다!"); loadProgress();
+  } catch(e){ toast(e.message); }
+}
+
+// ── 답글 ──
+async function toggleReplies(pt, pid, btn){
+  const box = document.getElementById(`rep-${pt}-${pid}`);
+  if (box.classList.contains("open")) { box.classList.remove("open"); return; }
+  box.classList.add("open");
+  await loadReplies(pt, pid);
+}
+async function loadReplies(pt, pid){
+  const box = document.getElementById(`rep-${pt}-${pid}`);
+  try {
+    const rows = await (await fetch(`${API}/api/replies?parent_type=${pt}&parent_id=${pid}`)).json();
+    const list = rows.map(r=>{
+      const del = (ME&&ME.isStaff) ? `<button class="linkbtn del" style="font-size:11px" onclick="hide('reply',${r.id})">숨김</button>` : "";
+      return `<div class="reply"><div class="rhead"><span class="rname">${esc(r.discord_name)}</span>${r.is_staff?'<span class="staff">트레이너</span>':''}<span class="rdate">${fmtDate(r.created_at)}</span></div><div class="rbody">${esc(r.content)}</div>${del}</div>`;
+    }).join("") || `<div class="rbody" style="padding:4px 0">첫 답글을 남겨보세요.</div>`;
+    const form = ME ? `<div class="replyform"><input id="rin-${pt}-${pid}" placeholder="답글 입력" onkeydown="if(event.key==='Enter')sendReply('${pt}',${pid})"><button class="btn btn-gold" onclick="sendReply('${pt}',${pid})">등록</button></div>` : `<div class="lockmsg">답글은 로그인 후 작성할 수 있어요</div>`;
+    box.innerHTML = list + form;
+  } catch { box.innerHTML = `<div class="rbody">답글을 불러오지 못했습니다.</div>`; }
+}
+async function sendReply(pt, pid){
+  if (!ME) return toast("로그인이 필요합니다");
+  const inp = document.getElementById(`rin-${pt}-${pid}`);
+  const content = inp.value.trim();
+  if (!content) return;
+  try {
+    const r = await fetch(`${API}/api/replies`, { method:"POST", headers:{...authHeaders(),"Content-Type":"application/json"}, body:JSON.stringify({parent_type:pt,parent_id:pid,content}) });
+    if (!r.ok) throw new Error((await r.json()).error||"오류");
+    inp.value=""; loadReplies(pt, pid);
+  } catch(e){ toast(e.message); }
+}
+
+// ── 운영진 숨김 ──
+async function hide(type, id){
+  if (!confirm("이 항목을 숨길까요? (목록에서 사라집니다)")) return;
+  try {
+    const r = await fetch(`${API}/api/moderate`, { method:"POST", headers:{...authHeaders(),"Content-Type":"application/json"}, body:JSON.stringify({type,id}) });
+    if (!r.ok) throw new Error("권한 없음");
+    toast("숨김 처리됐습니다"); loadReviews(); loadProgress();
+  } catch(e){ toast(e.message); }
+}
+
+// ── 초기화 ──
+checkAuth().then(()=>{ loadReviews(); loadProgress(); });
+</script>
+</body>
+</html>

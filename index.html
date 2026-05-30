@@ -200,12 +200,28 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 
 /* PLANS */
 .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;align-items:start}
+.plans-4{grid-template-columns:repeat(4,1fr)}
+.prog-head{font-size:15px;font-weight:700;color:var(--ink);margin:0 0 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.prog-tag{font-family:var(--display);font-size:12px;padding:3px 11px;border-radius:7px;letter-spacing:.02em}
+.prog-sub{font-size:12.5px;color:var(--ink-faint);font-weight:500}
 .plan{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:24px;position:relative;transition:transform .2s}
 .plan:hover{transform:translateY(-3px)}
 .plan.hot{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold-soft),0 18px 44px rgba(245,197,24,.12)}
 .plan .rib{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--gold);color:#000;font-size:10.5px;font-weight:800;padding:4px 12px;border-radius:99px;white-space:nowrap}
 .plan .pn{font-family:var(--display);font-size:22px}
-.plan .pp{font-family:var(--display);font-size:26px;color:var(--gold);margin:8px 0 2px}
+.plan .po{font-size:13px;color:var(--ink-faint);margin-top:8px;text-decoration:line-through;text-decoration-color:var(--ink-faint)}
+.plan .pp{font-family:var(--display);font-size:26px;color:var(--gold);margin:2px 0 2px}
+.plan .off{display:inline-block;background:var(--red);color:#fff;font-size:11px;font-weight:800;padding:2px 8px;border-radius:99px;margin-left:6px;vertical-align:middle;letter-spacing:.3px}
+.plan .bns{display:inline-block;background:var(--green);color:#fff;font-size:11px;font-weight:800;padding:2px 8px;border-radius:99px;margin-left:6px;vertical-align:middle;letter-spacing:.3px}
+.promo-banner{background:linear-gradient(135deg,rgba(245,197,24,.1),rgba(230,57,70,.08));border:1px solid var(--gold-soft);border-radius:16px;padding:18px 22px;margin:8px 0 24px;text-align:center}
+.promo-banner .pb-tag{display:inline-block;background:var(--red);color:#fff;font-size:12px;font-weight:800;padding:4px 14px;border-radius:99px;margin-bottom:10px;letter-spacing:.5px}
+.promo-banner .pb-main{font-size:15.5px;color:var(--ink);line-height:1.5;margin-bottom:6px}
+.promo-banner .pb-counter{display:inline-flex;align-items:center;gap:8px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.35);border-radius:99px;padding:6px 16px;margin:8px 0 8px;font-size:13.5px;color:var(--ink)}
+.promo-banner .pb-counter .ec-now{font-family:var(--display);font-size:18px;color:var(--green)}
+.promo-banner .pb-counter .ec-unit{margin-left:-3px}
+.promo-banner .pb-counter .ec-sep{color:var(--ink-faint)}
+.promo-banner .pb-counter .ec-target b{color:var(--gold)}
+.promo-banner .pb-sub{font-size:12.5px;color:var(--ink-dim);line-height:1.5}
 .plan .pd{font-size:12.5px;color:var(--ink-faint);margin-bottom:16px}
 .plan ul{list-style:none;margin-bottom:20px}
 .plan li{font-size:13px;color:var(--ink-dim);padding:6px 0;display:flex;gap:8px}
@@ -214,7 +230,8 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .plan.hot .pbtn{background:var(--gold);color:#000;border-color:var(--gold)}
 .plan .pbtn:hover{transform:translateY(-1px);border-color:var(--gold-soft)}
 .plan-note{text-align:center;color:var(--ink-faint);font-size:12.5px;margin-top:20px}
-@media(max-width:780px){.plans{grid-template-columns:1fr;gap:18px}}
+@media(max-width:780px){.plans{grid-template-columns:1fr;gap:18px}.plans-4{grid-template-columns:1fr}}
+@media(min-width:781px) and (max-width:980px){.plans-4{grid-template-columns:repeat(2,1fr)}}
 
 /* CONSULT */
 .cons{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
@@ -305,6 +322,7 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 footer{padding:42px 0 60px;border-top:1px solid var(--line);text-align:center;color:var(--ink-faint);font-size:12.5px}
 footer .fl{margin:12px 0;display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
 footer .fl a{color:var(--ink-dim);text-decoration:none}footer .fl a:hover{color:var(--gold)}
+.bizinfo{font-size:11.5px;color:var(--ink-faint);line-height:1.8;margin:14px auto;max-width:560px;padding:14px;background:var(--bg-card);border:1px solid var(--line);border-radius:8px}
 footer b{color:var(--gold)}
 
 .reveal{opacity:0;transform:translateY(14px);animation:rise .6s ease forwards}
@@ -353,6 +371,7 @@ footer b{color:var(--gold)}
       <a href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-s2.html" target="_blank" rel="noopener">클랜컵</a>
       <a href="gmi-progress.html">성장기록</a>
       <a href="lesson-feedback.html">코칭기록</a>
+      <a href="community.html">후기</a>
     </div>
     <a class="nav-cta" href="#consult">상담 신청</a>
   </div>
@@ -484,39 +503,99 @@ footer b{color:var(--gold)}
 
   <!-- PLANS -->
   <section id="plans">
-    <div class="kick">Lesson Plans</div>
-    <div class="s-title">레슨 플랜</div>
-    <p class="s-desc">레벨테스트 합격 후 등록 가능합니다. (판수 기준 · 개인/그룹 선택)</p>
+    <div class="kick">Programs</div>
+    <div class="s-title">레슨 · 강의 · 세트</div>
+    <p class="s-desc">레슨(트레이너 판수제)과 강의(이무리 직강 시간제)는 엄연히 다른 과정입니다. 목표에 맞게 선택하세요.</p>
+
+    <div class="promo-banner">
+      <div class="pb-tag">🔥 OPEN 런칭 특가</div>
+      <div class="pb-main">지금은 <b>오픈 기념 특가</b> — 정가 대비 최대 <b style="color:var(--gold)">33% 할인</b></div>
+      <div class="pb-counter" id="enrollCounter">
+        <span class="ec-now" id="ecNow">··</span><span class="ec-unit">명 수강 중</span>
+        <span class="ec-sep">·</span>
+        <span class="ec-target">50명까지 <b id="ecLeft">··</b>명</span>
+      </div>
+      <div class="pb-sub">실수강생(레슨+강의 중복 제외) <b>50명 돌파 시, 그 주 다음 주부터 정가로 전환</b>됩니다. 자리가 한정되어 있으니 <b style="color:var(--gold)">선착순</b>으로 지금 신청하세요.</div>
+    </div>
+
+    <!-- 레슨 -->
+    <div class="prog-head"><span class="prog-tag" style="background:rgba(90,200,250,.12);color:var(--blue)">레슨</span> 서바이버 트레이너진 · <b>판수제</b> <span class="prog-sub">레벨테스트 무관 · 누구나 · 시간 여유롭게</span></div>
     <div class="plans">
       <div class="plan">
-        <div class="pn">10판</div><div class="pp">40,000원</div><div class="pd">단기 집중 교정</div>
+        <div class="pn">10판</div><div class="po">50,000원</div><div class="pp">40,000원<span class="off">-20%</span></div><div class="pd">판당 4,000원 · 단기 집중 교정</div>
         <ul><li>에임 정밀 분석</li><li>포지셔닝 교정</li><li>즉시 배정</li><li>빠른 피드백</li></ul>
-        <a class="pbtn" href="#consult">레벨테스트 신청 →</a>
+        <a class="pbtn" href="apply.html">신청하기 →</a>
       </div>
       <div class="plan hot">
         <div class="rib">인기 1위</div>
-        <div class="pn">21판</div><div class="pp">80,000원</div><div class="pd">마스터 달성 과정</div>
-        <ul><li>게임 리뷰 포함</li><li>실시간 동행</li><li>전술 훈련</li><li>수업 후 리포트</li></ul>
-        <a class="pbtn" href="#consult">레벨테스트 신청 →</a>
+        <div class="pn">21판</div><div class="po">105,000원</div><div class="pp">80,000원<span class="off">-24%</span></div><div class="pd">판당 3,810원 · 실전 다지기</div>
+        <ul><li>게임 리뷰 포함</li><li>실시간 동행·전술 훈련</li><li>수업 후 리포트</li></ul>
+        <a class="pbtn" href="apply.html">신청하기 →</a>
       </div>
       <div class="plan">
-        <div class="pn">33판</div><div class="pp">120,000원</div><div class="pd">풀 시즌 패키지</div>
-        <ul><li>시즌 전체 관리</li><li>주간 성장 리포트</li><li>무제한 Q&amp;A</li><li>클랜 입단 추천</li></ul>
-        <a class="pbtn" href="#consult">레벨테스트 신청 →</a>
+        <div class="pn">33판</div><div class="po">165,000원</div><div class="pp">120,000원<span class="off">-27%</span></div><div class="pd">판당 3,636원 · 풀 시즌 패키지</div>
+        <ul><li>시즌 전체 관리</li><li>주간 성장 리포트</li><li>무제한 Q&amp;A · 클랜 추천</li></ul>
+        <a class="pbtn" href="apply.html">신청하기 →</a>
       </div>
     </div>
-    <p class="plan-note">※ 강의(이무리 직강)는 예약제 3시간 집중 과정으로 별도 진행됩니다 — 상담에서 안내.</p>
+    <p class="plan-note">레슨 상담(테스트) 비용 <b>15,000원</b> · 개인/그룹 선택 가능 · 핵·버그로 터진 게임은 무효 처리<br>개인레슨 시간별 판수 차감 — <b>30분 3판 · 1시간 5판 · 1시간 30분 8판 · 2시간 10판</b></p>
+
+    <!-- 강의 -->
+    <div class="prog-head" style="margin-top:40px"><span class="prog-tag" style="background:rgba(245,197,24,.12);color:var(--gold)">강의</span> 이무리 클랜장 직강 · <b>시간제(3시간 집중)</b> <span class="prog-sub">레벨테스트 합격 필수 · 12회 이상 · 전략 심화 · 고점 돌파</span></div>
+    <div class="plans">
+      <div class="plan hot">
+        <div class="rib">기본</div>
+        <div class="pn">12회 패키지</div><div class="po">540,000원</div><div class="pp">360,000원<span class="off">-33%</span></div><div class="pd">회당 30,000원 · 1회 3시간</div>
+        <ul><li>체계적 장기 과정</li><li>단계별 전략 전수</li><li>주도권→포지션 4단계</li></ul>
+        <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
+      </div>
+      <div class="plan">
+        <div class="pn">24회 패키지</div><div class="po">970,000원</div><div class="pp">648,000원<span class="off">-33%</span></div><div class="pd">회당 27,000원 · 1회 3시간</div>
+        <ul><li>고점 돌파 집중</li><li>전적 관리 전략</li><li>회당 단가 추가 할인</li></ul>
+        <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
+      </div>
+      <div class="plan">
+        <div class="pn">36회 패키지</div><div class="po">1,300,000원</div><div class="pp">870,000원<span class="off">-33%</span></div><div class="pd">회당 24,166원 · 1회 3시간</div>
+        <ul><li>최대 혜택 구성</li><li>상위 1% 도약</li><li>시즌 풀 케어</li></ul>
+        <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
+      </div>
+    </div>
+    <p class="plan-note">강의 상담(테스트) 비용 <b>20,000원</b> · 최소 12회부터 · 클래스별 멤버 구성 후 3시간 집중 · 시간 예약제</p>
+
+    <!-- 세트 -->
+    <div class="prog-head" style="margin-top:40px"><span class="prog-tag" style="background:rgba(168,85,247,.14);color:var(--purple)">세트</span> 레슨 + 강의 결합 <span class="prog-sub">트레이너 레슨으로 다지고 · 이무리 강의로 심화 · 한 번에 신청</span></div>
+    <div class="plans">
+      <div class="plan">
+        <div class="pn">입문 세트</div><div class="po">590,000원</div><div class="pp">400,000원<span class="off">-32%</span></div><div class="pd">레슨 10판 + 강의 12회</div>
+        <ul><li>레슨 10판</li><li>+ 강의 12회</li><li>기초→전략 입문</li></ul>
+        <a class="pbtn" href="apply.html">세트 신청 →</a>
+      </div>
+      <div class="plan hot">
+        <div class="rib">추천</div>
+        <div class="pn">도약 세트</div><div class="po">1,075,000원</div><div class="pp">728,000원<span class="off">-32%</span></div><div class="pd">레슨 21판 + 강의 24회</div>
+        <ul><li>레슨 21판</li><li>+ 강의 24회</li><li>실전→심화 완성</li></ul>
+        <a class="pbtn" href="apply.html">세트 신청 →</a>
+      </div>
+      <div class="plan">
+        <div class="pn">마스터 세트</div><div class="po">1,465,000원</div><div class="pp">990,000원<span class="off">-32%</span></div><div class="pd">레슨 33판 + 강의 36회</div>
+        <ul><li>레슨 33판</li><li>+ 강의 36회</li><li>시즌 풀관리·고점</li></ul>
+        <a class="pbtn" href="apply.html">세트 신청 →</a>
+      </div>
+    </div>
+    <p class="plan-note">세트는 이미 최대 할인된 레슨·강의를 한 번에 신청하는 구성입니다 · 강의 포함으로 상담(테스트) 비용 <b>20,000원</b> 1회 · 트레이너·일정 우선 배정</p>
   </section>
+
 
   <!-- CONSULT -->
   <section id="consult">
     <div class="kick">Consultation</div>
     <div class="s-title">상담 신청</div>
     <p class="s-desc">상담비 결제 → AI 챗봇 진단 → 트레이너 자동 배정</p>
+    <a href="apply.html" style="display:block;max-width:420px;margin:0 auto 24px;background:linear-gradient(135deg,var(--gold),var(--gold-deep,#caa00f));color:#0a0a0c;text-align:center;padding:15px;border-radius:9px;font-weight:800;font-size:15px;text-decoration:none">📝 온라인 신청서 작성하기</a>
     <div class="cons">
       <div class="ccard">
         <div class="ct">레슨 상담</div><div class="cprice">15,000원</div>
-        <div class="cstep"><span class="num">1</span><span>상담비 결제 (토스뱅크)</span></div>
+        <div class="cstep"><span class="num">1</span><span>상담비 결제</span></div>
         <div class="cstep"><span class="num">2</span><span>AI 챗봇 진단 — 성향·티어·목표 분석</span></div>
         <div class="cstep"><span class="num">3</span><span>트레이너 배정 — 24시간 내 자동</span></div>
         <a class="cbtn" href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">💬 카카오로 신청하기</a>
@@ -524,7 +603,7 @@ footer b{color:var(--gold)}
       </div>
       <div class="ccard feature">
         <div class="ct">강의 상담</div><div class="cprice">20,000원</div>
-        <div class="cstep"><span class="num">1</span><span>상담비 결제 (토스뱅크)</span></div>
+        <div class="cstep"><span class="num">1</span><span>상담비 결제</span></div>
         <div class="cstep"><span class="num">2</span><span>AI 챗봇 진단 — 성향·목표 분석</span></div>
         <div class="cstep"><span class="num">3</span><span>이무리 클랜장 직접 담당</span></div>
         <a class="cbtn" href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">💬 카카오로 신청하기</a>
@@ -538,7 +617,7 @@ footer b{color:var(--gold)}
         <a class="cbtn" href="https://discord.gg/YfZD8d22wJ" target="_blank" rel="noopener">클랜 Discord 입장</a>
       </div>
     </div>
-    <div class="acct">입금 계좌 · <b>토스뱅크 1002-4781-4797</b> [무리 아카데미]</div>
+    <div class="acct">결제·납부 안내는 신청 접수 후 개별 안내드립니다.</div>
   </section>
 
   <!-- FAQ -->
@@ -555,7 +634,7 @@ footer b{color:var(--gold)}
 
       <details>
         <summary><span class="q">Q</span>비용은 어떻게 되나요?<span class="mk">+</span></summary>
-        <div class="a"><b>상담비</b> — 레슨상담 <span class="hi">15,000원</span> / 강의상담 <span class="hi">20,000원</span>. 레슨을 먼저 받으신 뒤 강의를 신청하실 경우 강의상담비는 따로 받지 않습니다(차감/면제). <b>레슨 판수</b> — 10판 40,000 / 21판 80,000 / 33판 120,000원. 입금: 토스뱅크 1002-4781-4797 [무리 아카데미].</div>
+        <div class="a"><b>상담비</b> — 레슨상담 <span class="hi">15,000원</span> / 강의상담 <span class="hi">20,000원</span>. 레슨을 먼저 받으신 뒤 강의를 신청하실 경우 강의상담비는 따로 받지 않습니다(차감/면제). <b>레슨 판수</b> — 10판 40,000 / 21판 80,000 / 33판 120,000원.</div>
       </details>
 
       <details>
@@ -586,6 +665,16 @@ footer b{color:var(--gold)}
       <details>
         <summary><span class="q">Q</span>강의 일정은 어떻게 잡나요?<span class="mk">+</span></summary>
         <div class="a">강의는 같은 실력대 수강생 3명과 <b>예약된 3시간</b> 동안 진행되어, 최소 하루이틀 전에는 일정 조율이 필요합니다. 스케줄이 유동적이시면 시간 제약이 적은 <span class="hi">레슨(판수제)</span>을 먼저 권해드립니다.</div>
+      </details>
+
+      <details>
+        <summary><span class="q">Q</span>초급·중급·심화 반은 어떻게 나뉘나요?<span class="mk">+</span></summary>
+        <div class="a">강의(이무리 직강)는 <span class="hi">상담 단계에서 객관적으로 배정</span>됩니다. ① 다시보기 리플 2~4개를 받아 플레이를 분석하고 ② 훈련장 <b>조준 정확도 테스트</b>(초급 37·중급 45·심화 52 / 정확도 80~85% 기준)와 ③ 피드백 수용도·실전 반응을 종합해 배정하며, <b>평균 3회 수강 이전에 확정</b>됩니다. 같은 실력대끼리 편성되어 "경험 차이로 못 따라가는" 일이 없습니다. (세부 테스트 방식은 상담 시 안내) 레슨(트레이너)은 담당 트레이너가 직접 수준을 보고 배정합니다.</div>
+      </details>
+
+      <details>
+        <summary><span class="q">Q</span>여러 트레이너 수업을 같이 들어도 되나요?<span class="mk">+</span></summary>
+        <div class="a">네. 레슨생은 특정 트레이너에 묶이지 않습니다. <b>준구 트레이너 레슨 + 현태 트레이너 레슨 + 이무리 강의</b>를 동시에 병행할 수 있고, 각 과정의 피드백은 따로 관리됩니다. 같은 분이라도 트레이너마다 보는 관점이 달라 배정 반이 다를 수 있는데, 이는 각 트레이너의 교정 포인트가 다르기 때문입니다.</div>
       </details>
 
       <details>
@@ -628,10 +717,10 @@ footer b{color:var(--gold)}
     <div class="tr-grid">
 
       <div class="trainer">
-        <div class="tr-head"><div class="tr-av">이</div>
+        <div class="tr-head"><div class="tr-av photo"><img alt="이무리 클랜장" src="data:image/jpeg;base64,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"></div>
           <div><div class="nm">이무리 <span style="font-size:12px;color:var(--ink-faint)">(LeeMuri)</span></div>
             <div class="role">대표강사 · GmI 클랜장</div><div class="tr-id">🎮 GmI_mri</div></div></div>
-        <div class="slogan">상위 1% 실력을 만들어드립니다</div>
+        <div class="slogan">"이 상황에서 뭘 해야 하지?"를 명쾌하게 풀어드립니다</div>
         <div class="tr-meta">배그 강의서버 국내 최초 창시. 전문 분석과 전략으로 도약시킵니다. 클래스별 <b>3시간 집중 교육</b> — 레벨테스트 합격자 한정.
           <div style="margin-top:8px"><span class="badge">강의상담 20,000</span><span class="badge">1회 3시간</span><span class="badge">50명+ 이력</span></div></div>
         <div class="tr-links">
@@ -664,19 +753,8 @@ footer b{color:var(--gold)}
           <a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">📊 전적</a>
           <a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">📺 SOOP</a></div>
       </div>
-
-      <div class="trainer">
-        <div class="tr-head"><div class="tr-av p4">도</div>
-          <div><div class="nm">한도은</div><div class="role">서바이버 · 트레이너</div><div class="tr-id">🎮 lsmGmI</div></div></div>
-        <div class="slogan">클랜전 · 팀플레이 전문</div>
-        <div class="tr-meta">서바이버 달성. 클랜전과 팀플레이 전문 — 솔로도 팀과 함께 성장하도록 밀착 지도합니다.
-          <div style="margin-top:8px"><span class="badge">팀플레이 코칭</span><span class="badge">상세 프로필 준비 중</span></div></div>
-        <div class="tr-links">
-          <a href="https://discord.com/users/835729481851076619" target="_blank" rel="noopener">💬 DM</a>
-          <a href="https://ch.sooplive.co.kr/paperhann99" target="_blank" rel="noopener">📺 SOOP</a></div>
-      </div>
     </div>
-    <p class="plan-note">🔜 서바이버 경력 예비 트레이너 1명 추가 예정</p>
+    <p class="plan-note">🔜 서바이버 경력 예비 트레이너 추가 예정</p>
   </section>
 
   <!-- CLAN -->
@@ -715,24 +793,33 @@ footer b{color:var(--gold)}
         <div class="sa">현</div><div><div class="sn">안현태 · 수석 트레이너</div><div class="ss">🎮 GmI_Hye0n · @gusxo3874</div></div><span class="go">바로가기 →</span></a>
       <a class="soop" href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">
         <div class="sa">준</div><div><div class="sn">권준구 (레빗) · 트레이너</div><div class="ss">🎮 GmI_rabbit · @kyupab1122</div></div><span class="go">바로가기 →</span></a>
-      <a class="soop" href="https://ch.sooplive.co.kr/paperhann99" target="_blank" rel="noopener">
-        <div class="sa">도</div><div><div class="sn">한도은 · 트레이너</div><div class="ss">🎮 lsmGmI · @paperhann99</div></div><span class="go">바로가기 →</span></a>
     </div>
   </section>
 
   <footer>
     <div class="logo" style="justify-content:center"><span class="mk">M</span><span>MRI ACADEMY</span></div>
     <div class="fl">
-      <a href="#proof">성과</a><a href="#plans">레슨</a><a href="#consult">상담</a>
+      <a href="#proof">성과</a><a href="#plans">레슨·강의</a><a href="#consult">상담</a>
       <a href="#trainers">트레이너</a><a href="gmi-progress.html">성장기록</a>
       <a href="lesson-schedule.html">일정</a><a href="lesson-feedback.html">코칭기록</a>
+      <a href="community.html">후기</a>
       <a href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-s2.html" target="_blank" rel="noopener">클랜컵</a>
+    </div>
+    <div class="fl">
+      <a href="terms.html">이용약관</a>
+      <a href="privacy.html"><b>개인정보처리방침</b></a>
       <a href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">카카오</a>
       <a href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener">Discord</a>
     </div>
+    <div class="bizinfo">
+      상호명: 무리아카데미 · 대표자: 이주형 · 사업자등록번호: 761-10-02908<br>
+      통신판매업신고번호: [신고번호 입력] · 사업장 주소: [사업자등록증상 주소 입력]<br>
+      고객센터: [연락처 입력] · 이메일: [이메일 입력]
+    </div>
     실력을 향한 투명한 도전, <b>MRI ACADEMY</b>와 함께.<br>
-    입금 계좌 · 토스뱅크 1002-4781-4797 [무리 아카데미]
+    <span style="color:var(--ink-faint);font-size:11.5px">MRI 아카데미는 관련 법령(학원법·전자상거래법)을 준수합니다. © 2026 MRI ACADEMY</span>
   </footer>
+
 
 </div>
 <script>
@@ -757,6 +844,30 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
   } catch (e) {
     // API 미연결 시: 표시된 기준 수치 유지 (빈 화면 방지)
     if (state) state.textContent = "현황 (기준 데이터)";
+  }
+})();
+// 실수강생 카운터 (레슨생+수강생 중복 제외 · 50명 돌파 시 정가 전환)
+(async function () {
+  const now = document.getElementById("ecNow");
+  const left = document.getElementById("ecLeft");
+  if (!now || !left) return;
+  const TARGET = 50;
+  try {
+    const r = await fetch(STATS_API + "/api/enrollment", { cache: "no-store" });
+    if (!r.ok) throw 0;
+    const d = await r.json();
+    const c = typeof d.count === "number" ? d.count : null;
+    if (c === null) throw 0;
+    now.textContent = c;
+    const remain = Math.max(0, (d.target || TARGET) - c);
+    left.textContent = remain;
+    if (remain === 0) {
+      const wrap = document.getElementById("enrollCounter");
+      if (wrap) wrap.innerHTML = '<span class="ec-now">' + c + '</span><span class="ec-unit">명 — 정가 전환 임박!</span>';
+    }
+  } catch (e) {
+    now.textContent = "19";   // API 미연결 시 기준값 (디스코드 수강생 수)
+    left.textContent = Math.max(0, TARGET - 19);
   }
 })();
 </script>

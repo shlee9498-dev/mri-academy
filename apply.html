@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>수강 신청 · MRI ACADEMY</title>
+<meta name="description" content="MRI ACADEMY 배틀그라운드 레슨/강의 온라인 신청. 작성하면 운영진에게 바로 전달됩니다.">
+<meta name="robots" content="noindex">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<style>
+:root{--bg:#0a0a0c;--bg-card:#1a1a20;--bg-elev:#20202a;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--gold-deep:#caa00f;--green:#10b981;--blue:#5ac8fa;--red:#e63946;--line:#27272a;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;background-image:radial-gradient(circle at 50% 0,rgba(245,197,24,.06),transparent 60%),linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);background-size:auto,37px 37px,37px 37px}
+.wrap{max-width:680px;margin:0 auto;padding:30px 18px 70px}
+.top{text-align:center;margin-bottom:24px}
+.kick{color:var(--gold);font-weight:800;font-size:12px;letter-spacing:.16em;text-transform:uppercase}
+h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
+.sub{color:var(--ink-dim);font-size:13.5px}
+.sec{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:14px}
+.sec h2{font-family:var(--display);font-size:14px;color:var(--gold);margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.fld{margin-bottom:15px}
+.fld:last-child{margin-bottom:0}
+.fld label{display:block;font-size:12.5px;font-weight:700;margin-bottom:7px;color:var(--ink)}
+.fld label .req{color:var(--red);margin-left:3px}
+.fld label .opt{color:var(--ink-faint);font-weight:500;font-size:11px;margin-left:5px}
+.fld input,.fld select,.fld textarea{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:11px 13px;font-family:var(--body);font-size:14px}
+.fld input:focus,.fld select:focus,.fld textarea:focus{outline:none;border-color:var(--gold-soft)}
+.fld textarea{resize:vertical;min-height:64px}
+.fld .hint{font-size:11px;color:var(--ink-faint);margin-top:5px;line-height:1.5}
+.radios,.checks{display:flex;gap:8px;flex-wrap:wrap}
+.radios label,.checks label{flex:0 0 auto;display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--line);border-radius:99px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;margin:0}
+.radios input,.checks input{width:auto;accent-color:var(--gold)}
+.radios label:has(input:checked),.checks label:has(input:checked){border-color:var(--gold-soft);background:rgba(245,197,24,.08);color:var(--gold)}
+.agree{display:flex;align-items:flex-start;gap:9px;font-size:12.5px;color:var(--ink-dim);cursor:pointer;line-height:1.5}
+.agree input{width:17px;height:17px;accent-color:var(--gold);flex-shrink:0;margin-top:2px}
+.submit{width:100%;background:linear-gradient(135deg,var(--gold),var(--gold-deep));color:#0a0a0c;border:none;border-radius:8px;padding:15px;font-weight:800;font-size:15px;cursor:pointer;margin-top:6px;transition:transform .15s}
+.submit:hover{transform:translateY(-1px)}
+.submit:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.msg{display:none;padding:16px;border-radius:8px;margin-top:14px;font-size:13.5px;line-height:1.6}
+.msg.ok{display:block;background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.35);color:var(--green)}
+.msg.err{display:block;background:rgba(230,57,70,.1);border:1px solid rgba(230,57,70,.35);color:var(--red)}
+.pii-note{font-size:11.5px;color:var(--ink-faint);line-height:1.6;margin-top:14px;padding:13px;background:var(--bg-card);border:1px dashed var(--line);border-radius:8px}
+.back{display:inline-block;margin-top:20px;color:var(--gold);text-decoration:none;font-weight:700;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="kick">Application</div>
+    <h1>수강 신청</h1>
+    <p class="sub">작성해 주시면 <b style="color:var(--gold)">운영진에게 바로 전달</b>됩니다. 확인 후 디스코드/카카오로 일정·결제를 안내드려요.</p>
+  </div>
+
+  <form id="form">
+    <!-- 1. 기본 -->
+    <div class="sec">
+      <h2>📝 기본 정보</h2>
+      <div class="fld">
+        <label>이름<span class="req">*</span></label>
+        <input name="name" type="text" required placeholder="실명">
+      </div>
+      <div class="fld">
+        <label>성별<span class="req">*</span></label>
+        <div class="radios">
+          <label><input type="radio" name="gender" value="남" required>남</label>
+          <label><input type="radio" name="gender" value="여">여</label>
+          <label><input type="radio" name="gender" value="비공개">비공개</label>
+        </div>
+      </div>
+      <div class="fld">
+        <label>디스코드 계정<span class="req">*</span></label>
+        <input name="discord" type="text" required placeholder="예: cdairepme">
+      </div>
+      <div class="fld">
+        <label>연락처<span class="req">*</span></label>
+        <input name="phone" type="tel" required placeholder="010-0000-0000" inputmode="numeric">
+      </div>
+      <div class="fld">
+        <label>생년월일<span class="opt">(선택)</span></label>
+        <input name="birth" type="text" placeholder="YYMMDD" inputmode="numeric">
+      </div>
+    </div>
+
+    <!-- 2. 신청 -->
+    <div class="sec">
+      <h2>📚 신청 구분</h2>
+      <div class="fld">
+        <label>신청 항목<span class="req">*</span></label>
+        <select name="applyType" required>
+          <option value="">선택하세요</option>
+          <option>1:1 집중 레슨</option>
+          <option>그룹 레슨</option>
+          <option>강의 (이무리 직강)</option>
+          <option>레벨테스트 / 상담</option>
+          <option>아직 모르겠음 (상담 후 결정)</option>
+        </select>
+      </div>
+      <div class="fld">
+        <label>유입 경로<span class="req">*</span></label>
+        <select name="source" required>
+          <option value="">선택하세요</option>
+          <option>유튜브 라이브만 보고</option>
+          <option>유튜브 영상(롱/숏폼) 보고</option>
+          <option>인스타그램</option>
+          <option>숨고</option>
+          <option>지인 추천 / 트레이너 로비</option>
+          <option>검색(구글/네이버)</option>
+          <option>기타</option>
+        </select>
+      </div>
+      <div class="fld">
+        <label>추천 트레이너<span class="opt">(로비 받았을 경우)</span></label>
+        <input name="trainer" type="text" placeholder="트레이너 닉네임">
+      </div>
+    </div>
+
+    <!-- 3. 실력 -->
+    <div class="sec">
+      <h2>🎮 배틀그라운드 정보</h2>
+      <div class="fld">
+        <label>플랫폼<span class="req">*</span></label>
+        <div class="radios">
+          <label><input type="radio" name="platform" value="steam" required>스팀</label>
+          <label><input type="radio" name="platform" value="kakao">카카오</label>
+        </div>
+      </div>
+      <div class="fld">
+        <label>인게임 닉네임<span class="req">*</span></label>
+        <input name="nickname" type="text" required placeholder="예: psh1838">
+        <div class="hint">입력하시면 신청과 동시에 현재 시즌 전적이 자동 진단됩니다.</div>
+      </div>
+      <div class="fld">
+        <label>최근 2시즌 최고 티어<span class="opt">(선택)</span></label>
+        <input name="tier" type="text" placeholder="예: 다이아 2 / 모름">
+      </div>
+      <div class="fld">
+        <label>주 플레이 시간<span class="req">*</span></label>
+        <input name="playtime" type="text" required placeholder="예: 주말 저녁·밤, 가끔 평일 오후">
+      </div>
+      <div class="fld">
+        <label>집중 교정 희망<span class="req">*</span></label>
+        <div class="checks">
+          <label><input type="checkbox" name="focus" value="운영 판단">운영 판단</label>
+          <label><input type="checkbox" name="focus" value="교전">교전</label>
+          <label><input type="checkbox" name="focus" value="샷 피지컬">샷 피지컬</label>
+          <label><input type="checkbox" name="focus" value="포지션">포지션</label>
+          <label><input type="checkbox" name="focus" value="투척">투척</label>
+          <label><input type="checkbox" name="focus" value="오더/브리핑">오더/브리핑</label>
+        </div>
+      </div>
+      <div class="fld">
+        <label>추가로 하고 싶은 말<span class="opt">(선택)</span></label>
+        <textarea name="memo" placeholder="목표, 궁금한 점 등 자유롭게"></textarea>
+      </div>
+    </div>
+
+    <div class="sec">
+      <label class="agree">
+        <input type="checkbox" id="agree" required>
+        <span>개인정보(이름·연락처·디스코드 등)를 <b style="color:var(--gold)">수강 상담 목적</b>으로 수집·이용하는 데 동의합니다. 입력 정보는 운영진에게만 전달되며 사이트에 저장·공개되지 않습니다.</span>
+      </label>
+    </div>
+
+    <button class="submit" id="submit" type="submit">신청서 보내기</button>
+    <div class="msg" id="msg"></div>
+    <div class="pii-note">
+      💳 결제 계좌·증빙은 운영진 확인 후 디스코드/카카오에서 안내드립니다. 신청 단계에서는 받지 않습니다.<br>
+      문의: <a href="https://open.kakao.com/o/sAUU6OGf" style="color:var(--gold)">카카오</a> · <a href="https://discord.gg/szFa7teEJs" style="color:var(--gold)">디스코드</a>
+    </div>
+  </form>
+
+  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
+</div>
+
+<script>
+const API_BASE = "https://mri-academy-production.up.railway.app";
+const form = document.getElementById("form");
+const submit = document.getElementById("submit");
+const msg = document.getElementById("msg");
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!document.getElementById("agree").checked) { show("err", "개인정보 수집·이용에 동의해 주세요."); return; }
+  const fd = new FormData(form);
+  const focus = fd.getAll("focus");
+  const payload = {
+    name: fd.get("name"), gender: fd.get("gender"), discord: fd.get("discord"),
+    phone: fd.get("phone"), birth: fd.get("birth") || "",
+    applyType: fd.get("applyType"), source: fd.get("source"), trainer: fd.get("trainer") || "",
+    platform: fd.get("platform"), nickname: fd.get("nickname"),
+    tier: fd.get("tier") || "", playtime: fd.get("playtime"),
+    focus: focus.join(", "), memo: fd.get("memo") || "",
+  };
+  if (!focus.length) { show("err", "집중 교정 희망을 하나 이상 선택해 주세요."); return; }
+
+  submit.disabled = true; submit.textContent = "전송 중…";
+  try {
+    const r = await fetch(`${API_BASE}/api/apply`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "전송 실패");
+    show("ok", "✅ 신청서가 운영진에게 전달됐습니다! 곧 디스코드/카카오로 연락드릴게요. 창을 닫으셔도 됩니다.");
+    form.querySelectorAll("input,select,textarea,button").forEach(el => el.disabled = true);
+  } catch (err) {
+    show("err", "❌ " + (err.message || "전송 오류") + " — 디스코드/카카오로 직접 문의해 주세요.");
+    submit.disabled = false; submit.textContent = "신청서 보내기";
+  }
+});
+function show(type, text) { msg.className = "msg " + type; msg.textContent = text; msg.scrollIntoView({behavior:"smooth", block:"center"}); }
+</script>
+</body>
+</html>
