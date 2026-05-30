@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>트레이너 지원서 | MRI ACADEMY</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0c; --bg-card:#1a1a20; --bg-elev:#20202a;
+  --ink:#f4f4f5; --ink-dim:#a1a1aa; --ink-faint:#71717a;
+  --gold:#f5c518; --gold-soft:rgba(245,197,24,.3); --gold-deep:#caa00f;
+  --green:#10b981; --blue:#5ac8fa; --red:#e63946; --line:#27272a;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:"Pretendard Variable",Pretendard,-apple-system,sans-serif;
+  color:var(--ink); background-color:var(--bg);
+  background-image:
+    radial-gradient(circle at 50% -10%, rgba(245,197,24,.10), transparent 55%),
+    linear-gradient(rgba(245,197,24,.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(245,197,24,.022) 1px, transparent 1px);
+  background-size:auto, 37px 37px, 37px 37px;
+  line-height:1.6; -webkit-font-smoothing:antialiased; padding:40px 0 70px;
+}
+.wrap{max-width:600px;margin:0 auto;padding:0 22px}
+.top{text-align:center;margin-bottom:34px}
+.kick{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.18em;color:var(--gold);
+  border:1px solid var(--gold-soft);border-radius:999px;padding:5px 14px;margin-bottom:16px}
+.top h1{font-family:"Archivo Black",sans-serif;font-size:30px;letter-spacing:-.02em;margin-bottom:8px}
+.top .sub{color:var(--ink-dim);font-size:14.5px}
+
+.sec{background:var(--bg-card);border:1px solid var(--line);border-radius:16px;padding:22px;margin-bottom:16px}
+.sec > .lbl{font-size:13px;font-weight:700;letter-spacing:.04em;color:var(--gold);margin-bottom:16px;text-transform:uppercase}
+.fld{margin-bottom:15px}
+.fld:last-child{margin-bottom:0}
+.fld label{display:block;font-size:13.5px;color:var(--ink-dim);margin-bottom:6px}
+.fld label .req{color:var(--gold);margin-left:3px}
+.fld input,.fld textarea{width:100%;background:var(--bg-elev);border:1px solid var(--line);border-radius:10px;
+  color:var(--ink);font-size:15px;padding:12px 14px;font-family:inherit;outline:none;transition:border-color .12s}
+.fld input:focus,.fld textarea:focus{border-color:var(--gold-soft)}
+.fld textarea{resize:vertical;min-height:84px}
+.fld input::placeholder,.fld textarea::placeholder{color:var(--ink-faint)}
+
+.radios{display:flex;flex-wrap:wrap;gap:8px}
+.radios label{flex:1;min-width:90px;text-align:center;background:var(--bg-elev);border:1px solid var(--line);
+  border-radius:10px;padding:11px 8px;font-size:14px;color:var(--ink-dim);cursor:pointer;transition:.12s}
+.radios input{display:none}
+.radios input:checked + span{color:#000}
+.radios label:has(input:checked){background:var(--gold);border-color:var(--gold);color:#000;font-weight:700}
+
+.checks{display:grid;gap:11px}
+.checks label{display:flex;gap:11px;align-items:flex-start;font-size:14px;color:var(--ink-dim);cursor:pointer;line-height:1.5}
+.checks input{flex:0 0 18px;width:18px;height:18px;margin-top:2px;accent-color:var(--gold)}
+.checks label b{color:var(--ink);font-weight:600}
+
+.agree{display:flex;gap:11px;align-items:flex-start;font-size:13.5px;color:var(--ink-dim);cursor:pointer;
+  background:var(--bg-elev);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:16px;line-height:1.55}
+.agree input{flex:0 0 18px;width:18px;height:18px;margin-top:1px;accent-color:var(--gold)}
+
+.pii-note{font-size:12.5px;color:var(--ink-faint);margin-bottom:18px;padding:0 4px}
+.submit{width:100%;background:var(--gold);color:#000;font-weight:800;font-size:16px;border:none;border-radius:12px;
+  padding:16px;cursor:pointer;transition:transform .12s,opacity .12s}
+.submit:hover{transform:translateY(-1px)}
+.submit:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.msg{margin-top:14px;text-align:center;font-size:14px;min-height:20px}
+.msg.ok{color:var(--green)}
+.msg.err{color:var(--red)}
+.back{display:block;text-align:center;margin-top:24px;color:var(--ink-faint);font-size:13px;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="kick">GmI · MRI ACADEMY</div>
+    <h1>트레이너 지원서</h1>
+    <p class="sub">아래 내용을 작성해 주시면 검토 후 디스코드로 연락드립니다.</p>
+  </div>
+
+  <div class="sec">
+    <div class="lbl">지원 트랙 *</div>
+    <div class="fld">
+      <div class="radios">
+        <label><input type="radio" name="track" value="A"><span>A · 서바이버 유지 (우대)</span></label>
+        <label><input type="radio" name="track" value="B"><span>B · 양성 과정 (교육)</span></label>
+      </div>
+    </div>
+    <label class="agree" style="margin:8px 0 0"><input type="checkbox" id="btrack"><span><b style="color:var(--ink)">B 트랙 지원자만 체크:</b> 한 시즌 양성 교육(수강료 30만원)을 신청하며, 교육 이수가 트레이너 임명을 보장하지 않고(승격은 서바이버 달성·검증 통과 기준) 중도 환불은 학원법 환불 기준을 따른다는 점에 동의합니다.</span></label>
+  </div>
+
+  <div class="sec">
+    <div class="lbl">기본 정보</div>
+    <div class="fld"><label>이름<span class="req">*</span></label><input id="name" placeholder="실명"></div>
+    <div class="fld"><label>생년월일<span class="req">*</span></label><input id="birth" placeholder="예: 2000-01-01"></div>
+    <div class="fld"><label>연락처<span class="req">*</span></label><input id="contact" placeholder="휴대폰 번호"></div>
+    <div class="fld"><label>디스코드 ID<span class="req">*</span></label><input id="discord" placeholder="예: zmdk1373"></div>
+  </div>
+
+  <div class="sec">
+    <div class="lbl">게임 정보</div>
+    <div class="fld"><label>현재 티어<span class="req">*</span></label><input id="tier" placeholder="예: 서바이버 / 마스터"></div>
+    <div class="fld"><label>인게임 닉네임<span class="req">*</span></label><input id="ign" placeholder="인게임 닉"></div>
+    <div class="fld"><label>플랫폼<span class="req">*</span></label>
+      <div class="radios">
+        <label><input type="radio" name="platform" value="PC"><span>PC</span></label>
+        <label><input type="radio" name="platform" value="모바일"><span>모바일</span></label>
+        <label><input type="radio" name="platform" value="크로스"><span>크로스</span></label>
+      </div>
+    </div>
+    <div class="fld"><label>현재 소속 클랜</label><input id="clan" placeholder="없으면 비워두세요"></div>
+  </div>
+
+  <div class="sec">
+    <div class="lbl">검증 서약 (필수)</div>
+    <div class="checks">
+      <label><input type="checkbox" class="vow"><span>저는 <b>대리(계정 대리 플레이) 이력이 없으며</b>, 향후에도 절대 하지 않을 것을 서약합니다.</span></label>
+      <label><input type="checkbox" class="vow"><span>저는 <b>계정 거래·공유 이력을 전부 처분하였거나, 처분에 동의</b>하며 이후 하지 않을 것을 서약합니다.</span></label>
+      <label><input type="checkbox" class="vow"><span>저는 신원 확인을 위한 <b>신상정보(신분증 등) 공개에 동의</b>합니다.</span></label>
+      <label><input type="checkbox" class="vow"><span>저는 <b>수업 시간 약속을 최우선으로 준수</b>할 것에 동의합니다.</span></label>
+      <label><input type="checkbox" class="vow"><span>선발 시 <b>비밀유지·경업금지 등 업무위탁 계약 체결에 동의</b>합니다.</span></label>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="lbl">기타</div>
+    <div class="fld"><label>코칭 / 방송 경력</label><textarea id="career" placeholder="있으면 자유롭게 적어주세요 (없으면 비워두세요)"></textarea></div>
+    <div class="fld"><label>지원 동기<span class="req">*</span></label><textarea id="motive" placeholder="간단히 적어주세요"></textarea></div>
+    <div class="fld"><label>가능한 시간대<span class="req">*</span></label><input id="time" placeholder="예: 평일 저녁 8시~12시, 주말 오후"></div>
+  </div>
+
+  <label class="agree"><input type="checkbox" id="pii"><span>개인정보 수집·이용에 동의합니다. (선발 검토 목적으로만 사용하며, 미선발 시 파기합니다.)</span></label>
+
+  <p class="pii-note">※ 제출하신 정보는 트레이너 선발 검토 용도로만 사용됩니다.</p>
+  <button class="submit" id="btn" onclick="submitForm()">지원서 제출</button>
+  <div class="msg" id="msg"></div>
+  <a class="back" href="trainer-recruit.html">← 모집 안내로 돌아가기</a>
+
+</div>
+
+<script>
+const API_BASE="https://mri-academy-production.up.railway.app";
+
+function val(id){ const el=document.getElementById(id); return el?el.value.trim():""; }
+function platformVal(){ const el=document.querySelector('input[name="platform"]:checked'); return el?el.value:""; }
+function trackVal(){ const el=document.querySelector('input[name="track"]:checked'); return el?el.value:""; }
+
+function submitForm(){
+  const msg=document.getElementById("msg");
+  const btn=document.getElementById("btn");
+  msg.className="msg"; msg.textContent="";
+
+  const name=val("name"), birth=val("birth"), contact=val("contact"), discord=val("discord");
+  const tier=val("tier"), ign=val("ign"), platform=platformVal(), clan=val("clan");
+  const track=trackVal();
+  const career=val("career"), motive=val("motive"), time=val("time");
+  const vows=document.querySelectorAll(".vow");
+  const allVows=Array.from(vows).every(function(c){return c.checked;});
+  const pii=document.getElementById("pii").checked;
+
+  if(!name||!birth||!contact||!discord||!tier||!ign||!platform||!track||!motive||!time){
+    msg.className="msg err"; msg.textContent="필수 항목(*)을 모두 입력해 주세요."; return;
+  }
+  if(track==="B" && !document.getElementById("btrack").checked){
+    msg.className="msg err"; msg.textContent="B(양성 과정) 트랙은 교육 조건 동의가 필요합니다."; return;
+  }
+  if(!allVows){ msg.className="msg err"; msg.textContent="검증 서약 5개 항목에 모두 동의해야 지원할 수 있습니다."; return; }
+  if(!pii){ msg.className="msg err"; msg.textContent="개인정보 수집·이용 동의가 필요합니다."; return; }
+
+  const summary=
+    "[트레이너 지원 · "+track+" 트랙]\\n"+
+    "이름: "+name+" / 생년월일: "+birth+"\\n"+
+    "연락처: "+contact+" / 디스코드: "+discord+"\\n"+
+    "티어: "+tier+" / 인게임닉: "+ign+" / 플랫폼: "+platform+" / 클랜: "+(clan||"-")+"\\n"+
+    "경력: "+(career||"-")+"\\n"+
+    "지원동기: "+motive+"\\n"+
+    "가능시간: "+time+"\\n"+
+    "서약: 대리없음·계정처분·신상공개·시간준수·계약동의 모두 동의";
+
+  const payload={
+    category:"트레이너 지원",
+    type:"trainer", track:track,
+    name:name, birth:birth, contact:contact, discord:discord,
+    tier:tier, ign:ign, platform:platform, clan:clan,
+    career:career, motive:motive, time:time,
+    message:summary, content:summary
+  };
+
+  btn.disabled=true; btn.textContent="제출 중...";
+  fetch(API_BASE+"/api/apply",{
+    method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify(payload)
+  }).then(function(r){
+    if(!r.ok) throw new Error("server");
+    msg.className="msg ok";
+    msg.textContent="지원이 접수되었습니다. 검토 후 디스코드로 연락드리겠습니다. 감사합니다!";
+    btn.textContent="제출 완료";
+  }).catch(function(){
+    msg.className="msg err";
+    msg.textContent="전송에 실패했습니다. 잠시 후 다시 시도하거나 #상담-문의로 연락 주세요.";
+    btn.disabled=false; btn.textContent="지원서 제출";
+  });
+}
+</script>
+</body>
+</html>

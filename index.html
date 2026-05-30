@@ -222,6 +222,20 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .promo-banner .pb-counter .ec-sep{color:var(--ink-faint)}
 .promo-banner .pb-counter .ec-target b{color:var(--gold)}
 .promo-banner .pb-sub{font-size:12.5px;color:var(--ink-dim);line-height:1.5}
+.enroll-bars{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0 12px;text-align:left}
+.ebar{background:rgba(0,0,0,.2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.ebar-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.ebar-name{font-weight:800;font-size:13.5px;color:var(--blue)}
+.ebar-name.gold{color:var(--gold)}
+.ebar-num{font-size:12px;color:var(--ink-dim)}
+.ebar-num b{font-family:var(--display);color:var(--ink);font-size:15px}
+.ebar-track{height:9px;border-radius:99px;background:#2a2a30;overflow:hidden}
+.ebar-fill{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--gold),var(--gold-deep));transition:width .9s ease}
+.ebar-fill.les{background:linear-gradient(90deg,var(--blue),#2b9fd4)}
+.ebar-fill.full{background:linear-gradient(90deg,var(--green),#0e9f6e)}
+.ebar-left{font-size:11.5px;color:var(--ink-faint);margin-top:7px}
+.ebar-left b{color:var(--gold)}
+@media(max-width:560px){.enroll-bars{grid-template-columns:1fr}}
 .plan .pd{font-size:12.5px;color:var(--ink-faint);margin-bottom:16px}
 .plan ul{list-style:none;margin-bottom:20px}
 .plan li{font-size:13px;color:var(--ink-dim);padding:6px 0;display:flex;gap:8px}
@@ -367,7 +381,7 @@ footer b{color:var(--gold)}
       <a href="#proof">성과</a><a href="#plans">레슨</a><a href="#consult">상담</a>
       <a href="#faq">FAQ</a>
       <a href="lesson-schedule.html">일정</a>
-      <a href="#trainers">트레이너</a><a href="#clan">클랜</a>
+      <a href="#trainers">트레이너</a><a href="trainer-recruit.html">트레이너모집</a><a href="#clan">클랜</a>
       <a href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-s2.html" target="_blank" rel="noopener">클랜컵</a>
       <a href="gmi-progress.html">성장기록</a>
       <a href="lesson-feedback.html">코칭기록</a>
@@ -509,13 +523,20 @@ footer b{color:var(--gold)}
 
     <div class="promo-banner">
       <div class="pb-tag">🔥 OPEN 런칭 특가</div>
-      <div class="pb-main">지금은 <b>오픈 기념 특가</b> — 정가 대비 최대 <b style="color:var(--gold)">33% 할인</b></div>
-      <div class="pb-counter" id="enrollCounter">
-        <span class="ec-now" id="ecNow">··</span><span class="ec-unit">명 수강 중</span>
-        <span class="ec-sep">·</span>
-        <span class="ec-target">50명까지 <b id="ecLeft">··</b>명</span>
+      <div class="pb-main">지금은 <b>오픈 기념 특가</b> 진행 중 — 아래 정원 도달 시 정가로 전환됩니다</div>
+      <div class="enroll-bars">
+        <div class="ebar">
+          <div class="ebar-top"><span class="ebar-name">레슨</span><span class="ebar-num"><b id="lesNow">··</b> / 50명</span></div>
+          <div class="ebar-track"><div class="ebar-fill les" id="lesFill"></div></div>
+          <div class="ebar-left">정가 전환까지 <b id="lesLeft">··</b></div>
+        </div>
+        <div class="ebar">
+          <div class="ebar-top"><span class="ebar-name gold">강의</span><span class="ebar-num"><b id="couNow">··</b> / 25명</span></div>
+          <div class="ebar-track"><div class="ebar-fill" id="couFill"></div></div>
+          <div class="ebar-left">정가 전환까지 <b id="couLeft">··</b></div>
+        </div>
       </div>
-      <div class="pb-sub">실수강생(레슨+강의 중복 제외) <b>50명 돌파 시, 그 주 다음 주부터 정가로 전환</b>됩니다. 자리가 한정되어 있으니 <b style="color:var(--gold)">선착순</b>으로 지금 신청하세요.</div>
+      <div class="pb-sub">레슨생 <b>50명</b> · 강의 수강생 <b>25명</b> 돌파 시 <b>각각 그 주 다음 주부터 정가로 전환</b>됩니다. 자리가 한정되어 있으니 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
     </div>
 
     <!-- 레슨 -->
@@ -754,7 +775,7 @@ footer b{color:var(--gold)}
           <a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">📺 SOOP</a></div>
       </div>
     </div>
-    <p class="plan-note">🔜 서바이버 경력 예비 트레이너 추가 예정</p>
+    <p class="plan-note">🔜 함께할 트레이너를 모집합니다 · <a href="trainer-recruit.html" style="color:var(--gold);font-weight:700;text-decoration:none">트레이너 모집 안내 →</a></p>
   </section>
 
   <!-- CLAN -->
@@ -800,7 +821,7 @@ footer b{color:var(--gold)}
     <div class="logo" style="justify-content:center"><span class="mk">M</span><span>MRI ACADEMY</span></div>
     <div class="fl">
       <a href="#proof">성과</a><a href="#plans">레슨·강의</a><a href="#consult">상담</a>
-      <a href="#trainers">트레이너</a><a href="gmi-progress.html">성장기록</a>
+      <a href="#trainers">트레이너</a><a href="trainer-recruit.html">트레이너 모집</a><a href="gmi-progress.html">성장기록</a>
       <a href="lesson-schedule.html">일정</a><a href="lesson-feedback.html">코칭기록</a>
       <a href="community.html">후기</a>
       <a href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-s2.html" target="_blank" rel="noopener">클랜컵</a>
@@ -846,29 +867,32 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
     if (state) state.textContent = "현황 (기준 데이터)";
   }
 })();
-// 실수강생 카운터 (레슨생+수강생 중복 제외 · 50명 돌파 시 정가 전환)
+// 정가 전환 진행바 (레슨생 50 / 수강생 25 · 각각 독립 트리거 · /api/stats 구동)
 (async function () {
-  const now = document.getElementById("ecNow");
-  const left = document.getElementById("ecLeft");
-  if (!now || !left) return;
-  const TARGET = 50;
-  try {
-    const r = await fetch(STATS_API + "/api/enrollment", { cache: "no-store" });
-    if (!r.ok) throw 0;
-    const d = await r.json();
-    const c = typeof d.count === "number" ? d.count : null;
-    if (c === null) throw 0;
-    now.textContent = c;
-    const remain = Math.max(0, (d.target || TARGET) - c);
-    left.textContent = remain;
-    if (remain === 0) {
-      const wrap = document.getElementById("enrollCounter");
-      if (wrap) wrap.innerHTML = '<span class="ec-now">' + c + '</span><span class="ec-unit">명 — 정가 전환 임박!</span>';
-    }
-  } catch (e) {
-    now.textContent = "19";   // API 미연결 시 기준값 (디스코드 수강생 수)
-    left.textContent = Math.max(0, TARGET - 19);
+  const lesNow = document.getElementById("lesNow"), lesFill = document.getElementById("lesFill"), lesLeft = document.getElementById("lesLeft");
+  const couNow = document.getElementById("couNow"), couFill = document.getElementById("couFill"), couLeft = document.getElementById("couLeft");
+  if (!lesNow || !couNow) return;
+  function setBar(nowEl, fillEl, leftEl, count, target) {
+    const c = Math.max(0, count | 0);
+    nowEl.textContent = c;
+    fillEl.style.width = Math.min(100, Math.round((c / target) * 100)) + "%";
+    const remain = Math.max(0, target - c);
+    if (remain === 0) { fillEl.classList.add("full"); leftEl.textContent = "전환 임박!"; }
+    else { leftEl.textContent = remain + "명"; }
   }
+  let les = 38, cou = 17; // API 미연결 시 기준값 (2026-05-31)
+  try {
+    const r = await fetch(STATS_API + "/api/stats", { cache: "no-store" });
+    if (r.ok) {
+      const d = await r.json();
+      if (d && d.counts) {
+        if (typeof d.counts.lessonseng === "number") les = d.counts.lessonseng;
+        if (typeof d.counts.suganseng === "number") cou = d.counts.suganseng;
+      }
+    }
+  } catch (e) { /* 기준값 유지 */ }
+  setBar(lesNow, lesFill, lesLeft, les, 50);
+  setBar(couNow, couFill, couLeft, cou, 25);
 })();
 </script>
 <!-- 챗봇 위젯 -->

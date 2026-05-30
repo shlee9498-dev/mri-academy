@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>트레이너 모집 | MRI ACADEMY</title>
+<meta name="description" content="MRI ACADEMY · GmI 클랜에서 함께할 배틀그라운드 트레이너를 모집합니다. 투명한 수익 배분, 체계적인 커리큘럼, 검증된 팀.">
+<meta property="og:title" content="MRI ACADEMY 트레이너 모집">
+<meta property="og:description" content="검증된 트레이너와 함께 성장하는 배그 코칭 아카데미. 지금 지원하세요.">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0c; --bg-card:#1a1a20; --bg-elev:#20202a;
+  --ink:#f4f4f5; --ink-dim:#a1a1aa; --ink-faint:#71717a;
+  --gold:#f5c518; --gold-soft:rgba(245,197,24,.3); --gold-deep:#caa00f;
+  --green:#10b981; --blue:#5ac8fa; --red:#e63946; --line:#27272a;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:"Pretendard Variable",Pretendard,-apple-system,sans-serif;
+  color:var(--ink); background-color:var(--bg);
+  background-image:
+    radial-gradient(circle at 50% -10%, rgba(245,197,24,.12), transparent 55%),
+    linear-gradient(rgba(245,197,24,.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(245,197,24,.022) 1px, transparent 1px);
+  background-size:auto, 37px 37px, 37px 37px;
+  line-height:1.65; -webkit-font-smoothing:antialiased;
+}
+.disp{font-family:"Archivo Black",sans-serif;letter-spacing:-.02em}
+.wrap{max-width:840px;margin:0 auto;padding:0 22px}
+
+.hero{text-align:center;padding:84px 0 56px}
+.kick{display:inline-block;font-size:13px;font-weight:700;letter-spacing:.18em;color:var(--gold);
+  border:1px solid var(--gold-soft);border-radius:999px;padding:6px 16px;margin-bottom:24px}
+.hero h1{font-size:clamp(34px,7vw,58px);line-height:1.12;margin-bottom:18px}
+.hero h1 b{color:var(--gold)}
+.hero .lead{font-size:17px;color:var(--ink-dim);max-width:560px;margin:0 auto 32px}
+.cta{display:inline-block;background:var(--gold);color:#000;font-weight:800;font-size:16px;
+  padding:15px 38px;border-radius:12px;text-decoration:none;transition:transform .12s,box-shadow .12s;
+  box-shadow:0 8px 30px rgba(245,197,24,.25)}
+.cta:hover{transform:translateY(-2px);box-shadow:0 12px 38px rgba(245,197,24,.38)}
+.cta.ghost{background:transparent;color:var(--gold);border:1px solid var(--gold-soft);box-shadow:none}
+
+.sec{padding:40px 0;border-top:1px solid var(--line)}
+.sec h2{font-size:24px;margin-bottom:8px}
+.sec h2 span{color:var(--gold)}
+.sec .desc{color:var(--ink-dim);font-size:15px;margin-bottom:26px}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.card{background:var(--bg-card);border:1px solid var(--line);border-radius:14px;padding:22px}
+.card h3{font-size:16px;margin-bottom:8px;color:var(--ink)}
+.card h3 i{font-style:normal;color:var(--gold);margin-right:7px}
+.card p{font-size:14px;color:var(--ink-dim)}
+
+.steps{display:flex;flex-direction:column;gap:12px}
+.step{display:flex;gap:16px;align-items:flex-start;background:var(--bg-card);
+  border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+.step .n{flex:0 0 34px;height:34px;border-radius:9px;background:var(--bg-elev);color:var(--gold);
+  font-family:"Archivo Black",sans-serif;display:flex;align-items:center;justify-content:center;font-size:15px}
+.step .t{font-size:15px}
+.step .t b{color:var(--ink)}
+.step .t span{display:block;color:var(--ink-dim);font-size:13.5px;margin-top:3px}
+
+.reqs{list-style:none;display:grid;gap:10px}
+.reqs li{display:flex;gap:12px;align-items:flex-start;font-size:15px;color:var(--ink-dim)}
+.reqs li b{color:var(--gold);flex:0 0 auto}
+.reqs li em{color:var(--ink);font-style:normal}
+
+.note{margin-top:20px;font-size:13px;color:var(--ink-faint);background:var(--bg-elev);
+  border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+
+.endcta{text-align:center;padding:56px 0 32px}
+.endcta h2{font-size:26px;margin-bottom:20px}
+
+footer{text-align:center;padding:34px 0 60px;color:var(--ink-faint);font-size:12.5px;border-top:1px solid var(--line)}
+footer a{color:var(--ink-faint)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <section class="hero">
+    <div class="kick">GmI · MRI ACADEMY</div>
+    <h1 class="disp">함께할 <b>트레이너</b>를<br>찾습니다</h1>
+    <p class="lead">실력은 기본, 가르치는 것에 진심인 분.<br>검증된 팀에서 안정적으로 코칭에 집중하실 분을 모십니다.</p>
+    <a class="cta" href="trainer-apply.html">지원하기 →</a>
+  </section>
+
+  <section class="sec">
+    <h2>이런 <span>분</span>을 찾습니다</h2>
+    <p class="desc">실력 못지않게 태도와 신뢰를 봅니다.</p>
+    <div class="grid">
+      <div class="card"><h3><i>◆</i>서바이버급 실력</h3><p>현재 서바이버 이상, 또는 그에 준하는 실전 기량을 갖추신 분.</p></div>
+      <div class="card"><h3><i>◆</i>가르치는 진심</h3><p>"왜 그렇게 해야 하는지"를 풀어서 설명할 수 있는 분.</p></div>
+      <div class="card"><h3><i>◆</i>약속을 지키는 분</h3><p>정해진 수업 시간을 무엇보다 우선으로 지킬 수 있는 분.</p></div>
+      <div class="card"><h3><i>◆</i>정정당당한 분</h3><p>정직한 플레이 이력과 신뢰를 최우선으로 하는 분.</p></div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <h2>함께하면 <span>좋은 점</span></h2>
+    <p class="desc">트레이너가 코칭에만 집중할 수 있도록 설계했습니다.</p>
+    <div class="grid">
+      <div class="card"><h3><i>＄</i>투명한 수익 배분</h3><p>본인이 유치하고 직접 수업하면 <b style="color:var(--gold)">최대 70%</b>. 매월 정해진 날 투명하게 정산합니다.</p></div>
+      <div class="card"><h3><i>↗</i>안정적인 수강생 유입</h3><p>아카데미·클랜·방송 채널을 통한 꾸준한 신규 유입으로 코칭에만 집중.</p></div>
+      <div class="card"><h3><i>▥</i>체계적인 시스템</h3><p>반 배정·피드백 양식·커리큘럼이 갖춰져 있어 처음에도 안정적으로 시작.</p></div>
+      <div class="card"><h3><i>★</i>GmI 클랜 소속</h3><p>검증된 팀의 일원으로 함께 성장하고 활동합니다.</p></div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <h2>지원 <span>트랙</span></h2>
+    <p class="desc">실력과 상황에 따라 두 가지 경로로 함께할 수 있습니다.</p>
+    <div class="grid">
+      <div class="card">
+        <h3><i>A</i>즉시 검증형 (우대)</h3>
+        <p>이번 시즌 <b style="color:var(--gold)">본인 명의 계정</b>으로 <b style="color:var(--gold)">서바이버</b>를 유지하신 분. 별도 양성 과정 없이 곧바로 검증 절차로 진행합니다.</p>
+      </div>
+      <div class="card">
+        <h3><i>B</i>육성형 (양성 과정)</h3>
+        <p>아직 서바이버엔 못 미치지만 그에 준하는 실력과 성장 의지가 있는 분. 한 시즌 동안 <b style="color:var(--gold)">이무리 직강 양성 과정</b>을 거쳐, 서바이버 달성·검증 통과 시 트레이너로 승격합니다.</p>
+      </div>
+    </div>
+    <div class="note">※ B 트랙은 한 시즌 양성 교육(수강료 30만원)을 포함합니다. <b style="color:var(--ink)">교육 이수가 트레이너 임명을 보장하지는 않으며</b>(승격은 서바이버 달성·검증 통과 기준), 중도 환불은 학원법 환불 기준을 따릅니다. 양성 과정은 본인 실력 향상 자체로도 도움이 되도록 설계되어 있습니다.</div>
+  </section>
+
+  <section class="sec">
+    <h2>검증 <span>절차</span></h2>
+    <p class="desc">MRI ACADEMY는 엄격한 검증을 거친 트레이너만 함께합니다. 그래서 수강생이 믿고 맡깁니다.</p>
+    <div class="steps">
+      <div class="step"><div class="n disp">1</div><div class="t"><b>지원서 제출</b><span>기본 정보와 게임 이력, 기본 서약을 작성해 제출합니다.</span></div></div>
+      <div class="step"><div class="n disp">2</div><div class="t"><b>무결성 검증</b><span>정직한 플레이 이력과 신원 확인 등 기본 검증을 진행합니다.</span></div></div>
+      <div class="step"><div class="n disp">3</div><div class="t"><b>GmI 클랜 입단</b><span>검증을 통과하시면 클랜에 합류합니다.</span></div></div>
+      <div class="step"><div class="n disp">4</div><div class="t"><b>한 시즌 함께</b><span>실력·인성·게임 이해도를 한 시즌 동안 함께 확인합니다.</span></div></div>
+      <div class="step"><div class="n disp">5</div><div class="t"><b>트레이너 승격</b><span>모든 과정을 통과하시면 정식 트레이너로 활동을 시작합니다.</span></div></div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <h2>지원 <span>자격</span></h2>
+    <p class="desc">아래에 해당하시면 편하게 지원해 주세요.</p>
+    <ul class="reqs">
+      <li><b>·</b><em>서바이버 이상의 실력(또는 그에 준하는 기량)을 갖춘 분</em></li>
+      <li><b>·</b><em>정해진 수업 시간 약속을 최우선으로 지킬 수 있는 분</em></li>
+      <li><b>·</b><em>정직한 플레이 이력을 갖고, 신원 확인이 가능한 분</em></li>
+      <li><b>·</b><em>선발 시 비밀유지·업무위탁 계약 체결에 동의하시는 분</em></li>
+    </ul>
+    <div class="note">※ MRI ACADEMY는 공정한 플레이와 신뢰를 최우선 가치로 합니다. 대리·계정 거래 등 부정 이력이 있는 경우 함께하기 어렵습니다.</div>
+  </section>
+
+  <section class="endcta">
+    <h2 class="disp">지금 <span style="color:var(--gold)">지원</span>하세요</h2>
+    <a class="cta" href="trainer-apply.html">트레이너 지원하기 →</a>
+  </section>
+
+  <footer>
+    © 2026 MRI ACADEMY. 무단 복제·도용 금지<br>
+    <a href="https://shlee9498-dev.github.io/mri-academy/">메인으로 돌아가기</a>
+  </footer>
+
+</div>
+</body>
+</html>
