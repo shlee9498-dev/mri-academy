@@ -124,7 +124,9 @@ nav{position:sticky;top:0;z-index:50;background:rgba(10,10,12,.78);backdrop-filt
 .nav-links a{text-decoration:none;transition:color .15s}.nav-links a:hover{color:var(--gold)}
 .nav-cta{background:var(--gold);color:#000;font-weight:800;font-size:13px;padding:9px 15px;border-radius:6px;text-decoration:none;white-space:nowrap;transition:transform .15s}
 .nav-cta:hover{transform:translateY(-1px)}
-@media(max-width:860px){.nav-links{display:none}}
+.nav-hot{border:1px solid var(--gold);color:var(--gold);font-weight:800;font-size:13px;padding:8px 13px;border-radius:6px;text-decoration:none;white-space:nowrap;transition:transform .15s,background .15s}
+.nav-hot:hover{background:rgba(245,197,24,.1);transform:translateY(-1px)}
+@media(max-width:860px){.nav-links{display:none}.nav-hot{margin-left:auto;font-size:12.5px;padding:8px 11px}.nav-cta{font-size:12.5px;padding:8px 12px}}
 
 /* shared section */
 section{padding:64px 0;border-top:1px solid var(--line)}
@@ -380,13 +382,13 @@ footer b{color:var(--gold)}
     <div class="nav-links">
       <a href="#proof">성과</a><a href="#plans">레슨</a><a href="#consult">상담</a>
       <a href="#faq">FAQ</a>
-      <a href="lesson-schedule.html">일정</a>
       <a href="#trainers">트레이너</a><a href="trainer-recruit.html">트레이너모집</a><a href="#clan">클랜</a>
       <a href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-s2.html" target="_blank" rel="noopener">클랜컵</a>
       <a href="gmi-progress.html">성장기록</a>
       <a href="lesson-feedback.html">코칭기록</a>
       <a href="community.html">후기</a>
     </div>
+    <a class="nav-hot" href="lesson-schedule.html">📅 레슨 일정</a>
     <a class="nav-cta" href="#consult">상담 신청</a>
   </div>
 </nav>
@@ -422,6 +424,18 @@ footer b{color:var(--gold)}
       </div>
     </div>
   </header>
+
+  <!-- LESSON SCHEDULE BANNER -->
+  <a href="lesson-schedule.html" style="display:block;text-decoration:none;margin:6px 0 4px">
+    <div style="background:linear-gradient(135deg,rgba(245,197,24,.13),rgba(245,197,24,.03));border:1px solid var(--gold-soft);border-radius:16px;padding:20px 24px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+      <div style="font-size:32px;line-height:1">📅</div>
+      <div style="flex:1;min-width:210px">
+        <div style="font-family:var(--display);font-size:clamp(17px,3.4vw,21px);color:var(--ink);line-height:1.3">이번 주 레슨 일정 · <span style="color:var(--gold)">자리 모집중</span> 그룹 확인</div>
+        <div style="color:var(--ink-dim);font-size:13.5px;margin-top:5px">트레이너별 그룹 레슨·강의 시간표 — 비어있는 자리에 지금 합류하세요.</div>
+      </div>
+      <span class="btn btn-gold" style="white-space:nowrap">레슨 일정 보기 →</span>
+    </div>
+  </a>
 
   <!-- PROOF -->
   <section id="proof">
@@ -536,7 +550,7 @@ footer b{color:var(--gold)}
           <div class="ebar-left">정가 전환까지 <b id="couLeft">··</b></div>
         </div>
       </div>
-      <div class="pb-sub">레슨생 <b>50명</b> · 강의 수강생 <b>25명</b> 돌파 시 <b>각각 그 주 다음 주부터 정가로 전환</b>됩니다. 자리가 한정되어 있으니 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
+      <div class="pb-sub"><b style="color:var(--gold)">트레이너 1인당 정원 25명</b> — 수업 질을 지키기 위해 인원을 제한합니다. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b> 돌파 시 <b>각각 그 주 다음 주부터 정가로 전환</b>됩니다. 자리가 한정되어 있으니 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
     </div>
 
     <!-- 레슨 -->
