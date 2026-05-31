@@ -1,0 +1,207 @@
+<!DOCTYPE html><html lang="ko"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="GmI · MRI ACADEMY 주간 그룹 레슨/강의 시간표. 관전형·참여형 수업과 지금 자리 모집중인 그룹을 확인하고 바로 신청하세요.">
+<title>주간 레슨 일정 · MRI ACADEMY</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+:root{--bg:#0a0a0c;--bg-card:#1a1a20;--bg-elev:#20202a;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--gold-deep:#caa00f;--green:#10b981;--blue:#5ac8fa;--purple:#a855f7;--red:#e63946;--line:#27272a;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;background-image:radial-gradient(circle at 50% -5%,rgba(245,197,24,.10),transparent 55%),linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);background-size:auto,37px 37px,37px 37px;background-attachment:fixed}
+.wrap{max-width:740px;margin:0 auto;padding:0 16px 70px}
+.hero{text-align:center;padding:46px 16px 30px}
+.kick{color:var(--gold);font-weight:800;font-size:12px;letter-spacing:.18em;text-transform:uppercase}
+h1{font-family:var(--display);font-size:clamp(30px,8vw,46px);line-height:1.05;margin:10px 0 4px;background:linear-gradient(135deg,#fff 20%,var(--gold) 90%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.tag{color:var(--ink-dim);font-size:14px;margin-top:12px;max-width:460px;margin-left:auto;margin-right:auto}
+.tag b{color:var(--gold)}
+.wk{display:inline-block;margin-top:14px;font-size:13px;font-weight:800;color:var(--gold);background:rgba(245,197,24,.08);border:1px solid var(--gold-soft);padding:7px 18px;border-radius:99px}
+.live{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-faint);margin-top:12px;width:100%;justify-content:center}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(16,185,129,.5);animation:p 2s infinite}
+.dot.fb{background:var(--ink-faint);animation:none}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(16,185,129,.5)}70%{box-shadow:0 0 0 7px rgba(16,185,129,0)}100%{box-shadow:0 0 0 0 rgba(16,185,129,0)}}
+.cta{display:flex;gap:10px;justify-content:center;margin-top:20px;flex-wrap:wrap}
+.btn{padding:13px 22px;border-radius:8px;font-weight:800;font-size:14px;text-decoration:none;transition:transform .15s,box-shadow .15s}
+.btn-gold{background:linear-gradient(135deg,var(--gold),var(--gold-deep));color:#0a0a0c;box-shadow:0 6px 20px -6px rgba(245,197,24,.5)}
+.btn-gold:hover{transform:translateY(-2px);box-shadow:0 10px 26px -6px rgba(245,197,24,.6)}
+.btn-ghost{border:1px solid var(--line);color:var(--ink);background:var(--bg-card)}
+.btn-ghost:hover{border-color:var(--gold-soft)}
+.stats{display:flex;gap:10px;margin:6px 0 4px}
+.stat{flex:1;background:var(--bg-card);border:1px solid var(--line);border-radius:11px;padding:15px 8px;text-align:center}
+.stat .n{font-family:var(--display);font-size:24px;color:var(--gold);line-height:1}
+.stat .l{font-size:11px;color:var(--ink-faint);margin-top:6px;font-weight:600}
+.fmthelp{display:flex;flex-wrap:wrap;gap:6px 16px;justify-content:center;margin:14px 0 2px;font-size:11.5px;color:var(--ink-faint)}
+.fmthelp b{color:var(--blue);font-weight:800}
+.fmthelp .g{color:var(--green)}
+.shead{display:flex;align-items:center;gap:8px;margin:34px 0 14px;font-family:var(--display);font-size:15px}
+.shead .bar{width:3px;height:16px;background:var(--gold);border-radius:2px}
+.hl{display:flex;flex-direction:column;gap:10px}
+.hlcard{display:flex;align-items:center;gap:14px;background:rgba(245,197,24,.06);border:1px solid var(--gold-soft);border-radius:12px;padding:14px 16px}
+.hlcard .when{text-align:center;flex-shrink:0;min-width:46px}
+.hlcard .when .d{font-family:var(--display);font-size:18px;color:var(--gold);line-height:1}
+.hlcard .when .t{font-size:11px;color:var(--ink-dim);margin-top:3px;font-weight:700}
+.hlcard .info{flex:1;min-width:0}
+.hlcard .tn{font-size:13px;font-weight:800;color:var(--ink)}
+.hlcard .cm{font-size:12.5px;color:var(--ink-dim);margin-top:3px}
+.hlcard .rec{font-size:10px;font-weight:800;color:#0a0a0c;background:var(--gold);padding:3px 9px;border-radius:99px;flex-shrink:0;align-self:center}
+.tsec{margin-top:22px;background:var(--bg-card);border:1px solid var(--line);border-radius:14px;padding:16px 16px 6px}
+.tname{font-family:var(--display);font-size:15px;margin-bottom:14px;padding-bottom:11px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.tname::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--gold)}
+.day{display:flex;gap:12px;margin-bottom:13px}
+.dn{font-family:var(--display);font-size:15px;color:var(--gold);width:26px;flex-shrink:0;padding-top:11px;text-align:center}
+.slots{flex:1;display:flex;flex-direction:column;gap:8px}
+.slot{display:flex;gap:13px;background:var(--bg-elev);border:1px solid var(--line);border-radius:9px;padding:11px 14px;align-items:flex-start}
+.slot.open{border-color:var(--gold-soft);background:rgba(245,197,24,.06)}
+.st{font-family:var(--display);font-size:13px;color:var(--ink);min-width:54px;padding-top:1px}
+.sm{flex:1;min-width:0}
+.ty{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;border:1px solid;margin-right:6px;white-space:nowrap}
+.ty.gold{color:var(--gold);border-color:var(--gold-soft);background:rgba(245,197,24,.08)}
+.ty.green{color:var(--green);border-color:rgba(16,185,129,.3);background:rgba(16,185,129,.08)}
+.ty.blue{color:var(--blue);border-color:rgba(90,200,250,.3);background:rgba(90,200,250,.08)}
+.ty.purple{color:var(--purple);border-color:rgba(168,85,247,.3);background:rgba(168,85,247,.08)}
+.ty.red{color:var(--red);border-color:rgba(230,57,70,.3);background:rgba(230,57,70,.08)}
+.ty.faint{color:var(--ink-faint);border-color:var(--line)}
+.ty.sub{font-size:9.5px;opacity:.85;margin-right:0}
+.rec{font-size:10px;font-weight:800;color:#0a0a0c;background:var(--gold);padding:2px 8px;border-radius:99px}
+.who{font-size:13.5px;color:var(--ink-dim);margin-top:6px}
+.empty{color:var(--ink-faint);font-size:13px;text-align:center;padding:40px;background:var(--bg-card);border:1px solid var(--line);border-radius:14px}
+.note{margin-top:34px;font-size:12px;color:var(--ink-faint);text-align:center;line-height:1.8}
+.back{display:inline-block;margin-top:22px;color:var(--gold);text-decoration:none;font-weight:700;font-size:14px}
+</style></head><body>
+<div class="wrap">
+  <header class="hero">
+    <div class="kick">GmI · MRI ACADEMY</div>
+    <h1>주간 레슨 일정</h1>
+    <p class="tag">트레이너별 그룹 레슨·강의 시간표예요. <b>자리 모집중</b>인 그룹은 지금 바로 합류할 수 있어요.</p>
+    <div class="wk" id="wk">📅 이번 주</div>
+    <div class="cta">
+      <a class="btn btn-gold" href="apply.html">레슨 신청하기</a>
+      <a class="btn btn-ghost" href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">카카오 문의</a>
+      <a class="btn btn-ghost" href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener">디스코드</a>
+    </div>
+    <div class="live" id="live"><span class="dot fb"></span><span>일정 불러오는 중…</span></div>
+  </header>
+
+  <div class="stats" id="stats"></div>
+  <div class="fmthelp">
+    <span><b>관전형</b> 트레이너가 화면 보며 코칭</span>
+    <span><b class="g">참여형</b> 강사가 스쿼드에 같이 플레이</span>
+  </div>
+
+  <div id="hlwrap"></div>
+
+  <div class="shead"><span class="bar"></span>전체 시간표</div>
+  <div id="board"></div>
+
+  <div class="cta" style="margin-top:30px">
+    <a class="btn btn-gold" href="apply.html">레슨 신청하기</a>
+    <a class="btn btn-ghost" href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">상담 문의</a>
+  </div>
+  <p class="note">※ 그룹레슨은 같은 실력대 구성으로 진행되며 일정은 매주 변동됩니다.<br>레슨/강의 구분·반 배정 안내는 홈페이지 FAQ를 참고해 주세요.</p>
+  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
+</div>
+<script>
+const CSV_URL = "https://docs.google.com/spreadsheets/d/141g6wrhNP8REwR7C1KgEL-9LYKOSFHFF4BZqLYIgzoU/gviz/tq?tqx=out:csv";
+const FALLBACK = [
+{"트레이너":"이무리 직강 · 그룹강의","요일":"수","시간":"11:00~13:00","구성":"선우 · 준성","형식":"그룹강의","유형":"","모집":"N"},
+{"트레이너":"이무리 직강 · 그룹강의","요일":"목","시간":"20:00~22:00","구성":"근이 · 허삐","형식":"그룹강의","유형":"","모집":"N"},
+{"트레이너":"현태 트레이너","요일":"월","시간":"16:00","구성":"다다 · 라니 · 감자","형식":"관전형","유형":"","모집":"N"},
+{"트레이너":"현태 트레이너","요일":"월","시간":"21:00","구성":"덕덕 · 레드 · 해주","형식":"참여형","유형":"고티어","모집":"N"},
+{"트레이너":"현태 트레이너","요일":"화","시간":"16:00","구성":"콩가 · 재호","형식":"참여형","유형":"","모집":"N"},
+{"트레이너":"현태 트레이너","요일":"수","시간":"18:00","구성":"다다 · 강준","형식":"관전형","유형":"","모집":"Y"},
+{"트레이너":"현태 트레이너","요일":"수","시간":"21:00","구성":"성인 · 지훈 · 구름","형식":"관전형","유형":"","모집":"Y"},
+{"트레이너":"현태 트레이너","요일":"목","시간":"21:00","구성":"덕덕 · 레드 · 해주","형식":"참여형","유형":"고티어","모집":"N"},
+{"트레이너":"현태 트레이너","요일":"금","시간":"09:00","구성":"콩가 · 재호","형식":"참여형","유형":"","모집":"N"},
+{"트레이너":"현태 트레이너","요일":"금","시간":"15:00","구성":"다다 · 배로 · 건희","형식":"관전형","유형":"","모집":"N"},
+{"트레이너":"현태 트레이너","요일":"금","시간":"19:00","구성":"감자 · 이티","형식":"참여형","유형":"","모집":"N"},
+{"트레이너":"레빗 트레이너","요일":"수","시간":"21:00","구성":"감티 · 다다 · 웅열","형식":"참여형","유형":"카배 경쟁","모집":"N"},
+{"트레이너":"레빗 트레이너","요일":"수","시간":"22:00","구성":"운규 · 이티 · 순대","형식":"참여형","유형":"카배 경쟁","모집":"N"},
+{"트레이너":"레빗 트레이너","요일":"목","시간":"17:00","구성":"배로 · 아이크","형식":"관전형","유형":"인텐스","모집":"N"},
+{"트레이너":"레빗 트레이너","요일":"금","시간":"22:00","구성":"상윤 · 감티","형식":"참여형","유형":"","모집":"N"},
+{"트레이너":"레빗 트레이너","요일":"토","시간":"21:30","구성":"빡이","형식":"1:1","유형":"","모집":"N"},
+{"트레이너":"레슨생 자율 연습","요일":"화","시간":"22:00","구성":"다다 · 배로","형식":"자율연습","유형":"","모집":"N"}
+];
+const DAYS = ["월","화","수","목","금","토","일"];
+const ORD = {"월":0,"화":1,"수":2,"목":3,"금":4,"토":5,"일":6};
+const COLOR = {"관전형":"blue","참여형":"green","1:1":"gold","1:1 개인":"gold","개인레슨":"gold","그룹강의":"purple","자율연습":"faint","그룹레슨":"blue","고티어 그룹":"gold","고티어":"gold","카배 경쟁":"purple","인텐스 그룹":"red","인텐스":"red"};
+const colorOf = v => COLOR[String(v||"").trim()]||"faint";
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const isRec = v => /^(y|o|모집|자리)/i.test(String(v||"").trim());
+const isAuto = r => /자율/.test(String(r["형식"]||"")+String(r["유형"]||"")+String(r["활동"]||"")+String(r["트레이너"]||""));
+function setLive(live, txt){
+  const el=document.getElementById("live");
+  el.innerHTML = `<span class="dot ${live?'':'fb'}"></span><span>${esc(txt)}</span>`;
+}
+function badges(r){
+  const f=(r["형식"]||"").trim(), ty=(r["유형"]||"").trim();
+  let h="";
+  if(f) h+=`<span class="ty ${colorOf(f)}">${esc(f)}</span>`;
+  else if(ty) h+=`<span class="ty ${colorOf(ty)}">${esc(ty)}</span>`;
+  if(f && ty) h+=`<span class="ty faint sub">${esc(ty)}</span>`;
+  return h;
+}
+function buildStats(rows){
+  const groups=rows.length;
+  const trainers=new Set(rows.map(r=>(r["트레이너"]||"").trim()).filter(Boolean)).size;
+  const open=rows.filter(r=>isRec(r["모집"])).length;
+  document.getElementById("stats").innerHTML=
+    `<div class="stat"><div class="n">${groups}</div><div class="l">이번 주 그룹</div></div>`+
+    `<div class="stat"><div class="n">${trainers}</div><div class="l">트레이너</div></div>`+
+    `<div class="stat"><div class="n" style="color:${open?'var(--gold)':'var(--ink-faint)'}">${open}</div><div class="l">자리 모집중</div></div>`;
+}
+function buildHighlights(rows){
+  const open=rows.filter(r=>isRec(r["모집"]));
+  const wrap=document.getElementById("hlwrap");
+  if(!open.length){ wrap.innerHTML=""; return; }
+  open.sort((a,b)=>(ORD[(a["요일"]||"").trim()]??9)-(ORD[(b["요일"]||"").trim()]??9));
+  const cards=open.map(r=>
+    `<div class="hlcard"><div class="when"><div class="d">${esc((r["요일"]||"").trim())}</div><div class="t">${esc(r["시간"])}</div></div>`+
+    `<div class="info"><div class="tn">${esc(r["트레이너"])}</div><div class="cm">${badges(r)}${esc(r["구성"])}</div></div>`+
+    `<span class="rec">합류 가능</span></div>`).join("");
+  wrap.innerHTML=`<div class="shead"><span class="bar"></span>🔥 지금 자리 모집중</div><div class="hl">${cards}</div>`;
+}
+function render(rows){
+  const clean=rows.filter(r=>{
+    const t=(r["트레이너"]||"").trim();
+    if(t.startsWith("@WEEK")){ document.getElementById("wk").textContent="📅 "+(r["시간"]||r["구성"]||""); return false; }
+    if(!t) return false;
+    if(isAuto(r)) return false;   // 자율 연습은 사이트에서 숨김
+    return true;
+  });
+  buildStats(clean); buildHighlights(clean);
+  const order=[]; const byT={};
+  clean.forEach(r=>{const t=(r["트레이너"]||"").trim(); if(!byT[t]){byT[t]=[];order.push(t);} byT[t].push(r);});
+  const board=document.getElementById("board");
+  if(!order.length){ board.innerHTML='<div class="empty">등록된 수업 일정이 없습니다.</div>'; return; }
+  let html="";
+  order.forEach(t=>{
+    const byDay={};
+    byT[t].forEach(r=>{(byDay[(r["요일"]||"").trim()]=byDay[(r["요일"]||"").trim()]||[]).push(r);});
+    let rowsH="";
+    DAYS.forEach(d=>{
+      if(!byDay[d]) return;
+      let cells="";
+      byDay[d].forEach(r=>{
+        const rec=isRec(r["모집"]);
+        cells+=`<div class="slot ${rec?'open':''}"><div class="st">${esc(r["시간"])}</div><div class="sm">${badges(r)}${rec?'<span class="rec">자리 모집중</span>':''}<div class="who">${esc(r["구성"])}</div></div></div>`;
+      });
+      rowsH+=`<div class="day"><div class="dn">${esc(d)}</div><div class="slots">${cells}</div></div>`;
+    });
+    html+=`<div class="tsec"><div class="tname">${esc(t)}</div>${rowsH}</div>`;
+  });
+  board.innerHTML=html;
+}
+function boot(){
+  if(!CSV_URL){ render(FALLBACK); setLive(false,"기본 일정 표시 중 (시트 미연동)"); return; }
+  Papa.parse(CSV_URL,{download:true,header:true,skipEmptyLines:true,
+    complete:res=>{
+      const rows=(res.data||[]).filter(r=>Object.values(r).some(v=>String(v||"").trim()));
+      if(rows.length){ render(rows); setLive(true,"구글시트 실시간 연동됨"); }
+      else { render(FALLBACK); setLive(false,"기본 일정 표시 중"); }
+    },
+    error:()=>{ render(FALLBACK); setLive(false,"기본 일정 표시 중 (연동 실패)"); }
+  });
+}
+boot();
+</script>
+</body></html>
