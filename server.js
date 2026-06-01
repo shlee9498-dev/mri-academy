@@ -7,6 +7,11 @@
 // GET  /api/bpi-suggest       — 단일 플랫폼 BPI 자동 추천
 // GET  /api/bpi-suggest-auto  — ★ 카카오·스팀 동시 조회 + 추천
 // GET  /api/bpi-info          — BPI 산정 기준
+// ── 후기/동향/답글 ──
+// GET/POST            /api/reviews  /api/progress  /api/replies   (POST: 로그인+연타방지)
+// PATCH/DELETE        /api/reviews/:id  /api/progress/:id  /api/replies/:id  (본인 또는 운영진)
+// POST /api/moderate          — 운영진 숨김
+// GET  /api/enrollment        — 레슨생 ∪ 수강생 (중복 제외) 카운트
 // ─────────────────────────────────────────────────────────
 // 한 프로세스. 누락 env는 해당 기능만 비활성, 나머지는 정상 동작.
 //   CLAUDE_KEY    없으면 /api/chat 비활성
@@ -28,7 +33,7 @@ const ALLOWED = [
 app.use((req, res, next) => {
   const o = req.headers.origin;
   if (ALLOWED.includes(o)) res.setHeader("Access-Control-Allow-Origin", o);
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
@@ -118,6 +123,27 @@ async function sbUpsert(table, row, onConflict) {
   return (await r.json())[0];
 }
 
+// ── 연타 방지: 유저·타입별 쿨다운 + 동일내용 중복 차단 (인메모리) ──
+const lastPost = new Map(); // `${type}:${uid}` -> { t, content }
+function postGuard(type, uid, content, cooldownMs) {
+  const key = type + ":" + uid, now = Date.now();
+  const prev = lastPost.get(key);
+  if (prev) {
+    if (now - prev.t < cooldownMs) return "cooldown";
+    if (content && prev.content && prev.content === content && now - prev.t < 10 * 60_000) return "duplicate";
+  }
+  lastPost.set(key, { t: now, content: content || "" });
+  if (lastPost.size > 10000) lastPost.clear();
+  return null;
+}
+// ── 소유자/운영진 권한 확인 (대상 행의 discord_id 조회) ──
+async function ownsOrStaff(table, id, u) {
+  const rows = await sbSelect(table, `select=discord_id&id=eq.${id}`);
+  if (!rows.length) return "not_found";
+  if (rows[0].discord_id !== u.id && !u.isStaff) return "forbidden";
+  return null;
+}
+
 // ── 디스코드 OAuth ──
 const safeReturn = (u) => {
   try { const url = new URL(u); return ALLOWED.includes(url.origin) ? u : ALLOWED[0]; }
@@ -178,6 +204,9 @@ app.post("/api/reviews", async (req, res) => {
   const content = String(b.content || "").trim();
   if (content.length < 5) return res.status(400).json({ error: "내용을 5자 이상 입력해 주세요." });
   const rating = Math.min(5, Math.max(1, parseInt(b.rating) || 5));
+  const g = postGuard("review", u.id, content, 30_000);
+  if (g === "cooldown") return res.status(429).json({ error: "잠시 후 다시 등록해 주세요." });
+  if (g === "duplicate") return res.status(409).json({ error: "방금 등록한 내용과 동일합니다." });
   try {
     const row = await sbInsert("reviews", {
       discord_id: u.id, discord_name: u.name,
@@ -202,6 +231,9 @@ app.post("/api/progress", async (req, res) => {
   const b = req.body || {};
   const content = String(b.content || "").trim();
   if (content.length < 5) return res.status(400).json({ error: "내용을 5자 이상 입력해 주세요." });
+  const g = postGuard("progress", u.id, content, 30_000);
+  if (g === "cooldown") return res.status(429).json({ error: "잠시 후 다시 등록해 주세요." });
+  if (g === "duplicate") return res.status(409).json({ error: "방금 등록한 내용과 동일합니다." });
   try {
     const row = await sbInsert("progress_logs", {
       discord_id: u.id, discord_name: u.name,
@@ -229,6 +261,9 @@ app.post("/api/replies", async (req, res) => {
   const pt = b.parent_type, pid = parseInt(b.parent_id);
   if (!["review", "progress"].includes(pt) || !pid) return res.status(400).json({ error: "bad_params" });
   if (content.length < 1) return res.status(400).json({ error: "내용을 입력해 주세요." });
+  const g = postGuard("reply", u.id, content, 5_000);
+  if (g === "cooldown") return res.status(429).json({ error: "잠시 후 다시 등록해 주세요." });
+  if (g === "duplicate") return res.status(409).json({ error: "방금 등록한 내용과 동일합니다." });
   try {
     const row = await sbInsert("replies", {
       parent_type: pt, parent_id: pid, discord_id: u.id, discord_name: u.name,
@@ -248,6 +283,90 @@ app.post("/api/moderate", async (req, res) => {
   if (!table || !id) return res.status(400).json({ error: "bad_params" });
   try { await sbPatch(table, `id=eq.${id}`, { hidden: true }); res.json({ ok: true }); }
   catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+
+// ── 수정 (본인 또는 운영진) ──
+app.patch("/api/reviews/:id", async (req, res) => {
+  const u = getUser(req); if (!u) return res.status(401).json({ error: "login_required" });
+  const id = parseInt(req.params.id); if (!id) return res.status(400).json({ error: "bad_params" });
+  const b = req.body || {}; const content = String(b.content || "").trim();
+  if (content.length < 5) return res.status(400).json({ error: "내용을 5자 이상 입력해 주세요." });
+  try {
+    const own = await ownsOrStaff("reviews", id, u);
+    if (own === "not_found") return res.status(404).json({ error: "not_found" });
+    if (own === "forbidden") return res.status(403).json({ error: "forbidden" });
+    const patch = { content: content.slice(0, 2000), rating: Math.min(5, Math.max(1, parseInt(b.rating) || 5)) };
+    if (b.trainer !== undefined) patch.trainer = String(b.trainer || "").slice(0, 30) || null;
+    const rows = await sbPatch("reviews", `id=eq.${id}`, patch);
+    res.json(rows[0] || { ok: true });
+  } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+app.patch("/api/progress/:id", async (req, res) => {
+  const u = getUser(req); if (!u) return res.status(401).json({ error: "login_required" });
+  const id = parseInt(req.params.id); if (!id) return res.status(400).json({ error: "bad_params" });
+  const b = req.body || {}; const content = String(b.content || "").trim();
+  if (content.length < 5) return res.status(400).json({ error: "내용을 5자 이상 입력해 주세요." });
+  try {
+    const own = await ownsOrStaff("progress_logs", id, u);
+    if (own === "not_found") return res.status(404).json({ error: "not_found" });
+    if (own === "forbidden") return res.status(403).json({ error: "forbidden" });
+    const patch = { content: content.slice(0, 4000) };
+    if (b.title !== undefined) patch.title = String(b.title || "").slice(0, 80) || null;
+    const rows = await sbPatch("progress_logs", `id=eq.${id}`, patch);
+    res.json(rows[0] || { ok: true });
+  } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+app.patch("/api/replies/:id", async (req, res) => {
+  const u = getUser(req); if (!u) return res.status(401).json({ error: "login_required" });
+  const id = parseInt(req.params.id); if (!id) return res.status(400).json({ error: "bad_params" });
+  const b = req.body || {}; const content = String(b.content || "").trim();
+  if (content.length < 1) return res.status(400).json({ error: "내용을 입력해 주세요." });
+  try {
+    const own = await ownsOrStaff("replies", id, u);
+    if (own === "not_found") return res.status(404).json({ error: "not_found" });
+    if (own === "forbidden") return res.status(403).json({ error: "forbidden" });
+    const rows = await sbPatch("replies", `id=eq.${id}`, { content: content.slice(0, 1000) });
+    res.json(rows[0] || { ok: true });
+  } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+
+// ── 삭제 (본인 또는 운영진 · 소프트 숨김 + 답글 연쇄 숨김) ──
+async function softHide(table, id, parentType) {
+  await sbPatch(table, `id=eq.${id}`, { hidden: true });
+  if (parentType) await sbPatch("replies", `parent_type=eq.${parentType}&parent_id=eq.${id}`, { hidden: true });
+}
+app.delete("/api/reviews/:id", async (req, res) => {
+  const u = getUser(req); if (!u) return res.status(401).json({ error: "login_required" });
+  const id = parseInt(req.params.id); if (!id) return res.status(400).json({ error: "bad_params" });
+  try {
+    const own = await ownsOrStaff("reviews", id, u);
+    if (own === "not_found") return res.status(404).json({ error: "not_found" });
+    if (own === "forbidden") return res.status(403).json({ error: "forbidden" });
+    await softHide("reviews", id, "review");
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+app.delete("/api/progress/:id", async (req, res) => {
+  const u = getUser(req); if (!u) return res.status(401).json({ error: "login_required" });
+  const id = parseInt(req.params.id); if (!id) return res.status(400).json({ error: "bad_params" });
+  try {
+    const own = await ownsOrStaff("progress_logs", id, u);
+    if (own === "not_found") return res.status(404).json({ error: "not_found" });
+    if (own === "forbidden") return res.status(403).json({ error: "forbidden" });
+    await softHide("progress_logs", id, "progress");
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+});
+app.delete("/api/replies/:id", async (req, res) => {
+  const u = getUser(req); if (!u) return res.status(401).json({ error: "login_required" });
+  const id = parseInt(req.params.id); if (!id) return res.status(400).json({ error: "bad_params" });
+  try {
+    const own = await ownsOrStaff("replies", id, u);
+    if (own === "not_found") return res.status(404).json({ error: "not_found" });
+    if (own === "forbidden") return res.status(403).json({ error: "forbidden" });
+    await sbPatch("replies", `id=eq.${id}`, { hidden: true });
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
 });
 
 
@@ -399,8 +518,12 @@ if (process.env.DISCORD_TOKEN) {
     }
   });
   client.login(process.env.DISCORD_TOKEN).catch((e) => {
-    console.error("discord_login_failed", e?.message);
+    const msg = e?.message || String(e);
+    console.error("discord_login_failed", msg);
     CACHE.status = "login_failed";
+    CACHE.loginError = /disallowed intents/i.test(msg)
+      ? "disallowed_intents — 개발자포털에서 SERVER MEMBERS INTENT를 켜세요"
+      : msg.slice(0, 140);
   });
 } else {
   CACHE.status = "discord_disabled_no_token";
