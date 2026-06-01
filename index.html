@@ -246,7 +246,33 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .plan.hot .pbtn{background:var(--gold);color:#000;border-color:var(--gold)}
 .plan .pbtn:hover{transform:translateY(-1px);border-color:var(--gold-soft)}
 .plan-note{text-align:center;color:var(--ink-faint);font-size:12.5px;margin-top:20px}
-@media(max-width:780px){.plans{grid-template-columns:1fr;gap:18px}.plans-4{grid-template-columns:1fr}}
+/* program category tabs */
+.prog-tabs{display:flex;gap:8px;margin:4px 0 22px;flex-wrap:wrap}
+.ptab{background:var(--bg-card);border:1px solid var(--line);color:var(--ink-dim);font-family:var(--display);font-size:14px;padding:10px 22px;border-radius:9px;cursor:pointer;transition:all .15s}
+.ptab:hover{border-color:var(--gold-soft);color:var(--ink)}
+.ptab.active{background:var(--gold);color:#000;border-color:var(--gold)}
+.prog-panel{display:none}
+.prog-panel.active{display:block;animation:progFade .25s ease}
+@keyframes progFade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.swipe-hint{display:none}
+/* section rhythm */
+#why{background:linear-gradient(180deg,transparent,rgba(255,255,255,.015) 50%,transparent)}
+#consult{background:linear-gradient(180deg,transparent,rgba(245,197,24,.022) 50%,transparent)}
+/* mobile category chips */
+.mcats{display:none}
+@media(max-width:860px){
+.mcats{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;position:sticky;top:53px;z-index:49;background:rgba(10,10,12,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:10px 14px;-webkit-overflow-scrolling:touch}
+.mcats::-webkit-scrollbar{display:none}
+.mcats a{flex:0 0 auto;text-decoration:none;color:var(--ink-dim);font-size:13px;font-weight:700;background:var(--bg-card);border:1px solid var(--line);padding:7px 14px;border-radius:99px;white-space:nowrap}
+.mcats a:active{color:var(--gold);border-color:var(--gold-soft)}
+}
+@media(max-width:780px){
+.plans{display:flex;grid-template-columns:none;overflow-x:auto;gap:14px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;padding:16px 4px 12px;scrollbar-width:none}
+.plans::-webkit-scrollbar{display:none}
+.plans .plan{flex:0 0 82%;scroll-snap-align:center}
+.plans-4{grid-template-columns:1fr}
+.swipe-hint{display:block;text-align:center;color:var(--ink-faint);font-size:12px;margin:-4px 0 4px}
+}
 @media(min-width:781px) and (max-width:980px){.plans-4{grid-template-columns:repeat(2,1fr)}}
 
 /* CONSULT */
@@ -380,7 +406,7 @@ footer b{color:var(--gold)}
   <div class="nav-in">
     <a href="#hero" style="text-decoration:none"><div class="logo"><span class="mk">M</span><span>MRI ACADEMY<small>PUBG COACHING</small></span></div></a>
     <div class="nav-links">
-      <a href="#proof">성과</a><a href="#plans">레슨</a><a href="#consult">상담</a>
+      <a href="#proof">성과</a><a href="#plans" data-prog="lesson">레슨</a><a href="#plans" data-prog="course">강의</a><a href="#plans" data-prog="set">세트</a><a href="#consult">상담</a>
       <a href="#faq">FAQ</a>
       <a href="#trainers">트레이너</a><a href="trainer-recruit.html">트레이너모집</a><a href="#clan">클랜</a>
       <a href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-s2.html" target="_blank" rel="noopener">클랜컵</a>
@@ -392,6 +418,18 @@ footer b{color:var(--gold)}
     <a class="nav-cta" href="#consult">상담 신청</a>
   </div>
 </nav>
+
+<div class="mcats" id="mcats">
+  <a href="#proof">성과</a>
+  <a href="#plans" data-prog="lesson">레슨</a>
+  <a href="#plans" data-prog="course">강의</a>
+  <a href="#plans" data-prog="set">세트</a>
+  <a href="#consult">상담</a>
+  <a href="#faq">FAQ</a>
+  <a href="#trainers">트레이너</a>
+  <a href="community.html">후기</a>
+  <a href="lesson-schedule.html">레슨일정</a>
+</div>
 
 <div class="wrap">
 
@@ -558,9 +596,17 @@ footer b{color:var(--gold)}
       <div class="pb-sub"><b style="color:var(--gold)">트레이너 1인당 정원 25명</b> — 수업 질을 지키기 위해 인원을 제한합니다. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b> 돌파 시 <b>각각 그 주 다음 주부터 정가로 전환</b>됩니다. 자리가 한정되어 있으니 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
     </div>
 
+    <div class="prog-tabs" role="tablist">
+      <button class="ptab active" data-prog="lesson" type="button">레슨</button>
+      <button class="ptab" data-prog="course" type="button">강의</button>
+      <button class="ptab" data-prog="set" type="button">세트</button>
+    </div>
+
     <!-- 레슨 -->
+    <div class="prog-panel active" data-prog="lesson">
     <div class="prog-head"><span class="prog-tag" style="background:rgba(90,200,250,.12);color:var(--blue)">레슨</span> 서바이버 트레이너진 · <b>판수제</b> <span class="prog-sub">레벨테스트 무관 · 누구나 · 시간 여유롭게</span></div>
     <div style="margin:-2px 0 14px;color:var(--ink-dim);font-size:13.5px"><b style="color:var(--ink)">트레이너가 1:1로 봐주는 실전 판수 — 산 만큼만.</b> 실력 단계에 맞춰 골라 받기 · <span style="color:var(--blue)">관전형 · 참여형 · 1:1</span></div>
+    <div class="swipe-hint">← 좌우로 넘겨서 비교 →</div>
     <div class="plans">
       <div class="plan">
         <div class="pn">10판</div><div class="po">50,000원</div><div class="pp">40,000원<span class="off">-20%</span></div><div class="pd">판당 4,000원 · 단기 집중 교정</div>
@@ -581,9 +627,13 @@ footer b{color:var(--gold)}
     </div>
     <p class="plan-note">레슨 상담(테스트) 비용 <b>15,000원</b> · 개인/그룹 선택 가능 · 핵·버그로 터진 게임은 무효 처리<br>개인레슨 시간별 판수 차감 — <b>30분 3판 · 1시간 5판 · 1시간 30분 8판 · 2시간 10판</b></p>
 
+    </div>
+
     <!-- 강의 -->
-    <div class="prog-head" style="margin-top:40px"><span class="prog-tag" style="background:rgba(245,197,24,.12);color:var(--gold)">강의</span> 이무리 클랜장 직강 · <b>시간제(3시간 집중)</b> <span class="prog-sub">레벨테스트 합격 필수 · 12회 이상 · 전략 심화 · 고점 돌파</span></div>
+    <div class="prog-panel" data-prog="course">
+    <div class="prog-head"><span class="prog-tag" style="background:rgba(245,197,24,.12);color:var(--gold)">강의</span> 이무리 클랜장 직강 · <b>시간제(3시간 집중)</b> <span class="prog-sub">레벨테스트 합격 필수 · 12회 이상 · 전략 심화 · 고점 돌파</span></div>
     <div style="margin:-2px 0 14px;color:var(--ink-dim);font-size:13.5px"><b style="color:var(--ink)">대표강사 직강 그룹강의 — 월 부담으로 쪼개서.</b> 12회 = 주1회 기준 <span style="color:var(--gold)">월 12만원</span>대로 시작.</div>
+    <div class="swipe-hint">← 좌우로 넘겨서 비교 →</div>
     <div class="plans">
       <div class="plan hot">
         <div class="rib">기본</div>
@@ -604,9 +654,13 @@ footer b{color:var(--gold)}
     </div>
     <p class="plan-note">강의 상담(테스트) 비용 <b>20,000원</b> · 최소 12회부터 · 클래스별 멤버 구성 후 3시간 집중 · 시간 예약제</p>
 
+    </div>
+
     <!-- 세트 -->
-    <div class="prog-head" style="margin-top:40px"><span class="prog-tag" style="background:rgba(168,85,247,.14);color:var(--purple)">세트</span> 레슨 + 강의 결합 <span class="prog-sub">트레이너 레슨으로 다지고 · 이무리 강의로 심화 · 한 번에 신청</span></div>
+    <div class="prog-panel" data-prog="set">
+    <div class="prog-head"><span class="prog-tag" style="background:rgba(168,85,247,.14);color:var(--purple)">세트</span> 레슨 + 강의 결합 <span class="prog-sub">트레이너 레슨으로 다지고 · 이무리 강의로 심화 · 한 번에 신청</span></div>
     <div style="margin:-2px 0 14px;color:var(--ink-dim);font-size:13.5px"><b style="color:var(--ink)">레슨 + 강의 묶음 — 할인 폭이 가장 큽니다.</b> 한 번에 신청하고 트레이너·일정 우선 배정받으세요.</div>
+    <div class="swipe-hint">← 좌우로 넘겨서 비교 →</div>
     <div class="plans">
       <div class="plan">
         <div class="pn">입문 세트</div><div class="po">590,000원</div><div class="pp">400,000원<span class="off">-32%</span></div><div class="pd">레슨 10판 + 강의 12회</div>
@@ -626,6 +680,8 @@ footer b{color:var(--gold)}
       </div>
     </div>
     <p class="plan-note">세트는 이미 최대 할인된 레슨·강의를 한 번에 신청하는 구성입니다 · 강의 포함으로 상담(테스트) 비용 <b>20,000원</b> 1회 · 트레이너·일정 우선 배정</p>
+    </div>
+
     <div style="max-width:760px;margin:26px auto 0;background:linear-gradient(135deg,rgba(245,197,24,.07),rgba(16,185,129,.05));border:1px solid var(--line);border-radius:12px;padding:18px 20px;text-align:center">
       <div style="font-family:var(--display);font-size:clamp(17px,3vw,21px);margin-bottom:11px">부담은 줄이고, 안전장치는 그대로</div>
       <div style="display:flex;flex-wrap:wrap;gap:10px 16px;justify-content:center">
@@ -987,6 +1043,24 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
   document.querySelectorAll(".cb-chip").forEach(c=>c.addEventListener("click",()=>{
     input.value=c.dataset.q; const s=document.getElementById("cbSugs"); if(s) s.remove(); ask();
   }));
+})();
+</script>
+<script>
+/* 가격 카테고리 탭 전환 */
+(function(){
+  var tabs=document.querySelectorAll(".ptab");
+  var panels=document.querySelectorAll(".prog-panel");
+  if(!tabs.length) return;
+  function activate(name){
+    if(!name) return;
+    tabs.forEach(function(t){t.classList.toggle("active",t.dataset.prog===name);});
+    panels.forEach(function(p){p.classList.toggle("active",p.dataset.prog===name);});
+  }
+  tabs.forEach(function(t){t.addEventListener("click",function(){activate(t.dataset.prog);});});
+  /* nav·모바일칩에서 강의/세트 누르면 해당 탭으로 전환 */
+  document.querySelectorAll("a[data-prog]").forEach(function(a){
+    a.addEventListener("click",function(){activate(a.dataset.prog);});
+  });
 })();
 </script>
 </body>
