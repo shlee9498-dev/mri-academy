@@ -126,6 +126,7 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,34px);margin:8px 0 6px}
 <script>
 const API = "https://mri-academy-production.up.railway.app";
 let ME = null, RATING = 5;
+let RV_MAP = {}, PG_MAP = {}, RP_MAP = {};
 
 // ── 토큰: 콜백 #token= 수신 → localStorage ──
 (function captureToken(){
@@ -183,16 +184,18 @@ async function loadReviews(){
   try {
     const rows = await (await fetch(`${API}/api/reviews`)).json();
     if (!rows.length) { el.innerHTML = `<div class="empty">아직 후기가 없습니다. 첫 후기를 남겨주세요!</div>`; return; }
+    RV_MAP = {}; rows.forEach(r => { RV_MAP[r.id] = r; });
     el.innerHTML = rows.map(r => itemReview(r)).join("");
   } catch { el.innerHTML = `<div class="empty">후기를 불러오지 못했습니다.</div>`; }
 }
 function itemReview(r){
   const stars = "★".repeat(r.rating||0) + "☆".repeat(5-(r.rating||0));
-  const del = (ME&&ME.isStaff) ? `<button class="linkbtn del" onclick="hide('review',${r.id})">숨김</button>` : "";
+  const own = ME && (ME.isStaff || ME.id === r.discord_id);
+  const acts = own ? `<button class="linkbtn" onclick="editItem('review',${r.id})">✏️ 수정</button><button class="linkbtn del" onclick="deleteItem('review',${r.id})">🗑 삭제</button>` : "";
   return `<div class="item">
     <div class="ihead"><span class="iname">${esc(r.discord_name)}</span><span class="istar">${stars}</span>${r.trainer?`<span class="itrainer">${esc(r.trainer)}</span>`:""}<span class="idate">${fmtDate(r.created_at)}</span></div>
     <div class="ibody">${esc(r.content)}</div>
-    <div class="iacts"><button class="linkbtn" onclick="toggleReplies('review',${r.id},this)">💬 답글</button>${del}</div>
+    <div class="iacts"><button class="linkbtn" onclick="toggleReplies('review',${r.id},this)">💬 답글</button>${acts}</div>
     <div class="replies" id="rep-review-${r.id}"></div>
   </div>`;
 }
@@ -215,16 +218,18 @@ async function loadProgress(){
   try {
     const rows = await (await fetch(`${API}/api/progress`)).json();
     if (!rows.length) { el.innerHTML = `<div class="empty">아직 작성된 레슨 동향이 없습니다.</div>`; return; }
+    PG_MAP = {}; rows.forEach(r => { PG_MAP[r.id] = r; });
     el.innerHTML = rows.map(r => itemProgress(r)).join("");
   } catch { el.innerHTML = `<div class="empty">불러오지 못했습니다.</div>`; }
 }
 function itemProgress(r){
-  const del = (ME&&ME.isStaff) ? `<button class="linkbtn del" onclick="hide('progress',${r.id})">숨김</button>` : "";
+  const own = ME && (ME.isStaff || ME.id === r.discord_id);
+  const acts = own ? `<button class="linkbtn" onclick="editItem('progress',${r.id})">✏️ 수정</button><button class="linkbtn del" onclick="deleteItem('progress',${r.id})">🗑 삭제</button>` : "";
   return `<div class="item">
     <div class="ihead"><span class="iname">${esc(r.discord_name)}</span><span class="idate">${fmtDate(r.created_at)}</span></div>
     ${r.title?`<div class="ititle">${esc(r.title)}</div>`:""}
     <div class="ibody">${esc(r.content)}</div>
-    <div class="iacts"><button class="linkbtn" onclick="toggleReplies('progress',${r.id},this)">💬 답글</button>${del}</div>
+    <div class="iacts"><button class="linkbtn" onclick="toggleReplies('progress',${r.id},this)">💬 답글</button>${acts}</div>
     <div class="replies" id="rep-progress-${r.id}"></div>
   </div>`;
 }
@@ -252,9 +257,11 @@ async function loadReplies(pt, pid){
   const box = document.getElementById(`rep-${pt}-${pid}`);
   try {
     const rows = await (await fetch(`${API}/api/replies?parent_type=${pt}&parent_id=${pid}`)).json();
+    rows.forEach(r => { RP_MAP[r.id] = r; });
     const list = rows.map(r=>{
-      const del = (ME&&ME.isStaff) ? `<button class="linkbtn del" style="font-size:11px" onclick="hide('reply',${r.id})">숨김</button>` : "";
-      return `<div class="reply"><div class="rhead"><span class="rname">${esc(r.discord_name)}</span>${r.is_staff?'<span class="staff">트레이너</span>':''}<span class="rdate">${fmtDate(r.created_at)}</span></div><div class="rbody">${esc(r.content)}</div>${del}</div>`;
+      const own = ME && (ME.isStaff || ME.id === r.discord_id);
+      const acts = own ? `<button class="linkbtn" style="font-size:11px" onclick="editItem('reply',${r.id})">✏️ 수정</button><button class="linkbtn del" style="font-size:11px" onclick="deleteItem('reply',${r.id})">🗑 삭제</button>` : "";
+      return `<div class="reply"><div class="rhead"><span class="rname">${esc(r.discord_name)}</span>${r.is_staff?'<span class="staff">트레이너</span>':''}<span class="rdate">${fmtDate(r.created_at)}</span></div><div class="rbody">${esc(r.content)}</div>${acts}</div>`;
     }).join("") || `<div class="rbody" style="padding:4px 0">첫 답글을 남겨보세요.</div>`;
     const form = ME ? `<div class="replyform"><input id="rin-${pt}-${pid}" placeholder="답글 입력" onkeydown="if(event.key==='Enter')sendReply('${pt}',${pid})"><button class="btn btn-gold" onclick="sendReply('${pt}',${pid})">등록</button></div>` : `<div class="lockmsg">답글은 로그인 후 작성할 수 있어요</div>`;
     box.innerHTML = list + form;
@@ -279,6 +286,33 @@ async function hide(type, id){
     const r = await fetch(`${API}/api/moderate`, { method:"POST", headers:{...authHeaders(),"Content-Type":"application/json"}, body:JSON.stringify({type,id}) });
     if (!r.ok) throw new Error("권한 없음");
     toast("숨김 처리됐습니다"); loadReviews(); loadProgress();
+  } catch(e){ toast(e.message); }
+}
+
+const EP = { review: "reviews", progress: "progress", reply: "replies" };
+function rowOf(type, id){ const m = type==="review"?RV_MAP:type==="progress"?PG_MAP:RP_MAP; return m[id]; }
+function reloadAfter(type, cur){ if (type==="reply" && cur) loadReplies(cur.parent_type, cur.parent_id); else { loadReviews(); loadProgress(); } }
+async function editItem(type, id){
+  const cur = rowOf(type, id);
+  const text = prompt("내용을 수정하세요", cur ? cur.content : "");
+  if (text == null) return;
+  const t = text.trim(), min = type==="reply" ? 1 : 5;
+  if (t.length < min) return toast(`내용을 ${min}자 이상 입력해 주세요`);
+  const body = { content: t };
+  if (type==="review" && cur) { body.rating = cur.rating; body.trainer = cur.trainer; }
+  try {
+    const r = await fetch(`${API}/api/${EP[type]}/${id}`, { method:"PATCH", headers:{...authHeaders(),"Content-Type":"application/json"}, body:JSON.stringify(body) });
+    if (!r.ok) throw new Error((await r.json()).error || "수정 권한이 없습니다");
+    toast("수정됐습니다"); reloadAfter(type, cur);
+  } catch(e){ toast(e.message); }
+}
+async function deleteItem(type, id){
+  if (!confirm("정말 삭제할까요? 되돌릴 수 없습니다.")) return;
+  const cur = rowOf(type, id);
+  try {
+    const r = await fetch(`${API}/api/${EP[type]}/${id}`, { method:"DELETE", headers: authHeaders() });
+    if (!r.ok) throw new Error((await r.json()).error || "삭제 권한이 없습니다");
+    toast("삭제됐습니다"); reloadAfter(type, cur);
   } catch(e){ toast(e.message); }
 }
 
