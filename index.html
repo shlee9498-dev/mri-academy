@@ -271,6 +271,7 @@ section{padding:64px 0;border-top:1px solid var(--line);scroll-snap-align:start}
 /* mobile category chips */
 .mcats{display:none}
 .cta-bar{display:none}
+.swipe-ctl{display:none}
 @media(max-width:860px){
 .mcats{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;position:sticky;top:53px;z-index:49;background:rgba(10,10,12,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:10px 14px;-webkit-overflow-scrolling:touch}
 .mcats::-webkit-scrollbar{display:none}
@@ -289,7 +290,12 @@ body{padding-bottom:66px}
 .plans::-webkit-scrollbar{display:none}
 .plans .plan{flex:0 0 82%;scroll-snap-align:center}
 .plans-4{grid-template-columns:1fr}
-.swipe-hint{display:block;text-align:center;color:var(--ink-faint);font-size:12px;margin:-4px 0 4px}
+.swipe-ctl{display:flex;align-items:center;gap:12px;margin:2px 4px 8px;padding:0 2px}
+.sc-arrow{flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:var(--bg-card);border:1px solid var(--line);color:var(--gold);font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:opacity .15s,border-color .15s}
+.sc-arrow:disabled{opacity:.3;cursor:default}
+.sc-arrow:active{border-color:var(--gold)}
+.sc-track{position:relative;flex:1;height:3px;background:var(--line);border-radius:99px}
+.sc-fill{position:absolute;top:0;left:0;height:100%;width:30%;background:var(--gold);border-radius:99px;transition:left .18s ease,width .18s ease}
 .tr-grid{display:flex;grid-template-columns:none;overflow-x:auto;gap:12px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;padding:2px 2px 10px;scrollbar-width:none}
 .tr-grid::-webkit-scrollbar{display:none}
 .tr-grid .trainer{flex:0 0 86%;scroll-snap-align:center}
@@ -647,6 +653,7 @@ footer b{color:var(--gold)}
         <a class="pbtn" href="apply.html">신청하기 →</a>
       </div>
     </div>
+    <div class="swipe-ctl"><button class="sc-arrow sc-prev" type="button" aria-label="이전 카드">←</button><div class="sc-track"><div class="sc-fill"></div></div><button class="sc-arrow sc-next" type="button" aria-label="다음 카드">→</button></div>
     <p class="plan-note">레슨 상담(테스트) 비용 <b>15,000원</b> · 개인/그룹 선택 가능 · 핵·버그로 터진 게임은 무효 처리<br>개인레슨 시간별 판수 차감 — <b>30분 3판 · 1시간 5판 · 1시간 30분 8판 · 2시간 10판</b></p>
 
     </div>
@@ -674,6 +681,7 @@ footer b{color:var(--gold)}
         <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
       </div>
     </div>
+    <div class="swipe-ctl"><button class="sc-arrow sc-prev" type="button" aria-label="이전 카드">←</button><div class="sc-track"><div class="sc-fill"></div></div><button class="sc-arrow sc-next" type="button" aria-label="다음 카드">→</button></div>
     <p class="plan-note">강의 상담(테스트) 비용 <b>20,000원</b> · 최소 12회부터 · 클래스별 멤버 구성 후 3시간 집중 · 시간 예약제</p>
 
     </div>
@@ -701,6 +709,7 @@ footer b{color:var(--gold)}
         <a class="pbtn" href="apply.html">세트 신청 →</a>
       </div>
     </div>
+    <div class="swipe-ctl"><button class="sc-arrow sc-prev" type="button" aria-label="이전 카드">←</button><div class="sc-track"><div class="sc-fill"></div></div><button class="sc-arrow sc-next" type="button" aria-label="다음 카드">→</button></div>
     <p class="plan-note">세트는 이미 최대 할인된 레슨·강의를 한 번에 신청하는 구성입니다 · 강의 포함으로 상담(테스트) 비용 <b>20,000원</b> 1회 · 트레이너·일정 우선 배정</p>
     </div>
 
@@ -889,6 +898,7 @@ footer b{color:var(--gold)}
           <a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">📺 SOOP</a></div>
       </div>
     </div>
+    <div class="swipe-ctl"><button class="sc-arrow sc-prev" type="button" aria-label="이전 카드">←</button><div class="sc-track"><div class="sc-fill"></div></div><button class="sc-arrow sc-next" type="button" aria-label="다음 카드">→</button></div>
     <p class="plan-note">🔜 함께할 트레이너를 모집합니다 · <a href="trainer-recruit.html" style="color:var(--gold);font-weight:700;text-decoration:none">트레이너 모집 안내 →</a></p>
   </section>
 
@@ -1083,12 +1093,45 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
     panels.forEach(function(p){p.classList.toggle("active",p.dataset.prog===name);});
     document.querySelectorAll(".prog-tabs").forEach(function(pt){pt.classList.add("touched");});
     var hint=document.querySelector(".tabs-hint"); if(hint) hint.classList.add("hide");
+    window.dispatchEvent(new Event("resize"));
   }
   tabs.forEach(function(t){t.addEventListener("click",function(){activate(t.dataset.prog);});});
   /* nav·모바일칩에서 강의/세트 누르면 해당 탭으로 전환 */
   document.querySelectorAll("a[data-prog]").forEach(function(a){
     a.addEventListener("click",function(){activate(a.dataset.prog);});
   });
+})();
+</script>
+<script>
+/* 모바일 카드 캐러셀: 화살표 + 진행바 */
+(function(){
+  function wire(ctl){
+    var row=ctl.previousElementSibling;
+    if(!row||(!row.classList.contains("plans")&&!row.classList.contains("tr-grid"))) return;
+    var fill=ctl.querySelector(".sc-fill"),prev=ctl.querySelector(".sc-prev"),next=ctl.querySelector(".sc-next");
+    function update(){
+      if(row.clientWidth===0) return; /* 숨겨진 탭 패널 */
+      var max=row.scrollWidth-row.clientWidth;
+      var vis=Math.min(1,row.clientWidth/row.scrollWidth);
+      var ratio=max>0?row.scrollLeft/max:0;
+      var w=Math.max(20,Math.round(vis*100));
+      fill.style.width=w+"%";
+      fill.style.left=(ratio*(100-w))+"%";
+      prev.disabled=row.scrollLeft<=2;
+      next.disabled=row.scrollLeft>=max-2;
+    }
+    function step(dir){
+      var card=row.querySelector(".plan,.trainer");
+      var d=card?card.getBoundingClientRect().width+14:row.clientWidth*0.8;
+      row.scrollBy({left:dir*d,behavior:"smooth"});
+    }
+    prev.addEventListener("click",function(){step(-1);});
+    next.addEventListener("click",function(){step(1);});
+    row.addEventListener("scroll",update,{passive:true});
+    window.addEventListener("resize",update);
+    update();
+  }
+  document.querySelectorAll(".swipe-ctl").forEach(wire);
 })();
 </script>
 </body>
