@@ -867,6 +867,68 @@ app.post("/api/apply", async (req, res) => {
   }
 });
 
+// POST /api/trainer-apply — 트레이너 지원서 → 디스코드 운영진 채널(웹훅)
+app.post("/api/trainer-apply", async (req, res) => {
+  try {
+    const WEBHOOK = process.env.DISCORD_TRAINER_WEBHOOK || process.env.DISCORD_APPLY_WEBHOOK;
+    if (!WEBHOOK) return res.status(503).json({ error: "apply_disabled_no_webhook" });
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
+    if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
+
+    const b = req.body || {};
+    const required = ["name", "phone", "discord", "platform", "ign", "tier", "playtime"];
+    for (const k of required) {
+      if (!b[k] || String(b[k]).trim() === "") return res.status(400).json({ error: `필수 항목 누락: ${k}` });
+    }
+    const vows = ["vowProxy", "vowTrade", "vowOpen", "vowTime", "vowContract"];
+    if (!vows.every((v) => b[v] === true || b[v] === "true")) {
+      return res.status(400).json({ error: "검증 서약에 모두 동의해야 지원할 수 있습니다." });
+    }
+    const clip = (s, n) => String(s || "").slice(0, n);
+
+    let bpiText = "PUBG 키 미설정 — 진단 생략";
+    if (process.env.PUBG_API_KEY) {
+      try {
+        const r = await computeBPI(b.platform, clip(b.ign, 40), false);
+        const s = r.suggested;
+        bpiText = `**${s.tier} ${s.label}** (BPI ${s.bpi}) · 평균딜 ${r.sample.avgDamage} · ${r.sample.roundsPlayed}판`
+          + (r.lowConfidence ? " ⚠표본부족" : "");
+      } catch (e) { bpiText = `자동 진단 실패: ${clip(e.message, 60)}`; }
+    }
+
+    const embed = {
+      title: "🎖️ 새 트레이너 지원 — " + clip(b.name, 30),
+      color: 0xf5c518,
+      fields: [
+        { name: "플랫폼/닉", value: `${clip(b.platform, 10)} / ${clip(b.ign, 40)}`, inline: true },
+        { name: "현재 티어", value: clip(b.tier, 40), inline: true },
+        { name: "현 클랜", value: clip(b.clan, 40) || "—", inline: true },
+        { name: "🎯 BPI 자동진단", value: bpiText, inline: false },
+        { name: "가능 시간대", value: clip(b.playtime, 100), inline: false },
+        { name: "코칭/방송 경력", value: clip(b.career, 300) || "—", inline: false },
+        { name: "지원 동기", value: clip(b.motive, 500) || "—", inline: false },
+        { name: "📞 연락처", value: clip(b.phone, 20), inline: true },
+        { name: "💬 디스코드", value: clip(b.discord, 40), inline: true },
+        { name: "생년월일", value: clip(b.birth, 10) || "—", inline: true },
+        { name: "✅ 검증 서약", value: "대리이력없음 · 계정거래/공유 처분동의 · 신상오픈동의 · 강의시간최우선 · 계약(NDA·경업금지)동의 — 전체 동의함", inline: false },
+      ],
+      timestamp: new Date().toISOString(),
+      footer: { text: "MRI ACADEMY 트레이너 지원" },
+    };
+
+    const wr = await fetch(WEBHOOK, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "트레이너지원봇", embeds: [embed] }),
+    });
+    if (!wr.ok) { console.error("trainer_webhook_error", wr.status); return res.status(502).json({ error: "webhook_failed" }); }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("trainer_apply_error", e);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
 // ─── 상태 확인 ────────────────────────────────────────────
 app.get("/", (_req, res) =>
   res.send(

@@ -2,164 +2,106 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>트레이너 모집 | MRI ACADEMY</title>
-<meta name="description" content="MRI ACADEMY · GmI 클랜에서 함께할 배틀그라운드 트레이너를 모집합니다. 투명한 수익 배분, 체계적인 커리큘럼, 검증된 팀.">
-<meta property="og:title" content="MRI ACADEMY 트레이너 모집">
-<meta property="og:description" content="검증된 트레이너와 함께 성장하는 배그 코칭 아카데미. 지금 지원하세요.">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
-<link rel="preconnect" href="https://fonts.googleapis.com">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>트레이너 모집 · MRI ACADEMY — 배틀그라운드 코칭</title>
+<meta name="description" content="MRI ACADEMY와 함께 가르칠 검증된 PUBG 트레이너를 모집합니다. 대표강사 직강 시스템·안정적 정산·성장 파이프라인. 서바이버 이상 실력과 인성을 갖춘 분을 찾습니다.">
+<meta name="keywords" content="배그 트레이너 모집, PUBG 코치 모집, 배틀그라운드 강사 모집, MRI ACADEMY 트레이너, GmI 클랜">
+<meta property="og:title" content="트레이너 모집 · MRI ACADEMY">
+<meta property="og:description" content="검증된 PUBG 트레이너를 모집합니다. 대표강사 직강 시스템·안정적 정산·성장 파이프라인.">
+<meta property="og:type" content="website">
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
 <style>
-:root{
-  --bg:#0a0a0c; --bg-card:#1a1a20; --bg-elev:#20202a;
-  --ink:#f4f4f5; --ink-dim:#a1a1aa; --ink-faint:#71717a;
-  --gold:#f5c518; --gold-soft:rgba(245,197,24,.3); --gold-deep:#caa00f;
-  --green:#10b981; --blue:#5ac8fa; --red:#e63946; --line:#27272a;
-}
+:root{--bg:#0a0a0c;--bg-card:#1a1a20;--bg-elev:#20202a;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--gold-deep:#caa00f;--green:#10b981;--blue:#5ac8fa;--red:#e63946;--line:#27272a;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif}
 *{margin:0;padding:0;box-sizing:border-box}
-body{
-  font-family:"Pretendard Variable",Pretendard,-apple-system,sans-serif;
-  color:var(--ink); background-color:var(--bg);
-  background-image:
-    radial-gradient(circle at 50% -10%, rgba(245,197,24,.12), transparent 55%),
-    linear-gradient(rgba(245,197,24,.022) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(245,197,24,.022) 1px, transparent 1px);
-  background-size:auto, 37px 37px, 37px 37px;
-  line-height:1.65; -webkit-font-smoothing:antialiased;
-}
-.disp{font-family:"Archivo Black",sans-serif;letter-spacing:-.02em}
-.wrap{max-width:840px;margin:0 auto;padding:0 22px}
-
-.hero{text-align:center;padding:84px 0 56px}
-.kick{display:inline-block;font-size:13px;font-weight:700;letter-spacing:.18em;color:var(--gold);
-  border:1px solid var(--gold-soft);border-radius:999px;padding:6px 16px;margin-bottom:24px}
-.hero h1{font-size:clamp(34px,7vw,58px);line-height:1.12;margin-bottom:18px}
-.hero h1 b{color:var(--gold)}
-.hero .lead{font-size:17px;color:var(--ink-dim);max-width:560px;margin:0 auto 32px}
-.cta{display:inline-block;background:var(--gold);color:#000;font-weight:800;font-size:16px;
-  padding:15px 38px;border-radius:12px;text-decoration:none;transition:transform .12s,box-shadow .12s;
-  box-shadow:0 8px 30px rgba(245,197,24,.25)}
-.cta:hover{transform:translateY(-2px);box-shadow:0 12px 38px rgba(245,197,24,.38)}
-.cta.ghost{background:transparent;color:var(--gold);border:1px solid var(--gold-soft);box-shadow:none}
-
-.sec{padding:40px 0;border-top:1px solid var(--line)}
-.sec h2{font-size:24px;margin-bottom:8px}
-.sec h2 span{color:var(--gold)}
-.sec .desc{color:var(--ink-dim);font-size:15px;margin-bottom:26px}
-
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
-.card{background:var(--bg-card);border:1px solid var(--line);border-radius:14px;padding:22px}
-.card h3{font-size:16px;margin-bottom:8px;color:var(--ink)}
-.card h3 i{font-style:normal;color:var(--gold);margin-right:7px}
-.card p{font-size:14px;color:var(--ink-dim)}
-
-.steps{display:flex;flex-direction:column;gap:12px}
-.step{display:flex;gap:16px;align-items:flex-start;background:var(--bg-card);
-  border:1px solid var(--line);border-radius:14px;padding:18px 20px}
-.step .n{flex:0 0 34px;height:34px;border-radius:9px;background:var(--bg-elev);color:var(--gold);
-  font-family:"Archivo Black",sans-serif;display:flex;align-items:center;justify-content:center;font-size:15px}
-.step .t{font-size:15px}
-.step .t b{color:var(--ink)}
-.step .t span{display:block;color:var(--ink-dim);font-size:13.5px;margin-top:3px}
-
-.reqs{list-style:none;display:grid;gap:10px}
-.reqs li{display:flex;gap:12px;align-items:flex-start;font-size:15px;color:var(--ink-dim)}
-.reqs li b{color:var(--gold);flex:0 0 auto}
-.reqs li em{color:var(--ink);font-style:normal}
-
-.note{margin-top:20px;font-size:13px;color:var(--ink-faint);background:var(--bg-elev);
-  border:1px solid var(--line);border-radius:10px;padding:14px 16px}
-
-.endcta{text-align:center;padding:56px 0 32px}
-.endcta h2{font-size:26px;margin-bottom:20px}
-
-footer{text-align:center;padding:34px 0 60px;color:var(--ink-faint);font-size:12.5px;border-top:1px solid var(--line)}
-footer a{color:var(--ink-faint)}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;background-image:radial-gradient(circle at 50% 0,rgba(245,197,24,.07),transparent 60%),linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);background-size:auto,37px 37px,37px 37px}
+.wrap{max-width:760px;margin:0 auto;padding:34px 18px 80px}
+.top{text-align:center;margin-bottom:30px}
+.kick{color:var(--gold);font-weight:800;font-size:12px;letter-spacing:.16em;text-transform:uppercase}
+h1{font-family:var(--display);font-size:clamp(28px,7vw,46px);line-height:1.08;margin:10px 0 12px}
+h1 .gd{color:var(--gold);text-shadow:0 0 34px rgba(245,197,24,.4)}
+.lead{color:var(--ink-dim);font-size:15px;max-width:560px;margin:0 auto}
+.cta-big{display:inline-block;background:linear-gradient(135deg,var(--gold),var(--gold-deep));color:#0a0a0c;border-radius:10px;padding:15px 34px;font-weight:800;font-size:16px;text-decoration:none;margin-top:20px;transition:transform .15s}
+.cta-big:hover{transform:translateY(-2px)}
+.sec{background:var(--bg-card);border:1px solid var(--line);border-radius:14px;padding:24px;margin-bottom:16px}
+.sec h2{font-family:var(--display);font-size:clamp(17px,4vw,21px);margin-bottom:6px}
+.sec .sd{color:var(--ink-dim);font-size:13.5px;margin-bottom:18px}
+.cards{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.card{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:16px}
+.card .ci{font-size:22px}
+.card .ct{font-weight:800;font-size:14.5px;margin:8px 0 5px}
+.card .cc{font-size:12.5px;color:var(--ink-dim);line-height:1.6}
+.list{list-style:none;display:flex;flex-direction:column;gap:11px}
+.list li{display:flex;gap:10px;font-size:14px;color:var(--ink-dim);align-items:flex-start}
+.list li b{color:var(--ink);font-weight:700}
+.list li .ck{color:var(--gold);flex-shrink:0;font-weight:800}
+.steps{display:flex;flex-direction:column;gap:0}
+.step{display:flex;gap:14px;padding:14px 0;border-bottom:1px solid var(--line)}
+.step:last-child{border-bottom:none}
+.step .num{flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:rgba(245,197,24,.12);border:1px solid var(--gold-soft);color:var(--gold);font-family:var(--display);font-size:14px;display:flex;align-items:center;justify-content:center}
+.step .st{font-weight:800;font-size:14.5px;margin-bottom:2px}
+.step .ss{font-size:12.5px;color:var(--ink-dim)}
+.trust{text-align:center;background:linear-gradient(135deg,rgba(245,197,24,.08),rgba(16,185,129,.05));border:1px solid var(--gold-soft);border-radius:14px;padding:24px;margin-bottom:16px}
+.trust .tt{font-family:var(--display);font-size:clamp(16px,4vw,20px);margin-bottom:8px}
+.trust .tc{font-size:13.5px;color:var(--ink-dim);max-width:520px;margin:0 auto}
+.bottom-cta{text-align:center;margin-top:8px}
+.back{display:inline-block;margin-top:22px;color:var(--gold);text-decoration:none;font-weight:700;font-size:14px}
+@media(max-width:560px){.cards{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <div class="wrap">
+  <div class="top">
+    <div class="kick">Trainer Recruit</div>
+    <h1>함께 가르칠 <span class="gd">트레이너</span>를 찾습니다</h1>
+    <p class="lead">MRI ACADEMY는 검증된 시스템과 데이터로 수강생의 실력을 끌어올립니다. 그 길을 함께할, 실력과 신뢰를 갖춘 트레이너를 모집합니다.</p>
+    <a class="cta-big" href="trainer-apply.html">지원하기 →</a>
+  </div>
 
-  <section class="hero">
-    <div class="kick">GmI · MRI ACADEMY</div>
-    <h1 class="disp">함께할 <b>트레이너</b>를<br>찾습니다</h1>
-    <p class="lead">실력은 기본, 가르치는 것에 진심인 분.<br>검증된 팀에서 안정적으로 코칭에 집중하실 분을 모십니다.</p>
-    <a class="cta" href="trainer-apply.html">지원하기 →</a>
-  </section>
-
-  <section class="sec">
-    <h2>이런 <span>분</span>을 찾습니다</h2>
-    <p class="desc">실력 못지않게 태도와 신뢰를 봅니다.</p>
-    <div class="grid">
-      <div class="card"><h3><i>◆</i>서바이버급 실력</h3><p>현재 서바이버 이상, 또는 그에 준하는 실전 기량을 갖추신 분.</p></div>
-      <div class="card"><h3><i>◆</i>가르치는 진심</h3><p>"왜 그렇게 해야 하는지"를 풀어서 설명할 수 있는 분.</p></div>
-      <div class="card"><h3><i>◆</i>약속을 지키는 분</h3><p>정해진 수업 시간을 무엇보다 우선으로 지킬 수 있는 분.</p></div>
-      <div class="card"><h3><i>◆</i>정정당당한 분</h3><p>정직한 플레이 이력과 신뢰를 최우선으로 하는 분.</p></div>
+  <div class="sec">
+    <h2>왜 MRI ACADEMY인가</h2>
+    <p class="sd">혼자 맨땅에서 시작하지 않습니다. 시스템 위에서 가르칩니다.</p>
+    <div class="cards">
+      <div class="card"><div class="ci">🎓</div><div class="ct">검증된 커리큘럼</div><div class="cc">대표강사 직강 시스템과 4단계 커리큘럼·교육 자료를 제공합니다. 가르치는 데만 집중하세요.</div></div>
+      <div class="card"><div class="ci">💰</div><div class="ct">안정적·투명 정산</div><div class="cc">검증 후 업계 상위 수준의 수익 배분, 매월 정산(사업소득). 직접 유치 시 영업 인센티브 별도.</div></div>
+      <div class="card"><div class="ci">📈</div><div class="ct">성장 파이프라인</div><div class="cc">후임 양성·체계적 교육으로 함께 큽니다. 입대 등 공백도 팀으로 커버합니다.</div></div>
+      <div class="card"><div class="ci">🏆</div><div class="ct">검증된 브랜드</div><div class="cc">실데이터 기반 성과와 검증된 팀. 신뢰가 곧 자산이 되는 환경에서 활동합니다.</div></div>
     </div>
-  </section>
+  </div>
 
-  <section class="sec">
-    <h2>함께하면 <span>좋은 점</span></h2>
-    <p class="desc">트레이너가 코칭에만 집중할 수 있도록 설계했습니다.</p>
-    <div class="grid">
-      <div class="card"><h3><i>＄</i>투명한 수익 배분</h3><p>본인이 유치하고 직접 수업하면 <b style="color:var(--gold)">최대 70%</b>. 매월 정해진 날 투명하게 정산합니다.</p></div>
-      <div class="card"><h3><i>↗</i>안정적인 수강생 유입</h3><p>아카데미·클랜·방송 채널을 통한 꾸준한 신규 유입으로 코칭에만 집중.</p></div>
-      <div class="card"><h3><i>▥</i>체계적인 시스템</h3><p>반 배정·피드백 양식·커리큘럼이 갖춰져 있어 처음에도 안정적으로 시작.</p></div>
-      <div class="card"><h3><i>★</i>GmI 클랜 소속</h3><p>검증된 팀의 일원으로 함께 성장하고 활동합니다.</p></div>
-    </div>
-  </section>
-
-  <section class="sec">
-    <h2>지원 <span>트랙</span></h2>
-    <p class="desc">실력과 상황에 따라 두 가지 경로로 함께할 수 있습니다.</p>
-    <div class="grid">
-      <div class="card">
-        <h3><i>A</i>즉시 검증형 (우대)</h3>
-        <p>이번 시즌 <b style="color:var(--gold)">본인 명의 계정</b>으로 <b style="color:var(--gold)">서바이버</b>를 유지하신 분. 별도 양성 과정 없이 곧바로 검증 절차로 진행합니다.</p>
-      </div>
-      <div class="card">
-        <h3><i>B</i>육성형 (양성 과정)</h3>
-        <p>아직 서바이버엔 못 미치지만 그에 준하는 실력과 성장 의지가 있는 분. 한 시즌 동안 <b style="color:var(--gold)">이무리 직강 양성 과정</b>을 거쳐, 서바이버 달성·검증 통과 시 트레이너로 승격합니다.</p>
-      </div>
-    </div>
-    <div class="note">※ B 트랙은 한 시즌 양성 교육(수강료 30만원)을 포함합니다. <b style="color:var(--ink)">교육 이수가 트레이너 임명을 보장하지는 않으며</b>(승격은 서바이버 달성·검증 통과 기준), 중도 환불은 학원법 환불 기준을 따릅니다. 양성 과정은 본인 실력 향상 자체로도 도움이 되도록 설계되어 있습니다.</div>
-  </section>
-
-  <section class="sec">
-    <h2>검증 <span>절차</span></h2>
-    <p class="desc">MRI ACADEMY는 엄격한 검증을 거친 트레이너만 함께합니다. 그래서 수강생이 믿고 맡깁니다.</p>
-    <div class="steps">
-      <div class="step"><div class="n disp">1</div><div class="t"><b>지원서 제출</b><span>기본 정보와 게임 이력, 기본 서약을 작성해 제출합니다.</span></div></div>
-      <div class="step"><div class="n disp">2</div><div class="t"><b>무결성 검증</b><span>정직한 플레이 이력과 신원 확인 등 기본 검증을 진행합니다.</span></div></div>
-      <div class="step"><div class="n disp">3</div><div class="t"><b>GmI 클랜 입단</b><span>검증을 통과하시면 클랜에 합류합니다.</span></div></div>
-      <div class="step"><div class="n disp">4</div><div class="t"><b>한 시즌 함께</b><span>실력·인성·게임 이해도를 한 시즌 동안 함께 확인합니다.</span></div></div>
-      <div class="step"><div class="n disp">5</div><div class="t"><b>트레이너 승격</b><span>모든 과정을 통과하시면 정식 트레이너로 활동을 시작합니다.</span></div></div>
-    </div>
-  </section>
-
-  <section class="sec">
-    <h2>지원 <span>자격</span></h2>
-    <p class="desc">아래에 해당하시면 편하게 지원해 주세요.</p>
-    <ul class="reqs">
-      <li><b>·</b><em>서바이버 이상의 실력(또는 그에 준하는 기량)을 갖춘 분</em></li>
-      <li><b>·</b><em>정해진 수업 시간 약속을 최우선으로 지킬 수 있는 분</em></li>
-      <li><b>·</b><em>정직한 플레이 이력을 갖고, 신원 확인이 가능한 분</em></li>
-      <li><b>·</b><em>선발 시 비밀유지·업무위탁 계약 체결에 동의하시는 분</em></li>
+  <div class="sec">
+    <h2>이런 분을 찾습니다</h2>
+    <p class="sd">실력만큼 인성과 신뢰를 봅니다.</p>
+    <ul class="list">
+      <li><span class="ck">✓</span><span><b>서바이버 이상의 실력</b> (마스터 지향) — 자신의 플레이를 말로 풀어낼 수 있는 분</span></li>
+      <li><span class="ck">✓</span><span><b>가르치는 것을 좋아하고</b> 인성·소통이 갖춰진 분</span></li>
+      <li><span class="ck">✓</span><span><b>강의 시간 약속을 최우선</b>으로 지킬 수 있는 분</span></li>
+      <li><span class="ck">✓</span><span><b>신상 공개를 통한 무결성 검증</b>에 응할 수 있는 분</span></li>
+      <li><span class="ck">✓</span><span><b>대리·계정거래와 무관한</b>, 깨끗한 이력을 가진 분</span></li>
     </ul>
-    <div class="note">※ MRI ACADEMY는 공정한 플레이와 신뢰를 최우선 가치로 합니다. 대리·계정 거래 등 부정 이력이 있는 경우 함께하기 어렵습니다.</div>
-  </section>
+  </div>
 
-  <section class="endcta">
-    <h2 class="disp">지금 <span style="color:var(--gold)">지원</span>하세요</h2>
-    <a class="cta" href="trainer-apply.html">트레이너 지원하기 →</a>
-  </section>
+  <div class="sec">
+    <h2>합류 절차</h2>
+    <p class="sd">검증을 통과한 분만 GmI 클랜 입단 후 트레이너로 합류합니다.</p>
+    <div class="steps">
+      <div class="step"><div class="num">1</div><div><div class="st">지원서 제출</div><div class="ss">기본 정보·게임 정보·검증 서약 작성</div></div></div>
+      <div class="step"><div class="num">2</div><div><div class="st">무결성 검증 <span style="color:var(--gold-deep);font-size:11px">· 입단 전</span></div><div class="ss">대리·계정거래 이력 및 신상 확인 — 신뢰의 첫 관문</div></div></div>
+      <div class="step"><div class="num">3</div><div><div class="st">GmI 클랜 입단</div><div class="ss">검증 통과자에 한해 클랜 합류</div></div></div>
+      <div class="step"><div class="num">4</div><div><div class="st">한 시즌 함께 플레이</div><div class="ss">대표강사와 직접 게임하며 실력·인성·게임 사고를 검증</div></div></div>
+      <div class="step"><div class="num">5</div><div><div class="st">트레이너 승격</div><div class="ss">정식 트레이너로 수강생 코칭 시작 · 위탁계약 체결</div></div></div>
+    </div>
+  </div>
 
-  <footer>
-    © 2026 MRI ACADEMY. 무단 복제·도용 금지<br>
-    <a href="https://shlee9498-dev.github.io/mri-academy/">메인으로 돌아가기</a>
-  </footer>
+  <div class="trust">
+    <div class="tt">신뢰가 우리 브랜드의 핵심입니다</div>
+    <div class="tc">대리·계정거래는 어떤 경우에도 허용하지 않습니다. 엄격한 무결성 검증을 거친 트레이너만이 MRI ACADEMY의 이름으로 가르칩니다.</div>
+  </div>
 
+  <div class="bottom-cta">
+    <a class="cta-big" href="trainer-apply.html">트레이너 지원하기 →</a>
+    <div><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
+  </div>
 </div>
 </body>
 </html>
