@@ -104,7 +104,7 @@
   --body:'Pretendard Variable','Archivo',-apple-system,sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box}
-html{scroll-behavior:smooth}
+html{scroll-behavior:smooth;scroll-snap-type:y proximity;scroll-padding-top:64px}
 body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;position:relative}
 body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
   background-image:linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);background-size:38px 38px}
@@ -130,13 +130,13 @@ nav{position:sticky;top:0;z-index:50;background:rgba(10,10,12,.78);backdrop-filt
 @media(max-width:860px){.nav-links{display:none}.nav-hot{margin-left:auto;font-size:12.5px;padding:8px 11px}.nav-cta{font-size:12.5px;padding:8px 12px}}
 
 /* shared section */
-section{padding:64px 0;border-top:1px solid var(--line)}
+section{padding:64px 0;border-top:1px solid var(--line);scroll-snap-align:start}
 .kick{text-transform:uppercase;letter-spacing:.22em;color:var(--gold);font-size:11px;font-weight:800;margin-bottom:12px}
 .s-title{font-family:var(--display);font-size:clamp(23px,4.5vw,34px);line-height:1.1;margin-bottom:10px}
 .s-desc{color:var(--ink-dim);font-size:14.5px;margin-bottom:34px}
 
 /* HERO */
-.hero{padding:60px 0 56px;border-top:none}
+.hero{padding:60px 0 56px;border-top:none;scroll-snap-align:start}
 .hero-grid{display:grid;grid-template-columns:1.08fr .92fr;gap:38px;align-items:center}
 .hero h1{font-family:var(--display);font-size:clamp(34px,6vw,60px);line-height:1.04;letter-spacing:-.015em}
 .hero h1 .gd{color:var(--gold);text-shadow:0 0 38px rgba(245,197,24,.45)}
@@ -252,6 +252,15 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .ptab{background:var(--bg-card);border:1px solid var(--line);color:var(--ink-dim);font-family:var(--display);font-size:14px;padding:10px 22px;border-radius:9px;cursor:pointer;transition:all .15s}
 .ptab:hover{border-color:var(--gold-soft);color:var(--ink)}
 .ptab.active{background:var(--gold);color:#000;border-color:var(--gold)}
+.ptab:not(.active){animation:tabGlow 2.4s ease-in-out infinite}
+@keyframes tabGlow{0%,100%{box-shadow:0 0 0 0 rgba(245,197,24,0)}50%{box-shadow:0 0 0 4px rgba(245,197,24,.16)}}
+.prog-tabs.touched .ptab{animation:none}
+.tabs-hint{display:flex;align-items:center;justify-content:center;gap:7px;font-size:13px;color:var(--ink-dim);margin:2px 0 12px}
+.tabs-hint b{color:var(--gold);font-weight:700}
+.tabs-hint .bob{display:inline-block;animation:hintBob 1.3s ease-in-out infinite;font-size:15px}
+@keyframes hintBob{0%,100%{transform:translateY(0)}50%{transform:translateY(4px)}}
+.tabs-hint.hide{display:none}
+@media(prefers-reduced-motion:reduce){.ptab:not(.active){animation:none}.tabs-hint .bob{animation:none}}
 .prog-panel{display:none}
 .prog-panel.active{display:block;animation:progFade .25s ease}
 @keyframes progFade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
@@ -261,11 +270,19 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 #consult{background:linear-gradient(180deg,transparent,rgba(245,197,24,.022) 50%,transparent)}
 /* mobile category chips */
 .mcats{display:none}
+.cta-bar{display:none}
 @media(max-width:860px){
 .mcats{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;position:sticky;top:53px;z-index:49;background:rgba(10,10,12,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:10px 14px;-webkit-overflow-scrolling:touch}
 .mcats::-webkit-scrollbar{display:none}
 .mcats a{flex:0 0 auto;text-decoration:none;color:var(--ink-dim);font-size:13px;font-weight:700;background:var(--bg-card);border:1px solid var(--line);padding:7px 14px;border-radius:99px;white-space:nowrap}
 .mcats a:active{color:var(--gold);border-color:var(--gold-soft)}
+html{scroll-padding-top:104px}
+.cta-bar{display:flex;gap:10px;position:fixed;left:0;right:0;bottom:0;z-index:80;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:rgba(10,10,12,.94);backdrop-filter:blur(12px);border-top:1px solid var(--line)}
+.cta-bar a{flex:1;text-align:center;text-decoration:none;font-weight:800;font-size:14px;padding:13px 0;border-radius:10px;white-space:nowrap}
+.cta-bar .ghost{background:var(--bg-card);border:1px solid var(--gold-soft);color:var(--gold)}
+.cta-bar .solid{background:var(--gold);color:#000}
+body{padding-bottom:66px}
+.cb-fab{bottom:80px}
 }
 @media(max-width:780px){
 .plans{display:flex;grid-template-columns:none;overflow-x:auto;gap:14px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;padding:16px 4px 12px;scrollbar-width:none}
@@ -273,6 +290,9 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .plans .plan{flex:0 0 82%;scroll-snap-align:center}
 .plans-4{grid-template-columns:1fr}
 .swipe-hint{display:block;text-align:center;color:var(--ink-faint);font-size:12px;margin:-4px 0 4px}
+.tr-grid{display:flex;grid-template-columns:none;overflow-x:auto;gap:12px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;padding:2px 2px 10px;scrollbar-width:none}
+.tr-grid::-webkit-scrollbar{display:none}
+.tr-grid .trainer{flex:0 0 86%;scroll-snap-align:center}
 }
 @media(min-width:781px) and (max-width:980px){.plans-4{grid-template-columns:repeat(2,1fr)}}
 
@@ -597,6 +617,7 @@ footer b{color:var(--gold)}
       <div class="pb-sub"><b style="color:var(--gold)">트레이너 1인당 정원 25명</b> — 수업 질을 지키기 위해 인원을 제한합니다. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b> 돌파 시 <b>각각 그 주 다음 주부터 정가로 전환</b>됩니다. 자리가 한정되어 있으니 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
     </div>
 
+    <div class="tabs-hint"><span class="bob">👆</span> 탭을 눌러 <b>레슨 · 강의 · 세트</b> 가격을 비교해보세요</div>
     <div class="prog-tabs" role="tablist">
       <button class="ptab active" data-prog="lesson" type="button">레슨</button>
       <button class="ptab" data-prog="course" type="button">강의</button>
@@ -989,6 +1010,10 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
 })();
 </script>
 <!-- 챗봇 위젯 -->
+<div class="cta-bar">
+  <a href="#plans" class="ghost" data-prog="course">💰 강의금·가격 확인</a>
+  <a href="#consult" class="solid">💬 상담 신청</a>
+</div>
 <button class="cb-fab" id="cbFab" aria-label="상담 챗봇 열기"><span>💬</span><span class="cbdot"></span></button>
 <div class="cb-panel" id="cbPanel" role="dialog" aria-label="MRI ACADEMY 상담 챗봇">
   <div class="cb-head">
@@ -1056,6 +1081,8 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
     if(!name) return;
     tabs.forEach(function(t){t.classList.toggle("active",t.dataset.prog===name);});
     panels.forEach(function(p){p.classList.toggle("active",p.dataset.prog===name);});
+    document.querySelectorAll(".prog-tabs").forEach(function(pt){pt.classList.add("touched");});
+    var hint=document.querySelector(".tabs-hint"); if(hint) hint.classList.add("hide");
   }
   tabs.forEach(function(t){t.addEventListener("click",function(){activate(t.dataset.prog);});});
   /* nav·모바일칩에서 강의/세트 누르면 해당 탭으로 전환 */
