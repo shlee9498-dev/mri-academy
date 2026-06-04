@@ -247,6 +247,9 @@ section{padding:64px 0;border-top:1px solid var(--line);scroll-snap-align:start}
 .plan.hot .pbtn{background:var(--gold);color:#000;border-color:var(--gold)}
 .plan .pbtn:hover{transform:translateY(-1px);border-color:var(--gold-soft)}
 .plan-note{text-align:center;color:var(--ink-faint);font-size:12.5px;margin-top:20px}
+.plan.vip{border-color:var(--gold-deep);background:linear-gradient(180deg,rgba(245,197,24,.07),var(--bg-card));box-shadow:0 0 0 1px var(--gold-soft),0 18px 44px rgba(245,197,24,.16)}
+.plan.vip .pp{color:var(--gold)}
+.rib-vip{background:linear-gradient(90deg,#caa00f,#f5c518)!important;color:#000!important}
 /* program category tabs */
 .prog-tabs{display:flex;gap:8px;margin:4px 0 22px;flex-wrap:wrap}
 .ptab{background:var(--bg-card);border:1px solid var(--line);color:var(--ink-dim);font-family:var(--display);font-size:14px;padding:10px 22px;border-radius:9px;cursor:pointer;transition:all .15s}
@@ -620,7 +623,7 @@ footer b{color:var(--gold)}
           <div class="ebar-left">정가 전환까지 <b id="couLeft">··</b></div>
         </div>
       </div>
-      <div class="pb-sub"><b style="color:var(--gold)">트레이너 1인당 정원 25명</b> — 수업 질을 지키기 위해 인원을 제한합니다. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b> 돌파 시 <b>각각 그 주 다음 주부터 정가로 전환</b>됩니다. 자리가 한정되어 있으니 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
+      <div class="pb-sub"><b style="color:var(--gold)">트레이너 1인당 정원 25명</b> — 수업 질을 지키기 위해 인원을 제한합니다. 레슨생 <b>50명</b> 도달 시 판당 <b>5,000원</b>, <b>70명</b> 도달 시 판당 <b>6,000원</b>으로 단계 전환되며, 강의 수강생 <b>25명</b> 돌파 시 정가 전환됩니다. 전환은 각각 그 주 다음 주부터 적용 · 기존 등록분은 종전가 유지. 자리가 한정되어 있으니 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
     </div>
 
     <div class="tabs-hint"><span class="bob">👆</span> 탭을 눌러 <b>레슨 · 강의 · 세트</b> 가격을 비교해보세요</div>
@@ -635,7 +638,7 @@ footer b{color:var(--gold)}
     <div class="prog-head"><span class="prog-tag" style="background:rgba(90,200,250,.12);color:var(--blue)">레슨</span> 서바이버 트레이너진 · <b>판수제</b> <span class="prog-sub">레벨테스트 무관 · 누구나 · 시간 여유롭게</span></div>
     <div style="margin:-2px 0 14px;color:var(--ink-dim);font-size:13.5px"><b style="color:var(--ink)">트레이너가 1:1로 봐주는 실전 판수 — 산 만큼만.</b> 실력 단계에 맞춰 골라 받기 · <span style="color:var(--blue)">관전형 · 참여형 · 1:1</span></div>
     <div class="swipe-hint">← 좌우로 넘겨서 비교 →</div>
-    <div class="plans">
+    <div class="plans plans-4">
       <div class="plan">
         <div class="pn">10판</div><div class="po">50,000원</div><div class="pp">40,000원<span class="off">-20%</span></div><div class="pd">판당 4,000원 · 단기 집중 교정</div>
         <ul><li>에임 정밀 분석</li><li>포지셔닝 교정</li><li>즉시 배정</li><li>빠른 피드백</li></ul>
@@ -652,9 +655,15 @@ footer b{color:var(--gold)}
         <ul><li>시즌 전체 관리</li><li>주간 성장 리포트</li><li>무제한 Q&amp;A · 클랜 추천</li></ul>
         <a class="pbtn" href="apply.html">신청하기 →</a>
       </div>
+      <div class="plan vip">
+        <div class="rib rib-vip">👑 VIP</div>
+        <div class="pn">VIP · 10판</div><div class="pp">120,000원</div><div class="pd">판당 12,000원 · 시간이 우선인 분께</div>
+        <ul><li>우선 예약 · 즉시 배정</li><li>속성 집중 진행</li><li>당일 리플 분석 피드백</li><li>일정 변경 자유</li><li>트레이너당 2~3명 한정</li></ul>
+        <a class="pbtn" href="apply.html">VIP 문의 →</a>
+      </div>
     </div>
     <div class="swipe-ctl"><button class="sc-arrow sc-prev" type="button" aria-label="이전 카드">←</button><div class="sc-track"><div class="sc-fill"></div></div><button class="sc-arrow sc-next" type="button" aria-label="다음 카드">→</button></div>
-    <p class="plan-note">레슨 상담(테스트) 비용 <b>15,000원</b> · 개인/그룹 선택 가능 · 핵·버그로 터진 게임은 무효 처리<br>개인레슨 시간별 판수 차감 — <b>30분 3판 · 1시간 5판 · 1시간 30분 8판 · 2시간 10판</b></p>
+    <p class="plan-note">레슨 상담(테스트) 비용 <b>15,000원</b> · 개인/그룹 선택 가능 · 핵·버그로 터진 게임은 무효 처리<br>개인레슨 시간별 판수 차감 — <b>30분 3판 · 1시간 5판 · 1시간 30분 8판 · 2시간 10판</b><br><span style="color:var(--ink-faint)">표시가는 런칭 할인가 · 레슨생 <b>50명</b> 도달 시 판당 <b>5,000원</b> · <b>70명</b> 도달 시 판당 <b>6,000원</b>으로 단계 전환</span></p>
 
     </div>
 
@@ -663,7 +672,7 @@ footer b{color:var(--gold)}
     <div class="prog-head"><span class="prog-tag" style="background:rgba(245,197,24,.12);color:var(--gold)">강의</span> 이무리 클랜장 직강 · <b>시간제(3시간 집중)</b> <span class="prog-sub">레벨테스트 합격 필수 · 12회 이상 · 전략 심화 · 고점 돌파</span></div>
     <div style="margin:-2px 0 14px;color:var(--ink-dim);font-size:13.5px"><b style="color:var(--ink)">대표강사 직강 그룹강의 — 월 부담으로 쪼개서.</b> 12회 = 주1회 기준 <span style="color:var(--gold)">월 12만원</span>대로 시작.</div>
     <div class="swipe-hint">← 좌우로 넘겨서 비교 →</div>
-    <div class="plans">
+    <div class="plans plans-4">
       <div class="plan hot">
         <div class="rib">기본</div>
         <div class="pn">12회 패키지</div><div class="po">540,000원</div><div class="pp">360,000원<span class="off">-33%</span></div><div class="pd">회당 30,000원 · 1회 3시간</div>
@@ -680,6 +689,12 @@ footer b{color:var(--gold)}
         <ul><li>최대 혜택 구성</li><li>상위 1% 도약</li><li>시즌 풀 케어</li></ul>
         <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
       </div>
+      <div class="plan vip">
+        <div class="rib rib-vip">👑 VIP</div>
+        <div class="pn">VIP · 12회</div><div class="pp">1,080,000원</div><div class="pd">회당 90,000원 · 직강 우선 배정</div>
+        <ul><li>우선 일정 · 즉시 편성</li><li>속성 집중 진행</li><li>당일 피드백</li><li>1:1 전담 케어</li><li>소수 한정</li></ul>
+        <a class="pbtn" href="apply.html">VIP 문의 →</a>
+      </div>
     </div>
     <div class="swipe-ctl"><button class="sc-arrow sc-prev" type="button" aria-label="이전 카드">←</button><div class="sc-track"><div class="sc-fill"></div></div><button class="sc-arrow sc-next" type="button" aria-label="다음 카드">→</button></div>
     <p class="plan-note">강의 상담(테스트) 비용 <b>20,000원</b> · 최소 12회부터 · 클래스별 멤버 구성 후 3시간 집중 · 시간 예약제</p>
@@ -689,7 +704,7 @@ footer b{color:var(--gold)}
     <!-- 세트 -->
     <div class="prog-panel" data-prog="set">
     <div class="prog-head"><span class="prog-tag" style="background:rgba(168,85,247,.14);color:var(--purple)">세트</span> 레슨 + 강의 결합 <span class="prog-sub">트레이너 레슨으로 다지고 · 이무리 강의로 심화 · 한 번에 신청</span></div>
-    <div style="margin:-2px 0 14px;color:var(--ink-dim);font-size:13.5px"><b style="color:var(--ink)">레슨 + 강의 묶음 — 할인 폭이 가장 큽니다.</b> 한 번에 신청하고 트레이너·일정 우선 배정받으세요.</div>
+    <div style="margin:-2px 0 14px;color:var(--ink-dim);font-size:13.5px"><b style="color:var(--ink)">레슨 + 강의 묶음 — 할인 폭이 가장 큽니다.</b> 한 번에 신청하고 트레이너·일정 우선 배정받으세요. <span style="color:var(--ink-faint)">(레슨 구성분은 정원 사다리 50명→5천·70명→6천에 따라 동반 조정)</span></div>
     <div class="swipe-hint">← 좌우로 넘겨서 비교 →</div>
     <div class="plans">
       <div class="plan">
@@ -777,7 +792,7 @@ footer b{color:var(--gold)}
 
       <details>
         <summary><span class="q">Q</span>비용은 어떻게 되나요?<span class="mk">+</span></summary>
-        <div class="a"><b>상담비</b> — 레슨상담 <span class="hi">15,000원</span> / 강의상담 <span class="hi">20,000원</span>. 레슨을 먼저 받으신 뒤 강의를 신청하실 경우 강의상담비는 따로 받지 않습니다(차감/면제). <b>레슨 판수</b> — 10판 40,000 / 21판 80,000 / 33판 120,000원.</div>
+        <div class="a"><b>상담비</b> — 레슨상담 <span class="hi">15,000원</span> / 강의상담 <span class="hi">20,000원</span>. 레슨을 먼저 받으신 뒤 강의를 신청하실 경우 강의상담비는 따로 받지 않습니다(차감/면제). <b>레슨 판수</b> — 10판 40,000 / 21판 80,000 / 33판 120,000원 (런칭가 · 50명→판당 5,000 · 70명→판당 6,000 전환).</div>
       </details>
 
       <details>
