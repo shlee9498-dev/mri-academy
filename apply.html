@@ -160,6 +160,10 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
         <input type="checkbox" id="agree" required>
         <span>개인정보(이름·연락처·디스코드 등)를 <b style="color:var(--gold)">수강 상담 목적</b>으로 수집·이용하는 데 동의합니다. 입력 정보는 운영진에게만 전달되며 사이트에 저장·공개되지 않습니다.</span>
       </label>
+      <label class="agree" style="margin-top:12px">
+        <input type="checkbox" id="agreeStats" required>
+        <span><b style="color:var(--gold)">전적(인게임 기록) 수집·활용</b>에 동의합니다. 입력한 닉네임·플랫폼으로 PUBG 전적을 조회해 <b>레벨 테스트·반 배정·성장 추적</b>에 활용하며, 성과 데이터는 <b>닉네임 비공개(익명)</b> 형태로만 사용됩니다.</span>
+      </label>
     </div>
 
     <button class="submit" id="submit" type="submit">신청서 보내기</button>
@@ -182,6 +186,7 @@ const msg = document.getElementById("msg");
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!document.getElementById("agree").checked) { show("err", "개인정보 수집·이용에 동의해 주세요."); return; }
+  if (!document.getElementById("agreeStats").checked) { show("err", "전적 수집·활용에 동의해 주세요."); return; }
   const fd = new FormData(form);
   const focus = fd.getAll("focus");
   const payload = {
@@ -190,7 +195,7 @@ form.addEventListener("submit", async (e) => {
     applyType: fd.get("applyType"), source: fd.get("source"), trainer: fd.get("trainer") || "",
     platform: fd.get("platform"), nickname: fd.get("nickname"),
     tier: fd.get("tier") || "", playtime: fd.get("playtime"),
-    focus: focus.join(", "), memo: fd.get("memo") || "",
+    focus: focus.join(", "), memo: fd.get("memo") || "", statsConsent: document.getElementById("agreeStats").checked ? "동의" : "미동의",
   };
   if (!focus.length) { show("err", "집중 교정 희망을 하나 이상 선택해 주세요."); return; }
 
