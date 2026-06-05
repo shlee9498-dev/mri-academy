@@ -613,9 +613,9 @@ footer b{color:var(--gold)}
       <div class="pb-main">지금은 <b>오픈 기념 특가</b> 진행 중 — 아래 정원 도달 시 정가로 전환됩니다</div>
       <div class="enroll-bars">
         <div class="ebar">
-          <div class="ebar-top"><span class="ebar-name">레슨</span><span class="ebar-num"><b id="lesNow">··</b> / 50명</span></div>
+          <div class="ebar-top"><span class="ebar-name">레슨</span><span class="ebar-num"><b id="lesNow">··</b> / <b id="lesTgt">50</b>명</span></div>
           <div class="ebar-track"><div class="ebar-fill les" id="lesFill"></div></div>
-          <div class="ebar-left">정가 전환까지 <b id="lesLeft">··</b></div>
+          <div class="ebar-left"><span id="lesLeft">··</span></div>
         </div>
         <div class="ebar">
           <div class="ebar-top"><span class="ebar-name gold">강의</span><span class="ebar-num"><b id="couNow">··</b> / 25명</span></div>
@@ -1011,6 +1011,17 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
   const lesNow = document.getElementById("lesNow"), lesFill = document.getElementById("lesFill"), lesLeft = document.getElementById("lesLeft");
   const couNow = document.getElementById("couNow"), couFill = document.getElementById("couFill"), couLeft = document.getElementById("couLeft");
   if (!lesNow || !couNow) return;
+  const lesTgt = document.getElementById("lesTgt");
+  function setLesson(count) {
+    const c = Math.max(0, count | 0); lesNow.textContent = c;
+    let lo = 0, hi = 50, msg = "";
+    if (c < 50) { lo = 0; hi = 50; msg = "50명까지 " + (50 - c) + "명 → 도달 시 판당 5,000원"; }
+    else if (c < 70) { lo = 50; hi = 70; msg = "70명까지 " + (70 - c) + "명 → 도달 시 판당 6,000원"; }
+    else { lo = 70; hi = 70; }
+    if (lesTgt) lesTgt.textContent = hi;
+    if (c >= 70) { lesFill.style.width = "100%"; lesFill.classList.add("full"); lesLeft.textContent = "정가(판당 6,000원) 적용 중"; }
+    else { lesFill.style.width = Math.min(100, Math.round(((c - lo) / (hi - lo)) * 100)) + "%"; lesLeft.textContent = msg; }
+  }
   function setBar(nowEl, fillEl, leftEl, count, target) {
     const c = Math.max(0, count | 0);
     nowEl.textContent = c;
@@ -1030,7 +1041,7 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
       }
     }
   } catch (e) { /* 기준값 유지 */ }
-  setBar(lesNow, lesFill, lesLeft, les, 50);
+  setLesson(les);
   setBar(couNow, couFill, couLeft, cou, 25);
 })();
 </script>

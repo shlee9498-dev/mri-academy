@@ -381,7 +381,7 @@ const SYSTEM = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우미입니
 - 세트(레슨+강의): 입문 400,000 / 도약 728,000 / 마스터 990,000원. 할인 폭이 가장 큼.
 - 상담비: 레슨상담 15,000원 / 강의상담 20,000원. 레슨 먼저 받고 강의로 이어가면 강의상담비는 면제(차감).
 - 입금: 토스뱅크 1002-4781-4797 [무리 아카데미]. (결제·증빙은 상담에서 안내)
-- 정원·정가 전환: 트레이너 1인당 정원 25명. 레슨생 50명 또는 강의 수강생 25명 도달 시 각각 그 다음 주부터 정가로 전환(현재 오픈 기념 특가 진행 중).
+- 가격 전환(정원 사다리): 트레이너 1인당 정원 25명. 레슨은 현재 판당 4,000원(런칭), 레슨생 50명 도달 시 판당 5,000원·70명 도달 시 판당 6,000원으로 단계 인상. 강의 수강생 25명 도달 시 정가 전환. 각각 도달 그 다음 주부터 적용, 기존 등록·진행분은 종전가 유지.
 - 클랜: 이번 시즌 스팀 기준(경쟁전 가능 스팀 아이디 필요). 카카오 추후 오픈 예정. 레슨·강의는 카카오/스팀 모두 가능.
 - 추천 기준: 다이아 2 · 300딜 이하면 레슨 먼저 추천.
 - 상담 절차: 상담(레벨테스트) → 다시보기 2개 이상 60분+ 분석 → 방향성 → 맞춤 진행.
@@ -538,14 +538,19 @@ if (process.env.DISCORD_TOKEN) {
 app.get("/api/stats", (_req, res) => res.json(CACHE));
 
 // 실수강생 카운터 (레슨생 ∪ 수강생 중복 제외) — 사이트 런칭 특가 배너용
-app.get("/api/enrollment", (_req, res) =>
+app.get("/api/enrollment", (_req, res) => {
+  const c = CACHE.counts || {};
   res.json({
-    count: typeof CACHE.enrollment === "number" ? CACHE.enrollment : null,
+    count: typeof CACHE.enrollment === "number" ? CACHE.enrollment : null, // 레슨생∪수강생(하위호환)
+    lesson: typeof c.lessonseng === "number" ? c.lessonseng : null,
+    course: typeof c.suganseng === "number" ? c.suganseng : null,
+    lessonStages: [Number(process.env.LESSON_STAGE1 || 50), Number(process.env.LESSON_STAGE2 || 70)],
+    courseTarget: Number(process.env.COURSE_TARGET || 25),
     target: Number(process.env.ENROLL_TARGET || 50),
     status: CACHE.status,
     updatedAt: CACHE.updatedAt,
-  })
-);
+  });
+});
 
 // ═══════════════════ PUBG API ═══════════════════════════════
 const PUBG_API_BASE = "https://api.pubg.com";
