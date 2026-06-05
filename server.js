@@ -469,6 +469,7 @@ async function refresh(client) {
       if (hit) role.members.forEach((m) => enrollSet.add(m.id));
     });
     CACHE = { updatedAt: new Date().toISOString(), counts, enrollment: enrollSet.size, status: "ok" };
+    try { const v = computeViolations(guild); CACHE.alerts = { suganNoBan: v.suganNoBan.length, banNoSugan: v.banNoSugan.length, inactiveWithRoles: v.inactiveWithRoles.length }; } catch (_) {}
     console.log("stats refreshed", JSON.stringify(counts), "enrollment=" + enrollSet.size);
   } catch (e) {
     console.error("refresh_error", e?.message);
@@ -546,12 +547,64 @@ async function progressPairs() {
   return Object.values(by);
 }
 
+// ═══════════════ 디코 역할 자동 관리 (라이프사이클) ═══════════════
+const ROLE = {
+  course: { 수강생: "수강생", 레슨생: "레슨생", 상담: "상담" },
+  ban: { 초급: "초급반", 중급: "중급반", 심화: "심화반" },
+  life: ["보류", "졸업"],
+};
+const damdamMap = [
+  { key: "무리", pred: (n) => n.includes("담당") && n.includes("무리") },
+  { key: "현태", pred: (n) => n.includes("트레이너") && n.includes("현태") },
+  { key: "준구", pred: (n) => n.includes("준구") },
+];
+const findRoleByName = (g, name) => g.roles.cache.find((r) => r.name.trim() === name);
+const findRoleByPred = (g, pred) => g.roles.cache.find((r) => pred(r.name));
+function damdamRole(g, key) {
+  const m = damdamMap.find((d) => d.key === key);
+  return m ? findRoleByPred(g, m.pred) : null;
+}
+// 보류/졸업 역할 없으면 자동 생성 (봇에 '역할 관리' 권한 필요)
+async function ensureLifecycleRoles(guild) {
+  for (const nm of ROLE.life) {
+    if (!findRoleByName(guild, nm)) {
+      try { await guild.roles.create({ name: nm, color: nm === "보류" ? 0x71717a : 0x5ac8fa, reason: "MRI 수강 상태 관리" }); console.log("role created:", nm); }
+      catch (e) { console.error("role_create_failed", nm, e?.message); }
+    }
+  }
+}
+// 역할-상태 정합성 위반 계산 (이름은 운영진 ephemeral 응답에서만 사용)
+function computeViolations(guild) {
+  const sugan = findRoleByName(guild, "수강생");
+  const bans = Object.values(ROLE.ban).map((n) => findRoleByName(guild, n)).filter(Boolean);
+  const lifeRoles = ROLE.life.map((n) => findRoleByName(guild, n)).filter(Boolean);
+  const activeRoles = [
+    ...Object.values(ROLE.course).map((n) => findRoleByName(guild, n)),
+    ...bans,
+    ...damdamMap.map((d) => damdamRole(guild, d.key)),
+  ].filter(Boolean);
+  const has = (m, role) => role && m.roles.cache.has(role.id);
+  const banIds = bans.map((b) => b.id);
+  const out = { suganNoBan: [], banNoSugan: [], inactiveWithRoles: [] };
+  guild.members.cache.forEach((m) => {
+    if (m.user.bot) return;
+    const isSugan = has(m, sugan);
+    const nBan = banIds.filter((id) => m.roles.cache.has(id)).length;
+    if (isSugan && nBan !== 1) out.suganNoBan.push(m.displayName);
+    if (!isSugan && nBan > 0) out.banNoSugan.push(m.displayName);
+    const inactive = lifeRoles.some((r) => has(m, r));
+    if (inactive && activeRoles.some((r) => has(m, r))) out.inactiveWithRoles.push(m.displayName);
+  });
+  return out;
+}
+
 if (process.env.DISCORD_TOKEN) {
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
   client.once("ready", async () => {
     console.log("bot ready:", client.user.tag);
     refresh(client);
     setInterval(() => refresh(client), 5 * 60 * 1000);
+    try { const g = process.env.GUILD_ID ? await client.guilds.fetch(process.env.GUILD_ID) : client.guilds.cache.first(); if (g) await ensureLifecycleRoles(g); } catch (e) { console.error("ensure_roles_failed", e?.message); }
     // /전적등록 슬래시 명령 등록 (길드 한정 · 봇에 applications.commands 스코프 필요)
     try {
       const opt = (n, d) => ({ name: n, description: d, type: 3, required: false });
@@ -574,6 +627,29 @@ if (process.env.DISCORD_TOKEN) {
             opt("메시지", "추가 안내 문구(선택)"),
           ],
         },
+        {
+          name: "반배정",
+          description: "[운영진] 수강생 과정/반/담당 배정 (활성화)",
+          options: [
+            { name: "대상", description: "대상 수강생", type: 6, required: true },
+            { name: "과정", description: "과정", type: 3, required: true, choices: [
+              { name: "수강생(강의)", value: "수강생" }, { name: "레슨생", value: "레슨생" }, { name: "상담", value: "상담" } ] },
+            { name: "반", description: "강의 반 (수강생만)", type: 3, required: false, choices: [
+              { name: "초급", value: "초급" }, { name: "중급", value: "중급" }, { name: "심화", value: "심화" } ] },
+            { name: "담당", description: "담당 트레이너", type: 3, required: false, choices: [
+              { name: "무리", value: "무리" }, { name: "현태", value: "현태" }, { name: "준구", value: "준구" } ] },
+          ],
+        },
+        {
+          name: "수강종료",
+          description: "[운영진] 보류/졸업 — 활성 역할 전부 정리 (졸업은 전적 스냅샷까지)",
+          options: [
+            { name: "대상", description: "대상", type: 6, required: true },
+            { name: "사유", description: "보류 또는 졸업", type: 3, required: true, choices: [
+              { name: "보류", value: "보류" }, { name: "졸업", value: "졸업" } ] },
+          ],
+        },
+        { name: "정합성점검", description: "[운영진] 역할-상태 불일치 자동 점검", options: [] },
       ];
       if (process.env.GUILD_ID) await client.application.commands.set(cmds, process.env.GUILD_ID);
       else await client.application.commands.set(cmds);
@@ -585,8 +661,10 @@ if (process.env.DISCORD_TOKEN) {
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand()) return;
     const cmd = itx.commandName;
-    if (!["전적등록", "수료처리", "전적요청"].includes(cmd)) return;
-    if (!reviewsReady())
+    const DB_CMDS = ["전적등록", "수료처리", "전적요청"];
+    const ROLE_CMDS = ["반배정", "수강종료", "정합성점검"];
+    if (![...DB_CMDS, ...ROLE_CMDS].includes(cmd)) return;
+    if (DB_CMDS.includes(cmd) && !reviewsReady())
       return itx.reply({ content: "저장소가 아직 설정 전이야. 운영진에게 문의해줘.", ephemeral: true });
 
     // ── /전적등록 : 닉 저장 + baseline 스냅샷 ──
@@ -680,6 +758,102 @@ if (process.env.DISCORD_TOKEN) {
       } catch (e) {
         console.error("dm_campaign_failed", e?.message);
         await itx.editReply("DM 발송 중 오류. 잠시 후 재시도.");
+      }
+      return;
+    }
+
+    // ── /반배정 : 활성 배정 (운영진) ──
+    if (cmd === "반배정") {
+      if (!isStaff(itx.user.id)) return itx.reply({ content: "운영진만 사용할 수 있어.", ephemeral: true });
+      await itx.deferReply({ ephemeral: true });
+      try {
+        const g = itx.guild; await g.roles.fetch();
+        const member = await g.members.fetch(itx.options.getUser("대상").id);
+        const course = itx.options.getString("과정");
+        const ban = itx.options.getString("반");
+        const damdam = itx.options.getString("담당");
+        const added = [], miss = [];
+        const add = async (label, role) => { if (role) { await member.roles.add(role); added.push(label); } else miss.push(label); };
+        const rm = async (role) => { if (role && member.roles.cache.has(role.id)) await member.roles.remove(role); };
+        for (const nm of ROLE.life) await rm(findRoleByName(g, nm)); // 재활성
+        if (course === "수강생") {
+          await add("수강생", findRoleByName(g, "수강생"));
+          await rm(findRoleByName(g, "상담"));
+          if (ban) { for (const [k, nm] of Object.entries(ROLE.ban)) { if (k === ban) await add(nm, findRoleByName(g, nm)); else await rm(findRoleByName(g, nm)); } }
+          else miss.push("반(수강생은 반 필수)");
+        } else if (course === "레슨생") {
+          await add("레슨생", findRoleByName(g, "레슨생"));
+          await rm(findRoleByName(g, "상담"));
+        } else if (course === "상담") {
+          await add("상담", findRoleByName(g, "상담"));
+        }
+        if (damdam) await add("담당-" + damdam, damdamRole(g, damdam));
+        await itx.editReply(`✅ 배정 완료 — ${member.displayName}\n· 부여: ${added.join(", ") || "없음"}` +
+          (miss.length ? `\n⚠ 누락/못찾음: ${miss.join(", ")} (역할명·봇 권한 확인)` : ""));
+      } catch (e) {
+        console.error("assign_failed", e?.message);
+        await itx.editReply("배정 실패 — 봇에 **역할 관리** 권한 + 봇 역할이 대상 역할들보다 **위**인지 확인.");
+      }
+      return;
+    }
+
+    // ── /수강종료 : 보류·졸업 (활성 역할 전부 정리, 졸업은 스냅샷까지) (운영진) ──
+    if (cmd === "수강종료") {
+      if (!isStaff(itx.user.id)) return itx.reply({ content: "운영진만 사용할 수 있어.", ephemeral: true });
+      await itx.deferReply({ ephemeral: true });
+      try {
+        const g = itx.guild; await g.roles.fetch();
+        const target = itx.options.getUser("대상");
+        const member = await g.members.fetch(target.id);
+        const reason = itx.options.getString("사유"); // 보류 | 졸업
+        const strip = [...Object.values(ROLE.course), ...Object.values(ROLE.ban)]
+          .map((n) => findRoleByName(g, n)).filter(Boolean)
+          .concat(damdamMap.map((d) => damdamRole(g, d.key)).filter(Boolean))
+          .concat(ROLE.life.map((n) => findRoleByName(g, n)).filter(Boolean));
+        for (const r of strip) if (member.roles.cache.has(r.id)) await member.roles.remove(r);
+        const lifeRole = findRoleByName(g, reason);
+        if (lifeRole) await member.roles.add(lifeRole);
+        let snapMsg = "";
+        if (reason === "졸업" && reviewsReady()) {
+          try {
+            const nrows = await sbSelect("pubg_nicks", `select=steam,kakao&discord_id=eq.${target.id}&limit=1`);
+            const res = [];
+            for (const [plat, nick] of [["steam", nrows[0]?.steam], ["kakao", nrows[0]?.kakao]]) {
+              if (!nick) continue;
+              const { snap } = await saveSnapshot(target, plat, nick, "after");
+              const base = (await sbSelect("student_snapshots", `select=tier_index&discord_id=eq.${target.id}&platform=eq.${plat}&snapshot_type=eq.baseline&order=created_at.asc&limit=1`))[0];
+              const up = base ? snap.tierIdx - (base.tier_index || 0) : null;
+              res.push(`${plat === "steam" ? "스팀" : "카카오"} ${snap.tierLabel}${up != null ? (up > 0 ? ` ▲${up}티어` : up < 0 ? " (하락)" : " (유지)") : ""}`);
+            }
+            if (res.length) snapMsg = "\n📊 졸업 스냅샷: " + res.join(" / ");
+          } catch (_) { snapMsg = "\n(전적 스냅샷 건너뜀 — 닉 미등록 등)"; }
+        }
+        await itx.editReply(`✅ ${reason} 처리 — ${member.displayName}\n· 활성 역할 정리 + **${reason}** 부여${snapMsg}`);
+      } catch (e) {
+        console.error("end_failed", e?.message);
+        await itx.editReply("처리 실패 — 봇 **역할 관리** 권한 + 위계 확인('보류'·'졸업' 역할이 봇보다 아래).");
+      }
+      return;
+    }
+
+    // ── /정합성점검 : 역할-상태 불일치 점검 (운영진) ──
+    if (cmd === "정합성점검") {
+      if (!isStaff(itx.user.id)) return itx.reply({ content: "운영진만 사용할 수 있어.", ephemeral: true });
+      await itx.deferReply({ ephemeral: true });
+      try {
+        const g = itx.guild; await g.roles.fetch(); await g.members.fetch();
+        const v = computeViolations(g);
+        const fmt = (a) => a.length ? a.slice(0, 25).join(", ") + (a.length > 25 ? ` 외 ${a.length - 25}명` : "") : "없음";
+        await itx.editReply(
+          "🔎 역할 정합성 점검\n" +
+          `① 수강생인데 반 0/2개+: **${v.suganNoBan.length}명**\n   ${fmt(v.suganNoBan)}\n` +
+          `② 반 있는데 수강생 아님: **${v.banNoSugan.length}명**\n   ${fmt(v.banNoSugan)}\n` +
+          `③ 보류·졸업인데 활성역할 잔존: **${v.inactiveWithRoles.length}명**\n   ${fmt(v.inactiveWithRoles)}\n` +
+          "→ ②③은 /수강종료로 정리 · ①은 /반배정으로 반 지정"
+        );
+      } catch (e) {
+        console.error("audit_failed", e?.message);
+        await itx.editReply("점검 실패. 잠시 후 재시도.");
       }
       return;
     }
