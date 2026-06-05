@@ -1,16 +1,21 @@
 {
   "name": "MRI ACADEMY",
   "short_name": "MRI",
-  "description": "PUBG(배틀그라운드) 전문 코칭 아카데미",
-  "start_url": "/mri-academy/",
-  "scope": "/mri-academy/",
+  "description": "데이터로 증명하는 PUBG 코칭",
+  "start_url": "/",
   "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#0a0a0c",
   "theme_color": "#0a0a0c",
-  "lang": "ko",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ]
 }
