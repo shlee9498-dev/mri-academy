@@ -58,3 +58,46 @@ alter table public.replies       enable row level security;
 -- create policy "public read replies"  on public.replies       for select to anon using (hidden = false);
 
 -- 완료. 테이블 3개 + 인덱스 + RLS 설정됨.
+
+-- ════════════════════════════════════════════════════════════
+-- 추가: 전적/성장 추적 (2026-06 · /전적등록·/수료처리 명령용)
+-- 기존 파일에 이미 RUN 했어도 아래만 다시 RUN 하면 됨 (idempotent).
+-- ════════════════════════════════════════════════════════════
+
+-- 6) PUBG 닉 매핑 (디스코드 ↔ 인게임 닉)  ← /전적등록 명령이 사용 (그동안 누락돼 있었음!)
+create table if not exists public.pubg_nicks (
+  discord_id   text primary key,
+  discord_name text,
+  steam        text,
+  kakao        text,
+  updated_at   timestamptz not null default now()
+);
+
+-- 7) 수강생 성장 스냅샷 (baseline = 등록시점 / after = 수료시점)
+create table if not exists public.student_snapshots (
+  id              bigint generated always as identity primary key,
+  discord_id      text not null,
+  discord_name    text,
+  platform        text not null,                 -- steam | kakao
+  player_name     text,
+  account_id      text,
+  season_id       text,
+  snapshot_type   text not null check (snapshot_type in ('baseline','after')),
+  tier            text,
+  sub_tier        text,
+  tier_index      int,
+  rank_point      int,
+  best_rank_point int,
+  rounds_played   int,
+  kda             numeric,
+  avg_damage      int,
+  raw             jsonb,
+  created_at      timestamptz not null default now()
+);
+create index if not exists idx_snap_lookup
+  on public.student_snapshots (discord_id, platform, snapshot_type, created_at);
+
+-- 8) RLS (백엔드 service_role 우회 → /api 경유로만 접근)
+alter table public.pubg_nicks        enable row level security;
+alter table public.student_snapshots enable row level security;
+-- 완료. 테이블 2개 추가됨.

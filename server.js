@@ -476,6 +476,76 @@ async function refresh(client) {
   }
 }
 
+// ═══════════════ 수강생 성장 추적 (전적 스냅샷) ═══════════════
+// /전적등록 → 등록 시점 baseline 자동 스냅샷 / /수료처리 → after + 성장폭
+// 테이블: pubg_nicks(discord_id pk) · student_snapshots
+const TIER_RANK = { Unranked: 0, Bronze: 1, Silver: 2, Gold: 3, Platinum: 4, Diamond: 5, Master: 6 };
+const SURVIVOR_CUT = 3700; // 36S~ 서바이버 컷 (Master 위 최상위)
+function tierIndex(tier, bestRP) {
+  let i = TIER_RANK[tier] ?? 0;
+  if ((bestRP || 0) >= SURVIVOR_CUT) i = Math.max(i, 7);
+  return i;
+}
+function tierLabel(tier, subTier, bestRP) {
+  if ((bestRP || 0) >= SURVIVOR_CUT) return "서바이버";
+  if (!tier) return "Unranked";
+  return tier + (subTier ? ` ${subTier}` : "");
+}
+// 한 계정의 현재 시즌 랭크 스냅샷 (squad / squad-fpp 중 표본 많은 쪽)
+async function snapshotStats(platform, nickname) {
+  const player = await findPlayer(platform, nickname);
+  const accountId = player.id;
+  const seasonId = await currentSeasonId(platform);
+  let sq = null;
+  try {
+    const rd = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}/ranked`, 1800000);
+    const m = rd.data.attributes.rankedGameModeStats || {};
+    sq = [m["squad-fpp"], m["squad"]].filter(Boolean)
+      .sort((a, b) => (b.roundsPlayed || 0) - (a.roundsPlayed || 0))[0] || null;
+  } catch (_) { /* 랭크 미참여 */ }
+  const tier = sq?.currentTier?.tier || null;
+  const subTier = sq?.currentTier?.subTier || null;
+  const bestRP = sq?.bestRankPoint ?? null;
+  const rounds = sq?.roundsPlayed || 0;
+  return {
+    platform, accountId, playerName: player.attributes.name, seasonId,
+    tier, subTier, tierIdx: tierIndex(tier, bestRP), tierLabel: tierLabel(tier, subTier, bestRP),
+    rankPoint: sq?.currentRankPoint ?? null, bestRankPoint: bestRP,
+    roundsPlayed: rounds, kda: sq?.kda ?? null,
+    avgDamage: rounds ? Math.round(sq.damageDealt / rounds) : null,
+  };
+}
+async function saveSnapshot(user, platform, nickname, type) {
+  const snap = await snapshotStats(platform, nickname);
+  if (type === "baseline") {
+    const exists = await sbSelect("student_snapshots",
+      `select=id&discord_id=eq.${user.id}&platform=eq.${platform}&snapshot_type=eq.baseline&limit=1`);
+    if (exists.length) return { snap, skipped: true }; // baseline은 덮어쓰지 않음
+  }
+  await sbInsert("student_snapshots", {
+    discord_id: user.id, discord_name: user.globalName || user.username,
+    platform: snap.platform, player_name: snap.playerName, account_id: snap.accountId,
+    season_id: snap.seasonId, snapshot_type: type,
+    tier: snap.tier, sub_tier: snap.subTier, tier_index: snap.tierIdx,
+    rank_point: snap.rankPoint, best_rank_point: snap.bestRankPoint,
+    rounds_played: snap.roundsPlayed, kda: snap.kda, avg_damage: snap.avgDamage, raw: snap,
+  });
+  return { snap, skipped: false };
+}
+// 계정별 baseline ↔ 최신 after 페어링
+async function progressPairs() {
+  const rows = await sbSelect("student_snapshots",
+    "select=discord_name,player_name,platform,snapshot_type,tier_index,tier,sub_tier,best_rank_point,rank_point,avg_damage,season_id,created_at&order=created_at.asc");
+  const by = {};
+  for (const r of rows) {
+    const k = r.player_name + "|" + r.platform;
+    by[k] = by[k] || { player: r.player_name, platform: r.platform, name: r.discord_name };
+    if (r.snapshot_type === "baseline" && !by[k].base) by[k].base = r;
+    if (r.snapshot_type === "after") by[k].after = r;
+  }
+  return Object.values(by);
+}
+
 if (process.env.DISCORD_TOKEN) {
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
   client.once("ready", async () => {
@@ -484,42 +554,134 @@ if (process.env.DISCORD_TOKEN) {
     setInterval(() => refresh(client), 5 * 60 * 1000);
     // /전적등록 슬래시 명령 등록 (길드 한정 · 봇에 applications.commands 스코프 필요)
     try {
-      const cmd = {
-        name: "전적등록",
-        description: "PUBG 인게임 닉을 등록/수정합니다 (클랜 실력 분포 집계용)",
-        options: [
-          { name: "스팀", description: "스팀(스배) 인게임 닉", type: 3, required: false },
-          { name: "카카오", description: "카카오(카배) 인게임 닉", type: 3, required: false },
-        ],
-      };
-      if (process.env.GUILD_ID) await client.application.commands.set([cmd], process.env.GUILD_ID);
-      else await client.application.commands.set([cmd]);
-      console.log("slash command /전적등록 registered");
+      const opt = (n, d) => ({ name: n, description: d, type: 3, required: false });
+      const cmds = [
+        {
+          name: "전적등록",
+          description: "PUBG 인게임 닉 등록 — 등록 시점 전적이 '시작점'으로 기록됩니다",
+          options: [opt("스팀", "스팀(스배) 인게임 닉"), opt("카카오", "카카오(카배) 인게임 닉")],
+        },
+        {
+          name: "수료처리",
+          description: "[운영진] 수강생 수료 시점 전적 기록 + 성장폭 계산",
+          options: [{ name: "대상", description: "수료한 수강생", type: 6, required: true }],
+        },
+        {
+          name: "전적요청",
+          description: "[운영진] 특정 역할의 미등록 멤버에게 전적등록 안내 DM 발송",
+          options: [
+            { name: "역할", description: "대상 역할(레슨생/수강생 등)", type: 8, required: true },
+            opt("메시지", "추가 안내 문구(선택)"),
+          ],
+        },
+      ];
+      if (process.env.GUILD_ID) await client.application.commands.set(cmds, process.env.GUILD_ID);
+      else await client.application.commands.set(cmds);
+      console.log("slash commands registered:", cmds.map((c) => c.name).join(", "));
     } catch (e) { console.error("slash_register_failed", e?.message); }
+
   });
+  const isStaff = (id) => STAFF_IDS.includes(id);
   client.on("interactionCreate", async (itx) => {
-    if (!itx.isChatInputCommand() || itx.commandName !== "전적등록") return;
-    const steam = (itx.options.getString("스팀") || "").trim();
-    const kakao = (itx.options.getString("카카오") || "").trim();
-    if (!steam && !kakao)
-      return itx.reply({ content: "스팀 또는 카카오 닉 중 하나는 입력해줘.", ephemeral: true });
+    if (!itx.isChatInputCommand()) return;
+    const cmd = itx.commandName;
+    if (!["전적등록", "수료처리", "전적요청"].includes(cmd)) return;
     if (!reviewsReady())
-      return itx.reply({ content: "닉 저장소가 아직 설정 전이야. 운영진에게 문의해줘.", ephemeral: true });
-    try {
-      await sbUpsert("pubg_nicks", {
-        discord_id: itx.user.id,
-        discord_name: itx.user.globalName || itx.user.username,
-        steam: steam || null,
-        kakao: kakao || null,
-        updated_at: new Date().toISOString(),
-      }, "discord_id");
-      await itx.reply({
-        content: `✅ 등록 완료!\n· 스팀: ${steam || "—"}\n· 카카오: ${kakao || "—"}\n클랜 실력 분포 집계에 반영돼.`,
-        ephemeral: true,
-      });
-    } catch (e) {
-      console.error("nick_register_failed", e?.message);
-      await itx.reply({ content: "저장 중 오류가 났어. 잠시 후 다시 시도해줘.", ephemeral: true });
+      return itx.reply({ content: "저장소가 아직 설정 전이야. 운영진에게 문의해줘.", ephemeral: true });
+
+    // ── /전적등록 : 닉 저장 + baseline 스냅샷 ──
+    if (cmd === "전적등록") {
+      const steam = (itx.options.getString("스팀") || "").trim();
+      const kakao = (itx.options.getString("카카오") || "").trim();
+      if (!steam && !kakao)
+        return itx.reply({ content: "스팀 또는 카카오 닉 중 하나는 입력해줘.", ephemeral: true });
+      await itx.deferReply({ ephemeral: true });
+      try {
+        await sbUpsert("pubg_nicks", {
+          discord_id: itx.user.id, discord_name: itx.user.globalName || itx.user.username,
+          steam: steam || null, kakao: kakao || null, updated_at: new Date().toISOString(),
+        }, "discord_id");
+        const lines = [];
+        for (const [plat, nick] of [["steam", steam], ["kakao", kakao]]) {
+          if (!nick) continue;
+          const ko = plat === "steam" ? "스팀" : "카카오";
+          try {
+            const { snap, skipped } = await saveSnapshot(itx.user, plat, nick, "baseline");
+            lines.push(`· ${ko} ${snap.playerName} — ${snap.tierLabel}` +
+              (snap.bestRankPoint ? ` (${snap.bestRankPoint} RP)` : "") +
+              (skipped ? " · 시작점 이미 있음" : " · 시작점 기록 ✅"));
+          } catch (e) {
+            lines.push(`· ${ko} ${nick} — 전적 조회 실패 (${e.status === 404 ? "닉 확인 필요" : "잠시 후 재시도"})`);
+          }
+        }
+        await itx.editReply("✅ 등록 완료! 지금 전적을 '시작점'으로 저장했어.\n" + lines.join("\n") +
+          "\n(전적 데이터는 성장 통계 용도로만 사용돼요)");
+      } catch (e) {
+        console.error("register_failed", e?.message);
+        await itx.editReply("저장 중 오류가 났어. 잠시 후 다시 시도해줘.");
+      }
+      return;
+    }
+
+    // ── /수료처리 : after 스냅샷 + delta (운영진) ──
+    if (cmd === "수료처리") {
+      if (!isStaff(itx.user.id)) return itx.reply({ content: "운영진만 사용할 수 있어.", ephemeral: true });
+      const target = itx.options.getUser("대상");
+      await itx.deferReply({ ephemeral: true });
+      try {
+        const nrows = await sbSelect("pubg_nicks", `select=steam,kakao,discord_name&discord_id=eq.${target.id}&limit=1`);
+        if (!nrows.length) return itx.editReply(`${target.username} 님은 아직 /전적등록을 안 했어. 먼저 /전적요청으로 안내해줘.`);
+        const out = [];
+        for (const [plat, nick] of [["steam", nrows[0].steam], ["kakao", nrows[0].kakao]]) {
+          if (!nick) continue;
+          const ko = plat === "steam" ? "스팀" : "카카오";
+          try {
+            const { snap } = await saveSnapshot(target, plat, nick, "after");
+            const base = (await sbSelect("student_snapshots",
+              `select=tier_index,tier,sub_tier,best_rank_point&discord_id=eq.${target.id}&platform=eq.${plat}&snapshot_type=eq.baseline&order=created_at.asc&limit=1`))[0];
+            if (base) {
+              const up = snap.tierIdx - (base.tier_index || 0);
+              const baseLabel = tierLabel(base.tier, base.sub_tier, base.best_rank_point);
+              out.push(`· ${ko} ${snap.playerName}: ${baseLabel} → ${snap.tierLabel}` +
+                (up > 0 ? `  ▲${up}티어` : up < 0 ? "  (하락)" : "  (유지)"));
+            } else {
+              out.push(`· ${ko} ${snap.playerName}: 시작점 없음 (after만 기록)`);
+            }
+          } catch (e) {
+            out.push(`· ${ko}: 조회 실패 (${e.status === 404 ? "닉 확인" : "재시도"})`);
+          }
+        }
+        await itx.editReply(`📋 수료 처리 완료 — ${nrows[0].discord_name}\n` + out.join("\n"));
+      } catch (e) {
+        console.error("graduate_failed", e?.message);
+        await itx.editReply("처리 중 오류. 잠시 후 재시도.");
+      }
+      return;
+    }
+
+    // ── /전적요청 : 미등록 멤버 안내 DM (운영진, 페이싱) ──
+    if (cmd === "전적요청") {
+      if (!isStaff(itx.user.id)) return itx.reply({ content: "운영진만 사용할 수 있어.", ephemeral: true });
+      const role = itx.options.getRole("역할");
+      const extra = (itx.options.getString("메시지") || "").trim();
+      await itx.deferReply({ ephemeral: true });
+      try {
+        const reg = await sbSelect("pubg_nicks", "select=discord_id");
+        const regSet = new Set(reg.map((r) => r.discord_id));
+        await itx.guild.members.fetch();
+        const targets = [...role.members.values()].filter((m) => !m.user.bot && !regSet.has(m.id)).slice(0, 200);
+        const msg = `안녕하세요! **MRI ACADEMY** 입니다.\n수강 성과(전·후 성장) 추적을 위해 서버에서 \`/전적등록\` 명령으로 PUBG 닉을 등록해 주세요. (스팀/카카오)\n등록 시점 전적이 '시작점'으로 저장되고, 수료 시 성장폭이 계산됩니다. 데이터는 성장 통계에만 사용돼요.${extra ? "\n\n" + extra : ""}`;
+        let sent = 0, failed = 0;
+        for (const m of targets) {
+          try { await m.send(msg); sent++; } catch { failed++; }
+          await new Promise((r) => setTimeout(r, 1600)); // 스팸 방지
+        }
+        await itx.editReply(`📨 안내 DM 발송 완료\n· 대상(미등록): ${targets.length}명\n· 성공 ${sent} / 실패(DM차단 등) ${failed}`);
+      } catch (e) {
+        console.error("dm_campaign_failed", e?.message);
+        await itx.editReply("DM 발송 중 오류. 잠시 후 재시도.");
+      }
+      return;
     }
   });
   client.login(process.env.DISCORD_TOKEN).catch((e) => {
@@ -550,6 +712,33 @@ app.get("/api/enrollment", (_req, res) => {
     status: CACHE.status,
     updatedAt: CACHE.updatedAt,
   });
+});
+
+// ── 수강생 성장 추적 표시용 API (student-progress.html) ──
+app.get("/api/progress-stats", async (_req, res) => {
+  if (!reviewsReady()) return res.json({ ready: false });
+  try {
+    const pairs = (await progressPairs()).filter((p) => p.base && p.after);
+    const total = pairs.length;
+    const up = pairs.filter((p) => (p.after.tier_index || 0) > (p.base.tier_index || 0)).length;
+    res.json({ ready: true, totalTracked: total, tierUpCount: up, tierUpPct: total ? Math.round((up / total) * 100) : null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/student-progress", async (_req, res) => {
+  if (!reviewsReady()) return res.json({ ready: false, items: [] });
+  try {
+    const pairs = (await progressPairs()).filter((p) => p.base && p.after);
+    res.json({
+      ready: true,
+      items: pairs.map((p) => ({
+        player: p.player, platform: p.platform,
+        before: tierLabel(p.base.tier, p.base.sub_tier, p.base.best_rank_point),
+        after: tierLabel(p.after.tier, p.after.sub_tier, p.after.best_rank_point),
+        beforeRP: p.base.best_rank_point, afterRP: p.after.best_rank_point,
+        tierUp: (p.after.tier_index || 0) > (p.base.tier_index || 0),
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════ PUBG API ═══════════════════════════════
