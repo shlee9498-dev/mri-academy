@@ -1,11 +1,6 @@
-# MRI ACADEMY — Crawler 정책
 User-agent: *
 Allow: /
-Disallow: /lesson-feedback-admin.html
+Disallow: /apply.html
+Disallow: /trainer-apply.html
 
-# Naver
-User-agent: Yeti
-Allow: /
-Disallow: /lesson-feedback-admin.html
-
-Sitemap: https://shlee9498-dev.github.io/mri-academy/sitemap.xml
+Sitemap: https://mriacademy.gg/sitemap.xml
