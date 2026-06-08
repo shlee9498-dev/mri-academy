@@ -202,12 +202,12 @@ section{padding:64px 0;border-top:1px solid var(--line);scroll-snap-align:start}
 @media(max-width:680px){.grid4{grid-template-columns:1fr}}
 
 /* PLANS */
-.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;align-items:start}
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;align-items:stretch}
 .plans-4{grid-template-columns:repeat(4,1fr)}
 .prog-head{font-size:15px;font-weight:700;color:var(--ink);margin:0 0 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .prog-tag{font-family:var(--display);font-size:12px;padding:3px 11px;border-radius:7px;letter-spacing:.02em}
 .prog-sub{font-size:12.5px;color:var(--ink-faint);font-weight:500}
-.plan{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:24px;position:relative;transition:transform .2s}
+.plan{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:24px;position:relative;transition:transform .2s;display:flex;flex-direction:column}
 .plan:hover{transform:translateY(-3px)}
 .plan.hot{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold-soft),0 18px 44px rgba(245,197,24,.12)}
 .plan .rib{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--gold);color:#000;font-size:10.5px;font-weight:800;padding:4px 12px;border-radius:99px;white-space:nowrap}
@@ -243,7 +243,7 @@ section{padding:64px 0;border-top:1px solid var(--line);scroll-snap-align:start}
 .plan ul{list-style:none;margin-bottom:20px}
 .plan li{font-size:13px;color:var(--ink-dim);padding:6px 0;display:flex;gap:8px}
 .plan li::before{content:"✓";color:var(--green);font-weight:800}
-.plan .pbtn{display:block;text-align:center;text-decoration:none;font-weight:800;font-size:13.5px;padding:12px;border-radius:7px;background:var(--bg-card-hi);border:1px solid var(--line);color:var(--ink);transition:all .18s}
+.plan .pbtn{display:block;margin-top:auto;text-align:center;text-decoration:none;font-weight:800;font-size:13.5px;padding:12px;border-radius:7px;background:var(--bg-card-hi);border:1px solid var(--line);color:var(--ink);transition:all .18s}
 .plan.hot .pbtn{background:var(--gold);color:#000;border-color:var(--gold)}
 .plan .pbtn:hover{transform:translateY(-1px);border-color:var(--gold-soft)}
 .plan-note{text-align:center;color:var(--ink-faint);font-size:12.5px;margin-top:20px}
@@ -644,7 +644,7 @@ footer b{color:var(--gold)}
     <div class="prog-panel active" data-prog="lesson">
     <div class="prog-head"><span class="prog-tag" style="background:rgba(90,200,250,.12);color:var(--blue)">레슨</span> 서바이버 트레이너진 · <b>판수제</b> <span class="prog-sub">레벨테스트 무관 · 누구나 · 시간 여유롭게</span></div>
     <div style="margin:-2px 0 14px;color:var(--ink-dim);font-size:13.5px"><b style="color:var(--ink)">트레이너가 1:1로 봐주는 실전 판수 — 산 만큼만.</b> 실력 단계에 맞춰 골라 받기 · <span style="color:var(--blue)">관전형 · 참여형 · 1:1</span></div>
-    <div class="swipe-hint">← 좌우로 넘겨서 비교 →</div>
+    <div class="swipe-hint">← 좌우로 넘겨서 비교 · 👑 VIP 포함 →</div>
     <div class="plans plans-4">
       <div class="plan">
         <div class="pn">10판</div><div class="po">50,000원</div><div class="pp">40,000원<span class="off">-20%</span></div><div class="pd">판당 4,000원 · 단기 집중 교정</div>
@@ -678,21 +678,21 @@ footer b{color:var(--gold)}
     <div class="prog-panel" data-prog="course">
     <div class="prog-head"><span class="prog-tag" style="background:rgba(245,197,24,.12);color:var(--gold)">강의</span> 이무리 클랜장 직강 · <b>시간제(3시간 집중)</b> <span class="prog-sub">레벨테스트 합격 필수 · 12회 이상 · 전략 심화 · 고점 돌파</span></div>
     <div style="margin:-2px 0 14px;color:var(--ink-dim);font-size:13.5px"><b style="color:var(--ink)">대표강사 직강 그룹강의 — 월 부담으로 쪼개서.</b> 12회 = 주1회 기준 <span style="color:var(--gold)">월 12만원</span>대로 시작.</div>
-    <div class="swipe-hint">← 좌우로 넘겨서 비교 →</div>
+    <div class="swipe-hint">← 좌우로 넘겨서 비교 · 👑 VIP 포함 →</div>
     <div class="plans plans-4">
       <div class="plan hot">
         <div class="rib">기본</div>
-        <div class="pn">12회 패키지</div><div class="po">540,000원</div><div class="pp">360,000원<span class="off">-33%</span></div><div class="pd">회당 30,000원 · 1회 3시간</div>
+        <div class="pn">12회 패키지</div><div class="po">540,000원</div><div class="pp">360,000원<span class="off">-33%</span></div><div class="pd">회당 30,000원 · 1회 3시간</div><div style="font-size:12.5px;color:var(--gold);font-weight:700;margin:-8px 0 14px">📅 주1회 기준 월 12만원~ · 카드 할부 가능</div>
         <ul><li>체계적 장기 과정</li><li>단계별 전략 전수</li><li>주도권→포지션 4단계</li></ul>
         <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
       </div>
       <div class="plan">
-        <div class="pn">24회 패키지</div><div class="po">970,000원</div><div class="pp">648,000원<span class="off">-33%</span></div><div class="pd">회당 27,000원 · 1회 3시간</div>
+        <div class="pn">24회 패키지</div><div class="po">970,000원</div><div class="pp">648,000원<span class="off">-33%</span></div><div class="pd">회당 27,000원 · 1회 3시간</div><div style="font-size:12.5px;color:var(--gold);font-weight:700;margin:-8px 0 14px">📅 주1회 기준 월 10.8만원~ · 카드 할부 가능</div>
         <ul><li>고점 돌파 집중</li><li>전적 관리 전략</li><li>회당 단가 추가 할인</li></ul>
         <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
       </div>
       <div class="plan">
-        <div class="pn">36회 패키지</div><div class="po">1,300,000원</div><div class="pp">870,000원<span class="off">-33%</span></div><div class="pd">회당 24,166원 · 1회 3시간</div>
+        <div class="pn">36회 패키지</div><div class="po">1,300,000원</div><div class="pp">870,000원<span class="off">-33%</span></div><div class="pd">회당 24,166원 · 1회 3시간</div><div style="font-size:12.5px;color:var(--gold);font-weight:700;margin:-8px 0 14px">📅 주1회 기준 월 9.7만원~ · 카드 할부 가능</div>
         <ul><li>최대 혜택 구성</li><li>상위 1% 도약</li><li>시즌 풀 케어</li></ul>
         <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
       </div>
@@ -712,7 +712,7 @@ footer b{color:var(--gold)}
     <div class="prog-panel" data-prog="set">
     <div class="prog-head"><span class="prog-tag" style="background:rgba(168,85,247,.14);color:var(--purple)">세트</span> 레슨 + 강의 결합 <span class="prog-sub">트레이너 레슨으로 다지고 · 이무리 강의로 심화 · 한 번에 신청</span></div>
     <div style="margin:-2px 0 14px;color:var(--ink-dim);font-size:13.5px"><b style="color:var(--ink)">레슨 + 강의 묶음 — 할인 폭이 가장 큽니다.</b> 한 번에 신청하고 트레이너·일정 우선 배정받으세요. <span style="color:var(--ink-faint)">(레슨 구성분은 정원 사다리 50명→5천·70명→6천에 따라 동반 조정)</span></div>
-    <div class="swipe-hint">← 좌우로 넘겨서 비교 →</div>
+    <div class="swipe-hint">← 좌우로 넘겨서 비교 · 👑 VIP 포함 →</div>
     <div class="plans">
       <div class="plan">
         <div class="pn">입문 세트</div><div class="po">590,000원</div><div class="pp">400,000원<span class="off">-32%</span></div><div class="pd">레슨 10판 + 강의 12회</div>
