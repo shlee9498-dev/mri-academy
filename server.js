@@ -1424,5 +1424,40 @@ app.post("/api/gdcup-confirm", async (req, res) => {
   } catch (e) { console.error("gdcup_confirm_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
+// ===== G드컵 스코어 (공개 조회 / 운영진 저장·게시) =====
+app.get("/api/gdcup-scores", async (req, res) => {
+  try {
+    if (!process.env.SUPABASE_URL) return res.json({ scores: null });
+    const rows = await sbSelect("gdcup_state", "select=value,updated_at&key=eq.scores");
+    if (!rows.length) return res.json({ scores: null });
+    res.json({ scores: rows[0].value, updated_at: rows[0].updated_at });
+  } catch (e) { res.json({ scores: null }); }
+});
+app.post("/api/gdcup-scores-save", async (req, res) => {
+  try {
+    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+    const b = req.body || {};
+    const inTeams = Array.isArray(b.teams) ? b.teams : [];
+    const ranking = inTeams.map(function (t) {
+      const r1 = Number(t.r1) || 0, r2 = Number(t.r2) || 0, r3 = Number(t.r3) || 0;
+      const w = (t.weight != null && t.weight !== "") ? Number(t.weight) : 1;
+      const raw = r1 + r2 + r3;
+      const weighted = Math.round(raw * w * 100) / 100;
+      return { team_name: String(t.team_name || "").slice(0, 40), weight: w, r1: r1, r2: r2, r3: r3, raw: raw, weighted: weighted };
+    }).sort(function (a, b2) { return b2.weighted - a.weighted; });
+    const value = { ranking: ranking, published: !!b.publish, ts: new Date().toISOString() };
+    await sbUpsert("gdcup_state", { key: "scores", value: value }, "key");
+    if (b.publish && process.env.GDCUP_SCORE_WEBHOOK) {
+      const medal = ["🥇", "🥈", "🥉"];
+      const lines = ranking.slice(0, 16).map(function (t, i) {
+        return (medal[i] || ((i + 1) + ".")) + " " + t.team_name + " — " + t.weighted + "점 (R " + t.r1 + "/" + t.r2 + "/" + t.r3 + " ×" + t.weight + ")";
+      }).join("\n");
+      const embed = { title: "🏆 G드컵 시즌2 스코어", color: 0xf5c518, description: lines.slice(0, 4000) || "-", timestamp: new Date().toISOString() };
+      try { await fetch(process.env.GDCUP_SCORE_WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "📊 스코어 업데이트", embeds: [embed] }) }); } catch (e) { console.error("score_webhook", e.message); }
+    }
+    res.json({ ok: true, ranking: ranking });
+  } catch (e) { console.error("scores_save_error", e); res.status(500).json({ error: "server_error" }); }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("listening on " + PORT));
