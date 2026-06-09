@@ -34,7 +34,7 @@ app.use((req, res, next) => {
   const o = req.headers.origin;
   if (ALLOWED.includes(o)) res.setHeader("Access-Control-Allow-Origin", o);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-key");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
@@ -1382,6 +1382,46 @@ app.get("/api/gdcup-list", async (req, res) => {
     }));
     res.json({ teams, target: 16 });
   } catch (e) { res.json({ teams: [], target: 16 }); }
+});
+
+// ===== G드컵 운영진: 입금 확정 (키 필요) =====
+function gdcupAdmin(req) {
+  const k = process.env.GDCUP_ADMIN_KEY;
+  if (!k) return false;
+  const got = req.headers["x-admin-key"] || (req.body && req.body.adminKey) || req.query.key;
+  return !!got && got === k;
+}
+// 운영진용 전체 명단 (연락처/입금자 포함)
+app.get("/api/gdcup-admin-list", async (req, res) => {
+  try {
+    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+    if (!process.env.SUPABASE_URL) return res.json({ teams: [] });
+    const rows = await sbSelect("gdcup_apps", "select=id,team_name,slogan,members,bpi,weight,contact,status,created_at&order=created_at.asc");
+    res.json({ teams: rows });
+  } catch (e) { res.status(500).json({ error: "server_error" }); }
+});
+// 입금 확정 / 신청대기 / 취소 + 디코 알림
+app.post("/api/gdcup-confirm", async (req, res) => {
+  try {
+    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+    const b = req.body || {};
+    if (!b.id) return res.status(400).json({ error: "no_id" });
+    const status = b.status === "applied" ? "applied" : (b.status === "cancelled" ? "cancelled" : "confirmed");
+    const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, { status });
+    const team = Array.isArray(updated) ? updated[0] : updated;
+    const WEBHOOK = process.env.GDCUP_DEPOSIT_WEBHOOK;
+    if (WEBHOOK && team && status === "confirmed") {
+      const embed = {
+        title: "보증금 입금 확정 - " + (team.team_name || ""),
+        color: 0x10b981,
+        description: "참가가 확정되었습니다. (보증금 입금 확인 완료)",
+        footer: { text: "팀 BPI " + (team.bpi != null ? team.bpi : "-") },
+        timestamp: new Date().toISOString(),
+      };
+      try { await fetch(WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "💰 입금 확정", embeds: [embed] }) }); } catch (e) { console.error("deposit_webhook", e.message); }
+    }
+    res.json({ ok: true, status });
+  } catch (e) { console.error("gdcup_confirm_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
 const PORT = process.env.PORT || 3000;
