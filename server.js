@@ -1367,5 +1367,22 @@ app.post("/api/gdcup-apply", async (req, res) => {
   } catch (e) { console.error("gdcup_apply_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
+// G드컵 참가팀 공개 명단 (개인정보 제외: 팀명/슬로건/닉/티어/BPI/확정여부만)
+app.get("/api/gdcup-list", async (req, res) => {
+  try {
+    if (!process.env.SUPABASE_URL) return res.json({ teams: [], target: 16 });
+    const rows = await sbSelect("gdcup_apps", "select=team_name,slogan,members,bpi,weight,status,created_at&status=neq.cancelled&order=created_at.asc");
+    const teams = rows.map(r => ({
+      team_name: r.team_name,
+      slogan: r.slogan || "",
+      bpi: r.bpi,
+      weight: r.weight,
+      status: r.status,
+      members: Array.isArray(r.members) ? r.members.map(m => ({ ign: m.ign || "", tier: m.tier || "" })) : [],
+    }));
+    res.json({ teams, target: 16 });
+  } catch (e) { res.json({ teams: [], target: 16 }); }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("listening on " + PORT));
