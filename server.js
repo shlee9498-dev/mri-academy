@@ -1315,5 +1315,57 @@ app.get("/", (_req, res) =>
   )
 );
 
+// ===== G드컵 시즌2 팀 신청 (사이트 -> 디스코드 자동등록 + 실시간 카운터) =====
+app.get("/api/gdcup-count", async (req, res) => {
+  try {
+    if (!process.env.SUPABASE_URL) return res.json({ teams: 0, target: 16 });
+    const rows = await sbSelect("gdcup_apps", "select=id&status=neq.cancelled");
+    res.json({ teams: rows.length, target: 16 });
+  } catch (e) { res.json({ teams: 0, target: 16 }); }
+});
+app.post("/api/gdcup-apply", async (req, res) => {
+  try {
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
+    if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
+    const b = req.body || {};
+    const clip = (v, n) => String(v || "").slice(0, n);
+    const teamName = clip(b.team_name, 40);
+    if (!teamName) return res.status(400).json({ error: "no_team_name" });
+    const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4) })) : [];
+    const bpi = Number(b.bpi) || null;
+    const weight = (b.weight != null && b.weight !== "") ? Number(b.weight) : null;
+    const contact = clip(b.contact, 60);
+    let count = null;
+    if (process.env.SUPABASE_URL) {
+      try {
+        await sbInsert("gdcup_apps", { team_name: teamName, slogan: clip(b.slogan, 60), members, bpi, weight, contact, ip });
+        const rows = await sbSelect("gdcup_apps", "select=id&status=neq.cancelled");
+        count = rows.length;
+      } catch (e) { console.error("gdcup_sb", e.message); }
+    }
+    const WEBHOOK = process.env.GDCUP_APPLY_WEBHOOK;
+    if (WEBHOOK) {
+      const mlines = members.map((m, i) => (i === 0 ? "[팀장] " : "[팀원" + (i + 1) + "] ") + m.name + " (" + m.ign + ") - " + m.tier).join("\n");
+      const embed = {
+        title: "G드컵 시즌2 팀 신청 - " + teamName,
+        color: 0xf5c518,
+        fields: [
+          { name: "슬로건", value: clip(b.slogan, 60) || "-", inline: false },
+          { name: "멤버", value: mlines || "-", inline: false },
+          { name: "팀 BPI", value: bpi != null ? (bpi + (weight != null ? (" (가중치 x" + weight + ")") : "")) : "-", inline: true },
+          { name: "연락/입금자", value: contact || "-", inline: true },
+        ],
+        footer: { text: count != null ? ("현재 " + count + "팀 신청") : "" },
+        timestamp: new Date().toISOString(),
+      };
+      try {
+        const wr = await fetch(WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "새 팀 신청이 들어왔어요!", embeds: [embed] }) });
+        if (!wr.ok) console.error("gdcup_webhook", wr.status);
+      } catch (e) { console.error("gdcup_webhook", e.message); }
+    }
+    res.json({ ok: true, teams: count });
+  } catch (e) { console.error("gdcup_apply_error", e); res.status(500).json({ error: "server_error" }); }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("listening on " + PORT));
