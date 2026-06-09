@@ -1353,7 +1353,7 @@ app.post("/api/gdcup-apply", async (req, res) => {
           { name: "슬로건", value: clip(b.slogan, 60) || "-", inline: false },
           { name: "멤버", value: mlines || "-", inline: false },
           { name: "팀 BPI", value: bpi != null ? (bpi + (weight != null ? (" (가중치 x" + weight + ")") : "")) : "-", inline: true },
-          { name: "연락/입금자", value: contact || "-", inline: true },
+          { name: "연락처", value: contact || "-", inline: true },
         ],
         footer: { text: count != null ? ("현재 " + count + "팀 신청") : "" },
         timestamp: new Date().toISOString(),
@@ -1412,13 +1412,13 @@ app.post("/api/gdcup-confirm", async (req, res) => {
     const WEBHOOK = process.env.GDCUP_DEPOSIT_WEBHOOK;
     if (WEBHOOK && team && status === "confirmed") {
       const embed = {
-        title: "보증금 입금 확정 - " + (team.team_name || ""),
+        title: "✅ 참가 확정 - " + (team.team_name || ""),
         color: 0x10b981,
-        description: "참가가 확정되었습니다. (보증금 입금 확인 완료)",
+        description: "참가가 확정되었습니다.",
         footer: { text: "팀 BPI " + (team.bpi != null ? team.bpi : "-") },
         timestamp: new Date().toISOString(),
       };
-      try { await fetch(WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "💰 입금 확정", embeds: [embed] }) }); } catch (e) { console.error("deposit_webhook", e.message); }
+      try { await fetch(WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "✅ 참가 확정", embeds: [embed] }) }); } catch (e) { console.error("deposit_webhook", e.message); }
     }
     res.json({ ok: true, status });
   } catch (e) { console.error("gdcup_confirm_error", e); res.status(500).json({ error: "server_error" }); }
