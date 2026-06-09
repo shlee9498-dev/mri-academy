@@ -19,7 +19,7 @@
 //   PUBG_API_KEY  없으면 PUBG 라우트 비활성
 
 const express = require("express");
-const { Client, GatewayIntentBits } = require("discord.js");
+const { Client, GatewayIntentBits, Partials } = require("discord.js");
 
 const app = express();
 app.use(express.json({ limit: "64kb" }));
@@ -121,6 +121,66 @@ async function sbUpsert(table, row, onConflict) {
   });
   if (!r.ok) throw new Error(`supabase_upsert_${r.status}`);
   return (await r.json())[0];
+}
+
+// ═══════════════════ 피드백 월 (트레이너 피드백 → 사이트) ═══════════════════
+// 봇이 트레이너 피드백 서버의 메시지를 수집 → Claude로 정제(오탈자·민감 마스킹)
+// → Supabase(feedback) 미공개 저장 → 운영진이 디코에서 ✅ 누르면 사이트 공개.
+// env: FEEDBACK_GUILD_IDS(쉼표) · FEEDBACK_TRAINER_MAP("길드ID:이름,길드ID:이름")
+//      FEEDBACK_REVIEW_CHANNEL_ID · (STAFF_DISCORD_IDS 재사용) · CLAUDE_KEY · SUPABASE_*
+const FB_GUILDS = (process.env.FEEDBACK_GUILD_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const FB_TRAINERS = {};
+(process.env.FEEDBACK_TRAINER_MAP || "").split(",").map((s) => s.trim()).filter(Boolean).forEach((pair) => {
+  const i = pair.indexOf(":");
+  if (i > 0) FB_TRAINERS[pair.slice(0, i).trim()] = pair.slice(i + 1).trim();
+});
+const FB_REVIEW_CH = process.env.FEEDBACK_REVIEW_CHANNEL_ID || "";
+const feedbackReady = () =>
+  !!(FB_GUILDS.length && FB_REVIEW_CH && process.env.SUPABASE_URL &&
+     process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.CLAUDE_KEY);
+
+// 채널명 → { grp, studentRaw }  (예: "A그룹-순대", "b그룹-000")
+function parseFeedbackChannel(name = "") {
+  const m = name.match(/([ABCabc])\s*그룹\s*[-_]?\s*(.*)$/);
+  if (!m) return null;
+  return { grp: m[1].toUpperCase(), studentRaw: (m[2] || "").trim() };
+}
+// 가명: 닉 첫 글자 + ○  (식별 최소화)
+function aliasOf(s = "") {
+  const t = (s || "").replace(/[()[\]<>]/g, "").trim();
+  if (!t || t === "000") return "수강생";
+  return Array.from(t)[0] + "○";
+}
+// 본문에서 날짜 추출 → ISO(YYYY-MM-DD) or null
+function extractDate(s = "") {
+  const m = s.match(/(20\d{2})[.\-/\s]+(\d{1,2})[.\-/\s]+(\d{1,2})/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
+  return null;
+}
+// Claude(Haiku) 정제 + 민감 마스킹 → 다듬은 본문 텍스트(or null)
+async function cleanFeedback(raw) {
+  const KEY = process.env.CLAUDE_KEY;
+  if (!KEY) return null;
+  const sys = `너는 배그 코칭학원의 강의 피드백을 '공개 홍보용'으로 다듬는 편집기다. 규칙:
+- 오탈자·띄어쓰기·줄바꿈을 자연스럽게 교정한다.
+- 학생의 실명/닉네임/계정/디스코드 등 개인 식별정보는 모두 "수강생"으로 바꾼다.
+- 특정인을 깎아내리거나 창피를 줄 수 있는 표현은 중립적·긍정적으로 순화한다(예: "X 못함" → "X를 더 다듬는 중").
+- 내용과 의미는 보존한다. 게임 용어(포탑·연막·1선 등)는 그대로 둔다.
+- 새로운 정보를 지어내지 않는다.
+- 출력은 다듬은 본문 텍스트만. 머리말·설명·따옴표 없이.`;
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001", max_tokens: 800, system: sys,
+        messages: [{ role: "user", content: String(raw).slice(0, 4000) }],
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok) { console.error("fb_clean_error", r.status, data?.error?.type); return null; }
+    return (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim() || null;
+  } catch (e) { console.error("fb_clean_exc", e?.message); return null; }
 }
 
 // ── 연타 방지: 유저·타입별 쿨다운 + 동일내용 중복 차단 (인메모리) ──
@@ -599,7 +659,14 @@ function computeViolations(guild) {
 }
 
 if (process.env.DISCORD_TOKEN) {
-  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent,
+      GatewayIntentBits.GuildMessageReactions,
+    ],
+    partials: [Partials.Message, Partials.Channel, Partials.Reaction],
+  });
   client.once("ready", async () => {
     console.log("bot ready:", client.user.tag);
     refresh(client);
@@ -858,12 +925,73 @@ if (process.env.DISCORD_TOKEN) {
       return;
     }
   });
+  // ── 피드백 수집: 트레이너 피드백 서버 메시지 → 정제 → 미공개 저장 → 승인 대기 ──
+  if (feedbackReady()) {
+    client.on("messageCreate", async (msg) => {
+      try {
+        if (msg.author?.bot) return;
+        if (!msg.guild || !FB_GUILDS.includes(msg.guild.id)) return;
+        if (msg.channel?.id === FB_REVIEW_CH) return;
+        const meta = parseFeedbackChannel(msg.channel?.name || "");
+        if (!meta) return;
+        const raw = (msg.content || "").trim();
+        if (raw.length < 15) return; // 너무 짧으면 무시
+        const trainer = FB_TRAINERS[msg.guild.id] || msg.guild.name || "트레이너";
+        const cleaned = await cleanFeedback(raw);
+        if (!cleaned) return;
+        const alias = aliasOf(meta.studentRaw);
+        const lessonDate = extractDate(raw) || new Date(msg.createdTimestamp).toISOString().slice(0, 10);
+        let row;
+        try {
+          row = await sbInsert("feedback", {
+            trainer, grp: meta.grp, student_alias: alias, lesson_date: lessonDate,
+            body: cleaned, raw, src_guild: msg.guild.id, src_channel: msg.channel.id,
+            src_msg: msg.id, published: false,
+          });
+        } catch (e) { console.error("fb_insert", e?.message); return; } // 중복(src_msg unique) 등은 무시
+        try {
+          const ch = await client.channels.fetch(FB_REVIEW_CH);
+          const preview =
+            "🆕 **피드백 승인 대기**\n" +
+            `· 트레이너 **${trainer}**  · 그룹 **${meta.grp}**  · 학생 **${alias}**  · 날짜 ${lessonDate}\n` +
+            "────────────\n" + cleaned.slice(0, 1500) + "\n────────────\n" +
+            "✅ = 사이트 공개  ·  ❌ = 반려";
+          const pm = await ch.send(preview);
+          await pm.react("✅"); await pm.react("❌");
+          await sbPatch("feedback", `id=eq.${row.id}`, { review_msg: pm.id });
+        } catch (e) { console.error("fb_preview", e?.message); }
+      } catch (e) { console.error("fb_msg", e?.message); }
+    });
+
+    client.on("messageReactionAdd", async (reaction, user) => {
+      try {
+        if (user?.bot) return;
+        if (reaction.partial) { try { await reaction.fetch(); } catch { return; } }
+        if (reaction.message?.channelId !== FB_REVIEW_CH) return;
+        if (!STAFF_IDS.includes(user.id)) return;
+        const emoji = reaction.emoji?.name;
+        if (emoji !== "✅" && emoji !== "❌") return;
+        const rows = await sbSelect("feedback", `review_msg=eq.${reaction.message.id}&select=id`);
+        if (!rows?.length) return;
+        const id = rows[0].id;
+        if (emoji === "✅") {
+          await sbPatch("feedback", `id=eq.${id}`, { published: true, rejected: false });
+          try { await reaction.message.reply("✅ 공개 완료 — 사이트에 노출됩니다."); } catch {}
+        } else {
+          await sbPatch("feedback", `id=eq.${id}`, { published: false, rejected: true });
+          try { await reaction.message.reply("❌ 반려 — 공개되지 않습니다."); } catch {}
+        }
+      } catch (e) { console.error("fb_react", e?.message); }
+    });
+    console.log("feedback collector: on");
+  }
+
   client.login(process.env.DISCORD_TOKEN).catch((e) => {
     const msg = e?.message || String(e);
     console.error("discord_login_failed", msg);
     CACHE.status = "login_failed";
     CACHE.loginError = /disallowed intents/i.test(msg)
-      ? "disallowed_intents — 개발자포털에서 SERVER MEMBERS INTENT를 켜세요"
+      ? "disallowed_intents — 개발자포털에서 SERVER MEMBERS + MESSAGE CONTENT INTENT를 켜세요"
       : msg.slice(0, 140);
   });
 } else {
@@ -1537,4 +1665,22 @@ app.post("/api/gdcup-solo-status", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// ── 공개 피드백 월 (published=true 만 노출) ──
+app.get("/api/feedback", async (req, res) => {
+  try {
+    if (!process.env.SUPABASE_URL) return res.json({ items: [] });
+    const grp = (req.query.grp || "").toString().toUpperCase();
+    const trainer = (req.query.trainer || "").toString();
+    let q = "published=eq.true&select=id,trainer,grp,student_alias,lesson_date,body,created_at" +
+            "&order=lesson_date.desc,created_at.desc&limit=200";
+    if (["A", "B", "C"].includes(grp)) q += `&grp=eq.${grp}`;
+    if (trainer) q += `&trainer=eq.${encodeURIComponent(trainer)}`;
+    const rows = await sbSelect("feedback", q);
+    res.json({ items: rows || [] });
+  } catch (e) {
+    console.error("feedback_api", e?.message);
+    res.json({ items: [] });
+  }
+});
+
 app.listen(PORT, () => console.log("listening on " + PORT));

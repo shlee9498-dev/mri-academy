@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>수강생 성장 기록 · MRI ACADEMY</title>
+<meta name="description" content="MRI ACADEMY 실제 강의·레슨 피드백을 가명으로 공개합니다. 트레이너가 매 수업마다 남긴 성장 기록을 확인하세요." />
+<meta property="og:title" content="수강생 성장 기록 · MRI ACADEMY" />
+<meta property="og:description" content="실제 강의·레슨 피드백을 가명으로 공개 — 트레이너가 남긴 성장 기록" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://mriacademy.gg/feedback.html" />
+<meta property="og:image" content="https://mriacademy.gg/og-banner.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="preconnect" href="https://cdn.jsdelivr.net" />
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:#0a0a0c; --bg-card:#1a1a20; --bg-elev:#20202a;
+  --ink:#f4f4f5; --ink-dim:#a1a1aa; --ink-faint:#71717a;
+  --gold:#f5c518; --gold-soft:rgba(245,197,24,.3); --gold-deep:#caa00f;
+  --green:#10b981; --blue:#5ac8fa; --red:#e63946; --line:#27272a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;
+  line-height:1.6; min-height:100vh; position:relative; overflow-x:hidden;
+}
+body::before{
+  content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+  background:
+    radial-gradient(900px 500px at 50% -10%, rgba(245,197,24,.10), transparent 70%),
+    linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);
+  background-size:auto, 37px 37px, 37px 37px;
+}
+.wrap{position:relative; z-index:1; max-width:1080px; margin:0 auto; padding:48px 20px 80px}
+.top{text-align:center; margin-bottom:14px}
+.kick{
+  font-size:.82rem; letter-spacing:.22em; color:var(--gold);
+  font-weight:700; text-transform:uppercase; margin-bottom:10px;
+}
+h1{font-size:clamp(1.9rem,5vw,2.9rem); font-weight:800; letter-spacing:-.02em; line-height:1.15}
+h1 .em{color:var(--gold)}
+.sub{color:var(--ink-dim); margin-top:14px; font-size:1rem; max-width:600px; margin-left:auto; margin-right:auto}
+.note{
+  margin:22px auto 0; max-width:620px; font-size:.82rem; color:var(--ink-faint);
+  background:var(--bg-card); border:1px solid var(--line); border-radius:12px; padding:11px 16px;
+}
+.tabs{display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin:34px 0 26px}
+.tab{
+  background:var(--bg-card); border:1px solid var(--line); color:var(--ink-dim);
+  padding:9px 20px; border-radius:999px; font-size:.92rem; font-weight:600;
+  cursor:pointer; transition:.15s; font-family:inherit;
+}
+.tab:hover{border-color:var(--gold-soft); color:var(--ink)}
+.tab.on{background:var(--gold); border-color:var(--gold); color:#1a1a1a}
+.grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px}
+.card{
+  background:var(--bg-card); border:1px solid var(--line); border-radius:16px;
+  padding:18px 18px 16px; display:flex; flex-direction:column; gap:12px;
+  transition:.18s; position:relative; overflow:hidden;
+}
+.card:hover{border-color:var(--gold-soft); transform:translateY(-2px)}
+.card .head{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.badge{font-size:.74rem; font-weight:800; padding:3px 10px; border-radius:7px; letter-spacing:.02em}
+.badge.A{background:rgba(90,200,250,.14); color:var(--blue)}
+.badge.B{background:rgba(245,197,24,.14); color:var(--gold)}
+.badge.C{background:rgba(16,185,129,.14); color:var(--green)}
+.who{font-size:.82rem; color:var(--ink-dim)}
+.who b{color:var(--ink); font-weight:700}
+.date{margin-left:auto; font-size:.76rem; color:var(--ink-faint); font-variant-numeric:tabular-nums}
+.body{white-space:pre-wrap; font-size:.92rem; color:var(--ink); line-height:1.7}
+.grow{
+  align-self:flex-start; font-size:.72rem; font-weight:700; color:var(--gold-deep);
+  border:1px solid var(--gold-soft); border-radius:7px; padding:2px 9px;
+}
+.empty,.loading{text-align:center; color:var(--ink-faint); padding:60px 0; font-size:.95rem}
+.cnt{text-align:center; color:var(--ink-faint); font-size:.82rem; margin-bottom:18px}
+.back{display:inline-block; margin-top:40px; color:var(--ink-dim); text-decoration:none; font-size:.9rem}
+.back:hover{color:var(--gold)}
+footer{text-align:center; color:var(--ink-faint); font-size:.78rem; margin-top:48px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="kick">REAL COACHING FEEDBACK</div>
+    <h1>수강생 <span class="em">성장 기록</span></h1>
+    <p class="sub">트레이너가 매 강의·레슨마다 남긴 실제 피드백입니다. 수강생 보호를 위해 <b>가명으로</b> 공개됩니다.</p>
+    <div class="note">🔒 모든 기록은 본인 동의 하에 가명·익명화되어 게시되며, 개인 식별정보는 포함되지 않습니다.</div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-grp="">전체</button>
+    <button class="tab" data-grp="A">A 그룹</button>
+    <button class="tab" data-grp="B">B 그룹</button>
+    <button class="tab" data-grp="C">C 그룹</button>
+  </div>
+
+  <div class="cnt" id="cnt"></div>
+  <div class="grid" id="grid"><div class="loading">불러오는 중…</div></div>
+
+  <div style="text-align:center">
+    <a class="back" href="./index.html">← MRI ACADEMY 홈으로</a>
+  </div>
+
+  <footer>© 2026 MRI ACADEMY. 무단 복제·도용 금지</footer>
+</div>
+
+<script>
+const API_BASE = "https://mri-academy-production.up.railway.app";
+let ALL = [];
+let curGrp = "";
+
+function esc(s){
+  return String(s==null?"":s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+function fmtDate(d){
+  if(!d) return "";
+  const m = String(d).match(/(\d{4})-(\d{2})-(\d{2})/);
+  return m ? m[1]+"."+m[2]+"."+m[3] : String(d);
+}
+function render(){
+  const grid = document.getElementById("grid");
+  const cnt = document.getElementById("cnt");
+  const list = curGrp ? ALL.filter(x => x.grp === curGrp) : ALL;
+  cnt.textContent = list.length ? ("공개된 기록 " + list.length + "건") : "";
+  if(!list.length){
+    grid.innerHTML = '<div class="empty">아직 공개된 기록이 없습니다. 곧 채워집니다 ✍️</div>';
+    return;
+  }
+  grid.innerHTML = list.map(function(x){
+    const g = (x.grp || "").toUpperCase();
+    return ''+
+      '<div class="card">'+
+        '<div class="head">'+
+          '<span class="badge '+esc(g)+'">'+esc(g)+' 그룹</span>'+
+          '<span class="who"><b>'+esc(x.trainer)+'</b> 쌤 · '+esc(x.student_alias||"수강생")+'</span>'+
+          '<span class="date">'+esc(fmtDate(x.lesson_date))+'</span>'+
+        '</div>'+
+        '<div class="body">'+esc(x.body)+'</div>'+
+        '<span class="grow">📈 성장 중</span>'+
+      '</div>';
+  }).join("");
+}
+function setTab(grp, btn){
+  curGrp = grp;
+  document.querySelectorAll(".tab").forEach(function(b){ b.classList.remove("on"); });
+  btn.classList.add("on");
+  render();
+}
+document.getElementById("tabs").addEventListener("click", function(e){
+  const b = e.target.closest(".tab");
+  if(b) setTab(b.dataset.grp || "", b);
+});
+async function load(){
+  try{
+    const r = await fetch(API_BASE + "/api/feedback");
+    const data = await r.json();
+    ALL = Array.isArray(data.items) ? data.items : [];
+  }catch(err){
+    ALL = [];
+  }
+  render();
+}
+load();
+</script>
+</body>
+</html>
