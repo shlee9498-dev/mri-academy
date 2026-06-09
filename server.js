@@ -1363,6 +1363,20 @@ app.post("/api/gdcup-apply", async (req, res) => {
         if (!wr.ok) console.error("gdcup_webhook", wr.status);
       } catch (e) { console.error("gdcup_webhook", e.message); }
     }
+    // 참가팀명단 채널 공개 카드 (연락처 제외)
+    const LISTWH = process.env.GDCUP_LIST_WEBHOOK;
+    if (LISTWH) {
+      const plines = members.map((m, i) => (i === 0 ? "👑 " : "") + (m.ign || "-") + (m.tier ? (" (" + m.tier + ")") : "")).join(" · ");
+      const pembed = {
+        title: "🎮 " + teamName,
+        color: 0xf5c518,
+        description: (clip(b.slogan, 60) ? ("\"" + clip(b.slogan, 60) + "\"\n") : "") + (plines || ""),
+        fields: [{ name: "팀 BPI", value: bpi != null ? String(bpi) : "-", inline: true }],
+        footer: { text: count != null ? ("현재 " + count + "팀 신청 중") : "" },
+        timestamp: new Date().toISOString(),
+      };
+      try { await fetch(LISTWH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "📋 새 팀이 합류했어요!", embeds: [pembed] }) }); } catch (e) { console.error("gdcup_list_webhook", e.message); }
+    }
     res.json({ ok: true, teams: count });
   } catch (e) { console.error("gdcup_apply_error", e); res.status(500).json({ error: "server_error" }); }
 });
