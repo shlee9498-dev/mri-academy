@@ -1459,5 +1459,68 @@ app.post("/api/gdcup-scores-save", async (req, res) => {
   } catch (e) { console.error("scores_save_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
+// ===== G드컵 솔로/용병 (혼자 신청 + 자리부족 모집) =====
+app.get("/api/gdcup-solo-list", async (req, res) => {
+  try {
+    if (!process.env.SUPABASE_URL) return res.json({ solos: [], count: 0 });
+    const rows = await sbSelect("gdcup_solos", "select=kind,ign,tier,note,status,created_at&status=neq.cancelled&order=created_at.asc");
+    const solos = rows.map(function (r) { return { kind: r.kind, ign: r.ign, tier: r.tier, note: r.note || "", status: r.status }; });
+    const waiting = solos.filter(function (s) { return s.status !== "matched"; }).length;
+    res.json({ solos: solos, count: waiting });
+  } catch (e) { res.json({ solos: [], count: 0 }); }
+});
+app.post("/api/gdcup-solo", async (req, res) => {
+  try {
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
+    if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
+    const b = req.body || {};
+    const ign = String(b.ign || "").slice(0, 30);
+    if (!ign) return res.status(400).json({ error: "no_ign" });
+    const rec = {
+      kind: b.kind === "short" ? "short" : "solo",
+      ign: ign,
+      tier: String(b.tier || "").slice(0, 20),
+      discord: String(b.discord || "").slice(0, 60),
+      note: String(b.note || "").slice(0, 200),
+      status: "waiting",
+      ip: ip,
+    };
+    const row = await sbInsert("gdcup_solos", rec);
+    if (process.env.GDCUP_SOLO_WEBHOOK) {
+      const kindTxt = rec.kind === "short" ? "👥 팀원 부족 — 자리 모집" : "🙋 솔로 — 같이 할 팀 구함";
+      const embed = {
+        title: kindTxt, color: 0x5ac8fa,
+        fields: [
+          { name: "인게임닉", value: rec.ign || "-", inline: true },
+          { name: "티어", value: rec.tier || "-", inline: true },
+          { name: "디스코드", value: rec.discord || "-", inline: true },
+          { name: "한마디", value: rec.note || "-", inline: false },
+        ],
+        timestamp: new Date().toISOString(),
+      };
+      try { await fetch(process.env.GDCUP_SOLO_WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "🎮 새 용병/솔로 신청! 같이 할 사람 구해요", embeds: [embed] }) }); } catch (e) { console.error("solo_webhook", e.message); }
+    }
+    res.json({ ok: true, id: row && row.id });
+  } catch (e) { console.error("solo_apply_error", e); res.status(500).json({ error: "server_error" }); }
+});
+app.get("/api/gdcup-solo-admin", async (req, res) => {
+  try {
+    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+    if (!process.env.SUPABASE_URL) return res.json({ solos: [] });
+    const rows = await sbSelect("gdcup_solos", "select=id,kind,ign,tier,discord,note,status,created_at&order=created_at.asc");
+    res.json({ solos: rows });
+  } catch (e) { res.status(500).json({ error: "server_error" }); }
+});
+app.post("/api/gdcup-solo-status", async (req, res) => {
+  try {
+    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+    const b = req.body || {};
+    if (!b.id) return res.status(400).json({ error: "no_id" });
+    const status = ["waiting", "matched", "cancelled"].includes(b.status) ? b.status : "waiting";
+    await sbPatch("gdcup_solos", `id=eq.${encodeURIComponent(b.id)}`, { status });
+    res.json({ ok: true, status });
+  } catch (e) { res.status(500).json({ error: "server_error" }); }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("listening on " + PORT));
