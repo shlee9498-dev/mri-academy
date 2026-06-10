@@ -122,6 +122,12 @@ async function sbUpsert(table, row, onConflict) {
   if (!r.ok) throw new Error(`supabase_upsert_${r.status}`);
   return (await r.json())[0];
 }
+async function sbDelete(table, filter) {
+  const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?${filter}`, {
+    method: "DELETE", headers: sbHeaders(),
+  });
+  if (!r.ok) throw new Error(`supabase_delete_${r.status}`);
+}
 
 // ═══════════════════ 피드백 월 (트레이너 피드백 → 사이트) ═══════════════════
 // 봇이 트레이너 피드백 서버의 메시지를 수집 → Claude로 정제(오탈자·민감 마스킹)
@@ -757,6 +763,7 @@ if (process.env.DISCORD_TOKEN) {
         { name: "참석취합", description: "[운영진] G드컵 참석 확인 버튼을 이 채널에 게시", options: [opt("안내", "상단에 표시할 안내 문구(선택)")] },
         { name: "참석현황", description: "[운영진] 참석/불참 집계 + 미응답자 명단", options: [{ name: "역할", description: "미응답자를 점검할 역할(선택)", type: 8, required: false }] },
         { name: "성장등록버튼", description: "[운영진] 수강생 성장(전적) 등록 버튼을 이 채널에 게시", options: [] },
+        { name: "성장재계산", description: "[운영진] 등록된 모든 수강생 성장 데이터 재계산(TPP/시즌 보정·현재시즌 갱신)", options: [] },
       ];
       if (process.env.GUILD_ID) await client.application.commands.set(cmds, process.env.GUILD_ID);
       else await client.application.commands.set(cmds);
@@ -1112,6 +1119,55 @@ if (process.env.DISCORD_TOKEN) {
           components: [row],
         });
         return itx.reply({ content: "성장 등록 버튼을 게시했어요.", ephemeral: true });
+      }
+      if (itx.isChatInputCommand() && itx.commandName === "성장재계산") {
+        if (!isStaff(itx.user.id)) return itx.reply({ content: "운영진 전용입니다.", ephemeral: true });
+        await itx.deferReply({ ephemeral: true });
+        let baselines;
+        try {
+          baselines = await sbSelect("student_snapshots",
+            "select=discord_id,discord_name,player_name,platform,account_id,season_id&snapshot_type=eq.baseline&order=created_at.asc");
+        } catch (e) { return itx.editReply("DB 조회 실패: " + e.message); }
+        const seen = new Set(); const targets = [];
+        for (const b of baselines) {
+          const key = `${b.discord_id}_${b.platform}`;
+          if (seen.has(key) || !b.account_id) continue;
+          seen.add(key); targets.push(b);
+        }
+        if (targets.length === 0) return itx.editReply("재계산할 등록 데이터가 없어요.");
+        await itx.editReply(`🔄 재계산 시작 — ${targets.length}명. 레이트리밋 때문에 1명당 ~14초, 백그라운드로 처리할게요. 끝나면 알림 보낼게요.`);
+        (async () => {
+          let ok = 0, fail = 0;
+          const baseNum = parseInt(process.env.PUBG_BASELINE_SEASON_NUM || "40", 10);
+          for (const t of targets) {
+            try {
+              const curSeason = await currentSeasonId(t.platform);
+              let baseSeasonId = t.season_id;
+              if (!baseSeasonId || baseSeasonId === curSeason) {
+                baseSeasonId = (await seasonIdByNumber(t.platform, baseNum)) || curSeason;
+              }
+              const base = await snapshotStatsAt(t.platform, t.account_id, t.player_name, baseSeasonId);
+              const after = await snapshotStatsAt(t.platform, t.account_id, t.player_name, curSeason);
+              await sbDelete("student_snapshots", `discord_id=eq.${t.discord_id}&platform=eq.${t.platform}`);
+              const mk = (snap, type) => ({
+                discord_id: t.discord_id, discord_name: t.discord_name,
+                platform: snap.platform, player_name: snap.playerName, account_id: snap.accountId,
+                season_id: snap.seasonId, snapshot_type: type,
+                tier: snap.tier, sub_tier: snap.subTier, tier_index: snap.tierIdx,
+                rank_point: snap.rankPoint, best_rank_point: snap.bestRankPoint,
+                rounds_played: snap.roundsPlayed, kda: snap.kda, avg_kills: snap.avgKills, raw: snap,
+              });
+              await sbInsert("student_snapshots", mk(base, "baseline"));
+              await sbInsert("student_snapshots", mk(after, "after"));
+              ok++;
+            } catch (e) { console.error("resync", t.player_name, e?.message); fail++; }
+            await new Promise((r) => setTimeout(r, 14000)); // PUBG 레이트리밋 보호
+          }
+          const msg = `✅ 성장 재계산 완료 — 성공 ${ok} / 실패 ${fail}`;
+          try { await itx.followUp({ content: msg, ephemeral: true }); }
+          catch (_) { try { await itx.channel.send(msg); } catch (__) {} }
+        })();
+        return;
       }
       if (itx.isButton() && itx.customId === "growth_open") {
         const modal = new ModalBuilder().setCustomId("growth_modal").setTitle("성장 등록");
