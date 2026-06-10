@@ -552,7 +552,7 @@ function tierLabel(tier, subTier, bestRP) {
   if (!tier) return "Unranked";
   return tier + (subTier ? ` ${subTier}` : "");
 }
-// 한 계정의 현재 시즌 랭크 스냅샷 (squad / squad-fpp 중 표본 많은 쪽)
+// 한 계정의 현재 시즌 랭크 스냅샷 (TPP 우선, 없으면 FPP)
 async function snapshotStats(platform, nickname) {
   const player = await findPlayer(platform, nickname);
   const accountId = player.id;
@@ -561,8 +561,8 @@ async function snapshotStats(platform, nickname) {
   try {
     const rd = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}/ranked`, 1800000);
     const m = rd.data.attributes.rankedGameModeStats || {};
-    sq = [m["squad-fpp"], m["squad"]].filter(Boolean)
-      .sort((a, b) => (b.roundsPlayed || 0) - (a.roundsPlayed || 0))[0] || null;
+    const tpp = m["squad"], fpp = m["squad-fpp"]; // 공식 대회 기준 TPP 우선
+    sq = (tpp && (tpp.roundsPlayed || 0) > 0) ? tpp : (fpp || tpp || null);
   } catch (_) { /* 랭크 미참여 */ }
   const tier = sq?.currentTier?.tier || null;
   const subTier = sq?.currentTier?.subTier || null;
@@ -583,7 +583,8 @@ async function snapshotStatsAt(platform, accountId, playerName, seasonId) {
   try {
     const rd = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}/ranked`, 1800000);
     const m = rd.data.attributes.rankedGameModeStats || {};
-    sq = [m["squad-fpp"], m["squad"]].filter(Boolean).sort((a, b) => (b.roundsPlayed || 0) - (a.roundsPlayed || 0))[0] || null;
+    const tpp = m["squad"], fpp = m["squad-fpp"]; // TPP 우선
+    sq = (tpp && (tpp.roundsPlayed || 0) > 0) ? tpp : (fpp || tpp || null);
   } catch (_) { /* 해당 시즌 랭크 기록 없음 */ }
   const tier = sq?.currentTier?.tier || null;
   const subTier = sq?.currentTier?.subTier || null;
@@ -1163,10 +1164,10 @@ if (process.env.DISCORD_TOKEN) {
           await sbInsert("student_snapshots", mkRow(after, "after"));
         } catch (e) { console.error("growth_insert", e?.message); return itx.editReply("저장 중 오류. 잠시 후 다시 시도해주세요."); }
         const fmt = (s) => s.hasRanked
-          ? `${s.tierLabel} · ${s.bestRankPoint ?? s.rankPoint ?? "-"}점 · 평균 ${s.avgKills ?? "-"}킬/판 (${s.roundsPlayed}판)`
+          ? `${s.tierLabel} · ${s.bestRankPoint ?? s.rankPoint ?? "-"}점 · 평균 ${s.avgKills ?? "-"}킬/판 · KDA ${s.kda ?? "-"} (${s.roundsPlayed}판)`
           : "경쟁전 기록 없음";
         return itx.editReply(
-          `✅ 등록 완료! (PUBG 공식 전적 검증)\n` +
+          `✅ 등록 완료! (PUBG 공식 **경쟁전(랭크)** 전적)\n` +
           `· 닉: ${playerName} (${plat})\n` +
           `· 시작(${!isNaN(baseNum) ? baseNum + "s" : "현재"}): ${fmt(base)}\n` +
           `· 현재: ${fmt(after)}\n` +
