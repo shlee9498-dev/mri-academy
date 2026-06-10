@@ -598,7 +598,7 @@ async function snapshotStatsAt(platform, accountId, playerName, seasonId) {
   };
 }
 // "시즌 N" → seasonId : 현재 시즌(번호는 env로 관리)을 기준점으로 역산
-const PUBG_CUR_SEASON_NUM = parseInt(process.env.PUBG_CURRENT_SEASON_NUM || "42", 10);
+const PUBG_CUR_SEASON_NUM = parseInt(process.env.PUBG_CURRENT_SEASON_NUM || "41", 10);
 async function seasonIdByNumber(platform, num) {
   const data = await pubgGet(`/shards/${platform}/seasons`, 86400_000);
   const list = data.data; // 오래된 → 최신 순
