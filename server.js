@@ -19,7 +19,7 @@
 //   PUBG_API_KEY  없으면 PUBG 라우트 비활성
 
 const express = require("express");
-const { Client, GatewayIntentBits, Partials } = require("discord.js");
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require("discord.js");
 
 const app = express();
 app.use(express.json({ limit: "64kb" }));
@@ -568,13 +568,49 @@ async function snapshotStats(platform, nickname) {
   const subTier = sq?.currentTier?.subTier || null;
   const bestRP = sq?.bestRankPoint ?? null;
   const rounds = sq?.roundsPlayed || 0;
+  const kills = sq?.kills ?? null;
   return {
     platform, accountId, playerName: player.attributes.name, seasonId,
     tier, subTier, tierIdx: tierIndex(tier, bestRP), tierLabel: tierLabel(tier, subTier, bestRP),
     rankPoint: sq?.currentRankPoint ?? null, bestRankPoint: bestRP,
-    roundsPlayed: rounds, kda: sq?.kda ?? null,
-    avgDamage: rounds ? Math.round(sq.damageDealt / rounds) : null,
+    roundsPlayed: rounds, kills, kda: sq?.kda ?? null, winRatio: sq?.winRatio ?? null,
+    avgKills: (rounds && kills != null) ? +(kills / rounds).toFixed(2) : null, // 평균 처치(킬/판), KDA 아님
   };
+}
+// ── 성장 백필용: 특정 시즌의 ranked 스냅샷 (계정ID 기준) ──
+async function snapshotStatsAt(platform, accountId, playerName, seasonId) {
+  let sq = null;
+  try {
+    const rd = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}/ranked`, 1800000);
+    const m = rd.data.attributes.rankedGameModeStats || {};
+    sq = [m["squad-fpp"], m["squad"]].filter(Boolean).sort((a, b) => (b.roundsPlayed || 0) - (a.roundsPlayed || 0))[0] || null;
+  } catch (_) { /* 해당 시즌 랭크 기록 없음 */ }
+  const tier = sq?.currentTier?.tier || null;
+  const subTier = sq?.currentTier?.subTier || null;
+  const bestRP = sq?.bestRankPoint ?? null;
+  const rounds = sq?.roundsPlayed || 0;
+  const kills = sq?.kills ?? null;
+  return {
+    platform, accountId, playerName, seasonId,
+    tier, subTier, tierIdx: tierIndex(tier, bestRP), tierLabel: tierLabel(tier, subTier, bestRP),
+    rankPoint: sq?.currentRankPoint ?? null, bestRankPoint: bestRP,
+    roundsPlayed: rounds, kills, kda: sq?.kda ?? null, winRatio: sq?.winRatio ?? null,
+    avgKills: (rounds && kills != null) ? +(kills / rounds).toFixed(2) : null, // 평균 처치(킬/판)
+    hasRanked: !!sq,
+  };
+}
+// "시즌 N" → seasonId : 현재 시즌(번호는 env로 관리)을 기준점으로 역산
+const PUBG_CUR_SEASON_NUM = parseInt(process.env.PUBG_CURRENT_SEASON_NUM || "41", 10);
+async function seasonIdByNumber(platform, num) {
+  const data = await pubgGet(`/shards/${platform}/seasons`, 86400_000);
+  const list = data.data;
+  const curIdx = list.findIndex((s) => s.attributes.isCurrentSeason);
+  if (curIdx < 0) return null;
+  const goBack = PUBG_CUR_SEASON_NUM - num; // 41→40이면 1시즌 전
+  // 정렬 방향 자동 감지: 현재 시즌이 리스트 뒤쪽=오래된→최신 / 앞쪽=최신→오래된
+  const idx = (curIdx > list.length / 2) ? curIdx - goBack : curIdx + goBack;
+  if (idx < 0 || idx >= list.length) return null;
+  return list[idx].id;
 }
 async function saveSnapshot(user, platform, nickname, type) {
   const snap = await snapshotStats(platform, nickname);
@@ -589,14 +625,14 @@ async function saveSnapshot(user, platform, nickname, type) {
     season_id: snap.seasonId, snapshot_type: type,
     tier: snap.tier, sub_tier: snap.subTier, tier_index: snap.tierIdx,
     rank_point: snap.rankPoint, best_rank_point: snap.bestRankPoint,
-    rounds_played: snap.roundsPlayed, kda: snap.kda, avg_damage: snap.avgDamage, raw: snap,
+    rounds_played: snap.roundsPlayed, kda: snap.kda, avg_kills: snap.avgKills, raw: snap,
   });
   return { snap, skipped: false };
 }
 // 계정별 baseline ↔ 최신 after 페어링
 async function progressPairs() {
   const rows = await sbSelect("student_snapshots",
-    "select=discord_name,player_name,platform,snapshot_type,tier_index,tier,sub_tier,best_rank_point,rank_point,avg_damage,season_id,created_at&order=created_at.asc");
+    "select=discord_name,player_name,platform,snapshot_type,tier_index,tier,sub_tier,best_rank_point,rank_point,avg_kills,season_id,created_at&order=created_at.asc");
   const by = {};
   for (const r of rows) {
     const k = r.player_name + "|" + r.platform;
@@ -717,6 +753,9 @@ if (process.env.DISCORD_TOKEN) {
           ],
         },
         { name: "정합성점검", description: "[운영진] 역할-상태 불일치 자동 점검", options: [] },
+        { name: "참석취합", description: "[운영진] G드컵 참석 확인 버튼을 이 채널에 게시", options: [opt("안내", "상단에 표시할 안내 문구(선택)")] },
+        { name: "참석현황", description: "[운영진] 참석/불참 집계 + 미응답자 명단", options: [{ name: "역할", description: "미응답자를 점검할 역할(선택)", type: 8, required: false }] },
+        { name: "성장등록버튼", description: "[운영진] 수강생 성장(전적) 등록 버튼을 이 채널에 게시", options: [] },
       ];
       if (process.env.GUILD_ID) await client.application.commands.set(cmds, process.env.GUILD_ID);
       else await client.application.commands.set(cmds);
@@ -986,6 +1025,164 @@ if (process.env.DISCORD_TOKEN) {
     console.log("feedback collector: on");
   }
 
+  // ── G드컵 참석 확인(체크인) — 버튼/모달 수집 (기존 핸들러와 독립) ──
+  const ATT_EVENT = "gdcup-s2";
+  client.on("interactionCreate", async (itx) => {
+    try {
+      if (itx.isChatInputCommand()) {
+        if (itx.commandName === "참석취합") {
+          if (!isStaff(itx.user.id)) return itx.reply({ content: "운영진 전용입니다.", ephemeral: true });
+          if (!process.env.SUPABASE_URL) return itx.reply({ content: "Supabase 미설정.", ephemeral: true });
+          const note = itx.options.getString("안내") || "6/20(토) 8PM 본매치 — 아래 버튼을 눌러 참석 여부를 알려주세요!";
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("att_yes").setLabel("✅ 참석").setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId("att_no").setLabel("❌ 불참").setStyle(ButtonStyle.Danger),
+          );
+          await itx.channel.send({ content: "📋 **G드컵 시즌2 · 참석 확인**\n" + note, components: [row] });
+          return itx.reply({ content: "참석 확인 버튼을 게시했어요.", ephemeral: true });
+        }
+        if (itx.commandName === "참석현황") {
+          if (!isStaff(itx.user.id)) return itx.reply({ content: "운영진 전용입니다.", ephemeral: true });
+          if (!process.env.SUPABASE_URL) return itx.reply({ content: "Supabase 미설정.", ephemeral: true });
+          await itx.deferReply({ ephemeral: true });
+          let rows = [];
+          try { rows = await sbSelect("gdcup_attendance", `event=eq.${ATT_EVENT}&select=user_id,name,status,reason&limit=500`); } catch {}
+          const yes = rows.filter((r) => r.status === "참석");
+          const no = rows.filter((r) => r.status === "불참");
+          let out = `📊 **참석 현황** — 참석 ${yes.length} · 불참 ${no.length} (응답 ${rows.length})\n`;
+          if (no.length) out += "\n❌ 불참\n" + no.map((r) => `· ${r.name}${r.reason ? " — " + r.reason : ""}`).join("\n");
+          const role = itx.options.getRole("역할");
+          if (role) {
+            try {
+              await itx.guild.members.fetch();
+              const done = new Set(rows.map((r) => r.user_id));
+              const miss = role.members.filter((m) => !m.user.bot && !done.has(m.id)).map((m) => m.displayName);
+              out += `\n\n⏳ 미응답 (${miss.length})\n` + (miss.length ? miss.map((n) => "· " + n).join("\n") : "전원 응답 완료 🎉");
+            } catch (e) { out += "\n\n(미응답 점검 실패: " + (e?.message || "") + ")"; }
+          }
+          return itx.editReply(out.slice(0, 1900));
+        }
+        return; // 그 외 명령은 기존 핸들러가 처리
+      }
+      if (itx.isButton() && (itx.customId === "att_yes" || itx.customId === "att_no")) {
+        if (itx.customId === "att_no") {
+          const modal = new ModalBuilder().setCustomId("att_no_modal").setTitle("불참 사유");
+          const input = new TextInputBuilder().setCustomId("reason").setLabel("불참 사유 (간단히, 선택)")
+            .setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(100);
+          modal.addComponents(new ActionRowBuilder().addComponents(input));
+          return itx.showModal(modal);
+        }
+        if (process.env.SUPABASE_URL) {
+          try {
+            await sbUpsert("gdcup_attendance",
+              { event: ATT_EVENT, user_id: itx.user.id, name: itx.member?.displayName || itx.user.username, status: "참석", reason: null },
+              "event,user_id");
+          } catch (e) { console.error("att_yes", e?.message); }
+        }
+        return itx.reply({ content: "✅ 참석으로 등록됐어요! 6/20 봐요 🎮", ephemeral: true });
+      }
+      if (itx.isModalSubmit() && itx.customId === "att_no_modal") {
+        const reason = (itx.fields.getTextInputValue("reason") || "").trim() || "(미기재)";
+        if (process.env.SUPABASE_URL) {
+          try {
+            await sbUpsert("gdcup_attendance",
+              { event: ATT_EVENT, user_id: itx.user.id, name: itx.member?.displayName || itx.user.username, status: "불참", reason },
+              "event,user_id");
+          } catch (e) { console.error("att_no_modal", e?.message); }
+        }
+        return itx.reply({ content: "❌ 불참으로 등록됐어요. 사유 전달 감사합니다!", ephemeral: true });
+      }
+    } catch (e) {
+      console.error("att_itx", e?.message);
+      try { if (itx.isRepliable() && !itx.replied && !itx.deferred) await itx.reply({ content: "처리 중 오류가 났어요. 다시 시도해주세요.", ephemeral: true }); } catch {}
+    }
+  });
+
+  // ── 수강생 성장 등록(전적 백필) — 버튼/모달 → PUBG 과거시즌+현재 스냅샷 ──
+  client.on("interactionCreate", async (itx) => {
+    try {
+      if (itx.isChatInputCommand() && itx.commandName === "성장등록버튼") {
+        if (!isStaff(itx.user.id)) return itx.reply({ content: "운영진 전용입니다.", ephemeral: true });
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("growth_open").setLabel("📈 내 성장 등록").setStyle(ButtonStyle.Primary),
+        );
+        await itx.channel.send({
+          content: "📈 **수강 성장 등록**\n버튼을 눌러 현재 닉네임과 처음 수강한 시즌을 입력하면, PUBG 공식 전적으로 성장 기록이 자동 생성됩니다.\n(닉변했으면 지금 닉으로 · 개인 식별정보는 공개 시 가려집니다)",
+          components: [row],
+        });
+        return itx.reply({ content: "성장 등록 버튼을 게시했어요.", ephemeral: true });
+      }
+      if (itx.isButton() && itx.customId === "growth_open") {
+        const modal = new ModalBuilder().setCustomId("growth_modal").setTitle("성장 등록");
+        const f1 = new TextInputBuilder().setCustomId("platform").setLabel("플랫폼 (스팀 / 카카오)").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(10);
+        const f2 = new TextInputBuilder().setCustomId("nick").setLabel("현재 인게임 닉 (닉변했으면 지금 닉)").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(40);
+        const f3 = new TextInputBuilder().setCustomId("season").setLabel("처음 수강한 시즌 번호 (예: 38 · 모르면 비움)").setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(4);
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(f1),
+          new ActionRowBuilder().addComponents(f2),
+          new ActionRowBuilder().addComponents(f3),
+        );
+        return itx.showModal(modal);
+      }
+      if (itx.isModalSubmit() && itx.customId === "growth_modal") {
+        await itx.deferReply({ ephemeral: true });
+        if (!process.env.SUPABASE_URL || !process.env.PUBG_API_KEY)
+          return itx.editReply("서버 설정 누락(Supabase/PUBG). 운영진에게 문의해주세요.");
+        const platRaw = (itx.fields.getTextInputValue("platform") || "").trim().toLowerCase();
+        const plat = /카카오|kakao/.test(platRaw) ? "kakao" : /스팀|steam/.test(platRaw) ? "steam" : null;
+        const nick = (itx.fields.getTextInputValue("nick") || "").trim();
+        const seasonStr = (itx.fields.getTextInputValue("season") || "").trim();
+        if (!plat) return itx.editReply("플랫폼은 '스팀' 또는 '카카오'로 입력해주세요.");
+        if (!nick) return itx.editReply("닉네임을 입력해주세요.");
+        let player;
+        try { player = await findPlayer(plat, nick); }
+        catch (_) { return itx.editReply(`닉네임 "${nick}"(${plat}) 조회 실패 — 철자/플랫폼을 확인해주세요.`); }
+        const accountId = player.id, playerName = player.attributes.name;
+        let curSeason;
+        try { curSeason = await currentSeasonId(plat); }
+        catch (_) { return itx.editReply("시즌 조회 실패, 잠시 후 다시 시도해주세요."); }
+        let baseNum = parseInt(seasonStr, 10);
+        if (isNaN(baseNum) && process.env.PUBG_BASELINE_SEASON_NUM) baseNum = parseInt(process.env.PUBG_BASELINE_SEASON_NUM, 10); // 미입력 = 학원 시작(런치) 시즌 기준
+        let baseSeasonId = curSeason;
+        if (!isNaN(baseNum)) { const sid = await seasonIdByNumber(plat, baseNum); if (sid) baseSeasonId = sid; }
+        let base, after;
+        try {
+          after = await snapshotStatsAt(plat, accountId, playerName, curSeason);
+          base = (baseSeasonId === curSeason) ? after : await snapshotStatsAt(plat, accountId, playerName, baseSeasonId);
+        } catch (_) { return itx.editReply("전적 조회 중 오류. 잠시 후 다시 시도해주세요."); }
+        const mkRow = (snap, type) => ({
+          discord_id: itx.user.id, discord_name: itx.member?.displayName || itx.user.username,
+          platform: plat, player_name: playerName, account_id: accountId,
+          season_id: snap.seasonId, snapshot_type: type,
+          tier: snap.tier, sub_tier: snap.subTier, tier_index: snap.tierIdx,
+          rank_point: snap.rankPoint, best_rank_point: snap.bestRankPoint,
+          rounds_played: snap.roundsPlayed, kda: snap.kda, avg_kills: snap.avgKills, raw: snap,
+        });
+        try {
+          await sbInsert("student_snapshots", mkRow(base, "baseline"));
+          await sbInsert("student_snapshots", mkRow(after, "after"));
+        } catch (e) { console.error("growth_insert", e?.message); return itx.editReply("저장 중 오류. 잠시 후 다시 시도해주세요."); }
+        const fmt = (s) => s.hasRanked
+          ? `${s.tierLabel} · ${s.bestRankPoint ?? s.rankPoint ?? "-"}점 · 평균 ${s.avgKills ?? "-"}킬/판 (${s.roundsPlayed}판)`
+          : "경쟁전 기록 없음";
+        return itx.editReply(
+          `✅ 등록 완료! (PUBG 공식 전적 검증)\n` +
+          `· 닉: ${playerName} (${plat})\n` +
+          `· 시작(${!isNaN(baseNum) ? baseNum + "s" : "현재"}): ${fmt(base)}\n` +
+          `· 현재: ${fmt(after)}\n` +
+          (base.hasRanked ? "" : "\n※ 시작 시즌 경쟁전 기록이 없어요. 시즌 번호를 다시 확인하거나 운영진에게 문의해주세요."));
+      }
+    } catch (e) {
+      console.error("growth_itx", e?.message);
+      try {
+        if (itx.isRepliable()) {
+          if (itx.deferred) await itx.editReply("처리 중 오류가 났어요. 다시 시도해주세요.");
+          else if (!itx.replied) await itx.reply({ content: "처리 중 오류가 났어요. 다시 시도해주세요.", ephemeral: true });
+        }
+      } catch {}
+    }
+  });
+
   client.login(process.env.DISCORD_TOKEN).catch((e) => {
     const msg = e?.message || String(e);
     console.error("discord_login_failed", msg);
@@ -1023,7 +1220,35 @@ app.get("/api/progress-stats", async (_req, res) => {
     const pairs = (await progressPairs()).filter((p) => p.base && p.after);
     const total = pairs.length;
     const up = pairs.filter((p) => (p.after.tier_index || 0) > (p.base.tier_index || 0)).length;
-    res.json({ ready: true, totalTracked: total, tierUpCount: up, tierUpPct: total ? Math.round((up / total) * 100) : null });
+    const cntAfter = (min) => pairs.filter((p) => (p.after.tier_index || 0) >= min).length;
+    const avg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
+    const rpGains = pairs.filter((p) => p.base.best_rank_point != null && p.after.best_rank_point != null)
+      .map((p) => p.after.best_rank_point - p.base.best_rank_point);
+    const killGains = pairs.filter((p) => p.base.avg_kills != null && p.after.avg_kills != null)
+      .map((p) => p.after.avg_kills - p.base.avg_kills);
+    const avg2 = (arr) => arr.length ? +(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : null;
+    res.json({
+      ready: true, totalTracked: total,
+      tierUpCount: up, tierUpPct: total ? Math.round((up / total) * 100) : null,
+      survivorCount: cntAfter(7), masterPlusCount: cntAfter(6), diamondPlusCount: cntAfter(5),
+      avgRpGain: avg(rpGains), avgKillsGain: avg2(killGains),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/_seasondbg", async (req, res) => {
+  try {
+    const plat = (req.query.platform === "kakao") ? "kakao" : "steam";
+    const data = await pubgGet(`/shards/${plat}/seasons`, 0);
+    const list = data.data;
+    const curIdx = list.findIndex((s) => s.attributes.isCurrentSeason);
+    const cur = await currentSeasonId(plat);
+    const b40 = await seasonIdByNumber(plat, 40);
+    res.json({
+      platform: plat, curSeasonNum: PUBG_CUR_SEASON_NUM, total: list.length, curIdx,
+      currentId: cur, baseline40Id: b40, EQUAL_BAD: cur === b40,
+      head: list.slice(0, 3).map((s) => ({ id: s.id, cur: s.attributes.isCurrentSeason })),
+      tail: list.slice(-3).map((s) => ({ id: s.id, cur: s.attributes.isCurrentSeason })),
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get("/api/student-progress", async (_req, res) => {
@@ -1037,6 +1262,7 @@ app.get("/api/student-progress", async (_req, res) => {
         before: tierLabel(p.base.tier, p.base.sub_tier, p.base.best_rank_point),
         after: tierLabel(p.after.tier, p.after.sub_tier, p.after.best_rank_point),
         beforeRP: p.base.best_rank_point, afterRP: p.after.best_rank_point,
+        beforeKills: p.base.avg_kills, afterKills: p.after.avg_kills,
         tierUp: (p.after.tier_index || 0) > (p.base.tier_index || 0),
       })),
     });
@@ -1101,13 +1327,30 @@ async function currentSeasonId(platform) {
   return cur.id;
 }
 
+function nameVariants(name) {
+  // 화면에서 똑같이 생긴 글자들을 묶어서 변형 생성 (i/I/l/1, o/O/0)
+  const groups = { i: "iIl1", I: "iIl1", l: "iIl1", "1": "iIl1", o: "oO0", O: "oO0", "0": "oO0" };
+  let out = [""];
+  for (const ch of name) {
+    const opts = groups[ch] ? groups[ch].split("") : [ch];
+    const next = [];
+    for (const pre of out) for (const o of opts) next.push(pre + o);
+    out = next;
+    if (out.length > 64) { out = out.slice(0, 64); break; }
+  }
+  return [...new Set([name, ...out])].slice(0, 10); // PUBG filter[playerNames] 최대 10개
+}
+
 async function findPlayer(platform, nickname) {
-  const p = `/shards/${platform}/players?filter[playerNames]=${encodeURIComponent(nickname)}`;
+  const variants = nameVariants(nickname);
+  const p = `/shards/${platform}/players?filter[playerNames]=${variants.map(encodeURIComponent).join(",")}`;
   const data = await pubgGet(p, 3600_000);
   if (!data.data || data.data.length === 0) {
     const e = new Error(`닉네임 "${nickname}" 못 찾음 (${platform})`); e.status = 404; throw e;
   }
-  return data.data[0];
+  // 입력과 정확히 일치하면 우선, 아니면 첫 매치 (i/l 등 헷갈린 경우 자동 보정)
+  const exact = data.data.find((d) => d.attributes?.name === nickname);
+  return exact || data.data[0];
 }
 
 async function computeBPI(platform, nickname, isLeader) {
