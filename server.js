@@ -1137,9 +1137,10 @@ if (process.env.DISCORD_TOKEN) {
         let curSeason;
         try { curSeason = await currentSeasonId(plat); }
         catch (_) { return itx.editReply("시즌 조회 실패, 잠시 후 다시 시도해주세요."); }
-        const num = parseInt(seasonStr, 10);
+        let baseNum = parseInt(seasonStr, 10);
+        if (isNaN(baseNum) && process.env.PUBG_BASELINE_SEASON_NUM) baseNum = parseInt(process.env.PUBG_BASELINE_SEASON_NUM, 10); // 미입력 = 학원 시작(런치) 시즌 기준
         let baseSeasonId = curSeason;
-        if (!isNaN(num)) { const sid = await seasonIdByNumber(plat, num); if (sid) baseSeasonId = sid; }
+        if (!isNaN(baseNum)) { const sid = await seasonIdByNumber(plat, baseNum); if (sid) baseSeasonId = sid; }
         let base, after;
         try {
           after = await snapshotStatsAt(plat, accountId, playerName, curSeason);
@@ -1162,7 +1163,7 @@ if (process.env.DISCORD_TOKEN) {
         return itx.editReply(
           `✅ 등록 완료! (PUBG 공식 전적 검증)\n` +
           `· 닉: ${playerName} (${plat})\n` +
-          `· 시작(${!isNaN(num) ? num + "s" : "현재"}): ${bl}\n` +
+          `· 시작(${!isNaN(baseNum) ? baseNum + "s" : "현재"}): ${bl}\n` +
           `· 현재: ${al}\n` +
           (base.hasRanked ? "" : "\n※ 시작 시즌 경쟁전 기록이 없어요. 시즌 번호를 다시 확인하거나 운영진에게 문의해주세요."));
       }
@@ -1214,7 +1215,18 @@ app.get("/api/progress-stats", async (_req, res) => {
     const pairs = (await progressPairs()).filter((p) => p.base && p.after);
     const total = pairs.length;
     const up = pairs.filter((p) => (p.after.tier_index || 0) > (p.base.tier_index || 0)).length;
-    res.json({ ready: true, totalTracked: total, tierUpCount: up, tierUpPct: total ? Math.round((up / total) * 100) : null });
+    const cntAfter = (min) => pairs.filter((p) => (p.after.tier_index || 0) >= min).length;
+    const avg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
+    const rpGains = pairs.filter((p) => p.base.best_rank_point != null && p.after.best_rank_point != null)
+      .map((p) => p.after.best_rank_point - p.base.best_rank_point);
+    const dmgGains = pairs.filter((p) => p.base.avg_damage != null && p.after.avg_damage != null)
+      .map((p) => p.after.avg_damage - p.base.avg_damage);
+    res.json({
+      ready: true, totalTracked: total,
+      tierUpCount: up, tierUpPct: total ? Math.round((up / total) * 100) : null,
+      survivorCount: cntAfter(7), masterPlusCount: cntAfter(6), diamondPlusCount: cntAfter(5),
+      avgRpGain: avg(rpGains), avgDamageGain: avg(dmgGains),
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get("/api/student-progress", async (_req, res) => {
