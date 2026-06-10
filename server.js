@@ -19,7 +19,7 @@
 //   PUBG_API_KEY  없으면 PUBG 라우트 비활성
 
 const express = require("express");
-const { Client, GatewayIntentBits, Partials } = require("discord.js");
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require("discord.js");
 
 const app = express();
 app.use(express.json({ limit: "64kb" }));
@@ -717,6 +717,8 @@ if (process.env.DISCORD_TOKEN) {
           ],
         },
         { name: "정합성점검", description: "[운영진] 역할-상태 불일치 자동 점검", options: [] },
+        { name: "참석취합", description: "[운영진] G드컵 참석 확인 버튼을 이 채널에 게시", options: [opt("안내", "상단에 표시할 안내 문구(선택)")] },
+        { name: "참석현황", description: "[운영진] 참석/불참 집계 + 미응답자 명단", options: [{ name: "역할", description: "미응답자를 점검할 역할(선택)", type: 8, required: false }] },
       ];
       if (process.env.GUILD_ID) await client.application.commands.set(cmds, process.env.GUILD_ID);
       else await client.application.commands.set(cmds);
@@ -985,6 +987,79 @@ if (process.env.DISCORD_TOKEN) {
     });
     console.log("feedback collector: on");
   }
+
+  // ── G드컵 참석 확인(체크인) — 버튼/모달 수집 (기존 핸들러와 독립) ──
+  const ATT_EVENT = "gdcup-s2";
+  client.on("interactionCreate", async (itx) => {
+    try {
+      if (itx.isChatInputCommand()) {
+        if (itx.commandName === "참석취합") {
+          if (!isStaff(itx.user.id)) return itx.reply({ content: "운영진 전용입니다.", ephemeral: true });
+          if (!process.env.SUPABASE_URL) return itx.reply({ content: "Supabase 미설정.", ephemeral: true });
+          const note = itx.options.getString("안내") || "6/20(토) 8PM 본매치 — 아래 버튼을 눌러 참석 여부를 알려주세요!";
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("att_yes").setLabel("✅ 참석").setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId("att_no").setLabel("❌ 불참").setStyle(ButtonStyle.Danger),
+          );
+          await itx.channel.send({ content: "📋 **G드컵 시즌2 · 참석 확인**\n" + note, components: [row] });
+          return itx.reply({ content: "참석 확인 버튼을 게시했어요.", ephemeral: true });
+        }
+        if (itx.commandName === "참석현황") {
+          if (!isStaff(itx.user.id)) return itx.reply({ content: "운영진 전용입니다.", ephemeral: true });
+          if (!process.env.SUPABASE_URL) return itx.reply({ content: "Supabase 미설정.", ephemeral: true });
+          await itx.deferReply({ ephemeral: true });
+          let rows = [];
+          try { rows = await sbSelect("gdcup_attendance", `event=eq.${ATT_EVENT}&select=user_id,name,status,reason&limit=500`); } catch {}
+          const yes = rows.filter((r) => r.status === "참석");
+          const no = rows.filter((r) => r.status === "불참");
+          let out = `📊 **참석 현황** — 참석 ${yes.length} · 불참 ${no.length} (응답 ${rows.length})\n`;
+          if (no.length) out += "\n❌ 불참\n" + no.map((r) => `· ${r.name}${r.reason ? " — " + r.reason : ""}`).join("\n");
+          const role = itx.options.getRole("역할");
+          if (role) {
+            try {
+              await itx.guild.members.fetch();
+              const done = new Set(rows.map((r) => r.user_id));
+              const miss = role.members.filter((m) => !m.user.bot && !done.has(m.id)).map((m) => m.displayName);
+              out += `\n\n⏳ 미응답 (${miss.length})\n` + (miss.length ? miss.map((n) => "· " + n).join("\n") : "전원 응답 완료 🎉");
+            } catch (e) { out += "\n\n(미응답 점검 실패: " + (e?.message || "") + ")"; }
+          }
+          return itx.editReply(out.slice(0, 1900));
+        }
+        return; // 그 외 명령은 기존 핸들러가 처리
+      }
+      if (itx.isButton() && (itx.customId === "att_yes" || itx.customId === "att_no")) {
+        if (itx.customId === "att_no") {
+          const modal = new ModalBuilder().setCustomId("att_no_modal").setTitle("불참 사유");
+          const input = new TextInputBuilder().setCustomId("reason").setLabel("불참 사유 (간단히, 선택)")
+            .setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(100);
+          modal.addComponents(new ActionRowBuilder().addComponents(input));
+          return itx.showModal(modal);
+        }
+        if (process.env.SUPABASE_URL) {
+          try {
+            await sbUpsert("gdcup_attendance",
+              { event: ATT_EVENT, user_id: itx.user.id, name: itx.member?.displayName || itx.user.username, status: "참석", reason: null },
+              "event,user_id");
+          } catch (e) { console.error("att_yes", e?.message); }
+        }
+        return itx.reply({ content: "✅ 참석으로 등록됐어요! 6/20 봐요 🎮", ephemeral: true });
+      }
+      if (itx.isModalSubmit() && itx.customId === "att_no_modal") {
+        const reason = (itx.fields.getTextInputValue("reason") || "").trim() || "(미기재)";
+        if (process.env.SUPABASE_URL) {
+          try {
+            await sbUpsert("gdcup_attendance",
+              { event: ATT_EVENT, user_id: itx.user.id, name: itx.member?.displayName || itx.user.username, status: "불참", reason },
+              "event,user_id");
+          } catch (e) { console.error("att_no_modal", e?.message); }
+        }
+        return itx.reply({ content: "❌ 불참으로 등록됐어요. 사유 전달 감사합니다!", ephemeral: true });
+      }
+    } catch (e) {
+      console.error("att_itx", e?.message);
+      try { if (itx.isRepliable() && !itx.replied && !itx.deferred) await itx.reply({ content: "처리 중 오류가 났어요. 다시 시도해주세요.", ephemeral: true }); } catch {}
+    }
+  });
 
   client.login(process.env.DISCORD_TOKEN).catch((e) => {
     const msg = e?.message || String(e);
