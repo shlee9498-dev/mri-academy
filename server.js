@@ -568,12 +568,13 @@ async function snapshotStats(platform, nickname) {
   const subTier = sq?.currentTier?.subTier || null;
   const bestRP = sq?.bestRankPoint ?? null;
   const rounds = sq?.roundsPlayed || 0;
+  const kills = sq?.kills ?? null;
   return {
     platform, accountId, playerName: player.attributes.name, seasonId,
     tier, subTier, tierIdx: tierIndex(tier, bestRP), tierLabel: tierLabel(tier, subTier, bestRP),
     rankPoint: sq?.currentRankPoint ?? null, bestRankPoint: bestRP,
-    roundsPlayed: rounds, kda: sq?.kda ?? null,
-    avgDamage: rounds ? Math.round(sq.damageDealt / rounds) : null,
+    roundsPlayed: rounds, kills, kda: sq?.kda ?? null, winRatio: sq?.winRatio ?? null,
+    avgKills: (rounds && kills != null) ? +(kills / rounds).toFixed(2) : null, // 평균 처치(킬/판), KDA 아님
   };
 }
 // ── 성장 백필용: 특정 시즌의 ranked 스냅샷 (계정ID 기준) ──
@@ -588,12 +589,13 @@ async function snapshotStatsAt(platform, accountId, playerName, seasonId) {
   const subTier = sq?.currentTier?.subTier || null;
   const bestRP = sq?.bestRankPoint ?? null;
   const rounds = sq?.roundsPlayed || 0;
+  const kills = sq?.kills ?? null;
   return {
     platform, accountId, playerName, seasonId,
     tier, subTier, tierIdx: tierIndex(tier, bestRP), tierLabel: tierLabel(tier, subTier, bestRP),
     rankPoint: sq?.currentRankPoint ?? null, bestRankPoint: bestRP,
-    roundsPlayed: rounds, kda: sq?.kda ?? null,
-    avgDamage: rounds ? Math.round(sq.damageDealt / rounds) : null,
+    roundsPlayed: rounds, kills, kda: sq?.kda ?? null, winRatio: sq?.winRatio ?? null,
+    avgKills: (rounds && kills != null) ? +(kills / rounds).toFixed(2) : null, // 평균 처치(킬/판)
     hasRanked: !!sq,
   };
 }
@@ -621,14 +623,14 @@ async function saveSnapshot(user, platform, nickname, type) {
     season_id: snap.seasonId, snapshot_type: type,
     tier: snap.tier, sub_tier: snap.subTier, tier_index: snap.tierIdx,
     rank_point: snap.rankPoint, best_rank_point: snap.bestRankPoint,
-    rounds_played: snap.roundsPlayed, kda: snap.kda, avg_damage: snap.avgDamage, raw: snap,
+    rounds_played: snap.roundsPlayed, kda: snap.kda, avg_kills: snap.avgKills, raw: snap,
   });
   return { snap, skipped: false };
 }
 // 계정별 baseline ↔ 최신 after 페어링
 async function progressPairs() {
   const rows = await sbSelect("student_snapshots",
-    "select=discord_name,player_name,platform,snapshot_type,tier_index,tier,sub_tier,best_rank_point,rank_point,avg_damage,season_id,created_at&order=created_at.asc");
+    "select=discord_name,player_name,platform,snapshot_type,tier_index,tier,sub_tier,best_rank_point,rank_point,avg_kills,season_id,created_at&order=created_at.asc");
   const by = {};
   for (const r of rows) {
     const k = r.player_name + "|" + r.platform;
@@ -1152,19 +1154,20 @@ if (process.env.DISCORD_TOKEN) {
           season_id: snap.seasonId, snapshot_type: type,
           tier: snap.tier, sub_tier: snap.subTier, tier_index: snap.tierIdx,
           rank_point: snap.rankPoint, best_rank_point: snap.bestRankPoint,
-          rounds_played: snap.roundsPlayed, kda: snap.kda, avg_damage: snap.avgDamage, raw: snap,
+          rounds_played: snap.roundsPlayed, kda: snap.kda, avg_kills: snap.avgKills, raw: snap,
         });
         try {
           await sbInsert("student_snapshots", mkRow(base, "baseline"));
           await sbInsert("student_snapshots", mkRow(after, "after"));
         } catch (e) { console.error("growth_insert", e?.message); return itx.editReply("저장 중 오류. 잠시 후 다시 시도해주세요."); }
-        const bl = base.hasRanked ? base.tierLabel : "경쟁전 기록 없음";
-        const al = after.hasRanked ? after.tierLabel : "경쟁전 기록 없음";
+        const fmt = (s) => s.hasRanked
+          ? `${s.tierLabel} · ${s.bestRankPoint ?? s.rankPoint ?? "-"}점 · 평균 ${s.avgKills ?? "-"}킬/판 (${s.roundsPlayed}판)`
+          : "경쟁전 기록 없음";
         return itx.editReply(
           `✅ 등록 완료! (PUBG 공식 전적 검증)\n` +
           `· 닉: ${playerName} (${plat})\n` +
-          `· 시작(${!isNaN(baseNum) ? baseNum + "s" : "현재"}): ${bl}\n` +
-          `· 현재: ${al}\n` +
+          `· 시작(${!isNaN(baseNum) ? baseNum + "s" : "현재"}): ${fmt(base)}\n` +
+          `· 현재: ${fmt(after)}\n` +
           (base.hasRanked ? "" : "\n※ 시작 시즌 경쟁전 기록이 없어요. 시즌 번호를 다시 확인하거나 운영진에게 문의해주세요."));
       }
     } catch (e) {
@@ -1219,13 +1222,14 @@ app.get("/api/progress-stats", async (_req, res) => {
     const avg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
     const rpGains = pairs.filter((p) => p.base.best_rank_point != null && p.after.best_rank_point != null)
       .map((p) => p.after.best_rank_point - p.base.best_rank_point);
-    const dmgGains = pairs.filter((p) => p.base.avg_damage != null && p.after.avg_damage != null)
-      .map((p) => p.after.avg_damage - p.base.avg_damage);
+    const killGains = pairs.filter((p) => p.base.avg_kills != null && p.after.avg_kills != null)
+      .map((p) => p.after.avg_kills - p.base.avg_kills);
+    const avg2 = (arr) => arr.length ? +(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : null;
     res.json({
       ready: true, totalTracked: total,
       tierUpCount: up, tierUpPct: total ? Math.round((up / total) * 100) : null,
       survivorCount: cntAfter(7), masterPlusCount: cntAfter(6), diamondPlusCount: cntAfter(5),
-      avgRpGain: avg(rpGains), avgDamageGain: avg(dmgGains),
+      avgRpGain: avg(rpGains), avgKillsGain: avg2(killGains),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1240,6 +1244,7 @@ app.get("/api/student-progress", async (_req, res) => {
         before: tierLabel(p.base.tier, p.base.sub_tier, p.base.best_rank_point),
         after: tierLabel(p.after.tier, p.after.sub_tier, p.after.best_rank_point),
         beforeRP: p.base.best_rank_point, afterRP: p.after.best_rank_point,
+        beforeKills: p.base.avg_kills, afterKills: p.after.avg_kills,
         tierUp: (p.after.tier_index || 0) > (p.base.tier_index || 0),
       })),
     });
