@@ -603,10 +603,12 @@ async function snapshotStatsAt(platform, accountId, playerName, seasonId) {
 const PUBG_CUR_SEASON_NUM = parseInt(process.env.PUBG_CURRENT_SEASON_NUM || "41", 10);
 async function seasonIdByNumber(platform, num) {
   const data = await pubgGet(`/shards/${platform}/seasons`, 86400_000);
-  const list = data.data; // 오래된 → 최신 순
+  const list = data.data;
   const curIdx = list.findIndex((s) => s.attributes.isCurrentSeason);
   if (curIdx < 0) return null;
-  const idx = curIdx - (PUBG_CUR_SEASON_NUM - num); // 42 - 38 = 4 → 4시즌 전
+  const goBack = PUBG_CUR_SEASON_NUM - num; // 41→40이면 1시즌 전
+  // 정렬 방향 자동 감지: 현재 시즌이 리스트 뒤쪽=오래된→최신 / 앞쪽=최신→오래된
+  const idx = (curIdx > list.length / 2) ? curIdx - goBack : curIdx + goBack;
   if (idx < 0 || idx >= list.length) return null;
   return list[idx].id;
 }
@@ -1230,6 +1232,22 @@ app.get("/api/progress-stats", async (_req, res) => {
       tierUpCount: up, tierUpPct: total ? Math.round((up / total) * 100) : null,
       survivorCount: cntAfter(7), masterPlusCount: cntAfter(6), diamondPlusCount: cntAfter(5),
       avgRpGain: avg(rpGains), avgKillsGain: avg2(killGains),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/_seasondbg", async (req, res) => {
+  try {
+    const plat = (req.query.platform === "kakao") ? "kakao" : "steam";
+    const data = await pubgGet(`/shards/${plat}/seasons`, 0);
+    const list = data.data;
+    const curIdx = list.findIndex((s) => s.attributes.isCurrentSeason);
+    const cur = await currentSeasonId(plat);
+    const b40 = await seasonIdByNumber(plat, 40);
+    res.json({
+      platform: plat, curSeasonNum: PUBG_CUR_SEASON_NUM, total: list.length, curIdx,
+      currentId: cur, baseline40Id: b40, EQUAL_BAD: cur === b40,
+      head: list.slice(0, 3).map((s) => ({ id: s.id, cur: s.attributes.isCurrentSeason })),
+      tail: list.slice(-3).map((s) => ({ id: s.id, cur: s.attributes.isCurrentSeason })),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
