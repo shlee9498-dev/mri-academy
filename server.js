@@ -1795,10 +1795,11 @@ app.post("/api/gdcup-apply", async (req, res) => {
     const LISTWH = process.env.GDCUP_LIST_WEBHOOK;
     if (LISTWH) {
       const plines = members.map((m, i) => (i === 0 ? "👑 " : "") + (m.ign || "-") + (m.tier ? (" (" + m.tier + ")") : "")).join(" · ");
+      const recruitLine = (members.length > 0 && members.length < 4) ? ("\n🔍 **용병 " + (4 - members.length) + "명 모집중!** 솔로 신청하면 합류 가능") : "";
       const pembed = {
         title: "🎮 " + teamName,
         color: 0xf5c518,
-        description: (clip(b.slogan, 60) ? ("\"" + clip(b.slogan, 60) + "\"\n") : "") + (plines || ""),
+        description: (clip(b.slogan, 60) ? ("\"" + clip(b.slogan, 60) + "\"\n") : "") + (plines || "") + recruitLine,
         fields: [{ name: "팀 BPI", value: bpi != null ? String(bpi) : "-", inline: true }],
         footer: { text: count != null ? ("현재 " + count + "팀 신청 중") : "" },
         timestamp: new Date().toISOString(),
