@@ -78,6 +78,11 @@ h1 .em{color:var(--gold)}
   border:1px solid var(--gold-soft); border-radius:7px; padding:2px 9px;
 }
 .empty,.loading{text-align:center; color:var(--ink-faint); padding:60px 0; font-size:.95rem}
+.stats{display:none; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin:26px 0 4px}
+.stat{background:var(--bg-card); border:1px solid var(--line); border-radius:12px; padding:14px 12px; text-align:center}
+.stat .v{font-family:"Archivo Black",sans-serif; font-size:1.3rem; color:var(--gold)}
+.stat .k{font-size:.74rem; color:var(--ink-faint); margin-top:4px}
+.stats-note{display:none; text-align:center; font-size:.72rem; color:var(--ink-faint); margin-bottom:18px}
 .cnt{text-align:center; color:var(--ink-faint); font-size:.82rem; margin-bottom:18px}
 .back{display:inline-block; margin-top:40px; color:var(--ink-dim); text-decoration:none; font-size:.9rem}
 .back:hover{color:var(--gold)}
@@ -92,6 +97,9 @@ footer{text-align:center; color:var(--ink-faint); font-size:.78rem; margin-top:4
     <p class="sub">트레이너가 매 강의·레슨마다 남긴 실제 피드백입니다. 수강생 보호를 위해 <b>가명으로</b> 공개됩니다.</p>
     <div class="note">🔒 모든 기록은 본인 동의 하에 가명·익명화되어 게시되며, 개인 식별정보는 포함되지 않습니다.</div>
   </div>
+
+  <div class="stats" id="stats"></div>
+  <div class="stats-note" id="statsNote">📊 PUBG 공식 전적 API로 검증된 수치 (시작 시즌 → 현재 시즌 비교)</div>
 
   <div class="tabs" id="tabs">
     <button class="tab on" data-grp="">전체</button>
@@ -169,6 +177,26 @@ async function load(){
   render();
 }
 load();
+async function loadStats(){
+  try{
+    const r = await fetch(API_BASE + "/api/progress-stats");
+    const s = await r.json();
+    if(!s || !s.ready || !s.totalTracked) return; // 데이터 쌓이기 전엔 숨김
+    const items = [
+      [s.totalTracked + "명", "검증 등록 수강생"],
+      [(s.tierUpPct != null ? s.tierUpPct + "%" : "-"), "티어 상승"],
+      [s.masterPlusCount + "명", "마스터+ 달성"],
+      [s.diamondPlusCount + "명", "다이아+ 달성"],
+    ];
+    if (s.avgRpGain != null && s.avgRpGain > 0) items.push(["+" + s.avgRpGain, "평균 점수 상승"]);
+    document.getElementById("stats").innerHTML = items.map(function(it){
+      return '<div class="stat"><div class="v">'+it[0]+'</div><div class="k">'+it[1]+'</div></div>';
+    }).join("");
+    document.getElementById("stats").style.display = "grid";
+    document.getElementById("statsNote").style.display = "block";
+  }catch(e){ /* 통계 실패해도 페이지는 정상 */ }
+}
+loadStats();
 </script>
 </body>
 </html>
