@@ -1757,6 +1757,16 @@ function gdcupWeight(bpi) {
   for (const [lo, hi, m] of T) { if (bpi >= lo && bpi <= hi) return m; }
   return 1.0;
 }
+const GD_BPI = { T0: 10, T1: 8, T2: 6, T3: 4, T4: 2, T5: 1 };
+function gdcupBpi(members) {
+  let sum = 0;
+  (members || []).forEach(function (m, i) {
+    let v = GD_BPI[m && m.tier] || 0;
+    if (i === 0 && m && m.tier === "T0") v += 1; // T0 팀장 +1
+    sum += v;
+  });
+  return sum;
+}
 app.post("/api/gdcup-apply", async (req, res) => {
   try {
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
@@ -1875,6 +1885,49 @@ app.post("/api/gdcup-confirm", async (req, res) => {
   } catch (e) { console.error("gdcup_confirm_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
+// 운영진 — 팀 멤버 티어 수정 + BPI·가중치 자동 재계산
+app.post("/api/gdcup-edit", async (req, res) => {
+  try {
+    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+    const b = req.body || {};
+    if (!b.id) return res.status(400).json({ error: "no_id" });
+    const clip = (v, n) => String(v || "").slice(0, n);
+    const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6) })) : [];
+    const bpi = gdcupBpi(members);
+    const weight = gdcupWeight(bpi);
+    await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, { members, bpi, weight });
+    res.json({ ok: true, bpi, weight });
+  } catch (e) { console.error("gdcup_edit_error", e); res.status(500).json({ error: "server_error" }); }
+});
+
+// 운영진 — 현재 모집 현황(용병 모집팀 + 대기 솔로)을 디코 채널에 게시
+app.post("/api/gdcup-board", async (req, res) => {
+  try {
+    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+    if (!process.env.SUPABASE_URL) return res.json({ ok: false, error: "no_db" });
+    const WH = process.env.GDCUP_BOARD_WEBHOOK || process.env.GDCUP_LIST_WEBHOOK;
+    if (!WH) return res.json({ ok: false, error: "no_webhook" });
+    const teams = await sbSelect("gdcup_apps", "select=team_name,members,bpi,status&status=neq.cancelled&order=created_at.asc");
+    const solos = await sbSelect("gdcup_solos", "select=ign,tier,discord,status&status=neq.cancelled&order=created_at.asc");
+    const recruiting = teams.filter(function (t) { const fm = (t.members || []).filter(function (m) { return m.ign; }); return fm.length > 0 && fm.length < 4; });
+    const teamLines = recruiting.map(function (t) { const fm = (t.members || []).filter(function (m) { return m.ign; }); return "🎮 **" + t.team_name + "** · 🔍 용병 " + (4 - fm.length) + "명 (현재 " + fm.length + "/4, BPI " + (t.bpi != null ? t.bpi : "-") + ")"; }).join("\n") || "_모집중인 팀 없음_";
+    const waiting = solos.filter(function (s) { return s.status !== "matched"; });
+    const soloLines = waiting.map(function (s) { return "🙋 " + s.ign + (s.tier ? " (" + s.tier + ")" : "") + (s.discord ? " · @" + s.discord : ""); }).join("\n") || "_대기 솔로 없음_";
+    const embed = {
+      title: "📋 G드컵 시즌2 — 현재 모집 현황",
+      color: 0xf5c518,
+      fields: [
+        { name: "🔍 용병 모집중인 팀 (" + recruiting.length + ")", value: teamLines.slice(0, 1000), inline: false },
+        { name: "🙋 팀 찾는 솔로/용병 (" + waiting.length + ")", value: soloLines.slice(0, 1000), inline: false },
+      ],
+      footer: { text: "신청 → gdcup-s2.html" },
+      timestamp: new Date().toISOString(),
+    };
+    await fetch(WH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "📋 지금 같이 할 팀·사람 찾는 현황이에요!", embeds: [embed] }) });
+    res.json({ ok: true, teams: recruiting.length, solos: waiting.length });
+  } catch (e) { console.error("gdcup_board_error", e); res.status(500).json({ error: "server_error" }); }
+});
+
 // ===== G드컵 스코어 (공개 조회 / 운영진 저장·게시) =====
 app.get("/api/gdcup-scores", async (req, res) => {
   try {
@@ -1971,6 +2024,17 @@ app.post("/api/gdcup-solo-status", async (req, res) => {
     const status = ["waiting", "matched", "cancelled"].includes(b.status) ? b.status : "waiting";
     await sbPatch("gdcup_solos", `id=eq.${encodeURIComponent(b.id)}`, { status });
     res.json({ ok: true, status });
+  } catch (e) { res.status(500).json({ error: "server_error" }); }
+});
+// 운영진 — 솔로 티어 표기 정리 (섭외용 명확화)
+app.post("/api/gdcup-solo-tier", async (req, res) => {
+  try {
+    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+    const b = req.body || {};
+    if (!b.id) return res.status(400).json({ error: "no_id" });
+    const tier = String(b.tier || "").slice(0, 20);
+    await sbPatch("gdcup_solos", `id=eq.${encodeURIComponent(b.id)}`, { tier });
+    res.json({ ok: true, tier });
   } catch (e) { res.status(500).json({ error: "server_error" }); }
 });
 
