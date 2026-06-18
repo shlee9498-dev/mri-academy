@@ -1879,7 +1879,7 @@ app.post("/api/gdcup-confirm", async (req, res) => {
         footer: { text: "팀 BPI " + (team.bpi != null ? team.bpi : "-") },
         timestamp: new Date().toISOString(),
       };
-      try { await fetch(WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "✅ 참가 확정", embeds: [embed] }) }); } catch (e) { console.error("deposit_webhook", e.message); }
+      try { await fetch(WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: (process.env.GDCUP_PING ? process.env.GDCUP_PING + " " : "") + "✅ 참가 확정", embeds: [embed] }) }); } catch (e) { console.error("deposit_webhook", e.message); }
     }
     res.json({ ok: true, status });
   } catch (e) { console.error("gdcup_confirm_error", e); res.status(500).json({ error: "server_error" }); }
@@ -1895,7 +1895,23 @@ app.post("/api/gdcup-edit", async (req, res) => {
     const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6) })) : [];
     const bpi = gdcupBpi(members);
     const weight = gdcupWeight(bpi);
-    await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, { members, bpi, weight });
+    const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, { members, bpi, weight });
+    const team = Array.isArray(updated) ? updated[0] : updated;
+    // 디코 참가팀명단 채널에 '정정' 카드 자동 게시
+    const LISTWH = process.env.GDCUP_LIST_WEBHOOK;
+    if (LISTWH && team) {
+      const fm = (members || []).filter(function (m) { return m.ign; });
+      const plines = fm.map(function (m, i) { return (i === 0 ? "👑 " : "") + (m.ign || "-") + (m.tier ? (" (" + m.tier + ")") : ""); }).join(" · ");
+      const recruitLine = (fm.length > 0 && fm.length < 4) ? ("\n🔍 **용병 " + (4 - fm.length) + "명 모집중**") : "";
+      const pembed = {
+        title: "✏️ 팀 정보 수정됨 — " + (team.team_name || ""),
+        color: 0xf5c518,
+        description: (plines || "") + recruitLine,
+        fields: [{ name: "팀 BPI", value: String(bpi) + " (가중치 ×" + weight + ")", inline: true }],
+        timestamp: new Date().toISOString(),
+      };
+      try { await fetch(LISTWH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: (process.env.GDCUP_PING ? process.env.GDCUP_PING + " " : "") + "✏️ 팀 티어가 수정됐어요 (최신 BPI 반영)", embeds: [pembed] }) }); } catch (e) { console.error("gdcup_edit_webhook", e.message); }
+    }
     res.json({ ok: true, bpi, weight });
   } catch (e) { console.error("gdcup_edit_error", e); res.status(500).json({ error: "server_error" }); }
 });
