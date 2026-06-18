@@ -1751,6 +1751,12 @@ app.get("/api/gdcup-count", async (req, res) => {
     res.json({ teams: rows.length, target: 16 });
   } catch (e) { res.json({ teams: 0, target: 16 }); }
 });
+// 서버측 가중치 계산 (프론트와 동일한 새 표: T0 신설·상단 확장 반영)
+function gdcupWeight(bpi) {
+  const T = [[0,14,1.3],[15,16,1.2],[17,19,1.1],[20,20,1.0],[21,22,0.9],[23,25,0.8],[26,28,0.7],[29,9999,0.6]];
+  for (const [lo, hi, m] of T) { if (bpi >= lo && bpi <= hi) return m; }
+  return 1.0;
+}
 app.post("/api/gdcup-apply", async (req, res) => {
   try {
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
@@ -1759,9 +1765,10 @@ app.post("/api/gdcup-apply", async (req, res) => {
     const clip = (v, n) => String(v || "").slice(0, n);
     const teamName = clip(b.team_name, 40);
     if (!teamName) return res.status(400).json({ error: "no_team_name" });
-    const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4) })) : [];
+    const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6) })) : [];
     const bpi = Number(b.bpi) || null;
-    const weight = (b.weight != null && b.weight !== "") ? Number(b.weight) : null;
+    let weight = (b.weight != null && b.weight !== "") ? Number(b.weight) : null;
+    if (weight == null && bpi != null) weight = gdcupWeight(bpi);
     const contact = clip(b.contact, 60);
     let count = null;
     if (process.env.SUPABASE_URL) {
@@ -1772,8 +1779,9 @@ app.post("/api/gdcup-apply", async (req, res) => {
       } catch (e) { console.error("gdcup_sb", e.message); }
     }
     const WEBHOOK = process.env.GDCUP_APPLY_WEBHOOK;
+    const PING = process.env.GDCUP_PING || "";
     if (WEBHOOK) {
-      const mlines = members.map((m, i) => (i === 0 ? "[팀장] " : "[팀원" + (i + 1) + "] ") + m.name + " (" + m.ign + ") - " + m.tier).join("\n");
+      const mlines = members.map((m, i) => (i === 0 ? "[팀장] " : "[팀원" + (i + 1) + "] ") + m.name + " (" + m.ign + ") · " + m.tier + (m.peak ? " · 최고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
       const embed = {
         title: "G드컵 시즌2 팀 신청 - " + teamName,
         color: 0xf5c518,
@@ -1787,7 +1795,7 @@ app.post("/api/gdcup-apply", async (req, res) => {
         timestamp: new Date().toISOString(),
       };
       try {
-        const wr = await fetch(WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "새 팀 신청이 들어왔어요!", embeds: [embed] }) });
+        const wr = await fetch(WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: (PING ? PING + " " : "") + "새 팀 신청이 들어왔어요!", embeds: [embed] }) });
         if (!wr.ok) console.error("gdcup_webhook", wr.status);
       } catch (e) { console.error("gdcup_webhook", e.message); }
     }
@@ -1930,6 +1938,7 @@ app.post("/api/gdcup-solo", async (req, res) => {
     };
     const row = await sbInsert("gdcup_solos", rec);
     if (process.env.GDCUP_SOLO_WEBHOOK) {
+      const PING = process.env.GDCUP_PING || "";
       const kindTxt = rec.kind === "short" ? "👥 팀원 부족 — 자리 모집" : "🙋 솔로 — 같이 할 팀 구함";
       const embed = {
         title: kindTxt, color: 0x5ac8fa,
@@ -1941,7 +1950,7 @@ app.post("/api/gdcup-solo", async (req, res) => {
         ],
         timestamp: new Date().toISOString(),
       };
-      try { await fetch(process.env.GDCUP_SOLO_WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "🎮 새 용병/솔로 신청! 같이 할 사람 구해요", embeds: [embed] }) }); } catch (e) { console.error("solo_webhook", e.message); }
+      try { await fetch(process.env.GDCUP_SOLO_WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: (PING ? PING + " " : "") + "🎮 새 용병/솔로 신청! 같이 할 사람 구해요", embeds: [embed] }) }); } catch (e) { console.error("solo_webhook", e.message); }
     }
     res.json({ ok: true, id: row && row.id });
   } catch (e) { console.error("solo_apply_error", e); res.status(500).json({ error: "server_error" }); }
