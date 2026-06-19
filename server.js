@@ -2050,13 +2050,39 @@ app.post("/api/gdcup-scores-save", async (req, res) => {
 });
 
 // ===== G드컵 솔로/용병 (혼자 신청 + 자리부족 모집) =====
+// 비-취소 팀들의 멤버 ign 집합(소문자) — 솔로 구직 자동 정리에 사용
+async function gdcupRosterIgnSet() {
+  const set = new Set();
+  try {
+    const teams = await sbSelect("gdcup_apps", "select=members&status=neq.cancelled");
+    (teams || []).forEach(function (t) {
+      (t.members || []).forEach(function (m) {
+        const ign = (m && m.ign) ? String(m.ign).trim().toLowerCase() : "";
+        if (ign) set.add(ign);
+      });
+    });
+  } catch (e) { console.error("gdcup_roster_set", e.message); }
+  return set;
+}
+// 팀에 합류한 솔로를 자동 matched 처리 (구직란에서 빠지도록, fire-and-forget)
+function gdcupReconcileSolos(rows, roster) {
+  (rows || []).forEach(function (r) {
+    if (r.id && r.status !== "matched" && r.status !== "cancelled"
+        && roster.has(String(r.ign || "").trim().toLowerCase())) {
+      sbPatch("gdcup_solos", `id=eq.${encodeURIComponent(r.id)}`, { status: "matched" }).catch(function () {});
+    }
+  });
+}
 app.get("/api/gdcup-solo-list", async (req, res) => {
   try {
     if (!process.env.SUPABASE_URL) return res.json({ solos: [], count: 0 });
-    const rows = await sbSelect("gdcup_solos", "select=kind,ign,tier,note,status,created_at&status=neq.cancelled&order=created_at.asc");
-    const solos = rows.map(function (r) { return { kind: r.kind, ign: r.ign, tier: r.tier, note: r.note || "", status: r.status }; });
-    const waiting = solos.filter(function (s) { return s.status !== "matched"; }).length;
-    res.json({ solos: solos, count: waiting });
+    const rows = await sbSelect("gdcup_solos", "select=id,kind,ign,tier,note,status,created_at&status=neq.cancelled&order=created_at.asc");
+    const roster = await gdcupRosterIgnSet();
+    gdcupReconcileSolos(rows, roster);
+    const solos = rows.filter(function (r) {
+      return r.status !== "matched" && !roster.has(String(r.ign || "").trim().toLowerCase());
+    }).map(function (r) { return { kind: r.kind, ign: r.ign, tier: r.tier, note: r.note || "", status: r.status }; });
+    res.json({ solos: solos, count: solos.length });
   } catch (e) { res.json({ solos: [], count: 0 }); }
 });
 app.post("/api/gdcup-solo", async (req, res) => {
@@ -2099,7 +2125,15 @@ app.get("/api/gdcup-solo-admin", async (req, res) => {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
     if (!process.env.SUPABASE_URL) return res.json({ solos: [] });
     const rows = await sbSelect("gdcup_solos", "select=id,kind,ign,tier,discord,note,status,created_at&order=created_at.asc");
-    res.json({ solos: rows });
+    const roster = await gdcupRosterIgnSet();
+    gdcupReconcileSolos(rows, roster);
+    // 팀 합류(matched)·로스터 포함자는 구직 관리에서 제외 (취소건은 그대로 노출)
+    const solos = rows.filter(function (r) {
+      if (r.status === "matched") return false;
+      if (roster.has(String(r.ign || "").trim().toLowerCase())) return false;
+      return true;
+    });
+    res.json({ solos: solos });
   } catch (e) { res.status(500).json({ error: "server_error" }); }
 });
 app.post("/api/gdcup-solo-status", async (req, res) => {
