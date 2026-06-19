@@ -1967,6 +1967,99 @@ app.get("/api/gdcup-list", async (req, res) => {
   } catch (e) { res.json({ teams: [], target: 16 }); }
 });
 
+// ===== G드컵 시즌2: 본매치(3~5R) 점수 집계 =====
+// 테이블 gdcup_scores(round int, team_name text, placement int, team_kills int, player_kills jsonb [{ign,kills}], updated_at) UNIQUE(round,team_name)
+function gdcupPlacementPts(p){ const T={1:10,2:6,3:5,4:4,5:3,6:2,7:1,8:1}; return T[Number(p)] || 0; } // 9위↓ 0
+const GDCUP_MAIN_ROUNDS = [3,4,5];
+async function gdcupTeamsMap(){
+  const rows = await sbSelect("gdcup_apps","select=team_name,members,weight,bpi,status&status=neq.cancelled");
+  const map = {};
+  (rows||[]).forEach(t=>{ map[t.team_name] = { weight: (t.weight!=null ? Number(t.weight) : 1), members: Array.isArray(t.members)?t.members:[] }; });
+  return map;
+}
+
+// [관리자] 점수 입력/수정 — 팀 1개의 1라운드
+app.post("/api/gdcup-score", async (req,res)=>{
+  try{
+    if(!gdcupAdmin(req)) return res.status(401).json({error:"unauthorized"});
+    if(!process.env.SUPABASE_URL) return res.status(503).json({error:"db_disabled"});
+    const b = req.body||{};
+    const round = Number(b.round);
+    const team_name = String(b.team_name||"").slice(0,40);
+    if(!team_name || !GDCUP_MAIN_ROUNDS.includes(round)) return res.status(400).json({error:"bad_input"});
+    const placement = (b.placement!=null && b.placement!=="") ? Number(b.placement) : null;
+    const players = Array.isArray(b.players)
+      ? b.players.map(p=>({ ign:String(p.ign||"").slice(0,40), kills:Math.max(0,Number(p.kills)||0) })).filter(p=>p.ign)
+      : [];
+    // 선수별 입력이 있으면 그 합이 팀킬(진실), 없으면 직접입력 팀킬
+    let team_kills;
+    if(players.length>0) team_kills = players.reduce((s,p)=>s+(p.kills||0),0);
+    else team_kills = (b.team_kills!=null && b.team_kills!=="") ? Math.max(0,Number(b.team_kills)||0) : 0;
+    const row = { round, team_name, placement, team_kills, player_kills: players, updated_at: new Date().toISOString() };
+    await sbUpsert("gdcup_scores", row, "round,team_name");
+    res.json({ ok:true, saved:{ team_name, round, placement, team_kills, players: players.length } });
+  }catch(e){ console.error("gdcup_score_save", e); res.status(500).json({error:"server_error"}); }
+});
+
+// [관리자] 입력 원본 로드 (입력페이지 복원용)
+app.get("/api/gdcup-round-scores", async (req,res)=>{
+  try{
+    if(!gdcupAdmin(req)) return res.status(401).json({error:"unauthorized"});
+    if(!process.env.SUPABASE_URL) return res.json({scores:[]});
+    const rf = req.query.round ? "&round=eq."+Number(req.query.round) : "";
+    const rows = await sbSelect("gdcup_scores", `select=round,team_name,placement,team_kills,player_kills,updated_at${rf}&order=round.asc`);
+    res.json({ scores: rows||[] });
+  }catch(e){ console.error("gdcup_round_scores", e); res.status(500).json({error:"server_error"}); }
+});
+
+// [공개] 팀 누적 순위 = (Σ 순위점 + Σ 팀킬) × 가중치
+app.get("/api/gdcup-scores", async (req,res)=>{
+  try{
+    if(!process.env.SUPABASE_URL) return res.json({standings:[], lastRound:0});
+    const teams = await gdcupTeamsMap();
+    let rows=[]; try{ rows = await sbSelect("gdcup_scores","select=round,team_name,placement,team_kills,player_kills&order=round.asc"); }catch(_){ rows=[]; }
+    const agg={}; let lastRound=0;
+    (rows||[]).forEach(r=>{
+      if(!GDCUP_MAIN_ROUNDS.includes(Number(r.round))) return;
+      lastRound=Math.max(lastRound, Number(r.round));
+      const name=r.team_name;
+      const tk = (r.team_kills!=null) ? Number(r.team_kills) : ((r.player_kills||[]).reduce((s,p)=>s+(p.kills||0),0));
+      if(!agg[name]) agg[name]={raw:0, kills:0};
+      agg[name].raw += gdcupPlacementPts(r.placement) + tk;
+      agg[name].kills += tk;
+    });
+    const standings = Object.keys(agg).map(name=>{
+      const w = teams[name] ? teams[name].weight : 1;
+      return { name, weight:w, points: Math.round(agg[name].raw * w), kills: agg[name].kills };
+    }).sort((a,b)=> b.points-a.points || b.kills-a.kills);
+    res.json({ standings, lastRound });
+  }catch(e){ console.error("gdcup_scores", e); res.json({standings:[], lastRound:0}); }
+});
+
+// [공개] 킬 MVP = 선수별 누적 킬
+app.get("/api/gdcup-killmvp", async (req,res)=>{
+  try{
+    if(!process.env.SUPABASE_URL) return res.json({players:[], lastRound:0});
+    const teams = await gdcupTeamsMap();
+    const ignTeam={};
+    Object.keys(teams).forEach(tn=> (teams[tn].members||[]).forEach(m=>{ if(m&&m.ign) ignTeam[String(m.ign).trim().toLowerCase()]=tn; }));
+    let rows=[]; try{ rows = await sbSelect("gdcup_scores","select=round,team_name,player_kills&order=round.asc"); }catch(_){ rows=[]; }
+    const agg={}; let lastRound=0;
+    (rows||[]).forEach(r=>{
+      if(!GDCUP_MAIN_ROUNDS.includes(Number(r.round))) return;
+      lastRound=Math.max(lastRound, Number(r.round));
+      (r.player_kills||[]).forEach(p=>{
+        const ign=String(p.ign||"").trim(); if(!ign) return;
+        const key=ign.toLowerCase();
+        if(!agg[key]) agg[key]={ name:ign, team: ignTeam[key] || r.team_name || "", kills:0 };
+        agg[key].kills += Number(p.kills)||0;
+      });
+    });
+    const players = Object.values(agg).filter(p=>p.kills>0).sort((a,b)=> b.kills-a.kills);
+    res.json({ players, lastRound });
+  }catch(e){ console.error("gdcup_killmvp", e); res.json({players:[], lastRound:0}); }
+});
+
 // ===== G드컵 운영진: 입금 확정 (키 필요) =====
 function gdcupAdmin(req) {
   const k = process.env.GDCUP_ADMIN_KEY;
