@@ -1534,6 +1534,58 @@ app.get("/api/bpi-suggest-auto", async (req, res) => {
   res.json({ nickname, searched: platforms, found, notFound, recommended });
 });
 
+// ── 관리자: 솔로 대기자 전시즌(직전) 전적 조회 (카카오→스팀 자동 탐색) ──
+async function seasonModeStats(platform, accountId, seasonId) {
+  const data = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}`, 21600_000);
+  const gm = (data.data && data.data.attributes && data.data.attributes.gameModeStats) || {};
+  const order = ["squad-fpp", "squad", "duo-fpp", "duo", "solo-fpp", "solo"];
+  for (const m of order) {
+    const s = gm[m];
+    if (s && s.roundsPlayed > 0) {
+      return { mode: m, rounds: s.roundsPlayed, avgDamage: Math.round((s.damageDealt || 0) / s.roundsPlayed), kills: s.kills || 0, avgKills: +(((s.kills || 0) / s.roundsPlayed)).toFixed(2), wins: s.wins || 0 };
+    }
+  }
+  return null;
+}
+async function soloStatsOnePlatform(platform, ign) {
+  const player = await findPlayer(platform, ign);
+  const accountId = player.id;
+  const name = player.attributes.name;
+  const prevNum = PUBG_CUR_SEASON_NUM - 1;
+  let seasonId = await seasonIdByNumber(platform, prevNum).catch(() => null);
+  let src = "prev", seasonNum = prevNum;
+  let st = seasonId ? await seasonModeStats(platform, accountId, seasonId) : null;
+  if (!st) { seasonId = await currentSeasonId(platform); src = "cur"; seasonNum = PUBG_CUR_SEASON_NUM; st = await seasonModeStats(platform, accountId, seasonId); }
+  let tier = null;
+  try {
+    const rd = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}/ranked`, 21600_000);
+    const m = rd.data.attributes.rankedGameModeStats || {};
+    const sq = m["squad"] || m["squad-fpp"];
+    if (sq && sq.currentTier && sq.currentTier.tier) tier = sq.currentTier.tier + (sq.currentTier.subTier ? " " + sq.currentTier.subTier : "");
+  } catch (_) { /* 랭크 기록 없음 */ }
+  return st ? { found: true, platform, name, seasonNum, source: src, mode: st.mode, rounds: st.rounds, avgDamage: st.avgDamage, kills: st.kills, avgKills: st.avgKills, tier } : { found: false, platform, name };
+}
+app.get("/api/gdcup-solo-stats", async (req, res) => {
+  if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+  if (!process.env.PUBG_API_KEY) return res.status(503).json({ error: "pubg_disabled" });
+  const ign = (req.query.ign || "").toString().trim();
+  if (!ign) return res.status(400).json({ error: "no_ign" });
+  const plats = req.query.platform ? [req.query.platform.toString().toLowerCase()] : ["kakao", "steam"];
+  const platforms = plats.filter((p) => VALID_PLATFORMS.includes(p));
+  let lastErr = "not_found";
+  for (const p of platforms) {
+    try {
+      const r = await soloStatsOnePlatform(p, ign);
+      if (r.found) return res.json(r);
+      lastErr = "no_record";
+    } catch (e) {
+      if (e.status === 429) return res.status(429).json({ error: "rate_limit" });
+      lastErr = e.message || "error";
+    }
+  }
+  res.status(404).json({ error: lastErr, ign });
+});
+
 app.get("/api/bpi-info", (_req, res) => {
   res.json({
     tiers: [
