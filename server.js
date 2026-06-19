@@ -22,7 +22,7 @@ const express = require("express");
 const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require("discord.js");
 
 const app = express();
-app.use(express.json({ limit: "64kb" }));
+app.use(express.json({ limit: "256kb" }));
 
 // ─── CORS ─────────────────────────────────────────────────
 const ALLOWED = [
@@ -2058,6 +2058,39 @@ app.get("/api/gdcup-killmvp", async (req,res)=>{
     const players = Object.values(agg).filter(p=>p.kills>0).sort((a,b)=> b.kills-a.kills);
     res.json({ players, lastRound });
   }catch(e){ console.error("gdcup_killmvp", e); res.json({players:[], lastRound:0}); }
+});
+
+// ===== G드컵 시즌2: 팀 브랜드(컬러·엠블럼) 자율 신청 =====
+// 테이블 gdcup_team_brand(team_name text UNIQUE, color text, emblem text, captain text, updated_at)
+function gdcupHexOk(s){ return /^#[0-9a-fA-F]{6}$/.test(String(s||"")); }
+// [공개] 팀 브랜드 제출/수정 (team_name 기준 upsert)
+app.post("/api/gdcup-team-brand", async (req,res)=>{
+  try{
+    if(!process.env.SUPABASE_URL) return res.status(503).json({error:"db_disabled"});
+    const b = req.body||{};
+    const team_name = String(b.team_name||"").trim().slice(0,40);
+    if(!team_name) return res.status(400).json({error:"team_name_required"});
+    let color = String(b.color||"").trim();
+    if(color && color[0] !== "#") color = "#"+color;
+    if(color && !gdcupHexOk(color)) color = "";
+    const captain = String(b.captain||"").trim().slice(0,60);
+    let emblem = String(b.emblem||"");
+    if(emblem && (!/^data:image\/(png|jpeg|webp);base64,/.test(emblem) || emblem.length > 340000)) emblem = "";
+    const row = { team_name, color: color||null, emblem: emblem||null, captain: captain||null, updated_at: new Date().toISOString() };
+    await sbUpsert("gdcup_team_brand", row, "team_name");
+    const wh = process.env.DISCORD_TEAMBRAND_WEBHOOK || process.env.DISCORD_APPLY_WEBHOOK;
+    if(wh){ try{ await fetch(wh,{method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({content:`🎨 팀 브랜드 등록: **${team_name}** ${color||"(색 없음)"} ${emblem?"· 엠블럼O":""}${captain?(" · "+captain):""}`})}); }catch(_){ } }
+    res.json({ ok:true, team_name });
+  }catch(e){ console.error("gdcup_team_brand", e); res.status(500).json({error:"server_error"}); }
+});
+// [공개] 팀 브랜드 전체 (오버레이가 팀명 기준으로 매칭)
+app.get("/api/gdcup-team-brands", async (req,res)=>{
+  try{
+    if(!process.env.SUPABASE_URL) return res.json({brands:[]});
+    let rows=[]; try{ rows = await sbSelect("gdcup_team_brand","select=team_name,color,emblem,captain&order=updated_at.desc"); }catch(_){ rows=[]; }
+    res.json({ brands: rows||[] });
+  }catch(e){ res.json({brands:[]}); }
 });
 
 // ===== G드컵 운영진: 입금 확정 (키 필요) =====
