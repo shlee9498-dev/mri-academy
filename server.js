@@ -2093,6 +2093,57 @@ app.get("/api/gdcup-team-brands", async (req,res)=>{
   }catch(e){ res.json({brands:[]}); }
 });
 
+// ── PUBG 매치 자동 파싱 → 라운드 점수 프리필 (저장은 사람이 검토 후) ──
+async function pubgMatch(platform, matchId){
+  const data = await pubgGet(`/shards/${platform}/matches/${matchId}`, 0);
+  const inc = data.included || [];
+  const parts = {}; const rosters = [];
+  inc.forEach(it=>{
+    if(it.type==="participant"){ const s=(it.attributes&&it.attributes.stats)||{}; parts[it.id]={ name:s.name||"", kills:Number(s.kills)||0, winPlace:Number(s.winPlace)||0 }; }
+    else if(it.type==="roster"){ const s=(it.attributes&&it.attributes.stats)||{}; const pd=(it.relationships&&it.relationships.participants&&it.relationships.participants.data)||[]; rosters.push({ rank:Number(s.rank)||0, pids:pd.map(p=>p.id) }); }
+  });
+  const attr=(data.data&&data.data.attributes)||{};
+  return { rosters, parts, mapName:attr.mapName||"", mode:attr.gameMode||"", matchType:attr.matchType||"" };
+}
+// [관리자] 매치에서 팀별 순위·킬 자동 추출
+app.get("/api/gdcup-match-pull", async (req,res)=>{
+  try{
+    if(!gdcupAdmin(req)) return res.status(401).json({error:"unauthorized"});
+    if(!process.env.PUBG_API_KEY) return res.status(503).json({error:"pubg_disabled"});
+    if(!process.env.SUPABASE_URL) return res.status(503).json({error:"db_disabled"});
+    const platform = (req.query.platform||"steam").toString();
+    let matchId = (req.query.matchId||"").toString().trim();
+    let pulledFrom = matchId ? "matchId" : "";
+    if(!matchId){
+      const nick = (req.query.player||"").toString().trim();
+      if(!nick) return res.status(400).json({error:"need_match_or_player"});
+      const player = await findPlayer(platform, nick);
+      const ms = (player.relationships && player.relationships.matches && player.relationships.matches.data) || [];
+      if(!ms.length) return res.status(404).json({error:"no_recent_match"});
+      matchId = ms[0].id; pulledFrom = "player:"+nick;
+    }
+    const m = await pubgMatch(platform, matchId);
+    const teamsMap = await gdcupTeamsMap();
+    const ignTeam = {};
+    Object.keys(teamsMap).forEach(tn=> (teamsMap[tn].members||[]).forEach(mm=>{ if(mm&&mm.ign) ignTeam[String(mm.ign).trim().toLowerCase()]=tn; }));
+    const out = {}; const unmatched = [];
+    m.rosters.forEach(r=>{
+      const players = r.pids.map(pid=>m.parts[pid]).filter(Boolean).map(p=>({ ign:p.name, kills:p.kills }));
+      const votes = {};
+      players.forEach(p=>{ const tn=ignTeam[String(p.ign).trim().toLowerCase()]; if(tn) votes[tn]=(votes[tn]||0)+1; else unmatched.push(p.ign); });
+      let team_name=null, best=0;
+      Object.keys(votes).forEach(tn=>{ if(votes[tn]>best){best=votes[tn];team_name=tn;} });
+      if(!team_name) return;
+      const team_kills = players.reduce((s,p)=>s+(p.kills||0),0);
+      if(!out[team_name] || r.rank < out[team_name].placement){
+        out[team_name] = { team_name, placement:r.rank, team_kills, players };
+      }
+    });
+    res.json({ ok:true, matchId, pulledFrom, mapName:m.mapName, mode:m.mode, matchType:m.matchType,
+      teams: Object.values(out).sort((a,b)=>a.placement-b.placement), unmatched:[...new Set(unmatched)].slice(0,30) });
+  }catch(e){ const st=e.status||500; res.status(st).json({error: st===404?"match_not_found": st===429?"rate_limit": st===503?"pubg_disabled":"server_error", detail:String(e.message||e).slice(0,140)}); }
+});
+
 // ===== G드컵 운영진: 입금 확정 (키 필요) =====
 function gdcupAdmin(req) {
   const k = process.env.GDCUP_ADMIN_KEY;
