@@ -1828,6 +1828,76 @@ app.post("/api/gdcup-apply", async (req, res) => {
   } catch (e) { console.error("gdcup_apply_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
+// G드컵 시즌2: 기존 팀에 팀원 추가신청 (멤버 append + BPI 재계산 + 디코 알림)
+app.post("/api/gdcup-add-member", async (req, res) => {
+  try {
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
+    if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
+    if (!process.env.SUPABASE_URL) return res.status(503).json({ error: "db_disabled" });
+    const b = req.body || {};
+    const clip = (v, n) => String(v || "").slice(0, n);
+    const teamName = clip(b.team_name, 40);
+    const leader = clip(b.leader, 40).trim().toLowerCase();
+    if (!teamName) return res.status(400).json({ error: "no_team_name" });
+    const adds = (Array.isArray(b.members) ? b.members : [])
+      .map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6) }))
+      .filter(m => m.ign && m.tier && GD_BPI[m.tier] != null);
+    if (adds.length === 0) return res.status(400).json({ error: "no_members" });
+
+    // 팀 조회
+    const rows = await sbSelect("gdcup_apps", `select=id,team_name,members,bpi,weight,status&team_name=eq.${encodeURIComponent(teamName)}&status=neq.cancelled&order=created_at.asc`);
+    if (!rows || rows.length === 0) return res.status(404).json({ error: "team_not_found" });
+    const team = rows[0];
+    const existing = Array.isArray(team.members) ? team.members : [];
+
+    // 본인 확인: 입력 닉이 기존 멤버(닉 or 이름)와 일치해야 함
+    const known = existing.some(m => [m && m.ign, m && m.name].filter(Boolean)
+      .some(x => String(x).trim().toLowerCase() === leader));
+    if (!leader || !known) return res.status(403).json({ error: "verify_failed" });
+
+    // 4인 초과 차단
+    if (existing.length + adds.length > 4) {
+      return res.status(409).json({ error: "over_capacity", current: existing.length, room: Math.max(0, 4 - existing.length) });
+    }
+
+    const members = existing.concat(adds).slice(0, 4);
+    const bpi = gdcupBpi(members);
+    const weight = gdcupWeight(bpi);
+    await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(team.id)}`, { members, bpi, weight });
+
+    const PING = process.env.GDCUP_PING || "";
+    const addLines = adds.map(m => "+ " + (m.name ? m.name + " " : "") + "(" + m.ign + ") · " + m.tier + (m.peak ? " · 최고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
+    const WEBHOOK = process.env.GDCUP_APPLY_WEBHOOK;
+    if (WEBHOOK) {
+      const embed = {
+        title: "➕ 팀원 추가 - " + teamName,
+        color: 0x10b981,
+        fields: [
+          { name: "추가된 멤버", value: addLines || "-", inline: false },
+          { name: "현재 인원", value: members.length + "명", inline: true },
+          { name: "팀 BPI", value: bpi + " (가중치 x" + weight + ")", inline: true },
+        ],
+        timestamp: new Date().toISOString(),
+      };
+      try { await fetch(WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: (PING ? PING + " " : "") + "팀원 추가신청이 들어왔어요!", embeds: [embed] }) }); } catch (e) { console.error("gdcup_add_webhook", e.message); }
+    }
+    const LISTWH = process.env.GDCUP_LIST_WEBHOOK;
+    if (LISTWH) {
+      const plines = members.map((m, i) => (i === 0 ? "👑 " : "") + (m.ign || "-") + (m.tier ? (" (" + m.tier + ")") : "")).join(" · ");
+      const recruitLine = (members.length > 0 && members.length < 4) ? ("\n🔍 **용병 " + (4 - members.length) + "명 모집중!**") : "\n✅ 4인 완성!";
+      const pembed = {
+        title: "🎮 " + teamName + " (팀원 추가)",
+        color: 0x10b981,
+        description: plines + recruitLine,
+        fields: [{ name: "팀 BPI", value: String(bpi), inline: true }],
+        timestamp: new Date().toISOString(),
+      };
+      try { await fetch(LISTWH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "➕ 팀원이 추가됐어요!", embeds: [pembed] }) }); } catch (e) { console.error("gdcup_add_list_webhook", e.message); }
+    }
+    res.json({ ok: true, team_name: teamName, count: members.length, bpi, weight });
+  } catch (e) { console.error("gdcup_add_member_error", e); res.status(500).json({ error: "server_error" }); }
+});
+
 // G드컵 참가팀 공개 명단 (개인정보 제외: 팀명/슬로건/닉/티어/BPI/확정여부만)
 app.get("/api/gdcup-list", async (req, res) => {
   try {
