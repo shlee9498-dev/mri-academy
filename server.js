@@ -1795,11 +1795,13 @@ app.get("/", (_req, res) =>
   )
 );
 
-// ===== G드컵 시즌2 팀 신청 (사이트 -> 디스코드 자동등록 + 실시간 카운터) =====
+// ===== G드컵 팀 신청 (시즌 분리: ?season, 기본 2=레거시) + 실시간 카운터 =====
+function gdSeason(v) { const n = parseInt(v, 10); return (n >= 1 && n <= 9) ? n : 2; }
 app.get("/api/gdcup-count", async (req, res) => {
   try {
     if (!process.env.SUPABASE_URL) return res.json({ teams: 0, target: 16 });
-    const rows = await sbSelect("gdcup_apps", "select=id&status=neq.cancelled");
+    const season = gdSeason(req.query.season);
+    const rows = await sbSelect("gdcup_apps", `select=id&status=neq.cancelled&season=eq.${season}`);
     res.json({ teams: rows.length, target: 16 });
   } catch (e) { res.json({ teams: 0, target: 16 }); }
 });
@@ -1827,7 +1829,8 @@ app.post("/api/gdcup-apply", async (req, res) => {
     const clip = (v, n) => String(v || "").slice(0, n);
     const teamName = clip(b.team_name, 40);
     if (!teamName) return res.status(400).json({ error: "no_team_name" });
-    const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6) })) : [];
+    const season = gdSeason(b.season);
+    const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6), bank: clip(m.bank, 20), account: clip(m.account, 30), holder: clip(m.holder, 20) })) : [];
     const bpi = Number(b.bpi) || null;
     let weight = (b.weight != null && b.weight !== "") ? Number(b.weight) : null;
     if (weight == null && bpi != null) weight = gdcupWeight(bpi);
@@ -1835,8 +1838,8 @@ app.post("/api/gdcup-apply", async (req, res) => {
     let count = null;
     if (process.env.SUPABASE_URL) {
       try {
-        await sbInsert("gdcup_apps", { team_name: teamName, slogan: clip(b.slogan, 60), members, bpi, weight, contact, ip });
-        const rows = await sbSelect("gdcup_apps", "select=id&status=neq.cancelled");
+        await sbInsert("gdcup_apps", { team_name: teamName, slogan: clip(b.slogan, 60), members, bpi, weight, contact, ip, season });
+        const rows = await sbSelect("gdcup_apps", `select=id&status=neq.cancelled&season=eq.${season}`);
         count = rows.length;
       } catch (e) { console.error("gdcup_sb", e.message); }
     }
@@ -1845,7 +1848,7 @@ app.post("/api/gdcup-apply", async (req, res) => {
     if (WEBHOOK) {
       const mlines = members.map((m, i) => (i === 0 ? "[팀장] " : "[팀원" + (i + 1) + "] ") + m.name + " (" + m.ign + ") · " + m.tier + (m.peak ? " · 최고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
       const embed = {
-        title: "G드컵 시즌2 팀 신청 - " + teamName,
+        title: "G드컵 시즌" + season + " 팀 신청 - " + teamName,
         color: 0xf5c518,
         fields: [
           { name: "슬로건", value: clip(b.slogan, 60) || "-", inline: false },
@@ -1861,7 +1864,7 @@ app.post("/api/gdcup-apply", async (req, res) => {
         if (!wr.ok) console.error("gdcup_webhook", wr.status);
       } catch (e) { console.error("gdcup_webhook", e.message); }
     }
-    // 참가팀명단 채널 공개 카드 (연락처 제외)
+    // 참가팀명단 채널 공개 카드 (연락처·계좌 제외)
     const LISTWH = process.env.GDCUP_LIST_WEBHOOK;
     if (LISTWH) {
       const plines = members.map((m, i) => (i === 0 ? "👑 " : "") + (m.ign || "-") + (m.tier ? (" (" + m.tier + ")") : "")).join(" · ");
@@ -1880,7 +1883,7 @@ app.post("/api/gdcup-apply", async (req, res) => {
   } catch (e) { console.error("gdcup_apply_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
-// G드컵 시즌2: 기존 팀에 팀원 추가신청 (멤버 append + BPI 재계산 + 디코 알림)
+// G드컵: 기존 팀에 팀원 추가신청 (멤버 append + BPI 재계산 + 디코 알림)
 app.post("/api/gdcup-add-member", async (req, res) => {
   try {
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
@@ -1892,7 +1895,7 @@ app.post("/api/gdcup-add-member", async (req, res) => {
     const leader = clip(b.leader, 40).trim().toLowerCase();
     if (!teamName) return res.status(400).json({ error: "no_team_name" });
     const adds = (Array.isArray(b.members) ? b.members : [])
-      .map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6) }))
+      .map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6), bank: clip(m.bank, 20), account: clip(m.account, 30), holder: clip(m.holder, 20) }))
       .filter(m => m.ign && m.tier && GD_BPI[m.tier] != null);
     if (adds.length === 0) return res.status(400).json({ error: "no_members" });
 
@@ -1950,11 +1953,12 @@ app.post("/api/gdcup-add-member", async (req, res) => {
   } catch (e) { console.error("gdcup_add_member_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
-// G드컵 참가팀 공개 명단 (개인정보 제외: 팀명/슬로건/닉/티어/BPI/확정여부만)
+// G드컵 참가팀 공개 명단 (개인정보·계좌 제외: 팀명/슬로건/닉/티어/BPI/확정여부만)
 app.get("/api/gdcup-list", async (req, res) => {
   try {
     if (!process.env.SUPABASE_URL) return res.json({ teams: [], target: 16 });
-    const rows = await sbSelect("gdcup_apps", "select=team_name,slogan,members,bpi,weight,status,created_at&status=neq.cancelled&order=created_at.asc");
+    const season = gdSeason(req.query.season);
+    const rows = await sbSelect("gdcup_apps", `select=team_name,slogan,members,bpi,weight,status,created_at&status=neq.cancelled&season=eq.${season}&order=created_at.asc`);
     const teams = rows.map(r => ({
       team_name: r.team_name,
       slogan: r.slogan || "",
@@ -2151,12 +2155,13 @@ function gdcupAdmin(req) {
   const got = req.headers["x-admin-key"] || (req.body && req.body.adminKey) || req.query.key;
   return !!got && got === k;
 }
-// 운영진용 전체 명단 (연락처/입금자 포함)
+// 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
 app.get("/api/gdcup-admin-list", async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
     if (!process.env.SUPABASE_URL) return res.json({ teams: [] });
-    const rows = await sbSelect("gdcup_apps", "select=id,team_name,slogan,members,bpi,weight,contact,status,created_at&order=created_at.asc");
+    const sf = req.query.season ? `&season=eq.${gdSeason(req.query.season)}` : "";
+    const rows = await sbSelect("gdcup_apps", `select=id,team_name,slogan,members,bpi,weight,contact,status,season,created_at${sf}&order=created_at.asc`);
     res.json({ teams: rows });
   } catch (e) { res.status(500).json({ error: "server_error" }); }
 });
@@ -2191,7 +2196,7 @@ app.post("/api/gdcup-edit", async (req, res) => {
     const b = req.body || {};
     if (!b.id) return res.status(400).json({ error: "no_id" });
     const clip = (v, n) => String(v || "").slice(0, n);
-    const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6) })) : [];
+    const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6), bank: clip(m.bank, 20), account: clip(m.account, 30), holder: clip(m.holder, 20) })) : [];
     const bpi = gdcupBpi(members);
     const weight = gdcupWeight(bpi);
     const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, { members, bpi, weight });
@@ -2215,27 +2220,28 @@ app.post("/api/gdcup-edit", async (req, res) => {
   } catch (e) { console.error("gdcup_edit_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
-// 운영진 — 현재 모집 현황(용병 모집팀 + 대기 솔로)을 디코 채널에 게시
+// 운영진 — 현재 모집 현황(용병 모집팀 + 대기 솔로)을 디코 채널에 게시 (?season 기본 2)
 app.post("/api/gdcup-board", async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
     if (!process.env.SUPABASE_URL) return res.json({ ok: false, error: "no_db" });
     const WH = process.env.GDCUP_BOARD_WEBHOOK || process.env.GDCUP_LIST_WEBHOOK;
     if (!WH) return res.json({ ok: false, error: "no_webhook" });
-    const teams = await sbSelect("gdcup_apps", "select=team_name,members,bpi,status&status=neq.cancelled&order=created_at.asc");
-    const solos = await sbSelect("gdcup_solos", "select=ign,tier,discord,status&status=neq.cancelled&order=created_at.asc");
+    const season = gdSeason(req.body && req.body.season);
+    const teams = await sbSelect("gdcup_apps", `select=team_name,members,bpi,status&status=neq.cancelled&season=eq.${season}&order=created_at.asc`);
+    const solos = await sbSelect("gdcup_solos", `select=ign,tier,discord,status&status=neq.cancelled&season=eq.${season}&order=created_at.asc`);
     const recruiting = teams.filter(function (t) { const fm = (t.members || []).filter(function (m) { return m.ign; }); return fm.length > 0 && fm.length < 4; });
     const teamLines = recruiting.map(function (t) { const fm = (t.members || []).filter(function (m) { return m.ign; }); return "🎮 **" + t.team_name + "** · 🔍 용병 " + (4 - fm.length) + "명 (현재 " + fm.length + "/4, BPI " + (t.bpi != null ? t.bpi : "-") + ")"; }).join("\n") || "_모집중인 팀 없음_";
     const waiting = solos.filter(function (s) { return s.status !== "matched"; });
     const soloLines = waiting.map(function (s) { return "🙋 " + s.ign + (s.tier ? " (" + s.tier + ")" : "") + (s.discord ? " · @" + s.discord : ""); }).join("\n") || "_대기 솔로 없음_";
     const embed = {
-      title: "📋 G드컵 시즌2 — 현재 모집 현황",
+      title: "📋 G드컵 시즌" + season + " — 현재 모집 현황",
       color: 0xf5c518,
       fields: [
         { name: "🔍 용병 모집중인 팀 (" + recruiting.length + ")", value: teamLines.slice(0, 1000), inline: false },
         { name: "🙋 팀 찾는 솔로/용병 (" + waiting.length + ")", value: soloLines.slice(0, 1000), inline: false },
       ],
-      footer: { text: "신청 → gdcup-s2.html" },
+      footer: { text: "신청 → 신청 페이지" },
       timestamp: new Date().toISOString(),
     };
     await fetch(WH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "📋 지금 같이 할 팀·사람 찾는 현황이에요!", embeds: [embed] }) });
@@ -2279,11 +2285,12 @@ app.post("/api/gdcup-scores-save", async (req, res) => {
 });
 
 // ===== G드컵 솔로/용병 (혼자 신청 + 자리부족 모집) =====
-// 비-취소 팀들의 멤버 ign 집합(소문자) — 솔로 구직 자동 정리에 사용
-async function gdcupRosterIgnSet() {
+// 비-취소 팀들의 멤버 ign 집합(소문자) — 솔로 구직 자동 정리에 사용 (?season 스코프 가능)
+async function gdcupRosterIgnSet(season) {
   const set = new Set();
   try {
-    const teams = await sbSelect("gdcup_apps", "select=members&status=neq.cancelled");
+    const sf = season ? `&season=eq.${season}` : "";
+    const teams = await sbSelect("gdcup_apps", `select=members&status=neq.cancelled${sf}`);
     (teams || []).forEach(function (t) {
       (t.members || []).forEach(function (m) {
         const ign = (m && m.ign) ? String(m.ign).trim().toLowerCase() : "";
@@ -2305,8 +2312,9 @@ function gdcupReconcileSolos(rows, roster) {
 app.get("/api/gdcup-solo-list", async (req, res) => {
   try {
     if (!process.env.SUPABASE_URL) return res.json({ solos: [], count: 0 });
-    const rows = await sbSelect("gdcup_solos", "select=id,kind,ign,tier,note,status,created_at&status=neq.cancelled&order=created_at.asc");
-    const roster = await gdcupRosterIgnSet();
+    const season = gdSeason(req.query.season);
+    const rows = await sbSelect("gdcup_solos", `select=id,kind,ign,tier,note,status,created_at&status=neq.cancelled&season=eq.${season}&order=created_at.asc`);
+    const roster = await gdcupRosterIgnSet(season);
     gdcupReconcileSolos(rows, roster);
     const solos = rows.filter(function (r) {
       return r.status !== "matched" && !roster.has(String(r.ign || "").trim().toLowerCase());
@@ -2328,6 +2336,7 @@ app.post("/api/gdcup-solo", async (req, res) => {
       discord: String(b.discord || "").slice(0, 60),
       note: String(b.note || "").slice(0, 200),
       status: "waiting",
+      season: gdSeason(b.season),
       ip: ip,
     };
     const row = await sbInsert("gdcup_solos", rec);
@@ -2353,8 +2362,9 @@ app.get("/api/gdcup-solo-admin", async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
     if (!process.env.SUPABASE_URL) return res.json({ solos: [] });
-    const rows = await sbSelect("gdcup_solos", "select=id,kind,ign,tier,discord,note,status,created_at&order=created_at.asc");
-    const roster = await gdcupRosterIgnSet();
+    const sf = req.query.season ? `&season=eq.${gdSeason(req.query.season)}` : "";
+    const rows = await sbSelect("gdcup_solos", `select=id,kind,ign,tier,discord,note,status,season,created_at${sf}&order=created_at.asc`);
+    const roster = await gdcupRosterIgnSet(req.query.season ? gdSeason(req.query.season) : null);
     gdcupReconcileSolos(rows, roster);
     // 팀 합류(matched)·로스터 포함자는 구직 관리에서 제외 (취소건은 그대로 노출)
     const solos = rows.filter(function (r) {
