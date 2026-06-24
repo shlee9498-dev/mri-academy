@@ -626,18 +626,20 @@ footer b{color:var(--gold)}
 
     <div class="promo-banner">
       <div class="pb-tag">🔥 OPEN 런칭 특가</div>
-      <div class="pb-main">지금은 <b>오픈 기념 특가</b> 진행 중 — <b style="color:var(--gold)">시즌43부터 정가로 전환</b>됩니다</div>
-      <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:18px 0 6px;">
-        <div style="background:rgba(245,197,24,.08);border:1px solid var(--gold-soft,rgba(245,197,24,.3));border-radius:10px;padding:12px 18px;text-align:center;min-width:150px;">
-          <div style="font-size:12px;color:var(--ink-faint);">레슨 10판</div>
-          <div style="font-size:15px;margin-top:4px;"><span style="text-decoration:line-through;color:var(--ink-faint);">50,000</span> → <b style="color:var(--gold);font-size:18px;">40,000원</b></div>
+      <div class="pb-main">지금은 <b>오픈 기념 특가</b> 진행 중 — 아래 정원 도달 시 정가로 전환됩니다</div>
+      <div class="enroll-bars">
+        <div class="ebar">
+          <div class="ebar-top"><span class="ebar-name">레슨</span><span class="ebar-num"><b id="lesNow">··</b> / 50명</span></div>
+          <div class="ebar-track"><div class="ebar-fill les" id="lesFill"></div></div>
+          <div class="ebar-left">정가 전환까지 <b id="lesLeft">··</b></div>
         </div>
-        <div style="background:rgba(245,197,24,.08);border:1px solid var(--gold-soft,rgba(245,197,24,.3));border-radius:10px;padding:12px 18px;text-align:center;min-width:150px;">
-          <div style="font-size:12px;color:var(--ink-faint);">강의 8회</div>
-          <div style="font-size:15px;margin-top:4px;"><span style="text-decoration:line-through;color:var(--ink-faint);">360,000</span> → <b style="color:var(--gold);font-size:18px;">290,000원</b></div>
+        <div class="ebar">
+          <div class="ebar-top"><span class="ebar-name gold">강의</span><span class="ebar-num"><b id="couNow">··</b> / 25명</span></div>
+          <div class="ebar-track"><div class="ebar-fill" id="couFill"></div></div>
+          <div class="ebar-left">정가 전환까지 <b id="couLeft">··</b></div>
         </div>
       </div>
-      <div class="pb-sub"><b style="color:var(--gold)">시즌42까지만 특가</b> — 시즌43부터 모든 레슨·강의가 정가로 전환됩니다. 이미 등록한 패키지는 특가가 유지되며, <b>신규 결제부터 정가</b>가 적용됩니다. 특가 마감 전 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
+      <div class="pb-sub"><b style="color:var(--gold)">트레이너 1인당 정원 25명</b> — 수업 질을 지키기 위해 인원을 제한합니다. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b> 돌파 시 <b>각각 그 주 다음 주부터 정가로 전환</b>됩니다. 자리가 한정되어 있으니 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
     </div>
 
     <!-- 레슨 -->
@@ -716,7 +718,7 @@ footer b{color:var(--gold)}
           <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
         </div>
       </div>
-      <p class="plan-note">강의 상담(테스트) 비용 <b>20,000원</b> · 1회 3시간 집중 · 시간 예약제 · <b style="color:var(--gold)">시즌43부터 정가 전환 (특가 마감 임박)</b></p>
+      <p class="plan-note">강의 상담(테스트) 비용 <b>20,000원</b> · 1회 3시간 집중 · 시간 예약제 · <b style="color:var(--gold)">정원(수강생 25명) 도달 시 정가 전환</b></p>
 
       <!-- 세트 -->
       <div class="vip-block-label"><span class="vbl-line"></span><span>레슨 + 강의 세트 · 한 번에</span><span class="vbl-line"></span></div>
@@ -1003,6 +1005,33 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
     // API 미연결 시: 표시된 기준 수치 유지 (빈 화면 방지)
     if (state) state.textContent = "현황 (기준 데이터)";
   }
+})();
+// 정가 전환 진행바 (레슨생 50 / 수강생 25 · 각각 독립 트리거 · /api/stats 구동)
+(async function () {
+  const lesNow = document.getElementById("lesNow"), lesFill = document.getElementById("lesFill"), lesLeft = document.getElementById("lesLeft");
+  const couNow = document.getElementById("couNow"), couFill = document.getElementById("couFill"), couLeft = document.getElementById("couLeft");
+  if (!lesNow || !couNow) return;
+  function setBar(nowEl, fillEl, leftEl, count, target) {
+    const c = Math.max(0, count | 0);
+    nowEl.textContent = c;
+    fillEl.style.width = Math.min(100, Math.round((c / target) * 100)) + "%";
+    const remain = Math.max(0, target - c);
+    if (remain === 0) { fillEl.classList.add("full"); leftEl.textContent = "전환 임박!"; }
+    else { leftEl.textContent = remain + "명"; }
+  }
+  let les = 38, cou = 17; // API 미연결 시 기준값
+  try {
+    const r = await fetch(STATS_API + "/api/stats", { cache: "no-store" });
+    if (r.ok) {
+      const d = await r.json();
+      if (d && d.counts) {
+        if (typeof d.counts.lessonseng === "number") les = d.counts.lessonseng;
+        if (typeof d.counts.suganseng === "number") cou = d.counts.suganseng;
+      }
+    }
+  } catch (e) { /* 기준값 유지 */ }
+  setBar(lesNow, lesFill, lesLeft, les, 50);
+  setBar(couNow, couFill, couLeft, cou, 25);
 })();
 </script>
 <!-- 챗봇 위젯 -->
