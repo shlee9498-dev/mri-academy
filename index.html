@@ -372,6 +372,57 @@ footer b{color:var(--gold)}
 .cb-sugs .cbl{width:100%;font-size:10.5px;color:var(--ink-faint);margin-bottom:2px;letter-spacing:.04em}
 .cb-chip{background:rgba(245,197,24,.06);border:1px solid var(--gold-soft);color:var(--ink);padding:7px 11px;border-radius:99px;font-size:12px;cursor:pointer;font-family:var(--body);text-align:left;line-height:1.3;transition:background .15s}
 .cb-chip:hover{background:rgba(245,197,24,.13)}
+/* ===== VIP 섹션 ===== */
+.vip-section{position:relative;margin:64px 0;padding:2px;border-radius:24px;
+  background:linear-gradient(135deg,rgba(245,197,24,.55),rgba(245,197,24,.05) 35%,rgba(168,85,247,.15) 65%,rgba(245,197,24,.4));
+  overflow:hidden;}
+.vip-inner{position:relative;background:
+  radial-gradient(ellipse 80% 60% at 50% 0%,rgba(245,197,24,.10),transparent 60%),
+  linear-gradient(180deg,#121119,#0c0c10);
+  border-radius:22px;padding:48px 28px;}
+.vip-inner::before{content:'';position:absolute;inset:0;pointer-events:none;border-radius:22px;
+  background-image:linear-gradient(rgba(245,197,24,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.025) 1px,transparent 1px);background-size:34px 34px;}
+.vip-head{text-align:center;position:relative;margin-bottom:32px;}
+.vip-kick{font-family:var(--display);letter-spacing:.28em;font-size:12px;
+  background:linear-gradient(90deg,var(--gold),#fff3b0,var(--gold));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+.vip-title{font-family:var(--display);font-size:clamp(30px,7vw,46px);margin:10px 0 8px;
+  background:linear-gradient(135deg,#fff,var(--gold) 60%,var(--gold-deep));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+.vip-desc{color:var(--ink-dim);font-size:14px;max-width:480px;margin:0 auto;}
+
+/* 스포트라이트 (1일권) */
+.vip-spotlight{position:relative;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center;
+  background:linear-gradient(135deg,rgba(245,197,24,.12),rgba(20,18,12,.6));
+  border:1px solid var(--gold-soft);border-radius:18px;padding:28px;margin-bottom:40px;overflow:hidden;}
+.vip-spotlight::after{content:'';position:absolute;top:-60%;right:-10%;width:280px;height:280px;border-radius:50%;
+  background:radial-gradient(circle,rgba(245,197,24,.22),transparent 70%);pointer-events:none;}
+.vs-ribbon{position:absolute;top:16px;left:-34px;transform:rotate(-45deg);background:var(--gold);color:#1a1500;
+  font-family:var(--display);font-size:10px;letter-spacing:.08em;padding:5px 40px;}
+.vs-tag{font-family:var(--display);color:var(--gold);font-size:14px;}
+.vs-name{font-family:var(--display);font-size:24px;margin:6px 0 4px;letter-spacing:.02em;}
+.vs-quote{color:var(--ink-dim);font-size:13.5px;font-style:italic;margin-bottom:14px;}
+.vs-list{list-style:none;display:flex;flex-direction:column;gap:8px;}
+.vs-list li{position:relative;padding-left:22px;font-size:13.5px;color:var(--ink-dim);}
+.vs-list li::before{content:'◆';position:absolute;left:0;color:var(--gold);font-size:11px;top:2px;}
+.vs-list li b{color:var(--ink);}
+.vs-right{text-align:center;position:relative;z-index:1;min-width:180px;
+  background:rgba(10,10,12,.5);border:1px solid var(--line);border-radius:14px;padding:22px 20px;}
+.vs-price-label{font-size:12px;color:var(--ink-faint);letter-spacing:.1em;}
+.vs-price{font-family:var(--display);font-size:34px;color:var(--gold);line-height:1;margin:6px 0 2px;}
+.vs-price span{font-size:16px;}
+.vs-sub{font-size:11px;color:var(--ink-faint);letter-spacing:.15em;margin-bottom:16px;}
+.vs-btn{display:block;background:var(--gold);color:#1a1500;font-weight:800;font-size:14px;
+  padding:13px;border-radius:9px;text-decoration:none;transition:transform .12s,background .15s;}
+.vs-btn:hover{transform:translateY(-2px);background:#fde047;}
+
+/* 블록 라벨 */
+.vip-block-label{display:flex;align-items:center;gap:14px;margin:36px 0 18px;
+  font-family:var(--display);font-size:12px;color:var(--ink-dim);letter-spacing:.06em;justify-content:center;text-align:center;}
+.vbl-line{flex:1;height:1px;background:linear-gradient(90deg,transparent,var(--line),transparent);}
+.vip-plan{position:relative;}
+.vip-plan::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:linear-gradient(135deg,rgba(245,197,24,.3),transparent 60%);
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;}
+@media(max-width:640px){.vip-spotlight{grid-template-columns:1fr;}.vip-inner{padding:36px 16px;}.vs-right{min-width:0;}}
 </style>
 </head>
 <body>
@@ -380,7 +431,7 @@ footer b{color:var(--gold)}
   <div class="nav-in">
     <a href="#hero" style="text-decoration:none"><div class="logo"><span class="mk">M</span><span>MRI ACADEMY<small>PUBG COACHING</small></span></div></a>
     <div class="nav-links">
-      <a href="#proof">성과</a><a href="#plans">레슨</a><a href="#how">수업방식</a><a href="#consult">상담</a>
+      <a href="#proof">성과</a><a href="#plans">레슨</a><a href="#vip" style="color:var(--gold);font-weight:800;">⭐VIP</a><a href="#how">수업방식</a><a href="#consult">상담</a>
       <a href="#faq">FAQ</a>
       <a href="#trainers">트레이너</a><a href="trainer-recruit.html">트레이너모집</a><a href="#clan">클랜</a>
       <a href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-s3.html" target="_blank" rel="noopener">클랜컵</a>
@@ -562,25 +613,31 @@ footer b{color:var(--gold)}
   <!-- PLANS -->
   <section id="plans">
     <div class="kick">Programs</div>
-    <div class="s-title">레슨 · 강의 · 세트</div>
-    <p class="s-desc">레슨(트레이너 판수제)과 강의(이무리 직강 시간제)는 엄연히 다른 과정입니다. 목표에 맞게 선택하세요.</p>
+    <div class="s-title">레슨 (트레이너 판수제)</div>
+    <p class="s-desc">서바이버 트레이너진과 판수 기준으로 진행하는 1:1·그룹 레슨. 레벨테스트 무관, 누구나 신청 가능합니다. <span style="color:var(--gold)">이무리 직강·세트·VIP는 아래 ⭐VIP 섹션에서 확인하세요.</span></p>
+
+    <div style="background:linear-gradient(135deg,rgba(245,197,24,.1),rgba(245,197,24,.02));border:1px solid var(--gold-soft,rgba(245,197,24,.3));border-radius:14px;padding:18px 20px;margin-bottom:28px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+      <div style="font-size:30px;">♾️</div>
+      <div style="flex:1;min-width:240px;">
+        <div style="font-weight:800;font-size:15px;color:var(--gold);margin-bottom:4px;">수강생 평생 사후관리 — 모든 레슨·강의 공통</div>
+        <div style="font-size:13.5px;color:var(--ink-dim);line-height:1.6;">수강이 끝나도 끝이 아닙니다. <b style="color:var(--ink)">리플(다시보기) 피드백</b>과 <b style="color:var(--ink)">배틀그라운드 관련 질문</b>을 상시 답변 — 막히는 부분은 <b style="color:var(--ink)">재판(다음 판)까지 함께</b> 해결해 드립니다.</div>
+      </div>
+    </div>
 
     <div class="promo-banner">
       <div class="pb-tag">🔥 OPEN 런칭 특가</div>
-      <div class="pb-main">지금은 <b>오픈 기념 특가</b> 진행 중 — 아래 정원 도달 시 정가로 전환됩니다</div>
-      <div class="enroll-bars">
-        <div class="ebar">
-          <div class="ebar-top"><span class="ebar-name">레슨</span><span class="ebar-num"><b id="lesNow">··</b> / 50명</span></div>
-          <div class="ebar-track"><div class="ebar-fill les" id="lesFill"></div></div>
-          <div class="ebar-left">정가 전환까지 <b id="lesLeft">··</b></div>
+      <div class="pb-main">지금은 <b>오픈 기념 특가</b> 진행 중 — <b style="color:var(--gold)">시즌43부터 정가로 전환</b>됩니다</div>
+      <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:18px 0 6px;">
+        <div style="background:rgba(245,197,24,.08);border:1px solid var(--gold-soft,rgba(245,197,24,.3));border-radius:10px;padding:12px 18px;text-align:center;min-width:150px;">
+          <div style="font-size:12px;color:var(--ink-faint);">레슨 10판</div>
+          <div style="font-size:15px;margin-top:4px;"><span style="text-decoration:line-through;color:var(--ink-faint);">50,000</span> → <b style="color:var(--gold);font-size:18px;">40,000원</b></div>
         </div>
-        <div class="ebar">
-          <div class="ebar-top"><span class="ebar-name gold">강의</span><span class="ebar-num"><b id="couNow">··</b> / 25명</span></div>
-          <div class="ebar-track"><div class="ebar-fill" id="couFill"></div></div>
-          <div class="ebar-left">정가 전환까지 <b id="couLeft">··</b></div>
+        <div style="background:rgba(245,197,24,.08);border:1px solid var(--gold-soft,rgba(245,197,24,.3));border-radius:10px;padding:12px 18px;text-align:center;min-width:150px;">
+          <div style="font-size:12px;color:var(--ink-faint);">강의 8회</div>
+          <div style="font-size:15px;margin-top:4px;"><span style="text-decoration:line-through;color:var(--ink-faint);">360,000</span> → <b style="color:var(--gold);font-size:18px;">290,000원</b></div>
         </div>
       </div>
-      <div class="pb-sub"><b style="color:var(--gold)">트레이너 1인당 정원 25명</b> — 수업 질을 지키기 위해 인원을 제한합니다. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b> 돌파 시 <b>각각 그 주 다음 주부터 정가로 전환</b>됩니다. 자리가 한정되어 있으니 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
+      <div class="pb-sub"><b style="color:var(--gold)">시즌42까지만 특가</b> — 시즌43부터 모든 레슨·강의가 정가로 전환됩니다. 이미 등록한 패키지는 특가가 유지되며, <b>신규 결제부터 정가</b>가 적용됩니다. 특가 마감 전 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
     </div>
 
     <!-- 레슨 -->
@@ -604,50 +661,85 @@ footer b{color:var(--gold)}
       </div>
     </div>
     <p class="plan-note">레슨 상담(테스트) 비용 <b>15,000원</b> · 개인/그룹 선택 가능 · 핵·버그로 터진 게임은 무효 처리<br>개인레슨 시간별 판수 차감 — <b>30분 3판 · 1시간 5판 · 1시간 30분 8판 · 2시간 10판</b></p>
+  </section>
 
-    <!-- 강의 -->
-    <div class="prog-head" style="margin-top:40px"><span class="prog-tag" style="background:rgba(245,197,24,.12);color:var(--gold)">강의</span> 이무리 클랜장 직강 · <b>시간제(3시간 집중)</b> <span class="prog-sub">레벨테스트 합격 필수 · 12회 이상 · 전략 심화 · 고점 돌파</span></div>
-    <div class="plans">
-      <div class="plan hot">
-        <div class="rib">기본</div>
-        <div class="pn">12회 패키지</div><div class="po">540,000원</div><div class="pp">360,000원<span class="off">-33%</span></div><div class="pd">회당 30,000원 · 1회 3시간</div>
-        <ul><li>체계적 장기 과정</li><li>단계별 전략 전수</li><li>주도권→포지션 4단계</li></ul>
-        <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
+  <!-- ========== VIP 섹션 ========== -->
+  <section id="vip" class="vip-section">
+    <div class="vip-inner">
+      <div class="vip-head">
+        <div class="vip-kick">⭐ PREMIUM · 이무리 직강</div>
+        <h2 class="vip-title">VIP 프로그램</h2>
+        <p class="vip-desc">이무리 클랜장이 직접 진행하는 프리미엄 과정. 체계적 장기 강의부터, 시간 없는 분을 위한 1일 집중까지.</p>
       </div>
-      <div class="plan">
-        <div class="pn">24회 패키지</div><div class="po">970,000원</div><div class="pp">648,000원<span class="off">-33%</span></div><div class="pd">회당 27,000원 · 1회 3시간</div>
-        <ul><li>고점 돌파 집중</li><li>전적 관리 전략</li><li>회당 단가 추가 할인</li></ul>
-        <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
-      </div>
-      <div class="plan">
-        <div class="pn">36회 패키지</div><div class="po">1,300,000원</div><div class="pp">870,000원<span class="off">-33%</span></div><div class="pd">회당 24,166원 · 1회 3시간</div>
-        <ul><li>최대 혜택 구성</li><li>상위 1% 도약</li><li>시즌 풀 케어</li></ul>
-        <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
-      </div>
-    </div>
-    <p class="plan-note">강의 상담(테스트) 비용 <b>20,000원</b> · 최소 12회부터 · 클래스별 멤버 구성 후 3시간 집중 · 시간 예약제</p>
 
-    <!-- 세트 -->
-    <div class="prog-head" style="margin-top:40px"><span class="prog-tag" style="background:rgba(168,85,247,.14);color:var(--purple)">세트</span> 레슨 + 강의 결합 <span class="prog-sub">트레이너 레슨으로 다지고 · 이무리 강의로 심화 · 한 번에 신청</span></div>
-    <div class="plans">
-      <div class="plan">
-        <div class="pn">입문 세트</div><div class="po">590,000원</div><div class="pp">400,000원<span class="off">-32%</span></div><div class="pd">레슨 10판 + 강의 12회</div>
-        <ul><li>레슨 10판</li><li>+ 강의 12회</li><li>기초→전략 입문</li></ul>
-        <a class="pbtn" href="apply.html">세트 신청 →</a>
+      <!-- 1일 집중 (신규·하이라이트) -->
+      <div class="vip-spotlight">
+        <div class="vs-ribbon">NEW · 하루 완성</div>
+        <div class="vs-left">
+          <div class="vs-tag">⭐ 이무리 1일 집중</div>
+          <div class="vs-name">VIP DAY PASS</div>
+          <p class="vs-quote">"시간은 없고, 빠르게 끌어올리고 싶은 분께"</p>
+          <ul class="vs-list">
+            <li>오전~저녁 <b>종일</b>, 이무리 직강 우선 진행</li>
+            <li>원하는 강의 주제 집중 (실전·복기·운영 등)</li>
+            <li>24시간 전 일정 조율 · 전용/그룹 여부 협의</li>
+            <li><b style="color:var(--gold)">레벨테스트 없이</b> 바로 신청 가능</li>
+          </ul>
+        </div>
+        <div class="vs-right">
+          <div class="vs-price-label">1일 집중</div>
+          <div class="vs-price">150,000<span>원</span></div>
+          <div class="vs-sub">/ 1 DAY</div>
+          <a class="vs-btn" href="apply.html">1일 집중 신청 →</a>
+        </div>
       </div>
-      <div class="plan hot">
-        <div class="rib">추천</div>
-        <div class="pn">도약 세트</div><div class="po">1,075,000원</div><div class="pp">728,000원<span class="off">-32%</span></div><div class="pd">레슨 21판 + 강의 24회</div>
-        <ul><li>레슨 21판</li><li>+ 강의 24회</li><li>실전→심화 완성</li></ul>
-        <a class="pbtn" href="apply.html">세트 신청 →</a>
+
+      <!-- 직강 패키지 -->
+      <div class="vip-block-label"><span class="vbl-line"></span><span>이무리 직강 패키지 · 시간제(1회 3시간)</span><span class="vbl-line"></span></div>
+      <div class="plans vip-plans">
+        <div class="plan vip-plan">
+          <div class="rib">입문</div>
+          <div class="pn">8회 패키지</div><div class="po">360,000원</div><div class="pp">290,000원<span class="off">특가</span></div><div class="pd">1회 3시간 · 첫 강의 입문</div>
+          <ul><li>강의 입문 추천</li><li>핵심 전략 8회 집중</li><li>부담 없는 첫 시작</li></ul>
+          <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
+        </div>
+        <div class="plan vip-plan hot">
+          <div class="rib">인기</div>
+          <div class="pn">12회 패키지</div><div class="po">504,000원</div><div class="pp">400,000원<span class="off">특가</span></div><div class="pd">1회 3시간 · 체계적 과정</div>
+          <ul><li>단계별 전략 전수</li><li>주도권→포지션 4단계</li><li>가장 인기 있는 구성</li></ul>
+          <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
+        </div>
+        <div class="plan vip-plan">
+          <div class="rib">심화</div>
+          <div class="pn">16회 패키지</div><div class="po">640,000원</div><div class="pp">510,000원<span class="off">특가</span></div><div class="pd">1회 3시간 · 고점 돌파</div>
+          <ul><li>심화 전략·전적 관리</li><li>상위권 도약 집중</li><li>최대 회차 구성</li></ul>
+          <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
+        </div>
       </div>
-      <div class="plan">
-        <div class="pn">마스터 세트</div><div class="po">1,465,000원</div><div class="pp">990,000원<span class="off">-32%</span></div><div class="pd">레슨 33판 + 강의 36회</div>
-        <ul><li>레슨 33판</li><li>+ 강의 36회</li><li>시즌 풀관리·고점</li></ul>
-        <a class="pbtn" href="apply.html">세트 신청 →</a>
+      <p class="plan-note">강의 상담(테스트) 비용 <b>20,000원</b> · 1회 3시간 집중 · 시간 예약제 · <b style="color:var(--gold)">시즌43부터 정가 전환 (특가 마감 임박)</b></p>
+
+      <!-- 세트 -->
+      <div class="vip-block-label"><span class="vbl-line"></span><span>레슨 + 강의 세트 · 한 번에</span><span class="vbl-line"></span></div>
+      <div class="plans vip-plans">
+        <div class="plan vip-plan">
+          <div class="pn">입문 세트</div><div class="po">590,000원</div><div class="pp">400,000원<span class="off">특가</span></div><div class="pd">레슨 10판 + 강의 8회</div>
+          <ul><li>레슨 10판</li><li>+ 강의 8회</li><li>기초→전략 입문</li></ul>
+          <a class="pbtn" href="apply.html">세트 신청 →</a>
+        </div>
+        <div class="plan vip-plan hot">
+          <div class="rib">추천</div>
+          <div class="pn">도약 세트</div><div class="po">920,000원</div><div class="pp">680,000원<span class="off">특가</span></div><div class="pd">레슨 20판 + 강의 12회</div>
+          <ul><li>레슨 20판</li><li>+ 강의 12회</li><li>실전→심화 완성</li></ul>
+          <a class="pbtn" href="apply.html">세트 신청 →</a>
+        </div>
+        <div class="plan vip-plan">
+          <div class="pn">마스터 세트</div><div class="po">1,200,000원</div><div class="pp">890,000원<span class="off">특가</span></div><div class="pd">레슨 30판 + 강의 16회</div>
+          <ul><li>레슨 30판</li><li>+ 강의 16회</li><li>시즌 풀관리·고점</li></ul>
+          <a class="pbtn" href="apply.html">세트 신청 →</a>
+        </div>
       </div>
+      <p class="plan-note">세트는 이미 최대 할인된 레슨·강의를 한 번에 신청하는 구성입니다 · 강의 포함으로 상담(테스트) 비용 <b>20,000원</b> 1회 · 트레이너·일정 우선 배정</p>
     </div>
-    <p class="plan-note">세트는 이미 최대 할인된 레슨·강의를 한 번에 신청하는 구성입니다 · 강의 포함으로 상담(테스트) 비용 <b>20,000원</b> 1회 · 트레이너·일정 우선 배정</p>
   </section>
 
 
@@ -911,33 +1003,6 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
     // API 미연결 시: 표시된 기준 수치 유지 (빈 화면 방지)
     if (state) state.textContent = "현황 (기준 데이터)";
   }
-})();
-// 정가 전환 진행바 (레슨생 50 / 수강생 25 · 각각 독립 트리거 · /api/stats 구동)
-(async function () {
-  const lesNow = document.getElementById("lesNow"), lesFill = document.getElementById("lesFill"), lesLeft = document.getElementById("lesLeft");
-  const couNow = document.getElementById("couNow"), couFill = document.getElementById("couFill"), couLeft = document.getElementById("couLeft");
-  if (!lesNow || !couNow) return;
-  function setBar(nowEl, fillEl, leftEl, count, target) {
-    const c = Math.max(0, count | 0);
-    nowEl.textContent = c;
-    fillEl.style.width = Math.min(100, Math.round((c / target) * 100)) + "%";
-    const remain = Math.max(0, target - c);
-    if (remain === 0) { fillEl.classList.add("full"); leftEl.textContent = "전환 임박!"; }
-    else { leftEl.textContent = remain + "명"; }
-  }
-  let les = 38, cou = 17; // API 미연결 시 기준값 (2026-05-31)
-  try {
-    const r = await fetch(STATS_API + "/api/stats", { cache: "no-store" });
-    if (r.ok) {
-      const d = await r.json();
-      if (d && d.counts) {
-        if (typeof d.counts.lessonseng === "number") les = d.counts.lessonseng;
-        if (typeof d.counts.suganseng === "number") cou = d.counts.suganseng;
-      }
-    }
-  } catch (e) { /* 기준값 유지 */ }
-  setBar(lesNow, lesFill, lesLeft, les, 50);
-  setBar(couNow, couFill, couLeft, cou, 25);
 })();
 </script>
 <!-- 챗봇 위젯 -->
