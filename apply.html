@@ -43,6 +43,7 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
 .pii-note{font-size:11.5px;color:var(--ink-faint);line-height:1.6;margin-top:14px;padding:13px;background:var(--bg-card);border:1px dashed var(--line);border-radius:8px}
 .back{display:inline-block;margin-top:20px;color:var(--gold);text-decoration:none;font-weight:700;font-size:14px}
 </style>
+<script src="https://js.tosspayments.com/v2/standard"></script>
 </head>
 <body>
 <div class="wrap">
@@ -169,10 +170,24 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
     <button class="submit" id="submit" type="submit">신청서 보내기</button>
     <div class="msg" id="msg"></div>
     <div class="pii-note">
-      💳 결제 계좌·증빙은 운영진 확인 후 디스코드/카카오에서 안내드립니다. 신청 단계에서는 받지 않습니다.<br>
+      💳 신청서를 보내면 이어서 <b style="color:var(--gold)">상담비 결제</b>가 진행됩니다. (레슨 상담 15,000원 · 강의/레벨테스트 20,000원)<br>
       문의: <a href="https://open.kakao.com/o/sAUU6OGf" style="color:var(--gold)">카카오</a> · <a href="https://discord.gg/szFa7teEJs" style="color:var(--gold)">디스코드</a>
     </div>
   </form>
+
+  <!-- ===== 상담비 결제 (신청서 접수 후 노출) ===== -->
+  <div class="sec" id="payStep" style="display:none;margin-top:22px">
+    <h2>💳 상담비 결제</h2>
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--line);margin-bottom:6px">
+      <span id="payName" style="font-weight:700"></span>
+      <span id="payAmount" style="color:var(--gold);font-weight:800;font-size:18px"></span>
+    </div>
+    <p class="hint" style="margin:8px 0 16px">카드·계좌이체·토스페이·간편결제 중 편하신 방법으로 결제하세요. 결제 후 운영진이 일정·반 배정을 안내드립니다.</p>
+    <div id="payment-method"></div>
+    <div id="agreement" style="margin-top:10px"></div>
+    <button class="submit" id="payBtn" type="button" disabled style="margin-top:14px">결제하기</button>
+    <div class="msg" id="payMsg"></div>
+  </div>
 
   <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
 </div>
@@ -207,14 +222,72 @@ form.addEventListener("submit", async (e) => {
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "전송 실패");
-    show("ok", "✅ 신청서가 운영진에게 전달됐습니다! 곧 디스코드/카카오로 연락드릴게요. 창을 닫으셔도 됩니다.");
+    show("ok", "✅ 신청서 접수 완료! 이어서 아래에서 상담비를 결제해 주세요.");
     form.querySelectorAll("input,select,textarea,button").forEach(el => el.disabled = true);
+    startPayment(payload.applyType, payload.name, payload.phone);
   } catch (err) {
     show("err", "❌ " + (err.message || "전송 오류") + " — 디스코드/카카오로 직접 문의해 주세요.");
     submit.disabled = false; submit.textContent = "신청서 보내기";
   }
 });
 function show(type, text) { msg.className = "msg " + type; msg.textContent = text; msg.scrollIntoView({behavior:"smooth", block:"center"}); }
+
+// ===== 토스페이먼츠 결제위젯 =====
+// TODO: 토스 상점관리자 > 개발자센터 > API 키 > 결제위젯 연동 키 > "클라이언트 키"로 교체.
+//       지금은 토스 공개 테스트 키 → 본인 상점 테스트키로 바꿔야 심사 연동됨 → 심사 통과 후 라이브 키로 교체.
+const TOSS_CLIENT_KEY = "test_gck_docs_Ovk5rk1EwkEbP0W43n07xlzm";
+let tossWidgets = null, payReady = false, currentFee = null;
+const payBtn = document.getElementById("payBtn");
+const payMsg = document.getElementById("payMsg");
+
+function consultFee(applyType){
+  if (applyType === "강의 (이무리 직강)") return { amount: 20000, name: "강의 상담(레벨테스트)" };
+  if (applyType === "레벨테스트 / 상담")  return { amount: 20000, name: "레벨테스트 상담" };
+  return { amount: 15000, name: "레슨 상담" }; // 1:1·그룹 레슨, 미정
+}
+
+async function startPayment(applyType, customerName, phone){
+  const fee = consultFee(applyType);
+  currentFee = fee;
+  document.getElementById("payName").textContent = fee.name;
+  document.getElementById("payAmount").textContent = fee.amount.toLocaleString() + "원";
+  const payStep = document.getElementById("payStep");
+  payStep.style.display = "block";
+  payStep.scrollIntoView({ behavior:"smooth", block:"start" });
+  try {
+    const tossPayments = TossPayments(TOSS_CLIENT_KEY);
+    tossWidgets = tossPayments.widgets({ customerKey: TossPayments.ANONYMOUS });
+    await tossWidgets.setAmount({ currency: "KRW", value: fee.amount });
+    await Promise.all([
+      tossWidgets.renderPaymentMethods({ selector: "#payment-method", variantKey: "DEFAULT" }),
+      tossWidgets.renderAgreement({ selector: "#agreement", variantKey: "AGREEMENT" }),
+    ]);
+    payReady = true; payBtn.disabled = false;
+    window._payMeta = { customerName, phone };
+  } catch (e) {
+    payMsg.className = "msg err"; payMsg.textContent = "결제창 로드 실패 — 카카오/디스코드로 문의해 주세요.";
+  }
+}
+
+payBtn.addEventListener("click", async () => {
+  if (!payReady || !tossWidgets) return;
+  payBtn.disabled = true; payBtn.textContent = "결제창 여는 중…";
+  const orderId = "MRI-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+  const meta = window._payMeta || {};
+  try {
+    await tossWidgets.requestPayment({
+      orderId,
+      orderName: currentFee.name,
+      successUrl: window.location.origin + "/payment-success.html",
+      failUrl: window.location.origin + "/payment-fail.html",
+      customerName: meta.customerName || undefined,
+      customerMobilePhone: (meta.phone || "").replace(/[^0-9]/g, "") || undefined,
+    });
+  } catch (e) {
+    payBtn.disabled = false; payBtn.textContent = "결제하기";
+    if (e.code !== "USER_CANCEL") { payMsg.className = "msg err"; payMsg.textContent = "결제 요청 오류: " + (e.message || e.code || ""); }
+  }
+});
 </script>
 </body>
 </html>

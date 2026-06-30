@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>결제 완료 · MRI ACADEMY</title>
+<style>
+  :root{--bg:#0a0a0c;--card:#141417;--line:#26262b;--gold:#f5c518;--ink:#ededf0;--ink-dim:#a0a0a8;--ink-faint:#6b6b73;--green:#10b981;--red:#e63946}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:Pretendard,-apple-system,system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .box{width:100%;max-width:440px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:36px 26px;text-align:center}
+  .icon{font-size:46px;margin-bottom:10px}
+  h1{font-size:21px;margin:6px 0 4px}
+  .sub{color:var(--ink-dim);font-size:13.5px;line-height:1.6;margin-bottom:22px}
+  .row{display:flex;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .row .k{color:var(--ink-faint)}
+  .row .v{font-weight:700}
+  .row .v.gold{color:var(--gold)}
+  .btn{display:inline-block;margin-top:24px;background:var(--gold);color:#0a0a0c;text-decoration:none;font-weight:800;padding:13px 26px;border-radius:9px;font-size:14px}
+  .spin{color:var(--ink-dim);font-size:14px}
+  .err{color:var(--red);font-size:13.5px;line-height:1.7}
+  .detail{text-align:left;margin:18px 0 0}
+</style>
+</head>
+<body>
+<div class="box">
+  <div id="loading">
+    <div class="icon">⏳</div>
+    <h1>결제 확인 중…</h1>
+    <p class="spin">잠시만 기다려 주세요. 결제를 최종 승인하고 있습니다.</p>
+  </div>
+
+  <div id="done" style="display:none">
+    <div class="icon">✅</div>
+    <h1>결제가 완료됐어요</h1>
+    <p class="sub">상담비 결제가 정상 처리됐습니다.<br>곧 운영진이 디스코드/카카오로 일정·반 배정을 안내드릴게요.</p>
+    <div class="detail">
+      <div class="row"><span class="k">항목</span><span class="v" id="dName">-</span></div>
+      <div class="row"><span class="k">결제 금액</span><span class="v gold" id="dAmount">-</span></div>
+      <div class="row"><span class="k">주문번호</span><span class="v" id="dOrder" style="font-size:12px">-</span></div>
+    </div>
+    <a class="btn" href="index.html">홈으로 돌아가기</a>
+  </div>
+
+  <div id="failbox" style="display:none">
+    <div class="icon">⚠️</div>
+    <h1>결제 승인에 실패했어요</h1>
+    <p class="err" id="failmsg">잠시 후 다시 시도하거나, 카카오/디스코드로 문의해 주세요.</p>
+    <a class="btn" href="apply.html">신청 페이지로</a>
+  </div>
+</div>
+
+<script>
+const API_BASE = "https://mri-academy-production.up.railway.app";
+const q = new URLSearchParams(location.search);
+const paymentKey = q.get("paymentKey"), orderId = q.get("orderId"), amount = q.get("amount");
+
+function showFail(t){ document.getElementById("loading").style.display="none"; document.getElementById("failbox").style.display="block"; if(t) document.getElementById("failmsg").textContent = t; }
+
+(async () => {
+  if (!paymentKey || !orderId || !amount) { showFail("결제 정보가 올바르지 않습니다."); return; }
+  try {
+    const r = await fetch(`${API_BASE}/api/payments/confirm`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ paymentKey, orderId, amount: Number(amount) }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) { showFail((d.error || "승인 실패") + (d.code ? ` (${d.code})` : "")); return; }
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("done").style.display = "block";
+    document.getElementById("dName").textContent = d.orderName || "상담비";
+    document.getElementById("dAmount").textContent = Number(d.amount).toLocaleString() + "원";
+    document.getElementById("dOrder").textContent = d.orderId || orderId;
+  } catch (e) { showFail("네트워크 오류 — 잠시 후 다시 시도해 주세요."); }
+})();
+</script>
+</body>
+</html>

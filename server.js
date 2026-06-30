@@ -2416,4 +2416,39 @@ app.get("/api/feedback", async (req, res) => {
   }
 });
 
+// ─── 토스페이먼츠 결제 승인 ───────────────────────────────
+// 결제위젯 successUrl(payment-success.html)에서 paymentKey/orderId/amount를 받아 승인 확정.
+// env: TOSS_SECRET_KEY  (토스 개발자센터 > API 키 > 결제위젯 연동 키 > "시크릿 키")
+//      ※ 시크릿 키는 절대 프론트/깃허브에 노출 금지. Railway 환경변수에만 저장.
+//      DISCORD_APPLY_WEBHOOK (선택) — 결제 완료 시 운영진 채널 알림 재사용.
+app.post("/api/payments/confirm", async (req, res) => {
+  try {
+    const { paymentKey, orderId, amount } = req.body || {};
+    if (!paymentKey || !orderId || !amount) return res.status(400).json({ error: "missing_params" });
+    const secret = process.env.TOSS_SECRET_KEY;
+    if (!secret) return res.status(503).json({ error: "no_toss_secret_key" });
+    const auth = Buffer.from(secret + ":").toString("base64");
+    const r = await fetch("https://api.tosspayments.com/v1/payments/confirm", {
+      method: "POST",
+      headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ paymentKey, orderId, amount: Number(amount) }),
+    });
+    const data = await r.json();
+    if (!r.ok) return res.status(r.status).json({ error: data.message || "confirm_failed", code: data.code });
+
+    // 결제 완료 디스코드 알림 (운영진이 바로 확인 → 일정/반 배정)
+    const WEBHOOK = process.env.DISCORD_APPLY_WEBHOOK;
+    if (WEBHOOK) {
+      fetch(WEBHOOK, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content:
+          `💳 **상담비 결제 완료**\n· 항목: ${data.orderName || "-"}\n· 금액: ${Number(data.totalAmount).toLocaleString()}원\n· 결제수단: ${data.method || "-"}\n· 주문번호: \`${orderId}\`\n· 승인시각: ${data.approvedAt || "-"}` }),
+      }).catch(() => {});
+    }
+    return res.json({ ok: true, orderId: data.orderId, orderName: data.orderName, amount: data.totalAmount, method: data.method, approvedAt: data.approvedAt });
+  } catch (e) {
+    return res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
 app.listen(PORT, () => console.log("listening on " + PORT));
