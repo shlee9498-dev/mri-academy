@@ -1,6 +1,6 @@
 User-agent: *
 Allow: /
-Disallow: /apply.html
-Disallow: /trainer-apply.html
+Disallow: /payment-success.html
+Disallow: /payment-fail.html
 
 Sitemap: https://mriacademy.gg/sitemap.xml
