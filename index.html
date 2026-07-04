@@ -453,7 +453,7 @@ footer b{color:var(--gold)}
         <span class="hpill"><span class="dot"></span>🏆 전세계 최초 · 솔로 단독 서바이버 달성</span>
         <h1>당신의 다음 시즌은<br><span class="gd">달라질 수 있습니다</span></h1>
         <p class="hlead">마스터 달성률 <b>87.5%</b> — 당신이 막힌 이유, 저는 알고 있습니다.</p>
-        <p class="hnote">레벨테스트 합격자에 한해 등록 가능합니다.</p>
+        <p class="hnote">레벨테스트 합격자에 한해 등록 가능합니다. 기본 8회 과정이며, 원하시는 경우 <b style="color:var(--gold)">12회 확장 등록</b>도 가능합니다(상담 시 안내). 수업 시간대는 낮·심야(21~24시)·새벽(03~06시)까지 유연하게 조율됩니다.</p>
         <div class="proof">
           <div class="chip"><div class="l">솔로 경쟁전</div><div class="v" style="color:var(--gold)">서바이버<span class="ar">최초</span></div></div>
           <div class="chip"><div class="l">평균 딜량</div><div class="v">282→398<span class="ar">▲116</span></div></div>
@@ -864,6 +864,11 @@ footer b{color:var(--gold)}
         <div class="a">상담 후 원하시는 방향성과 거리가 있다고 판단되시면 <b>환불</b>해 드립니다. 환불 계좌를 남겨주시거나, 이후 레슨 신청 시 금액만큼 차감도 가능합니다. (수강 시작 전 전액 환불 등 환불 규정은 학원법·전자상거래법을 준수합니다.)</div>
       </details>
 
+      <details>
+        <summary><span class="q">Q</span>기존 수강생인데 가격이 바뀌었어요. 저도 새 가격인가요?<span class="mk">+</span></summary>
+        <div class="a">아니요. <b>기존 수강생은 등록 당시 조건이 그대로 유지</b>됩니다(기존 등록 기준 2시간 = 1회 포함). 새 가격표는 <span class="hi">신규 등록부터</span> 적용되며, 재등록 시점에 안내드립니다.</div>
+      </details>
+
     </div>
   </section>
 
@@ -1042,7 +1047,7 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
     if (remain === 0) { fillEl.classList.add("full"); leftEl.textContent = "전환 임박!"; }
     else { leftEl.textContent = remain + "명"; }
   }
-  let les = 38, cou = 17; // API 미연결 시 기준값
+  let les = 26, cou = 15; // API 미연결 시 기준값 (2026-07-05 실측)
   try {
     const r = await fetch(STATS_API + "/api/stats", { cache: "no-store" });
     if (r.ok) {
