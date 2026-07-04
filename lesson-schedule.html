@@ -72,6 +72,29 @@ const FMT = { "관전형":["관전형","b-blue"], "참여형":["참여형","b-gr
 const $ = (id)=>document.getElementById(id);
 const esc = (s)=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
+// ── 개인정보 보호: 시트는 본명 유지, 화면만 닉/마스킹 표시 ──
+// 닉네임 매핑표: 여기에 "본명":"닉네임" 추가하면 그 수강생은 닉으로 표시됨
+const NICK = {
+  "양형석":"콩가",
+  "박성민":"빡이",
+  "김웅채":"감티",
+};
+function maskName(n){ // 매핑 없는 본명은 자동 마스킹 (박성민→박*민)
+  if(n.length<=1) return n;
+  if(n.length===2) return n[0]+"*";
+  return n[0]+"*".repeat(n.length-2)+n[n.length-1];
+}
+function displayMembers(s){
+  return String(s==null?"":s).split(",").map(tok=>{
+    tok = tok.trim(); if(!tok) return "";
+    const m = tok.match(/^(.+?)\s*\((.+)\)\s*$/); // "이름(닉)" → 닉만
+    if(m) return m[2].trim();
+    if(NICK[tok]) return NICK[tok];
+    if(/^[가-힣]{2,4}$/.test(tok)) return maskName(tok); // 한글 이름은 마스킹
+    return tok; // 그 외(팀명·문구 등)는 그대로
+  }).filter(Boolean).join(", ");
+}
+
 function trainerRank(name){
   if(/무리/.test(name)) return 0;
   if(/현태/.test(name)) return 1;
@@ -117,7 +140,7 @@ async function load(){
               ${it.type?`<span class="badge b-type">${esc(it.type)}</span>`:""}
               ${it.recruit?`<span class="badge b-recruit">자리 모집중</span>`:""}
             </div>
-            <div class="members">${esc(it.members)}</div>
+            <div class="members">${esc(displayMembers(it.members))}</div>
           </div></div>`;
       });
       html += `</div>`;
