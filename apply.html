@@ -288,6 +288,15 @@ payBtn.addEventListener("click", async () => {
     if (e.code !== "USER_CANCEL") { payMsg.className = "msg err"; payMsg.textContent = "결제 요청 오류: " + (e.message || e.code || ""); }
   }
 });
+
+// ── 결제 직행 모드 (?pay=1|lesson / ?pay=lecture) ──
+// 신청서 제출 없이 결제창 바로 노출 — PG 심사 확인용 + "상담비만 먼저 결제" 동선.
+(function(){
+  const p = new URLSearchParams(location.search).get("pay");
+  if (!p) return;
+  const applyType = (p === "lecture" || p === "강의") ? "강의 (이무리 직강)" : "레슨";
+  startPayment(applyType, "", "");
+})();
 </script>
 </body>
 </html>
