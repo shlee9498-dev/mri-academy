@@ -1654,6 +1654,27 @@ app.get("/api/nicks", async (req, res) => {
 // ═══════════════════ 수강 신청 자동 전송 ═══════════════════
 // POST /api/apply — 신청서를 디스코드 운영진 채널(웹훅)로 전송 + BPI 자동 첨부
 // env: DISCORD_APPLY_WEBHOOK (디스코드 채널 → 연동 → 웹훅 URL)
+
+// BPI 자동진단 공용: 404(닉 없음)면 반대 플랫폼 재시도 + 사람이 읽을 수 있는 메시지
+async function diagnoseBpi(platform, nick) {
+  const fmt = (r, extra) => {
+    const s = r.suggested;
+    return `**${s.tier} ${s.label}** (BPI ${s.bpi}) · 평균딜 ${r.sample.avgDamage} · ${r.sample.roundsPlayed}판`
+      + (r.lowConfidence ? " ⚠표본부족" : "") + (extra || "");
+  };
+  try {
+    return fmt(await computeBPI(platform, nick, false));
+  } catch (e) {
+    if (e.status !== 404) return `자동 진단 실패: ${String(e.message || e).slice(0, 60)}`;
+    const other = String(platform).toLowerCase() === "kakao" ? "steam" : "kakao";
+    try {
+      return fmt(await computeBPI(other, nick, false), ` ⚠**${other}**에서 발견 — 신청서 플랫폼(${platform}) 오기재 가능성`);
+    } catch (e2) {
+      return `⚠ 닉네임 "${String(nick).slice(0, 30)}" 을(를) 스팀·카카오 모두에서 찾지 못함 — 오타/개명 가능성, 상담 시 확인 필요`;
+    }
+  }
+}
+
 app.post("/api/apply", async (req, res) => {
   try {
     const WEBHOOK = process.env.DISCORD_APPLY_WEBHOOK;
@@ -1671,14 +1692,7 @@ app.post("/api/apply", async (req, res) => {
     // 스팀/카카오 닉이 있으면 BPI 자동 진단 (PUBG 키 있을 때만)
     let bpiText = "PUBG 키 미설정 — 진단 생략";
     if (process.env.PUBG_API_KEY) {
-      try {
-        const r = await computeBPI(b.platform, clip(b.nickname, 40), false);
-        const s = r.suggested;
-        bpiText = `**${s.tier} ${s.label}** (BPI ${s.bpi}) · 평균딜 ${r.sample.avgDamage} · ${r.sample.roundsPlayed}판`
-          + (r.lowConfidence ? " ⚠표본부족" : "");
-      } catch (e) {
-        bpiText = `자동 진단 실패: ${clip(e.message, 60)}`;
-      }
+      bpiText = await diagnoseBpi(b.platform, clip(b.nickname, 40));
     }
 
     const embed = {
@@ -1741,12 +1755,7 @@ app.post("/api/trainer-apply", async (req, res) => {
 
     let bpiText = "PUBG 키 미설정 — 진단 생략";
     if (process.env.PUBG_API_KEY) {
-      try {
-        const r = await computeBPI(b.platform, clip(b.ign, 40), false);
-        const s = r.suggested;
-        bpiText = `**${s.tier} ${s.label}** (BPI ${s.bpi}) · 평균딜 ${r.sample.avgDamage} · ${r.sample.roundsPlayed}판`
-          + (r.lowConfidence ? " ⚠표본부족" : "");
-      } catch (e) { bpiText = `자동 진단 실패: ${clip(e.message, 60)}`; }
+      bpiText = await diagnoseBpi(b.platform, clip(b.ign, 40));
     }
 
     const embed = {
