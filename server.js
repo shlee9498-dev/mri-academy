@@ -1816,7 +1816,8 @@ app.get("/api/gdcup-count", async (req, res) => {
 });
 // 서버측 가중치 계산 (프론트와 동일한 새 표: T0 신설·상단 확장 반영)
 function gdcupWeight(bpi) {
-  const T = [[0,14,1.3],[15,16,1.2],[17,19,1.1],[20,20,1.0],[21,22,0.9],[23,25,0.8],[26,28,0.7],[29,9999,0.6]];
+  // 시즌3 가중치표 (기준 22~23 = 1.0) — 시즌2 포디움 실측(BPI 20~25) 반영 상향
+  const T = [[0,16,1.3],[17,19,1.2],[20,21,1.1],[22,23,1.0],[24,25,0.9],[26,28,0.8],[29,31,0.7],[32,9999,0.6]];
   for (const [lo, hi, m] of T) { if (bpi >= lo && bpi <= hi) return m; }
   return 1.0;
 }
@@ -2025,29 +2026,46 @@ app.get("/api/gdcup-round-scores", async (req,res)=>{
   }catch(e){ console.error("gdcup_round_scores", e); res.status(500).json({error:"server_error"}); }
 });
 
-// [공개] 팀 누적 순위 = (Σ 순위점 + Σ 팀킬) × 가중치
+// [공개] 팀 누적 순위 = (Σ 순위점 + Σ 팀킬 + Σ 연속보너스) × 가중치
+// 시즌3 연속 보너스(42시즌 공식 패치 오마주): 직전 라운드도 Top4면 +2, 직전도 1위(연속 치킨)면 +5 (높은 것 하나만)
+// 5위↓·기록없음(몰수)이면 스트릭 리셋. 라운드 순서(3→4→5) 기준 자동 계산 — 입력 방식 변경 없음.
 app.get("/api/gdcup-scores", async (req,res)=>{
   try{
     if(!process.env.SUPABASE_URL) return res.json({standings:[], lastRound:0});
     const teams = await gdcupTeamsMap();
     let rows=[]; try{ rows = await sbSelect("gdcup_scores","select=round,team_name,placement,team_kills,player_kills&order=round.asc"); }catch(_){ rows=[]; }
     const agg={}; let lastRound=0;
+    const placeByTeam={}; // { team: { round: placement } }
     (rows||[]).forEach(r=>{
       if(!GDCUP_MAIN_ROUNDS.includes(Number(r.round))) return;
       lastRound=Math.max(lastRound, Number(r.round));
       const name=r.team_name;
       const tk = (r.team_kills!=null) ? Number(r.team_kills) : ((r.player_kills||[]).reduce((s,p)=>s+(p.kills||0),0));
-      if(!agg[name]) agg[name]={raw:0, kills:0};
+      if(!agg[name]) agg[name]={raw:0, kills:0, bonus:0};
       agg[name].raw += gdcupPlacementPts(r.placement) + tk;
       agg[name].kills += tk;
+      (placeByTeam[name]=placeByTeam[name]||{})[Number(r.round)] = (r.placement!=null && r.placement!=="") ? Number(r.placement) : null;
+    });
+    // 연속 보너스 계산
+    Object.keys(agg).forEach(name=>{
+      const pl = placeByTeam[name]||{};
+      for(let i=1;i<GDCUP_MAIN_ROUNDS.length;i++){
+        const prev = pl[GDCUP_MAIN_ROUNDS[i-1]], cur = pl[GDCUP_MAIN_ROUNDS[i]];
+        if(prev==null || cur==null) continue;           // 기록 없음 = 스트릭 끊김
+        let b = 0;
+        if(prev===1 && cur===1) b = 5;                  // 연속 치킨
+        else if(prev<=4 && cur<=4) b = 2;               // 연속 Top4
+        if(b){ agg[name].raw += b; agg[name].bonus += b; }
+      }
     });
     const standings = Object.keys(agg).map(name=>{
       const w = teams[name] ? teams[name].weight : 1;
-      return { name, weight:w, points: Math.round(agg[name].raw * w), kills: agg[name].kills };
+      return { name, weight:w, points: Math.round(agg[name].raw * w), kills: agg[name].kills, bonus: agg[name].bonus };
     }).sort((a,b)=> b.points-a.points || b.kills-a.kills);
     res.json({ standings, lastRound });
   }catch(e){ console.error("gdcup_scores", e); res.json({standings:[], lastRound:0}); }
 });
+
 
 // [공개] 킬 MVP = 선수별 누적 킬
 app.get("/api/gdcup-killmvp", async (req,res)=>{
