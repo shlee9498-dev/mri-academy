@@ -2478,4 +2478,7 @@ app.post("/api/payments/confirm", async (req, res) => {
   }
 });
 
+// ── 운영진 정산·레슨로그 관리 패널 (Phase 0) ──
+require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete });
+
 app.listen(PORT, () => console.log("listening on " + PORT));
