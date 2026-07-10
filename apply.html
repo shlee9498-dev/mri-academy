@@ -222,9 +222,15 @@ form.addEventListener("submit", async (e) => {
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "전송 실패");
-    show("ok", "✅ 신청서 접수 완료! 이어서 아래에서 상담비를 결제해 주세요.");
     form.querySelectorAll("input,select,textarea,button").forEach(el => el.disabled = true);
-    startPayment(payload.applyType, payload.name, payload.phone);
+    // ── 결제 오픈 스위치: 토스 심사 통과 후 true로 변경 ──
+    const PAYMENT_LIVE = false;
+    if (PAYMENT_LIVE) {
+      show("ok", "✅ 신청서 접수 완료! 이어서 아래에서 상담비를 결제해 주세요.");
+      startPayment(payload.applyType, payload.name, payload.phone);
+    } else {
+      show("ok", "✅ 신청서 접수 완료! 운영진이 확인 후 24시간 이내에 카카오톡/디스코드로 상담 일정과 상담비 결제 방법을 안내드립니다. 조금만 기다려 주세요 🙂");
+    }
   } catch (err) {
     show("err", "❌ " + (err.message || "전송 오류") + " — 디스코드/카카오로 직접 문의해 주세요.");
     submit.disabled = false; submit.textContent = "신청서 보내기";
