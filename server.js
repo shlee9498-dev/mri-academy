@@ -1652,6 +1652,25 @@ app.get("/api/nicks", async (req, res) => {
 });
 
 // ═══════════════════ 수강 신청 자동 전송 ═══════════════════
+// ── 할인코드 (apply.html DISCOUNT_CODES와 동일하게 유지) ──
+// 날짜는 KST(+09:00) 오프셋 포함 ISO — 절대 시각 비교라 서버 TZ와 무관하게 KST 기준 판정.
+const DISCOUNT_CODES = {
+  SHORTS10: {
+    rate: 0.10, label: "유튜브 쇼츠 10%",
+    validFrom: "2026-07-14T14:00:00+09:00",
+    validUntil: "2026-07-19T14:00:00+09:00",
+  },
+};
+// 공용 기간 판정 (제출 수신 시 서버 시각 기준 재검증) — state: ok|before|after|unknown
+function codeStatus(code, now) {
+  const def = DISCOUNT_CODES[String(code || "").trim().toUpperCase()];
+  if (!def) return { state: "unknown", def: null };
+  const t = now.getTime();
+  if (def.validFrom && t < new Date(def.validFrom).getTime()) return { state: "before", def };
+  if (def.validUntil && t >= new Date(def.validUntil).getTime()) return { state: "after", def };
+  return { state: "ok", def };
+}
+
 // POST /api/apply — 신청서를 디스코드 운영진 채널(웹훅)로 전송 + BPI 자동 첨부
 // env: DISCORD_APPLY_WEBHOOK (디스코드 채널 → 연동 → 웹훅 URL)
 
@@ -1689,6 +1708,17 @@ app.post("/api/apply", async (req, res) => {
     }
     const clip = (s, n) => String(s || "").slice(0, n);
 
+    // 할인코드 — 서버 시각(KST 오프셋 기준) 재검증 후 운영진용 표기 (제출 자체는 거부 안 함)
+    let discountText = "—";
+    if (b.discount_code && String(b.discount_code).trim()) {
+      const code = clip(String(b.discount_code).trim().toUpperCase(), 30);
+      const st = codeStatus(code, new Date());
+      if (st.state === "ok") discountText = `${code} ✅ (기간 내)`;
+      else if (st.state === "before") discountText = `${code} ⚠️ 기간 외 제출 (시작 전)`;
+      else if (st.state === "after") discountText = `${code} ⚠️ 기간 외 제출 (만료)`;
+      else discountText = `${code} ⚠️ 미등록 코드`;
+    }
+
     // 스팀/카카오 닉이 있으면 BPI 자동 진단 (PUBG 키 있을 때만)
     let bpiText = "PUBG 키 미설정 — 진단 생략";
     if (process.env.PUBG_API_KEY) {
@@ -1710,6 +1740,8 @@ app.post("/api/apply", async (req, res) => {
         { name: "성별/생년", value: `${clip(b.gender, 10)} / ${clip(b.birth, 10) || "—"}`, inline: true },
         { name: "📞 연락처", value: clip(b.phone, 20), inline: true },
         { name: "💬 디스코드", value: clip(b.discord, 40), inline: true },
+        { name: "🎟️ 할인코드", value: discountText, inline: true },
+        { name: "🔗 UTM", value: [clip(b.utm_source, 40), clip(b.utm_medium, 40), clip(b.utm_content, 60)].filter(Boolean).join(" / ") || "—", inline: true },
       ],
       timestamp: new Date().toISOString(),
       footer: { text: "MRI ACADEMY 온라인 신청" },
