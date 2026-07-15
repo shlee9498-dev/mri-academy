@@ -46,10 +46,7 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
 .code-row{display:flex;gap:8px}
 .code-row input{flex:1;text-transform:uppercase}
 .code-apply{flex:0 0 auto;width:auto;margin:0;padding:11px 20px;font-size:14px}
-.disc-badge{display:inline-block;background:rgba(245,197,24,.12);border:1px solid var(--gold-soft);color:var(--gold);font-weight:800;font-size:12.5px;padding:6px 12px;border-radius:99px}
-.disc-preview{font-size:13px;color:var(--ink-dim);margin-top:10px}
-.disc-preview s{color:var(--ink-faint)}
-.disc-preview b{color:var(--gold)}
+.disc-badge{display:inline-block;background:rgba(245,197,24,.12);border:1px solid var(--gold-soft);color:var(--gold);font-weight:800;font-size:12.5px;padding:6px 12px;border-radius:99px;line-height:1.5}
 .disc-err{color:var(--red);font-weight:700}
 /* 입금 안내 */
 .dep-amt{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:14px 0;border-bottom:1px solid var(--line);margin-bottom:14px}
@@ -192,7 +189,6 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
         </div>
         <div class="hint" id="discountMsg"></div>
         <div id="discountBadge" style="display:none;margin-top:10px"></div>
-        <div class="disc-preview" id="discountPreview" style="display:none"></div>
       </div>
     </div>
 
@@ -234,9 +230,7 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
     <h2>🏦 상담비 입금 안내</h2>
     <div class="dep-amt">
       <span id="depName" style="font-weight:700"></span>
-      <s id="depOrig" style="display:none"></s>
       <span class="dep-final" id="depFinal"></span>
-      <span class="disc-badge" id="depBadge" style="display:none"></span>
     </div>
     <div class="dep-line">
       <span>입금 금액 <b id="depAmountText"></b></span>
@@ -299,7 +293,8 @@ function kstFmt(iso){
   const kor = p.minute === "00" ? `${ampm} ${h12}시` : `${ampm} ${h12}시 ${parseInt(p.minute, 10)}분`;
   return { md: `${parseInt(p.month, 10)}/${parseInt(p.day, 10)}`, hm24: `${p.hour}:${p.minute}`, kor };
 }
-// 공용 할인 계산 — 표시(안내)·토스 amount 모두 이 함수 하나만 사용 (로직 이원화 금지)
+// 공용 할인 계산 — 현재 상담비 흐름에서는 미호출(상담비 원가 유지).
+// 추후 PAYMENT_LIVE=true로 '수강료' 결제가 붙을 때 수강료 amount에 이 함수 하나로 적용 (로직 이원화 금지).
 function applyDiscount(base){
   const rate = appliedCode ? appliedCode.rate : 0;
   const discounted = Math.round(base * (1 - rate)); // 원 단위 정수
@@ -377,21 +372,19 @@ function consultFee(applyType){
 }
 
 async function startPayment(applyType, customerName, phone){
+  // 상담비는 할인 대상 아님(원가 유지). 할인은 '수강료 할인 자격'이며,
+  // 추후 수강료 결제(PAYMENT_LIVE) 붙을 때 applyDiscount()로 수강료에 적용.
   const fee = consultFee(applyType);
-  const d = applyDiscount(fee.amount); // 할인 반영 (공용 함수)
-  currentFee = { name: fee.name, amount: d.discounted, base: d.base };
+  currentFee = { name: fee.name, amount: fee.amount };
   document.getElementById("payName").textContent = fee.name;
-  const payAmountEl = document.getElementById("payAmount");
-  payAmountEl.innerHTML = d.rate > 0
-    ? `<s style="color:var(--ink-faint);font-size:14px">${d.base.toLocaleString()}원</s> ${d.discounted.toLocaleString()}원`
-    : `${d.discounted.toLocaleString()}원`;
+  document.getElementById("payAmount").textContent = fee.amount.toLocaleString() + "원";
   const payStep = document.getElementById("payStep");
   payStep.style.display = "block";
   payStep.scrollIntoView({ behavior:"smooth", block:"start" });
   try {
     const tossPayments = TossPayments(TOSS_CLIENT_KEY);
     tossWidgets = tossPayments.widgets({ customerKey: TossPayments.ANONYMOUS });
-    await tossWidgets.setAmount({ currency: "KRW", value: d.discounted });
+    await tossWidgets.setAmount({ currency: "KRW", value: fee.amount });
     await Promise.all([
       tossWidgets.renderPaymentMethods({ selector: "#payment-method", variantKey: "DEFAULT" }),
       tossWidgets.renderAgreement({ selector: "#agreement", variantKey: "AGREEMENT" }),
@@ -424,21 +417,7 @@ payBtn.addEventListener("click", async () => {
 });
 
 // ===== 할인코드 적용 UI =====
-function updatePricePreview(){
-  const prev = document.getElementById("discountPreview");
-  const applyType = form.applyType.value;
-  if (!appliedCode){ prev.style.display = "none"; return; }
-  if (!applyType){
-    prev.style.display = "block";
-    prev.innerHTML = `상담비에 <b>-${Math.round(appliedCode.rate*100)}%</b>가 적용됩니다. (신청 항목 선택 시 금액 표시)`;
-    return;
-  }
-  const fee = consultFee(applyType);
-  const d = applyDiscount(fee.amount);
-  prev.style.display = "block";
-  prev.innerHTML = `${fee.name} <s>${d.base.toLocaleString()}원</s> → <b>${d.discounted.toLocaleString()}원</b>`;
-}
-
+// 할인은 '수강료 할인 자격'을 뜻함 — 상담비에는 미적용(원가 유지). 뱃지에 예시 금액 병기.
 function applyCode(){
   const val = document.getElementById("discountInput").value;
   const msgEl = document.getElementById("discountMsg");
@@ -446,7 +425,7 @@ function applyCode(){
   const hidden = document.getElementById("discount_code");
   if (!normCode(val)){
     appliedCode = null; hidden.value = ""; msgEl.textContent = ""; badgeEl.style.display = "none";
-    updatePricePreview(); return;
+    return;
   }
   const code = normCode(val);
   const st = codeStatus(code, new Date());
@@ -455,7 +434,8 @@ function applyCode(){
     hidden.value = code; msgEl.textContent = "";
     badgeEl.style.display = "block";
     const u = kstFmt(st.def.validUntil);
-    badgeEl.innerHTML = `<span class="disc-badge">✅ ${code} 적용 — 정식 등록 시 수강료 ${Math.round(st.def.rate*100)}% 할인 (~${u.md} ${u.kor}까지)</span>`;
+    const pct = Math.round(st.def.rate * 100);
+    badgeEl.innerHTML = `<span class="disc-badge">✅ ${code} 적용 — 정식 등록 시 수강료 ${pct}% 할인 (예: 8회 290,000 → 261,000원) · ~${u.md} ${u.kor}까지</span>`;
   } else {
     // 기간 외/무효 → 코드 미적용, 폼 진행은 허용
     appliedCode = null; hidden.value = ""; badgeEl.style.display = "none";
@@ -464,11 +444,9 @@ function applyCode(){
     else if (st.state === "after"){ const u = kstFmt(st.def.validUntil); m = `기간이 만료된 코드입니다 (${u.md} ${u.hm24} 종료)`; }
     msgEl.innerHTML = `<span class="disc-err">${m}</span>`;
   }
-  updatePricePreview();
 }
 document.getElementById("applyCodeBtn").addEventListener("click", applyCode);
 document.getElementById("discountInput").addEventListener("keydown", (e) => { if (e.key === "Enter"){ e.preventDefault(); applyCode(); } });
-form.applyType.addEventListener("change", updatePricePreview);
 
 // ?code=XXX → 입력란 자동 채움 + 적용까지 실행
 (function autoCode(){
@@ -479,21 +457,13 @@ form.applyType.addEventListener("change", updatePricePreview);
 })();
 
 // ===== 상담비 입금 안내 (계좌이체) =====
+// 상담비는 할인 대상 아님 — 원가 그대로 안내. (할인은 수강료 자격이며 정식 등록 시 반영)
 function startDeposit(applyType, customerName){
   const fee = consultFee(applyType);
-  const d = applyDiscount(fee.amount); // 할인 반영 (공용 함수)
   document.getElementById("depName").textContent = fee.name;
-  const origEl = document.getElementById("depOrig");
-  const badgeEl = document.getElementById("depBadge");
-  if (d.rate > 0){
-    origEl.textContent = d.base.toLocaleString() + "원"; origEl.style.display = "inline";
-    badgeEl.textContent = `${appliedCode.code} 적용됨 (-${Math.round(d.rate*100)}%)`; badgeEl.style.display = "inline-block";
-  } else {
-    origEl.style.display = "none"; badgeEl.style.display = "none";
-  }
-  document.getElementById("depFinal").textContent = d.discounted.toLocaleString() + "원";
-  document.getElementById("depAmountText").textContent = d.discounted.toLocaleString() + "원";
-  document.getElementById("copyAmount").dataset.copy = String(d.discounted);
+  document.getElementById("depFinal").textContent = fee.amount.toLocaleString() + "원";
+  document.getElementById("depAmountText").textContent = fee.amount.toLocaleString() + "원";
+  document.getElementById("copyAmount").dataset.copy = String(fee.amount);
   const depositor = document.getElementById("depositor");
   if (!depositor.value) depositor.value = customerName || "";
   const dep = document.getElementById("depositStep");
