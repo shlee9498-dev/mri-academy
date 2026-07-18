@@ -764,6 +764,19 @@ if (process.env.DISCORD_TOKEN) {
         { name: "참석현황", description: "[운영진] 참석/불참 집계 + 미응답자 명단", options: [{ name: "역할", description: "미응답자를 점검할 역할(선택)", type: 8, required: false }] },
         { name: "성장등록버튼", description: "[운영진] 수강생 성장(전적) 등록 버튼을 이 채널에 게시", options: [] },
         { name: "성장재계산", description: "[운영진] 등록된 모든 수강생 성장 데이터 재계산(TPP/시즌 보정·현재시즌 갱신)", options: [] },
+        {
+          name: "수업등록",
+          description: "[트레이너] 수업 진행 기록 — 구글시트에 자동 등록·회차 차감",
+          options: [
+            { name: "유형", description: "수업 유형", type: 3, required: true, choices: [
+              { name: "그룹 관전형(최대 4명)", value: "관전형" },
+              { name: "그룹 참여형(최대 3명)", value: "참여형" },
+              { name: "개인 1:1", value: "개인" } ] },
+            { name: "학생", description: "학생 이름(쉼표로 여러 명)", type: 3, required: true },
+            { name: "시간", description: "개인수업 시간(시간 단위, 1시간=5판)", type: 10, required: false },
+            { name: "메모", description: "메모(선택)", type: 3, required: false },
+          ],
+        },
       ];
       if (process.env.GUILD_ID) await client.application.commands.set(cmds, process.env.GUILD_ID);
       else await client.application.commands.set(cmds);
@@ -772,6 +785,97 @@ if (process.env.DISCORD_TOKEN) {
 
   });
   const isStaff = (id) => STAFF_IDS.includes(id);
+
+  // ── /수업등록 : 트레이너 수업 등록 → 구글시트 Apps Script 웹훅 (기존 핸들러와 독립) ──
+  // env: SHEET_WEBHOOK_URL, SHEET_SECRET, TRAINER_ROLE_ID(미설정 시 운영진만), MRI_OWNER_ID(잔여 3판 이하 DM)
+  const LESSON_CAP = { "관전형": 4, "참여형": 3, "개인": 1 };
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "수업등록") return;
+
+    // 권한: 트레이너 역할 보유자 또는 운영진
+    const trainerRole = process.env.TRAINER_ROLE_ID;
+    const okRole = trainerRole ? !!itx.member?.roles?.cache?.has(trainerRole) : false;
+    if (!okRole && !isStaff(itx.user.id))
+      return itx.reply({ content: "트레이너 전용 명령이야.", ephemeral: true });
+
+    const webhook = process.env.SHEET_WEBHOOK_URL;
+    if (!webhook)
+      return itx.reply({ content: "시트 연동이 아직 설정 전이야(SHEET_WEBHOOK_URL 미배포). 운영진에게 문의해줘.", ephemeral: true });
+
+    const lessonType = itx.options.getString("유형");
+    const hours = itx.options.getNumber("시간");
+    const memo = (itx.options.getString("메모") || "").trim();
+
+    // 학생 파싱: 쉼표(반각/전각)·공백 구분, 트림, 중복·빈값 제거
+    const names = [...new Set((itx.options.getString("학생") || "")
+      .split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean))];
+    if (!names.length)
+      return itx.reply({ content: "학생을 최소 1명 입력해줘.", ephemeral: true });
+
+    const cap = LESSON_CAP[lessonType];
+    if (cap && names.length > cap)
+      return itx.reply({ content: `${lessonType}은 최대 ${cap}명이야. (입력: ${names.length}명)`, ephemeral: true });
+
+    // 판수 산정: 그룹=각 1판, 개인=시간×5 (유효판만 트레이너가 등록)
+    let students;
+    if (lessonType === "개인") {
+      if (!hours || hours <= 0)
+        return itx.reply({ content: "개인 수업은 '시간'을 입력해줘 (1시간=5판).", ephemeral: true });
+      const games = Math.round(hours * 5);
+      students = names.map((name) => ({ name, games }));
+    } else {
+      students = names.map((name) => ({ name, games: 1 }));
+    }
+
+    const trainerName = itx.member?.displayName || itx.user.globalName || itx.user.username;
+    await itx.deferReply({ ephemeral: true });
+    try {
+      const r = await fetch(webhook, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          secret: process.env.SHEET_SECRET || "",
+          type: "lesson",
+          trainer: trainerName,
+          lessonType,
+          students,
+          memo,
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.ok === false)
+        return itx.editReply(`시트 등록 실패: ${data.error || r.status}. 잠시 후 다시 시도해줘.`);
+
+      const totalGames = students.reduce((a, s) => a + s.games, 0);
+      const lines = [
+        `✅ 수업 등록 완료 — ${lessonType} · 학생 ${students.length}명 · 총 ${totalGames}판 차감`,
+        `· 대상: ${students.map((s) => `${s.name}(${s.games}판)`).join(", ")}`,
+      ];
+
+      // 시트가 잔여판수(remaining)를 회신하면 표기 + 3판 이하 재결제 DM (선택)
+      const remaining = data.remaining;
+      if (remaining && typeof remaining === "object") {
+        const low = [];
+        for (const s of students) {
+          const rem = remaining[s.name];
+          if (rem == null) continue;
+          lines.push(`  └ ${s.name} 잔여 ${rem}판`);
+          if (Number(rem) <= 3) low.push(`${s.name}(잔여 ${rem}판)`);
+        }
+        if (low.length && process.env.MRI_OWNER_ID) {
+          try {
+            const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+            await owner.send(`⚠️ 재결제 타이밍 — 잔여 3판 이하: ${low.join(", ")}`);
+          } catch (e) { console.error("owner_dm_failed", e?.message); }
+        }
+      }
+      await itx.editReply(lines.join("\n"));
+    } catch (e) {
+      console.error("lesson_register_failed", e?.message);
+      await itx.editReply("등록 중 오류가 났어. 잠시 후 다시 시도해줘.");
+    }
+  });
+
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand()) return;
     const cmd = itx.commandName;
