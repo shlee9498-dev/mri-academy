@@ -795,6 +795,11 @@ if (process.env.DISCORD_TOKEN) {
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand() || itx.commandName !== "수업등록") return;
 
+    // 채널 하드 잠금: LESSON_CHANNEL_ID 설정 시 그 채널에서만 (미설정=잠금 없음, 안전 폴백)
+    const lessonCh = process.env.LESSON_CHANNEL_ID;
+    if (lessonCh && itx.channelId !== lessonCh)
+      return itx.reply({ content: "이 명령은 #수업등록 채널에서만 사용 가능합니다.", ephemeral: true });
+
     // 권한 + 트레이너명: 디코 유저ID→트레이너명 매핑으로만 결정(파라미터로 안 받음 → 남의 탭 방지)
     const trainer = TRAINER_MAP[itx.user.id];
     if (!trainer)
