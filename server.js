@@ -787,16 +787,18 @@ if (process.env.DISCORD_TOKEN) {
   const isStaff = (id) => STAFF_IDS.includes(id);
 
   // ── /수업등록 : 트레이너 수업 등록 → 구글시트 Apps Script 웹훅 (기존 핸들러와 독립) ──
-  // env: SHEET_WEBHOOK_URL, SHEET_SECRET, TRAINER_ROLE_ID(미설정 시 운영진만), MRI_OWNER_ID(잔여 3판 이하 DM)
+  // env: SHEET_WEBHOOK_URL, SHEET_SECRET, TRAINER_MAP(JSON: 디코유저ID→"현태"|"준구"), MRI_OWNER_ID(알림)
   const LESSON_CAP = { "관전형": 4, "참여형": 3, "개인": 1 };
+  let TRAINER_MAP = {};
+  try { TRAINER_MAP = JSON.parse(process.env.TRAINER_MAP || "{}"); }
+  catch (e) { console.error("TRAINER_MAP parse failed", e?.message); }
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand() || itx.commandName !== "수업등록") return;
 
-    // 권한: 트레이너 역할 보유자 또는 운영진
-    const trainerRole = process.env.TRAINER_ROLE_ID;
-    const okRole = trainerRole ? !!itx.member?.roles?.cache?.has(trainerRole) : false;
-    if (!okRole && !isStaff(itx.user.id))
-      return itx.reply({ content: "트레이너 전용 명령이야.", ephemeral: true });
+    // 권한 + 트레이너명: 디코 유저ID→트레이너명 매핑으로만 결정(파라미터로 안 받음 → 남의 탭 방지)
+    const trainer = TRAINER_MAP[itx.user.id];
+    if (!trainer)
+      return itx.reply({ content: "등록된 트레이너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
 
     const webhook = process.env.SHEET_WEBHOOK_URL;
     if (!webhook)
@@ -827,7 +829,6 @@ if (process.env.DISCORD_TOKEN) {
       students = names.map((name) => ({ name, games: 1 }));
     }
 
-    const trainerName = itx.member?.displayName || itx.user.globalName || itx.user.username;
     await itx.deferReply({ ephemeral: true });
     try {
       const r = await fetch(webhook, {
@@ -836,7 +837,7 @@ if (process.env.DISCORD_TOKEN) {
         body: JSON.stringify({
           secret: process.env.SHEET_SECRET || "",
           type: "lesson",
-          trainer: trainerName,
+          trainer,
           lessonType,
           students,
           memo,
@@ -846,26 +847,18 @@ if (process.env.DISCORD_TOKEN) {
       if (!r.ok || data.ok === false)
         return itx.editReply(`시트 등록 실패: ${data.error || r.status}. 잠시 후 다시 시도해줘.`);
 
-      const totalGames = students.reduce((a, s) => a + s.games, 0);
-      const lines = [
-        `✅ 수업 등록 완료 — ${lessonType} · 학생 ${students.length}명 · 총 ${totalGames}판 차감`,
-        `· 대상: ${students.map((s) => `${s.name}(${s.games}판)`).join(", ")}`,
-      ];
-
-      // 시트가 잔여판수(remaining)를 회신하면 표기 + 3판 이하 재결제 DM (선택)
-      const remaining = data.remaining;
-      if (remaining && typeof remaining === "object") {
-        const low = [];
-        for (const s of students) {
-          const rem = remaining[s.name];
-          if (rem == null) continue;
-          lines.push(`  └ ${s.name} 잔여 ${rem}판`);
-          if (Number(rem) <= 3) low.push(`${s.name}(잔여 ${rem}판)`);
-        }
-        if (low.length && process.env.MRI_OWNER_ID) {
+      // v3 응답: updated[{name,added,total}] + notFound[]
+      const updated = Array.isArray(data.updated) ? data.updated : [];
+      const notFound = Array.isArray(data.notFound) ? data.notFound : [];
+      const lines = [`✅ 수업 등록 — ${trainer} · ${lessonType}`];
+      if (updated.length)
+        lines.push(...updated.map((u) => `· ${u.name} +${u.added}판 → 누적 ${u.total}판`));
+      if (notFound.length) {
+        lines.push(`⚠️ 레슨로그에 없는 이름 — 사장 확인 필요: ${notFound.join(", ")}`);
+        if (process.env.MRI_OWNER_ID) {
           try {
             const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
-            await owner.send(`⚠️ 재결제 타이밍 — 잔여 3판 이하: ${low.join(", ")}`);
+            await owner.send(`⚠️ /수업등록 — ${trainer} 탭에 없는 이름: ${notFound.join(", ")} (오타/미등록 확인)`);
           } catch (e) { console.error("owner_dm_failed", e?.message); }
         }
       }
@@ -1862,6 +1855,22 @@ app.post("/api/apply", async (req, res) => {
     if (!wr.ok) {
       console.error("webhook_error", wr.status);
       return res.status(502).json({ error: "webhook_failed" });
+    }
+    // 상담신청 매출관리 시트에도 append (best-effort — 실패해도 신청 자체는 성공 처리)
+    if (process.env.SHEET_WEBHOOK_URL) {
+      fetch(process.env.SHEET_WEBHOOK_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          secret: process.env.SHEET_SECRET || "",
+          type: "consult",
+          name: clip(b.name, 30),
+          phone: clip(b.phone, 20),
+          discord: clip(b.discord, 40),
+          course: clip(b.applyType, 50),
+          memo: clip(b.memo || b.focus, 300),
+        }),
+      }).catch((e) => console.error("consult_sheet_error", e?.message));
     }
     res.json({ ok: true });
   } catch (e) {
