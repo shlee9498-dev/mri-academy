@@ -833,6 +833,7 @@ if (process.env.DISCORD_TOKEN) {
     try {
       const r = await fetch(webhook, {
         method: "POST",
+        redirect: "follow", // Apps Script /exec: POST→302→JSON, 리다이렉트 추적 필수(Node fetch 기본값이나 명시)
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           secret: process.env.SHEET_SECRET || "",
@@ -1860,6 +1861,7 @@ app.post("/api/apply", async (req, res) => {
     if (process.env.SHEET_WEBHOOK_URL) {
       fetch(process.env.SHEET_WEBHOOK_URL, {
         method: "POST",
+        redirect: "follow", // Apps Script /exec: POST→302→JSON 추적 필수
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           secret: process.env.SHEET_SECRET || "",
