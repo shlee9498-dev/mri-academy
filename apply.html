@@ -342,6 +342,7 @@ form.addEventListener("submit", async (e) => {
     if (!r.ok) throw new Error(d.error || "전송 실패");
     if (window.umami) umami.track("apply_submit");
     form.querySelectorAll("input,select,textarea,button").forEach(el => el.disabled = true);
+    if (window.umami) umami.track("apply_submit", { applyType: payload.applyType, source: payload.source });
     if (PAYMENT_LIVE) {
       show("ok", "✅ 신청서 접수 완료! 이어서 아래에서 상담비를 결제해 주세요.");
       startPayment(payload.applyType, payload.name, payload.phone);
