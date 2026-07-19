@@ -42,8 +42,25 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
 .msg.err{display:block;background:rgba(230,57,70,.1);border:1px solid rgba(230,57,70,.35);color:var(--red)}
 .pii-note{font-size:11.5px;color:var(--ink-faint);line-height:1.6;margin-top:14px;padding:13px;background:var(--bg-card);border:1px dashed var(--line);border-radius:8px}
 .back{display:inline-block;margin-top:20px;color:var(--gold);text-decoration:none;font-weight:700;font-size:14px}
+/* 할인코드 */
+.code-row{display:flex;gap:8px}
+.code-row input{flex:1;text-transform:uppercase}
+.code-apply{flex:0 0 auto;width:auto;margin:0;padding:11px 20px;font-size:14px}
+.disc-badge{display:inline-block;background:rgba(245,197,24,.12);border:1px solid var(--gold-soft);color:var(--gold);font-weight:800;font-size:12.5px;padding:6px 12px;border-radius:99px;line-height:1.5}
+.disc-err{color:var(--red);font-weight:700}
+/* 입금 안내 */
+.dep-amt{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:14px 0;border-bottom:1px solid var(--line);margin-bottom:14px}
+.dep-amt s{color:var(--ink-faint);font-size:15px}
+.dep-final{color:var(--gold);font-weight:800;font-size:26px;line-height:1}
+.dep-line{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:10px;font-size:14px}
+.dep-line b{color:var(--ink);letter-spacing:.02em}
+.copy-btn{flex:0 0 auto;background:var(--bg-elev);color:var(--gold);border:1px solid var(--gold-soft);border-radius:6px;padding:8px 13px;font-family:var(--body);font-size:12.5px;font-weight:700;cursor:pointer}
+.copy-btn:active{transform:scale(.97)}
+.dep-warn{font-size:12.5px;color:var(--ink);background:rgba(230,57,70,.08);border:1px solid rgba(230,57,70,.3);border-radius:8px;padding:12px 14px;margin:4px 0 12px;line-height:1.6}
+.dep-note{font-size:12.5px;color:var(--ink-dim);line-height:1.6}
 </style>
 <script src="https://js.tosspayments.com/v2/standard"></script>
+<script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
 </head>
 <body>
 <div class="wrap">
@@ -54,6 +71,12 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
   </div>
 
   <form id="form">
+    <!-- 제출 payload 보존용 (UTM은 진입 시 URL→sessionStorage 백업) -->
+    <input type="hidden" name="discount_code" id="discount_code">
+    <input type="hidden" name="utm_source" id="utm_source">
+    <input type="hidden" name="utm_medium" id="utm_medium">
+    <input type="hidden" name="utm_content" id="utm_content">
+
     <!-- 1. 기본 -->
     <div class="sec">
       <h2>📝 기본 정보</h2>
@@ -156,6 +179,20 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
       </div>
     </div>
 
+    <!-- 4. 할인코드 -->
+    <div class="sec">
+      <h2>🎟️ 할인코드</h2>
+      <div class="fld">
+        <label>할인코드<span class="opt">(선택)</span></label>
+        <div class="code-row">
+          <input name="discountInput" id="discountInput" type="text" placeholder="예: SHORTS10" autocomplete="off" inputmode="text">
+          <button type="button" id="applyCodeBtn" class="submit code-apply">적용</button>
+        </div>
+        <div class="hint" id="discountMsg"></div>
+        <div id="discountBadge" style="display:none;margin-top:10px"></div>
+      </div>
+    </div>
+
     <div class="sec">
       <label class="agree">
         <input type="checkbox" id="agree" required>
@@ -189,6 +226,30 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
     <div class="msg" id="payMsg"></div>
   </div>
 
+  <!-- ===== 상담비 입금 안내 (PAYMENT_LIVE=false · 계좌이체) ===== -->
+  <div class="sec" id="depositStep" style="display:none;margin-top:22px">
+    <h2>🏦 상담비 입금 안내</h2>
+    <div class="dep-amt">
+      <span id="depName" style="font-weight:700"></span>
+      <span class="dep-final" id="depFinal"></span>
+    </div>
+    <div class="dep-line">
+      <span>입금 금액 <b id="depAmountText"></b></span>
+      <button type="button" class="copy-btn" id="copyAmount" data-copy="">금액복사</button>
+    </div>
+    <div class="dep-line">
+      <span>카카오뱅크 <b>3333-24-0264625</b> (MRI아카데미)</span>
+      <button type="button" class="copy-btn" id="copyAcct" data-copy="3333240264625">계좌복사</button>
+    </div>
+    <div class="fld" style="margin:14px 0 12px">
+      <label>입금 예정자명<span class="opt">(신청자명과 다를 경우 수정)</span></label>
+      <input type="text" id="depositor" placeholder="입금하실 분 성함">
+    </div>
+    <div class="dep-warn">⚠️ 입금자명은 <b>신청자 이름과 동일</b>하게 해주세요. 다를 경우 위 <b>입금 예정자명</b>에 기재해 주세요.</div>
+    <div class="dep-note">입금 확인 후 <b style="color:var(--gold)">24시간 이내</b> 디스코드/카카오로 수강 안내드립니다.</div>
+    <div class="msg" id="depMsg"></div>
+  </div>
+
   <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
 </div>
 
@@ -197,6 +258,61 @@ const API_BASE = "https://mri-academy-production.up.railway.app";
 const form = document.getElementById("form");
 const submit = document.getElementById("submit");
 const msg = document.getElementById("msg");
+
+// ===== 할인코드 =====
+// 추후 서버 검증 전환 여지: codeStatus()만 서버 호출로 바꾸면 됨. 지금은 클라이언트 상수.
+// ⚠ 유효기간(validFrom/validUntil)은 server.js DISCOUNT_CODES와 동일하게 유지할 것.
+//   날짜는 KST(+09:00) 오프셋을 포함한 ISO — 절대 시각 비교라 실행 TZ와 무관하게 KST 기준으로 판정됨.
+const DISCOUNT_CODES = {
+  "SHORTS10": {
+    rate: 0.10, label: "유튜브 쇼츠 10%",
+    validFrom: "2026-07-14T14:00:00+09:00",
+    validUntil: "2026-07-19T14:00:00+09:00",
+  },
+};
+let appliedCode = null; // { code, rate, label, ... } | null
+const normCode = (v) => String(v || "").trim().toUpperCase();
+
+// 공용 기간 판정 — 클라 표시용/제출 검증용 모두 이 함수 하나만 사용 (로직 중복 금지)
+// state: "ok" | "before"(시작 전) | "after"(만료) | "unknown"(없는 코드)
+function codeStatus(code, now){
+  const def = DISCOUNT_CODES[normCode(code)];
+  if (!def) return { state: "unknown", def: null };
+  const t = now.getTime();
+  if (def.validFrom && t < new Date(def.validFrom).getTime()) return { state: "before", def };
+  if (def.validUntil && t >= new Date(def.validUntil).getTime()) return { state: "after", def };
+  return { state: "ok", def };
+}
+// KST 표시 포맷 (마감 병기용) — Asia/Seoul 고정
+function kstFmt(iso){
+  const p = {};
+  new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })
+    .formatToParts(new Date(iso)).forEach((x) => { p[x.type] = x.value; });
+  let h = parseInt(p.hour, 10); if (h === 24) h = 0;
+  const ampm = h < 12 ? "오전" : "오후";
+  let h12 = h % 12; if (h12 === 0) h12 = 12;
+  const kor = p.minute === "00" ? `${ampm} ${h12}시` : `${ampm} ${h12}시 ${parseInt(p.minute, 10)}분`;
+  return { md: `${parseInt(p.month, 10)}/${parseInt(p.day, 10)}`, hm24: `${p.hour}:${p.minute}`, kor };
+}
+// 공용 할인 계산 — 현재 상담비 흐름에서는 미호출(상담비 원가 유지).
+// 추후 PAYMENT_LIVE=true로 '수강료' 결제가 붙을 때 수강료 amount에 이 함수 하나로 적용 (로직 이원화 금지).
+function applyDiscount(base){
+  const rate = appliedCode ? appliedCode.rate : 0;
+  const discounted = Math.round(base * (1 - rate)); // 원 단위 정수
+  return { base, rate, discounted, off: base - discounted };
+}
+
+// ===== UTM 캡처 (진입 시 URL→sessionStorage 백업, 페이지 내 이동에도 유지) =====
+(function captureUTM(){
+  const qs = new URLSearchParams(location.search);
+  ["utm_source","utm_medium","utm_content"].forEach((k) => {
+    let v = qs.get(k);
+    if (v) { try { sessionStorage.setItem(k, v); } catch(e){} }
+    else { try { v = sessionStorage.getItem(k); } catch(e){ v = null; } }
+    const el = document.getElementById(k);
+    if (el) el.value = v || "";
+  });
+})();
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -211,6 +327,8 @@ form.addEventListener("submit", async (e) => {
     platform: fd.get("platform"), nickname: fd.get("nickname"),
     tier: fd.get("tier") || "", playtime: fd.get("playtime"),
     focus: focus.join(", "), memo: fd.get("memo") || "", statsConsent: document.getElementById("agreeStats").checked ? "동의" : "미동의",
+    discount_code: appliedCode ? appliedCode.code : "",
+    utm_source: fd.get("utm_source") || "", utm_medium: fd.get("utm_medium") || "", utm_content: fd.get("utm_content") || "",
   };
   if (!focus.length) { show("err", "집중 교정 희망을 하나 이상 선택해 주세요."); return; }
 
@@ -222,14 +340,15 @@ form.addEventListener("submit", async (e) => {
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "전송 실패");
+    if (window.umami) umami.track("apply_submit");
     form.querySelectorAll("input,select,textarea,button").forEach(el => el.disabled = true);
-    // ── 결제 오픈 스위치: 토스 심사 통과 후 true로 변경 ──
-    const PAYMENT_LIVE = false;
+    if (window.umami) umami.track("apply_submit", { applyType: payload.applyType, source: payload.source });
     if (PAYMENT_LIVE) {
       show("ok", "✅ 신청서 접수 완료! 이어서 아래에서 상담비를 결제해 주세요.");
       startPayment(payload.applyType, payload.name, payload.phone);
     } else {
-      show("ok", "✅ 신청서 접수 완료! 운영진이 확인 후 24시간 이내에 카카오톡/디스코드로 상담 일정과 상담비 결제 방법을 안내드립니다. 조금만 기다려 주세요 🙂");
+      show("ok", "✅ 신청서 접수 완료! 아래 안내에 따라 상담비를 입금해 주세요. 입금 확인 후 24시간 이내에 카카오톡/디스코드로 상담 일정을 안내드립니다 🙂");
+      startDeposit(payload.applyType, payload.name);
     }
   } catch (err) {
     show("err", "❌ " + (err.message || "전송 오류") + " — 디스코드/카카오로 직접 문의해 주세요.");
@@ -242,6 +361,9 @@ function show(type, text) { msg.className = "msg " + type; msg.textContent = tex
 // TODO: 토스 상점관리자 > 개발자센터 > API 키 > 결제위젯 연동 키 > "클라이언트 키"로 교체.
 //       지금은 토스 공개 테스트 키 → 본인 상점 테스트키로 바꿔야 심사 연동됨 → 심사 통과 후 라이브 키로 교체.
 const TOSS_CLIENT_KEY = "test_gck_GePWvyJnrKRq46aB1kEqVgLzN97E";
+// ── 결제 오픈 스위치: 토스 심사 통과 후 true로 변경 ──
+// false: 계좌이체 입금 안내(depositStep) 노출 / true: 토스 결제위젯(payStep) 노출
+const PAYMENT_LIVE = false;
 let tossWidgets = null, payReady = false, currentFee = null;
 const payBtn = document.getElementById("payBtn");
 const payMsg = document.getElementById("payMsg");
@@ -253,8 +375,10 @@ function consultFee(applyType){
 }
 
 async function startPayment(applyType, customerName, phone){
+  // 상담비는 할인 대상 아님(원가 유지). 할인은 '수강료 할인 자격'이며,
+  // 추후 수강료 결제(PAYMENT_LIVE) 붙을 때 applyDiscount()로 수강료에 적용.
   const fee = consultFee(applyType);
-  currentFee = fee;
+  currentFee = { name: fee.name, amount: fee.amount };
   document.getElementById("payName").textContent = fee.name;
   document.getElementById("payAmount").textContent = fee.amount.toLocaleString() + "원";
   const payStep = document.getElementById("payStep");
@@ -294,6 +418,78 @@ payBtn.addEventListener("click", async () => {
     if (e.code !== "USER_CANCEL") { payMsg.className = "msg err"; payMsg.textContent = "결제 요청 오류: " + (e.message || e.code || ""); }
   }
 });
+
+// ===== 할인코드 적용 UI =====
+// 할인은 '수강료 할인 자격'을 뜻함 — 상담비에는 미적용(원가 유지). 뱃지에 예시 금액 병기.
+function applyCode(){
+  const val = document.getElementById("discountInput").value;
+  const msgEl = document.getElementById("discountMsg");
+  const badgeEl = document.getElementById("discountBadge");
+  const hidden = document.getElementById("discount_code");
+  if (!normCode(val)){
+    appliedCode = null; hidden.value = ""; msgEl.textContent = ""; badgeEl.style.display = "none";
+    return;
+  }
+  const code = normCode(val);
+  const st = codeStatus(code, new Date());
+  if (st.state === "ok"){
+    appliedCode = Object.assign({ code }, st.def);
+    hidden.value = code; msgEl.textContent = "";
+    badgeEl.style.display = "block";
+    const u = kstFmt(st.def.validUntil);
+    const pct = Math.round(st.def.rate * 100);
+    badgeEl.innerHTML = `<span class="disc-badge">✅ ${code} 적용 — 정식 등록 시 수강료 ${pct}% 할인 (예: 8회 290,000 → 261,000원) · ~${u.md} ${u.kor}까지</span>`;
+  } else {
+    // 기간 외/무효 → 코드 미적용, 폼 진행은 허용
+    appliedCode = null; hidden.value = ""; badgeEl.style.display = "none";
+    let m = "유효하지 않은 코드입니다";
+    if (st.state === "before") m = "아직 시작 전인 코드입니다";
+    else if (st.state === "after"){ const u = kstFmt(st.def.validUntil); m = `기간이 만료된 코드입니다 (${u.md} ${u.hm24} 종료)`; }
+    msgEl.innerHTML = `<span class="disc-err">${m}</span>`;
+  }
+}
+document.getElementById("applyCodeBtn").addEventListener("click", applyCode);
+document.getElementById("discountInput").addEventListener("keydown", (e) => { if (e.key === "Enter"){ e.preventDefault(); applyCode(); } });
+
+// ?code=XXX → 입력란 자동 채움 + 적용까지 실행
+(function autoCode(){
+  const c = new URLSearchParams(location.search).get("code");
+  if (!c) return;
+  document.getElementById("discountInput").value = normCode(c);
+  applyCode();
+})();
+
+// ===== 상담비 입금 안내 (계좌이체) =====
+// 상담비는 할인 대상 아님 — 원가 그대로 안내. (할인은 수강료 자격이며 정식 등록 시 반영)
+function startDeposit(applyType, customerName){
+  const fee = consultFee(applyType);
+  document.getElementById("depName").textContent = fee.name;
+  document.getElementById("depFinal").textContent = fee.amount.toLocaleString() + "원";
+  document.getElementById("depAmountText").textContent = fee.amount.toLocaleString() + "원";
+  document.getElementById("copyAmount").dataset.copy = String(fee.amount);
+  const depositor = document.getElementById("depositor");
+  if (!depositor.value) depositor.value = customerName || "";
+  const dep = document.getElementById("depositStep");
+  dep.style.display = "block";
+  dep.scrollIntoView({ behavior:"smooth", block:"start" });
+}
+
+function copyText(text, btn){
+  const label = btn.textContent;
+  const done = () => { btn.textContent = "복사됨 ✓"; setTimeout(() => { btn.textContent = label; }, 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else { fallbackCopy(text, done); }
+}
+function fallbackCopy(text, cb){
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  try { document.execCommand("copy"); cb(); } catch(e){}
+  document.body.removeChild(ta);
+}
+document.getElementById("copyAmount").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
+document.getElementById("copyAcct").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
 
 // ── 결제 직행 모드 (?pay=1|lesson / ?pay=lecture) ──
 // 신청서 제출 없이 결제창 바로 노출 — PG 심사 확인용 + "상담비만 먼저 결제" 동선.

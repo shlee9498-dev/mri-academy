@@ -710,6 +710,38 @@ if (process.env.DISCORD_TOKEN) {
     ],
     partials: [Partials.Message, Partials.Channel, Partials.Reaction],
   });
+
+  // /수업등록 명령 정의 — GmI 서버(LESSON_GUILD_ID)에만 등록 (기존 명령과 길드 분리).
+  const LESSON_CMD = {
+    name: "수업등록",
+    description: "[트레이너] 수업 진행 기록 — 구글시트에 자동 등록·회차 차감",
+    options: [
+      { name: "유형", description: "수업 유형", type: 3, required: true, choices: [
+        { name: "그룹 관전형(최대 4명)", value: "관전형" },
+        { name: "그룹 참여형(최대 3명)", value: "참여형" },
+        { name: "개인 1:1", value: "개인" } ] },
+      { name: "학생", description: "학생 이름(쉼표로 여러 명)", type: 3, required: true },
+      { name: "시간", description: "개인수업 시간(시간 단위, 1시간=5판)", type: 10, required: false },
+      { name: "메모", description: "메모(선택)", type: 3, required: false },
+    ],
+  };
+  // 봇 초대 URL(bot + applications.commands). client_id는 로그인 후 확정.
+  const lessonInviteUrl = () => client.application
+    ? `https://discord.com/oauth2/authorize?client_id=${client.application.id}&scope=bot%20applications.commands&permissions=3072`
+    : "(로그인 후 확정)";
+  // /수업등록을 지정 길드(GmI)에만 등록. 봇이 그 길드에 없으면 초대 URL 안내 후 skip.
+  async function registerLessonCmd(guildId, ctx) {
+    if (!guildId) return;
+    if (!client.guilds.cache.has(guildId)) {
+      console.warn(`⚠️ 봇이 LESSON_GUILD_ID(${guildId}) 길드에 없음 [${ctx}] → 초대 후 자동 등록됩니다.\n   invite: ${lessonInviteUrl()}`);
+      return;
+    }
+    try {
+      await client.application.commands.set([LESSON_CMD], guildId);
+      console.log(`/수업등록 registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
+    } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
+  }
+
   client.once("ready", async () => {
     console.log("bot ready:", client.user.tag);
     refresh(client);
@@ -765,13 +797,119 @@ if (process.env.DISCORD_TOKEN) {
         { name: "성장등록버튼", description: "[운영진] 수강생 성장(전적) 등록 버튼을 이 채널에 게시", options: [] },
         { name: "성장재계산", description: "[운영진] 등록된 모든 수강생 성장 데이터 재계산(TPP/시즌 보정·현재시즌 갱신)", options: [] },
       ];
-      if (process.env.GUILD_ID) await client.application.commands.set(cmds, process.env.GUILD_ID);
-      else await client.application.commands.set(cmds);
-      console.log("slash commands registered:", cmds.map((c) => c.name).join(", "));
+      // 기존 명령은 GUILD_ID(피드백/운영 서버)에 그대로 유지 — 피드백 워크플로우 무파손.
+      // 수업등록을 별도 길드(LESSON_GUILD_ID=GmI)로 분리. 단 두 값이 같거나 LESSON 미설정이면
+      // 안전 폴백으로 GUILD_ID에 함께 등록(별도 set()이 서로의 명령을 덮어쓰는 사고 방지).
+      const lessonGuild = process.env.LESSON_GUILD_ID;
+      const splitLesson = lessonGuild && lessonGuild !== process.env.GUILD_ID;
+      const mainCmds = splitLesson ? cmds : [...cmds, LESSON_CMD];
+      if (process.env.GUILD_ID) await client.application.commands.set(mainCmds, process.env.GUILD_ID);
+      else await client.application.commands.set(mainCmds);
+      console.log("slash commands registered (main guild):", mainCmds.map((c) => c.name).join(", "));
+      // /수업등록 → GmI 서버(LESSON_GUILD_ID)에만 등록 (트레이너 운영 채널이 GmI에 있음)
+      if (splitLesson) await registerLessonCmd(lessonGuild, "ready");
     } catch (e) { console.error("slash_register_failed", e?.message); }
 
   });
+
+  // 봇이 GmI 길드에 새로 초대되면 /수업등록 즉시 등록 (재배포 불필요)
+  client.on("guildCreate", async (guild) => {
+    const lessonGuild = process.env.LESSON_GUILD_ID;
+    if (lessonGuild && lessonGuild !== process.env.GUILD_ID && guild.id === lessonGuild) {
+      await registerLessonCmd(lessonGuild, "guildCreate");
+    }
+  });
   const isStaff = (id) => STAFF_IDS.includes(id);
+
+  // ── /수업등록 : 트레이너 수업 등록 → 구글시트 Apps Script 웹훅 (기존 핸들러와 독립) ──
+  // env: SHEET_WEBHOOK_URL, SHEET_SECRET, TRAINER_MAP(JSON: 디코유저ID→"현태"|"준구"), MRI_OWNER_ID(알림)
+  const LESSON_CAP = { "관전형": 4, "참여형": 3, "개인": 1 };
+  let TRAINER_MAP = {};
+  try { TRAINER_MAP = JSON.parse(process.env.TRAINER_MAP || "{}"); }
+  catch (e) { console.error("TRAINER_MAP parse failed", e?.message); }
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "수업등록") return;
+
+    // 채널 하드 잠금: LESSON_CHANNEL_ID 설정 시 그 채널에서만 (미설정=잠금 없음, 안전 폴백)
+    const lessonCh = process.env.LESSON_CHANNEL_ID;
+    if (lessonCh && itx.channelId !== lessonCh)
+      return itx.reply({ content: "이 명령은 #수업등록 채널에서만 사용 가능합니다.", ephemeral: true });
+
+    // 권한 + 트레이너명: 디코 유저ID→트레이너명 매핑으로만 결정(파라미터로 안 받음 → 남의 탭 방지)
+    const trainer = TRAINER_MAP[itx.user.id];
+    if (!trainer)
+      return itx.reply({ content: "등록된 트레이너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
+
+    const webhook = process.env.SHEET_WEBHOOK_URL;
+    if (!webhook)
+      return itx.reply({ content: "시트 연동이 아직 설정 전이야(SHEET_WEBHOOK_URL 미배포). 운영진에게 문의해줘.", ephemeral: true });
+
+    const lessonType = itx.options.getString("유형");
+    const hours = itx.options.getNumber("시간");
+    const memo = (itx.options.getString("메모") || "").trim();
+
+    // 학생 파싱: 쉼표(반각/전각)·공백 구분, 트림, 중복·빈값 제거
+    const names = [...new Set((itx.options.getString("학생") || "")
+      .split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean))];
+    if (!names.length)
+      return itx.reply({ content: "학생을 최소 1명 입력해줘.", ephemeral: true });
+
+    const cap = LESSON_CAP[lessonType];
+    if (cap && names.length > cap)
+      return itx.reply({ content: `${lessonType}은 최대 ${cap}명이야. (입력: ${names.length}명)`, ephemeral: true });
+
+    // 판수 산정: 그룹=각 1판, 개인=시간×5 (유효판만 트레이너가 등록)
+    let students;
+    if (lessonType === "개인") {
+      if (!hours || hours <= 0)
+        return itx.reply({ content: "개인 수업은 '시간'을 입력해줘 (1시간=5판).", ephemeral: true });
+      const games = Math.round(hours * 5);
+      students = names.map((name) => ({ name, games }));
+    } else {
+      students = names.map((name) => ({ name, games: 1 }));
+    }
+
+    await itx.deferReply({ ephemeral: true });
+    try {
+      const r = await fetch(webhook, {
+        method: "POST",
+        redirect: "follow", // Apps Script /exec: POST→302→JSON, 리다이렉트 추적 필수(Node fetch 기본값이나 명시)
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          secret: process.env.SHEET_SECRET || "",
+          type: "lesson",
+          trainer,
+          lessonType,
+          students,
+          memo,
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.ok === false)
+        return itx.editReply(`시트 등록 실패: ${data.error || r.status}. 잠시 후 다시 시도해줘.`);
+
+      // v3 응답: updated[{name,added,total}] + notFound[]
+      const updated = Array.isArray(data.updated) ? data.updated : [];
+      const notFound = Array.isArray(data.notFound) ? data.notFound : [];
+      const lines = [`✅ 수업 등록 — ${trainer} · ${lessonType}`];
+      if (updated.length)
+        lines.push(...updated.map((u) => `· ${u.name} +${u.added}판 → 누적 ${u.total}판`));
+      if (notFound.length) {
+        lines.push(`⚠️ 레슨로그에 없는 이름 — 사장 확인 필요: ${notFound.join(", ")}`);
+        if (process.env.MRI_OWNER_ID) {
+          try {
+            const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+            await owner.send(`⚠️ /수업등록 — ${trainer} 탭에 없는 이름: ${notFound.join(", ")} (오타/미등록 확인)`);
+          } catch (e) { console.error("owner_dm_failed", e?.message); }
+        }
+      }
+      await itx.editReply(lines.join("\n"));
+    } catch (e) {
+      console.error("lesson_register_failed", e?.message);
+      await itx.editReply("등록 중 오류가 났어. 잠시 후 다시 시도해줘.");
+    }
+  });
+
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand()) return;
     const cmd = itx.commandName;
@@ -1652,6 +1790,25 @@ app.get("/api/nicks", async (req, res) => {
 });
 
 // ═══════════════════ 수강 신청 자동 전송 ═══════════════════
+// ── 할인코드 (apply.html DISCOUNT_CODES와 동일하게 유지) ──
+// 날짜는 KST(+09:00) 오프셋 포함 ISO — 절대 시각 비교라 서버 TZ와 무관하게 KST 기준 판정.
+const DISCOUNT_CODES = {
+  SHORTS10: {
+    rate: 0.10, label: "유튜브 쇼츠 10%",
+    validFrom: "2026-07-14T14:00:00+09:00",
+    validUntil: "2026-07-19T14:00:00+09:00",
+  },
+};
+// 공용 기간 판정 (제출 수신 시 서버 시각 기준 재검증) — state: ok|before|after|unknown
+function codeStatus(code, now) {
+  const def = DISCOUNT_CODES[String(code || "").trim().toUpperCase()];
+  if (!def) return { state: "unknown", def: null };
+  const t = now.getTime();
+  if (def.validFrom && t < new Date(def.validFrom).getTime()) return { state: "before", def };
+  if (def.validUntil && t >= new Date(def.validUntil).getTime()) return { state: "after", def };
+  return { state: "ok", def };
+}
+
 // POST /api/apply — 신청서를 디스코드 운영진 채널(웹훅)로 전송 + BPI 자동 첨부
 // env: DISCORD_APPLY_WEBHOOK (디스코드 채널 → 연동 → 웹훅 URL)
 
@@ -1689,6 +1846,17 @@ app.post("/api/apply", async (req, res) => {
     }
     const clip = (s, n) => String(s || "").slice(0, n);
 
+    // 할인코드 — 서버 시각(KST 오프셋 기준) 재검증 후 운영진용 표기 (제출 자체는 거부 안 함)
+    let discountText = "—";
+    if (b.discount_code && String(b.discount_code).trim()) {
+      const code = clip(String(b.discount_code).trim().toUpperCase(), 30);
+      const st = codeStatus(code, new Date());
+      if (st.state === "ok") discountText = `${code} ✅ (기간 내)`;
+      else if (st.state === "before") discountText = `${code} ⚠️ 기간 외 제출 (시작 전)`;
+      else if (st.state === "after") discountText = `${code} ⚠️ 기간 외 제출 (만료)`;
+      else discountText = `${code} ⚠️ 미등록 코드`;
+    }
+
     // 스팀/카카오 닉이 있으면 BPI 자동 진단 (PUBG 키 있을 때만)
     let bpiText = "PUBG 키 미설정 — 진단 생략";
     if (process.env.PUBG_API_KEY) {
@@ -1710,6 +1878,8 @@ app.post("/api/apply", async (req, res) => {
         { name: "성별/생년", value: `${clip(b.gender, 10)} / ${clip(b.birth, 10) || "—"}`, inline: true },
         { name: "📞 연락처", value: clip(b.phone, 20), inline: true },
         { name: "💬 디스코드", value: clip(b.discord, 40), inline: true },
+        { name: "🎟️ 할인코드", value: discountText, inline: true },
+        { name: "🔗 UTM", value: [clip(b.utm_source, 40), clip(b.utm_medium, 40), clip(b.utm_content, 60)].filter(Boolean).join(" / ") || "—", inline: true },
       ],
       timestamp: new Date().toISOString(),
       footer: { text: "MRI ACADEMY 온라인 신청" },
@@ -1726,6 +1896,23 @@ app.post("/api/apply", async (req, res) => {
     if (!wr.ok) {
       console.error("webhook_error", wr.status);
       return res.status(502).json({ error: "webhook_failed" });
+    }
+    // 상담신청 매출관리 시트에도 append (best-effort — 실패해도 신청 자체는 성공 처리)
+    if (process.env.SHEET_WEBHOOK_URL) {
+      fetch(process.env.SHEET_WEBHOOK_URL, {
+        method: "POST",
+        redirect: "follow", // Apps Script /exec: POST→302→JSON 추적 필수
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          secret: process.env.SHEET_SECRET || "",
+          type: "consult",
+          name: clip(b.name, 30),
+          phone: clip(b.phone, 20),
+          discord: clip(b.discord, 40),
+          course: clip(b.applyType, 50),
+          memo: clip(b.memo || b.focus, 300),
+        }),
+      }).catch((e) => console.error("consult_sheet_error", e?.message));
     }
     res.json({ ok: true });
   } catch (e) {
