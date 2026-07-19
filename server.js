@@ -710,6 +710,38 @@ if (process.env.DISCORD_TOKEN) {
     ],
     partials: [Partials.Message, Partials.Channel, Partials.Reaction],
   });
+
+  // /수업등록 명령 정의 — GmI 서버(LESSON_GUILD_ID)에만 등록 (기존 명령과 길드 분리).
+  const LESSON_CMD = {
+    name: "수업등록",
+    description: "[트레이너] 수업 진행 기록 — 구글시트에 자동 등록·회차 차감",
+    options: [
+      { name: "유형", description: "수업 유형", type: 3, required: true, choices: [
+        { name: "그룹 관전형(최대 4명)", value: "관전형" },
+        { name: "그룹 참여형(최대 3명)", value: "참여형" },
+        { name: "개인 1:1", value: "개인" } ] },
+      { name: "학생", description: "학생 이름(쉼표로 여러 명)", type: 3, required: true },
+      { name: "시간", description: "개인수업 시간(시간 단위, 1시간=5판)", type: 10, required: false },
+      { name: "메모", description: "메모(선택)", type: 3, required: false },
+    ],
+  };
+  // 봇 초대 URL(bot + applications.commands). client_id는 로그인 후 확정.
+  const lessonInviteUrl = () => client.application
+    ? `https://discord.com/oauth2/authorize?client_id=${client.application.id}&scope=bot%20applications.commands&permissions=3072`
+    : "(로그인 후 확정)";
+  // /수업등록을 지정 길드(GmI)에만 등록. 봇이 그 길드에 없으면 초대 URL 안내 후 skip.
+  async function registerLessonCmd(guildId, ctx) {
+    if (!guildId) return;
+    if (!client.guilds.cache.has(guildId)) {
+      console.warn(`⚠️ 봇이 LESSON_GUILD_ID(${guildId}) 길드에 없음 [${ctx}] → 초대 후 자동 등록됩니다.\n   invite: ${lessonInviteUrl()}`);
+      return;
+    }
+    try {
+      await client.application.commands.set([LESSON_CMD], guildId);
+      console.log(`/수업등록 registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
+    } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
+  }
+
   client.once("ready", async () => {
     console.log("bot ready:", client.user.tag);
     refresh(client);
@@ -764,25 +796,28 @@ if (process.env.DISCORD_TOKEN) {
         { name: "참석현황", description: "[운영진] 참석/불참 집계 + 미응답자 명단", options: [{ name: "역할", description: "미응답자를 점검할 역할(선택)", type: 8, required: false }] },
         { name: "성장등록버튼", description: "[운영진] 수강생 성장(전적) 등록 버튼을 이 채널에 게시", options: [] },
         { name: "성장재계산", description: "[운영진] 등록된 모든 수강생 성장 데이터 재계산(TPP/시즌 보정·현재시즌 갱신)", options: [] },
-        {
-          name: "수업등록",
-          description: "[트레이너] 수업 진행 기록 — 구글시트에 자동 등록·회차 차감",
-          options: [
-            { name: "유형", description: "수업 유형", type: 3, required: true, choices: [
-              { name: "그룹 관전형(최대 4명)", value: "관전형" },
-              { name: "그룹 참여형(최대 3명)", value: "참여형" },
-              { name: "개인 1:1", value: "개인" } ] },
-            { name: "학생", description: "학생 이름(쉼표로 여러 명)", type: 3, required: true },
-            { name: "시간", description: "개인수업 시간(시간 단위, 1시간=5판)", type: 10, required: false },
-            { name: "메모", description: "메모(선택)", type: 3, required: false },
-          ],
-        },
       ];
-      if (process.env.GUILD_ID) await client.application.commands.set(cmds, process.env.GUILD_ID);
-      else await client.application.commands.set(cmds);
-      console.log("slash commands registered:", cmds.map((c) => c.name).join(", "));
+      // 기존 명령은 GUILD_ID(피드백/운영 서버)에 그대로 유지 — 피드백 워크플로우 무파손.
+      // 수업등록을 별도 길드(LESSON_GUILD_ID=GmI)로 분리. 단 두 값이 같거나 LESSON 미설정이면
+      // 안전 폴백으로 GUILD_ID에 함께 등록(별도 set()이 서로의 명령을 덮어쓰는 사고 방지).
+      const lessonGuild = process.env.LESSON_GUILD_ID;
+      const splitLesson = lessonGuild && lessonGuild !== process.env.GUILD_ID;
+      const mainCmds = splitLesson ? cmds : [...cmds, LESSON_CMD];
+      if (process.env.GUILD_ID) await client.application.commands.set(mainCmds, process.env.GUILD_ID);
+      else await client.application.commands.set(mainCmds);
+      console.log("slash commands registered (main guild):", mainCmds.map((c) => c.name).join(", "));
+      // /수업등록 → GmI 서버(LESSON_GUILD_ID)에만 등록 (트레이너 운영 채널이 GmI에 있음)
+      if (splitLesson) await registerLessonCmd(lessonGuild, "ready");
     } catch (e) { console.error("slash_register_failed", e?.message); }
 
+  });
+
+  // 봇이 GmI 길드에 새로 초대되면 /수업등록 즉시 등록 (재배포 불필요)
+  client.on("guildCreate", async (guild) => {
+    const lessonGuild = process.env.LESSON_GUILD_ID;
+    if (lessonGuild && lessonGuild !== process.env.GUILD_ID && guild.id === lessonGuild) {
+      await registerLessonCmd(lessonGuild, "guildCreate");
+    }
   });
   const isStaff = (id) => STAFF_IDS.includes(id);
 
