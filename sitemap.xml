@@ -3,6 +3,7 @@
   <url><loc>https://mriacademy.gg/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
   <url><loc>https://mriacademy.gg/apply.html</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
   <url><loc>https://mriacademy.gg/sound-guide.html</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://mriacademy.gg/graphics-guide.html</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://mriacademy.gg/success.html</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://mriacademy.gg/terms.html</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
   <url><loc>https://mriacademy.gg/privacy.html</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
