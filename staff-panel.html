@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ko"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>운영진 패널 · MRI ACADEMY</title>
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0a0a0c;--bg-el:#15151a;--bg-card:#1a1a20;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;
+  --gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--golddeep:#caa00f;--green:#10b981;--blue:#5ac8fa;--red:#e63946;--line:#27272a;
+  --disp:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif;--mono:ui-monospace,Menlo,monospace}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.55;
+  background-image:radial-gradient(circle at 50% 0,rgba(245,197,24,.05),transparent 55%),
+   linear-gradient(rgba(245,197,24,.02) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.02) 1px,transparent 1px);
+  background-size:auto,38px 38px,38px 38px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:22px 16px 80px}
+a{color:var(--gold);text-decoration:none}
+.topbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.logo{font-family:var(--disp);font-size:17px;display:flex;align-items:center;gap:9px}
+.logo .mk{width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,var(--gold),var(--golddeep));color:#000;display:flex;align-items:center;justify-content:center;font-size:13px}
+.logo small{display:block;font-family:var(--body);font-size:8.5px;font-weight:800;letter-spacing:.2em;color:var(--ink-faint)}
+.scope{font-family:var(--mono);font-size:10.5px;font-weight:700;padding:4px 10px;border-radius:99px;border:1px solid var(--gold-soft);color:var(--gold);background:rgba(245,197,24,.07);letter-spacing:.05em}
+.scope.tr{color:var(--blue);border-color:rgba(90,200,250,.3);background:rgba(90,200,250,.07)}
+.spacer{margin-left:auto}
+.btn{font-family:var(--body);font-weight:700;font-size:13px;padding:8px 13px;border-radius:7px;border:1px solid var(--line);background:var(--bg-card);color:var(--ink);cursor:pointer;transition:.15s;white-space:nowrap}
+.btn:hover{border-color:var(--gold-soft)}
+.btn.gold{background:var(--gold);color:#1a1500;border-color:var(--gold)}
+.btn.gold:hover{background:#fde047;transform:translateY(-1px)}
+.btn.sm{font-size:11.5px;padding:5px 9px}
+.btn.disc{background:#5865F2;color:#fff;border-color:#5865F2}
+.btn.ghost{background:transparent}
+.btn.danger{color:var(--red);border-color:rgba(230,57,70,.3)}
+h1{font-family:var(--disp);font-size:clamp(20px,4vw,26px);margin:20px 0 4px}
+.sub{color:var(--ink-dim);font-size:13px;margin-bottom:18px}
+section{margin-top:28px}
+.sec-h{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.sec-h h2{font-family:var(--disp);font-size:15px}
+.sec-h .tag{font-family:var(--mono);font-size:10px;color:var(--ink-faint);letter-spacing:.12em}
+.sec-h .line{flex:1;height:1px;background:var(--line)}
+.card{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.grid{display:grid;gap:10px}
+.kpis{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+.kpi{background:var(--bg-el);border:1px solid var(--line);border-radius:10px;padding:13px 15px}
+.kpi .l{font-size:10.5px;color:var(--ink-faint);letter-spacing:.04em}
+.kpi .v{font-family:var(--disp);font-size:20px;color:var(--gold);margin-top:5px}
+.kpi .v.sm{font-size:15px;color:var(--ink)}
+.tbl{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.tbl th{font-size:10.5px;color:var(--ink-faint);letter-spacing:.06em;text-transform:uppercase;text-align:right;padding:8px 8px;border-bottom:1px solid var(--line);font-weight:700;white-space:nowrap}
+.tbl th:first-child,.tbl td:first-child{text-align:left}
+.tbl td{padding:9px 8px;border-bottom:1px solid rgba(39,39,42,.55);text-align:right;white-space:nowrap}
+.tbl tr:hover td{background:rgba(255,255,255,.015)}
+.tbl .name{font-weight:700;color:var(--ink)}
+.tbl .pay{font-weight:800;color:var(--gold)}
+.badge{font-family:var(--mono);font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:99px;border:1px solid}
+.badge.ok{color:var(--green);border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.08)}
+.badge.sug{color:var(--ink-faint);border-color:var(--line)}
+.badge.remain{color:var(--blue);border-color:rgba(90,200,250,.3);background:rgba(90,200,250,.07)}
+.scroll{overflow-x:auto}
+.stu{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:14px 15px;margin-bottom:10px}
+.stu .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.stu .nm{font-family:var(--disp);font-size:15px}
+.stu .meta{font-size:12px;color:var(--ink-dim);margin-top:4px}
+.stu .prog{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}
+.pill{font-family:var(--mono);font-size:11px;padding:4px 9px;border-radius:7px;background:var(--bg-el);border:1px solid var(--line);color:var(--ink-dim)}
+.pill b{color:var(--gold)}
+.frm{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-top:11px;padding-top:11px;border-top:1px dashed var(--line)}
+input,select{font-family:var(--body);font-size:13px;padding:8px 10px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-width:0}
+input:focus,select:focus{outline:none;border-color:var(--gold-soft)}
+input.w-s{width:74px}input.w-m{width:110px}input.w-l{width:150px}
+label.fl{font-size:11px;color:var(--ink-faint);display:flex;flex-direction:column;gap:3px}
+.gate{text-align:center;padding:60px 20px}
+.gate .em{font-size:40px;margin-bottom:14px}
+.gate h2{font-family:var(--disp);font-size:20px;margin-bottom:8px}
+.gate p{color:var(--ink-dim);font-size:14px;margin-bottom:20px}
+.hint{font-size:11.5px;color:var(--ink-faint);margin-top:8px}
+.formrow{display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:var(--bg-el);border:1px solid var(--gold-soft);
+  color:var(--ink);padding:11px 18px;border-radius:10px;font-size:13px;font-weight:600;opacity:0;pointer-events:none;transition:.25s;z-index:99;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.err{border-color:rgba(230,57,70,.5);color:#fca5a5}
+.muted{color:var(--ink-faint);font-size:12px}
+.empty{text-align:center;color:var(--ink-faint);font-size:13px;padding:24px}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="logo"><span class="mk">M</span><span>MRI ACADEMY<small>STAFF PANEL</small></span></div>
+    <span id="scopeBadge" class="scope" style="display:none"></span>
+    <div class="spacer"></div>
+    <button id="logoutBtn" class="btn ghost sm" style="display:none" onclick="logout()">로그아웃</button>
+  </div>
+
+  <div id="gate" class="gate">
+    <div class="em">🔒</div>
+    <h2>운영진 전용</h2>
+    <p>디스코드로 로그인하면 담당 수강생 판수 기록·정산 현황을 볼 수 있어요.</p>
+    <button class="btn disc" onclick="login()">디스코드로 로그인</button>
+    <div class="hint" id="gateHint"></div>
+  </div>
+
+  <div id="app" style="display:none"></div>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+const API = "https://mri-academy-production.up.railway.app";
+let ME = null, DATA = null, STAFF = [];
+
+// ── 토큰 ──
+(function(){ if(location.hash.startsWith("#token=")){ localStorage.setItem("mri_token", location.hash.slice(7)); history.replaceState(null,"",location.pathname); } })();
+const token = () => localStorage.getItem("mri_token");
+const authH = () => token() ? { Authorization: "Bearer " + token() } : {};
+function login(){ location.href = API + "/api/auth/login?return=" + encodeURIComponent(location.href.split("#")[0]); }
+function logout(){ localStorage.removeItem("mri_token"); ME=null; location.reload(); }
+
+// ── API 헬퍼 ──
+async function api(path, method="GET", body){
+  const r = await fetch(API+path, { method, headers:{ "Content-Type":"application/json", ...authH() }, body: body?JSON.stringify(body):undefined });
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+  return j;
+}
+const won = (n)=> Number(n||0).toLocaleString("ko-KR");
+const esc = (s)=> String(s==null?"":s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const today = ()=> new Date().toISOString().slice(0,10);
+function toast(msg, err){ const t=document.getElementById("toast"); t.textContent=msg; t.className="toast on"+(err?" err":""); clearTimeout(t._t); t._t=setTimeout(()=>t.className="toast",2600); }
+async function act(fn){ try{ await fn(); await reload(); }catch(e){ toast(e.message||"오류", true); } }
+
+// ── 부팅 ──
+(async function boot(){
+  if(!token()){ return; }
+  try{
+    ME = await api("/api/auth/me");
+    if(!ME.isStaff){ document.getElementById("gateHint").textContent = "이 계정("+esc(ME.name)+")은 운영진이 아니에요. 클랜장에게 문의하세요."; return; }
+    document.getElementById("gate").style.display="none";
+    document.getElementById("app").style.display="block";
+    document.getElementById("logoutBtn").style.display="inline-block";
+    await reload();
+  }catch(e){ localStorage.removeItem("mri_token"); document.getElementById("gateHint").textContent="세션이 만료됐어요. 다시 로그인해주세요."; }
+})();
+
+async function reload(){
+  DATA = await api("/api/admin/overview");
+  const sb = document.getElementById("scopeBadge");
+  sb.style.display="inline-block";
+  if(DATA.scope==="owner"){ sb.className="scope"; sb.textContent="OWNER · 전체"; STAFF = await api("/api/admin/staff").catch(()=>[]); renderOwner(); }
+  else { sb.className="scope tr"; sb.textContent="TRAINER · "+(DATA.me?DATA.me.name:""); renderTrainer(); }
+}
+
+// ── 트레이너 뷰 ──
+function renderTrainer(){
+  const box = document.getElementById("app");
+  const studs = DATA.students||[];
+  const me = DATA.trainers && DATA.trainers[0];
+  box.innerHTML = `
+    <h1>내 수강생 · 판수 기록</h1>
+    <div class="sub">수업 끝나면 진행한 판수를 여기 기록하세요. 정산은 클랜장이 확정합니다.</div>
+    ${ me ? `<div class="grid kpis" style="margin-bottom:8px">
+      <div class="kpi"><div class="l">담당 수강생</div><div class="v sm">${me.student_count}명</div></div>
+      <div class="kpi"><div class="l">이번 발생(누적)</div><div class="v">${won(me.lesson_accrued)}<span style="font-size:12px">원</span></div></div>
+    </div>`:"" }
+    ${ studs.length ? studs.map(stuCard).join("") : `<div class="empty">담당 수강생이 아직 없어요. 클랜장이 배정하면 표시됩니다.</div>` }
+  `;
+}
+
+function stuCard(s){
+  const rate = s.rate_confirmed ? `<span class="badge ok">확정 ${Math.round(s.applied_rate*100)}%</span>` : `<span class="badge sug">제안 ${Math.round(s.applied_rate*100)}%</span>`;
+  return `<div class="stu">
+    <div class="top"><span class="nm">${esc(s.name)}</span>${s.discord_nick?`<span class="muted">${esc(s.discord_nick)}</span>`:""}
+      <span class="badge remain">남은 ${s.remain}판</span></div>
+    <div class="prog">
+      <span class="pill">진행 <b>${s.played}</b>판</span>
+      <span class="pill">결제 ${s.paid_games}판</span>
+      <span class="pill">정산 ${s.cycles}회차</span>
+      <span class="pill">지급예정 <b>${won(s.payable)}</b>원</span>
+      ${rate}
+    </div>
+    <div class="frm">
+      <label class="fl">날짜<input type="date" class="w-m" id="sd_${s.student_id}" value="${today()}"></label>
+      <label class="fl">진행판수<input type="number" min="1" class="w-s" id="sg_${s.student_id}" placeholder="예:3"></label>
+      <label class="fl" style="flex:1;min-width:120px">메모(선택)<input type="text" id="sm_${s.student_id}" placeholder="코칭 포인트"></label>
+      <button class="btn gold sm" onclick="addSession(${s.student_id})">＋ 판수 기록</button>
+    </div>
+  </div>`;
+}
+
+function addSession(id){
+  const games = parseInt(document.getElementById("sg_"+id).value);
+  if(!(games>0)) return toast("진행판수를 1 이상 입력하세요", true);
+  const played_at = document.getElementById("sd_"+id).value || today();
+  const memo = document.getElementById("sm_"+id).value;
+  act(async ()=>{ await api("/api/admin/sessions","POST",{student_id:id,games,played_at,memo}); toast("판수 "+games+"판 기록됨"); });
+}
+
+// ── 사장(OWNER) 뷰 ──
+function renderOwner(){
+  const box = document.getElementById("app");
+  const T = DATA.trainers||[], E = DATA.employees||[], R = DATA.revenue||[], S = DATA.students||[];
+  const totalNet = T.reduce((a,t)=>a+t.net,0);
+  const unconfirmed = S.filter(s=>!s.rate_confirmed && s.played>=10).length;
+  box.innerHTML = `
+    <h1>정산 대시보드</h1>
+    <div class="sub">전부 자동계산 · 지급율 미확정 ${unconfirmed>0?`<b style="color:var(--gold)">${unconfirmed}건</b> 확인 필요`:"없음"}</div>
+    <div class="grid kpis">
+      <div class="kpi"><div class="l">이번 실지급 합계(트레이너)</div><div class="v">${won(totalNet)}<span style="font-size:12px">원</span></div></div>
+      <div class="kpi"><div class="l">활성 수강생</div><div class="v sm">${S.filter(s=>s.status==="active").length}명</div></div>
+      <div class="kpi"><div class="l">지급율 미확정</div><div class="v sm" style="color:${unconfirmed?"var(--red)":"var(--green)"}">${unconfirmed}건</div></div>
+      <div class="kpi"><div class="l">누적 매출(전체)</div><div class="v sm">${won(R.reduce((a,m)=>a+m.amount,0))}원</div></div>
+    </div>
+
+    <section>
+      <div class="sec-h"><h2>트레이너 월 정산</h2><span class="tag">지급할금액 = 발생 − 기지급</span><span class="line"></span></div>
+      <div class="card scroll"><table class="tbl"><thead><tr>
+        <th>트레이너</th><th>수강생</th><th>발생(누적)</th><th>기지급</th><th>지급할금액</th><th>원천3.3%</th><th>실지급</th><th></th>
+      </tr></thead><tbody>
+      ${ T.length ? T.map(t=>`<tr>
+        <td class="name">${esc(t.name)}</td><td>${t.student_count}</td><td>${won(t.lesson_accrued)}</td>
+        <td class="muted">${won(t.paid_out)}</td><td>${won(t.gross)}</td><td class="muted">${won(t.withholding)}</td>
+        <td class="pay">${won(t.net)}</td>
+        <td><button class="btn sm" onclick="payoutFor(${t.staff_id},'${esc(t.name)}',${t.gross})">지급기록</button></td>
+      </tr>`).join("") : `<tr><td colspan="8" class="empty">트레이너를 먼저 등록하세요 (아래 운영진 관리)</td></tr>` }
+      </tbody></table></div>
+    </section>
+
+    ${ E.length ? `<section>
+      <div class="sec-h"><h2>직원 급여 (제안값)</h2><span class="tag">최종은 수동 확정</span><span class="line"></span></div>
+      <div class="card scroll"><table class="tbl"><thead><tr><th>직원</th><th>기본급</th><th>당월매출</th><th>수수료(제안)</th><th>규칙</th><th></th></tr></thead><tbody>
+      ${ E.map(e=>`<tr><td class="name">${esc(e.name)}</td><td>${won(e.base_salary)}</td><td class="muted">${won(e.month_revenue)}</td>
+        <td class="pay">${won(e.suggest_commission)}</td><td class="muted" style="text-align:left;font-size:11px">${esc(e.comp_note||"")}</td>
+        <td><button class="btn sm" onclick="payoutFor(${e.staff_id},'${esc(e.name)}',${(e.base_salary||0)+(e.suggest_commission||0)})">지급기록</button></td></tr>`).join("") }
+      </tbody></table></div>
+    </section>`:"" }
+
+    <section>
+      <div class="sec-h"><h2>수강생 정산</h2><span class="tag">지급율 확정 필요 항목 우선</span><span class="line"></span></div>
+      <div class="card scroll"><table class="tbl"><thead><tr>
+        <th>수강생</th><th>담당</th><th>결제</th><th>진행</th><th>남은</th><th>지급율</th><th>지급예정</th><th>기록/확정</th>
+      </tr></thead><tbody>
+      ${ S.length ? S.map(stuRow).join("") : `<tr><td colspan="8" class="empty">수강생을 추가하세요</td></tr>` }
+      </tbody></table></div>
+      <div class="formrow" style="margin-top:12px">
+        <label class="fl">＋수강생<input id="ns_name" class="w-m" placeholder="이름"></label>
+        <label class="fl">디코닉<input id="ns_nick" class="w-m" placeholder="(선택)"></label>
+        <label class="fl">담당트레이너<select id="ns_tr">${trainerOpts()}</select></label>
+        <button class="btn gold sm" onclick="addStudent()">추가</button>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-h"><h2>결제 입력</h2><span class="tag">Phase1에서 토스 자동</span><span class="line"></span></div>
+      <div class="card"><div class="formrow">
+        <label class="fl">수강생<select id="pm_stu">${studentOpts()}</select></label>
+        <label class="fl">결제일<input type="date" id="pm_date" class="w-m" value="${today()}"></label>
+        <label class="fl">금액<input type="number" id="pm_amt" class="w-m" placeholder="120000"></label>
+        <label class="fl">판수<input type="number" id="pm_games" class="w-s" placeholder="33"></label>
+        <label class="fl">지급율<input type="number" step="0.05" min="0" max="1" id="pm_rate" class="w-s" placeholder="0.7"></label>
+        <label class="fl">유입<select id="pm_yt"><option value="">일반</option><option value="1">유튜브</option></select></label>
+        <label class="fl" style="flex:1;min-width:100px">메모<input id="pm_memo" placeholder="추가결제 등"></label>
+        <button class="btn gold sm" onclick="addPayment()">결제 추가</button>
+      </div></div>
+    </section>
+
+    <section>
+      <div class="sec-h"><h2>운영진 관리</h2><span class="tag">부트스트랩</span><span class="line"></span></div>
+      <div class="card scroll"><table class="tbl"><thead><tr><th>이름</th><th>역할</th><th>디코ID</th><th>기본급</th></tr></thead><tbody>
+      ${ STAFF.length ? STAFF.map(s=>`<tr><td class="name">${esc(s.name)}</td><td class="muted" style="text-align:left">${esc(s.role)}</td>
+        <td class="muted" style="text-align:left;font-family:var(--mono);font-size:11px">${esc(s.discord_id||"—")}</td><td>${won(s.base_salary)}</td></tr>`).join("") : `<tr><td colspan="4" class="empty">운영진을 추가하세요</td></tr>` }
+      </tbody></table>
+      <div class="formrow" style="margin-top:12px">
+        <label class="fl">이름<input id="st_name" class="w-m" placeholder="현태"></label>
+        <label class="fl">역할<select id="st_role"><option value="trainer">트레이너</option><option value="staff">직원</option><option value="owner">사장</option></select></label>
+        <label class="fl">디코ID<input id="st_did" class="w-l" placeholder="숫자 ID"></label>
+        <label class="fl">기본급<input type="number" id="st_base" class="w-m" placeholder="0"></label>
+        <button class="btn gold sm" onclick="addStaff()">운영진 추가</button>
+      </div>
+      <div class="hint">디코ID는 로그인 매핑용. 트레이너는 본인 담당 수강생만, 사장은 전체가 보입니다.</div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-h"><h2>내보내기</h2><span class="line"></span></div>
+      <button class="btn" onclick="exportCsv()">⬇ 정산 CSV 내보내기 (엑셀)</button>
+      <span class="hint">시트처럼 언제든 스냅샷을 받을 수 있어요.</span>
+    </section>
+  `;
+}
+
+function stuRow(s){
+  const rate = s.rate_confirmed ? `<span class="badge ok">${Math.round(s.applied_rate*100)}%</span>` : `<span class="badge sug">제안 ${Math.round(s.applied_rate*100)}%</span>`;
+  const tName = (STAFF.find(x=>x.id===s.trainer_id)||{}).name || "—";
+  return `<tr>
+    <td class="name">${esc(s.name)}</td><td class="muted">${esc(tName)}</td>
+    <td class="muted">${won(s.paid_amount)}<span style="font-size:10px">/${s.paid_games}판</span></td>
+    <td>${s.played}판</td><td class="muted">${s.remain}</td><td>${rate}</td>
+    <td class="pay">${won(s.payable)}</td>
+    <td style="white-space:nowrap">
+      <button class="btn sm" onclick="sessFor(${s.student_id},'${esc(s.name)}')">판수</button>
+      <button class="btn sm gold" onclick="confirmRate(${s.student_id},'${esc(s.name)}',${s.suggested_rate})">지급율</button>
+    </td></tr>`;
+}
+
+function trainerOpts(){ return `<option value="">미배정</option>`+STAFF.filter(s=>s.role==="trainer").map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join(""); }
+function studentOpts(){ return (DATA.students||[]).map(s=>`<option value="${s.student_id}">${esc(s.name)}</option>`).join(""); }
+
+function addStudent(){
+  const name=document.getElementById("ns_name").value.trim(); if(!name) return toast("이름을 입력하세요",true);
+  act(async ()=>{ await api("/api/admin/students","POST",{name,discord_nick:document.getElementById("ns_nick").value,trainer_id:document.getElementById("ns_tr").value||null}); toast("수강생 추가됨"); });
+}
+function addStaff(){
+  const name=document.getElementById("st_name").value.trim(); if(!name) return toast("이름을 입력하세요",true);
+  act(async ()=>{ await api("/api/admin/staff","POST",{name,role:document.getElementById("st_role").value,discord_id:document.getElementById("st_did").value,base_salary:document.getElementById("st_base").value}); toast("운영진 추가됨"); });
+}
+function addPayment(){
+  const student_id=parseInt(document.getElementById("pm_stu").value);
+  const amount=parseInt(document.getElementById("pm_amt").value);
+  const games=parseInt(document.getElementById("pm_games").value)||0;
+  const payout_rate=Number(document.getElementById("pm_rate").value);
+  if(!student_id||!amount) return toast("수강생·금액 확인",true);
+  if(!(payout_rate>=0&&payout_rate<=1)) return toast("지급율 0~1 (예:0.7)",true);
+  act(async ()=>{ await api("/api/admin/payments","POST",{student_id,paid_at:document.getElementById("pm_date").value,amount,games,payout_rate,via_youtube:!!document.getElementById("pm_yt").value,memo:document.getElementById("pm_memo").value}); toast("결제 추가됨"); });
+}
+function confirmRate(id,name,suggest){
+  const cur = prompt(`${name} · 지급율 확정 (0~1)\n제안값(가중평균): ${suggest}\n\n숫자 입력 (예 0.7), 비우면 확정 해제:`, suggest);
+  if(cur===null) return;
+  const v = cur.trim()===""? null : Number(cur);
+  if(v!==null && !(v>=0&&v<=1)) return toast("0~1 범위로 입력",true);
+  act(async ()=>{ await api("/api/admin/students/"+id,"PATCH",{payout_rate_set:v}); toast(v===null?"확정 해제됨":name+" 지급율 "+Math.round(v*100)+"% 확정"); });
+}
+function sessFor(id,name){
+  const g=prompt(`${name} · 진행판수 추가`,"3"); if(g===null) return;
+  const games=parseInt(g); if(!(games>0)) return toast("1 이상 입력",true);
+  act(async ()=>{ await api("/api/admin/sessions","POST",{student_id:id,games,played_at:today()}); toast(name+" "+games+"판 기록"); });
+}
+function payoutFor(staff_id,name,gross){
+  const g=prompt(`${name} · 지급 세전액`, gross); if(g===null) return;
+  const val=parseInt(g); if(!(val>=0)) return toast("금액 확인",true);
+  act(async ()=>{ await api("/api/admin/payouts","POST",{staff_id,gross:val,paid_on:today()}); toast(name+" 지급 "+won(val)+"원 기록"); });
+}
+async function exportCsv(){
+  try{
+    const r = await fetch(API+"/api/admin/export.csv",{headers:authH()});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const blob = await r.blob(); const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href=url; a.download="mri-settlement.csv"; a.click(); URL.revokeObjectURL(url);
+    toast("CSV 내보냄");
+  }catch(e){ toast("내보내기 실패: "+e.message, true); }
+}
+</script>
+</body></html>
