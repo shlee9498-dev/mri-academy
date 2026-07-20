@@ -167,14 +167,16 @@ function renderTrainer(){
 }
 
 function stuCard(s){
-  const rate = s.rate_confirmed ? `<span class="badge ok">확정 ${Math.round(s.applied_rate*100)}%</span>` : `<span class="badge sug">제안 ${Math.round(s.applied_rate*100)}%</span>`;
+  const bonusPill = s.bonus_new > 0 ? `<span class="pill">재결제분 <b>${s.bonus_new}</b>판(+5%p)</span>` : "";
+  const rate = `<span class="badge ok">지급율 ${Math.round((s.base_rate||0)*100)}%</span>`;
   return `<div class="stu">
     <div class="top"><span class="nm">${esc(s.name)}</span>${s.discord_nick?`<span class="muted">${esc(s.discord_nick)}</span>`:""}
       <span class="badge remain">남은 ${s.remain}판</span></div>
     <div class="prog">
       <span class="pill">진행 <b>${s.played}</b>판</span>
       <span class="pill">결제 ${s.paid_games}판</span>
-      <span class="pill">정산 ${s.cycles}회차</span>
+      <span class="pill">신규 <b>${s.new_played}</b>판(7/20↑)</span>
+      ${bonusPill}
       <span class="pill">지급예정 <b>${won(s.payable)}</b>원</span>
       ${rate}
     </div>
