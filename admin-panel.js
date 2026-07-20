@@ -11,6 +11,14 @@
 module.exports = function mountAdminPanel(app, deps) {
   const { getUser, sbSelect, sbInsert, sbPatch, sbDelete } = deps;
 
+  // Phase 0.5 — 이중기입 방지: 시트가 판수·정산 진실인 동안 패널은 읽기전용.
+  // PANEL_WRITE=1 이면 쓰기 허용(Phase 1 DB 전환 시). 기본(미설정)=읽기전용.
+  const PANEL_WRITE = process.env.PANEL_WRITE === "1";
+  app.use("/api/admin", (req, res, next) => {
+    if (PANEL_WRITE || req.method === "GET") return next();
+    return res.status(423).json({ error: "read_only", message: "패널 읽기전용(Phase 1 전). 판수·결제는 디스코드 /수업등록(시트) 사용 — 이 입력은 반영되지 않습니다." });
+  });
+
   const OWNER_IDS = (process.env.OWNER_DISCORD_IDS || "")
     .split(",").map((s) => s.trim()).filter(Boolean);
 
