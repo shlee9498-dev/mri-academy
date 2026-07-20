@@ -91,13 +91,32 @@ create table if not exists public.admin_audit (
 );
 create index if not exists idx_audit_created on public.admin_audit (created_at desc);
 
--- 7) RLS — 백엔드 service_role만 접근 (/api 경유, 서버에서 isStaff 검증)
+-- 7) 승급 배출 이력 (Phase 1 — 지급율 승급 래칫 근거)
+--    트레이너가 '레슨으로' 학생을 마스터/서바이버로 올린 이력만 카운트.
+--    지급율 = 0.65 + floor(Σweight(via_lesson)/5)×0.01 (영구 래칫, 하락 없음).
+--    weight: 마스터 1 · 서바이버 3. 서버가 tier로 강제(입력값 신뢰 안 함).
+create table if not exists public.graduations (
+  id            bigint generated always as identity primary key,
+  trainer_id    bigint not null references public.staff(id),
+  student_name  text not null,                            -- 승급시킨 학생 이름
+  student_id    bigint references public.students(id),    -- 매핑되면 연결(선택)
+  tier          text not null check (tier in ('마스터','서바이버')),
+  weight        int  not null check (weight in (1,3)),    -- 마스터1 · 서바이버3
+  via_lesson    boolean not null default true,            -- 레슨으로 상승시킨 것만 카운트(입성/외부는 false)
+  achieved_at   date not null default now(),
+  note          text,
+  created_at    timestamptz not null default now()
+);
+create index if not exists idx_grad_trainer on public.graduations (trainer_id) where via_lesson;
+
+-- 8) RLS — 백엔드 service_role만 접근 (/api 경유, 서버에서 isStaff 검증)
 alter table public.staff           enable row level security;
 alter table public.students        enable row level security;
 alter table public.payments        enable row level security;
 alter table public.lesson_sessions enable row level security;
 alter table public.payouts         enable row level security;
 alter table public.admin_audit     enable row level security;
+alter table public.graduations     enable row level security;
 
 -- ============================================================
 -- 정산 계산 규칙 (server.js에서 계산 — 여기 문서화만, 시트에서 역설계·검증됨)
