@@ -31,6 +31,8 @@ create table if not exists public.students (
   created_at    timestamptz not null default now()
 );
 create index if not exists idx_students_trainer on public.students (trainer_id) where status <> 'done';
+-- Phase 1.2: 이월 진행판수 스냅 (2026-07-20 이전 진행분, 동결 — 신엔진 FIFO 경계 위치용)
+alter table public.students add column if not exists carry_games int not null default 0;
 
 -- 3) 결제 (레슨/상담/세트) — 결제 트랜치 1건 = 1줄
 --    지급율은 결제 시점 룰: 5월이전 0.60 / 5월~ 0.70 (혼합은 서버가 가중평균)

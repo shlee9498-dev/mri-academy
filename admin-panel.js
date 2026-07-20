@@ -53,43 +53,62 @@ module.exports = function mountAdminPanel(app, deps) {
     } catch (e) { console.error("audit_fail", e); }
   }
 
-  // ── 정산 엔진 (순수 계산) ─────────────────────────────
-  // 수강생 1명: 결제들 + 세션들 → 정산 필드
-  function computeStudent(s, pays, sess) {
-    const amount = sum(pays, (p) => p.amount);
-    const games = sum(pays, (p) => p.games);
-    const played = sum(sess, (x) => x.games);
-    const unit = games > 0 ? amount / games : 0;              // 판당 결제단가
-    const wRate = amount > 0 ? sum(pays, (p) => p.amount * p.payout_rate) / amount : 0; // 가중평균(제안값)
-    // 사장 확정 지급율(payout_rate_set)이 있으면 그걸로, 없으면 가중평균을 잠정 적용
-    const setRate = s.payout_rate_set != null ? Number(s.payout_rate_set) : null;
-    const applied = setRate != null ? setRate : wRate;
-    const cycles = Math.floor(played / 10);                   // 10판 = 1회 정산단위
-    const payable = floor100(cycles * 10 * unit * applied);   // 지급예정(누적) · 100원 버림
+  // ── 정산 엔진 (순수 계산) · Phase 1.2 ─────────────────────
+  // 지급율 = 트레이너 승급 base(65% + 래칫) / 재결제 진행분 +5%p.
+  // 7/20 경계: lesson_sessions.played_at >= CUTOVER 만 신엔진 정산 (이전은 이월동결·별도).
+  // FIFO: 이월 진행판수(carry) 다음 위치부터의 신규 진행분을 1차 결제판수 경계로 base/+5%p 분할.
+  const CUTOVER = "2026-07-20";
+  function computeStudent(s, pays, sess, baseRate) {
+    // 판수 결제만(게임 보유): 레슨·세트. 상담/영업(games 0)·전환·환불 제외.
+    const lessonPays = pays
+      .filter((p) => ["lesson", "set"].includes(p.kind) && (p.games || 0) > 0)
+      .sort((a, b) => String(a.paid_at).localeCompare(String(b.paid_at)));
+    const amount = sum(lessonPays, (p) => p.amount);
+    const games = sum(lessonPays, (p) => p.games);
+    const unit = games > 0 ? amount / games : 0;              // 판당 결제단가(총결제금액/총결제판수)
+    const firstGames = lessonPays.length ? (lessonPays[0].games || 0) : 0; // 1차 결제판수 = FIFO 경계
+
+    // 7/20 경계로 진행판수 분리
+    const carrySnap = Number(s.carry_games || 0);            // 이월 진행판수 스냅(7/20 이전·동결)
+    const preSess = sum(sess.filter((x) => String(x.played_at || "") < CUTOVER), (x) => x.games);
+    const carry = carrySnap + preSess;                        // 경계 위치용 누적 이월분
+    const newPlayed = sum(sess.filter((x) => String(x.played_at || "") >= CUTOVER), (x) => x.games);
+
+    // FIFO 분할: 신규 진행분을 firstGames 경계로 base / +5%p
+    const bonusRate = Math.round((baseRate + 0.05) * 100) / 100;
+    const baseNew = Math.max(0, Math.min(firstGames - carry, newPlayed));
+    const bonusNew = newPlayed - baseNew;
+    const payable = floor100(baseNew * unit * baseRate + bonusNew * unit * bonusRate); // 100원 버림
+
+    const totalPlayed = carry + newPlayed;
     return {
       student_id: s.id, name: s.name, discord_nick: s.discord_nick || null,
       trainer_id: s.trainer_id, status: s.status,
-      paid_amount: amount, paid_games: games, played, remain: games - played,
+      paid_amount: amount, paid_games: games, first_games: firstGames,
+      carry_games: carry, new_played: newPlayed,
+      played: totalPlayed, remain: games - totalPlayed,       // played=진행누적(이월+신규)
       unit_price: Math.round(unit),
-      suggested_rate: Math.round(wRate * 1000) / 1000,        // 가중평균 제안
-      applied_rate: Math.round(applied * 1000) / 1000,        // 실제 적용
-      rate_confirmed: setRate != null,                        // 사장 확정 여부
-      cycles, payable,
+      base_rate: baseRate, bonus_rate: bonusRate, base_new: baseNew, bonus_new: bonusNew,
+      applied_rate: baseRate, rate_confirmed: true,           // 지급율 결정론적(트레이너 승급 기반)
+      suggested_rate: baseRate, cycles: 0,                    // 구 필드 호환(제안/회차 개념 폐지)
+      payable,                                                // 신엔진 지급예정(7/20 이후분)
     };
   }
 
-  // 트레이너 1명(월 정산): 담당 수강생 지급예정 합 − 기지급
-  function computeTrainer(st, students, payouts) {
+  // 트레이너 1명(월 정산): 담당 수강생 신엔진 지급예정 합 + 상담 건당 1만 − 기지급. (영업수수료 폐지)
+  function computeTrainer(st, students, payouts, consultCount) {
     const mine = students.filter((x) => x.trainer_id === st.id);
     const lessonAccrued = sum(mine, (x) => x.payable);
+    const consults = (consultCount && consultCount[st.id]) || 0;
+    const consultPay = consults * 10000;                      // 상담 건당 +10,000
     const paidOut = sum(payouts.filter((p) => p.staff_id === st.id), (p) => p.gross);
-    const total = lessonAccrued;                              // 상담·영업수수료는 Phase0 미집계(0)
+    const total = lessonAccrued + consultPay;                 // 영업수수료 폐지(미집계)
     const gross = Math.max(0, total - paidOut);               // 지급할 금액(세전)
-    const wh = Math.round(gross * WITHHOLDING);               // 원천 3.3% · 원단위 반올림 (시트 검증)
+    const wh = Math.round(gross * WITHHOLDING);               // 원천 3.3% · 원단위 반올림
     return {
       staff_id: st.id, name: st.name, role: st.role,
-      lesson_accrued: lessonAccrued, paid_out: paidOut,
-      gross, withholding: wh, net: gross - wh, student_count: mine.length,
+      lesson_accrued: lessonAccrued, consult_count: consults, consult_pay: consultPay,
+      paid_out: paidOut, gross, withholding: wh, net: gross - wh, student_count: mine.length,
     };
   }
 
@@ -125,21 +144,34 @@ module.exports = function mountAdminPanel(app, deps) {
     if (!c) return res.status(403).json({ error: "staff_only" });
     const period = String(req.query.period || "").match(/^\d{4}-\d{2}$/) ? req.query.period : null;
     try {
-      const [students, payments, sessions, payouts, staff] = await Promise.all([
+      const [students, payments, sessions, payouts, staff, graduations] = await Promise.all([
         sbSelect("students", "select=*&order=name.asc"),
         sbSelect("payments", "select=*"),
-        sbSelect("lesson_sessions", "select=student_id,games"),
+        sbSelect("lesson_sessions", "select=student_id,games,played_at"),
         sbSelect("payouts", "select=*"),
         sbSelect("staff", "select=*&order=id.asc"),
+        sbSelect("graduations", "select=trainer_id,tier,weight,via_lesson").catch(() => []),
       ]);
       const payByStu = groupBy(payments, "student_id");
       const sessByStu = groupBy(sessions, "student_id");
-      let computed = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || []));
+      // 트레이너별 승급 지급율(graduations 기반) — 없으면 0.65
+      const gradByTrainer = groupBy(graduations, "trainer_id");
+      const rateOf = (tid) => trainerBaseRate(gradByTrainer[tid] || []);
+      // 상담(consult) 건수 → 담당 트레이너별 (수강생의 trainer_id로 귀속)
+      const stuById = {}; for (const s of students) stuById[s.id] = s;
+      const consultByTrainer = {};
+      for (const p of payments) {
+        if (p.kind !== "consult") continue;
+        const stu = stuById[p.student_id];
+        if (stu && stu.trainer_id != null)
+          consultByTrainer[stu.trainer_id] = (consultByTrainer[stu.trainer_id] || 0) + 1;
+      }
+      let computed = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || [], rateOf(s.trainer_id)));
       // 트레이너는 본인 담당만 노출
       if (!c.isOwner && c.me) computed = computed.filter((x) => x.trainer_id === c.me.id);
 
       const trainers = staff.filter((s) => s.role === "trainer")
-        .map((s) => computeTrainer(s, computed, payouts));
+        .map((s) => computeTrainer(s, computed, payouts, consultByTrainer));
       const employees = c.isOwner
         ? staff.filter((s) => s.role === "staff")
             .map((s) => computeStaffSalary(s, payments, period || currentPeriod()))
@@ -375,17 +407,19 @@ module.exports = function mountAdminPanel(app, deps) {
   app.get("/api/admin/export.csv", async (req, res) => {
     const c = await ctx(req); if (!c || !c.isOwner) return res.status(403).send("owner_only");
     try {
-      const [students, payments, sessions] = await Promise.all([
+      const [students, payments, sessions, graduations] = await Promise.all([
         sbSelect("students", "select=*&order=trainer_id.asc,name.asc"),
-        sbSelect("payments", "select=student_id,amount,games,payout_rate"),
-        sbSelect("lesson_sessions", "select=student_id,games"),
+        sbSelect("payments", "select=student_id,amount,games,kind,paid_at"),
+        sbSelect("lesson_sessions", "select=student_id,games,played_at"),
+        sbSelect("graduations", "select=trainer_id,tier,weight,via_lesson").catch(() => []),
       ]);
       const payByStu = groupBy(payments, "student_id"), sessByStu = groupBy(sessions, "student_id");
-      const rows = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || []));
-      const head = ["수강생", "디코닉", "담당트레이너ID", "결제금액", "결제판수", "진행판수", "남은판수", "적용지급율", "확정여부", "정산회차", "지급예정"];
+      const gradByTrainer = groupBy(graduations, "trainer_id");
+      const rows = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || [], trainerBaseRate(gradByTrainer[s.trainer_id] || [])));
+      const head = ["수강생", "디코닉", "담당트레이너ID", "결제금액", "결제판수", "1차판수", "이월판수", "신규진행", "남은판수", "지급율", "재결제분(+5%p)", "지급예정(7/20이후)"];
       const body = rows.map((r) => [
         r.name, r.discord_nick || "", r.trainer_id || "", r.paid_amount, r.paid_games,
-        r.played, r.remain, r.applied_rate, r.rate_confirmed ? "확정" : "제안", r.cycles, r.payable,
+        r.first_games, r.carry_games, r.new_played, r.remain, r.base_rate, r.bonus_new, r.payable,
       ].map(csvCell).join(","));
       const csv = "﻿" + [head.join(","), ...body].join("\r\n");   // BOM: 엑셀 한글 깨짐 방지
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
