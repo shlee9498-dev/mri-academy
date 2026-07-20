@@ -726,6 +726,21 @@ if (process.env.DISCORD_TOKEN) {
       { name: "메모", description: "메모(선택)", type: 3, required: false },
     ],
   };
+  // Phase 1.4 — /승급 (오너 DM 전용): graduations 등록 → 지급율 래칫 자동 반영.
+  //   DM에서 쓰려면 글로벌 명령 + dm_permission 필요. 핸들러에서 오너ID·DM 이중검증.
+  const SUNG_CMD = {
+    name: "승급",
+    description: "[오너] 학생 승급 등록 — 지급율 래칫 반영 (DM 전용)",
+    dm_permission: true,
+    options: [
+      { name: "학생", description: "승급시킨 학생 이름", type: 3, required: true },
+      { name: "티어", description: "달성 티어", type: 3, required: true, choices: [
+        { name: "마스터(가중치1)", value: "마스터" },
+        { name: "서바이버(가중치3)", value: "서바이버" } ] },
+      { name: "트레이너", description: "담당 트레이너 이름(미지정=본인 매핑)", type: 3, required: false },
+      { name: "메모", description: "메모(선택)", type: 3, required: false },
+    ],
+  };
   // 봇 초대 URL(bot + applications.commands). client_id는 로그인 후 확정.
   const lessonInviteUrl = () => client.application
     ? `https://discord.com/oauth2/authorize?client_id=${client.application.id}&scope=bot%20applications.commands&permissions=3072`
@@ -809,6 +824,9 @@ if (process.env.DISCORD_TOKEN) {
       console.log("slash commands registered (main guild):", mainCmds.map((c) => c.name).join(", "));
       // /수업등록 → GmI 서버(LESSON_GUILD_ID)에만 등록 (트레이너 운영 채널이 GmI에 있음)
       if (splitLesson) await registerLessonCmd(lessonGuild, "ready");
+      // Phase 1.4 — /승급 글로벌 등록(DM 사용 위함). create=이름 기준 upsert, 기존 명령 미삭제.
+      try { await client.application.commands.create(SUNG_CMD); console.log("/승급 registered (global · DM 전용)"); }
+      catch (e) { console.error("sung_register_failed", e?.message); }
     } catch (e) { console.error("slash_register_failed", e?.message); }
 
   });
@@ -828,6 +846,34 @@ if (process.env.DISCORD_TOKEN) {
   let TRAINER_MAP = {};
   try { TRAINER_MAP = JSON.parse(process.env.TRAINER_MAP || "{}"); }
   catch (e) { console.error("TRAINER_MAP parse failed", e?.message); }
+
+  // Phase 1.4 — KST 자정 기준 날짜(새벽 수업이 전날로 안 넘어가게). Railway TZ 무관.
+  const kstToday = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+  const hasSupabase = () => !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  // /수업등록 성공분을 DB lesson_sessions에도 기록(시트 병행·검증용).
+  //   시트가 진실인 단계 — DB insert는 best-effort: 실패/이름 미매칭이어도 명령 성공(오너 DM만).
+  async function dualWriteSessions(trainerName, students, memo, createdBy) {
+    if (!hasSupabase()) return { skipped: true, miss: [] };
+    const played_at = kstToday();
+    let trainer_id = null;
+    try {
+      const st = await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainerName)}&limit=1`);
+      trainer_id = st[0] ? st[0].id : null;
+    } catch (e) { console.error("dualwrite_staff_lookup", e?.message); }
+    const rows = [], miss = [];
+    for (const s of students) {
+      try {
+        const found = await sbSelect("students", `select=id&name=eq.${encodeURIComponent(s.name)}&limit=1`);
+        if (found[0]) rows.push({ student_id: found[0].id, trainer_id, played_at, games: s.games, memo: memo || null, created_by: createdBy });
+        else miss.push(s.name);
+      } catch (e) { console.error("dualwrite_student_lookup", s.name, e?.message); miss.push(s.name); }
+    }
+    if (rows.length) {
+      try { await sbInsert("lesson_sessions", rows); }
+      catch (e) { console.error("dualwrite_insert", e?.message); return { error: true, miss }; }
+    }
+    return { inserted: rows.length, miss };
+  }
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand() || itx.commandName !== "수업등록") return;
 
@@ -907,10 +953,73 @@ if (process.env.DISCORD_TOKEN) {
           } catch (e) { console.error("owner_dm_failed", e?.message); }
         }
       }
+      // Phase 1.4 — DB 이중기록(시트 병행·검증). 실패해도 명령 성공(시트가 진실).
+      try {
+        const dw = await dualWriteSessions(trainer, students, memo, itx.user.id);
+        if (dw && dw.miss && dw.miss.length && process.env.MRI_OWNER_ID) {
+          const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+          await owner.send(`⚠️ /수업등록 DB 미매칭(시트는 기록됨) — ${trainer}: ${dw.miss.join(", ")} · students 테이블 이름 확인/보정 필요`);
+        }
+      } catch (e) { console.error("dualwrite_failed", e?.message); }
       await itx.editReply(lines.join("\n"));
     } catch (e) {
       console.error("lesson_register_failed", e?.message);
       await itx.editReply("등록 중 오류가 났어. 잠시 후 다시 시도해줘.");
+    }
+  });
+
+  // ── Phase 1.4 /승급 : 오너 DM 전용. graduations insert → 지급율 래칫 자동 갱신 ──
+  //   지급율 = 0.65 + floor(Σweight(via_lesson)/5)×0.01 (admin-panel.js trainerBaseRate와 동일식).
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "승급") return;
+    if (itx.guildId) return itx.reply({ content: "이 명령은 오너 DM에서만 사용해요.", ephemeral: true });
+    if (!process.env.MRI_OWNER_ID || itx.user.id !== process.env.MRI_OWNER_ID)
+      return itx.reply({ content: "오너 전용 명령이야.", ephemeral: true });
+    if (!hasSupabase())
+      return itx.reply({ content: "DB 연동 미설정(SUPABASE 미배포).", ephemeral: true });
+
+    const studentName = (itx.options.getString("학생") || "").trim();
+    const tier = itx.options.getString("티어");
+    const trainerName = (itx.options.getString("트레이너") || "").trim() || TRAINER_MAP[itx.user.id] || "";
+    const note = (itx.options.getString("메모") || "").trim() || null;
+    if (!studentName || !["마스터", "서바이버"].includes(tier))
+      return itx.reply({ content: "학생명·티어(마스터/서바이버)를 확인해줘.", ephemeral: true });
+
+    await itx.deferReply({ ephemeral: true });
+    try {
+      // 트레이너 staff.id 해석(이름)
+      let trainer_id = null;
+      if (trainerName) {
+        const st = await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainerName)}&limit=1`);
+        trainer_id = st[0] ? st[0].id : null;
+      }
+      if (!trainer_id)
+        return itx.editReply(`트레이너를 못 찾았어(${trainerName || "미지정"}). '트레이너' 옵션에 정확한 이름을 넣어줘.`);
+      // 학생 매핑(선택 — 없으면 이름만 기록)
+      let student_id = null;
+      try {
+        const su = await sbSelect("students", `select=id&name=eq.${encodeURIComponent(studentName)}&limit=1`);
+        student_id = su[0] ? su[0].id : null;
+      } catch (e) { console.error("sung_student_lookup", e?.message); }
+      const weight = tier === "서바이버" ? 3 : 1;   // 서버가 tier→weight 강제
+      await sbInsert("graduations", {
+        trainer_id, student_name: studentName.slice(0, 40), student_id,
+        tier, weight, via_lesson: true, achieved_at: kstToday(), note,
+      });
+      // 갱신된 지급율 계산해 응답
+      const grads = await sbSelect("graduations", `select=weight,via_lesson&trainer_id=eq.${trainer_id}`);
+      const wsum = grads.filter((g) => g.via_lesson !== false).reduce((a, g) => a + (g.weight || 0), 0);
+      const rate = Math.round((0.65 + Math.floor(wsum / 5) * 0.01) * 100) / 100;
+      await itx.editReply(`✅ 승급 등록 — ${trainerName} · ${studentName} (${tier}, +${weight})\n지급율: **${Math.round(rate * 100)}%** (Σweight ${wsum})`);
+      try {
+        await sbInsert("admin_audit", {
+          actor_id: itx.user.id, actor_name: "owner(디스코드)", action: "graduation.add",
+          target: `staff:${trainer_id}`, detail: { student_name: studentName, tier, weight },
+        });
+      } catch (e) { console.error("sung_audit", e?.message); }
+    } catch (e) {
+      console.error("sung_failed", e?.message);
+      await itx.editReply("승급 등록 중 오류가 났어. 잠시 후 다시 시도해줘.");
     }
   });
 
