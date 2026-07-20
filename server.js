@@ -727,11 +727,13 @@ if (process.env.DISCORD_TOKEN) {
     ],
   };
   // Phase 1.4 — /승급 (오너 DM 전용): graduations 등록 → 지급율 래칫 자동 반영.
-  //   DM에서 쓰려면 글로벌 명령 + dm_permission 필요. 핸들러에서 오너ID·DM 이중검증.
+  //   DM 슬래시커맨드는 integration_types/contexts 필요. (구 dm_permission은 snake_case라
+  //   discord.js가 무시 → DM에 안 뜸.) contexts=[1](BOT_DM만)이라 서버 채널엔 노출 X.
   const SUNG_CMD = {
     name: "승급",
     description: "[오너] 학생 승급 등록 — 지급율 래칫 반영 (DM 전용)",
-    dm_permission: true,
+    integrationTypes: [0],   // 0 = GUILD_INSTALL (봇이 서버에 설치됨)
+    contexts: [1],           // 컨텍스트: 0=Guild · 1=BotDM · 2=PrivateChannel → BOT_DM만
     options: [
       { name: "학생", description: "승급시킨 학생 이름", type: 3, required: true },
       { name: "티어", description: "달성 티어", type: 3, required: true, choices: [
