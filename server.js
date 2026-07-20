@@ -721,6 +721,7 @@ if (process.env.DISCORD_TOKEN) {
         { name: "그룹 참여형(최대 3명)", value: "참여형" },
         { name: "개인 1:1", value: "개인" } ] },
       { name: "학생", description: "학생 이름(쉼표로 여러 명)", type: 3, required: true },
+      { name: "판수", description: "그룹 수업 진행 판수(기본 1, 여러 판 한 번에 등록)", type: 4, required: false, min_value: 1, max_value: 100 },
       { name: "시간", description: "개인수업 시간(시간 단위, 1시간=5판)", type: 10, required: false },
       { name: "메모", description: "메모(선택)", type: 3, required: false },
     ],
@@ -846,6 +847,7 @@ if (process.env.DISCORD_TOKEN) {
 
     const lessonType = itx.options.getString("유형");
     const hours = itx.options.getNumber("시간");
+    const gamesInput = itx.options.getInteger("판수"); // 그룹 다중판 입력용(null=미지정)
     const memo = (itx.options.getString("메모") || "").trim();
 
     // 학생 파싱: 쉼표(반각/전각)·공백 구분, 트림, 중복·빈값 제거
@@ -858,7 +860,7 @@ if (process.env.DISCORD_TOKEN) {
     if (cap && names.length > cap)
       return itx.reply({ content: `${lessonType}은 최대 ${cap}명이야. (입력: ${names.length}명)`, ephemeral: true });
 
-    // 판수 산정: 그룹=각 1판, 개인=시간×5 (유효판만 트레이너가 등록)
+    // 판수 산정: 그룹=판수 옵션(기본 1, 각 학생 동일 판수), 개인=시간×5 (유효판만 트레이너가 등록)
     let students;
     if (lessonType === "개인") {
       if (!hours || hours <= 0)
@@ -866,7 +868,9 @@ if (process.env.DISCORD_TOKEN) {
       const games = Math.round(hours * 5);
       students = names.map((name) => ({ name, games }));
     } else {
-      students = names.map((name) => ({ name, games: 1 }));
+      // 그룹(관전형/참여형): 하루 여러 판을 한 번에 등록 (미지정 시 1판). 정원 검증은 명수 기준 유지.
+      const games = gamesInput && gamesInput > 0 ? gamesInput : 1;
+      students = names.map((name) => ({ name, games }));
     }
 
     await itx.deferReply({ ephemeral: true });
