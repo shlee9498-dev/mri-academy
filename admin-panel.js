@@ -109,6 +109,15 @@ module.exports = function mountAdminPanel(app, deps) {
     };
   }
 
+  // ── 승급 지급율 (Phase 1.1 · 계산 헬퍼) ──────────────────
+  // 지급율 = 0.65 + floor(Σweight/5)×0.01 (영구 래칫, 하락 없음).
+  // Σweight = graduations 중 via_lesson=true 의 weight 합 (마스터 1 · 서바이버 3).
+  // ⚠️ Phase 1.1은 헬퍼·엔드포인트만 — 실제 정산 반영은 1.2(computeTrainer 재작성)에서.
+  const BASE_RATE = 0.65;
+  const gradWeightSum = (grads) => sum(grads.filter((g) => g.via_lesson !== false), (g) => g.weight || 0);
+  const trainerBaseRate = (grads) =>
+    Math.round((BASE_RATE + Math.floor(gradWeightSum(grads) / 5) * 0.01) * 100) / 100;
+
   // ── 대시보드: 정산 전체 현황 ───────────────────────────
   app.get("/api/admin/overview", async (req, res) => {
     if (!ready()) return res.status(503).json({ error: "disabled" });
@@ -314,6 +323,50 @@ module.exports = function mountAdminPanel(app, deps) {
         memo: String(b.memo || "").slice(0, 200) || null,
       });
       await audit(c, "payout.add", `staff:${staff_id}`, { gross, period: row.period });
+      res.json(row);
+    } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+  });
+
+  // ── 승급 배출 이력 (Phase 1.1 — 지급율 래칫 근거) ──────
+  // GET: owner=전체 / 트레이너=본인. 트레이너별 계산 지급율(base_rate) 병기(검증용).
+  app.get("/api/admin/graduations", async (req, res) => {
+    const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    try {
+      let q = "select=*&order=achieved_at.desc";
+      if (!c.isOwner && c.me) q += `&trainer_id=eq.${c.me.id}`;
+      const grads = await sbSelect("graduations", q);
+      const byTrainer = groupBy(grads, "trainer_id");
+      const rates = Object.entries(byTrainer).map(([tid, gs]) => ({
+        trainer_id: Number(tid),
+        weight_sum: gradWeightSum(gs),
+        base_rate: trainerBaseRate(gs),                        // 0.65 + floor(Σweight/5)×0.01
+        master: gs.filter((g) => g.tier === "마스터" && g.via_lesson !== false).length,
+        survivor: gs.filter((g) => g.tier === "서바이버" && g.via_lesson !== false).length,
+      }));
+      res.json({ graduations: grads, rates });
+    } catch (e) { console.error("graduations", e); res.status(502).json({ error: "db" }); }
+  });
+  // POST: 승급 1건 등록 — owner 전용(봇 /승급은 Phase 1.4). weight는 tier로 서버가 강제.
+  //       ※ 쓰기는 상단 PANEL_WRITE 가드에 걸림 — 현재 시드는 SQL Editor 직접 실행.
+  app.post("/api/admin/graduations", async (req, res) => {
+    const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!c.isOwner) return res.status(403).json({ error: "owner_only" });
+    const b = req.body || {};
+    const trainer_id = parseInt(b.trainer_id);
+    const student_name = String(b.student_name || "").trim();
+    const tier = ["마스터", "서바이버"].includes(b.tier) ? b.tier : null;
+    if (!trainer_id || !student_name || !tier)
+      return res.status(400).json({ error: "트레이너·학생명·티어(마스터/서바이버)를 확인해 주세요." });
+    const weight = tier === "서바이버" ? 3 : 1;                // 서버가 tier→weight 강제
+    try {
+      const row = await sbInsert("graduations", {
+        trainer_id, student_name: student_name.slice(0, 40),
+        student_id: b.student_id ? parseInt(b.student_id) : null,
+        tier, weight, via_lesson: b.via_lesson === false ? false : true,
+        achieved_at: validDate(b.achieved_at),
+        note: String(b.note || "").slice(0, 200) || null,
+      });
+      await audit(c, "graduation.add", `staff:${trainer_id}`, { student_name, tier, weight });
       res.json(row);
     } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
   });
