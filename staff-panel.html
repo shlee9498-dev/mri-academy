@@ -84,6 +84,7 @@ label.fl{font-size:11px;color:var(--ink-faint);display:flex;flex-direction:colum
 </style>
 </head><body>
 <div class="wrap">
+  <div style="background:rgba(245,197,24,.12);border:1px solid rgba(245,197,24,.3);color:#f5c518;border-radius:10px;padding:10px 14px;margin:0 0 14px;font-size:13px;font-weight:700;text-align:center;line-height:1.5">🔒 읽기전용 모드 (Phase 0.5) — 판수·결제 입력은 디스코드 <b>/수업등록</b>(구글시트)로만. 이 패널 입력은 시트에 반영되지 않습니다.</div>
   <div class="topbar">
     <div class="logo"><span class="mk">M</span><span>MRI ACADEMY<small>STAFF PANEL</small></span></div>
     <span id="scopeBadge" class="scope" style="display:none"></span>
@@ -125,7 +126,8 @@ const won = (n)=> Number(n||0).toLocaleString("ko-KR");
 const esc = (s)=> String(s==null?"":s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const today = ()=> new Date().toISOString().slice(0,10);
 function toast(msg, err){ const t=document.getElementById("toast"); t.textContent=msg; t.className="toast on"+(err?" err":""); clearTimeout(t._t); t._t=setTimeout(()=>t.className="toast",2600); }
-async function act(fn){ try{ await fn(); await reload(); }catch(e){ toast(e.message||"오류", true); } }
+const READONLY = true;  // Phase 0.5 — 시트가 진실인 동안 패널 쓰기 잠금(이중기입 방지). Phase 1 DB 전환 시 false + 서버 PANEL_WRITE=1.
+async function act(fn){ if(READONLY){ toast("읽기전용 모드 — 판수·결제는 디스코드 /수업등록(시트)로 입력하세요. 이 패널 입력은 반영되지 않습니다.", true); return; } try{ await fn(); await reload(); }catch(e){ toast(e.message||"오류", true); } }
 
 // ── 부팅 ──
 (async function boot(){
