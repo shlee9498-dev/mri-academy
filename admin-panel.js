@@ -30,7 +30,8 @@ module.exports = function mountAdminPanel(app, deps) {
   const round100 = (n) => Math.round(n / 100) * 100;   // 수수료 제안값 등
   const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) || 0), 0);
   const WITHHOLDING = 0.033;                  // 원천징수 3.3% (프리랜서 사업소득)
-  const YT_RATE = 0.15, NORMAL_RATE = 0.05;   // 빵다 수수료: 유튜브 유입 15% / 그외 5%
+  const NET_RATE = 0.06;                      // 빵다 순매출 수수료 6% (구 유튜브15/일반5 이원화 폐지)
+  const SALARY_START = "2026-07";             // 순매출 수수료 시작월 (6월분 이전 동결)
 
   // 요청자 컨텍스트: 로그인 + 스태프 + staff 테이블 매핑(role, staff.id)
   async function ctx(req) {
@@ -112,19 +113,21 @@ module.exports = function mountAdminPanel(app, deps) {
     };
   }
 
-  // 직원(빵다·소영) 급여 제안값: 기본급 + (당월 순매출 기반 수수료 제안 — owner 확정)
+  // 직원(빵다) 급여: 기본급 + 순매출 6% (7월분/8·2 지급부터, 6월분 이전 동결).
+  //   순매출 = floor100(금액/1.1) — 100원 버림 (시트 검증: 360,000→327,200 / 120,000→109,000 / 40,000→36,300).
+  //   수수료 적용 대상: comp_note에 '6%' 또는 '순매출' 표기된 직원 (소영 등 기본급만은 제안 0).
   function computeStaffSalary(st, payments, period) {
     const monthPays = payments.filter((p) => (p.paid_at || "").slice(0, 7) === period);
-    const ytRev = sum(monthPays.filter((p) => p.via_youtube), (p) => p.amount);
-    const normalRev = sum(monthPays.filter((p) => !p.via_youtube), (p) => p.amount);
-    // 빵다 규칙 반영: 유튜브 유입분 15% + 그외 5%. (소영 등은 comp_note 참고, 제안 0)
-    const suggestCommission = st.comp_note && /5%/.test(st.comp_note)
-      ? round100(ytRev * YT_RATE + normalRev * NORMAL_RATE)
-      : 0;
+    const netRevenue = sum(monthPays, (p) => floor100((p.amount || 0) / 1.1)); // 당월 순매출(VAT 제외·버림)
+    const commissioned = !!(st.comp_note && /6%|순매출/.test(st.comp_note));
+    const applies = commissioned && period >= SALARY_START;      // 6월분 이전 동결
+    const suggestCommission = applies ? round100(netRevenue * NET_RATE) : 0;    // 순매출 6%
     return {
       staff_id: st.id, name: st.name, base_salary: st.base_salary || 0,
       suggest_commission: suggestCommission, comp_note: st.comp_note || null,
-      month_revenue: ytRev + normalRev, note: "수수료는 제안값 — 지급 기록 시 owner가 최종 확정",
+      month_revenue: netRevenue,                                  // 순매출 기준 표기
+      note: applies ? "순매출 6% + 기본급 · 지급 시 owner 최종확정"
+        : (commissioned ? "6월분 이전 동결(수수료 미발생)" : "기본급만"),
     };
   }
 
