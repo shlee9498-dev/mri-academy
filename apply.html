@@ -179,8 +179,8 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
       </div>
     </div>
 
-    <!-- 4. 할인코드 -->
-    <div class="sec">
+    <!-- 4. 할인코드 — 현재 활성 코드 없음(SHORTS10 만료). 로직/상수는 '다음 코드'용으로 보존, UI만 숨김. -->
+    <div class="sec" style="display:none">
       <h2>🎟️ 할인코드</h2>
       <div class="fld">
         <label>할인코드<span class="opt">(선택)</span></label>
@@ -238,8 +238,8 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,32px);margin:8px 0 6px}
       <button type="button" class="copy-btn" id="copyAmount" data-copy="">금액복사</button>
     </div>
     <div class="dep-line">
-      <span>카카오뱅크 <b>3333-24-0264625</b> (MRI아카데미)</span>
-      <button type="button" class="copy-btn" id="copyAcct" data-copy="3333240264625">계좌복사</button>
+      <span>토스뱅크 <b>1002-4781-4797</b> (MRI아카데미)</span>
+      <button type="button" class="copy-btn" id="copyAcct" data-copy="100247814797">계좌복사</button>
     </div>
     <div class="fld" style="margin:14px 0 12px">
       <label>입금 예정자명<span class="opt">(신청자명과 다를 경우 수정)</span></label>
