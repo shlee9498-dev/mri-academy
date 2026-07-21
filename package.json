@@ -4,7 +4,10 @@
   "private": true,
   "description": "MRI ACADEMY 통합 서버 — 챗봇(Anthropic) + 디스코드 현황",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check admin-panel.js"
+  },
   "engines": { "node": ">=18" },
   "dependencies": {
     "express": "^4.19.2",

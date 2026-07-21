@@ -1,0 +1,10 @@
+# 의존성
+node_modules/
+
+# 환경변수·시크릿 (절대 커밋 금지 — Railway env 전용)
+.env
+.env.*
+!.env.example
+
+# 로그
+*.log

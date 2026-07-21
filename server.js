@@ -48,6 +48,16 @@ function rateLimited(ip) {
   if (hits.size > 5000) hits.clear();
   return arr.length > max;
 }
+// 챗봇 일일 전역 쿼터 — IP 스푸핑과 무관하게 총 호출량 상한(비용 방어)
+let chatDay = "", chatDayCount = 0;
+const CHAT_DAILY_MAX = 500;
+function chatDailyExceeded() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== chatDay) { chatDay = today; chatDayCount = 0; }
+  if (chatDayCount >= CHAT_DAILY_MAX) return true;
+  chatDayCount++;
+  return false;
+}
 
 // ═══════════════════ 후기/동향/답글 시스템 ═══════════════════
 // 디스코드 OAuth 로그인 + Supabase 저장 (기존 MRI 봇 앱 재활용)
@@ -469,6 +479,7 @@ app.post("/api/chat", async (req, res) => {
     if (!KEY) return res.status(503).json({ error: "chat_disabled_no_key" });
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
     if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
+    if (chatDailyExceeded()) return res.status(429).json({ error: "daily_quota_exceeded" });
 
     let messages = Array.isArray(req.body?.messages) ? req.body.messages : null;
     if (!messages && typeof req.body?.message === "string") {
@@ -2481,8 +2492,10 @@ app.get("/api/gdcup-match-pull", async (req,res)=>{
 function gdcupAdmin(req) {
   const k = process.env.GDCUP_ADMIN_KEY;
   if (!k) return false;
-  const got = req.headers["x-admin-key"] || (req.body && req.body.adminKey) || req.query.key;
-  return !!got && got === k;
+  const got = req.headers["x-admin-key"];               // 헤더 전용 (쿼리/바디 수신 제거 — URL·로그·referrer 노출 방지)
+  if (!got || typeof got !== "string") return false;
+  const a = Buffer.from(got), b = Buffer.from(k);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);  // 타이밍 안전 비교
 }
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
 app.get("/api/gdcup-admin-list", async (req, res) => {
@@ -2579,14 +2592,7 @@ app.post("/api/gdcup-board", async (req, res) => {
 });
 
 // ===== G드컵 스코어 (공개 조회 / 운영진 저장·게시) =====
-app.get("/api/gdcup-scores", async (req, res) => {
-  try {
-    if (!process.env.SUPABASE_URL) return res.json({ scores: null });
-    const rows = await sbSelect("gdcup_state", "select=value,updated_at&key=eq.scores");
-    if (!rows.length) return res.json({ scores: null });
-    res.json({ scores: rows[0].value, updated_at: rows[0].updated_at });
-  } catch (e) { res.json({ scores: null }); }
-});
+// (중복 제거) /api/gdcup-scores GET은 위 gdcup_scores 집계 핸들러가 우선 매칭 — gdcup_state 조회판은 dead code라 삭제.
 app.post("/api/gdcup-scores-save", async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
