@@ -81,6 +81,12 @@ label.fl{font-size:11px;color:var(--ink-faint);display:flex;flex-direction:colum
 .toast.err{border-color:rgba(230,57,70,.5);color:#fca5a5}
 .muted{color:var(--ink-faint);font-size:12px}
 .empty{text-align:center;color:var(--ink-faint);font-size:13px;padding:24px}
+.ops{margin-top:28px}
+.ops-h{font-size:13px;color:var(--gold);font-weight:800;margin-bottom:12px;letter-spacing:.03em}
+.ops-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:9px}
+.oplink{display:flex;align-items:center;gap:9px;padding:13px 14px;background:var(--bg-card);border:1px solid var(--line);border-radius:9px;color:var(--ink);text-decoration:none;font-weight:700;font-size:13.5px;transition:.15s}
+.oplink:hover{border-color:var(--gold-soft);background:rgba(245,197,24,.06)}
+.oplink .ext{margin-left:auto;color:var(--ink-faint);font-size:12px}
 </style>
 </head><body>
 <div class="wrap">
@@ -148,6 +154,23 @@ async function reload(){
   sb.style.display="inline-block";
   if(DATA.scope==="owner"){ sb.className="scope"; sb.textContent="OWNER · 전체"; STAFF = await api("/api/admin/staff").catch(()=>[]); renderOwner(); }
   else { sb.className="scope tr"; sb.textContent="TRAINER · "+(DATA.me?DATA.me.name:""); renderTrainer(); }
+  // 🔗 운영 바로가기 — 로그인 후에만 렌더(reload는 인증 성공 후 호출). 시트 2종은 owner 전용.
+  document.getElementById("app").insertAdjacentHTML("beforeend", opsLinks(DATA.scope==="owner"));
+}
+
+// 운영 바로가기 카드 (staff 공통 + owner 전용 시트 링크). 전부 새 탭.
+function opsLinks(isOwner){
+  const L = (href,label,icon)=>`<a class="oplink" href="${href}" target="_blank" rel="noopener">${icon} ${label} <span class="ext">↗</span></a>`;
+  const items = [
+    L("https://shlee9498-dev.github.io/gmi-clancup/gdcup-score.html","G드컵 점수 입력","🎯"),
+    ...(isOwner ? [
+      L("https://docs.google.com/spreadsheets/d/1KTWL7zSQyZKwsVg39DVEUJA-_dr2L2fS-Wla8HuF1yg/edit","레슨 일정표 (구글시트)","📅"),
+      L("https://docs.google.com/spreadsheets/d/1ROBPAp3y8KtByn8viZl_Q-x5uVjdVhkzyJLmqJFMB9U/edit","매출관리 시트","💰"),
+    ] : []),
+    L("https://shlee9498-dev.github.io/gmi-clancup/","G드컵 사이트","🏆"),
+    L("https://book.mriacademy.gg","전자책 웹북","📖"),
+  ];
+  return `<section class="ops"><h2 class="ops-h">🔗 운영 바로가기</h2><div class="ops-grid">${items.join("")}</div></section>`;
 }
 
 // ── 트레이너 뷰 ──
