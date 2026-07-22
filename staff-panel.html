@@ -169,9 +169,35 @@ async function reload(){
   if(DATA.scope==="owner"){ sb.className="scope"; sb.textContent="OWNER · 전체"; STAFF = await api("/api/admin/staff").catch(()=>[]); renderOwner(); }
   else { sb.className="scope tr"; sb.textContent="TRAINER · "+(DATA.me?DATA.me.name:""); renderTrainer(); }
   // 🗓️ 일정 관리 + 🔗 운영 바로가기 — 로그인 후에만 렌더(reload는 인증 성공 후 호출).
-  document.getElementById("app").insertAdjacentHTML("beforeend", '<div id="schedwrap"></div>' + opsLinks(DATA.scope==="owner"));
+  document.getElementById("app").insertAdjacentHTML("beforeend", '<div id="schedwrap"></div>' + (DATA.scope==="owner"?'<div id="statswrap"></div>':'') + opsLinks(DATA.scope==="owner"));
   loadSchedule();
+  if(DATA.scope==="owner") loadStats();
 }
+
+// ── 📊 전적 스냅샷 (Phase T1, owner 전용) — server 라우트는 읽기전용 게이트 밖이라 직접 호출 ──
+let SST=null, _sti=null;
+function renderStats(){
+  const w=document.getElementById("statswrap"); if(!w) return;
+  const r=SST; let body;
+  if(r && r.running){ body=`<div class="muted">실행 중… ${r.done}/${r.total} (계정당 ~7초)</div>`; }
+  else if(r && r.finishedAt){
+    const rated=(r.report||[]).filter(x=>!x.error).length;
+    const cand=(r.candidates||[]).length ? (r.candidates||[]).map(c=>`<div class="srow"><b>${esc(c.student)}</b> · ${esc(c.trainer||"미배정")} · <span style="color:var(--gold)">${esc(c.tier)}</span></div>`).join("") : `<div class="muted">없음</div>`;
+    body=`<div class="pill">마스터+ 달성률 <b>${r.masterRate}%</b> (${r.masterCount}/${rated})</div>${r.unlinked?` <span class="muted">· 미연결 ${r.unlinked}명</span>`:""}
+      <div style="margin-top:11px;font-size:12.5px;font-weight:700">승급 후보 (미등록 마스터+)</div>${cand}`;
+  } else { body=`<div class="muted">아직 실행하지 않았어요.</div>`; }
+  w.innerHTML=`<section class="ops"><h2 class="ops-h">📊 전적 스냅샷 (PUBG)</h2>
+    <button class="btn gold sm" onclick="runStats()"${r&&r.running?" disabled":""}>전수 스냅샷 실행</button>
+    <span class="muted" style="margin-left:8px">계정당 ~7초 · 완료 시 오너 DM</span>
+    <div style="margin-top:12px">${body}</div></section>`;
+}
+async function loadStats(){ try{ SST=await api("/api/admin/stats/report"); }catch(e){ SST=null; } renderStats(); if(SST&&SST.running) pollStats(); }
+async function runStats(){
+  try{ await api("/api/admin/stats/snapshot","POST"); toast("스냅샷 시작 — 완료까지 몇 분 걸려요"); }
+  catch(e){ toast(e.message==="already_running"?"이미 실행 중":(e.message||"오류"), true); }
+  pollStats();
+}
+function pollStats(){ clearInterval(_sti); _sti=setInterval(async()=>{ try{ SST=await api("/api/admin/stats/report"); renderStats(); if(!SST.running){ clearInterval(_sti); if(SST.finishedAt) toast("전적 스냅샷 완료 · 마스터+ "+SST.masterRate+"%"); } }catch(e){} }, 5000); }
 
 // 운영 바로가기 카드 (staff 공통 + owner 전용 시트 링크). 전부 새 탭.
 function opsLinks(isOwner){
