@@ -87,6 +87,20 @@ label.fl{font-size:11px;color:var(--ink-faint);display:flex;flex-direction:colum
 .oplink{display:flex;align-items:center;gap:9px;padding:13px 14px;background:var(--bg-card);border:1px solid var(--line);border-radius:9px;color:var(--ink);text-decoration:none;font-weight:700;font-size:13.5px;transition:.15s}
 .oplink:hover{border-color:var(--gold-soft);background:rgba(245,197,24,.06)}
 .oplink .ext{margin-left:auto;color:var(--ink-faint);font-size:12px}
+.sched{margin-top:28px}
+.sched-tabs{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.sched-list{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.srow{background:var(--bg-card);border:1px solid var(--line);border-radius:9px;padding:11px 13px}
+.srow.off{opacity:.5}
+.srow .s1{font-size:13.5px;line-height:1.5}
+.srow .s2{font-size:12px;margin-top:4px}
+.srow .s3{display:flex;gap:6px;margin-top:9px}
+.sched-form{background:var(--bg-el);border:1px dashed var(--line);border-radius:10px;padding:13px}
+.sched-form .fh{font-size:12.5px;font-weight:800;color:var(--gold);margin-bottom:9px}
+.sched-form .formrow{margin-bottom:9px}
+.sched-form .formrow:last-child{margin-bottom:0}
+.ck{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:var(--ink-dim);white-space:nowrap}
+.ck input{width:auto;accent-color:var(--gold)}
 </style>
 </head><body>
 <div class="wrap">
@@ -154,8 +168,9 @@ async function reload(){
   sb.style.display="inline-block";
   if(DATA.scope==="owner"){ sb.className="scope"; sb.textContent="OWNER · 전체"; STAFF = await api("/api/admin/staff").catch(()=>[]); renderOwner(); }
   else { sb.className="scope tr"; sb.textContent="TRAINER · "+(DATA.me?DATA.me.name:""); renderTrainer(); }
-  // 🔗 운영 바로가기 — 로그인 후에만 렌더(reload는 인증 성공 후 호출). 시트 2종은 owner 전용.
-  document.getElementById("app").insertAdjacentHTML("beforeend", opsLinks(DATA.scope==="owner"));
+  // 🗓️ 일정 관리 + 🔗 운영 바로가기 — 로그인 후에만 렌더(reload는 인증 성공 후 호출).
+  document.getElementById("app").insertAdjacentHTML("beforeend", '<div id="schedwrap"></div>' + opsLinks(DATA.scope==="owner"));
+  loadSchedule();
 }
 
 // 운영 바로가기 카드 (staff 공통 + owner 전용 시트 링크). 전부 새 탭.
@@ -171,6 +186,126 @@ function opsLinks(isOwner){
     L("https://book.mriacademy.gg","전자책 웹북","📖"),
   ];
   return `<section class="ops"><h2 class="ops-h">🔗 운영 바로가기</h2><div class="ops-grid">${items.join("")}</div></section>`;
+}
+
+// ── 🗓️ 일정 관리 (Phase S1) — schedule는 서버에서 읽기전용 게이트 예외라 act() 안 거치고 직접 쓴다 ──
+const SCHED = { week:0, kind:"lesson", editing:null, _byId:{} };
+const SCHED_FMT = { lesson:["관전형","참여형","1:1","그룹","자율연습","상담"], direct:["초급반","중급반","심화반","개인강의","그룹강의"] };
+const DOW = ["일","월","화","수","목","금","토"];
+const dPlus = (d,n)=>{ const x=new Date(d+"T00:00:00Z"); x.setUTCDate(x.getUTCDate()+n); return x.toISOString().slice(0,10); };
+const schedDow = (d)=> DOW[new Date(d+"T00:00:00Z").getUTCDay()];
+
+async function loadSchedule(){
+  const wrap = document.getElementById("schedwrap"); if(!wrap) return;
+  const isOwner = DATA.scope==="owner";
+  let data;
+  try{ data = await api(`/api/admin/schedule?week=${SCHED.week}&kind=${SCHED.kind}`); }
+  catch(e){ wrap.innerHTML = `<section class="sched"><h2 class="ops-h">🗓️ 일정 관리</h2><div class="empty">일정을 불러오지 못했어요 (${esc(e.message)}). schedule_events 테이블 생성 여부를 확인하세요.</div></section>`; return; }
+  const ev = data.events||[]; SCHED._byId={}; ev.forEach(e=>SCHED._byId[e.id]=e);
+  const wt=(n,l)=>`<button class="btn sm ${SCHED.week===n?"gold":""}" onclick="setSchedWeek(${n})">${l}</button>`;
+  const kt=(k,l)=>`<button class="btn sm ${SCHED.kind===k?"gold":""}" onclick="setSchedKind('${k}')">${l}</button>`;
+  const list = ev.length ? ev.map(schedRow).join("") : `<div class="empty">이 주 ${SCHED.kind==="lesson"?"레슨":"직강"} 일정이 없어요.</div>`;
+  const wk = data.week ? `${esc(data.week.start)} ~ ${esc(dPlus(data.week.end,-1))}` : "";
+  wrap.innerHTML = `
+  <section class="sched">
+    <h2 class="ops-h">🗓️ 일정 관리 <span class="muted" style="font-weight:500;font-size:11px">${wk}</span></h2>
+    <div class="sched-tabs">
+      ${wt(0,"이번주")}${wt(1,"다음주")}${wt(2,"다다음주")}<span style="width:6px"></span>${kt("lesson","레슨")}${kt("direct","직강")}
+      <button class="btn sm" style="margin-left:auto" onclick="copyWeek(false)">📋 이번 주 → 다음 주 복사</button>
+    </div>
+    <div class="sched-list">${list}</div>
+    ${schedForm(isOwner)}
+  </section>`;
+}
+
+function schedRow(e){
+  const t = (e.start_time?e.start_time.slice(0,5):"") + (e.end_time?"~"+e.end_time.slice(0,5):"");
+  const cap = e.capacity!=null ? ` · 정원 ${e.capacity}` : "";
+  const rec = e.is_recruiting ? ` <span class="badge ok">모집중</span>` : "";
+  const pub = e.is_public===false ? ` <span class="badge sug">비공개</span>` : "";
+  const off = e.status==="cancelled";
+  return `<div class="srow${off?" off":""}">
+    <div class="s1"><b>${esc(e.event_date)}(${schedDow(e.event_date)})</b> ${esc(t)} <span class="pill">${esc(e.format)}</span>${e.title?" "+esc(e.title):""}</div>
+    <div class="s2 muted">${e.participants?esc(e.participants):"참여자 미입력"}${cap}${rec}${pub}${off?' <span class="badge">취소됨</span>':""}</div>
+    ${off?"":`<div class="s3"><button class="btn sm" onclick="schedEdit(${e.id})">수정</button><button class="btn sm" onclick="schedCancel(${e.id})">취소</button></div>`}
+  </div>`;
+}
+
+function schedForm(isOwner){
+  const ed = SCHED.editing;
+  const kind = ed?ed.kind:SCHED.kind;
+  const trainerSel = isOwner ? `<label class="fl">담당<select id="ss_trainer">
+      <option value="">(미지정/무리)</option>
+      ${STAFF.filter(s=>s.role!=="staff").map(s=>`<option value="${s.id}" ${ed&&ed.trainer_id===s.id?"selected":""}>${esc(s.name)}</option>`).join("")}
+    </select></label>` : "";
+  return `<div class="sched-form">
+    <div class="fh">${ed?`✏️ 수정 (#${ed.id})`:"＋ 새 일정"}</div>
+    <div class="formrow">
+      <label class="fl">유형<select id="ss_kind" onchange="onSchedKindChange()">
+        <option value="lesson" ${kind==="lesson"?"selected":""}>레슨</option>
+        ${isOwner?`<option value="direct" ${kind==="direct"?"selected":""}>직강</option>`:""}
+      </select></label>
+      <label class="fl">형식<select id="ss_format">${SCHED_FMT[kind].map(f=>`<option ${ed&&ed.format===f?"selected":""}>${f}</option>`).join("")}</select></label>
+      ${trainerSel}
+    </div>
+    <div class="formrow">
+      <label class="fl">날짜<input type="date" id="ss_date" value="${ed?ed.event_date:""}"></label>
+      <label class="fl">시작<input type="time" id="ss_start" value="${ed&&ed.start_time?ed.start_time.slice(0,5):""}"></label>
+      <label class="fl">종료<input type="time" id="ss_end" value="${ed&&ed.end_time?ed.end_time.slice(0,5):""}"></label>
+      <label class="fl">정원<input type="number" min="1" id="ss_cap" style="width:66px" value="${ed&&ed.capacity!=null?ed.capacity:""}"></label>
+    </div>
+    <div class="formrow">
+      <label class="fl" style="flex:1">라벨(선택)<input type="text" id="ss_title" placeholder="예: 심화반 A" value="${ed?esc(ed.title||""):""}"></label>
+      <label class="fl" style="flex:2;min-width:150px">참여자(이름·쉼표 — 비공개)<input type="text" id="ss_part" placeholder="홍길동, 김철수" value="${ed?esc(ed.participants||""):""}"></label>
+    </div>
+    <div class="formrow">
+      <label class="fl" style="flex:1">메모<input type="text" id="ss_memo" value="${ed?esc(ed.memo||""):""}"></label>
+      <label class="ck"><input type="checkbox" id="ss_public" ${!ed||ed.is_public!==false?"checked":""}> 공개</label>
+      <label class="ck"><input type="checkbox" id="ss_recruit" ${ed&&ed.is_recruiting?"checked":""}> 모집중</label>
+      <button class="btn gold sm" onclick="schedSave()">${ed?"수정 저장":"추가"}</button>
+      ${ed?`<button class="btn sm" onclick="schedCancelEdit()">닫기</button>`:""}
+    </div>
+  </div>`;
+}
+
+function onSchedKindChange(){
+  const k = document.getElementById("ss_kind").value;
+  document.getElementById("ss_format").innerHTML = SCHED_FMT[k].map(f=>`<option>${f}</option>`).join("");
+}
+function setSchedWeek(n){ SCHED.week=n; SCHED.editing=null; loadSchedule(); }
+function setSchedKind(k){ SCHED.kind=k; SCHED.editing=null; loadSchedule(); }
+function schedEdit(id){ SCHED.editing=SCHED._byId[id]; loadSchedule().then(()=>{ const f=document.querySelector(".sched-form"); if(f) f.scrollIntoView({behavior:"smooth",block:"center"}); }); }
+function schedCancelEdit(){ SCHED.editing=null; loadSchedule(); }
+
+async function schedSave(){
+  const ed = SCHED.editing;
+  const g = (id)=>document.getElementById(id);
+  const body = {
+    kind: g("ss_kind").value, format: g("ss_format").value, event_date: g("ss_date").value,
+    start_time: g("ss_start").value||null, end_time: g("ss_end").value||null,
+    title: g("ss_title").value, participants: g("ss_part").value,
+    capacity: g("ss_cap").value, memo: g("ss_memo").value,
+    is_public: g("ss_public").checked, is_recruiting: g("ss_recruit").checked,
+  };
+  const tsel = g("ss_trainer"); if(tsel) body.trainer_id = tsel.value||null;
+  if(!body.event_date) return toast("날짜를 선택하세요", true);
+  try{
+    if(ed){ await api("/api/admin/schedule/"+ed.id, "PATCH", body); toast("일정 수정됨"); SCHED.editing=null; }
+    else { const r = await api("/api/admin/schedule","POST",body); toast("일정 추가됨"); if(r.warning) setTimeout(()=>toast(r.warning,true), 300); }
+    await loadSchedule();
+  }catch(e){ toast(e.message||"오류", true); }
+}
+async function schedCancel(id){
+  if(!confirm("이 일정을 취소할까요? (기록은 남고 공개에서 숨겨집니다)")) return;
+  try{ await api("/api/admin/schedule/"+id, "PATCH", {status:"cancelled"}); toast("일정 취소됨"); await loadSchedule(); }
+  catch(e){ toast(e.message||"오류", true); }
+}
+async function copyWeek(force){
+  const r = await fetch(API+"/api/admin/schedule/copy-week", { method:"POST", headers:{"Content-Type":"application/json", ...authH()}, body:JSON.stringify({week:SCHED.week, confirm:!!force}) });
+  const j = await r.json().catch(()=>({}));
+  if(r.status===409 && j.error==="target_not_empty"){ if(confirm(`다음 주에 이미 ${j.count}건 있어요. 그래도 추가로 복사할까요?`)) return copyWeek(true); return; }
+  if(!r.ok){ return toast(j.error||"복사 오류", true); }
+  toast(`${j.inserted}건 복사됨 → 다음 주`); SCHED.week=Math.min(2,SCHED.week+1); SCHED.editing=null; await loadSchedule();
 }
 
 // ── 트레이너 뷰 ──

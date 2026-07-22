@@ -15,6 +15,8 @@ module.exports = function mountAdminPanel(app, deps) {
   // PANEL_WRITE=1 이면 쓰기 허용(Phase 1 DB 전환 시). 기본(미설정)=읽기전용.
   const PANEL_WRITE = process.env.PANEL_WRITE === "1";
   app.use("/api/admin", (req, res, next) => {
+    // 일정(schedule)은 정산 이중기입과 무관 → 읽기전용 게이트 예외 (자체 owner/trainer 가드 보유).
+    if ((req.originalUrl || "").split("?")[0].startsWith("/api/admin/schedule")) return next();
     if (PANEL_WRITE || req.method === "GET") return next();
     return res.status(423).json({ error: "read_only", message: "패널 읽기전용(Phase 1 전). 판수·결제는 디스코드 /수업등록(시트) 사용 — 이 입력은 반영되지 않습니다." });
   });
@@ -452,6 +454,156 @@ module.exports = function mountAdminPanel(app, deps) {
     const s = String(v == null ? "" : v);
     return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   }
+
+  // ═══════════════════ 일정 (Phase S1 — 레슨/직강 통합) ═══════════════════
+  // 정산(lesson_sessions)과 완전 분리. 공개 GET은 실명(participants) 미노출 — capacity/잔여만.
+  const SCHED_FORMATS = {
+    lesson: ["관전형", "참여형", "1:1", "그룹", "자율연습", "상담"],
+    direct: ["초급반", "중급반", "심화반", "개인강의", "그룹강의"],
+  };
+  // KST 월요일 기준 주 범위 [start, end) — week: 0=이번주,1=다음주,2=다다음주
+  function kstWeekRange(week) {
+    const off = [0, 1, 2].includes(Number(week)) ? Number(week) : 0;
+    const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+    const dow = nowKst.getUTCDay();                       // 0=일..6=토 (shift=KST 요일)
+    const toMon = (dow === 0 ? -6 : 1 - dow);
+    const mon = new Date(nowKst); mon.setUTCDate(mon.getUTCDate() + toMon + 7 * off);
+    const end = new Date(mon); end.setUTCDate(end.getUTCDate() + 7);
+    return { start: mon.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  }
+  const datePlus = (dateStr, days) => {
+    const d = new Date(dateStr + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+  const filledCount = (p) => p ? String(p).split(/[,，]/).map((s) => s.trim()).filter(Boolean).length : 0;
+
+  // [공개] 주간 일정 — is_public·비취소만, 실명 제외(정원/잔여만)
+  app.get("/api/schedule", async (req, res) => {
+    const { start, end } = kstWeekRange(req.query.week);
+    if (!ready()) return res.json({ week: { start, end }, events: [] });
+    const kind = ["lesson", "direct"].includes(req.query.kind) ? req.query.kind : null;
+    try {
+      let q = `select=id,kind,event_date,start_time,end_time,format,title,capacity,participants,is_recruiting,trainer_id&event_date=gte.${start}&event_date=lt.${end}&is_public=eq.true&status=neq.cancelled&order=event_date.asc,start_time.asc.nullslast`;
+      if (kind) q += `&kind=eq.${kind}`;
+      const rows = await sbSelect("schedule_events", q);
+      const staff = await sbSelect("staff", "select=id,name").catch(() => []);
+      const nameOf = {}; staff.forEach((s) => { nameOf[s.id] = s.name; });
+      const events = rows.map((r) => ({
+        id: r.id, kind: r.kind, event_date: r.event_date, start_time: r.start_time, end_time: r.end_time,
+        format: r.format, title: r.title || null,
+        trainer: r.trainer_id ? (nameOf[r.trainer_id] || null) : null,
+        capacity: r.capacity, filled: filledCount(r.participants),   // 실명 대신 인원수만
+        is_recruiting: r.is_recruiting,
+      }));
+      res.json({ week: { start, end }, events });
+    } catch (e) { console.error("schedule_public", e); res.json({ week: { start, end }, events: [] }); }
+  });
+
+  // [운영진] 주간 일정 — owner 전체 / 트레이너 본인 것만. 실명 포함.
+  app.get("/api/admin/schedule", async (req, res) => {
+    const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    const { start, end } = kstWeekRange(req.query.week);
+    const kind = ["lesson", "direct"].includes(req.query.kind) ? req.query.kind : null;
+    try {
+      let q = `select=*&event_date=gte.${start}&event_date=lt.${end}&order=event_date.asc,start_time.asc.nullslast`;
+      if (kind) q += `&kind=eq.${kind}`;
+      if (!c.isOwner && c.me) q += `&trainer_id=eq.${c.me.id}`;
+      res.json({ week: { start, end }, events: await sbSelect("schedule_events", q), formats: SCHED_FORMATS, isOwner: c.isOwner });
+    } catch (e) { console.error("schedule_admin", e); res.status(502).json({ error: "db" }); }
+  });
+
+  // [운영진] 일정 생성 — 직강은 owner 전용. kind×format 화이트리스트 강제. 더블부킹 경고(차단X).
+  app.post("/api/admin/schedule", async (req, res) => {
+    const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    const b = req.body || {};
+    const kind = ["lesson", "direct"].includes(b.kind) ? b.kind : null;
+    if (!kind) return res.status(400).json({ error: "kind(lesson/direct)를 확인해 주세요." });
+    if (kind === "direct" && !c.isOwner) return res.status(403).json({ error: "owner_only" });
+    if (!SCHED_FORMATS[kind].includes(b.format))
+      return res.status(400).json({ error: `${kind} format 허용값: ${SCHED_FORMATS[kind].join("/")}` });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.event_date || "")))
+      return res.status(400).json({ error: "날짜(YYYY-MM-DD)를 확인해 주세요." });
+    const trainer_id = c.isOwner ? (b.trainer_id ? parseInt(b.trainer_id) : null) : (c.me && c.me.id);
+    let warning = null;
+    if (trainer_id && b.start_time) {
+      try {
+        const dup = await sbSelect("schedule_events", `select=id&trainer_id=eq.${trainer_id}&event_date=eq.${b.event_date}&start_time=eq.${encodeURIComponent(b.start_time)}&status=neq.cancelled&limit=1`);
+        if (dup.length) warning = "같은 트레이너·시간대에 이미 일정이 있어요(중복 등록 가능).";
+      } catch { /* 경고용 조회 실패는 무시 */ }
+    }
+    try {
+      const row = await sbInsert("schedule_events", {
+        kind, event_date: b.event_date, start_time: b.start_time || null, end_time: b.end_time || null,
+        trainer_id, format: b.format, title: String(b.title || "").slice(0, 60) || null,
+        participants: String(b.participants || "").slice(0, 500) || null,
+        capacity: (b.capacity === "" || b.capacity == null) ? null : parseInt(b.capacity),
+        memo: String(b.memo || "").slice(0, 300) || null,
+        is_public: b.is_public === false ? false : true,
+        is_recruiting: !!b.is_recruiting, created_by: c.u.id,
+      });
+      await audit(c, "schedule.add", `schedule:${row.id}`, { kind, format: b.format, event_date: b.event_date });
+      res.json({ event: row, warning });
+    } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+  });
+
+  // [운영진] 일정 수정 — 기존 행 소유권 검증(트레이너=본인 trainer_id·비직강). status=cancelled=soft delete.
+  app.patch("/api/admin/schedule/:id", async (req, res) => {
+    const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    const id = parseInt(req.params.id); if (!id) return res.status(400).json({ error: "bad_params" });
+    const b = req.body || {};
+    try {
+      const existing = (await sbSelect("schedule_events", `select=*&id=eq.${id}&limit=1`))[0];
+      if (!existing) return res.status(404).json({ error: "not_found" });
+      if (!c.isOwner && (existing.kind === "direct" || existing.trainer_id !== (c.me && c.me.id)))
+        return res.status(403).json({ error: "forbidden" });
+      const patch = { updated_at: new Date().toISOString() };
+      if (b.event_date !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(b.event_date)) patch.event_date = b.event_date;
+      if (b.start_time !== undefined) patch.start_time = b.start_time || null;
+      if (b.end_time !== undefined) patch.end_time = b.end_time || null;
+      if (b.format !== undefined) {
+        if (!SCHED_FORMATS[existing.kind].includes(b.format)) return res.status(400).json({ error: "format이 kind와 맞지 않습니다." });
+        patch.format = b.format;
+      }
+      if (b.title !== undefined) patch.title = String(b.title).slice(0, 60) || null;
+      if (b.participants !== undefined) patch.participants = String(b.participants).slice(0, 500) || null;
+      if (b.capacity !== undefined) patch.capacity = (b.capacity === "" || b.capacity == null) ? null : parseInt(b.capacity);
+      if (b.memo !== undefined) patch.memo = String(b.memo).slice(0, 300) || null;
+      if (b.is_public !== undefined) patch.is_public = !!b.is_public;
+      if (b.is_recruiting !== undefined) patch.is_recruiting = !!b.is_recruiting;
+      if (b.status !== undefined && ["scheduled", "done", "cancelled"].includes(b.status)) patch.status = b.status;
+      if (c.isOwner && b.trainer_id !== undefined) patch.trainer_id = b.trainer_id ? parseInt(b.trainer_id) : null;
+      const rows = await sbPatch("schedule_events", `id=eq.${id}`, patch);
+      await audit(c, "schedule.edit", `schedule:${id}`, patch);
+      res.json(rows[0] || { ok: true });
+    } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
+  });
+
+  // [운영진] 지난주 복사 — [보고 있는 주] → [그 다음 주]. 멱등 가드(대상 비취소 존재 시 confirm 요구).
+  app.post("/api/admin/schedule/copy-week", async (req, res) => {
+    const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    const b = req.body || {};
+    const src = kstWeekRange(b.week);
+    const tgtStart = datePlus(src.start, 7), tgtEnd = datePlus(src.end, 7);
+    const scope = (!c.isOwner && c.me) ? `&trainer_id=eq.${c.me.id}` : "";
+    try {
+      const tgt = await sbSelect("schedule_events", `select=id&event_date=gte.${tgtStart}&event_date=lt.${tgtEnd}&status=neq.cancelled${scope}`);
+      if (tgt.length > 0 && b.confirm !== true)
+        return res.status(409).json({ error: "target_not_empty", count: tgt.length, target_week: { start: tgtStart, end: tgtEnd } });
+      const srcRows = await sbSelect("schedule_events", `select=*&event_date=gte.${src.start}&event_date=lt.${src.end}&status=eq.scheduled${scope}`);
+      let inserted = 0;
+      for (const r of srcRows) {
+        await sbInsert("schedule_events", {
+          kind: r.kind, event_date: datePlus(r.event_date, 7), start_time: r.start_time, end_time: r.end_time,
+          trainer_id: r.trainer_id, format: r.format, title: r.title, participants: r.participants,
+          capacity: r.capacity, memo: r.memo, is_public: r.is_public, is_recruiting: r.is_recruiting,
+          status: "scheduled", created_by: c.u.id,
+        });
+        inserted++;
+      }
+      await audit(c, "schedule.copy_week", null, { from: src.start, to: tgtStart, inserted });
+      res.json({ inserted, source_week: src, target_week: { start: tgtStart, end: tgtEnd } });
+    } catch (e) { console.error("copy_week", e); res.status(502).json({ error: "db" }); }
+  });
 
   console.log("[admin-panel] mounted · /api/admin/*");
 };

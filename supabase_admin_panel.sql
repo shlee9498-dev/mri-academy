@@ -111,7 +111,33 @@ create table if not exists public.graduations (
 );
 create index if not exists idx_grad_trainer on public.graduations (trainer_id) where via_lesson;
 
--- 8) RLS — 백엔드 service_role만 접근 (/api 경유, 서버에서 isStaff 검증)
+-- 8) 일정 (레슨/직강 통합) — Phase S1. lesson_sessions(정산)와 완전 분리·불가침. soft delete(status).
+--    공개 GET은 participants(실명) 미노출 — capacity/잔여만. kind×format 조합은 서버(API)에서 강제.
+create table if not exists public.schedule_events (
+  id            bigint generated always as identity primary key,
+  kind          text not null check (kind in ('lesson','direct')),
+  event_date    date not null,
+  start_time    time,
+  end_time      time,
+  trainer_id    bigint references public.staff(id),       -- 직강은 무리(owner staff)
+  format        text not null check (format in (
+                  '관전형','참여형','1:1','그룹','자율연습','상담',
+                  '초급반','중급반','심화반','개인강의','그룹강의')),
+  title         text,                                     -- 자유 라벨(수업유형/반명)
+  participants  text,                                     -- 이름 나열(FK 강제 안 함, 운영진 전용·비공개)
+  capacity      int,                                      -- 정원(공개 '3/4 모집중' 표시용)
+  memo          text,
+  is_public     boolean not null default true,
+  is_recruiting boolean not null default false,
+  status        text not null default 'scheduled' check (status in ('scheduled','done','cancelled')),
+  created_by    text,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create index if not exists idx_sched_week on public.schedule_events (event_date, kind) where status <> 'cancelled';
+create index if not exists idx_sched_trainer on public.schedule_events (trainer_id, event_date);
+
+-- 9) RLS — 백엔드 service_role만 접근 (/api 경유, 서버에서 isStaff 검증)
 alter table public.staff           enable row level security;
 alter table public.students        enable row level security;
 alter table public.payments        enable row level security;
@@ -119,6 +145,7 @@ alter table public.lesson_sessions enable row level security;
 alter table public.payouts         enable row level security;
 alter table public.admin_audit     enable row level security;
 alter table public.graduations     enable row level security;
+alter table public.schedule_events enable row level security;
 
 -- ============================================================
 -- 정산 계산 규칙 (server.js에서 계산 — 여기 문서화만, 시트에서 역설계·검증됨)
