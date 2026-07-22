@@ -2,45 +2,90 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>주간 레슨 일정 · MRI ACADEMY</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>레슨 일정 · MRI ACADEMY</title>
+<meta name="description" content="MRI ACADEMY 주간 레슨·직강 일정. 자리 모집중인 그룹을 확인하고 바로 합류하세요.">
 <link rel="canonical" href="https://mriacademy.gg/lesson-schedule.html">
+<meta property="og:title" content="레슨 일정 · MRI ACADEMY">
+<meta property="og:description" content="주간 레슨·직강 일정 — 모집중 자리 확인.">
+<meta property="og:url" content="https://mriacademy.gg/lesson-schedule.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
 <style>
+/* ── MRI 디자인 시스템 v1 · A "OLED Premium" ── */
 :root{
-  --bg:#0a0a0c;--bg-card:#1a1a20;--bg-elev:#20202a;
-  --ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;
-  --gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--gold-deep:#caa00f;
-  --green:#10b981;--blue:#5ac8fa;--purple:#a78bfa;--line:#27272a;
+  --bg:#0a0a0c; --surface-1:#15151a; --surface-2:#1a1a20;
+  --ink:#f4f4f5; --ink-dim:#a1a1aa; --ink-faint:#71717a;
+  --gold:#f5c518; --gold-deep:#caa00f; --gold-soft:rgba(245,197,24,.3);
+  --line:#27272a;
+  --display:'Space Grotesk',ui-sans-serif,sans-serif;      /* 영문·숫자 */
+  --body:'Pretendard Variable',Pretendard,-apple-system,system-ui,sans-serif; /* 한글 */
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--ink);font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh;
-  background-image:radial-gradient(900px 500px at 50% -10%,rgba(245,197,24,.06),transparent 70%),linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);background-size:auto,37px 37px,37px 37px}
-.wrap{max-width:760px;margin:0 auto;padding:40px 18px 80px}
-.top{text-align:center;margin-bottom:8px}
-.kick{color:var(--gold);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
-h1{font-size:30px;font-weight:800;margin:6px 0 10px;letter-spacing:-.02em}
-.weekpill{display:inline-flex;align-items:center;gap:7px;background:var(--bg-card);border:1px solid var(--gold-soft);color:var(--gold);border-radius:999px;padding:7px 16px;font-size:14px;font-weight:700}
-.note{text-align:center;color:var(--ink-dim);font-size:13px;margin:14px 0 4px}
-.note b{color:var(--gold)}
-.legend{text-align:center;color:var(--ink-faint);font-size:11.5px;margin-bottom:28px}
-.grp{margin-bottom:30px}
-.grp h2{font-size:16px;font-weight:800;margin-bottom:14px;padding-left:10px;border-left:3px solid var(--gold)}
-.row{display:flex;gap:12px;margin-bottom:10px}
-.day{flex:0 0 30px;text-align:center;font-weight:800;color:var(--ink-dim);padding-top:14px}
-.card{flex:1;background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
-.card.recruit{border-color:var(--gold-soft);background:linear-gradient(0deg,rgba(245,197,24,.05),rgba(245,197,24,.05)),var(--bg-card)}
-.line1{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:5px}
-.time{font-size:15px;font-weight:800}
-.badge{font-size:11px;font-weight:700;border-radius:999px;padding:2px 9px;border:1px solid}
-.b-blue{color:var(--blue);border-color:rgba(90,200,250,.4);background:rgba(90,200,250,.08)}
-.b-green{color:var(--green);border-color:rgba(16,185,129,.4);background:rgba(16,185,129,.08)}
-.b-gold{color:var(--gold);border-color:var(--gold-soft);background:rgba(245,197,24,.08)}
-.b-type{color:var(--purple);border-color:rgba(167,139,250,.4);background:rgba(167,139,250,.08)}
-.b-recruit{color:#0a0a0c;background:var(--gold);border-color:var(--gold);font-weight:800}
-.members{color:var(--ink-dim);font-size:13.5px}
-.state{background:var(--bg-card);border:1px dashed var(--line);border-radius:14px;padding:40px 20px;text-align:center;color:var(--ink-dim)}
-.back{display:inline-block;margin-top:24px;color:var(--gold);text-decoration:none;font-size:14px}
-.upd{text-align:center;color:var(--ink-faint);font-size:11px;margin-top:22px}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh}
+.wrap{max-width:720px;margin:0 auto;padding:44px 18px 120px}
+
+/* 헤더 */
+.top{margin-bottom:26px}
+.kick{font-family:var(--display);color:var(--gold);font-size:12px;font-weight:600;letter-spacing:.18em;text-transform:uppercase}
+h1{font-size:clamp(26px,6vw,34px);font-weight:800;letter-spacing:-.02em;margin:8px 0 8px}
+.lead{color:var(--ink-dim);font-size:14px;max-width:46ch}
+
+/* 탭 (2층) */
+.tabs{display:flex;flex-direction:column;gap:9px;margin:22px 0 6px}
+.tabrow{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.tabrow .lbl{font-family:var(--display);font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--ink-faint);text-transform:uppercase;width:44px;flex:0 0 auto}
+.tab{font-family:var(--body);font-weight:700;font-size:13px;padding:8px 15px;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-dim);cursor:pointer;transition:.15s}
+.tab:hover{border-color:var(--gold-soft);color:var(--ink)}
+.tab[aria-selected="true"]{background:rgba(245,197,24,.1);border-color:var(--gold-soft);color:var(--gold)}
+.range{font-family:var(--display);color:var(--ink-faint);font-size:12.5px;font-weight:500;margin:12px 0 22px}
+
+/* 요일 그룹 */
+.day{margin-bottom:26px}
+.day-h{display:flex;align-items:baseline;gap:10px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.day-h .dow{font-family:var(--display);font-size:15px;font-weight:700;color:var(--ink)}
+.day-h .date{font-family:var(--display);font-size:12px;font-weight:500;color:var(--ink-faint)}
+.day-h .today{font-family:var(--display);font-size:10px;font-weight:700;color:var(--gold);border:1px solid var(--gold-soft);border-radius:99px;padding:1px 8px;margin-left:auto}
+
+/* 카드 */
+.card{background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px;transition:border-color .15s,transform .15s}
+.card:hover{border-color:#3a3a40}
+.card.recruit{border-color:var(--gold-soft)}
+.c1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.time{font-family:var(--display);font-size:16px;font-weight:700;letter-spacing:.01em}
+.chip{font-size:11px;font-weight:700;border-radius:99px;padding:3px 10px;border:1px solid var(--line);background:var(--surface-1);color:var(--ink-dim)}
+.c2{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;color:var(--ink-dim);font-size:13px}
+.c2 .trainer{color:var(--ink);font-weight:700}
+.c2 .seats{font-family:var(--display);font-weight:600;color:var(--ink-dim)}
+.title{color:var(--ink-faint);font-size:12.5px;margin-top:6px}
+
+/* 모집중 뱃지 — 이 페이지의 유일한 골드 글로우 */
+.recruiting{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;color:#0a0a0c;background:var(--gold);border-radius:99px;padding:3px 10px}
+@media (prefers-reduced-motion: no-preference){
+  .recruiting{animation:glowpulse 2.6s ease-in-out infinite}
+}
+@keyframes glowpulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(245,197,24,.0)}
+  50%{box-shadow:0 0 14px 1px rgba(245,197,24,.45)}
+}
+
+/* 빈 주 상태 */
+.empty{background:var(--surface-1);border:1px dashed var(--line);border-radius:14px;padding:44px 22px;text-align:center}
+.empty .em{font-size:30px;margin-bottom:12px;opacity:.6}
+.empty p{color:var(--ink-dim);font-size:14px;line-height:1.7;margin-bottom:18px}
+.empty .cta{display:inline-block;font-weight:800;font-size:14px;color:#0a0a0c;background:linear-gradient(135deg,var(--gold),var(--gold-deep));border-radius:9px;padding:12px 22px;text-decoration:none}
+
+.note{color:var(--ink-faint);font-size:12px;line-height:1.7;margin-top:26px;text-align:center}
+.back{display:inline-block;margin-top:14px;color:var(--gold);text-decoration:none;font-weight:700;font-size:13.5px}
+
+/* 하단 고정 신청 바 */
+.applybar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(10,10,12,.86);backdrop-filter:saturate(140%) blur(8px);border-top:1px solid var(--line)}
+.applybar .in{max-width:720px;margin:0 auto;padding:12px 18px calc(12px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:12px}
+.applybar .txt{flex:1;min-width:0;font-size:13px;color:var(--ink-dim)}
+.applybar .txt b{color:var(--ink)}
+.applybar a{flex:0 0 auto;font-weight:800;font-size:14px;color:#0a0a0c;background:linear-gradient(135deg,var(--gold),var(--gold-deep));border-radius:9px;padding:12px 20px;text-decoration:none;white-space:nowrap}
 </style>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
 </head>
@@ -48,112 +93,140 @@ h1{font-size:30px;font-weight:800;margin:6px 0 10px;letter-spacing:-.02em}
 <div class="wrap">
   <div class="top">
     <div class="kick">Weekly Schedule</div>
-    <h1>주간 레슨 일정</h1>
-    <span class="weekpill">📅 <span id="week">불러오는 중…</span></span>
+    <h1>레슨 일정</h1>
+    <p class="lead">주간 레슨·직강 일정입니다. <b style="color:var(--gold)">모집중</b> 표시된 그룹은 빈 자리에 바로 합류할 수 있어요.</p>
+    <div class="tabs">
+      <div class="tabrow"><span class="lbl">구분</span>
+        <button class="tab" data-kind="lesson" aria-selected="true">레슨</button>
+        <button class="tab" data-kind="direct" aria-selected="false">직강</button>
+      </div>
+      <div class="tabrow"><span class="lbl">주간</span>
+        <button class="tab" data-week="0" aria-selected="true">이번 주</button>
+        <button class="tab" data-week="1" aria-selected="false">다음 주</button>
+        <button class="tab" data-week="2" aria-selected="false">다다음 주</button>
+      </div>
+    </div>
+    <div class="range" id="range">불러오는 중…</div>
   </div>
-  <p class="note"><b>자리 모집중</b> 표시된 그룹레슨은 추가 참여가 가능합니다. 일정 조율은 디스코드/카카오로 문의해 주세요.</p>
-  <p class="legend">🟦 관전형 &nbsp; 🟩 참여형 &nbsp; 🟨 1:1</p>
 
-  <div id="list"></div>
-  <div id="state" class="state">일정을 불러오는 중…</div>
+  <div id="list" aria-live="polite"></div>
 
-  <div style="text-align:center"><a class="back" href="/">← MRI ACADEMY 홈</a></div>
-  <div class="upd" id="upd"></div>
+  <p class="note">일정 조율·문의는 디스코드/카카오로. 정원·시간은 상담 시 안내드립니다.<br>
+    <a class="back" href="/">← MRI ACADEMY 홈</a></p>
 </div>
 
-<script>
-// ⬇⬇⬇ 배포한 Apps Script 웹앱 /exec URL 을 여기에 붙여넣으세요 ⬇⬇⬇
-const SHEET_API = "https://script.google.com/macros/s/AKfycbw4PsdbJAxINmSr8MkauxSHuROfnGsAo1-8X6Mu6Jno8VZDHaxVkTHcWg6EQJ0lfVP2Yg/exec";
-// ⬆⬆⬆ (또는 이 URL 알려주면 박아서 최종본 드림)
-// ⬇ 무리 직강 피드 (무리 master의 Apps Script /exec) — 배포 후 URL 교체
-const MURI_API = "https://script.google.com/macros/s/AKfycbwei0BqGQg3VsIdpmGBW9NO3baqIt8foprrGt4Yiq5gD16ZjQrFTOdeEVHaATVWaSGJ/exec";
+<div class="applybar">
+  <div class="in">
+    <div class="txt"><b>레벨테스트 없이</b> 레슨 신청 가능</div>
+    <a href="apply.html">상담 신청하기 →</a>
+  </div>
+</div>
 
-const DAYS = ["월","화","수","목","금","토","일"];
-const FMT = { "관전형":["관전형","b-blue"], "참여형":["참여형","b-green"], "1:1":["1:1","b-gold"], "그룹강의":["그룹강의","b-green"], "개인강의":["개인강의","b-gold"] };
-const $ = (id)=>document.getElementById(id);
-const esc = (s)=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+<script type="module">
+const API = "https://mri-academy-production.up.railway.app";
+const DOW = ["일","월","화","수","목","금","토"];
+const state = { kind: "lesson", week: 0 };
+const $ = (s, r=document) => r.querySelector(s);
+const esc = (s) => String(s==null?"":s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const dowLabel = (d) => DOW[new Date(d+"T00:00:00Z").getUTCDay()];
+const mdLabel = (d) => { const p=d.split("-"); return `${+p[1]}.${+p[2]}`; };
+const hhmm = (t) => t ? String(t).slice(0,5) : "";
+const kstToday = () => new Date(Date.now()+9*3600*1000).toISOString().slice(0,10);
 
-// ── 개인정보 보호: 시트는 본명 유지, 화면만 닉/마스킹 표시 ──
-// 닉네임 매핑표: 여기에 "본명":"닉네임" 추가하면 그 수강생은 닉으로 표시됨
-const NICK = {
-  "양형석":"콩가",
-  "박성민":"빡이",
-  "김웅채":"감티",
-};
-function maskName(n){ // 매핑 없는 본명은 자동 마스킹 (박성민→박*민)
-  if(n.length<=1) return n;
-  if(n.length===2) return n[0]+"*";
-  return n[0]+"*".repeat(n.length-2)+n[n.length-1];
+// 모션 (실패해도 콘텐츠는 보임 — 카드는 기본 opacity 1)
+let animate=null, stagger=null;
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+if(!reduce){
+  try{ const m = await import("https://cdn.jsdelivr.net/npm/motion@11/+esm"); animate=m.animate; stagger=m.stagger; }catch(e){ /* CDN 실패 → 정적 표시 */ }
 }
-function displayMembers(s){
-  return String(s==null?"":s).split(",").map(tok=>{
-    tok = tok.trim(); if(!tok) return "";
-    const m = tok.match(/^(.+?)\s*\((.+)\)\s*$/); // "이름(닉)" → 닉만
-    if(m) return m[2].trim();
-    if(NICK[tok]) return NICK[tok];
-    if(/^[가-힣]{2,4}$/.test(tok)) return maskName(tok); // 한글 이름은 마스킹
-    return tok; // 그 외(팀명·문구 등)는 그대로
-  }).filter(Boolean).join(", ");
+function reveal(){
+  if(!animate) return;
+  const cards = document.querySelectorAll("[data-reveal]");
+  if(!cards.length) return;
+  cards.forEach(c=>{ c.style.opacity="0"; });
+  animate(cards, { opacity:[0,1], transform:["translateY(12px)","translateY(0)"] },
+    { duration:.4, delay: stagger(0.045), easing:"ease-out" });
 }
 
-function trainerRank(name){
-  if(/무리/.test(name)) return 0;
-  if(/현태/.test(name)) return 1;
-  if(/준구/.test(name)) return 2;
-  return 3;
+function fmtBadge(f){ return `<span class="chip">${esc(f)}</span>`; }
+function seatText(e){
+  if(e.capacity!=null){ return `${e.filled}/${e.capacity}명`; }
+  return e.filled ? `${e.filled}명` : "";
 }
-function startMin(t){ const m=String(t).match(/(\d{1,2}):(\d{2})/); return m?(+m[1]*60 + +m[2]):9999; }
-function thisWeekRange(){
-  const n=new Date(), dow=(n.getDay()+6)%7; // 월=0
-  const mon=new Date(n); mon.setDate(n.getDate()-dow);
-  const sun=new Date(mon); sun.setDate(mon.getDate()+6);
-  const f=(d)=>`${String(d.getMonth()+1).padStart(2,"0")}.${String(d.getDate()).padStart(2,"0")}`;
-  return `2026.${f(mon)} ~ ${f(sun)}`;
+
+function render(data){
+  const range = $("#range"), list = $("#list");
+  const wk = data.week;
+  range.textContent = wk ? `${wk.start.replace(/-/g,".")} ~ ${data.__endLabel}` : "";
+  const events = (data.events||[]).slice()
+    .sort((a,b)=> (a.event_date<b.event_date?-1:a.event_date>b.event_date?1:0) || (hhmm(a.start_time)<hhmm(b.start_time)?-1:1));
+
+  if(!events.length){
+    list.innerHTML = `<div class="empty">
+      <div class="em">🗓️</div>
+      <p>이번 주 ${state.kind==="lesson"?"레슨":"직강"} 일정이 아직 없어요.<br>다른 주를 확인하거나, 상담을 신청하면 맞는 자리로 안내해 드려요.</p>
+      <a class="cta" href="apply.html">상담 신청하기 →</a>
+    </div>`;
+    return;
+  }
+
+  const byDay = {};
+  events.forEach(e=>{ (byDay[e.event_date]=byDay[e.event_date]||[]).push(e); });
+  const today = kstToday();
+  let html="";
+  Object.keys(byDay).sort().forEach(date=>{
+    html += `<section class="day">
+      <div class="day-h"><span class="dow">${dowLabel(date)}요일</span><span class="date">${mdLabel(date)}</span>${date===today?`<span class="today">오늘</span>`:""}</div>`;
+    byDay[date].forEach(e=>{
+      const time = hhmm(e.start_time) + (e.end_time?`–${hhmm(e.end_time)}`:"");
+      const seats = seatText(e);
+      html += `<div class="card${e.is_recruiting?" recruit":""}" data-reveal>
+        <div class="c1">
+          ${time?`<span class="time">${esc(time)}</span>`:""}
+          ${fmtBadge(e.format)}
+          ${e.is_recruiting?`<span class="recruiting">● 모집중</span>`:""}
+        </div>
+        <div class="c2">
+          ${e.trainer?`<span class="trainer">${esc(e.trainer)}</span>`:""}
+          ${seats?`<span class="seats">${esc(seats)}</span>`:""}
+        </div>
+        ${e.title?`<div class="title">${esc(e.title)}</div>`:""}
+      </div>`;
+    });
+    html += `</section>`;
+  });
+  list.innerHTML = html;
+  reveal();
 }
 
 async function load(){
-  if(SHEET_API.indexOf("__EXEC")===0){ $("state").textContent="일정 연동 준비 중입니다."; $("week").textContent=thisWeekRange(); return; }
+  $("#range").textContent = "불러오는 중…";
+  $("#list").innerHTML = "";
   try{
-    const tasks = [ fetch(SHEET_API,{cache:"no-store"}).then(r=>r.json()).catch(()=>({lessons:[]})) ];
-    if(MURI_API.indexOf("__MURI")!==0) tasks.push( fetch(MURI_API,{cache:"no-store"}).then(r=>r.json()).catch(()=>({lessons:[]})) );
-    const results = await Promise.all(tasks);
-    const d = results[0] || {lessons:[]};
-    $("week").textContent = (d.week && d.week.range) ? ("2026."+d.week.range.replace(/\s/g,"").replace("~"," ~ ")) : thisWeekRange();
-    const items = results.flatMap(x=>(x&&x.lessons)||[]);
-    if(!items.length){ $("state").textContent="이번 주 등록된 일정이 없습니다."; return; }
-
-    // 트레이너별 그룹화
-    const groups = {};
-    items.forEach(it=>{ (groups[it.trainer]=groups[it.trainer]||[]).push(it); });
-    const order = Object.keys(groups).sort((a,b)=> trainerRank(a)-trainerRank(b) || a.localeCompare(b));
-
-    let html="";
-    order.forEach(tr=>{
-      const rows = groups[tr].slice().sort((a,b)=> DAYS.indexOf(a.day)-DAYS.indexOf(b.day) || startMin(a.time)-startMin(b.time));
-      html += `<div class="grp"><h2>${esc(tr)}</h2>`;
-      rows.forEach(it=>{
-        const fmt = FMT[it.format] || [it.format||"수업","b-blue"];
-        html += `<div class="row"><div class="day">${esc(it.day)}</div>
-          <div class="card${it.recruit?" recruit":""}">
-            <div class="line1">
-              <span class="time">${esc(it.time)}</span>
-              <span class="badge ${fmt[1]}">${esc(fmt[0])}</span>
-              ${it.type?`<span class="badge b-type">${esc(it.type)}</span>`:""}
-              ${it.recruit?`<span class="badge b-recruit">자리 모집중</span>`:""}
-            </div>
-            <div class="members">${esc(displayMembers(it.members))}</div>
-          </div></div>`;
-      });
-      html += `</div>`;
-    });
-    $("list").innerHTML = html;
-    $("state").style.display="none";
-    if(d.updated){ const m=Math.max(0,Math.round((Date.now()-new Date(d.updated))/60000)); $("upd").textContent = "시트 연동 · 실시간 반영"; }
+    const r = await fetch(`${API}/api/schedule?week=${state.week}&kind=${state.kind}`, { cache:"no-store" });
+    const d = await r.json();
+    // 주 종료 라벨(포함형) = end - 1일
+    if(d.week){ const e=new Date(d.week.end+"T00:00:00Z"); e.setUTCDate(e.getUTCDate()-1); d.__endLabel = e.toISOString().slice(0,10).replace(/-/g,"."); }
+    render(d);
   }catch(e){
-    $("state").textContent="일정을 불러오지 못했습니다. 잠시 후 새로고침해 주세요.";
-    $("week").textContent=thisWeekRange();
+    $("#list").innerHTML = `<div class="empty"><div class="em">⚠️</div><p>일정을 불러오지 못했어요. 잠시 후 새로고침해 주세요.</p><a class="cta" href="apply.html">상담 신청하기 →</a></div>`;
+    $("#range").textContent = "";
   }
 }
+
+// 탭 배선
+document.querySelectorAll(".tab").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    const grp = btn.dataset.kind!=null ? "kind" : "week";
+    const val = btn.dataset.kind!=null ? btn.dataset.kind : Number(btn.dataset.week);
+    if(state[grp]===val) return;
+    state[grp] = val;
+    const attr = grp==="kind" ? "data-kind" : "data-week";
+    document.querySelectorAll(`.tab[${attr}]`).forEach(b=> b.setAttribute("aria-selected","false"));
+    btn.setAttribute("aria-selected","true");
+    load();
+  });
+});
 load();
 </script>
 </body>
