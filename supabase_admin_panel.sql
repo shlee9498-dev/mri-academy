@@ -137,7 +137,19 @@ create table if not exists public.schedule_events (
 create index if not exists idx_sched_week on public.schedule_events (event_date, kind) where status <> 'cancelled';
 create index if not exists idx_sched_trainer on public.schedule_events (trainer_id, event_date);
 
--- 9) RLS — 백엔드 service_role만 접근 (/api 경유, 서버에서 isStaff 검증)
+-- 9) Phase T1: 수강생 PUBG 계정 연결 + 전적 스냅샷
+--    기존 student_snapshots(성장추적 테이블) 재사용 — student_id FK·avg_damage 컬럼만 추가.
+--    account_id는 안정키(닉 변경 무관): 배치가 닉→accountId 1회 해석 후 캐시.
+alter table public.students add column if not exists pubg_platform   text check (pubg_platform in ('steam','kakao'));
+alter table public.students add column if not exists pubg_name       text;   -- 인게임 닉(시드용, 변경 가능)
+alter table public.students add column if not exists pubg_account_id text;   -- 해석된 안정 accountId(캐시)
+-- student_snapshots는 성장추적 시스템이 이미 생성함. 여기선 컬럼만 확장(idempotent).
+alter table public.student_snapshots add column if not exists student_id  bigint references public.students(id);
+alter table public.student_snapshots add column if not exists avg_damage  int;   -- 평균 딜량(damageDealt/rounds)
+alter table public.student_snapshots alter column discord_id drop not null;      -- owner 시드 학생(디코 없음) 허용
+create index if not exists idx_snap_student on public.student_snapshots (student_id, created_at desc);
+
+-- 10) RLS — 백엔드 service_role만 접근 (/api 경유, 서버에서 isStaff 검증)
 alter table public.staff           enable row level security;
 alter table public.students        enable row level security;
 alter table public.payments        enable row level security;

@@ -712,6 +712,7 @@ function computeViolations(guild) {
   return out;
 }
 
+let botClient = null;   // Phase T1 — 스냅샷 완료 시 오너 DM용 모듈 레벨 ref
 if (process.env.DISCORD_TOKEN) {
   const client = new Client({
     intents: [
@@ -773,6 +774,8 @@ if (process.env.DISCORD_TOKEN) {
 
   client.once("ready", async () => {
     console.log("bot ready:", client.user.tag);
+    botClient = client;   // Phase T1 오너 DM용
+
     refresh(client);
     setInterval(() => refresh(client), 5 * 60 * 1000);
     try { const g = process.env.GUILD_ID ? await client.guilds.fetch(process.env.GUILD_ID) : client.guilds.cache.first(); if (g) await ensureLifecycleRoles(g); } catch (e) { console.error("ensure_roles_failed", e?.message); }
@@ -2784,6 +2787,109 @@ app.post("/api/payments/confirm", async (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: String(e?.message || e) });
   }
+});
+
+// ═══════════════════ Phase T1 · 전적 자동 스냅샷 (owner) ═══════════════════
+// 기존 PUBG 파이프라인(pubgGet·findPlayer·currentSeasonId·tierIndex/Label) 재사용.
+// students.pubg_* 연결 → 랭크 스냅샷 → student_snapshots(snapshot_type='tracking') 적재
+// → 현 티어 전수 리포트 + 미등록 마스터+ 승급 후보. 10 RPM 보호 위해 계정당 페이싱.
+// ※ 이 라우트들은 admin-panel 마운트(아래) 이전에 등록 → 읽기전용 미들웨어 미적용. 핸들러에서 owner 검증.
+const sleepT = (ms) => new Promise((r) => setTimeout(r, ms));
+const OWNER_IDS_T = (process.env.OWNER_DISCORD_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
+function reqOwner(req) {
+  const u = getUser(req);
+  if (!u || !u.isStaff) return null;                        // null = 로그인·스태프 아님
+  const owner = OWNER_IDS_T.includes(u.id) || u.id === process.env.MRI_OWNER_ID;
+  return owner ? u : false;                                 // false = 스태프지만 owner 아님
+}
+// 계정ID 기준 현재 시즌 랭크 (딜량 포함) — snapshotStatsAt 변형(damageDealt 추가)
+async function pubgRankedByAccount(platform, accountId) {
+  const seasonId = await currentSeasonId(platform);
+  let sq = null;
+  try {
+    const rd = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}/ranked`, 1800000);
+    const m = rd.data.attributes.rankedGameModeStats || {};
+    const tpp = m["squad"], fpp = m["squad-fpp"];           // 공식 대회 기준 TPP 우선
+    sq = (tpp && (tpp.roundsPlayed || 0) > 0) ? tpp : (fpp || tpp || null);
+  } catch (_) { /* 랭크 미참여 시즌 */ }
+  const tier = sq?.currentTier?.tier || null, subTier = sq?.currentTier?.subTier || null;
+  const bestRP = sq?.bestRankPoint ?? null, rounds = sq?.roundsPlayed || 0, dmg = sq?.damageDealt ?? null;
+  return {
+    seasonId, tier, subTier, tierIdx: tierIndex(tier, bestRP), tierLabel: tierLabel(tier, subTier, bestRP),
+    rankPoint: sq?.currentRankPoint ?? null, bestRP, rounds, kda: sq?.kda ?? null,
+    avgKills: (rounds && sq?.kills != null) ? +(sq.kills / rounds).toFixed(2) : null,
+    avgDamage: (rounds && dmg != null) ? Math.round(dmg / rounds) : null, hasRanked: !!sq,
+  };
+}
+let statsRun = { running: false, total: 0, done: 0, unlinked: 0, report: [], candidates: [], masterRate: null, masterCount: null, startedAt: null, finishedAt: null, error: null };
+async function runStatsSnapshot() {
+  statsRun = { running: true, total: 0, done: 0, unlinked: 0, report: [], candidates: [], masterRate: null, masterCount: null, startedAt: Date.now(), finishedAt: null, error: null };
+  try {
+    const students = await sbSelect("students", "select=id,name,trainer_id,pubg_platform,pubg_name,pubg_account_id&status=neq.done&order=name.asc");
+    const staff = await sbSelect("staff", "select=id,name");
+    const nameOf = {}; staff.forEach((s) => { nameOf[s.id] = s.name; });
+    const grads = await sbSelect("graduations", "select=student_name,student_id");
+    const gset = new Set();
+    grads.forEach((g) => { if (g.student_id) gset.add("id:" + g.student_id); if (g.student_name) gset.add("nm:" + String(g.student_name).trim()); });
+    const linked = students.filter((s) => s.pubg_platform && (s.pubg_account_id || s.pubg_name));
+    statsRun.total = linked.length; statsRun.unlinked = students.length - linked.length;
+    for (const s of linked) {
+      try {
+        let accountId = s.pubg_account_id;
+        if (!accountId) {
+          const p = await findPlayer(s.pubg_platform, s.pubg_name);        // 닉→accountId 1회 해석
+          accountId = p.id;
+          try { await sbPatch("students", `id=eq.${s.id}`, { pubg_account_id: accountId }); } catch (_) {}
+          await sleepT(7000);
+        }
+        const snap = await pubgRankedByAccount(s.pubg_platform, accountId);
+        try {
+          await sbInsert("student_snapshots", {
+            student_id: s.id, discord_id: null, platform: s.pubg_platform, player_name: s.pubg_name || null,
+            account_id: accountId, season_id: snap.seasonId, snapshot_type: "tracking",
+            tier: snap.tier, sub_tier: snap.subTier, tier_index: snap.tierIdx,
+            rank_point: snap.rankPoint, best_rank_point: snap.bestRP, rounds_played: snap.rounds,
+            kda: snap.kda, avg_kills: snap.avgKills, avg_damage: snap.avgDamage, raw: snap,
+          });
+        } catch (e) { console.error("snap_insert", s.name, e?.message); }
+        const masterPlus = snap.tierIdx >= 6;                               // 6=마스터 7=서바이버
+        const registered = gset.has("id:" + s.id) || gset.has("nm:" + String(s.name || "").trim());
+        const row = { student: s.name, trainer: nameOf[s.trainer_id] || null, tier: snap.tierLabel, best_rank_point: snap.bestRP, avg_damage: snap.avgDamage, master_plus: masterPlus, registered };
+        statsRun.report.push(row);
+        if (masterPlus && !registered) statsRun.candidates.push(row);
+        statsRun.done++;
+        await sleepT(7000);                                                 // 10 RPM 보호(계정당 ~7s)
+      } catch (e) {
+        statsRun.report.push({ student: s.name, trainer: nameOf[s.trainer_id] || null, error: e?.message || "실패" });
+        statsRun.done++; await sleepT(3000);
+      }
+    }
+    const rated = statsRun.report.filter((r) => !r.error);
+    const mp = rated.filter((r) => r.master_plus).length;
+    statsRun.masterCount = mp;
+    statsRun.masterRate = rated.length ? +((mp / rated.length) * 100).toFixed(1) : null;
+    if (botClient && process.env.MRI_OWNER_ID) {
+      try {
+        const owner = await botClient.users.fetch(process.env.MRI_OWNER_ID);
+        const cand = statsRun.candidates.length
+          ? statsRun.candidates.map((c) => `· ${c.student} (${c.trainer || "미배정"} · ${c.tier})`).join("\n")
+          : "없음";
+        await owner.send(`📊 전적 스냅샷 완료 — ${rated.length}명 조회 (미연결 ${statsRun.unlinked})\n마스터+ 달성률: **${statsRun.masterRate}%** (${mp}/${rated.length})\n\n승급 후보(미등록 마스터+):\n${cand}\n\n전체 리포트: GET /api/admin/stats/report`);
+      } catch (e) { console.error("stats_owner_dm", e?.message); }
+    }
+  } catch (e) { console.error("stats_batch", e?.message); statsRun.error = e?.message || "batch_error"; }
+  finally { statsRun.running = false; statsRun.finishedAt = Date.now(); }
+}
+app.post("/api/admin/stats/snapshot", async (req, res) => {
+  const u = reqOwner(req); if (u === null) return res.status(403).json({ error: "staff_only" }); if (!u) return res.status(403).json({ error: "owner_only" });
+  if (!process.env.PUBG_API_KEY) return res.status(503).json({ error: "no_pubg_key" });
+  if (statsRun.running) return res.status(409).json({ error: "already_running", done: statsRun.done, total: statsRun.total });
+  runStatsSnapshot();                                        // fire-and-forget(응답 블로킹 X)
+  return res.json({ started: true, note: "백그라운드 실행 — 진행/결과는 GET /api/admin/stats/report, 완료 시 오너 DM" });
+});
+app.get("/api/admin/stats/report", async (req, res) => {
+  const u = reqOwner(req); if (u === null) return res.status(403).json({ error: "staff_only" }); if (!u) return res.status(403).json({ error: "owner_only" });
+  res.json(statsRun);
 });
 
 // ── 운영진 정산·레슨로그 관리 패널 (Phase 0) ──
