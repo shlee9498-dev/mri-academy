@@ -2825,7 +2825,8 @@ let statsRun = { running: false, total: 0, done: 0, unlinked: 0, unlinkedReasons
 async function runStatsSnapshot() {
   statsRun = { running: true, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], masterRate: null, masterCount: null, startedAt: Date.now(), finishedAt: null, error: null };
   try {
-    const students = await sbSelect("students", "select=id,name,trainer_id,pubg_platform,pubg_name,pubg_account_id&status=neq.done&order=name.asc");
+    // pubg 연결 학생은 status 무관 전원 조회 — 수료생(마스터 배출자)이 달성률·PROOF의 핵심이라 제외 금지
+    const students = await sbSelect("students", "select=id,name,trainer_id,status,pubg_platform,pubg_name,pubg_account_id&order=name.asc");
     const staff = await sbSelect("staff", "select=id,name");
     const nameOf = {}; staff.forEach((s) => { nameOf[s.id] = s.name; });
     const grads = await sbSelect("graduations", "select=student_name,student_id");
@@ -2860,7 +2861,7 @@ async function runStatsSnapshot() {
         } catch (e) { console.error("snap_insert", s.name, e?.message); }
         const masterPlus = snap.tierIdx >= 6;                               // 6=마스터 7=서바이버
         const registered = gset.has("id:" + s.id) || gset.has("nm:" + String(s.name || "").trim());
-        const row = { student: s.name, trainer: nameOf[s.trainer_id] || null, tier: snap.tierLabel, best_rank_point: snap.bestRP, avg_damage: snap.avgDamage, master_plus: masterPlus, registered };
+        const row = { student: s.name, trainer: nameOf[s.trainer_id] || null, status: s.status, tier: snap.tierLabel, best_rank_point: snap.bestRP, avg_damage: snap.avgDamage, master_plus: masterPlus, registered };
         statsRun.report.push(row);
         if (masterPlus && !registered) statsRun.candidates.push(row);
         statsRun.done++;
