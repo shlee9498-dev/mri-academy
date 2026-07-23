@@ -2821,9 +2821,9 @@ async function pubgRankedByAccount(platform, accountId) {
     avgDamage: (rounds && dmg != null) ? Math.round(dmg / rounds) : null, hasRanked: !!sq,
   };
 }
-let statsRun = { running: false, total: 0, done: 0, unlinked: 0, report: [], candidates: [], masterRate: null, masterCount: null, startedAt: null, finishedAt: null, error: null };
+let statsRun = { running: false, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], masterRate: null, masterCount: null, startedAt: null, finishedAt: null, error: null };
 async function runStatsSnapshot() {
-  statsRun = { running: true, total: 0, done: 0, unlinked: 0, report: [], candidates: [], masterRate: null, masterCount: null, startedAt: Date.now(), finishedAt: null, error: null };
+  statsRun = { running: true, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], masterRate: null, masterCount: null, startedAt: Date.now(), finishedAt: null, error: null };
   try {
     const students = await sbSelect("students", "select=id,name,trainer_id,pubg_platform,pubg_name,pubg_account_id&status=neq.done&order=name.asc");
     const staff = await sbSelect("staff", "select=id,name");
@@ -2831,8 +2831,14 @@ async function runStatsSnapshot() {
     const grads = await sbSelect("graduations", "select=student_name,student_id");
     const gset = new Set();
     grads.forEach((g) => { if (g.student_id) gset.add("id:" + g.student_id); if (g.student_name) gset.add("nm:" + String(g.student_name).trim()); });
-    const linked = students.filter((s) => s.pubg_platform && (s.pubg_account_id || s.pubg_name));
-    statsRun.total = linked.length; statsRun.unlinked = students.length - linked.length;
+    const isLinked = (s) => s.pubg_platform && (s.pubg_account_id || s.pubg_name);
+    const linked = students.filter(isLinked);
+    const unlinkedList = students.filter((s) => !isLinked(s));
+    statsRun.total = linked.length; statsRun.unlinked = unlinkedList.length;
+    statsRun.unlinkedReasons = {                                    // 왜 대상에서 빠졌나(화면 표시용)
+      no_platform: unlinkedList.filter((s) => !s.pubg_platform).length,               // 플랫폼(steam/kakao) 미시드
+      no_name_no_id: unlinkedList.filter((s) => s.pubg_platform && !s.pubg_account_id && !s.pubg_name).length, // 플랫폼O·닉/accountId 없음
+    };
     for (const s of linked) {
       try {
         let accountId = s.pubg_account_id;
