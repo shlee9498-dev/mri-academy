@@ -183,7 +183,9 @@ function renderStats(){
   else if(r && r.finishedAt){
     const rated=(r.report||[]).filter(x=>!x.error).length;
     const cand=(r.candidates||[]).length ? (r.candidates||[]).map(c=>`<div class="srow"><b>${esc(c.student)}</b> · ${esc(c.trainer||"미배정")} · <span style="color:var(--gold)">${esc(c.tier)}</span></div>`).join("") : `<div class="muted">없음</div>`;
-    body=`<div class="pill">마스터+ 달성률 <b>${r.masterRate}%</b> (${r.masterCount}/${rated})</div>${r.unlinked?` <span class="muted">· 미연결 ${r.unlinked}명</span>`:""}
+    const ur=r.unlinkedReasons||{}; const urBits=[]; if(ur.no_platform)urBits.push(`플랫폼 미시드 ${ur.no_platform}`); if(ur.no_name_no_id)urBits.push(`닉 없음 ${ur.no_name_no_id}`);
+    const urTxt=urBits.length?` (${urBits.join(" · ")})`:"";
+    body=`<div class="pill">마스터+ 달성률 <b>${r.masterRate}%</b> (${r.masterCount}/${rated})</div>${r.unlinked?` <span class="muted">· 미연결 ${r.unlinked}명${esc(urTxt)}</span>`:""}
       <div style="margin-top:11px;font-size:12.5px;font-weight:700">승급 후보 (미등록 마스터+)</div>${cand}`;
   } else { body=`<div class="muted">아직 실행하지 않았어요.</div>`; }
   w.innerHTML=`<section class="ops"><h2 class="ops-h">📊 전적 스냅샷 (PUBG)</h2>
