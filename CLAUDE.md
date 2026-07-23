@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # MRI ACADEMY 작업 규칙
 - 브랜드: 다크 #0a0a0c + 골드 #f5c518. 강조색은 골드 하나만. 라이트 테마 금지.
 - TOSS_SECRET_KEY, PUBG_API_KEY 등 모든 키는 절대 HTML/JS/커밋에 넣지 않는다 (Railway env 전용).
@@ -17,3 +21,78 @@
 - Codex: mri-academy 접근 금지. 별도 실험 저장소·일회성 스크립트만
 - 원칙: 구현 창구는 Claude Code 단일. 다른 도구가 만든 코드 diff는 머지 전
   Claude Code가 검토. AGENTS.md와 충돌 시 CLAUDE.md 우선
+
+# 명령어
+빌드 단계 없음(정적 HTML + Node 서버). 테스트 프레임워크 없음.
+- `npm start` — `node server.js` (서버 + 디스코드 봇 기동)
+- `npm run check` — `node --check server.js && node --check admin-panel.js` (구문 검사; 커밋 전 필수)
+- HTML 인라인 스크립트 검사: `<script>`~`</script>`를 뽑아 `.mjs`로 저장 후 `node --check`
+- 실행/검증엔 실제 env(SUPABASE_*·DISCORD_TOKEN·PUBG_API_KEY 등)가 필요 → 로컬은 구문 검사 위주.
+  프로덕션 API(mri-academy-production.up.railway.app)는 이 환경에서 도달 불가.
+
+# 아키텍처 (큰 그림)
+3개 런타임이 분리돼 있고, 이 경계를 아는 게 핵심이다.
+
+1. **정적 프론트 (Vercel)** — `*.html` (index/apply/staff-panel/lesson-schedule/gmi-*/trainer-* 등).
+   빌드 없이 그대로 서빙. 각 HTML은 상수 `API = "https://mri-academy-production.up.railway.app"`로
+   서버에 `fetch`한다. PR마다 Vercel 프리뷰가 자동 생성됨.
+2. **API + 디스코드 봇 (Railway) = `server.js`** — 2,900줄 단일 Express 앱(모놀리식).
+   `if (process.env.DISCORD_TOKEN) { … }` 블록 안에 discord.js 봇이 통째로 들어있고,
+   그 밖은 전부 모듈 레벨 함수/라우트. 봇 슬래시 명령과 API가 한 파일에 공존한다.
+3. **Supabase (PostgREST, service_role)** — `server.js`의 `sbSelect/sbInsert/sbPatch/sbDelete/sbUpsert`
+   헬퍼가 REST로 접근. 모든 테이블 RLS on, service_role만 통과. 프론트는 DB에 직접 접근하지 않음.
+
+추가 외부 연동: Google Apps Script(레거시 시트 웹훅, 마이그레이션 중 폐기 예정) · Toss(결제) ·
+Anthropic(`/api/chat` 상담 챗봇 프록시, `CLAUDE_KEY`) · PUBG API(전적).
+
+## 인증 모델
+Discord OAuth(`/api/auth/*`) → 의존성 0의 경량 **HS256 JWT**(`signJWT`/`verifyJWT`, `SESSION_SECRET`,
+`timingSafeEqual`) → 프론트가 `localStorage`에 토큰 저장 → 요청 헤더 `Authorization: Bearer`.
+서버 `getUser(req)`가 검증. `isStaff`=`STAFF_DISCORD_IDS` 포함 여부, owner=`OWNER_DISCORD_IDS`
+또는 staff.role='owner'(패널) / `MRI_OWNER_ID`(봇·stats).
+
+## 정산 패널 = `admin-panel.js` (`/api/admin/*`)
+`module.exports = mountAdminPanel(app, {getUser, sbSelect, ...})` — `server.js` 맨 끝에서 마운트.
+- **읽기전용 게이트(PANEL_WRITE)**: 시트가 정산 진실인 동안 이중기입 방지 — `PANEL_WRITE=1`이 아니면
+  `/api/admin/*`의 비-GET을 423으로 차단. **단 `/api/admin/schedule*`는 예외**(일정은 정산과 무관).
+- **정산 엔진(순수 함수)**: `computeStudent`(지급율 = 트레이너 승급 base + 재결제 진행분 +5%p,
+  `CUTOVER="2026-07-20"` 경계로 이월/신규 분리, FIFO), `computeTrainer`(+상담 건당 1만, 영업수수료 폐지),
+  `computeStaffSalary`(빵다 순매출 6% = `floor100(금액/1.1)`, 7월분부터), `trainerBaseRate`
+  (graduations 래칫: `0.65 + floor(Σweight/5)×0.01`, 마스터=1·서바이버=3).
+- 소유권 규칙: 트레이너는 본인 담당만, owner 전용 쓰기(결제·지급·승급·직강 일정).
+
+## DB 스키마 & 마이그레이션 워크플로
+`supabase_admin_panel.sql` = 전 스키마(staff·students·payments·lesson_sessions·payouts·admin_audit·
+graduations·schedule_events + student_snapshots 확장). **idempotent** — 오너가 Supabase SQL Editor에
+붙여 실행한다(마이그레이션 도구 없음). **PII 시드(수강생 이름·pubg_id·결제)는 절대 커밋하지 않고**
+챗이 생성해 오너가 실행. 새 컬럼/테이블은 `create ... if not exists` / `add column if not exists`로.
+
+## 디스코드 봇 (server.js 내부)
+슬래시 명령이 길드별로 분리 등록됨: 기존 운영 명령은 `GUILD_ID`(피드백 서버), `/수업등록`은
+`LESSON_GUILD_ID`(GmI). `/승급`은 **글로벌 + DM 전용**(`integrationTypes`/`contexts`로 등록, `dm_permission`
+snake_case는 discord.js가 무시하므로 쓰지 말 것). `/수업등록`은 시트(Apps Script)와 DB `lesson_sessions`에
+dual-write(마이그레이션 중), 채널 잠금(`LESSON_CHANNEL_ID`)·`TRAINER_MAP`(디코ID→트레이너명).
+
+## PUBG 전적 파이프라인 (재사용 자산)
+`snapshotStats`/`snapshotStatsAt`/`pubgRankedByAccount`·`findPlayer`·`currentSeasonId`·`pubgGet`(캐시)·
+`tierIndex`/`tierLabel`(**`SURVIVOR_CUT=3700` → 마스터=6·서바이버=7**)는 전부 모듈 레벨. `/전적등록`·
+`/수료처리` 성장추적과 Phase T(전수 스냅샷)가 이걸 공유한다. **PUBG API 기본 10 RPM** — 배치는
+계정당 페이싱 필수(`pubgGet`은 자체 스로틀 없음). 플랫폼(steam/kakao)은 shard·seasonId·accountId 전부 분리.
+
+## 배포
+- main 머지 → Vercel(정적) + Railway(서버·봇) 자동 배포. 봇 슬래시 명령 변경은 **봇 재기동** 필요
+  (글로벌 명령 전파 최대 ~1시간).
+- 마이그레이션이 필요한 기능은 **머지·배포만으로 동작 안 함** — 오너가 해당 DDL을 SQL Editor에서
+  실행해야 실동작(PR 본문에 항상 명시).
+
+## 마이그레이션 진행 상태 (정산 = 시트 → DB)
+현재 **병행 단계**: 시트가 판수·정산 진실, 패널은 읽기전용(`PANEL_WRITE` 미설정), `/수업등록` dual-write.
+`2026-07-20` 이후 진행분만 신 엔진 정산(이전은 이월동결). 컷오버(`PANEL_WRITE=1` + 키 로테이션)는
+검증 후 오너 승인 예정.
+
+## 디자인 시스템 v1 ("OLED Premium", lesson-schedule.html에서 확정)
+토큰 `--bg:#0a0a0c / --surface-1:#15151a / --surface-2:#1a1a20 / --gold:#f5c518` + 골드 단일 강조.
+폰트: 영문·숫자 = Space Grotesk, 한글 헤딩 = Pretendard 800. 모션 = 바닐라 Motion(CDN ESM,
+`prefers-reduced-motion` 존중, fade-up 스태거). **골드 글로우는 3곳만**(히어로 CTA·클랜컵 배너·"모집중"
+뱃지), 한 화면 1개 원칙. 글래스/blur 미채택(성능). 브랜드 톤 = "퍼포먼스 코칭"(방패·트로피·스톡
+게이밍아트 배제).
