@@ -185,4 +185,65 @@ alter table public.schedule_events enable row level security;
 --   실지급액     = 지급할금액 − 원천3.3%
 --   · 직원(빵다/소영)은 base_salary + 당월수수료 별도 규칙 (comp_note)
 -- ============================================================
+-- 11) Phase T 확장: 수강생 계정(닉/ID) 이력 + 스냅샷 이벤트 유형
+--     목표: "언제 어떤 ID로 시작했고, 마칠 때 전적이 뭐였나"가 기존 흐름의
+--     부산물로 자동 적재. 트레이너 신규 입력 없음 — 스냅샷 배치·정산 이벤트·
+--     상담봇이 트리거(구현은 Phase별, 이 PR은 스키마만).
+-- ------------------------------------------------------------
+
+-- 11a) 계정 이력 (SCD Type-2: 닉변 시 덮어쓰기 금지, 이력 행 추가)
+--      account_id = 안정키(닉변 무관). valid_to null = 현재 유효.
+--      is_main = 대표 계정(students.pubg_* 캐시의 소스). 부계정/스머프 대비 다행 허용.
+create table if not exists public.student_accounts (
+  id           bigint generated always as identity primary key,
+  student_id   bigint not null references public.students(id) on delete cascade,
+  platform     text not null check (platform in ('steam','kakao')),
+  pubg_name    text not null,                       -- 해당 구간의 인게임 닉(구간별 스냅)
+  account_id   text,                                -- 해석된 안정 accountId(닉변과 무관)
+  is_main      boolean not null default true,       -- 대표 계정 여부
+  valid_from   timestamptz not null default now(),  -- 이 닉/계정 유효 시작
+  valid_to     timestamptz,                         -- null = 현재. 닉변 감지 시 이전 행에 now() 기입
+  note         text,                                -- '닉변 자동감지' · '초기 시드' 등
+  created_at   timestamptz not null default now()
+);
+create index if not exists idx_stacc_student on public.student_accounts (student_id, valid_to);
+create index if not exists idx_stacc_account on public.student_accounts (account_id) where account_id is not null;
+-- 학생당 '현재 대표계정'은 최대 1개 — students.pubg_* 캐시와 1:1 보장
+create unique index if not exists uq_stacc_current_main
+  on public.student_accounts (student_id) where valid_to is null and is_main;
+
+alter table public.student_accounts enable row level security;
+
+-- 11b) 스냅샷 이벤트 유형 — snapshot_type(파이프라인 출처)과 직교하는 '사업 이벤트' 축.
+--      snapshot_type: baseline/after/tracking  (어느 서브시스템이 썼나)
+--      event_type   : 수강시작/정기/재결제/수료/승급  (무슨 계기로 찍었나)
+--      예) 수료 스냅샷 = snapshot_type 'after' + event_type '수료'
+--          T1 배치 행  = snapshot_type 'tracking' + event_type '정기'
+alter table public.student_snapshots add column if not exists event_type text
+  check (event_type is null or event_type in ('수강시작','정기','재결제','수료','승급'));
+
+-- 11c) ⚠️ 기존 snapshot_type 체크 보정 (버그픽스)
+--      원본(supabase_setup.sql)은 check (snapshot_type in ('baseline','after')) 뿐이라,
+--      T1 배치의 snapshot_type='tracking' insert가 체크제약에 걸려 조용히 실패(try/catch)해 왔다.
+--      → 'tracking' 포함하도록 교체. 인라인 컬럼체크의 표준 제약명은 아래와 같다.
+--      (혹시 제약명이 다르면 \d student_snapshots 로 확인 후 그 이름을 drop 할 것)
+alter table public.student_snapshots drop constraint if exists student_snapshots_snapshot_type_check;
+alter table public.student_snapshots add  constraint student_snapshots_snapshot_type_check
+  check (snapshot_type in ('baseline','after','tracking'));
+
+-- 11d) 백필 (SQL에 PII 리터럴 없음 — 전부 기존 행에서 파생, idempotent guard 포함)
+--   (1) 기존 tracking 스냅샷 → event_type '정기' 소급 태깅
+update public.student_snapshots set event_type = '정기'
+  where snapshot_type = 'tracking' and event_type is null;
+--   (2) 현재 연결된 학생 → 대표계정 이력 최초 행 생성(이미 있으면 skip)
+insert into public.student_accounts (student_id, platform, pubg_name, account_id, is_main, valid_from, note)
+select s.id, s.pubg_platform, s.pubg_name, s.pubg_account_id, true, coalesce(s.created_at, now()), '초기 시드(students.pubg_* 이관)'
+  from public.students s
+ where s.pubg_platform is not null and s.pubg_name is not null
+   and not exists (
+     select 1 from public.student_accounts a
+      where a.student_id = s.id and a.valid_to is null and a.is_main
+   );
+
+-- ============================================================
 -- 완료. 테이블 6개 + 인덱스 + RLS. 기존 reviews/progress 계열과 독립.
