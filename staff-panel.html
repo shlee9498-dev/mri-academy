@@ -182,7 +182,7 @@ function renderStats(){
   if(r && r.running){ body=`<div class="muted">실행 중… ${r.done}/${r.total} (계정당 ~7초)</div>`; }
   else if(r && r.finishedAt){
     const rated=(r.report||[]).filter(x=>!x.error).length;
-    const cand=(r.candidates||[]).length ? (r.candidates||[]).map(c=>`<div class="srow"><b>${esc(c.student)}</b> · ${esc(c.trainer||"미배정")} · <span style="color:var(--gold)">${esc(c.tier)}</span></div>`).join("") : `<div class="muted">없음</div>`;
+    const cand=(r.candidates||[]).length ? (r.candidates||[]).map(c=>`<div class="srow"><b>${esc(c.student)}</b> · ${esc(c.trainer||"미배정")} · <span style="color:var(--gold)${c.provisional?";font-weight:600;opacity:.85":""}">${esc(c.cand_label||c.tier)}</span></div>`).join("") : `<div class="muted">없음</div>`;
     const ur=r.unlinkedReasons||{}; const urBits=[]; if(ur.no_platform)urBits.push(`플랫폼 미시드 ${ur.no_platform}`); if(ur.no_name_no_id)urBits.push(`닉 없음 ${ur.no_name_no_id}`);
     const urTxt=urBits.length?` (${urBits.join(" · ")})`:"";
     body=`<div class="pill">마스터+ 달성률 <b>${r.masterRate}%</b> (${r.masterCount}/${rated})</div>${r.unlinked?` <span class="muted">· 미연결 ${r.unlinked}명${esc(urTxt)}</span>`:""}
