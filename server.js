@@ -2860,8 +2860,10 @@ async function runStatsSnapshot() {
           });
         } catch (e) { console.error("snap_insert", s.name, e?.message); }
         const masterPlus = snap.tierIdx >= 6;                               // 6=마스터 7=서바이버
+        const provisional = snap.tierIdx >= 7;                              // 서바이버=실시간 상위등수 구간(시즌중 미확정), 마스터=달성시 확정
+        const candLabel = provisional ? "서바이버 구간 진입 (시즌 중 — 확정 아님)" : snap.tierLabel;
         const registered = gset.has("id:" + s.id) || gset.has("nm:" + String(s.name || "").trim());
-        const row = { student: s.name, trainer: nameOf[s.trainer_id] || null, status: s.status, tier: snap.tierLabel, best_rank_point: snap.bestRP, avg_damage: snap.avgDamage, master_plus: masterPlus, registered };
+        const row = { student: s.name, trainer: nameOf[s.trainer_id] || null, status: s.status, tier: snap.tierLabel, cand_label: candLabel, provisional, best_rank_point: snap.bestRP, avg_damage: snap.avgDamage, master_plus: masterPlus, registered };
         statsRun.report.push(row);
         if (masterPlus && !registered) statsRun.candidates.push(row);
         statsRun.done++;
@@ -2879,7 +2881,7 @@ async function runStatsSnapshot() {
       try {
         const owner = await botClient.users.fetch(process.env.MRI_OWNER_ID);
         const cand = statsRun.candidates.length
-          ? statsRun.candidates.map((c) => `· ${c.student} (${c.trainer || "미배정"} · ${c.tier})`).join("\n")
+          ? statsRun.candidates.map((c) => `· ${c.student} (${c.trainer || "미배정"} · ${c.cand_label || c.tier})`).join("\n")
           : "없음";
         await owner.send(`📊 전적 스냅샷 완료 — ${rated.length}명 조회 (미연결 ${statsRun.unlinked})\n마스터+ 달성률: **${statsRun.masterRate}%** (${mp}/${rated.length})\n\n승급 후보(미등록 마스터+):\n${cand}\n\n전체 리포트: GET /api/admin/stats/report`);
       } catch (e) { console.error("stats_owner_dm", e?.message); }
