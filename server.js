@@ -3028,4 +3028,24 @@ app.get("/api/admin/stats/report", async (req, res) => {
 // ── 운영진 정산·레슨로그 관리 패널 (Phase 0) ──
 require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete });
 
+// [재발 방지] 기동 시 시트 웹훅 연결 식별 — 어느 Apps Script 배포(=어느 스프레드시트)에 붙는지 즉시 확인.
+//   봇은 SHEET_ID가 아니라 SHEET_WEBHOOK_URL(Apps Script /exec)로 씀 → 배포ID가 정본/구 시트 식별키.
+//   (2026-07 사고: Apps Script 재배포/재바인딩 후 webhook URL 미갱신 → 봇이 구 시트에 계속 기록)
+(function logSheetBinding() {
+  const wh = process.env.SHEET_WEBHOOK_URL || "";
+  if (!wh) { console.log("[sheet] SHEET_WEBHOOK_URL 미설정 — 시트 연동 비활성"); return; }
+  const depId = (wh.match(/macros\/s\/([^/]+)\/exec/) || [])[1] || "(URL 파싱불가)";
+  console.log(`[sheet] webhook 배포ID: ${depId} — 이 값이 최신 재배포본과 일치하는지 확인(구 배포면 옛 시트에 기록됨)`);
+  fetch(wh, { method: "POST", redirect: "follow", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret: process.env.SHEET_SECRET || "", type: "ping" }) })
+    .then((r) => r.json().catch(() => ({})))
+    .then((d) => {
+      if (d && (d.spreadsheetTitle || d.spreadsheetId))
+        console.log(`[sheet] 연결된 시트: ${d.spreadsheetTitle || "?"} (${d.spreadsheetId || "id?"})`);
+      else
+        console.log("[sheet] ping 응답에 시트 식별 없음 — Apps Script가 type:'ping'에 {spreadsheetTitle,spreadsheetId} 반환하도록 추가하면 제목까지 로그됨");
+    })
+    .catch((e) => console.log("[sheet] ping 실패:", e && e.message));
+})();
+
 app.listen(PORT, () => console.log("listening on " + PORT));
