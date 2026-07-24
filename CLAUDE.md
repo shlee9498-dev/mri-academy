@@ -22,6 +22,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 원칙: 구현 창구는 Claude Code 단일. 다른 도구가 만든 코드 diff는 머지 전
   Claude Code가 검토. AGENTS.md와 충돌 시 CLAUDE.md 우선
 
+## AI 운영 정책 v1 (2026-08 확정)
+- **운영 철학**: AI 신뢰가 아니라 **자동 검증을 신뢰**한다. AI가 실수해도 시스템(CI·가드·검증)이 먼저 잡는다.
+- **Trust는 영역별** (자동화 허용 수준):
+  - **Code** — 자동화 확대 가능(Code CI 통과 조건).
+  - **Database** — 영구 사람 승인(스키마·데이터 변경은 항상 오너).
+  - **Deploy** — 조건부(CI·스모크 통과 시).
+  - **External**(시트·디코·결제·키) — 영구 사람 승인.
+- **영구 Level 0**(절대 자동화 금지, 항상 사람 승인): 결제·정산·DDL·env·키·데이터삭제.
+- **Gemini 시트 쓰기 = Level 0**: 시트 수정 지시에는 **현재값 가드 필수**(대상 셀 현재값 확인 후 변경 — 오기록·덮어쓰기 방지).
+- **Codex**: Phase C까지 **repo 접근 금지** 유지. Phase C에서 `docs/`·테스트코드·로그분석 **lane 한정**, Code CI 통과 조건부 개방 검토.
+- **Phase 로드맵**: **A**(~8/7, 동결 — 자동머지 없음) / **B**(8월 중순, CI 구축: Code CI + Operation self-check + 배포 후 smoke) / **C**(9월~, 자동머지 단계적 개방).
+
 # 명령어
 빌드 단계 없음(정적 HTML + Node 서버). 테스트 프레임워크 없음.
 - `npm start` — `node server.js` (서버 + 디스코드 봇 기동)
