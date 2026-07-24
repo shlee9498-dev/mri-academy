@@ -67,6 +67,13 @@ graduations·schedule_events + student_snapshots 확장). **idempotent** — 오
 붙여 실행한다(마이그레이션 도구 없음). **PII 시드(수강생 이름·pubg_id·결제)는 절대 커밋하지 않고**
 챗이 생성해 오너가 실행. 새 컬럼/테이블은 `create ... if not exists` / `add column if not exists`로.
 
+**⚠️ 스키마 변경 포함 PR은 본문에 DDL 실행 체크리스트 필수** — 머지·배포만으로는 테이블/컬럼이
+생기지 않는다(런타임에 `42P01`/`PGRST205`로 터짐. 실제 사례: schedule_events S1 머지 후 DDL 미실행
+→ `/api/admin/schedule` 간헐 502/500). PR 본문에 **해당 DDL의 파일·섹션 위치**를 명시하고 아래를
+체크박스로 넣는다:
+- [ ] 오너가 Supabase SQL Editor에서 해당 DDL 실행
+- [ ] 마지막에 `NOTIFY pgrst, 'reload schema';` 실행(PostgREST 스키마 캐시 갱신)
+
 ## 디스코드 봇 (server.js 내부)
 슬래시 명령이 길드별로 분리 등록됨: 기존 운영 명령은 `GUILD_ID`(피드백 서버), `/수업등록`은
 `LESSON_GUILD_ID`(GmI). `/승급`은 **글로벌 + DM 전용**(`integrationTypes`/`contexts`로 등록, `dm_permission`
