@@ -295,4 +295,30 @@ create table if not exists public.ops_state (
 alter table public.ops_state enable row level security;
 
 -- ============================================================
+-- 14) 상담/강의 등록 로그 (consults) — /수업등록 구분=진단상담·강의(직강)의 pending 로그.
+--     봇은 로그만(정산 자동생성 없음) → 오너가 확정 시 payments(kind='consult'|'direct_lecture')로 반영.
+--     이름 매칭: students 매칭 시 student_id 연결, 미매칭 시 이름만 보관(이후 /수업등록 시 소급 연결).
+create table if not exists public.consults (
+  id            bigint generated always as identity primary key,
+  kind          text not null check (kind in ('consult','direct_lecture')),  -- 진단상담 · 강의(직강)
+  student_name  text not null,
+  student_id    bigint references public.students(id),   -- 매칭 시 연결, 미매칭 null → 소급 연결
+  trainer_name  text,                                    -- 진단상담 담당(강의=null)
+  trainer_id    bigint references public.staff(id),
+  registered_by text,                                    -- 등록한 디코 id
+  registered_at date not null default now(),
+  status        text not null default 'pending' check (status in ('pending','confirmed','cancelled')),
+  memo          text,
+  created_at    timestamptz not null default now()
+);
+create index if not exists idx_consults_name    on public.consults (student_name);
+create index if not exists idx_consults_student on public.consults (student_id);
+alter table public.consults enable row level security;
+
+-- 결제 kind에 'direct_lecture'(직강 강의) 추가 — 오너가 강의 결제 확정 시 사용(trainer_id 없음=정산 자연 제외).
+alter table public.payments drop constraint if exists payments_kind_check;
+alter table public.payments add  constraint payments_kind_check
+  check (kind in ('lesson','consult','set','sales','direct_lecture'));
+
+-- ============================================================
 -- 완료. 테이블 6개 + 인덱스 + RLS. 기존 reviews/progress 계열과 독립.
