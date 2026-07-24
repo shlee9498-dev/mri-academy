@@ -3290,17 +3290,46 @@ async function maybeRunDaily(key, hhmm, fn, label) {
 // Phase B Operation CI 숙주(현재는 스텁) — schema drift·Apps Script ping 대조·API smoke·env 존재가 여기 얹힘.
 // 실패 시 오너 DM, 성공 시 침묵. 지금은 no-op.
 async function runSelfCheck() { /* Phase B */ }
-async function cronTick() {
-  if (!T2_ENABLED) return;
-  await maybeRunDaily("stats", "05:00", runStatsSnapshot, "일일 전적 스냅샷");
-  await maybeRunDaily("selfcheck", "05:00", runSelfCheck, "Operation self-check");   // Phase B(현재 no-op)
+// 직강 잔여회차 알림 — 강의일정 시트에서 잔여 조회(서버는 표시만, 계산 안 함). remain≤2만 오너 DM, 전원≥3=침묵.
+// 데이터 원천=시트(결제원장 아님). 웹훅 1회 재시도 후 실패 시 오너 DM. Phase 2에서 DB 기반 승격 예정(경량 브리지).
+async function runDirectStatus() {
+  const webhook = process.env.SHEET_WEBHOOK_URL;
+  if (!webhook) { console.log("[cron] direct_status: SHEET_WEBHOOK_URL 미설정 — 스킵"); return; }
+  let data = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {                 // 1회 재시도
+    try {
+      const r = await fetch(webhook, { method: "POST", redirect: "follow", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "direct_status", secret: process.env.SHEET_SECRET || "" }) });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && Array.isArray(d.students)) { data = d; break; }
+      if (attempt === 2) { await ownerDM(`❌ [cron] 직강 잔여회차 조회 실패 — 시트 응답 이상(HTTP ${r.status}). Apps Script의 direct_status 핸들러 확인 필요.`); return; }
+    } catch (e) {
+      if (attempt === 2) { await ownerDM(`❌ [cron] 직강 잔여회차 조회 실패 — ${e?.message || "네트워크 오류"}`); return; }
+    }
+    await new Promise((res) => setTimeout(res, 3000));            // 재시도 전 짧은 대기
+  }
+  const low = (data.students || []).filter((s) => Number(s.remain) <= 2);
+  if (!low.length) { console.log("[cron] direct_status: 전원 remain≥3 — 침묵"); return; }
+  const lines = low.sort((a, b) => Number(a.remain) - Number(b.remain))
+    .map((s) => `${Number(s.remain) <= 0 ? "⚠️ " : "· "}${s.name}: 잔여 ${s.remain} (수강 ${s.attended}/${s.total})`);
+  await ownerDM(`🎓 직강 잔여회차 알림 (remain ≤2)\n${lines.join("\n")}`);
 }
-if (T2_ENABLED) {
+const DIRECT_STATUS_ENABLED = process.env.DIRECT_STATUS === "1";
+async function cronTick() {
+  if (T2_ENABLED) {
+    await maybeRunDaily("stats", "05:00", runStatsSnapshot, "일일 전적 스냅샷");
+    await maybeRunDaily("selfcheck", "05:00", runSelfCheck, "Operation self-check");   // Phase B(현재 no-op)
+  }
+  if (DIRECT_STATUS_ENABLED) {
+    await maybeRunDaily("directStatus", "05:10", runDirectStatus, "직강 잔여회차");     // 기존 T2 게이트 재사용
+  }
+}
+if (T2_ENABLED || DIRECT_STATUS_ENABLED) {
   setInterval(() => { cronTick().catch((e) => console.error("cron_tick", e?.message)); }, 10 * 60 * 1000);   // 10분 틱
   cronTick().catch((e) => console.error("cron_tick_boot", e?.message));   // 기동 시 1회(재배포 캐치업 + Phase B 배포후 smoke 지점)
-  console.log("[cron] T2 일일 크론 활성 (05:00 KST · 10분 틱)");
+  console.log(`[cron] 활성 — T2:${T2_ENABLED ? "on" : "off"} · directStatus:${DIRECT_STATUS_ENABLED ? "on" : "off"} (10분 틱)`);
 } else {
-  console.log("[cron] T2 비활성 (T2_CRON=1 로 옵트인)");
+  console.log("[cron] 비활성 (T2_CRON=1 / DIRECT_STATUS=1 로 옵트인)");
 }
 
 app.listen(PORT, () => console.log("listening on " + PORT));
