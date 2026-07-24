@@ -970,15 +970,34 @@ if (process.env.DISCORD_TOKEN) {
       // v3 응답: updated[{name,added,total}] + notFound[]
       const updated = Array.isArray(data.updated) ? data.updated : [];
       const notFound = Array.isArray(data.notFound) ? data.notFound : [];
-      const lines = [`✅ 수업 등록 — ${trainer} · ${lessonType}`];
+      const noneRecorded = updated.length === 0;   // 시트 응답이 ok여도 실기록 0건이면 성공으로 표기 금지
+      const lines = [noneRecorded
+        ? `⚠️ 수업 등록 — ${trainer} · ${lessonType} · **시트 기록 0건**(아래 확인)`
+        : `✅ 수업 등록 — ${trainer} · ${lessonType}`];
       if (updated.length)
         lines.push(...updated.map((u) => `· ${u.name} +${u.added}판 → 누적 ${u.total}판`));
       if (notFound.length) {
-        lines.push(`⚠️ 레슨로그에 없는 이름 — 사장 확인 필요: ${notFound.join(", ")}`);
+        // notFound = Apps Script가 시트에서 매칭 실패한 이름(해당 이름만 미기록). updated 인원은 이미 기록됨.
+        // → '전체 재등록'하면 updated 인원이 중복 기록되므로, "못 찾은 이름만 다시" 등록하도록 명시(이중입력 차단).
+        lines.push(`⚠️ 시트에서 못 찾은 이름 — **이 이름들만 미기록**: ${notFound.join(", ")}`);
+        if (updated.length)
+          lines.push(`↳ 위 ${updated.length}명은 **기록 완료**. 전체 재등록 금지(중복됨) — 못 찾은 이름만 철자·등록 확인 후 그 이름만 다시 등록해줘.`);
+        else
+          lines.push(`↳ 기록된 인원 없음 — 철자·시트 등록 확인 후 다시 시도해줘.`);
         if (process.env.MRI_OWNER_ID) {
           try {
             const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
-            await owner.send(`⚠️ /수업등록 — ${trainer} 탭에 없는 이름: ${notFound.join(", ")} (오타/미등록 확인)`);
+            await owner.send(`⚠️ /수업등록 — ${trainer} 시트 매칭 실패(해당 이름 미기록): ${notFound.join(", ")}\n기록됨: ${updated.map((u) => u.name).join(", ") || "없음"}\n→ Apps Script의 이름 열/탭명/공백(trim) 대조 점검 필요(시트 쪽 로직).`);
+          } catch (e) { console.error("owner_dm_failed", e?.message); }
+        }
+      }
+      // ok:true인데 updated·notFound 모두 0 → Apps Script가 대상 시트/탭에 아무것도 못 씀(시트 연결/탭명 의심).
+      if (noneRecorded && !notFound.length) {
+        lines.push(`❌ 시트에 기록된 행이 없습니다 — 재시도 전 운영진 확인(대상 스프레드시트/탭명 연결 점검).`);
+        if (process.env.MRI_OWNER_ID) {
+          try {
+            const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+            await owner.send(`❌ /수업등록 무기록(0건) — ${trainer}: 시트 응답은 ok지만 updated·notFound 모두 비어있음. Apps Script가 가리키는 스프레드시트 ID·탭명(레슨로그_${trainer}) 연결 점검 필요.`);
           } catch (e) { console.error("owner_dm_failed", e?.message); }
         }
       }
@@ -987,7 +1006,8 @@ if (process.env.DISCORD_TOKEN) {
         const dw = await dualWriteSessions(trainer, students, memo, itx.user.id);
         if (dw && dw.miss && dw.miss.length && process.env.MRI_OWNER_ID) {
           const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
-          await owner.send(`⚠️ /수업등록 DB 미매칭(시트는 기록됨) — ${trainer}: ${dw.miss.join(", ")} · students 테이블 이름 확인/보정 필요`);
+          // '시트 기록됨'을 단정하지 않음 — 시트 응답 기준 updated 건수만 명시(검증 불가한 성공 주장 제거).
+          await owner.send(`⚠️ /수업등록 DB 미매칭 — ${trainer}: ${dw.miss.join(", ")} (시트 응답상 기록 ${updated.length}건) · students 테이블 이름 확인/보정 필요`);
         }
       } catch (e) { console.error("dualwrite_failed", e?.message); }
       await itx.editReply(lines.join("\n"));
