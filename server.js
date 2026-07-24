@@ -106,7 +106,13 @@ function sbHeaders(extra = {}) {
 }
 async function sbSelect(table, query) {
   const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?${query}`, { headers: sbHeaders() });
-  if (!r.ok) throw new Error(`supabase_select_${r.status}`);
+  if (!r.ok) {
+    // 에러 본문(PGRST 코드 등) 보존 — 진단 로그용. message 접두사는 하위호환 유지(supabase_select_NNN).
+    const body = await r.text().catch(() => "");
+    const err = new Error(`supabase_select_${r.status}${body ? " · " + body.slice(0, 300) : ""}`);
+    err.status = r.status; err.table = table; err.body = body;
+    throw err;
+  }
   return r.json();
 }
 async function sbInsert(table, row) {

@@ -27,6 +27,22 @@ module.exports = function mountAdminPanel(app, deps) {
   const ready = () =>
     !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SESSION_SECRET);
 
+  // 일시적 Supabase 실패(페이지 첫 요청 콜드스타트·커넥션·타임아웃) 대비 짧은 재시도.
+  // 실패마다 status·PGRST 본문·cause를 상세 로그 → 재발 시 원인 확정용. 최종 실패만 throw.
+  async function sbSelectRetry(label, table, query, { tries = 2, backoffMs = 300 } = {}) {
+    let lastErr;
+    for (let attempt = 1; attempt <= tries; attempt++) {
+      try { return await sbSelect(table, query); }
+      catch (e) {
+        lastErr = e;
+        const cause = e && e.cause ? (e.cause.code || e.cause.message || String(e.cause)) : "";
+        console.error(`[${label}] sbSelect 실패 attempt ${attempt}/${tries} · status=${(e && e.status) || "?"} · msg=${e && e.message}${cause ? " · cause=" + cause : ""}`);
+        if (attempt < tries) await new Promise((r) => setTimeout(r, backoffMs));
+      }
+    }
+    throw lastErr;
+  }
+
   // ── 유틸 ──────────────────────────────────────────────
   const floor100 = (n) => Math.floor(n / 100) * 100;   // 지급예정: 100원 단위 버림 (시트 검증)
   const round100 = (n) => Math.round(n / 100) * 100;   // 수수료 제안값 등
@@ -508,8 +524,17 @@ module.exports = function mountAdminPanel(app, deps) {
       let q = `select=*&event_date=gte.${start}&event_date=lt.${end}&order=event_date.asc,start_time.asc.nullslast`;
       if (kind) q += `&kind=eq.${kind}`;
       if (!c.isOwner && c.me) q += `&trainer_id=eq.${c.me.id}`;
-      res.json({ week: { start, end }, events: await sbSelect("schedule_events", q), formats: SCHED_FORMATS, isOwner: c.isOwner });
-    } catch (e) { console.error("schedule_admin", e); res.status(502).json({ error: "db" }); }
+      const events = await sbSelectRetry("schedule_admin", "schedule_events", q);   // 콜드스타트 대비 1회 재시도
+      res.json({ week: { start, end }, events, formats: SCHED_FORMATS, isOwner: c.isOwner });
+    } catch (e) {
+      // 상세 로그(내부용): status·PGRST 본문·cause·요청 파라미터. 클라 응답은 generic 유지.
+      console.error("schedule_admin 최종 실패:", {
+        status: e && e.status, message: e && e.message,
+        cause: e && e.cause && (e.cause.code || e.cause.message),
+        week: req.query.week, kind, isOwner: c.isOwner,
+      }, e && e.stack);
+      res.status(500).json({ error: "db" });        // DB 조회 실패는 502(Bad Gateway) 아님 → 500 정정
+    }
   });
 
   // [운영진] 일정 생성 — 직강은 owner 전용. kind×format 화이트리스트 강제. 더블부킹 경고(차단X).
