@@ -785,6 +785,12 @@ if (process.env.DISCORD_TOKEN) {
         { name: "스팀", value: "steam" } ] },
       { name: "인게임닉", description: "PUBG 인게임 닉네임(등록계)", type: 3, required: true },
       { name: "실명", description: "실명(선택, 미입력 시 디스코드 서버닉 사용)", type: 3, required: false },
+      { name: "시간대", description: "주 접속 시간대(선택 · 팀 매칭용)", type: 3, required: false, choices: [
+        { name: "🌆 저녁(19~21시)", value: "저녁" },
+        { name: "🌙 밤(21~24시)", value: "밤" },
+        { name: "🌃 새벽(24~03시)", value: "새벽" },
+        { name: "☀️ 낮/주간", value: "낮" },
+        { name: "🔀 유동적", value: "유동적" } ] },
     ],
   };
   // /등록계현황 — [오너] 시즌 등록 현황·미등록자·중복 감지 (DM 전용, /승급과 동일 방식)
@@ -1108,6 +1114,7 @@ if (process.env.DISCORD_TOKEN) {
     const ign = (itx.options.getString("인게임닉") || "").trim();
     const realName = (itx.options.getString("실명") || "").trim()
       || itx.member?.nickname || itx.user.globalName || itx.user.username || null;
+    const activeHours = itx.options.getString("시간대") || null;   // 주 접속 시간대(선택 · 팀 매칭용)
     if (!ign) return itx.reply({ content: "인게임 닉을 입력해줘.", ephemeral: true });
     if (!process.env.SUPABASE_URL) return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
     await itx.deferReply({ ephemeral: true });
@@ -1140,16 +1147,19 @@ if (process.env.DISCORD_TOKEN) {
           await sbInsert("registry_history", { discord_id: itx.user.id, season, platform, pubg_name: resolvedName, account_id: accountId, real_name: realName, valid_from: nowIso, note: prev ? "등록계 변경" : "최초등록" });
         } catch (e) { console.error("registry_history", e?.message); }
       }
-      // 5) clan_registry upsert (discord_id,season)
-      await sbUpsert("clan_registry", {
+      // 5) clan_registry upsert (discord_id,season). 시간대 미입력 시 payload에서 제외 → 기존값 보존.
+      const upsertRow = {
         discord_id: itx.user.id, discord_name: itx.user.globalName || itx.user.username,
         real_name: realName, platform, pubg_name: resolvedName, account_id: accountId,
         season, verified_at: nowIso, updated_at: nowIso,
-      }, "discord_id,season");
+      };
+      if (activeHours) upsertRow.active_hours = activeHours;
+      await sbUpsert("clan_registry", upsertRow, "discord_id,season");
       // 6) 응답 카드 + 명의 규칙 고정 안내
       await itx.editReply(
         `✅ 등록계 등록 완료 (시즌 ${season})\n`
         + `· 닉: **${resolvedName}**\n· 플랫폼: ${platform === "kakao" ? "카카오" : "스팀"}\n· 현시즌 티어: ${tierText}\n`
+        + (activeHours ? `· 주 접속: ${activeHours}\n` : "")
         + (prev ? "\n♻️ 기존 등록계에서 변경됨(이력 보존).\n" : "")
         + `\n📌 본인 명의 계정만 등록 가능(가족 명의는 증빙 필요). 계정거래·대리 ID 등록 불가.`
       );
@@ -1169,8 +1179,13 @@ if (process.env.DISCORD_TOKEN) {
     await itx.deferReply({ ephemeral: true });
     const season = itx.options.getInteger("시즌") || PUBG_CUR_SEASON_NUM;
     try {
-      const rows = await sbSelect("clan_registry", `select=discord_id,pubg_name,account_id&season=eq.${season}`);
+      const rows = await sbSelect("clan_registry", `select=discord_id,pubg_name,account_id,active_hours&season=eq.${season}`);
       const regByDiscord = new Set(rows.map((r) => r.discord_id));
+      // 시간대 분포 (팀 매칭 편성용)
+      const hourOrder = ["밤", "저녁", "새벽", "낮", "유동적"];
+      const hourCnt = {}; let hourBlank = 0;
+      rows.forEach((r) => { if (r.active_hours) hourCnt[r.active_hours] = (hourCnt[r.active_hours] || 0) + 1; else hourBlank++; });
+      const hourLine = "🕒 시간대: " + (hourOrder.filter((h) => hourCnt[h]).map((h) => `${h} ${hourCnt[h]}`).join(" · ") || "입력 없음") + (hourBlank ? ` · 미입력 ${hourBlank}` : "");
       // 중복 account_id (타인 명의·계정공유 의심)
       const byAcc = {};
       rows.forEach((r) => { if (r.account_id) (byAcc[r.account_id] = byAcc[r.account_id] || []).push(r.pubg_name); });
@@ -1192,7 +1207,7 @@ if (process.env.DISCORD_TOKEN) {
       const dupLine = dupAcc.length
         ? "⚠️ 중복 account_id(계정공유·타인명의 의심):\n" + dupAcc.map(([, names]) => `· ${names.join(" / ")}`).join("\n")
         : "중복 account_id 없음";
-      await itx.editReply(`📋 등록계 현황 (시즌 ${season})\n등록 ${rows.length}건\n\n${unregLine}\n\n${dupLine}`);
+      await itx.editReply(`📋 등록계 현황 (시즌 ${season})\n등록 ${rows.length}건\n${hourLine}\n\n${unregLine}\n\n${dupLine}`);
     } catch (e) {
       console.error("registry_status_failed", e?.message);
       await itx.editReply("현황 조회 중 오류가 났어.");

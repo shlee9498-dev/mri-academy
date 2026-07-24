@@ -262,6 +262,8 @@ create table if not exists public.clan_registry (
   created_at    timestamptz not null default now(),
   unique (discord_id, season)                          -- 디코ID×시즌 1건(재실행=등록계 변경 upsert)
 );
+-- 주 접속 시간대(선택 · 시간대 기반 팀 매칭 풀). 저녁/밤/새벽/낮/유동적.
+alter table public.clan_registry add column if not exists active_hours text;
 create index if not exists idx_registry_season  on public.clan_registry (season);
 create index if not exists idx_registry_account on public.clan_registry (account_id) where account_id is not null;
 
