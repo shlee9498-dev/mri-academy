@@ -115,18 +115,25 @@ async function sbSelect(table, query) {
   }
   return r.json();
 }
+// 에러 시 PGRST 응답 본문·status·cause 보존해 throw (진단 로그용). message 접두사는 하위호환 유지.
+async function sbThrow(kind, table, r) {
+  const body = await r.text().catch(() => "");
+  const err = new Error(`supabase_${kind}_${r.status}${body ? " · " + body.slice(0, 300) : ""}`);
+  err.status = r.status; err.table = table; err.body = body;
+  throw err;
+}
 async function sbInsert(table, row) {
   const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}`, {
     method: "POST", headers: sbHeaders({ Prefer: "return=representation" }), body: JSON.stringify(row),
   });
-  if (!r.ok) throw new Error(`supabase_insert_${r.status}`);
+  if (!r.ok) await sbThrow("insert", table, r);
   return (await r.json())[0];
 }
 async function sbPatch(table, idFilter, patch) {
   const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?${idFilter}`, {
     method: "PATCH", headers: sbHeaders({ Prefer: "return=representation" }), body: JSON.stringify(patch),
   });
-  if (!r.ok) throw new Error(`supabase_patch_${r.status}`);
+  if (!r.ok) await sbThrow("patch", table, r);
   return r.json();
 }
 async function sbUpsert(table, row, onConflict) {
@@ -135,14 +142,14 @@ async function sbUpsert(table, row, onConflict) {
     headers: sbHeaders({ Prefer: "return=representation,resolution=merge-duplicates" }),
     body: JSON.stringify(row),
   });
-  if (!r.ok) throw new Error(`supabase_upsert_${r.status}`);
+  if (!r.ok) await sbThrow("upsert", table, r);
   return (await r.json())[0];
 }
 async function sbDelete(table, filter) {
   const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?${filter}`, {
     method: "DELETE", headers: sbHeaders(),
   });
-  if (!r.ok) throw new Error(`supabase_delete_${r.status}`);
+  if (!r.ok) await sbThrow("delete", table, r);
 }
 
 // ═══════════════════ 피드백 월 (트레이너 피드백 → 사이트) ═══════════════════
@@ -1602,22 +1609,43 @@ app.get("/api/student-progress", async (_req, res) => {
 // ═══════════════════ PUBG API ═══════════════════════════════
 const PUBG_API_BASE = "https://api.pubg.com";
 const VALID_PLATFORMS = ["kakao", "steam", "psn", "xbox"];
+// ── G드컵 통합 BPI 스케일 (정본 — 서버 전역 단일 상수). GD_BPI·TIERS 모두 이걸 참조, 하드코딩 중복 금지 ──
+const GDCUP_BPI_SCALE = { S: 13, T0: 10, T1: 8, T2: 6, T3: 4, T4: 2, T5: 1 };
+const GDCUP_TIER_ORDER = ["T5", "T4", "T3", "T2", "T1", "T0", "S"];   // 낮음→높음 (티어 보정 max 비교용)
+// 평딜 경계 (겹침 없음, 정수 기준). bpi는 GDCUP_BPI_SCALE에서 파생.
 const TIERS = [
-  { min: 350, t: "T1", bpi: 10, label: "에이스" },
-  { min: 300, t: "T2", bpi: 6,  label: "준에이스" },
-  { min: 200, t: "T3", bpi: 4,  label: "중위" },
-  { min: 100, t: "T4", bpi: 2,  label: "받쳐주기" },
-  { min: 0,   t: "T5", bpi: 1,  label: "신예" },
+  { min: 400, t: "S",  label: "S급" },
+  { min: 350, t: "T0", label: "에이스" },
+  { min: 300, t: "T1", label: "준에이스" },
+  { min: 250, t: "T2", label: "상위" },
+  { min: 180, t: "T3", label: "중위" },
+  { min: 100, t: "T4", label: "받쳐주기" },
+  { min: 0,   t: "T5", label: "신예" },
 ];
+// 현대 PUBG 경쟁전 사다리: …Platinum < Crystal < Diamond < Master < 서바이버(RP≥SURVIVOR_CUT).
+// 티어 상향 보정(현시즌 rankedTier): 서바이버→최소S / 마스터→최소T0 / 크리스탈·다이아→최소T1 / 플레이하→보정없음.
+function gdcupRankedFloor(rankedTier, bestRP) {
+  const name = String(rankedTier || "").split(" ")[0];               // "Master 1" → "Master"
+  if (name === "Master" && (bestRP || 0) >= SURVIVOR_CUT) return "S"; // 서바이버 구간
+  if (name === "Master") return "T0";
+  if (name === "Crystal" || name === "Diamond") return "T1";
+  return null;
+}
 
-function suggestBPI(avgDamage, rankedTier, isTeamLeader) {
+function suggestBPI(avgDamage, rankedTier, isTeamLeader, bestRP) {
   const found = TIERS.find((x) => avgDamage >= x.min);
-  let { t: tier, bpi, label } = found;
+  let tier = found.t, label = found.label, pick = "damage";
+  const floor = gdcupRankedFloor(rankedTier, bestRP);                 // 티어 보정 등급
+  if (floor && GDCUP_TIER_ORDER.indexOf(floor) > GDCUP_TIER_ORDER.indexOf(tier)) {
+    tier = floor; pick = "ranked";                                   // 최종 = max(평딜, 티어보정)
+    label = (TIERS.find((x) => x.t === tier) || {}).label || label;
+  }
+  let bpi = GDCUP_BPI_SCALE[tier];
   let leaderPenalty = 0;
-  if (tier === "T1" && isTeamLeader) { leaderPenalty = 1; bpi += 1; }
+  if (tier === "T0" && isTeamLeader) { leaderPenalty = 1; bpi += 1; } // T0 팀장만 +1 (S급 가산 없음)
   return {
     suggested: { tier, bpi, label, leaderPenalty },
-    basis: { avgDamage, rankedTier: rankedTier || null, isTeamLeader: !!isTeamLeader },
+    basis: { avgDamage, rankedTier: rankedTier || null, isTeamLeader: !!isTeamLeader, pick },
     confirmedBy: null,
   };
 }
@@ -1720,7 +1748,7 @@ async function computeBPI(platform, nickname, isLeader) {
   const avgDamage = rp ? Math.round(dmg / rp) : 0;
   const wins = stats.wins || 0;
 
-  const bpi = suggestBPI(avgDamage, rankedTier, isLeader);
+  const bpi = suggestBPI(avgDamage, rankedTier, isLeader, rankedStats?.bestRankPoint ?? null);
   const lowConfidence = rp < 10;
 
   return {
@@ -2136,22 +2164,43 @@ app.get("/api/gdcup-count", async (req, res) => {
     res.json({ teams: rows.length, target: 16 });
   } catch (e) { res.json({ teams: 0, target: 16 }); }
 });
-// 서버측 가중치 계산 (프론트와 동일한 새 표: T0 신설·상단 확장 반영)
-function gdcupWeight(bpi) {
-  // 시즌3 가중치표 (기준 22~23 = 1.0) — 시즌2 포디움 실측(BPI 20~25) 반영 상향
-  const T = [[0,16,1.3],[17,19,1.2],[20,21,1.1],[22,23,1.0],[24,25,0.9],[26,28,0.8],[29,31,0.7],[32,9999,0.6]];
-  for (const [lo, hi, m] of T) { if (bpi >= lo && bpi <= hi) return m; }
+// ── 시즌 룰셋 (단일 상수) ── 라운드·가중치표·상한·보너스모드를 시즌별로 분리 ──
+const GDCUP_CURRENT_SEASON = 3;
+const GDCUP_WEIGHT_S2 = [[0,16,1.3],[17,19,1.2],[20,21,1.1],[22,23,1.0],[24,25,0.9],[26,28,0.8],[29,31,0.7],[32,9999,0.6]]; // 시즌2 구표(동결)
+const GDCUP_WEIGHT_S3 = [[0,19,1.15],[20,24,1.10],[25,28,1.05],[29,32,1.00],[33,36,0.95],[37,9999,0.85]];                  // 시즌3 신표
+const GDCUP_SEASONS = {
+  2: { rounds: [3,4,5],       weightTable: GDCUP_WEIGHT_S2, cap: null,                   bonusMode: "legacy_inclusive" },
+  3: { rounds: [1,2,3,4,5],   weightTable: GDCUP_WEIGHT_S3, cap: { team: 36, sTier: 1 }, bonusMode: "post_weight" },
+};
+function gdSeasonRules(season) { return GDCUP_SEASONS[season] || GDCUP_SEASONS[GDCUP_CURRENT_SEASON]; }
+function gdcupRounds(season) { return gdSeasonRules(season).rounds; }
+// 서버측 가중치 — 시즌 룰셋의 표 사용(경계 정수 이상/이하). season 미지정=현 시즌.
+function gdcupWeight(bpi, season) {
+  const table = gdSeasonRules(season).weightTable;
+  for (const [lo, hi, m] of table) { if (bpi >= lo && bpi <= hi) return m; }
   return 1.0;
 }
-const GD_BPI = { T0: 10, T1: 8, T2: 6, T3: 4, T4: 2, T5: 1 };
+const GD_BPI = GDCUP_BPI_SCALE;                       // 정본 스케일 참조(S=13·T0=10…). 하드코딩 중복 제거.
 function gdcupBpi(members) {
   let sum = 0;
   (members || []).forEach(function (m, i) {
     let v = GD_BPI[m && m.tier] || 0;
-    if (i === 0 && m && m.tier === "T0") v += 1; // T0 팀장 +1
+    if (i === 0 && m && m.tier === "T0") v += 1; // T0 팀장 +1 (S급 가산 없음)
     sum += v;
   });
   return sum;
+}
+// 팀 구성 검증 (시즌 룰셋 cap 기준). 서버측 gdcupBpi가 정본 — 클라 전송 bpi 무시.
+function validateTeamComposition(members, season) {
+  const rules = gdSeasonRules(season);
+  const teamBpi = gdcupBpi(members);
+  const sCount = (members || []).filter((m) => m && m.tier === "S").length;
+  const reasons = [];
+  if (rules.cap) {
+    if (teamBpi > rules.cap.team) reasons.push({ code: "bpi_cap_exceeded", teamBpi, cap: rules.cap.team, over: teamBpi - rules.cap.team });
+    if (sCount > rules.cap.sTier) reasons.push({ code: "s_tier_limit", count: sCount, max: rules.cap.sTier });
+  }
+  return { ok: reasons.length === 0, teamBpi, sCount, reasons };
 }
 app.post("/api/gdcup-apply", async (req, res) => {
   try {
@@ -2163,9 +2212,11 @@ app.post("/api/gdcup-apply", async (req, res) => {
     if (!teamName) return res.status(400).json({ error: "no_team_name" });
     const season = gdSeason(b.season);
     const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6), bank: clip(m.bank, 20), account: clip(m.account, 30), holder: clip(m.holder, 20) })) : [];
-    const bpi = Number(b.bpi) || null;
-    let weight = (b.weight != null && b.weight !== "") ? Number(b.weight) : null;
-    if (weight == null && bpi != null) weight = gdcupWeight(bpi);
+    // 서버측 검증·재계산이 정본 — 클라 전송 bpi/weight는 무시. 상한/S급 위반 시 사유 배열 반환.
+    const validation = validateTeamComposition(members, season);
+    if (!validation.ok) return res.status(400).json({ error: "team_validation_failed", reasons: validation.reasons });
+    const bpi = validation.teamBpi;
+    const weight = gdcupWeight(bpi, season);
     const contact = clip(b.contact, 60);
     let count = null;
     if (process.env.SUPABASE_URL) {
@@ -2232,7 +2283,7 @@ app.post("/api/gdcup-add-member", async (req, res) => {
     if (adds.length === 0) return res.status(400).json({ error: "no_members" });
 
     // 팀 조회
-    const rows = await sbSelect("gdcup_apps", `select=id,team_name,members,bpi,weight,status&team_name=eq.${encodeURIComponent(teamName)}&status=neq.cancelled&order=created_at.asc`);
+    const rows = await sbSelect("gdcup_apps", `select=id,team_name,members,bpi,weight,status,season&team_name=eq.${encodeURIComponent(teamName)}&status=neq.cancelled&order=created_at.asc`);
     if (!rows || rows.length === 0) return res.status(404).json({ error: "team_not_found" });
     const team = rows[0];
     const existing = Array.isArray(team.members) ? team.members : [];
@@ -2248,8 +2299,11 @@ app.post("/api/gdcup-add-member", async (req, res) => {
     }
 
     const members = existing.concat(adds).slice(0, 4);
-    const bpi = gdcupBpi(members);
-    const weight = gdcupWeight(bpi);
+    const teamSeason = gdSeason(team.season);
+    const validation = validateTeamComposition(members, teamSeason);   // 합류 후 구성 검증(상한/S급)
+    if (!validation.ok) return res.status(422).json({ error: "team_validation_failed", reasons: validation.reasons });
+    const bpi = validation.teamBpi;
+    const weight = gdcupWeight(bpi, teamSeason);
     await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(team.id)}`, { members, bpi, weight });
 
     const PING = process.env.GDCUP_PING || "";
@@ -2303,12 +2357,13 @@ app.get("/api/gdcup-list", async (req, res) => {
   } catch (e) { res.json({ teams: [], target: 16 }); }
 });
 
-// ===== G드컵 시즌2: 본매치(3~5R) 점수 집계 =====
-// 테이블 gdcup_scores(round int, team_name text, placement int, team_kills int, player_kills jsonb [{ign,kills}], updated_at) UNIQUE(round,team_name)
+// ===== G드컵 본매치 점수 집계 (시즌 인지형) =====
+// 테이블 gdcup_scores(season int, round int, team_name text, placement int, team_kills int,
+//   player_kills jsonb [{ign,kills}], updated_at) UNIQUE(season,round,team_name)  ← 유니크 마이그레이션(DDL) 필요
 function gdcupPlacementPts(p){ const T={1:10,2:6,3:5,4:4,5:3,6:2,7:1,8:1}; return T[Number(p)] || 0; } // 9위↓ 0
-const GDCUP_MAIN_ROUNDS = [3,4,5];
-async function gdcupTeamsMap(){
-  const rows = await sbSelect("gdcup_apps","select=team_name,members,weight,bpi,status&status=neq.cancelled");
+async function gdcupTeamsMap(season){
+  const sf = (season!=null) ? `&season=eq.${season}` : "";
+  const rows = await sbSelect("gdcup_apps",`select=team_name,members,weight,bpi,status${sf}&status=neq.cancelled`);
   const map = {};
   (rows||[]).forEach(t=>{ map[t.team_name] = { weight: (t.weight!=null ? Number(t.weight) : 1), members: Array.isArray(t.members)?t.members:[] }; });
   return map;
@@ -2320,9 +2375,10 @@ app.post("/api/gdcup-score", async (req,res)=>{
     if(!gdcupAdmin(req)) return res.status(401).json({error:"unauthorized"});
     if(!process.env.SUPABASE_URL) return res.status(503).json({error:"db_disabled"});
     const b = req.body||{};
+    const season = gdSeason(b.season);
     const round = Number(b.round);
     const team_name = String(b.team_name||"").slice(0,40);
-    if(!team_name || !GDCUP_MAIN_ROUNDS.includes(round)) return res.status(400).json({error:"bad_input"});
+    if(!team_name || !gdcupRounds(season).includes(round)) return res.status(400).json({error:"bad_input"});
     const placement = (b.placement!=null && b.placement!=="") ? Number(b.placement) : null;
     const players = Array.isArray(b.players)
       ? b.players.map(p=>({ ign:String(p.ign||"").slice(0,40), kills:Math.max(0,Number(p.kills)||0) })).filter(p=>p.ign)
@@ -2331,9 +2387,9 @@ app.post("/api/gdcup-score", async (req,res)=>{
     let team_kills;
     if(players.length>0) team_kills = players.reduce((s,p)=>s+(p.kills||0),0);
     else team_kills = (b.team_kills!=null && b.team_kills!=="") ? Math.max(0,Number(b.team_kills)||0) : 0;
-    const row = { round, team_name, placement, team_kills, player_kills: players, updated_at: new Date().toISOString() };
-    await sbUpsert("gdcup_scores", row, "round,team_name");
-    res.json({ ok:true, saved:{ team_name, round, placement, team_kills, players: players.length } });
+    const row = { season, round, team_name, placement, team_kills, player_kills: players, updated_at: new Date().toISOString() };
+    await sbUpsert("gdcup_scores", row, "season,round,team_name");
+    res.json({ ok:true, saved:{ season, team_name, round, placement, team_kills, players: players.length } });
   }catch(e){ console.error("gdcup_score_save", e); res.status(500).json({error:"server_error"}); }
 });
 
@@ -2342,64 +2398,79 @@ app.get("/api/gdcup-round-scores", async (req,res)=>{
   try{
     if(!gdcupAdmin(req)) return res.status(401).json({error:"unauthorized"});
     if(!process.env.SUPABASE_URL) return res.json({scores:[]});
+    const season = gdSeason(req.query.season);
     const rf = req.query.round ? "&round=eq."+Number(req.query.round) : "";
-    const rows = await sbSelect("gdcup_scores", `select=round,team_name,placement,team_kills,player_kills,updated_at${rf}&order=round.asc`);
-    res.json({ scores: rows||[] });
+    const rows = await sbSelect("gdcup_scores", `select=season,round,team_name,placement,team_kills,player_kills,updated_at&season=eq.${season}${rf}&order=round.asc`);
+    res.json({ scores: rows||[], season });
   }catch(e){ console.error("gdcup_round_scores", e); res.status(500).json({error:"server_error"}); }
 });
 
-// [공개] 팀 누적 순위 = (Σ 순위점 + Σ 팀킬 + Σ 연속보너스) × 가중치
-// 시즌3 연속 보너스(42시즌 공식 패치 오마주): 직전 라운드도 Top4면 +2, 직전도 1위(연속 치킨)면 +5 (높은 것 하나만)
-// 5위↓·기록없음(몰수)이면 스트릭 리셋. 라운드 순서(3→4→5) 기준 자동 계산 — 입력 방식 변경 없음.
+// [공개] 팀 누적 순위 (?season 기본 현시즌)
+// 시즌3(post_weight/B안): 총점 = Σ round(기본점수_r × weight) + Σ 보너스_r (보너스는 weight 미적용 정수 가산)
+// 시즌2(legacy_inclusive, 동결): 총점 = round( (Σ기본점수 + Σ보너스) × weight )
+// 연속보너스: 인접 라운드 both 기록 · prev≤4&cur≤4 → +2 / prev=1&cur=1 → +5(중복 시 5만) · null(불참)=리셋
 app.get("/api/gdcup-scores", async (req,res)=>{
   try{
-    if(!process.env.SUPABASE_URL) return res.json({standings:[], lastRound:0});
-    const teams = await gdcupTeamsMap();
-    let rows=[]; try{ rows = await sbSelect("gdcup_scores","select=round,team_name,placement,team_kills,player_kills&order=round.asc"); }catch(_){ rows=[]; }
+    if(!process.env.SUPABASE_URL) return res.json({standings:[], lastRound:0, season:GDCUP_CURRENT_SEASON});
+    const season = gdSeason(req.query.season);
+    const rules = gdSeasonRules(season);
+    const rounds = rules.rounds;
+    const teams = await gdcupTeamsMap(season);
+    let rows=[]; try{ rows = await sbSelect("gdcup_scores",`select=round,team_name,placement,team_kills,player_kills&season=eq.${season}&order=round.asc`); }catch(_){ rows=[]; }
     const agg={}; let lastRound=0;
-    const placeByTeam={}; // { team: { round: placement } }
     (rows||[]).forEach(r=>{
-      if(!GDCUP_MAIN_ROUNDS.includes(Number(r.round))) return;
+      if(!rounds.includes(Number(r.round))) return;
       lastRound=Math.max(lastRound, Number(r.round));
       const name=r.team_name;
       const tk = (r.team_kills!=null) ? Number(r.team_kills) : ((r.player_kills||[]).reduce((s,p)=>s+(p.kills||0),0));
-      if(!agg[name]) agg[name]={raw:0, kills:0, bonus:0};
-      agg[name].raw += gdcupPlacementPts(r.placement) + tk;
+      if(!agg[name]) agg[name]={ baseByRound:{}, place:{}, kills:0, bonus:0 };
+      agg[name].baseByRound[Number(r.round)] = gdcupPlacementPts(r.placement) + tk;   // 기본점수_r = 순위점 + 팀킬
       agg[name].kills += tk;
-      (placeByTeam[name]=placeByTeam[name]||{})[Number(r.round)] = (r.placement!=null && r.placement!=="") ? Number(r.placement) : null;
+      agg[name].place[Number(r.round)] = (r.placement!=null && r.placement!=="") ? Number(r.placement) : null;
     });
-    // 연속 보너스 계산
+    // 연속 보너스 (인접 라운드 스캔, 라운드 순서 기준)
     Object.keys(agg).forEach(name=>{
-      const pl = placeByTeam[name]||{};
-      for(let i=1;i<GDCUP_MAIN_ROUNDS.length;i++){
-        const prev = pl[GDCUP_MAIN_ROUNDS[i-1]], cur = pl[GDCUP_MAIN_ROUNDS[i]];
-        if(prev==null || cur==null) continue;           // 기록 없음 = 스트릭 끊김
-        let b = 0;
-        if(prev===1 && cur===1) b = 5;                  // 연속 치킨
-        else if(prev<=4 && cur<=4) b = 2;               // 연속 Top4
-        if(b){ agg[name].raw += b; agg[name].bonus += b; }
+      const pl = agg[name].place;
+      for(let i=1;i<rounds.length;i++){
+        const prev = pl[rounds[i-1]], cur = pl[rounds[i]];
+        if(prev==null || cur==null) continue;           // 기록 없음(불참) = 스트릭 끊김
+        let bn = 0;
+        if(prev===1 && cur===1) bn = 5;                 // 연속 치킨
+        else if(prev<=4 && cur<=4) bn = 2;              // 연속 Top4
+        if(bn) agg[name].bonus += bn;
       }
     });
     const standings = Object.keys(agg).map(name=>{
       const w = teams[name] ? teams[name].weight : 1;
-      return { name, weight:w, points: Math.round(agg[name].raw * w), kills: agg[name].kills, bonus: agg[name].bonus };
+      const a = agg[name];
+      let points;
+      if(rules.bonusMode === "post_weight"){
+        const weighted = Object.values(a.baseByRound).reduce((s,v)=>s+Math.round(v*w),0);  // 라운드별 반올림
+        points = weighted + a.bonus;                    // 보너스는 정수 가산(weight 미적용)
+      } else {
+        const baseSum = Object.values(a.baseByRound).reduce((s,v)=>s+v,0);
+        points = Math.round((baseSum + a.bonus) * w);   // legacy: 보너스 포함해 ×weight
+      }
+      return { name, weight:w, points, kills:a.kills, bonus:a.bonus };
     }).sort((a,b)=> b.points-a.points || b.kills-a.kills);
-    res.json({ standings, lastRound });
-  }catch(e){ console.error("gdcup_scores", e); res.json({standings:[], lastRound:0}); }
+    res.json({ standings, lastRound, season });
+  }catch(e){ console.error("gdcup_scores", e); res.json({standings:[], lastRound:0, season:GDCUP_CURRENT_SEASON}); }
 });
 
 
 // [공개] 킬 MVP = 선수별 누적 킬
 app.get("/api/gdcup-killmvp", async (req,res)=>{
   try{
-    if(!process.env.SUPABASE_URL) return res.json({players:[], lastRound:0});
-    const teams = await gdcupTeamsMap();
+    if(!process.env.SUPABASE_URL) return res.json({players:[], lastRound:0, season:GDCUP_CURRENT_SEASON});
+    const season = gdSeason(req.query.season);
+    const rounds = gdcupRounds(season);
+    const teams = await gdcupTeamsMap(season);
     const ignTeam={};
     Object.keys(teams).forEach(tn=> (teams[tn].members||[]).forEach(m=>{ if(m&&m.ign) ignTeam[String(m.ign).trim().toLowerCase()]=tn; }));
-    let rows=[]; try{ rows = await sbSelect("gdcup_scores","select=round,team_name,player_kills&order=round.asc"); }catch(_){ rows=[]; }
+    let rows=[]; try{ rows = await sbSelect("gdcup_scores",`select=round,team_name,player_kills&season=eq.${season}&order=round.asc`); }catch(_){ rows=[]; }
     const agg={}; let lastRound=0;
     (rows||[]).forEach(r=>{
-      if(!GDCUP_MAIN_ROUNDS.includes(Number(r.round))) return;
+      if(!rounds.includes(Number(r.round))) return;
       lastRound=Math.max(lastRound, Number(r.round));
       (r.player_kills||[]).forEach(p=>{
         const ign=String(p.ign||"").trim(); if(!ign) return;
@@ -2409,7 +2480,7 @@ app.get("/api/gdcup-killmvp", async (req,res)=>{
       });
     });
     const players = Object.values(agg).filter(p=>p.kills>0).sort((a,b)=> b.kills-a.kills);
-    res.json({ players, lastRound });
+    res.json({ players, lastRound, season });
   }catch(e){ console.error("gdcup_killmvp", e); res.json({players:[], lastRound:0}); }
 });
 
@@ -2548,9 +2619,20 @@ app.post("/api/gdcup-edit", async (req, res) => {
     if (!b.id) return res.status(400).json({ error: "no_id" });
     const clip = (v, n) => String(v || "").slice(0, n);
     const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6), bank: clip(m.bank, 20), account: clip(m.account, 30), holder: clip(m.holder, 20) })) : [];
-    const bpi = gdcupBpi(members);
-    const weight = gdcupWeight(bpi);
-    const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, { members, bpi, weight });
+    const cur = (await sbSelect("gdcup_apps", `select=id,season,bpi,audit&id=eq.${encodeURIComponent(b.id)}&limit=1`))[0];
+    if (!cur) return res.status(404).json({ error: "team_not_found" });
+    const teamSeason = gdSeason(cur.season);
+    const validation = validateTeamComposition(members, teamSeason);
+    const override = b.override === true;                  // 관리자만 override 허용
+    if (!validation.ok && !override) return res.status(422).json({ error: "team_validation_failed", reasons: validation.reasons });
+    const bpi = validation.teamBpi;
+    const weight = gdcupWeight(bpi, teamSeason);
+    const patch = { members, bpi, weight };
+    if (!validation.ok && override) {                     // 예외승인 감사 append (gdcup_apps.audit jsonb)
+      const prevAudit = Array.isArray(cur.audit) ? cur.audit : [];
+      patch.audit = prevAudit.concat([{ override: true, approvedBy: clip(b.approvedBy, 40) || null, reason: clip(b.reason, 200) || null, at: new Date().toISOString(), bpiBefore: cur.bpi ?? null, bpiAfter: bpi, reasons: validation.reasons }]);
+    }
+    const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, patch);
     const team = Array.isArray(updated) ? updated[0] : updated;
     // 디코 참가팀명단 채널에 '정정' 카드 자동 게시
     const LISTWH = process.env.GDCUP_LIST_WEBHOOK;
@@ -2601,32 +2683,9 @@ app.post("/api/gdcup-board", async (req, res) => {
 });
 
 // ===== G드컵 스코어 (공개 조회 / 운영진 저장·게시) =====
-// (중복 제거) /api/gdcup-scores GET은 위 gdcup_scores 집계 핸들러가 우선 매칭 — gdcup_state 조회판은 dead code라 삭제.
-app.post("/api/gdcup-scores-save", async (req, res) => {
-  try {
-    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
-    const b = req.body || {};
-    const inTeams = Array.isArray(b.teams) ? b.teams : [];
-    const ranking = inTeams.map(function (t) {
-      const r1 = Number(t.r1) || 0, r2 = Number(t.r2) || 0, r3 = Number(t.r3) || 0;
-      const w = (t.weight != null && t.weight !== "") ? Number(t.weight) : 1;
-      const raw = r1 + r2 + r3;
-      const weighted = Math.round(raw * w * 100) / 100;
-      return { team_name: String(t.team_name || "").slice(0, 40), weight: w, r1: r1, r2: r2, r3: r3, raw: raw, weighted: weighted };
-    }).sort(function (a, b2) { return b2.weighted - a.weighted; });
-    const value = { ranking: ranking, published: !!b.publish, ts: new Date().toISOString() };
-    await sbUpsert("gdcup_state", { key: "scores", value: value }, "key");
-    if (b.publish && process.env.GDCUP_SCORE_WEBHOOK) {
-      const medal = ["🥇", "🥈", "🥉"];
-      const lines = ranking.slice(0, 16).map(function (t, i) {
-        return (medal[i] || ((i + 1) + ".")) + " " + t.team_name + " — " + t.weighted + "점 (R " + t.r1 + "/" + t.r2 + "/" + t.r3 + " ×" + t.weight + ")";
-      }).join("\n");
-      const embed = { title: "🏆 G드컵 시즌2 스코어", color: 0xf5c518, description: lines.slice(0, 4000) || "-", timestamp: new Date().toISOString() };
-      try { await fetch(process.env.GDCUP_SCORE_WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "📊 스코어 업데이트", embeds: [embed] }) }); } catch (e) { console.error("score_webhook", e.message); }
-    }
-    res.json({ ok: true, ranking: ranking });
-  } catch (e) { console.error("scores_save_error", e); res.status(500).json({ error: "server_error" }); }
-});
+// [제거됨] /api/gdcup-scores-save (레거시 gdcup_state r1/r2/r3 3라운드 수동 집계) —
+//   양 repo 프론트에서 호출처 없음(dead code). 실집계는 gdcup_scores 테이블 + /api/gdcup-scores로 대체됨.
+//   r1/r2/r3 3라운드 하드코딩이라 시즌3(5라운드)와도 불일치. gdcup_state 테이블은 방치(무해).
 
 // ===== G드컵 솔로/용병 (혼자 신청 + 자리부족 모집) =====
 // 비-취소 팀들의 멤버 ign 집합(소문자) — 솔로 구직 자동 정리에 사용 (?season 스코프 가능)
