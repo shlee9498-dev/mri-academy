@@ -285,4 +285,14 @@ alter table public.clan_registry   enable row level security;
 alter table public.registry_history enable row level security;
 
 -- ============================================================
+-- 13) 운영 상태 저장소 (T2 크론 · Phase B Operation CI) — key/value 범용.
+--     크론 마지막 실행일(KST)·status·attempts 영속 → 재배포 타이머 리셋에도 중복/누락 방지.
+create table if not exists public.ops_state (
+  key         text primary key,                       -- 'cron:stats' · 'cron:selfcheck' 등
+  value       jsonb,                                  -- { date, status, attempts, at, ... }
+  updated_at  timestamptz not null default now()
+);
+alter table public.ops_state enable row level security;
+
+-- ============================================================
 -- 완료. 테이블 6개 + 인덱스 + RLS. 기존 reviews/progress 계열과 독립.

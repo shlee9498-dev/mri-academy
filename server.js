@@ -3037,9 +3037,9 @@ async function pubgNameByAccount(platform, accountId) {
   const d = await pubgGet(`/shards/${platform}/players/${accountId}`, 1800000);
   return d?.data?.attributes?.name || null;
 }
-let statsRun = { running: false, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], nickChanges: [], needsInvestigation: [], masterRate: null, masterCount: null, startedAt: null, finishedAt: null, error: null };
+let statsRun = { running: false, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], nickChanges: [], needsInvestigation: [], promotions: [], masterRate: null, masterCount: null, startedAt: null, finishedAt: null, error: null };
 async function runStatsSnapshot() {
-  statsRun = { running: true, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], nickChanges: [], needsInvestigation: [], masterRate: null, masterCount: null, startedAt: Date.now(), finishedAt: null, error: null };
+  statsRun = { running: true, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], nickChanges: [], needsInvestigation: [], promotions: [], masterRate: null, masterCount: null, startedAt: Date.now(), finishedAt: null, error: null };
   try {
     // pubg 연결 학생은 status 무관 전원 조회 — 수료생(마스터 배출자)이 달성률·PROOF의 핵심이라 제외 금지
     const students = await sbSelect("students", "select=id,name,trainer_id,status,pubg_platform,pubg_name,pubg_account_id&order=name.asc");
@@ -3054,6 +3054,12 @@ async function runStatsSnapshot() {
       const accts = await sbSelect("student_accounts", "select=student_id,pubg_name&valid_to=is.null&is_main=eq.true");
       accts.forEach((a) => { curNameOf[a.student_id] = a.pubg_name; });
     } catch (e) { console.error("stacc_load", e?.message); }
+    // 승급 감지 기준값 — 학생별 직전 tracking 스냅샷 tier_index (최신 1건)
+    const prevIdxOf = {};
+    try {
+      const prevSnaps = await sbSelect("student_snapshots", "select=student_id,tier_index,created_at&snapshot_type=eq.tracking&order=created_at.desc");
+      prevSnaps.forEach((r) => { if (r.student_id != null && prevIdxOf[r.student_id] === undefined) prevIdxOf[r.student_id] = r.tier_index; });
+    } catch (e) { console.error("prev_snap_load", e?.message); }
     const isLinked = (s) => s.pubg_platform && (s.pubg_account_id || s.pubg_name);
     const linked = students.filter(isLinked);
     const unlinkedList = students.filter((s) => !isLinked(s));
@@ -3109,6 +3115,12 @@ async function runStatsSnapshot() {
         const row = { student: s.name, trainer: nameOf[s.trainer_id] || null, status: s.status, tier: snap.tierLabel, cand_label: candLabel, provisional, best_rank_point: snap.bestRP, avg_damage: snap.avgDamage, master_plus: masterPlus, registered };
         statsRun.report.push(row);
         if (masterPlus && !registered) statsRun.candidates.push(row);
+        // 승급 감지 (직전 스냅샷 대비 신규 크로싱) — 오너 DM 전용. 이전 스냅샷 없으면 스킵(최초=베이스라인).
+        const prevIdx = prevIdxOf[s.id];
+        if (prevIdx != null) {
+          if (prevIdx < 8 && snap.tierIdx >= 8) statsRun.promotions.push({ student: s.name, trainer: nameOf[s.trainer_id] || null, tier: "서바이버", provisional: true });
+          else if (prevIdx < 7 && snap.tierIdx >= 7) statsRun.promotions.push({ student: s.name, trainer: nameOf[s.trainer_id] || null, tier: "마스터", provisional: false });
+        }
         statsRun.done++;
         await sleepT(7000);                                                 // 10 RPM 보호(계정당 ~7s)
       } catch (e) {
@@ -3133,7 +3145,10 @@ async function runStatsSnapshot() {
         const invest = statsRun.needsInvestigation.length
           ? statsRun.needsInvestigation.map((i) => `· ${i.student} — ${i.reason}`).join("\n")
           : "없음";
-        await owner.send(`📊 전적 스냅샷 완료 — ${rated.length}명 조회 (미연결 ${statsRun.unlinked})\n마스터+ 달성률: **${statsRun.masterRate}%** (${mp}/${rated.length})\n\n승급 후보(미등록 마스터+):\n${cand}\n\n🔄 닉변 감지(이력 기록됨):\n${nick}\n\n🔍 수동 조사 필요(dak.gg):\n${invest}\n\n전체 리포트: GET /api/admin/stats/report`);
+        const promo = statsRun.promotions.length
+          ? statsRun.promotions.map((p) => `· ${p.student} (${p.trainer || "미배정"}) → ${p.provisional ? "⚡ 서바이버 구간 진입(시즌 중 미확정)" : "🎖️ 마스터 확정"}`).join("\n")
+          : "없음";
+        await owner.send(`📊 전적 스냅샷 완료 — ${rated.length}명 조회 (미연결 ${statsRun.unlinked})\n마스터+ 달성률: **${statsRun.masterRate}%** (${mp}/${rated.length})\n\n🆙 승급 감지(직전 대비):\n${promo}\n\n승급 후보(미등록 마스터+):\n${cand}\n\n🔄 닉변 감지(이력 기록됨):\n${nick}\n\n🔍 수동 조사 필요(dak.gg):\n${invest}\n\n전체 리포트: GET /api/admin/stats/report`);
       } catch (e) { console.error("stats_owner_dm", e?.message); }
     }
   } catch (e) { console.error("stats_batch", e?.message); statsRun.error = e?.message || "batch_error"; }
@@ -3173,5 +3188,63 @@ require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete }
     })
     .catch((e) => console.log("[sheet] ping 실패:", e && e.message));
 })();
+
+// ── T2 일일 크론 + Operation CI 훅 (운영정책 v1) ──────────────────────────────
+// in-process setInterval(10분 틱). ops_state에 마지막 실행일(KST) 영속 → 재배포 타이머 리셋에도
+// 중복/누락 방지. 실패 시 status:'failed'+attempts 기록 → 다음 틱 재시도. 2회 실패면 그날 포기 + 오너 DM.
+// 성공/변화없음 = 침묵. T2_CRON=1 옵트인(미설정=비활성 안전폴백).
+const T2_ENABLED = process.env.T2_CRON === "1";
+function kstNow() { const d = new Date(Date.now() + 9 * 3600 * 1000); return { date: d.toISOString().slice(0, 10), hm: d.toISOString().slice(11, 16) }; }
+async function opsStateGet(key) {
+  try { const r = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`); return r[0]?.value || null; }
+  catch (e) { console.error("ops_state_get", key, e?.message); return null; }
+}
+async function opsStateSet(key, value) {
+  try { await sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key"); }
+  catch (e) { console.error("ops_state_set", key, e?.message); }
+}
+async function ownerDM(msg) {
+  if (!botClient || !process.env.MRI_OWNER_ID) return;
+  try { const o = await botClient.users.fetch(process.env.MRI_OWNER_ID); await o.send(msg); } catch (e) { console.error("owner_dm", e?.message); }
+}
+// 날짜 게이트 실행: 하루 1회, hhmm(KST) 이후. status/attempts로 재시도(≤2)·중복·크래시 복구 관리.
+async function maybeRunDaily(key, hhmm, fn, label) {
+  const { date, hm } = kstNow();
+  if (hm < hhmm) return;                                            // 아직 실행 시각 전
+  const st = (await opsStateGet(`cron:${key}`)) || {};
+  if (st.date === date && st.status === "success") return;          // 오늘 이미 완료
+  if (st.date === date && st.status === "failed" && (st.attempts || 0) >= 2) return; // 오늘 2회 실패 → 포기
+  if (st.date === date && st.status === "running") {                // 진행 중(선점) — 30분 내면 스킵, 넘으면 죽은 것으로 간주해 재시도
+    const age = st.at ? (Date.now() - new Date(st.at).getTime()) : Infinity;
+    if (age < 30 * 60 * 1000) return;
+  }
+  const attempts = (st.date === date ? (st.attempts || 0) : 0) + 1;
+  await opsStateSet(`cron:${key}`, { date, status: "running", attempts, at: new Date().toISOString() });  // 슬롯 선점(중복 방지)
+  try {
+    await fn();
+    await opsStateSet(`cron:${key}`, { date, status: "success", attempts, at: new Date().toISOString() });
+    console.log(`[cron] ${key} 완료 (${date}, 시도 ${attempts})`);
+  } catch (e) {
+    await opsStateSet(`cron:${key}`, { date, status: "failed", attempts, error: e?.message || "err", at: new Date().toISOString() });
+    console.error(`[cron] ${key} 실패 (시도 ${attempts}):`, e?.message);
+    if (attempts >= 2) await ownerDM(`❌ [cron] ${label || key} 2회 실패 — 오늘(${date}) 포기. 마지막 오류: ${e?.message || "unknown"}`);
+    // attempts<2면 다음 틱에서 재시도(무한 재시도 금지)
+  }
+}
+// Phase B Operation CI 숙주(현재는 스텁) — schema drift·Apps Script ping 대조·API smoke·env 존재가 여기 얹힘.
+// 실패 시 오너 DM, 성공 시 침묵. 지금은 no-op.
+async function runSelfCheck() { /* Phase B */ }
+async function cronTick() {
+  if (!T2_ENABLED) return;
+  await maybeRunDaily("stats", "05:00", runStatsSnapshot, "일일 전적 스냅샷");
+  await maybeRunDaily("selfcheck", "05:00", runSelfCheck, "Operation self-check");   // Phase B(현재 no-op)
+}
+if (T2_ENABLED) {
+  setInterval(() => { cronTick().catch((e) => console.error("cron_tick", e?.message)); }, 10 * 60 * 1000);   // 10분 틱
+  cronTick().catch((e) => console.error("cron_tick_boot", e?.message));   // 기동 시 1회(재배포 캐치업 + Phase B 배포후 smoke 지점)
+  console.log("[cron] T2 일일 크론 활성 (05:00 KST · 10분 틱)");
+} else {
+  console.log("[cron] T2 비활성 (T2_CRON=1 로 옵트인)");
+}
 
 app.listen(PORT, () => console.log("listening on " + PORT));
