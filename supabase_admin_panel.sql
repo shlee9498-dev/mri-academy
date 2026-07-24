@@ -246,4 +246,43 @@ select s.id, s.pubg_platform, s.pubg_name, s.pubg_account_id, true, coalesce(s.c
    );
 
 -- ============================================================
+-- 12) 등록계(클랜원 시즌 전적관리 ID) — GmI 1인 1계정 앵커. students(수강생)와 모집단 분리(별도 테이블).
+--     디코 /등록계 커맨드가 upsert. account_id 안정키, 닉변/계정변경은 registry_history(SCD-2)로 이력.
+create table if not exists public.clan_registry (
+  id            bigint generated always as identity primary key,
+  discord_id    text not null,
+  discord_name  text,
+  real_name     text,
+  platform      text not null check (platform in ('kakao','steam')),
+  pubg_name     text not null,                         -- 등록 시점 인게임 닉(현재값 캐시)
+  account_id    text,                                  -- 해석된 안정 accountId(중복감지 기준)
+  season        int  not null,                         -- PUBG 시즌 번호(PUBG_CUR_SEASON_NUM 공유)
+  verified_at   timestamptz,                           -- PUBG API 실존 확인 시각
+  updated_at    timestamptz not null default now(),
+  created_at    timestamptz not null default now(),
+  unique (discord_id, season)                          -- 디코ID×시즌 1건(재실행=등록계 변경 upsert)
+);
+create index if not exists idx_registry_season  on public.clan_registry (season);
+create index if not exists idx_registry_account on public.clan_registry (account_id) where account_id is not null;
+
+-- 등록계 변경 이력 (SCD Type-2: 덮어쓰기 금지, 변경 시 이전 구간 valid_to 마감 + 새 행 append)
+create table if not exists public.registry_history (
+  id            bigint generated always as identity primary key,
+  discord_id    text not null,
+  season        int  not null,
+  platform      text not null,
+  pubg_name     text not null,
+  account_id    text,
+  real_name     text,
+  valid_from    timestamptz not null default now(),
+  valid_to      timestamptz,                           -- null = 현재 유효
+  note          text,                                  -- '최초등록' · '등록계 변경(닉/계정)' 등
+  created_at    timestamptz not null default now()
+);
+create index if not exists idx_reghist_discord on public.registry_history (discord_id, season, valid_to);
+
+alter table public.clan_registry   enable row level security;
+alter table public.registry_history enable row level security;
+
+-- ============================================================
 -- 완료. 테이블 6개 + 인덱스 + RLS. 기존 reviews/progress 계열과 독립.

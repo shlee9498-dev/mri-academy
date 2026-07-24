@@ -570,11 +570,14 @@ async function refresh(client) {
 // ═══════════════ 수강생 성장 추적 (전적 스냅샷) ═══════════════
 // /전적등록 → 등록 시점 baseline 자동 스냅샷 / /수료처리 → after + 성장폭
 // 테이블: pubg_nicks(discord_id pk) · student_snapshots
-const TIER_RANK = { Unranked: 0, Bronze: 1, Silver: 2, Gold: 3, Platinum: 4, Diamond: 5, Master: 6 };
+// 현대 PUBG 경쟁전 사다리: …Platinum(4) < Crystal(5) < Diamond(6) < Master(7) < 서바이버(8, RP≥컷)
+// ⚠️ Crystal 신설로 Diamond/Master가 한 칸씩 상향 — 기존 student_snapshots.tier_index는 마이그레이션 필요
+//    (DDL 체크리스트: update … set tier_index = tier_index + 1 where tier_index >= 5).
+const TIER_RANK = { Unranked: 0, Bronze: 1, Silver: 2, Gold: 3, Platinum: 4, Crystal: 5, Diamond: 6, Master: 7 };
 const SURVIVOR_CUT = 3700; // 36S~ 서바이버 컷 (Master 위 최상위)
 function tierIndex(tier, bestRP) {
   let i = TIER_RANK[tier] ?? 0;
-  if ((bestRP || 0) >= SURVIVOR_CUT) i = Math.max(i, 7);
+  if ((bestRP || 0) >= SURVIVOR_CUT) i = Math.max(i, 8);   // 서바이버=8 (Master 7 위)
   return i;
 }
 function tierLabel(tier, subTier, bestRP) {
@@ -768,6 +771,28 @@ if (process.env.DISCORD_TOKEN) {
       { name: "메모", description: "메모(선택)", type: 3, required: false },
     ],
   };
+  // /등록계 — GmI 클랜원 시즌 등록계(전적관리 ID) 등록. LESSON_GUILD(GmI)에 등록.
+  const REGISTRY_CMD = {
+    name: "등록계",
+    description: "[클랜원] 시즌 등록계(전적관리 ID) 등록 — PUBG 실존 확인 후 저장",
+    options: [
+      { name: "플랫폼", description: "PUBG 플랫폼", type: 3, required: true, choices: [
+        { name: "카카오", value: "kakao" },
+        { name: "스팀", value: "steam" } ] },
+      { name: "인게임닉", description: "PUBG 인게임 닉네임(등록계)", type: 3, required: true },
+      { name: "실명", description: "실명(선택, 미입력 시 디스코드 서버닉 사용)", type: 3, required: false },
+    ],
+  };
+  // /등록계현황 — [오너] 시즌 등록 현황·미등록자·중복 감지 (DM 전용, /승급과 동일 방식)
+  const REGISTRY_STATUS_CMD = {
+    name: "등록계현황",
+    description: "[오너] 시즌 등록계 현황·미등록자·중복 감지 (DM 전용)",
+    integrationTypes: [0],
+    contexts: [1],
+    options: [
+      { name: "시즌", description: "PUBG 시즌 번호(미지정=현재)", type: 4, required: false, min_value: 1, max_value: 99 },
+    ],
+  };
   // 봇 초대 URL(bot + applications.commands). client_id는 로그인 후 확정.
   const lessonInviteUrl = () => client.application
     ? `https://discord.com/oauth2/authorize?client_id=${client.application.id}&scope=bot%20applications.commands&permissions=3072`
@@ -780,8 +805,8 @@ if (process.env.DISCORD_TOKEN) {
       return;
     }
     try {
-      await client.application.commands.set([LESSON_CMD], guildId);
-      console.log(`/수업등록 registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
+      await client.application.commands.set([LESSON_CMD, REGISTRY_CMD], guildId);
+      console.log(`/수업등록·/등록계 registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
     } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
   }
 
@@ -856,6 +881,9 @@ if (process.env.DISCORD_TOKEN) {
       // Phase 1.4 — /승급 글로벌 등록(DM 사용 위함). create=이름 기준 upsert, 기존 명령 미삭제.
       try { await client.application.commands.create(SUNG_CMD); console.log("/승급 registered (global · DM 전용)"); }
       catch (e) { console.error("sung_register_failed", e?.message); }
+      // /등록계현황 글로벌 등록(DM 전용, owner)
+      try { await client.application.commands.create(REGISTRY_STATUS_CMD); console.log("/등록계현황 registered (global · DM 전용)"); }
+      catch (e) { console.error("registry_status_register_failed", e?.message); }
     } catch (e) { console.error("slash_register_failed", e?.message); }
 
   });
@@ -1014,6 +1042,104 @@ if (process.env.DISCORD_TOKEN) {
     } catch (e) {
       console.error("lesson_register_failed", e?.message);
       await itx.editReply("등록 중 오류가 났어. 잠시 후 다시 시도해줘.");
+    }
+  });
+
+  // ── /등록계 : GmI 클랜원 시즌 등록계 등록 (PUBG 실존확인 → clan_registry upsert + registry_history SCD-2) ──
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "등록계") return;
+    const platform = itx.options.getString("플랫폼");
+    const ign = (itx.options.getString("인게임닉") || "").trim();
+    const realName = (itx.options.getString("실명") || "").trim()
+      || itx.member?.nickname || itx.user.globalName || itx.user.username || null;
+    if (!ign) return itx.reply({ content: "인게임 닉을 입력해줘.", ephemeral: true });
+    if (!process.env.SUPABASE_URL) return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+    await itx.deferReply({ ephemeral: true });
+    const season = PUBG_CUR_SEASON_NUM;   // 스냅샷 파이프라인과 공유하는 단일 시즌 상수
+    try {
+      // 1) PUBG 실존 확인 (닉→accountId, I/l/i/1·o/O/0 변형 재시도)
+      let player;
+      try { player = await findPlayer(platform, ign); }
+      catch (e) {
+        if (e?.status === 404) {
+          const tried = nameVariants(ign).slice(0, 8).join(", ");
+          return itx.editReply(`❌ "${ign}" 닉을 찾을 수 없어요(${platform}). dak.gg에서 정확한 닉 확인 후 다시 입력해줘.\n시도한 변형: ${tried}`);
+        }
+        throw e;
+      }
+      const accountId = player.id;
+      const resolvedName = player.attributes?.name || ign;
+      // 2) 현시즌 티어 카드 (tierLabel은 Crystal 등 원문 티어 그대로 표기)
+      let tierText = "랭크 기록 없음";
+      try { const snap = await pubgRankedByAccount(platform, accountId); if (snap.hasRanked) tierText = `${snap.tierLabel}${snap.bestRP ? " · " + snap.bestRP + "RP" : ""}`; }
+      catch (_) { /* 랭크 조회 실패는 무시 — 등록 자체는 진행 */ }
+      // 3) 기존 등록(디코ID×시즌) 조회 → 변경 감지
+      const prev = (await sbSelect("clan_registry", `select=id,platform,pubg_name,account_id&discord_id=eq.${encodeURIComponent(itx.user.id)}&season=eq.${season}&limit=1`))[0];
+      const changed = !prev || prev.account_id !== accountId || prev.platform !== platform;
+      const nowIso = new Date().toISOString();
+      // 4) SCD-2 이력: 최초등록 or 변경 시 이전 구간 마감 + 새 행(덮어쓰기 금지)
+      if (changed) {
+        try {
+          if (prev) await sbPatch("registry_history", `discord_id=eq.${encodeURIComponent(itx.user.id)}&season=eq.${season}&valid_to=is.null`, { valid_to: nowIso });
+          await sbInsert("registry_history", { discord_id: itx.user.id, season, platform, pubg_name: resolvedName, account_id: accountId, real_name: realName, valid_from: nowIso, note: prev ? "등록계 변경" : "최초등록" });
+        } catch (e) { console.error("registry_history", e?.message); }
+      }
+      // 5) clan_registry upsert (discord_id,season)
+      await sbUpsert("clan_registry", {
+        discord_id: itx.user.id, discord_name: itx.user.globalName || itx.user.username,
+        real_name: realName, platform, pubg_name: resolvedName, account_id: accountId,
+        season, verified_at: nowIso, updated_at: nowIso,
+      }, "discord_id,season");
+      // 6) 응답 카드 + 명의 규칙 고정 안내
+      await itx.editReply(
+        `✅ 등록계 등록 완료 (시즌 ${season})\n`
+        + `· 닉: **${resolvedName}**\n· 플랫폼: ${platform === "kakao" ? "카카오" : "스팀"}\n· 현시즌 티어: ${tierText}\n`
+        + (prev ? "\n♻️ 기존 등록계에서 변경됨(이력 보존).\n" : "")
+        + `\n📌 본인 명의 계정만 등록 가능(가족 명의는 증빙 필요). 계정거래·대리 ID 등록 불가.`
+      );
+    } catch (e) {
+      console.error("registry_register_failed", e?.message);
+      await itx.editReply("등록 중 오류가 났어. 잠시 후 다시 시도해줘.");
+    }
+  });
+
+  // ── /등록계현황 : [오너 DM] 시즌 등록 현황·미등록자(역할 G/M/I 대비)·중복 account_id 감지 ──
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "등록계현황") return;
+    if (itx.guildId) return itx.reply({ content: "이 명령은 오너 DM에서만 사용해요.", ephemeral: true });
+    if (!process.env.MRI_OWNER_ID || itx.user.id !== process.env.MRI_OWNER_ID)
+      return itx.reply({ content: "오너 전용 명령이에요.", ephemeral: true });
+    if (!process.env.SUPABASE_URL) return itx.reply({ content: "DB 연동 준비 전이야.", ephemeral: true });
+    await itx.deferReply({ ephemeral: true });
+    const season = itx.options.getInteger("시즌") || PUBG_CUR_SEASON_NUM;
+    try {
+      const rows = await sbSelect("clan_registry", `select=discord_id,pubg_name,account_id&season=eq.${season}`);
+      const regByDiscord = new Set(rows.map((r) => r.discord_id));
+      // 중복 account_id (타인 명의·계정공유 의심)
+      const byAcc = {};
+      rows.forEach((r) => { if (r.account_id) (byAcc[r.account_id] = byAcc[r.account_id] || []).push(r.pubg_name); });
+      const dupAcc = Object.entries(byAcc).filter(([, v]) => v.length > 1);
+      // 역할 G/M/I 보유자 대비 미등록자 (best-effort — GUILD_MEMBERS intent 필요)
+      let unregLine = "역할 대비 미등록자: 조회 생략(LESSON_GUILD_ID/DISCORD_ROLE_* env 미설정)";
+      const gid = process.env.LESSON_GUILD_ID;
+      const roleIds = [process.env.DISCORD_ROLE_G, process.env.DISCORD_ROLE_M, process.env.DISCORD_ROLE_I].filter(Boolean);
+      if (gid && roleIds.length) {
+        try {
+          const guild = await client.guilds.fetch(gid);
+          const members = await guild.members.fetch();
+          const roleHolders = members.filter((m) => m.roles.cache.some((r) => roleIds.includes(r.id)));
+          const unreg = roleHolders.filter((m) => !regByDiscord.has(m.id));
+          unregLine = `역할(G/M/I) 보유 ${roleHolders.size}명 중 **미등록 ${unreg.size}명**`
+            + (unreg.size ? "\n" + [...unreg.values()].slice(0, 40).map((m) => `· ${m.displayName}`).join("\n") : "");
+        } catch (e) { unregLine = `역할 대비 미등록자 조회 실패(${e?.message || "권한/Intent 확인"})`; }
+      }
+      const dupLine = dupAcc.length
+        ? "⚠️ 중복 account_id(계정공유·타인명의 의심):\n" + dupAcc.map(([, names]) => `· ${names.join(" / ")}`).join("\n")
+        : "중복 account_id 없음";
+      await itx.editReply(`📋 등록계 현황 (시즌 ${season})\n등록 ${rows.length}건\n\n${unregLine}\n\n${dupLine}`);
+    } catch (e) {
+      console.error("registry_status_failed", e?.message);
+      await itx.editReply("현황 조회 중 오류가 났어.");
     }
   });
 
@@ -1587,7 +1713,7 @@ app.get("/api/progress-stats", async (_req, res) => {
     res.json({
       ready: true, totalTracked: total,
       tierUpCount: up, tierUpPct: total ? Math.round((up / total) * 100) : null,
-      survivorCount: cntAfter(7), masterPlusCount: cntAfter(6), diamondPlusCount: cntAfter(5),
+      survivorCount: cntAfter(8), masterPlusCount: cntAfter(7), diamondPlusCount: cntAfter(6),
       avgRpGain: avg(rpGains), avgKillsGain: avg2(killGains),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2976,8 +3102,8 @@ async function runStatsSnapshot() {
             kda: snap.kda, avg_kills: snap.avgKills, avg_damage: snap.avgDamage, raw: snap,
           });
         } catch (e) { console.error("snap_insert", s.name, e?.message); }
-        const masterPlus = snap.tierIdx >= 6;                               // 6=마스터 7=서바이버
-        const provisional = snap.tierIdx >= 7;                              // 서바이버=실시간 상위등수 구간(시즌중 미확정), 마스터=달성시 확정
+        const masterPlus = snap.tierIdx >= 7;                               // 7=마스터 8=서바이버 (Crystal 신설로 +1)
+        const provisional = snap.tierIdx >= 8;                              // 서바이버=실시간 상위등수 구간(시즌중 미확정), 마스터=달성시 확정
         const candLabel = provisional ? "서바이버 구간 진입 (시즌 중 — 확정 아님)" : snap.tierLabel;
         const registered = gset.has("id:" + s.id) || gset.has("nm:" + String(s.name || "").trim());
         const row = { student: s.name, trainer: nameOf[s.trainer_id] || null, status: s.status, tier: snap.tierLabel, cand_label: candLabel, provisional, best_rank_point: snap.bestRP, avg_damage: snap.avgDamage, master_plus: masterPlus, registered };
@@ -3041,9 +3167,9 @@ require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete }
     .then((r) => r.json().catch(() => ({})))
     .then((d) => {
       if (d && (d.spreadsheetTitle || d.spreadsheetId))
-        console.log(`[sheet] 연결된 시트: ${d.spreadsheetTitle || "?"} (${d.spreadsheetId || "id?"})`);
+        console.log(`[sheet] 연결된 시트: ${d.spreadsheetTitle || "?"} (${d.spreadsheetId || "id?"})${d.scriptVersion ? " · scriptVersion " + d.scriptVersion : ""}`);
       else
-        console.log("[sheet] ping 응답에 시트 식별 없음 — Apps Script가 type:'ping'에 {spreadsheetTitle,spreadsheetId} 반환하도록 추가하면 제목까지 로그됨");
+        console.log("[sheet] ping 응답에 시트 식별 없음 — Apps Script가 type:'ping'에 {spreadsheetTitle,spreadsheetId,scriptVersion} 반환하도록 추가하면 제목·버전까지 로그됨");
     })
     .catch((e) => console.log("[sheet] ping 실패:", e && e.message));
 })();
