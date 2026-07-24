@@ -52,16 +52,31 @@ module.exports = function mountAdminPanel(app, deps) {
   const SALARY_START = "2026-07";             // 순매출 수수료 시작월 (6월분 이전 동결)
 
   // 요청자 컨텍스트: 로그인 + 스태프 + staff 테이블 매핑(role, staff.id)
+  //  meError: staff 조회가 DB오류로 실패(신원 미해석). '행 부재(부트스트랩)'와 구분 —
+  //  전자는 fail-closed(503 재시도), 후자는 403. 둘 다 requireIdentity에서 스코프 차단.
   async function ctx(req) {
     const u = getUser(req);
     if (!u || !u.isStaff) return null;
-    let me = null;
+    let me = null, meError = false;
     try {
-      const rows = await sbSelect("staff", `select=*&discord_id=eq.${encodeURIComponent(u.id)}&limit=1`);
-      me = rows[0] || null;
-    } catch { /* staff 미설정 상태 허용 (부트스트랩) */ }
+      const rows = await sbSelectRetry("ctx_staff", "staff", `select=*&discord_id=eq.${encodeURIComponent(u.id)}&limit=1`);
+      me = rows[0] || null;                                   // 조회 성공·행 없음 = 정상 null(부트스트랩)
+    } catch (e) {
+      meError = true;                                         // DB오류 = 신원 미해석 → fail-closed 대상
+      console.error("ctx_staff 최종 실패:", e && e.message);
+    }
     const isOwner = OWNER_IDS.includes(u.id) || (me && me.role === "owner");
-    return { u, me, isOwner };
+    return { u, me, meError, isOwner };
+  }
+
+  // 데이터 스코프 라우트 가드 — 비-owner는 본인 staff(me)가 해석돼야만 진행(fail-closed).
+  //  me 미해석 시 스코프 필터가 빠져 전체 노출/전체 쓰기가 되던 fail-open을 차단.
+  //  owner(=env OWNER_IDS 또는 role)는 me 없이도 통과. false 반환 시 이미 응답 전송됨.
+  function requireIdentity(c, res) {
+    if (c.isOwner) return true;
+    if (c.meError) { res.status(503).json({ error: "identity_unresolved", message: "권한 확인 일시 실패 — 새로고침 해주세요." }); return false; }
+    if (!c.me) { res.status(403).json({ error: "no_staff_record", message: "운영진(staff) 등록이 필요합니다 — owner에게 문의." }); return false; }
+    return true;
   }
 
   async function audit(c, action, target, detail) {
@@ -163,6 +178,7 @@ module.exports = function mountAdminPanel(app, deps) {
     if (!ready()) return res.status(503).json({ error: "disabled" });
     const c = await ctx(req);
     if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     const period = String(req.query.period || "").match(/^\d{4}-\d{2}$/) ? req.query.period : null;
     try {
       const [students, payments, sessions, payouts, staff, graduations] = await Promise.all([
@@ -256,6 +272,7 @@ module.exports = function mountAdminPanel(app, deps) {
   // ── 수강생 ─────────────────────────────────────────────
   app.get("/api/admin/students", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     try {
       let q = "select=*&order=name.asc";
       if (!c.isOwner && c.me) q += `&trainer_id=eq.${c.me.id}`;
@@ -264,6 +281,7 @@ module.exports = function mountAdminPanel(app, deps) {
   });
   app.post("/api/admin/students", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     const b = req.body || {};
     const name = String(b.name || "").trim();
     if (!name) return res.status(400).json({ error: "이름을 입력해 주세요." });
@@ -279,6 +297,7 @@ module.exports = function mountAdminPanel(app, deps) {
   });
   app.patch("/api/admin/students/:id", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     const id = parseInt(req.params.id); if (!id) return res.status(400).json({ error: "bad_params" });
     const b = req.body || {}; const patch = {};
     if (b.name !== undefined) patch.name = String(b.name).slice(0, 40);
@@ -327,12 +346,14 @@ module.exports = function mountAdminPanel(app, deps) {
   // ── 레슨 세션 (트레이너 판수 기록 — 핵심 액션) ──────────
   app.get("/api/admin/sessions", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     const sid = parseInt(req.query.student_id); if (!sid) return res.status(400).json({ error: "bad_params" });
     try { res.json(await sbSelect("lesson_sessions", `select=*&student_id=eq.${sid}&order=played_at.desc`)); }
     catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
   });
   app.post("/api/admin/sessions", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     const b = req.body || {};
     const student_id = parseInt(b.student_id), games = parseInt(b.games);
     if (!student_id || !(games > 0)) return res.status(400).json({ error: "수강생·판수(1이상)를 확인해 주세요." });
@@ -352,6 +373,7 @@ module.exports = function mountAdminPanel(app, deps) {
   });
   app.delete("/api/admin/sessions/:id", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     const id = parseInt(req.params.id); if (!id) return res.status(400).json({ error: "bad_params" });
     try {
       await sbDelete("lesson_sessions", `id=eq.${id}`);
@@ -384,6 +406,7 @@ module.exports = function mountAdminPanel(app, deps) {
   // GET: owner=전체 / 트레이너=본인. 트레이너별 계산 지급율(base_rate) 병기(검증용).
   app.get("/api/admin/graduations", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     try {
       let q = "select=*&order=achieved_at.desc";
       if (!c.isOwner && c.me) q += `&trainer_id=eq.${c.me.id}`;
@@ -518,6 +541,7 @@ module.exports = function mountAdminPanel(app, deps) {
   // [운영진] 주간 일정 — owner 전체 / 트레이너 본인 것만. 실명 포함.
   app.get("/api/admin/schedule", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     const { start, end } = kstWeekRange(req.query.week);
     const kind = ["lesson", "direct"].includes(req.query.kind) ? req.query.kind : null;
     try {
@@ -540,6 +564,7 @@ module.exports = function mountAdminPanel(app, deps) {
   // [운영진] 일정 생성 — 직강은 owner 전용. kind×format 화이트리스트 강제. 더블부킹 경고(차단X).
   app.post("/api/admin/schedule", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     const b = req.body || {};
     const kind = ["lesson", "direct"].includes(b.kind) ? b.kind : null;
     if (!kind) return res.status(400).json({ error: "kind(lesson/direct)를 확인해 주세요." });
@@ -574,6 +599,7 @@ module.exports = function mountAdminPanel(app, deps) {
   // [운영진] 일정 수정 — 기존 행 소유권 검증(트레이너=본인 trainer_id·비직강). status=cancelled=soft delete.
   app.patch("/api/admin/schedule/:id", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     const id = parseInt(req.params.id); if (!id) return res.status(400).json({ error: "bad_params" });
     const b = req.body || {};
     try {
@@ -606,6 +632,7 @@ module.exports = function mountAdminPanel(app, deps) {
   // [운영진] 지난주 복사 — [보고 있는 주] → [그 다음 주]. 멱등 가드(대상 비취소 존재 시 confirm 요구).
   app.post("/api/admin/schedule/copy-week", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!requireIdentity(c, res)) return;
     const b = req.body || {};
     const src = kstWeekRange(b.week);
     const tgtStart = datePlus(src.start, 7), tgtEnd = datePlus(src.end, 7);
