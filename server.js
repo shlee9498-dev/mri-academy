@@ -2827,9 +2827,14 @@ async function pubgRankedByAccount(platform, accountId) {
     avgDamage: (rounds && dmg != null) ? Math.round(dmg / rounds) : null, hasRanked: !!sq,
   };
 }
-let statsRun = { running: false, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], masterRate: null, masterCount: null, startedAt: null, finishedAt: null, error: null };
+// account_id(안정키)로 현재 인게임 닉 조회 — 닉변 감지용(랭크 엔드포인트엔 name이 없음)
+async function pubgNameByAccount(platform, accountId) {
+  const d = await pubgGet(`/shards/${platform}/players/${accountId}`, 1800000);
+  return d?.data?.attributes?.name || null;
+}
+let statsRun = { running: false, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], nickChanges: [], needsInvestigation: [], masterRate: null, masterCount: null, startedAt: null, finishedAt: null, error: null };
 async function runStatsSnapshot() {
-  statsRun = { running: true, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], masterRate: null, masterCount: null, startedAt: Date.now(), finishedAt: null, error: null };
+  statsRun = { running: true, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], nickChanges: [], needsInvestigation: [], masterRate: null, masterCount: null, startedAt: Date.now(), finishedAt: null, error: null };
   try {
     // pubg 연결 학생은 status 무관 전원 조회 — 수료생(마스터 배출자)이 달성률·PROOF의 핵심이라 제외 금지
     const students = await sbSelect("students", "select=id,name,trainer_id,status,pubg_platform,pubg_name,pubg_account_id&order=name.asc");
@@ -2838,6 +2843,12 @@ async function runStatsSnapshot() {
     const grads = await sbSelect("graduations", "select=student_name,student_id");
     const gset = new Set();
     grads.forEach((g) => { if (g.student_id) gset.add("id:" + g.student_id); if (g.student_name) gset.add("nm:" + String(g.student_name).trim()); });
+    // 현재 대표계정(is_main·valid_to null)의 닉 캐시 — 닉변 비교 기준값
+    const curNameOf = {};
+    try {
+      const accts = await sbSelect("student_accounts", "select=student_id,pubg_name&valid_to=is.null&is_main=eq.true");
+      accts.forEach((a) => { curNameOf[a.student_id] = a.pubg_name; });
+    } catch (e) { console.error("stacc_load", e?.message); }
     const isLinked = (s) => s.pubg_platform && (s.pubg_account_id || s.pubg_name);
     const linked = students.filter(isLinked);
     const unlinkedList = students.filter((s) => !isLinked(s));
@@ -2849,11 +2860,32 @@ async function runStatsSnapshot() {
     for (const s of linked) {
       try {
         let accountId = s.pubg_account_id;
+        let currentName = null;                                            // 현재 인게임 닉(닉변 감지용)
         if (!accountId) {
           const p = await findPlayer(s.pubg_platform, s.pubg_name);        // 닉→accountId 1회 해석
           accountId = p.id;
+          currentName = p.attributes?.name || null;                        // findPlayer가 현재 닉을 이미 반환 — 추가 호출 절약
           try { await sbPatch("students", `id=eq.${s.id}`, { pubg_account_id: accountId }); } catch (_) {}
           await sleepT(7000);
+        } else {
+          try {
+            currentName = await pubgNameByAccount(s.pubg_platform, accountId);  // account_id 보유 학생은 by-account로 현재 닉 확인
+            await sleepT(7000);
+          } catch (e) {
+            if (e?.status === 404) statsRun.needsInvestigation.push({ student: s.name, account_id: accountId, reason: "PUBG 404(by-account) — dak.gg 수동 조사" });
+            // 닉 조회 실패는 비치명적: 닉변 감지만 스킵, 스냅샷은 계속
+          }
+        }
+        // 닉변 감지 → student_accounts(SCD-2) 이력 기록 + students 캐시 동기화
+        const storedName = curNameOf[s.id] || s.pubg_name || null;
+        if (currentName && storedName && currentName !== storedName) {
+          const nowIso = new Date().toISOString();
+          try {
+            await sbPatch("student_accounts", `student_id=eq.${s.id}&valid_to=is.null&is_main=eq.true`, { valid_to: nowIso });  // 이전 구간 마감(먼저)
+            await sbInsert("student_accounts", { student_id: s.id, platform: s.pubg_platform, pubg_name: currentName, account_id: accountId, is_main: true, valid_from: nowIso, note: "닉변 자동감지" });
+            try { await sbPatch("students", `id=eq.${s.id}`, { pubg_name: currentName }); } catch (_) {}
+            statsRun.nickChanges.push({ student: s.name, from: storedName, to: currentName });
+          } catch (e) { console.error("nick_history", s.name, e?.message); }
         }
         const snap = await pubgRankedByAccount(s.pubg_platform, accountId);
         try {
@@ -2875,6 +2907,7 @@ async function runStatsSnapshot() {
         statsRun.done++;
         await sleepT(7000);                                                 // 10 RPM 보호(계정당 ~7s)
       } catch (e) {
+        if (e?.status === 404) statsRun.needsInvestigation.push({ student: s.name, reason: "닉 해석 404(닉변 추정) — dak.gg 수동 조사" });
         statsRun.report.push({ student: s.name, trainer: nameOf[s.trainer_id] || null, error: e?.message || "실패" });
         statsRun.done++; await sleepT(3000);
       }
@@ -2889,7 +2922,13 @@ async function runStatsSnapshot() {
         const cand = statsRun.candidates.length
           ? statsRun.candidates.map((c) => `· ${c.student} (${c.trainer || "미배정"} · ${c.cand_label || c.tier})`).join("\n")
           : "없음";
-        await owner.send(`📊 전적 스냅샷 완료 — ${rated.length}명 조회 (미연결 ${statsRun.unlinked})\n마스터+ 달성률: **${statsRun.masterRate}%** (${mp}/${rated.length})\n\n승급 후보(미등록 마스터+):\n${cand}\n\n전체 리포트: GET /api/admin/stats/report`);
+        const nick = statsRun.nickChanges.length
+          ? statsRun.nickChanges.map((n) => `· ${n.student}: ${n.from} → ${n.to}`).join("\n")
+          : "없음";
+        const invest = statsRun.needsInvestigation.length
+          ? statsRun.needsInvestigation.map((i) => `· ${i.student} — ${i.reason}`).join("\n")
+          : "없음";
+        await owner.send(`📊 전적 스냅샷 완료 — ${rated.length}명 조회 (미연결 ${statsRun.unlinked})\n마스터+ 달성률: **${statsRun.masterRate}%** (${mp}/${rated.length})\n\n승급 후보(미등록 마스터+):\n${cand}\n\n🔄 닉변 감지(이력 기록됨):\n${nick}\n\n🔍 수동 조사 필요(dak.gg):\n${invest}\n\n전체 리포트: GET /api/admin/stats/report`);
       } catch (e) { console.error("stats_owner_dm", e?.message); }
     }
   } catch (e) { console.error("stats_batch", e?.message); statsRun.error = e?.message || "batch_error"; }

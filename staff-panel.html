@@ -185,8 +185,12 @@ function renderStats(){
     const cand=(r.candidates||[]).length ? (r.candidates||[]).map(c=>`<div class="srow"><b>${esc(c.student)}</b> · ${esc(c.trainer||"미배정")} · <span style="color:var(--gold)${c.provisional?";font-weight:600;opacity:.85":""}">${esc(c.cand_label||c.tier)}</span></div>`).join("") : `<div class="muted">없음</div>`;
     const ur=r.unlinkedReasons||{}; const urBits=[]; if(ur.no_platform)urBits.push(`플랫폼 미시드 ${ur.no_platform}`); if(ur.no_name_no_id)urBits.push(`닉 없음 ${ur.no_name_no_id}`);
     const urTxt=urBits.length?` (${urBits.join(" · ")})`:"";
+    const nick=(r.nickChanges||[]).length ? (r.nickChanges||[]).map(n=>`<div class="srow"><b>${esc(n.student)}</b> · <span class="muted">${esc(n.from)} → </span><span style="color:var(--gold)">${esc(n.to)}</span></div>`).join("") : "";
+    const inv=(r.needsInvestigation||[]).length ? (r.needsInvestigation||[]).map(i=>`<div class="srow"><b>${esc(i.student)}</b> · <span class="muted">${esc(i.reason)}</span></div>`).join("") : "";
     body=`<div class="pill">마스터+ 달성률 <b>${r.masterRate}%</b> (${r.masterCount}/${rated})</div>${r.unlinked?` <span class="muted">· 미연결 ${r.unlinked}명${esc(urTxt)}</span>`:""}
-      <div style="margin-top:11px;font-size:12.5px;font-weight:700">승급 후보 (미등록 마스터+)</div>${cand}`;
+      <div style="margin-top:11px;font-size:12.5px;font-weight:700">승급 후보 (미등록 마스터+)</div>${cand}`
+      +(nick?`<div style="margin-top:11px;font-size:12.5px;font-weight:700">🔄 닉변 감지 (이력 기록됨)</div>${nick}`:"")
+      +(inv?`<div style="margin-top:11px;font-size:12.5px;font-weight:700">🔍 수동 조사 필요 (dak.gg)</div>${inv}`:"");
   } else { body=`<div class="muted">아직 실행하지 않았어요.</div>`; }
   w.innerHTML=`<section class="ops"><h2 class="ops-h">📊 전적 스냅샷 (PUBG)</h2>
     <button class="btn gold sm" onclick="runStats()"${r&&r.running?" disabled":""}>전수 스냅샷 실행</button>
