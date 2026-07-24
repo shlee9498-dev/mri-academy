@@ -744,11 +744,15 @@ if (process.env.DISCORD_TOKEN) {
     name: "수업등록",
     description: "[트레이너] 수업 진행 기록 — 구글시트에 자동 등록·회차 차감",
     options: [
-      { name: "유형", description: "수업 유형", type: 3, required: true, choices: [
+      { name: "학생", description: "학생 이름(쉼표로 여러 명)", type: 3, required: true },
+      { name: "구분", description: "기록 구분 (기본 레슨)", type: 3, required: false, choices: [
+        { name: "레슨", value: "레슨" },
+        { name: "강의(직강)", value: "강의" },
+        { name: "진단상담", value: "진단상담" } ] },
+      { name: "유형", description: "레슨 유형(구분=레슨일 때 필수)", type: 3, required: false, choices: [
         { name: "그룹 관전형(최대 4명)", value: "관전형" },
         { name: "그룹 참여형(최대 3명)", value: "참여형" },
         { name: "개인 1:1", value: "개인" } ] },
-      { name: "학생", description: "학생 이름(쉼표로 여러 명)", type: 3, required: true },
       { name: "판수", description: "그룹 수업 진행 판수(기본 1, 여러 판 한 번에 등록)", type: 4, required: false, min_value: 1, max_value: 100 },
       { name: "시간", description: "개인수업 시간(시간 단위, 1시간=5판)", type: 10, required: false },
       { name: "메모", description: "메모(선택)", type: 3, required: false },
@@ -931,6 +935,21 @@ if (process.env.DISCORD_TOKEN) {
     }
     return { inserted: rows.length, miss };
   }
+  // 이름→students.id 해석(1건). 미매칭 null.
+  async function resolveStudentId(name) {
+    try { const r = await sbSelect("students", `select=id&name=eq.${encodeURIComponent(name)}&limit=1`); return r[0]?.id ?? null; }
+    catch (e) { console.error("resolve_student", name, e?.message); return null; }
+  }
+  // 상담(진단상담) 이력 조회 — 이름별 최근 1건. /수업등록 시 "○○님 상담 이력" 표시용.
+  async function consultHistoryFor(names) {
+    if (!hasSupabase() || !names.length) return [];
+    try {
+      const rows = await sbSelect("consults", "select=student_name,registered_at&kind=eq.consult&order=registered_at.desc");
+      const latest = {};
+      rows.forEach((r) => { const n = String(r.student_name || "").trim(); if (n && !latest[n]) latest[n] = r.registered_at; });
+      return names.filter((n) => latest[n]).map((n) => ({ name: n, date: latest[n] }));
+    } catch (e) { console.error("consult_history", e?.message); return []; }
+  }
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand() || itx.commandName !== "수업등록") return;
 
@@ -948,6 +967,7 @@ if (process.env.DISCORD_TOKEN) {
     if (!webhook)
       return itx.reply({ content: "시트 연동이 아직 설정 전이야(SHEET_WEBHOOK_URL 미배포). 운영진에게 문의해줘.", ephemeral: true });
 
+    const guboon = itx.options.getString("구분") || "레슨";
     const lessonType = itx.options.getString("유형");
     const hours = itx.options.getNumber("시간");
     const gamesInput = itx.options.getInteger("판수"); // 그룹 다중판 입력용(null=미지정)
@@ -959,24 +979,58 @@ if (process.env.DISCORD_TOKEN) {
     if (!names.length)
       return itx.reply({ content: "학생을 최소 1명 입력해줘.", ephemeral: true });
 
+    await itx.deferReply({ ephemeral: true });
+
+    // 이름→student_id 해석 + 과거 미연결 상담로그 소급 연결(모든 구분 공통)
+    const sidOf = {};
+    for (const name of names) {
+      const sid = await resolveStudentId(name);
+      sidOf[name] = sid;
+      if (sid != null) { try { await sbPatch("consults", `student_name=eq.${encodeURIComponent(name)}&student_id=is.null`, { student_id: sid }); } catch (_) {} }
+    }
+    const hist = await consultHistoryFor(names);                    // 상담 이력 표시(공통)
+    const histLines = hist.map((h) => `💬 ${h.name}님 ${h.date} 진단상담 이력 있음`);
+
+    // ── 구분=강의/진단상담 : consults 로그만 (정산 자동생성 없음 — 금액·정산은 오너 확정) ──
+    if (guboon !== "레슨") {
+      const kind = guboon === "진단상담" ? "consult" : "direct_lecture";
+      const trainerName = guboon === "진단상담" ? trainer : null;   // 강의(직강)=트레이너 없음(정산 자연 제외)
+      let trainerId = null;
+      if (trainerName) { try { trainerId = (await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainerName)}&limit=1`))[0]?.id ?? null; } catch (_) {} }
+      const logged = [];
+      for (const name of names) {
+        try {
+          await sbInsert("consults", { kind, student_name: name, student_id: sidOf[name], trainer_name: trainerName, trainer_id: trainerId, registered_by: itx.user.id, memo: memo || null, status: "pending" });
+          logged.push(name);
+        } catch (e) { console.error("consult_insert", name, e?.message); }
+      }
+      // 시트 payload에 구분 전송(베스트에포트) — Apps Script의 구분 수신 핸들러는 Gemini 별도 배포. 실패=비치명적(consults가 진실).
+      try {
+        await fetch(webhook, { method: "POST", redirect: "follow", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ secret: process.env.SHEET_SECRET || "", type: "register", 구분: guboon, trainer, students: names.map((name) => ({ name })), memo }) });
+      } catch (e) { console.error("consult_sheet", e?.message); }
+      const label = guboon === "진단상담" ? "진단상담" : "강의(직강)";
+      const out = [`✅ ${label} 등록(로그) — ${logged.join(", ") || "없음"}`,
+        `↳ 로그만 기록됨(정산 자동반영 없음). 금액·정산은 오너가 확정합니다.`];
+      if (histLines.length) out.push("", ...histLines);
+      return itx.editReply(out.join("\n"));
+    }
+
+    // ── 구분=레슨 : 기존 흐름(유형 필수) ──
+    if (!lessonType) return itx.editReply("레슨은 '유형'을 선택해줘 (관전형/참여형/개인).");
     const cap = LESSON_CAP[lessonType];
     if (cap && names.length > cap)
-      return itx.reply({ content: `${lessonType}은 최대 ${cap}명이야. (입력: ${names.length}명)`, ephemeral: true });
-
+      return itx.editReply(`${lessonType}은 최대 ${cap}명이야. (입력: ${names.length}명)`);
     // 판수 산정: 그룹=판수 옵션(기본 1, 각 학생 동일 판수), 개인=시간×5 (유효판만 트레이너가 등록)
     let students;
     if (lessonType === "개인") {
-      if (!hours || hours <= 0)
-        return itx.reply({ content: "개인 수업은 '시간'을 입력해줘 (1시간=5판).", ephemeral: true });
+      if (!hours || hours <= 0) return itx.editReply("개인 수업은 '시간'을 입력해줘 (1시간=5판).");
       const games = Math.round(hours * 5);
       students = names.map((name) => ({ name, games }));
     } else {
-      // 그룹(관전형/참여형): 하루 여러 판을 한 번에 등록 (미지정 시 1판). 정원 검증은 명수 기준 유지.
       const games = gamesInput && gamesInput > 0 ? gamesInput : 1;
       students = names.map((name) => ({ name, games }));
     }
-
-    await itx.deferReply({ ephemeral: true });
     try {
       const r = await fetch(webhook, {
         method: "POST",
@@ -985,6 +1039,7 @@ if (process.env.DISCORD_TOKEN) {
         body: JSON.stringify({
           secret: process.env.SHEET_SECRET || "",
           type: "lesson",
+          구분: "레슨",
           trainer,
           lessonType,
           students,
@@ -1038,6 +1093,7 @@ if (process.env.DISCORD_TOKEN) {
           await owner.send(`⚠️ /수업등록 DB 미매칭 — ${trainer}: ${dw.miss.join(", ")} (시트 응답상 기록 ${updated.length}건) · students 테이블 이름 확인/보정 필요`);
         }
       } catch (e) { console.error("dualwrite_failed", e?.message); }
+      if (histLines.length) lines.push("", ...histLines);          // 상담 이력 표시(전환 추적)
       await itx.editReply(lines.join("\n"));
     } catch (e) {
       console.error("lesson_register_failed", e?.message);

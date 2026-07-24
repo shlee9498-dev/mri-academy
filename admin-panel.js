@@ -335,7 +335,7 @@ module.exports = function mountAdminPanel(app, deps) {
     try {
       const row = await sbInsert("payments", {
         student_id, paid_at: validDate(b.paid_at), amount, games, payout_rate: rate,
-        kind: ["lesson", "consult", "set", "sales"].includes(b.kind) ? b.kind : "lesson",
+        kind: ["lesson", "consult", "set", "sales", "direct_lecture"].includes(b.kind) ? b.kind : "lesson",
         via_youtube: !!b.via_youtube, memo: String(b.memo || "").slice(0, 200) || null, source: "manual",
       });
       await audit(c, "payment.add", `student:${student_id}`, { amount, games, rate });
