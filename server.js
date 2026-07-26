@@ -1167,8 +1167,8 @@ if (process.env.DISCORD_TOKEN) {
         components: [],
       });
     } catch (e) {
-      console.error("registry_register_failed", e?.message);
-      await itx.editReply({ content: "등록 중 오류가 났어. 잠시 후 다시 시도해줘.", components: [] });
+      console.error("registry_register_failed", e?.message);   // 서버 로그는 상세 유지
+      await itx.editReply({ content: registryUserError(e), components: [] });
     }
   }
 
@@ -3491,6 +3491,93 @@ async function ownerDM(msg) {
   if (!botClient || !process.env.MRI_OWNER_ID) return;
   try { const o = await botClient.users.fetch(process.env.MRI_OWNER_ID); await o.send(msg); } catch (e) { console.error("owner_dm", e?.message); }
 }
+// ── 등록 실패 사용자 문구 분류 ──
+// 단일 문구("오류가 났어")면 사용자가 재시도할지 운영진을 부를지 판단할 수 없다.
+// 카테고리만 알려주고 상세는 서버 로그에만 남긴다(민감정보 노출 방지).
+function registryUserError(e) {
+  const status = e?.status;
+  const body = String(e?.body || "");
+  const msg = String(e?.message || "");
+  if (status === 429 || /rate ?limit|too many/i.test(body + msg))
+    return "⏳ 전적 서버가 혼잡해요. 1분 후 다시 시도해줘.";
+  if (status === 408 || status === 504 || /timeout|ETIMEDOUT|ECONNRESET|ENOTFOUND|fetch failed/i.test(body + msg))
+    return "⏳ 전적 서버가 혼잡해요. 1분 후 다시 시도해줘.";
+  if (/PGRST\d{3}/.test(body) || /^supabase_/.test(msg))
+    return "❌ 등록 저장에 실패했어. 운영진에 알려줘 (코드: DB)";
+  return "❌ 알 수 없는 오류 (코드: UNK). 운영진에 알려줘.";
+}
+
+// ── 스키마 자기점검 (Phase B schema drift 선반영) ──
+// "코드는 배포됐는데 DDL 미실행" 패턴으로 반복 장애가 났다(예: clan_registry.confirmed_at
+// 부재 → /등록계 전건 PGRST204 실패). 기동 시 1회 확인해 로그+오너 DM으로 즉시 드러낸다.
+// 컬럼 목록은 코드가 실제로 select/insert 하는 것만 — 여기 한 곳에서 관리한다.
+const REQUIRED_SCHEMA = {
+  clan_registry:   ["discord_id","discord_name","real_name","platform","pubg_name","account_id",
+                    "season","verified_at","updated_at","active_hours","ownership_confirmed","confirmed_at"],
+  registry_history:["discord_id","season","platform","pubg_name","account_id","real_name",
+                    "valid_from","valid_to","note"],
+  ops_state:       ["key","value","updated_at"],
+  gdcup_apps:      ["id","team_name","slogan","members","bpi","weight","contact","ip","season",
+                    "status","created_at","leader_discord","audit"],
+  gdcup_payouts:   ["id","app_id","season","member_idx","real_name","bank","account_no","holder"],
+  gdcup_scores:    ["season","round","team_name","placement","team_kills","player_kills","updated_at"],
+  schedule_events: ["kind","event_date","trainer_id","format","status","is_public","is_recruiting",
+                    "capacity","participants"],
+  students:        ["id","name","trainer_id","status","carry_games","payout_rate_set"],
+  staff:           ["id","discord_id","name","role","active","base_salary"],
+};
+
+// 테이블 1건 점검. 전체 컬럼을 한 번에 조회해 통과하면 요청 1회로 끝나고,
+// 실패했을 때만 컬럼을 하나씩 짚어 누락분을 특정한다(정상일 때 요청 폭증 방지).
+async function checkSchemaTable(table, cols) {
+  try {
+    await sbSelect(table, `select=${cols.join(",")}&limit=0`);
+    return { table, ok: true, cols: cols.length };
+  } catch (e) {
+    const body = String(e?.body || "");
+    if (e?.status === 404 || /PGRST205/.test(body)) return { table, ok: false, tableMissing: true };
+    const missing = [];
+    for (const c of cols) {
+      try { await sbSelect(table, `select=${c}&limit=0`); }
+      catch (e2) { if (/PGRST204|42703|does not exist|Could not find/i.test(String(e2?.body || e2?.message))) missing.push(c); }
+    }
+    if (missing.length) return { table, ok: false, missing };
+    return { table, ok: false, error: String(e?.message || "unknown").slice(0, 140) };
+  }
+}
+
+// notify=false 로 호출하면 DM 없이 결과만 반환 — T2 일일 점검에서 재사용.
+async function runSchemaCheck({ notify = true, label = "boot" } = {}) {
+  if (!process.env.SUPABASE_URL) { console.log("[schema] SKIP — SUPABASE_URL 미설정"); return { skipped: true }; }
+  const results = [];
+  for (const [table, cols] of Object.entries(REQUIRED_SCHEMA)) {
+    results.push(await checkSchemaTable(table, cols));
+  }
+  const bad = results.filter((r) => !r.ok);
+  if (bad.length) {
+    // 누락이 있으면 요약을 최상단에 먼저 — 배포 로그에서 스크롤 없이 보이도록
+    console.error(`[schema] ⚠️ ${bad.length}개 테이블 이상 — DDL 미실행 의심 (${label})`);
+  }
+  results.forEach((r) => {
+    if (r.ok) console.log(`[schema] OK  ${r.table} (${r.cols} cols)`);
+    else if (r.tableMissing) console.error(`[schema] ⚠️ MISSING TABLE ${r.table}  ← DDL 미실행 의심`);
+    else if (r.missing) r.missing.forEach((c) => console.error(`[schema] ⚠️ MISSING ${r.table}.${c}  ← DDL 미실행 의심`));
+    else console.error(`[schema] ⚠️ CHECK FAILED ${r.table} · ${r.error}`);
+  });
+  if (bad.length && notify) {
+    const lines = bad.map((r) =>
+      r.tableMissing ? `• 테이블 없음: \`${r.table}\``
+      : r.missing ? `• \`${r.table}\` — 컬럼 없음: ${r.missing.map((c) => "`" + c + "`").join(", ")}`
+      : `• \`${r.table}\` — 점검 실패: ${r.error}`);
+    await ownerDM(
+      `🚨 **스키마 점검 실패** (${label})\n\n${lines.join("\n")}\n\n`
+      + "→ `supabase_admin_panel.sql`의 해당 DDL 실행 후 마지막에 `NOTIFY pgrst, 'reload schema';` 까지 실행해주세요.\n"
+      + "미실행 상태면 해당 기능이 런타임에 PGRST204/42P01로 실패합니다."
+    );
+  }
+  return { total: results.length, bad: bad.length, results };
+}
+
 // 날짜 게이트 실행: 하루 1회, hhmm(KST) 이후. status/attempts로 재시도(≤2)·중복·크래시 복구 관리.
 async function maybeRunDaily(key, hhmm, fn, label) {
   const { date, hm } = kstNow();
@@ -3561,3 +3648,8 @@ if (T2_ENABLED || DIRECT_STATUS_ENABLED) {
 }
 
 app.listen(PORT, () => console.log("listening on " + PORT));
+
+// 스키마 자기점검 — 기동 1회. 봇 로그인(ownerDM용) 여유를 두고 실행.
+setTimeout(() => {
+  runSchemaCheck({ label: "boot" }).catch((e) => console.error("schema_check", e?.message));
+}, 12000);
