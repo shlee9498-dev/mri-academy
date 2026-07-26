@@ -3008,13 +3008,25 @@ function gdcupAdmin(req) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);  // 타이밍 안전 비교
 }
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
+// ── 운영 응답용 members 정제 ──
+// 계좌·실명은 gdcup_payouts(owner 전용)에만 존재해야 한다. 그런데 시즌2 레거시 행은
+// members jsonb 안에 bank/account/holder가 남아 있어(구 /api/gdcup-apply가 거기 저장),
+// 그대로 내려가면 인증 없는 정적 페이지(gdcup-admin.html)가 쓰는 공유 키만으로 계좌가 열람된다.
+// 화면이 안 그려도 응답 본문에 있으면 노출이다 → 서버에서 잘라낸다.
+function sanitizeMembers(members) {
+  return (Array.isArray(members) ? members : []).map((m) => ({
+    name: (m && m.name) || "", ign: (m && m.ign) || "", tier: (m && m.tier) || "",
+    peak: (m && m.peak) || "", dmg: (m && m.dmg) || "", discord: (m && m.discord) || "",
+  }));
+}
+
 app.get("/api/gdcup-admin-list", async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
     if (!process.env.SUPABASE_URL) return res.json({ teams: [] });
     const sf = req.query.season ? `&season=eq.${gdSeason(req.query.season)}` : "";
     const rows = await sbSelect("gdcup_apps", `select=id,team_name,slogan,members,bpi,weight,contact,status,season,created_at${sf}&order=created_at.asc`);
-    res.json({ teams: rows });
+    res.json({ teams: rows.map((r) => ({ ...r, members: sanitizeMembers(r.members) })) });
   } catch (e) { res.status(500).json({ error: "server_error" }); }
 });
 // 입금 확정 / 신청대기 / 취소 + 디코 알림
@@ -3048,7 +3060,10 @@ app.post("/api/gdcup-edit", async (req, res) => {
     const b = req.body || {};
     if (!b.id) return res.status(400).json({ error: "no_id" });
     const clip = (v, n) => String(v || "").slice(0, n);
-    const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6), bank: clip(m.bank, 20), account: clip(m.account, 30), holder: clip(m.holder, 20) })) : [];
+    // 계좌·실명은 여기 저장하지 않는다 — gdcup_payouts(owner 전용) 전용.
+    // #42에서 /api/gdcup-apply만 고치고 이 경로를 놓쳐, 팀 수정 시 members에 계좌가
+    // 되살아나던 문제를 막는다. 기존 레거시 값은 이 수정 시점에 제거된다.
+    const members = Array.isArray(b.members) ? b.members.slice(0, 4).map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6), discord: clip(m.discord, 40) })) : [];
     const cur = (await sbSelect("gdcup_apps", `select=id,season,bpi,audit&id=eq.${encodeURIComponent(b.id)}&limit=1`))[0];
     if (!cur) return res.status(404).json({ error: "team_not_found" });
     const teamSeason = gdSeason(cur.season);
