@@ -264,6 +264,11 @@ create table if not exists public.clan_registry (
 );
 -- 주 접속 시간대(선택 · 시간대 기반 팀 매칭 풀). 저녁/밤/새벽/낮/유동적.
 alter table public.clan_registry add column if not exists active_hours text;
+-- 계정 정책 v2: 1군 등록계 = 본인 명의 + 계정거래·양도 이력 없음.
+-- /등록계 확인 버튼을 통과한 건만 true. 확인 단계 도입 전 등록분은 false로 남아
+-- /등록계현황의 "명의 미확인" 목록에 뜬다(소급 확인 대상).
+alter table public.clan_registry add column if not exists ownership_confirmed boolean not null default false;
+alter table public.clan_registry add column if not exists confirmed_at timestamptz;
 create index if not exists idx_registry_season  on public.clan_registry (season);
 create index if not exists idx_registry_account on public.clan_registry (account_id) where account_id is not null;
 

@@ -1107,17 +1107,16 @@ if (process.env.DISCORD_TOKEN) {
     }
   });
 
-  // ── /등록계 : GmI 클랜원 시즌 등록계 등록 (PUBG 실존확인 → clan_registry upsert + registry_history SCD-2) ──
-  client.on("interactionCreate", async (itx) => {
-    if (!itx.isChatInputCommand() || itx.commandName !== "등록계") return;
-    const platform = itx.options.getString("플랫폼");
-    const ign = (itx.options.getString("인게임닉") || "").trim();
-    const realName = (itx.options.getString("실명") || "").trim()
-      || itx.member?.nickname || itx.user.globalName || itx.user.username || null;
-    const activeHours = itx.options.getString("시간대") || null;   // 주 접속 시간대(선택 · 팀 매칭용)
-    if (!ign) return itx.reply({ content: "인게임 닉을 입력해줘.", ephemeral: true });
-    if (!process.env.SUPABASE_URL) return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
-    await itx.deferReply({ ephemeral: true });
+  // ── /등록계 명의 확인 (계정 정책 v2) ──
+  // 1군(GmI) 등록계 = 본인 명의 + 계정거래·양도 이력 없는 계정만. 거래 이력 계정은 2군 소속.
+  // 확인 버튼을 통과해야 등록이 진행된다(PUBG 조회도 확인 후에 — 10 RPM 낭비 방지).
+  // 대기 상태는 메모리 보관: 봇 재기동 시 사라지지만 /등록계 재실행이면 되므로 DB에 남기지 않는다.
+  const REG_PENDING = new Map();                 // discord_id → { platform, ign, realName, activeHours, at }
+  const REG_PENDING_TTL_MS = 10 * 60 * 1000;
+
+  // 기존 등록 로직(PUBG 실존확인 → SCD-2 이력 → clan_registry upsert). 확인 버튼에서 호출.
+  async function runRegistryRegister(itx, p) {
+    const { platform, ign, realName, activeHours } = p;
     const season = PUBG_CUR_SEASON_NUM;   // 스냅샷 파이프라인과 공유하는 단일 시즌 상수
     try {
       // 1) PUBG 실존 확인 (닉→accountId, I/l/i/1·o/O/0 변형 재시도)
@@ -1152,21 +1151,73 @@ if (process.env.DISCORD_TOKEN) {
         discord_id: itx.user.id, discord_name: itx.user.globalName || itx.user.username,
         real_name: realName, platform, pubg_name: resolvedName, account_id: accountId,
         season, verified_at: nowIso, updated_at: nowIso,
+        ownership_confirmed: true, confirmed_at: nowIso,   // 명의 확인 버튼 통과분만 여기 도달
       };
       if (activeHours) upsertRow.active_hours = activeHours;
       await sbUpsert("clan_registry", upsertRow, "discord_id,season");
       // 6) 응답 카드 + 명의 규칙 고정 안내
-      await itx.editReply(
-        `✅ 등록계 등록 완료 (시즌 ${season})\n`
-        + `· 닉: **${resolvedName}**\n· 플랫폼: ${platform === "kakao" ? "카카오" : "스팀"}\n· 현시즌 티어: ${tierText}\n`
-        + (activeHours ? `· 주 접속: ${activeHours}\n` : "")
-        + (prev ? "\n♻️ 기존 등록계에서 변경됨(이력 보존).\n" : "")
-        + `\n📌 본인 명의 계정만 등록 가능(가족 명의는 증빙 필요). 계정거래·대리 ID 등록 불가.`
-      );
+      await itx.editReply({
+        content:
+          `✅ 등록계 등록 완료 (시즌 ${season})\n`
+          + `· 닉: **${resolvedName}**\n· 플랫폼: ${platform === "kakao" ? "카카오" : "스팀"}\n· 현시즌 티어: ${tierText}\n`
+          + (activeHours ? `· 주 접속: ${activeHours}\n` : "")
+          + `· 명의 확인: ✅ 본인 명의·거래 이력 없음\n`
+          + (prev ? "\n♻️ 기존 등록계에서 변경됨(이력 보존).\n" : "")
+          + `\n📌 본인 명의 계정만 등록 가능(가족 명의는 증빙 필요). 계정거래·대리 ID 등록 불가.`,
+        components: [],
+      });
     } catch (e) {
       console.error("registry_register_failed", e?.message);
-      await itx.editReply("등록 중 오류가 났어. 잠시 후 다시 시도해줘.");
+      await itx.editReply({ content: "등록 중 오류가 났어. 잠시 후 다시 시도해줘.", components: [] });
     }
+  }
+
+  // ── /등록계 : 입력 접수 → 명의 확인 버튼 제시 (등록은 확인 후) ──
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "등록계") return;
+    const platform = itx.options.getString("플랫폼");
+    const ign = (itx.options.getString("인게임닉") || "").trim();
+    const realName = (itx.options.getString("실명") || "").trim()
+      || itx.member?.nickname || itx.user.globalName || itx.user.username || null;
+    const activeHours = itx.options.getString("시간대") || null;   // 주 접속 시간대(선택 · 팀 매칭용)
+    if (!ign) return itx.reply({ content: "인게임 닉을 입력해줘.", ephemeral: true });
+    if (!process.env.SUPABASE_URL) return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+
+    REG_PENDING.set(itx.user.id, { platform, ign, realName, activeHours, at: Date.now() });
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("regown_ok").setLabel("확인").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("regown_no").setLabel("해당 없음").setStyle(ButtonStyle.Secondary),
+    );
+    await itx.reply({
+      content:
+        `📝 등록 전 확인 (${platform === "kakao" ? "카카오" : "스팀"} · **${ign}**)\n\n`
+        + `> **이 계정은 본인 명의이며, 계정거래·양도 이력이 없습니다**\n\n`
+        + `해당하면 [확인], 아니면 [해당 없음]을 눌러줘.`,
+      components: [row], ephemeral: true,
+    });
+  });
+
+  // ── /등록계 명의 확인 버튼 처리 ──
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isButton() || (itx.customId !== "regown_ok" && itx.customId !== "regown_no")) return;
+    const pending = REG_PENDING.get(itx.user.id);
+    if (!pending || Date.now() - pending.at > REG_PENDING_TTL_MS) {
+      REG_PENDING.delete(itx.user.id);
+      return itx.update({ content: "확인 시간이 지났어. `/등록계`를 다시 실행해줘.", components: [] });
+    }
+    REG_PENDING.delete(itx.user.id);
+
+    if (itx.customId === "regown_no") {
+      return itx.update({
+        content:
+          "거래 이력이 있는 계정은 GmI 2군 소속으로 활동하실 수 있습니다.\n"
+          + "1군 등록계는 본인 명의·거래 이력 없는 계정만 가능합니다.\n\n"
+          + "2군 등록은 운영진에게 문의해줘.",
+        components: [],
+      });
+    }
+    await itx.update({ content: "✅ 확인됨. 등록 진행 중…", components: [] });
+    await runRegistryRegister(itx, pending);
   });
 
   // ── /등록계현황 : [오너 DM] 시즌 등록 현황·미등록자(역할 G/M/I 대비)·중복 account_id 감지 ──
@@ -1179,8 +1230,15 @@ if (process.env.DISCORD_TOKEN) {
     await itx.deferReply({ ephemeral: true });
     const season = itx.options.getInteger("시즌") || PUBG_CUR_SEASON_NUM;
     try {
-      const rows = await sbSelect("clan_registry", `select=discord_id,pubg_name,account_id,active_hours&season=eq.${season}`);
+      const rows = await sbSelect("clan_registry", `select=discord_id,pubg_name,account_id,active_hours,ownership_confirmed&season=eq.${season}`);
       const regByDiscord = new Set(rows.map((r) => r.discord_id));
+      // 명의 확인(계정 정책 v2) — 확인 단계 도입 전 등록분은 미확인으로 남는다
+      const unconfirmed = rows.filter((r) => !r.ownership_confirmed);
+      const confirmLine = unconfirmed.length
+        ? `🔒 명의 미확인 **${unconfirmed.length}건** / ${rows.length}건`
+          + "\n" + unconfirmed.slice(0, 20).map((r) => `· ${r.pubg_name}`).join("\n")
+          + (unconfirmed.length > 20 ? `\n· 외 ${unconfirmed.length - 20}건` : "")
+        : `🔒 명의 확인 완료 ${rows.length}건 (미확인 0)`;
       // 시간대 분포 (팀 매칭 편성용)
       const hourOrder = ["밤", "저녁", "새벽", "낮", "유동적"];
       const hourCnt = {}; let hourBlank = 0;
@@ -1207,7 +1265,7 @@ if (process.env.DISCORD_TOKEN) {
       const dupLine = dupAcc.length
         ? "⚠️ 중복 account_id(계정공유·타인명의 의심):\n" + dupAcc.map(([, names]) => `· ${names.join(" / ")}`).join("\n")
         : "중복 account_id 없음";
-      await itx.editReply(`📋 등록계 현황 (시즌 ${season})\n등록 ${rows.length}건\n${hourLine}\n\n${unregLine}\n\n${dupLine}`);
+      await itx.editReply(`📋 등록계 현황 (시즌 ${season})\n등록 ${rows.length}건\n${hourLine}\n${confirmLine}\n\n${unregLine}\n\n${dupLine}`);
     } catch (e) {
       console.error("registry_status_failed", e?.message);
       await itx.editReply("현황 조회 중 오류가 났어.");
