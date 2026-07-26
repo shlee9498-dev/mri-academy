@@ -324,3 +324,29 @@ alter table public.payments add  constraint payments_kind_check
 
 -- ============================================================
 -- 완료. 테이블 6개 + 인덱스 + RLS. 기존 reviews/progress 계열과 독립.
+
+-- ============================================================
+-- G드컵 시즌3 — 상금 지급 정보 (민감정보 분리 보관)
+-- gdcup_apps.members(jsonb)에는 계좌·실명을 넣지 않는다. 조회 권한을 분리하기 위해
+-- 별도 테이블로 두고, 서버에서 owner 전용 엔드포인트로만 노출한다.
+-- (gdcup_apps 자체는 이 파일에 정의가 없다 — 기존 수동 생성분)
+-- ============================================================
+create table if not exists public.gdcup_payouts (
+  id          bigint generated always as identity primary key,
+  app_id      bigint not null,                       -- gdcup_apps.id
+  season      int    not null,
+  member_idx  int    not null,                       -- 팀 내 순번 0~3 (0=팀장)
+  real_name   text,                                  -- 실명(상금 지급용)
+  bank        text,
+  account_no  text,
+  holder      text,                                  -- 예금주
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  unique (app_id, member_idx)                        -- 재신청 시 upsert 대상
+);
+create index if not exists idx_gdcup_payouts_season on public.gdcup_payouts (season);
+alter table public.gdcup_payouts enable row level security;   -- service_role만 통과
+
+-- 팀장 디코ID (신청 수정 재접근 키). gdcup_apps는 수동 생성분이라 컬럼만 추가.
+alter table public.gdcup_apps add column if not exists leader_discord text;
+create index if not exists idx_gdcup_apps_leader on public.gdcup_apps (season, leader_discord);
