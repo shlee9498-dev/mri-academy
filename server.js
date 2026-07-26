@@ -2442,6 +2442,9 @@ app.get("/api/gdcup-count", async (req, res) => {
 // ── 시즌 룰셋 (단일 상수) ── 라운드·가중치표·상한·보너스모드를 시즌별로 분리 ──
 const GDCUP_CURRENT_SEASON = 3;
 const GDCUP_WEIGHT_S2 = [[0,16,1.3],[17,19,1.2],[20,21,1.1],[22,23,1.0],[24,25,0.9],[26,28,0.8],[29,31,0.7],[32,9999,0.6]]; // 시즌2 구표(동결)
+// ⚠️ 가중치표·BPI 스케일의 단일 정본. 프론트(gdcup-s3.html)에 복제하지 말 것 —
+//    시즌3에서 양쪽 하드코딩이 어긋나 신청자에게 틀린 배율이 표시된 사고가 있었다.
+//    프론트는 GET /api/gdcup-meta 로 받아 쓴다.
 const GDCUP_WEIGHT_S3 = [[0,19,1.15],[20,24,1.10],[25,28,1.05],[29,32,1.00],[33,36,0.95],[37,9999,0.85]];                  // 시즌3 신표
 const GDCUP_SEASONS = {
   2: { rounds: [3,4,5],       weightTable: GDCUP_WEIGHT_S2, cap: null,                   bonusMode: "legacy_inclusive" },
@@ -2477,6 +2480,27 @@ function validateTeamComposition(members, season) {
   }
   return { ok: reasons.length === 0, teamBpi, sCount, reasons };
 }
+// ── G드컵 룰 메타 (공개) ──
+// 가중치표·BPI 스케일·cap을 프론트가 하드코딩하지 않고 여기서 받아간다.
+// 시즌3 사고 재발 방지: 표가 server.js와 gdcup-s3.html 양쪽에 있어 어긋났었다.
+// 이 엔드포인트가 단일 정본 — 프론트는 절대 자체 표를 두지 말 것.
+app.get("/api/gdcup-meta", (req, res) => {
+  const season = gdSeason(req.query.season);
+  const rules = gdSeasonRules(season);
+  res.setHeader("Cache-Control", "public, max-age=60");
+  res.json({
+    season,
+    bpiScale: GDCUP_BPI_SCALE,                 // { S:13, T0:10, ... }
+    tierOrder: GDCUP_TIER_ORDER,               // 낮음→높음
+    weightTable: rules.weightTable,            // [[lo,hi,mult], ...] 경계 정수 이상/이하
+    cap: rules.cap,                            // { team, sTier } · null이면 제한 없음
+    rounds: rules.rounds,
+    leaderBonus: { tier: "T0", bpi: 1 },       // T0 팀장 +1 (S급 가산 없음)
+    applyDeadline: GDCUP_APPLY_DEADLINE,
+    applyOpen: gdcupApplyOpen(),
+  });
+});
+
 // ── 신청 마감 (KST). 마감 후에는 팀장 자가수정 불가 — 관리자만 수정. ──
 const GDCUP_APPLY_DEADLINE = process.env.GDCUP_APPLY_DEADLINE || "2026-08-07T11:00:00Z"; // 8/7(금) 20:00 KST
 function gdcupApplyOpen() { return Date.now() < Date.parse(GDCUP_APPLY_DEADLINE); }
