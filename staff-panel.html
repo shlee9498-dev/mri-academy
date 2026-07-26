@@ -169,9 +169,93 @@ async function reload(){
   if(DATA.scope==="owner"){ sb.className="scope"; sb.textContent="OWNER · 전체"; STAFF = await api("/api/admin/staff").catch(()=>[]); renderOwner(); }
   else { sb.className="scope tr"; sb.textContent="TRAINER · "+(DATA.me?DATA.me.name:""); renderTrainer(); }
   // 🗓️ 일정 관리 + 🔗 운영 바로가기 — 로그인 후에만 렌더(reload는 인증 성공 후 호출).
-  document.getElementById("app").insertAdjacentHTML("beforeend", '<div id="schedwrap"></div>' + (DATA.scope==="owner"?'<div id="statswrap"></div>':'') + opsLinks(DATA.scope==="owner"));
+  document.getElementById("app").insertAdjacentHTML("beforeend", '<div id="schedwrap"></div><div id="gdcupwrap"></div>' + (DATA.scope==="owner"?'<div id="statswrap"></div>':'') + opsLinks(DATA.scope==="owner"));
   loadSchedule();
+  loadGdcup();
   if(DATA.scope==="owner") loadStats();
+}
+
+
+// ── 🏆 G드컵 신청 현황 (staff) · 계좌·CSV는 owner 전용 ──
+// 계좌는 서버가 owner에게만 내려준다(/api/gdcup-payouts). 여기서 감추는 건 표시상 편의일 뿐,
+// 실제 차단은 서버가 한다.
+let GD_SEASON = 3, GD_TEAMS = [], GD_PAY = null;
+async function loadGdcup(){
+  const w = document.getElementById("gdcupwrap"); if(!w) return;
+  try{
+    const r = await api("/api/gdcup-apps?season="+GD_SEASON);
+    GD_TEAMS = r.teams || [];
+    renderGdcup(r.unverified || 0);
+  }catch(e){
+    w.innerHTML = `<section class="ops"><h2 class="ops-h">🏆 G드컵 신청 현황</h2><div class="empty">불러오지 못했어요 (${esc(e.message)}).</div></section>`;
+  }
+}
+function gdMemberLine(m){
+  const v = m.verified === true ? '<span style="color:#4ade80">✅</span>'
+          : m.verified === false ? '<span style="color:#fbbf24" title="등록계 미등록">⚠️</span>'
+          : '<span style="color:var(--ink-faint)">—</span>';
+  return `${v} ${esc(m.ign||"-")} <span style="color:var(--ink-faint)">(${esc(m.tier||"?")}${m.dmg?" · "+esc(m.dmg)+"딜":""})</span>`;
+}
+function renderGdcup(unverified){
+  const w = document.getElementById("gdcupwrap");
+  const isOwner = DATA.scope === "owner";
+  if(!GD_TEAMS.length){
+    w.innerHTML = `<section class="ops"><h2 class="ops-h">🏆 G드컵 신청 현황</h2><div class="empty">아직 신청 팀이 없어요.</div></section>`;
+    return;
+  }
+  const rows = GD_TEAMS.map(t2 => {
+    const when = t2.created_at ? String(t2.created_at).slice(0,16).replace("T"," ") : "";
+    const pay = (isOwner && GD_PAY) ? (GD_PAY[t2.id]||[]) : null;
+    const payHtml = pay ? `<div style="margin-top:8px;padding:9px 10px;background:var(--bg-el);border-radius:8px;font-size:12px;line-height:1.8">
+      ${pay.length ? pay.map(x=>`💳 ${esc(x.real_name||"-")} · ${esc(x.bank||"-")} ${esc(x.account_no||"-")} (${esc(x.holder||"-")})`).join("<br>")
+                   : '<span style="color:var(--ink-faint)">계좌 미입력</span>'}
+    </div>` : "";
+    return `<div class="srow" style="margin-bottom:9px">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <b>${esc(t2.team_name)}</b>
+        <span style="color:var(--ink-faint);font-size:12px">BPI ${t2.bpi} · ×${t2.weight} · ${esc(when)}</span>
+      </div>
+      <div style="margin-top:7px;font-size:13px;line-height:1.9">${(t2.members||[]).map(gdMemberLine).join("<br>")}</div>
+      <div style="margin-top:6px;color:var(--ink-faint);font-size:12px">연락처 ${esc(t2.contact||"-")}${t2.leader_discord?" · 팀장 "+esc(t2.leader_discord):""}</div>
+      ${payHtml}
+    </div>`;
+  }).join("");
+  w.innerHTML = `<section class="ops">
+    <h2 class="ops-h">🏆 G드컵 신청 현황 <span style="font-weight:400;color:var(--ink-faint);font-size:13px">시즌 ${GD_SEASON} · ${GD_TEAMS.length}팀</span></h2>
+    ${unverified ? `<div class="empty" style="margin-bottom:10px">⚠️ 등록계 미등록 멤버 <b>${unverified}명</b> — 8/1 마감 전 <code>/등록계</code> 안내 필요</div>` : ""}
+    ${isOwner ? `<div style="display:flex;gap:8px;margin-bottom:11px;flex-wrap:wrap">
+      <button class="btn" onclick="toggleGdPayouts()">${GD_PAY ? "계좌 숨기기" : "💳 계좌 보기"}</button>
+      <button class="btn" onclick="downloadGdCsv()">⬇️ 정산 CSV</button>
+    </div>` : ""}
+    ${rows}
+  </section>`;
+}
+async function toggleGdPayouts(){
+  if(GD_PAY){ GD_PAY = null; renderGdcup(0); return; }
+  try{
+    const r = await api("/api/gdcup-payouts?season="+GD_SEASON);
+    GD_PAY = {};
+    (r.payouts||[]).forEach(x => { (GD_PAY[x.app_id] = GD_PAY[x.app_id] || []).push(x); });
+    renderGdcup(0);
+  }catch(e){ alert("계좌 조회 실패: "+e.message+"\n(오너 계정만 조회할 수 있어요)"); }
+}
+async function downloadGdCsv(){
+  // 순위 입력 → appId:순위 매핑. 비우면 전체 팀을 순위 없이 내보낸다.
+  const hint = GD_TEAMS.map(t2=>`${t2.id}=${t2.team_name}`).join("\n");
+  const ranks = prompt("순위를 입력하세요 (형식: 팀ID:순위, 쉼표 구분)\n비우면 전체 팀\n\n"+hint, "");
+  if(ranks === null) return;
+  const prizes = ranks.trim() ? (prompt("순위별 상금 (형식: 순위:금액, 쉼표 구분)\n예: 1:400000,2:200000\n비우면 금액 없이", "") || "") : "";
+  const qs = "?season="+GD_SEASON + (ranks.trim()?"&ranks="+encodeURIComponent(ranks.trim()):"") + (prizes.trim()?"&prizes="+encodeURIComponent(prizes.trim()):"");
+  try{
+    const res = await fetch(API + "/api/gdcup-payouts.csv" + qs, { headers: authH() });
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `gdcup-s${GD_SEASON}-payouts.csv`;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }catch(e){ alert("CSV 내려받기 실패: "+e.message+"\n(오너 계정만 가능해요)"); }
 }
 
 // ── 📊 전적 스냅샷 (Phase T1, owner 전용) — server 라우트는 읽기전용 게이트 밖이라 직접 호출 ──
