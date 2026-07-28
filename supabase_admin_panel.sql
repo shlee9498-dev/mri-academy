@@ -355,3 +355,9 @@ alter table public.gdcup_payouts enable row level security;   -- service_role만
 -- 팀장 디코ID (신청 수정 재접근 키). gdcup_apps는 수동 생성분이라 컬럼만 추가.
 alter table public.gdcup_apps add column if not exists leader_discord text;
 create index if not exists idx_gdcup_apps_leader on public.gdcup_apps (season, leader_discord);
+
+-- G드컵 확정 단계 tier 재검증 (분쟁 대비 감사 로그)
+-- verify_json: 멤버별 서버 재도출 결과(tier·평딜·RP·판정근거). verified_at: 검증 통과 시각.
+-- 강제확정은 verified_at null + verify_json.forced=true 로 구분된다.
+alter table public.gdcup_apps add column if not exists verify_json jsonb;
+alter table public.gdcup_apps add column if not exists verified_at timestamptz;

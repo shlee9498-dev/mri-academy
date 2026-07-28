@@ -2252,6 +2252,19 @@ app.get("/api/bpi-suggest", async (req, res) => {
   } catch (e) { pubgError(res, e); }
 });
 
+// 닉 하나를 양대 플랫폼에서 조회해 최적 판정을 고른다 — suggest-auto와
+// 확정 단계 tier 재검증(verifyTeamTiers)이 같은 함수를 쓴다(판정 이원화 방지).
+async function resolveBpiAuto(nickname, leader, platforms) {
+  const results = await Promise.allSettled(platforms.map((p) => computeBPI(p, nickname, leader)));
+  const found = [], notFound = [];
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") found.push(r.value);
+    else notFound.push({ platform: platforms[i], reason: r.reason?.message || "unknown", status: r.reason?.status });
+  });
+  found.sort((a, b) => b.suggested.bpi - a.suggested.bpi || b.sample.avgDamage - a.sample.avgDamage);
+  return { found, notFound };
+}
+
 app.get("/api/bpi-suggest-auto", async (req, res) => {
   const nickname = (req.query.nickname || "").toString().trim();
   const leader = req.query.leader === "1" || req.query.leader === "true";
@@ -2261,23 +2274,67 @@ app.get("/api/bpi-suggest-auto", async (req, res) => {
     .filter((p) => VALID_PLATFORMS.includes(p));
   if (!platforms.length) return res.status(400).json({ error: "no valid platforms" });
 
-  const results = await Promise.allSettled(platforms.map((p) => computeBPI(p, nickname, leader)));
-  const found = [], notFound = [];
-  results.forEach((r, i) => {
-    if (r.status === "fulfilled") found.push(r.value);
-    else notFound.push({ platform: platforms[i], reason: r.reason?.message || "unknown" });
-  });
-
+  const { found, notFound } = await resolveBpiAuto(nickname, leader, platforms);
   if (!found.length) {
     return res.status(404).json({
       error: `닉네임 "${nickname}" 어느 서버에서도 못 찾음`,
       searched: platforms, notFound,
     });
   }
-  found.sort((a, b) => b.suggested.bpi - a.suggested.bpi || b.sample.avgDamage - a.sample.avgDamage);
   const recommended = found.length > 1 ? found[0].platform : null;
   res.json({ nickname, searched: platforms, found, notFound, recommended });
 });
+
+// ── 확정 단계 tier 재검증 ──
+// 클라 tier는 신뢰 경계 밖(브라우저 조작 가능)이라, 운영진 확정 시점에 서버가
+// 전 멤버 tier를 재도출해 합산·S급을 다시 검증한다. 신청 시점 전수 재도출은
+// 마감 몰림+API 장애 시 신청 차단 리스크로 기각(오너 결정) — 확정은 운영진
+// 액션이 있는 지점이라 검증 삽입이 자연스럽고 RPM이 분산된다.
+// ⚠️ PUBG 10 RPM: computeBPI는 멤버당 최대 3회 호출(닉해석·시즌·랭크).
+//    멤버 사이 20초 페이싱으로 분당 ~9회를 유지한다. pubgGet 1시간 캐시가
+//    있어 신청자가 자동조회를 쓴 지 얼마 안 됐으면 즉시 끝난다.
+const VERIFY_PACE_MS = 20_000;
+async function verifyTeamTiers(team) {
+  const members = Array.isArray(team.members) ? team.members : [];
+  const out = { ok: false, apiFailed: false, members: [], serverBpi: null, reasons: [] };
+  const serverMembers = [];
+  for (let i = 0; i < members.length; i++) {
+    const m = members[i] || {};
+    const ign = String(m.ign || "").trim();
+    if (!ign) { out.reasons.push({ code: "no_ign", idx: i }); return out; }
+    if (i > 0) await new Promise((r) => setTimeout(r, VERIFY_PACE_MS));
+    const { found, notFound } = await resolveBpiAuto(ign, i === 0, ["kakao", "steam"]);
+    if (!found.length) {
+      // 404(닉 없음)와 API 장애(429/5xx/네트워크)를 구분 — 장애면 보류, 닉 없음이면 거부
+      const hardFail = notFound.some((n) => n.status && n.status !== 404);
+      if (hardFail) { out.apiFailed = true; return out; }
+      out.reasons.push({ code: "player_not_found", idx: i, ign });
+      out.members.push({ idx: i, ign, clientTier: m.tier || null, serverTier: null });
+      continue;
+    }
+    const best = found[0];
+    const sv = best.suggested || {};
+    out.members.push({
+      idx: i, ign,
+      clientTier: m.tier || null, serverTier: sv.tier || null,
+      mismatch: !!(m.tier && sv.tier && m.tier !== sv.tier),
+      platform: best.platform, avgDamage: best.sample?.avgDamage ?? null,
+      rankedTier: best.rankedTier || null,
+      bestRP: best.ranked?.bestRankPoint ?? null,
+      basis: sv.tier != null ? (best.basis?.pick || null) : null,
+      bpi: sv.bpi ?? null,
+    });
+    serverMembers.push({ ...m, tier: sv.tier });
+  }
+  if (out.reasons.some((r) => r.code === "player_not_found")) return out;
+  const season = Number(team.season) || GDCUP_CURRENT_SEASON;
+  const v = validateTeamComposition(serverMembers, season);
+  out.serverBpi = v.teamBpi;
+  out.sCount = v.sCount;
+  out.ok = v.ok;
+  out.reasons.push(...v.reasons);
+  return out;
+}
 
 // ── 관리자: 솔로 대기자 전시즌(직전) 전적 조회 (카카오→스팀 자동 탐색) ──
 async function seasonModeStats(platform, accountId, seasonId) {
@@ -3209,8 +3266,9 @@ app.get("/api/gdcup-admin-list", async (req, res) => {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
     if (!process.env.SUPABASE_URL) return res.json({ teams: [] });
     const sf = req.query.season ? `&season=eq.${gdSeason(req.query.season)}` : "";
-    const rows = await sbSelect("gdcup_apps", `select=id,team_name,slogan,members,bpi,weight,contact,status,season,created_at${sf}&order=created_at.asc`);
-    res.json({ teams: rows.map((r) => ({ ...r, members: sanitizeMembers(r.members) })) });
+    const rows = await sbSelect("gdcup_apps", `select=id,team_name,slogan,members,bpi,weight,contact,status,season,created_at,verified_at${sf}&order=created_at.asc`);
+    // verified: 확정 시 서버 tier 재검증 통과 여부 (강제확정은 verified_at null → false)
+    res.json({ teams: rows.map((r) => ({ ...r, verified: !!r.verified_at, members: sanitizeMembers(r.members) })) });
   } catch (e) { res.status(500).json({ error: "server_error" }); }
 });
 // 입금 확정 / 신청대기 / 취소 + 디코 알림
