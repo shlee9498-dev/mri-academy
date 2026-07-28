@@ -19,7 +19,7 @@
 //   PUBG_API_KEY  없으면 PUBG 라우트 비활성
 
 const express = require("express");
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require("discord.js");
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require("discord.js");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -740,6 +740,18 @@ if (process.env.DISCORD_TOKEN) {
   });
 
   // /수업등록 명령 정의 — GmI 서버(LESSON_GUILD_ID)에만 등록 (기존 명령과 길드 분리).
+  // /판수정정 — 오등록 판수 보정. 대상 수업을 직접 고르게 해서 정정분이 엉뚱한
+  // 정산 구간(7/20 이월/신규 경계)에 들어가는 걸 막는다.
+  const CORRECTION_CMD = {
+    name: "판수정정",
+    description: "[트레이너] 잘못 등록한 진행판수 정정 — 대상 수업을 골라 증감분을 기록",
+    options: [
+      { name: "학생", description: "학생 이름", type: 3, required: true },
+      { name: "정정판수", description: "증감분 (예: -5 = 5판 차감, 3 = 3판 추가)", type: 4, required: true, min_value: -100, max_value: 100 },
+      { name: "사유", description: "정정 사유 (예: 중복 등록 / 판수 오기입)", type: 3, required: true },
+    ],
+  };
+
   const LESSON_CMD = {
     name: "수업등록",
     description: "[트레이너] 수업 진행 기록 — 구글시트에 자동 등록·회차 차감",
@@ -815,7 +827,7 @@ if (process.env.DISCORD_TOKEN) {
       return;
     }
     try {
-      await client.application.commands.set([LESSON_CMD, REGISTRY_CMD], guildId);
+      await client.application.commands.set([LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD], guildId);
       console.log(`/수업등록·/등록계 registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
     } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
   }
@@ -882,7 +894,7 @@ if (process.env.DISCORD_TOKEN) {
       // 안전 폴백으로 GUILD_ID에 함께 등록(별도 set()이 서로의 명령을 덮어쓰는 사고 방지).
       const lessonGuild = process.env.LESSON_GUILD_ID;
       const splitLesson = lessonGuild && lessonGuild !== process.env.GUILD_ID;
-      const mainCmds = splitLesson ? cmds : [...cmds, LESSON_CMD];
+      const mainCmds = splitLesson ? cmds : [...cmds, LESSON_CMD, CORRECTION_CMD];
       if (process.env.GUILD_ID) await client.application.commands.set(mainCmds, process.env.GUILD_ID);
       else await client.application.commands.set(mainCmds);
       console.log("slash commands registered (main guild):", mainCmds.map((c) => c.name).join(", "));
@@ -1106,6 +1118,163 @@ if (process.env.DISCORD_TOKEN) {
       await itx.editReply("등록 중 오류가 났어. 잠시 후 다시 시도해줘.");
     }
   });
+
+  // ── /판수정정 : 오등록 판수 보정 (append-only 보정 행) ──
+  // 세션을 지우거나 고치지 않는다 — 원본이 남아야 오등록 추적이 되고, carry_games(7/20 이월
+  // 동결 스냅)를 건드리면 정산 기준선이 오염된다. 대신 음수/양수 보정 행을 append 한다.
+  // ⚠️ played_at은 반드시 '정정 대상 세션과 같은 날짜'여야 한다. computeStudent가
+  //    played_at < CUTOVER 로 이월/신규를 가르므로, 날짜가 다른 구간에 들어가면 지급액이 틀어진다.
+  //    그래서 트레이너가 날짜를 직접 입력하지 못하게 하고, 대상 세션을 고르게 한다.
+  const CORRECTION_PENDING = new Map();      // discord_id → { sid, name, delta, reason, at }
+  const CORRECTION_TTL_MS = 10 * 60 * 1000;
+
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "판수정정") return;
+
+    const isOwner = !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
+    const trainer = TRAINER_MAP[itx.user.id];
+    if (!trainer && !isOwner)
+      return itx.reply({ content: "등록된 트레이너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
+    if (!process.env.SUPABASE_URL)
+      return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+
+    const name = (itx.options.getString("학생") || "").trim();
+    const delta = itx.options.getInteger("정정판수");
+    const reason = (itx.options.getString("사유") || "").trim();
+    if (!delta) return itx.reply({ content: "정정판수는 0이 될 수 없어. (예: -5 또는 3)", ephemeral: true });
+
+    await itx.deferReply({ ephemeral: true });
+    try {
+      const sid = await resolveStudentId(name);
+      if (sid == null) return itx.editReply(`❌ "${name}" 학생을 찾을 수 없어. 이름을 정확히 입력해줘.`);
+
+      // 본인 담당 세션만 — 오너는 전체
+      let trainerId = null;
+      if (!isOwner) {
+        trainerId = (await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainer)}&limit=1`))[0]?.id ?? null;
+        if (trainerId == null) return itx.editReply("❌ 트레이너 정보를 찾을 수 없어. 운영진에게 문의해줘.");
+      }
+      const scope = trainerId != null ? `&trainer_id=eq.${trainerId}` : "";
+      const rows = await sbSelect("lesson_sessions",
+        `select=id,played_at,games,memo&student_id=eq.${sid}${scope}&order=played_at.desc,id.desc&limit=20`);
+      if (!rows.length)
+        return itx.editReply(`❌ ${name}님의 ${isOwner ? "" : "내 담당 "}수업 기록이 없어. 정정할 대상이 없어.`);
+
+      CORRECTION_PENDING.set(itx.user.id, { sid, name, delta, reason, at: Date.now(), isOwner, trainerId });
+
+      const opts = rows.slice(0, 24).map((r) => ({
+        label: `${r.played_at} · ${r.games > 0 ? "+" : ""}${r.games}판`,
+        description: (r.memo || "").slice(0, 90) || "메모 없음",
+        value: String(r.id),
+      }));
+      opts.push({ label: "❓ 어느 수업인지 모르겠음", description: "오너에게 확인 요청 (임의 날짜 입력 방지)", value: "unknown" });
+
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId("corr_pick").setPlaceholder("정정할 대상 수업을 선택").addOptions(opts);
+      await itx.editReply({
+        content: `📝 **${name}** · 정정 **${delta > 0 ? "+" : ""}${delta}판** · 사유: ${reason}\n\n`
+          + "어느 수업의 기록을 정정하는지 골라줘. 고른 수업의 **날짜로** 보정이 기록돼\n"
+          + "7/20 이월/신규 구간이 어긋나지 않아.",
+        components: [new ActionRowBuilder().addComponents(menu)],
+      });
+    } catch (e) {
+      console.error("correction_prepare_failed", e?.status || e?.message);
+      await itx.editReply("❌ 조회 중 오류가 났어. 잠시 후 다시 시도해줘.");
+    }
+  });
+
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isStringSelectMenu() || itx.customId !== "corr_pick") return;
+    const pend = CORRECTION_PENDING.get(itx.user.id);
+    if (!pend || Date.now() - pend.at > CORRECTION_TTL_MS) {
+      CORRECTION_PENDING.delete(itx.user.id);
+      return itx.update({ content: "시간이 지났어. `/판수정정`을 다시 실행해줘.", components: [] });
+    }
+    CORRECTION_PENDING.delete(itx.user.id);
+    const picked = itx.values[0];
+    const { sid, name, delta, reason, isOwner, trainerId } = pend;
+
+    // 대상 세션 특정 불가 → 기록하지 않고 오너 확인으로 넘긴다 (임의 날짜 금지)
+    if (picked === "unknown") {
+      await ownerDM(
+        `🔧 **판수정정 확인 요청**\n`
+        + `· 학생: ${name}\n· 정정: ${delta > 0 ? "+" : ""}${delta}판\n· 사유: ${reason}\n`
+        + `· 요청자: <@${itx.user.id}>\n\n대상 수업을 특정하지 못해 기록하지 않았어요. 확인 후 처리 부탁드립니다.`
+      );
+      return itx.update({
+        content: "📨 대상 수업을 특정할 수 없어 **오너에게 확인 요청**을 보냈어.\n"
+          + "임의 날짜로 기록하면 정산 구간이 틀어질 수 있어서 여기서 멈췄어. 곧 처리될 거야.",
+        components: [],
+      });
+    }
+
+    await itx.update({ content: "기록 중…", components: [] });
+    try {
+      const target = (await sbSelect("lesson_sessions", `select=id,played_at,games,trainer_id&id=eq.${picked}&limit=1`))[0];
+      if (!target) return itx.editReply("❌ 대상 수업을 찾을 수 없어. 다시 시도해줘.");
+
+      const before = await totalPlayedOf(sid);
+      const row = {
+        student_id: sid,
+        trainer_id: isOwner ? target.trainer_id : trainerId,
+        played_at: target.played_at,                       // ★ 대상 세션 날짜 복사 (구간 보존)
+        games: delta,
+        memo: `정정: ${reason} (대상 세션 #${target.id})`,   // kind/reason/corrects_id 컬럼은 8/2 DDL 후 이관
+        created_by: itx.user.id,
+      };
+      const ins = await sbInsert("lesson_sessions", row);
+      const after = before + delta;
+
+      try {
+        await sbInsert("admin_audit", {
+          actor_id: itx.user.id, actor_name: itx.user.globalName || itx.user.username,
+          action: "session.correct", target: `student:${sid}`,
+          detail: { student: name, delta, reason, played_at: target.played_at,
+                    corrects_session: target.id, correction_id: ins?.id ?? null,
+                    played_before: before, played_after: after },
+        });
+      } catch (e) { console.error("correction_audit", e?.status || "fail"); }
+
+      // 시트 반영 (컷오버 전이라 시트가 정산 진실) — correction_id로 중복 차감 방지
+      const webhook = process.env.SHEET_WEBHOOK_URL;
+      let sheetOk = false;
+      if (webhook) {
+        try {
+          const r = await fetch(webhook, {
+            method: "POST", redirect: "follow", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              secret: process.env.SHEET_SECRET || "", type: "correction",
+              correction_id: ins?.id ?? null, student: name,
+              trainer: isOwner ? null : TRAINER_MAP[itx.user.id] || null,
+              delta, played_at: target.played_at, reason,
+              actor: itx.user.globalName || itx.user.username,
+            }),
+          });
+          sheetOk = r.ok;
+        } catch (e) { console.error("correction_sheet", e?.message); }
+      }
+
+      await itx.editReply(
+        `✅ 판수 정정 완료 — **${name}**\n`
+        + `· 정정: **${delta > 0 ? "+" : ""}${delta}판** (대상 수업 ${target.played_at})\n`
+        + `· 진행판수: ${before} → **${after}**\n· 사유: ${reason}\n`
+        + (webhook ? (sheetOk ? "· 시트 반영 완료" : "· ⚠️ 시트 반영 실패 — 운영진에게 알려줘(DB는 기록됨)")
+                   : "· 시트 연동 미설정 — DB에만 기록됨")
+      );
+    } catch (e) {
+      console.error("correction_failed", e?.status || e?.message);
+      await itx.editReply("❌ 정정 기록 중 오류가 났어. 운영진에게 알려줘 (코드: DB)");
+    }
+  });
+
+  // 학생 진행판수 합계 (carry_games + 세션 합) — 정정 전/후 감사 기록용
+  async function totalPlayedOf(sid) {
+    try {
+      const st = (await sbSelect("students", `select=carry_games&id=eq.${sid}&limit=1`))[0];
+      const sess = await sbSelect("lesson_sessions", `select=games&student_id=eq.${sid}`);
+      return Number(st?.carry_games || 0) + sess.reduce((n, r) => n + Number(r.games || 0), 0);
+    } catch (e) { console.error("total_played", e?.status || "fail"); return 0; }
+  }
 
   // ── /등록계 명의 확인 (계정 정책 v2) ──
   // 1군(GmI) 등록계 = 본인 명의 + 계정거래·양도 이력 없는 계정만. 거래 이력 계정은 2군 소속.
