@@ -3780,7 +3780,7 @@ const REQUIRED_SCHEMA = {
   feedback:         ["id","grp","body","lesson_date","published","review_msg","src_channel",
                      "src_guild","src_msg","student_alias"],
   gdcup_apps:       ["id","team_name","slogan","members","bpi","weight","contact","ip","season",
-                     "status","created_at","leader_discord","audit"],
+                     "status","created_at","leader_discord","audit","verify_json","verified_at"],
   gdcup_attendance: ["event","user_id","name","status","reason"],
   gdcup_payouts:    ["id","app_id","season","member_idx","real_name","bank","account_no","holder"],
   gdcup_scores:     ["season","round","team_name","placement","team_kills","player_kills","updated_at"],
