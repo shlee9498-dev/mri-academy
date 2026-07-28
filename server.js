@@ -828,7 +828,7 @@ if (process.env.DISCORD_TOKEN) {
     }
     try {
       await client.application.commands.set([LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD], guildId);
-      console.log(`/수업등록·/등록계 registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
+      console.log(`/수업등록·/판수정정·/등록계 registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
     } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
   }
 
@@ -3720,14 +3720,20 @@ require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete }
   console.log(`[sheet] webhook 배포ID: ${depId} — 이 값이 최신 재배포본과 일치하는지 확인(구 배포면 옛 시트에 기록됨)`);
   fetch(wh, { method: "POST", redirect: "follow", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ secret: process.env.SHEET_SECRET || "", type: "ping" }) })
-    .then((r) => r.json().catch(() => ({})))
-    .then((d) => {
-      if (d && (d.spreadsheetTitle || d.spreadsheetId))
+    .then(async (r) => {
+      const text = await r.text().catch(() => "");
+      let d = null;
+      try { d = JSON.parse(text); } catch (_) {}
+      // 죽은/보관된 Apps Script 배포는 Google "Page Not Found" HTML을 (종종 200으로) 반환한다.
+      // JSON이 아니면 유령 배포로 명시 — 이번(NVI6) 같은 사고를 기동 로그에서 즉시 잡는다.
+      if (d == null)
+        return console.error(`[sheet] ⚠️ 웹훅 URL 응답 불가(HTTP ${r.status}, 비JSON ${text.slice(0, 60).replace(/\s+/g, " ")}…) — 배포 삭제/보관 의심. Apps Script 웹앱 재배포 후 URL 교체 필요`);
+      if (d.spreadsheetTitle || d.spreadsheetId)
         console.log(`[sheet] 연결된 시트: ${d.spreadsheetTitle || "?"} (${d.spreadsheetId || "id?"})${d.scriptVersion ? " · scriptVersion " + d.scriptVersion : ""}`);
       else
         console.log("[sheet] ping 응답에 시트 식별 없음 — Apps Script가 type:'ping'에 {spreadsheetTitle,spreadsheetId,scriptVersion} 반환하도록 추가하면 제목·버전까지 로그됨");
     })
-    .catch((e) => console.log("[sheet] ping 실패:", e && e.message));
+    .catch((e) => console.error("[sheet] ⚠️ ping 실패(네트워크):", e && e.message));
 })();
 
 // ── T2 일일 크론 + Operation CI 훅 (운영정책 v1) ──────────────────────────────
