@@ -2677,7 +2677,8 @@ const GDCUP_WEIGHT_S2 = [[0,16,1.3],[17,19,1.2],[20,21,1.1],[22,23,1.0],[24,25,0
 const GDCUP_WEIGHT_S3 = [[0,19,1.15],[20,24,1.10],[25,28,1.05],[29,32,1.00],[33,36,0.95],[37,9999,0.85]];                  // 시즌3 신표
 const GDCUP_SEASONS = {
   2: { rounds: [3,4,5],       weightTable: GDCUP_WEIGHT_S2, cap: null,                   bonusMode: "legacy_inclusive" },
-  3: { rounds: [1,2,3,4,5],   weightTable: GDCUP_WEIGHT_S3, cap: { team: 36, sTier: 1 }, bonusMode: "post_weight" },
+  3: { rounds: [1,2,3,4,5],   weightTable: GDCUP_WEIGHT_S3, cap: { team: 36, sTier: 1 }, bonusMode: "pre_weight",
+       streak: { top4: 2, chicken: 4 } },   // 연속 Top4 +2 · 연속 치킨 +4(대체) — BPI 곱하기 전 라운드 점수에 합산
 };
 function gdSeasonRules(season) { return GDCUP_SEASONS[season] || GDCUP_SEASONS[GDCUP_CURRENT_SEASON]; }
 function gdcupRounds(season) { return gdSeasonRules(season).rounds; }
@@ -3099,30 +3100,43 @@ app.get("/api/gdcup-scores", async (req,res)=>{
       agg[name].kills += tk;
       agg[name].place[Number(r.round)] = (r.placement!=null && r.placement!=="") ? Number(r.placement) : null;
     });
-    // 연속 보너스 (인접 라운드 스캔, 라운드 순서 기준)
+    // 연속 보너스 (인접 라운드 스캔, 라운드 순서 기준 — 입력 순서 아님)
+    // 시즌3(pre_weight): 보너스를 발생 라운드의 기본점수에 합산 → 순위점·킬점과 동일하게
+    // ×BPI 대상이 된다. 라운드별 귀속(bonusByRound)은 점수판 뱃지·검산용으로 응답에 포함.
+    const streak = rules.streak || { top4: 2, chicken: 5 };   // 시즌2 legacy 기본값 유지
     Object.keys(agg).forEach(name=>{
       const pl = agg[name].place;
+      agg[name].bonusByRound = {};
       for(let i=1;i<rounds.length;i++){
-        const prev = pl[rounds[i-1]], cur = pl[rounds[i]];
+        const r = rounds[i];
+        const prev = pl[rounds[i-1]], cur = pl[r];
         if(prev==null || cur==null) continue;           // 기록 없음(불참) = 스트릭 끊김
         let bn = 0;
-        if(prev===1 && cur===1) bn = 5;                 // 연속 치킨
-        else if(prev<=4 && cur<=4) bn = 2;              // 연속 Top4
-        if(bn) agg[name].bonus += bn;
+        if(prev===1 && cur===1) bn = streak.chicken;    // 연속 치킨 (+2 대체, 중복 아님)
+        else if(prev<=4 && cur<=4) bn = streak.top4;    // 연속 Top4
+        if(bn){
+          agg[name].bonus += bn;
+          agg[name].bonusByRound[r] = bn;
+          if(rules.bonusMode === "pre_weight")
+            agg[name].baseByRound[r] = (agg[name].baseByRound[r] || 0) + bn;  // BPI 곱하기 전 합산
+        }
       }
     });
     const standings = Object.keys(agg).map(name=>{
       const w = teams[name] ? teams[name].weight : 1;
       const a = agg[name];
       let points;
-      if(rules.bonusMode === "post_weight"){
+      if(rules.bonusMode === "pre_weight"){
+        // 보너스는 위에서 baseByRound에 이미 합산됨 — 라운드별 ×weight 반올림만
+        points = Object.values(a.baseByRound).reduce((s,v)=>s+Math.round(v*w),0);
+      } else if(rules.bonusMode === "post_weight"){
         const weighted = Object.values(a.baseByRound).reduce((s,v)=>s+Math.round(v*w),0);  // 라운드별 반올림
         points = weighted + a.bonus;                    // 보너스는 정수 가산(weight 미적용)
       } else {
         const baseSum = Object.values(a.baseByRound).reduce((s,v)=>s+v,0);
         points = Math.round((baseSum + a.bonus) * w);   // legacy: 보너스 포함해 ×weight
       }
-      return { name, weight:w, points, kills:a.kills, bonus:a.bonus };
+      return { name, weight:w, points, kills:a.kills, bonus:a.bonus, bonusByRound:a.bonusByRound||{} };
     }).sort((a,b)=> b.points-a.points || b.kills-a.kills);
     res.json({ standings, lastRound, season });
   }catch(e){ console.error("gdcup_scores", e); res.json({standings:[], lastRound:0, season:GDCUP_CURRENT_SEASON}); }
