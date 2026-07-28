@@ -2430,7 +2430,10 @@ app.get("/", (_req, res) =>
 );
 
 // ===== G드컵 팀 신청 (시즌 분리: ?season, 기본 2=레거시) + 실시간 카운터 =====
-function gdSeason(v) { const n = parseInt(v, 10); return (n >= 1 && n <= 9) ? n : 2; }
+// season 미지정 시 현재 시즌으로 폴백. 과거엔 2로 하드코딩돼 있어, season을 안 보내는
+// 화면(gdcup-admin.html 등)이 시즌3 운영 중에도 시즌2 데이터를 보고 있었다.
+// ⚠️ 아카이브 페이지(gdcup-s2/history)는 반드시 season을 명시해야 한다 — 생략하면 현재 시즌이 온다.
+function gdSeason(v) { const n = parseInt(v, 10); return (n >= 1 && n <= 9) ? n : GDCUP_CURRENT_SEASON; }
 app.get("/api/gdcup-count", async (req, res) => {
   try {
     if (!process.env.SUPABASE_URL) return res.json({ teams: 0, target: 16 });
@@ -2484,12 +2487,24 @@ function validateTeamComposition(members, season) {
 // 가중치표·BPI 스케일·cap을 프론트가 하드코딩하지 않고 여기서 받아간다.
 // 시즌3 사고 재발 방지: 표가 server.js와 gdcup-s3.html 양쪽에 있어 어긋났었다.
 // 이 엔드포인트가 단일 정본 — 프론트는 절대 자체 표를 두지 말 것.
-app.get("/api/gdcup-meta", (req, res) => {
+app.get("/api/gdcup-meta", async (req, res) => {
   const season = gdSeason(req.query.season);
   const rules = gdSeasonRules(season);
+  // 선택 가능한 시즌 목록 — 룰셋 정의분 ∪ 실제 신청 데이터의 시즌.
+  // 프론트가 시즌을 하드코딩하지 않게 하려는 것. 시즌4가 생기면 프론트 수정 없이 늘어난다.
+  let seasons = Object.keys(GDCUP_SEASONS).map(Number).filter(Boolean);
+  if (process.env.SUPABASE_URL) {
+    try {
+      const rows = await sbSelect("gdcup_apps", "select=season");
+      rows.forEach((r) => { const n = Number(r.season); if (n && !seasons.includes(n)) seasons.push(n); });
+    } catch (e) { console.error("gdcup_meta_seasons", e?.status || "fail"); }   // 실패해도 룰셋 목록으로 응답
+  }
+  seasons.sort((a, b) => a - b);
   res.setHeader("Cache-Control", "public, max-age=60");
   res.json({
     season,
+    currentSeason: GDCUP_CURRENT_SEASON,
+    seasons,
     bpiScale: GDCUP_BPI_SCALE,                 // { S:13, T0:10, ... }
     tierOrder: GDCUP_TIER_ORDER,               // 낮음→높음
     weightTable: rules.weightTable,            // [[lo,hi,mult], ...] 경계 정수 이상/이하
