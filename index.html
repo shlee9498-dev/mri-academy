@@ -91,17 +91,17 @@
 }
 </script>
 
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@400;600;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
 :root{
   --bg:#0a0a0c;--bg-elev:#15151a;--bg-card:#1a1a20;--bg-card-hi:#20202a;
-  --ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;
+  --ink:#f4f4f5;--ink-dim:#c6c6cd;--ink-faint:#9b9ba4;
   --gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--gold-deep:#caa00f;
   --red:#e63946;--green:#10b981;--blue:#5ac8fa;--purple:#a855f7;
   --line:#27272a;
-  --display:'Archivo Black','Pretendard Variable',sans-serif;
-  --body:'Pretendard Variable','Archivo',-apple-system,sans-serif;
+  --display:'Saira Condensed','Pretendard Variable',sans-serif;
+  --body:'Pretendard Variable',-apple-system,sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -127,6 +127,7 @@ nav{position:sticky;top:0;z-index:50;background:rgba(10,10,12,.78);backdrop-filt
 .nav-hot{border:1px solid var(--gold);color:var(--gold);font-weight:800;font-size:13px;padding:8px 13px;border-radius:6px;text-decoration:none;white-space:nowrap;transition:transform .15s,background .15s}
 .nav-hot:hover{background:rgba(245,197,24,.1);transform:translateY(-1px)}
 @media(max-width:860px){.nav-links{display:none}.nav-hot{margin-left:auto;font-size:12.5px;padding:8px 11px}.nav-cta{font-size:12.5px;padding:8px 12px}}
+@media(max-width:420px){.logo small{display:none}.nav-hot{padding:7px 8px}.nav-cta{padding:7px 9px;font-size:12px}} /* 390px 가로 오버플로 수정(기존 결함) */
 
 /* shared section */
 section{padding:64px 0;border-top:1px solid var(--line)}
@@ -138,7 +139,7 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .hero{padding:60px 0 56px;border-top:none}
 .hero-grid{display:grid;grid-template-columns:1.08fr .92fr;gap:38px;align-items:center}
 .hero h1{font-family:var(--display);font-size:clamp(34px,6vw,60px);line-height:1.04;letter-spacing:-.015em}
-.hero h1 .gd{color:var(--gold);text-shadow:0 0 38px rgba(245,197,24,.45)}
+.hero h1 .gd{color:var(--gold)}
 .hpill{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--gold);border:1px solid var(--gold-soft);background:rgba(245,197,24,.07);padding:6px 13px;border-radius:99px;margin-bottom:22px}
 .hpill .dot{width:6px;height:6px;border-radius:99px;background:var(--gold);box-shadow:0 0 8px var(--gold);animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
@@ -232,7 +233,7 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .ebar-num{font-size:12px;color:var(--ink-dim)}
 .ebar-num b{font-family:var(--display);color:var(--ink);font-size:15px}
 .ebar-track{height:9px;border-radius:99px;background:#2a2a30;overflow:hidden}
-.ebar-fill{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--gold),var(--gold-deep));transition:width .9s ease}
+.ebar-fill{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--gold),var(--gold-deep));transition:none}
 .ebar-fill.les{background:linear-gradient(90deg,var(--blue),#2b9fd4)}
 .ebar-fill.full{background:linear-gradient(90deg,var(--green),#0e9f6e)}
 .ebar-left{font-size:11.5px;color:var(--ink-faint);margin-top:7px}
@@ -384,7 +385,7 @@ footer b{color:var(--gold)}
   background-image:linear-gradient(rgba(245,197,24,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.025) 1px,transparent 1px);background-size:34px 34px;}
 .vip-head{text-align:center;position:relative;margin-bottom:32px;}
 .vip-kick{font-family:var(--display);letter-spacing:.28em;font-size:12px;
-  background:linear-gradient(90deg,var(--gold),#fff3b0,var(--gold));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+  color:var(--gold);}
 .vip-title{font-family:var(--display);font-size:clamp(30px,7vw,46px);margin:10px 0 8px;
   background:linear-gradient(135deg,#fff,var(--gold) 60%,var(--gold-deep));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
 .vip-desc{color:var(--ink-dim);font-size:14px;max-width:480px;margin:0 auto;}
@@ -452,16 +453,27 @@ footer b{color:var(--gold)}
   <header class="hero" id="hero">
     <div class="hero-grid">
       <div class="hero-left reveal">
-        <span class="hpill"><span class="dot"></span>🏆 전세계 최초 · 솔로 단독 서바이버 달성</span>
-        <h1>당신의 다음 시즌은<br><span class="gd">달라질 수 있습니다</span></h1>
-        <p class="hlead">마스터 달성률 <b>87.5%</b> — 당신이 막힌 이유, 저는 알고 있습니다.</p>
+        <span class="hpill"><span class="dot"></span>전세계 최초 · 솔로 단독 서바이버</span>
+        <h1>마스터를 만든 사람만<br><span class="gd">30명이 넘습니다</span></h1>
+        <p class="hlead">전세계 최초 솔로 단독 서바이버, 이무리가 직접 가르칩니다. 3년의 기록이 증거입니다.</p>
         <p class="hnote">레벨테스트 합격자에 한해 등록 가능합니다. 기본 8회 과정이며, 원하시는 경우 <b style="color:var(--gold)">12회 확장 등록</b>도 가능합니다(상담 시 안내). 수업 시간대는 낮·심야(21~24시)·새벽(03~06시)까지 유연하게 조율됩니다.</p>
         <div class="proof">
           <div class="chip"><div class="l">솔로 경쟁전</div><div class="v" style="color:var(--gold)">서바이버<span class="ar">최초</span></div></div>
-          <div class="chip"><div class="l">평균 딜량</div><div class="v">282→398<span class="ar">▲116</span></div></div>
-          <div class="chip"><div class="l">평균 KDA</div><div class="v">2.79→4.47<span class="ar">▲1.68</span></div></div>
-          <div class="chip"><div class="l">마스터 달성</div><div class="v">87.5%</div></div>
+          <div class="chip"><div class="l">마스터·서바이버 배출</div><div class="v">30명+<span class="ar">3년</span></div></div>
+          <!-- 실시간 카운터 승격 — API 성공 시에만 실수치로 교체, 실패·지연 시 아래 정적 문구 유지(빈칸·0 금지) -->
+          <div class="chip"><div class="l">지금 훈련 중</div><div class="v" id="heroLiveV">50명+</div></div>
+          <div class="chip"><div class="l">클랜 창설 4개월</div><div class="v">클랜원 80명</div></div>
         </div>
+        <script>
+        (function(){
+          try{
+            fetch("https://mri-academy-production.up.railway.app/api/stats").then(function(r){return r.json();}).then(function(d){
+              var c=(d&&d.counts)||{}; var n=(Number(c.lessonseng)||0)+(Number(c.suganseng)||0);
+              if(d&&d.status==="ok"&&n>0){ var el=document.getElementById("heroLiveV"); if(el)el.textContent=n+"명"; }
+            }).catch(function(){});
+          }catch(e){}
+        })();
+        </script>
         <div class="cta">
           <a class="btn btn-gold" href="#consult">🎯 레슨 상담 신청</a>
           <a class="btn btn-ghost" href="https://discord.gg/YfZD8d22wJ" target="_blank" rel="noopener">🛡 클랜 가입하기</a>
@@ -478,6 +490,33 @@ footer b{color:var(--gold)}
       </div>
     </div>
   </header>
+
+  <!-- CASES — 대표 성장 사례 5건 (히어로 직하단 메인 증거. 데이터는 PRODUCT.md 오너 확정본, 닉 부분 마스킹) -->
+  <style>
+    .cases{padding:34px 0 8px}
+    .case-row{display:grid;grid-template-columns:64px 1fr auto;gap:14px;align-items:center;padding:15px 0;border-bottom:1px solid var(--line)}
+    .case-row:first-of-type{border-top:2px solid var(--gold)}
+    .case-nick{font-family:var(--display);font-size:21px;color:var(--ink)}
+    .case-path{font-size:15px;color:var(--ink);font-weight:700;line-height:1.5}
+    .case-path .from{color:#9b9ba4;font-weight:600}
+    .case-path .to{color:var(--gold)}
+    .case-cond{font-size:12.5px;color:#9b9ba4;margin-top:2px;font-weight:600}
+    .case-dur{font-family:var(--display);font-size:15px;color:#9b9ba4;white-space:nowrap;text-align:right}
+    .case-honest{margin-top:16px;font-size:14px;color:#c6c6cd;border-top:1px solid var(--line);padding-top:14px}
+    .case-honest b{color:var(--ink)}
+    @media(max-width:560px){.case-row{grid-template-columns:52px 1fr}.case-dur{grid-column:2;text-align:left;font-size:13px}}
+  </style>
+  <section class="cases" id="cases">
+    <div class="kick">Evidence</div>
+    <div class="s-title">같은 판수, 다른 성적</div>
+    <p class="s-desc">기간이 아니라 판수 기준 비교 — 판수가 같은데 성적이 다르면, 오른 것은 실력입니다.</p>
+    <div class="case-row"><div class="case-nick">세**</div><div><div class="case-path"><span class="from">Gold 2,446</span> → <span class="to">서바이버 5,065</span> · 승률 60% · 600딜</div></div><div class="case-dur">12개월</div></div>
+    <div class="case-row"><div class="case-nick">숑**</div><div><div class="case-path"><span class="from">마스터 3,700 · 380딜</span> → <span class="to">4,560 · 500딜+</span></div><div class="case-cond">동일 200판 기준</div></div><div class="case-dur">4개월</div></div>
+    <div class="case-row"><div class="case-nick">제**</div><div><div class="case-path"><span class="from">다이아 · 300딜</span> → <span class="to">4,500+ · 500딜+</span></div></div><div class="case-dur">4개월</div></div>
+    <div class="case-row"><div class="case-nick">지**</div><div><div class="case-path"><span class="from">플래티넘 · 170딜</span> → <span class="to">마스터 · 350딜</span></div><div class="case-cond">동일 200판 기준</div></div><div class="case-dur">8개월</div></div>
+    <div class="case-row"><div class="case-nick">텐**</div><div><div class="case-path"><span class="from">플래티넘 · 180딜</span> → <span class="to">서바이버 3,960 · 460딜</span></div><div class="case-cond">동일 100판 기준</div></div><div class="case-dur">12개월</div></div>
+    <div class="case-honest"><b>평균 6개월에서 1년이 걸립니다. 절반은 수강생의 노력입니다.</b> 빠른 약속 대신, 기록으로 말합니다.</div>
+  </section>
 
   <!-- LESSON SCHEDULE BANNER -->
   <a href="lesson-schedule.html" style="display:block;text-decoration:none;margin:6px 0 4px">
@@ -533,7 +572,7 @@ footer b{color:var(--gold)}
           <path d="M64,259 L167,214 L271,167 L374,144 L477,133 L684,56 L684,270 L64,270 Z" fill="url(#ga)"/>
           <path d="M64,259 L167,214 L271,167 L374,144 L477,133 L684,56" fill="none" stroke="#f5c518" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
           <!-- points -->
-          <g font-family="'Archivo Black',sans-serif">
+          <g font-family="'Saira Condensed',sans-serif">
             <circle cx="64"  cy="259" r="5" fill="#caa00f" stroke="#0a0a0c" stroke-width="2"/>
             <circle cx="167" cy="214" r="5" fill="#5ac8fa" stroke="#0a0a0c" stroke-width="2"/>
             <circle cx="271" cy="167" r="6" fill="#f5c518" stroke="#0a0a0c" stroke-width="2"/>
@@ -969,6 +1008,26 @@ footer b{color:var(--gold)}
         <div class="cf"><span class="ic">🔔</span><b>자동 알림</b>스크림 1시간 전 푸시</div>
       </div>
     </div>
+  </section>
+
+  <!-- ARCHIVE — 증거 창고 동선 -->
+  <style>
+    .arch{padding:34px 0 8px}
+    .arch-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:14px 2px;border-bottom:1px solid var(--line);text-decoration:none}
+    .arch-row:first-of-type{border-top:2px solid var(--gold)}
+    .arch-row .t{font-weight:800;font-size:16px;color:var(--ink)}
+    .arch-row .d{font-size:13px;color:var(--ink-faint);margin-top:2px}
+    .arch-row .go{font-family:var(--display);font-size:14px;color:var(--gold);white-space:nowrap}
+    .arch-row:hover .t{color:var(--gold)}
+  </style>
+  <section class="arch" id="archive">
+    <div class="kick">Archive</div>
+    <div class="s-title">기록은 전부 공개돼 있습니다</div>
+    <p class="s-desc">수강 전에 직접 확인하세요. 전부 실제 수강생의 기록입니다.</p>
+    <a class="arch-row" href="gmi-progress.html"><span><span class="t">성장 기록</span><span class="d"> — 수강생 티어·RP·딜 변화 추적</span></span><span class="go">보기 →</span></a>
+    <a class="arch-row" href="lesson-feedback.html"><span><span class="t">코칭 기록</span><span class="d"> — 레슨별 피드백 원문</span></span><span class="go">보기 →</span></a>
+    <a class="arch-row" href="community.html"><span><span class="t">커뮤니티</span><span class="d"> — 성장일지·후기</span></span><span class="go">보기 →</span></a>
+    <a class="arch-row" href="success.html"><span><span class="t">수료생</span><span class="d"> — 마스터·서바이버 달성 기록</span></span><span class="go">보기 →</span></a>
   </section>
 
   <!-- SOOP -->
