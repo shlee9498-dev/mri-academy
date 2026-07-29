@@ -1091,12 +1091,13 @@ if (process.env.DISCORD_TOKEN) {
         lines.push(...updated.map((u) => `· ${u.name} +${u.added}판 → 누적 ${u.total}판`));
       if (notFound.length) {
         // notFound = Apps Script가 시트에서 매칭 실패한 이름(해당 이름만 미기록). updated 인원은 이미 기록됨.
-        // → '전체 재등록'하면 updated 인원이 중복 기록되므로, "못 찾은 이름만 다시" 등록하도록 명시(이중입력 차단).
+        // ⛔ "다시 시도해줘" 문구 금지 — 명부 미등록 상태의 재시도를 유도해 반복 등록 사고가 실제로
+        //    발생했다(2026-07-29 신규생 반복 등록 건). 명부 등록은 운영자 작업이므로 문의로 유도한다.
         lines.push(`⚠️ 시트에서 못 찾은 이름 — **이 이름들만 미기록**: ${notFound.join(", ")}`);
         if (updated.length)
-          lines.push(`↳ 위 ${updated.length}명은 **기록 완료**. 전체 재등록 금지(중복됨) — 못 찾은 이름만 철자·등록 확인 후 그 이름만 다시 등록해줘.`);
+          lines.push(`↳ 위 ${updated.length}명은 **기록 완료**. 전체 재등록 금지(중복됨) — 못 찾은 이름은 ⛔ **바로 재시도하지 말고 운영자에게 문의**해줘. (명부 등록 완료 안내를 받은 뒤, 그 이름만 다시 등록)`);
         else
-          lines.push(`↳ 기록된 인원 없음 — 철자·시트 등록 확인 후 다시 시도해줘.`);
+          lines.push(`↳ 기록된 인원 없음 — ⛔ **재시도 금지, 운영자에게 문의**해줘. 명부(시트) 미등록 상태라 다시 시도해도 똑같이 실패해. (명부 등록 완료 안내 후 다시 등록)`);
         if (process.env.MRI_OWNER_ID) {
           try {
             const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
