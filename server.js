@@ -942,8 +942,8 @@ if (process.env.DISCORD_TOKEN) {
     const rows = [], miss = [];
     for (const s of students) {
       try {
-        const found = await sbSelect("students", `select=id&name=eq.${encodeURIComponent(s.name)}&limit=1`);
-        if (found[0]) rows.push({ student_id: found[0].id, trainer_id, played_at, games: s.games, memo: memo || null, created_by: createdBy });
+        const sid = await resolveStudentId(s.name, trainer_id);   // 병행수강 2행이면 본인 담당 행 우선
+        if (sid != null) rows.push({ student_id: sid, trainer_id, played_at, games: s.games, memo: memo || null, created_by: createdBy });
         else miss.push(s.name);
       } catch (e) { console.error("dualwrite_student_lookup", s.name, e?.message); miss.push(s.name); }
     }
@@ -953,10 +953,19 @@ if (process.env.DISCORD_TOKEN) {
     }
     return { inserted: rows.length, miss };
   }
-  // 이름→students.id 해석(1건). 미매칭 null.
-  async function resolveStudentId(name) {
-    try { const r = await sbSelect("students", `select=id&name=eq.${encodeURIComponent(name)}&limit=1`); return r[0]?.id ?? null; }
-    catch (e) { console.error("resolve_student", name, e?.message); return null; }
+  // 이름→students.id 해석. 미매칭 null.
+  // 동명 다행(병행수강 의도적 2행 포함) 결정론: ① status='active' 우선
+  // ② trainerId 주어지면 그 트레이너 담당(trainer_id) 행 우선 ③ 동률이면 id 오름차순(먼저 등록된 행).
+  // 과거엔 limit=1 무정렬이라 아무 행이나 집었다 — 동명 중복행에 판수가 붙는 사고의 원인.
+  async function resolveStudentId(name, trainerId) {
+    try {
+      const rows = await sbSelect("students", `select=id,status,trainer_id&name=eq.${encodeURIComponent(name)}&order=id.asc`);
+      if (!rows.length) return null;
+      const rank = (r) => (r.status === "active" ? 0 : 2) + (trainerId != null && r.trainer_id === trainerId ? 0 : 1);
+      let best = rows[0];
+      for (const r of rows) if (rank(r) < rank(best)) best = r;   // 동률은 id.asc 순서 유지
+      return best.id;
+    } catch (e) { console.error("resolve_student", name, e?.message); return null; }
   }
   // 상담(진단상담) 이력 조회 — 이름별 최근 1건. /수업등록 시 "○○님 상담 이력" 표시용.
   async function consultHistoryFor(names) {
@@ -999,10 +1008,14 @@ if (process.env.DISCORD_TOKEN) {
 
     await itx.deferReply({ ephemeral: true });
 
+    // 명령 트레이너의 staff.id — 동명 다행(병행수강) 매칭 시 본인 담당 행 우선용
+    let trainerStaffId = null;
+    try { trainerStaffId = (await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainer)}&limit=1`))[0]?.id ?? null; } catch (_) {}
+
     // 이름→student_id 해석 + 과거 미연결 상담로그 소급 연결(모든 구분 공통)
     const sidOf = {};
     for (const name of names) {
-      const sid = await resolveStudentId(name);
+      const sid = await resolveStudentId(name, trainerStaffId);
       sidOf[name] = sid;
       if (sid != null) { try { await sbPatch("consults", `student_name=eq.${encodeURIComponent(name)}&student_id=is.null`, { student_id: sid }); } catch (_) {} }
     }
@@ -1013,8 +1026,7 @@ if (process.env.DISCORD_TOKEN) {
     if (guboon !== "레슨") {
       const kind = guboon === "진단상담" ? "consult" : "direct_lecture";
       const trainerName = guboon === "진단상담" ? trainer : null;   // 강의(직강)=트레이너 없음(정산 자연 제외)
-      let trainerId = null;
-      if (trainerName) { try { trainerId = (await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainerName)}&limit=1`))[0]?.id ?? null; } catch (_) {} }
+      const trainerId = trainerName ? trainerStaffId : null;        // 위에서 이미 조회한 staff.id 재사용
       const logged = [];
       for (const name of names) {
         try {
@@ -1079,12 +1091,13 @@ if (process.env.DISCORD_TOKEN) {
         lines.push(...updated.map((u) => `· ${u.name} +${u.added}판 → 누적 ${u.total}판`));
       if (notFound.length) {
         // notFound = Apps Script가 시트에서 매칭 실패한 이름(해당 이름만 미기록). updated 인원은 이미 기록됨.
-        // → '전체 재등록'하면 updated 인원이 중복 기록되므로, "못 찾은 이름만 다시" 등록하도록 명시(이중입력 차단).
+        // ⛔ "다시 시도해줘" 문구 금지 — 명부 미등록 상태의 재시도를 유도해 반복 등록 사고가 실제로
+        //    발생했다(2026-07-29 신규생 반복 등록 건). 명부 등록은 운영자 작업이므로 문의로 유도한다.
         lines.push(`⚠️ 시트에서 못 찾은 이름 — **이 이름들만 미기록**: ${notFound.join(", ")}`);
         if (updated.length)
-          lines.push(`↳ 위 ${updated.length}명은 **기록 완료**. 전체 재등록 금지(중복됨) — 못 찾은 이름만 철자·등록 확인 후 그 이름만 다시 등록해줘.`);
+          lines.push(`↳ 위 ${updated.length}명은 **기록 완료**. 전체 재등록 금지(중복됨) — 못 찾은 이름은 ⛔ **바로 재시도하지 말고 운영자에게 문의**해줘. (명부 등록 완료 안내를 받은 뒤, 그 이름만 다시 등록)`);
         else
-          lines.push(`↳ 기록된 인원 없음 — 철자·시트 등록 확인 후 다시 시도해줘.`);
+          lines.push(`↳ 기록된 인원 없음 — ⛔ **재시도 금지, 운영자에게 문의**해줘. 명부(시트) 미등록 상태라 다시 시도해도 똑같이 실패해. (명부 등록 완료 안내 후 다시 등록)`);
         if (process.env.MRI_OWNER_ID) {
           try {
             const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
@@ -1103,8 +1116,14 @@ if (process.env.DISCORD_TOKEN) {
         }
       }
       // Phase 1.4 — DB 이중기록(시트 병행·검증). 실패해도 명령 성공(시트가 진실).
+      // 시트가 실제 기록한(updated) 인원만 DB에 쓴다 — 시트 미기록(notFound)분을 DB에만 쓰면
+      // 명부 보정 후 재시도 때 DB가 중복된다(시트=진실인 병행 단계에서 DB는 시트를 미러링).
       try {
-        const dw = await dualWriteSessions(trainer, students, memo, itx.user.id);
+        const okNames = new Set(updated.map((u) => String(u.name || "").trim()));
+        const sheetOk = students.filter((s) => okNames.has(s.name));
+        if (updated.length && !sheetOk.length)
+          console.error("dualwrite_name_echo_mismatch", updated.map((u) => u.name).join(","));   // 시트 응답 이름이 입력과 불일치 — DB 미기록
+        const dw = sheetOk.length ? await dualWriteSessions(trainer, sheetOk, memo, itx.user.id) : { inserted: 0, miss: [] };
         if (dw && dw.miss && dw.miss.length && process.env.MRI_OWNER_ID) {
           const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
           // '시트 기록됨'을 단정하지 않음 — 시트 응답 기준 updated 건수만 명시(검증 불가한 성공 주장 제거).
@@ -1145,15 +1164,14 @@ if (process.env.DISCORD_TOKEN) {
 
     await itx.deferReply({ ephemeral: true });
     try {
-      const sid = await resolveStudentId(name);
-      if (sid == null) return itx.editReply(`❌ "${name}" 학생을 찾을 수 없어. 이름을 정확히 입력해줘.`);
-
-      // 본인 담당 세션만 — 오너는 전체
+      // 본인 담당 세션만 — 오너는 전체. (학생 매칭보다 먼저 조회 — 병행수강 2행이면 본인 담당 행 우선)
       let trainerId = null;
       if (!isOwner) {
         trainerId = (await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainer)}&limit=1`))[0]?.id ?? null;
         if (trainerId == null) return itx.editReply("❌ 트레이너 정보를 찾을 수 없어. 운영진에게 문의해줘.");
       }
+      const sid = await resolveStudentId(name, trainerId);
+      if (sid == null) return itx.editReply(`❌ "${name}" 학생을 찾을 수 없어. 이름을 정확히 입력해줘.`);
       const scope = trainerId != null ? `&trainer_id=eq.${trainerId}` : "";
       const rows = await sbSelect("lesson_sessions",
         `select=id,played_at,games,memo&student_id=eq.${sid}${scope}&order=played_at.desc,id.desc&limit=20`);
