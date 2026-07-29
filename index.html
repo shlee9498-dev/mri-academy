@@ -91,17 +91,17 @@
 }
 </script>
 
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@400;600;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
 :root{
   --bg:#0a0a0c;--bg-elev:#15151a;--bg-card:#1a1a20;--bg-card-hi:#20202a;
-  --ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;
+  --ink:#f4f4f5;--ink-dim:#c6c6cd;--ink-faint:#9b9ba4;
   --gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--gold-deep:#caa00f;
   --red:#e63946;--green:#10b981;--blue:#5ac8fa;--purple:#a855f7;
   --line:#27272a;
-  --display:'Archivo Black','Pretendard Variable',sans-serif;
-  --body:'Pretendard Variable','Archivo',-apple-system,sans-serif;
+  --display:'Saira Condensed','Pretendard Variable',sans-serif;
+  --body:'Pretendard Variable',-apple-system,sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -127,6 +127,7 @@ nav{position:sticky;top:0;z-index:50;background:rgba(10,10,12,.78);backdrop-filt
 .nav-hot{border:1px solid var(--gold);color:var(--gold);font-weight:800;font-size:13px;padding:8px 13px;border-radius:6px;text-decoration:none;white-space:nowrap;transition:transform .15s,background .15s}
 .nav-hot:hover{background:rgba(245,197,24,.1);transform:translateY(-1px)}
 @media(max-width:860px){.nav-links{display:none}.nav-hot{margin-left:auto;font-size:12.5px;padding:8px 11px}.nav-cta{font-size:12.5px;padding:8px 12px}}
+@media(max-width:420px){.logo small{display:none}.nav-hot{padding:7px 8px}.nav-cta{padding:7px 9px;font-size:12px}} /* 390px 가로 오버플로 수정(기존 결함) */
 
 /* shared section */
 section{padding:64px 0;border-top:1px solid var(--line)}
@@ -138,7 +139,7 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .hero{padding:60px 0 56px;border-top:none}
 .hero-grid{display:grid;grid-template-columns:1.08fr .92fr;gap:38px;align-items:center}
 .hero h1{font-family:var(--display);font-size:clamp(34px,6vw,60px);line-height:1.04;letter-spacing:-.015em}
-.hero h1 .gd{color:var(--gold);text-shadow:0 0 38px rgba(245,197,24,.45)}
+.hero h1 .gd{color:var(--gold)}
 .hpill{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--gold);border:1px solid var(--gold-soft);background:rgba(245,197,24,.07);padding:6px 13px;border-radius:99px;margin-bottom:22px}
 .hpill .dot{width:6px;height:6px;border-radius:99px;background:var(--gold);box-shadow:0 0 8px var(--gold);animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
@@ -232,7 +233,7 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .ebar-num{font-size:12px;color:var(--ink-dim)}
 .ebar-num b{font-family:var(--display);color:var(--ink);font-size:15px}
 .ebar-track{height:9px;border-radius:99px;background:#2a2a30;overflow:hidden}
-.ebar-fill{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--gold),var(--gold-deep));transition:width .9s ease}
+.ebar-fill{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--gold),var(--gold-deep));transition:none}
 .ebar-fill.les{background:linear-gradient(90deg,var(--blue),#2b9fd4)}
 .ebar-fill.full{background:linear-gradient(90deg,var(--green),#0e9f6e)}
 .ebar-left{font-size:11.5px;color:var(--ink-faint);margin-top:7px}
@@ -384,7 +385,7 @@ footer b{color:var(--gold)}
   background-image:linear-gradient(rgba(245,197,24,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.025) 1px,transparent 1px);background-size:34px 34px;}
 .vip-head{text-align:center;position:relative;margin-bottom:32px;}
 .vip-kick{font-family:var(--display);letter-spacing:.28em;font-size:12px;
-  background:linear-gradient(90deg,var(--gold),#fff3b0,var(--gold));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+  color:var(--gold);}
 .vip-title{font-family:var(--display);font-size:clamp(30px,7vw,46px);margin:10px 0 8px;
   background:linear-gradient(135deg,#fff,var(--gold) 60%,var(--gold-deep));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
 .vip-desc{color:var(--ink-dim);font-size:14px;max-width:480px;margin:0 auto;}
@@ -571,7 +572,7 @@ footer b{color:var(--gold)}
           <path d="M64,259 L167,214 L271,167 L374,144 L477,133 L684,56 L684,270 L64,270 Z" fill="url(#ga)"/>
           <path d="M64,259 L167,214 L271,167 L374,144 L477,133 L684,56" fill="none" stroke="#f5c518" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
           <!-- points -->
-          <g font-family="'Archivo Black',sans-serif">
+          <g font-family="'Saira Condensed',sans-serif">
             <circle cx="64"  cy="259" r="5" fill="#caa00f" stroke="#0a0a0c" stroke-width="2"/>
             <circle cx="167" cy="214" r="5" fill="#5ac8fa" stroke="#0a0a0c" stroke-width="2"/>
             <circle cx="271" cy="167" r="6" fill="#f5c518" stroke="#0a0a0c" stroke-width="2"/>
@@ -1007,6 +1008,26 @@ footer b{color:var(--gold)}
         <div class="cf"><span class="ic">🔔</span><b>자동 알림</b>스크림 1시간 전 푸시</div>
       </div>
     </div>
+  </section>
+
+  <!-- ARCHIVE — 증거 창고 동선 -->
+  <style>
+    .arch{padding:34px 0 8px}
+    .arch-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:14px 2px;border-bottom:1px solid var(--line);text-decoration:none}
+    .arch-row:first-of-type{border-top:2px solid var(--gold)}
+    .arch-row .t{font-weight:800;font-size:16px;color:var(--ink)}
+    .arch-row .d{font-size:13px;color:var(--ink-faint);margin-top:2px}
+    .arch-row .go{font-family:var(--display);font-size:14px;color:var(--gold);white-space:nowrap}
+    .arch-row:hover .t{color:var(--gold)}
+  </style>
+  <section class="arch" id="archive">
+    <div class="kick">Archive</div>
+    <div class="s-title">기록은 전부 공개돼 있습니다</div>
+    <p class="s-desc">수강 전에 직접 확인하세요. 전부 실제 수강생의 기록입니다.</p>
+    <a class="arch-row" href="gmi-progress.html"><span><span class="t">성장 기록</span><span class="d"> — 수강생 티어·RP·딜 변화 추적</span></span><span class="go">보기 →</span></a>
+    <a class="arch-row" href="lesson-feedback.html"><span><span class="t">코칭 기록</span><span class="d"> — 레슨별 피드백 원문</span></span><span class="go">보기 →</span></a>
+    <a class="arch-row" href="community.html"><span><span class="t">커뮤니티</span><span class="d"> — 성장일지·후기</span></span><span class="go">보기 →</span></a>
+    <a class="arch-row" href="success.html"><span><span class="t">수료생</span><span class="d"> — 마스터·서바이버 달성 기록</span></span><span class="go">보기 →</span></a>
   </section>
 
   <!-- SOOP -->
