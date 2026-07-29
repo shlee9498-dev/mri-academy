@@ -8,3 +8,6 @@ node_modules/
 
 # 로그
 *.log
+
+# Claude Code 로컬 설정 (impeccable 훅 — 개인 로컬 전용, install 명령으로 재생성)
+.claude/settings.local.json
