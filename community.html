@@ -7,70 +7,68 @@
 <meta name="description" content="MRI ACADEMY 수강생들의 실제 후기와 레슨 성장 동향. 디스코드 로그인 후 작성·답글이 가능합니다.">
 <meta property="og:title" content="수강생 후기 · 레슨 동향 — MRI ACADEMY">
 <meta property="og:description" content="검증된 수강생 후기와 성장 기록.">
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
 <style>
-:root{--bg:#0a0a0c;--bg-card:#1a1a20;--bg-elev:#20202a;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--gold-deep:#caa00f;--green:#10b981;--blue:#5ac8fa;--purple:#a855f7;--red:#e63946;--line:#27272a;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif}
+:root{--bg:#0a0a0c;--surface-1:#141419;--surface-2:#1b1b21;--line:#26262c;--ink:#f4f4f5;--ink-body:#c6c6cd;--ink-dim:#9b9ba4;--gold:#f5c518;--gold-deep:#caa00f;--danger:#f87171;--display:'Saira Condensed','Pretendard Variable',sans-serif;--body:'Pretendard Variable',sans-serif}
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;background-image:radial-gradient(circle at 50% 0,rgba(245,197,24,.06),transparent 60%),linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);background-size:auto,37px 37px,37px 37px}
-.wrap{max-width:720px;margin:0 auto;padding:30px 18px 70px}
-.top{text-align:center;margin-bottom:22px}
-.kick{color:var(--gold);font-weight:800;font-size:12px;letter-spacing:.16em;text-transform:uppercase}
-h1{font-family:var(--display);font-size:clamp(24px,6vw,34px);margin:8px 0 6px}
-.sub{color:var(--ink-dim);font-size:13.5px}
-/* 로그인 바 */
-.authbar{display:flex;align-items:center;justify-content:center;gap:12px;background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin-bottom:18px;flex-wrap:wrap}
-.authbar .who{font-size:13.5px;color:var(--ink-dim)}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--gold);text-decoration:none}a:hover{text-decoration:underline}
+:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
+.wrap{max-width:720px;margin:0 auto;padding:0 18px 70px}
+.top{padding:48px 0 24px;border-bottom:1px solid var(--line);margin-bottom:20px}
+.kick{display:flex;align-items:center;gap:8px;font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.kick::before{content:"";width:14px;height:3px;background:var(--gold)}
+h1{font-size:clamp(26px,6vw,36px);font-weight:800;margin:10px 0 8px;line-height:1.15}
+.sub{color:var(--ink-body);font-size:16px}
+.authbar{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);background:var(--surface-1);padding:14px 16px;margin-bottom:18px;flex-wrap:wrap}
+.authbar .who{font-size:15px;color:var(--ink-body)}
 .authbar .who b{color:var(--gold)}
-.btn{border:none;border-radius:8px;padding:11px 18px;font-weight:800;font-size:13.5px;cursor:pointer;font-family:var(--body);transition:transform .15s}
-.btn:hover{transform:translateY(-1px)}
+.btn{border:none;padding:11px 18px;font-weight:800;font-size:14px;cursor:pointer;font-family:var(--body);transition:opacity .18s ease-out;min-height:44px}
+.btn:hover{opacity:.88}
 .btn-disc{background:#5865F2;color:#fff}
-.btn-ghost{background:transparent;color:var(--ink-dim);border:1px solid var(--line)}
-.btn-gold{background:linear-gradient(135deg,var(--gold),var(--gold-deep));color:#0a0a0c}
-/* 탭 */
+.btn-ghost{background:transparent;color:var(--ink-body);border:1px solid var(--line)}
+.btn-gold{background:var(--gold);color:#0a0a0c}
 .tabs{display:flex;gap:8px;margin-bottom:18px}
-.tab{flex:1;background:var(--bg-card);border:1px solid var(--line);border-radius:9px;padding:12px;font-weight:800;font-size:14px;cursor:pointer;text-align:center;color:var(--ink-dim)}
-.tab.on{border-color:var(--gold-soft);background:rgba(245,197,24,.08);color:var(--gold)}
-/* 작성 폼 */
-.composer{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:18px}
+.tab{flex:1;background:transparent;border:1px solid var(--line);padding:12px;font-weight:800;font-size:14px;cursor:pointer;text-align:center;color:var(--ink-body);min-height:44px}
+.tab.on{border-color:var(--gold);color:var(--gold)}
+.composer{border:1px solid var(--line);background:var(--surface-1);padding:16px;margin-bottom:18px}
 .composer.locked{opacity:.55;pointer-events:none}
-.composer label{display:block;font-size:12px;font-weight:700;margin-bottom:6px;color:var(--ink-dim)}
-.composer input,.composer textarea,.composer select{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:10px 12px;font-family:var(--body);font-size:14px;margin-bottom:12px}
+.composer label{display:block;font-size:14px;font-weight:700;margin-bottom:6px;color:var(--ink-dim)}
+.composer input,.composer textarea,.composer select{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);padding:10px 12px;font-family:var(--body);font-size:16px;margin-bottom:12px}
 .composer textarea{resize:vertical;min-height:70px}
 .stars{display:flex;gap:4px;margin-bottom:12px}
-.stars span{font-size:24px;cursor:pointer;color:var(--ink-faint);line-height:1}
+.stars span{font-size:24px;cursor:pointer;color:var(--ink-dim);line-height:1.4}
 .stars span.act{color:var(--gold)}
-.lockmsg{font-size:12.5px;color:var(--ink-faint);text-align:center;padding:6px}
-/* 목록 */
+.lockmsg{font-size:14px;color:var(--ink-body);text-align:center;padding:6px}
 .list{display:flex;flex-direction:column;gap:12px}
-.item{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.item{border:1px solid var(--line);background:var(--surface-1);padding:16px}
 .ihead{display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap}
-.iname{font-weight:800;font-size:14px}
+.iname{font-weight:800;font-size:15px}
 .istar{color:var(--gold);font-size:13px;letter-spacing:1px}
-.itrainer{font-size:11px;color:var(--blue);background:rgba(90,200,250,.1);padding:2px 8px;border-radius:99px}
-.idate{font-size:11px;color:var(--ink-faint);margin-left:auto}
-.ititle{font-weight:800;font-size:15px;margin-bottom:4px}
-.ibody{font-size:13.5px;color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.itrainer{font-size:12px;font-weight:700;color:var(--ink);border:1px solid var(--line);padding:2px 8px}
+.idate{font-family:var(--display);font-weight:700;font-size:12.5px;letter-spacing:.06em;color:var(--ink-dim);margin-left:auto;font-variant-numeric:tabular-nums}
+.ititle{font-weight:800;font-size:16px;margin-bottom:4px}
+.ibody{font-size:15px;color:var(--ink-body);white-space:pre-wrap;word-break:break-word}
 .iacts{display:flex;gap:12px;margin-top:10px;align-items:center}
-.linkbtn{background:none;border:none;color:var(--ink-faint);font-size:12px;cursor:pointer;font-family:var(--body);font-weight:600}
+.linkbtn{background:none;border:none;color:var(--ink-dim);font-size:14px;cursor:pointer;font-family:var(--body);font-weight:700;padding:4px 0;min-height:28px}
 .linkbtn:hover{color:var(--gold)}
-.del{color:var(--red)}
-/* 답글 */
+.del{color:var(--danger)}
 .replies{margin-top:12px;border-top:1px solid var(--line);padding-top:12px;display:none}
 .replies.open{display:block}
 .reply{padding:8px 0;border-bottom:1px solid var(--line)}
 .reply:last-of-type{border-bottom:none}
 .rhead{display:flex;align-items:center;gap:6px;margin-bottom:2px}
-.rname{font-weight:700;font-size:12.5px}
-.staff{font-size:10px;color:#0a0a0c;background:var(--gold);padding:1px 6px;border-radius:99px;font-weight:800}
-.rdate{font-size:10.5px;color:var(--ink-faint);margin-left:auto}
-.rbody{font-size:13px;color:var(--ink-dim);white-space:pre-wrap;word-break:break-word}
+.rname{font-weight:700;font-size:14px}
+.staff{font-size:11px;color:#0a0a0c;background:var(--gold);padding:1px 6px;font-weight:800}
+.rdate{font-family:var(--display);font-weight:700;font-size:12px;color:var(--ink-dim);margin-left:auto;font-variant-numeric:tabular-nums}
+.rbody{font-size:14.5px;color:var(--ink-body);white-space:pre-wrap;word-break:break-word}
 .replyform{display:flex;gap:7px;margin-top:10px}
-.replyform input{flex:1;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:9px 11px;font-family:var(--body);font-size:13px}
-.empty{text-align:center;color:var(--ink-faint);font-size:13px;padding:30px}
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--bg-elev);border:1px solid var(--line);color:var(--ink);padding:12px 20px;border-radius:9px;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:50}
+.replyform input{flex:1;background:var(--bg);color:var(--ink);border:1px solid var(--line);padding:9px 11px;font-family:var(--body);font-size:16px}
+.empty{text-align:center;color:var(--ink-body);font-size:15px;padding:30px;border:1px dashed var(--line)}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--line);color:var(--ink);padding:12px 20px;font-size:14px;opacity:0;transition:opacity .25s ease-out;pointer-events:none;z-index:50}
 .toast.show{opacity:1}
-.back{display:inline-block;margin-top:24px;color:var(--gold);text-decoration:none;font-weight:700;font-size:14px}
+.back{display:inline-block;margin-top:24px;font-weight:700;font-size:15px}
 </style>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
 </head>
@@ -85,8 +83,8 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,34px);margin:8px 0 6px}
   <div class="authbar" id="authbar"><span class="who">로그인 상태 확인 중…</span></div>
 
   <div class="tabs">
-    <div class="tab on" id="tab-reviews" onclick="switchTab('reviews')">⭐ 후기</div>
-    <div class="tab" id="tab-progress" onclick="switchTab('progress')">📈 레슨 동향</div>
+    <div class="tab on" id="tab-reviews" onclick="switchTab('reviews')">후기</div>
+    <div class="tab" id="tab-progress" onclick="switchTab('progress')">레슨 동향</div>
   </div>
 
   <!-- 후기 -->
@@ -120,7 +118,7 @@ h1{font-family:var(--display);font-size:clamp(24px,6vw,34px);margin:8px 0 6px}
     <div class="list" id="pg-list"><div class="empty">불러오는 중…</div></div>
   </div>
 
-  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
+  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈</a></div>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -151,7 +149,7 @@ async function checkAuth(){
     const r = await fetch(`${API}/api/auth/me`, { headers: authHeaders() });
     if (!r.ok) throw 0;
     ME = await r.json();
-    bar.innerHTML = `<span class="who">👋 <b>${esc(ME.name)}</b>${ME.isStaff?' · 운영진':''} 님</span><button class="btn btn-ghost" onclick="logout()">로그아웃</button>`;
+    bar.innerHTML = `<span class="who"><b>${esc(ME.name)}</b>${ME.isStaff?' · 운영진':''} 님</span><button class="btn btn-ghost" onclick="logout()">로그아웃</button>`;
   } catch { localStorage.removeItem("mri_token"); ME=null; bar.innerHTML = `<span class="who">세션이 만료됐어요</span><button class="btn btn-disc" onclick="login()">디스코드로 다시 로그인</button>`; }
   renderAuthedUI();
 }
@@ -192,11 +190,11 @@ async function loadReviews(){
 function itemReview(r){
   const stars = "★".repeat(r.rating||0) + "☆".repeat(5-(r.rating||0));
   const own = ME && (ME.isStaff || ME.id === r.discord_id);
-  const acts = own ? `<button class="linkbtn" onclick="editItem('review',${r.id})">✏️ 수정</button><button class="linkbtn del" onclick="deleteItem('review',${r.id})">🗑 삭제</button>` : "";
+  const acts = own ? `<button class="linkbtn" onclick="editItem('review',${r.id})">수정</button><button class="linkbtn del" onclick="deleteItem('review',${r.id})">삭제</button>` : "";
   return `<div class="item">
     <div class="ihead"><span class="iname">${esc(r.discord_name)}</span><span class="istar">${stars}</span>${r.trainer?`<span class="itrainer">${esc(r.trainer)}</span>`:""}<span class="idate">${fmtDate(r.created_at)}</span></div>
     <div class="ibody">${esc(r.content)}</div>
-    <div class="iacts"><button class="linkbtn" onclick="toggleReplies('review',${r.id},this)">💬 답글</button>${acts}</div>
+    <div class="iacts"><button class="linkbtn" onclick="toggleReplies('review',${r.id},this)">답글</button>${acts}</div>
     <div class="replies" id="rep-review-${r.id}"></div>
   </div>`;
 }
@@ -225,12 +223,12 @@ async function loadProgress(){
 }
 function itemProgress(r){
   const own = ME && (ME.isStaff || ME.id === r.discord_id);
-  const acts = own ? `<button class="linkbtn" onclick="editItem('progress',${r.id})">✏️ 수정</button><button class="linkbtn del" onclick="deleteItem('progress',${r.id})">🗑 삭제</button>` : "";
+  const acts = own ? `<button class="linkbtn" onclick="editItem('progress',${r.id})">수정</button><button class="linkbtn del" onclick="deleteItem('progress',${r.id})">삭제</button>` : "";
   return `<div class="item">
     <div class="ihead"><span class="iname">${esc(r.discord_name)}</span><span class="idate">${fmtDate(r.created_at)}</span></div>
     ${r.title?`<div class="ititle">${esc(r.title)}</div>`:""}
     <div class="ibody">${esc(r.content)}</div>
-    <div class="iacts"><button class="linkbtn" onclick="toggleReplies('progress',${r.id},this)">💬 답글</button>${acts}</div>
+    <div class="iacts"><button class="linkbtn" onclick="toggleReplies('progress',${r.id},this)">답글</button>${acts}</div>
     <div class="replies" id="rep-progress-${r.id}"></div>
   </div>`;
 }
@@ -261,7 +259,7 @@ async function loadReplies(pt, pid){
     rows.forEach(r => { RP_MAP[r.id] = r; });
     const list = rows.map(r=>{
       const own = ME && (ME.isStaff || ME.id === r.discord_id);
-      const acts = own ? `<button class="linkbtn" style="font-size:11px" onclick="editItem('reply',${r.id})">✏️ 수정</button><button class="linkbtn del" style="font-size:11px" onclick="deleteItem('reply',${r.id})">🗑 삭제</button>` : "";
+      const acts = own ? `<button class="linkbtn" style="font-size:11px" onclick="editItem('reply',${r.id})">수정</button><button class="linkbtn del" style="font-size:11px" onclick="deleteItem('reply',${r.id})">삭제</button>` : "";
       return `<div class="reply"><div class="rhead"><span class="rname">${esc(r.discord_name)}</span>${r.is_staff?'<span class="staff">트레이너</span>':''}<span class="rdate">${fmtDate(r.created_at)}</span></div><div class="rbody">${esc(r.content)}</div>${acts}</div>`;
     }).join("") || `<div class="rbody" style="padding:4px 0">첫 답글을 남겨보세요.</div>`;
     const form = ME ? `<div class="replyform"><input id="rin-${pt}-${pid}" placeholder="답글 입력" onkeydown="if(event.key==='Enter')sendReply('${pt}',${pid})"><button class="btn btn-gold" onclick="sendReply('${pt}',${pid})">등록</button></div>` : `<div class="lockmsg">답글은 로그인 후 작성할 수 있어요</div>`;
