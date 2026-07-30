@@ -12,6 +12,8 @@
 <meta property="og:description" content="서바이버 티어 무리의 실사용 G5 세팅 그대로 — 발소리 최적화 6단계.">
 <meta property="og:url" content="https://mriacademy.gg/sound-guide.html">
 <meta property="og:image" content="https://mriacademy.gg/g5-eq.png">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -29,34 +31,36 @@
 }
 </script>
 <style>
-:root{--bg:#0a0a0c;--card:#141417;--elev:#1b1b21;--line:#26262b;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--ink:#ededf0;--dim:#a0a0a8;--faint:#6b6b73;--red:#ff6b6b}
+:root{--bg:#0a0a0c;--surface-1:#141419;--surface-2:#1b1b21;--line:#26262c;--ink:#f4f4f5;--ink-body:#c6c6cd;--ink-dim:#9b9ba4;--gold:#f5c518;--gold-deep:#caa00f;--danger:#f87171;--display:'Saira Condensed','Pretendard Variable',sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--ink);font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;line-height:1.65;-webkit-font-smoothing:antialiased;
-  background-image:radial-gradient(900px 500px at 50% -10%,rgba(245,197,24,.06),transparent 70%)}
+body{background:var(--bg);color:var(--ink);font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;line-height:1.65;-webkit-font-smoothing:antialiased}
+a{color:var(--gold)}
+:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
 .wrap{max-width:760px;margin:0 auto;padding:48px 18px 90px}
-.kick{color:var(--gold);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
-h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin:8px 0 10px}
-.sub{color:var(--dim);font-size:15px;margin-bottom:6px}
-.meta{color:var(--faint);font-size:12.5px;margin-bottom:34px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px 20px;margin-bottom:16px}
-.card.warn{border-color:rgba(255,107,107,.4)}
+.kick{display:flex;align-items:center;gap:8px;font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.kick::before{content:"";width:14px;height:3px;background:var(--gold)}
+h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin:10px 0 10px}
+.sub{color:var(--ink-body);font-size:16px;margin-bottom:6px}
+.meta{color:var(--ink-dim);font-size:14px;font-weight:700;margin-bottom:34px}
+.card{border:1px solid var(--line);background:var(--surface-1);padding:22px 20px;margin-bottom:16px}
+.card.warn{border-color:rgba(248,113,113,.45)}
 .stephead{display:flex;align-items:center;gap:12px;margin-bottom:8px}
-.num{flex:0 0 40px;height:40px;border-radius:50%;background:var(--gold);color:#0a0a0c;font-weight:800;font-size:19px;display:flex;align-items:center;justify-content:center}
-.warn .num{background:var(--red)}
+.num{flex:0 0 40px;height:40px;background:var(--gold);color:#0a0a0c;font-family:var(--display);font-weight:800;font-size:19px;display:flex;align-items:center;justify-content:center}
+.warn .num{background:var(--danger)}
 .stephead h2{font-size:19px;font-weight:800}
-.warn .stephead h2{color:var(--red)}
-.card p{color:var(--dim);font-size:14.5px}
+.warn .stephead h2{color:var(--danger)}
+.card p{color:var(--ink-body);font-size:15px}
 .card b{color:var(--ink)}
 .card .gold{color:var(--gold)}
-.shot{width:100%;border-radius:12px;border:1px solid var(--line);margin-top:14px;display:block}
-.why{background:linear-gradient(0deg,rgba(245,197,24,.05),rgba(245,197,24,.05)),var(--card);border:1px solid var(--gold-soft);border-radius:16px;padding:22px 20px;margin:28px 0}
+.shot{width:100%;border:1px solid var(--line);margin-top:14px;display:block}
+.why{border:1px solid var(--line);border-top:2px solid var(--gold);background:var(--surface-1);padding:22px 20px;margin:28px 0}
 .why h3{color:var(--gold);font-size:16px;font-weight:800;margin-bottom:8px}
-.why p{color:var(--dim);font-size:14.5px}
-.cta{background:var(--card);border:1px solid var(--gold-soft);border-radius:16px;padding:26px 20px;text-align:center;margin-top:36px}
+.why p{color:var(--ink-body);font-size:15px}
+.cta{border-top:2px solid var(--gold);border-bottom:1px solid var(--line);padding:26px 20px;text-align:center;margin-top:36px}
 .cta h3{font-size:19px;font-weight:800;margin-bottom:6px}
-.cta p{color:var(--dim);font-size:14px;margin-bottom:16px}
-.btn{display:inline-block;background:var(--gold);color:#0a0a0c;text-decoration:none;font-weight:800;padding:13px 26px;border-radius:10px;font-size:14.5px}
-.back{display:inline-block;margin-top:28px;color:var(--gold);text-decoration:none;font-size:14px}
+.cta p{color:var(--ink-body);font-size:15px;margin-bottom:16px}
+.btn{display:inline-block;background:var(--gold);color:#0a0a0c;text-decoration:none;font-weight:800;padding:13px 26px;font-size:15px;min-height:44px}
+.back{display:inline-block;margin-top:28px;color:var(--gold);text-decoration:none;font-size:15px;font-weight:700}
 .divider{border:none;border-top:1px solid var(--line);margin:30px 0}
 </style>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
@@ -74,7 +78,7 @@ h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin
   </div>
 
   <div class="card warn">
-    <div class="stephead"><div class="num">2</div><h2>게인 스위치 = L (중요!)</h2></div>
+    <div class="stephead"><div class="num">2</div><h2>게인 스위치 = L</h2></div>
     <p>본체의 <b>H/L 게인 스위치를 반드시 L</b>로 두세요. NX7 MK4처럼 감도 높은 이어폰은 H로 두면 "치지직" 화이트노이즈가 낍니다. 소리가 작다고 H로 올리지 말고, 볼륨은 노브와 윈도우 볼륨으로 조절하세요.</p>
   </div>
 
@@ -101,12 +105,12 @@ h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin
   </div>
 
   <div class="why">
-    <h3>💡 왜 "효과 다 끄고 EQ만"인가요?</h3>
+    <h3>왜 "효과 다 끄고 EQ만"인가</h3>
     <p>가상 서라운드·크리스탈라이저 같은 후처리 효과는 음악·영화용입니다. 배그의 발소리 방향은 게임 엔진이 이미 스테레오로 정확히 계산해 주는데, 후처리가 끼면 그 정보가 왜곡됩니다. <b>원음(스테레오) + 발소리 대역 EQ 부스트</b>가 위치 파악에 가장 유리한 조합이고, 실제 대회·상위권 유저 대부분이 같은 방식을 씁니다.</p>
   </div>
 
   <div class="why">
-    <h3>❓ 자주 묻는 질문</h3>
+    <h3>자주 묻는 질문</h3>
     <p><b>Q. 윈도우 "공간 음향(Windows Sonic)"은 켜야 하나요?</b><br>
     → <b style="color:var(--gold)">끄세요.</b> 공간 음향은 윈도우가 소리에 가상 서라운드를 덧입히는 후처리라, 발소리 방향·거리감을 오히려 뭉갭니다. 확인: 작업표시줄 스피커 우클릭 → 소리 설정 → 출력(G5) → 공간 음향 <b>끄기</b>.</p>
     <p style="margin-top:12px"><b>Q. 이어폰 플러그가 4.4mm(밸런스드)인데 G5에 안 들어가요.</b><br>
@@ -121,7 +125,7 @@ h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin
     <a class="btn" href="apply.html">레슨 신청하기 →</a>
   </div>
 
-  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
+  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈</a></div>
 </div>
 </body>
 </html>
