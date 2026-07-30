@@ -11,42 +11,47 @@
 <meta property="og:title" content="수강생 성장 기록 — 배틀그라운드 강의 후기 | MRI ACADEMY">
 <meta property="og:description" content="dak.gg 전적으로 검증하는 실제 성장 기록. 평딜 200 플래 → 평딜 300 마스터.">
 <meta property="og:url" content="https://mriacademy.gg/success.html">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
-:root{--bg:#0a0a0c;--card:#141417;--elev:#1b1b21;--line:#26262b;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--ink:#ededf0;--dim:#a0a0a8;--faint:#6b6b73;--green:#10b981}
+:root{--bg:#0a0a0c;--surface-1:#141419;--surface-2:#1b1b21;--line:#26262c;--ink:#f4f4f5;--ink-body:#c6c6cd;--ink-dim:#9b9ba4;--gold:#f5c518;--gold-deep:#caa00f;--display:'Saira Condensed','Pretendard Variable',sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--ink);font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;line-height:1.65;-webkit-font-smoothing:antialiased;
-  background-image:radial-gradient(900px 500px at 50% -10%,rgba(245,197,24,.06),transparent 70%)}
+body{background:var(--bg);color:var(--ink);font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;line-height:1.65;-webkit-font-smoothing:antialiased}
+a{color:var(--gold)}
+:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
 .wrap{max-width:760px;margin:0 auto;padding:48px 18px 90px}
-.kick{color:var(--gold);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
-h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin:8px 0 10px}
-.sub{color:var(--dim);font-size:15px;margin-bottom:30px}
-.trust{background:linear-gradient(0deg,rgba(245,197,24,.05),rgba(245,197,24,.05)),var(--card);border:1px solid var(--gold-soft);border-radius:14px;padding:16px 18px;margin-bottom:34px;font-size:13.5px;color:var(--dim)}
+.kick{display:flex;align-items:center;gap:8px;font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.kick::before{content:"";width:14px;height:3px;background:var(--gold)}
+h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin:10px 0 10px}
+.sub{color:var(--ink-body);font-size:16px;margin-bottom:30px}
+.trust{border:1px solid var(--line);border-top:2px solid var(--gold);background:var(--surface-1);padding:16px 18px;margin-bottom:34px;font-size:15px;color:var(--ink-body)}
 .trust b{color:var(--gold)}
-.case{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px 22px;margin-bottom:22px}
+.case{border:1px solid var(--line);background:var(--surface-1);padding:26px 22px;margin-bottom:22px}
 .case-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
 .case-head .nick{font-size:20px;font-weight:800}
-.badge{font-size:11.5px;font-weight:700;border-radius:999px;padding:3px 11px;border:1px solid var(--gold-soft);color:var(--gold);background:rgba(245,197,24,.08)}
-.grow{display:flex;align-items:stretch;gap:0;background:var(--elev);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:18px}
+.badge{font-family:var(--display);font-size:12.5px;font-weight:700;letter-spacing:.06em;padding:3px 11px;border:1px solid var(--line);color:var(--ink-body)}
+.grow{display:flex;align-items:stretch;gap:0;background:var(--bg);border:1px solid var(--line);margin-bottom:18px}
 .grow .col{flex:1;padding:16px 12px;text-align:center}
-.grow .col.after{background:rgba(245,197,24,.07)}
-.grow .lbl{font-size:11px;font-weight:800;letter-spacing:.12em;color:var(--faint);text-transform:uppercase;margin-bottom:6px}
+.grow .col.after{border-left:1px solid var(--line)}
+.grow .lbl{font-family:var(--display);font-size:12px;font-weight:700;letter-spacing:.12em;color:var(--ink-dim);text-transform:uppercase;margin-bottom:6px}
 .grow .after .lbl{color:var(--gold)}
-.grow .tier{font-size:17px;font-weight:800}
+.grow .tier{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums}
 .grow .after .tier{color:var(--gold)}
-.grow .dmg{font-size:13px;color:var(--dim);margin-top:3px}
+.grow .dmg{font-size:14px;color:var(--ink-body);margin-top:3px;font-variant-numeric:tabular-nums}
 .grow .arrow{display:flex;align-items:center;color:var(--gold);font-size:22px;font-weight:800;padding:0 4px}
-.shot{width:100%;border-radius:12px;border:1px solid var(--line);margin:6px 0 14px;display:block}
-.cap{font-size:12px;color:var(--faint);text-align:center;margin:-8px 0 16px}
-.case p{color:var(--dim);font-size:14.5px;margin-bottom:12px}
+.shot{width:100%;border:1px solid var(--line);margin:6px 0 14px;display:block;max-width:100%}
+.cap{font-size:13px;font-weight:700;color:var(--ink-dim);text-align:center;margin:-8px 0 16px}
+.case p{color:var(--ink-body);font-size:15px;margin-bottom:12px}
 .case b{color:var(--ink)}
-.quote{border-left:3px solid var(--gold);background:var(--elev);border-radius:0 10px 10px 0;padding:13px 16px;font-size:14px;color:var(--dim);margin:14px 0;font-style:normal}
+.quote{border:1px solid var(--line);background:var(--bg);padding:13px 16px;font-size:15px;color:var(--ink-body);margin:14px 0;font-style:normal}
+.quote::before{content:"\201C";font-family:var(--display);font-weight:800;color:var(--gold);font-size:20px;margin-right:6px}
 .quote b{color:var(--gold)}
-.soon{background:var(--card);border:1px dashed var(--line);border-radius:18px;padding:30px 20px;text-align:center;color:var(--faint);font-size:14px;margin-bottom:22px}
-.cta{background:var(--card);border:1px solid var(--gold-soft);border-radius:16px;padding:26px 20px;text-align:center;margin-top:36px}
+.soon{border:1px dashed var(--line);padding:30px 20px;text-align:center;color:var(--ink-body);font-size:15px;margin-bottom:22px}
+.cta{border-top:2px solid var(--gold);border-bottom:1px solid var(--line);padding:26px 20px;text-align:center;margin-top:36px}
 .cta h3{font-size:19px;font-weight:800;margin-bottom:6px}
-.cta p{color:var(--dim);font-size:14px;margin-bottom:16px}
-.btn{display:inline-block;background:var(--gold);color:#0a0a0c;text-decoration:none;font-weight:800;padding:13px 26px;border-radius:10px;font-size:14.5px}
-.back{display:inline-block;margin-top:28px;color:var(--gold);text-decoration:none;font-size:14px}
+.cta p{color:var(--ink-body);font-size:15px;margin-bottom:16px}
+.btn{display:inline-block;background:var(--gold);color:#0a0a0c;text-decoration:none;font-weight:800;padding:13px 26px;font-size:15px;min-height:44px}
+.back{display:inline-block;margin-top:28px;color:var(--gold);text-decoration:none;font-size:15px;font-weight:700}
 </style>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
 </head>
@@ -57,7 +62,7 @@ h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin
   <p class="sub">말로 하는 후기가 아니라, <b style="color:var(--gold)">전적으로 증명되는 기록</b>만 올립니다.</p>
 
   <div class="trust">
-    📊 <b>기록 원칙</b> — 모든 수치는 dak.gg 공개 전적 기준이며 시즌별로 확인 가능합니다. 닉네임·전적 공개는 본인 동의를 받은 사례만 게시합니다. 과장·연출 없음.
+    <b>기록 원칙</b> — 모든 수치는 dak.gg 공개 전적 기준이며 시즌별로 확인 가능합니다. 닉네임·전적 공개는 본인 동의를 받은 사례만 게시합니다. 과장·연출 없음.
   </div>
 
   <!-- CASE 01 · 덕덕 -->
@@ -77,7 +82,7 @@ h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin
       <div class="arrow">→</div>
       <div class="col after">
         <div class="lbl">After · 시즌40</div>
-        <div class="tier">마스터 🏅 <span style="font-size:12px;color:var(--dim)">(3,404 RP)</span></div>
+        <div class="tier">마스터 <span style="font-size:12px;color:var(--dim)">(3,404 RP)</span></div>
         <div class="dmg">평균 딜량 315.8</div>
       </div>
     </div>
@@ -97,16 +102,16 @@ h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin
   </div>
 
   <div class="soon">
-    📈 다음 성장 기록 정리 중입니다.<br>수강생의 시즌 전적이 쌓이는 대로, 동의를 받아 순차 공개합니다.
+    다음 성장 기록 정리 중.<br>수강생의 시즌 전적이 쌓이는 대로, 동의를 받아 순차 공개합니다.
   </div>
 
   <div class="cta">
-    <h3>당신의 전적도 여기 올라올 수 있습니다</h3>
+    <h3>다음 기록은 당신의 전적입니다</h3>
     <p>다시보기 2개를 60분 이상 분석해서, 뭐부터 고칠지 순서를 잡아드립니다.</p>
     <a class="btn" href="apply.html">상담 신청하기 →</a>
   </div>
 
-  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
+  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈</a></div>
 </div>
 </body>
 </html>
