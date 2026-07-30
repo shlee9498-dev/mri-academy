@@ -11,6 +11,8 @@
 <meta property="og:title" content="배틀그라운드 그래픽 세팅 가이드 · 경쟁전 프레임 최적화">
 <meta property="og:description" content="서바이버 티어 무리의 실사용 그래픽 세팅 그대로 — 프레임·시인성 최적화 7단계.">
 <meta property="og:url" content="https://mriacademy.gg/graphics-guide.html">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -29,33 +31,35 @@
 }
 </script>
 <style>
-:root{--bg:#0a0a0c;--card:#141417;--elev:#1b1b21;--line:#26262b;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--ink:#ededf0;--dim:#a0a0a8;--faint:#6b6b73;--red:#ff6b6b}
+:root{--bg:#0a0a0c;--surface-1:#141419;--surface-2:#1b1b21;--line:#26262c;--ink:#f4f4f5;--ink-body:#c6c6cd;--ink-dim:#9b9ba4;--gold:#f5c518;--gold-deep:#caa00f;--danger:#f87171;--display:'Saira Condensed','Pretendard Variable',sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--ink);font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;line-height:1.65;-webkit-font-smoothing:antialiased;
-  background-image:radial-gradient(900px 500px at 50% -10%,rgba(245,197,24,.06),transparent 70%)}
+body{background:var(--bg);color:var(--ink);font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;line-height:1.65;-webkit-font-smoothing:antialiased}
+a{color:var(--gold)}
+:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
 .wrap{max-width:760px;margin:0 auto;padding:48px 18px 90px}
-.kick{color:var(--gold);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
-h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin:8px 0 10px}
-.sub{color:var(--dim);font-size:15px;margin-bottom:6px}
-.meta{color:var(--faint);font-size:12.5px;margin-bottom:34px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px 20px;margin-bottom:16px}
-.card.warn{border-color:rgba(255,107,107,.4)}
+.kick{display:flex;align-items:center;gap:8px;font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.kick::before{content:"";width:14px;height:3px;background:var(--gold)}
+h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin:10px 0 10px}
+.sub{color:var(--ink-body);font-size:16px;margin-bottom:6px}
+.meta{color:var(--ink-dim);font-size:14px;font-weight:700;margin-bottom:34px}
+.card{border:1px solid var(--line);background:var(--surface-1);padding:22px 20px;margin-bottom:16px}
+.card.warn{border-color:rgba(248,113,113,.45)}
 .stephead{display:flex;align-items:center;gap:12px;margin-bottom:8px}
-.num{flex:0 0 40px;height:40px;border-radius:50%;background:var(--gold);color:#0a0a0c;font-weight:800;font-size:19px;display:flex;align-items:center;justify-content:center}
-.warn .num{background:var(--red)}
+.num{flex:0 0 40px;height:40px;background:var(--gold);color:#0a0a0c;font-family:var(--display);font-weight:800;font-size:19px;display:flex;align-items:center;justify-content:center}
+.warn .num{background:var(--danger)}
 .stephead h2{font-size:19px;font-weight:800}
-.warn .stephead h2{color:var(--red)}
-.card p{color:var(--dim);font-size:14.5px}
+.warn .stephead h2{color:var(--danger)}
+.card p{color:var(--ink-body);font-size:15px}
 .card b{color:var(--ink)}
 .card .gold{color:var(--gold)}
-.why{background:linear-gradient(0deg,rgba(245,197,24,.05),rgba(245,197,24,.05)),var(--card);border:1px solid var(--gold-soft);border-radius:16px;padding:22px 20px;margin:28px 0}
+.why{border:1px solid var(--line);border-top:2px solid var(--gold);background:var(--surface-1);padding:22px 20px;margin:28px 0}
 .why h3{color:var(--gold);font-size:16px;font-weight:800;margin-bottom:8px}
-.why p{color:var(--dim);font-size:14.5px}
-.cta{background:var(--card);border:1px solid var(--gold-soft);border-radius:16px;padding:26px 20px;text-align:center;margin-top:36px}
+.why p{color:var(--ink-body);font-size:15px}
+.cta{border-top:2px solid var(--gold);border-bottom:1px solid var(--line);padding:26px 20px;text-align:center;margin-top:36px}
 .cta h3{font-size:19px;font-weight:800;margin-bottom:6px}
-.cta p{color:var(--dim);font-size:14px;margin-bottom:16px}
-.btn{display:inline-block;background:var(--gold);color:#0a0a0c;text-decoration:none;font-weight:800;padding:13px 26px;border-radius:10px;font-size:14.5px}
-.back{display:inline-block;margin-top:28px;color:var(--gold);text-decoration:none;font-size:14px}
+.cta p{color:var(--ink-body);font-size:15px;margin-bottom:16px}
+.btn{display:inline-block;background:var(--gold);color:#0a0a0c;text-decoration:none;font-weight:800;padding:13px 26px;font-size:15px;min-height:44px}
+.back{display:inline-block;margin-top:28px;color:var(--gold);text-decoration:none;font-size:15px;font-weight:700}
 .divider{border:none;border-top:1px solid var(--line);margin:30px 0}
 </style>
 </head>
@@ -72,7 +76,7 @@ h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin
   </div>
 
   <div class="card warn">
-    <div class="stephead"><div class="num">2</div><h2>렌더링 스케일 = 100 (중요!)</h2></div>
+    <div class="stephead"><div class="num">2</div><h2>렌더링 스케일 = 100</h2></div>
     <p><b>렌더링 스케일은 100 고정</b>이 원칙입니다. 100 아래로 내리면 프레임은 늘지만 <b>원거리 적이 픽셀로 뭉개져서</b> 먼저 발견당하고, 100 위로 올리면 선명해지는 대신 프레임 손해가 큽니다. 프레임이 부족하다면 렌더링 스케일이 아니라 3~6번 항목에서 줄이세요.</p>
   </div>
 
@@ -102,7 +106,7 @@ h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin
   </div>
 
   <div class="why">
-    <h3>💡 왜 "화질을 버리고 프레임"인가요?</h3>
+    <h3>왜 "화질을 버리고 프레임"인가</h3>
     <p>배그의 교전은 0.1초 싸움입니다. 프레임이 높을수록 적의 움직임이 더 자주 갱신되고 조준 반응이 빨라지며, 프레임이 <b>일정할수록</b> 에임이 흔들리지 않습니다. 평균 프레임보다 중요한 건 교전 순간의 최저 프레임 — 그래서 그림자·효과처럼 교전 때 부하가 몰리는 옵션을 최하로 내리는 겁니다. 화질 옵션 중에서도 <b>적 시인성에 직결되는 것(렌더링 스케일·안티앨리어싱·텍스처)만 지키는</b> 것이 상위권의 공통 세팅입니다.</p>
   </div>
 
@@ -114,7 +118,7 @@ h1{font-size:clamp(26px,5.5vw,36px);font-weight:800;letter-spacing:-.02em;margin
     <a class="btn" href="apply.html">레슨 신청하기 →</a>
   </div>
 
-  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
+  <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈</a></div>
 </div>
 </body>
 </html>
