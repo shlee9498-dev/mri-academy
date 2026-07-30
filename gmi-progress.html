@@ -2,187 +2,158 @@
 <html lang="ko"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MRI ACADEMY — 성장 기록</title>
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@400;600;800&display=swap" rel="stylesheet">
+<meta name="description" content="MRI ACADEMY 수강생 성장 원장 — 전적 스냅샷 기반 티어·RP·딜량 변화 기록.">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
-:root{--bg:#0a0a0c;--bg-elev:#15151a;--bg-card:#1a1a20;--bg-card-hi:#20202a;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--blue:#5ac8fa;--green:#10b981;--purple:#a855f7;--orange:#ff9500;--line:#27272a;--display:'Archivo Black','Pretendard Variable',sans-serif;--body:'Pretendard Variable','Archivo',-apple-system,sans-serif}
-*{margin:0;padding:0;box-sizing:border-box}html{scroll-behavior:smooth}
-body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;position:relative}
-body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(rgba(245,197,24,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.025) 1px,transparent 1px);background-size:36px 36px}
-body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse at top,rgba(245,197,24,.08),transparent 60%)}
-.wrap{position:relative;z-index:1;max-width:720px;margin:0 auto;padding:0 20px}
-header{padding:60px 0 36px;text-align:center}
-.brand{display:inline-flex;align-items:center;gap:8px;font-family:var(--display);font-size:15px;letter-spacing:.04em;margin-bottom:24px}
+:root{--bg:#0a0a0c;--surface-1:#141419;--surface-2:#1b1b21;--line:#26262c;--ink:#f4f4f5;--ink-body:#c6c6cd;--ink-dim:#9b9ba4;--gold:#f5c518;--gold-deep:#caa00f;--display:'Saira Condensed','Pretendard Variable',sans-serif;--body:'Pretendard Variable',-apple-system,sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--gold);text-decoration:none}
+a:hover{text-decoration:underline}
+:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
+.wrap{max-width:760px;margin:0 auto;padding:0 20px}
+header{padding:56px 0 34px;border-bottom:1px solid var(--line)}
+.brand{font-family:var(--display);font-size:15px;letter-spacing:.06em;text-transform:uppercase;font-weight:800}
 .brand .g{color:var(--gold)}
-.kicker{text-transform:uppercase;letter-spacing:.2em;color:var(--gold);font-size:11px;font-weight:800;margin-bottom:14px}
-h1{font-family:var(--display);font-size:clamp(27px,7vw,44px);line-height:1.05;letter-spacing:-.01em;margin-bottom:16px}
-h1 em{color:var(--gold);font-style:normal}
-.sub{color:var(--ink-dim);font-size:15px;max-width:500px;margin:0 auto}
-section{padding:38px 0;border-top:1px solid var(--line)}
-.sec-kicker{text-transform:uppercase;letter-spacing:.2em;color:var(--gold);font-size:11px;font-weight:800;margin-bottom:10px}
-.sec-title{font-family:var(--display);font-size:clamp(21px,5vw,28px);margin-bottom:8px}
-.sec-desc{color:var(--ink-dim);font-size:14px;margin-bottom:24px}
-.defs{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.def{background:var(--bg-card);border:1px solid var(--line);border-radius:8px;padding:18px}
-.def.lesson{border-top:3px solid var(--gold)}.def.class{border-top:3px solid var(--purple)}
-.def .t{font-family:var(--display);font-size:15px;margin-bottom:4px}
-.def.lesson .t{color:var(--gold)}.def.class .t{color:#c79bf5}
-.def .u{font-size:12px;color:var(--ink-faint);margin-bottom:12px}
-.def .row{font-size:12.5px;color:var(--ink-dim);padding:5px 0;border-top:1px solid var(--line)}
-.def .row b{color:var(--ink)}
-@media(max-width:520px){.defs{grid-template-columns:1fr}}
-.curri{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.step{background:var(--bg-card);border:1px solid var(--line);border-radius:8px;padding:15px 11px;position:relative;transition:transform .2s,border-color .2s}
-.step:hover{transform:translateY(-1px);border-color:var(--gold-soft)}
-.step .num{font-family:var(--display);font-size:13px;color:var(--gold);opacity:.55}
-.step .nm{font-family:var(--display);font-size:14px;margin:7px 0 5px}
-.step .d{font-size:11px;color:var(--ink-faint);line-height:1.4}
-.step .arrow{position:absolute;right:-9px;top:50%;transform:translateY(-50%);color:var(--gold);font-size:13px;z-index:2}
-.step:last-child .arrow{display:none}
-@media(max-width:560px){.curri{grid-template-columns:repeat(2,1fr)}.step:nth-child(2) .arrow{display:none}}
-.tabs{display:flex;gap:8px;margin-bottom:20px}
-.tab{flex:1;padding:11px;text-align:center;background:transparent;border:1px solid var(--line);border-radius:6px;color:var(--ink-dim);font-family:var(--body);font-weight:800;font-size:13px;cursor:pointer;transition:all .18s}
-.tab:hover{border-color:var(--gold-soft);color:var(--ink)}.tab.on{background:var(--gold);color:#000;border-color:var(--gold)}
-.card{background:var(--bg-card);border:1px solid var(--line);border-radius:8px;padding:18px;margin-bottom:13px}
-.card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:13px;border-bottom:1px solid var(--line);margin-bottom:14px}
-.who{display:flex;align-items:center;gap:11px;min-width:0}
-.avatar{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:15px;flex-shrink:0;color:#000}
-.av-gold{background:linear-gradient(135deg,var(--gold),#caa00f)}.av-purple{background:linear-gradient(135deg,#c79bf5,#9b5de5);color:#fff}
-.who .h{font-family:var(--display);font-size:15px;line-height:1.1}.who .m{font-size:11px;color:var(--ink-faint);margin-top:3px}
-.badge{font-size:10px;font-weight:800;letter-spacing:.03em;padding:5px 9px;border-radius:5px;white-space:nowrap}
-.b-lesson{background:rgba(245,197,24,.13);color:var(--gold);border:1px solid var(--gold-soft)}
-.b-class{background:rgba(168,85,247,.14);color:#c79bf5;border:1px solid rgba(168,85,247,.3)}
-.strip{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
-.cell{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px 8px;text-align:center}
-.cell .n{font-family:var(--display);font-size:16px;color:var(--gold);line-height:1.05}
-.cell .n.pend{color:var(--ink-faint);font-size:12px;font-family:var(--body);font-weight:800}
-.cell .l{font-size:10px;color:var(--ink-faint);margin-top:5px}
-.cell.rank .n{color:var(--blue)}
-.mstones{display:flex;gap:6px;margin:0 0 4px;flex-wrap:wrap}
-.pill{font-size:11px;font-weight:800;padding:5px 10px;border-radius:99px;border:1px solid var(--line);color:var(--ink-faint)}
-.pill.done{background:rgba(16,185,129,.12);color:var(--green);border-color:rgba(16,185,129,.35)}
-.pill.now{background:rgba(245,197,24,.12);color:var(--gold);border-color:var(--gold-soft)}
-.log{margin-top:14px;border-left:2px solid var(--line);padding-left:14px}
-.log .li{position:relative;padding:5px 0;font-size:12.5px;color:var(--ink-dim)}
-.log .li::before{content:"";position:absolute;left:-19px;top:11px;width:7px;height:7px;border-radius:99px;background:var(--gold)}
-.vod{display:inline-flex;align-items:center;gap:6px;margin-top:13px;font-size:12px;font-weight:800;color:var(--blue);text-decoration:none;border:1px solid rgba(90,200,250,.3);background:rgba(90,200,250,.07);padding:7px 12px;border-radius:6px;transition:all .18s}
-.vod:hover{border-color:var(--blue);transform:translateY(-1px)}
-.empty{color:var(--ink-faint);font-size:13px;text-align:center;padding:24px;border:1px dashed var(--line);border-radius:8px}
-.group{display:none}.group.on{display:block;animation:fade .3s ease}
-@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-footer{padding:38px 0 56px;border-top:1px solid var(--line);text-align:center;color:var(--ink-faint);font-size:12px}
-footer b{color:var(--gold)}footer .links{margin-top:9px;color:var(--ink-dim)}
+.kicker{display:flex;align-items:center;gap:8px;margin:26px 0 10px;font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.kicker::before{content:"";width:14px;height:3px;background:var(--gold)}
+h1{font-size:clamp(30px,7vw,44px);font-weight:800;line-height:1.12;letter-spacing:-.01em}
+.sub{color:var(--ink-body);font-size:16px;max-width:540px;margin-top:12px}
+section{padding:40px 0;border-bottom:1px solid var(--line)}
+.sec-label{display:flex;align-items:center;gap:8px;font-family:var(--display);font-weight:700;font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);margin-bottom:8px}
+.sec-label::before{content:"";width:12px;height:3px;background:var(--gold)}
+.sec-title{font-size:clamp(20px,5vw,26px);font-weight:800;margin-bottom:6px}
+.sec-desc{color:var(--ink-body);font-size:15px;margin-bottom:22px}
+.updated{font-family:var(--display);font-weight:700;font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-dim)}
+.ledger{border-top:2px solid var(--gold);margin-top:14px}
+.row{display:grid;grid-template-columns:34px 1fr auto;gap:12px;align-items:center;padding:14px 2px;border-bottom:1px solid var(--line)}
+.row .no{font-family:var(--display);font-weight:800;font-size:16px;color:var(--ink-dim);font-variant-numeric:tabular-nums}
+.row:first-child .no{color:var(--gold)}
+.who .nick{font-family:var(--display);font-weight:800;font-size:17px;letter-spacing:.02em}
+.who .path{font-size:14px;font-weight:700;color:var(--ink-dim);margin-top:2px}
+.who .path b{color:var(--ink);font-weight:700}
+.who .path .arr{font-weight:400}
+.nums{text-align:right;font-variant-numeric:tabular-nums}
+.nums .rp{font-family:var(--display);font-weight:800;font-size:18px}
+.nums .rp .unit{font-size:12px;color:var(--ink-body);font-family:var(--body);font-weight:700;margin-left:2px}
+.nums .meta{font-size:13px;font-weight:700;color:var(--ink-dim);margin-top:2px}
+.spark{grid-column:2/4;height:34px}
+.spark svg{width:100%;max-width:340px;height:34px;display:block}
+.spark polyline{fill:none;stroke:var(--gold);stroke-width:2}
+.state{padding:26px 0;border-bottom:1px solid var(--line);color:var(--ink-body);font-size:15px}
+.state b{color:var(--ink)}
+.defs{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line)}
+.def{background:var(--surface-1);padding:20px}
+.def .t{font-size:16px;font-weight:800;margin-bottom:2px}
+.def.lesson .t{color:var(--gold)}
+.def .u{font-size:14px;font-weight:700;color:var(--ink-dim);margin-bottom:12px}
+.def .row2{font-size:14px;color:var(--ink-body);padding:6px 0;border-top:1px solid var(--line)}
+.def .row2 b{color:var(--ink)}
+@media(max-width:560px){.defs{grid-template-columns:1fr}}
+.curri{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+.step{background:var(--surface-1);padding:16px 12px}
+.step .num{font-family:var(--display);font-weight:800;font-size:13px;color:var(--gold)}
+.step .nm{font-size:15px;font-weight:800;margin:6px 0 4px}
+.step .d{font-size:13px;color:var(--ink-body);line-height:1.5}
+@media(max-width:560px){.curri{grid-template-columns:repeat(2,1fr)}}
+footer{padding:36px 0 56px;text-align:center;color:var(--ink-body);font-size:14px}
+footer b{color:var(--gold)}
+footer .links{margin-top:8px}
+@media(prefers-reduced-motion:no-preference){
+  .fade{animation:fade .35s ease-out both}
+  @keyframes fade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+}
 </style><script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
 </head><body><div class="wrap">
   <header>
-    <div class="brand"><span class="g">GmI</span>&nbsp;MRI ACADEMY</div>
-    <div class="kicker">Player Growth Report</div>
-    <h1>실력의 차이는<br><em>기록</em>으로 증명된다</h1>
-    <p class="sub">입과 시점부터 주차별 코칭, 커리큘럼 단계, 전적 변화까지 — 투명하게 공개합니다.</p>
+    <div class="brand"><span class="g">GmI</span> MRI ACADEMY</div>
+    <div class="kicker">Player Growth Ledger</div>
+    <h1>성장 기록</h1>
+    <p class="sub">전적 스냅샷 기반 성장 원장. 서버가 기록하고, 숫자가 증명합니다.</p>
   </header>
+
   <section>
-    <div class="sec-kicker">Two Tracks</div>
-    <div class="sec-title">강의와 레슨, 무엇이 다른가</div>
-    <p class="sec-desc">같은 배움이지만 진행 단위가 다릅니다.</p>
-    <div class="defs">
-      <div class="def class"><div class="t">강의 · 이무리 직강</div><div class="u">예약제 3시간 집중 (심화 과정)</div>
-        <div class="row"><b>진행 단위</b> · 정해진 예약 시간(회차)</div><div class="row"><b>자격</b> · 레벨 테스트 합격</div>
-        <div class="row"><b>특징</b> · 전략 심화 · 고점 돌파 · 다시보기 제공</div></div>
-      <div class="def lesson"><div class="t">레슨 · 서바이버 트레이너</div><div class="u">실전 밀착 교육 (기초~실전)</div>
-        <div class="row"><b>진행 단위</b> · 판수(Game) 기준</div><div class="row"><b>자격</b> · 누구나 (테스트 무관)</div>
-        <div class="row"><b>특징</b> · 실전 경험 중심 · 시간 자유 · 개인/그룹</div></div>
+    <div class="sec-label">Growth Top 20</div>
+    <div class="sec-title">성장 상위 기록</div>
+    <p class="sec-desc">첫 스냅샷 대비 티어·RP 상승 순. 닉네임은 부분 마스킹으로 공개합니다. <span class="updated" id="updatedAt"></span></p>
+    <div id="ledger">
+      <div class="state" id="ledgerState"><b>기록 불러오는 중</b> — 전적 스냅샷 원장을 조회하고 있습니다. 잠시 후 이 자리에 표시됩니다.</div>
     </div>
   </section>
+
   <section>
-    <div class="sec-kicker">Curriculum</div>
-    <div class="sec-title">우리는 이 순서로 가르칩니다</div>
-    <p class="sec-desc">감이 아니라 이론. 모든 수강생이 동일한 4단계 개념 트랙을 밟습니다.</p>
+    <div class="sec-label">Two Tracks</div>
+    <div class="sec-title">강의와 레슨</div>
+    <p class="sec-desc">같은 배움, 다른 진행 단위.</p>
+    <div class="defs">
+      <div class="def"><div class="t">강의 · 이무리 직강</div><div class="u">예약제 3시간 집중 — 심화 과정</div>
+        <div class="row2"><b>진행 단위</b> · 정해진 예약 시간(회차)</div><div class="row2"><b>자격</b> · 레벨 테스트 합격</div>
+        <div class="row2"><b>특징</b> · 전략 심화 · 고점 돌파 · 다시보기 제공</div></div>
+      <div class="def lesson"><div class="t">레슨 · 서바이버 트레이너</div><div class="u">실전 밀착 교육 — 기초부터 실전까지</div>
+        <div class="row2"><b>진행 단위</b> · 판수(Game) 기준</div><div class="row2"><b>자격</b> · 누구나 (테스트 무관)</div>
+        <div class="row2"><b>특징</b> · 실전 경험 중심 · 시간 자유 · 개인/그룹</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-label">Curriculum</div>
+    <div class="sec-title">4단계 개념 트랙</div>
+    <p class="sec-desc">감이 아니라 이론. 모든 수강생이 같은 순서를 밟습니다.</p>
     <div class="curri">
-      <div class="step"><div class="num">01</div><div class="nm">주도권</div><div class="d">서클·동선으로 1·2·3티어 자리 판단</div><span class="arrow">&rarr;</span></div>
-      <div class="step"><div class="num">02</div><div class="nm">우선순위</div><div class="d">공격·방어 우선순위와 빠른 전환</div><span class="arrow">&rarr;</span></div>
-      <div class="step"><div class="num">03</div><div class="nm">포지션</div><div class="d">1선·본대·리베·끝각 / 포탑 로테이션</div><span class="arrow">&rarr;</span></div>
+      <div class="step"><div class="num">01</div><div class="nm">주도권</div><div class="d">서클·동선으로 1·2·3티어 자리 판단</div></div>
+      <div class="step"><div class="num">02</div><div class="nm">우선순위</div><div class="d">공격·방어 우선순위와 빠른 전환</div></div>
+      <div class="step"><div class="num">03</div><div class="nm">포지션</div><div class="d">1선·본대·리베·끝각 / 포탑 로테이션</div></div>
       <div class="step"><div class="num">04</div><div class="nm">강제</div><div class="d">상대 선택지를 좁혀 게임 설계</div></div>
     </div>
   </section>
-  <section>
-    <div class="sec-kicker">Progress Tracker</div>
-    <div class="sec-title">성장 기록</div>
-    <p class="sec-desc">담당 트레이너/강사의 주차별 코칭과 진행 현황. (현재 4명 공개)</p>
-    <div class="tabs">
-      <button class="tab on" data-g="lesson">레슨 · 판수 기준</button>
-      <button class="tab" data-g="class">강의 · 예약제 시간</button>
-    </div>
-    <div class="group on" id="g-lesson">
-      <div class="card">
-        <div class="card-head">
-          <div class="who"><div class="avatar av-gold">E</div>
-            <div><div class="h">EOMTI</div><div class="m">레슨 · 현태 담당 · 오더 트랙</div></div></div>
-          <div class="badge b-lesson">레슨</div>
-        </div>
-        <div class="strip">
-          <div class="cell"><div class="n">33판</div><div class="l">진행 판수</div></div>
-          <div class="cell"><div class="n pend">연동 예정</div><div class="l">일반전 평균딜</div></div>
-          <div class="cell rank"><div class="n pend">연동 예정</div><div class="l">경쟁전 티어</div></div>
-        </div>
-        <div class="mstones"><span class="pill done">주도권 ✓</span><span class="pill done">우선순위 ✓</span><span class="pill done">포지션 ✓</span><span class="pill now">강제 ◑</span></div>
-        <div class="log"><div class="li">04/23 주도권 개념 첫 도입</div><div class="li">04/25 발로란트 포지션 접목·맵 체크</div><div class="li">05/05 진행방향 설계·피지컬 다듬기</div></div>
-        
-      </div>
-      <div class="card">
-        <div class="card-head">
-          <div class="who"><div class="avatar av-gold">R</div>
-            <div><div class="h">RED</div><div class="m">레슨 · 준구 담당 · 오더/빌드업 트랙</div></div></div>
-          <div class="badge b-lesson">레슨</div>
-        </div>
-        <div class="strip">
-          <div class="cell"><div class="n">33판</div><div class="l">진행 판수 (31/33)</div></div>
-          <div class="cell"><div class="n pend">연동 예정</div><div class="l">일반전 평균딜</div></div>
-          <div class="cell rank"><div class="n pend">연동 예정</div><div class="l">경쟁전 티어</div></div>
-        </div>
-        <div class="mstones"><span class="pill done">주도권 ✓</span><span class="pill done">우선순위 ✓</span><span class="pill done">포지션 ✓</span><span class="pill done">강제 ✓</span></div>
-        <div class="log"><div class="li">05/09 오더 방향성·우선순위 전달</div><div class="li">05/16 강제 개념 — 선택지 좁히기</div><div class="li">05/21 1:1 쇼부 습관 교정</div></div>
-        
-      </div>
-    </div>
-    <div class="group" id="g-class">
-      <div class="card">
-        <div class="card-head">
-          <div class="who"><div class="avatar av-purple">박</div>
-            <div><div class="h">박선우</div><div class="m">강의 · 무리 담당 · 중급반 정규</div></div></div>
-          <div class="badge b-class">강의</div>
-        </div>
-        <div class="strip">
-          <div class="cell"><div class="n">12회</div><div class="l">수강 회차 (1패키지)</div></div>
-          <div class="cell"><div class="n pend">연동 예정</div><div class="l">일반전 평균딜</div></div>
-          <div class="cell rank"><div class="n pend">연동 예정</div><div class="l">경쟁전 티어</div></div>
-        </div>
-        <div class="mstones"><span class="pill done">주도권 ✓</span><span class="pill done">우선순위 ✓</span><span class="pill now">포지션 ◑</span><span class="pill">강제</span></div>
-        <div class="log"><div class="li">정규 이론(브리핑·포지션) 집중</div><div class="li">정규 방어 포지션 역할 이해</div><div class="li">정규 서브오더 정보 제공</div></div>
-        <a class="vod" href="https://vod.sooplive.com/player/193596469" target="_blank" rel="noopener">📺 강의 다시보기</a>
-      </div>
-      <div class="card">
-        <div class="card-head">
-          <div class="who"><div class="avatar av-purple">김</div>
-            <div><div class="h">김준성</div><div class="m">강의 · 무리 담당 · 정규 36회</div></div></div>
-          <div class="badge b-class">강의</div>
-        </div>
-        <div class="strip">
-          <div class="cell"><div class="n">36회</div><div class="l">수강 회차 (장기)</div></div>
-          <div class="cell"><div class="n pend">연동 예정</div><div class="l">일반전 평균딜</div></div>
-          <div class="cell rank"><div class="n pend">연동 예정</div><div class="l">경쟁전 티어</div></div>
-        </div>
-        <div class="mstones"><span class="pill done">주도권 ✓</span><span class="pill done">우선순위 ✓</span><span class="pill done">포지션 ✓</span><span class="pill now">강제 ◑</span></div>
-        <div class="log"><div class="li">정규 전적관리 전략 단계 진입</div><div class="li">정규 고지대 주도권·시야 운영</div><div class="li">정규 4페 1티어 빌드업 설계</div></div>
-        <a class="vod" href="https://vod.sooplive.com/player/193596469" target="_blank" rel="noopener">📺 강의 다시보기</a>
-      </div>
-    </div>
-  </section>
-  <footer>실력을 향한 투명한 도전, <b>MRI 아카데미</b>와 함께.<br>
-    <span class="links">YouTube [이무리] · 카카오톡 채널 MRI아카데미 · discord.gg/9RjqdSKw</span></footer>
+
+  <footer>실력을 향한 투명한 도전, <b>MRI 아카데미</b>.<br>
+    <span class="links"><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube 이무리</a> · <a href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">디스코드</a> · <a href="index.html">MRI ACADEMY 홈</a></span></footer>
 </div>
 <script>
-document.querySelectorAll('.tab').forEach(t=>{t.addEventListener('click',()=>{
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
-  document.querySelectorAll('.group').forEach(x=>x.classList.remove('on'));
-  t.classList.add('on');document.getElementById('g-'+t.dataset.g).classList.add('on');});});
+(function(){
+  var API="https://mri-academy-production.up.railway.app";
+  function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+  function sign(n){return (n>0?"+":"")+Number(n).toLocaleString("ko-KR");}
+  function spark(traj){
+    var pts=traj.filter(function(p){return p.rankPoint!=null;});
+    if(pts.length<2)return "";
+    var vals=pts.map(function(p){return p.rankPoint;});
+    var min=Math.min.apply(null,vals),max=Math.max.apply(null,vals),rng=(max-min)||1;
+    var poly=vals.map(function(v,i){
+      var x=(i/(vals.length-1))*200, y=30-((v-min)/rng)*26;
+      return x.toFixed(1)+","+y.toFixed(1);
+    }).join(" ");
+    return '<div class="spark"><svg viewBox="0 0 200 34" preserveAspectRatio="none" role="img" aria-label="RP 변화 추이"><polyline points="'+poly+'"/></svg></div>';
+  }
+  fetch(API+"/api/progress-public").then(function(r){return r.json();}).then(function(d){
+    var list=(d&&d.students)||[];
+    if(!list.length){
+      document.getElementById("ledgerState").innerHTML="<b>기록 준비 중</b> — 전적 스냅샷이 쌓이는 대로 이 자리에 공개됩니다. 실시간 성장 기록은 디스코드에서 확인할 수 있습니다.";
+      return;
+    }
+    var html='<div class="ledger">'+list.map(function(s,i){
+      var dl=s.delta||{};
+      var path=(dl.tierFrom&&dl.tierTo)?('<b>'+esc(dl.tierFrom)+'</b> <span class="arr">→</span> <b>'+esc(dl.tierTo)+'</b>'):"";
+      var meta=[];
+      if(dl.dmgDelta!=null&&dl.dmgDelta!==0)meta.push("평균딜 "+sign(Math.round(dl.dmgDelta)));
+      if(dl.months)meta.push(dl.months+"개월");
+      return '<div class="row fade" style="animation-delay:'+Math.min(i*40,400)+'ms">'
+        +'<div class="no">'+String(i+1).padStart(2,"0")+'</div>'
+        +'<div class="who"><div class="nick">'+esc(s.alias)+'</div>'+(path?'<div class="path">'+path+'</div>':'')+'</div>'
+        +'<div class="nums">'+(dl.rpDelta!=null?'<div class="rp">'+sign(Math.round(dl.rpDelta))+'<span class="unit">RP</span></div>':'')
+        +(meta.length?'<div class="meta">'+meta.join(" · ")+'</div>':'')+'</div>'
+        +spark(s.trajectory||[])
+        +'</div>';
+    }).join("")+'</div>';
+    document.getElementById("ledger").innerHTML=html;
+    if(d.updatedAt){
+      var el=document.getElementById("updatedAt");
+      el.textContent="Updated "+String(d.updatedAt).slice(0,10);
+    }
+  }).catch(function(){
+    document.getElementById("ledgerState").innerHTML="<b>기록 불러오는 중</b> — 서버 응답이 지연되고 있습니다. 잠시 후 새로고침으로 다시 확인할 수 있습니다.";
+  });
+})();
 </script></body></html>
