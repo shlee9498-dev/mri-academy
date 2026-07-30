@@ -3543,9 +3543,14 @@ app.get("/api/progress-public", async (_req, res) => {
     (snaps || []).forEach((r) => { (by[r.student_id] = by[r.student_id] || []).push(r); });
     const students = Object.values(by).map((arr) => {
       const f = arr[0], l = arr[arr.length - 1];
-      const mm = {};                                   // 월 단위 다운샘플: 월별 마지막 스냅
-      arr.forEach((r) => { mm[String(r.created_at).slice(0, 7)] = r; });
-      const trajectory = Object.values(mm).map((r) => ({
+      const dd = {};                                   // 일 단위 버킷: 일별 마지막 스냅 (월 버킷은 매일 적재 초기에 1점 → 전원 탈락)
+      arr.forEach((r) => { dd[String(r.created_at).slice(0, 10)] = r; });
+      let pts = Object.values(dd);
+      if (pts.length > 12) {                           // 최대 12점 균등 다운샘플 — 첫·끝 스냅 항상 포함
+        const step = (pts.length - 1) / 11;
+        pts = Array.from({ length: 12 }, (_, i) => pts[Math.round(i * step)]);
+      }
+      const trajectory = pts.map((r) => ({
         date: String(r.created_at).slice(0, 10), tier: r.tier || null,
         rankPoint: r.rank_point ?? null, avgDamage: r.avg_damage ?? null,
       }));
