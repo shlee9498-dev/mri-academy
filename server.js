@@ -3519,6 +3519,86 @@ app.post("/api/gdcup-solo-tier", async (req, res) => {
   } catch (e) { res.status(500).json({ error: "server_error" }); }
 });
 
+// ══ 공개 read API 2종 — gmi-progress·lesson-feedback 동적 전환용 (PII 정책: 2026-07-29 오너 승인) ══
+// ① progress: 부분 마스킹 인게임닉("세**") ② feedback: 완전 익명("레슨생 A") + 본문 내
+//   students.name·discord_nick 사전 치환 ③ 트레이너 활동명 공개 ④ 익명화 전제 본문 전문.
+// 서버측 마스킹만 신뢰(클라 0), 5분 캐시. 실패 시 프론트는 정적 폴백("기록 불러오는 중").
+const PUB_CACHE = { prog: null, progAt: 0, feed: null, feedAt: 0 };
+const PUB_TTL = 5 * 60 * 1000;
+function pubMaskNick(n) {
+  const t = String(n || "").trim();
+  if (!t) return "익명";
+  return Array.from(t).slice(0, 2).join("") + "**";   // 사례 5건과 동일 규격("세**")
+}
+
+// [공개] 수강생 성장 요약 — student_snapshots 시계열 (닉 부분 마스킹, 상위 20명)
+app.get("/api/progress-public", async (_req, res) => {
+  try {
+    if (!process.env.SUPABASE_URL) return res.json({ updatedAt: null, students: [] });
+    if (PUB_CACHE.prog && Date.now() - PUB_CACHE.progAt < PUB_TTL) return res.json(PUB_CACHE.prog);
+    const snaps = await sbSelect("student_snapshots",
+      "select=student_id,player_name,tier,tier_index,rank_point,avg_damage,created_at" +
+      "&student_id=not.is.null&order=created_at.asc&limit=5000");
+    const by = {};
+    (snaps || []).forEach((r) => { (by[r.student_id] = by[r.student_id] || []).push(r); });
+    const students = Object.values(by).map((arr) => {
+      const f = arr[0], l = arr[arr.length - 1];
+      const mm = {};                                   // 월 단위 다운샘플: 월별 마지막 스냅
+      arr.forEach((r) => { mm[String(r.created_at).slice(0, 7)] = r; });
+      const trajectory = Object.values(mm).map((r) => ({
+        date: String(r.created_at).slice(0, 10), tier: r.tier || null,
+        rankPoint: r.rank_point ?? null, avgDamage: r.avg_damage ?? null,
+      }));
+      const months = Math.max(1, Math.round((new Date(l.created_at) - new Date(f.created_at)) / 2592000000));
+      return {
+        alias: pubMaskNick(l.player_name || f.player_name),
+        trajectory,
+        delta: {
+          tierFrom: f.tier || null, tierTo: l.tier || null,
+          tierDelta: (l.tier_index != null && f.tier_index != null) ? l.tier_index - f.tier_index : null,
+          rpDelta: (l.rank_point != null && f.rank_point != null) ? l.rank_point - f.rank_point : null,
+          dmgDelta: (l.avg_damage != null && f.avg_damage != null) ? l.avg_damage - f.avg_damage : null,
+          months,
+        },
+      };
+    }).filter((s) => s.trajectory.length >= 2)
+      .sort((a, b) => (b.delta.tierDelta || 0) - (a.delta.tierDelta || 0) || (b.delta.rpDelta || 0) - (a.delta.rpDelta || 0))
+      .slice(0, 20);
+    const out = { updatedAt: new Date().toISOString(), students };
+    PUB_CACHE.prog = out; PUB_CACHE.progAt = Date.now();
+    res.json(out);
+  } catch (e) { console.error("progress_public", e?.message); res.json({ updatedAt: null, students: [] }); }
+});
+
+// [공개] 코칭 기록 — feedback(published=true) 최신 50건, 완전 익명 + 본문 사전 필터
+app.get("/api/feedback-public", async (_req, res) => {
+  try {
+    if (!process.env.SUPABASE_URL) return res.json({ updatedAt: null, items: [] });
+    if (PUB_CACHE.feed && Date.now() - PUB_CACHE.feedAt < PUB_TTL) return res.json(PUB_CACHE.feed);
+    const rows = await sbSelect("feedback",
+      "published=eq.true&select=trainer,student_alias,lesson_date,body,created_at" +
+      "&order=lesson_date.desc,created_at.desc&limit=50");
+    // 본문 필터 사전: students.name·discord_nick 전체 (등장 시 "레슨생"으로 치환)
+    let dict = [];
+    try {
+      const st = await sbSelect("students", "select=name,discord_nick");
+      (st || []).forEach((s) => { [s.name, s.discord_nick].forEach((w) => { const t = String(w || "").trim(); if (t.length >= 2) dict.push(t); }); });
+      dict.sort((a, b) => b.length - a.length);        // 긴 이름 우선(부분 겹침 방지)
+    } catch (e) { console.error("feedback_public_dict", e?.message); }
+    const scrub = (txt) => { let s = String(txt || ""); dict.forEach((w) => { s = s.split(w).join("레슨생"); }); return s; };
+    // 응답 내 안정 별칭: student_alias 첫 등장 순서로 "레슨생 A·B·…"
+    const seen = new Map();
+    const items = (rows || []).map((r) => {
+      const key = r.student_alias || "?";
+      if (!seen.has(key)) seen.set(key, "레슨생 " + String.fromCharCode(65 + (seen.size % 26)) + (seen.size >= 26 ? Math.floor(seen.size / 26) : ""));
+      return { alias: seen.get(key), trainer: r.trainer || null, date: r.lesson_date || String(r.created_at).slice(0, 10), summary: scrub(r.body) };
+    });
+    const out = { updatedAt: new Date().toISOString(), items };
+    PUB_CACHE.feed = out; PUB_CACHE.feedAt = Date.now();
+    res.json(out);
+  } catch (e) { console.error("feedback_public", e?.message); res.json({ updatedAt: null, items: [] }); }
+});
+
 const PORT = process.env.PORT || 3000;
 // ── 공개 피드백 월 (published=true 만 노출) ──
 app.get("/api/feedback", async (req, res) => {
