@@ -9,43 +9,46 @@
 <meta property="og:title" content="트레이너 모집 · MRI ACADEMY">
 <meta property="og:description" content="검증된 PUBG 트레이너를 모집합니다. 대표강사 직강 시스템·안정적 정산·성장 파이프라인.">
 <meta property="og:type" content="website">
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
 <style>
-:root{--bg:#0a0a0c;--bg-card:#1a1a20;--bg-elev:#20202a;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;--gold:#f5c518;--gold-soft:rgba(245,197,24,.3);--gold-deep:#caa00f;--green:#10b981;--blue:#5ac8fa;--red:#e63946;--line:#27272a;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif}
+:root{--bg:#0a0a0c;--surface-1:#141419;--surface-2:#1b1b21;--line:#26262c;--ink:#f4f4f5;--ink-body:#c6c6cd;--ink-dim:#9b9ba4;--gold:#f5c518;--gold-deep:#caa00f;--display:'Saira Condensed','Pretendard Variable',sans-serif;--body:'Pretendard Variable',sans-serif}
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;background-image:radial-gradient(circle at 50% 0,rgba(245,197,24,.07),transparent 60%),linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);background-size:auto,37px 37px,37px 37px}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--gold)}
+:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
 .wrap{max-width:760px;margin:0 auto;padding:34px 18px 80px}
-.top{text-align:center;margin-bottom:30px}
-.kick{color:var(--gold);font-weight:800;font-size:12px;letter-spacing:.16em;text-transform:uppercase}
-h1{font-family:var(--display);font-size:clamp(28px,7vw,46px);line-height:1.08;margin:10px 0 12px}
-h1 .gd{color:var(--gold);text-shadow:0 0 34px rgba(245,197,24,.4)}
-.lead{color:var(--ink-dim);font-size:15px;max-width:560px;margin:0 auto}
-.cta-big{display:inline-block;background:linear-gradient(135deg,var(--gold),var(--gold-deep));color:#0a0a0c;border-radius:10px;padding:15px 34px;font-weight:800;font-size:16px;text-decoration:none;margin-top:20px;transition:transform .15s}
-.cta-big:hover{transform:translateY(-2px)}
-.sec{background:var(--bg-card);border:1px solid var(--line);border-radius:14px;padding:24px;margin-bottom:16px}
-.sec h2{font-family:var(--display);font-size:clamp(17px,4vw,21px);margin-bottom:6px}
-.sec .sd{color:var(--ink-dim);font-size:13.5px;margin-bottom:18px}
-.cards{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-.card{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:16px}
-.card .ci{font-size:22px}
-.card .ct{font-weight:800;font-size:14.5px;margin:8px 0 5px}
-.card .cc{font-size:12.5px;color:var(--ink-dim);line-height:1.6}
+.top{padding:24px 0 30px;border-bottom:1px solid var(--line);margin-bottom:24px}
+.kick{display:flex;align-items:center;gap:8px;font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.kick::before{content:"";width:14px;height:3px;background:var(--gold)}
+h1{font-size:clamp(28px,7vw,44px);font-weight:800;line-height:1.12;margin:10px 0 12px}
+h1 .gd{color:var(--gold)}
+.lead{color:var(--ink-body);font-size:16px;max-width:560px}
+.cta-big{display:inline-block;background:var(--gold);color:#0a0a0c;padding:15px 34px;font-weight:800;font-size:16px;text-decoration:none;margin-top:20px;transition:opacity .18s ease-out;min-height:44px}
+.cta-big:hover{opacity:.88}
+.sec{padding:24px 0;border-bottom:1px solid var(--line)}
+.sec h2{font-size:clamp(19px,4vw,23px);font-weight:800;margin-bottom:6px}
+.sec .sd{color:var(--ink-body);font-size:15px;margin-bottom:18px}
+.cards{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+.card{background:var(--surface-1);padding:16px}
+.card .ci{font-family:var(--display);font-weight:800;font-size:14px;letter-spacing:.1em;color:var(--gold)}
+.card .ct{font-weight:800;font-size:15.5px;margin:8px 0 5px}
+.card .cc{font-size:14px;color:var(--ink-body);line-height:1.6}
 .list{list-style:none;display:flex;flex-direction:column;gap:11px}
-.list li{display:flex;gap:10px;font-size:14px;color:var(--ink-dim);align-items:flex-start}
+.list li{display:flex;gap:10px;font-size:15px;color:var(--ink-body);align-items:flex-start}
 .list li b{color:var(--ink);font-weight:700}
 .list li .ck{color:var(--gold);flex-shrink:0;font-weight:800}
 .steps{display:flex;flex-direction:column;gap:0}
 .step{display:flex;gap:14px;padding:14px 0;border-bottom:1px solid var(--line)}
 .step:last-child{border-bottom:none}
-.step .num{flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:rgba(245,197,24,.12);border:1px solid var(--gold-soft);color:var(--gold);font-family:var(--display);font-size:14px;display:flex;align-items:center;justify-content:center}
-.step .st{font-weight:800;font-size:14.5px;margin-bottom:2px}
-.step .ss{font-size:12.5px;color:var(--ink-dim)}
-.trust{text-align:center;background:linear-gradient(135deg,rgba(245,197,24,.08),rgba(16,185,129,.05));border:1px solid var(--gold-soft);border-radius:14px;padding:24px;margin-bottom:16px}
-.trust .tt{font-family:var(--display);font-size:clamp(16px,4vw,20px);margin-bottom:8px}
-.trust .tc{font-size:13.5px;color:var(--ink-dim);max-width:520px;margin:0 auto}
+.step .num{flex:0 0 auto;width:30px;height:30px;border:1px solid var(--gold-deep);color:var(--gold);font-family:var(--display);font-weight:800;font-size:14px;display:flex;align-items:center;justify-content:center}
+.step .st{font-weight:800;font-size:15px;margin-bottom:2px}
+.step .ss{font-size:14px;color:var(--ink-body)}
+.trust{text-align:center;border-top:2px solid var(--gold);border-bottom:1px solid var(--line);padding:24px 20px;margin:24px 0 16px}
+.trust .tt{font-size:clamp(17px,4vw,20px);font-weight:800;margin-bottom:8px}
+.trust .tc{font-size:15px;color:var(--ink-body);max-width:520px;margin:0 auto}
 .bottom-cta{text-align:center;margin-top:8px}
-.back{display:inline-block;margin-top:22px;color:var(--gold);text-decoration:none;font-weight:700;font-size:14px}
+.back{display:inline-block;margin-top:22px;color:var(--gold);text-decoration:none;font-weight:700;font-size:15px}
 @media(max-width:560px){.cards{grid-template-columns:1fr}}
 </style>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
@@ -63,10 +66,10 @@ h1 .gd{color:var(--gold);text-shadow:0 0 34px rgba(245,197,24,.4)}
     <h2>왜 MRI ACADEMY인가</h2>
     <p class="sd">혼자 맨땅에서 시작하지 않습니다. 시스템 위에서 가르칩니다.</p>
     <div class="cards">
-      <div class="card"><div class="ci">🎓</div><div class="ct">검증된 커리큘럼</div><div class="cc">대표강사 직강 시스템과 4단계 커리큘럼·교육 자료를 제공합니다. 가르치는 데만 집중하세요.</div></div>
-      <div class="card"><div class="ci">💰</div><div class="ct">안정적·투명 정산</div><div class="cc">검증 후 업계 상위 수준의 수익 배분, 매월 정산(사업소득). 직접 유치 시 영업 인센티브 별도.</div></div>
-      <div class="card"><div class="ci">📈</div><div class="ct">성장 파이프라인</div><div class="cc">후임 양성·체계적 교육으로 함께 큽니다. 입대 등 공백도 팀으로 커버합니다.</div></div>
-      <div class="card"><div class="ci">🏆</div><div class="ct">검증된 브랜드</div><div class="cc">실데이터 기반 성과와 검증된 팀. 신뢰가 곧 자산이 되는 환경에서 활동합니다.</div></div>
+      <div class="card"><div class="ci">01</div><div class="ct">검증된 커리큘럼</div><div class="cc">대표강사 직강 시스템과 4단계 커리큘럼·교육 자료를 제공합니다. 가르치는 데만 집중하세요.</div></div>
+      <div class="card"><div class="ci">02</div><div class="ct">안정적·투명 정산</div><div class="cc">검증 후 업계 상위 수준의 수익 배분, 매월 정산(사업소득). 직접 유치 시 영업 인센티브 별도.</div></div>
+      <div class="card"><div class="ci">03</div><div class="ct">성장 파이프라인</div><div class="cc">후임 양성·체계적 교육으로 함께 큽니다. 입대 등 공백도 팀으로 커버합니다.</div></div>
+      <div class="card"><div class="ci">04</div><div class="ct">검증된 브랜드</div><div class="cc">실데이터 기반 성과와 검증된 팀. 신뢰가 곧 자산이 되는 환경에서 활동합니다.</div></div>
     </div>
   </div>
 
@@ -101,7 +104,7 @@ h1 .gd{color:var(--gold);text-shadow:0 0 34px rgba(245,197,24,.4)}
 
   <div class="bottom-cta">
     <a class="cta-big" href="trainer-apply.html">트레이너 지원하기 →</a>
-    <div><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
+    <div><a class="back" href="index.html">← MRI ACADEMY 홈</a></div>
   </div>
 </div>
 </body>
