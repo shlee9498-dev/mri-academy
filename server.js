@@ -3703,7 +3703,7 @@ async function pubgNameByAccount(platform, accountId) {
 }
 let statsRun = { running: false, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], nickChanges: [], needsInvestigation: [], promotions: [], masterRate: null, masterCount: null, startedAt: null, finishedAt: null, error: null };
 async function runStatsSnapshot() {
-  statsRun = { running: true, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], nickChanges: [], needsInvestigation: [], promotions: [], masterRate: null, masterCount: null, startedAt: Date.now(), finishedAt: null, error: null };
+  statsRun = { running: true, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], nickChanges: [], needsInvestigation: [], promotions: [], masterRate: null, masterCount: null, insertFails: 0, insertFailMsg: null, startedAt: Date.now(), finishedAt: null, error: null };
   try {
     // pubg 연결 학생은 status 무관 전원 조회 — 수료생(마스터 배출자)이 달성률·PROOF의 핵심이라 제외 금지
     const students = await sbSelect("students", "select=id,name,trainer_id,status,pubg_platform,pubg_name,pubg_account_id&order=name.asc");
@@ -3771,7 +3771,11 @@ async function runStatsSnapshot() {
             rank_point: snap.rankPoint, best_rank_point: snap.bestRP, rounds_played: snap.rounds,
             kda: snap.kda, avg_kills: snap.avgKills, avg_damage: snap.avgDamage, raw: snap,
           });
-        } catch (e) { console.error("snap_insert", s.name, e?.message); }
+        } catch (e) {
+          console.error("snap_insert", s.name, e?.message);
+          statsRun.insertFails++;                                           // 조용한 전멸 방지 — 완료 DM에 집계 표기
+          if (!statsRun.insertFailMsg) statsRun.insertFailMsg = e?.message || "unknown";
+        }
         const masterPlus = snap.tierIdx >= 7;                               // 7=마스터 8=서바이버 (Crystal 신설로 +1)
         const provisional = snap.tierIdx >= 8;                              // 서바이버=실시간 상위등수 구간(시즌중 미확정), 마스터=달성시 확정
         const candLabel = provisional ? "서바이버 구간 진입 (시즌 중 — 확정 아님)" : snap.tierLabel;
@@ -3812,7 +3816,7 @@ async function runStatsSnapshot() {
         const promo = statsRun.promotions.length
           ? statsRun.promotions.map((p) => `· ${p.student} (${p.trainer || "미배정"}) → ${p.provisional ? "⚡ 서바이버 구간 진입(시즌 중 미확정)" : "🎖️ 마스터 확정"}`).join("\n")
           : "없음";
-        await owner.send(`📊 전적 스냅샷 완료 — ${rated.length}명 조회 (미연결 ${statsRun.unlinked})\n마스터+ 달성률: **${statsRun.masterRate}%** (${mp}/${rated.length})\n\n🆙 승급 감지(직전 대비):\n${promo}\n\n승급 후보(미등록 마스터+):\n${cand}\n\n🔄 닉변 감지(이력 기록됨):\n${nick}\n\n🔍 수동 조사 필요(dak.gg):\n${invest}\n\n전체 리포트: GET /api/admin/stats/report`);
+        await owner.send(`📊 전적 스냅샷 완료 — ${rated.length}명 조회 (미연결 ${statsRun.unlinked})${statsRun.insertFails ? `\n⚠️ DB 적재 실패 ${statsRun.insertFails}건 — ${statsRun.insertFailMsg}` : ""}\n마스터+ 달성률: **${statsRun.masterRate}%** (${mp}/${rated.length})\n\n🆙 승급 감지(직전 대비):\n${promo}\n\n승급 후보(미등록 마스터+):\n${cand}\n\n🔄 닉변 감지(이력 기록됨):\n${nick}\n\n🔍 수동 조사 필요(dak.gg):\n${invest}\n\n전체 리포트: GET /api/admin/stats/report`);
       } catch (e) { console.error("stats_owner_dm", e?.message); }
     }
   } catch (e) { console.error("stats_batch", e?.message); statsRun.error = e?.message || "batch_error"; }
