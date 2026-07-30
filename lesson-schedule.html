@@ -11,16 +11,16 @@
 <meta property="og:url" content="https://mriacademy.gg/lesson-schedule.html">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
 <style>
 /* ── MRI 디자인 시스템 v1 · A "OLED Premium" ── */
 :root{
   --bg:#0a0a0c; --surface-1:#15151a; --surface-2:#1a1a20;
-  --ink:#f4f4f5; --ink-dim:#a1a1aa; --ink-faint:#71717a;
+  --ink:#f4f4f5; --ink-dim:#c6c6cd; --ink-faint:#9b9ba4;
   --gold:#f5c518; --gold-deep:#caa00f; --gold-soft:rgba(245,197,24,.3);
   --line:#27272a;
-  --display:'Space Grotesk',ui-sans-serif,sans-serif;      /* 영문·숫자 */
+  --display:'Saira Condensed','Pretendard Variable',sans-serif;      /* 영문·숫자 */
   --body:'Pretendard Variable',Pretendard,-apple-system,system-ui,sans-serif; /* 한글 */
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -68,7 +68,7 @@ h1{font-size:clamp(26px,6vw,34px);font-weight:800;letter-spacing:-.02em;margin:8
 }
 @keyframes glowpulse{
   0%,100%{box-shadow:0 0 0 0 rgba(245,197,24,.0)}
-  50%{box-shadow:0 0 14px 1px rgba(245,197,24,.45)}
+  50%{box-shadow:0 0 14px 1px rgba(245,197,24,.45)} /* impeccable-disable-line dark-glow -- 디자인 계약: 골드 글로우 한 화면 1개 = 모집중 뱃지 */
 }
 
 /* 빈 주 상태 */
