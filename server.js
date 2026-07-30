@@ -3541,7 +3541,7 @@ app.get("/api/progress-public", async (_req, res) => {
       "&student_id=not.is.null&order=created_at.asc&limit=5000");
     const by = {};
     (snaps || []).forEach((r) => { (by[r.student_id] = by[r.student_id] || []).push(r); });
-    const students = Object.values(by).map((arr) => {
+    const grouped = Object.values(by).map((arr) => {
       const f = arr[0], l = arr[arr.length - 1];
       const dd = {};                                   // 일 단위 버킷: 일별 마지막 스냅 (월 버킷은 매일 적재 초기에 1점 → 전원 탈락)
       arr.forEach((r) => { dd[String(r.created_at).slice(0, 10)] = r; });
@@ -3566,9 +3566,15 @@ app.get("/api/progress-public", async (_req, res) => {
           months,
         },
       };
-    }).filter((s) => s.trajectory.length >= 2)
+    });
+    const withTraj = grouped.filter((s) => s.trajectory.length >= 2);
+    const students = withTraj
       .sort((a, b) => (b.delta.tierDelta || 0) - (a.delta.tierDelta || 0) || (b.delta.rpDelta || 0) - (a.delta.rpDelta || 0))
       .slice(0, 20);
+    // 단계별 카운트 — 어느 단계에서 0이 되는지 특정용(캐시 미스 시에만 출력, 5분 1회)
+    console.log(`[progress_public] rows=${(snaps || []).length}`
+      + ` days=${new Set((snaps || []).map((r) => String(r.created_at).slice(0, 10))).size}`
+      + ` students=${grouped.length} traj2plus=${withTraj.length} out=${students.length}`);
     const out = { updatedAt: new Date().toISOString(), students };
     PUB_CACHE.prog = out; PUB_CACHE.progAt = Date.now();
     res.json(out);
@@ -4034,6 +4040,16 @@ async function runDirectStatus() {
   await ownerDM(`🎓 직강 잔여회차 알림 (remain ≤2)\n${lines.join("\n")}`);
 }
 const DIRECT_STATUS_ENABLED = process.env.DIRECT_STATUS === "1";
+// 미승인 피드백 리마인더 — 승인 워크플로(검수 채널 ✅)가 잊혀 공개 0건이 되는 구조 재발 방지.
+// 0건=침묵(스팸 방지), 1건 이상만 오너 DM. rejected(반려)는 대기 아님 — 제외.
+async function runFeedbackPending() {
+  if (!process.env.SUPABASE_URL) return;
+  const rows = await sbSelect("feedback",
+    "published=eq.false&rejected=not.is.true&select=id,created_at&order=created_at.asc&limit=1000");
+  if (!rows || !rows.length) { console.log("[cron] fbPending: 0건 — 침묵"); return; }
+  const oldestDays = Math.max(1, Math.round((Date.now() - new Date(rows[0].created_at)) / 86400000));
+  await ownerDM(`📝 미승인 피드백 ${rows.length}건 (최장 대기 ${oldestDays}일)\n검수 채널에서 ✅(공개) / ❌(반려)로 처리해주세요 — ✅ 즉시 사이트 노출.`);
+}
 async function cronTick() {
   if (T2_ENABLED) {
     await maybeRunDaily("stats", "05:00", runStatsSnapshot, "일일 전적 스냅샷");
@@ -4042,6 +4058,7 @@ async function cronTick() {
   if (DIRECT_STATUS_ENABLED) {
     await maybeRunDaily("directStatus", "05:10", runDirectStatus, "직강 잔여회차");     // 기존 T2 게이트 재사용
   }
+  await maybeRunDaily("fbPending", "05:15", runFeedbackPending, "미승인 피드백");       // 별도 env 불요(크론 활성 시 항상)
 }
 if (T2_ENABLED || DIRECT_STATUS_ENABLED) {
   setInterval(() => { cronTick().catch((e) => console.error("cron_tick", e?.message)); }, 10 * 60 * 1000);   // 10분 틱
