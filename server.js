@@ -2872,6 +2872,14 @@ app.get("/api/gdcup-meta", async (req, res) => {
     seasons,
     bpiScale: GDCUP_BPI_SCALE,                 // { S:13, T0:10, ... }
     tierOrder: GDCUP_TIER_ORDER,               // 낮음→높음
+    // 평딜 경계 — 프론트가 표·폴백 판정을 하드코딩하지 않도록 여기서 내려준다.
+    // (bpiScale만 내려주던 동안 gdcup-s3·gdcup-add가 자체 경계 450/350/200을 들고 있어
+    //  서버 판정과 어긋났다. 임계값을 바꿔도 프론트가 자동으로 따라오게 하는 게 목적.)
+    tiers: TIERS.map((t, i) => ({
+      tier: t.t, label: t.label, min: t.min,
+      max: i === 0 ? null : TIERS[i - 1].min - 1,   // TIERS는 min 내림차순
+      bpi: GDCUP_BPI_SCALE[t.t],
+    })),
     weightTable: rules.weightTable,            // [[lo,hi,mult], ...] 경계 정수 이상/이하
     cap: rules.cap,                            // { team, sTier } · null이면 제한 없음
     rounds: rules.rounds,
@@ -3420,7 +3428,19 @@ app.get("/api/gdcup-admin-list", async (req, res) => {
     const sf = req.query.season ? `&season=eq.${gdSeason(req.query.season)}` : "";
     const rows = await sbSelect("gdcup_apps", `select=id,team_name,slogan,members,bpi,weight,contact,status,season,created_at,verified_at${sf}&order=created_at.asc`);
     // verified: 확정 시 서버 tier 재검증 통과 여부 (강제확정은 verified_at null → false)
-    res.json({ teams: rows.map((r) => ({ ...r, verified: !!r.verified_at, members: sanitizeMembers(r.members) })) });
+    // 멤버별 registered: 등록계(clan_registry) 대조 결과. DB 조회만이라 PUBG 10 RPM과 무관하게
+    // 목록 로드마다 계산할 수 있다 — PUBG 닉 실존(404) 검증은 확정 시점에만 가능하므로,
+    // 그 전에 팀장 오기재를 미리 잡아내는 용도다. staff-panel과 같은 판정을 쓴다.
+    const teams = await Promise.all(rows.map(async (r) => {
+      const members = sanitizeMembers(r.members);
+      const { verified: reg } = await matchClanRegistry(members);
+      return {
+        ...r, verified: !!r.verified_at,
+        members: members.map((m, i) => ({ ...m, registered: reg[i] })),
+        unregistered: reg.filter((v) => v === false).length,
+      };
+    }));
+    res.json({ teams });
   } catch (e) { res.status(500).json({ error: "server_error" }); }
 });
 // 입금 확정 / 신청대기 / 취소 + 디코 알림
