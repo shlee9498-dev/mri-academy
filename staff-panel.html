@@ -169,10 +169,10 @@ async function reload(){
   if(DATA.scope==="owner"){ sb.className="scope"; sb.textContent="OWNER · 전체"; STAFF = await api("/api/admin/staff").catch(()=>[]); renderOwner(); }
   else { sb.className="scope tr"; sb.textContent="TRAINER · "+(DATA.me?DATA.me.name:""); renderTrainer(); }
   // 🗓️ 일정 관리 + 🔗 운영 바로가기 — 로그인 후에만 렌더(reload는 인증 성공 후 호출).
-  document.getElementById("app").insertAdjacentHTML("beforeend", '<div id="schedwrap"></div><div id="gdcupwrap"></div>' + (DATA.scope==="owner"?'<div id="statswrap"></div>':'') + opsLinks(DATA.scope==="owner"));
+  document.getElementById("app").insertAdjacentHTML("beforeend", '<div id="schedwrap"></div><div id="gdcupwrap"></div>' + (DATA.scope==="owner"?'<div id="statswrap"></div><div id="bpiwrap"></div>':'') + opsLinks(DATA.scope==="owner"));
   loadSchedule();
   loadGdcup();
-  if(DATA.scope==="owner") loadStats();
+  if(DATA.scope==="owner"){ loadStats(); loadDist(); }
 }
 
 
@@ -288,6 +288,75 @@ async function runStats(){
   pollStats();
 }
 function pollStats(){ clearInterval(_sti); _sti=setInterval(async()=>{ try{ SST=await api("/api/admin/stats/report"); renderStats(); if(!SST.running){ clearInterval(_sti); if(SST.finishedAt) toast("전적 스냅샷 완료 · 마스터+ "+SST.masterRate+"%"); } }catch(e){} }, 5000); }
+
+// ── 📈 BPI 분포 (경쟁전 임계값 재보정용) ──────────────────────────
+// PUBG 10 RPM 때문에 오너가 닉을 하나씩 조회할 수 없다. 서버가 닉당 7초 페이싱으로
+// 순회한 결과(/api/pubg-dist·pubg-dist-detail)를 표로 보여주기만 한다 — 여기서 PUBG를
+// 직접 부르지 않는다. 판정 로직과 무관한 읽기 전용 계측 화면.
+let DIST=null, DISTD=null, _dti=null;
+const nz = (v)=> (v==null||v==="") ? "—" : v;
+function renderDist(){
+  const w=document.getElementById("bpiwrap"); if(!w) return;
+  const rk=DIST&&DIST.ranked, rows=(DISTD&&DISTD.rows)||[];
+  let head;
+  if(!DIST || DIST.status==="init"){ head=`<div class="muted">아직 수집하지 않았어요.</div>`; }
+  else if(DIST.status==="disabled"){ head=`<div class="muted">PUBG 키 또는 DB 연동이 없어 비활성 상태예요.</div>`; }
+  else if(DIST.status==="error"){ head=`<div class="muted">수집 중 오류가 났어요. 다시 시도해주세요.</div>`; }
+  else {
+    const s=rk&&rk.stats;
+    head = `<div class="pill">경쟁전 표본 <b>${nz(rk&&rk.counted)}</b></div> `
+      + `<span class="muted">판수부족 ${nz(rk&&rk.thin)} · 기록없음 ${nz(rk&&rk.missing)} · 기준 ${nz(rk&&rk.minRounds)}판</span>`
+      + (s ? `<div style="margin-top:9px;font-size:12.5px">경쟁전 평딜 분위수 —
+            p10 <b>${s.p10}</b> · p25 <b>${s.p25}</b> · p50 <b>${s.p50}</b> · p75 <b>${s.p75}</b> · p90 <b>${s.p90}</b>
+            <span class="muted">(min ${s.min} · 평균 ${s.mean} · max ${s.max})</span></div>` : "")
+      + (rk&&rk.ratio ? `<div style="margin-top:5px;font-size:12.5px">경쟁전÷일겜 비율 — 중앙값 <b>${rk.ratio.median}</b>
+            <span class="muted">(평균 ${rk.ratio.mean} · n=${rk.ratio.n})</span></div>` : "")
+      + `<div class="muted" style="margin-top:5px">수집 ${DIST.updatedAt ? new Date(DIST.updatedAt).toLocaleString("ko-KR") : "—"}</div>`;
+  }
+  const body = rows.length ? `<div style="overflow-x:auto;margin-top:12px">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;white-space:nowrap">
+      <thead><tr style="color:var(--ink-faint);text-align:left">
+        <th style="padding:6px 8px">닉</th><th style="padding:6px 8px">플랫폼</th>
+        <th style="padding:6px 8px">경쟁전딜</th><th style="padding:6px 8px">경쟁전판수</th>
+        <th style="padding:6px 8px">bestRP</th><th style="padding:6px 8px">티어</th>
+        <th style="padding:6px 8px">일겜딜</th><th style="padding:6px 8px">비율</th>
+      </tr></thead><tbody>${rows.map(r=>{
+        const thin = r.rankedRounds!=null && r.rankedRounds < (rk&&rk.minRounds||10);
+        return `<tr style="border-top:1px solid var(--line)">
+          <td style="padding:6px 8px">${esc(r.nick)}${thin?' <span title="경쟁전 표본 부족" style="color:#fbbf24">⚠</span>':''}</td>
+          <td style="padding:6px 8px" class="muted">${esc(r.platform)}</td>
+          <td style="padding:6px 8px"><b>${nz(r.rankedAvgDamage)}</b></td>
+          <td style="padding:6px 8px${thin?';color:#fbbf24;font-weight:700':''}">${nz(r.rankedRounds)}</td>
+          <td style="padding:6px 8px">${nz(r.bestRankPoint)}</td>
+          <td style="padding:6px 8px" class="muted">${esc(nz(r.rankedTier))}</td>
+          <td style="padding:6px 8px">${nz(r.sampleAvgDamage)}</td>
+          <td style="padding:6px 8px">${r.ratio!=null?Math.round(r.ratio*100)+"%":"—"}</td>
+        </tr>`;}).join("")}</tbody></table></div>` : "";
+  w.innerHTML=`<section class="ops"><h2 class="ops-h">📈 BPI 분포 (경쟁전)</h2>
+    <button class="btn gold sm" onclick="runDist()">분포 수집</button>
+    <span class="muted" style="margin-left:8px">닉당 ~7초 · 20명이면 약 2.5분</span>
+    <div style="margin-top:12px">${head}</div>${body}</section>`;
+}
+async function loadDist(){
+  try{ DIST=await api("/api/pubg-dist"); }catch(e){ DIST=null; }
+  try{ DISTD=await api("/api/pubg-dist-detail"); }catch(e){ DISTD=null; }
+  renderDist();
+}
+async function runDist(){
+  try{ await api("/api/pubg-dist/refresh","POST"); toast("분포 수집 시작 — 닉당 7초라 몇 분 걸려요"); }
+  catch(e){ toast(e.message==="already_running"?"이미 수집 중":(e.message||"오류"), true); }
+  clearInterval(_dti);
+  // 수집 완료 신호가 따로 없어 updatedAt 변화로 감지한다.
+  const before = DIST && DIST.updatedAt;
+  _dti=setInterval(async()=>{
+    try{
+      const d=await api("/api/pubg-dist");
+      if(d && d.updatedAt && d.updatedAt!==before){
+        clearInterval(_dti); await loadDist(); toast("분포 수집 완료");
+      }
+    }catch(e){}
+  }, 10000);
+}
 
 // 운영 바로가기 카드 (staff 공통 + owner 전용 시트 링크). 전부 새 탭.
 function opsLinks(isOwner){
