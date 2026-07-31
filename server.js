@@ -798,7 +798,7 @@ if (process.env.DISCORD_TOKEN) {
   // /등록계 — GmI 클랜원 시즌 등록계(전적관리 ID) 등록. LESSON_GUILD(GmI)에 등록.
   const REGISTRY_CMD = {
     name: "등록계",
-    description: "[클랜원] 시즌 등록계(전적관리 ID) 등록 — PUBG 실존 확인 후 저장",
+    description: "[클랜원] 시즌 등록계 등록 — 본계정 1개만. PUBG 실존 확인 후 저장",
     options: [
       { name: "플랫폼", description: "PUBG 플랫폼", type: 3, required: true, choices: [
         { name: "카카오", value: "kakao" },
@@ -1358,7 +1358,8 @@ if (process.env.DISCORD_TOKEN) {
           + (activeHours ? `· 주 접속: ${activeHours}\n` : "")
           + `· 명의 확인: ✅ 본인 명의·거래 이력 없음\n`
           + (prev ? "\n♻️ 기존 등록계에서 변경됨(이력 보존).\n" : "")
-          + `\n📌 본인 명의 계정만 등록 가능(가족 명의는 증빙 필요). 계정거래·대리 ID 등록 불가.`,
+          + `\n📌 등록계는 본계정 1개. 부계정은 인게임 클랜 **Gmriacademy** 가입으로 관리합니다.`
+          + `\n📌 본인 명의 계정만 등록 가능(가족 명의는 증빙 필요). 계정거래·대리 ID는 본계·부계 모두 불가.`,
         components: [],
       });
     } catch (e) {
@@ -1387,6 +1388,8 @@ if (process.env.DISCORD_TOKEN) {
       content:
         `📝 등록 전 확인 (${platform === "kakao" ? "카카오" : "스팀"} · **${ign}**)\n\n`
         + `> **이 계정은 본인 명의이며, 계정거래·양도 이력이 없습니다**\n\n`
+        + `등록계는 **본계정 1개**만 등록돼. 이미 등록한 계정이 있으면 이 계정으로 **교체**돼(이력은 보존).\n`
+        + `부계정은 인게임 클랜 **Gmriacademy** 가입으로 관리해줘.\n\n`
         + `해당하면 [확인], 아니면 [해당 없음]을 눌러줘.`,
       components: [row], ephemeral: true,
     });
