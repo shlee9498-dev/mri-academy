@@ -2121,7 +2121,15 @@ function suggestBPI(avgDamage, rankedTier, isTeamLeader, bestRP) {
   if (tier === "T0" && isTeamLeader) { leaderPenalty = 1; bpi += 1; } // T0 팀장만 +1 (S급 가산 없음)
   return {
     suggested: { tier, bpi, label, leaderPenalty },
-    basis: { avgDamage, rankedTier: rankedTier || null, isTeamLeader: !!isTeamLeader, pick },
+    // pick/decidedBy = **어느 규칙이 최종 티어를 정했는지**("damage" 경계 vs "ranked" 티어보정).
+    //   avgDamage가 어느 통계에서 왔는지를 뜻하지 않는다 — 그건 damageSource가 나타낸다.
+    //   (pick="ranked" + avgDamage=일겜값 조합이 모순처럼 보인다는 지적이 있었다. 모순이 아니라
+    //    서로 다른 두 가지를 가리키는 필드다. pick은 기존 소비처 호환용으로 남긴다.)
+    basis: {
+      avgDamage, damageSource: "sample",
+      rankedTier: rankedTier || null, isTeamLeader: !!isTeamLeader,
+      pick, decidedBy: pick,
+    },
     confirmedBy: null,
   };
 }
@@ -2229,6 +2237,7 @@ async function computeBPI(platform, nickname, isLeader) {
 
   return {
     nickname: player.attributes.name, accountId, platform, seasonId,
+    clanId: player.attributes.clanId || null,   // 인게임 클랜 검증용(GmI = Gmriacademy, 스팀)
     sample: {
       mode, roundsPlayed: rp, avgDamage,
       kills: stats.kills || 0, wins, top10s: stats.top10s || 0,
@@ -2269,6 +2278,39 @@ app.get("/api/player", async (req, res) => {
   try {
     const p = await findPlayer(platform, nickname);
     res.json({ platform, accountId: p.id, nickname: p.attributes.name });
+  } catch (e) { pubgError(res, e); }
+});
+
+// GET /api/pubg-clan?nickname=&platform= — 닉 → clanId → 클랜명 1회 조회 (staff 전용).
+// 인게임 클랜(Gmriacademy) 소속 자동검증의 기준값 clanId를 확보하기 위한 도구.
+// 클랜명은 고유하지 않으므로 정본은 clanId다 — 이 응답으로 상수·env를 고정한다.
+// nickname 없이 clanId만 줘도 클랜명 역조회가 된다.
+app.get("/api/pubg-clan", async (req, res) => {
+  const u = getUser(req);
+  if (!u || !u.isStaff) return res.status(403).json({ error: "staff_only" });
+  if (!process.env.PUBG_API_KEY) return res.status(503).json({ error: "pubg_disabled" });
+  const platform = (req.query.platform || "steam").toString().toLowerCase();
+  if (!VALID_PLATFORMS.includes(platform)) return res.status(400).json({ error: "invalid platform" });
+  const nickname = (req.query.nickname || "").toString().trim();
+  let clanId = (req.query.clanId || "").toString().trim();
+  try {
+    let resolvedNick = null;
+    if (!clanId) {
+      if (!nickname) return res.status(400).json({ error: "nickname or clanId required" });
+      const p = await findPlayer(platform, nickname);
+      resolvedNick = p.attributes.name;
+      clanId = p.attributes.clanId || "";
+      if (!clanId) {
+        return res.json({ platform, nickname: resolvedNick, clanId: null, clan: null,
+          note: "이 계정은 인게임 클랜 미가입 상태이거나, players 응답에 clanId가 없습니다" });
+      }
+    }
+    const cd = await pubgGet(`/shards/${platform}/clans/${clanId}`, 3600_000);
+    const a = cd?.data?.attributes || {};
+    res.json({
+      platform, nickname: resolvedNick, clanId,
+      clan: { name: a.clanName || null, tag: a.clanTag || null, level: a.clanLevel ?? null, members: a.clanMemberCount ?? null },
+    });
   } catch (e) { pubgError(res, e); }
 });
 
@@ -2563,9 +2605,18 @@ app.get("/api/pubg-dist", (_req, res) => res.json(DIST));
 
 // GET /api/pubg-dist-detail — 닉별 일겜/경쟁전 평딜 대조표. BPI 임계값 재보정 전용 계측.
 // 닉이 붙으므로 staff 전용(/api/nicks와 동일 게이트).
+// format=tsv 면 붙여넣기 가능한 표로 내려준다(jq 없이 그대로 복사 가능).
 app.get("/api/pubg-dist-detail", (req, res) => {
   const u = getUser(req);
   if (!u || !u.isStaff) return res.status(403).json({ error: "staff_only" });
+  if (String(req.query.format || "").toLowerCase() === "tsv") {
+    const cols = ["nick", "platform", "rankedAvgDamage", "rankedRounds", "bestRankPoint",
+      "rankedTier", "sampleAvgDamage", "sampleRounds", "ratio", "currentTier", "currentBpi"];
+    const lines = [cols.join("\t")].concat(
+      DIST_DETAIL.map((r) => cols.map((c) => (r[c] == null ? "" : String(r[c]))).join("\t")));
+    res.type("text/plain; charset=utf-8");
+    return res.send(`# updatedAt=${DIST.updatedAt} status=${DIST.status} count=${DIST_DETAIL.length}\n${lines.join("\n")}\n`);
+  }
   res.json({ updatedAt: DIST.updatedAt, status: DIST.status, count: DIST_DETAIL.length, rows: DIST_DETAIL });
 });
 
