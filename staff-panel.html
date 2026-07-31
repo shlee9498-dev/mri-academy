@@ -222,7 +222,7 @@ function renderGdcup(unverified){
   }).join("");
   w.innerHTML = `<section class="ops">
     <h2 class="ops-h">🏆 G드컵 신청 현황 <span style="font-weight:400;color:var(--ink-faint);font-size:13px">시즌 ${GD_SEASON} · ${GD_TEAMS.length}팀</span></h2>
-    ${unverified ? `<div class="empty" style="margin-bottom:10px">⚠️ 등록계 미등록 멤버 <b>${unverified}명</b> — 8/1 마감 전 <code>/등록계</code> 안내 필요</div>` : ""}
+    ${unverified ? `<div class="empty" style="margin-bottom:10px">⚠️ 등록계 미등록 멤버 <b>${unverified}명</b> — <code>/등록계</code> 안내 필요 (상시 접수)</div>` : ""}
     ${isOwner ? `<div style="display:flex;gap:8px;margin-bottom:11px;flex-wrap:wrap">
       <button class="btn" onclick="toggleGdPayouts()">${GD_PAY ? "계좌 숨기기" : "💳 계좌 보기"}</button>
       <button class="btn" onclick="downloadGdCsv()">⬇️ 정산 CSV</button>
