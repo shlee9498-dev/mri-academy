@@ -2092,6 +2092,9 @@ const TIERS = [
   { min: 100, t: "T4", label: "받쳐주기" },
   { min: 0,   t: "T5", label: "신예" },
 ];
+// 경쟁전 표본이 이 판수 미만이면 "표본 부족"으로 본다. 현재는 계측 집계에서만 쓰이고
+// 판정에는 관여하지 않는다(BPI 티어는 여전히 일겜 평딜 기준 — 경쟁전 전환은 임계값 재보정과 동시 적용).
+const RANKED_MIN_ROUNDS = Number(process.env.RANKED_MIN_ROUNDS || 10);
 // 현대 PUBG 경쟁전 사다리: …Platinum < Crystal < Diamond < Master < 서바이버(RP≥SURVIVOR_CUT).
 // 티어 상향 보정(현시즌 rankedTier): 서바이버→최소S / 마스터→최소T0 / 크리스탈·다이아→최소T1 / 플레이하→보정없음.
 function gdcupRankedFloor(rankedTier, bestRP) {
@@ -2414,24 +2417,33 @@ app.get("/api/gdcup-solo-stats", async (req, res) => {
   res.status(404).json({ error: lastErr, ign });
 });
 
+// 표를 손으로 적어두면 TIERS·GDCUP_BPI_SCALE와 어긋난다(실제로 T1 350+/bpi10 등
+// 구 표가 그대로 남아 있었다). 정본 상수에서 파생시켜 복제를 없앤다.
 app.get("/api/bpi-info", (_req, res) => {
   res.json({
-    tiers: [
-      { tier: "T1", avgDmg: "350+",    bpi: 10, label: "에이스",   leaderPenalty: "+1 (T1만)" },
-      { tier: "T2", avgDmg: "300~349", bpi: 6,  label: "준에이스" },
-      { tier: "T3", avgDmg: "200~299", bpi: 4,  label: "중위" },
-      { tier: "T4", avgDmg: "100~199", bpi: 2,  label: "받쳐주기" },
-      { tier: "T5", avgDmg: "0~99",    bpi: 1,  label: "신예" },
-    ],
+    tiers: TIERS.map((t, i) => {
+      const upper = i === 0 ? null : TIERS[i - 1].min - 1;      // TIERS는 min 내림차순
+      return {
+        tier: t.t,
+        avgDmg: upper == null ? `${t.min}+` : `${t.min}~${upper}`,
+        bpi: GDCUP_BPI_SCALE[t.t],
+        label: t.label,
+        ...(t.t === "T0" ? { leaderPenalty: "+1 (T0만)" } : {}),
+      };
+    }),
     modeOrder: ["squad-fpp", "squad", "duo-fpp", "duo", "solo-fpp", "solo"],
     lowConfidenceUnder: 10,
+    rankedMinRounds: RANKED_MIN_ROUNDS,
   });
 });
 
 // ═══════════════════ 클랜 실력 분포 (PUBG) ════════════════
 // GET /api/pubg-dist — 등록된 닉들의 시즌 평균딜 → 티어(T1~T5)·딜구간 분포 (집계만, 개인정보 X)
 // PUBG_API_KEY + Supabase(pubg_nicks) 둘 다 있어야 동작. 6시간마다 백그라운드 갱신.
-let DIST = { updatedAt: null, total: 0, byTier: {}, byDamage: {}, status: "init" };
+let DIST = { updatedAt: null, total: 0, byTier: {}, byDamage: {}, ranked: null, status: "init" };
+// 닉↔경쟁전 수치가 붙은 상세 표본 — 개인 식별 가능하므로 staff 전용 엔드포인트에서만 노출.
+// BPI 티어 임계값 재보정용 계측 데이터이며, 판정 로직은 이 값을 쓰지 않는다(읽기 전용).
+let DIST_DETAIL = [];
 const DMG_BUCKETS = [
   { key: "0-150", min: 0, max: 150 },
   { key: "150-200", min: 150, max: 200 },
@@ -2441,13 +2453,46 @@ const DMG_BUCKETS = [
 function dmgBucket(d) {
   return (DMG_BUCKETS.find((b) => d >= b.min && d < b.max) || DMG_BUCKETS[DMG_BUCKETS.length - 1]).key;
 }
+// 경쟁전 평딜 분포용 세분 버킷 — 임계값 후보를 눈으로 고르려면 50 단위가 필요하다.
+const RANKED_DMG_BUCKETS = [
+  { key: "0-100", min: 0, max: 100 },
+  { key: "100-150", min: 100, max: 150 },
+  { key: "150-200", min: 150, max: 200 },
+  { key: "200-250", min: 200, max: 250 },
+  { key: "250-300", min: 250, max: 300 },
+  { key: "300-350", min: 300, max: 350 },
+  { key: "350+", min: 350, max: Infinity },
+];
+function rankedDmgBucket(d) {
+  return (RANKED_DMG_BUCKETS.find((b) => d >= b.min && d < b.max)
+    || RANKED_DMG_BUCKETS[RANKED_DMG_BUCKETS.length - 1]).key;
+}
+// 최근접 순위법(nearest-rank) 백분위 — 표본 15~20명이라 보간은 과하다.
+function percentile(sortedAsc, p) {
+  if (!sortedAsc.length) return null;
+  const idx = Math.min(sortedAsc.length - 1, Math.max(0, Math.ceil((p / 100) * sortedAsc.length) - 1));
+  return sortedAsc[idx];
+}
+function summarize(values) {
+  const v = values.slice().sort((a, b) => a - b);
+  if (!v.length) return null;
+  return {
+    n: v.length, min: v[0], max: v[v.length - 1],
+    mean: Math.round(v.reduce((a, b) => a + b, 0) / v.length),
+    p10: percentile(v, 10), p25: percentile(v, 25), p50: percentile(v, 50),
+    p75: percentile(v, 75), p90: percentile(v, 90),
+  };
+}
 async function refreshDist() {
   if (!process.env.PUBG_API_KEY || !reviewsReady()) { DIST.status = "disabled"; return; }
   try {
     const rows = await sbSelect("pubg_nicks", "select=steam,kakao&order=updated_at.desc");
     const byTier = { T1: 0, T2: 0, T3: 0, T4: 0, T5: 0 };
     const byDamage = Object.fromEntries(DMG_BUCKETS.map((b) => [b.key, 0]));
-    let total = 0;
+    const byRankedDamage = Object.fromEntries(RANKED_DMG_BUCKETS.map((b) => [b.key, 0]));
+    const detail = [];
+    const rankedVals = [], sampleVals = [], ratios = [];
+    let total = 0, rankedTotal = 0, rankedThin = 0, rankedMissing = 0;
     for (const row of rows) {
       const nick = row.steam || row.kakao;
       const platform = row.steam ? "steam" : "kakao";
@@ -2457,11 +2502,54 @@ async function refreshDist() {
         byTier[r.suggested.tier] = (byTier[r.suggested.tier] || 0) + 1;
         byDamage[dmgBucket(r.sample.avgDamage)]++;
         total++;
+
+        // ── 경쟁전 계측 (판정에는 미반영) ──
+        const rk = r.ranked;
+        const rkDmg = rk?.avgDamage ?? null;
+        const rkRounds = rk?.roundsPlayed ?? 0;
+        if (rkDmg == null) rankedMissing++;
+        else if (rkRounds < RANKED_MIN_ROUNDS) rankedThin++;
+        else {
+          byRankedDamage[rankedDmgBucket(rkDmg)]++;
+          rankedVals.push(rkDmg);
+          rankedTotal++;
+          if (r.sample.avgDamage > 0) {
+            sampleVals.push(r.sample.avgDamage);
+            ratios.push(rkDmg / r.sample.avgDamage);
+          }
+        }
+        detail.push({
+          nick: r.nickname, platform,
+          sampleMode: r.sample.mode,
+          sampleAvgDamage: r.sample.avgDamage, sampleRounds: r.sample.roundsPlayed,
+          rankedAvgDamage: rkDmg, rankedRounds: rkRounds,
+          rankedTier: r.rankedTier || null,
+          currentRankPoint: rk?.currentRankPoint ?? null,
+          bestRankPoint: rk?.bestRankPoint ?? null,
+          currentTier: r.suggested.tier, currentBpi: r.suggested.bpi, pick: r.basis.pick,
+          ratio: (rkDmg != null && r.sample.avgDamage > 0)
+            ? +(rkDmg / r.sample.avgDamage).toFixed(3) : null,
+        });
       } catch { /* 닉 못 찾음/표본 없음 → 스킵 */ }
       await new Promise((res) => setTimeout(res, 7000)); // 레이트리밋 보호(~8.5/min)
     }
-    DIST = { updatedAt: new Date().toISOString(), total, byTier, byDamage, status: "ok" };
-    console.log("dist refreshed", JSON.stringify(DIST.byTier), "total=" + total);
+    const ranked = {
+      minRounds: RANKED_MIN_ROUNDS,
+      counted: rankedTotal,          // 경쟁전 표본 충분
+      thin: rankedThin,              // 경쟁전 판수 부족 (< minRounds)
+      missing: rankedMissing,        // 경쟁전 기록 자체 없음
+      byDamage: byRankedDamage,
+      stats: summarize(rankedVals),
+      sampleStats: summarize(sampleVals),   // 같은 인원의 일겜 평딜 (비교용)
+      ratio: ratios.length
+        ? { n: ratios.length, mean: +(ratios.reduce((a, b) => a + b, 0) / ratios.length).toFixed(3),
+            median: +percentile(ratios.slice().sort((a, b) => a - b), 50).toFixed(3) }
+        : null,
+    };
+    DIST = { updatedAt: new Date().toISOString(), total, byTier, byDamage, ranked, status: "ok" };
+    DIST_DETAIL = detail;
+    console.log("dist refreshed", JSON.stringify(DIST.byTier), "total=" + total,
+      "ranked=" + rankedTotal + "/thin=" + rankedThin + "/missing=" + rankedMissing);
   } catch (e) { console.error("dist_error", e?.message); DIST.status = "error"; }
 }
 if (process.env.PUBG_API_KEY) {
@@ -2469,6 +2557,27 @@ if (process.env.PUBG_API_KEY) {
   setInterval(refreshDist, 6 * 60 * 60 * 1000);    // 6시간마다
 }
 app.get("/api/pubg-dist", (_req, res) => res.json(DIST));
+
+// GET /api/pubg-dist-detail — 닉별 일겜/경쟁전 평딜 대조표. BPI 임계값 재보정 전용 계측.
+// 닉이 붙으므로 staff 전용(/api/nicks와 동일 게이트).
+app.get("/api/pubg-dist-detail", (req, res) => {
+  const u = getUser(req);
+  if (!u || !u.isStaff) return res.status(403).json({ error: "staff_only" });
+  res.json({ updatedAt: DIST.updatedAt, status: DIST.status, count: DIST_DETAIL.length, rows: DIST_DETAIL });
+});
+
+// POST /api/pubg-dist/refresh — 6시간 주기를 기다리지 않고 즉시 재수집(staff 전용).
+// 닉 1명당 ~7초 페이싱이라 응답은 즉시 반환하고 수집은 백그라운드에서 돈다.
+let distRunning = false;
+app.post("/api/pubg-dist/refresh", (req, res) => {
+  const u = getUser(req);
+  if (!u || !u.isStaff) return res.status(403).json({ error: "staff_only" });
+  if (!process.env.PUBG_API_KEY) return res.status(503).json({ error: "pubg_disabled" });
+  if (distRunning) return res.status(409).json({ error: "already_running", updatedAt: DIST.updatedAt });
+  distRunning = true;
+  refreshDist().finally(() => { distRunning = false; });
+  res.status(202).json({ started: true, note: "닉 1명당 약 7초 — 20명이면 ~2.5분 후 /api/pubg-dist 확인" });
+});
 
 // GET /api/nicks — 운영진 전용(닉 레지스트리 조회). 개인정보라 스태프만.
 app.get("/api/nicks", async (req, res) => {
