@@ -2883,7 +2883,7 @@ const GDCUP_APPLY_DEADLINE = process.env.GDCUP_APPLY_DEADLINE || "2026-08-07T11:
 function gdcupApplyOpen() { return Date.now() < Date.parse(GDCUP_APPLY_DEADLINE); }
 
 // ── 등록계 대조: 각 멤버 인게임 닉이 clan_registry에 있는지 (차단 안 함 · 경고만) ──
-// 등록계 마감(8/1) 전이라 미등록자가 있을 수 있으므로 verified 플래그와 경고만 돌려준다.
+// 등록계는 상시 접수(마감 없음)라 미등록자가 상존하므로 verified 플래그와 경고만 돌려준다.
 async function matchClanRegistry(members) {
   if (!process.env.SUPABASE_URL) return { verified: members.map(() => null), warnings: [] };
   try {
