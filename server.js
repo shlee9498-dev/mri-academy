@@ -3838,9 +3838,13 @@ app.post("/api/gdcup-team-brand", async (req,res)=>{
     if(color && color[0] !== "#") color = "#"+color;
     if(color && !gdcupHexOk(color)) color = "";
     const captain = String(b.captain||"").trim().slice(0,60);
+    // 방송 화면·옵저버 CSV가 함께 쓰는 짧은 식별자. 한글 팀명이 옵저버에서 깨지던 문제(시즌2)를
+    // 여기서 한 번 정해 두 곳이 같은 값을 쓰게 한다. 영문·숫자 대문자 2~4자.
+    const tag = String(b.tag||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,4);
     let emblem = String(b.emblem||"");
     if(emblem && (!/^data:image\/(png|jpeg|webp);base64,/.test(emblem) || emblem.length > 340000)) emblem = "";
-    const row = { team_name, color: color||null, emblem: emblem||null, captain: captain||null, updated_at: new Date().toISOString() };
+    const row = { team_name, color: color||null, emblem: emblem||null, captain: captain||null,
+                  tag: tag||null, updated_at: new Date().toISOString() };
     await sbUpsert("gdcup_team_brand", row, "team_name");
     const wh = process.env.DISCORD_TEAMBRAND_WEBHOOK || process.env.DISCORD_APPLY_WEBHOOK;
     if(wh){ try{ await fetch(wh,{method:"POST",headers:{"content-type":"application/json"},
@@ -3852,7 +3856,7 @@ app.post("/api/gdcup-team-brand", async (req,res)=>{
 app.get("/api/gdcup-team-brands", async (req,res)=>{
   try{
     if(!process.env.SUPABASE_URL) return res.json({brands:[]});
-    let rows=[]; try{ rows = await sbSelect("gdcup_team_brand","select=team_name,color,emblem,captain&order=updated_at.desc"); }catch(_){ rows=[]; }
+    let rows=[]; try{ rows = await sbSelect("gdcup_team_brand","select=team_name,color,emblem,captain,tag&order=updated_at.desc"); }catch(_){ rows=[]; }
     res.json({ brands: rows||[] });
   }catch(e){ res.json({brands:[]}); }
 });
@@ -4749,7 +4753,7 @@ const REQUIRED_SCHEMA = {
   gdcup_payouts:    ["id","app_id","season","member_idx","real_name","bank","account_no","holder"],
   gdcup_scores:     ["season","round","team_name","placement","team_kills","player_kills","updated_at"],
   gdcup_solos:      ["id","season","kind","ign","tier","discord","note","status","created_at"],
-  gdcup_team_brand: ["team_name","captain","color","emblem"],
+  gdcup_team_brand: ["team_name","captain","color","emblem","tag"],
   graduations:      ["trainer_id","student_name","student_id","tier","weight","via_lesson","achieved_at","note"],
   lesson_sessions:  ["id","student_id","trainer_id","played_at","games","memo","created_by",
                      "settled_period","settled_rate"],

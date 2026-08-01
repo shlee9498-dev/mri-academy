@@ -368,3 +368,7 @@ create index if not exists idx_gdcup_apps_leader on public.gdcup_apps (season, l
 -- 강제확정은 verified_at null + verify_json.forced=true 로 구분된다.
 alter table public.gdcup_apps add column if not exists verify_json jsonb;
 alter table public.gdcup_apps add column if not exists verified_at timestamptz;
+
+-- 12) G드컵 팀 태그 — 방송 화면 뱃지 + 옵저버 CSV 공용 식별자.
+--     한글 팀명이 옵저버에서 깨지던 문제(시즌2)를 여기서 한 번 정해 두 곳이 같은 값을 쓴다.
+alter table public.gdcup_team_brand add column if not exists tag text;
