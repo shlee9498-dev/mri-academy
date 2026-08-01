@@ -813,6 +813,28 @@ if (process.env.DISCORD_TOKEN) {
         { name: "🔀 유동적", value: "유동적" } ] },
     ],
   };
+  // /수강생등록 — [트레이너] 신규 수강생 명단 등록(students + 시트 레슨로그 행 생성).
+  //   결제는 이 명령에 넣지 않는다 — 오너가 입금 확인 후 별도 처리(명단 등록까지만).
+  //   존재 이유: 명부(시트) 행이 없으면 /수업등록이 notFound로 막힌다. 그 병목이 오너 1인에게 걸려 있었다.
+  const STUDENT_CMD = {
+    name: "수강생등록",
+    description: "[트레이너] 신규 수강생 명단 등록 — 등록해야 /수업등록이 동작합니다(결제는 오너가 별도)",
+    options: [
+      { name: "이름", description: "수강생 실명(시트 명부와 동일하게)", type: 3, required: true },
+      { name: "신청구분", description: "신청 구분", type: 3, required: true, choices: [
+        { name: "레슨", value: "레슨" },
+        { name: "직강", value: "직강" },
+        { name: "강의", value: "강의" } ] },
+      { name: "디코닉", description: "디스코드 닉(선택)", type: 3, required: false },
+      { name: "인게임닉", description: "PUBG 인게임 닉(선택)", type: 3, required: false },
+      { name: "플랫폼", description: "PUBG 플랫폼(인게임닉 입력 시)", type: 3, required: false, choices: [
+        { name: "카카오", value: "kakao" },
+        { name: "스팀", value: "steam" } ] },
+      { name: "유입경로", description: "유입경로(예: 유튜브 / 지인소개 / 디스코드)", type: 3, required: false },
+      // 접수 양식의 나머지(성별·생년월일·연락처·최고티어·플레이시간·교정희망)는 비고로 받는다.
+      { name: "비고", description: "그 외 접수 정보(최고티어·플레이시간·교정희망 등)", type: 3, required: false },
+    ],
+  };
   // /등록계현황 — [오너] 시즌 등록 현황·미등록자·중복 감지 (DM 전용, /승급과 동일 방식)
   const REGISTRY_STATUS_CMD = {
     name: "등록계현황",
@@ -835,8 +857,8 @@ if (process.env.DISCORD_TOKEN) {
       return;
     }
     try {
-      await client.application.commands.set([LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD], guildId);
-      console.log(`/수업등록·/판수정정·/등록계 registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
+      await client.application.commands.set([LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD], guildId);
+      console.log(`/수업등록·/판수정정·/등록계·/수강생등록 registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
     } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
   }
 
@@ -1416,6 +1438,175 @@ if (process.env.DISCORD_TOKEN) {
     }
     await itx.update({ content: "✅ 확인됨. 등록 진행 중…", components: [] });
     await runRegistryRegister(itx, pending);
+  });
+
+  // ── /수강생등록 : 신규 수강생 명단 등록 (students + 시트 레슨로그 행) ──
+  //   시트 행 생성이 이 명령의 존재 이유다 — DB만 넣으면 /수업등록은 여전히 notFound로 막힌다.
+  //   따라서 "이제 /수업등록 사용 가능"은 시트가 행을 만들었을 때만 말한다(허위 안내 금지).
+  const STU_PENDING = new Map();                 // discord_id → { payload, at }
+  const STU_PENDING_TTL_MS = 10 * 60 * 1000;
+
+  async function runStudentRegister(itx, p) {
+    const lines = [];
+    // 1) DB — students insert. 실패하면 시트도 건드리지 않는다(한쪽만 생기는 상태 방지).
+    let studentId = null;
+    try {
+      const row = await sbInsert("students", {
+        name: p.name, discord_nick: p.discordNick, trainer_id: p.trainerId, status: "active",
+        pubg_platform: p.platform, pubg_name: p.ign, note: p.note,
+      });
+      studentId = (Array.isArray(row) ? row[0] : row)?.id ?? null;
+      lines.push(`✅ 명부(DB) 등록 — ${p.name} · 담당 ${p.trainer}`);
+    } catch (e) {
+      console.error("student_add_db", e?.message);
+      return itx.editReply(`❌ 명부(DB) 등록 실패 — ${e?.message || "오류"}\n↳ 시트는 건드리지 않았어. 운영자에게 문의해줘.`);
+    }
+
+    // 2) 시트 — 레슨로그 탭에 행 생성. Apps Script 핸들러(type: student.add) 필요.
+    //    미배포면 여기서 실패한다. 그 경우 DB만 남으므로 "사용 가능" 안내를 하지 않는다.
+    let sheetOk = false, sheetErr = null;
+    const webhook = process.env.SHEET_WEBHOOK_URL;
+    if (!webhook) sheetErr = "SHEET_WEBHOOK_URL 미설정";
+    else {
+      try {
+        const r = await fetch(webhook, {
+          method: "POST", redirect: "follow", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            secret: process.env.SHEET_SECRET || "", type: "student.add",
+            trainer: p.trainer, name: p.name, 구분: p.applyKind,
+            discordNick: p.discordNick, ign: p.ign, platform: p.platform,
+            inflow: p.inflow, memo: p.note,
+          }),
+        });
+        const text = await r.text().catch(() => "");
+        let d = null; try { d = JSON.parse(text); } catch (_) {}
+        // 죽은 배포·미구현 핸들러는 비JSON(HTML)이나 ok:false로 돌아온다 — 성공으로 오인하지 않는다.
+        if (d == null) sheetErr = `응답 비JSON(HTTP ${r.status}) — Apps Script 핸들러 미배포 의심`;
+        else if (!r.ok || d.ok === false) sheetErr = d.error || `HTTP ${r.status}`;
+        else if (d.created === false) sheetErr = d.reason || "행 생성 안 됨";
+        else sheetOk = true;
+      } catch (e) { sheetErr = e?.message || "요청 실패"; }
+    }
+
+    if (sheetOk) {
+      lines.push(`✅ 시트 명부 등록 — 레슨로그(${p.trainer}) 행 생성 (진행판수 0)`);
+      lines.push("", `🎉 **등록 완료. 이제 \`/수업등록\` 사용 가능합니다.**`);
+      lines.push(`↳ 결제 등록은 오너가 입금 확인 후 별도로 처리해.`);
+    } else {
+      lines.push(`⚠️ 시트 명부 등록 실패 — ${sheetErr}`);
+      lines.push("", `⛔ **아직 \`/수업등록\`을 쓰면 안 돼** — 시트에 행이 없어서 똑같이 실패해.`);
+      lines.push(`↳ 오너에게 알림을 보냈어. **등록 완료 안내를 받은 뒤에** 수업을 등록해줘.`);
+    }
+    await itx.editReply(lines.join("\n"));
+
+    // 3) 오너 DM — 결제 등록이 오너 몫이라 신규 등록은 항상 알린다(시트 실패 시엔 조치 요청까지).
+    if (process.env.MRI_OWNER_ID) {
+      try {
+        const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+        const info = [
+          `🆕 신규 수강생 등록 — **${p.name}** (담당 ${p.trainer}, 등록자 <@${itx.user.id}>)`,
+          `· 신청구분: ${p.applyKind}${p.inflow ? ` · 유입경로: ${p.inflow}` : ""}`,
+          p.discordNick ? `· 디코닉: ${p.discordNick}` : null,
+          p.ign ? `· 인게임닉: ${p.ign}${p.platform ? ` (${p.platform === "kakao" ? "카카오" : "스팀"})` : ""}` : null,
+          p.note ? `· 비고: ${p.note}` : null,
+          studentId ? `· students.id = ${studentId}` : null,
+          p.dupNames ? `· ⚠️ 동명 active 행 있음(트레이너가 확인 후 진행): ${p.dupNames}` : null,
+          "",
+          sheetOk
+            ? `→ **결제 등록이 남았어**(입금 확인 후 패널/시트에서 처리).`
+            : `→ ❌ **시트 행 생성 실패: ${sheetErr}**\n   레슨로그(${p.trainer}) 탭에 수동으로 행을 넣고 트레이너에게 알려줘. Apps Script \`student.add\` 핸들러 배포 필요.`,
+        ].filter(Boolean);
+        await owner.send(info.join("\n"));
+      } catch (e) { console.error("owner_dm_failed", e?.message); }
+    }
+  }
+
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "수강생등록") return;
+
+    // /수업등록과 같은 채널 잠금(미설정=잠금 없음).
+    const lessonCh = process.env.LESSON_CHANNEL_ID;
+    if (lessonCh && itx.channelId !== lessonCh)
+      return itx.reply({ content: "이 명령은 #수업등록 채널에서만 사용 가능합니다.", ephemeral: true });
+
+    // 권한·담당 배정: 디코 유저ID→트레이너명 매핑으로만 결정(파라미터로 안 받음 → 남의 담당 방지)
+    const trainer = TRAINER_MAP[itx.user.id];
+    if (!trainer)
+      return itx.reply({ content: "등록된 트레이너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
+    if (!hasSupabase())
+      return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+
+    const name = (itx.options.getString("이름") || "").trim();
+    if (!name) return itx.reply({ content: "이름을 입력해줘.", ephemeral: true });
+    const ign = (itx.options.getString("인게임닉") || "").trim() || null;
+    const platform = itx.options.getString("플랫폼") || null;
+    if (ign && !platform)
+      return itx.reply({ content: "인게임닉을 넣었으면 플랫폼(스팀/카카오)도 골라줘.", ephemeral: true });
+
+    const p = {
+      name, trainer,
+      applyKind: itx.options.getString("신청구분"),
+      discordNick: (itx.options.getString("디코닉") || "").trim() || null,
+      ign, platform: ign ? platform : null,
+      inflow: (itx.options.getString("유입경로") || "").trim() || null,
+      trainerId: null, note: null, dupNames: null,
+    };
+    // 신청구분·유입경로·비고는 전용 컬럼이 없다 — note 한 줄로 합쳐 저장한다(스키마 변경 없이 즉시 가동).
+    p.note = [
+      `신청구분:${p.applyKind}`,
+      p.inflow ? `유입:${p.inflow}` : null,
+      (itx.options.getString("비고") || "").trim() || null,
+    ].filter(Boolean).join(" · ").slice(0, 200);
+
+    await itx.deferReply({ ephemeral: true });
+    try { p.trainerId = (await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainer)}&limit=1`))[0]?.id ?? null; } catch (_) {}
+    if (p.trainerId == null)
+      return itx.editReply(`❌ 트레이너 '${trainer}'를 staff에서 못 찾았어. 운영자에게 문의해줘(TRAINER_MAP 이름과 staff.name 불일치).`);
+
+    // 동명 active 행 — 차단이 아니라 경고 후 확인. 병행수강 2행이 정상인 케이스가 있다(이희훈·장익교).
+    let dups = [];
+    try {
+      dups = await sbSelect("students",
+        `select=id,trainer_id,status&name=eq.${encodeURIComponent(name)}&status=eq.active&order=id.asc`);
+    } catch (e) { console.error("student_dup_check", e?.message); }
+
+    if (!dups.length) return runStudentRegister(itx, p);
+
+    // 담당 트레이너명을 붙여서 보여준다 — "내 학생인지 남의 학생인지"가 판단의 핵심이다.
+    let staffById = {};
+    try {
+      const st = await sbSelect("staff", "select=id,name");
+      st.forEach((s) => { staffById[s.id] = s.name; });
+    } catch (_) {}
+    p.dupNames = dups.map((d) => `#${d.id}(${staffById[d.trainer_id] || "담당없음"})`).join(", ");
+    STU_PENDING.set(itx.user.id, { p, at: Date.now() });
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("stuadd_ok").setLabel("그래도 등록").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("stuadd_no").setLabel("취소").setStyle(ButtonStyle.Secondary),
+    );
+    await itx.editReply({
+      content:
+        `⚠️ **'${name}' 이름의 활성 수강생이 이미 ${dups.length}건 있어.**\n`
+        + `· ${p.dupNames}\n\n`
+        + `병행수강처럼 **2행이 정상인 경우**도 있어서 막지는 않아.\n`
+        + `같은 사람이면 [취소]하고 기존 행을 그대로 쓰면 돼. 다른 사람이거나 병행수강이면 [그래도 등록].`,
+      components: [row],
+    });
+  });
+
+  // ── /수강생등록 동명 확인 버튼 ──
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isButton() || (itx.customId !== "stuadd_ok" && itx.customId !== "stuadd_no")) return;
+    const pending = STU_PENDING.get(itx.user.id);
+    if (!pending || Date.now() - pending.at > STU_PENDING_TTL_MS) {
+      STU_PENDING.delete(itx.user.id);
+      return itx.update({ content: "확인 시간이 지났어. `/수강생등록`을 다시 실행해줘.", components: [] });
+    }
+    STU_PENDING.delete(itx.user.id);
+    if (itx.customId === "stuadd_no")
+      return itx.update({ content: "취소했어. 기존 명부 행을 그대로 쓰면 돼.", components: [] });
+    await itx.update({ content: "등록 진행 중…", components: [] });
+    await runStudentRegister(itx, pending.p);
   });
 
   // ── /등록계현황 : [오너 DM] 시즌 등록 현황·미등록자(역할 G/M/I 대비)·중복 account_id 감지 ──
