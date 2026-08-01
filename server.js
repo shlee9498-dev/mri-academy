@@ -599,7 +599,16 @@ async function refresh(client) {
       if (hit) role.members.forEach((m) => enrollSet.add(m.id));
     });
     CACHE = { updatedAt: new Date().toISOString(), counts, enrollment: enrollSet.size, status: "ok" };
-    try { const v = computeViolations(guild); CACHE.alerts = { suganNoBan: v.suganNoBan.length, banNoSugan: v.banNoSugan.length, inactiveWithRoles: v.inactiveWithRoles.length }; } catch (_) {}
+    try {
+      const v = computeViolations(guild);
+      CACHE.alerts = {
+        suganNoBan: v.suganNoBan.length, banNoSugan: v.banNoSugan.length,
+        inactiveWithRoles: v.inactiveWithRoles.length,
+        trainerNoLesson: v.trainerNoLesson.length,     // 담당 있는데 레슨생 아님
+        lessonNoTrainer: v.lessonNoTrainer.length,     // 레슨생인데 담당 없음
+        multiTrainer: v.multiTrainer.length,
+      };
+    } catch (_) {}
     console.log("stats refreshed", JSON.stringify(counts), "enrollment=" + enrollSet.size);
   } catch (e) {
     console.error("refresh_error", e?.message);
@@ -734,6 +743,27 @@ function damdamRole(g, key) {
   const m = damdamMap.find((d) => d.key === key);
   return m ? findRoleByPred(g, m.pred) : null;
 }
+// ── 역할 해석: ID(env) 우선 · 없으면 이름 폴백 ──
+// 이름 매칭은 역할명이 바뀌면 조용히 0명이 된다(damdamMap의 n.includes("준구")는
+// "준구"가 들어간 다른 역할을 먼저 잡을 수도 있다). ROLE_ENROLL_IDS가 쓰는 패턴과 동일하게,
+// env가 있으면 ID로 정확히 잡고 없으면 기존 동작을 유지한다.
+const roleById = (g, id) => (id ? g.roles.cache.get(String(id).trim()) : null);
+const jsonEnv = (name) => {
+  try { return JSON.parse(process.env[name] || "{}"); }
+  catch (e) { console.error(`${name} parse failed`, e?.message); return {}; }
+};
+const lessonRole = (g) => roleById(g, process.env.ROLE_LESSON_ID) || findRoleByName(g, "레슨생");
+// [{ name, role }] — 레슨 담당 트레이너만(담당강사:무리는 직강이라 제외).
+function trainerRoleList(g) {
+  const map = jsonEnv("ROLE_TRAINER_MAP");                    // {"<roleId>":"준구", …}
+  const byEnv = Object.entries(map)
+    .map(([id, name]) => ({ name, role: roleById(g, id) }))
+    .filter((x) => x.role);
+  if (byEnv.length) return byEnv;
+  return damdamMap.filter((d) => d.key !== "무리")
+    .map((d) => ({ name: d.key, role: damdamRole(g, d.key) }))
+    .filter((x) => x.role);
+}
 // 보류/졸업 역할 없으면 자동 생성 (봇에 '역할 관리' 권한 필요)
 async function ensureLifecycleRoles(guild) {
   for (const nm of ROLE.life) {
@@ -755,7 +785,14 @@ function computeViolations(guild) {
   ].filter(Boolean);
   const has = (m, role) => role && m.roles.cache.has(role.id);
   const banIds = bans.map((b) => b.id);
-  const out = { suganNoBan: [], banNoSugan: [], inactiveWithRoles: [] };
+  // 레슨 판별 정본 = "레슨생". 담당 트레이너 역할은 매칭 검증용(오너 확정).
+  // 담당 46(준구25+현태21) vs 레슨생 36의 불일치를 명단으로 뽑아 정리를 유도한다.
+  const lesson = lessonRole(guild);
+  const trainers = trainerRoleList(guild);
+  const out = {
+    suganNoBan: [], banNoSugan: [], inactiveWithRoles: [],
+    trainerNoLesson: [], lessonNoTrainer: [], multiTrainer: [],
+  };
   guild.members.cache.forEach((m) => {
     if (m.user.bot) return;
     const isSugan = has(m, sugan);
@@ -764,6 +801,16 @@ function computeViolations(guild) {
     if (!isSugan && nBan > 0) out.banNoSugan.push(m.displayName);
     const inactive = lifeRoles.some((r) => has(m, r));
     if (inactive && activeRoles.some((r) => has(m, r))) out.inactiveWithRoles.push(m.displayName);
+
+    const mine = trainers.filter((t) => has(m, t.role));
+    const isLesson = has(m, lesson);
+    const tag = mine.map((t) => t.name).join("·");
+    // ④ 담당은 있는데 레슨생 아님 — 부여 누락이면 판수가 새고 있고, 수동 정리 잔재면 집계 오염.
+    if (mine.length && !isLesson) out.trainerNoLesson.push(`${m.displayName}(${tag})`);
+    // ⑤ 레슨생인데 담당 없음 — 판수를 넣어도 귀속할 트레이너가 없다.
+    if (isLesson && !mine.length) out.lessonNoTrainer.push(m.displayName);
+    // ⑥ 담당 2명 이상 — 병행수강이면 정상(이희훈·장익교), 아니면 미정리.
+    if (mine.length > 1) out.multiTrainer.push(`${m.displayName}(${tag})`);
   });
   return out;
 }
@@ -1939,7 +1986,13 @@ if (process.env.DISCORD_TOKEN) {
           `① 수강생인데 반 0/2개+: **${v.suganNoBan.length}명**\n   ${fmt(v.suganNoBan)}\n` +
           `② 반 있는데 수강생 아님: **${v.banNoSugan.length}명**\n   ${fmt(v.banNoSugan)}\n` +
           `③ 보류·졸업인데 활성역할 잔존: **${v.inactiveWithRoles.length}명**\n   ${fmt(v.inactiveWithRoles)}\n` +
-          "→ ②③은 /수강종료로 정리 · ①은 /반배정으로 반 지정"
+          "\n**레슨 담당 매칭**\n" +
+          `④ 담당 트레이너 있는데 레슨생 아님: **${v.trainerNoLesson.length}명**\n   ${fmt(v.trainerNoLesson)}\n` +
+          `⑤ 레슨생인데 담당 트레이너 없음: **${v.lessonNoTrainer.length}명**\n   ${fmt(v.lessonNoTrainer)}\n` +
+          `⑥ 담당 트레이너 2명 이상: **${v.multiTrainer.length}명**\n   ${fmt(v.multiTrainer)}\n` +
+          "\n→ ②③은 /수강종료로 정리 · ①은 /반배정으로 반 지정\n" +
+          "→ ④는 **레슨생 부여 누락이면 지금도 판수가 새는 중**(수강 종료자면 /수강종료로 정리)\n" +
+          "→ ⑤는 판수 귀속 불가 · ⑥은 병행수강이면 정상"
         );
       } catch (e) {
         console.error("audit_failed", e?.message);
