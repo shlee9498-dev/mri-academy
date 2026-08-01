@@ -92,7 +92,8 @@ module.exports = function mountAdminPanel(app, deps) {
   // 7/20 경계: lesson_sessions.played_at >= CUTOVER 만 신엔진 정산 (이전은 이월동결·별도).
   // FIFO: 이월 진행판수(carry) 다음 위치부터의 신규 진행분을 1차 결제판수 경계로 base/+5%p 분할.
   const CUTOVER = "2026-07-20";
-  function computeStudent(s, pays, sess, baseRate) {
+  // grads = 담당 트레이너의 graduations 행 배열. 세션마다 played_at 시점 요율을 뽑는다.
+  function computeStudent(s, pays, sess, grads) {
     // 판수 결제만(게임 보유): 레슨·세트. 상담/영업(games 0)·전환·환불 제외.
     const lessonPays = pays
       .filter((p) => ["lesson", "set"].includes(p.kind) && (p.games || 0) > 0)
@@ -106,13 +107,39 @@ module.exports = function mountAdminPanel(app, deps) {
     const carrySnap = Number(s.carry_games || 0);            // 이월 진행판수 스냅(7/20 이전·동결)
     const preSess = sum(sess.filter((x) => String(x.played_at || "") < CUTOVER), (x) => x.games);
     const carry = carrySnap + preSess;                        // 경계 위치용 누적 이월분
-    const newPlayed = sum(sess.filter((x) => String(x.played_at || "") >= CUTOVER), (x) => x.games);
 
-    // FIFO 분할: 신규 진행분을 firstGames 경계로 base / +5%p
-    const bonusRate = Math.round((baseRate + 0.05) * 100) / 100;
-    const baseNew = Math.max(0, Math.min(firstGames - carry, newPlayed));
-    const bonusNew = newPlayed - baseNew;
-    const payable = floor100(baseNew * unit * baseRate + bonusNew * unit * bonusRate); // 100원 버림
+    // 정산 도장(settled_period)이 찍힌 세션은 이미 지급된 회차다 — 재계산 대상에서 제외한다.
+    // 이게 동결의 실질 메커니즘이다. 요율만 저장해서는 "확정된 달을 뒤집지 않는다"가 성립하지 않는다.
+    const newSess = sess
+      .filter((x) => String(x.played_at || "") >= CUTOVER)
+      .sort((a, b) => String(a.played_at).localeCompare(String(b.played_at)));
+    const unsettled = newSess.filter((x) => !x.settled_period);
+    const settledGames = sum(newSess.filter((x) => x.settled_period), (x) => x.games);
+    const newPlayed = sum(newSess, (x) => x.games);           // 표시용(정산분 포함 신규 진행 누적)
+
+    // FIFO 분할을 세션 단위로 수행한다.
+    //   위치(pos) = carry부터 누적. firstGames 경계 이전은 base, 이후는 +5%p.
+    //   요율은 세션의 played_at 시점 기준(trainerBaseRateAt) — 소급이 구조적으로 불가능.
+    //   floor100은 세션마다가 아니라 마지막에 한 번만(반복 버림으로 인한 과소지급 방지).
+    let pos = carry;
+    let accrual = 0, baseNew = 0, bonusNew = 0;
+    for (const x of newSess) {
+      const g = Number(x.games || 0);
+      if (g <= 0) continue;
+      const baseG = Math.max(0, Math.min(firstGames - pos, g));   // 이 세션 중 base 구간
+      const bonusG = g - baseG;
+      baseNew += baseG; bonusNew += bonusG;
+      if (!x.settled_period) {                                    // 미정산분만 지급예정에 반영
+        const r = trainerBaseRateAt(grads, x.played_at);
+        accrual += baseG * unit * r + bonusG * unit * (r + REPEAT_BONUS);
+      }
+      pos += g;
+    }
+    const payable = floor100(accrual);                            // 100원 버림
+    // 표시용 대표 요율 — 미정산 세션이 있으면 그중 가장 이른 시점 기준.
+    const rateAsOf = unsettled.length ? unsettled[0].played_at : null;
+    const baseRate = trainerBaseRateAt(grads, rateAsOf);
+    const bonusRate = round2(baseRate + REPEAT_BONUS);
 
     const totalPlayed = carry + newPlayed;
     return {
@@ -125,7 +152,9 @@ module.exports = function mountAdminPanel(app, deps) {
       base_rate: baseRate, bonus_rate: bonusRate, base_new: baseNew, bonus_new: bonusNew,
       applied_rate: baseRate, rate_confirmed: true,           // 지급율 결정론적(트레이너 승급 기반)
       suggested_rate: baseRate, cycles: 0,                    // 구 필드 호환(제안/회차 개념 폐지)
-      payable,                                                // 신엔진 지급예정(7/20 이후분)
+      settled_games: settledGames,                            // 이미 정산 도장이 찍힌 진행판수
+      unsettled_games: newPlayed - settledGames,              // 이번 회차 지급 대상 판수
+      payable,                                                // 미정산 진행분만의 지급예정
     };
   }
 
@@ -164,14 +193,31 @@ module.exports = function mountAdminPanel(app, deps) {
     };
   }
 
-  // ── 승급 지급율 (Phase 1.1 · 계산 헬퍼) ──────────────────
-  // 지급율 = 0.65 + floor(Σweight/5)×0.01 (영구 래칫, 하락 없음).
+  // ── 승급 지급율 (래칫) ──────────────────────────────────
+  // 지급율 = min(0.65 + floor(Σweight/5)×0.01, 0.70). 영구 래칫, 하락 없음.
   // Σweight = graduations 중 via_lesson=true 의 weight 합 (마스터 1 · 서바이버 3).
-  // ⚠️ Phase 1.1은 헬퍼·엔드포인트만 — 실제 정산 반영은 1.2(computeTrainer 재작성)에서.
+  //
+  // ⚠️ asOf(기준일) 필수 — achieved_at <= asOf 인 승급만 합산한다.
+  //    예전에는 기준일 없이 전체를 합산해 요율이 매 요청 재계산됐고, 그 결과
+  //    승급을 오늘 등록하면 과거 미지급 진행분까지 새 요율로 소급됐다(회계상 불성립).
+  //    세션의 played_at을 asOf로 넘기면 "승급 등록일 이후 진행분부터" 가 자동 성립한다.
+  //
+  // cap 0.70은 base율에만 걸린다. 재결제 +5%p는 cap 밖(실질 상한 0.75) —
+  // 래칫(성과)과 재결제 보너스(장기 유지)는 성격이 다른 보상이라 같은 상한에 묶으면
+  // 0.70 도달 트레이너가 재결제를 기피하는 역전이 생긴다(오너 확정).
+  // Σweight 자체는 cap을 넘어도 계속 누적 저장된다(추후 정책 변경 대비).
   const BASE_RATE = 0.65;
+  const RATE_CAP = 0.70;                                    // base율 상한 (재결제 +5%p는 이 밖)
+  const REPEAT_BONUS = 0.05;
   const gradWeightSum = (grads) => sum(grads.filter((g) => g.via_lesson !== false), (g) => g.weight || 0);
-  const trainerBaseRate = (grads) =>
-    Math.round((BASE_RATE + Math.floor(gradWeightSum(grads) / 5) * 0.01) * 100) / 100;
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const rateFromWeight = (w) => round2(Math.min(BASE_RATE + Math.floor(w / 5) * 0.01, RATE_CAP));
+  // asOf 미지정 시 전체 합산(구 동작) — 화면 표시·현황 조회용.
+  const trainerBaseRateAt = (grads, asOf) =>
+    rateFromWeight(gradWeightSum(asOf
+      ? (grads || []).filter((g) => !g.achieved_at || String(g.achieved_at) <= String(asOf))
+      : (grads || [])));
+  const trainerBaseRate = (grads) => trainerBaseRateAt(grads, null);
 
   // ── 대시보드: 정산 전체 현황 ───────────────────────────
   app.get("/api/admin/overview", async (req, res) => {
@@ -184,10 +230,10 @@ module.exports = function mountAdminPanel(app, deps) {
       const [students, payments, sessions, payouts, staff, graduations] = await Promise.all([
         sbSelect("students", "select=*&order=name.asc"),
         sbSelect("payments", "select=*"),
-        sbSelect("lesson_sessions", "select=student_id,games,played_at"),
+        sbSelect("lesson_sessions", "select=student_id,games,played_at,settled_period,settled_rate"),
         sbSelect("payouts", "select=*"),
         sbSelect("staff", "select=*&order=id.asc"),
-        sbSelect("graduations", "select=trainer_id,tier,weight,via_lesson").catch(() => []),
+        sbSelect("graduations", "select=trainer_id,tier,weight,via_lesson,achieved_at").catch(() => []),
       ]);
       const payByStu = groupBy(payments, "student_id");
       const sessByStu = groupBy(sessions, "student_id");
@@ -203,7 +249,7 @@ module.exports = function mountAdminPanel(app, deps) {
         if (stu && stu.trainer_id != null)
           consultByTrainer[stu.trainer_id] = (consultByTrainer[stu.trainer_id] || 0) + 1;
       }
-      let computed = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || [], rateOf(s.trainer_id)));
+      let computed = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || [], gradByTrainer[s.trainer_id] || []));
       // 트레이너는 본인 담당만 노출
       if (!c.isOwner && c.me) computed = computed.filter((x) => x.trainer_id === c.me.id);
 
@@ -454,12 +500,12 @@ module.exports = function mountAdminPanel(app, deps) {
       const [students, payments, sessions, graduations] = await Promise.all([
         sbSelect("students", "select=*&order=trainer_id.asc,name.asc"),
         sbSelect("payments", "select=student_id,amount,games,kind,paid_at"),
-        sbSelect("lesson_sessions", "select=student_id,games,played_at"),
-        sbSelect("graduations", "select=trainer_id,tier,weight,via_lesson").catch(() => []),
+        sbSelect("lesson_sessions", "select=student_id,games,played_at,settled_period,settled_rate"),
+        sbSelect("graduations", "select=trainer_id,tier,weight,via_lesson,achieved_at").catch(() => []),
       ]);
       const payByStu = groupBy(payments, "student_id"), sessByStu = groupBy(sessions, "student_id");
       const gradByTrainer = groupBy(graduations, "trainer_id");
-      const rows = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || [], trainerBaseRate(gradByTrainer[s.trainer_id] || [])));
+      const rows = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || [], gradByTrainer[s.trainer_id] || []));
       const head = ["수강생", "디코닉", "담당트레이너ID", "결제금액", "결제판수", "1차판수", "이월판수", "신규진행", "남은판수", "지급율", "재결제분(+5%p)", "지급예정(7/20이후)"];
       const body = rows.map((r) => [
         r.name, r.discord_nick || "", r.trainer_id || "", r.paid_amount, r.paid_games,
