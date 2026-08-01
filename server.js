@@ -2528,22 +2528,66 @@ function summarize(values) {
     p75: percentile(v, 75), p90: percentile(v, 90),
   };
 }
-async function refreshDist() {
+// 수집 대상 두 갈래.
+//   registry — pubg_nicks(등록계). 플랫폼이 컬럼으로 있어 조회가 1플랫폼으로 끝난다.
+//   gdcup    — gdcup_apps의 신청자. 플랫폼 정보가 없어 양대 플랫폼을 모두 조회해야 하고,
+//              그만큼 PUBG 호출이 배로 늘어 페이싱을 verifyTeamTiers와 같은 20초로 둔다.
+//              대신 신고값(tier·dmg)이 함께 있어 신고 대 실측 대조가 가능하다.
+const DIST_SOURCES = ["registry", "gdcup"];
+const DIST_PACE_MS = { registry: 7000, gdcup: VERIFY_PACE_MS };
+
+async function distTargets(source) {
+  if (source === "gdcup") {
+    const season = GDCUP_CURRENT_SEASON;
+    const rows = await sbSelect("gdcup_apps",
+      `select=team_name,members,status&season=eq.${season}&status=neq.cancelled`);
+    const out = [], seen = new Set();
+    for (const r of rows) {
+      for (const m of (Array.isArray(r.members) ? r.members : [])) {
+        const nick = String(m?.ign || "").trim();
+        if (!nick) continue;
+        const key = nick.toLowerCase();
+        if (seen.has(key)) continue;               // 같은 닉이 두 팀에 있어도 1회만 조회
+        seen.add(key);
+        out.push({ nick, platform: null, team: r.team_name || null,
+          claimedTier: m?.tier || null, claimedDmg: m?.dmg ?? null });
+      }
+    }
+    return out;
+  }
+  const rows = await sbSelect("pubg_nicks", "select=steam,kakao&order=updated_at.desc");
+  return rows
+    .map((r) => ({ nick: r.steam || r.kakao, platform: r.steam ? "steam" : "kakao",
+      team: null, claimedTier: null, claimedDmg: null }))
+    .filter((t) => t.nick);
+}
+
+async function refreshDist(source = "registry") {
+  if (!DIST_SOURCES.includes(source)) source = "registry";
   if (!process.env.PUBG_API_KEY || !reviewsReady()) { DIST.status = "disabled"; return; }
   try {
-    const rows = await sbSelect("pubg_nicks", "select=steam,kakao&order=updated_at.desc");
+    const targets = await distTargets(source);
     const byTier = { T1: 0, T2: 0, T3: 0, T4: 0, T5: 0 };
     const byDamage = Object.fromEntries(DMG_BUCKETS.map((b) => [b.key, 0]));
     const byRankedDamage = Object.fromEntries(RANKED_DMG_BUCKETS.map((b) => [b.key, 0]));
     const detail = [];
     const rankedVals = [], sampleVals = [], ratios = [];
     let total = 0, rankedTotal = 0, rankedThin = 0, rankedMissing = 0;
-    for (const row of rows) {
-      const nick = row.steam || row.kakao;
-      const platform = row.steam ? "steam" : "kakao";
-      if (!nick) continue;
+    let notFound = 0;
+    for (const t of targets) {
+      const nick = t.nick;
       try {
-        const r = await computeBPI(platform, nick, false);
+        // 플랫폼을 알면 그것만, 모르면 양대 플랫폼을 조회해 판정이 높은 쪽을 택한다
+        // (resolveBpiAuto는 verifyTeamTiers와 같은 함수 — 판정 이원화 방지).
+        let r;
+        if (t.platform) {
+          r = await computeBPI(t.platform, nick, false);
+        } else {
+          const { found } = await resolveBpiAuto(nick, false, ["kakao", "steam"]);
+          if (!found.length) { notFound++; continue; }
+          r = found[0];
+        }
+        const platform = r.platform || t.platform;
         byTier[r.suggested.tier] = (byTier[r.suggested.tier] || 0) + 1;
         byDamage[dmgBucket(r.sample.avgDamage)]++;
         total++;
@@ -2565,6 +2609,9 @@ async function refreshDist() {
         }
         detail.push({
           nick: r.nickname, platform,
+          team: t.team, claimedTier: t.claimedTier, claimedDmg: t.claimedDmg,
+          // 신고 tier와 서버 판정이 다르면 확정 단계에서 mismatch로 걸린다 — 미리 보이게 한다.
+          tierMismatch: !!(t.claimedTier && t.claimedTier !== r.suggested.tier),
           sampleMode: r.sample.mode,
           sampleAvgDamage: r.sample.avgDamage, sampleRounds: r.sample.roundsPlayed,
           rankedAvgDamage: rkDmg, rankedRounds: rkRounds,
@@ -2575,11 +2622,13 @@ async function refreshDist() {
           ratio: (rkDmg != null && r.sample.avgDamage > 0)
             ? +(rkDmg / r.sample.avgDamage).toFixed(3) : null,
         });
-      } catch { /* 닉 못 찾음/표본 없음 → 스킵 */ }
-      await new Promise((res) => setTimeout(res, 7000)); // 레이트리밋 보호(~8.5/min)
+      } catch { notFound++; /* 닉 못 찾음/표본 없음 → 스킵 */ }
+      await new Promise((res) => setTimeout(res, DIST_PACE_MS[source])); // PUBG 10 RPM 보호
     }
     const ranked = {
       minRounds: RANKED_MIN_ROUNDS,
+      targets: targets.length,       // 조회 대상 수 — 0이면 대상 자체가 없다는 뜻(수집기 문제 아님)
+      notFound,                      // 닉을 어느 플랫폼에서도 못 찾음
       counted: rankedTotal,          // 경쟁전 표본 충분
       thin: rankedThin,              // 경쟁전 판수 부족 (< minRounds)
       missing: rankedMissing,        // 경쟁전 기록 자체 없음
@@ -2591,15 +2640,16 @@ async function refreshDist() {
             median: +percentile(ratios.slice().sort((a, b) => a - b), 50).toFixed(3) }
         : null,
     };
-    DIST = { updatedAt: new Date().toISOString(), total, byTier, byDamage, ranked, status: "ok" };
+    DIST = { updatedAt: new Date().toISOString(), source, total, byTier, byDamage, ranked, status: "ok" };
     DIST_DETAIL = detail;
-    console.log("dist refreshed", JSON.stringify(DIST.byTier), "total=" + total,
+    console.log("dist refreshed", "source=" + source, JSON.stringify(DIST.byTier),
+      "targets=" + targets.length, "total=" + total, "notFound=" + notFound,
       "ranked=" + rankedTotal + "/thin=" + rankedThin + "/missing=" + rankedMissing);
   } catch (e) { console.error("dist_error", e?.message); DIST.status = "error"; }
 }
 if (process.env.PUBG_API_KEY) {
-  setTimeout(refreshDist, 30_000);                 // 부팅 30초 후 1차
-  setInterval(refreshDist, 6 * 60 * 60 * 1000);    // 6시간마다
+  setTimeout(() => refreshDist("registry"), 30_000);              // 부팅 30초 후 1차
+  setInterval(() => refreshDist("registry"), 6 * 60 * 60 * 1000); // 6시간마다
 }
 app.get("/api/pubg-dist", (_req, res) => res.json(DIST));
 
@@ -2610,27 +2660,32 @@ app.get("/api/pubg-dist-detail", (req, res) => {
   const u = getUser(req);
   if (!u || !u.isStaff) return res.status(403).json({ error: "staff_only" });
   if (String(req.query.format || "").toLowerCase() === "tsv") {
-    const cols = ["nick", "platform", "rankedAvgDamage", "rankedRounds", "bestRankPoint",
-      "rankedTier", "sampleAvgDamage", "sampleRounds", "ratio", "currentTier", "currentBpi"];
+    const cols = ["nick", "platform", "team", "claimedTier", "claimedDmg",
+      "rankedAvgDamage", "rankedRounds", "bestRankPoint", "rankedTier",
+      "sampleAvgDamage", "sampleRounds", "ratio", "currentTier", "currentBpi", "tierMismatch"];
     const lines = [cols.join("\t")].concat(
       DIST_DETAIL.map((r) => cols.map((c) => (r[c] == null ? "" : String(r[c]))).join("\t")));
     res.type("text/plain; charset=utf-8");
-    return res.send(`# updatedAt=${DIST.updatedAt} status=${DIST.status} count=${DIST_DETAIL.length}\n${lines.join("\n")}\n`);
+    return res.send(`# source=${DIST.source || "-"} updatedAt=${DIST.updatedAt} status=${DIST.status} count=${DIST_DETAIL.length}\n${lines.join("\n")}\n`);
   }
-  res.json({ updatedAt: DIST.updatedAt, status: DIST.status, count: DIST_DETAIL.length, rows: DIST_DETAIL });
+  res.json({ source: DIST.source || null, updatedAt: DIST.updatedAt, status: DIST.status,
+    count: DIST_DETAIL.length, rows: DIST_DETAIL });
 });
 
-// POST /api/pubg-dist/refresh — 6시간 주기를 기다리지 않고 즉시 재수집(staff 전용).
-// 닉 1명당 ~7초 페이싱이라 응답은 즉시 반환하고 수집은 백그라운드에서 돈다.
+// POST /api/pubg-dist/refresh?source=registry|gdcup — 즉시 재수집(staff 전용).
+// 페이싱 때문에 오래 걸리므로 응답은 즉시 반환하고 수집은 백그라운드에서 돈다.
 let distRunning = false;
 app.post("/api/pubg-dist/refresh", (req, res) => {
   const u = getUser(req);
   if (!u || !u.isStaff) return res.status(403).json({ error: "staff_only" });
   if (!process.env.PUBG_API_KEY) return res.status(503).json({ error: "pubg_disabled" });
   if (distRunning) return res.status(409).json({ error: "already_running", updatedAt: DIST.updatedAt });
+  const source = DIST_SOURCES.includes(String(req.query.source)) ? String(req.query.source) : "registry";
   distRunning = true;
-  refreshDist().finally(() => { distRunning = false; });
-  res.status(202).json({ started: true, note: "닉 1명당 약 7초 — 20명이면 ~2.5분 후 /api/pubg-dist 확인" });
+  refreshDist(source).finally(() => { distRunning = false; });
+  const per = Math.round(DIST_PACE_MS[source] / 1000);
+  res.status(202).json({ started: true, source,
+    note: `닉 1명당 약 ${per}초 — 완료 후 /api/pubg-dist 확인` });
 });
 
 // GET /api/nicks — 운영진 전용(닉 레지스트리 조회). 개인정보라 스태프만.

@@ -305,7 +305,11 @@ function renderDist(){
   else {
     const s=rk&&rk.stats;
     head = `<div class="pill">경쟁전 표본 <b>${nz(rk&&rk.counted)}</b></div> `
-      + `<span class="muted">판수부족 ${nz(rk&&rk.thin)} · 기록없음 ${nz(rk&&rk.missing)} · 기준 ${nz(rk&&rk.minRounds)}판</span>`
+      + `<span class="muted">대상 ${nz(rk&&rk.targets)} · 조회실패 ${nz(rk&&rk.notFound)} · 판수부족 ${nz(rk&&rk.thin)} · 기록없음 ${nz(rk&&rk.missing)} · 기준 ${nz(rk&&rk.minRounds)}판</span>`
+      // 대상 0이면 수집기가 아니라 소스가 비어 있다는 뜻 — 오해 방지용 안내.
+      + (rk && rk.targets===0 ? `<div style="margin-top:7px;color:#fbbf24;font-size:12.5px">조회 대상이 0명입니다 —
+            ${DIST.source==="gdcup" ? "이번 시즌 신청 팀이 없거나 멤버 닉이 비어 있어요." : "등록계(clan_registry·pubg_nicks)에 등록된 닉이 없어요."}
+            수집기 문제가 아닙니다.</div>` : "")
       + (s ? `<div style="margin-top:9px;font-size:12.5px">경쟁전 평딜 분위수 —
             p10 <b>${s.p10}</b> · p25 <b>${s.p25}</b> · p50 <b>${s.p50}</b> · p75 <b>${s.p75}</b> · p90 <b>${s.p90}</b>
             <span class="muted">(min ${s.min} · 평균 ${s.mean} · max ${s.max})</span></div>` : "")
@@ -313,28 +317,38 @@ function renderDist(){
             <span class="muted">(평균 ${rk.ratio.mean} · n=${rk.ratio.n})</span></div>` : "")
       + `<div class="muted" style="margin-top:5px">수집 ${DIST.updatedAt ? new Date(DIST.updatedAt).toLocaleString("ko-KR") : "—"}</div>`;
   }
+  // 신고값(claimed*)은 G드컵 신청자 소스에만 있다 — 있을 때만 열을 붙인다.
+  const hasClaim = rows.some(r=>r.claimedTier!=null||r.claimedDmg!=null);
+  const th = (t)=>`<th style="padding:6px 8px">${t}</th>`;
   const body = rows.length ? `<div style="overflow-x:auto;margin-top:12px">
       <table style="width:100%;border-collapse:collapse;font-size:12.5px;white-space:nowrap">
       <thead><tr style="color:var(--ink-faint);text-align:left">
-        <th style="padding:6px 8px">닉</th><th style="padding:6px 8px">플랫폼</th>
-        <th style="padding:6px 8px">경쟁전딜</th><th style="padding:6px 8px">경쟁전판수</th>
-        <th style="padding:6px 8px">bestRP</th><th style="padding:6px 8px">티어</th>
-        <th style="padding:6px 8px">일겜딜</th><th style="padding:6px 8px">비율</th>
+        ${th("닉")}${th("플랫폼")}${hasClaim?th("팀")+th("신고tier")+th("신고딜"):""}
+        ${th("경쟁전딜")}${th("경쟁전판수")}${th("bestRP")}${th("티어")}
+        ${th("일겜딜")}${th("비율")}${th("서버판정")}
       </tr></thead><tbody>${rows.map(r=>{
         const thin = r.rankedRounds!=null && r.rankedRounds < (rk&&rk.minRounds||10);
         return `<tr style="border-top:1px solid var(--line)">
           <td style="padding:6px 8px">${esc(r.nick)}${thin?' <span title="경쟁전 표본 부족" style="color:#fbbf24">⚠</span>':''}</td>
           <td style="padding:6px 8px" class="muted">${esc(r.platform)}</td>
+          ${hasClaim?`<td style="padding:6px 8px" class="muted">${esc(nz(r.team))}</td>
+          <td style="padding:6px 8px">${esc(nz(r.claimedTier))}</td>
+          <td style="padding:6px 8px">${nz(r.claimedDmg)}</td>`:""}
           <td style="padding:6px 8px"><b>${nz(r.rankedAvgDamage)}</b></td>
           <td style="padding:6px 8px${thin?';color:#fbbf24;font-weight:700':''}">${nz(r.rankedRounds)}</td>
           <td style="padding:6px 8px">${nz(r.bestRankPoint)}</td>
           <td style="padding:6px 8px" class="muted">${esc(nz(r.rankedTier))}</td>
           <td style="padding:6px 8px">${nz(r.sampleAvgDamage)}</td>
           <td style="padding:6px 8px">${r.ratio!=null?Math.round(r.ratio*100)+"%":"—"}</td>
+          <td style="padding:6px 8px${r.tierMismatch?';color:#fbbf24;font-weight:700':''}">${esc(nz(r.currentTier))}${r.tierMismatch?' <span title="신고 tier와 서버 판정이 다름 — 확정 시 mismatch로 걸린다">≠</span>':''}</td>
         </tr>`;}).join("")}</tbody></table></div>` : "";
+  const src = (DIST&&DIST.source) || "registry";
+  const tab = (key,label)=>`<button class="btn sm${src===key?" gold":""}" onclick="runDist('${key}')">${label}</button>`;
   w.innerHTML=`<section class="ops"><h2 class="ops-h">📈 BPI 분포 (경쟁전)</h2>
-    <button class="btn gold sm" onclick="runDist()">분포 수집</button>
-    <span class="muted" style="margin-left:8px">닉당 ~7초 · 20명이면 약 2.5분</span>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      ${tab("registry","클랜원 등록계")}${tab("gdcup","G드컵 신청자")}
+      <span class="muted">클랜원 닉당 ~7초 · 신청자는 양대 플랫폼 조회라 ~20초</span>
+    </div>
     <div style="margin-top:12px">${head}</div>${body}</section>`;
 }
 async function loadDist(){
@@ -342,8 +356,13 @@ async function loadDist(){
   try{ DISTD=await api("/api/pubg-dist-detail"); }catch(e){ DISTD=null; }
   renderDist();
 }
-async function runDist(){
-  try{ await api("/api/pubg-dist/refresh","POST"); toast("분포 수집 시작 — 닉당 7초라 몇 분 걸려요"); }
+async function runDist(source){
+  const s = (source==="gdcup"||source==="registry") ? source : "registry";
+  try{
+    await api("/api/pubg-dist/refresh?source="+s,"POST");
+    toast(s==="gdcup" ? "G드컵 신청자 분포 수집 시작 — 닉당 20초라 몇 분 걸려요"
+                      : "클랜원 분포 수집 시작 — 닉당 7초라 몇 분 걸려요");
+  }
   catch(e){ toast(e.message==="already_running"?"이미 수집 중":(e.message||"오류"), true); }
   clearInterval(_dti);
   // 수집 완료 신호가 따로 없어 updatedAt 변화로 감지한다.
