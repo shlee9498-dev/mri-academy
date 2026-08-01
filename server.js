@@ -2244,7 +2244,12 @@ async function seasonSnapshot(platform, accountId, seasonId) {
         avgDamage: sq.roundsPlayed ? Math.round(sq.damageDealt / sq.roundsPlayed) : null,
       };
     }
-  } catch (_) { /* 랭크 미참여 무시 */ }
+  } catch (e) {
+    // 404(랭크 미참여)만 무시. 429/5xx/네트워크는 되던져야 한다 —
+    // 삼키면 일시적 장애가 "시즌 기록 없음"으로 둔갑해 조회 결과가 전부 null로 나온다
+    // (Ez_YeonDu 간헐 실패의 원인). 장애는 장애로 보고돼야 재시도 판단이 선다.
+    if (e?.status && e.status !== 404) throw e;
+  }
 
   let mode = null, stats = null;
   try {
@@ -2253,7 +2258,9 @@ async function seasonSnapshot(platform, accountId, seasonId) {
     for (const m of ["squad-fpp", "squad", "duo-fpp", "duo", "solo-fpp", "solo"]) {
       if (gm[m] && gm[m].roundsPlayed > 0) { mode = m; stats = gm[m]; break; }
     }
-  } catch (_) { /* 시즌 데이터 없음 */ }
+  } catch (e) {
+    if (e?.status && e.status !== 404) throw e;   // 위와 동일 — 장애를 데이터 부재로 오인하지 않는다
+  }
 
   if (!stats && !rankedStats) return null;
   return { seasonId, mode, stats, rankedTier, rankedStats };
@@ -3838,6 +3845,68 @@ app.post("/api/gdcup-edit", async (req, res) => {
 });
 
 // 운영진 — 현재 모집 현황(용병 모집팀 + 대기 솔로)을 디코 채널에 게시 (?season 기본 2)
+// ── 기신청 팀 일괄 재판정 ──────────────────────────────────
+// 팀의 members[].tier는 신청 시점 클라 판정값이 그대로 굳는다. 확정(gdcup-confirm)이나
+// 수정(gdcup-edit?verify)을 거치기 전까지 재판정되지 않으므로, 판정 기준이 바뀌면
+// (예: 일겜→경쟁전 전환) 기신청 팀은 구 기준 값을 계속 들고 있다.
+// 팀마다 확정을 다시 누르는 것 말고 전수 재계산 경로가 없어서 추가한다.
+//
+// PUBG 10 RPM: verifyTeamTiers가 멤버당 20초 페이싱이라 4팀×4명이면 ~5분.
+// 요청은 즉시 202로 반환하고 백그라운드에서 돈다. 진행상황은 GET으로 조회.
+let REVERIFY = { running: false, startedAt: null, done: 0, total: 0, results: [], error: null };
+app.post("/api/gdcup-reverify", async (req, res) => {
+  if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+  if (!process.env.PUBG_API_KEY) return res.status(503).json({ error: "pubg_disabled" });
+  if (REVERIFY.running) return res.status(409).json({ error: "already_running", ...REVERIFY });
+  const season = gdSeason(req.query.season);
+  const dryRun = String(req.query.dry) === "1";      // 저장 없이 판정만 — 영향 미리보기
+  res.status(202).json({ started: true, season, dryRun, note: "멤버당 ~20초. GET /api/gdcup-reverify 로 진행상황 확인" });
+
+  REVERIFY = { running: true, startedAt: new Date().toISOString(), done: 0, total: 0, results: [], error: null, season, dryRun };
+  (async () => {
+    try {
+      const teams = await sbSelect("gdcup_apps",
+        `select=id,team_name,members,bpi,status&season=eq.${season}&status=neq.cancelled&order=created_at.asc`);
+      REVERIFY.total = teams.length;
+      for (const t of teams) {
+        const mem = Array.isArray(t.members) ? t.members : [];
+        try {
+          const v = await verifyTeamTiers({ members: mem, season });
+          if (v.apiFailed) {
+            REVERIFY.results.push({ team: t.team_name, skipped: "pubg_unavailable" });
+          } else {
+            const stamped = stampPubgVerify(mem, v);
+            // 판정이 나온 멤버만 tier 교체. 못 찾았거나 시즌기록 없는 멤버는 신고값 유지.
+            const next = stamped.map((m, i) => ({ ...m, tier: v.members[i]?.serverTier || m.tier }));
+            const sv = validateTeamComposition(next, season);
+            const changed = next.filter((m, i) => m.tier !== (mem[i] || {}).tier)
+              .map((m, i2) => m.ign);
+            if (!dryRun) {
+              await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(t.id)}`,
+                { members: next, bpi: sv.teamBpi, weight: gdcupWeight(sv.teamBpi, season) });
+            }
+            REVERIFY.results.push({
+              team: t.team_name, bpiBefore: t.bpi ?? null, bpiAfter: sv.teamBpi,
+              ok: sv.ok, reasons: sv.reasons, changedMembers: changed,
+              notFound: (v.reasons || []).filter((r) => r.code === "player_not_found").map((r) => r.ign),
+              noSeason: (v.reasons || []).filter((r) => r.code === "no_season_data").map((r) => r.ign),
+            });
+          }
+        } catch (e) {
+          REVERIFY.results.push({ team: t.team_name, error: String(e?.message || e).slice(0, 120) });
+        }
+        REVERIFY.done++;
+      }
+    } catch (e) {
+      REVERIFY.error = String(e?.message || e).slice(0, 200);
+    } finally { REVERIFY.running = false; REVERIFY.finishedAt = new Date().toISOString(); }
+  })();
+});
+app.get("/api/gdcup-reverify", (req, res) => {
+  if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+  res.json(REVERIFY);
+});
+
 app.post("/api/gdcup-board", async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
