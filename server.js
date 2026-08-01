@@ -2195,13 +2195,23 @@ async function findPlayer(platform, nickname) {
   return exact || data.data[0];
 }
 
-async function computeBPI(platform, nickname, isLeader) {
-  const player = await findPlayer(platform, nickname);
-  const accountId = player.id;
-  const seasonId = await currentSeasonId(platform);
+// 최근 시즌 id 2개(현재, 직전) — 현재 시즌 기록이 없을 때 직전 시즌으로 폴백하기 위함.
+// 시즌 목록은 24시간 캐시라 추가 호출 부담이 사실상 없다.
+async function recentSeasonIds(platform) {
+  const key = `seasons-recent:${platform}`;
+  const c = cacheGet(key); if (c) return c;
+  const data = await pubgGet(`/shards/${platform}/seasons`, 86400_000);
+  const list = data.data || [];
+  const curIdx = list.findIndex((s) => s.attributes.isCurrentSeason);
+  if (curIdx < 0) { const e = new Error("현재 시즌 없음"); e.status = 500; throw e; }
+  const out = [list[curIdx].id];
+  if (curIdx > 0) out.push(list[curIdx - 1].id);          // 목록은 오래된 순 → 직전은 하나 앞
+  cacheSet(key, out, 86400_000);
+  return out;
+}
 
-  const seasonData = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}`, 3600_000);
-
+// 한 시즌의 일겜/경쟁전 통계를 뽑는다. 기록이 없으면 null (예외 아님).
+async function seasonSnapshot(platform, accountId, seasonId) {
   let rankedTier = null, rankedStats = null;
   try {
     const rd = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}/ranked`, 3600_000);
@@ -2219,33 +2229,80 @@ async function computeBPI(platform, nickname, isLeader) {
     }
   } catch (_) { /* 랭크 미참여 무시 */ }
 
-  const gm = seasonData.data.attributes.gameModeStats || {};
-  const order = ["squad-fpp", "squad", "duo-fpp", "duo", "solo-fpp", "solo"];
   let mode = null, stats = null;
-  for (const m of order) {
-    if (gm[m] && gm[m].roundsPlayed > 0) { mode = m; stats = gm[m]; break; }
-  }
-  if (!stats) { const e = new Error(`${platform}: 현재 시즌 매치 기록 없음`); e.status = 404; throw e; }
+  try {
+    const seasonData = await pubgGet(`/shards/${platform}/players/${accountId}/seasons/${seasonId}`, 3600_000);
+    const gm = seasonData.data.attributes.gameModeStats || {};
+    for (const m of ["squad-fpp", "squad", "duo-fpp", "duo", "solo-fpp", "solo"]) {
+      if (gm[m] && gm[m].roundsPlayed > 0) { mode = m; stats = gm[m]; break; }
+    }
+  } catch (_) { /* 시즌 데이터 없음 */ }
 
-  const rp = stats.roundsPlayed || 0;
-  const dmg = stats.damageDealt || 0;
+  if (!stats && !rankedStats) return null;
+  return { seasonId, mode, stats, rankedTier, rankedStats };
+}
+
+async function computeBPI(platform, nickname, isLeader) {
+  const player = await findPlayer(platform, nickname);   // 여기서만 진짜 '닉 없음'(404)이 난다
+  const accountId = player.id;
+  const [curSeason, prevSeason] = await recentSeasonIds(platform);
+
+  // 폴백 체인: 현재 시즌 → 직전 시즌. 계정이 있으면 시즌 기록이 없어도 예외를 던지지 않는다.
+  // (예전에는 "현재 시즌 매치 기록 없음"을 status 404로 던져, 실존 계정이 '닉 없음'과
+  //  똑같이 처리됐다. 시즌 초반·경쟁전 미플레이 유저가 전부 미검증으로 표시되던 원인.)
+  let snap = await seasonSnapshot(platform, accountId, curSeason);
+  let seasonSource = "current";
+  if (!snap && prevSeason) {
+    snap = await seasonSnapshot(platform, accountId, prevSeason);
+    seasonSource = snap ? "previous" : "none";
+  } else if (!snap) {
+    seasonSource = "none";
+  }
+
+  const base = {
+    nickname: player.attributes.name, accountId, platform,
+    seasonId: snap ? snap.seasonId : curSeason,
+    clanId: player.attributes.clanId || null,   // 인게임 클랜 검증용(GmI = Gmriacademy, 스팀)
+    accountFound: true,
+    seasonDataAvailable: !!snap,
+    seasonSource,                                // "current" | "previous" | "none"
+  };
+
+  // 계정은 있는데 최근 두 시즌 모두 기록이 없다 — 참가는 가능해야 하므로 판정만 비운다.
+  // 소비처는 suggested가 null이면 신고 tier(수동)를 유지한다.
+  if (!snap) {
+    return {
+      ...base,
+      sample: null, ranked: null, rankedTier: null,
+      suggested: null, basis: null, confirmedBy: null,
+      lowConfidence: true,
+      warnings: ["최근 두 시즌 매치 기록 없음 — 계정은 확인됨, 티어는 신고값 유지"],
+    };
+  }
+
+  const rankedStats = snap.rankedStats, rankedTier = snap.rankedTier;
+  const stats = snap.stats;
+  const rp = stats?.roundsPlayed || 0;
+  const dmg = stats?.damageDealt || 0;
   const avgDamage = rp ? Math.round(dmg / rp) : 0;
-  const wins = stats.wins || 0;
+  const wins = stats?.wins || 0;
 
   const bpi = suggestBPI(avgDamage, rankedTier, isLeader, rankedStats?.bestRankPoint ?? null);
-  const lowConfidence = rp < 10;
+  const lowConfidence = rp < 10 || seasonSource === "previous";
 
   return {
-    nickname: player.attributes.name, accountId, platform, seasonId,
-    clanId: player.attributes.clanId || null,   // 인게임 클랜 검증용(GmI = Gmriacademy, 스팀)
+    ...base,
     sample: {
-      mode, roundsPlayed: rp, avgDamage,
-      kills: stats.kills || 0, wins, top10s: stats.top10s || 0,
-      kda: stats.kda || null, winRate: rp ? wins / rp : 0,
+      mode: snap.mode, roundsPlayed: rp, avgDamage,
+      kills: stats?.kills || 0, wins, top10s: stats?.top10s || 0,
+      kda: stats?.kda || null, winRate: rp ? wins / rp : 0,
     },
     ranked: rankedStats, rankedTier,
     ...bpi, lowConfidence,
-    warnings: lowConfidence ? [`매치 ${rp}판 — 표본 적음, 운영진 재검증 필요`] : [],
+    warnings: [
+      ...(rp < 10 ? [`매치 ${rp}판 — 표본 적음, 운영진 재검증 필요`] : []),
+      ...(seasonSource === "previous" ? ["현재 시즌 기록 없음 — 직전 시즌 기준으로 판정"] : []),
+    ],
   };
 }
 
@@ -2335,7 +2392,10 @@ async function resolveBpiAuto(nickname, leader, platforms) {
     if (r.status === "fulfilled") found.push(r.value);
     else notFound.push({ platform: platforms[i], reason: r.reason?.message || "unknown", status: r.reason?.status });
   });
-  found.sort((a, b) => b.suggested.bpi - a.suggested.bpi || b.sample.avgDamage - a.sample.avgDamage);
+  // 시즌 기록이 없으면 suggested·sample이 null이다(계정은 존재) — 정렬에서 최하위로 민다.
+  const bpiOf = (x) => x.suggested?.bpi ?? -1;
+  const dmgOf = (x) => x.sample?.avgDamage ?? -1;
+  found.sort((a, b) => bpiOf(b) - bpiOf(a) || dmgOf(b) - dmgOf(a));
   return { found, notFound };
 }
 
@@ -2388,8 +2448,14 @@ async function verifyTeamTiers(team) {
     }
     const best = found[0];
     const sv = best.suggested || {};
+    // 계정은 찾았는데 최근 두 시즌 기록이 없는 경우 — 참가 자격 문제가 아니다.
+    // 서버 판정을 낼 수 없을 뿐이므로 신고 tier를 그대로 살리고 거부하지 않는다.
+    const noSeason = best.seasonDataAvailable === false;
     out.members.push({
       idx: i, ign,
+      accountFound: true,
+      seasonDataAvailable: !noSeason,
+      seasonSource: best.seasonSource || null,
       clientTier: m.tier || null, serverTier: sv.tier || null,
       mismatch: !!(m.tier && sv.tier && m.tier !== sv.tier),
       platform: best.platform, avgDamage: best.sample?.avgDamage ?? null,
@@ -2398,7 +2464,8 @@ async function verifyTeamTiers(team) {
       basis: sv.tier != null ? (best.basis?.pick || null) : null,
       bpi: sv.bpi ?? null,
     });
-    serverMembers.push({ ...m, tier: sv.tier });
+    if (noSeason) out.reasons.push({ code: "no_season_data", idx: i, ign });
+    serverMembers.push({ ...m, tier: sv.tier || m.tier });   // 판정 없으면 신고값 유지
   }
   if (out.reasons.some((r) => r.code === "player_not_found")) return out;
   const season = Number(team.season) || GDCUP_CURRENT_SEASON;
@@ -2573,7 +2640,7 @@ async function refreshDist(source = "registry") {
     const detail = [];
     const rankedVals = [], sampleVals = [], ratios = [];
     let total = 0, rankedTotal = 0, rankedThin = 0, rankedMissing = 0;
-    let notFound = 0;
+    let notFound = 0, noSeasonData = 0;
     for (const t of targets) {
       const nick = t.nick;
       try {
@@ -2588,6 +2655,8 @@ async function refreshDist(source = "registry") {
           r = found[0];
         }
         const platform = r.platform || t.platform;
+        // 계정은 있으나 시즌 기록이 없으면 집계 대상이 아니다(판정값 자체가 없음).
+        if (!r.suggested || !r.sample) { noSeasonData++; continue; }
         byTier[r.suggested.tier] = (byTier[r.suggested.tier] || 0) + 1;
         byDamage[dmgBucket(r.sample.avgDamage)]++;
         total++;
@@ -2629,6 +2698,7 @@ async function refreshDist(source = "registry") {
       minRounds: RANKED_MIN_ROUNDS,
       targets: targets.length,       // 조회 대상 수 — 0이면 대상 자체가 없다는 뜻(수집기 문제 아님)
       notFound,                      // 닉을 어느 플랫폼에서도 못 찾음
+      noSeasonData,                  // 계정은 있으나 최근 두 시즌 기록 없음(참가 가능)
       counted: rankedTotal,          // 경쟁전 표본 충분
       thin: rankedThin,              // 경쟁전 판수 부족 (< minRounds)
       missing: rankedMissing,        // 경쟁전 기록 자체 없음
@@ -2724,7 +2794,13 @@ function codeStatus(code, now) {
 async function diagnoseBpi(platform, nick) {
   const fmt = (r, extra) => {
     const s = r.suggested;
+    // 계정은 있으나 최근 두 시즌 기록이 없으면 판정값이 없다 — 참가 자격 문제가 아니므로
+    // 실패가 아니라 '기록 없음'으로 적는다.
+    if (!s || !r.sample) {
+      return `✅ 닉 확인됨(${r.platform}) · ⚠ 최근 두 시즌 매치 기록 없음 — 티어는 신고값 유지` + (extra || "");
+    }
     return `**${s.tier} ${s.label}** (BPI ${s.bpi}) · 평균딜 ${r.sample.avgDamage} · ${r.sample.roundsPlayed}판`
+      + (r.seasonSource === "previous" ? " (직전 시즌 기준)" : "")
       + (r.lowConfidence ? " ⚠표본부족" : "") + (extra || "");
   };
   try {
@@ -3542,11 +3618,16 @@ app.get("/api/gdcup-admin-list", async (req, res) => {
       const raw = Array.isArray(r.members) ? r.members : [];
       const members = sanitizeMembers(raw).map((m, i) => ({
         ...m,
-        pubgOk: raw[i] && raw[i].pubgOk != null ? !!raw[i].pubgOk : null,   // null = 아직 검증 안 함
+        // pubgState: "ok" | "no_season" | "not_found". null = 아직 검증 안 함.
+        // 구 데이터(pubgOk만 있음)도 읽을 수 있게 폴백을 둔다.
+        pubgState: (raw[i] && raw[i].pubgState)
+          || (raw[i] && raw[i].pubgOk != null ? (raw[i].pubgOk ? "ok" : "not_found") : null),
         pubgAt: (raw[i] && raw[i].pubgAt) || null,
       }));
       return { ...r, verified: !!r.verified_at, members,
-        pubgFailed: members.filter((m) => m.pubgOk === false).length };
+        // 조치가 필요한 건 not_found 뿐 — no_season은 참가 가능한 정상 상태다.
+        pubgFailed: members.filter((m) => m.pubgState === "not_found").length,
+        pubgNoSeason: members.filter((m) => m.pubgState === "no_season").length };
     });
     res.json({ teams });
   } catch (e) { res.status(500).json({ error: "server_error" }); }
@@ -3555,13 +3636,21 @@ app.get("/api/gdcup-admin-list", async (req, res) => {
 // verifyTeamTiers 결과를 members에 새겨 목록에서 바로 보이게 한다.
 // 이게 없으면 확정 전까지 PUBG 조회 성공 여부를 알 방법이 없어, 등록계 미등록을
 // 대리 지표로 쓰게 된다 — 등록계는 용병에게 애초에 해당이 없어 오해를 만든다.
+// pubgState 3단계 — 계정 존재와 시즌 기록 유무는 별개 문제다.
+//   "ok"        조회 성공 + 판정 가능
+//   "no_season" 계정은 있으나 최근 두 시즌 기록 없음 → 참가 가능, 신고 tier 유지
+//   "not_found" 어느 플랫폼에서도 닉을 못 찾음 → 닉 수정 필요
 function stampPubgVerify(members, v) {
   const at = new Date().toISOString();
   const byIdx = new Map((v?.members || []).map((m) => [m.idx, m]));
   return (members || []).map((m, i) => {
     const r = byIdx.get(i);
     if (!r) return m;
-    return { ...m, pubgOk: !!r.serverTier, pubgTier: r.serverTier || null, pubgAt: at };
+    const state = r.accountFound === false || (!r.accountFound && !r.serverTier && r.seasonDataAvailable == null)
+      ? "not_found"
+      : (r.seasonDataAvailable === false ? "no_season" : "ok");
+    return { ...m, pubgState: state, pubgOk: state === "ok",
+      pubgTier: r.serverTier || null, pubgAt: at };
   });
 }
 
