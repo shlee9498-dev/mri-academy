@@ -115,7 +115,7 @@ label.fl{font-size:11px;color:var(--ink-faint);display:flex;flex-direction:colum
   <div id="gate" class="gate">
     <div class="em">🔒</div>
     <h2>운영진 전용</h2>
-    <p>디스코드로 로그인하면 담당 수강생 판수 기록·정산 현황을 볼 수 있어요.</p>
+    <p>디스코드로 로그인하면 담당 수강생 진행 판수·정산 현황을 볼 수 있어요.</p>
     <button class="btn disc" onclick="login()">디스코드로 로그인</button>
     <div class="hint" id="gateHint"></div>
   </div>
@@ -146,7 +146,8 @@ const won = (n)=> Number(n||0).toLocaleString("ko-KR");
 const esc = (s)=> String(s==null?"":s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const today = ()=> new Date().toISOString().slice(0,10);
 function toast(msg, err){ const t=document.getElementById("toast"); t.textContent=msg; t.className="toast on"+(err?" err":""); clearTimeout(t._t); t._t=setTimeout(()=>t.className="toast",2600); }
-const READONLY = true;  // Phase 0.5 — 시트가 진실인 동안 패널 쓰기 잠금(이중기입 방지). Phase 1 DB 전환 시 false + 서버 PANEL_WRITE=1.
+// 서버 게이트(PANEL_WRITE)에서 파생한다. overview 응답 전·구버전 서버 응답에는 필드가 없으므로 기본은 읽기전용(fail-closed).
+let READONLY = true;
 async function act(fn){ if(READONLY){ toast("읽기전용 모드 — 판수·결제는 디스코드 /수업등록(시트)로 입력하세요. 이 패널 입력은 반영되지 않습니다.", true); return; } try{ await fn(); await reload(); }catch(e){ toast(e.message||"오류", true); } }
 
 // ── 부팅 ──
@@ -164,6 +165,7 @@ async function act(fn){ if(READONLY){ toast("읽기전용 모드 — 판수·결
 
 async function reload(){
   DATA = await api("/api/admin/overview");
+  READONLY = DATA.panelWrite !== true;
   const sb = document.getElementById("scopeBadge");
   sb.style.display="inline-block";
   if(DATA.scope==="owner"){ sb.className="scope"; sb.textContent="OWNER · 전체"; STAFF = await api("/api/admin/staff").catch(()=>[]); renderOwner(); }
@@ -518,8 +520,10 @@ function renderTrainer(){
   const studs = DATA.students||[];
   const me = DATA.trainers && DATA.trainers[0];
   box.innerHTML = `
-    <h1>내 수강생 · 판수 기록</h1>
-    <div class="sub">수업 끝나면 진행한 판수를 여기 기록하세요. 정산은 클랜장이 확정합니다.</div>
+    <h1>내 수강생 ${READONLY ? "현황" : "· 판수 기록"}</h1>
+    <div class="sub">${READONLY
+      ? "판수 기록은 디스코드 <b>/수업등록</b>으로 해주세요. 이 화면은 진행 현황·지급예정 조회 전용입니다."
+      : "수업 끝나면 진행한 판수를 여기 기록하세요."} 정산은 클랜장이 확정합니다.</div>
     ${ me ? `<div class="grid kpis" style="margin-bottom:8px">
       <div class="kpi"><div class="l">담당 수강생</div><div class="v sm">${me.student_count}명</div></div>
       <div class="kpi"><div class="l">이번 발생(누적)</div><div class="v">${won(me.lesson_accrued)}<span style="font-size:12px">원</span></div></div>
@@ -542,12 +546,12 @@ function stuCard(s){
       <span class="pill">지급예정 <b>${won(s.payable)}</b>원</span>
       ${rate}
     </div>
-    <div class="frm">
+    ${READONLY ? "" : `<div class="frm">
       <label class="fl">날짜<input type="date" class="w-m" id="sd_${s.student_id}" value="${today()}"></label>
       <label class="fl">진행판수<input type="number" min="1" class="w-s" id="sg_${s.student_id}" placeholder="예:3"></label>
       <label class="fl" style="flex:1;min-width:120px">메모(선택)<input type="text" id="sm_${s.student_id}" placeholder="코칭 포인트"></label>
       <button class="btn gold sm" onclick="addSession(${s.student_id})">＋ 판수 기록</button>
-    </div>
+    </div>`}
   </div>`;
 }
 

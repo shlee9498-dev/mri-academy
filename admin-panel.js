@@ -262,6 +262,9 @@ module.exports = function mountAdminPanel(app, deps) {
 
       res.json({
         scope: c.isOwner ? "owner" : "trainer",
+        // 프론트가 쓰기 UI 노출 여부를 서버 게이트에서 파생하도록 내려준다.
+        // (하드코딩 플래그가 서버와 어긋나면 저장 가능한 화면처럼 보이고 423으로만 막힌다)
+        panelWrite: PANEL_WRITE,
         me: c.me ? { id: c.me.id, name: c.me.name, role: c.me.role } : null,
         students: computed,
         trainers: c.isOwner ? trainers : trainers.filter((t) => c.me && t.staff_id === c.me.id),
