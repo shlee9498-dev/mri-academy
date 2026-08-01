@@ -60,11 +60,18 @@ h1{font-size:clamp(26px,6vw,34px);font-weight:800;letter-spacing:-.02em;margin:8
 .c2 .trainer{color:var(--ink);font-weight:700}
 .c2 .seats{font-family:var(--display);font-weight:600;color:var(--ink-dim)}
 .title{color:var(--ink-faint);font-size:12.5px;margin-top:6px}
+.c2 .seats.full{color:var(--ink-faint)}
+/* 참가 문의 — 보조 스타일(테두리만). 글로우는 모집중 뱃지 하나로 유지한다. */
+.ask{margin-left:auto;font-size:12px;font-weight:700;color:var(--ink);border:1px solid var(--line);
+     border-radius:8px;padding:6px 12px;text-decoration:none;white-space:nowrap;transition:border-color .15s,color .15s}
+.ask:hover{border-color:var(--gold-soft);color:var(--gold)}
 
 /* 모집중 뱃지 — 이 페이지의 유일한 골드 글로우 */
 .recruiting{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;color:#0a0a0c;background:var(--gold);border-radius:99px;padding:3px 10px}
 @media (prefers-reduced-motion: no-preference){
-  .recruiting{animation:glowpulse 2.6s ease-in-out infinite}
+  /* 글로우는 가장 임박한 1건에만 — 모집중이 여러 개여도 한 화면 1개 원칙(DESIGN.md)을 지킨다.
+     자동 판정으로 전환하면서 뱃지 개수가 늘어나 이 제한이 필요해졌다. */
+  .recruiting.lead{animation:glowpulse 2.6s ease-in-out infinite}
 }
 @keyframes glowpulse{
   0%,100%{box-shadow:0 0 0 0 rgba(245,197,24,.0)}
@@ -126,6 +133,8 @@ h1{font-size:clamp(26px,6vw,34px);font-weight:800;letter-spacing:-.02em;margin:8
 const API = "https://mri-academy-production.up.railway.app";
 const DOW = ["일","월","화","수","목","금","토"];
 const state = { kind: "lesson", week: 0 };
+// 모집중 카드의 참가 동선. 상담 서버(MRI) — 카카오로 바꾸려면 이 상수만 교체.
+const ASK_URL = "https://discord.gg/szFa7teEJs";
 const $ = (s, r=document) => r.querySelector(s);
 const esc = (s) => String(s==null?"":s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const dowLabel = (d) => DOW[new Date(d+"T00:00:00Z").getUTCDay()];
@@ -149,9 +158,11 @@ function reveal(){
 }
 
 function fmtBadge(f){ return `<span class="chip">${esc(f)}</span>`; }
+// 당일 신청자는 "2/4"보다 "2자리 남음"이 바로 읽힌다 — 뺄셈을 시키지 않는다.
 function seatText(e){
-  if(e.capacity!=null){ return `${e.filled}/${e.capacity}명`; }
-  return e.filled ? `${e.filled}명` : "";
+  if(e.capacity==null) return e.filled ? { t:`${e.filled}명`, full:false } : null;
+  const left = e.capacity - e.filled;
+  return left > 0 ? { t:`${left}자리 남음`, full:false } : { t:"마감", full:true };
 }
 
 function render(data){
@@ -173,22 +184,26 @@ function render(data){
   const byDay = {};
   events.forEach(e=>{ (byDay[e.event_date]=byDay[e.event_date]||[]).push(e); });
   const today = kstToday();
-  let html="";
+  let html="", glowUsed = false;
   Object.keys(byDay).sort().forEach(date=>{
     html += `<section class="day">
       <div class="day-h"><span class="dow">${dowLabel(date)}요일</span><span class="date">${mdLabel(date)}</span>${date===today?`<span class="today">오늘</span>`:""}</div>`;
     byDay[date].forEach(e=>{
       const time = hhmm(e.start_time) + (e.end_time?`–${hhmm(e.end_time)}`:"");
       const seats = seatText(e);
+      // 글로우는 가장 임박한 모집중 1건만(events가 날짜·시간순이라 처음 만나는 게 가장 이르다)
+      const lead = e.is_recruiting && !glowUsed;
+      if(lead) glowUsed = true;
       html += `<div class="card${e.is_recruiting?" recruit":""}" data-reveal>
         <div class="c1">
           ${time?`<span class="time">${esc(time)}</span>`:""}
           ${fmtBadge(e.format)}
-          ${e.is_recruiting?`<span class="recruiting">● 모집중</span>`:""}
+          ${e.is_recruiting?`<span class="recruiting${lead?" lead":""}">● 모집중</span>`:""}
         </div>
         <div class="c2">
           ${e.trainer?`<span class="trainer">${esc(e.trainer)}</span>`:""}
-          ${seats?`<span class="seats">${esc(seats)}</span>`:""}
+          ${seats?`<span class="seats${seats.full?" full":""}">${esc(seats.t)}</span>`:""}
+          ${e.is_recruiting?`<a class="ask" href="${ASK_URL}" target="_blank" rel="noopener">참가 문의 →</a>`:""}
         </div>
         ${e.title?`<div class="title">${esc(e.title)}</div>`:""}
       </div>`;
