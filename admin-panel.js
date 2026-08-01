@@ -241,10 +241,13 @@ module.exports = function mountAdminPanel(app, deps) {
       const gradByTrainer = groupBy(graduations, "trainer_id");
       const rateOf = (tid) => trainerBaseRate(gradByTrainer[tid] || []);
       // 상담(consult) 건수 → 담당 트레이너별 (수강생의 trainer_id로 귀속)
+      // amount>0 가드: 무료 상담(클랜상담·인계무료·서비스면제·기존고객)은 가산 대상이 아니다.
+      // 추적 목적으로 원장에 0원 행을 남기기 시작하면, 이 가드가 없는 순간 건당 10,000이 과지급된다
+      // (엔진은 금액이 아니라 건수를 센다). 0원 행이 생기기 전에 선반영해 둔다.
       const stuById = {}; for (const s of students) stuById[s.id] = s;
       const consultByTrainer = {};
       for (const p of payments) {
-        if (p.kind !== "consult") continue;
+        if (p.kind !== "consult" || !(p.amount > 0)) continue;
         const stu = stuById[p.student_id];
         if (stu && stu.trainer_id != null)
           consultByTrainer[stu.trainer_id] = (consultByTrainer[stu.trainer_id] || 0) + 1;
