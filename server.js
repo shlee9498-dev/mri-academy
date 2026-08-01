@@ -3597,8 +3597,50 @@ app.post("/api/gdcup-edit", async (req, res) => {
       const prevAudit = Array.isArray(cur.audit) ? cur.audit : [];
       patch.audit = prevAudit.concat([{ override: true, approvedBy: clip(b.approvedBy, 40) || null, reason: clip(b.reason, 200) || null, at: new Date().toISOString(), bpiBefore: cur.bpi ?? null, bpiAfter: bpi, reasons: validation.reasons }]);
     }
-    const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, patch);
-    const team = Array.isArray(updated) ? updated[0] : updated;
+    let updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, patch);
+    let team = Array.isArray(updated) ? updated[0] : updated;
+
+    // ── verify=true: 저장 직후 서버가 tier를 재도출한다(닉 정정 흐름 전용) ──
+    // 닉을 고치는 이유가 "PUBG에서 안 잡히던 걸 잡히게" 하는 것이라, 저장만 하고 끝내면
+    // 확정 버튼을 누를 때까지 고쳐졌는지 알 수 없다. 확정과 같은 verifyTeamTiers를 써서
+    // 판정 이원화를 만들지 않는다. 멤버당 20초 페이싱이라 4명이면 ~60초 걸린다.
+    // 저장 자체는 이미 끝났으므로, 검증이 실패해도 닉 정정은 남는다.
+    let verify = null;
+    if (b.verify === true) {
+      try {
+        const v = await verifyTeamTiers({ members, season: teamSeason });
+        verify = {
+          apiFailed: !!v.apiFailed,
+          members: (v.members || []).map((m) => ({
+            idx: m.idx, ign: m.ign,
+            serverTier: m.serverTier || null,
+            found: !!m.serverTier,
+            clientTier: m.clientTier || null,
+            mismatch: !!m.mismatch,
+          })),
+          notFound: (v.reasons || []).filter((r) => r.code === "player_not_found").map((r) => r.ign),
+          ok: !!v.ok, serverBpi: v.serverBpi ?? null, reasons: v.reasons || [],
+        };
+        // 전원 조회 성공했을 때만 서버 판정 tier를 반영한다.
+        // 일부만 잡히는 중간 상태에서 덮어쓰면 신고값이 소리 없이 사라진다.
+        if (!v.apiFailed && verify.notFound.length === 0 && v.members.length === members.length) {
+          const svMembers = members.map((m, i) => ({ ...m, tier: v.members[i].serverTier || m.tier }));
+          const sv = validateTeamComposition(svMembers, teamSeason);
+          const svPatch = { members: svMembers, bpi: sv.teamBpi, weight: gdcupWeight(sv.teamBpi, teamSeason) };
+          updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, svPatch);
+          team = Array.isArray(updated) ? updated[0] : updated;
+          verify.applied = true;
+          verify.teamBpi = sv.teamBpi;
+          verify.teamOk = sv.ok;
+          verify.teamReasons = sv.reasons;
+        } else {
+          verify.applied = false;
+        }
+      } catch (e) {
+        console.error("gdcup_edit_verify", e?.message);
+        verify = { error: "verify_failed", message: String(e?.message || e).slice(0, 120) };
+      }
+    }
     // 디코 참가팀명단 채널에 '정정' 카드 자동 게시
     const LISTWH = process.env.GDCUP_LIST_WEBHOOK;
     if (LISTWH && team) {
@@ -3614,7 +3656,9 @@ app.post("/api/gdcup-edit", async (req, res) => {
       };
       try { await fetch(LISTWH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: (process.env.GDCUP_PING ? process.env.GDCUP_PING + " " : "") + "✏️ 팀 티어가 수정됐어요 (최신 BPI 반영)", embeds: [pembed] }) }); } catch (e) { console.error("gdcup_edit_webhook", e.message); }
     }
-    res.json({ ok: true, bpi, weight });
+    // verify가 서버 판정을 반영했으면 그 값이 최신 — 프론트에 재조회를 요구하지 않는다.
+    const finalBpi = (verify && verify.applied) ? verify.teamBpi : bpi;
+    res.json({ ok: true, bpi: finalBpi, weight: gdcupWeight(finalBpi, teamSeason), verify });
   } catch (e) { console.error("gdcup_edit_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
