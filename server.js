@@ -460,7 +460,7 @@ app.delete("/api/replies/:id", async (req, res) => {
 
 
 // ═══════════════════ 챗봇 ═══════════════════════════════════
-const SYSTEM = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우미입니다. 존댓말로, 군더더기 없이 답하세요.
+const SYSTEM = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우미입니다. 존댓말로, 따뜻하되 군더더기 없이 답하세요.
 
 [핵심 사실 — 라이브 사이트 PLANS·FAQ 원문이 정본]
 - 레슨: 판수(Game) 기준. 서바이버 트레이너진 진행. 레벨테스트 무관, 누구나 가능. 개인/그룹 선택.
@@ -484,11 +484,20 @@ const SYSTEM = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우미입니
 - 담당 트레이너의 부득이한 사정(군 입대 등) 시: 잔여 회차를 ①후임 인계 ②동급 전환 ③미사용분 환불 중 수강생이 선택.
 - 트레이너 모집: 검증을 거친 트레이너를 상시 모집(trainer-recruit 페이지).
 - 링크: 디스코드 https://discord.gg/szFa7teEJs · 카카오 https://open.kakao.com/o/sAUU6OGf · 홈페이지 https://mriacademy.gg · 이용약관 https://mriacademy.gg/terms.html
+- 참고 자료(대화 흐름에 맞을 때 자연스럽게 하나만 곁들이세요. 매 답변마다 붙이지 마세요):
+  · 교정 사례 영상 https://youtube.com/shorts/29HMASCtxcQ — 실력이 어떻게 바뀌는지 궁금해할 때
+  · 수강생 전적 https://mriacademy.gg/success.html — 결과·후기를 확인하고 싶어할 때
 
 [응대 규칙]
 - **마크다운을 쓰지 마세요.** 별표(**), 백틱, #, 표 기호는 그대로 글자로 노출되므로 금지. 강조가 필요하면 문장으로 표현하고, 나열은 "·"로 하세요.
-- **길이는 3~5줄. 마지막은 되묻기 한 문장으로 끝내세요** (예: 현재 티어가 어느 구간인지 알려주시면 맞는 과정으로 안내드리겠습니다).
-- **상투적인 도입부 금지.** "안녕하세요", "좋은 질문입니다", "물론입니다", "~에 대해 안내드리겠습니다" 같은 서두 없이 곧바로 답부터 시작하세요.
+- **길이는 3~5줄.**
+- **톤: 존댓말 + 따뜻하게.** 사무적으로 끊지 말고 사람이 응대하듯 답하세요. 다만 과장·영업 멘트는 넣지 마세요.
+- **이모지는 답변당 0~2개까지.** 문장 끝에 가볍게만 쓰고, 나열마다 붙이지 마세요.
+- **인사는 대화의 첫 답변에서 딱 한 번만** 허용합니다 (예: 안녕하세요, MRI 아카데미입니다 😊). 이전 대화가 이미 있으면 인사 없이 곧바로 답하세요.
+- **그 밖의 상투적인 도입부는 금지.** "좋은 질문입니다", "물론입니다", "~에 대해 안내드리겠습니다" 같은 서두 없이 곧바로 답부터 시작하세요.
+- **마지막은 행동 지시형 되묻기로 끝내세요.** 상대가 무엇을 하면 되는지 하나만 명확히 알려주고, 그렇게 하면 무엇을 받게 되는지까지 붙이세요.
+  좋은 예: 현재 티어와 가장 막히는 부분을 한 줄로 보내주시면, 맞는 과정과 준비 방법까지 안내드리겠습니다.
+  나쁜 예: 티어가 어떻게 되세요? / 궁금한 점 있으시면 말씀해 주세요. (무엇을 해야 할지가 없습니다)
 - 금액·절차·규정 질문은 위 사실대로만 답합니다. 모르는 내용은 지어내지 말고 상담 연결로 안내하세요.
 - 일정 확정, 결제 완료 확인, 환불 실행, 트레이너 배정 등 실제 처리는 직접 하지 말고 "상담(디스코드/카카오)에서 도와드린다"로 연결하세요.
 - 개인별 상황(이미 결제했는지·누가 담당인지 등)은 추측하지 말고 상담 연결로 안내하세요.
@@ -2693,6 +2702,13 @@ async function verifyTeamTiers(team) {
       rankedTier: best.rankedTier || null,
       bestRP: best.ranked?.bestRankPoint ?? null,
       basis: sv.tier != null ? (best.basis?.pick || null) : null,
+      // 판정 근거를 그대로 흘려보낸다 — 화면에서 "신고값 때문에 이 등급이 나왔다"고
+      // 오해하는 사고가 실제로 있었다(Ez_time-: 신고 670딜(일겜 8판)이 S의 근거처럼 보임.
+      // 실제 근거는 경쟁전 439딜 95판). 판정 로직이 아니라 표시가 문제였다.
+      damageSource: best.basis?.damageSource || null,
+      judgeDamage: best.basis?.avgDamage ?? null,
+      rankedAvgDamage: best.basis?.rankedAvgDamage ?? null,
+      rankedRounds: best.basis?.rankedRounds ?? null,
       bpi: sv.bpi ?? null,
     });
     if (noSeason) out.reasons.push({ code: "no_season_data", idx: i, ign });
@@ -3461,7 +3477,9 @@ app.post("/api/gdcup-apply", async (req, res) => {
     const WEBHOOK = process.env.GDCUP_APPLY_WEBHOOK;
     const PING = process.env.GDCUP_PING || "";
     if (WEBHOOK) {
-      const mlines = members.map((m, i) => (i === 0 ? "[팀장] " : "[팀원" + (i + 1) + "] ") + m.name + " (" + m.ign + ") · " + m.tier + (m.peak ? " · 최고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
+      // "최고 X/Y딜"이 판정 근거처럼 읽혀 오판정 의심을 부른 사고가 있었다(Ez_time-).
+      // 신청 시점엔 서버 검증 전이라 근거가 아예 없다 — 자기신고값임을 문구로 못박는다.
+      const mlines = members.map((m, i) => (i === 0 ? "[팀장] " : "[팀원" + (i + 1) + "] ") + m.name + " (" + m.ign + ") · " + m.tier + (m.peak ? " · 신고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
       const embed = {
         title: "G드컵 시즌" + season + " 팀 신청 - " + teamName,
         color: 0xf5c518,
@@ -3540,7 +3558,7 @@ app.post("/api/gdcup-add-member", async (req, res) => {
     await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(team.id)}`, { members, bpi, weight });
 
     const PING = process.env.GDCUP_PING || "";
-    const addLines = adds.map(m => "+ " + (m.name ? m.name + " " : "") + "(" + m.ign + ") · " + m.tier + (m.peak ? " · 최고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
+    const addLines = adds.map(m => "+ " + (m.name ? m.name + " " : "") + "(" + m.ign + ") · " + m.tier + (m.peak ? " · 신고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
     const WEBHOOK = process.env.GDCUP_APPLY_WEBHOOK;
     if (WEBHOOK) {
       const embed = {
@@ -3856,6 +3874,11 @@ app.get("/api/gdcup-admin-list", async (req, res) => {
         pubgState: (raw[i] && raw[i].pubgState)
           || (raw[i] && raw[i].pubgOk != null ? (raw[i].pubgOk ? "ok" : "not_found") : null),
         pubgAt: (raw[i] && raw[i].pubgAt) || null,
+        // 판정 근거(신고값과 구분해 표시하기 위함). sanitizeMembers는 화이트리스트라 여기서 되붙인다.
+        pubgDmgSource: (raw[i] && raw[i].pubgDmgSource) || null,
+        pubgJudgeDmg: (raw[i] && raw[i].pubgJudgeDmg) ?? null,
+        pubgRankedDmg: (raw[i] && raw[i].pubgRankedDmg) ?? null,
+        pubgRankedRounds: (raw[i] && raw[i].pubgRankedRounds) ?? null,
       }));
       return { ...r, verified: !!r.verified_at, members,
         // 조치가 필요한 건 not_found 뿐 — no_season은 참가 가능한 정상 상태다.
@@ -3883,7 +3906,12 @@ function stampPubgVerify(members, v) {
       ? "not_found"
       : (r.seasonDataAvailable === false ? "no_season" : "ok");
     return { ...m, pubgState: state, pubgOk: state === "ok",
-      pubgTier: r.serverTier || null, pubgAt: at };
+      pubgTier: r.serverTier || null, pubgAt: at,
+      // 판정 근거 스냅 — 검증은 재조회가 비싸므로(멤버당 20초) 결과를 새겨둔다.
+      pubgDmgSource: r.damageSource || null,      // "ranked" | "sample"
+      pubgJudgeDmg: r.judgeDamage ?? null,        // 실제 판정에 쓰인 평딜
+      pubgRankedDmg: r.rankedAvgDamage ?? null,
+      pubgRankedRounds: r.rankedRounds ?? null };
   });
 }
 
