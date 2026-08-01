@@ -14,11 +14,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## AI 협업 구조 (2026-07 확정)
 - 무리(오너): 최종 승인·방향 결정
 - 지휘탑(Claude 챗): 설계·계획·검토·데이터·시트 방향. 작업 명세는 여기서 나옴
-- Claude Code(본인): mri-academy 구현 전담. 별도 브랜치 → draft PR → 오너 승인 → 머지.
-  main 직접 push 금지 (Ruleset으로도 차단됨)
+- Claude Code(본인): **세 repo 구현 전담** — mri-academy · gmi-clancup · gmi-casino-bot.
+  별도 브랜치 → draft PR → 오너 승인 → 머지. main 직접 push 금지 (Ruleset으로도 차단됨)
+  - **mri-academy** — 정적 프론트 + API/디스코드 봇(server.js) + 정산 패널. G드컵 판정·정산의 서버 정본
+  - **gmi-clancup** — G드컵 공개 페이지·운영 화면(GitHub Pages). 표·스케일을 복제하지 않고
+    `GET /api/gdcup-meta`로 받아 쓴다
+  - **gmi-casino-bot** — 카지노·킬내기·아레나(Python/discord.py + FastAPI, Railway).
+    코인 경제 상한은 env와 코드 기본값을 **양쪽 다** 안전값으로 유지(env 단일 방어선 금지)
 - Gemini: Google Sheets 내부 편집만. repo 접근 없음
 - ChatGPT: repo 밖 작업(글·아이디어·검색). repo 코드 관여 금지
-- Codex: mri-academy 접근 금지. 별도 실험 저장소·일회성 스크립트만
+- Codex: 위 세 repo 전부 접근 금지. 별도 실험 저장소·일회성 스크립트만
 - 원칙: 구현 창구는 Claude Code 단일. 다른 도구가 만든 코드 diff는 머지 전
   Claude Code가 검토. AGENTS.md와 충돌 시 CLAUDE.md 우선
 
