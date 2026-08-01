@@ -2095,6 +2095,20 @@ const TIERS = [
   { min: 100, t: "T4", label: "받쳐주기" },
   { min: 0,   t: "T5", label: "신예" },
 ];
+// 경쟁전(랭크) 평딜 경계 — 일겜과 스케일이 완전히 다르다.
+// 실측: 같은 사람이 일겜 506 / 경쟁전 172(275판). 일겜 경계를 그대로 쓰면 S가 나온다.
+// (Ez 카카오팀이 이 오판정으로 합산 42가 되어 상한 36에 막혀 신청이 차단된 사고.)
+// 비율이 34~116%로 흩어져 일괄 계수 보정은 불가 — 경쟁전 전용 표를 둔다.
+// 표본이 적어 잠정값이며, env GDCUP_RANKED_TIERS="400,330,280,230,180,120" 로
+// 배포 없이 재보정할 수 있다(S,T0,T1,T2,T3,T4 순 · T5는 0 고정).
+const RANKED_TIER_MINS = (() => {
+  const raw = String(process.env.GDCUP_RANKED_TIERS || "").split(",").map((x) => parseInt(x, 10));
+  const ok = raw.length === 6 && raw.every((n) => Number.isFinite(n));
+  return ok ? raw : [400, 330, 280, 230, 180, 120];
+})();
+const RANKED_TIERS = ["S", "T0", "T1", "T2", "T3", "T4"]
+  .map((t, i) => ({ min: RANKED_TIER_MINS[i], t, label: (TIERS.find((x) => x.t === t) || {}).label || t }))
+  .concat([{ min: 0, t: "T5", label: "신예" }]);
 // 경쟁전 표본이 이 판수 미만이면 "표본 부족"으로 본다. 현재는 계측 집계에서만 쓰이고
 // 판정에는 관여하지 않는다(BPI 티어는 여전히 일겜 평딜 기준 — 경쟁전 전환은 임계값 재보정과 동시 적용).
 const RANKED_MIN_ROUNDS = Number(process.env.RANKED_MIN_ROUNDS || 10);
@@ -2108,8 +2122,11 @@ function gdcupRankedFloor(rankedTier, bestRP) {
   return null;
 }
 
-function suggestBPI(avgDamage, rankedTier, isTeamLeader, bestRP) {
-  const found = TIERS.find((x) => avgDamage >= x.min);
+// damageSource="ranked" 면 경쟁전 전용 경계표를 쓴다. 두 스케일을 같은 표로 재면
+// 일겜 고딜 유저가 S로 튀어오른다(Ez 카카오팀 사고).
+function suggestBPI(avgDamage, rankedTier, isTeamLeader, bestRP, damageSource = "sample") {
+  const table = damageSource === "ranked" ? RANKED_TIERS : TIERS;
+  const found = table.find((x) => avgDamage >= x.min);
   let tier = found.t, label = found.label, pick = "damage";
   const floor = gdcupRankedFloor(rankedTier, bestRP);                 // 티어 보정 등급
   if (floor && GDCUP_TIER_ORDER.indexOf(floor) > GDCUP_TIER_ORDER.indexOf(tier)) {
@@ -2287,8 +2304,24 @@ async function computeBPI(platform, nickname, isLeader) {
   const avgDamage = rp ? Math.round(dmg / rp) : 0;
   const wins = stats?.wins || 0;
 
-  const bpi = suggestBPI(avgDamage, rankedTier, isLeader, rankedStats?.bestRankPoint ?? null);
-  const lowConfidence = rp < 10 || seasonSource === "previous";
+  // ── 판정 딜 소스 결정 (오너 확정: pick이 아니라 판수로 독립 게이트) ──
+  // 경쟁전 판수가 충분하면 경쟁전 평딜이 정본. 대회는 경쟁 환경이므로 일겜 딜은
+  // 실력을 뭉갠다(같은 사람 일겜 506 / 경쟁전 172). 판수가 모자라면 일겜으로 폴백한다.
+  // pick(=어느 규칙이 티어를 정했나)과는 무관한 별개 판단이다.
+  const rkRounds = rankedStats?.roundsPlayed ?? 0;
+  const rkDmg = rankedStats?.avgDamage ?? null;
+  const useRanked = rkDmg != null && rkRounds >= RANKED_MIN_ROUNDS;
+  const damageSource = useRanked ? "ranked" : "sample";
+  const judgeDamage = useRanked ? rkDmg : avgDamage;
+
+  const bpi = suggestBPI(judgeDamage, rankedTier, isLeader, rankedStats?.bestRankPoint ?? null, damageSource);
+  bpi.basis.avgDamage = judgeDamage;           // 판정에 실제로 쓰인 값
+  bpi.basis.damageSource = damageSource;
+  bpi.basis.sampleAvgDamage = avgDamage;       // 참고용(일겜)
+  bpi.basis.rankedAvgDamage = rkDmg;
+  bpi.basis.rankedRounds = rkRounds;
+  bpi.basis.minRounds = RANKED_MIN_ROUNDS;
+  const lowConfidence = (useRanked ? false : rp < 10) || seasonSource === "previous" || !useRanked;
 
   return {
     ...base,
