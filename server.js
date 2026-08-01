@@ -4770,7 +4770,8 @@ const REQUIRED_SCHEMA = {
                      "season_id","snapshot_type","tier","sub_tier","tier_index","rank_point",
                      "best_rank_point","avg_damage","avg_kills","kda","rounds_played","raw","created_at"],
   students:         ["id","name","discord_nick","trainer_id","status","note","carry_games",
-                     "payout_rate_set","pubg_platform","pubg_name","pubg_account_id"],
+                     "payout_rate_set","pubg_platform","pubg_name","pubg_account_id",
+                     "discord_id","discord_src"],
 };
 
 // 테이블 1건 점검. 전체 컬럼을 한 번에 조회해 통과하면 요청 1회로 끝나고,

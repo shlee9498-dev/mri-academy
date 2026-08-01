@@ -91,6 +91,16 @@ graduations·schedule_events + student_snapshots 확장). **idempotent** — 오
 - [ ] 오너가 Supabase SQL Editor에서 해당 DDL 실행
 - [ ] 마지막에 `NOTIFY pgrst, 'reload schema';` 실행(PostgREST 스키마 캐시 갱신)
 
+**⚠️ 스키마 변경은 항상 3곳을 함께 고친다** — 하나라도 빠지면 조용히 어긋난다.
+1. `supabase_admin_panel.sql` (재현 가능한 정본)
+2. `server.js`의 `REQUIRED_SCHEMA` (기동 시 자기점검 — **여기 없으면 미실행을 영영 못 잡는다**)
+3. 실제 DB (오너가 SQL Editor에서 실행)
+
+실제 사례: `students.discord_id`가 `REQUIRED_SCHEMA`에 없어 자기점검 사각지대였고, 음성 참여
+자동기록 설계에 들어가서야 부재가 드러났다(active 47명 중 44명 미연결).
+**제약(NOT NULL·check) 변경은 컬럼 존재 프로브로 못 잡는다** — `select=col&limit=0`은 nullable
+여부를 보지 않는다. 제약 변경은 PR 본문 체크리스트로만 관리한다.
+
 ## 디스코드 봇 (server.js 내부)
 슬래시 명령이 길드별로 분리 등록됨: 기존 운영 명령은 `GUILD_ID`(피드백 서버), `/수업등록`은
 `LESSON_GUILD_ID`(GmI). `/승급`은 **글로벌 + DM 전용**(`integrationTypes`/`contexts`로 등록, `dm_permission`

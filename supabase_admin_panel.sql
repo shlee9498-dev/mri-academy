@@ -143,6 +143,13 @@ create index if not exists idx_sched_trainer on public.schedule_events (trainer_
 alter table public.students add column if not exists pubg_platform   text check (pubg_platform in ('steam','kakao'));
 alter table public.students add column if not exists pubg_name       text;   -- 인게임 닉(시드용, 변경 가능)
 alter table public.students add column if not exists pubg_account_id text;   -- 해석된 안정 accountId(캐시)
+-- 디코 사용자ID. discord_nick(표시닉)은 변경·중복이 가능해 키로 쓸 수 없다.
+-- 음성 참여 자동기록(voiceStateUpdate)이 주는 건 이 숫자 ID 하나뿐이라, 이게 없으면 붙일 데가 없다.
+-- unique 제약이 아니라 부분 유니크 인덱스 — 미연결(null)이 다수여야 하고, 값이 있을 때만 중복을 막는다.
+alter table public.students add column if not exists discord_id  text;
+alter table public.students add column if not exists discord_src text;   -- 백필 경로 기록(account/nick/manual)
+create unique index if not exists idx_students_discord
+  on public.students (discord_id) where discord_id is not null;
 -- student_snapshots는 성장추적 시스템이 이미 생성함. 여기선 컬럼만 확장(idempotent).
 alter table public.student_snapshots add column if not exists student_id  bigint references public.students(id);
 alter table public.student_snapshots add column if not exists avg_damage  int;   -- 평균 딜량(damageDealt/rounds)
