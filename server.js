@@ -3034,10 +3034,12 @@ const GDCUP_WEIGHT_S2 = [[0,16,1.3],[17,19,1.2],[20,21,1.1],[22,23,1.0],[24,25,0
 // ⚠️ 가중치표·BPI 스케일의 단일 정본. 프론트(gdcup-s3.html)에 복제하지 말 것 —
 //    시즌3에서 양쪽 하드코딩이 어긋나 신청자에게 틀린 배율이 표시된 사고가 있었다.
 //    프론트는 GET /api/gdcup-meta 로 받아 쓴다.
-const GDCUP_WEIGHT_S3 = [[0,19,1.15],[20,24,1.10],[25,28,1.05],[29,32,1.00],[33,36,0.95],[37,9999,0.85]];                  // 시즌3 신표
+// 2026-08-01: 상한 36→38 상향(모집 우선, 오너 확정). 37~38 구간을 신설해 상향분이
+// 기존 37+ ×0.85에 묶이지 않게 한다. 39+ 구간은 상한상 도달 불가하나 방어적으로 유지.
+const GDCUP_WEIGHT_S3 = [[0,19,1.15],[20,24,1.10],[25,28,1.05],[29,32,1.00],[33,36,0.95],[37,38,0.90],[39,9999,0.85]];      // 시즌3 신표
 const GDCUP_SEASONS = {
   2: { rounds: [3,4,5],       weightTable: GDCUP_WEIGHT_S2, cap: null,                   bonusMode: "legacy_inclusive" },
-  3: { rounds: [1,2,3,4,5],   weightTable: GDCUP_WEIGHT_S3, cap: { team: 36, sTier: 1 }, bonusMode: "pre_weight",
+  3: { rounds: [1,2,3,4,5],   weightTable: GDCUP_WEIGHT_S3, cap: { team: 38, sTier: 1 }, bonusMode: "pre_weight",
        streak: { top4: 2, chicken: 4 } },   // 연속 Top4 +2 · 연속 치킨 +4(대체) — BPI 곱하기 전 라운드 점수에 합산
 };
 function gdSeasonRules(season) { return GDCUP_SEASONS[season] || GDCUP_SEASONS[GDCUP_CURRENT_SEASON]; }
