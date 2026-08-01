@@ -2693,6 +2693,13 @@ async function verifyTeamTiers(team) {
       rankedTier: best.rankedTier || null,
       bestRP: best.ranked?.bestRankPoint ?? null,
       basis: sv.tier != null ? (best.basis?.pick || null) : null,
+      // 판정 근거를 그대로 흘려보낸다 — 화면에서 "신고값 때문에 이 등급이 나왔다"고
+      // 오해하는 사고가 실제로 있었다(Ez_time-: 신고 670딜(일겜 8판)이 S의 근거처럼 보임.
+      // 실제 근거는 경쟁전 439딜 95판). 판정 로직이 아니라 표시가 문제였다.
+      damageSource: best.basis?.damageSource || null,
+      judgeDamage: best.basis?.avgDamage ?? null,
+      rankedAvgDamage: best.basis?.rankedAvgDamage ?? null,
+      rankedRounds: best.basis?.rankedRounds ?? null,
       bpi: sv.bpi ?? null,
     });
     if (noSeason) out.reasons.push({ code: "no_season_data", idx: i, ign });
@@ -3461,7 +3468,9 @@ app.post("/api/gdcup-apply", async (req, res) => {
     const WEBHOOK = process.env.GDCUP_APPLY_WEBHOOK;
     const PING = process.env.GDCUP_PING || "";
     if (WEBHOOK) {
-      const mlines = members.map((m, i) => (i === 0 ? "[팀장] " : "[팀원" + (i + 1) + "] ") + m.name + " (" + m.ign + ") · " + m.tier + (m.peak ? " · 최고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
+      // "최고 X/Y딜"이 판정 근거처럼 읽혀 오판정 의심을 부른 사고가 있었다(Ez_time-).
+      // 신청 시점엔 서버 검증 전이라 근거가 아예 없다 — 자기신고값임을 문구로 못박는다.
+      const mlines = members.map((m, i) => (i === 0 ? "[팀장] " : "[팀원" + (i + 1) + "] ") + m.name + " (" + m.ign + ") · " + m.tier + (m.peak ? " · 신고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
       const embed = {
         title: "G드컵 시즌" + season + " 팀 신청 - " + teamName,
         color: 0xf5c518,
@@ -3540,7 +3549,7 @@ app.post("/api/gdcup-add-member", async (req, res) => {
     await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(team.id)}`, { members, bpi, weight });
 
     const PING = process.env.GDCUP_PING || "";
-    const addLines = adds.map(m => "+ " + (m.name ? m.name + " " : "") + "(" + m.ign + ") · " + m.tier + (m.peak ? " · 최고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
+    const addLines = adds.map(m => "+ " + (m.name ? m.name + " " : "") + "(" + m.ign + ") · " + m.tier + (m.peak ? " · 신고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
     const WEBHOOK = process.env.GDCUP_APPLY_WEBHOOK;
     if (WEBHOOK) {
       const embed = {
@@ -3856,6 +3865,11 @@ app.get("/api/gdcup-admin-list", async (req, res) => {
         pubgState: (raw[i] && raw[i].pubgState)
           || (raw[i] && raw[i].pubgOk != null ? (raw[i].pubgOk ? "ok" : "not_found") : null),
         pubgAt: (raw[i] && raw[i].pubgAt) || null,
+        // 판정 근거(신고값과 구분해 표시하기 위함). sanitizeMembers는 화이트리스트라 여기서 되붙인다.
+        pubgDmgSource: (raw[i] && raw[i].pubgDmgSource) || null,
+        pubgJudgeDmg: (raw[i] && raw[i].pubgJudgeDmg) ?? null,
+        pubgRankedDmg: (raw[i] && raw[i].pubgRankedDmg) ?? null,
+        pubgRankedRounds: (raw[i] && raw[i].pubgRankedRounds) ?? null,
       }));
       return { ...r, verified: !!r.verified_at, members,
         // 조치가 필요한 건 not_found 뿐 — no_season은 참가 가능한 정상 상태다.
@@ -3883,7 +3897,12 @@ function stampPubgVerify(members, v) {
       ? "not_found"
       : (r.seasonDataAvailable === false ? "no_season" : "ok");
     return { ...m, pubgState: state, pubgOk: state === "ok",
-      pubgTier: r.serverTier || null, pubgAt: at };
+      pubgTier: r.serverTier || null, pubgAt: at,
+      // 판정 근거 스냅 — 검증은 재조회가 비싸므로(멤버당 20초) 결과를 새겨둔다.
+      pubgDmgSource: r.damageSource || null,      // "ranked" | "sample"
+      pubgJudgeDmg: r.judgeDamage ?? null,        // 실제 판정에 쓰인 평딜
+      pubgRankedDmg: r.rankedAvgDamage ?? null,
+      pubgRankedRounds: r.rankedRounds ?? null };
   });
 }
 
