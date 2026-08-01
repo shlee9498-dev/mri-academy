@@ -584,7 +584,12 @@ module.exports = function mountAdminPanel(app, deps) {
         format: r.format, title: r.title || null,
         trainer: r.trainer_id ? (nameOf[r.trainer_id] || null) : null,
         capacity: r.capacity, filled: filledCount(r.participants),   // 실명 대신 인원수만
-        is_recruiting: r.is_recruiting,
+        // 모집중은 정원 대비 자동 판정. 수동 플래그는 트레이너가 체크를 빠뜨리면
+        // 빈 자리가 있어도 뱃지가 안 떠서 신뢰할 수 없었다.
+        // capacity가 없는 형식(자율연습 등)만 수동 플래그를 그대로 쓴다.
+        is_recruiting: r.capacity != null
+          ? filledCount(r.participants) < r.capacity
+          : !!r.is_recruiting,
       }));
       res.json({ week: { start, end }, events });
     } catch (e) { console.error("schedule_public", e); res.json({ week: { start, end }, events: [] }); }
