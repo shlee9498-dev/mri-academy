@@ -3534,29 +3534,75 @@ app.get("/api/gdcup-admin-list", async (req, res) => {
     const sf = req.query.season ? `&season=eq.${gdSeason(req.query.season)}` : "";
     const rows = await sbSelect("gdcup_apps", `select=id,team_name,slogan,members,bpi,weight,contact,status,season,created_at,verified_at${sf}&order=created_at.asc`);
     // verified: 확정 시 서버 tier 재검증 통과 여부 (강제확정은 verified_at null → false)
-    // 멤버별 registered: 등록계(clan_registry) 대조 결과. DB 조회만이라 PUBG 10 RPM과 무관하게
-    // 목록 로드마다 계산할 수 있다 — PUBG 닉 실존(404) 검증은 확정 시점에만 가능하므로,
-    // 그 전에 팀장 오기재를 미리 잡아내는 용도다. staff-panel과 같은 판정을 쓴다.
-    const teams = await Promise.all(rows.map(async (r) => {
-      const members = sanitizeMembers(r.members);
-      const { verified: reg } = await matchClanRegistry(members);
-      return {
-        ...r, verified: !!r.verified_at,
-        members: members.map((m, i) => ({ ...m, registered: reg[i] })),
-        unregistered: reg.filter((v) => v === false).length,
-      };
-    }));
+    // 멤버별 pubgOk: 마지막 재검증에서 PUBG 조회가 됐는지(members에 새겨둔 값).
+    // 등록계(clan_registry) 대조는 여기서 쓰지 않는다 — 용병은 등록계 대상이 아니라
+    // "미등록"이 정상인데도 경고로 읽혀 오해를 만들었다(오너 지적). 확정 판단에 필요한 건
+    // "PUBG에서 이 닉이 잡히는가" 하나뿐이다.
+    const teams = rows.map((r) => {
+      const raw = Array.isArray(r.members) ? r.members : [];
+      const members = sanitizeMembers(raw).map((m, i) => ({
+        ...m,
+        pubgOk: raw[i] && raw[i].pubgOk != null ? !!raw[i].pubgOk : null,   // null = 아직 검증 안 함
+        pubgAt: (raw[i] && raw[i].pubgAt) || null,
+      }));
+      return { ...r, verified: !!r.verified_at, members,
+        pubgFailed: members.filter((m) => m.pubgOk === false).length };
+    });
     res.json({ teams });
   } catch (e) { res.status(500).json({ error: "server_error" }); }
 });
 // 입금 확정 / 신청대기 / 취소 + 디코 알림
+// verifyTeamTiers 결과를 members에 새겨 목록에서 바로 보이게 한다.
+// 이게 없으면 확정 전까지 PUBG 조회 성공 여부를 알 방법이 없어, 등록계 미등록을
+// 대리 지표로 쓰게 된다 — 등록계는 용병에게 애초에 해당이 없어 오해를 만든다.
+function stampPubgVerify(members, v) {
+  const at = new Date().toISOString();
+  const byIdx = new Map((v?.members || []).map((m) => [m.idx, m]));
+  return (members || []).map((m, i) => {
+    const r = byIdx.get(i);
+    if (!r) return m;
+    return { ...m, pubgOk: !!r.serverTier, pubgTier: r.serverTier || null, pubgAt: at };
+  });
+}
+
 app.post("/api/gdcup-confirm", async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
     const b = req.body || {};
     if (!b.id) return res.status(400).json({ error: "no_id" });
     const status = b.status === "applied" ? "applied" : (b.status === "cancelled" ? "cancelled" : "confirmed");
-    const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, { status });
+    const force = b.force === 1 || b.force === true;
+
+    // ── 확정 시 서버 재검증 ──
+    // admin은 예전부터 "확정 시 서버가 재검증한다"고 안내하고 409/503 처리까지 갖고 있었는데
+    // 정작 서버에 검증이 없었다. verified_at도 어디에서도 쓰이지 않아 모든 팀이 영구 '미검증'
+    // 표시였다. 여기서 실제로 검증하고 결과를 남긴다.
+    const patch = { status };
+    if (status === "confirmed" && !force) {
+      const cur0 = (await sbSelect("gdcup_apps",
+        `select=id,season,members,bpi&id=eq.${encodeURIComponent(b.id)}&limit=1`))[0];
+      if (!cur0) return res.status(404).json({ error: "team_not_found" });
+      const season0 = gdSeason(cur0.season);
+      const mem0 = Array.isArray(cur0.members) ? cur0.members : [];
+      const v = await verifyTeamTiers({ members: mem0, season: season0 });
+      if (v.apiFailed) {
+        return res.status(503).json({ error: "pubg_unavailable",
+          message: "PUBG API 장애로 검증 불가 — 잠시 후 재시도하거나 강제확정하세요" });
+      }
+      const stamped = stampPubgVerify(mem0, v);
+      if (!v.ok) {
+        // 검증 실패여도 조회 결과는 남긴다 — 어느 닉이 문제인지 목록에서 보여야 고칠 수 있다.
+        await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, { members: stamped });
+        return res.status(409).json({ error: "verify_failed", reasons: v.reasons, members: v.members });
+      }
+      const svMembers = stamped.map((m, i) => ({ ...m, tier: v.members[i]?.serverTier || m.tier }));
+      const sv = validateTeamComposition(svMembers, season0);
+      patch.members = svMembers;
+      patch.bpi = sv.teamBpi;
+      patch.weight = gdcupWeight(sv.teamBpi, season0);
+      patch.verified_at = new Date().toISOString();
+    }
+    const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, patch);
     const team = Array.isArray(updated) ? updated[0] : updated;
     const WEBHOOK = process.env.GDCUP_DEPOSIT_WEBHOOK;
     if (WEBHOOK && team && status === "confirmed") {
@@ -3621,10 +3667,13 @@ app.post("/api/gdcup-edit", async (req, res) => {
           notFound: (v.reasons || []).filter((r) => r.code === "player_not_found").map((r) => r.ign),
           ok: !!v.ok, serverBpi: v.serverBpi ?? null, reasons: v.reasons || [],
         };
-        // 전원 조회 성공했을 때만 서버 판정 tier를 반영한다.
-        // 일부만 잡히는 중간 상태에서 덮어쓰면 신고값이 소리 없이 사라진다.
+        // 조회 결과는 성공·실패 무관하게 members에 새긴다 — 어느 닉이 문제인지
+        // 목록에서 바로 보여야 고칠 수 있다(닉 수정 → 저장의 순환이 여기서 닫힌다).
+        const stamped = stampPubgVerify(members, v);
+        // 서버 판정 tier 반영은 전원 조회 성공했을 때만.
+        // 일부만 잡히는 중간 상태에서 덮어쓰면 아직 못 찾은 멤버의 신고값이 소리 없이 사라진다.
         if (!v.apiFailed && verify.notFound.length === 0 && v.members.length === members.length) {
-          const svMembers = members.map((m, i) => ({ ...m, tier: v.members[i].serverTier || m.tier }));
+          const svMembers = stamped.map((m, i) => ({ ...m, tier: v.members[i].serverTier || m.tier }));
           const sv = validateTeamComposition(svMembers, teamSeason);
           const svPatch = { members: svMembers, bpi: sv.teamBpi, weight: gdcupWeight(sv.teamBpi, teamSeason) };
           updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, svPatch);
@@ -3634,6 +3683,10 @@ app.post("/api/gdcup-edit", async (req, res) => {
           verify.teamOk = sv.ok;
           verify.teamReasons = sv.reasons;
         } else {
+          if (!v.apiFailed) {
+            updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, { members: stamped });
+            team = Array.isArray(updated) ? updated[0] : updated;
+          }
           verify.applied = false;
         }
       } catch (e) {
