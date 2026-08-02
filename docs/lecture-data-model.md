@@ -537,17 +537,29 @@ DB `students` 68행 + 강의 마스터 31행 + 원장 85명 + 레슨로그 59명
 ### 8.1 🔴 먼저 — DDL 미실행분이 있다
 
 **실제 DB에 아래가 없다.** main에 머지됐지만 SQL Editor에서 실행되지 않았다.
+(2026-08-02 `information_schema` 전수 대조 — 아래 4건 외 26개 테이블·컬럼은 전부 정상)
 
-| 대상 | 정본 위치 | 커밋 |
+| 대상 | 정본 위치 | 기동 자기점검 |
 |---|---|---|
-| `students.discord_id` | `supabase_admin_panel.sql` §11 (149행) | `8316db4` |
-| `students.discord_src` | 동 (150행) | `8316db4` |
-| `student_snapshots.event_type` | 동 §11b (229행) | — |
+| `students.discord_id` | `supabase_admin_panel.sql` §11 (149행) | 잡힌다 |
+| `students.discord_src` | 동 (150행) | 잡힌다 |
+| `student_snapshots.event_type` | 동 §11b (229행) | **못 잡는다** ↓ |
+| `student_aliases` **(테이블 전체)** | 동 §16 (389행) | 잡힌다 |
 
 이름 정규화의 **종착지가 바로 이 컬럼**이고(§8.4), 예약 시스템의 학생 인증도 같은 컬럼을 쓴다.
-둘 다 여기서 막힌다. 나머지 25개 테이블·컬럼은 전부 정상이다.
+둘 다 여기서 막힌다.
 
-- [ ] 오너: `supabase_admin_panel.sql` §11 실행 + `NOTIFY pgrst, 'reload schema';`
+`student_aliases`는 PR #103으로 main에 들어갔지만 DDL은 미실행이다 — 즉 §8.5의 별칭 조회는
+**지금 코드에는 있고 DB에는 없다.** 다만 `resolveStudentId`의 별칭 조회는 try/catch로 감싸
+미생성 시 기존 동작(`null`)으로 떨어지므로, 장애가 아니라 **조용한 무효화**다.
+`/수업등록`은 계속 뜨고 미해석은 종전대로 오너 DM으로 간다. 표기가 다른 학생만 계속 안 붙는다.
+
+⚠️ `event_type`은 `REQUIRED_SCHEMA`에 없어 **기동 자기점검이 영영 못 잡는다.**
+아직 코드가 참조하지 않아서인데(`REQUIRED_SCHEMA` 주석 = "코드가 실제 참조하는 것만"),
+규약상 맞더라도 결과적으로 이 한 건은 **아래 체크박스가 유일한 방어선**이다.
+회차 스냅샷이 `event_type`을 쓰기 시작하는 시점에 `REQUIRED_SCHEMA`도 같이 늘려야 한다.
+
+- [ ] 오너: `supabase_admin_panel.sql` §11 · §11b · §16 실행 + `NOTIFY pgrst, 'reload schema';`
 
 ### 8.2 확정 중복 — 같은 사람인 게 증거로 확인된 4쌍
 
@@ -605,7 +617,9 @@ alter table public.student_aliases enable row level security;
 `이희훈(goran_1)` · `김예지(낭쓰)` · `김준길(규민)` · `주혁(rla7wn)` — 원장의 괄호 별칭 4건.
 뒤 둘은 `students`에 base 이름조차 없다.
 
-### 8.5 `resolveStudentId` 변경
+### 8.5 `resolveStudentId` 변경 — ✅ 반영됨 (PR #103)
+
+코드는 main에 있다. **DB DDL은 아직 미실행이라 실동작하지 않는다** — §8.1 참조.
 
 ```js
 // 1) 정확일치 → 2) student_aliases → 3) 미해석은 null (추측 금지)
