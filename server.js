@@ -3891,7 +3891,12 @@ app.get("/api/gdcup-match-pull", async (req,res)=>{
       matchId = ms[0].id; pulledFrom = "player:"+nick;
     }
     const m = await pubgMatch(platform, matchId);
-    const teamsMap = await gdcupTeamsMap();
+    // 시즌 스코프 필수 — 인자를 비우면 전 시즌 신청서를 다 긁는다. 그러면 아래 IGN→팀명
+    // 역인덱스에서 시즌을 넘나든 선수의 IGN이 나중에 순회된 팀으로 덮여, 이번 시즌
+    // 로스터가 구 시즌 팀명으로 잡힌다(예: "세휘네 치킨집"(S2) ↔ "세휘네치킨집"(S3)).
+    // PostgREST에 order가 없어 순서 보장도 없다 — 지금 맞는 건 우연이다.
+    const season = gdSeason(req.query.season);
+    const teamsMap = await gdcupTeamsMap(season);
     const ignTeam = {};
     Object.keys(teamsMap).forEach(tn=> (teamsMap[tn].members||[]).forEach(mm=>{ if(mm&&mm.ign) ignTeam[String(mm.ign).trim().toLowerCase()]=tn; }));
     const out = {}; const unmatched = [];
@@ -3907,7 +3912,7 @@ app.get("/api/gdcup-match-pull", async (req,res)=>{
         out[team_name] = { team_name, placement:r.rank, team_kills, players };
       }
     });
-    res.json({ ok:true, matchId, pulledFrom, mapName:m.mapName, mode:m.mode, matchType:m.matchType,
+    res.json({ ok:true, matchId, pulledFrom, season, mapName:m.mapName, mode:m.mode, matchType:m.matchType,
       teams: Object.values(out).sort((a,b)=>a.placement-b.placement), unmatched:[...new Set(unmatched)].slice(0,30) });
   }catch(e){ const st=e.status||500; res.status(st).json({error: st===404?"match_not_found": st===429?"rate_limit": st===503?"pubg_disabled":"server_error", detail:String(e.message||e).slice(0,140)}); }
 });
