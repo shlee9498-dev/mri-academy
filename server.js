@@ -4757,7 +4757,7 @@ function registryUserError(e) {
 // 부재 → /등록계 전건 PGRST204 실패). 기동 시 1회 확인해 로그+오너 DM으로 즉시 드러낸다.
 // 컬럼 목록은 코드가 실제로 select/insert 하는 것만 — 여기 한 곳에서 관리한다.
 const REQUIRED_SCHEMA = {
-  // sb*(Select/Insert/Upsert/Patch/Delete) 로 접근하는 전 테이블. 25개.
+  // sb*(Select/Insert/Upsert/Patch/Delete) 로 접근하는 전 테이블. 26개.
   // 컬럼은 코드가 실제 참조하는 것만 — 코드에서 기계적으로 추출 후 대조했다.
   // 새 테이블/컬럼을 쓰기 시작하면 여기도 같이 늘려야 점검이 유효하다.
   admin_audit:      ["actor_id","actor_name","action","target","detail"],
