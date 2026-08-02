@@ -372,3 +372,30 @@ alter table public.gdcup_apps add column if not exists verified_at timestamptz;
 -- 12) G드컵 팀 태그 — 방송 화면 뱃지 + 옵저버 CSV 공용 식별자.
 --     한글 팀명이 옵저버에서 깨지던 문제(시즌2)를 여기서 한 번 정해 두 곳이 같은 값을 쓴다.
 alter table public.gdcup_team_brand add column if not exists tag text;
+
+-- ============================================================
+-- 16) 수강생 별칭 (이름 정규화) — 문자열 매칭이 깨지는 지점을 명시적으로 등록한다.
+--     시트·원장 표기가 students.name과 다른 경우가 실재한다(2026-08-02 전수 대조):
+--       괄호 별칭 — '이희훈(goran_1)' · '김예지(낭쓰)' · '김준길(규민)' · '주혁(rla7wn)'
+--       표기 상이 — '길영패'(강의 마스터) ↔ '길영태'(결제_원장, 둘 다 별칭 "뛰루뛰루")
+--
+--     ⚠ 배열 컬럼(text[])이 아니라 별도 테이블인 이유는 unique(alias, kind) 하나다.
+--       배열로는 "이 별칭이 이미 다른 사람에게 붙어 있다"를 DB가 막지 못한다.
+--       그게 정희준(63)/정희훈(62)이 갈라져 결제는 62에, 세션은 63에 쌓인 경로다.
+--
+--     ⚠ 별칭은 사람이 등록한다. 편집거리·유사도 자동 매칭은 코드에 넣지 않는다 —
+--       1글자 차이인 별개 인물이 실재하고(김재성↔김현성 · 주성준↔지성준),
+--       오탐이 곧 오귀속이며 오귀속은 정산 오류다.
+create table if not exists public.student_aliases (
+  id          bigint generated always as identity primary key,
+  student_id  bigint not null references public.students(id) on delete cascade,
+  alias       text   not null,
+  kind        text   not null default 'name'
+              check (kind in ('name','discord_nick','ledger_name','sheet_name')),
+  source      text,                                   -- 출처(감사): '결제_원장' · '강의 마스터' 등
+  created_by  text,
+  created_at  timestamptz not null default now(),
+  unique (alias, kind)                                -- 한 별칭이 두 사람에게 붙는 것을 DB가 막는다
+);
+create index if not exists idx_alias_student on public.student_aliases (student_id);
+alter table public.student_aliases enable row level security;

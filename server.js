@@ -1066,10 +1066,25 @@ if (process.env.DISCORD_TOKEN) {
   // 동명 다행(병행수강 의도적 2행 포함) 결정론: ① status='active' 우선
   // ② trainerId 주어지면 그 트레이너 담당(trainer_id) 행 우선 ③ 동률이면 id 오름차순(먼저 등록된 행).
   // 과거엔 limit=1 무정렬이라 아무 행이나 집었다 — 동명 중복행에 판수가 붙는 사고의 원인.
+  // 이름 → student_id 해석. 순서: ① students.name 정확일치 ② student_aliases ③ 미해석(null).
+  //  유사도·편집거리 매칭은 넣지 않는다 — 1글자 차이인 별개 인물이 실재하고
+  //  (김재성↔김현성 · 주성준↔지성준), 오탐이 곧 오귀속이며 오귀속은 정산 오류다.
+  //  미해석은 지금처럼 null로 두고 /수업등록의 오너 DM 경로가 처리한다.
   async function resolveStudentId(name, trainerId) {
     try {
       const rows = await sbSelect("students", `select=id,status,trainer_id&name=eq.${encodeURIComponent(name)}&order=id.asc`);
-      if (!rows.length) return null;
+      if (!rows.length) {
+        // 별칭 조회 — 원장/시트 표기가 students.name과 다른 경우.
+        // 테이블 미생성(DDL 미실행) 시에도 기존 동작(null)으로 안전하게 떨어진다.
+        try {
+          const al = await sbSelect("student_aliases", `select=student_id&alias=eq.${encodeURIComponent(name)}&limit=1`);
+          if (al.length) return al[0].student_id;
+        } catch (e) { console.error("resolve_alias", name, e?.message); }
+        return null;
+      }
+      // 동명 다행을 드러낸다 — 조용히 한쪽만 갱신되던 게 정희준/정희훈이 갈라진 구조다.
+      if (rows.length > 1)
+        console.warn(`[resolve] 동명 ${rows.length}행 — "${name}" (id: ${rows.map((r) => r.id).join(",")}) · 중복/병행수강 확인 필요`);
       const rank = (r) => (r.status === "active" ? 0 : 2) + (trainerId != null && r.trainer_id === trainerId ? 0 : 1);
       let best = rows[0];
       for (const r of rows) if (rank(r) < rank(best)) best = r;   // 동률은 id.asc 순서 유지
@@ -4775,6 +4790,7 @@ const REQUIRED_SCHEMA = {
                      "participants","capacity","memo","is_public","is_recruiting","status","created_by"],
   staff:            ["id","discord_id","name","role","active","base_salary","comp_note"],
   student_accounts: ["student_id","platform","pubg_name","account_id","is_main","valid_from","valid_to","note"],
+  student_aliases:  ["id","student_id","alias","kind","source"],
   student_snapshots:["id","student_id","discord_id","discord_name","platform","player_name","account_id",
                      "season_id","snapshot_type","tier","sub_tier","tier_index","rank_point",
                      "best_rank_point","avg_damage","avg_kills","kda","rounds_played","raw","created_at"],
