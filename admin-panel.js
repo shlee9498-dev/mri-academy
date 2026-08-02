@@ -79,6 +79,37 @@ module.exports = function mountAdminPanel(app, deps) {
     return true;
   }
 
+  // 수강생 소유권 게이트 — owner 통과, 트레이너는 본인 담당만.
+  //  POST /sessions 에만 있던 검사를 공통화한다. GET·DELETE에는 없어서
+  //  student_id(또는 session id)만 바꿔 넣으면 남의 수강생 판수 이력이 그대로
+  //  조회·삭제됐다. 조회 실패는 fail-closed(false) — 확인 못 한 건 통과시키지 않는다.
+  async function ownsStudent(c, studentId) {
+    if (c.isOwner) return true;
+    if (!c.me) return false;                       // requireIdentity 통과분만 여기 온다
+    try {
+      const s = (await sbSelect("students", `select=trainer_id&id=eq.${studentId}&limit=1`))[0];
+      return !!s && s.trainer_id === c.me.id;
+    } catch (e) {
+      console.error("ownsStudent 확인 실패:", e && e.message);
+      return false;
+    }
+  }
+
+  // 강의(course*) 도메인 차단 — owner 전용. 라우트별 가드에 의존하지 않고 prefix에서 먼저 막는다.
+  //  이유: 강의 스코프는 '학생 단위'로 못 만든다. 레슨·강의를 겸하는 수강생이 16명 있고
+  //  그 사람의 students.trainer_id는 레슨 담당 트레이너다 — 학생 단위 필터는 통과해 버린다.
+  //  강의는 학생이 누구든 오너 것이므로 도메인 자체를 닫는다.
+  //  라우트가 아직 없을 때도 등록해 둔다: 나중에 course 라우트를 추가하며 가드를 빠뜨려도
+  //  이 미들웨어가 이미 닫아 놓은 상태가 기본이 된다(fail-closed).
+  app.use("/api/admin", async (req, res, next) => {
+    const path = (req.originalUrl || "").split("?")[0];
+    if (!path.startsWith("/api/admin/course")) return next();
+    const c = await ctx(req);
+    if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!c.isOwner) return res.status(403).json({ error: "owner_only" });
+    next();
+  });
+
   async function audit(c, action, target, detail) {
     try {
       await sbInsert("admin_audit", {
@@ -400,6 +431,7 @@ module.exports = function mountAdminPanel(app, deps) {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
     if (!requireIdentity(c, res)) return;
     const sid = parseInt(req.query.student_id); if (!sid) return res.status(400).json({ error: "bad_params" });
+    if (!(await ownsStudent(c, sid))) return res.status(403).json({ error: "담당 수강생만 조회할 수 있습니다." });
     try { res.json(await sbSelect("lesson_sessions", `select=*&student_id=eq.${sid}&order=played_at.desc`)); }
     catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
   });
@@ -409,12 +441,9 @@ module.exports = function mountAdminPanel(app, deps) {
     const b = req.body || {};
     const student_id = parseInt(b.student_id), games = parseInt(b.games);
     if (!student_id || !(games > 0)) return res.status(400).json({ error: "수강생·판수(1이상)를 확인해 주세요." });
+    // 트레이너는 본인 담당 수강생만 기록 가능
+    if (!(await ownsStudent(c, student_id))) return res.status(403).json({ error: "담당 수강생만 기록할 수 있습니다." });
     try {
-      // 트레이너는 본인 담당 수강생만 기록 가능
-      if (!c.isOwner && c.me) {
-        const s = (await sbSelect("students", `select=trainer_id&id=eq.${student_id}&limit=1`))[0];
-        if (!s || s.trainer_id !== c.me.id) return res.status(403).json({ error: "담당 수강생만 기록할 수 있습니다." });
-      }
       const row = await sbInsert("lesson_sessions", {
         student_id, trainer_id: c.me ? c.me.id : null, played_at: validDate(b.played_at),
         games, memo: String(b.memo || "").slice(0, 300) || null, created_by: c.u.id,
@@ -428,8 +457,13 @@ module.exports = function mountAdminPanel(app, deps) {
     if (!requireIdentity(c, res)) return;
     const id = parseInt(req.params.id); if (!id) return res.status(400).json({ error: "bad_params" });
     try {
+      // 삭제 전에 대상 세션의 수강생을 먼저 확인한다 — id만 바꿔 넣으면 남의 판수가 지워졌다.
+      const row = (await sbSelect("lesson_sessions", `select=student_id&id=eq.${id}&limit=1`))[0];
+      if (!row) return res.status(404).json({ error: "not_found" });
+      if (!(await ownsStudent(c, row.student_id)))
+        return res.status(403).json({ error: "담당 수강생만 삭제할 수 있습니다." });
       await sbDelete("lesson_sessions", `id=eq.${id}`);
-      await audit(c, "session.delete", `session:${id}`, null);
+      await audit(c, "session.delete", `session:${id}`, { student_id: row.student_id });
       res.json({ ok: true });
     } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
   });
