@@ -42,6 +42,10 @@ INSTALL_EXAMPLE_SKILLS="${INSTALL_EXAMPLE_SKILLS:-0}"
 # Skill_Seekers 는 외부 문서 도메인이 egress 정책에 막혀 scrape_* 를 쓸 수 없다.
 # 로컬 PC에서 쓰는 도구라 컨테이너에는 기본 비활성.
 INSTALL_SKILL_SEEKERS="${INSTALL_SKILL_SEEKERS:-0}"
+# video-shotcraft 는 설치하되 기본 비활성 상태로 둔다. SKILL.md 와 104장의 샷 카드가
+# 커서 세션 컨텍스트를 상시 점유하는데, 영상 작업은 상시 과제가 아니다.
+# 필요할 때 세션에서 켠다:  claude plugin enable video-shotcraft
+VIDEO_SHOTCRAFT_ENABLED="${VIDEO_SHOTCRAFT_ENABLED:-0}"
 
 SRC_DIR="${CLAUDE_SRC_DIR:-$HOME/.claude-src}"
 SKILLS_DIR="$HOME/.claude/skills"
@@ -149,11 +153,34 @@ if claude plugin marketplace list 2>/dev/null | grep -q "anthropic-agent-skills"
   claude plugin marketplace remove anthropic-agent-skills || true
 fi
 
+# video-shotcraft 는 repo 에 marketplace.json 이 없어 원래는 ~/.claude/skills/ 에
+# 복사하는 skills-dir 방식으로만 쓸 수 있다. 그런데 skills-dir 플러그인은 토글이
+# 안 된다 — `claude plugin disable video-shotcraft` 가 다음 에러로 거부된다:
+#   "Plugin "video-shotcraft" not found in any editable settings scope."
+# 세션 목적에 따라 껐다 켜려면 마켓플레이스 경유로 설치돼 있어야 한다. 그래서
+# 로컬 사본에 최소 marketplace.json 을 만들어 등록한다. 업스트림 파일은 건드리지
+# 않는다(이 파일은 업스트림에 없다). 매 실행마다 reset --hard 로 지워졌다가
+# 여기서 다시 만들어지므로 멱등하다.
+python3 - "$SRC_DIR/video-shotcraft/.claude-plugin/marketplace.json" <<'PY'
+import json, pathlib, sys
+pathlib.Path(sys.argv[1]).write_text(json.dumps({
+    "name": "video-shotcraft-local",
+    "owner": {"name": "local-pin"},
+    "metadata": {"description": "video-shotcraft pinned locally", "version": "1.0.0"},
+    "plugins": [{
+        "name": "video-shotcraft",
+        "source": "./",
+        "description": "Cinematic product videos with Remotion shot recipe cards",
+    }],
+}, indent=2))
+PY
+
 log "마켓플레이스 등록 중…"
 claude plugin marketplace add "$SRC_DIR/superpowers"
 claude plugin marketplace add "$SRC_DIR/anthropic-skills"
 claude plugin marketplace add "$SRC_DIR/claude-seo"
 claude plugin marketplace add "$SRC_DIR/ui-ux-pro-max"
+claude plugin marketplace add "$SRC_DIR/video-shotcraft"
 
 # ── 4. 플러그인 설치 ─────────────────────────────────────────────────────────
 # @뒤는 각 repo 의 .claude-plugin/marketplace.json 이 선언한 마켓플레이스 이름이다
@@ -163,29 +190,36 @@ claude plugin install superpowers@superpowers-dev
 claude plugin install document-skills@anthropic-skills-pinned
 claude plugin install claude-seo@agricidaniel-claude-seo
 claude plugin install ui-ux-pro-max@ui-ux-pro-max-skill
+claude plugin install video-shotcraft@video-shotcraft-local
 
 if [ "$INSTALL_EXAMPLE_SKILLS" = "1" ]; then
   claude plugin install example-skills@anthropic-skills-pinned
 fi
 
-# ── 5. skills-dir 스킬 ───────────────────────────────────────────────────────
-# video-shotcraft 는 마켓플레이스가 없고 repo 루트 전체가 스킬이다
-# (.claude-plugin/plugin.json 의 "skills": "./"). ~/.claude/skills/ 에 두면
-# <name>@skills-dir 로 자동 로드된다.
-log "skills-dir 스킬 설치 중…"
-mkdir -p "$SKILLS_DIR"
-
-rm -rf "$SKILLS_DIR/video-shotcraft"
-mkdir -p "$SKILLS_DIR/video-shotcraft"
-tar --exclude=.git --exclude=.github -C "$SRC_DIR/video-shotcraft" -cf - . \
-  | tar -C "$SKILLS_DIR/video-shotcraft" -xf -
-
-if [ "$INSTALL_SKILL_SEEKERS" = "1" ]; then
-  rm -rf "$SKILLS_DIR/skill-seekers"
-  cp -r "$SRC_DIR/skill-seekers/skills/skill-seekers" "$SKILLS_DIR/skill-seekers"
+# ── 5. 활성/비활성 상태 복원 ─────────────────────────────────────────────────
+# 토글 상태는 ~/.claude/settings.json 의 enabledPlugins 에 boolean 으로 저장된다.
+# 세션 간에는 유지되지만 컨테이너가 회수되면 함께 사라지므로, 설치만으로는
+# "회수 전과 같은 상태"가 되지 않는다. 여기서 의도한 상태로 명시 복원한다.
+if [ "$VIDEO_SHOTCRAFT_ENABLED" = "1" ]; then
+  claude plugin enable video-shotcraft
+else
+  log "video-shotcraft 비활성 상태로 설치 (필요 시: claude plugin enable video-shotcraft)"
+  claude plugin disable video-shotcraft || true
 fi
 
-# ── 6. 검증 ──────────────────────────────────────────────────────────────────
+# ── 6. skills-dir 스킬 ───────────────────────────────────────────────────────
+# skills-dir 방식은 토글이 불가능하다. Skill_Seekers 는 이 컨테이너에서 쓸 일이
+# 없어 기본적으로 설치하지 않으며, 켠 경우에만 여기로 들어온다.
+mkdir -p "$SKILLS_DIR"
+if [ "$INSTALL_SKILL_SEEKERS" = "1" ]; then
+  log "skill-seekers skills-dir 설치 중…"
+  rm -rf "$SKILLS_DIR/skill-seekers"
+  cp -r "$SRC_DIR/skill-seekers/skills/skill-seekers" "$SKILLS_DIR/skill-seekers"
+else
+  rm -rf "$SKILLS_DIR/skill-seekers"
+fi
+
+# ── 7. 검증 ──────────────────────────────────────────────────────────────────
 log "검증"
 ffmpeg -version 2>&1 | head -1
 echo
@@ -200,6 +234,12 @@ cat <<'EOF'
 
   플러그인으로 설치된 것들은 이번 세션에 로드되지 않는다 — 세션을 재시작해야
   적용된다. ~/.claude/skills/ 에 복사한 것들은 다음 턴부터 바로 잡힌다.
+
+  세션 목적별 토글 (상태는 ~/.claude/settings.json 의 enabledPlugins 에 저장):
+    claude plugin disable claude-seo        # SEO 작업 아닐 때
+    claude plugin enable  video-shotcraft   # 영상 작업 할 때
+    claude plugin list                      # 현재 상태 확인
+  superpowers 는 상시 활성으로 둔다(TDD·디버깅·검증 규율이 전 작업에 걸린다).
 
   영상 렌더가 필요하면 이 컨테이너가 아니라 로컬 PC에서 한다.
   절차: docs/local-video-setup.md
