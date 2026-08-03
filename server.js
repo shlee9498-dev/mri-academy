@@ -58,6 +58,22 @@ function chatDailyExceeded() {
   chatDayCount++;
   return false;
 }
+// 라우트별 레이트리밋 미들웨어 — 위 rateLimited와 같은 방식이고 버킷만 이름별로 분리한다.
+// express-rate-limit을 쓰지 않는 이유: 단일 인스턴스라 공유 store가 불필요하고,
+// 이 패턴은 /api/chat에서 이미 가동 중이다. 의존성을 늘리지 않는 쪽을 택했다.
+// (CodeQL은 커스텀 리미터를 인식하지 못해 경고가 남을 수 있다 — 실제 방어가 목적)
+const rlBuckets = new Map();
+function limit(name, max, windowMs) {
+  return (req, res, next) => {
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "?";
+    const key = name + ":" + ip, now = Date.now();
+    const arr = (rlBuckets.get(key) || []).filter((t) => now - t < windowMs);
+    arr.push(now); rlBuckets.set(key, arr);
+    if (rlBuckets.size > 5000) rlBuckets.clear();
+    if (arr.length > max) return res.status(429).json({ error: "too_many_requests" });
+    next();
+  };
+}
 
 // ═══════════════════ 후기/동향/답글 시스템 ═══════════════════
 // 디스코드 OAuth 로그인 + Supabase 저장 (기존 MRI 봇 앱 재활용)
@@ -4015,7 +4031,9 @@ function stampPubgVerify(members, v) {
   });
 }
 
-app.post("/api/gdcup-confirm", async (req, res) => {
+// 분당 2회 — 1회 확정 = 멤버 최대 4명 PUBG 조회. PUBG 10 RPM 안쪽으로 묶는다.
+// 인증 검사보다 앞에 둬 어드민키 브루트포스도 같은 버킷으로 막는다.
+app.post("/api/gdcup-confirm", limit("gdConfirm", 2, 60_000), async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
     const b = req.body || {};
@@ -4070,7 +4088,8 @@ app.post("/api/gdcup-confirm", async (req, res) => {
 });
 
 // 운영진 — 팀 멤버 티어 수정 + BPI·가중치 자동 재계산
-app.post("/api/gdcup-edit", async (req, res) => {
+// 분당 10회 — verify=true일 때만 PUBG를 타고, 닉 정정은 반복이 잦아 여유를 둔다.
+app.post("/api/gdcup-edit", limit("gdEdit", 10, 60_000), async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
     const b = req.body || {};
