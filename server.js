@@ -68,9 +68,18 @@ function limit(name, max, windowMs) {
     const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "?";
     const key = name + ":" + ip, now = Date.now();
     const arr = (rlBuckets.get(key) || []).filter((t) => now - t < windowMs);
-    arr.push(now); rlBuckets.set(key, arr);
     if (rlBuckets.size > 5000) rlBuckets.clear();
-    if (arr.length > max) return res.status(429).json({ error: "too_many_requests" });
+    // 차단된 요청은 버킷에 기록하지 않는다. 기록하면 연타할수록 창이 계속 뒤로 밀려
+    // 60초를 온전히 쉬기 전에는 영영 안 풀린다 — 재시도가 차단을 연장하는 셈이다.
+    // 통과한 요청만 쌓아야 "마지막 통과 시점 기준 windowMs 후 복구"가 성립한다.
+    if (arr.length >= max) {
+      rlBuckets.set(key, arr);
+      // 가장 오래된 통과 요청이 창에서 빠지는 시점까지 남은 초. 프론트 카운트다운용.
+      const retryAfter = Math.max(1, Math.ceil((windowMs - (now - arr[0])) / 1000));
+      res.set("Retry-After", String(retryAfter));
+      return res.status(429).json({ error: "too_many_requests", retry_after: retryAfter });
+    }
+    arr.push(now); rlBuckets.set(key, arr);
     next();
   };
 }
@@ -4031,9 +4040,31 @@ function stampPubgVerify(members, v) {
   });
 }
 
-// 분당 2회 — 1회 확정 = 멤버 최대 4명 PUBG 조회. PUBG 10 RPM 안쪽으로 묶는다.
-// 인증 검사보다 앞에 둬 어드민키 브루트포스도 같은 버킷으로 막는다.
-app.post("/api/gdcup-confirm", limit("gdConfirm", 2, 60_000), async (req, res) => {
+// 확정 라우트 리밋은 두 겹이다.
+//  · 바깥 30/분 — 인증 검사보다 앞에 둬 어드민키 브루트포스를 묶는다. 모든 호출에 적용.
+//  · 안쪽  8/분 — PUBG 쿼터 보호. 실제로 PUBG를 타는 호출에만 적용(gdConfirmPubgGate).
+//
+// 나누는 이유: 아래 핸들러는 status==="confirmed" && !force 일 때만 verifyTeamTiers()로
+// PUBG를 탄다. 취소(cancelled)·되돌리기(applied)·강제확정(force)은 쿼터를 전혀 쓰지 않는데
+// 예전엔 같은 2/분에 묶여 있었다. 쿼터 보호가 명분인 리밋이 쿼터를 안 쓰는 동작까지 막았다.
+//
+// 8/분 근거: 16팀 기준. 검증 1회는 VERIFY_PACE_MS(20초)×(멤버수-1)이라 4인팀이면 서버에서만
+// 60초가 걸려, 순차 운영으로는 분당 1회를 넘기기 어렵다. 8은 503→강제확정 경로가 요청을
+// 2회 쓰는 것과 운영진 2~3명 동시 진행까지 감안한 여유다. (기존 2/분은 16팀 확정에 최소
+// 8분을 강제했고, 503 경로 한 번이면 그 자리에서 버킷이 말랐다.)
+//
+// 트레이드오프: 브루트포스 상한이 분당 2회에서 30회로 올라간다. 어드민키가 노출된 상태라
+// 리밋은 애초에 2차 방어였고, 본선 당일 운영이 막히는 쪽이 실제 손해가 크다고 판단했다.
+const gdConfirmPubgLimit = limit("gdConfirmPubg", 8, 60_000);
+function gdConfirmPubgGate(req, res, next) {
+  const b = req.body || {};
+  // 아래 핸들러의 status/force 판정과 같은 식을 쓴다. 한쪽만 바뀌면 리밋이 어긋난다.
+  const status = b.status === "applied" ? "applied" : (b.status === "cancelled" ? "cancelled" : "confirmed");
+  const force = b.force === 1 || b.force === true;
+  if (status === "confirmed" && !force) return gdConfirmPubgLimit(req, res, next);
+  return next();
+}
+app.post("/api/gdcup-confirm", limit("gdConfirm", 30, 60_000), gdConfirmPubgGate, async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
     const b = req.body || {};
