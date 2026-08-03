@@ -2476,9 +2476,16 @@ function cacheGet(k) {
 }
 function cacheSet(k, data, ttlMs) { pubgCache.set(k, { data, exp: Date.now() + ttlMs }); }
 
+// ttlMs === 0 = 캐시 완전 우회(읽기·쓰기 둘 다). 예전엔 `ttlMs || 3600_000`이라 0이 조용히
+// 1시간으로 바뀌어, "캐시 끄기" 의도가 무시됐다. 읽기까지 건너뛰는 이유는 캐시 키가 path
+// 하나뿐이라서다 — 신선도가 필요한 호출이 다른 호출부가 남긴 장기 항목을 주워 읽으면 안 된다.
+// (본선 match-pull의 선수 조회가 여기 걸렸다: 레슨·전적 경로가 1시간으로 캐시해 둔 최근
+//  매치 목록을 그대로 받아, 이전 라운드 매치를 최신으로 착각했다.)
+// ttlMs 생략 시 종전대로 1시간.
 async function pubgGet(path, ttlMs) {
   const key = "pubg:" + path;
-  const c = cacheGet(key); if (c) return c;
+  const noCache = ttlMs === 0;
+  if (!noCache) { const c = cacheGet(key); if (c) return c; }
   const KEY = process.env.PUBG_API_KEY;
   if (!KEY) { const e = new Error("PUBG_API_KEY 미설정"); e.status = 503; throw e; }
   const r = await fetch(PUBG_API_BASE + path, {
@@ -2488,7 +2495,7 @@ async function pubgGet(path, ttlMs) {
   if (r.status === 429) { const e = new Error("PUBG rate limit"); e.status = 429; throw e; }
   if (!r.ok) { const e = new Error(`PUBG ${r.status}`); e.status = 502; throw e; }
   const data = await r.json();
-  cacheSet(key, data, ttlMs || 3600_000);
+  if (!noCache) cacheSet(key, data, ttlMs || 3600_000);
   return data;
 }
 
@@ -2516,10 +2523,15 @@ function nameVariants(name) {
   return [...new Set([name, ...out])].slice(0, 10); // PUBG filter[playerNames] 최대 10개
 }
 
-async function findPlayer(platform, nickname) {
+// ttlMs 생략 = 1시간 캐시(종전 동작). 레슨·전적·승급 등 대부분의 호출부는 닉→accountId 해석만
+// 필요해서 1시간이 적절하다.
+// ⚠️ 이 응답에는 accountId뿐 아니라 relationships.matches(최근 매치 목록)도 들어 있다.
+// "가장 최근 매치"가 필요한 호출부(G드컵 match-pull)는 반드시 ttlMs=0으로 무캐시 조회할 것 —
+// 1시간 캐시를 타면 라운드가 끝나도 직전 매치가 최신으로 잡힌다.
+async function findPlayer(platform, nickname, ttlMs) {
   const variants = nameVariants(nickname);
   const p = `/shards/${platform}/players?filter[playerNames]=${variants.map(encodeURIComponent).join(",")}`;
-  const data = await pubgGet(p, 3600_000);
+  const data = await pubgGet(p, ttlMs === undefined ? 3600_000 : ttlMs);
   if (!data.data || data.data.length === 0) {
     const e = new Error(`닉네임 "${nickname}" 못 찾음 (${platform})`); e.status = 404; throw e;
   }
@@ -3903,7 +3915,10 @@ app.get("/api/gdcup-team-brands", async (req,res)=>{
 
 // ── PUBG 매치 자동 파싱 → 라운드 점수 프리필 (저장은 사람이 검토 후) ──
 async function pubgMatch(platform, matchId){
-  const data = await pubgGet(`/shards/${platform}/matches/${matchId}`, 0);
+  // 매치 결과는 확정 후 불변이라 캐시가 안전하고, 자동 감지가 같은 매치를 반복 조회하므로
+  // 캐시가 오히려 PUBG 쿼터를 아낀다. (종전 `0`도 `0 || 3600_000`으로 1시간이었다 —
+  // 이제 0이 진짜 무캐시가 됐으므로 의도대로 1시간을 명시한다. 동작 변화 없음.)
+  const data = await pubgGet(`/shards/${platform}/matches/${matchId}`, 3600_000);
   const inc = data.included || [];
   const parts = {}; const rosters = [];
   inc.forEach(it=>{
@@ -3925,7 +3940,12 @@ app.get("/api/gdcup-match-pull", async (req,res)=>{
     if(!matchId){
       const nick = (req.query.player||"").toString().trim();
       if(!nick) return res.status(400).json({error:"need_match_or_player"});
-      const player = await findPlayer(platform, nick);
+      // ttlMs=0 필수 — 여기서 읽는 건 accountId가 아니라 "가장 최근 매치"다.
+      // 기본 1시간 캐시를 타면 라운드가 끝나도 ms[0]이 직전 라운드 매치로 고정돼,
+      // 방금 끝난 라운드 탭에 이전 라운드 점수가 조용히 저장된다(본선 사고 경로).
+      // 다른 findPlayer 호출부(레슨·전적·승급)의 1시간 캐시는 그대로 둔다 —
+      // 무캐시는 읽기·쓰기를 모두 건너뛰므로 그쪽 캐시를 오염시키지도, 지우지도 않는다.
+      const player = await findPlayer(platform, nick, 0);
       const ms = (player.relationships && player.relationships.matches && player.relationships.matches.data) || [];
       if(!ms.length) return res.status(404).json({error:"no_recent_match"});
       matchId = ms[0].id; pulledFrom = "player:"+nick;
