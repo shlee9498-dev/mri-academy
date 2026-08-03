@@ -47,6 +47,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 실행/검증엔 실제 env(SUPABASE_*·DISCORD_TOKEN·PUBG_API_KEY 등)가 필요 → 로컬은 구문 검사 위주.
   프로덕션 API(mri-academy-production.up.railway.app)는 이 환경에서 도달 불가.
 
+## 원격 컨테이너 환경 복구
+Claude Code 원격 컨테이너는 비활성이 지속되거나 세션 종료 시 **회수**된다. 회수되면 git 밖의
+모든 것(apt 패키지·스킬/플러그인·외부 clone)이 사라진다. **판별법: `ffmpeg -version`이 실패하면
+회수된 것** → `bash scripts/claude-env-setup.sh` 1회 실행으로 복구(멱등, 외부 repo는 SHA pin).
+영상 렌더는 컨테이너에서 불가(폰트·Chromium CDN 차단) → 로컬에서만: `docs/local-video-setup.md`.
+
 # 아키텍처 (큰 그림)
 3개 런타임이 분리돼 있고, 이 경계를 아는 게 핵심이다.
 
