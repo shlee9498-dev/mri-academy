@@ -536,30 +536,47 @@ DB `students` 68행 + 강의 마스터 31행 + 원장 85명 + 레슨로그 59명
 
 ### 8.1 🔴 먼저 — DDL 미실행분이 있다
 
-**실제 DB에 아래가 없다.** main에 머지됐지만 SQL Editor에서 실행되지 않았다.
-(2026-08-02 `information_schema` 전수 대조 — 아래 4건 외 26개 테이블·컬럼은 전부 정상)
+**2026-08-03 실측 — 5블록 중 3블록 반영됨.** 남은 2블록은 아직 DB에 없다.
 
-| 대상 | 정본 위치 | 기동 자기점검 |
-|---|---|---|
-| `students.discord_id` | `supabase_admin_panel.sql` §11 (149행) | 잡힌다 |
-| `students.discord_src` | 동 (150행) | 잡힌다 |
-| `student_snapshots.event_type` | 동 §11b (229행) | **못 잡는다** ↓ |
-| `student_aliases` **(테이블 전체)** | 동 §16 (389행) | 잡힌다 |
+| 대상 | 정본 위치 | 실측 | 기동 자기점검 |
+|---|---|---|---|
+| `students.discord_id` · `discord_src` | `supabase_admin_panel.sql` §11 (149–152행) | ✅ 반영 | 잡힌다 |
+| `student_snapshots.event_type` | 동 §11b (229–230행) | ✅ 반영 | 잡힌다(본 PR로 추가) |
+| `snapshot_type` CHECK에 `'tracking'` | 동 §11c (232–239행) | ✅ 반영 | **못 잡는다** ↓ |
+| `student_aliases` **(테이블 전체)** | 동 §16 (389–401행) | ❌ 미실행 | 잡힌다 |
+| 백필(`event_type` 소급 · `student_accounts` 시드) | 동 §11d (241–254행) | ❌ 미실행 | — |
 
-이름 정규화의 **종착지가 바로 이 컬럼**이고(§8.4), 예약 시스템의 학생 인증도 같은 컬럼을 쓴다.
-둘 다 여기서 막힌다.
+- [ ] 오너: `supabase_admin_panel.sql` §16 · §11d 실행 + `NOTIFY pgrst, 'reload schema';`
+
+#### §11c를 빠뜨려 스냅샷이 전멸한 사고 (2026-08-02)
+
+원본 `supabase_setup.sql`의 CHECK는 `('baseline','after')`뿐이라 T1 배치의
+`snapshot_type='tracking'` insert가 **전건 23514(CHECK 위반)로 실패**했다. 8/2 20:01 학생 15명
+스냅샷이 통째로 날아갔다. §11c가 바로 그 보정인데, 그때 체크리스트에 §11c·§11d가 빠져 있었다.
+
+**교훈: 컬럼 존재 프로브로 제약 변경을 검증했다고 착각하지 말 것.** `information_schema.columns`
+대조는 CHECK를 보지 않는다(CLAUDE.md가 명시한 사각지대). 제약은 `pg_constraint`로 따로 봐야 한다:
+
+```sql
+select conname, pg_get_constraintdef(oid) from pg_constraint
+ where conrelid='public.student_snapshots'::regclass and contype='c';
+```
+
+또한 **기대값과 실측값을 구분해 전달할 것.** 이 사고 중 기대값 `2/1/1`이 실측값으로 잘못
+공유돼 한 라운드를 허비했다(실제로는 `0/0/0`이었다).
+
+#### 남은 것의 영향
 
 `student_aliases`는 PR #103으로 main에 들어갔지만 DDL은 미실행이다 — 즉 §8.5의 별칭 조회는
 **지금 코드에는 있고 DB에는 없다.** 다만 `resolveStudentId`의 별칭 조회는 try/catch로 감싸
 미생성 시 기존 동작(`null`)으로 떨어지므로, 장애가 아니라 **조용한 무효화**다.
 `/수업등록`은 계속 뜨고 미해석은 종전대로 오너 DM으로 간다. 표기가 다른 학생만 계속 안 붙는다.
+이름 정규화의 종착지가 바로 이 테이블이고(§8.4), 여기서 막힌다.
 
-⚠️ `event_type`은 `REQUIRED_SCHEMA`에 없어 **기동 자기점검이 영영 못 잡는다.**
-아직 코드가 참조하지 않아서인데(`REQUIRED_SCHEMA` 주석 = "코드가 실제 참조하는 것만"),
-규약상 맞더라도 결과적으로 이 한 건은 **아래 체크박스가 유일한 방어선**이다.
-회차 스냅샷이 `event_type`을 쓰기 시작하는 시점에 `REQUIRED_SCHEMA`도 같이 늘려야 한다.
-
-- [ ] 오너: `supabase_admin_panel.sql` §11 · §11b · §16 실행 + `NOTIFY pgrst, 'reload schema';`
+⚠️ **CHECK 제약은 여전히 자기점검 사각지대다.** `REQUIRED_SCHEMA`는 컬럼 존재만 프로브하므로
+§11c 같은 제약 변경은 코드가 그 값을 써도 기동 시 드러나지 않는다. 유일한 방어선은 위 체크박스와
+`pg_constraint` 수동 조회다. (`event_type`은 본 PR에서 코드가 참조하기 시작해
+`REQUIRED_SCHEMA`에 추가됐다 — 컬럼 자체는 이제 잡힌다.)
 
 ### 8.2 확정 중복 — 같은 사람인 게 증거로 확인된 4쌍
 

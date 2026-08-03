@@ -4640,7 +4640,10 @@ async function runStatsSnapshot() {
         try {
           await sbInsert("student_snapshots", {
             student_id: s.id, discord_id: null, platform: s.pubg_platform, player_name: s.pubg_name || null,
+            // 두 축은 직교다 — snapshot_type=파이프라인 출처(어느 서브시스템이 썼나),
+            // event_type=사업 이벤트(무슨 계기). T1 배치는 'tracking' + '정기'.
             account_id: accountId, season_id: snap.seasonId, snapshot_type: "tracking",
+            event_type: "정기",
             tier: snap.tier, sub_tier: snap.subTier, tier_index: snap.tierIdx,
             rank_point: snap.rankPoint, best_rank_point: snap.bestRP, rounds_played: snap.rounds,
             kda: snap.kda, avg_kills: snap.avgKills, avg_damage: snap.avgDamage, raw: snap,
@@ -4811,7 +4814,7 @@ const REQUIRED_SCHEMA = {
   student_accounts: ["student_id","platform","pubg_name","account_id","is_main","valid_from","valid_to","note"],
   student_aliases:  ["id","student_id","alias","kind","source"],
   student_snapshots:["id","student_id","discord_id","discord_name","platform","player_name","account_id",
-                     "season_id","snapshot_type","tier","sub_tier","tier_index","rank_point",
+                     "season_id","snapshot_type","event_type","tier","sub_tier","tier_index","rank_point",
                      "best_rank_point","avg_damage","avg_kills","kda","rounds_played","raw","created_at"],
   students:         ["id","name","discord_nick","trainer_id","status","note","carry_games",
                      "payout_rate_set","pubg_platform","pubg_name","pubg_account_id",
