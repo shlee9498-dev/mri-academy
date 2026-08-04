@@ -1,8 +1,13 @@
 # 강의(회차제) 데이터 모델 설계안
 
-> 상태: **설계안 · 미실행**. 이 문서에는 실행 가능한 DDL이 들어있지만
-> `supabase_admin_panel.sql`에는 반영하지 않았다(우선순위상 9/2 정산 이후).
-> 착수 시점에 이 문서의 DDL을 정본 SQL·`REQUIRED_SCHEMA`·실제 DB 세 곳에 함께 넣는다.
+> 상태: **정본 반영 완료 · DB 실행 대기**(2026-08-04, 오너 착수 지시).
+> DDL은 `supabase_admin_panel.sql` §17과 `server.js`의 `REQUIRED_SCHEMA`에 들어갔다.
+> 남은 것은 오너가 Supabase SQL Editor에서 실행하는 단계 하나다.
+>
+> 정본 반영 시 이 문서 대비 5건이 달라졌다(오너 승인분):
+> `course_attendance.status`에 `'scheduled'` 추가 · `course_sessions.source` 신설 ·
+> `course_sessions.is_partial` 신설 · `courses.source`에 `'photo_recount'` 추가 ·
+> `courses.verified_at`/`verified_by` 신설. 근거는 각각 §4.2 아래 주석과 정본 SQL 주석에 있다.
 >
 > 근거 데이터: `MRI_전체현황`(31행) · `수업_로그`(441행) · `잔여현황`(16행) ·
 > 레슨 파일 `결제_원장`(296행) · `레슨로그_현태/준구`. 2026-08-02 기준.
