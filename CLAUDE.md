@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 이 세션의 소관 (사이트·수강관리 트랙)
+- 담당: mriacademy.gg 프론트 전체, 수강관리 P1~P3(courses/course_sessions/course_attendance, 스테이징·대조표, 마이페이지 my.html, /api/me, 본인 연결 승인 큐), staff-panel, MRI 봇 커맨드(/직강일정 /직강완료 /직강현황), 디자인 시스템 v1
+- 비소관: 결제 금액·정산 로직(→ 결제), 승급시험 콘텐츠(→ 학습지), GmI 카지노·G드컵(→ 카지노)
+- 경계 규칙: 결제 UI 화면은 이 세션, 결제 데이터·웹훅은 결제 트랙. payments 스키마 변경은 결제 트랙 주도
+- 비소관 요청이 오면 작업하지 말고 "○○ 트랙 소관입니다"라고만 회신할 것. 타 트랙 파일은 읽기만 허용, 수정 금지
+
 # MRI ACADEMY 작업 규칙
 - 브랜드: 다크 #0a0a0c + 골드 #f5c518. 강조색은 골드 하나만. 라이트 테마 금지.
 - TOSS_SECRET_KEY, PUBG_API_KEY 등 모든 키는 절대 HTML/JS/커밋에 넣지 않는다 (Railway env 전용).
