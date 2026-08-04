@@ -4974,6 +4974,41 @@ async function runDirectStatus() {
     .map((s) => `${Number(s.remain) <= 0 ? "⚠️ " : "· "}${s.name}: 잔여 ${s.remain} (수강 ${s.attended}/${s.total})`);
   await ownerDM(`🎓 직강 잔여회차 알림 (remain ≤2)\n${lines.join("\n")}`);
 }
+// 직강 기록 정체 감지 — 잔여가 아니라 "누적 수강회차가 안 늘어난 기간"을 본다.
+// 위 runDirectStatus는 잔여≤2인 사람만 알린다. 그런데 기록이 통째로 멈추면 잔여가
+// 줄지 않아 전원 ≥3이 되고, 그래서 "정상"으로 판정해 침묵한다 — 미기록일수록
+// 조용해지는 구조다. 2026-04-09 이후 4개월 유실이 그렇게 지나갔다(수업_로그 공백).
+// 이 크론은 그 실패 모드를 정면으로 본다. 시트·DDL 변경 없이 기존 응답 필드만 쓴다.
+const DIRECT_STALE_DAYS = 7;   // 직강은 주 단위 운영 — 3일은 오탐, 14일은 늦다
+async function runDirectStale() {
+  const webhook = process.env.SHEET_WEBHOOK_URL;
+  if (!webhook) { console.log("[cron] direct_stale: SHEET_WEBHOOK_URL 미설정 — 스킵"); return; }
+  let data = null;
+  try {
+    const r = await fetch(webhook, { method: "POST", redirect: "follow", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "direct_status", secret: process.env.SHEET_SECRET || "" }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && Array.isArray(d.students)) data = d;
+  } catch (e) { console.error("direct_stale_fetch", e?.message); }
+  // 조회 실패면 상태를 건드리지 않는다 — 갱신 실패를 '기록 정체'로 오인하면 안 된다.
+  // 웹훅 장애 자체는 runDirectStatus가 이미 오너에게 알린다(중복 알림 방지).
+  if (!data) { console.log("[cron] direct_stale: 조회 실패 — 판정 보류"); return; }
+  const total = (data.students || []).reduce((s, x) => s + (Number(x.attended) || 0), 0);
+  const { date } = kstNow();
+  const st = (await opsStateGet("direct:staleBase")) || {};
+  if (st.total !== total) {                                  // 기록이 늘었다 → 기준점 갱신 후 침묵
+    await opsStateSet("direct:staleBase", { total, since: date });
+    console.log(`[cron] direct_stale: 누적 ${st.total ?? "-"} → ${total} · 기준 갱신`);
+    return;
+  }
+  const days = Math.floor((Date.parse(date) - Date.parse(st.since || date)) / 86400000);
+  if (days < DIRECT_STALE_DAYS) return;
+  // 임계 도달 후에는 7일마다 다시 알린다 — 한 번 놓치면 또 4개월이 간다.
+  if (st.notified != null && days - st.notified < DIRECT_STALE_DAYS) return;
+  await opsStateSet("direct:staleBase", { ...st, total, notified: days });
+  await ownerDM(`📓 직강 기록이 ${days}일째 늘지 않았습니다 (마지막 변화 ${st.since} · 누적 ${total}회)\n`
+    + `수업을 했는데 [수업_로그]에 안 들어갔다면 지금 채워주세요 — 밀릴수록 잔여회차·잔액이 실제와 벌어집니다.`);
+}
 const DIRECT_STATUS_ENABLED = process.env.DIRECT_STATUS === "1";
 // 미승인 피드백 리마인더 — 승인 워크플로(검수 채널 ✅)가 잊혀 공개 0건이 되는 구조 재발 방지.
 // 0건=침묵(스팸 방지), 1건 이상만 오너 DM. rejected(반려)는 대기 아님 — 제외.
@@ -4994,6 +5029,9 @@ async function cronTick() {
     await maybeRunDaily("directStatus", "05:10", runDirectStatus, "직강 잔여회차");     // 기존 T2 게이트 재사용
   }
   await maybeRunDaily("fbPending", "05:15", runFeedbackPending, "미승인 피드백");       // 별도 env 불요(크론 활성 시 항상)
+  // DIRECT_STATUS 게이트를 타지 않는다 — 게이트를 하나 더 두면 그 게이트가 꺼져서
+  // 침묵하는 경우를 또 못 잡는다. 웹훅이 없으면 함수가 스스로 스킵한다.
+  await maybeRunDaily("directStale", "05:20", runDirectStale, "직강 기록 정체");
 }
 if (T2_ENABLED || DIRECT_STATUS_ENABLED) {
   setInterval(() => { cronTick().catch((e) => console.error("cron_tick", e?.message)); }, 10 * 60 * 1000);   // 10분 틱
