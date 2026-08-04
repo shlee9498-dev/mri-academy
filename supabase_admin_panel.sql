@@ -399,3 +399,101 @@ create table if not exists public.student_aliases (
 );
 create index if not exists idx_alias_student on public.student_aliases (student_id);
 alter table public.student_aliases enable row level security;
+
+-- ============================================================
+-- 17) 강의(회차제) — 오너 직강. 레슨(판수제)과 단위·권한·정산이 전부 다르다.
+--     레슨: 판(game) · 트레이너 담당 · 지급 발생
+--     강의: 회차(session) · 오너 전담 · 지급 없음
+--     설계 근거: docs/lecture-data-model.md (441행 실데이터 검증 완료)
+-- ============================================================
+
+-- 17a) 등록 — 계약 1건. 회당단가·계약회차가 여기서 고정된다.
+--      같은 사람이 구 체계 종료 후 신 체계로 재등록하면 행이 2개다(허혜민 사례).
+create table if not exists public.courses (
+  id              bigint generated always as identity primary key,
+  student_id      bigint not null references public.students(id) on delete restrict,
+  level           text not null check (level in ('초급반','중급반','심화반','개인강의','기타')),
+  scheme          text not null check (scheme in ('old','new')),   -- 구(1회=2h) / 신(1회=3h)
+  session_minutes int  not null check (session_minutes > 0),        -- 120 | 180 · 등록 시점 고정
+  unit_price      int  not null check (unit_price > 0),             -- 회당단가 · 등록 시점 고정
+  units_total     numeric(6,2) check (units_total is null or units_total > 0),
+                                                     -- 계약 회차. null = 재구성분(원 계약 미상)
+  started_on      date not null,
+  ended_on        date,
+  status          text not null default 'active'
+                  check (status in ('active','done','paused','cancelled','reconstructed')),
+  source          text not null default 'panel'
+                  check (source in ('panel','sheet_import','bot','photo_recount')),
+  -- 학생 공개 게이트: 오너가 전수 확인해 확정한 등록만 마이페이지에 잔여회차가 뜬다.
+  -- 시트·사진 두 소스가 서로 상위집합이 아니라(박성민 사진13>시트8 / 김준성 사진10<시트13),
+  -- 확정 전 숫자를 학생에게 보여주면 틀린 값이 공식이 된다.
+  verified_at     timestamptz,
+  verified_by     text,
+  memo            text,
+  created_by      text,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+create index if not exists idx_courses_student on public.courses (student_id, started_on desc);
+create index if not exists idx_courses_active  on public.courses (status) where status = 'active';
+-- 같은 사람·같은 반·같은 날 이중 등록 차단(재등록은 날짜가 다르다)
+create unique index if not exists uq_courses_dup
+  on public.courses (student_id, level, started_on) where status <> 'cancelled';
+
+-- 17b) 수업 1회 — 그룹수업도 1행. 학생을 모른다.
+--      duration_min을 저장하는 이유: 종료<시작(22:00→00:00) 자정 넘김이 실데이터에 흔하고,
+--      time 두 개에서 매번 파생하면 그때마다 자정 보정을 다시 맞춰야 한다.
+create table if not exists public.course_sessions (
+  id           bigint generated always as identity primary key,
+  held_on      date not null,
+  start_time   time,
+  end_time     time,
+  duration_min int  not null check (duration_min > 0),   -- 실제 진행 분
+  kind         text not null default 'group' check (kind in ('group','private')),
+  label        text,                                     -- 표시용 반 라벨('중급반 야간')
+  -- scheduled: 일정 등록 시 생성(차감 없음) → 완료 시 done으로 전이.
+  -- 예정 시점에 차감까지 만들면 실패 모드가 '누락'에서 '허위 차감'으로 뒤집힌다.
+  status       text not null default 'done'
+               check (status in ('scheduled','done','cancelled')),
+  -- 출처 — 시트 이관분과 사진 재집계분이 섞이면 다시는 못 가른다.
+  source       text not null default 'bot'
+               check (source in ('bot','panel','sheet_import','photo_recount')),
+  -- 이 행이 하한선임을 데이터에 새긴다. 사진 재집계는 갭 기간(2026-05-18~06-14,
+  -- 07-13~07-20)이 통째로 빠져 있고, 세션당 참석자도 프레임에 찍힌 사람만 잡혔다.
+  is_partial   boolean not null default false,
+  schedule_id  bigint references public.schedule_events(id),  -- 일정에서 생성 시 연결(선택)
+  memo         text,
+  created_by   text,
+  created_at   timestamptz not null default now()
+);
+create index if not exists idx_csess_date on public.course_sessions (held_on desc)
+  where status <> 'cancelled';
+create index if not exists idx_csess_pending on public.course_sessions (held_on)
+  where status = 'scheduled';                          -- 완료 대기열 조회용
+
+-- 17c) 참가·차감 — 세션 × 등록. 저장되는 수량은 units 하나뿐이고 금액은 전부 파생.
+create table if not exists public.course_attendance (
+  id            bigint generated always as identity primary key,
+  session_id    bigint not null references public.course_sessions(id) on delete cascade,
+  course_id     bigint not null references public.courses(id) on delete restrict,
+  units         numeric(4,2) not null check (units >= 0),  -- 차감 회차
+  units_auto    numeric(4,2),                              -- 서버 자동계산값(오버라이드 감사)
+  adjust_reason text,                                      -- units <> units_auto 면 서버가 필수 강제
+  status        text not null default 'done'
+                check (status in ('scheduled','done','cancelled')),
+  memo          text,
+  created_by    text,
+  created_at    timestamptz not null default now(),
+  unique (session_id, course_id)      -- 중복 참가 행을 구조적으로 차단
+);
+create index if not exists idx_catt_course on public.course_attendance (course_id)
+  where status = 'done';                               -- 잔여 집계는 done만 센다
+
+-- 17d) 결제를 등록에 귀속. 분할납부·초과분정산·환불이 어느 계약 건인지 확정된다.
+alter table public.payments add column if not exists course_id bigint references public.courses(id);
+create index if not exists idx_payments_course on public.payments (course_id)
+  where course_id is not null;
+
+alter table public.courses           enable row level security;
+alter table public.course_sessions   enable row level security;
+alter table public.course_attendance enable row level security;
