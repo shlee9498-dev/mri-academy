@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 이 세션의 소관 (학습·승급시험 트랙)
+- 담당: 승급시험(명칭 「승급시험」/슬러그 exam), docs/learning-system-design.md, 문제은행·카테고리 16축·coach_tag, M1a 브랜치(8/8~), M2 실측 프로토콜(3무기×3방어구×3거리), 합격선 12/15·보정 게이트
+- 비소관: 결제·정산(→ 결제), 수강 회차·마이페이지(→ MRIacademy), 카지노·G드컵(→ 카지노)
+- 경계 규칙: 승급시험 응시료가 생기면 결제 트랙과 협의, 합격 시 역할 부여는 v1 수동(오너 DM)
+- 비소관 요청이 오면 작업하지 말고 "○○ 트랙 소관입니다"라고만 회신할 것. 타 트랙 파일은 읽기만 허용, 수정 금지
+
 # MRI ACADEMY 작업 규칙
 - 브랜드: 다크 #0a0a0c + 골드 #f5c518. 강조색은 골드 하나만. 라이트 테마 금지.
 - TOSS_SECRET_KEY, PUBG_API_KEY 등 모든 키는 절대 HTML/JS/커밋에 넣지 않는다 (Railway env 전용).
