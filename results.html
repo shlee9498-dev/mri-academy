@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>G드컵 · 누적 순위</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<!--
+THESIS: 방송 스코어보드가 곧 페이지다 — 카드 그리드로 감싼 "결과 요약"을 거부하고,
+  PGC/PWS 중계 패키지의 로워서드·스코어바 언어로 순위 원장을 직접 송출한다.
+OWN-WORLD: #0a0a0c 그라운드, 골드 #f5c518 단일 액센트(1위·보너스·핵심 수치만),
+  Saira Condensed 대문자 레이블·타뷸러 수치 + Pretendard 800 한글, 1px 괘선 원장 행,
+  직각 모서리(방송 그래픽 — 라운드 카드 없음), 골드 눈금 마크 섹션 규율.
+STORY: 시청자는 3초 안에 "지금 몇 라운드, 누가 1위, 왜(보너스)"를 읽고
+  다음 라운드를 기다린다.
+FIRST VIEWPORT: 1920×1080 고정 방송 캔버스 전체가 첫 뷰포트 — 상단 브리핑 헤더
+  (시즌·본선 일자·라운드 상태), 중앙 16팀 2열 원장, 하단 상태 티커. 주 행동 없음(관전 화면).
+FORM: broadcast-scoreboard / 정적 HTML 단일 파일 / 스코어바 원장 스테이징.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish
+  review, the verdict, and DESIGN.md
+-->
+<style>
+  :root{
+    --bg:#0a0a0c; --surface-1:#141419; --surface-2:#1b1b21; --line:#26262c;
+    --ink:#f4f4f5; --ink-body:#c6c6cd; --ink-dim:#9b9ba4;
+    --gold:#f5c518; --gold-deep:#caa00f;
+    /* 은·동은 --ink-dim(#9b9ba4)과 채도로 갈라야 1080p 원거리에서 구분된다.
+       명도만 다른 무채색은 방송에서 같은 회색으로 뭉갠다. */
+    --silver:#e8eef7; --bronze:#e08a3c; --danger:#f87171;
+    --disp:'Saira Condensed',sans-serif; --body:'Pretendard Variable',sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  /* 방송 그래픽 원칙: 표면은 스스로 선다 — 헤이즈·그리드 장식 없음, 순수 그라운드 */
+  html,body{width:1920px;height:1080px;overflow:hidden;font-family:var(--body);color:var(--ink-body);
+    background:#0a0a0c;}
+  .frame{position:relative;height:1080px;padding:46px 72px 34px;display:flex;flex-direction:column;}
+
+  /* ── 헤더: 방송 오프닝 타이틀 ── */
+  .head{display:flex;align-items:flex-end;justify-content:space-between;
+    border-bottom:2px solid var(--line);padding-bottom:20px;}
+  .tick{display:inline-block;width:14px;height:14px;background:var(--gold);
+    clip-path:polygon(0 0,100% 0,100% 30%,30% 30%,30% 100%,0 100%);margin-right:10px;vertical-align:top;}
+  .kick{font-family:var(--disp);font-weight:700;font-size:22px;letter-spacing:.3em;color:var(--gold);text-transform:uppercase;}
+  .title{font-weight:800;font-size:56px;line-height:1.02;margin-top:6px;color:var(--ink);letter-spacing:-.01em;}
+  .title small{font-family:var(--disp);font-weight:600;font-size:24px;letter-spacing:.24em;color:var(--ink-dim);margin-left:14px;}
+  .datechip{display:none;align-items:center;gap:9px;margin-top:14px;padding:7px 16px;
+    border:1px solid rgba(245,197,24,.45);font-family:var(--disp);font-weight:600;
+    font-size:17px;letter-spacing:.05em;color:var(--gold);width:max-content;}
+  .datechip.on{display:inline-flex;}
+  .datechip::before{content:"";width:7px;height:7px;background:var(--gold);}
+  .rstat{text-align:right;}
+  .rstat .brand{font-family:var(--disp);font-weight:600;font-size:15px;letter-spacing:.26em;color:var(--ink-dim);text-transform:uppercase;}
+  .rstat .r{font-family:var(--disp);font-weight:800;font-size:44px;letter-spacing:.06em;color:var(--gold);margin-top:2px;}
+  .rstat .s{font-size:17px;font-weight:600;color:var(--ink-dim);margin-top:6px;}
+
+  /* ── 원장: 2열 × 8행 스코어바 ── */
+  .cols{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:0 60px;align-content:center;padding:26px 0;}
+  .row{position:relative;display:grid;grid-template-columns:66px 64px 1fr auto;align-items:center;gap:16px;
+    padding:17px 18px 17px 0;border-bottom:1px solid var(--line);will-change:transform;}
+  .col > .row:first-child{border-top:1px solid var(--line);}
+  /* 팀이 적을 때(≤8) 행을 키워 세로를 채운다 — 5팀에서 헤더와 1위 사이가 비던 문제.
+     16팀이면 자동으로 기본 높이로 돌아간다. */
+  .cols.sparse .row{padding-top:30px;padding-bottom:30px;}
+  /* ≤8팀이면 전원이 colA로 가고 colB가 빈다(render의 i<8 분기) — 2열을 유지하면
+     방송 화면 오른쪽 절반이 통째로 비었다. 같은 조건에서 1열로 접어 가로를 채운다.
+     행 수는 그대로라 세로 레이아웃에는 영향이 없다. */
+  .cols.sparse{grid-template-columns:1fr;}
+  .row .rk{font-family:var(--disp);font-weight:800;font-size:34px;text-align:center;color:var(--ink-dim);
+    font-variant-numeric:tabular-nums;}
+  .row .em{width:64px;height:44px;object-fit:contain;background:var(--surface-1);}
+  /* 팀 태그 — 로고 대신 쓰는 3~4자 타이포. 회색 빈 사각형이 세로로 늘어서면
+     방송 화면이 미완성으로 읽혀서, 자리지킴을 없애고 태그로 대체했다. */
+  .row .tg{font-family:var(--disp);font-weight:800;font-size:26px;letter-spacing:.04em;
+    line-height:44px;height:44px;text-align:center;white-space:nowrap;
+    font-variant-numeric:tabular-nums;}
+  .row .nm{display:flex;align-items:baseline;gap:10px;min-width:0;}
+  .row .nm .tn{font-weight:800;font-size:25px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .row .nm .w{font-family:var(--disp);font-weight:600;font-size:15px;letter-spacing:.06em;color:var(--ink-dim);flex:0 0 auto;}
+  .row .sc{display:flex;align-items:baseline;gap:10px;font-variant-numeric:tabular-nums;}
+  .row .sc b{font-family:var(--disp);font-weight:800;font-size:34px;color:var(--ink);line-height:1;}
+  .row .sc .kl{font-family:var(--disp);font-weight:600;font-size:16px;color:var(--ink-dim);width:58px;text-align:right;}
+  .bn{font-family:var(--disp);font-weight:700;font-size:17px;letter-spacing:.04em;padding:2px 9px;
+    background:rgba(245,197,24,.16);border:1px solid rgba(245,197,24,.4);color:var(--gold);}
+  /* 순위 강조 — 1~3 금은동, 4위 = 연속 보너스 사정권 경계 */
+  .row.t1{background:linear-gradient(90deg,rgba(245,197,24,.14),transparent 70%);border-bottom-color:rgba(245,197,24,.5);
+    box-shadow:0 0 34px -6px rgba(245,197,24,.28);}  /* impeccable-disable-line dark-glow -- 디자인 계약(DESIGN.md v2): 골드 글로우 한 화면 1개 = 1위 시상 강조 */
+  .row.t1 .rk,.row.t1 .sc b{color:var(--gold);}
+  .row.t2 .rk{color:var(--silver);}
+  .row.t3 .rk{color:var(--bronze);}
+  .row.t4{background:linear-gradient(90deg,rgba(244,244,245,.06),transparent 60%);}
+  .row.t4 .rk{color:var(--ink);}
+  /* 변동 플래시 (1회) */
+  .row.chg::after{content:"";position:absolute;inset:0;background:rgba(245,197,24,.12);
+    animation:flash .9s ease-out forwards;pointer-events:none;}
+  @keyframes flash{from{opacity:1}to{opacity:0}}
+
+  /* ── 빈 상태: 방송 대기 화면 ── */
+  .empty{grid-column:1 / -1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:18px;min-height:420px;}
+  .empty .lbl{font-family:var(--disp);font-weight:700;font-size:20px;letter-spacing:.34em;color:var(--gold);text-transform:uppercase;}
+  .empty .msg{font-weight:800;font-size:34px;color:var(--ink);}
+  .empty .sub{font-size:18px;color:var(--ink-dim);}
+
+  /* ── 푸터: 상태 티커 ── */
+  .foot{display:flex;align-items:center;justify-content:space-between;gap:24px;
+    border-top:1px solid var(--line);padding-top:16px;}
+  .next{display:flex;align-items:center;gap:11px;font-weight:800;font-size:20px;color:var(--gold);}
+  /* impeccable-disable-next-line pulsing-dot -- 10초 자동 갱신 방송 화면의 실제 LIVE 인디케이터(장식 아님) */
+  .next .dot{width:10px;height:10px;border-radius:50%;background:var(--danger);animation:bl 1.4s infinite;}
+  @keyframes bl{0%,100%{opacity:1}50%{opacity:.25}}
+  .legend{font-size:15px;font-weight:600;color:var(--ink-dim);}
+  .snd{font-family:var(--disp);font-weight:700;font-size:15px;letter-spacing:.05em;color:var(--ink-dim);
+    background:none;border:1px solid var(--line);padding:8px 16px;cursor:pointer;min-width:110px;min-height:38px;}
+  .snd.on{color:var(--gold);border-color:rgba(245,197,24,.45);}
+  .snd:focus-visible{outline:1px solid var(--gold);outline-offset:2px;}
+  .updating{position:fixed;top:16px;right:22px;font-family:var(--disp);font-weight:600;font-size:14px;
+    letter-spacing:.05em;color:var(--ink-dim);}
+
+  @media (prefers-reduced-motion: reduce){
+    /* 방송 캔버스 예외: 순위 변동 트랜지션은 시청자 정보 전달용으로 유지, 장식 모션만 제거 */
+    .next .dot{animation:none;}
+  }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="head">
+      <div>
+        <div class="kick"><span class="tick"></span><span id="kick">GDCUP · STANDINGS</span></div>
+        <div class="title">누적 순위<small>OFFICIAL STANDINGS</small></div>
+        <!-- 이벤트 고정 표기(시즌 규칙 아님) — 다음 시즌 본선 때 날짜만 갱신. 현재 시즌에서만 표시 -->
+        <div class="datechip" id="dateChip">본선 2026.08.07 (금) 20:00 · GmI 클랜컵</div>
+      </div>
+      <div class="rstat">
+        <div class="brand">MRI ACADEMY × GmI</div>
+        <div class="r" id="roundStat">STANDBY</div>
+        <div class="s" id="subStat">본매치 누적 · BPI 가중치 반영</div>
+      </div>
+    </div>
+
+    <div class="cols" id="cols">
+      <div class="col" id="colA"></div>
+      <div class="col" id="colB"></div>
+    </div>
+
+    <div class="foot">
+      <div class="next"><span class="dot"></span><span id="nextLabel">곧 시작합니다</span></div>
+      <div class="legend">점수 = (순위점 + 킬 + 연속 보너스) 누적 × 팀 BPI 가중치 · 1~4위 = 연속 보너스 사정권</div>
+      <button class="snd" id="sndBtn" type="button" aria-pressed="false" title="사운드 (순위 변동·라운드 갱신 효과음)">SND OFF</button>
+    </div>
+  </div>
+  <div class="updating" id="upd"></div>
+
+<script>
+  // ===== 데이터 소스 =====
+  var GAPI="https://mri-academy-production.up.railway.app";
+  var QS = new URLSearchParams(location.search);
+  var DEMO = QS.get('demo')==='1';
+  // ?season=N 지정 시 해당 시즌, 미지정 = meta의 현재 시즌 (시즌 번호 하드코딩 금지)
+  var SEASON = QS.get('season');
+  var seasonQ = SEASON ? ('season='+encodeURIComponent(SEASON)) : '';
+  var META = null;
+  async function loadMeta(){
+    if(DEMO){ META={rounds:[3,4,5]}; return; }
+    try{ var r=await fetch(GAPI+"/api/gdcup-meta"+(seasonQ?('?'+seasonQ):'')); META=await r.json(); }catch(e){ META=null; }
+    // 파라미터 미지정 시 meta의 현재 시즌으로 확정 — score/admin과 동일한 시즌 결정 로직.
+    if(!SEASON && META && META.currentSeason){
+      SEASON = String(META.currentSeason);
+      seasonQ = 'season='+encodeURIComponent(SEASON);
+    }
+  }
+  var BRANDS = {};
+  async function loadBrands(){
+    if(DEMO){ BRANDS.__loaded=true; return; }
+    try{ var r=await fetch(GAPI+"/api/gdcup-team-brands"); var d=await r.json();
+      // 팀명이 겹치면 먼저 온 행이 이긴다 — 서버가 updated_at.desc라 항상 최신이 남는다.
+      // (지금은 team_name UNIQUE라 겹칠 일이 없지만, season 컬럼이 붙어 유니크가
+      //  (team_name,season)으로 풀리면 시즌2 잔존 행이 현재 시즌 색을 덮어쓴다.)
+      ((d&&d.brands)||[]).forEach(function(b){
+        if(!Object.prototype.hasOwnProperty.call(BRANDS,b.team_name)) BRANDS[b.team_name]=b;
+      }); }catch(e){}
+    BRANDS.__loaded=true;
+  }
+  var SAMPLE=[
+    {name:"세휘네치킨", weight:1.1, points:312, kills:41},
+    {name:"파워", weight:1.0, points:298, kills:39},
+    {name:"광부", weight:1.2, points:276, kills:33},
+    {name:"메르시", weight:1.0, points:255, kills:30},
+    {name:"불꽃", weight:0.9, points:241, kills:35},
+    {name:"새벽", weight:1.1, points:228, kills:27},
+    {name:"질풍", weight:1.0, points:210, kills:25},
+    {name:"백호", weight:1.3, points:198, kills:18},
+    {name:"천둥", weight:1.0, points:181, kills:22},
+    {name:"해일", weight:0.9, points:166, kills:24},
+    {name:"북극성", weight:1.1, points:150, kills:16},
+    {name:"적호", weight:1.0, points:138, kills:17},
+    {name:"은하", weight:1.2, points:120, kills:11},
+    {name:"비룡", weight:1.0, points:104, kills:13},
+    {name:"서리", weight:0.9, points:88, kills:12},
+    {name:"고요", weight:1.0, points:71, kills:9}
+  ];
+  // 반환: {standings:[{name,weight,points,kills,bonus,bonusByRound}], lastRound, season}
+  async function loadData(){
+    if(DEMO) return { standings: SAMPLE, lastRound: 3, season: 2 };
+    var r = await fetch(GAPI+"/api/gdcup-scores"+(seasonQ?('?'+seasonQ):''));
+    var d = await r.json();
+    return { standings: (d&&d.standings)||[], lastRound: (d&&d.lastRound)||0, season: d&&d.season };
+  }
+
+  // ===== 사운드 (opt-in · 기본 음소거 · 상태 유지 · 파일 0바이트 — WebAudio 합성) =====
+  var SND = { on: localStorage.getItem('gdcupSnd')==='1', ctx:null };
+  function ac(){ if(!SND.ctx){ try{ SND.ctx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return SND.ctx; }
+  function tone(freq, dur, delay, vol, type){
+    var c=ac(); if(!c) return;
+    var o=c.createOscillator(), g=c.createGain(), t=c.currentTime+(delay||0);
+    o.type=type||'square'; o.frequency.value=freq;
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(vol||.08,t+.008);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.connect(g); g.connect(c.destination); o.start(t); o.stop(t+dur+.02);
+  }
+  function sfxRank(){ if(!SND.on) return; tone(660,.05,0,.06); tone(990,.07,.06,.06); }        // 순위 변동 블립
+  function sfxRound(){ if(!SND.on) return; tone(196,.14,0,.09,'triangle'); tone(392,.1,.1,.06,'triangle'); } // 라운드 갱신
+  var sndBtn=document.getElementById('sndBtn');
+  function sndPaint(){ sndBtn.textContent = SND.on?'SND ON':'SND OFF'; sndBtn.classList.toggle('on',SND.on); sndBtn.setAttribute('aria-pressed',String(SND.on)); }
+  sndBtn.addEventListener('click',function(){
+    SND.on=!SND.on; localStorage.setItem('gdcupSnd',SND.on?'1':'0'); sndPaint();
+    if(SND.on){ ac(); tone(660,.05,0,.05); }   // 켜질 때 확인 블립 1회
+  });
+  sndPaint();
+
+  // 태그: 등록값 우선 → 없으면 팀명 앞 2글자. 수동 관리를 최소화하되 등록하면 그게 이긴다.
+  function teamTag(name, b){
+    if(b && b.tag) return String(b.tag).toUpperCase().slice(0,4);
+    return String(name||"").replace(/\s+/g,"").slice(0,2) || "?";
+  }
+  // 색: 등록값 우선 → 없으면 팀명 해시로 고정 배정. 같은 팀은 항상 같은 색이 나온다.
+  // 골드(45°) 근처는 1위 강조와 겹치므로 피한다. 반환은 항상 #RRGGBB — 대비 계산에 필요.
+  function teamColor(name, b){
+    if(b && b.color) return String(b.color)[0]==='#' ? b.color : '#'+b.color;
+    var h=0, s=String(name||"");
+    for(var i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0;
+    var hue=h%330; if(hue>25&&hue<75) hue=(hue+90)%360;   // 골드 대역 회피
+    return hslHex(hue, .52, .62);
+  }
+  function hslHex(hue, sat, li){
+    var c=(1-Math.abs(2*li-1))*sat, x=c*(1-Math.abs((hue/60)%2-1)), m=li-c/2, r=0,g=0,b=0;
+    if(hue<60){r=c;g=x;} else if(hue<120){r=x;g=c;} else if(hue<180){g=c;b=x;}
+    else if(hue<240){g=x;b=c;} else if(hue<300){r=x;b=c;} else {r=c;b=x;}
+    var hx=function(v){ return ('0'+Math.round((v+m)*255).toString(16)).slice(-2); };
+    return '#'+hx(r)+hx(g)+hx(b);
+  }
+  // 배경 위에 올릴 글자색 — 상대휘도(WCAG) 기준으로 검정/흰색 자동 선택.
+  // 태그는 solid fill이라 밝은 팀색(#4ECDC4)엔 검정, 어두운 색(#4D96FF)엔 흰색이 붙는다.
+  function textOn(hex){
+    var h=String(hex||'').replace('#','');
+    if(h.length===3) h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    var lin=function(v){ v/=255; return v<=0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055,2.4); };
+    var L=0.2126*lin(parseInt(h.slice(0,2),16))+0.7152*lin(parseInt(h.slice(2,4),16))+0.0722*lin(parseInt(h.slice(4,6),16));
+    return L > 0.42 ? '#0a0a0c' : '#ffffff';
+  }
+  function rowHtml(t, rank){
+    var cls = rank<=4 ? (' t'+rank) : '';
+    var b = BRANDS[t.name] || {};
+    var em = b.emblem ? '<img class="em" src="'+b.emblem+'" alt="">'
+           : (function(c){ return '<span class="tg" style="background:'+c+';color:'+textOn(c)+'">'
+               +escapeHtml(teamTag(t.name, b))+'</span>'; })(teamColor(t.name, b));
+    var stl = (b.color && rank>4) ? ' style="box-shadow:inset 4px 0 0 '+escapeHtml(b.color)+'"' : '';
+    return '<div class="row'+cls+'" data-team="'+escapeHtml(t.name)+'"'+stl+'>'
+      + '<div class="rk">'+rank+'</div>'
+      + em
+      + '<div class="nm"><span class="tn">'+escapeHtml(t.name)+'</span><span class="w">×'+t.weight+'</span></div>'
+      + '<div class="sc"><b>'+t.points+'</b>'
+      +   (t.bonus?'<span class="bn" title="연속 보너스 — 라운드별: '+bonusTip(t)+'">+'+t.bonus+'</span>':'')
+      +   '<span class="kl">'+t.kills+'킬</span></div>'
+      + '</div>';
+  }
+  // 연속 보너스 툴팁 — 검산용 (라운드별 +2/+4 귀속)
+  function bonusTip(t){
+    var br=t.bonusByRound||{};
+    var parts=Object.keys(br).sort(function(a,b){return a-b;}).map(function(r){return r+'R +'+br[r];});
+    return parts.join(' · ')||('+'+t.bonus);
+  }
+  function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  // 이전 상태 (변동 감지 — 플래시·FLIP·SFX)
+  var PREV = { rank:{}, points:{}, lastRound:null };
+
+  async function render(){
+    try{
+      if(!META) await loadMeta();
+      if(!BRANDS.__loaded) await loadBrands();
+      var d = await loadData();
+      // 시즌 라벨은 서버 응답이 정본 — 화면 하드코딩 금지
+      var sn = d.season || (META && META.season);
+      if(sn){
+        document.getElementById('kick').textContent = 'GDCUP · SEASON '+sn;
+        document.title = 'G드컵 시즌'+sn+' · 누적 순위';
+      }
+      var dc = document.getElementById('dateChip');
+      if(dc) dc.classList.toggle('on', !!(sn && META && Number(sn)===Number(META.currentSeason)));
+      var rds = (META && META.rounds && META.rounds.length) ? META.rounds : null;
+      if(rds) document.getElementById('subStat').textContent =
+        '본매치 '+rds[0]+'~'+rds[rds.length-1]+'R 누적 · BPI 가중치 반영';
+      var finalR = rds ? rds[rds.length-1] : 5;
+
+      var data = (d.standings||[]).slice().sort(function(a,b){ return b.points - a.points; });
+      var colA=document.getElementById('colA'), colB=document.getElementById('colB');
+      var cols=document.getElementById('cols');
+
+      // FLIP 준비: 교체 전 각 팀 행의 화면 위치 캡처
+      var before={};
+      document.querySelectorAll('.row[data-team]').forEach(function(el){
+        before[el.getAttribute('data-team')]=el.getBoundingClientRect().top;
+      });
+
+      if(!data.length){
+        colA.style.gridColumn='1 / -1';
+        colA.innerHTML='<div class="empty"><div class="lbl">Standby</div>'
+          +'<div class="msg">아직 집계된 라운드가 없습니다</div>'
+          +'<div class="sub">본선을 기다려주세요 — 집계 시작과 동시에 이 화면이 갱신됩니다</div></div>';
+        colB.innerHTML='';
+      } else {
+        colA.style.gridColumn='';
+        // 팀이 적으면 행을 키워 세로를 채운다(5팀도, 16팀도 화면이 비지 않게).
+        cols.classList.toggle('sparse', data.length <= 8);
+        var a='', b='';
+        data.forEach(function(t,i){ var html=rowHtml(t,i+1); if(i<8) a+=html; else b+=html; });
+        colA.innerHTML=a; colB.innerHTML=b;
+      }
+
+      // 변동 처리: FLIP 재정렬(400ms) + 점수 변동 플래시 + SFX
+      var rankChanged=false;
+      data.forEach(function(t,i){
+        var rank=i+1;
+        var el=document.querySelector('.row[data-team="'+CSS.escape(t.name)+'"]');
+        if(!el) return;
+        if(PREV.rank[t.name]!=null && PREV.rank[t.name]!==rank){
+          rankChanged=true;
+          if(before[t.name]!=null){
+            var dy=before[t.name]-el.getBoundingClientRect().top;
+            if(dy){ el.style.transition='none'; el.style.transform='translateY('+dy+'px)';
+              requestAnimationFrame(function(){ el.style.transition='transform 400ms ease-out'; el.style.transform=''; }); }
+          }
+        }
+        if(PREV.points[t.name]!=null && PREV.points[t.name]!==t.points) el.classList.add('chg');
+        PREV.rank[t.name]=rank; PREV.points[t.name]=t.points;
+      });
+      if(rankChanged) sfxRank();
+
+      var lr=d.lastRound||0;
+      if(PREV.lastRound!=null && lr>PREV.lastRound) sfxRound();
+      PREV.lastRound=lr;
+      document.getElementById('roundStat').textContent = lr ? ('ROUND '+lr+' 종료') : 'STANDBY';
+      document.getElementById('nextLabel').textContent = lr ? (lr<finalR ? ('잠시 후 ROUND '+(lr+1)+' 시작') : '최종 결과 · 곧 시상') : '곧 시작합니다';
+      document.getElementById('upd').textContent='UPDATED '+new Date().toLocaleTimeString('ko-KR');
+    }catch(e){ document.getElementById('upd').textContent='연결 대기…'; }
+  }
+  render();
+  setInterval(render, 10000); // 10초마다 자동 갱신
+</script>
+</body>
+</html>

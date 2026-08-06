@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>G드컵 시즌2 · 점수 입력</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  :root{--bg:#0a0a0c;--card:#16161c;--elev:#1d1d25;--line:#27272a;--ink:#f4f4f5;--dim:#a1a1aa;--faint:#71717a;
+    --gold:#f5c518;--green:#10b981;--blue:#5ac8fa;--red:#e63946;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.5;padding:0 14px 90px;}
+  .wrap{max-width:760px;margin:0 auto;}
+  .top{position:sticky;top:0;background:rgba(10,10,12,.95);backdrop-filter:blur(8px);padding:14px 0 12px;z-index:5;border-bottom:1px solid var(--line);}
+  .kick{font-family:var(--display);letter-spacing:.28em;color:var(--gold);font-size:12px;}
+  h1{font-size:20px;font-weight:800;margin:4px 0 10px;}
+  .tabs{display:flex;gap:8px;}
+  .tabs button{flex:1;background:var(--elev);border:1px solid var(--line);color:var(--ink);font-family:var(--body);
+    font-weight:800;font-size:15px;padding:11px;border-radius:10px;cursor:pointer;}
+  .tabs button.on{background:var(--gold);color:#1a1500;border-color:var(--gold);}
+  .bar{display:flex;gap:8px;align-items:center;margin-top:10px;}
+  .bar .saveall{flex:1;background:var(--green);color:#04261b;border:none;font-weight:800;font-size:15px;padding:12px;border-radius:10px;cursor:pointer;}
+  .bar a{color:var(--dim);font-size:13px;text-decoration:none;white-space:nowrap;}
+  .bar a:hover{color:var(--ink);}
+  .note{font-size:12px;color:var(--faint);margin:10px 2px 4px;}
+  .tcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 13px;margin-top:9px;}
+  .trow{display:grid;grid-template-columns:1fr 84px 70px auto;gap:8px;align-items:center;}
+  .tn{font-weight:800;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .tn .tw{color:var(--faint);font-size:12px;font-weight:700;margin-left:6px;}
+  select,input{background:var(--elev);border:1px solid var(--line);color:var(--ink);border-radius:8px;
+    padding:9px 8px;font-size:15px;font-family:var(--body);width:100%;}
+  input[readonly]{color:var(--faint);}
+  .save{background:var(--gold);color:#1a1500;border:none;font-weight:800;border-radius:8px;padding:9px 12px;cursor:pointer;white-space:nowrap;}
+  .save.done{background:var(--green);color:#04261b;}
+  .ptoggle{grid-column:1/-1;justify-self:start;margin-top:8px;background:none;border:1px solid var(--line);
+    color:var(--dim);border-radius:8px;padding:6px 11px;font-size:13px;cursor:pointer;}
+  .ptoggle:hover{color:var(--ink);border-color:var(--gold);}
+  .players{grid-column:1/-1;margin-top:9px;border-top:1px dashed var(--line);padding-top:9px;display:none;}
+  .players.show{display:block;}
+  .prow{display:grid;grid-template-columns:1fr 78px;gap:8px;align-items:center;margin:5px 0;}
+  .prow label{font-size:14px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .psum{font-size:13px;color:var(--gold);font-weight:700;margin-top:6px;}
+  .msg{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--elev);border:1px solid var(--line);
+    padding:11px 18px;border-radius:10px;font-size:14px;display:none;z-index:9;box-shadow:0 10px 30px rgba(0,0,0,.5);}
+  .msg.show{display:block;}
+  .gate{max-width:380px;margin:80px auto;text-align:center;}
+  .gate input{margin:14px 0;}
+  .gate button{background:var(--gold);color:#1a1500;border:none;font-weight:800;padding:12px 22px;border-radius:10px;cursor:pointer;}
+  .hidden{display:none;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="gate" id="gate">
+    <!-- 로그인 전이라 서버에서 시즌을 받을 수 없다 — 숫자를 적지 않는다.
+         (입장 후 #kick을 season 값으로 채운다.) -->
+    <div class="kick">G드컵</div>
+    <h1>점수 입력 — 관리자 확인</h1>
+    <input type="password" id="keyInput" placeholder="관리자 키">
+    <div><button id="keyBtn">입장</button></div>
+    <div class="note" id="gateMsg"></div>
+  </div>
+
+  <div id="app" class="hidden">
+    <div class="top">
+      <!-- render()가 season 값으로 채운다 (아래 $("kick").textContent). 숫자를 적지 말 것. -->
+      <div class="kick" id="kick">G드컵</div>
+      <h1>본매치 점수 입력</h1>
+      <!-- 20:00 솔로 이벤트가 팀전보다 먼저 열려서, 입력자에게는 솔로가 "1라운드"로 보인다.
+           R1에 넣으면 순위표·킬MVP가 그대로 오염되고 연속보너스 스캔이 R2까지 번진다.
+           서버는 R1~R5 밖을 400으로 막지만 R1 오입력은 못 막는다 — 화면에서 경고한다. -->
+      <div style="margin:8px 0;padding:10px 12px;border:1px solid var(--gold);border-radius:8px;
+                  background:rgba(245,197,24,.08);font-size:13px;line-height:1.6;">
+        ⚠ <b>R1은 팀전 첫 판(21:00)입니다.</b> 20:00 솔로 이벤트 결과는 여기 입력하지 마세요 —
+        순위표·킬MVP에 그대로 반영됩니다.
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap;">
+        <label style="font-size:12px;color:var(--faint);">시즌</label>
+        <select id="seasonSel" style="width:auto;">
+          <option value="3">시즌 3</option>
+          <option value="2">시즌 2 (조회전용)</option>
+        </select>
+        <span id="roMsg" style="font-size:12px;color:var(--gold);font-weight:700;"></span>
+      </div>
+      <div class="tabs" id="tabs"></div>
+      <div class="bar">
+        <button class="saveall" id="saveAll">이 라운드 전체 저장</button>
+        <a href="results.html" target="_blank" id="lnkResults">순위화면</a>
+        <a href="kill-mvp.html" target="_blank" id="lnkMvp">MVP화면</a>
+      </div>
+    </div>
+    <div class="note">팀별 <b>순위</b> + <b>팀 총킬</b>만 넣어도 순위표 됩니다. 킬 MVP까지 하려면 <b>선수별</b>을 펼쳐 각자 킬 입력(합계가 팀 총킬). 저장은 팀마다 또는 위 "전체 저장". <b style="color:var(--gold)">🔥 시즌3 연속 보너스(연속 Top4 +2 / 연속 치킨 +4)는 순위 기록으로 서버가 자동 계산</b> — 따로 입력할 것 없습니다.</div>
+    <div id="apBox" style="background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 13px;margin-top:10px;">
+      <div style="font-weight:800;margin-bottom:8px;">🤖 PUBG 자동 불러오기 <span style="color:var(--faint);font-weight:600;font-size:12px;">라운드 끝나면 클릭</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <select id="apPlat" style="flex:0 0 auto;width:auto;">
+          <option value="kakao">카카오</option>
+          <option value="steam">스팀</option>
+        </select>
+        <input id="apWho" placeholder="참가 선수 인게임닉 (또는 매치ID)" style="flex:1;min-width:150px;">
+        <button id="apBtn" class="save" style="flex:0 0 auto;">불러오기</button>
+        <button id="apSaveBtn" class="save" style="flex:0 0 auto;background:var(--green);color:#04261b;">불러와서 저장</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap;">
+        <button id="apAuto" class="ptoggle">🔴 자동 감지 OFF</button>
+        <span id="apAutoMsg" style="font-size:12px;color:var(--faint);"></span>
+      </div>
+      <div style="font-size:12px;color:var(--faint);margin-top:8px;"><b>불러오기</b>=폼만 채움(검토용) · <b>불러와서 저장</b>=채우고 바로 저장 · <b>자동 감지</b>=새 매치 뜰 때마다 알아서 저장(라운드 탭 맞춰두기). (PUBG 키 필요)</div>
+    </div>
+    <div id="list"></div>
+  </div>
+
+</div>
+<div class="msg" id="msg"></div>
+
+<script>
+(function(){
+  var GAPI="https://mri-academy-production.up.railway.app";
+  var KEYNAME="gdcupKey";
+  var SEASON_ROUNDS={2:[3,4,5],3:[1,2,3,4,5]};
+  var season=3;
+  var TEAMS=[]; var TEAMS_HIDDEN=0; var SCORES={}; var round=SEASON_ROUNDS[3][0];
+  function readOnly(){ return season===2; }   // 시즌2는 조회 전용(기록 동결)
+  var $=function(id){return document.getElementById(id);};
+  function key(){ return sessionStorage.getItem(KEYNAME)||""; }
+  function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+  function toast(t){ var m=$("msg"); m.textContent=t; m.classList.add("show"); clearTimeout(m._t); m._t=setTimeout(function(){m.classList.remove("show");},2200); }
+
+  // 세션 중 401 = 키가 교체됐거나 만료됐다(운영 중 키 로테이션 등).
+  // 조용히 빈 화면을 보여주면 운영자가 "저장이 안 됐다"고 오해해 다시 입력하게 되고,
+  // 그 재입력도 전부 401로 떨어지므로 게이트로 되돌려 확실히 알린다.
+  var gated=false;
+  function toGate(msg){
+    if(gated) return;                       // 동시 요청이 여러 건 401이어도 한 번만
+    gated=true;
+    try{ sessionStorage.removeItem(KEYNAME); }catch(e){}
+    setAuto(false);                         // 자동 감지 정지 (함수 선언이라 호이스팅됨)
+    $("app").classList.add("hidden");
+    $("gate").classList.remove("hidden");
+    $("keyInput").value="";
+    $("gateMsg").textContent = msg || "🔑 관리자 키가 만료됐습니다. 새 키를 입력해주세요.";
+  }
+
+  // ---- 게이트 ----
+  function enter(){
+    var k=$("keyInput").value.trim(); if(!k){return;}
+    sessionStorage.setItem(KEYNAME,k);
+    // 키 검증 겸 데이터 로드
+    fetch(GAPI+"/api/gdcup-round-scores?season=3",{headers:{"x-admin-key":k}})
+      .then(function(r){ if(r.status===401){throw new Error("키 오류");} return r.json(); })
+      .then(function(){ gated=false; $("gate").classList.add("hidden"); $("app").classList.remove("hidden"); boot(); })
+      .catch(function(){ $("gateMsg").textContent="❌ 관리자 키가 올바르지 않습니다."; sessionStorage.removeItem(KEYNAME); });
+  }
+  $("keyBtn").addEventListener("click",enter);
+  $("keyInput").addEventListener("keydown",function(e){ if(e.key==="Enter") enter(); });
+
+  // ---- PUBG 자동 불러오기 ----
+  function cardByTeam(name){
+    var found=null;
+    Array.prototype.forEach.call($("list").querySelectorAll('.tcard'),function(card){
+      var i=+card.getAttribute('data-i'); if(TEAMS[i] && TEAMS[i].team_name===name) found=card;
+    });
+    return found;
+  }
+  function fillFromPull(d){
+    var filled=0;
+    (d.teams||[]).forEach(function(t){
+      var card=cardByTeam(t.team_name); if(!card) return;
+      filled++;
+      var plc=card.querySelector('.plc'); if(plc) plc.value=String(t.placement);
+      var pmap={}; (t.players||[]).forEach(function(p){ pmap[String(p.ign).trim().toLowerCase()]=p.kills; });
+      var anyPk=false;
+      Array.prototype.forEach.call(card.querySelectorAll('.pk'),function(inp){
+        var ign=String(inp.getAttribute('data-ign')||"").trim().toLowerCase();
+        if(pmap[ign]!=null){ inp.value=pmap[ign]; anyPk=true; }
+      });
+      var players=card.querySelector('.players');
+      if(anyPk && players && !players.classList.contains('show')) players.classList.add('show');
+      if(anyPk){ syncSum(card); }
+      else { var tk=card.querySelector('.tk'); if(tk){ tk.removeAttribute('readonly'); tk.value=t.team_kills; } }
+      var b=card.querySelector('.save'); if(b){ b.classList.remove('done'); b.textContent='저장'; }
+    });
+    return filled;
+  }
+  function autoPull(opts){
+    opts=opts||{};
+    var plat=$("apPlat").value, who=$("apWho").value.trim();
+    if(!who){ if(!opts.silent) toast("선수 닉 또는 매치ID를 입력하세요"); return Promise.resolve(null); }
+    var isMatch=/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-/.test(who);
+    var q=isMatch?("matchId="+encodeURIComponent(who)):("player="+encodeURIComponent(who));
+    if(!opts.silent){ var bb=$("apBtn"); bb.disabled=true; bb.textContent="불러오는 중…"; }
+    // season 필수 — 없으면 서버가 전 시즌 신청서로 IGN→팀명 인덱스를 만들어
+    // 이번 시즌 로스터가 구 시즌 팀명으로 잡힐 수 있다.
+    return fetch(GAPI+"/api/gdcup-match-pull?platform="+encodeURIComponent(plat)+"&season="+season+"&"+q,{headers:{"x-admin-key":key()}})
+      .then(function(r){ return r.json().catch(function(){return {};}).then(function(d){ return {ok:r.ok,status:r.status,d:d}; }); })
+      .then(function(res){
+        if(!opts.silent){ var b=$("apBtn"); b.disabled=false; b.textContent="불러오기"; }
+        var d=res.d||{};
+        // 401은 silent 모드에서도 반드시 노출한다 — 자동 감지가 조용히 죽어 있으면
+        // 라운드가 통째로 기록되지 않은 채 본선이 끝난다.
+        if(res.status===401){ toGate(); return null; }
+        // 429도 silent 모드에서 노출한다 — 401과 같은 이유다. 자동 감지가 조용히 멈춰
+        // 있으면 라운드가 통째로 기록되지 않은 채 본선이 끝난다. 종전엔 아래 일반 분기로
+        // 떨어져 silent면 아무 표시가 없었고, 화면엔 "새 매치 감지 중…"이 그대로 남았다.
+        // 출처 2가지: PUBG 상류 10 RPM(rate_limit) · 우리 리미터(too_many_requests, retry_after 동반).
+        // 게이트로 되돌리지 않는 이유: 키 문제가 아니라 일시적이고, PUBG 창이 굴러가면
+        // 다음 tick(30초)에서 스스로 복구된다. 알리기만 하고 폴링은 계속한다.
+        if(res.status===429 || d.error==="rate_limit" || d.error==="too_many_requests"){
+          var wait = Number(d.retry_after) || 0;
+          if(opts.silent){
+            apRateLimited = true;
+            // 기본색(--faint)은 방송 중 눈에 안 띈다. 알아채게 하는 게 이 표시의 목적이라
+            // 골드로 올린다(브랜드 단일 강조색). 복구 시 원래대로 되돌린다.
+            $("apAutoMsg").style.color = "var(--gold)";
+            $("apAutoMsg").textContent = "⚠ 레이트리밋 — 자동 저장 대기"
+              + (wait ? (" 약 "+wait+"초") : "") + " · " + new Date().toLocaleTimeString('ko-KR');
+          } else {
+            toast("레이트리밋 — 잠시 후 다시" + (wait ? (" ("+wait+"초)") : ""));
+          }
+          return null;
+        }
+        if(!res.ok || !d.ok){
+          var em={pubg_disabled:"PUBG 키 미설정",match_not_found:"매치 못 찾음",no_recent_match:"최근 매치 없음",rate_limit:"잠시 후 다시(레이트리밋)",unauthorized:"키 오류",need_match_or_player:"닉/매치ID 입력"};
+          if(!opts.silent) toast("실패: "+(em[d.error]||d.error||"오류"));
+          return null;
+        }
+        // 레이트리밋에서 빠져나온 첫 성공 — 경고를 지운다. tick()은 새 매치가 있을 때만
+        // apAutoMsg를 쓰므로, 여기서 복구하지 않으면 경고가 라운드 내내 남는다.
+        if(apRateLimited && opts.silent){
+          apRateLimited = false;
+          $("apAutoMsg").style.color = "";
+          $("apAutoMsg").textContent = "새 매치 감지 중… · 레이트리밋 해제 " + new Date().toLocaleTimeString('ko-KR');
+        }
+        // 서버가 실제로 쓴 시즌을 되돌려준다. 다르면 구 배포가 season을 무시한 것이라
+        // 프리필이 엉뚱한 시즌 로스터로 만들어졌을 수 있다 — 방송 중이면 바로 알아야 한다.
+        if(d.season!=null && Number(d.season)!==Number(season)){
+          toast("⚠ 서버가 시즌 "+d.season+"로 조회했습니다 (현재 화면 시즌 "+season+") — 입력값을 확인하세요");
+        }
+        var filled = opts.peek ? 0 : fillFromPull(d);
+        if(!opts.silent){
+          var msg="✅ "+filled+"팀 자동 입력 ("+(d.mode||"")+")";
+          if(d.unmatched && d.unmatched.length) msg+=" · 미매칭 "+d.unmatched.length+"명";
+          if(!filled) msg="매칭된 팀 없음 · 닉/플랫폼 확인";
+          toast(msg);
+        }
+        return { matchId:d.matchId, d:d, filled:filled };
+      })
+      .catch(function(){ if(!opts.silent){ var b=$("apBtn"); b.disabled=false; b.textContent="불러오기"; toast("네트워크 오류"); } return null; });
+  }
+  $("apBtn").addEventListener("click", function(){ autoPull(); });
+  $("apSaveBtn").addEventListener("click", function(){
+    autoPull().then(function(res){ if(res && res.filled){ saveAllNow(); } });
+  });
+  // 자동 감지: 새 매치가 뜨면 자동으로 불러와 저장 (옵션 · 라운드 탭을 맞게 둘 것)
+  // apRateLimited: 429 경고를 apAutoMsg에 띄운 상태인지. autoPull이 세우고, 다음 성공에서
+  // 스스로 내린다(위 autoPull 참조). var 호이스팅으로 autoPull 정의 시점에도 접근 가능.
+  var apTimer=null, apLastMatch=null, apRateLimited=false;
+  function setAuto(on){
+    var b=$("apAuto");
+    if(on){
+      if(!$("apWho").value.trim()){ toast("먼저 참가 선수 닉을 입력하세요"); return; }
+      if(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-/.test($("apWho").value.trim())){ toast("자동 감지는 매치ID 말고 선수 닉으로"); return; }
+      b.textContent="🟢 자동 감지 ON"; b.style.borderColor="var(--green)"; b.style.color="var(--green)";
+      apRateLimited=false;                    // 재시작 시 이전 경고 상태를 끌고 가지 않는다
+      $("apAutoMsg").style.color="";
+      $("apAutoMsg").textContent="새 매치 감지 중…";
+      apLastMatch=null;
+      var tick=function(){
+        autoPull({silent:true, peek:true}).then(function(res){
+          if(res && res.matchId && res.matchId!==apLastMatch){
+            if(apLastMatch!==null){ fillFromPull(res.d); saveAllNow().then(function(n){ $("apAutoMsg").textContent="R"+round+" 자동 저장 "+n+"팀 · "+new Date().toLocaleTimeString('ko-KR'); }); }
+            else { $("apAutoMsg").textContent="대기 중(다음 매치부터 자동 저장)"; }
+            apLastMatch=res.matchId;
+          }
+        });
+      };
+      tick(); apTimer=setInterval(tick, 30000);
+    } else {
+      b.textContent="🔴 자동 감지 OFF"; b.style.borderColor=""; b.style.color="";
+      $("apAutoMsg").textContent=""; if(apTimer){ clearInterval(apTimer); apTimer=null; }
+    }
+  }
+  $("apAuto").addEventListener("click", function(){ setAuto(!apTimer); });
+
+  // ---- 데이터 ----
+  function placementOptions(sel){
+    var o='<option value="">순위</option>';
+    for(var i=1;i<=16;i++){ o+='<option value="'+i+'"'+(String(sel)===String(i)?' selected':'')+'>'+i+'위</option>'; }
+    return o;
+  }
+  // 점수 입력 대상은 확정팀만이다. /api/gdcup-list는 status=neq.cancelled 전부를 내려준다 —
+  // 그 엔드포인트는 공개 참가팀 명단도 겸해서 미확정 신청도 보여야 하므로, 거르는 건 이쪽 몫이다.
+  // 강제확정(force)도 status='confirmed'라 함께 잡힌다(verified_at만 null).
+  // 숨긴 수를 화면에 남기는 이유: 조용히 빼면 확정 처리를 빠뜨린 팀이 있을 때
+  // 본선 중에 "왜 이 팀이 안 보이지"를 알아챌 방법이 없다.
+  function loadTeams(){
+    return fetch(GAPI+"/api/gdcup-list").then(function(r){return r.json();}).then(function(d){
+      var all=(d&&d.teams)||[];
+      TEAMS = all.filter(function(t){ return t.status==='confirmed'; });
+      TEAMS_HIDDEN = all.length - TEAMS.length;
+    });
+  }
+  function loadScores(){
+    return fetch(GAPI+"/api/gdcup-round-scores?season="+season+"&round="+round,{headers:{"x-admin-key":key()}})
+      .then(function(r){
+        // 상태코드를 먼저 본다 — 401 바디를 그대로 파싱하면 scores가 undefined가 되어
+        // SCORES={}로 떨어지고, 이미 저장된 점수가 통째로 사라진 것처럼 보였다(무성 실패).
+        if(r.status===401){ toGate(); return null; }
+        return r.json();
+      }).then(function(d){
+        if(d===null) return;                 // 게이트로 되돌아감 — 렌더 생략
+        SCORES={}; ((d&&d.scores)||[]).forEach(function(s){ SCORES[s.team_name]=s; });
+      });
+  }
+  function render(){
+    var el=$("list"); 
+    if(!TEAMS.length){
+      el.innerHTML='<div class="note">'+(TEAMS_HIDDEN
+        ? '확정된 팀이 없습니다. 미확정 '+TEAMS_HIDDEN+'팀은 gdcup-admin에서 확정해주세요.'
+        : '신청한 팀이 없습니다.')+'</div>';
+      return;
+    }
+    el.innerHTML=TEAMS.map(function(t,i){
+      var sc=SCORES[t.team_name]||{};
+      var pk=sc.player_kills||[];
+      var pkMap={}; pk.forEach(function(p){ pkMap[p.ign]=p.kills; });
+      var hasPlayers = pk.length>0;
+      var members=t.members||[];
+      var prows=members.map(function(m){
+        var v=(pkMap[m.ign]!=null)?pkMap[m.ign]:"";
+        return '<div class="prow"><label>'+esc(m.ign||"-")+'</label>'
+          +'<input class="pk" data-ign="'+esc(m.ign||"")+'" inputmode="numeric" placeholder="킬" value="'+v+'"></div>';
+      }).join('');
+      var tkVal = (sc.team_kills!=null && !hasPlayers) ? sc.team_kills : (hasPlayers ? sc.team_kills : "");
+      return '<div class="tcard" data-i="'+i+'">'
+        +'<div class="trow">'
+          +'<span class="tn">'+esc(t.team_name)+'<span class="tw">×'+(t.weight!=null?t.weight:1)+'</span></span>'
+          +'<select class="plc">'+placementOptions(sc.placement)+'</select>'
+          +'<input class="tk" inputmode="numeric" placeholder="팀킬" value="'+(tkVal===""?"":tkVal)+'"'+(hasPlayers?' readonly':'')+'>'
+          +'<button class="save'+(sc.team_name?' done':'')+'">'+(sc.team_name?'✓ 저장됨':'저장')+'</button>'
+          +(members.length?'<button class="ptoggle">▸ 선수별 킬 ('+members.length+'명)</button>':'')
+          +'<div class="players'+(hasPlayers?' show':'')+'">'+prows+'<div class="psum"></div></div>'
+        +'</div></div>';
+    }).join('')
+      // 숨긴 팀이 있으면 밝힌다 — 확정 누락을 조용히 감추지 않기 위해서다.
+      + (TEAMS_HIDDEN ? '<div class="note">확정 '+TEAMS.length+'팀만 표시 중 · 미확정 '+TEAMS_HIDDEN+'팀 숨김 (gdcup-admin에서 확정)</div>' : '');
+    // 이벤트 바인딩
+    Array.prototype.forEach.call(el.querySelectorAll('.tcard'),function(card){
+      var i=+card.getAttribute('data-i');
+      var ptog=card.querySelector('.ptoggle');
+      if(ptog) ptog.addEventListener('click',function(){ togglePlayers(card); });
+      card.querySelector('.save').addEventListener('click',function(){ saveTeam(card,i); });
+      Array.prototype.forEach.call(card.querySelectorAll('.pk'),function(inp){ inp.addEventListener('input',function(){ syncSum(card); }); });
+      // 값 바뀌면 저장표시 해제
+      Array.prototype.forEach.call(card.querySelectorAll('select,input'),function(inp){ inp.addEventListener('input',function(){ var b=card.querySelector('.save'); b.classList.remove('done'); b.textContent='저장'; }); });
+      if(card.querySelector('.players').classList.contains('show')) syncSum(card);
+    });
+  }
+  function togglePlayers(card){
+    var p=card.querySelector('.players'); if(!p) return;
+    p.classList.toggle('show');
+    syncSum(card);
+  }
+  function syncSum(card){
+    var p=card.querySelector('.players'); var tk=card.querySelector('.tk'); var sum=0, any=false;
+    Array.prototype.forEach.call(card.querySelectorAll('.pk'),function(inp){ if(inp.value!==""){any=true;} sum+=Number(inp.value)||0; });
+    var show=p.classList.contains('show') && any;
+    if(show){ tk.value=sum; tk.setAttribute('readonly','readonly'); card.querySelector('.psum').textContent='팀 총킬 = '+sum; }
+    else { tk.removeAttribute('readonly'); card.querySelector('.psum').textContent=''; }
+  }
+  function teamPayload(card,i){
+    var t=TEAMS[i];
+    var plc=card.querySelector('.plc').value;
+    var p=card.querySelector('.players');
+    var usePlayers = p.classList.contains('show') && Array.prototype.some.call(card.querySelectorAll('.pk'),function(x){return x.value!=="";});
+    var body={ season:season, round:round, team_name:t.team_name, placement: plc==="" ? null : Number(plc) };
+    if(usePlayers){
+      body.players = Array.prototype.map.call(card.querySelectorAll('.pk'),function(inp){ return {ign:inp.getAttribute('data-ign'), kills:Number(inp.value)||0}; });
+    } else {
+      var tk=card.querySelector('.tk').value;
+      body.team_kills = tk==="" ? 0 : Number(tk)||0;
+    }
+    return body;
+  }
+  function saveTeam(card,i){
+    var body=teamPayload(card,i);
+    if(body.placement==null && (body.team_kills==null||body.team_kills===0) && !(body.players&&body.players.some(function(p){return p.kills>0;}))){
+      toast("순위나 킬을 입력해주세요"); return Promise.resolve(false);
+    }
+    var btn=card.querySelector('.save'); btn.textContent='저장중';
+    // 성공 여부를 boolean으로 돌려준다 — 전체저장이 실패를 성공으로 세던 문제 때문.
+    return fetch(GAPI+"/api/gdcup-score",{method:"POST",headers:{"Content-Type":"application/json","x-admin-key":key()},body:JSON.stringify(body)})
+      .then(function(r){ return r.json().catch(function(){return {};}).then(function(d){ return {status:r.status, d:d}; }); })
+      .then(function(res){
+        if(res.status===401){ btn.textContent='저장'; toGate(); return false; }
+        if(res.d && res.d.ok){ btn.classList.add('done'); btn.textContent='✓ 저장됨'; toast(body.team_name+" 저장됨"); return true; }
+        btn.textContent='저장'; toast("실패: "+((res.d&&res.d.error)||res.status)); return false;
+      }).catch(function(){ btn.textContent='저장'; toast("네트워크 오류"); return false; });
+  }
+  function saveAllNow(){
+    var cards=Array.prototype.slice.call($("list").querySelectorAll('.tcard'));
+    var todo=cards.filter(function(card){
+      var b=teamPayload(card,+card.getAttribute('data-i'));
+      return b.placement!=null || (b.team_kills>0) || (b.players&&b.players.some(function(p){return p.kills>0;}));
+    });
+    if(!todo.length){ toast("입력된 팀이 없습니다"); return Promise.resolve(0); }
+    return new Promise(function(resolve){
+      // 성공·실패를 따로 센다. 종전에는 실패해도 n++이라 전건 401이어도
+      // "✅ 5팀 저장 완료"가 떴고, 개별 실패 토스트는 이 최종 토스트가 덮었다.
+      var okN=0, failN=0;
+      (function next(idx){
+        if(gated){ toast("🔑 키 만료로 중단 — "+okN+"팀만 저장됨"); resolve(okN); return; }
+        if(idx>=todo.length){
+          toast(failN ? ("✅ "+okN+"팀 저장 · ❌ "+failN+"팀 실패") : ("✅ "+okN+"팀 저장 완료"));
+          resolve(okN); return;
+        }
+        Promise.resolve(saveTeam(todo[idx],+todo[idx].getAttribute('data-i'))).then(function(good){
+          if(good) okN++; else failN++;
+          setTimeout(function(){next(idx+1);},120);
+        });
+      })(0);
+    });
+  }
+  $("saveAll").addEventListener("click", saveAllNow);
+
+  function renderTabs(){
+    var rounds=SEASON_ROUNDS[season]||SEASON_ROUNDS[3];
+    if(rounds.indexOf(round)<0) round=rounds[0];
+    $("tabs").innerHTML=rounds.map(function(r){ return '<button data-r="'+r+'" class="'+(r===round?'on':'')+'">ROUND '+r+'</button>'; }).join('');
+    Array.prototype.forEach.call($("tabs").querySelectorAll('button'),function(b){
+      b.addEventListener('click',function(){ switchRound(+b.getAttribute('data-r')); });
+    });
+  }
+  function switchRound(r){
+    round=r;
+    Array.prototype.forEach.call($("tabs").querySelectorAll('button'),function(b){ b.classList.toggle('on', +b.getAttribute('data-r')===r); });
+    loadScores().then(function(){ render(); applyReadOnly(); });
+  }
+  // 순위/MVP 화면 링크에 현재 선택 시즌 전달 — 미전달 시 두 화면은 서버 현재 시즌으로
+  // 열리므로, 여기서 과거 시즌을 보다가 링크를 열면 화면 간 시즌이 어긋난다.
+  function syncLinks(){
+    $("lnkResults").href = "results.html?season="+season;
+    $("lnkMvp").href = "kill-mvp.html?season="+season;
+  }
+  function applyReadOnly(){
+    var ro=readOnly();
+    syncLinks();
+    $("kick").textContent="G드컵 SEASON "+season;
+    $("roMsg").textContent = ro ? "🔒 시즌 2는 조회 전용 (기록 동결)" : "";
+    var sa=$("saveAll"); if(sa) sa.style.display = ro ? "none" : "";
+    var ap=$("apBox"); if(ap) ap.style.display = ro ? "none" : "";
+    if(ro){
+      Array.prototype.forEach.call($("list").querySelectorAll('.tcard select,.tcard input'),function(x){ x.setAttribute('disabled','disabled'); });
+      Array.prototype.forEach.call($("list").querySelectorAll('.tcard .save'),function(b){ b.style.display='none'; });
+    }
+  }
+  function seasonChange(){
+    season=Number($("seasonSel").value)||3;
+    renderTabs();
+    loadScores().then(function(){ render(); applyReadOnly(); });
+  }
+  $("seasonSel").addEventListener("change", seasonChange);
+
+  function boot(){ renderTabs(); loadTeams().then(loadScores).then(function(){ render(); applyReadOnly(); }).catch(function(){ $("list").innerHTML='<div class="note">불러오기 실패 — 새로고침 해주세요.</div>'; }); }
+
+  // 이미 키 있으면 바로
+  if(key()){ $("keyInput").value=key(); enter(); }
+})();
+</script>
+</body>
+</html>

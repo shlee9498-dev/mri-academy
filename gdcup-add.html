@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>G드컵 시즌3 — 팀원 추가신청</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  :root{
+    --bg:#0a0a0c; --bg-elev:#15151a; --bg-card:#1a1a20; --bg-card-hi:#20202a;
+    --ink:#f4f4f5; --ink-dim:#a1a1aa; --ink-faint:#71717a;
+    --gold:#f5c518; --gold-soft:rgba(245,197,24,.3);
+    --red:#e63946; --green:#10b981; --blue:#5ac8fa; --purple:#a855f7;
+    --line:#27272a;
+    --display:'Archivo Black','Pretendard Variable',sans-serif;
+    --body:'Pretendard Variable',-apple-system,sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;
+    background-image:radial-gradient(ellipse 70% 40% at 50% 0%,rgba(245,197,24,.06),transparent 60%);}
+  .wrap{max-width:620px;margin:0 auto;padding:0 18px 80px;}
+  .nav{display:flex;gap:14px;align-items:center;padding:16px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+  .brand{font-family:var(--display);letter-spacing:.05em;color:var(--gold);font-size:14px;}
+  .nav a{color:var(--ink-dim);text-decoration:none;font-size:13px;}
+  .nav a:hover{color:var(--ink);}
+  .nav .sp{flex:1;}
+  .hero{padding:30px 0 6px;}
+  .kick{font-family:var(--display);letter-spacing:.3em;font-size:11px;color:var(--green);}
+  h1{font-size:28px;font-weight:800;margin:8px 0 6px;}
+  .hero p{color:var(--ink-dim);font-size:14px;}
+  .sec{margin-top:26px;}
+  .sec-h{font-weight:800;font-size:15px;margin-bottom:10px;display:flex;align-items:center;gap:8px;}
+  .step-no{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--gold);color:#1a1500;font-family:var(--display);font-size:12px;}
+  .card{background:var(--bg-card);border:1px solid var(--line);border-radius:14px;padding:16px;}
+  label{display:block;font-size:13px;color:var(--ink-dim);margin-bottom:6px;}
+  .req{color:var(--gold);}
+  select,input{width:100%;background:var(--bg-elev);border:1px solid var(--line);border-radius:10px;
+    color:var(--ink);padding:11px 12px;font-size:15px;font-family:var(--body);}
+  select:focus,input:focus{outline:none;border-color:var(--gold-soft);}
+  .roster{margin-top:12px;background:var(--bg-elev);border:1px solid var(--line);border-radius:12px;padding:14px;display:none;}
+  .roster.show{display:block;}
+  .roster .r-line{font-size:14px;color:var(--ink);padding:3px 0;}
+  .roster .r-line .t{color:var(--gold);font-weight:700;}
+  .roster .r-meta{margin-top:8px;font-size:13px;color:var(--ink-dim);display:flex;gap:14px;flex-wrap:wrap;}
+  .roster .r-meta b{color:var(--ink);}
+  .full-note{margin-top:10px;color:var(--green);font-weight:700;font-size:14px;display:none;}
+  .full-note.show{display:block;}
+  .mrow{background:var(--bg-elev);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px;position:relative;}
+  .mrow .g{margin-bottom:10px;}
+  .mrow .g:last-child{margin-bottom:0;}
+  .mrow .two{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .auto{font-size:13px;color:var(--ink-faint);margin-top:8px;}
+  .auto .chip{display:none;font-family:var(--display);font-size:12px;padding:2px 10px;border-radius:999px;}
+  .auto.has .chip{display:inline-block;}
+  .auto.has .txt{display:none;}
+  .T0{background:var(--red);color:#fff;} .T1{background:var(--gold);color:#1a1500;}
+  .T2{background:var(--blue);color:#06283b;} .T3{background:var(--purple);color:#fff;}
+  .T4{background:var(--green);color:#04261b;} .T5{background:var(--bg-card-hi);color:var(--ink-dim);}
+  .rm{position:absolute;top:10px;right:12px;background:none;border:none;color:var(--ink-faint);font-size:18px;cursor:pointer;width:auto;padding:0;}
+  .add-more{width:100%;background:var(--bg-card);border:1px dashed var(--line);color:var(--ink-dim);
+    border-radius:10px;padding:11px;font-size:14px;cursor:pointer;}
+  .add-more:hover{color:var(--ink);border-color:var(--gold-soft);}
+  .preview{margin-top:16px;background:rgba(245,197,24,.06);border:1px solid var(--gold-soft);border-radius:12px;padding:14px;display:none;}
+  .preview.show{display:block;}
+  .preview .pv-row{display:flex;justify-content:space-between;align-items:center;font-size:14px;}
+  .preview .pv-row + .pv-row{margin-top:6px;}
+  .preview b{font-family:var(--display);color:var(--gold);font-size:18px;}
+  .submit{width:100%;margin-top:20px;background:var(--gold);color:#1a1500;border:none;border-radius:12px;
+    padding:15px;font-size:16px;font-weight:800;font-family:var(--body);cursor:pointer;}
+  .submit:disabled{opacity:.5;cursor:not-allowed;}
+  .msg{margin-top:14px;border-radius:10px;padding:12px 14px;font-size:14px;display:none;}
+  .msg.show{display:block;}
+  .msg.ok{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.4);color:#6ee7b7;}
+  .msg.err{background:rgba(230,57,70,.1);border:1px solid rgba(230,57,70,.4);color:#fca5a5;}
+  .hint{font-size:12px;color:var(--ink-faint);margin-top:6px;}
+  footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--line);color:var(--ink-faint);font-size:12px;text-align:center;}
+  footer a{color:var(--ink-dim);text-decoration:none;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="nav">
+    <span class="brand">GmI CLANCUP</span>
+    <span class="sp"></span>
+    <a href="index.html">메인</a>
+    <a href="gdcup-s3.html">신청 · 룰</a>
+    <a href="https://discord.gg/YfZD8d22wJ" target="_blank" rel="noopener">디스코드</a>
+  </div>
+
+  <div class="hero">
+    <!-- 시즌 번호는 /api/gdcup-meta가 채운다. 여기 숫자를 적지 말 것. -->
+    <div class="kick" id="kick">G드컵</div>
+    <h1>팀원 추가신청</h1>
+    <p>이미 신청한 팀에 빈자리(용병)를 채우거나 멤버를 추가합니다. 한 팀은 최대 4명이에요.</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h"><span class="step-no">1</span> 내 팀 선택</div>
+    <div class="card">
+      <label>신청한 팀 <span class="req">*</span></label>
+      <select id="teamSelect"><option value="">팀 목록 불러오는 중…</option></select>
+      <div class="hint">팀명이 안 보이면 아직 신청이 안 된 상태예요. 먼저 <a href="gdcup-s3.html" style="color:var(--gold)">팀 신청</a>을 해주세요.</div>
+      <div class="roster" id="roster">
+        <div id="rosterLines"></div>
+        <div class="r-meta">
+          <span>현재 인원 <b id="rosterCount">-</b>/4</span>
+          <span>팀 BPI <b id="rosterBpi">-</b></span>
+          <span>빈자리 <b id="rosterRoom">-</b>명</span>
+        </div>
+        <div class="full-note" id="fullNote">✅ 이미 4명이 꽉 찼어요. 추가할 자리가 없습니다.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec" id="verifySec" style="display:none;">
+    <div class="sec-h"><span class="step-no">2</span> 본인 확인</div>
+    <div class="card">
+      <label>팀 대표(또는 팀원) 인게임 닉네임 <span class="req">*</span></label>
+      <input type="text" id="leaderNick" placeholder="이 팀에 이미 등록된 멤버 닉네임">
+      <div class="hint">남의 팀에 함부로 추가되는 걸 막기 위한 확인이에요. 팀에 이미 있는 멤버의 닉을 적어주세요.</div>
+    </div>
+  </div>
+
+  <div class="sec" id="addSec" style="display:none;">
+    <div class="sec-h"><span class="step-no">3</span> 추가할 멤버</div>
+    <div id="memberRows"></div>
+    <button class="add-more" id="addMore" type="button">+ 멤버 한 명 더</button>
+
+    <div class="preview" id="preview">
+      <div class="pv-row"><span>추가 후 인원</span><span><b id="pvCount">-</b> / 4</span></div>
+      <div class="pv-row"><span>추가 후 팀 BPI</span><span><b id="pvBpi">-</b></span></div>
+      <div class="pv-row"><span>가중치</span><span id="pvWeight" style="color:var(--ink-dim);">-</span></div>
+    </div>
+
+    <button class="submit" id="submitBtn" type="button" disabled>팀원 추가 신청하기</button>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <footer>
+    GmI 클랜 · <span id="foot-season">G드컵</span> · 2026<br>
+    <a href="gdcup-s3.html">신청·룰</a> · <a href="https://discord.gg/YfZD8d22wJ" target="_blank" rel="noopener">디스코드</a>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  var GAPI = "https://mri-academy-production.up.railway.app";
+  /* ⚠️ BPI 스케일·평딜 경계·가중치표를 여기에 두지 말 것.
+     세 개 모두 하드코딩돼 있었고 전부 서버 정본과 어긋나 있었다:
+       GD_BPI     — S급(13) 누락 → S 멤버가 BPI 0으로 합산됨
+       computeTier— 450/350/200 행렬 → 서버(400/350/300/250/180/100)와 다른 티어 산출
+       weightFor  — 시즌2 표(20=×1.0) → 시즌3 정본(29~32=×1.00)과 어긋남
+     정본은 서버(GDCUP_BPI_SCALE·TIERS·GDCUP_WEIGHT_S3)이며 GET /api/gdcup-meta로 받는다.
+     불러오기 실패 시엔 추정값을 쓰지 않는다(틀린 숫자보다 빈 값이 낫다). */
+  var META = null;
+  var GD_BPI = {};
+
+  function tierByDamage(dmg){
+    if(!META || !META.tiers || !META.tiers.length) return '';
+    for(var i=0;i<META.tiers.length;i++){ if(dmg >= META.tiers[i].min) return META.tiers[i].tier; }
+    return META.tiers[META.tiers.length-1].tier;   // meta.tiers는 min 내림차순
+  }
+  // 최고티어가 보장하는 최소 등급 — 서버 gdcupRankedFloor와 같은 매핑.
+  // "마스터 + 현시즌 RP 3700+ → S"는 RP가 필요해 여기서 재현할 수 없다(서버 판정 전용).
+  function tierFloor(peak){
+    // 서바이버는 S가 보장 등급이다. 종전에 마스터와 함께 T0으로 내려서, 이 화면으로
+    // 들어온 최상위 인원이 전부 T0으로 뭉개졌다(세휘네치킨집 687딜이 T0으로 등록된 경로).
+    // 서버 gdcupRankedFloor는 "마스터 + RP 3700+ → S"인데 RP를 여기서 못 읽으므로,
+    // 신고 최고티어가 '서바이버'인 경우만 S로 본다. 최종 판정은 운영진이 admin에서 한다.
+    if(peak === '서바이버') return 'S';
+    if(peak === '마스터') return 'T0';
+    if(peak === '다이아' || peak === '크리스탈') return 'T1';
+    return null;
+  }
+  // === 신청폼(gdcup-s3)과 동일한 티어 자동 산정 — 양쪽 모두 meta 소비 ===
+  function computeTier(peak, dmg){
+    dmg = Number(dmg) || 0;
+    if(!peak) return '';
+    var byDmg = tierByDamage(dmg); if(!byDmg) return '';
+    var fl = tierFloor(peak), order = (META && META.tierOrder) || [];
+    if(fl && order.indexOf(fl) > order.indexOf(byDmg)) return fl;   // 최종 = max(평딜, 티어보정)
+    return byDmg;
+  }
+  function teamBpi(members){
+    var sum = 0;
+    (members||[]).forEach(function(m,i){
+      var v = GD_BPI[m && m.tier] || 0;
+      if(i===0 && m && m.tier==='T0') v += 1; // T0 팀장 +1 (S급 가산 없음)
+      sum += v;
+    });
+    return sum;
+  }
+  function weightFor(bpi){
+    if(!META || !META.weightTable) return null;   // 호출부가 '—'로 표시
+    for(var i=0;i<META.weightTable.length;i++){
+      var r = META.weightTable[i];
+      if(bpi >= r[0] && bpi <= r[1]) return r[2];
+    }
+    return 1.0;
+  }
+
+  var teamsMap = {};
+  var current = null;       // 선택된 팀 객체
+  var roomLeft = 0;         // 추가 가능 인원
+
+  var $ = function(id){ return document.getElementById(id); };
+
+  function peakOptions(){
+    return '<option value="">선택</option>'+
+      '<option value="서바이버">서바이버</option>'+
+      '<option value="마스터">마스터</option>'+
+      '<option value="다이아">다이아</option>'+
+      '<option value="크리스탈">크리스탈</option>'+
+      '<option value="플래이하">플래티넘 이하</option>';
+  }
+
+  function addRow(){
+    var rows = $('memberRows');
+    if(rows.children.length >= roomLeft) return;
+    var div = document.createElement('div');
+    div.className = 'mrow';
+    div.innerHTML =
+      '<button class="rm" type="button" title="삭제">×</button>'+
+      '<div class="g"><label>인게임 닉네임 <span class="req">*</span></label><input type="text" class="add-ign" placeholder="PUBG 닉네임"></div>'+
+      '<div class="g"><label>이름 (선택)</label><input type="text" class="add-name" placeholder="실명/별명"></div>'+
+      '<div class="g two">'+
+        '<div><label>역대 최고 티어 <span class="req">*</span></label><select class="add-peak">'+peakOptions()+'</select></div>'+
+        '<div><label>시즌 최고 평균딜 <span class="req">*</span></label><input type="number" inputmode="numeric" class="add-dmg" placeholder="예: 320"></div>'+
+      '</div>'+
+      '<div class="auto"><span class="txt">전적 입력 시 티어 자동 산정</span><span class="chip"></span></div>';
+    rows.appendChild(div);
+    div.querySelector('.rm').addEventListener('click', function(){ div.remove(); recalc(); toggleAddMore(); });
+    div.querySelector('.add-peak').addEventListener('change', recalc);
+    div.querySelector('.add-dmg').addEventListener('input', recalc);
+    div.querySelector('.add-ign').addEventListener('input', recalc);
+    toggleAddMore();
+    recalc();
+  }
+
+  function toggleAddMore(){
+    var rows = $('memberRows');
+    $('addMore').style.display = (rows.children.length >= roomLeft) ? 'none' : 'block';
+  }
+
+  function readAdds(){
+    var out = [];
+    var rows = $('memberRows').children;
+    for(var i=0;i<rows.length;i++){
+      var r = rows[i];
+      var ign = r.querySelector('.add-ign').value.trim();
+      var name = r.querySelector('.add-name').value.trim();
+      var peak = r.querySelector('.add-peak').value;
+      var dmg = r.querySelector('.add-dmg').value.trim();
+      var tier = computeTier(peak, dmg);
+      // 칩 표시
+      var auto = r.querySelector('.auto'); var chip = r.querySelector('.chip');
+      if(tier){ chip.textContent = tier; chip.className = 'chip ' + tier; auto.classList.add('has'); }
+      else { auto.classList.remove('has'); }
+      out.push({ name:name, ign:ign, peak:peak, dmg:dmg, tier:tier, valid: !!(ign && tier) });
+    }
+    return out;
+  }
+
+  function recalc(){
+    if(!current){ return; }
+    var adds = readAdds();
+    var validAdds = adds.filter(function(m){ return m.valid; });
+    var merged = (current.members||[]).concat(validAdds.map(function(m){ return {tier:m.tier}; }));
+    var bpi = teamBpi(merged);
+    var w = weightFor(bpi);
+    $('pvCount').textContent = merged.length;
+    $('pvBpi').textContent = bpi;
+    // 정석 = 배율 1.00 구간. 시즌2 기준(bpi===20)이 하드코딩돼 있어 시즌3에서 틀렸다.
+    $('pvWeight').textContent = (w==null ? '—' : '×' + w.toFixed(2) + (w===1.0 ? ' (정석)' : ''));
+    $('preview').classList.add('show');
+
+    var anyTyped = adds.some(function(m){ return m.ign || m.dmg || m.peak; });
+    var allOk = validAdds.length > 0 && validAdds.length === adds.filter(function(m){return m.ign||m.peak||m.dmg;}).length;
+    var leaderOk = $('leaderNick').value.trim().length > 0;
+    var withinCap = (merged.length <= 4) && (validAdds.length <= roomLeft);
+    $('submitBtn').disabled = !(anyTyped && allOk && leaderOk && withinCap && validAdds.length>0);
+  }
+
+  function selectTeam(name){
+    current = teamsMap[name] || null;
+    var roster = $('roster');
+    if(!current){ roster.classList.remove('show'); $('verifySec').style.display='none'; $('addSec').style.display='none'; return; }
+    var members = current.members || [];
+    var lines = members.map(function(m,i){
+      var ign = (m.ign||m.name||'-');
+      return '<div class="r-line">'+(i===0?'👑 ':'• ')+ ign + ' <span class="t">'+(m.tier||'?')+'</span></div>';
+    }).join('');
+    $('rosterLines').innerHTML = lines || '<div class="r-line">등록된 멤버 정보 없음</div>';
+    $('rosterCount').textContent = members.length;
+    $('rosterBpi').textContent = (current.bpi != null ? current.bpi : teamBpi(members));
+    roomLeft = Math.max(0, 4 - members.length);
+    $('rosterRoom').textContent = roomLeft;
+    roster.classList.add('show');
+
+    if(roomLeft <= 0){
+      $('fullNote').classList.add('show');
+      $('verifySec').style.display='none';
+      $('addSec').style.display='none';
+      return;
+    }
+    $('fullNote').classList.remove('show');
+    $('verifySec').style.display='block';
+    $('addSec').style.display='block';
+    $('memberRows').innerHTML='';
+    addRow();
+  }
+
+  function loadTeams(){
+    fetch(GAPI + "/api/gdcup-list").then(function(r){ return r.json(); }).then(function(d){
+      var sel = $('teamSelect');
+      var teams = (d && d.teams) || [];
+      if(teams.length === 0){
+        sel.innerHTML = '<option value="">신청된 팀이 없습니다</option>';
+        return;
+      }
+      sel.innerHTML = '<option value="">팀을 선택하세요</option>';
+      teams.forEach(function(t){
+        teamsMap[t.team_name] = t;
+        var room = Math.max(0, 4 - ((t.members||[]).length));
+        var o = document.createElement('option');
+        o.value = t.team_name;
+        o.textContent = t.team_name + ' (' + ((t.members||[]).length) + '/4' + (room>0?(' · 빈자리 '+room):' · 완성') + ')';
+        sel.appendChild(o);
+      });
+    }).catch(function(){
+      $('teamSelect').innerHTML = '<option value="">목록을 불러오지 못했어요. 새로고침 해주세요.</option>';
+    });
+  }
+
+  function submit(){
+    if(!current) return;
+    var leader = $('leaderNick').value.trim();
+    var adds = readAdds().filter(function(m){ return m.valid; })
+      .map(function(m){ return { name:m.name, ign:m.ign, peak:m.peak, dmg:m.dmg, tier:m.tier }; });
+    var btn = $('submitBtn'); btn.disabled = true; btn.textContent = '전송 중…';
+    var msg = $('msg'); msg.className = 'msg';
+    fetch(GAPI + "/api/gdcup-add-member", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ team_name: current.team_name, leader: leader, members: adds })
+    }).then(function(r){ return r.json().then(function(j){ return {status:r.status, j:j}; }); })
+      .then(function(res){
+        if(res.status === 200 && res.j && res.j.ok){
+          msg.textContent = '✅ ' + current.team_name + ' 팀에 ' + adds.length + '명 추가 완료! (현재 ' + res.j.count + '/4 · 팀 BPI ' + res.j.bpi + ', 가중치 ×' + res.j.weight + ') 운영진에게도 전달됐어요.';
+          msg.className = 'msg ok show';
+          btn.textContent = '추가 완료';
+          $('addMore').style.display='none';
+        } else {
+          var map = {
+            team_not_found: '팀을 찾을 수 없어요. 팀명을 다시 확인해주세요.',
+            verify_failed: '본인 확인 실패: 입력한 닉네임이 이 팀의 멤버와 일치하지 않아요.',
+            over_capacity: '정원 초과예요. 한 팀은 최대 4명입니다.',
+            no_members: '추가할 멤버 정보를 입력해주세요.',
+            too_many_requests: '잠시 후 다시 시도해주세요.',
+            db_disabled: '서버 점검 중이에요. 잠시 후 다시 시도해주세요.'
+          };
+          var err = (res.j && res.j.error) || 'unknown';
+          msg.textContent = '⚠️ ' + (map[err] || '전송 실패. 잠시 후 다시 시도해주세요.');
+          msg.className = 'msg err show';
+          btn.disabled = false; btn.textContent = '팀원 추가 신청하기';
+        }
+      }).catch(function(){
+        msg.textContent = '⚠️ 네트워크 오류. 잠시 후 다시 시도해주세요.';
+        msg.className = 'msg err show';
+        btn.disabled = false; btn.textContent = '팀원 추가 신청하기';
+      });
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    // BPI 스케일·평딜 경계·가중치표는 서버가 정본 — 팀 목록보다 먼저 받아둔다.
+    fetch(GAPI + "/api/gdcup-meta").then(function(r){ return r.json(); }).then(function(d){
+      META = d; GD_BPI = (d && d.bpiScale) || {};
+      // 시즌 라벨도 서버가 정본 — 화면 하드코딩 금지 (시즌3 페이지가 "SEASON 2"를 달고 있었다).
+      // 못 받으면 숫자 없이 "G드컵"으로 남는다 — 틀린 시즌을 띄우는 것보다 낫다.
+      if(d && d.currentSeason){
+        $('kick').textContent = 'G드컵 SEASON ' + d.currentSeason;
+        $('foot-season').textContent = 'G드컵 시즌' + d.currentSeason;
+      }
+    }).catch(function(){
+      var s = $('msg');
+      if(s) s.textContent = '룰 정보를 불러오지 못했습니다 — 새로고침해주세요 (티어·BPI가 표시되지 않습니다)';
+    }).then(function(){ recalc(); });
+    loadTeams();
+    $('teamSelect').addEventListener('change', function(e){ selectTeam(e.target.value); recalc(); });
+    $('leaderNick').addEventListener('input', recalc);
+    $('addMore').addEventListener('click', addRow);
+    $('submitBtn').addEventListener('click', submit);
+  });
+})();
+</script>
+</body>
+</html>

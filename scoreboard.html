@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GmI 킬내기 전광판 v2 (노래방룰)</title>
+<style>
+:root{
+  --bg:#0a0a0c;--card:#141417;--elev:#1d1d22;--line:#26262b;
+  --gold:#f5c518;--gold-soft:rgba(245,197,24,.28);
+  --ink:#ededf0;--dim:#a0a0a8;--faint:#6b6b73;
+  --a:#ff5a5a;--b:#5aa8ff}
+*{box-sizing:border-box;margin:0;padding:0;font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif}
+body{background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}
+/* OBS 뷰: 투명 배경 */
+body.obs{background:transparent}
+body.obs #panel{display:none}
+body.obs .wrap{max-width:none;padding:0}
+
+.wrap{max-width:920px;margin:0 auto;padding:20px 16px 60px}
+
+/* ===== 전광판(보드) — OBS 브라우저 소스 ===== */
+.board{width:380px;background:linear-gradient(160deg,rgba(12,12,16,.97),rgba(20,20,26,.97));
+  border:2px solid var(--gold);border-radius:18px;padding:16px 15px;
+  box-shadow:0 8px 40px rgba(0,0,0,.6)}
+body.obs .board{margin:0}
+
+.hdr{text-align:center;padding-bottom:12px;margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,.12)}
+.hdr .brand{font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--gold);margin-bottom:6px}
+.timer{font-size:34px;font-weight:800;letter-spacing:.04em;line-height:1;font-variant-numeric:tabular-nums}
+.timer.paused{color:var(--faint)}
+.timer.done{color:var(--a)}
+.hdr .meta{display:flex;justify-content:center;gap:14px;margin-top:8px;font-size:12px;color:var(--dim);font-weight:700}
+.hdr .meta b{color:var(--ink)}
+.hdr .meta .goal b{color:var(--gold)}
+
+.team{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 13px;margin-bottom:11px;position:relative;transition:border-color .3s,box-shadow .3s}
+.team:last-child{margin-bottom:0}
+.team.a{border-left:4px solid var(--a)}
+.team.b{border-left:4px solid var(--b)}
+.team.win{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold-soft),0 0 24px rgba(245,197,24,.25)}
+
+.trow{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
+.tname{font-size:17px;font-weight:800;display:flex;align-items:center;gap:7px}
+.win-badge{display:none;font-size:11px;font-weight:800;color:#0a0a0c;background:var(--gold);padding:3px 9px;border-radius:999px;letter-spacing:.06em}
+.team.win .win-badge{display:inline-block;animation:pop .5s ease}
+@keyframes pop{0%{transform:scale(.7)}60%{transform:scale(1.12)}100%{transform:scale(1)}}
+
+.scores{display:flex;gap:8px;margin-bottom:11px}
+.sbox{flex:1;background:var(--elev);border-radius:10px;padding:8px 10px;text-align:center}
+.sbox .lbl{font-size:10px;color:var(--faint);font-weight:700;letter-spacing:.04em}
+.sbox .val{font-size:26px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}
+.sbox.cur .val{color:var(--ink)}
+.sbox.best .val{color:var(--gold)}
+
+.players{display:flex;flex-direction:column;gap:2px}
+.prow{display:flex;align-items:center;justify-content:space-between;padding:5px 4px;border-bottom:1px dashed var(--line)}
+.prow:last-child{border-bottom:none}
+.pname{font-size:13.5px;color:var(--dim);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%}
+.pkill{font-size:15px;font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums}
+.pkill span{font-size:11px;color:var(--faint);font-weight:600;margin-left:3px}
+
+/* ===== 조작 패널 ===== */
+#panel{margin-top:22px}
+.panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:720px){.panel-grid{grid-template-columns:1fr}}
+.pcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.pcard.a{border-top:3px solid var(--a)}
+.pcard.b{border-top:3px solid var(--b)}
+.pcard h3{font-size:14px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:7px}
+.pcard h3 .tag{font-size:10px;color:var(--faint);font-weight:700;margin-left:auto}
+.field{margin-bottom:10px}
+.field label{display:block;font-size:11px;color:var(--faint);font-weight:700;margin-bottom:4px}
+.field input[type=text]{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:8px 9px;font-size:14px}
+.prow-in{display:grid;grid-template-columns:1fr 74px;gap:8px;align-items:center;margin-bottom:7px}
+.prow-in input[type=text]{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 9px;font-size:13.5px}
+.prow-in input[type=number]{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--gold);font-weight:800;padding:7px;font-size:16px;text-align:center}
+.chick{display:flex;align-items:center;gap:9px;background:var(--elev);border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin:8px 0}
+.chick label{font-size:13px;font-weight:700;color:var(--ink);cursor:pointer;flex:1}
+.chick input{width:20px;height:20px;accent-color:var(--gold);cursor:pointer}
+.chick .note{font-size:10.5px;color:var(--faint)}
+.livecalc{background:var(--bg);border:1px dashed var(--gold-soft);border-radius:10px;padding:10px;text-align:center;margin-top:4px}
+.livecalc .v{font-size:24px;font-weight:800;color:var(--gold);font-variant-numeric:tabular-nums}
+.livecalc .l{font-size:10.5px;color:var(--faint);margin-top:1px}
+
+.controls{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-top:14px}
+.controls h3{font-size:14px;font-weight:800;margin-bottom:12px;color:var(--gold)}
+.btnrow{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+button{font-family:inherit;cursor:pointer;border:none;border-radius:9px;font-weight:800;font-size:13px;padding:10px 14px;transition:filter .15s,transform .05s}
+button:active{transform:translateY(1px)}
+.btn-gold{background:var(--gold);color:#0a0a0c}
+.btn-ghost{background:var(--elev);color:var(--ink);border:1px solid var(--line)}
+.btn-red{background:transparent;color:var(--a);border:1px solid var(--a)}
+button:hover{filter:brightness(1.08)}
+.confirm-btn{width:100%;font-size:16px;padding:14px;margin-top:6px}
+.goal-in{display:flex;align-items:center;gap:8px}
+.goal-in input{width:80px;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--gold);font-weight:800;padding:8px;font-size:15px;text-align:center}
+.goal-in span{font-size:12px;color:var(--dim)}
+.hint{font-size:11px;color:var(--faint);line-height:1.6;margin-top:12px;border-top:1px solid var(--line);padding-top:12px}
+.hint code{background:var(--elev);padding:1px 6px;border-radius:5px;color:var(--gold);font-size:11px}
+.preview-wrap{display:flex;justify-content:center;margin-bottom:6px}
+.section-title{font-size:12px;font-weight:800;color:var(--faint);letter-spacing:.1em;margin:26px 0 12px;text-transform:uppercase}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ===== 전광판 (OBS 소스가 잡는 영역) ===== -->
+  <div class="preview-wrap">
+    <div class="board" id="board">
+      <div class="hdr">
+        <div class="brand">🎤 GmI 킬내기 아레나 · 노래방룰</div>
+        <div class="timer" id="timer">2:00:00</div>
+        <div class="meta">
+          <span class="round"><b id="m_round">1</b>판째</span>
+          <span class="goal">목표 <b id="m_goal">25</b>점</span>
+        </div>
+      </div>
+
+      <div class="team a" id="team_a">
+        <div class="trow">
+          <div class="tname"><span>🔴</span><span id="a_name">치킨집</span></div>
+          <span class="win-badge">🏆 WIN</span>
+        </div>
+        <div class="scores">
+          <div class="sbox cur"><div class="lbl">현재 판</div><div class="val" id="a_cur">0</div></div>
+          <div class="sbox best"><div class="lbl">베스트 판</div><div class="val" id="a_best">0</div></div>
+        </div>
+        <div class="players" id="a_players"></div>
+      </div>
+
+      <div class="team b" id="team_b">
+        <div class="trow">
+          <div class="tname"><span>🔵</span><span id="b_name">언더독</span></div>
+          <span class="win-badge">🏆 WIN</span>
+        </div>
+        <div class="scores">
+          <div class="sbox cur"><div class="lbl">현재 판</div><div class="val" id="b_cur">0</div></div>
+          <div class="sbox best"><div class="lbl">베스트 판</div><div class="val" id="b_best">0</div></div>
+        </div>
+        <div class="players" id="b_players"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 조작 패널 (OBS엔 숨김) ===== -->
+  <div id="panel">
+    <div class="section-title">이번 판 입력</div>
+    <div class="panel-grid">
+      <div class="pcard a" id="pcard_a"></div>
+      <div class="pcard b" id="pcard_b"></div>
+    </div>
+
+    <button class="btn-gold confirm-btn" id="btn_confirm">✅ 판 확정 (베스트 갱신 → 현재 판 리셋 → 다음 판)</button>
+
+    <div class="controls">
+      <h3>⏱ 타이머 · 목표점수 · 리셋</h3>
+      <div class="btnrow">
+        <button class="btn-gold" id="btn_start">▶ 시작</button>
+        <button class="btn-ghost" id="btn_pause">⏸ 일시정지</button>
+        <button class="btn-ghost" id="btn_treset">↺ 타이머 리셋(2:00:00)</button>
+      </div>
+      <div class="btnrow" style="align-items:center">
+        <div class="goal-in">
+          <span>목표점수</span>
+          <input type="number" id="in_goal" min="1" value="25">
+          <span>점</span>
+        </div>
+        <button class="btn-red" id="btn_reset" style="margin-left:auto">⚠ 전체 리셋</button>
+      </div>
+      <div class="hint">
+        · 팀점수 = <b>개인킬 합 + (치킨 시 0 · 노치킨 시 −4)</b>. 데스 입력 없음.<br>
+        · 개인킬은 판이 넘어가도 <b>누적</b>됩니다(개인 기록). 팀 점수만 판마다 리셋.<br>
+        · <b>베스트 판 점수</b>가 순위 기준(노래방룰). 목표점수 선착 팀에 WIN.<br>
+        · OBS 브라우저 소스 URL: <code>scoreboard.html?obs=1&v=1</code> · 조작: <code>scoreboard.html?v=1</code><br>
+        · <code>v</code> 숫자는 캐시 회피용 — OBS가 옛 버전 물면 숫자만 올리세요.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+const KEY = "gmi_scoreboard_v2";
+const params = new URLSearchParams(location.search);
+const OBS = params.has("obs");
+if (OBS) document.body.classList.add("obs");
+
+const DEFAULT_MS = 2 * 3600 * 1000; // 2:00:00
+const PENALTY = -4;                  // 노치킨 페널티
+
+function defaultTeam(name, players){
+  return {
+    name,
+    players: players.map(n => ({ name:n, cum:0 })), // cum=누적킬
+    cur: [0,0,0,0],   // 이번 판 개인킬
+    chicken: false,
+    best: 0
+  };
+}
+function defaultState(){
+  return {
+    goal: 25,
+    round: 1,
+    a: defaultTeam("치킨집", ["선수1","선수2","선수3","선수4"]),
+    b: defaultTeam("언더독", ["선수5","선수6","선수7","선수8"]),
+    timer: { running:false, remaining:DEFAULT_MS, endAt:null }
+  };
+}
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(!raw) return defaultState();
+    const s = JSON.parse(raw);
+    // 방어적 병합
+    const d = defaultState();
+    s.goal = +s.goal || d.goal;
+    s.round = +s.round || d.round;
+    ["a","b"].forEach(k=>{
+      const t = s[k] || {}; const dt = d[k];
+      t.name = (typeof t.name==="string") ? t.name : dt.name;
+      if(!Array.isArray(t.players) || t.players.length!==4)
+        t.players = dt.players;
+      t.players = t.players.map((p,i)=>({ name:(p&&p.name)||dt.players[i].name, cum:(p&&+p.cum)||0 }));
+      if(!Array.isArray(t.cur) || t.cur.length!==4) t.cur = [0,0,0,0];
+      t.cur = t.cur.map(x=>+x||0);
+      t.chicken = !!t.chicken;
+      t.best = +t.best || 0;
+      s[k] = t;
+    });
+    s.timer = s.timer || d.timer;
+    s.timer.running = !!s.timer.running;
+    s.timer.remaining = (typeof s.timer.remaining==="number") ? s.timer.remaining : DEFAULT_MS;
+    s.timer.endAt = (typeof s.timer.endAt==="number") ? s.timer.endAt : null;
+    return s;
+  }catch(e){ return defaultState(); }
+}
+let state = loadState();
+
+function saveState(){
+  localStorage.setItem(KEY, JSON.stringify(state));
+}
+
+/* ---------- 계산 ---------- */
+function teamScore(t){
+  const kills = t.cur.reduce((a,b)=>a+(+b||0),0);
+  return kills + (t.chicken ? 0 : PENALTY);
+}
+function timerRemainingMs(){
+  const tm = state.timer;
+  if(tm.running && tm.endAt!=null){
+    return Math.max(0, tm.endAt - Date.now());
+  }
+  return Math.max(0, tm.remaining);
+}
+function fmtTime(ms){
+  let s = Math.floor(ms/1000);
+  const h = Math.floor(s/3600); s%=3600;
+  const m = Math.floor(s/60); s%=60;
+  return h + ":" + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
+}
+
+/* ---------- 보드 렌더 ---------- */
+const $ = id => document.getElementById(id);
+
+function renderPlayers(elId, t){
+  const wrap = $(elId);
+  wrap.innerHTML = "";
+  t.players.forEach((p,i)=>{
+    const total = (+p.cum||0) + (+t.cur[i]||0); // 누적 + 이번 판 진행중
+    const row = document.createElement("div");
+    row.className = "prow";
+    const nm = document.createElement("span");
+    nm.className = "pname"; nm.textContent = p.name;
+    const kl = document.createElement("span");
+    kl.className = "pkill"; kl.innerHTML = total + '<span>킬</span>';
+    row.appendChild(nm); row.appendChild(kl);
+    wrap.appendChild(row);
+  });
+}
+
+function renderBoard(){
+  // 타이머
+  const ms = timerRemainingMs();
+  const tEl = $("timer");
+  tEl.textContent = fmtTime(ms);
+  tEl.classList.toggle("paused", !state.timer.running && ms>0);
+  tEl.classList.toggle("done", ms<=0);
+  // 만료 시 정지 저장 (조작 뷰에서만 기록)
+  if(!OBS && state.timer.running && ms<=0){
+    state.timer.running=false; state.timer.remaining=0; state.timer.endAt=null; saveState();
+  }
+
+  $("m_round").textContent = state.round;
+  $("m_goal").textContent = state.goal;
+
+  ["a","b"].forEach(k=>{
+    const t = state[k];
+    $(k+"_name").textContent = t.name;
+    $(k+"_cur").textContent = teamScore(t);
+    $(k+"_best").textContent = t.best;
+    renderPlayers(k+"_players", t);
+    $("team_"+k).classList.toggle("win", t.best >= state.goal);
+  });
+}
+
+/* ---------- 조작 패널 빌드 ---------- */
+function buildPanel(){
+  ["a","b"].forEach(k=>{
+    const t = state[k];
+    const card = $("pcard_"+k);
+    const emoji = k==="a" ? "🔴" : "🔵";
+    card.innerHTML = `
+      <h3>${emoji} <span>팀</span> <span class="tag">개인킬 입력</span></h3>
+      <div class="field">
+        <label>팀명</label>
+        <input type="text" data-t="${k}" data-f="name" value="${escapeAttr(t.name)}">
+      </div>
+      ${[0,1,2,3].map(i=>`
+        <div class="prow-in">
+          <input type="text" data-t="${k}" data-p="${i}" data-f="pname" value="${escapeAttr(t.players[i].name)}" placeholder="닉네임">
+          <input type="number" data-t="${k}" data-p="${i}" data-f="kill" min="0" value="${t.cur[i]}">
+        </div>`).join("")}
+      <div class="chick">
+        <input type="checkbox" id="chk_${k}" data-t="${k}" data-f="chicken" ${t.chicken?"checked":""}>
+        <label for="chk_${k}">🍗 치킨 (체크 시 페널티 0 · 미체크 −4)</label>
+      </div>
+      <div class="livecalc">
+        <div class="v" id="live_${k}">0</div>
+        <div class="l">이번 판 팀점수 = 개인킬 합 ${PENALTY>=0?"+":"−"}${Math.abs(PENALTY)}(노치킨)</div>
+      </div>
+    `;
+  });
+  // 이벤트 바인딩
+  document.querySelectorAll("#panel input").forEach(el=>{
+    const ev = (el.type==="checkbox") ? "change" : "input";
+    el.addEventListener(ev, onPanelInput);
+  });
+  $("in_goal").value = state.goal;
+  refreshLive();
+}
+function escapeAttr(s){ return String(s).replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+
+function onPanelInput(e){
+  const el = e.target;
+  const k = el.dataset.t;
+  const f = el.dataset.f;
+  if(k && f){
+    const t = state[k];
+    if(f==="name") t.name = el.value;
+    else if(f==="pname") t.players[+el.dataset.p].name = el.value;
+    else if(f==="kill") t.cur[+el.dataset.p] = Math.max(0, +el.value||0);
+    else if(f==="chicken") t.chicken = el.checked;
+  } else if(el.id==="in_goal"){
+    state.goal = Math.max(1, +el.value||1);
+  }
+  saveState();
+  refreshLive();
+  renderBoard();
+}
+function refreshLive(){
+  ["a","b"].forEach(k=>{
+    const live = $("live_"+k);
+    if(live) live.textContent = teamScore(state[k]);
+  });
+}
+
+/* ---------- 버튼 액션 ---------- */
+function confirmRound(){
+  ["a","b"].forEach(k=>{
+    const t = state[k];
+    const score = teamScore(t);
+    if(score > t.best) t.best = score;      // 베스트 갱신
+    t.players.forEach((p,i)=>{ p.cum += (+t.cur[i]||0); }); // 개인킬 누적
+    t.cur = [0,0,0,0];                       // 현재 판 리셋
+    t.chicken = false;
+  });
+  state.round += 1;                          // 판 번호 +1
+  saveState();
+  buildPanel();
+  renderBoard();
+}
+function timerStart(){
+  if(!state.timer.running){
+    state.timer.endAt = Date.now() + Math.max(0, state.timer.remaining);
+    state.timer.running = true;
+    saveState(); renderBoard();
+  }
+}
+function timerPause(){
+  if(state.timer.running){
+    state.timer.remaining = timerRemainingMs();
+    state.timer.running = false;
+    state.timer.endAt = null;
+    saveState(); renderBoard();
+  }
+}
+function timerReset(){
+  state.timer = { running:false, remaining:DEFAULT_MS, endAt:null };
+  saveState(); renderBoard();
+}
+function fullReset(){
+  if(!confirm("전체 리셋: 팀명·닉네임·누적킬·베스트·판수·타이머 모두 초기화합니다. 진행할까요?")) return;
+  state = defaultState();
+  saveState();
+  buildPanel();
+  renderBoard();
+}
+
+/* ---------- 초기화 ---------- */
+if(!OBS){
+  buildPanel();
+  $("btn_confirm").addEventListener("click", confirmRound);
+  $("btn_start").addEventListener("click", timerStart);
+  $("btn_pause").addEventListener("click", timerPause);
+  $("btn_treset").addEventListener("click", timerReset);
+  $("btn_reset").addEventListener("click", fullReset);
+}
+
+// 크로스탭 동기화: 조작 뷰 변경 → OBS 뷰 즉시 반영
+window.addEventListener("storage", e=>{
+  if(e.key===KEY){ state = loadState(); if(!OBS) buildPanel(); renderBoard(); }
+});
+
+// 렌더 루프 (타이머 흐름 + 폴백 폴링)
+renderBoard();
+setInterval(()=>{
+  if(OBS){ state = loadState(); } // OBS는 매 틱 최신 상태 폴링
+  renderBoard();
+}, 500);
+</script>
+</body>
+</html>
