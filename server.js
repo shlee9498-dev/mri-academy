@@ -3379,6 +3379,14 @@ const GDCUP_WEIGHT_S3 = [[0,24,1.20],[25,30,1.10],[31,35,1.00],[36,39,0.92],[40,
 // S 2명째부터 1명당 추가 차감. S=13 vs T0=10이 3점 차라 저티어 멤버가 상쇄해버려,
 // BPI 구간만으로는 S 2~3명 팀과 평범한 마스터 4인팀이 구분되지 않는다.
 const GDCUP_S_PENALTY_S3 = 0.05;
+// ── 수동 티어 모드 (2026-08-07 본선, 오너 방침) ────────────────────────────
+// 티어 최종 판정을 사람이 한다. 서버가 PUBG 판정으로 tier를 덮어쓰는 경로가 세 곳
+// (confirm·edit?verify·reverify) 있고, 셋 다 오너가 손으로 정한 값을 되돌린다.
+// 특히 confirm은 "입금확정"이 곧 재판정이라, 확정할수록 판정이 바뀌는 구조였다.
+//
+// 이 모드에서 "입금확정" = 그 시점 저장값으로 박제. 확정 팀은 어떤 자동 경로도 안 닿는다.
+// 기본값 ON — 본선 후 되돌리려면 env로 GDCUP_AUTO_TIER=1 (배포 없이 복귀 가능).
+const GDCUP_MANUAL_TIER = process.env.GDCUP_AUTO_TIER !== "1";
 const GDCUP_SEASONS = {
   2: { rounds: [3,4,5],       weightTable: GDCUP_WEIGHT_S2, cap: null,                   bonusMode: "legacy_inclusive" },
   3: { rounds: [1,2,3,4,5],   weightTable: GDCUP_WEIGHT_S3, cap: { team: 38, sTier: 1 }, bonusMode: "pre_weight",
@@ -4118,6 +4126,9 @@ function gdConfirmPubgGate(req, res, next) {
   // 아래 핸들러의 status/force 판정과 같은 식을 쓴다. 한쪽만 바뀌면 리밋이 어긋난다.
   const status = b.status === "applied" ? "applied" : (b.status === "cancelled" ? "cancelled" : "confirmed");
   const force = b.force === 1 || b.force === true;
+  // 수동 티어 모드에서는 확정이 PUBG를 아예 안 탄다 — 쿼터 보호 리밋을 걸 이유가 없다.
+  // (걸어두면 오너가 12팀을 연달아 확정할 때 8회에서 막힌다.)
+  if (GDCUP_MANUAL_TIER) return next();
   if (status === "confirmed" && !force) return gdConfirmPubgLimit(req, res, next);
   return next();
 }
@@ -4134,7 +4145,11 @@ app.post("/api/gdcup-confirm", limit("gdConfirm", 30, 60_000), gdConfirmPubgGate
     // 정작 서버에 검증이 없었다. verified_at도 어디에서도 쓰이지 않아 모든 팀이 영구 '미검증'
     // 표시였다. 여기서 실제로 검증하고 결과를 남긴다.
     const patch = { status };
-    if (status === "confirmed" && !force) {
+    // 수동 티어 모드: 확정은 재판정이 아니라 박제다. 저장된 tier·bpi·weight를 그대로 두고
+    // 시각만 남긴다. PUBG를 안 타므로 60초 대기도 사라지고, API 장애로 확정이 막히지도 않는다.
+    if (status === "confirmed" && GDCUP_MANUAL_TIER) {
+      patch.verified_at = new Date().toISOString();
+    } else if (status === "confirmed" && !force) {
       const cur0 = (await sbSelect("gdcup_apps",
         `select=id,season,members,bpi&id=eq.${encodeURIComponent(b.id)}&limit=1`))[0];
       if (!cur0) return res.status(404).json({ error: "team_not_found" });
@@ -4231,7 +4246,16 @@ app.post("/api/gdcup-edit", limit("gdEdit", 10, 60_000), async (req, res) => {
         const stamped = stampPubgVerify(members, v);
         // 서버 판정 tier 반영은 전원 조회 성공했을 때만.
         // 일부만 잡히는 중간 상태에서 덮어쓰면 아직 못 찾은 멤버의 신고값이 소리 없이 사라진다.
-        if (!v.apiFailed && verify.notFound.length === 0 && v.members.length === members.length) {
+        // 수동 티어 모드: 조회는 그대로 하되(닉 오류·카카오 계정 판별에 필요) 서버 판정을
+        // tier에 반영하지 않는다. 반영해버리면 오너가 방금 고른 값이 저장 직후 사라진다.
+        if (GDCUP_MANUAL_TIER) {
+          if (!v.apiFailed) {
+            updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, { members: stamped });
+            team = Array.isArray(updated) ? updated[0] : updated;
+          }
+          verify.applied = false;
+          verify.manualTier = true;          // 프론트가 "서버 판정 미반영"을 설명할 수 있게
+        } else if (!v.apiFailed && verify.notFound.length === 0 && v.members.length === members.length) {
           const svMembers = stamped.map((m, i) => ({ ...m, tier: v.members[i].serverTier || m.tier }));
           const sv = validateTeamComposition(svMembers, teamSeason);
           const svPatch = { members: svMembers, bpi: sv.teamBpi, weight: gdcupWeight(sv.teamBpi, teamSeason, sv.sCount) };
@@ -4291,6 +4315,10 @@ app.post("/api/gdcup-edit", limit("gdEdit", 10, 60_000), async (req, res) => {
 let REVERIFY = { running: false, startedAt: null, done: 0, total: 0, results: [], error: null };
 app.post("/api/gdcup-reverify", async (req, res) => {
   if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+  // 수동 티어 모드에서는 전수 재판정 자체를 막는다. 이 라우트는 존재 목적이 tier 일괄
+  // 덮어쓰기라, "확정 팀만 제외"로는 의미가 없다(본선 시점엔 전 팀이 확정 상태다).
+  if (GDCUP_MANUAL_TIER) return res.status(423).json({ error: "manual_tier_mode",
+    message: "티어 수동 통제 중 — 전수 재판정은 비활성화됐습니다. 되돌리려면 env GDCUP_AUTO_TIER=1" });
   if (!process.env.PUBG_API_KEY) return res.status(503).json({ error: "pubg_disabled" });
   if (REVERIFY.running) return res.status(409).json({ error: "already_running", ...REVERIFY });
   const season = gdSeason(req.query.season);
