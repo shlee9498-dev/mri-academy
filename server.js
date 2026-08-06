@@ -3371,19 +3371,33 @@ const GDCUP_WEIGHT_S2 = [[0,16,1.3],[17,19,1.2],[20,21,1.1],[22,23,1.0],[24,25,0
 //    프론트는 GET /api/gdcup-meta 로 받아 쓴다.
 // 2026-08-01: 상한 36→38 상향(모집 우선, 오너 확정). 37~38 구간을 신설해 상향분이
 // 기존 37+ ×0.85에 묶이지 않게 한다. 39+ 구간은 상한상 도달 불가하나 방어적으로 유지.
-const GDCUP_WEIGHT_S3 = [[0,19,1.15],[20,24,1.10],[25,28,1.05],[29,32,1.00],[33,36,0.95],[37,38,0.90],[39,9999,0.85]];      // 시즌3 신표
+// 2026-08-06 B안(오너 확정): S등급이 실제로 유입되면서 구표가 무력해졌다. 평딜 기준 재분류 시
+// BPI 분포가 19~46으로 벌어지는데 구표는 39+가 전부 한 칸(×0.85)이라 상위권 변별력이 0이 됐다.
+// (실측: 마스터4인 41 · S2팀 42~46 · S3팀 43 — 넷이 같은 배율을 받았다.)
+// 구간을 위로 늘리고, BPI만으로는 안 잡히는 S 편중을 인원수 누진으로 따로 깎는다.
+const GDCUP_WEIGHT_S3 = [[0,24,1.20],[25,30,1.10],[31,35,1.00],[36,39,0.92],[40,43,0.85],[44,9999,0.78]];
+// S 2명째부터 1명당 추가 차감. S=13 vs T0=10이 3점 차라 저티어 멤버가 상쇄해버려,
+// BPI 구간만으로는 S 2~3명 팀과 평범한 마스터 4인팀이 구분되지 않는다.
+const GDCUP_S_PENALTY_S3 = 0.05;
 const GDCUP_SEASONS = {
   2: { rounds: [3,4,5],       weightTable: GDCUP_WEIGHT_S2, cap: null,                   bonusMode: "legacy_inclusive" },
   3: { rounds: [1,2,3,4,5],   weightTable: GDCUP_WEIGHT_S3, cap: { team: 38, sTier: 1 }, bonusMode: "pre_weight",
+       sPenaltyPerExtraS: GDCUP_S_PENALTY_S3,   // S 2명째부터 1명당 차감 (cap 은 권장값으로만 남는다)
        streak: { top4: 2, chicken: 4 } },   // 연속 Top4 +2 · 연속 치킨 +4(대체) — BPI 곱하기 전 라운드 점수에 합산
 };
 function gdSeasonRules(season) { return GDCUP_SEASONS[season] || GDCUP_SEASONS[GDCUP_CURRENT_SEASON]; }
 function gdcupRounds(season) { return gdSeasonRules(season).rounds; }
 // 서버측 가중치 — 시즌 룰셋의 표 사용(경계 정수 이상/이하). season 미지정=현 시즌.
-function gdcupWeight(bpi, season) {
-  const table = gdSeasonRules(season).weightTable;
-  for (const [lo, hi, m] of table) { if (bpi >= lo && bpi <= hi) return m; }
-  return 1.0;
+// sCount: 팀 내 S등급 인원. 2명째부터 시즌 룰셋의 sPenaltyPerExtraS 만큼 추가 차감한다.
+// 생략하면 차감 0 — 시즌2 등 누진이 없는 시즌과 sCount를 모르는 호출부의 동작이 종전과 같다.
+function gdcupWeight(bpi, season, sCount) {
+  const rules = gdSeasonRules(season);
+  let w = 1.0;
+  for (const [lo, hi, m] of rules.weightTable) { if (bpi >= lo && bpi <= hi) { w = m; break; } }
+  const per = rules.sPenaltyPerExtraS || 0;
+  const extra = Math.max(0, (Number(sCount) || 0) - 1);
+  // 소수 오차가 weight 컬럼(numeric)에 그대로 들어가면 표시가 지저분해진다 — 2자리로 끊는다.
+  return Math.max(0, Math.round((w - per * extra) * 100) / 100);
 }
 const GD_BPI = GDCUP_BPI_SCALE;                       // 정본 스케일 참조(S=13·T0=10…). 하드코딩 중복 제거.
 function gdcupBpi(members) {
@@ -3446,7 +3460,10 @@ app.get("/api/gdcup-meta", async (req, res) => {
       bpi: GDCUP_BPI_SCALE[t.t],
     })),
     weightTable: rules.weightTable,            // [[lo,hi,mult], ...] 경계 정수 이상/이하
-    cap: rules.cap,                            // { team, sTier } · null이면 제한 없음
+    // S 2명째부터 1명당 추가 차감(2026-08-06 B안). 프론트가 표시용 가중치를 계산할 때
+    // 이 값을 빼지 않으면 화면 배율과 서버 저장값이 어긋난다 — 하드코딩 금지.
+    sPenaltyPerExtraS: rules.sPenaltyPerExtraS || 0,
+    cap: rules.cap,                            // { team, sTier } · 권장값. 초과해도 접수된다(2026-08-06)
     rounds: rules.rounds,
     leaderBonus: { tier: "T0", bpi: 1 },       // T0 팀장 +1 (S급 가산 없음)
     applyDeadline: GDCUP_APPLY_DEADLINE,
@@ -3579,7 +3596,7 @@ app.post("/api/gdcup-apply", async (req, res) => {
     const validation = validateTeamComposition(members, season);
     const capWarnings = validation.ok ? [] : validation.reasons;
     const bpi = validation.teamBpi;
-    const weight = gdcupWeight(bpi, season);
+    const weight = gdcupWeight(bpi, season, validation.sCount);
     const contact = clip(b.contact, 60);
     const leaderDiscord = clip(b.leader_discord, 40);
     const registry = await matchClanRegistry(members);
@@ -3701,7 +3718,7 @@ app.post("/api/gdcup-add-member", async (req, res) => {
     const validation = validateTeamComposition(members, teamSeason);
     const capWarnings = validation.ok ? [] : validation.reasons;
     const bpi = validation.teamBpi;
-    const weight = gdcupWeight(bpi, teamSeason);
+    const weight = gdcupWeight(bpi, teamSeason, validation.sCount);
     await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(team.id)}`, { members, bpi, weight });
 
     const PING = process.env.GDCUP_PING || "";
@@ -4138,7 +4155,7 @@ app.post("/api/gdcup-confirm", limit("gdConfirm", 30, 60_000), gdConfirmPubgGate
       const sv = validateTeamComposition(svMembers, season0);
       patch.members = svMembers;
       patch.bpi = sv.teamBpi;
-      patch.weight = gdcupWeight(sv.teamBpi, season0);
+      patch.weight = gdcupWeight(sv.teamBpi, season0, sv.sCount);
       patch.verified_at = new Date().toISOString();
     }
     const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, patch);
@@ -4177,7 +4194,7 @@ app.post("/api/gdcup-edit", limit("gdEdit", 10, 60_000), async (req, res) => {
     const override = b.override === true;                  // 관리자만 override 허용
     if (!validation.ok && !override) return res.status(422).json({ error: "team_validation_failed", reasons: validation.reasons });
     const bpi = validation.teamBpi;
-    const weight = gdcupWeight(bpi, teamSeason);
+    const weight = gdcupWeight(bpi, teamSeason, validation.sCount);
     const patch = { members, bpi, weight };
     if (!validation.ok && override) {                     // 예외승인 감사 append (gdcup_apps.audit jsonb)
       const prevAudit = Array.isArray(cur.audit) ? cur.audit : [];
@@ -4215,11 +4232,12 @@ app.post("/api/gdcup-edit", limit("gdEdit", 10, 60_000), async (req, res) => {
         if (!v.apiFailed && verify.notFound.length === 0 && v.members.length === members.length) {
           const svMembers = stamped.map((m, i) => ({ ...m, tier: v.members[i].serverTier || m.tier }));
           const sv = validateTeamComposition(svMembers, teamSeason);
-          const svPatch = { members: svMembers, bpi: sv.teamBpi, weight: gdcupWeight(sv.teamBpi, teamSeason) };
+          const svPatch = { members: svMembers, bpi: sv.teamBpi, weight: gdcupWeight(sv.teamBpi, teamSeason, sv.sCount) };
           updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, svPatch);
           team = Array.isArray(updated) ? updated[0] : updated;
           verify.applied = true;
           verify.teamBpi = sv.teamBpi;
+          verify.teamSCount = sv.sCount;      // 응답 weight 재계산에 필요 — S 누진이 붙는다
           verify.teamOk = sv.ok;
           verify.teamReasons = sv.reasons;
         } else {
@@ -4251,7 +4269,8 @@ app.post("/api/gdcup-edit", limit("gdEdit", 10, 60_000), async (req, res) => {
     }
     // verify가 서버 판정을 반영했으면 그 값이 최신 — 프론트에 재조회를 요구하지 않는다.
     const finalBpi = (verify && verify.applied) ? verify.teamBpi : bpi;
-    res.json({ ok: true, bpi: finalBpi, weight: gdcupWeight(finalBpi, teamSeason), verify });
+    const finalSCount = (verify && verify.applied) ? verify.teamSCount : validation.sCount;
+    res.json({ ok: true, bpi: finalBpi, weight: gdcupWeight(finalBpi, teamSeason, finalSCount), verify });
   } catch (e) { console.error("gdcup_edit_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
@@ -4294,7 +4313,7 @@ app.post("/api/gdcup-reverify", async (req, res) => {
               .map((m, i2) => m.ign);
             if (!dryRun) {
               await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(t.id)}`,
-                { members: next, bpi: sv.teamBpi, weight: gdcupWeight(sv.teamBpi, season) });
+                { members: next, bpi: sv.teamBpi, weight: gdcupWeight(sv.teamBpi, season, sv.sCount) });
             }
             REVERIFY.results.push({
               team: t.team_name, bpiBefore: t.bpi ?? null, bpiAfter: sv.teamBpi,
