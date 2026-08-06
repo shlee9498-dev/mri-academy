@@ -4044,12 +4044,42 @@ function sanitizeMembers(members) {
   }));
 }
 
+// ── 예비인원·교체 일정 ────────────────────────────────────────────────
+// BPI는 확정 4인으로 동결한다(반복 확인된 오너 방침). 예비는 킬 귀속·운영 안내용이고
+// 판정에는 절대 들어가지 않는다 — 그래서 별도 컬럼에 두고 members를 건드리지 않는다.
+// 계좌·실명은 여기에도 담지 않는다. gdcup_payouts(owner 전용) 경계를 그대로 따른다.
+function sanitizeReserves(v) {
+  const clip = (x, n) => String(x == null ? "" : x).slice(0, n);
+  return (Array.isArray(v) ? v : []).slice(0, 8).map((r) => ({
+    ign: clip(r && r.ign, 40), tier: clip(r && r.tier, 4), peak: clip(r && r.peak, 10),
+    dmg: clip(r && r.dmg, 6), availFrom: clip(r && r.availFrom, 12),
+    discord: clip(r && r.discord, 40), note: clip(r && r.note, 120),
+  }));
+}
+// 시간순 정렬. "22:30" 같은 문자열이라 사전순 = 시간순이지만, 빈 값이 섞이면
+// 순서가 무너져서 빈 값을 뒤로 보낸다. 완료분은 같은 시각이라도 계획 뒤에 둔다.
+function sortRosterLog(v) {
+  const clip = (x, n) => String(x == null ? "" : x).slice(0, n);
+  return (Array.isArray(v) ? v : []).slice(0, 40).map((r) => ({
+    type: (r && r.type) === "done" ? "done" : "planned",
+    at: clip(r && r.at, 12), out: clip(r && r.out, 40), in: clip(r && r.in, 40),
+    note: clip(r && r.note, 120), doneAt: clip(r && r.doneAt, 40),
+  })).sort((a, b) => {
+    // localeCompare는 쓰지 않는다 — ICU 콜레이션에서 "~" 센티널이 숫자보다 앞으로 가서
+    // 시각 없는 항목이 목록 맨 위로 튀었다. "HH:MM"은 제로패딩이라 문자열 비교면 충분하다.
+    const ae = a.at ? 0 : 1, be = b.at ? 0 : 1;
+    if (ae !== be) return ae - be;                       // 시각 없는 건 항상 뒤
+    if (a.at !== b.at) return a.at < b.at ? -1 : 1;
+    return a.type === b.type ? 0 : a.type === "planned" ? -1 : 1;
+  });
+}
+
 app.get("/api/gdcup-admin-list", async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
     if (!process.env.SUPABASE_URL) return res.json({ teams: [] });
     const sf = req.query.season ? `&season=eq.${gdSeason(req.query.season)}` : "";
-    const rows = await sbSelect("gdcup_apps", `select=id,team_name,slogan,members,bpi,weight,contact,status,season,created_at,verified_at${sf}&order=created_at.asc`);
+    const rows = await sbSelect("gdcup_apps", `select=id,team_name,slogan,members,bpi,weight,contact,status,season,created_at,verified_at,reserves,roster_log${sf}&order=created_at.asc`);
     // verified: 확정 시 서버 tier 재검증 통과 여부 (강제확정은 verified_at null → false)
     // 멤버별 pubgOk: 마지막 재검증에서 PUBG 조회가 됐는지(members에 새겨둔 값).
     // 등록계(clan_registry) 대조는 여기서 쓰지 않는다 — 용병은 등록계 대상이 아니라
@@ -4071,6 +4101,8 @@ app.get("/api/gdcup-admin-list", async (req, res) => {
         pubgRankedRounds: (raw[i] && raw[i].pubgRankedRounds) ?? null,
       }));
       return { ...r, verified: !!r.verified_at, members,
+        // 예비·교체는 계좌·실명을 담지 않는다(gdcup_payouts 전용 경계 그대로).
+        reserves: sanitizeReserves(r.reserves), rosterLog: sortRosterLog(r.roster_log),
         // 조치가 필요한 건 not_found 뿐 — no_season은 참가 가능한 정상 상태다.
         pubgFailed: members.filter((m) => m.pubgState === "not_found").length,
         pubgNoSeason: members.filter((m) => m.pubgState === "no_season").length };
@@ -4188,6 +4220,47 @@ app.post("/api/gdcup-confirm", limit("gdConfirm", 30, 60_000), gdConfirmPubgGate
     }
     res.json({ ok: true, status });
   } catch (e) { console.error("gdcup_confirm_error", e); res.status(500).json({ error: "server_error" }); }
+});
+
+// 운영진 — 예비인원·교체 일정 저장 (BPI·weight·members·status 무접촉)
+// 확정 팀도 자유롭게 고칠 수 있다. 확정=박제는 "티어·BPI를 안 건드린다"는 뜻이고,
+// 교체 일정은 본선 중에 계속 바뀌는 운영 정보라 잠그면 쓸 수가 없다.
+app.post("/api/gdcup-reserves", limit("gdReserves", 30, 60_000), async (req, res) => {
+  try {
+    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+    const b = req.body || {};
+    if (!b.id) return res.status(400).json({ error: "no_id" });
+    const cur = (await sbSelect("gdcup_apps", `select=id&id=eq.${encodeURIComponent(b.id)}&limit=1`))[0];
+    if (!cur) return res.status(404).json({ error: "team_not_found" });
+    const patch = {};
+    if (b.reserves !== undefined)  patch.reserves   = sanitizeReserves(b.reserves);
+    if (b.rosterLog !== undefined) patch.roster_log = sortRosterLog(b.rosterLog);
+    if (!Object.keys(patch).length) return res.status(400).json({ error: "nothing_to_update" });
+    const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, patch);
+    const t = Array.isArray(updated) ? updated[0] : updated;
+    res.json({ ok: true, reserves: sanitizeReserves(t && t.reserves), rosterLog: sortRosterLog(t && t.roster_log) });
+  } catch (e) { console.error("gdcup_reserves", e); res.status(500).json({ error: "server_error" }); }
+});
+
+// 운영진 — 교체 실행 처리. 계획 한 건을 done으로 바꾸고 실제 시각을 남긴다.
+// 인덱스가 아니라 내용으로 찾는다 — 목록이 시간순 정렬되어 인덱스가 흔들린다.
+app.post("/api/gdcup-swap-done", limit("gdSwap", 30, 60_000), async (req, res) => {
+  try {
+    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+    const b = req.body || {};
+    if (!b.id) return res.status(400).json({ error: "no_id" });
+    const cur = (await sbSelect("gdcup_apps", `select=id,roster_log&id=eq.${encodeURIComponent(b.id)}&limit=1`))[0];
+    if (!cur) return res.status(404).json({ error: "team_not_found" });
+    const key = (r) => `${r.at}|${r.out}|${r.in}`;
+    const want = `${b.at || ""}|${b.out || ""}|${b.in || ""}`;
+    const log = sortRosterLog(cur.roster_log);
+    const i = log.findIndex((r) => r.type === "planned" && key(r) === want);
+    if (i < 0) return res.status(404).json({ error: "plan_not_found", message: "해당 교체 계획을 찾지 못했습니다 — 새로고침 후 다시 시도하세요" });
+    log[i] = { ...log[i], type: "done", doneAt: new Date().toISOString() };
+    const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, { roster_log: log });
+    const t = Array.isArray(updated) ? updated[0] : updated;
+    res.json({ ok: true, rosterLog: sortRosterLog(t && t.roster_log) });
+  } catch (e) { console.error("gdcup_swap_done", e); res.status(500).json({ error: "server_error" }); }
 });
 
 // 운영진 — 팀 멤버 티어 수정 + BPI·가중치 자동 재계산
@@ -4941,7 +5014,8 @@ const REQUIRED_SCHEMA = {
   feedback:         ["id","grp","body","lesson_date","published","review_msg","src_channel",
                      "src_guild","src_msg","student_alias"],
   gdcup_apps:       ["id","team_name","slogan","members","bpi","weight","contact","ip","season",
-                     "status","created_at","leader_discord","audit","verify_json","verified_at"],
+                     "status","created_at","leader_discord","audit","verify_json","verified_at",
+                     "reserves","roster_log"],
   gdcup_attendance: ["event","user_id","name","status","reason"],
   gdcup_payouts:    ["id","app_id","season","member_idx","real_name","bank","account_no","holder"],
   gdcup_scores:     ["season","round","team_name","placement","team_kills","player_kills","updated_at"],

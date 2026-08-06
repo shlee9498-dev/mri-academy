@@ -343,6 +343,15 @@ alter table public.payments add  constraint payments_kind_check
 -- 별도 테이블로 두고, 서버에서 owner 전용 엔드포인트로만 노출한다.
 -- (gdcup_apps 자체는 이 파일에 정의가 없다 — 기존 수동 생성분)
 -- ============================================================
+
+-- 예비인원·교체 일정 (2026-08-07). BPI는 확정 4인으로 동결하므로 members와 분리한다.
+-- reserves   = [{ign,tier,peak,dmg,availFrom,discord,note}]
+-- roster_log = [{type:'planned'|'done', at, out, in, note, doneAt}]
+-- 계좌·실명은 여기에도 넣지 않는다 — gdcup_payouts 전용.
+alter table public.gdcup_apps add column if not exists reserves   jsonb default '[]'::jsonb;
+alter table public.gdcup_apps add column if not exists roster_log jsonb default '[]'::jsonb;
+alter table public.gdcup_apps add column if not exists audit      jsonb default '[]'::jsonb;
+
 create table if not exists public.gdcup_payouts (
   id          bigint generated always as identity primary key,
   app_id      bigint not null,                       -- gdcup_apps.id
