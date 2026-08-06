@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>G드컵 · 라이브 보드</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  :root{--bg:#0a0a0c;--card:#16161c;--line:#27272a;--ink:#f4f4f5;--dim:#a1a1aa;--faint:#71717a;
+    --gold:#f5c518;--red:#e63946;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  /* OBS 브라우저 소스는 배경을 투명하게 쓰는 경우가 많다 — ?bg=0 이면 body 배경을 비운다 */
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.4;padding:18px 20px;}
+  body.clear{background:transparent;}
+  .wrap{max-width:640px;margin:0 auto;}
+  .hd{display:flex;align-items:baseline;gap:10px;margin-bottom:12px;}
+  .kick{font-family:var(--display);letter-spacing:.22em;color:var(--gold);font-size:14px;}
+  .rd{font-family:var(--display);font-size:14px;color:var(--ink);}
+  .alive{margin-left:auto;font-size:14px;color:var(--dim);font-weight:700;}
+  .row{display:grid;grid-template-columns:34px 52px 1fr 62px 74px;gap:10px;align-items:center;
+    background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-bottom:6px;
+    transition:transform .35s ease;}
+  .row.out{opacity:.4;}
+  .rk{font-family:var(--display);font-size:18px;color:var(--gold);text-align:center;}
+  .row.out .rk{color:var(--faint);}
+  .chip{font-family:var(--display);font-size:14px;letter-spacing:.05em;padding:5px 0;border-radius:5px;text-align:center;}
+  .nm{font-weight:800;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .nm small{display:block;font-size:11px;color:var(--faint);font-weight:600;}
+  .kl{font-family:var(--display);font-size:24px;text-align:right;}
+  .kl small{font-family:var(--body);font-size:11px;color:var(--faint);font-weight:700;margin-left:3px;}
+  .pt{font-family:var(--display);font-size:24px;color:var(--gold);text-align:right;}
+  .mark{margin-top:12px;text-align:center;font-size:11px;color:var(--faint);letter-spacing:.06em;}
+  .mark b{color:var(--gold);letter-spacing:.16em;font-family:var(--display);font-size:11px;}
+  .empty{color:var(--faint);font-size:14px;text-align:center;padding:30px 0;}
+  @media (prefers-reduced-motion: reduce){ .row{transition:none;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hd">
+    <span class="kick">G드컵</span>
+    <span class="rd" id="rd">LIVE</span>
+    <span class="alive" id="alive"></span>
+  </div>
+  <div id="list"><div class="empty">불러오는 중…</div></div>
+  <div class="mark"><b>UNOFFICIAL LIVE</b> · 옵저버 실시간 집계 — 확정 순위와 다를 수 있습니다</div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var GAPI = "https://mri-academy-production.up.railway.app";
+  var Q = new URLSearchParams(location.search);
+  var round = Number(Q.get("round")) || 0;      // 0이면 서버가 라이브 없이 확정분만 준다
+  var season = Q.get("season") || "";
+  var every = Math.min(30, Math.max(5, Number(Q.get("every")) || 7)) * 1000;   // 5~30초
+  if(Q.get("bg") === "0") document.body.classList.add("clear");
+  var $ = function(id){ return document.getElementById(id); };
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]; }); }
+  function textOn(hex){
+    var h=String(hex||"").replace("#",""); if(h.length!==6) return "#0a0a0c";
+    var r=parseInt(h.slice(0,2),16), g=parseInt(h.slice(2,4),16), b=parseInt(h.slice(4,6),16);
+    return (r*299+g*587+b*114)/1000 > 150 ? "#0a0a0c" : "#f4f4f5";
+  }
+  function tagOf(t){ return (t.tag ? String(t.tag).toUpperCase().slice(0,4)
+                                   : String(t.name||"").replace(/\s+/g,"").slice(0,2)) || "?"; }
+
+  function render(d){
+    var teams = (d && d.teams) || [];
+    if(!teams.length){ $("list").innerHTML = '<div class="empty">아직 집계가 없습니다.</div>'; return; }
+    $("rd").textContent = d.round ? ("R" + d.round + " LIVE") : "누적";
+    $("alive").textContent = d.live ? ("생존 " + d.alive + "/" + d.total) : "";
+    $("list").innerHTML = teams.map(function(t, i){
+      var col = t.color || "#3f3f46";
+      return '<div class="row'+(t.wiped?" out":"")+'">'
+        + '<div class="rk">'+(i+1)+'</div>'
+        + '<div class="chip" style="background:'+esc(col)+';color:'+textOn(col)+'">'+esc(tagOf(t))+'</div>'
+        + '<div class="nm">'+esc(t.name)
+          + '<small>×'+(t.weight!=null?t.weight:1)+(t.wiped?' · 전멸'+(t.livePlace?' '+t.livePlace+'위':''):'')+'</small></div>'
+        + '<div class="kl">'+(d.live ? t.liveKills : t.kills)+'<small>킬</small></div>'
+        + '<div class="pt">'+t.points+'</div>'
+        + '</div>';
+    }).join("");
+  }
+
+  function tick(){
+    var qs = "?round=" + round + (season ? "&season="+encodeURIComponent(season) : "");
+    fetch(GAPI + "/api/gdcup-live-board" + qs, { cache:"no-store" })
+      .then(function(r){ return r.json(); })
+      .then(render)
+      .catch(function(){ /* 방송 중이므로 조용히 넘기고 다음 폴링을 기다린다 */ });
+  }
+  tick();
+  setInterval(tick, every);
+})();
+</script>
+</body>
+</html>

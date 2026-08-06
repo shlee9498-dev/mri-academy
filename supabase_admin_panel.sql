@@ -525,3 +525,26 @@ create table if not exists public.gdcup_toto (
 create unique index if not exists gdcup_toto_season_nick
   on public.gdcup_toto (season, nick_key);
 alter table public.gdcup_toto enable row level security;   -- service_role만 통과
+
+-- ============================================================
+-- 라이브 킬 트래커 (2026-08-07) — 옵저버 실시간 카운트 (비공식)
+-- 전용 테이블. gdcup_scores는 읽기만 하고 절대 쓰지 않는다(정본 무접촉).
+-- 라운드 리셋 = 해당 (season, round) 행 삭제 — 정본과 무관하다.
+-- wiped_at은 전멸 "순서"를 남긴다. 배틀로얄은 탈락 시점의 생존 팀 수로 순위가
+-- 확정되므로(첫 전멸 = 꼴찌), 이 순서에서 라이브 예상 순위점이 나온다.
+-- ============================================================
+create table if not exists public.gdcup_live (
+  id         bigint generated always as identity primary key,
+  season     int  not null,
+  round      int  not null,
+  team_name  text not null,
+  kills      int  not null default 0,
+  wiped      boolean not null default false,
+  wiped_at   timestamptz,
+  updated_at timestamptz default now()
+);
+create unique index if not exists gdcup_live_season_round_team
+  on public.gdcup_live (season, round, team_name);
+alter table public.gdcup_live enable row level security;   -- service_role만 통과
+-- 앞서 wiped_at 없이 만든 경우를 위한 보정 (멱등)
+alter table public.gdcup_live add column if not exists wiped_at timestamptz;
