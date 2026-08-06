@@ -4685,9 +4685,26 @@ app.get("/api/feedback-public", async (_req, res) => {
 // 오너가 admin에 들어갈 방법이 없어졌다. 여기서 서빙하면 페이지와 API가 같은
 // 오리진이라 CORS 자체가 성립하지 않고, 정적 호스팅 두 곳 어디에도 의존하지 않는다.
 // 정본은 여전히 gmi-clancup — 이건 같은 파일을 한 경로 더 여는 것뿐이다.
-// 경로는 전부 리터럴로 둔다. Express 5는 ":p(a|b)" 패턴 문법을 제거했고, 여기서
-// 기동이 깨지면 API와 디스코드 봇이 통째로 죽는다 — 본선 당일 감수할 위험이 아니다.
+// 본선 페이지 전체. Pages 배포가 죽어 있어 오늘 본선은 이 주소가 정본이다(오너 확정).
+// 화이트리스트만 연다 — 디렉터리 통째 서빙(express.static)은 server.js·env까지 노출된다.
+// 경로는 리터럴로 등록한다. Express 5가 ":p(a|b)" 패턴 문법을 제거해서, 패턴을 쓰면
+// 의존성이 올라가는 순간 기동이 깨진다 — API와 디스코드 봇이 통째로 죽는 위험이다.
 const nodePath = require("path");
+const GDCUP_PAGES = [
+  "gdcup-admin",   // 운영 — 팀 확정·티어·예비/교체
+  "gdcup-score",   // 운영 — 라운드 점수 입력
+  "gdcup-s3",      // 공개 — 시즌3 신청
+  "gdcup-add",     // 공개 — 팀원 추가
+  "results",       // 공개 — 순위표
+  "kill-mvp",      // 방송 — 킬 MVP
+  "overlay",       // 방송 — OBS 오버레이
+  "scoreboard",    // 방송 — 점수판
+  "team-brand",    // 공개 — 팀 브랜드 등록
+  "roster",        // 공개 — 참가 명단
+  "briefing",      // 공개 — 브리핑
+  "gdcup-history", // 공개 — 아카이브 목록
+  "gdcup-s2",      // 공개 — 시즌2 아카이브
+];
 function sendGdcupPage(file) {
   return (req, res) => {
     res.setHeader("Cache-Control", "no-store");      // 구버전이 캐시에 남는 사고를 막는다
@@ -4697,10 +4714,11 @@ function sendGdcupPage(file) {
     });
   };
 }
-app.get("/gdcup-admin",      sendGdcupPage("gdcup-admin.html"));
-app.get("/gdcup-admin.html", sendGdcupPage("gdcup-admin.html"));
-app.get("/gdcup-s3",         sendGdcupPage("gdcup-s3.html"));
-app.get("/gdcup-s3.html",    sendGdcupPage("gdcup-s3.html"));
+GDCUP_PAGES.forEach((n) => {
+  const h = sendGdcupPage(n + ".html");
+  app.get("/" + n, h);                               // 확장자 없는 주소
+  app.get("/" + n + ".html", h);                     // 페이지 내부 상대링크가 쓰는 형태
+});
 
 const PORT = process.env.PORT || 3000;
 // ── 공개 피드백 월 (published=true 만 노출) ──

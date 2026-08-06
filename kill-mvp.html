@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>G드컵 · 킬 MVP</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  :root{
+    --bg:#0a0a0c; --panel:#16161c; --line:#27272a;
+    --ink:#f4f4f5; --ink-dim:#a1a1aa; --ink-faint:#71717a;
+    --gold:#f5c518; --gold-deep:#caa00f; --silver:#cbd5e1; --bronze:#d4955b; --red:#e63946;
+    --display:'Archivo Black',sans-serif; --body:'Pretendard Variable',sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:1920px;height:1080px;overflow:hidden;font-family:var(--body);color:var(--ink);
+    background:radial-gradient(ellipse 60% 50% at 50% -8%, rgba(245,197,24,.10), transparent 60%), #0a0a0c;}
+  body::before{content:"";position:fixed;inset:0;background-image:
+    linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);background-size:37px 37px;pointer-events:none;}
+  .wrap{position:relative;height:1080px;padding:54px 70px 40px;display:flex;flex-direction:column;}
+
+  .head{display:flex;align-items:flex-end;justify-content:space-between;border-bottom:2px solid var(--line);padding-bottom:22px;}
+  .kick{font-family:var(--display);letter-spacing:.34em;font-size:20px;color:var(--gold);}
+  .title{font-family:var(--display);font-size:54px;line-height:.95;margin-top:8px;}
+  .title small{color:var(--ink-faint);font-size:26px;letter-spacing:.2em;margin-left:12px;}
+  .rstat{text-align:right;}
+  .rstat .r{font-family:var(--display);font-size:26px;color:var(--gold);}
+  .rstat .s{font-size:16px;color:var(--ink-dim);margin-top:6px;}
+
+  /* MVP 히어로 */
+  .hero{margin-top:30px;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:28px;
+    background:linear-gradient(90deg,rgba(245,197,24,.18),rgba(245,197,24,.03));
+    border:1px solid rgba(245,197,24,.55);border-radius:20px;padding:26px 36px;}
+  .hero .crown{font-size:60px;}
+  .hero .who .lbl{font-family:var(--display);letter-spacing:.2em;font-size:15px;color:var(--gold);}
+  .hero .who .nm{font-family:var(--display);font-size:52px;line-height:1.04;margin-top:4px;}
+  .hero .who .tm{font-size:19px;color:var(--ink-dim);margin-top:6px;}
+  .hero .kills{text-align:right;}
+  .hero .kills b{font-family:var(--display);font-size:72px;color:var(--gold);line-height:.9;}
+  .hero .kills span{display:block;font-weight:700;font-size:17px;color:var(--ink-dim);margin-top:4px;}
+
+  /* 2~ 리스트 */
+  .cols{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:0 56px;align-content:center;padding:26px 0;}
+  .row{display:grid;grid-template-columns:52px 1fr auto;align-items:center;gap:16px;padding:11px 16px;border-radius:11px;}
+  .row + .row{margin-top:7px;}
+  .row .rk{font-family:var(--display);font-size:24px;text-align:center;color:var(--ink-dim);}
+  .row.s2 .rk{color:var(--silver);} .row.s3 .rk{color:var(--bronze);}
+  .row .nm{font-weight:800;font-size:23px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .row .nm .tm{font-weight:600;font-size:14px;color:var(--ink-faint);margin-left:8px;}
+  .row .kl{font-family:var(--display);font-size:25px;color:var(--ink);}
+  .row .kl small{font-family:var(--body);font-weight:700;font-size:13px;color:var(--ink-faint);margin-left:3px;}
+
+  .foot{display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--line);padding-top:18px;}
+  .foot .prize{font-weight:800;font-size:20px;color:var(--gold);}
+  .foot .legend{font-size:15px;color:var(--ink-faint);}
+  .updating{position:fixed;top:18px;right:22px;font-size:13px;color:var(--ink-faint);}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="kick" id="kick">G드컵</div>
+        <div class="title">킬 MVP<small>KILL LEADERS</small></div>
+      </div>
+      <div class="rstat">
+        <!-- 초기값은 반드시 중립 문구 — render()가 실패하면(catch가 roundStat을 안 건드린다)
+             이 값이 그대로 방송에 남는다. 종전 "ROUND 3 종료"는 API 장애 시 틀린 확정
+             문구가 고정됐다. JS 폴백(:집계 대기)과 같은 값으로 맞춘다. results.html도 동일 규칙. -->
+        <div class="r" id="roundStat">집계 대기</div>
+        <div class="s" id="subStat">본매치 누적 킬 기준</div>
+      </div>
+    </div>
+
+    <div class="hero" id="hero"><!-- #1 --></div>
+
+    <div class="cols">
+      <div id="colA"></div>
+      <div id="colB"></div>
+    </div>
+
+    <div class="foot">
+      <div class="prize">🏆 킬 MVP 상금 30,000원</div>
+      <div class="legend">개인 누적 킬 1위 · 본매치 합산</div>
+    </div>
+  </div>
+  <div class="updating" id="upd"></div>
+
+<script>
+  // ===== 데이터 소스 =====
+  var GAPI="https://mri-academy-production.up.railway.app";
+  var QS = new URLSearchParams(location.search);
+  var DEMO = QS.get('demo')==='1';
+  // ?season=N 지정 시 해당 시즌, 미지정 = 서버 현재 시즌 폴백 (시즌 번호 하드코딩 금지)
+  var SEASON = QS.get('season');
+  var seasonQ = SEASON ? ('season='+encodeURIComponent(SEASON)) : '';
+  // 파라미터 미지정 시 meta의 현재 시즌으로 확정 — results/score/admin과 동일한 시즌 결정 로직.
+  // (meta 실패 시에도 killmvp API 자체가 현재 시즌 폴백이라 동작은 동일)
+  var META_DONE=false;
+  async function resolveSeason(){
+    if(META_DONE || DEMO || SEASON){ META_DONE=true; return; }
+    try{
+      var r=await fetch(GAPI+"/api/gdcup-meta"); var m=await r.json();
+      if(m && m.currentSeason){ SEASON=String(m.currentSeason); seasonQ='season='+encodeURIComponent(SEASON); }
+    }catch(e){}
+    META_DONE=true;
+  }
+  var BRANDS={};
+  async function loadBrands(){
+    if(DEMO){ BRANDS.__loaded=true; return; }
+    try{ var r=await fetch(GAPI+"/api/gdcup-team-brands"); var d=await r.json();
+      // 팀명 중복 시 먼저 온 행(=updated_at 최신)이 이긴다. results.html과 같은 규칙.
+      ((d&&d.brands)||[]).forEach(function(b){
+        if(!Object.prototype.hasOwnProperty.call(BRANDS,b.team_name)) BRANDS[b.team_name]=b;
+      }); }catch(e){}
+    BRANDS.__loaded=true;
+  }
+  function tmCol(name){ var b=BRANDS[name]; return (b&&b.color)?(' style="color:'+b.color+'"'):''; }
+  var SAMPLE=[
+    {name:"GmI_Hye0n", team:"메르시", kills:14},
+    {name:"DRIFT_Pervert", team:"불꽃", kills:12},
+    {name:"kim__junsung", team:"파워", kills:11},
+    {name:"o8l8_Re4pxr", team:"세휘네치킨", kills:10},
+    {name:"GmI_rabbit", team:"광부", kills:9},
+    {name:"yeopomalgo", team:"새벽", kills:9},
+    {name:"D773ST", team:"질풍", kills:8},
+    {name:"GmI_Hwan", team:"백호", kills:7},
+    {name:"ddabbi_v", team:"천둥", kills:7},
+    {name:"baekminki", team:"해일", kills:6},
+    {name:"Da3va", team:"북극성", kills:5},
+    {name:"ansiwoo", team:"적호", kills:5}
+  ];
+  // 반환: {players:[{name,team,kills}], lastRound, season}
+  async function loadData(){
+    if(DEMO) return { players: SAMPLE, lastRound: 3, season: 2 };
+    var r = await fetch(GAPI+"/api/gdcup-killmvp"+(seasonQ?('?'+seasonQ):''));
+    var d = await r.json();
+    return { players: (d&&d.players)||[], lastRound: (d&&d.lastRound)||0, season: d&&d.season };
+  }
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  async function render(){
+    try{
+      if(!META_DONE) await resolveSeason();
+      if(!BRANDS.__loaded) await loadBrands();
+      var d = await loadData();
+      // 시즌 라벨은 서버 응답이 정본 — 화면 하드코딩 금지 (SEASON 2 고정 표기 사고 재발 방지)
+      if(d.season){
+        document.getElementById('kick').textContent = 'G드컵 SEASON '+d.season;
+        document.title = 'G드컵 시즌'+d.season+' · 킬 MVP';
+      }
+      var data = (d.players||[]).slice().sort(function(a,b){ return b.kills - a.kills; });
+      if(!data.length){
+        document.getElementById('hero').innerHTML='<div class="who"><div class="lbl">KILL MVP</div><div class="nm" style="color:var(--ink-faint)">집계 대기 중…</div></div>';
+        document.getElementById('colA').innerHTML=''; document.getElementById('colB').innerHTML='';
+      } else {
+        var top=data[0];
+        document.getElementById('hero').innerHTML=
+          '<div class="crown">👑</div>'
+          + '<div class="who"><div class="lbl">KILL MVP</div><div class="nm">'+esc(top.name)+'</div><div class="tm"'+tmCol(top.team)+'>'+esc(top.team)+'</div></div>'
+          + '<div class="kills"><b>'+top.kills+'</b><span>KILLS</span></div>';
+        var a='', b='';
+        data.slice(1,13).forEach(function(p,i){
+          var rank=i+2; var cls = rank<=3 ? (' s'+rank) : '';
+          var html='<div class="row'+cls+'"><div class="rk">'+rank+'</div>'
+            +'<div class="nm">'+esc(p.name)+'<span class="tm"'+tmCol(p.team)+'>'+esc(p.team)+'</span></div>'
+            +'<div class="kl">'+p.kills+'<small>킬</small></div></div>';
+          if(i<6) a+=html; else b+=html;
+        });
+        document.getElementById('colA').innerHTML=a;
+        document.getElementById('colB').innerHTML=b;
+      }
+      var lr=d.lastRound||0;
+      document.getElementById('roundStat').textContent = lr ? ('ROUND '+lr+' 종료') : '집계 대기';
+      document.getElementById('upd').textContent='업데이트 '+new Date().toLocaleTimeString('ko-KR');
+    }catch(e){ document.getElementById('upd').textContent='연결 대기…'; }
+  }
+  render();
+  setInterval(render, 10000);
+</script>
+</body>
+</html>

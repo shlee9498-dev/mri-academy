@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>G드컵 시즌3 · 팀 브랜드 등록</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  :root{
+    --bg:#0a0a0c; --card:#15151c; --elev:#1d1d27; --ink:#f4f4f5; --dim:#a1a1aa; --faint:#71717a;
+    --gold:#f5c518; --gold-deep:#caa00f; --blue:#5ac8fa; --green:#10b981; --red:#e63946; --line:#27272e;
+    --display:'Archivo Black',sans-serif; --body:'Pretendard Variable',sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:
+      radial-gradient(ellipse 80% 50% at 50% -5%, rgba(245,197,24,.10), transparent 60%),
+      var(--bg);
+    min-height:100vh;font-family:var(--body);color:var(--ink);padding:26px 16px 60px;
+    background-image:linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px),
+      radial-gradient(ellipse 80% 50% at 50% -5%, rgba(245,197,24,.10), transparent 60%);
+    background-size:37px 37px,37px 37px,auto;}
+  .wrap{max-width:560px;margin:0 auto;}
+  .top{text-align:center;margin-bottom:22px;}
+  .kick{font-family:var(--display);letter-spacing:.28em;font-size:13px;color:var(--gold);}
+  h1{font-size:25px;font-weight:900;margin-top:8px;letter-spacing:-.01em;}
+  .sub{color:var(--dim);font-size:14px;margin-top:8px;line-height:1.5;}
+
+  /* 미리보기 카드 */
+  .preview{position:relative;border-radius:16px;overflow:hidden;border:1px solid var(--line);
+    background:var(--card);padding:22px;margin:18px 0 8px;display:flex;align-items:center;gap:16px;min-height:104px;}
+  .preview::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,var(--pc,transparent) 0%,transparent 62%);opacity:.22;}
+  .pv-em{position:relative;width:72px;height:72px;border-radius:14px;flex:0 0 auto;
+    background:var(--elev);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  .pv-em img{width:100%;height:100%;object-fit:contain;}
+  .pv-em .ph{font-size:11px;color:var(--faint);text-align:center;padding:4px;}
+  .pv-tx{position:relative;}
+  .pv-tx .pn{font-weight:900;font-size:22px;}
+  .pv-tx .pc{display:inline-flex;align-items:center;gap:7px;margin-top:6px;font-size:12px;color:var(--dim);}
+  .pv-tx .dot{width:13px;height:13px;border-radius:4px;background:var(--pc,#3a3a44);border:1px solid rgba(255,255,255,.18);}
+  .pv-bar{position:absolute;left:0;top:0;bottom:0;width:6px;background:var(--pc,transparent);}
+
+  .sec{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-top:14px;}
+  .fld{margin-bottom:16px;}
+  .fld:last-child{margin-bottom:0;}
+  label{display:block;font-weight:700;font-size:14px;margin-bottom:7px;}
+  label .req{color:var(--gold);}
+  label .opt{color:var(--faint);font-weight:600;font-size:12px;margin-left:4px;}
+  input[type=text]{width:100%;background:var(--elev);border:1px solid var(--line);border-radius:10px;
+    padding:12px 14px;color:var(--ink);font-size:15px;font-family:var(--body);}
+  input[type=text]:focus{outline:none;border-color:var(--gold);}
+  .hint{font-size:12px;color:var(--faint);margin-top:6px;line-height:1.45;}
+
+  /* 컬러 */
+  .swatches{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:11px;}
+  .sw{width:34px;height:34px;border-radius:9px;cursor:pointer;border:2px solid transparent;}
+  .sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--gold);}
+  .colorrow{display:flex;align-items:center;gap:10px;}
+  .colorrow input[type=color]{width:46px;height:40px;border:1px solid var(--line);border-radius:9px;background:var(--elev);padding:3px;cursor:pointer;}
+  .colorrow input[type=text]{flex:1;}
+
+  /* 엠블럼 */
+  .drop{display:flex;align-items:center;gap:13px;}
+  .upbtn{display:inline-block;background:var(--elev);border:1px solid var(--line);border-radius:10px;
+    padding:11px 16px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap;}
+  .upbtn:hover{border-color:var(--gold);}
+  .emthumb{width:54px;height:54px;border-radius:10px;background:var(--elev);border:1px solid var(--line);
+    object-fit:contain;display:none;}
+  .emname{font-size:12px;color:var(--dim);}
+  input[type=file]{display:none;}
+
+  .submit{width:100%;margin-top:18px;background:var(--gold);color:#1a1500;border:none;border-radius:12px;
+    padding:15px;font-family:var(--body);font-weight:900;font-size:16px;cursor:pointer;}
+  .submit:disabled{opacity:.5;cursor:not-allowed;}
+  .msg{margin-top:14px;border-radius:10px;padding:13px 15px;font-size:14px;display:none;line-height:1.5;}
+  .msg.ok{display:block;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.5);color:#7ff0c8;}
+  .msg.err{display:block;background:rgba(230,57,70,.12);border:1px solid rgba(230,57,70,.5);color:#ff9aa3;}
+  .pii-note{font-size:11.5px;color:var(--faint);margin-top:16px;line-height:1.55;text-align:center;}
+  .back{display:block;text-align:center;margin-top:18px;color:var(--dim);font-size:13px;text-decoration:none;}
+  .back:hover{color:var(--gold);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <!-- 시즌 번호는 /api/gdcup-meta가 채운다. 여기 숫자를 적지 말 것. -->
+    <div class="kick" id="kick">G드컵</div>
+    <h1>팀 브랜드 등록</h1>
+    <div class="sub">우리 팀 <b>컬러</b>와 <b>엠블럼(마크)</b>을 등록하면<br>중계 순위·결과 화면에 그대로 박혀서 나옵니다.<br>없으면 색만 골라도 OK!</div>
+  </div>
+
+  <!-- 실시간 미리보기 -->
+  <div class="preview" id="pv">
+    <div class="pv-bar"></div>
+    <div class="pv-em" id="pvEm"><div class="ph">엠블럼<br>미리보기</div></div>
+    <div class="pv-tx">
+      <div class="pn" id="pvName">우리 팀</div>
+      <div class="pc"><span class="dot"></span><span id="pvColor">#color</span></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="fld">
+      <label>팀명 <span class="req">*</span></label>
+      <input type="text" id="team" placeholder="예: 파워 / 광부 / 세휘 …" maxlength="40" autocomplete="off">
+      <div class="hint">신청서에 적은 <b>팀명과 똑같이</b> 적어주세요. (다르면 화면에 안 붙습니다)</div>
+    </div>
+
+    <div class="fld">
+      <label>팀 컬러 <span class="req">*</span></label>
+      <div class="swatches" id="sw"></div>
+      <div class="colorrow">
+        <input type="color" id="colorPick" value="#f5c518">
+        <input type="text" id="colorHex" value="#F5C518" maxlength="7" autocomplete="off">
+      </div>
+      <div class="hint">스와치를 누르거나 직접 골라도 됩니다.</div>
+    </div>
+
+    <div class="fld">
+      <label>엠블럼(마크) <span class="opt">선택</span></label>
+      <div class="drop">
+        <label class="upbtn" for="emFile">이미지 올리기</label>
+        <img class="emthumb" id="emThumb" alt="">
+        <span class="emname" id="emName">PNG·JPG · 256px로 자동 변환</span>
+      </div>
+      <input type="file" id="emFile" accept="image/png,image/jpeg,image/webp">
+      <div class="hint">배경 투명한 PNG가 제일 예쁩니다. 큰 이미지도 자동으로 줄여서 올라갑니다.</div>
+    </div>
+
+    <div class="fld">
+      <label>대표 디스코드 <span class="opt">선택</span></label>
+      <input type="text" id="captain" placeholder="예: GmI_mri" maxlength="60" autocomplete="off">
+      <div class="hint">확인 연락용. 운영진만 봅니다.</div>
+    </div>
+
+    <button class="submit" id="go">등록하기</button>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="pii-note">제출한 정보는 G드컵 방송 연출 용도로만 사용됩니다.</div>
+  <a class="back" href="./gdcup-s3.html">← G드컵 시즌3 안내로</a>
+</div>
+
+<script>
+  var API_BASE = "https://mri-academy-production.up.railway.app";
+  var PRESETS = ["#f5c518","#e63946","#5ac8fa","#a855f7","#10b981","#ff7ab8","#ff8c42","#ffffff","#2dd4bf","#7c83ff"];
+  var state = { color:"#F5C518", emblem:"" };
+
+  var pv = document.getElementById('pv');
+  var pvName = document.getElementById('pvName');
+  var pvColor = document.getElementById('pvColor');
+  var pvEm = document.getElementById('pvEm');
+  var colorPick = document.getElementById('colorPick');
+  var colorHex = document.getElementById('colorHex');
+
+  function applyColor(hex){
+    hex = (hex||"").trim(); if(hex && hex[0] !== '#') hex = '#'+hex;
+    if(!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+    state.color = hex.toUpperCase();
+    pv.style.setProperty('--pc', hex);
+    pvColor.textContent = state.color;
+    colorPick.value = hex;
+    if(colorHex.value.toUpperCase() !== state.color) colorHex.value = state.color;
+    document.querySelectorAll('.sw').forEach(function(s){ s.classList.toggle('on', s.dataset.c.toUpperCase()===state.color); });
+  }
+  // 스와치 생성
+  var swWrap = document.getElementById('sw');
+  PRESETS.forEach(function(c){
+    var d=document.createElement('div'); d.className='sw'; d.style.background=c; d.dataset.c=c;
+    d.addEventListener('click', function(){ applyColor(c); });
+    swWrap.appendChild(d);
+  });
+  colorPick.addEventListener('input', function(){ applyColor(colorPick.value); });
+  colorHex.addEventListener('input', function(){ applyColor(colorHex.value); });
+
+  document.getElementById('team').addEventListener('input', function(e){
+    pvName.textContent = e.target.value.trim() || '우리 팀';
+  });
+
+  // 엠블럼 업로드 → 256px 리사이즈 → base64(PNG)
+  document.getElementById('emFile').addEventListener('change', function(e){
+    var f = e.target.files && e.target.files[0]; if(!f) return;
+    var rd = new FileReader();
+    rd.onload = function(){
+      var img = new Image();
+      img.onload = function(){
+        var max=256, w=img.width, h=img.height, s=Math.min(1, max/Math.max(w,h));
+        var cw=Math.round(w*s), ch=Math.round(h*s);
+        var cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
+        cv.getContext('2d').drawImage(img,0,0,cw,ch);
+        var data = cv.toDataURL('image/png');
+        if(data.length > 330000){ data = cv.toDataURL('image/jpeg',0.82); } // 너무 크면 JPEG로
+        state.emblem = data;
+        var t=document.getElementById('emThumb'); t.src=data; t.style.display='inline-block';
+        document.getElementById('emName').textContent = f.name.slice(0,28);
+        pvEm.innerHTML = '<img src="'+data+'" alt="">';
+      };
+      img.src = rd.result;
+    };
+    rd.readAsDataURL(f);
+  });
+
+  applyColor("#F5C518");
+
+  // 제출
+  var msg = document.getElementById('msg'), go = document.getElementById('go');
+  function showMsg(t, ok){ msg.className='msg '+(ok?'ok':'err'); msg.textContent=t; }
+  go.addEventListener('click', async function(){
+    var team = document.getElementById('team').value.trim();
+    if(!team){ showMsg('팀명을 입력해주세요.', false); return; }
+    go.disabled=true; go.textContent='등록 중…'; msg.className='msg';
+    try{
+      var r = await fetch(API_BASE+"/api/gdcup-team-brand", {
+        method:"POST", headers:{"content-type":"application/json"},
+        body: JSON.stringify({ team_name:team, color:state.color, emblem:state.emblem,
+          captain:document.getElementById('captain').value.trim() })
+      });
+      var d = await r.json().catch(function(){return {};});
+      if(r.ok && d.ok){ showMsg('✅ "'+team+'" 팀 브랜드가 등록됐어요! 같은 팀명으로 다시 보내면 수정됩니다.', true); }
+      else { showMsg('등록 실패: '+(d.error||r.status)+' — 잠시 후 다시 시도해주세요.', false); }
+    }catch(err){ showMsg('네트워크 오류로 등록하지 못했습니다. 다시 시도해주세요.', false); }
+    go.disabled=false; go.textContent='등록하기';
+  });
+
+  // 시즌 라벨 — 서버가 정본. 화면 하드코딩 금지 (이 페이지가 시즌3 운영 중 "SEASON 2"를 달고 있었다).
+  // 실패해도 숫자 없이 "G드컵"으로 남을 뿐이라 등록 기능에는 영향이 없다.
+  fetch(API_BASE+"/api/gdcup-meta").then(function(r){ return r.json(); }).then(function(d){
+    if(d && d.currentSeason) document.getElementById('kick').textContent = 'G드컵 SEASON ' + d.currentSeason;
+  }).catch(function(){});
+</script>
+</body>
+</html>
