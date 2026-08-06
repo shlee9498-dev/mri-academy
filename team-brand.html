@@ -108,6 +108,12 @@
     </div>
 
     <div class="fld">
+      <label>팀 태그</label>
+      <input type="text" id="tag" placeholder="예: PWR" maxlength="4" autocomplete="off">
+      <div class="hint">방송 화면·옵저버가 쓰는 <b>영문/숫자 2~4자</b>. 비우면 팀명 앞 2글자를 씁니다.</div>
+    </div>
+
+    <div class="fld">
       <label>팀 컬러 <span class="req">*</span></label>
       <div class="swatches" id="sw"></div>
       <div class="colorrow">
@@ -214,6 +220,7 @@
       var r = await fetch(API_BASE+"/api/gdcup-team-brand", {
         method:"POST", headers:{"content-type":"application/json"},
         body: JSON.stringify({ team_name:team, color:state.color, emblem:state.emblem,
+          tag:document.getElementById('tag').value.trim(),
           captain:document.getElementById('captain').value.trim() })
       });
       var d = await r.json().catch(function(){return {};});

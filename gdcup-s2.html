@@ -1563,24 +1563,15 @@ function copyApplication() {
   });
 }
 
-function copyAccount() {
-  navigator.clipboard.writeText('3333-24-0264625').then(() => {
-    const btn = document.getElementById('acctBtn');
-    btn.textContent = '✓ 복사됨';
-    btn.classList.add('copied');
-    setTimeout(() => {
-      btn.textContent = '계좌 복사';
-      btn.classList.remove('copied');
-    }, 2000);
-  });
-}
 </script>
 
 <script>
 (function(){
   var GAPI="https://mri-academy-production.up.railway.app";
   // 이 페이지는 시즌2 아카이브. 서버 폴백은 현재 시즌이므로 반드시 명시해야 한다.
-  var SEASON=2;
+  // blk1이 IIFE라 var SEASON은 여기 갇힌다. 아래 스크립트 3개가 같은 이름을 읽어
+  // ReferenceError로 죽고 있었다(팀목록·점수·솔로신청). 공유 스코프에 올린다.
+  var SEASON = window.GDCUP_SEASON = 2;
   function setCount(n){var e=document.getElementById('gdcupCountNum');if(e&&n!=null)e.textContent=n;}
   function loadCount(){fetch(GAPI+"/api/gdcup-count?season="+SEASON).then(function(r){return r.json();}).then(function(d){setCount(d.teams);}).catch(function(){});}
   var _sent=false;
@@ -1627,6 +1618,7 @@ function copyAccount() {
 <script>
 (function(){
   var GAPI="https://mri-academy-production.up.railway.app";
+  var SEASON = window.GDCUP_SEASON || 2;   // blk1의 IIFE 밖이라 공유값을 읽는다
   function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
   function loadTeams(){
     fetch(GAPI+"/api/gdcup-list?season="+SEASON).then(function(r){return r.json();}).then(function(d){
@@ -1664,6 +1656,7 @@ function copyAccount() {
 <script>
 (function(){
   var GAPI="https://mri-academy-production.up.railway.app";
+  var SEASON = window.GDCUP_SEASON || 2;   // blk1의 IIFE 밖이라 공유값을 읽는다
   function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
   function medal(i){return ["🥇","🥈","🥉"][i]||(i+1);}
   function loadScores(){
@@ -1698,6 +1691,7 @@ function copyAccount() {
 <script>
 (function(){
   var GAPI="https://mri-academy-production.up.railway.app";
+  var SEASON = window.GDCUP_SEASON || 2;   // blk1의 IIFE 밖이라 공유값을 읽는다
   function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
   window.submitSolo=function(){
     var ign=(document.getElementById('soloIgn').value||'').trim();

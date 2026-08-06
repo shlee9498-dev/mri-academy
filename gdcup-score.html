@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex">
-<title>G드컵 시즌2 · 점수 입력</title>
+<title>G드컵 · 점수 입력</title>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
@@ -449,6 +449,7 @@
     var ro=readOnly();
     syncLinks();
     $("kick").textContent="G드컵 SEASON "+season;
+    document.title="G드컵 시즌"+season+" · 점수 입력";
     $("roMsg").textContent = ro ? "🔒 시즌 2는 조회 전용 (기록 동결)" : "";
     var sa=$("saveAll"); if(sa) sa.style.display = ro ? "none" : "";
     var ap=$("apBox"); if(ap) ap.style.display = ro ? "none" : "";

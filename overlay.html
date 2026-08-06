@@ -199,7 +199,7 @@
   }
   setSeason(SEASON);   // ?season=N이면 즉시, 아니면 첫 응답에서 채워진다
 
-  function esc(s){ return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function renderStandings(d){
     LASTS = d;
     if(d && d.season) setSeason(d.season);   // 순위가 비어 있어도(아래 early return) 라벨은 먼저 맞춘다
@@ -209,8 +209,8 @@
     empty.style.display='none';
     rows.innerHTML = st.slice(0,16).map(function(t,i){
       var b = BRANDS[t.name] || {};
-      var em = b.emblem ? '<img class="em" src="'+b.emblem+'">' : '';
-      var stl = (b.color && i!==0) ? ' style="border-left:4px solid '+b.color+'"' : '';
+      var em = b.emblem ? '<img class="em" src="'+esc(b.emblem)+'">' : '';
+      var stl = (b.color && i!==0) ? ' style="border-left:4px solid '+esc(b.color)+'"' : '';
       return '<div class="srow'+(i===0?' lead':'')+'"'+stl+'><span class="rk">'+(i+1)+'</span>'+
              em+'<span class="tm">'+esc(t.name)+'</span>'+
              '<span class="pt">'+t.points+'<span class="kl">'+t.kills+'K</span></span></div>';
