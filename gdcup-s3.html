@@ -140,7 +140,7 @@ footer a{color:var(--ink-dim);text-decoration:none;}footer a:hover{color:var(--g
 <div class="topbar">
   <a href="https://shlee9498-dev.github.io/gmi-clancup/" class="brand">GmI CLANCUP</a>
   <div class="topbar-right">
-    <a href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-history.html">🏆 명예의전당</a>
+    <a href="gdcup-history.html">🏆 명예의전당</a>
     <a href="https://discord.gg/YfZD8d22wJ" target="_blank">디스코드</a>
     <a href="#apply" class="topbar-cta">신청하기</a>
   </div>
@@ -229,7 +229,9 @@ footer a{color:var(--ink-dim);text-decoration:none;}footer a:hover{color:var(--g
     <p style="font-size:12.5px;color:var(--ink-dim);margin:10px 2px 2px;line-height:1.75;">
       평균딜 기준으로 1차 산정한 뒤, 역대 최고 티어가 더 높은 등급을 보장하면 그쪽으로 올립니다
       (서바이버·마스터 → 최소 T0 · 다이아·크리스탈 → 최소 T1).
-      마스터 이상이면서 현시즌 RP 3700+인 경우의 S 판정은 자동조회(서버)에서만 이뤄집니다.
+      <strong style="color:var(--gold)">S 판정 기준은 평균딜 400+ 또는 최고티어 서바이버</strong>입니다.
+      자동조회가 1차 산정하고 <strong>최종 판정은 운영진이 합니다</strong> — 자동조회가 되지 않는 계정도
+      운영진 확인을 거쳐 S 판정을 받을 수 있습니다.
     </p>
   </div>
   <div class="callout"><strong>👑 T0 팀장 페널티</strong>: T0(괴물)이 팀장이면 BPI <strong>+1</strong> (10 → 11).</div>
@@ -237,6 +239,48 @@ footer a{color:var(--ink-dim);text-decoration:none;}footer a:hover{color:var(--g
     <div class="card-title">⚖️ 가중치 (계단식 · 시즌3 재산정)</div>
     <!-- 가중치표는 서버 meta가 정본 — 여기에 표를 두지 않는다(구표 하드코딩 표시 사고 재발 방지). 로드 실패 시 표를 비워둔다. -->
     <div id="weightRows"><div class="weight-row"><span class="weight-name" style="grid-column:1 / -1;color:var(--ink-faint);">서버 기준 가중치 불러오는 중…</span></div></div>
+    <!-- 차감폭은 meta.sPenaltyPerExtraS가 정본 — 숫자를 본문에 적지 않는다. -->
+    <p id="sPenaltyNote" style="font-size:12.5px;color:var(--ink-dim);margin:10px 2px 2px;line-height:1.75;"></p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="card">
+    <div class="card-title">🏅 순위 점수</div>
+    <div class="weight-row"><span class="weight-bpi">1위</span><span class="weight-mult">10점</span><span class="weight-name">치킨</span></div>
+    <div class="weight-row"><span class="weight-bpi">2위</span><span class="weight-mult">6점</span><span class="weight-name"></span></div>
+    <div class="weight-row"><span class="weight-bpi">3위</span><span class="weight-mult">5점</span><span class="weight-name"></span></div>
+    <div class="weight-row"><span class="weight-bpi">4위</span><span class="weight-mult">4점</span><span class="weight-name">연속 보너스 사정권</span></div>
+    <div class="weight-row"><span class="weight-bpi">5위</span><span class="weight-mult">3점</span><span class="weight-name"></span></div>
+    <div class="weight-row"><span class="weight-bpi">6위</span><span class="weight-mult">2점</span><span class="weight-name"></span></div>
+    <div class="weight-row"><span class="weight-bpi">7~8위</span><span class="weight-mult">1점</span><span class="weight-name"></span></div>
+    <div class="weight-row standard"><span class="weight-bpi">9위 이하</span><span class="weight-mult">0점</span><span class="weight-name">킬 점수는 그대로 반영</span></div>
+    <p style="font-size:12.5px;color:var(--ink-dim);margin:10px 2px 2px;line-height:1.75;">
+      라운드 점수 = <strong>순위점 + 팀 킬 + 연속 보너스</strong>, 여기에 팀 BPI 가중치를 곱합니다.
+    </p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="card">
+    <div class="card-title">🎮 진행 방식 · 인게임 설정</div>
+    <p style="font-size:13.5px;color:var(--ink);margin:2px 2px 12px;line-height:1.85;">
+      본 대회는 <strong style="color:var(--gold)">e스포츠 모드</strong>로 진행됩니다.
+      차량 등 커스텀 스킨은 적용되지 않습니다. <strong>맵은 고정</strong>이며 랜덤맵은 없습니다.
+    </p>
+    <div class="weight-row"><span class="weight-bpi">R1</span><span class="weight-mult">21:00</span><span class="weight-name"></span></div>
+    <div class="weight-row"><span class="weight-bpi">R2</span><span class="weight-mult">21:35</span><span class="weight-name"></span></div>
+    <div class="weight-row"><span class="weight-bpi">R3</span><span class="weight-mult">22:10</span><span class="weight-name"></span></div>
+    <div class="weight-row"><span class="weight-bpi">R4</span><span class="weight-mult">22:45</span><span class="weight-name"></span></div>
+    <div class="weight-row standard"><span class="weight-bpi">R5</span><span class="weight-mult">23:20</span><span class="weight-name">종료 23:50 예정</span></div>
+    <p style="font-size:12.5px;color:var(--ink-dim);margin:10px 2px 2px;line-height:1.75;">
+      팀전 총 <strong>5라운드</strong> · 판당 30분 · 휴식 5분.
+      <strong style="color:var(--gold)">멤버 교체는 라운드 사이 휴식 시간에만</strong> 가능합니다 —
+      라운드 진행 중 교체는 인정되지 않습니다.<br>
+      팀 BPI는 <strong>확정 4인 기준으로 동결</strong>되며 예비·교체 인원은 BPI에 반영되지 않습니다.<br>
+      20:00 솔로 이벤트는 <strong>팀 순위·킬 MVP 집계에 포함되지 않습니다.</strong><br>
+      티어 최종 판정 및 팀 구성 조율 권한은 <strong>운영진</strong>에게 있습니다.
+    </p>
   </div>
 </section>
 
@@ -265,7 +309,8 @@ footer a{color:var(--ink-dim);text-decoration:none;}footer a:hover{color:var(--g
 <!-- APPLY FORM -->
 <section id="apply" class="anchor">
   <div class="section-head"><div class="section-kicker">APPLY</div><h2 class="section-title">팀 신청</h2>
-  <p class="section-desc">양식 작성 → 신청서 생성 → 운영진 자동 전달 (참가비 무료)</p></div>
+  <p class="section-desc">양식 작성 → 신청서 생성 → 운영진 자동 전달 (참가비 무료)
+    <b id="applyDeadlineNote" style="color:var(--gold);display:block;margin-top:6px;"></b></p></div>
 
   <div class="form-section">
     <div class="callout" style="margin-bottom:12px;border-color:var(--gold-soft);background:linear-gradient(135deg,rgba(245,197,24,.06),transparent);">
@@ -346,7 +391,7 @@ footer a{color:var(--ink-dim);text-decoration:none;}footer a:hover{color:var(--g
 <section class="anchor">
   <div class="section-head"><div class="section-kicker">FAQ</div><h2 class="section-title">자주 묻는 질문</h2></div>
   <div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Q. 계좌는 꼭 적어야 하나요?</div><div class="faq-a"><strong>네, 시즌3부터 필수</strong>입니다. 상금을 팀장 취합 없이 멤버 개인에게 바로 입금하기 위해서예요. <strong>반드시 본인(해당 멤버) 명의</strong> 계좌만 적어주세요. 계좌·실명은 상금 지급 목적으로만 쓰이고 운영진(오너)만 조회할 수 있으며, 공개 팀 목록에는 절대 노출되지 않습니다.</div></div>
-  <div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Q. 내 티어를 모르겠어요</div><div class="faq-a">배그 닉을 넣고 <b>전적 자동조회</b>를 누르면 서버가 <b>현시즌</b> 기록으로 티어·평딜·BPI를 자동 산정합니다. 닉을 못 찾을 때만 역대 최고 티어·평균딜을 직접 입력하시면 대략값으로 폴백됩니다(이 경우 S급은 판정되지 않습니다).</div></div>
+  <div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Q. 내 티어를 모르겠어요</div><div class="faq-a">배그 닉을 넣고 <b>전적 자동조회</b>를 누르면 서버가 <b>현시즌</b> 기록으로 티어·평딜·BPI를 자동 산정합니다. 닉을 못 찾을 때만 역대 최고 티어·평균딜을 직접 입력하시면 대략값으로 폴백됩니다. 이 경우에도 <b>운영진 확인을 거쳐 S 판정을 받을 수 있습니다</b>.</div></div>
   <div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Q. 친구가 없어요 (솔로 신청)</div><div class="faq-a">솔로 신청 OK. 운영진이 BPI 맞춰 자동 매칭합니다.</div></div>
   <div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Q. 참가비가 있나요?</div><div class="faq-a">완전 무료입니다. 보증금도 없어요. 대신 8/7(금) 참가 확정 체크인에 응답해주세요.</div></div>
 </section>
@@ -357,7 +402,7 @@ footer a{color:var(--ink-dim);text-decoration:none;}footer a:hover{color:var(--g
   <div>GmI 클랜 · G드컵 시즌3 · 2026 · 비영리 친목 대회</div>
   <div style="margin-top:8px;">
     <a href="https://shlee9498-dev.github.io/gmi-clancup/">메인</a> ·
-    <a href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-history.html">🏆 명예의전당</a> ·
+    <a href="gdcup-history.html">🏆 명예의전당</a> ·
     <a href="https://discord.gg/YfZD8d22wJ" target="_blank">디스코드</a>
   </div>
 </footer>
@@ -642,7 +687,7 @@ function copyApplication(){
           // 서버 검증이 정본 — 클라 판정을 통과해도 여기서 막힐 수 있다
           var why=(d.reasons||[]).map(function(x){
             if(x.code==='bpi_cap_exceeded')return '합산 '+x.teamBpi+' — 상한 '+x.cap+' 초과 ('+x.over+'점 낮춰야 함)';
-            if(x.code==='s_tier_limit')return 'S급 '+x.count+'명 — 팀당 '+x.max+'명까지';
+            if(x.code==='s_tier_limit')return 'S급 '+x.count+'명 — 권장 팀당 '+x.max+'명';
             return x.code;
           }).join('\n');
           alert('신청이 접수되지 않았습니다.\n\n'+(why||d.message||d.error||'서버 검증 실패')); return;
@@ -806,6 +851,21 @@ function copyApplication(){
     if(cp) cp.textContent=(META.cap&&META.cap.team!=null?META.cap.team:'—');
     var sp=document.getElementById('sCapProse');
     if(sp&&META.cap&&META.cap.sTier!=null) sp.textContent='S급은 팀당 '+META.cap.sTier+'명';
+    // S 누진 차감 안내 — 차감폭도 meta가 정본이라 여기서 문장을 만든다.
+    var pen=Number(META.sPenaltyPerExtraS)||0, pn=document.getElementById('sPenaltyNote');
+    if(pn) pn.innerHTML = pen>0
+      ? 'S급이 <strong>2명 이상</strong>이면 1명당 가중치 <strong style="color:var(--gold)">−'+pen.toFixed(2)
+        +'</strong>가 추가로 붙습니다. BPI 구간만으로는 S 편중이 잡히지 않아 인원수로 따로 조정합니다.'
+      : '';
+    // 신청 마감도 서버 값을 그대로 쓴다 — 본문에 시각을 적으면 env를 바꿀 때 어긋난다.
+    var dl=document.getElementById('applyDeadlineNote');
+    if(dl && META.applyDeadline){
+      var t=new Date(META.applyDeadline);
+      dl.textContent = isNaN(t) ? '' : ('신청 마감 ' + t.toLocaleString('ko-KR',
+        {timeZone:'Asia/Seoul', month:'numeric', day:'numeric', weekday:'short',
+         hour:'2-digit', minute:'2-digit', hour12:false}) + ' (KST)'
+        + (META.applyOpen===false ? ' — 마감됨' : ''));
+    }
     // ── 표시 레이어: 정보 섹션의 티어 BPI·가중치표·정석 팩트를 meta로 렌더 ──
     // (검증 로직과 무관한 표시 전용. 과거 구표 하드코딩이 신청자에게 노출된 사고 재발 방지)
     try{
