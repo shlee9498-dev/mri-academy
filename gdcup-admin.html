@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>G드컵 운영진 · 입금 확정</title>
+<link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" rel="stylesheet">
+<style>
+:root{--bg:#0a0a0c;--bg-card:#1a1a20;--bg-elev:#20202a;--ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;--gold:#f5c518;--green:#10b981;--blue:#5ac8fa;--red:#e63946;--line:#27272a;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--ink);font-family:"Pretendard Variable",sans-serif;padding:18px;max-width:720px;margin:0 auto;}
+h1{font-size:20px;margin-bottom:4px;}
+.sub{color:var(--ink-dim);font-size:13px;margin-bottom:18px;}
+.keybar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+.keybar input{flex:1;min-width:160px;background:var(--bg-card);border:1px solid var(--line);color:var(--ink);padding:11px 13px;border-radius:8px;font-size:14px;}
+.btn{border:none;border-radius:8px;padding:11px 14px;font-weight:700;font-size:13px;cursor:pointer;}
+.btn-gold{background:var(--gold);color:#000;}
+.btn-ghost{background:var(--bg-card);color:var(--ink);border:1px solid var(--line);}
+.stat{font-size:13px;color:var(--ink-dim);margin-bottom:12px;}
+.stat b{color:var(--gold);font-size:16px;}
+.card{background:var(--bg-card);border:1px solid var(--line);border-radius:11px;padding:14px 15px;margin-bottom:10px;}
+.card.confirmed{border-color:var(--green);}
+.row1{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;}
+.tname{font-size:16px;font-weight:800;}
+.badge{font-size:12px;font-weight:700;padding:3px 9px;border-radius:20px;white-space:nowrap;}
+.b-applied{background:rgba(161,161,170,.15);color:var(--ink-dim);}
+.b-confirmed{background:rgba(16,185,129,.15);color:var(--green);}
+.b-cancelled{background:rgba(230,57,70,.15);color:var(--red);}
+.meta{color:var(--ink-dim);font-size:12.5px;margin:3px 0;}
+.meta b{color:var(--ink);}
+.contact{color:var(--blue);font-size:12.5px;margin:5px 0;}
+.acts{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap;}
+.acts button{flex:1;min-width:90px;padding:9px;border-radius:7px;border:1px solid var(--line);background:var(--bg-elev);color:var(--ink);font-weight:700;font-size:12.5px;cursor:pointer;}
+.acts .ok{border-color:var(--green);color:var(--green);}
+.acts .wait{color:var(--ink-dim);}
+.acts .del{border-color:var(--red);color:var(--red);}
+.msg{padding:14px;text-align:center;color:var(--ink-dim);}
+.warn{background:rgba(230,57,70,.1);border:1px solid var(--red);color:#fca5a5;padding:10px 13px;border-radius:8px;font-size:13px;margin-bottom:12px;}
+</style>
+</head>
+<body>
+<h1>🏆 G드컵 운영진 — 입금 확정</h1>
+<p class="sub">입금 확인한 팀에 ✅확정을 누르면 사이트 명단·디스코드에 자동 반영됩니다. (운영진 전용)</p>
+
+<div class="keybar">
+  <input type="password" id="key" placeholder="운영진 키 입력 (GDCUP_ADMIN_KEY)">
+  <button class="btn btn-gold" onclick="saveKeyAndLoad()">불러오기</button>
+</div>
+<div id="warn"></div>
+<!-- 레이트리밋 안내 배너 — 429일 때만 보인다. 문구는 상태 고지에 한정하고
+     재시도를 권하는 표현을 쓰지 않는다. 안내를 보고 연타하면 대회 운영이 막힌다. -->
+<div id="rlBanner" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:8px;
+     background:#3a2a12;border:1px solid #7a5a1e;font-size:13px;line-height:1.55;"></div>
+<button class="btn btn-ghost" style="width:100%;margin-bottom:8px;" onclick="postBoard()">📋 디코에 '현재 모집현황' 게시</button>
+<button class="btn btn-ghost" style="width:100%;margin-bottom:6px;" onclick="downloadObsCsv('utf8')">⬇️ 옵저버 CSV 내려받기 (확정 팀)</button>
+<div style="display:flex;gap:6px;margin-bottom:6px;">
+  <button class="btn btn-ghost" style="flex:1;" onclick="downloadObsCsv('cp949')">CP949로</button>
+  <button class="btn btn-ghost" style="flex:1;" onclick="downloadObsCsv('ascii')">영문 태그로</button>
+</div>
+<p class="sub" style="margin-bottom:14px;">기본은 BOM 없는 UTF-8. 옵저버에서 한글이 깨지면 CP949 → 그래도 깨지면 영문 태그 순으로 시도하세요.</p>
+<div class="stat" id="stat"></div>
+<div id="list"><div class="msg">키를 입력하고 불러오기를 누르세요.</div></div>
+
+<div style="margin:14px 0 6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+  <label for="seasonSel" style="font-size:13px;opacity:.85;">시즌</label>
+  <select id="seasonSel" onchange="onSeasonChange()" style="padding:7px 10px;border-radius:7px;"></select>
+  <span id="seasonHint" style="font-size:12px;opacity:.6;"></span>
+</div>
+
+<h2 style="font-size:16px;margin:22px 0 8px;">🙋 솔로 / 용병 대기</h2>
+<div id="soloAdminList"></div>
+
+<script>
+var GAPI="https://mri-academy-production.up.railway.app";
+
+// ─── 레이트리밋(429) 처리 ────────────────────────────────────────────────
+// 서버가 429와 함께 retry_after(초)를 준다. 그동안 버튼을 잠그고 남은 시간을 세어
+// 보여준다. 잠그는 이유는 안내가 아니라 차단이다 — 예전에 "재시도해주세요" 안내를
+// 보고 4번 눌러 40판이 중복 기록된 적이 있다. 문구도 행동을 유도하지 않는 형태로만
+// 쓴다("n초 후 다시 시도할 수 있습니다"). 자동 재시도는 딱 1회까지만 하고, 그 뒤에는
+// 사람이 판단하도록 넘긴다 — 자동으로 계속 두드리면 차단이 길어질 뿐이다.
+var rlTimer=null, rlAutoRetried={};
+function rlLockButtons(lock){
+  var btns=document.querySelectorAll('button');
+  for(var i=0;i<btns.length;i++){
+    var b=btns[i];
+    if(lock){ if(!b.disabled){ b.disabled=true; b.setAttribute('data-rl-locked','1'); } }
+    else if(b.getAttribute('data-rl-locked')==='1'){ b.disabled=false; b.removeAttribute('data-rl-locked'); }
+  }
+}
+// what: 무엇이 대기 중인지 사람이 읽을 문구. onReady: 카운트다운이 끝났을 때 실행(자동 재시도 1회).
+function rlHold(retryAfter, what, onReady){
+  var left=Math.max(1, Number(retryAfter)||60);
+  var el=document.getElementById('rlBanner');
+  if(rlTimer){clearInterval(rlTimer);rlTimer=null;}
+  rlLockButtons(true);
+  el.style.display='block';
+  function paint(){
+    el.innerHTML='⏳ <b>요청이 잠시 제한되었습니다</b> — '+what+
+      '<br><span style="opacity:.85">'+left+'초 후 다시 시도할 수 있습니다. 그동안 버튼은 잠겨 있습니다.</span>';
+  }
+  paint();
+  rlTimer=setInterval(function(){
+    left--;
+    if(left>0){paint();return;}
+    clearInterval(rlTimer); rlTimer=null;
+    rlLockButtons(false);
+    if(onReady){
+      el.innerHTML='🔄 <b>제한이 풀렸습니다</b> — '+what+' 자동으로 한 번 이어서 진행합니다.';
+      onReady();
+    }else{
+      el.innerHTML='✅ <b>제한이 풀렸습니다</b> — '+what+
+        '<br><span style="opacity:.85">진행 상황은 목록에서 확인하세요.</span>';
+      setTimeout(function(){ el.style.display='none'; },6000);
+    }
+  },1000);
+}
+function rlClear(){
+  if(rlTimer){clearInterval(rlTimer);rlTimer=null;}
+  rlLockButtons(false);
+  var el=document.getElementById('rlBanner');
+  if(el) el.style.display='none';
+}
+// 시즌 목록·기본값은 서버(/api/gdcup-meta)에서 받는다. 여기에 하드코딩하면
+// 시즌이 늘 때마다 프론트를 고쳐야 하고, 서버와 어긋나면 조회 시즌이 틀어진다.
+var SEASON=null;
+function seasonQS(){ return SEASON!=null ? ("?season="+SEASON) : ""; }
+function onSeasonChange(){
+  var sel=document.getElementById('seasonSel');
+  SEASON=parseInt(sel.value,10);
+  try{ sessionStorage.setItem('gdcupSeason',String(SEASON)); }catch(e){}
+  if(getKey())loadAdmin();
+}
+function loadSeasons(){
+  return fetch(GAPI+"/api/gdcup-meta").then(function(r){return r.json();}).then(function(m){
+    var sel=document.getElementById('seasonSel');
+    var list=(m&&m.seasons&&m.seasons.length)?m.seasons:[m&&m.currentSeason].filter(Boolean);
+    var saved=null; try{ saved=parseInt(sessionStorage.getItem('gdcupSeason'),10); }catch(e){}
+    SEASON=(saved&&list.indexOf(saved)>=0)?saved:(m&&m.currentSeason)||list[list.length-1];
+    sel.innerHTML=list.map(function(s){
+      return '<option value="'+s+'"'+(s===SEASON?' selected':'')+'>시즌 '+s+(s===m.currentSeason?' (현재)':'')+'</option>';
+    }).join('');
+    document.getElementById('seasonHint').textContent=(SEASON===m.currentSeason)?'':'과거 시즌 조회 중';
+  }).catch(function(){
+    // meta 실패 시 시즌을 추측하지 않는다 — 서버 폴백(현재 시즌)에 맡긴다
+    document.getElementById('seasonHint').textContent='시즌 목록을 못 불러왔어요 (현재 시즌으로 조회)';
+  });
+}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+function getKey(){return document.getElementById('key').value.trim();}
+function saveKeyAndLoad(){var k=getKey(); if(k){try{sessionStorage.setItem('gdcupKey',k);}catch(e){}} loadAdmin();}
+
+function loadAdmin(){
+  var k=getKey(); var warn=document.getElementById('warn'); warn.innerHTML='';
+  if(!k){warn.innerHTML='<div class="warn">키를 입력하세요.</div>';return;}
+  document.getElementById('list').innerHTML='<div class="msg">불러오는 중…</div>';
+  fetch(GAPI+"/api/gdcup-admin-list"+seasonQS(),{headers:{"x-admin-key":k}})
+  .then(function(r){
+    if(r.status===401){throw new Error('unauthorized');}
+    return r.json();
+  })
+  .then(function(d){render((d&&d.teams)||[]);loadSolosAdmin();})
+  .catch(function(e){
+    document.getElementById('list').innerHTML='';
+    if(String(e.message)==='unauthorized') warn.innerHTML='<div class="warn">❌ 키가 틀렸어요. Railway의 GDCUP_ADMIN_KEY 값과 똑같이 입력하세요.</div>';
+    else warn.innerHTML='<div class="warn">불러오기 실패. 잠시 후 다시 시도하세요.</div>';
+  });
+}
+
+function render(teams){
+  var applied=0,confirmed=0;
+  teams.forEach(function(t){ if(t.status==='confirmed')confirmed++; else if(t.status!=='cancelled')applied++; });
+  document.getElementById('stat').innerHTML='✅ 확정 <b>'+confirmed+'</b> · ⏳ 신청 <b>'+applied+'</b> / 16팀';
+  var el=document.getElementById('list');
+  if(!teams.length){el.innerHTML='<div class="msg">아직 신청한 팀이 없어요.</div>';return;}
+  function card(t){
+    var st=t.status||'applied';
+    // verified = 확정 시 서버 tier 재검증 통과. 강제확정은 확정이어도 미검증으로 남는다.
+    var badge=st==='confirmed'
+      ?(t.verified?'<span class="badge b-confirmed">✅ 확정 · 검증됨</span>'
+                  :'<span class="badge b-confirmed" title="강제확정 — 서버 검증 생략됨">✅ 확정 · ⚠️ 미검증</span>')
+      :(st==='cancelled'?'<span class="badge b-cancelled">🗑 취소</span>':'<span class="badge b-applied">⏳ 신청 · 미검증</span>');
+    var memEdit=(t.members||[]).filter(function(m){return m.ign;}).map(function(m,mi){
+      // S를 맨 앞에 둔다. 종전엔 T0~T5뿐이라 운영진이 최상위 인원을 S로 지정할 방법이
+      // 아예 없었고, 서버·BPI 스케일(S=13)에는 S가 있는데 이 화면에서만 막혀 있었다.
+      var opts=['S','T0','T1','T2','T3','T4','T5'].map(function(tt){return '<option value="'+tt+'"'+(m.tier===tt?' selected':'')+'>'+tt+'</option>';}).join('');
+      // 닉은 인라인 편집 — 닉변·오타로 PUBG 조회가 실패하면 ⚠ 미검증이 뜨는데,
+      // 여기서 못 고치면 SQL 말고는 방법이 없었다. 저장 시 서버가 재검증까지 돌린다.
+      // pubgOk: 마지막 재검증에서 PUBG 조회가 됐는지. null = 아직 검증 안 함.
+      // 신고값과 판정근거를 눈에 띄게 갈라놓는다.
+      // 신고 670딜(일겜 8판)이 S의 근거처럼 읽혀 "딜량 뻥튀기 아니냐"는 오해가 실제로 나왔다.
+      // 판정은 경쟁전 439딜(95판)로 났고 시스템은 정상 동작했다 — 표시만 문제였다.
+      // 검증 전(pubgDmgSource 없음)이면 아무것도 붙이지 않는다. 없는 근거를 지어내지 않는다.
+      function judgeBasis(m){
+        if(!m.pubgDmgSource) return '';
+        var ranked = m.pubgDmgSource === 'ranked';
+        var txt = ranked
+          ? '판정 경쟁전 '+m.pubgJudgeDmg+'딜('+m.pubgRankedRounds+'판)'
+          : '판정 일겜 '+m.pubgJudgeDmg+'딜';
+        var tip = ranked
+          ? '이 등급의 실제 산정 근거입니다. 경쟁전 표본이 충분해 일겜 딜은 무시했습니다.'
+          : '경쟁전 판수가 기준에 못 미쳐 일반전 평딜로 판정했습니다'
+            + (m.pubgRankedRounds!=null ? ' (경쟁전 '+m.pubgRankedRounds+'판).' : '.');
+        return '<span title="'+tip+'" style="color:'+(ranked?'#10b981':'#fbbf24')
+          +';font-size:11px;flex:0 0 auto;white-space:nowrap;">'+txt+'</span>';
+      }
+      // 등록계(clan_registry) 미등록은 더 이상 보지 않는다 — 용병은 등록계 대상이 아니라
+      // "미등록"이 정상인데도 경고로 읽혀 오해를 만들었다. 확정 판단에 필요한 건
+      // "PUBG에서 이 닉이 잡히는가" 하나뿐이다.
+      // 3단계 — 계정 존재와 시즌 기록 유무는 별개다.
+      //   ok        검증됨
+      //   no_season 계정은 있으나 최근 두 시즌 기록 없음 → 참가 가능(조치 불필요)
+      //   not_found 닉을 못 찾음 → 유일하게 수정이 필요한 상태
+      var st = m.pubgState || null;
+      var mark = st==='not_found'
+        ? ' <span title="PUBG에서 이 닉을 찾지 못했습니다 — 정확한 인게임 닉으로 고친 뒤 저장하세요" style="color:#f87171;font-size:11px;font-weight:800;">❌</span>'
+        : st==='no_season'
+        ? ' <span title="계정은 확인됐지만 최근 두 시즌 매치 기록이 없습니다. 참가 가능하며, 티어는 신고값이 유지됩니다." style="color:#fbbf24;font-size:11px;font-weight:800;">⚠</span>'
+        : st==='ok'
+        ? ' <span title="PUBG 조회 성공'+(m.pubgAt?(' · '+m.pubgAt.slice(0,10)):'')+'" style="color:#10b981;font-size:11px;">✅</span>'
+        : '';
+      var inpStyle='background:var(--bg-elev);border:1px solid '+(st==='not_found'?'#f87171':'var(--line)')
+        +';color:var(--ink);padding:5px 8px;border-radius:6px;font-size:13px;min-width:0;flex:1;';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:5px 0;">'
+        +'<span style="font-size:13px;flex:0 0 auto;">'+(mi===0?'👑':'&nbsp;&nbsp;')+mark
+        +'</span>'
+        +'<input class="ign-edit" type="text" value="'+esc(m.ign||'')+'" maxlength="40" spellcheck="false" autocomplete="off"'
+        +' data-team="'+t.id+'" data-idx="'+mi+'" title="인게임 닉 — 고친 뒤 💾 저장하면 서버가 재검증합니다" style="'+inpStyle+'">'
+        +(m.peak?'<span title="본인이 신청서에 적은 값 — 판정 근거가 아닙니다" style="color:var(--ink-faint);font-size:11px;flex:0 0 auto;">신고 '+esc(m.peak)+'/'+esc(m.dmg||'?')+'딜</span>':'')
+        +judgeBasis(m)
+        +'<select class="tier-edit" data-team="'+t.id+'" data-idx="'+mi+'" data-name="'+esc(m.name||'')+'" data-peak="'+esc(m.peak||'')+'" data-dmg="'+esc(m.dmg||'')+'" style="background:var(--bg-elev);border:1px solid var(--line);color:var(--ink);padding:5px 8px;border-radius:6px;font-size:13px;flex:0 0 auto;">'+opts+'</select>'
+        +'</div>';
+    }).join('');
+    return '<div class="card '+(st==='confirmed'?'confirmed':'')+'">'
+      +'<div class="row1"><span class="tname">'+esc(t.team_name)+'</span>'+badge+'</div>'
+      +(t.slogan?'<div class="meta">“'+esc(t.slogan)+'”</div>':'')
+      +'<div class="meta" style="margin-bottom:2px;">멤버 — 티어 바꾸면 💾 저장</div>'
+      +(memEdit||'<div class="meta">-</div>')
+      +'<div class="meta">팀 BPI: <b>'+esc(t.bpi)+'</b>'+(t.weight!=null?' (가중치 ×'+esc(t.weight)+')':'')+'</div>'
+      // 조치가 필요한 건 not_found 뿐. no_season은 정상 상태라 정보성으로만 적는다.
+      +(t.pubgFailed?'<div class="meta" style="color:#f87171;">❌ 닉 조회 실패 '+t.pubgFailed+'명 — 정확한 인게임 닉으로 고친 뒤 💾 저장하세요</div>':'')
+      +(t.pubgNoSeason?'<div class="meta" style="color:#fbbf24;">⚠ 시즌 기록 없음 '+t.pubgNoSeason+'명 — 계정은 확인됨, 참가 가능(티어는 신고값 유지)</div>':'')
+      +'<div class="contact">📞 연락/입금자: '+esc(t.contact||'-')+'</div>'
+      +'<div class="acts">'
+      +'<button class="ok" onclick="saveTiers(\''+t.id+'\')">💾 닉·티어 저장 → 재검증</button>'
+      // 운영진 판정을 그대로 굳히는 경로. 위 버튼은 저장 후 서버가 PUBG로 티어를 다시
+      // 판정해 덮어쓰므로, 손으로 정한 티어가 되돌아간다 — 최종 판정용으로는 이쪽을 쓴다.
+      +'<button class="wait" onclick="saveTiers(\''+t.id+'\',0,1)">🔒 판정 고정 저장</button>'
+      +'<button class="ok" onclick="setStatus(\''+t.id+'\',\'confirmed\')">✅ 입금확정</button>'
+      +'<button class="wait" onclick="setStatus(\''+t.id+'\',\'applied\')">↩️ 신청대기</button>'
+      +'<button class="del" onclick="setStatus(\''+t.id+'\',\'cancelled\')">🗑 취소</button>'
+      +'</div></div>';
+  }
+  var active=teams.filter(function(t){return (t.status||'')!=='cancelled';});
+  var canc=teams.filter(function(t){return (t.status||'')==='cancelled';});
+  var html=active.length?active.map(card).join(''):'<div class="msg">표시할 팀이 없어요.</div>';
+  if(canc.length){
+    html+='<details style="margin-top:16px;"><summary style="cursor:pointer;color:var(--ink-faint);font-size:14px;padding:8px 0;">🗑 취소된 팀 '+canc.length+'개 — 펼쳐서 복구(↩️ 신청대기)</summary><div style="opacity:.5;margin-top:8px;">'+canc.map(card).join('')+'</div></details>';
+  }
+  el.innerHTML=html;
+}
+
+// 확정은 서버가 멤버 tier를 재도출·검증한다(멤버당 20초 페이싱 → 최대 ~70초 소요).
+// 409=검증 실패(사유·멤버별 차이 표시) · 503=PUBG 장애(재시도 또는 강제확정).
+// 강제확정은 감사 기록이 남고 목록에 '미검증'으로 표시된다.
+function confirmDenied(d){
+  var lines=['❌ 확정 거부 — 서버 재검증 실패'];
+  if(d.serverBpi!=null)lines.push('서버 재도출 합산: '+d.serverBpi);
+  (d.reasons||[]).forEach(function(r){
+    if(r.code==='bpi_cap_exceeded')lines.push('· 합산 '+r.teamBpi+' — 상한 '+r.cap+' 초과 ('+r.over+'점)');
+    else if(r.code==='s_tier_limit')lines.push('· S급 '+r.count+'명 — 팀당 '+r.max+'명까지');
+    else if(r.code==='player_not_found')lines.push('· 닉을 찾을 수 없음 (idx '+r.idx+')');
+    else lines.push('· '+r.code);
+  });
+  var diffs=(d.members||[]).filter(function(m){return m.mismatch;});
+  if(diffs.length){
+    lines.push('');
+    lines.push('신고 티어와 실제가 다른 멤버:');
+    diffs.forEach(function(m){lines.push('· '+m.ign+': 신고 '+m.clientTier+' → 실제 '+m.serverTier);});
+  }
+  alert(lines.join('\n'));
+}
+// opts.skipConfirm: 자동 재시도로 다시 들어온 호출. 확인창을 또 띄우지 않는다.
+// opts.forceReason: 강제확정 사유를 이미 받아둔 경우 재입력을 생략한다.
+// ── 확정 진행 표시 ──
+// 확정은 서버에서 최소 60초 걸린다 — verifyTeamTiers가 멤버마다 VERIFY_PACE_MS(20초)로
+// PUBG를 조회하기 때문이다(4인팀 = 20초 x 3). 그동안 화면에 아무 변화가 없어서
+// "버튼이 렉으로 안 눌린다"로 읽혔고, 운영자가 연타하게 만들었다.
+// 경과 초를 세어 보여주고, 끝날 때까지 재진입을 막는다.
+var _confirmBusy = false, _busyEl = null, _busyTimer = null;
+function busyOn(msg){
+  _confirmBusy = true;
+  if(!_busyEl){
+    _busyEl = document.createElement('div');
+    _busyEl.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99;'
+      + 'background:#1a1a20;border:1px solid #f5c518;color:#f5c518;padding:12px 20px;border-radius:10px;'
+      + 'font-weight:700;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.6);';
+    document.body.appendChild(_busyEl);
+  }
+  var t0 = Date.now();
+  var tick = function(){
+    var s = Math.round((Date.now()-t0)/1000);
+    _busyEl.textContent = msg + ' — ' + s + '초 경과 (최대 1분 이상, 창을 닫지 마세요)';
+  };
+  tick(); _busyEl.style.display='block';
+  clearInterval(_busyTimer); _busyTimer = setInterval(tick, 1000);
+}
+function busyOff(){
+  _confirmBusy = false;
+  clearInterval(_busyTimer); _busyTimer = null;
+  if(_busyEl) _busyEl.style.display='none';
+}
+function setStatus(id,status,force,opts){
+  opts=opts||{};
+  var k=getKey(); if(!k)return;
+  // 진행 중 재진입 차단 — 연타하면 같은 팀에 확정 요청이 겹쳐 PUBG 쿼터만 태운다.
+  if(_confirmBusy){ alert('이전 확정 처리가 아직 진행 중입니다.\n완료될 때까지 기다려주세요.'); return; }
+  if(!opts.skipConfirm){
+    if(status==='cancelled' && !confirm('이 팀을 취소(명단에서 제외)할까요?'))return;
+    if(status==='confirmed'&&!force){
+      if(!window.confirm('확정 시 서버가 멤버 전적을 재검증합니다.\n(최대 1분 정도 걸릴 수 있어요 — 창을 닫지 마세요)'))return;
+    }
+  }
+  var body={id:id,status:status};
+  if(force){
+    var why=opts.forceReason;
+    if(why==null){
+      why=window.prompt('강제확정 사유 (감사 기록에 남습니다):','PUBG API 장애');
+      if(why===null)return;
+    }
+    body.force=1; body.force_reason=why;
+  }
+  // 확정(PUBG 재검증)만 오래 걸린다. 취소·되돌리기·강제확정은 쿼터를 안 타서 즉시 끝난다.
+  if(status==='confirmed' && !force) busyOn('팀 전적 재검증 중');
+  fetch(GAPI+"/api/gdcup-confirm",{method:"POST",headers:{"Content-Type":"application/json","x-admin-key":k},body:JSON.stringify(body)})
+  .then(function(r){return r.json().then(function(d){return {status:r.status,d:d};});})
+  .then(function(res){
+    busyOff();
+    var d=res.d||{};
+    if(res.status===429){
+      // 자동 재시도는 팀+동작 조합당 1회까지만. 그 뒤에는 사람이 판단한다.
+      var rk='confirm:'+id+':'+status+':'+(force?1:0);
+      var retryOnce=!rlAutoRetried[rk];
+      rlAutoRetried[rk]=true;
+      rlHold(d.retry_after, '팀 확정 처리가 대기 중입니다.', retryOnce?function(){
+        setStatus(id,status,force,{skipConfirm:true,forceReason:body.force_reason});
+      }:null);
+      return;
+    }
+    rlClear();
+    if(d.ok){loadAdmin();return;}
+    if(res.status===409){confirmDenied(d);return;}
+    if(res.status===503){
+      if(window.confirm((d.message||'PUBG API 장애로 검증 불가')+'\n\n강제확정할까요? (검증 생략 · 감사 기록됨 · 미검증 표시)'))
+        setStatus(id,'confirmed',true);
+      return;
+    }
+    alert('처리 실패: '+(d.error||res.status));
+  })
+  .catch(function(){busyOff();rlClear();alert('네트워크 오류 — 검증이 오래 걸리는 중일 수 있어요. 새로고침 후 상태를 확인해주세요.');});
+}
+
+// ── 옵저버 CSV — 확정 팀만. 태그는 results.html과 같은 규칙을 쓴다(한 번 정해 두 곳 사용).
+//    시즌2에서 한글 팀명이 옵저버에서 ??????로 깨졌으므로, 표시용 식별자는 태그가 담당한다.
+//    열: 번호, 팀명, 짧은태그, png, 색FF (헤더 행 없음 · CRLF · BOM 없음)
+//    인코딩 3종: utf8(기본) · cp949 · ascii(팀명 자리도 태그). 옵저버가 무엇을 먹는지
+//    확정될 때까지 셋 다 남긴다 — 본선 당일 바꿔 끼울 수 있어야 한다.
+function obsTag(name, b){
+  if(b && b.tag) return String(b.tag).toUpperCase().slice(0,4);
+  return String(name||'').replace(/\s+/g,'').slice(0,2) || '?';
+}
+function obsColor(name, b){
+  if(b && b.color) return String(b.color).replace('#','').toUpperCase()+'FF';
+  var h=0, s=String(name||'');
+  for(var i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0;
+  var hue=h%330; if(hue>25&&hue<75) hue=(hue+90)%360;
+  // hsl(hue,52%,62%) → hex (results.html의 자동 배정색과 같은 값)
+  var c=(1-Math.abs(2*0.62-1))*0.52, x=c*(1-Math.abs((hue/60)%2-1)), m=0.62-c/2, r=0,g=0,bl=0;
+  if(hue<60){r=c;g=x;} else if(hue<120){r=x;g=c;} else if(hue<180){g=c;bl=x;}
+  else if(hue<240){g=x;bl=c;} else if(hue<300){r=x;bl=c;} else {r=c;bl=x;}
+  var hx=function(v){ return ('0'+Math.round((v+m)*255).toString(16)).slice(-2).toUpperCase(); };
+  return hx(r)+hx(g)+hx(bl)+'FF';
+}
+// CP949(EUC-KR) 인코더 — 브라우저 자신의 디코더에서 역표를 만든다.
+// TextEncoder는 UTF-8만 되고 레거시 인코딩은 지원하지 않지만, TextDecoder('euc-kr')는
+// 표준(WHATWG Encoding)이라 쓸 수 있다. 2바이트 조합을 전수 디코드해 문자→바이트를
+// 뒤집어 두면 외부 라이브러리 없이 변환이 된다(약 8,400자 · 생성 20ms대 · 최초 1회).
+var CP949=null;
+function cp949Map(){
+  if(CP949) return CP949;
+  var dec; try{ dec=new TextDecoder('euc-kr'); }catch(e){ return (CP949={}); }
+  var m={}, buf=new Uint8Array(2);
+  for(var hi=0x81; hi<=0xFE; hi++){
+    for(var lo=0x41; lo<=0xFE; lo++){
+      buf[0]=hi; buf[1]=lo;
+      var ch=dec.decode(buf);
+      // 첫 매핑만 채택 — 같은 글자에 조합이 여럿이면 낮은 코드가 표준 조합이다.
+      if(ch.length===1 && ch!=='�' && !Object.prototype.hasOwnProperty.call(m,ch)) m[ch]=[hi,lo];
+    }
+  }
+  return (CP949=m);
+}
+function cp949Bytes(str){
+  var m=cp949Map(), out=[], bad=[];
+  for(var i=0;i<str.length;i++){
+    var cc=str.charCodeAt(i);
+    if(cc<0x80){ out.push(cc); continue; }
+    // 서로게이트 쌍(이모지 등)은 한 글자로 묶어 '?' 하나로 떨어뜨린다.
+    var c=str[i];
+    if(cc>=0xD800 && cc<=0xDBFF && i+1<str.length){ c=str[i]+str[i+1]; i++; }
+    var p=Object.prototype.hasOwnProperty.call(m,c) ? m[c] : null;
+    if(p){ out.push(p[0],p[1]); } else { out.push(0x3F); bad.push(c); }
+  }
+  return { bytes:new Uint8Array(out), bad:bad, ok:Object.keys(m).length>0 };
+}
+// enc: 'utf8'(기본) | 'cp949' | 'ascii'(팀명 자리에 영문 태그)
+function downloadObsCsv(enc){
+  enc = enc || 'utf8';
+  var k=getKey(); if(!k){alert('키를 입력하세요');return;}
+  Promise.all([
+    fetch(GAPI+"/api/gdcup-admin-list"+seasonQS(),{headers:{"x-admin-key":k}}).then(function(r){return r.json();}),
+    fetch(GAPI+"/api/gdcup-team-brands").then(function(r){return r.json();}).catch(function(){return {brands:[]};})
+  ]).then(function(res){
+    var teams=((res[0]&&res[0].teams)||[]).filter(function(t){return t.status==='confirmed';});
+    if(!teams.length){alert('확정된 팀이 없습니다.');return;}
+    // 팀명 중복 시 먼저 온 행(=updated_at 최신)이 이긴다. results·overlay·kill-mvp와 같은 규칙.
+    var B={}; ((res[1]&&res[1].brands)||[]).forEach(function(b){
+      if(!Object.prototype.hasOwnProperty.call(B,b.team_name)) B[b.team_name]=b;
+    });
+    var rows=teams.map(function(t,i){
+      var b=B[t.name||t.team_name]||{};
+      var nm=t.team_name||t.name||'';
+      var tag=obsTag(nm,b);
+      // ascii: 옵저버가 한글을 아예 못 그릴 때의 최후 폴백 — 팀명 자리도 태그로 채운다.
+      return [i+1, (enc==='ascii' ? tag : nm), tag, '', obsColor(nm,b)].join(',');
+    });
+    // BOM 없음 — 옵저버가 첫 필드를 BOM+"1"로 읽어 깨질 수 있다(엑셀 호환보다 옵저버 우선).
+    var text=rows.join('\r\n')+'\r\n', blob, suffix='';
+    if(enc==='cp949'){
+      var r=cp949Bytes(text);
+      if(!r.ok){ alert('이 브라우저는 CP949 변환을 지원하지 않습니다. UTF-8 또는 영문 태그로 받아주세요.'); return; }
+      if(r.bad.length) alert('CP949로 표현할 수 없는 문자가 있어 ?로 바뀝니다: '+r.bad.join(' ')+'\n\n영문 태그 버전을 권장합니다.');
+      blob=new Blob([r.bytes],{type:'text/csv;charset=euc-kr;'}); suffix='-cp949';
+    }else{
+      blob=new Blob([text],{type:'text/csv;charset=utf-8;'});
+      if(enc==='ascii') suffix='-en';
+    }
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='gdcup-observer-s'+(SEASON||'')+suffix+'.csv';
+    a.click(); URL.revokeObjectURL(a.href);
+  }).catch(function(){ alert('CSV 생성 실패 — 네트워크/키를 확인하세요.'); });
+}
+
+// skipConfirm: 자동 재시도로 다시 들어온 호출. 확인창을 또 띄우지 않는다.
+// manual: 서버 재판정 없이 저장(verify:false). 운영진이 정한 티어를 그대로 굳힌다.
+//   기본 저장은 전원 조회 성공 시 서버 판정 티어로 덮어쓰기 때문에, 경계선 인원을
+//   손으로 정하는 흐름에서는 그 판정이 저장 직후 사라진다. PUBG 호출이 없어 즉시 끝난다.
+function saveTiers(teamId,skipConfirm,manual){
+  var k=getKey(); if(!k){alert('키를 입력하세요');return;}
+  var sels=document.querySelectorAll('.tier-edit[data-team="'+teamId+'"]');
+  if(!sels.length)return;
+  var members=[], blank=false;
+  sels.forEach(function(s){
+    var idx=s.getAttribute('data-idx');
+    var inp=document.querySelector('.ign-edit[data-team="'+teamId+'"][data-idx="'+idx+'"]');
+    var ign=inp?inp.value.trim():'';
+    if(!ign) blank=true;
+    members.push({name:s.getAttribute('data-name'),ign:ign,tier:s.value,peak:s.getAttribute('data-peak')||'',dmg:s.getAttribute('data-dmg')||''});
+  });
+  // 닉이 비면 서버가 그 멤버를 빈 슬롯으로 저장해 팀이 조용히 줄어든다 — 미리 막는다.
+  if(blank){alert('빈 닉이 있어요. 모든 멤버의 인게임 닉을 채워주세요.');return;}
+  var ask=manual
+    ? '입력한 티어를 그대로 저장합니다. 서버 재판정을 하지 않으므로 이 값이 최종으로 굳습니다.\n(BPI·가중치는 이 티어 기준으로 다시 계산됩니다)'
+    : '저장 후 서버가 PUBG에서 각 멤버를 재조회해 티어를 다시 판정합니다.\n(멤버당 20초 — 4명이면 1분 정도, 창을 닫지 마세요)';
+  if(!skipConfirm && !window.confirm(ask))return;
+  // 두 버튼 모두 잡아야 한다 — 인자가 붙은 호출까지 포함하도록 여는 따옴표까지만 맞춘다.
+  var btns=document.querySelectorAll('button[onclick*="saveTiers(\''+teamId+'\'"]');
+  btns.forEach(function(b){b.disabled=true;b.textContent=manual?'⏳ 저장 중…':'⏳ 검증 중…';});
+  fetch(GAPI+"/api/gdcup-edit",{method:"POST",headers:{"Content-Type":"application/json","x-admin-key":k},body:JSON.stringify({id:teamId,members:members,verify:!manual})})
+  // HTTP status를 함께 읽는다. 예전엔 r.json()만 봐서 429·500이 전부 '저장 실패'로
+  // 뭉뚱그려졌고, 그 문구를 보고 다시 누르는 흐름이 만들어졌다.
+  .then(function(r){return r.json().then(function(d){return {status:r.status,d:d};});})
+  .then(function(res){
+    var d=res.d||{};
+    if(res.status===429){
+      var rk='edit:'+teamId;
+      var retryOnce=!rlAutoRetried[rk];
+      rlAutoRetried[rk]=true;
+      // 저장은 멤버 배열을 통째로 덮어쓰므로 같은 요청을 다시 보내도 결과가 같다(멱등).
+      rlHold(d.retry_after, '티어 저장이 대기 중입니다.', retryOnce?function(){ saveTiers(teamId,true,manual); }:function(){ loadAdmin(); });
+      return;
+    }
+    rlClear();
+    if(!d||!d.ok){alert('저장 실패: '+((d&&d.error)||res.status));loadAdmin();return;}
+    var v=d.verify, msg='저장 완료 — 팀 BPI '+d.bpi+' (가중치 ×'+d.weight+')';
+    if(v&&v.error){ msg+='\n\n⚠ 재검증 실패: '+(v.message||'')+'\n닉 수정은 저장됐어요. 확정 시 다시 검증됩니다.'; }
+    else if(v&&v.apiFailed){ msg+='\n\n⚠ PUBG API 장애로 재검증 보류. 닉 수정은 저장됐어요.'; }
+    else if(v&&v.notFound&&v.notFound.length){
+      msg+='\n\n❌ 아직 PUBG에서 못 찾는 닉 '+v.notFound.length+'명:\n· '+v.notFound.join('\n· ')
+        +'\n\n닉 수정은 저장됐어요. 팀장에게 정확한 인게임 닉을 확인해주세요.';
+    }
+    else if(v&&v.applied){
+      msg+='\n\n✅ 전원 조회 성공 — 서버 판정 티어를 반영했습니다.'
+        +'\n'+v.members.map(function(m){return '· '+m.ign+' → '+m.serverTier+(m.mismatch?' (신고 '+m.clientTier+'에서 변경)':'');}).join('\n');
+    }
+    // 상한은 권장값이라 저장을 막지 않는다 — 대신 초과 사실을 여기서 보여준다.
+    if(d.capOk===false && d.capWarnings && d.capWarnings.length){
+      msg+='\n\n⚠ 권장 초과 (저장은 됐습니다)\n· '+d.capWarnings.join('\n· ');
+    }
+    alert(msg); loadAdmin();
+  })
+  .catch(function(){rlClear();alert('네트워크 오류 — 재검증이 오래 걸리는 중일 수 있어요. 새로고침 후 상태를 확인해주세요.');loadAdmin();});
+}
+
+function postBoard(){
+  var k=getKey(); if(!k){alert('키를 입력하세요');return;}
+  fetch(GAPI+"/api/gdcup-board",{method:"POST",headers:{"x-admin-key":k}})
+  .then(function(r){return r.json();})
+  .then(function(d){ if(d&&d.ok){alert('📋 디코 게시 완료! 모집팀 '+d.teams+'개 · 대기솔로 '+d.solos+'명');} else {alert('실패: '+((d&&d.error)||'webhook 미설정?'));} })
+  .catch(function(){alert('네트워크 오류');});
+}
+
+function saveSoloTier(id){
+  var k=getKey(); if(!k)return;
+  var inp=document.querySelector('.solotier[data-id="'+id+'"]'); if(!inp)return;
+  fetch(GAPI+"/api/gdcup-solo-tier",{method:"POST",headers:{"Content-Type":"application/json","x-admin-key":k},body:JSON.stringify({id:id,tier:inp.value})})
+  .then(function(r){return r.json();})
+  .then(function(d){ if(d&&d.ok){inp.style.borderColor='var(--green)';} else {alert('실패');} })
+  .catch(function(){alert('네트워크 오류');});
+}
+
+function loadSolosAdmin(){
+  var k=getKey(); if(!k)return;
+  fetch(GAPI+"/api/gdcup-solo-admin",{headers:{"x-admin-key":k}})
+  .then(function(r){return r.json();}).then(function(d){renderSolos((d&&d.solos)||[]);}).catch(function(){});
+}
+function renderSolos(solos){
+  var el=document.getElementById('soloAdminList'); if(!el)return;
+  var act=solos.filter(function(s){return s.status!=='cancelled';});
+  if(!act.length){el.innerHTML='<div class="msg">솔로/용병 신청이 없어요.</div>';return;}
+  el.innerHTML='<div style="margin-bottom:10px;"><button class="ok" style="padding:7px 12px;" onclick="fetchAllSoloDmg()">🔍 대기자 전원 전시즌 딜 조회 (순차·느림)</button></div>'+act.map(function(s){
+    var st=s.status||'waiting';
+    var badge=st==='matched'?'<span class="badge b-confirmed">✅ 매칭완료</span>':'<span class="badge b-applied">⏳ 대기</span>';
+    var kind=s.kind==='short'?'👥 자리모집':'🙋 솔로';
+    return '<div class="card '+(st==='matched'?'confirmed':'')+'">'
+      +'<div class="row1"><span class="tname">'+esc(s.ign)+' <span style="font-size:12px;color:var(--ink-faint);font-weight:400;">'+kind+'</span></span>'+badge+'</div>'
+      +'<div class="meta" style="display:flex;gap:6px;align-items:center;margin-top:6px;">티어: <input class="solotier" data-id="'+s.id+'" value="'+esc(s.tier||'')+'" placeholder="예: 마스터 / T2" style="flex:1;background:var(--bg-elev);border:1px solid var(--line);color:var(--ink);padding:6px 9px;border-radius:6px;font-size:13px;"><button class="ok" style="padding:6px 10px;" onclick="saveSoloTier('+s.id+')">💾</button></div>'
+      +'<div class="meta" id="dmg-'+s.id+'" style="margin-top:4px;">전시즌 딜: <button class="ok" style="padding:4px 9px;font-size:12px;" data-ign="'+esc(s.ign)+'" data-id="'+s.id+'" onclick="fetchSoloDmg(this)">🔍 조회</button></div>'
+      +(s.note?'<div class="meta">한마디: '+esc(s.note)+'</div>':'')
+      +'<div class="contact">💬 디스코드: '+esc(s.discord||'-')+'</div>'
+      +'<div class="acts">'
+      +'<button class="ok" onclick="setSolo('+s.id+',\'matched\')">✅ 매칭완료</button>'
+      +'<button class="wait" onclick="setSolo('+s.id+',\'waiting\')">↩️ 대기</button>'
+      +'<button class="del" onclick="setSolo('+s.id+',\'cancelled\')">🗑 취소</button>'
+      +'</div></div>';
+  }).join('');
+}
+function fetchSoloDmg(btn){
+  var k=getKey(); if(!k)return;
+  var ign=btn.getAttribute('data-ign'); var id=btn.getAttribute('data-id');
+  var box=document.getElementById('dmg-'+id); if(!box)return;
+  box.innerHTML='전시즌 딜: <span style="color:var(--ink-faint);">조회중… (수 초)</span>';
+  var iq=esc(ign);
+  return fetch(GAPI+"/api/gdcup-solo-stats?ign="+encodeURIComponent(ign),{headers:{"x-admin-key":k}})
+    .then(function(r){return r.json().then(function(j){return {s:r.status,j:j};});})
+    .then(function(res){
+      var retry=' <button class="ok" style="padding:4px 9px;font-size:12px;" data-ign="'+iq+'" data-id="'+id+'" onclick="fetchSoloDmg(this)">🔍 재시도</button>';
+      if(res.s===200 && res.j && res.j.found){
+        var d=res.j;
+        var plat=d.platform==='kakao'?'카카오':(d.platform==='steam'?'스팀':d.platform);
+        var label=(d.source==='prev'?('시즌'+d.seasonNum):'현시즌');
+        box.innerHTML='전시즌 딜: <b style="color:var(--gold)">'+d.avgDamage+'</b> <span style="color:var(--ink-faint);font-size:12px;">('+label+' · '+plat+' · '+d.rounds+'판 · 평균 '+d.avgKills+'킬'+(d.tier?(' · '+d.tier):'')+')</span>'+retry;
+      } else if(res.s===429){
+        box.innerHTML='전시즌 딜: <span style="color:var(--red);">레이트리밋 — 잠시 후</span>'+retry;
+      } else {
+        box.innerHTML='전시즌 딜: <span style="color:var(--ink-faint);">못 찾음('+((res.j&&res.j.error)||'')+')</span>'+retry;
+      }
+    }).catch(function(){ box.innerHTML='전시즌 딜: <span style="color:var(--red);">네트워크 오류</span>'; });
+}
+function fetchAllSoloDmg(){
+  var btns=Array.prototype.slice.call(document.querySelectorAll('#soloAdminList [data-ign]'));
+  if(!btns.length)return;
+  if(!confirm(btns.length+'명을 순차 조회합니다. PUBG 제한(분당 10건) 때문에 1명당 약 9초, 총 '+Math.ceil(btns.length*9/60)+'분쯤 걸려요. 진행할까요?'))return;
+  var i=0;
+  (function next(){
+    if(i>=btns.length)return;
+    var b=btns[i++];
+    Promise.resolve(fetchSoloDmg(b)).then(function(){ setTimeout(next, 9000); });
+  })();
+}
+function setSolo(id,status){
+  var k=getKey(); if(!k)return;
+  if(status==='cancelled' && !confirm('이 신청을 취소(명단에서 제외)할까요?'))return;
+  fetch(GAPI+"/api/gdcup-solo-status",{method:"POST",headers:{"Content-Type":"application/json","x-admin-key":k},body:JSON.stringify({id:id,status:status})})
+  .then(function(r){return r.json();}).then(function(d){if(d&&d.ok)loadSolosAdmin();else alert('처리 실패');}).catch(function(){alert('네트워크 오류');});
+}
+
+// 세션에 저장된 키 있으면 자동 로드
+(function(){
+  // 시즌 목록을 먼저 받아 SEASON을 확정한 뒤 조회한다 — 순서가 뒤바뀌면 첫 조회가 시즌 없이 나간다.
+  var k=null; try{ k=sessionStorage.getItem('gdcupKey'); }catch(e){}
+  if(k){ try{ document.getElementById('key').value=k; }catch(e){} }
+  loadSeasons().then(function(){ if(k)loadAdmin(); });
+})();
+</script>
+</body>
+</html>
