@@ -117,7 +117,7 @@
       }); }catch(e){}
     BRANDS.__loaded=true;
   }
-  function tmCol(name){ var b=BRANDS[name]; return (b&&b.color)?(' style="color:'+b.color+'"'):''; }
+  function tmCol(name){ var b=BRANDS[name]; return (b&&b.color)?(' style="color:'+esc(b.color)+'"'):''; }
   var SAMPLE=[
     {name:"GmI_Hye0n", team:"메르시", kills:14},
     {name:"DRIFT_Pervert", team:"불꽃", kills:12},

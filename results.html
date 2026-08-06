@@ -265,7 +265,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   function rowHtml(t, rank){
     var cls = rank<=4 ? (' t'+rank) : '';
     var b = BRANDS[t.name] || {};
-    var em = b.emblem ? '<img class="em" src="'+b.emblem+'" alt="">'
+    var em = b.emblem ? '<img class="em" src="'+escapeHtml(b.emblem)+'" alt="">'
            : (function(c){ return '<span class="tg" style="background:'+c+';color:'+textOn(c)+'">'
                +escapeHtml(teamTag(t.name, b))+'</span>'; })(teamColor(t.name, b));
     var stl = (b.color && rank>4) ? ' style="box-shadow:inset 4px 0 0 '+escapeHtml(b.color)+'"' : '';
@@ -307,7 +307,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         '본매치 '+rds[0]+'~'+rds[rds.length-1]+'R 누적 · BPI 가중치 반영';
       var finalR = rds ? rds[rds.length-1] : 5;
 
-      var data = (d.standings||[]).slice().sort(function(a,b){ return b.points - a.points; });
+      var data = (d.standings||[]).slice().sort(function(a,b){ return (b.points - a.points) || (b.kills - a.kills); });
       var colA=document.getElementById('colA'), colB=document.getElementById('colB');
       var cols=document.getElementById('cols');
 
