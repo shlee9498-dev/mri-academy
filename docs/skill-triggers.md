@@ -17,9 +17,11 @@
 | 위치 | 스킬 | 휘발 여부 |
 |---|---|---|
 | `~/.claude/skills/` | `xlsx` `pdf` `docx` `pptx` `skill-creator` `session-start-hook` | **컨테이너 회수 시 소실** |
-| `mri-academy/.claude/skills/` | `impeccable` `ui-ux-pro-max` | git 보존 |
+| `~/.claude/skills/` | `design-analysis` `craft` (2026-08-06 추가) | **회수 시 소실 · 라이선스 부재로 저장소 이관 불가** |
+| `mri-academy/.claude/skills/` | `impeccable` `ui-ux-pro-max` `web-design-guidelines` | git 보존 |
 
-저장소 쪽 2개는 이 저장소에 커밋돼 있으므로 복구가 필요 없다. **아래 절차는 전역 2개(`xlsx`·`pdf`)만 해당한다.**
+저장소 쪽 3개는 이 저장소에 커밋돼 있으므로 복구가 필요 없다.
+**아래 절차는 전역 4개(`xlsx`·`pdf`·`design-analysis`·`craft`)만 해당한다.**
 
 ---
 
@@ -32,7 +34,12 @@
 ```
 ~/.claude/skills/xlsx/SKILL.md
 ~/.claude/skills/pdf/SKILL.md
+~/.claude/skills/design-analysis/SKILL.md   ← 먼저 재설치 필요(§3b)
+~/.claude/skills/craft/SKILL.md             ← 먼저 재설치 필요(§3b)
 ```
+
+`xlsx`·`pdf`는 스킬 **본체가 이미 있고** 문구만 다시 붙이면 된다.
+`design-analysis`·`craft`는 **본체부터 다시 받아야 한다** — §3b 참조.
 
 ### 방법
 
@@ -72,6 +79,59 @@ description: '…원본 영문 설명 그대로… 한국어 트리거(반드시
 
 ---
 
+## 3b. `design-analysis` · `craft` 재설치 (2026-08-06 추가)
+
+이 둘은 **본체를 커밋할 수 없다.** 출처 저장소에 `LICENSE` 파일이 없고 README에도 라이선스
+선언이 없다 — 라이선스 미표기는 「자유 이용 허락」이 아니라 **저작권 전부 유보**다. 저자가
+README에서 `git clone` + `./install.sh`를 직접 안내하므로 **내 환경에 설치해 쓰는 것은 문제없고,
+공개 저장소에 복제해 재배포하는 것만 안 된다.** (`xlsx`·`pdf`와 결론은 같고 이유가 다르다 —
+저쪽은 명시적 금지, 이쪽은 허락 부재.)
+
+```bash
+mkdir -p /workspace/tommyjepsen && cd /workspace/tommyjepsen
+git clone https://github.com/tommyjepsen/awesome-ux-skills.git   # 확인 시점 커밋 6992218
+cd awesome-ux-skills
+for n in design-analysis craft; do
+  mkdir -p ~/.claude/skills/$n && cp $n.md ~/.claude/skills/$n/SKILL.md
+done
+```
+
+> `./install.sh`를 그냥 돌리면 **22개가 전부 깔린다.** 쓰지 말 것 — §6의 후보 과다 문제 그대로다.
+> 위처럼 **2개만** 복사한다.
+
+설치 후 각 `SKILL.md`의 `description:` **한 줄을 아래로 통째 교체한다**(원본 문구는 버린다).
+이건 우리가 쓴 문구라 여기 남겨도 된다.
+
+**⚠️ `design-analysis` 원본 프론트매터는 엄격한 YAML이 아니다.** `description`이 따옴표 없는
+plain scalar인데 본문에 `made of: "analyze this design"`처럼 **`: `가 들어 있다.** 파이썬
+`yaml.safe_load`로는 파싱 자체가 실패한다(Claude 쪽 파서는 관대해서 통과한다). 손댈 때는
+§2의 규칙대로 **전체를 단일따옴표로 감싸고 본문의 `'`는 `''`로 두 번 쓴다.**
+
+#### `design-analysis` — 교체할 `description`
+
+```
+'…원본 영문 설명 그대로… 한국어 트리거(반드시 발동): 이 사이트 분석, 디자인 분석, 레퍼런스 분석, 색상 추출, 폰트 추출, 디자인 토큰 추출, 스크린샷 분석, 팔레트 뽑아줘, 벤치마킹. 「이 사이트 디자인 분석해줘」 「스크린샷에서 색이랑 폰트 뽑아줘」 같은 요청에 쓴다. 이 스킬은 측정만 한다 — 평가·개선은 impeccable, 팔레트·폰트 추천은 ui-ux-pro-max로 간다.'
+```
+
+원본 영문 설명은 **살린다**(측정 능력 자체는 겹치는 스킬이 없다). 마지막 한 문장이 경계선이다.
+
+동작에 **Playwright + Chromium이 필요하다.** 이 컨테이너엔 이미 있다
+(`PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`) — `npx playwright install`은 돌리지 말 것.
+URL이 아니라 이미지 파일을 주면 브라우저 없이도 동작한다.
+
+#### `craft` — 교체할 `description` (원본 문구는 **버린다**)
+
+```
+Static CSS-property-level rule check: 12 hard bans and disciplines — gradients, glow shadows, transition:all, placeholder/lorem text, z-index arms races (isolation:isolate), pure #000/#fff neutrals, off-scale spacing, type scale, elevation language, missing interactive states, decorative motion. Use ONLY when the user points at specific CSS, a stylesheet, or component code and asks whether the properties themselves are disciplined. For any broader design, screen, layout, brand, or visual review — including "make this look better" or "polish this UI" — use the impeccable skill instead, not this one. 한국어 트리거(코드 한정): CSS 점검, 스타일시트 점검, transition all, z-index 정리, 여백 스케일, 그림자 규칙, 상태 스타일 누락. 「이 CSS 규칙 위반 있나」처럼 코드 파일을 짚어 물을 때만 쓴다. 화면·디자인 전반 요청은 impeccable로 간다.
+```
+
+**왜 통째로 갈아엎나:** 원본 트리거가 *"make this look better" · "polish this UI" · "review my CSS" ·
+"why does this look generic"* 였다. `impeccable`의 핵심 트리거와 **완전히 같은 자리**다.
+「이 화면 다듬어줘」 한마디에 후보가 둘이 되는 걸 막으려고 **CSS 파일을 직접 짚었을 때만**
+걸리도록 좁혔다.
+
+---
+
 ## 4. 저장소 스킬 (참조용 — 복구 불요)
 
 이미 커밋돼 있어 회수와 무관하다. 문구를 고칠 때 참고만 한다.
@@ -86,6 +146,16 @@ description: '…원본 영문 설명 그대로… 한국어 트리거(반드시
 
 ```
 한국어 트리거(반드시 발동): 색 조합, 색상 팔레트, 팔레트, 폰트 조합, 폰트 추천, 타이포그래피, 반응형, 접근성, 차트, 그래프, 데이터 시각화, 모션 프리셋, 아이콘, 디자인 레퍼런스, 스타일 참고. 「색 조합 추천해줘」 「폰트 뭐 쓸까」 「차트 어떤 게 맞아」 같은 한국어 요청에 반드시 이 스킬을 쓴다.
+```
+
+### `web-design-guidelines` (2026-08-06 추가 · MIT)
+
+출처·라이선스·동작 방식은 `.claude/skills/web-design-guidelines/ATTRIBUTION.md`에 있다.
+본체는 규칙을 갖고 있지 않고 **실행할 때마다 원격에서 규칙을 받아 온다** — 네트워크가 막히면
+동작하지 않고, 원격 규칙이 바뀌면 우리 저장소 변경 없이 판정이 달라진다.
+
+```
+한국어 트리거(마크업 한정): 접근성 점검, a11y, aria, alt 텍스트, 폼 접근성, 라벨 연결, 키보드 접근성, 포커스 링, 시맨틱 태그. 「이 폼 접근성 봐줘」 「aria 빠진 데 있나」처럼 파일을 짚어 물을 때만 쓴다.
 ```
 
 ---
@@ -113,3 +183,36 @@ description: '…원본 영문 설명 그대로… 한국어 트리거(반드시
 git log --oneline --diff-filter=D -- .claude/skills/banner-design
 git checkout <그 커밋>^ -- .claude/skills/banner-design
 ```
+
+---
+
+## 7. 검토했지만 설치하지 않은 것 (2026-08-06)
+
+라이선스는 문제없지만 **넣지 않기로 한 것**들이다. 나중에 같은 저장소를 다시 발견했을 때
+같은 검토를 반복하지 않으려고 남긴다.
+
+### `Owl-Listener/designer-skills` — **설치 보류** (MIT, Copyright (c) 2026 MC Dean)
+
+플러그인 마켓플레이스(`.claude-plugin/marketplace.json`, v2.0.0) 형태다.
+**한 번 추가하면 스킬 96개가 들어온다** — 9개 플러그인(`design-research` `design-systems`
+`ux-strategy` `ui-design` `interaction-design` `prototyping-testing` `design-ops`
+`designer-toolkit` `visual-critique`) 묶음이다.
+
+라이선스는 깨끗하다(루트 `LICENSE` 있음, 공개 저장소 커밋 가능). **막는 건 §6의 후보 과다다.**
+`ui-design/color-system` · `visual-critique/critique-color` · `ui-design/typography-scale` ·
+`ui-design/spacing-system` 같은 것들이 `ui-ux-pro-max`(팔레트 192·폰트 조합 74)와
+`impeccable`(정적 검출기)의 자리에 그대로 겹친다. 「색 조합 추천해줘」 하나에 후보가
+셋 이상이 된다 — 7개를 지운 그 문제를 **열 배로 되살리는** 셈이다.
+
+필요해지면 **마켓플레이스 통째가 아니라 개별 스킬만** 골라 온다.
+클론: `/workspace/Owl-Listener/designer-skills`
+
+### `rohitg00/awesome-claude-design` — **스킬 아님, 참고 자료** (MIT, Copyright (c) 2026 Rohit Ghumare)
+
+Claude Design용 `DESIGN.md` 모음 · 리믹스 레시피 · 프롬프트 팩 · 티어다운이다.
+설치할 스킬 형태가 아니라 **읽을거리**다. 미학 계열 9종(editorial minimalism · terminal-core ·
+warm editorial · data-dense pro · cinematic dark · playful color · glass/soft-futurism ·
+neon brutalist · indie)으로 묶여 있어, 새 페이지 톤을 잡을 때 레퍼런스로 열어 보면 된다.
+
+클론: `/workspace/rohitg00/awesome-claude-design` (`design-md/` `recipes/` `prompts/` `showcase/`)
+**주의: 클론은 컨테이너 회수 시 사라진다.** 필요할 때 다시 클론한다.
