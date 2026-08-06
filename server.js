@@ -5154,7 +5154,9 @@ app.get("/api/admin/stats/report", async (req, res) => {
 });
 
 // ── 운영진 정산·레슨로그 관리 패널 (Phase 0) ──
-require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete });
+// schemaOptional은 기동 시 probeOptionalSchema()가 채우는 같은 객체를 그대로 넘긴다.
+// 참조를 넘기므로 프로브가 끝나면 패널 쪽에서도 값이 보인다(매 요청 재조회 없음).
+require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete, schemaOptional });
 
 // [재발 방지] 기동 시 시트 웹훅 연결 식별 — 어느 Apps Script 배포(=어느 스프레드시트)에 붙는지 즉시 확인.
 //   봇은 SHEET_ID가 아니라 SHEET_WEBHOOK_URL(Apps Script /exec)로 씀 → 배포ID가 정본/구 시트 식별키.
@@ -5253,6 +5255,8 @@ const REQUIRED_SCHEMA = {
   ops_state:        ["key","value","updated_at"],
   payments:         ["student_id","paid_at","amount","games","payout_rate","kind","via_youtube","memo",
                      "source","course_id"],
+  // ⚠️ payments의 pay_channel·fee_amount·net_amount는 여기 넣지 않는다 — SCHEMA_OPTIONAL 참조.
+  //    부재해도 코드가 정상 동작하므로 error(=DM 알림)가 아니라 warn 레벨로만 본다.
   payouts:          ["paid_on","net","withholding","period","rate_snapshot"],
   progress_logs:    ["id","discord_id","discord_name","title","content","hidden"],
   pubg_nicks:       ["discord_id","discord_name","kakao","steam","updated_at"],
@@ -5272,6 +5276,37 @@ const REQUIRED_SCHEMA = {
                      "payout_rate_set","pubg_platform","pubg_name","pubg_account_id",
                      "discord_id","discord_src"],
 };
+
+// ── 선택 컬럼 (warn 레벨) ────────────────────────────────────────────────────
+// REQUIRED_SCHEMA와 달리 "없어도 코드가 정상 동작하는" 컬럼이다. 부재 시 로그에만
+// 남기고 오너 DM·에러를 내지 않는다. 부팅을 막지 않는 것이 핵심이다.
+//
+// 왜 나눴나: 자기점검이 error로 올라오면 진짜 장애와 "아직 안 붙인 선택 컬럼"이
+// 같은 채널로 섞여 구분이 안 된다. 실제로 지금 자기점검에 실재 스키마를 미실행로
+// 보는 오탐이 남아 있어(MRIacademy 트랙 조사 중), 여기에 error를 더하면 신호가 묻힌다.
+//
+// payments 3종은 fee/net 도입분이다. 부재하면 admin-panel이 hasFeeColumns=false로
+// 떨어져 amount를 그대로 쓴다 — 현행 계산과 완전히 동일하게 동작한다.
+const SCHEMA_OPTIONAL = {
+  payments: ["pay_channel", "fee_amount", "net_amount"],
+};
+
+// 선택 컬럼 존재 여부를 기동 시 1회 확인한다. 결과는 캐시해 매 요청 재조회하지 않는다.
+//   반환: { "payments.fee_amount": true, ... }
+// 조회 자체가 실패하면(네트워크·권한) false로 둔다 — 없는 것으로 보고 안전한 경로를 탄다.
+const schemaOptional = {};
+async function probeOptionalSchema() {
+  if (!process.env.SUPABASE_URL) return schemaOptional;
+  for (const [table, cols] of Object.entries(SCHEMA_OPTIONAL)) {
+    for (const c of cols) {
+      let ok = false;
+      try { await sbSelect(table, `select=${c}&limit=0`); ok = true; } catch { ok = false; }
+      schemaOptional[`${table}.${c}`] = ok;
+      console.log(`[schema] ${ok ? "OK " : "warn"} (optional) ${table}.${c}${ok ? "" : "  ← 미실행. 코드는 폴백으로 동작"}`);
+    }
+  }
+  return schemaOptional;
+}
 
 // 테이블 1건 점검. 전체 컬럼을 한 번에 조회해 통과하면 요청 1회로 끝나고,
 // 실패했을 때만 컬럼을 하나씩 짚어 누락분을 특정한다(정상일 때 요청 폭증 방지).
@@ -5448,3 +5483,7 @@ app.listen(PORT, () => console.log("listening on " + PORT));
 setTimeout(() => {
   runSchemaCheck({ label: "boot" }).catch((e) => console.error("schema_check", e?.message));
 }, 12000);
+
+// 선택 컬럼 프로브 — 기동 직후 1회. 정산 산식이 이 결과를 플래그로 참조한다.
+// 자기점검(12초 지연)과 달리 DM을 보내지 않으므로 봇 로그인을 기다릴 필요가 없다.
+probeOptionalSchema().catch((e) => console.error("schema_optional_probe", e?.message));

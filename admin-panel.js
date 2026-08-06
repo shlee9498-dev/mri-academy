@@ -50,6 +50,27 @@ module.exports = function mountAdminPanel(app, deps) {
   const WITHHOLDING = 0.033;                  // 원천징수 3.3% (프리랜서 사업소득)
   const NET_RATE = 0.06;                      // 빵다 순매출 수수료 6% (구 유튜브15/일반5 이원화 폐지)
   const SALARY_START = "2026-07";             // 순매출 수수료 시작월 (6월분 이전 동결)
+  // 2026-08부터 빵다 6% 대상을 kind='lesson'으로 한정. course/consult 결제가 payments에
+  // 편입되면서 6% 대상이 자동 확대되는 것을 막기 위함. 7월 이전은 현행 로직 동결.
+  //
+  // 왜 소급하지 않나: 7월분에 필터를 적용하면 consult 3건(순매출 40,800)이 빠져
+  // 빵다 수수료가 137,600 → 135,200으로 2,400원 줄어든다. 7월분은 이미 8/2에 지급이
+  // 끝난 회차라 산출 근거가 사후에 바뀌면 안 된다. SALARY_START(6월분 이전 동결)와
+  // 같은 방식으로 시행월을 그어 과거를 건드리지 않는다.
+  const LESSON_ONLY_START = "2026-08";
+
+  // ── 수수료 컬럼 존재 플래그 ────────────────────────────
+  // payments.fee_amount/net_amount는 DDL이 실행돼야 존재한다. 매 쿼리를 try/catch로
+  // 감싸는 대신, 기동 시 1회 프로브한 결과(server.js probeOptionalSchema)를 참조한다.
+  //   false → net_amount를 참조하지 않고 amount를 그대로 쓴다(현행과 완전히 동일).
+  //   true  → coalesce(net_amount, amount) 의미로 읽는다.
+  // fee_amount가 전부 0인 동안에는 net = amount이므로 두 경로가 같은 값을 낸다.
+  const schemaOptional = deps.schemaOptional || {};
+  const hasFeeColumns = () =>
+    schemaOptional["payments.net_amount"] === true && schemaOptional["payments.fee_amount"] === true;
+  // 결제 1건의 정산 기준액. 수수료 차감 후 순액이 있으면 그것을, 없으면 결제금액을 쓴다.
+  const payBase = (p) =>
+    (hasFeeColumns() && p.net_amount != null) ? Number(p.net_amount) : Number(p.amount || 0);
 
   // 요청자 컨텍스트: 로그인 + 스태프 + staff 테이블 매핑(role, staff.id)
   //  meError: staff 조회가 DB오류로 실패(신원 미해석). '행 부재(부트스트랩)'와 구분 —
@@ -129,7 +150,7 @@ module.exports = function mountAdminPanel(app, deps) {
     const lessonPays = pays
       .filter((p) => ["lesson", "set"].includes(p.kind) && (p.games || 0) > 0)
       .sort((a, b) => String(a.paid_at).localeCompare(String(b.paid_at)));
-    const amount = sum(lessonPays, (p) => p.amount);
+    const amount = sum(lessonPays, payBase);   // 수수료 차감 후 순액 기준(컬럼 부재 시 amount 그대로)
     const games = sum(lessonPays, (p) => p.games);
     const unit = games > 0 ? amount / games : 0;              // 판당 결제단가(총결제금액/총결제판수)
     const firstGames = lessonPays.length ? (lessonPays[0].games || 0) : 0; // 1차 결제판수 = FIFO 경계
@@ -211,7 +232,9 @@ module.exports = function mountAdminPanel(app, deps) {
   //   수수료 적용 대상: comp_note에 '6%' 또는 '순매출' 표기된 직원 (소영 등 기본급만은 제안 0).
   function computeStaffSalary(st, payments, period) {
     const monthPays = payments.filter((p) => (p.paid_at || "").slice(0, 7) === period);
-    const netRevenue = sum(monthPays, (p) => floor100((p.amount || 0) / 1.1)); // 당월 순매출(VAT 제외·버림)
+    // 2026-08부터 kind='lesson'만 6% 대상. 그전 달은 전 kind 합산(현행 동결) — 위 LESSON_ONLY_START 주석 참조.
+    const base = period >= LESSON_ONLY_START ? monthPays.filter((p) => p.kind === "lesson") : monthPays;
+    const netRevenue = sum(base, (p) => floor100(payBase(p) / 1.1));           // 당월 순매출(VAT 제외·버림)
     const commissioned = !!(st.comp_note && /6%|순매출/.test(st.comp_note));
     const applies = commissioned && period >= SALARY_START;      // 6월분 이전 동결
     const suggestCommission = applies ? round100(netRevenue * NET_RATE) : 0;    // 순매출 6%
