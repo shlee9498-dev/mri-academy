@@ -3895,6 +3895,68 @@ app.get("/api/gdcup-scores", async (req,res)=>{
 });
 
 
+// ═══ 시청자 토토 (2026-08-07 신설) ═══════════════════════════════════
+// 방송 시청자가 로그인 없이 FINAL 치킨팀을 픽하는 경품 이벤트.
+// 설계 조건: 죽어도 본선에 영향이 없어야 한다 —
+//   · 전용 테이블(gdcup_toto)만 쓴다. gdcup_apps·gdcup_scores를 읽지도 쓰지도 않는다.
+//   · 팀 목록은 프론트가 기존 공개 라우트(/api/gdcup-list)에서 받는다. 여기서 조인하지 않는다.
+//   · 테이블이 없거나(DDL 미실행) DB가 죽어도 이 라우트만 실패하고 채점 경로는 그대로다.
+// 무료 경품이라 부정 방지는 하지 않는다(오너 방침). 같은 닉 재제출 = 덮어쓰기.
+const GDCUP_TOTO_DEADLINE = process.env.GDCUP_TOTO_DEADLINE || "2026-08-07T14:15:00Z"; // 23:15 KST
+// env 하나로 즉시 닫는다 — 배포 없이 마감을 당길 수 있어야 한다는 요구(#4).
+function gdcupTotoOpen() {
+  if (String(process.env.GDCUP_TOTO_CLOSED || "") === "1") return false;
+  return Date.now() < Date.parse(GDCUP_TOTO_DEADLINE);
+}
+const totoKey = (s) => String(s || "").trim().toLowerCase();
+
+// [공개] 토토 상태 — 프론트가 마감 여부·마감시각을 여기서 받는다(문구 하드코딩 금지).
+app.get("/api/gdcup-toto-status", async (req, res) => {
+  const season = gdSeason(req.query.season);
+  let count = null;
+  try {
+    if (process.env.SUPABASE_URL) count = (await sbSelect("gdcup_toto", `select=id&season=eq.${season}`)).length;
+  } catch (e) { /* 테이블 미생성 등 — 상태는 내려주되 집계만 비운다 */ }
+  res.json({ open: gdcupTotoOpen(), deadline: GDCUP_TOTO_DEADLINE, season, count });
+});
+
+// [공개] 픽 제출. 분당 12회 — 오타 정정 재제출을 막지 않을 정도.
+app.post("/api/gdcup-toto", limit("gdToto", 12, 60_000), async (req, res) => {
+  try {
+    if (!process.env.SUPABASE_URL) return res.status(503).json({ error: "db_disabled" });
+    if (!gdcupTotoOpen()) return res.status(423).json({ error: "closed", message: "예측 마감됐습니다. 결과는 방송에서 발표합니다!" });
+    const b = req.body || {};
+    const nickname = String(b.nickname || "").trim().slice(0, 24);
+    const pick_team = String(b.pick_team || "").trim().slice(0, 40);
+    if (!nickname) return res.status(400).json({ error: "no_nickname", message: "닉네임을 입력해주세요." });
+    if (!pick_team) return res.status(400).json({ error: "no_team", message: "팀을 선택해주세요." });
+    const season = gdSeason(b.season);
+    const row = { season, nickname, nick_key: totoKey(nickname), pick_team,
+                  ip: (req.headers["x-forwarded-for"] || "").split(",")[0].trim().slice(0, 45) || null,
+                  updated_at: new Date().toISOString() };
+    // 같은 닉이면 덮어쓴다. 대소문자 차이는 같은 사람으로 본다(nick_key).
+    const saved = await sbUpsert("gdcup_toto", row, "season,nick_key");
+    res.json({ ok: true, nickname: saved?.nickname || nickname, pick_team: saved?.pick_team || pick_team });
+  } catch (e) {
+    console.error("gdcup_toto", e?.message);
+    res.status(500).json({ error: "server_error", message: "저장에 실패했습니다. 잠시 후 다시 시도해주세요." });
+  }
+});
+
+// [운영진] 적중자 목록 — 방송 추첨 발표용. ?team=팀명 주면 그 팀 픽만.
+app.get("/api/gdcup-toto-result", async (req, res) => {
+  try {
+    if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+    if (!process.env.SUPABASE_URL) return res.json({ picks: [], byTeam: {}, winners: [] });
+    const season = gdSeason(req.query.season);
+    const rows = await sbSelect("gdcup_toto", `select=nickname,pick_team,updated_at&season=eq.${season}&order=updated_at.asc`);
+    const byTeam = {};
+    (rows || []).forEach((r) => { (byTeam[r.pick_team] = byTeam[r.pick_team] || []).push(r.nickname); });
+    const team = String(req.query.team || "").trim();
+    res.json({ total: (rows || []).length, byTeam, winners: team ? (byTeam[team] || []) : [], team: team || null, season });
+  } catch (e) { console.error("gdcup_toto_result", e?.message); res.status(500).json({ error: "server_error" }); }
+});
+
 // [공개] 킬 MVP = 선수별 누적 킬
 app.get("/api/gdcup-killmvp", async (req,res)=>{
   try{
@@ -4704,6 +4766,7 @@ const GDCUP_PAGES = [
   "briefing",      // 공개 — 브리핑
   "gdcup-history", // 공개 — 아카이브 목록
   "gdcup-s2",      // 공개 — 시즌2 아카이브
+  "toto",          // 공개 — 시청자 예측(FINAL 치킨팀). QR 유입, 모바일 우선
 ];
 function sendGdcupPage(file) {
   return (req, res) => {
@@ -5035,6 +5098,7 @@ const REQUIRED_SCHEMA = {
                      "status","created_at","leader_discord","audit","verify_json","verified_at",
                      "reserves","roster_log"],
   gdcup_attendance: ["event","user_id","name","status","reason"],
+  gdcup_toto:       ["id","season","nickname","nick_key","pick_team","ip","created_at","updated_at"],
   gdcup_payouts:    ["id","app_id","season","member_idx","real_name","bank","account_no","holder"],
   gdcup_scores:     ["season","round","team_name","placement","team_kills","player_kills","updated_at"],
   gdcup_solos:      ["id","season","kind","ign","tier","discord","note","status","created_at"],

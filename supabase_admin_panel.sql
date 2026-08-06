@@ -506,3 +506,22 @@ create index if not exists idx_payments_course on public.payments (course_id)
 alter table public.courses           enable row level security;
 alter table public.course_sessions   enable row level security;
 alter table public.course_attendance enable row level security;
+
+-- ============================================================
+-- 시청자 토토 (2026-08-07) — 방송 시청자 FINAL 치킨팀 예측
+-- 전용 테이블. gdcup_apps·gdcup_scores와 조인하지 않는다(장애 격리).
+-- 같은 닉 재제출 = 덮어쓰기. nick_key(소문자)로 대소문자 차이를 흡수한다.
+-- ============================================================
+create table if not exists public.gdcup_toto (
+  id         bigint generated always as identity primary key,
+  season     int  not null,
+  nickname   text not null,                      -- 표시용(원문 대소문자 유지)
+  nick_key   text not null,                      -- 중복 판정용(소문자)
+  pick_team  text not null,
+  ip         text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create unique index if not exists gdcup_toto_season_nick
+  on public.gdcup_toto (season, nick_key);
+alter table public.gdcup_toto enable row level security;   -- service_role만 통과
