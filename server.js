@@ -4607,6 +4607,28 @@ app.get("/api/feedback-public", async (_req, res) => {
   } catch (e) { console.error("feedback_public", e?.message); res.json({ updatedAt: null, items: [] }); }
 });
 
+// ── G드컵 운영·신청 페이지를 API 서버가 직접 서빙 (2026-08-07 장애 대응) ─────
+// GitHub Pages 배포가 죽고(Actions 인프라 장애) Vercel 미러도 404가 나면서
+// 오너가 admin에 들어갈 방법이 없어졌다. 여기서 서빙하면 페이지와 API가 같은
+// 오리진이라 CORS 자체가 성립하지 않고, 정적 호스팅 두 곳 어디에도 의존하지 않는다.
+// 정본은 여전히 gmi-clancup — 이건 같은 파일을 한 경로 더 여는 것뿐이다.
+// 경로는 전부 리터럴로 둔다. Express 5는 ":p(a|b)" 패턴 문법을 제거했고, 여기서
+// 기동이 깨지면 API와 디스코드 봇이 통째로 죽는다 — 본선 당일 감수할 위험이 아니다.
+const nodePath = require("path");
+function sendGdcupPage(file) {
+  return (req, res) => {
+    res.setHeader("Cache-Control", "no-store");      // 구버전이 캐시에 남는 사고를 막는다
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    res.sendFile(nodePath.join(__dirname, file), (e) => {
+      if (e && !res.headersSent) { console.error("gdcup_page", file, e.message); res.status(500).send("page_unavailable"); }
+    });
+  };
+}
+app.get("/gdcup-admin",      sendGdcupPage("gdcup-admin.html"));
+app.get("/gdcup-admin.html", sendGdcupPage("gdcup-admin.html"));
+app.get("/gdcup-s3",         sendGdcupPage("gdcup-s3.html"));
+app.get("/gdcup-s3.html",    sendGdcupPage("gdcup-s3.html"));
+
 const PORT = process.env.PORT || 3000;
 // ── 공개 피드백 월 (published=true 만 노출) ──
 app.get("/api/feedback", async (req, res) => {
