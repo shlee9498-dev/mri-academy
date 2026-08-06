@@ -52,6 +52,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   .datechip.on{display:inline-flex;}
   .datechip::before{content:"";width:7px;height:7px;background:var(--gold);}
   .rstat{text-align:right;}
+  .ctxline{margin-top:10px;font-size:15px;line-height:1.5;color:var(--ink-dim);max-width:760px;}
   .rstat .brand{font-family:var(--disp);font-weight:600;font-size:15px;letter-spacing:.26em;color:var(--ink-dim);text-transform:uppercase;}
   .rstat .r{font-family:var(--disp);font-weight:800;font-size:44px;letter-spacing:.06em;color:var(--gold);margin-top:2px;}
   .rstat .s{font-size:17px;font-weight:600;color:var(--ink-dim);margin-top:6px;}
@@ -133,6 +134,9 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <div class="title">누적 순위<small>OFFICIAL STANDINGS</small></div>
         <!-- 이벤트 고정 표기(시즌 규칙 아님) — 다음 시즌 본선 때 날짜만 갱신. 현재 시즌에서만 표시 -->
         <div class="datechip" id="dateChip">2026.08.07 (금) · 솔로 이벤트 20:00 · 본선(팀전) 21:00 · GmI 클랜컵</div>
+        <!-- 신규 시청자용 컨텍스트. 배율 범위는 설명 문구지 판정값이 아니다 —
+             가중치 커브를 바꾸면 이 줄도 같이 손봐야 한다(룰북 정합과 같은 이유). -->
+        <div class="ctxline">GmI 클랜 자체 토너먼트 · 팀 전력(BPI)에 따라 점수 가중치(×0.73~×1.20) 차등 적용 — 강팀은 더 많이 이겨야 합니다</div>
       </div>
       <div class="rstat">
         <div class="brand">MRI ACADEMY × GmI</div>
