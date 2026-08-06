@@ -429,6 +429,14 @@ function downloadObsCsv(enc){
   ]).then(function(res){
     var teams=((res[0]&&res[0].teams)||[]).filter(function(t){return t.status==='confirmed';});
     if(!teams.length){alert('확정된 팀이 없습니다.');return;}
+    // 슬롯 순서 = BPI 내림차순(동점은 등록순). 화면 목록 순서와 무관하게 여기서 정한다 —
+    // 배포한 CSV와 이 버튼이 다른 순서를 뱉으면 옵저버 슬롯이 통째로 어긋난다.
+    teams.sort(function(a,b){
+      var ab=Number(a.bpi)||0, bb=Number(b.bpi)||0;
+      if(ab!==bb) return bb-ab;
+      var ac=String(a.created_at||''), bc=String(b.created_at||'');
+      return ac<bc ? -1 : ac>bc ? 1 : 0;
+    });
     // 팀명 중복 시 먼저 온 행(=updated_at 최신)이 이긴다. results·overlay·kill-mvp와 같은 규칙.
     var B={}; ((res[1]&&res[1].brands)||[]).forEach(function(b){
       if(!Object.prototype.hasOwnProperty.call(B,b.team_name)) B[b.team_name]=b;
