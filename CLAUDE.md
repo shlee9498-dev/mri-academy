@@ -38,6 +38,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `server.js`는 단일 파일에 여러 트랙 코드가 공존한다 — 자기 트랙 영역 밖은 읽기만 한다
 - **승급시험 응시료가 생기면 학습지 ↔ 결제 협의.** 합격 시 역할 부여는 v1 수동(오너 DM)
 - 이 저장소 밖 트랙: **메인**(총괄·조정 — 트랙 간 충돌 조정·공용 문서), **카지노**(`gmi-casino-bot`·`gmi-clancup`)
+- 카지노 트랙: mri-academy 저장소 내 gdcup 관련 코드(`/api/gdcup-*`, gdcup-admin, 관련 테이블·이슈) 포함. MRIacademy 트랙은 해당 파일 수정 금지.
+  - 즉 **카지노는 "이 저장소 밖" 트랙이면서 이 저장소 안에 소관 구역을 갖는다** — 바로 윗줄과 함께 읽을 것.
+    G드컵은 판정·정산의 서버 정본이 `server.js`에 있고 공개·운영 화면만 `gmi-clancup`에 있어서, 저장소 경계와 트랙 경계가 일치하지 않는다.
+  - 구체 범위: `server.js`의 `GDCUP_*` 상수(`GDCUP_SEASONS`·`GDCUP_WEIGHT_S3`·`GDCUP_BPI_SCALE`·`TIERS` 등)와
+    `/api/gdcup-*` 라우트 전체, `gdcup_apps`·`gdcup_scores`·`gdcup_solos`·`gdcup_team_brand`·`gdcup_payouts`·`gdcup_attendance` 테이블,
+    `GDCUP_*` 환경변수, `track:casino` 라벨이 붙은 이슈.
+  - 단 **DDL·env·데이터 변경은 트랙과 무관하게 Level 0**(오너 실행)이다. 소관이 생겼다고 자동화되지 않는다.
+  - 2026-08 비수기에 G드컵 백엔드를 GmI 생태계로 이전할 예정이다(오너 방침). 이전 완료 시 이 줄은 삭제한다.
 
 ## 트랙 간 현황 공유 — `docs/STATE.md`
 - **세션 시작 시 `docs/STATE.md`를 먼저 읽고** 타 트랙 현황을 파악할 것.
