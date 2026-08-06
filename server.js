@@ -3562,19 +3562,34 @@ app.get("/api/gdcup-payouts.csv", async (req, res) => {
     });
     const apps = await sbSelect("gdcup_apps", `select=id,team_name,members&season=eq.${season}&status=neq.cancelled`);
     const pays = await sbSelect("gdcup_payouts", `select=app_id,member_idx,real_name,bank,account_no,holder&season=eq.${season}`);
-    const byApp = {};
-    apps.forEach((a) => { byApp[a.id] = a; });
-    const wanted = Object.keys(rankMap).length ? pays.filter((p) => rankMap[String(p.app_id)] != null) : pays;
+    // 줄의 기준은 **신청 멤버**다(계좌 행이 아니라). 계좌 행 기준으로 돌리면 계좌 미등록 팀이
+    // CSV에서 통째로 사라지는데, 에러가 없어서 완성된 파일로 보인다. 실제로 시즌3 13팀 중
+    // 6팀이 계좌 0건(admin·직접등록분)이라 그대로 뽑으면 절반이 조용히 빠진다.
+    // → 멤버를 다 깔고 계좌를 왼쪽조인해서, 미등록은 빈 칸 + 비고로 눈에 보이게 한다.
+    const payByKey = {};
+    pays.forEach((p) => { payByKey[`${p.app_id}:${p.member_idx}`] = p; });
+    const wantedApps = Object.keys(rankMap).length
+      ? apps.filter((a) => rankMap[String(a.id)] != null) : apps.slice();
+    wantedApps.sort((a, b) => (rankMap[String(a.id)] || 99) - (rankMap[String(b.id)] || 99) || a.id - b.id);
     const esc = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
-    const lines = ["순위,팀명,인게임닉,실명,은행,계좌번호,예금주,지급액"];
-    wanted.sort((a, b) => (rankMap[String(a.app_id)] || 99) - (rankMap[String(b.app_id)] || 99) || a.app_id - b.app_id || a.member_idx - b.member_idx);
-    wanted.forEach((p) => {
-      const app = byApp[p.app_id] || {};
-      const mem = (Array.isArray(app.members) ? app.members : [])[p.member_idx] || {};
-      const rank = rankMap[String(p.app_id)] ?? "";
-      const prize = rank !== "" && prizeMap[rank] != null ? Math.floor(prizeMap[rank] / 4) : "";
-      lines.push([rank, app.team_name, mem.ign, p.real_name, p.bank, p.account_no, p.holder, prize].map(esc).join(","));
+    const lines = ["순위,팀명,인게임닉,실명,은행,계좌번호,예금주,지급액,비고"];
+    let missing = 0;
+    wantedApps.forEach((app) => {
+      const members = Array.isArray(app.members) ? app.members : [];
+      const rank = rankMap[String(app.id)] ?? "";
+      // 4 고정 분할이었는데, 멤버가 3명인 팀이 입상하면 상금의 75%만 나온다.
+      // 실제 인원으로 나눈다(나머지는 버림 — 정산은 오너가 최종 확인한다).
+      const per = rank !== "" && prizeMap[rank] != null && members.length
+        ? Math.floor(prizeMap[rank] / members.length) : "";
+      members.forEach((mem, i) => {
+        const p = payByKey[`${app.id}:${i}`] || {};
+        const noAccount = !(p.bank || p.account_no || p.holder);
+        if (noAccount) missing += 1;
+        lines.push([rank, app.team_name, mem && mem.ign, p.real_name, p.bank, p.account_no, p.holder, per,
+                    noAccount ? "계좌 미등록 — 수기 입력 필요" : ""].map(esc).join(","));
+      });
     });
+    if (missing) lines.push(esc(`※ 계좌 미등록 ${missing}명 — 위 "비고" 열 확인 후 입금 전 채울 것`));
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="gdcup-s${season}-payouts.csv"`);
     res.setHeader("Cache-Control", "no-store");
