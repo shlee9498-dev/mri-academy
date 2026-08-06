@@ -169,6 +169,8 @@ function loadAdmin(){
 }
 
 function render(teams){
+  // 예비·교체 편집이 현재 값 위에서 이뤄져야 해서 id로 찾을 수 있게 캐싱한다.
+  TEAMS_BY_ID={}; teams.forEach(function(t){ TEAMS_BY_ID[String(t.id)]=t; });
   var applied=0,confirmed=0;
   teams.forEach(function(t){ if(t.status==='confirmed')confirmed++; else if(t.status!=='cancelled')applied++; });
   document.getElementById('stat').innerHTML='✅ 확정 <b>'+confirmed+'</b> · ⏳ 신청 <b>'+applied+'</b> / 16팀';
@@ -237,7 +239,10 @@ function render(teams){
       +(t.slogan?'<div class="meta">“'+esc(t.slogan)+'”</div>':'')
       +'<div class="meta" style="margin-bottom:2px;">멤버 — 티어 바꾸면 💾 저장</div>'
       +(memEdit||'<div class="meta">-</div>')
-      +'<div class="meta">팀 BPI: <b>'+esc(t.bpi)+'</b>'+(t.weight!=null?' (가중치 ×'+esc(t.weight)+')':'')+'</div>'
+      // "확정 4인 기준"을 붙인다 — 예비가 보이기 시작하면 BPI에 포함된 걸로 읽힌다.
+      +'<div class="meta">팀 BPI: <b>'+esc(t.bpi)+'</b>'+(t.weight!=null?' (가중치 ×'+esc(t.weight)+')':'')
+        +' <span style="color:var(--ink-faint);">— 확정 4인 기준(예비 미반영)</span></div>'
+      +reserveBlock(t)
       // 조치가 필요한 건 not_found 뿐. no_season은 정상 상태라 정보성으로만 적는다.
       +(t.pubgFailed?'<div class="meta" style="color:#f87171;">❌ 닉 조회 실패 '+t.pubgFailed+'명 — 정확한 인게임 닉으로 고친 뒤 💾 저장하세요</div>':'')
       +(t.pubgNoSeason?'<div class="meta" style="color:#fbbf24;">⚠ 시즌 기록 없음 '+t.pubgNoSeason+'명 — 계정은 확인됨, 참가 가능(티어는 신고값 유지)</div>':'')
@@ -451,6 +456,114 @@ function downloadObsCsv(enc){
     a.download='gdcup-observer-s'+(SEASON||'')+suffix+'.csv';
     a.click(); URL.revokeObjectURL(a.href);
   }).catch(function(){ alert('CSV 생성 실패 — 네트워크/키를 확인하세요.'); });
+}
+
+// ── 예비인원 · 교체 일정 ─────────────────────────────────────────────
+// BPI는 확정 4인 동결이라 이 블록은 순수 운영 정보다. 서버도 members·bpi·weight를
+// 건드리지 않는 별도 라우트(/api/gdcup-reserves)로 받는다.
+function reserveBlock(t){
+  var res=t.reserves||[], log=t.rosterLog||[];
+  var h='<div style="margin:8px 0;padding:8px;background:var(--bg-elev);border:1px solid var(--line);border-radius:8px;">'
+   +'<div class="meta" style="margin-bottom:4px;">🔄 예비 · 교체 일정</div>';
+
+  h+= res.length
+    ? res.map(function(r,i){
+        return '<div class="meta" style="display:flex;gap:6px;align-items:center;">'
+          +'<span>· <b>'+esc(r.ign)+'</b> '+esc(r.tier||'?')+(r.dmg?'/'+esc(r.dmg):'')
+          +(r.availFrom?' — '+esc(r.availFrom)+'~ 가능':'')+(r.note?' <span style="color:var(--ink-faint);">('+esc(r.note)+')</span>':'')+'</span>'
+          +'<button class="del" style="padding:1px 6px;font-size:11px;" onclick="delReserve(\''+t.id+'\','+i+')">삭제</button>'
+          +'</div>';
+      }).join('')
+    : '<div class="meta" style="color:var(--ink-faint);">예비 없음</div>';
+
+  h+= log.length
+    ? log.map(function(r){
+        var done=r.type==='done';
+        var line=(r.out&&r.in) ? esc(r.out)+' out → '+esc(r.in)+' in'
+               : r.in          ? esc(r.in)+' in'
+               : r.out         ? esc(r.out)+' out' : '(내용 없음)';
+        return '<div class="meta" style="display:flex;gap:6px;align-items:center;'+(done?'opacity:.6;':'')+'">'
+          +'<span>'+(done?'✅':'⏳')+' <b>'+esc(r.at||'시각미정')+'</b> '+line
+          +(r.note?' <span style="color:var(--ink-faint);">('+esc(r.note)+')</span>':'')+'</span>'
+          +(done?'':'<button class="ok" style="padding:1px 6px;font-size:11px;" onclick="swapDone(\''+t.id+'\',\''
+              +esc(r.at)+'\',\''+esc(r.out)+'\',\''+esc(r.in)+'\')">교체 완료</button>')
+          +'<button class="del" style="padding:1px 6px;font-size:11px;" onclick="delSwap(\''+t.id+'\',\''
+              +esc(r.at)+'\',\''+esc(r.out)+'\',\''+esc(r.in)+'\')">삭제</button>'
+          +'</div>';
+      }).join('')
+    : '<div class="meta" style="color:var(--ink-faint);">교체 예정 없음</div>';
+
+  h+='<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">'
+   +'<button class="wait" style="padding:2px 8px;font-size:11px;" onclick="addReserve(\''+t.id+'\')">+ 예비 추가</button>'
+   +'<button class="wait" style="padding:2px 8px;font-size:11px;" onclick="addSwap(\''+t.id+'\')">+ 교체 예정 추가</button>'
+   +'</div></div>';
+  return h;
+}
+
+// 현재 값을 서버에서 다시 읽지 않고 화면에 렌더된 팀 객체에서 가져온다 —
+// loadAdmin()이 매번 전체를 새로 받으므로 TEAMS_BY_ID가 항상 최신이다.
+var TEAMS_BY_ID={};
+function teamById(id){ return TEAMS_BY_ID[String(id)]||{reserves:[],rosterLog:[]}; }
+
+function postReserves(id, body, okMsg){
+  var k=getKey(); if(!k){alert('키를 입력하세요');return;}
+  body.id=id;
+  fetch(GAPI+"/api/gdcup-reserves",{method:"POST",headers:{"Content-Type":"application/json","x-admin-key":k},body:JSON.stringify(body)})
+  .then(function(r){return r.json().then(function(d){return {status:r.status,d:d};});})
+  .then(function(res){
+    if(res.status===401){alert('키가 틀렸어요.');return;}
+    if(!res.d||!res.d.ok){alert('실패: '+((res.d&&res.d.error)||res.status));return;}
+    if(okMsg) alert(okMsg);
+    loadAdmin();
+  }).catch(function(){alert('네트워크 오류');});
+}
+
+function addReserve(id){
+  var ign=prompt('예비 인원 인게임 닉'); if(!ign)return;
+  var tier=prompt('신고 티어 (S·T0~T5)','T1')||'';
+  var dmg=prompt('신고 평딜 (숫자만, 모르면 비워두기)','')||'';
+  var av=prompt('합류 가능 시각 (예: 22:30)','')||'';
+  var note=prompt('메모 (누구와 교체 예정인지 등)','')||'';
+  var cur=(teamById(id).reserves||[]).slice();
+  cur.push({ign:ign.trim(),tier:tier.trim(),dmg:dmg.trim(),availFrom:av.trim(),note:note.trim()});
+  postReserves(id,{reserves:cur});
+}
+function delReserve(id,i){
+  var cur=(teamById(id).reserves||[]).slice();
+  if(i<0||i>=cur.length)return;
+  if(!window.confirm('예비 "'+(cur[i].ign||'')+'" 삭제할까요?'))return;
+  cur.splice(i,1);
+  postReserves(id,{reserves:cur});
+}
+function addSwap(id){
+  var at=prompt('교체 시각 (예: 22:30)'); if(!at)return;
+  var out=prompt('빠지는 인원 닉 (없으면 비워두기 — 합류만)','')||'';
+  var inn=prompt('들어오는 인원 닉 (없으면 비워두기 — 이탈만)','')||'';
+  if(!out&&!inn){alert('빠지는 인원이나 들어오는 인원 중 하나는 있어야 합니다.');return;}
+  var note=prompt('메모','')||'';
+  var cur=(teamById(id).rosterLog||[]).slice();
+  cur.push({type:'planned',at:at.trim(),out:out.trim(),in:inn.trim(),note:note.trim()});
+  postReserves(id,{rosterLog:cur});
+}
+// 삭제·완료는 인덱스가 아니라 내용(at|out|in)으로 찾는다 — 서버가 시간순으로
+// 다시 정렬해 내려주기 때문에 화면 인덱스와 저장 순서가 어긋난다.
+function delSwap(id,at,out,inn){
+  var cur=(teamById(id).rosterLog||[]).slice();
+  var i=cur.findIndex(function(r){return (r.at||'')===at&&(r.out||'')===out&&(r.in||'')===inn;});
+  if(i<0){alert('항목을 찾지 못했어요 — 새로고침 후 다시 시도하세요.');return;}
+  if(!window.confirm('이 교체 일정을 삭제할까요?'))return;
+  cur.splice(i,1);
+  postReserves(id,{rosterLog:cur});
+}
+function swapDone(id,at,out,inn){
+  var k=getKey(); if(!k){alert('키를 입력하세요');return;}
+  if(!window.confirm('교체를 실행 완료로 기록할까요?\n(지금 시각이 로그에 남습니다)'))return;
+  fetch(GAPI+"/api/gdcup-swap-done",{method:"POST",headers:{"Content-Type":"application/json","x-admin-key":k},body:JSON.stringify({id:id,at:at,out:out,in:inn})})
+  .then(function(r){return r.json().then(function(d){return {status:r.status,d:d};});})
+  .then(function(res){
+    if(!res.d||!res.d.ok){alert('실패: '+((res.d&&res.d.message)||(res.d&&res.d.error)||res.status));return;}
+    loadAdmin();
+  }).catch(function(){alert('네트워크 오류');});
 }
 
 // skipConfirm: 자동 재시도로 다시 들어온 호출. 확인창을 또 띄우지 않는다.
