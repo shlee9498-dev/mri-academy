@@ -2,50 +2,131 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex">
-<title>G드컵 · 라이브 보드</title>
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
-<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<title>G드컵 S3 실시간 순위 바 (700×620)</title>
+<!--
+  ══ 개발자 가이드 (CD 시안 원문 유지) ═══════════════════════════
+  · OBS 브라우저 소스: 700×620 고정. 페이지 배경 투명, 행만 반투명 다크
+    (rgba(15,13,21,0.65)) — 게임 화면이 비쳐 보이는 오버레이용.
+  · 데이터 교체 지점:
+      .team-row             팀 한 줄. data-rank / data-team(태그) / data-team-name / data-alive("true"|"false")
+      .team-row .rank       순위 숫자
+      .team-row .team-chip  팀 컬러 칩 (style의 --team-color 교체)
+      .team-row .team-name  한글 팀명 (화면 표기 기본)
+      .team-row .team-tag   영문 태그 (보조, 작게)
+      .team-row .pts        누적 점수
+      .team-row .kills      이번 판 킬
+      .rounds[data-current] 현재 라운드 (1~5), .round.on 클래스로 하이라이트
+  · 상태 규칙:
+      data-alive="false" → 줄 딤 + 팀명 취소선 (CSS 자동)
+      data-rank="1"      → 골드 강조 (CSS 자동)
+
+  ══ 구현 메모 ═════════════════════════════════════════════════
+  · 마크업·CSS는 시안 그대로. 아래 스크립트가 실데이터를 바인딩한다.
+  · 팀 색·태그는 gdcup_team_brand 실값(API `color`/`tag`) — 시안의 더미 색이 아니다.
+  · 점수는 서버가 라운드마다 반올림해 정수로 준다. 시안의 "58.4"는 예시라
+    소수를 만들어 붙이지 않는다(없는 정밀도를 표시하지 않는다).
+  · URL 계약은 종전 그대로: ?round=N · &bg=0(투명) · &every=초(5~30).
+    시안은 기본 투명이지만, 이미 배포된 OBS 설정이 bg=0을 쓰고 있으므로
+    "bg=0이면 투명 / 그 외 불투명"을 유지한다.
+  ═══════════════════════════════════════════════════════════════
+-->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy/subsets/Paperlogy-dynamic-subset.css">
 <style>
-  :root{--bg:#0a0a0c;--card:#16161c;--line:#27272a;--ink:#f4f4f5;--dim:#a1a1aa;--faint:#71717a;
-    --gold:#f5c518;--red:#e63946;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif;}
-  *{margin:0;padding:0;box-sizing:border-box;}
-  /* OBS 브라우저 소스는 배경을 투명하게 쓰는 경우가 많다 — ?bg=0 이면 body 배경을 비운다 */
-  body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.4;padding:18px 20px;}
-  body.clear{background:transparent;}
-  .wrap{max-width:640px;margin:0 auto;}
-  .hd{display:flex;align-items:baseline;gap:10px;margin-bottom:12px;}
-  .kick{font-family:var(--display);letter-spacing:.22em;color:var(--gold);font-size:14px;}
-  .rd{font-family:var(--display);font-size:14px;color:var(--ink);}
-  .alive{margin-left:auto;font-size:14px;color:var(--dim);font-weight:700;}
-  .row{display:grid;grid-template-columns:34px 52px 1fr 62px 74px;gap:10px;align-items:center;
-    background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-bottom:6px;
-    transition:transform .35s ease;}
-  .row.out{opacity:.4;}
-  .rk{font-family:var(--display);font-size:18px;color:var(--gold);text-align:center;}
-  .row.out .rk{color:var(--faint);}
-  .chip{font-family:var(--display);font-size:14px;letter-spacing:.05em;padding:5px 0;border-radius:5px;text-align:center;}
-  .nm{font-weight:800;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .nm small{display:block;font-size:11px;color:var(--faint);font-weight:600;}
-  .kl{font-family:var(--display);font-size:24px;text-align:right;}
-  .kl small{font-family:var(--body);font-size:11px;color:var(--faint);font-weight:700;margin-left:3px;}
-  .pt{font-family:var(--display);font-size:24px;color:var(--gold);text-align:right;}
-  .mark{margin-top:12px;text-align:center;font-size:11px;color:var(--faint);letter-spacing:.06em;}
-  .mark b{color:var(--gold);letter-spacing:.16em;font-family:var(--display);font-size:11px;}
-  .empty{color:var(--faint);font-size:14px;text-align:center;padding:30px 0;}
-  @media (prefers-reduced-motion: reduce){ .row{transition:none;} }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { width:700px; height:620px; background:transparent; overflow:hidden;
+    font-family:'Pretendard Variable',Pretendard,sans-serif; color:#f4f1ea; }
+  body.bg-solid { background:#14121b; }
+
+  .board { width:700px; height:620px; display:flex; flex-direction:column; gap:2px; }
+  .board * { text-shadow:0 1px 3px rgba(0,0,0,0.75); }
+
+  /* ── 헤더 ── */
+  .board-header { height:50px; flex:none; display:flex; align-items:center; gap:12px;
+    padding:0 14px; background:rgba(15,13,21,0.7); border-radius:8px; }
+  .mark { width:26px; height:26px; border-radius:6px; background:#f5c518;
+    display:grid; place-items:center; flex:none; text-shadow:none;
+    font-family:Paperlogy,sans-serif; font-weight:900; font-size:17px; color:#171204; }
+  .title { font-family:Paperlogy,sans-serif; font-weight:800; font-size:20px; letter-spacing:-0.3px; }
+  .season { font-size:12px; font-weight:700; letter-spacing:2.5px; color:#f5c518; }
+  .spacer { flex:1; }
+  .rounds { display:flex; gap:4px; }
+  .round { width:29px; height:21px; border-radius:5px; display:grid; place-items:center;
+    font-family:Paperlogy,sans-serif; font-weight:700; font-size:12px;
+    color:#9d94b1; background:rgba(255,255,255,0.08); }
+  .round.on { color:#171204; background:#f5c518; text-shadow:none; }
+  .live { display:flex; align-items:center; gap:7px; padding:4px 11px; border-radius:999px;
+    background:rgba(230,77,70,0.2); }
+  .live.off { display:none; }
+  .live-dot { width:8px; height:8px; border-radius:50%; background:#e64d46;
+    animation:pulse 1.6s ease-out infinite; }
+  .live span { font-family:Paperlogy,sans-serif; font-weight:800; font-size:13px;
+    letter-spacing:2px; color:#ff8a80; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(230,77,70,.55)}
+    70%{box-shadow:0 0 0 9px rgba(230,77,70,0)} 100%{box-shadow:0 0 0 0 rgba(230,77,70,0)} }
+
+  /* ── 컬럼 라벨 ── */
+  .col-labels { height:20px; flex:none; display:grid;
+    grid-template-columns:40px 10px 1fr 92px 66px; gap:10px; align-items:center;
+    padding:0 14px; font-size:11px; font-weight:700; letter-spacing:2px; color:#9d94b1; }
+  .col-labels .r { text-align:right; }
+
+  /* ── 팀 줄 ── */
+  .rows { flex:1; display:flex; flex-direction:column; gap:2px; }
+  .team-row { flex:1; display:grid;
+    grid-template-columns:40px 10px 1fr 92px 66px; gap:10px; align-items:center;
+    padding:0 14px; background:rgba(15,13,21,0.65); border-radius:6px; }
+  .rank { font-family:Paperlogy,sans-serif; font-weight:900; font-size:19px;
+    color:#c9c2d6; font-variant-numeric:tabular-nums; }
+  .team-chip { width:10px; height:20px; border-radius:3px; background:var(--team-color,#8d84a3); text-shadow:none; }
+  .team-name { display:flex; align-items:baseline; gap:7px; min-width:0; }
+  .team-name .kr { font-size:18px; font-weight:700; letter-spacing:-0.2px; white-space:nowrap; }
+  .team-name .team-tag { font-family:Paperlogy,sans-serif; font-weight:700; font-size:11px;
+    letter-spacing:1px; color:#8d84a3; }
+  .pts { text-align:right; font-family:Paperlogy,sans-serif; font-weight:800; font-size:19px;
+    font-variant-numeric:tabular-nums; }
+  .kills { text-align:right; font-weight:700; font-size:16px; color:#ff9d97;
+    font-variant-numeric:tabular-nums; }
+
+  /* 1위 골드 강조 */
+  .team-row[data-rank="1"] { background:rgba(74,58,6,0.72); }
+  .team-row[data-rank="1"] .rank,
+  .team-row[data-rank="1"] .pts { color:#f5c518; }
+  .team-row[data-rank="1"] .kr { color:#fdf6de; }
+
+  /* 전멸 팀: 줄 딤 + 팀명 취소선 */
+  .team-row[data-alive="false"] { opacity:0.4; filter:grayscale(0.7); }
+  .team-row[data-alive="false"] .kr { text-decoration:line-through;
+    text-decoration-thickness:2px; text-decoration-color:rgba(230,77,70,0.9); }
+
+  /* 순위 변동 FLIP — 이전 위치에서 현재 위치로 미끄러진다 */
+  .team-row.flip { transition:transform 320ms cubic-bezier(0.16,1,0.3,1); }
+  @media (prefers-reduced-motion: reduce){ .team-row.flip { transition:none; } }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="hd">
-    <span class="kick">G드컵</span>
-    <span class="rd" id="rd">LIVE</span>
-    <span class="alive" id="alive"></span>
+<div class="board">
+  <div class="board-header">
+    <div class="mark">G</div>
+    <div class="title">G드컵</div>
+    <div class="season" id="season">SEASON 3</div>
+    <div class="spacer"></div>
+    <div class="rounds" id="rounds" data-current="">
+      <div class="round" data-r="1">R1</div>
+      <div class="round" data-r="2">R2</div>
+      <div class="round" data-r="3">R3</div>
+      <div class="round" data-r="4">R4</div>
+      <div class="round" data-r="5">R5</div>
+    </div>
+    <div class="live off" id="live"><span class="live-dot"></span><span>LIVE</span></div>
   </div>
-  <div id="list"><div class="empty">불러오는 중…</div></div>
-  <div class="mark"><b>UNOFFICIAL LIVE</b> · 옵저버 실시간 집계 — 확정 순위와 다를 수 있습니다</div>
+
+  <div class="col-labels">
+    <div>#</div><div></div><div>팀</div><div class="r">PTS</div><div class="r">KILLS</div>
+  </div>
+
+  <div class="rows" id="rows"></div>
 </div>
 
 <script>
@@ -53,37 +134,65 @@
   "use strict";
   var GAPI = "https://mri-academy-production.up.railway.app";
   var Q = new URLSearchParams(location.search);
-  var round = Number(Q.get("round")) || 0;      // 0이면 서버가 라이브 없이 확정분만 준다
+  var round = Number(Q.get("round")) || 0;      // 0이면 라이브 없이 확정분만
   var season = Q.get("season") || "";
-  var every = Math.min(30, Math.max(5, Number(Q.get("every")) || 7)) * 1000;   // 5~30초
-  if(Q.get("bg") === "0") document.body.classList.add("clear");
+  var every = Math.min(30, Math.max(5, Number(Q.get("every")) || 7)) * 1000;
+  // 시안은 기본 투명이지만 배포된 OBS 설정이 bg=0을 쓰므로 종전 계약을 유지한다.
+  if(Q.get("bg") !== "0") document.body.classList.add("bg-solid");
   var $ = function(id){ return document.getElementById(id); };
   function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]; }); }
-  function textOn(hex){
-    var h=String(hex||"").replace("#",""); if(h.length!==6) return "#0a0a0c";
-    var r=parseInt(h.slice(0,2),16), g=parseInt(h.slice(2,4),16), b=parseInt(h.slice(4,6),16);
-    return (r*299+g*587+b*114)/1000 > 150 ? "#0a0a0c" : "#f4f4f5";
-  }
-  function tagOf(t){ return (t.tag ? String(t.tag).toUpperCase().slice(0,4)
-                                   : String(t.name||"").replace(/\s+/g,"").slice(0,2)) || "?"; }
+
+  // 라운드 칩은 ?round= 를 따른다. 0이면 아무 칩도 켜지 않는다(누적 보기).
+  (function(){
+    $("rounds").setAttribute("data-current", round || "");
+    Array.prototype.forEach.call($("rounds").children, function(el){
+      el.classList.toggle("on", Number(el.getAttribute("data-r")) === round);
+    });
+    $("live").classList.toggle("off", !round);
+  })();
+
+  var prevTop = {};   // 팀명 → 직전 렌더의 화면상 top (FLIP용)
 
   function render(d){
     var teams = (d && d.teams) || [];
-    if(!teams.length){ $("list").innerHTML = '<div class="empty">아직 집계가 없습니다.</div>'; return; }
-    $("rd").textContent = d.round ? ("R" + d.round + " LIVE") : "누적";
-    $("alive").textContent = d.live ? ("생존 " + d.alive + "/" + d.total) : "";
-    $("list").innerHTML = teams.map(function(t, i){
-      var col = t.color || "#3f3f46";
-      return '<div class="row'+(t.wiped?" out":"")+'">'
-        + '<div class="rk">'+(i+1)+'</div>'
-        + '<div class="chip" style="background:'+esc(col)+';color:'+textOn(col)+'">'+esc(tagOf(t))+'</div>'
-        + '<div class="nm">'+esc(t.name)
-          + '<small>×'+(t.weight!=null?t.weight:1)+(t.wiped?' · 전멸'+(t.livePlace?' '+t.livePlace+'위':''):'')+'</small></div>'
-        + '<div class="kl">'+(d.live ? t.liveKills : t.kills)+'<small>킬</small></div>'
-        + '<div class="pt">'+t.points+'</div>'
+    var box = $("rows");
+    if(!teams.length){ box.innerHTML = ""; return; }
+    if(d.season) $("season").textContent = "SEASON " + d.season;
+
+    var before = prevTop;
+    var now = {};
+    box.innerHTML = teams.map(function(t, i){
+      var col = t.color || "#8d84a3";
+      var tag = t.tag || "";
+      // 태그가 팀명과 같으면(YM 등) 중복 표기를 하지 않는다 — 시안도 그렇게 그려져 있다.
+      var tagHtml = (tag && tag !== t.name) ? '<span class="team-tag">'+esc(tag)+'</span>' : '';
+      return '<div class="team-row" data-rank="'+(i+1)+'" data-team="'+esc(tag)+'"'
+        + ' data-team-name="'+esc(t.name)+'" data-alive="'+(t.wiped ? "false" : "true")+'"'
+        + ' style="--team-color:'+esc(col)+'">'
+        + '<div class="rank">'+(i+1)+'</div>'
+        + '<div class="team-chip"></div>'
+        + '<div class="team-name"><span class="kr">'+esc(t.name)+'</span>'+tagHtml+'</div>'
+        + '<div class="pts">'+(t.points!=null ? t.points : 0)+'</div>'
+        + '<div class="kills">'+(d.live ? t.liveKills : t.kills)+'</div>'
         + '</div>';
     }).join("");
+
+    // FLIP — 새 위치를 잰 뒤 이전 위치로 되돌렸다가 놓아준다.
+    var rows = box.querySelectorAll(".team-row");
+    Array.prototype.forEach.call(rows, function(el){
+      var name = el.getAttribute("data-team-name");
+      var top = el.offsetTop;
+      now[name] = top;
+      var was = before[name];
+      if(was != null && was !== top){
+        el.style.transform = "translateY(" + (was - top) + "px)";
+        el.getBoundingClientRect();               // 스타일 강제 반영
+        el.classList.add("flip");
+        el.style.transform = "";
+      }
+    });
+    prevTop = now;
   }
 
   function tick(){
