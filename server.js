@@ -3848,14 +3848,13 @@ app.get("/api/gdcup-round-scores", async (req,res)=>{
 // 시즌3(post_weight/B안): 총점 = Σ round(기본점수_r × weight) + Σ 보너스_r (보너스는 weight 미적용 정수 가산)
 // 시즌2(legacy_inclusive, 동결): 총점 = round( (Σ기본점수 + Σ보너스) × weight )
 // 연속보너스: 인접 라운드 both 기록 · prev≤4&cur≤4 → +2 / prev=1&cur=1 → +5(중복 시 5만) · null(불참)=리셋
-app.get("/api/gdcup-scores", async (req,res)=>{
-  try{
-    if(!process.env.SUPABASE_URL) return res.json({standings:[], lastRound:0, season:GDCUP_CURRENT_SEASON});
-    const season = gdSeason(req.query.season);
+// 순위 계산 = 순수 함수. /api/gdcup-scores와 라이브 보드가 **같은 함수**를 쓴다.
+// 라이브 보드용으로 식을 복제하면 반드시 어긋난다(가중치표 복제로 이미 한 번 사고가 났다).
+// rows는 gdcup_scores 형태 — 라이브 보드는 여기에 현재 라운드 가상 행을 얹어 넘긴다.
+function gdcupComputeStandings(rows, teams, season){
+  {
     const rules = gdSeasonRules(season);
     const rounds = rules.rounds;
-    const teams = await gdcupTeamsMap(season);
-    let rows=[]; try{ rows = await sbSelect("gdcup_scores",`select=round,team_name,placement,team_kills,player_kills&season=eq.${season}&order=round.asc`); }catch(_){ rows=[]; }
     const agg={}; let lastRound=0;
     (rows||[]).forEach(r=>{
       if(!rounds.includes(Number(r.round))) return;
@@ -3905,6 +3904,17 @@ app.get("/api/gdcup-scores", async (req,res)=>{
       }
       return { name, weight:w, points, kills:a.kills, bonus:a.bonus, bonusByRound:a.bonusByRound||{} };
     }).sort((a,b)=> b.points-a.points || b.kills-a.kills);
+    return { standings, lastRound };
+  }
+}
+
+app.get("/api/gdcup-scores", async (req,res)=>{
+  try{
+    if(!process.env.SUPABASE_URL) return res.json({standings:[], lastRound:0, season:GDCUP_CURRENT_SEASON});
+    const season = gdSeason(req.query.season);
+    const teams = await gdcupTeamsMap(season);
+    let rows=[]; try{ rows = await sbSelect("gdcup_scores",`select=round,team_name,placement,team_kills,player_kills&season=eq.${season}&order=round.asc`); }catch(_){ rows=[]; }
+    const { standings, lastRound } = gdcupComputeStandings(rows, teams, season);
     res.json({ standings, lastRound, season });
   }catch(e){ console.error("gdcup_scores", e); res.json({standings:[], lastRound:0, season:GDCUP_CURRENT_SEASON}); }
 });
@@ -3970,6 +3980,121 @@ app.get("/api/gdcup-toto-result", async (req, res) => {
     const team = String(req.query.team || "").trim();
     res.json({ total: (rows || []).length, byTeam, winners: team ? (byTeam[team] || []) : [], team: team || null, season });
   } catch (e) { console.error("gdcup_toto_result", e?.message); res.status(500).json({ error: "server_error" }); }
+});
+
+// ═══ 라이브 킬 트래커 (2026-08-07 신설) ═══════════════════════════════
+// 옵저버가 라운드 중 손으로 세는 **비공식** 카운트. 방송 그림용이고 판정과 무관하다.
+// 설계 조건: 정본 무접촉 —
+//   · 쓰기는 gdcup_live 전용. gdcup_scores는 **읽기만** 한다(그마저도 보드에서만).
+//   · 라운드 리셋은 gdcup_live의 해당 (season, round)만 지운다.
+//   · 이 테이블이 없거나 라우트가 죽어도 순위·킬MVP·정산은 그대로 돈다.
+// 예상 순위는 gdcupComputeStandings를 **그대로 재사용**한다 — 식을 복제하면 어긋난다.
+const GDCUP_LIVE_SEL = "season,round,team_name,kills,wiped,wiped_at,updated_at";
+
+// 전멸 순서 → 확정 순위. 배틀로얄은 탈락 시점의 생존 팀 수로 순위가 확정된다.
+// 13팀 중 첫 전멸 = 13위, 그다음 = 12위 … 마지막 1팀만 남으면 그 팀이 1위(치킨).
+// 아직 살아 있는 팀은 순위가 안 정해졌으므로 null — 순위점 0으로 계산된다.
+function gdcupLivePlacements(liveRows, teamNames){
+  const total = teamNames.length;
+  const wiped = (liveRows||[]).filter(r=>r.wiped && teamNames.includes(r.team_name))
+    .sort((a,b)=>{
+      const aw=a.wiped_at||"", bw=b.wiped_at||"";     // 먼저 죽은 팀이 앞
+      if(aw!==bw) return aw<bw ? -1 : 1;
+      return String(a.team_name).localeCompare(String(b.team_name), "en");
+    });
+  const out = {};
+  wiped.forEach((r,i)=>{ out[r.team_name] = total - i; });   // i=0 → 꼴찌
+  const alive = teamNames.filter(n=>!out[n]);
+  if(alive.length === 1) out[alive[0]] = 1;                  // 마지막 생존 = 치킨
+  return out;
+}
+
+// [운영] 라이브 상태 조회
+app.get("/api/gdcup-live", async (req,res)=>{
+  try{
+    if(!gdcupAdmin(req)) return res.status(401).json({error:"unauthorized"});
+    if(!process.env.SUPABASE_URL) return res.json({rows:[]});
+    const season = gdSeason(req.query.season);
+    const round = Number(req.query.round);
+    if(!gdcupRounds(season).includes(round)) return res.status(400).json({error:"bad_round"});
+    const rows = await sbSelect("gdcup_live", `select=${GDCUP_LIVE_SEL}&season=eq.${season}&round=eq.${round}`);
+    res.json({ rows: rows||[], season, round });
+  }catch(e){ console.error("gdcup_live_get", e?.status||"fail"); res.status(500).json({error:"server_error"}); }
+});
+
+// [운영] 킬 증감(delta) · 절대값(kills) · 전멸 토글(wiped)
+// delta를 서버에서 더하는 이유: 버튼 연타·모바일 재전송에서 클라 절대값을 믿으면
+// 뒤늦게 도착한 낮은 값이 최신 카운트를 덮어쓴다.
+app.post("/api/gdcup-live", async (req,res)=>{
+  try{
+    if(!gdcupAdmin(req)) return res.status(401).json({error:"unauthorized"});
+    if(!process.env.SUPABASE_URL) return res.status(503).json({error:"db_disabled"});
+    const b = req.body||{};
+    const season = gdSeason(b.season);
+    const round = Number(b.round);
+    const team_name = String(b.team_name||"").slice(0,40);
+    if(!team_name || !gdcupRounds(season).includes(round)) return res.status(400).json({error:"bad_input"});
+    const cur = (await sbSelect("gdcup_live",
+      `select=${GDCUP_LIVE_SEL}&season=eq.${season}&round=eq.${round}&team_name=eq.${encodeURIComponent(team_name)}&limit=1`))[0] || {};
+    let kills = Number(cur.kills)||0;
+    if(b.kills!=null && b.kills!=="") kills = Math.max(0, Number(b.kills)||0);
+    if(b.delta!=null && b.delta!=="") kills = Math.max(0, kills + (Number(b.delta)||0));
+    let wiped = cur.wiped === true;
+    let wiped_at = cur.wiped_at || null;
+    if(b.wiped!=null){
+      wiped = b.wiped === true || b.wiped === "true";
+      wiped_at = wiped ? (wiped_at || new Date().toISOString()) : null;   // 해제하면 순서에서 빠진다
+    }
+    const row = { season, round, team_name, kills, wiped, wiped_at, updated_at: new Date().toISOString() };
+    await sbUpsert("gdcup_live", row, "season,round,team_name");
+    res.json({ ok:true, row });
+  }catch(e){ console.error("gdcup_live_post", e?.status||"fail"); res.status(500).json({error:"server_error"}); }
+});
+
+// [운영] 라운드 리셋 — gdcup_live의 해당 라운드만. gdcup_scores는 건드리지 않는다.
+app.post("/api/gdcup-live-reset", async (req,res)=>{
+  try{
+    if(!gdcupAdmin(req)) return res.status(401).json({error:"unauthorized"});
+    if(!process.env.SUPABASE_URL) return res.status(503).json({error:"db_disabled"});
+    const season = gdSeason(req.body && req.body.season);
+    const round = Number(req.body && req.body.round);
+    if(!gdcupRounds(season).includes(round)) return res.status(400).json({error:"bad_round"});
+    await sbDelete("gdcup_live", `season=eq.${season}&round=eq.${round}`);
+    res.json({ ok:true, season, round });
+  }catch(e){ console.error("gdcup_live_reset", e?.status||"fail"); res.status(500).json({error:"server_error"}); }
+});
+
+// [공개] 방송 보드 — OBS 브라우저 소스는 헤더를 못 붙여서 공개다.
+// 내려주는 건 팀명·태그·색·킬·예상순위뿐 — 개인정보·키 없음.
+app.get("/api/gdcup-live-board", async (req,res)=>{
+  try{
+    if(!process.env.SUPABASE_URL) return res.json({teams:[], round:0, live:false});
+    const season = gdSeason(req.query.season);
+    const round = Number(req.query.round) || 0;
+    const teams = await gdcupTeamsMap(season);
+    const names = Object.keys(teams);
+    let brands=[]; try{ brands = await sbSelect("gdcup_team_brand","select=team_name,color,tag&order=updated_at.desc"); }catch(_){ brands=[]; }
+    const B={}; (brands||[]).forEach(b=>{ if(!Object.prototype.hasOwnProperty.call(B,b.team_name)) B[b.team_name]=b; });
+    let live=[]; if(round) { try{ live = await sbSelect("gdcup_live", `select=${GDCUP_LIVE_SEL}&season=eq.${season}&round=eq.${round}`); }catch(_){ live=[]; } }
+    const liveBy={}; (live||[]).forEach(r=>{ liveBy[r.team_name]=r; });
+    const placeBy = gdcupLivePlacements(live, names);
+    // 확정분 = gdcup_scores. 진행 중인 라운드가 이미 저장돼 있으면 라이브가 이긴다(중복 방지).
+    let scored=[]; try{ scored = await sbSelect("gdcup_scores",`select=round,team_name,placement,team_kills,player_kills&season=eq.${season}&order=round.asc`); }catch(_){ scored=[]; }
+    const rows = (scored||[]).filter(r=>Number(r.round)!==round).concat(
+      round ? names.map(n=>({ round, team_name:n, placement: placeBy[n]!=null ? placeBy[n] : null,
+                              team_kills: Number((liveBy[n]||{}).kills)||0, player_kills: [] })) : []);
+    const { standings } = gdcupComputeStandings(rows, teams, season);
+    const out = standings.map(s=>({
+      name: s.name, tag: (B[s.name]||{}).tag || null, color: (B[s.name]||{}).color || null,
+      points: s.points, kills: s.kills, weight: s.weight,
+      liveKills: Number((liveBy[s.name]||{}).kills)||0,
+      wiped: (liveBy[s.name]||{}).wiped === true,
+      livePlace: placeBy[s.name] != null ? placeBy[s.name] : null,
+    }));
+    res.json({ teams: out, round, season, live: !!round,
+               alive: names.length - Object.keys(placeBy).length,
+               total: names.length, at: new Date().toISOString() });
+  }catch(e){ console.error("gdcup_live_board", e?.status||"fail"); res.json({teams:[], round:0, live:false}); }
 });
 
 // [공개] 킬 MVP = 선수별 누적 킬
@@ -4782,6 +4907,9 @@ const GDCUP_PAGES = [
   "gdcup-history", // 공개 — 아카이브 목록
   "gdcup-s2",      // 공개 — 시즌2 아카이브
   "toto",          // 공개 — 시청자 예측(FINAL 치킨팀). QR 유입, 모바일 우선
+  "live",          // 운영 — 라이브 킬 트래커 입력(옵저버). 키 게이트
+  "live-board",    // 방송 — 라이브 보드(OBS 브라우저 소스). 공개
+  "staff-guide",   // 운영 — 운영진 매뉴얼. 키·개인정보 없음
 ];
 function sendGdcupPage(file) {
   return (req, res) => {
@@ -5114,6 +5242,7 @@ const REQUIRED_SCHEMA = {
                      "reserves","roster_log"],
   gdcup_attendance: ["event","user_id","name","status","reason"],
   gdcup_toto:       ["id","season","nickname","nick_key","pick_team","ip","created_at","updated_at"],
+  gdcup_live:       ["id","season","round","team_name","kills","wiped","wiped_at","updated_at"],
   gdcup_payouts:    ["id","app_id","season","member_idx","real_name","bank","account_no","holder"],
   gdcup_scores:     ["season","round","team_name","placement","team_kills","player_kills","updated_at"],
   gdcup_solos:      ["id","season","kind","ign","tier","discord","note","status","created_at"],

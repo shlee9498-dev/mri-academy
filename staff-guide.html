@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>G드컵 · 운영진 매뉴얼</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  :root{--bg:#0a0a0c;--card:#16161c;--elev:#1d1d25;--line:#27272a;--ink:#f4f4f5;--dim:#a1a1aa;--faint:#71717a;
+    --gold:#f5c518;--green:#10b981;--red:#e63946;--display:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;padding:0 14px 60px;}
+  .wrap{max-width:720px;margin:0 auto;}
+  header{padding:26px 0 18px;border-bottom:1px solid var(--line);margin-bottom:22px;}
+  .kick{font-family:var(--display);letter-spacing:.26em;color:var(--gold);font-size:11px;}
+  h1{font-size:27px;font-weight:800;margin:6px 0 4px;letter-spacing:-.01em;}
+  .sub{color:var(--dim);font-size:14px;}
+  h2{font-size:17px;font-weight:800;margin:30px 0 12px;display:flex;align-items:center;gap:9px;}
+  h2 .no{font-family:var(--display);color:var(--gold);font-size:11px;border:1px solid var(--gold);
+    border-radius:4px;padding:3px 6px;letter-spacing:.08em;}
+  .steps{display:grid;gap:9px;}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px 15px;display:flex;gap:13px;}
+  .step .n{font-family:var(--display);color:var(--gold);font-size:17px;flex:0 0 26px;line-height:1.3;}
+  .step b{display:block;font-size:15px;margin-bottom:2px;}
+  .step p{font-size:14px;color:var(--dim);margin:0;}
+  table{width:100%;border-collapse:collapse;font-size:14px;}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);}
+  th{color:var(--faint);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;}
+  td.t{font-family:var(--display);color:var(--gold);white-space:nowrap;font-size:14px;}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .screens{display:grid;gap:11px;}
+  .sc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px;}
+  .sc h3{font-size:17px;font-weight:800;margin-bottom:3px;}
+  .sc .when{font-size:11px;color:var(--gold);font-weight:700;letter-spacing:.08em;text-transform:uppercase;}
+  .sc p{font-size:14px;color:var(--dim);margin:8px 0 0;}
+  .go{display:inline-block;margin-top:11px;background:var(--gold);color:#1a1500;font-weight:800;font-size:14px;
+    text-decoration:none;padding:10px 17px;border-radius:9px;}
+  .go.ghost{background:none;color:var(--dim);border:1px solid var(--line);}
+  .care{margin-top:11px;border-left:2px solid var(--gold);padding:2px 0 2px 11px;font-size:14px;color:var(--ink);}
+  .care ul{margin:0;padding-left:17px;}
+  .care li{margin:3px 0;color:var(--dim);}
+  .care li b{color:var(--ink);}
+  .rule{background:var(--elev);border:1px solid var(--line);border-radius:12px;padding:15px;font-size:14px;}
+  .rule li{margin:7px 0 7px 17px;color:var(--dim);}
+  .rule li b{color:var(--ink);}
+  .tbd{border:1px dashed var(--line);border-radius:9px;padding:11px 13px;font-size:14px;color:var(--faint);}
+  footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);font-size:14px;color:var(--faint);}
+  @media (max-width:520px){ .step{flex-direction:column;gap:5px;} h1{font-size:23px;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kick">G드컵 시즌3</div>
+  <h1>운영진 매뉴얼</h1>
+  <p class="sub">본선 2026년 8월 7일(금) · 이 페이지에는 키·비밀번호가 없습니다. 키는 무리에게 따로 받으세요.</p>
+</header>
+
+<h2><span class="no">01</span> 오늘 역할 한눈에</h2>
+<div class="steps">
+  <div class="step"><div class="n">1</div><div>
+    <b>옵저버 슬롯으로 참여</b>
+    <p>커스텀 방에 옵저버로 입장해 관전합니다.</p></div></div>
+  <div class="step"><div class="n">2</div><div>
+    <b>라운드 중 — 라이브 트래커 딸깍</b>
+    <p>킬이 날 때마다 해당 팀 <b>+</b>, 팀이 전멸하면 <b>전멸 표시</b>. 방송 화면에 바로 반영됩니다.</p></div></div>
+  <div class="step"><div class="n">3</div><div>
+    <b>라운드 끝나면 — 점수 입력에 확정 저장</b>
+    <p>자동 불러오기로 채우고 라이브 카운트와 대조한 뒤 저장합니다. <b>이게 진짜 점수입니다.</b></p></div></div>
+  <div class="step"><div class="n">4</div><div>
+    <b>R1 끝나고 순위화면 확인</b>
+    <p>results에 1라운드가 제대로 반영됐는지 한 번 봅니다. 여기서 틀리면 뒤 라운드도 틀립니다.</p></div></div>
+  <div class="step"><div class="n">5</div><div>
+    <b>이상하면 바로 무리 호출</b>
+    <p>혼자 고치려 하지 말고 먼저 알립니다. 되돌리는 게 훨씬 쉽습니다.</p></div></div>
+</div>
+
+<h2><span class="no">02</span> 타임라인</h2>
+<div class="scroll"><table>
+  <thead><tr><th>시각</th><th>할 일</th></tr></thead>
+  <tbody>
+    <tr><td class="t">16:00</td><td>리허설 — 화면 전부 열어보고 키 확인</td></tr>
+    <tr><td class="t">20:00</td><td>솔로 이벤트 (2판) — <b>점수 입력하지 않습니다</b></td></tr>
+    <tr><td class="t">20:50</td><td>대기 — 커스텀 방 입장, 트래커 R1 탭 열어두기</td></tr>
+    <tr><td class="t">21:00</td><td>R1</td></tr>
+    <tr><td class="t">21:35</td><td>R2</td></tr>
+    <tr><td class="t">22:10</td><td>R3</td></tr>
+    <tr><td class="t">22:45</td><td>R4</td></tr>
+    <tr><td class="t">23:20</td><td>R5</td></tr>
+    <tr><td class="t">23:50</td><td>종료 — 최종 순위 확인</td></tr>
+  </tbody>
+</table></div>
+
+<h2><span class="no">03</span> 화면별 안내</h2>
+<div class="screens">
+
+  <div class="sc">
+    <div class="when">라운드 중 · 계속 켜둠</div>
+    <h3>라이브 킬 트래커</h3>
+    <p>킬 <b>+/−</b>와 전멸 토글. 여기 숫자는 <b>방송용 참고값</b>이고 판정에 들어가지 않습니다.</p>
+    <div class="care"><ul>
+      <li><b>라운드 탭을 먼저 확인.</b> R2가 시작됐는데 R1 탭에 누르면 숫자가 섞입니다.</li>
+      <li>잘못 눌렀으면 <b>−</b>로 되돌리면 됩니다. 라운드 통째로 지우려면 "이 라운드 리셋".</li>
+      <li>전멸 순서가 곧 그 팀의 순위입니다. <b>죽는 순서대로</b> 눌러주세요.</li>
+    </ul></div>
+    <a class="go" href="live.html">라이브 트래커 열기</a>
+  </div>
+
+  <div class="sc">
+    <div class="when">라운드 끝나고 · 필수</div>
+    <h3>점수 입력 (확정)</h3>
+    <p>순위 + 킬을 저장합니다. <b>여기 저장한 것만 실제 점수가 됩니다.</b></p>
+    <div class="care"><ul>
+      <li><b>선수 닉은 직접 타이핑하지 마세요.</b> 칸을 클릭하면 목록이 뜨니 거기서 고르세요.</li>
+      <li>순위만 먼저 저장하고 킬은 나중에 채워도 됩니다. 반대 순서도 됩니다.</li>
+      <li>저장은 <b>그 라운드 탭에 기존 값이 뜬 상태</b>에서. 빈 화면에서 저장하면 앞서 넣은 값이 지워집니다.</li>
+      <li><b>20:00 솔로 결과는 절대 입력하지 않습니다.</b> R1은 21:00 팀전 첫 판입니다.</li>
+      <li>"자동 감지 ON"을 켜두면 새 매치를 30초마다 알아서 불러옵니다. 새로고침 반복할 필요 없습니다.</li>
+    </ul></div>
+    <a class="go" href="gdcup-score.html">점수 입력 열기</a>
+  </div>
+
+  <div class="sc">
+    <div class="when">R1 후 · 그리고 매 라운드</div>
+    <h3>순위화면 · 킬 MVP</h3>
+    <p>확정 저장이 제대로 들어갔는지 보는 곳입니다. 방송에도 이 화면이 나갑니다.</p>
+    <div class="care"><ul>
+      <li>저장했는데 순위가 안 바뀌면 <b>라운드 번호</b>부터 확인하세요.</li>
+      <li>킬 MVP는 <b>가중치 없는 원킬</b> 기준입니다. 순위표 점수와 다른 게 정상입니다.</li>
+    </ul></div>
+    <a class="go ghost" href="results.html">순위화면</a>
+    <a class="go ghost" href="kill-mvp.html">킬 MVP</a>
+  </div>
+
+  <div class="sc">
+    <div class="when">방송 송출용 · OBS</div>
+    <h3>라이브 보드 · 오버레이</h3>
+    <p>OBS 브라우저 소스로 넣는 화면입니다. 운영 중에는 건드릴 일이 없습니다.</p>
+    <div class="care"><ul>
+      <li>라이브 보드는 주소 뒤에 <b>?round=1</b> 처럼 라운드를 붙여야 그 라운드를 그립니다.</li>
+      <li>배경을 투명하게 쓰려면 <b>&amp;bg=0</b>을 추가하세요.</li>
+    </ul></div>
+    <a class="go ghost" href="live-board.html?round=1">라이브 보드</a>
+    <a class="go ghost" href="overlay.html">오버레이</a>
+  </div>
+
+</div>
+
+<h2><span class="no">04</span> 곤란할 때</h2>
+<div class="rule"><ul>
+  <li><b>먼저 알린다.</b> 조용히 되돌리려다 더 꼬입니다. 스크린샷 한 장이면 충분합니다.</li>
+  <li><b>확정 저장은 되돌릴 수 있습니다.</b> 다시 저장하면 덮어써지니 잘못 넣었다고 당황하지 마세요.</li>
+  <li><b>라이브 트래커는 틀려도 됩니다.</b> 방송용 참고값이라 판정과 무관합니다. 라운드 리셋으로 다시 세면 됩니다.</li>
+  <li><b>키가 안 먹으면</b> 새로 받아 다시 입장하세요. 키는 이 페이지에 적지 않습니다.</li>
+  <li><b>화면이 안 열리면</b> 주소를 다시 확인하세요. 오늘은 Railway 주소가 정본입니다.</li>
+</ul></div>
+
+<h2><span class="no">05</span> 확정 대기</h2>
+<div class="tbd">
+  아래는 오너 최종 문안 대기 중입니다. 받는 대로 이 자리에 넣습니다.
+  <ul style="margin:8px 0 0 17px;">
+    <li>리허설 정확한 시각과 준비물</li>
+    <li>커스텀 방 입장 방법·비밀번호 전달 경로</li>
+    <li>솔로 이벤트(20:00) 중 운영진이 할 일</li>
+    <li>무리 호출 수단(디스코드 채널·멘션)</li>
+  </ul>
+</div>
+
+<footer>이 페이지는 검색에 노출되지 않습니다. 키·계좌·실명은 어떤 경우에도 여기 적지 않습니다.</footer>
+
+</div>
+</body>
+</html>
