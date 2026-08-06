@@ -4191,14 +4191,16 @@ app.post("/api/gdcup-edit", limit("gdEdit", 10, 60_000), async (req, res) => {
     if (!cur) return res.status(404).json({ error: "team_not_found" });
     const teamSeason = gdSeason(cur.season);
     const validation = validateTeamComposition(members, teamSeason);
-    const override = b.override === true;                  // 관리자만 override 허용
-    if (!validation.ok && !override) return res.status(422).json({ error: "team_validation_failed", reasons: validation.reasons });
+    // 상한은 #132에서 권장으로 바뀌었는데(apply·add-member) 이 경로만 422로 남아 있었다.
+    // 운영진이 티어를 S로 고치는 순간 저장이 막혀서 — 티어 조정 자체가 불가능해진다.
+    // 세 경로를 같은 계약으로 맞춘다: 막지 않되, 초과 사실은 audit에 남긴다.
+    const capWarnings = validation.ok ? [] : validation.reasons;
     const bpi = validation.teamBpi;
     const weight = gdcupWeight(bpi, teamSeason, validation.sCount);
     const patch = { members, bpi, weight };
-    if (!validation.ok && override) {                     // 예외승인 감사 append (gdcup_apps.audit jsonb)
+    if (capWarnings.length) {                             // 권장 초과 감사 append (gdcup_apps.audit jsonb)
       const prevAudit = Array.isArray(cur.audit) ? cur.audit : [];
-      patch.audit = prevAudit.concat([{ override: true, approvedBy: clip(b.approvedBy, 40) || null, reason: clip(b.reason, 200) || null, at: new Date().toISOString(), bpiBefore: cur.bpi ?? null, bpiAfter: bpi, reasons: validation.reasons }]);
+      patch.audit = prevAudit.concat([{ capExceeded: true, approvedBy: clip(b.approvedBy, 40) || null, reason: clip(b.reason, 200) || null, at: new Date().toISOString(), bpiBefore: cur.bpi ?? null, bpiAfter: bpi, reasons: capWarnings }]);
     }
     let updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, patch);
     let team = Array.isArray(updated) ? updated[0] : updated;
@@ -4270,7 +4272,10 @@ app.post("/api/gdcup-edit", limit("gdEdit", 10, 60_000), async (req, res) => {
     // verify가 서버 판정을 반영했으면 그 값이 최신 — 프론트에 재조회를 요구하지 않는다.
     const finalBpi = (verify && verify.applied) ? verify.teamBpi : bpi;
     const finalSCount = (verify && verify.applied) ? verify.teamSCount : validation.sCount;
-    res.json({ ok: true, bpi: finalBpi, weight: gdcupWeight(finalBpi, teamSeason, finalSCount), verify });
+    // 서버 판정이 반영됐으면 경고도 그 판정 기준이어야 한다 — 저장값과 경고가 어긋나지 않게.
+    const finalWarn = (verify && verify.applied) ? (verify.teamReasons || []) : capWarnings;
+    res.json({ ok: true, bpi: finalBpi, weight: gdcupWeight(finalBpi, teamSeason, finalSCount), verify,
+      capWarnings: finalWarn.map(capWarnText), capOk: finalWarn.length === 0 });
   } catch (e) { console.error("gdcup_edit_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
