@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>G드컵 시즌3 · 치킨 예측</title>
+<meta property="og:title" content="G드컵 시즌3 · 치킨 예측">
+<meta property="og:description" content="마지막 라운드 치킨팀을 맞혀보세요. 로그인 없이 3초.">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  :root{--bg:#0a0a0c;--card:#15151a;--elev:#1d1d25;--line:#2a2a32;--ink:#f4f4f5;
+    --dim:#a1a1aa;--faint:#71717a;--gold:#f5c518;--green:#10b981;
+    --body:'Pretendard Variable','Pretendard',-apple-system,sans-serif;
+    --disp:'Saira Condensed',sans-serif;}   /* 방송 화면(results)과 같은 디스플레이 폰트 */
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.5;
+    padding:22px 16px calc(28px + env(safe-area-inset-bottom));}
+  .wrap{max-width:520px;margin:0 auto;}
+  .kick{font-family:var(--disp);font-size:14px;letter-spacing:.28em;color:var(--gold);font-weight:800;}
+  h1{font-size:26px;font-weight:800;margin:6px 0 4px;letter-spacing:-.01em;}
+  .lead{font-size:14px;color:var(--dim);margin-bottom:4px;}
+  .dl{font-family:var(--disp);font-size:15px;color:var(--gold);font-weight:700;margin-bottom:18px;min-height:20px;}
+
+  .label{font-size:13px;color:var(--faint);font-weight:700;margin:18px 0 8px;}
+  /* 모바일 우선 — 한 손 엄지로 누르는 크기(최소 44px). 2열이 기본, 좁으면 1열. */
+  .teams{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;}
+  @media (max-width:340px){ .teams{grid-template-columns:1fr;} }
+  .team{display:flex;align-items:center;gap:9px;min-height:52px;padding:10px 12px;
+    background:var(--card);border:1px solid var(--line);border-radius:12px;cursor:pointer;
+    font-family:var(--body);color:var(--ink);text-align:left;width:100%;transition:border-color .12s;}
+  .team:active{border-color:var(--gold);}
+  .team.on{border-color:var(--gold);background:rgba(245,197,24,.09);}
+  .team .tg{font-family:var(--disp);font-weight:800;font-size:13px;letter-spacing:.03em;padding:4px 7px;border-radius:6px;
+    flex:0 0 auto;min-width:42px;text-align:center;}
+  .team .nm{font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+  input{width:100%;background:var(--elev);border:1px solid var(--line);color:var(--ink);
+    border-radius:12px;padding:14px;font-size:16px;font-family:var(--body);}
+  input:focus{outline:none;border-color:var(--gold);}
+  .go{width:100%;margin-top:14px;padding:16px;border:none;border-radius:12px;cursor:pointer;
+    background:var(--gold);color:#1a1500;font-family:var(--body);font-weight:800;font-size:17px;}
+  .go:disabled{opacity:.4;cursor:not-allowed;}
+  .msg{margin-top:12px;font-size:14px;line-height:1.6;display:none;}
+  .msg.show{display:block;}
+  .msg.err{color:#f87171;}
+
+  .done{display:none;text-align:center;padding:34px 6px;}
+  .done.show{display:block;}
+  .done .big{font-size:44px;}
+  .done h2{font-size:22px;font-weight:800;margin:12px 0 6px;}
+  .done .pick{display:inline-flex;align-items:center;gap:8px;margin:10px 0 18px;padding:8px 14px;
+    background:var(--card);border:1px solid var(--gold);border-radius:12px;font-weight:800;}
+  .done p{font-size:14px;color:var(--dim);line-height:1.7;}
+  .done a{color:var(--gold);font-weight:700;text-decoration:none;word-break:break-all;}
+  .again{margin-top:18px;background:none;border:1px solid var(--line);color:var(--dim);
+    border-radius:10px;padding:10px 16px;font-family:var(--body);font-size:14px;cursor:pointer;}
+  .foot{margin-top:26px;font-size:12px;color:var(--faint);text-align:center;line-height:1.7;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="form">
+    <div class="kick">G드컵 SEASON 3</div>
+    <h1>🍗 치킨 예측</h1>
+    <p class="lead">마지막 라운드(R5) 1등 팀을 맞혀보세요. 로그인 없이 3초면 끝납니다.</p>
+    <!-- 마감 시각은 서버(/api/gdcup-toto-status)가 정본 — 여기 숫자를 적지 않는다. -->
+    <div class="dl" id="dl"></div>
+
+    <div class="label">1. 팀 고르기</div>
+    <div class="teams" id="teams"><div class="lead">불러오는 중…</div></div>
+
+    <div class="label">2. 닉네임 (당첨자 호명용)</div>
+    <input id="nick" placeholder="디스코드 닉이면 더 좋아요" maxlength="24" autocomplete="off">
+
+    <button class="go" id="go" disabled>제출하기</button>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="done" id="done">
+    <div class="big">🍗</div>
+    <h2>예측 완료!</h2>
+    <div class="pick" id="donePick"></div>
+    <p>
+      당첨 발표는 <b style="color:var(--ink)">방송에서!</b><br>
+      디스코드 오시면 DM으로도 알려드려요<br>
+      <a href="https://discord.gg/YfZD8d22wJ" target="_blank" rel="noopener">discord.gg/YfZD8d22wJ</a>
+    </p>
+    <button class="again" id="again">다시 고르기</button>
+  </div>
+
+  <div class="foot">같은 닉네임으로 다시 제출하면 마지막 선택으로 바뀝니다.<br>참가비·응모권 없음 · 경품은 방송 추첨</div>
+</div>
+
+<script>
+(function(){
+  var GAPI = "https://mri-academy-production.up.railway.app";
+  var $ = function(id){ return document.getElementById(id); };
+  var picked = null, BRANDS = {}, OPEN = true;
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  // 태그·색은 results·overlay와 같은 규칙 — 세 화면의 팀 식별자가 갈리면 안 된다.
+  function teamTag(name, b){
+    if(b && b.tag) return String(b.tag).toUpperCase().slice(0,4);
+    return String(name||'').replace(/\s+/g,'').slice(0,2) || '?';
+  }
+  function teamColor(name, b){
+    if(b && b.color) return String(b.color)[0]==='#' ? b.color : '#'+b.color;
+    var h=0, s=String(name||'');
+    for(var i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0;
+    var hue=h%330; if(hue>25&&hue<75) hue=(hue+90)%360;
+    var c=(1-Math.abs(2*.62-1))*.52, x=c*(1-Math.abs((hue/60)%2-1)), m=.62-c/2, r=0,g=0,b2=0;
+    if(hue<60){r=c;g=x;} else if(hue<120){r=x;g=c;} else if(hue<180){g=c;b2=x;}
+    else if(hue<240){g=x;b2=c;} else if(hue<300){r=x;b2=c;} else {r=c;b2=x;}
+    return '#'+[r,g,b2].map(function(v){return ('0'+Math.round((v+m)*255).toString(16)).slice(-2);}).join('');
+  }
+  function textOn(hex){
+    var h=String(hex||'').replace('#',''); if(h.length!==6) return '#0a0a0c';
+    function lin(v){ v/=255; return v<=0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); }
+    var L=0.2126*lin(parseInt(h.slice(0,2),16))+0.7152*lin(parseInt(h.slice(2,4),16))+0.0722*lin(parseInt(h.slice(4,6),16));
+    return L > 0.42 ? '#0a0a0c' : '#ffffff';
+  }
+
+  function syncGo(){ $('go').disabled = !(OPEN && picked && $('nick').value.trim()); }
+
+  function renderTeams(names){
+    if(!names.length){ $('teams').innerHTML = '<div class="lead">아직 확정된 팀이 없어요.</div>'; return; }
+    $('teams').innerHTML = names.map(function(n){
+      var b = BRANDS[n] || {}, col = teamColor(n, b);
+      return '<button type="button" class="team" data-team="'+esc(n)+'">'
+        + '<span class="tg" style="background:'+col+';color:'+textOn(col)+'">'+esc(teamTag(n,b))+'</span>'
+        + '<span class="nm">'+esc(n)+'</span></button>';
+    }).join('');
+    Array.prototype.forEach.call($('teams').querySelectorAll('.team'), function(el){
+      el.addEventListener('click', function(){
+        Array.prototype.forEach.call($('teams').querySelectorAll('.team'), function(x){ x.classList.remove('on'); });
+        el.classList.add('on'); picked = el.getAttribute('data-team'); syncGo();
+      });
+    });
+  }
+
+  // 팀 목록은 기존 공개 라우트에서 받는다 — 토토 전용 서버 조인을 만들지 않는다(장애 격리).
+  function load(){
+    fetch(GAPI+'/api/gdcup-team-brands').then(function(r){return r.json();}).then(function(d){
+      ((d&&d.brands)||[]).forEach(function(b){
+        if(!Object.prototype.hasOwnProperty.call(BRANDS,b.team_name)) BRANDS[b.team_name]=b;
+      });
+    }).catch(function(){}).then(function(){
+      return fetch(GAPI+'/api/gdcup-list').then(function(r){return r.json();});
+    }).then(function(d){
+      var names = ((d&&d.teams)||[]).filter(function(t){ return t.status==='confirmed'; })
+        .map(function(t){ return t.team_name; });
+      renderTeams(names);
+    }).catch(function(){ $('teams').innerHTML = '<div class="lead">팀 목록을 불러오지 못했어요. 새로고침해주세요.</div>'; });
+
+    fetch(GAPI+'/api/gdcup-toto-status').then(function(r){return r.json();}).then(function(d){
+      OPEN = !!(d && d.open);
+      if(!OPEN){ $('dl').textContent = '예측이 마감됐습니다 — 결과는 방송에서!'; }
+      else if(d && d.deadline){
+        var t = new Date(d.deadline);
+        if(!isNaN(t)) $('dl').textContent = '마감 ' + t.toLocaleString('ko-KR',
+          {timeZone:'Asia/Seoul', hour:'2-digit', minute:'2-digit', hour12:false}) + ' 까지';
+      }
+      syncGo();
+    }).catch(function(){});
+  }
+
+  $('nick').addEventListener('input', syncGo);
+  $('again').addEventListener('click', function(){
+    $('done').classList.remove('show'); $('form').style.display=''; window.scrollTo(0,0);
+  });
+
+  $('go').addEventListener('click', function(){
+    if($('go').disabled) return;
+    var nickname = $('nick').value.trim();
+    $('go').disabled = true; $('go').textContent = '제출 중…';
+    var msg = $('msg'); msg.className = 'msg';
+    fetch(GAPI+'/api/gdcup-toto', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ nickname: nickname, pick_team: picked })})
+    .then(function(r){ return r.json().then(function(d){ return {status:r.status, d:d}; }); })
+    .then(function(res){
+      $('go').textContent = '제출하기'; syncGo();
+      if(res.status === 200 && res.d && res.d.ok){
+        var b = BRANDS[picked] || {}, col = teamColor(picked, b);
+        $('donePick').innerHTML = '<span class="tg" style="background:'+col+';color:'+textOn(col)
+          +';padding:4px 8px;border-radius:6px;font-size:12px;">'+esc(teamTag(picked,b))+'</span>'
+          + '<span>'+esc(picked)+'</span>';
+        $('form').style.display='none'; $('done').classList.add('show'); window.scrollTo(0,0);
+        return;
+      }
+      msg.className = 'msg show err';
+      msg.textContent = (res.d && res.d.message) || ('제출 실패 (' + res.status + ') — 잠시 후 다시 시도해주세요.');
+      if(res.status === 423){ OPEN = false; $('dl').textContent = '예측이 마감됐습니다 — 결과는 방송에서!'; $('go').disabled = true; }
+    })
+    .catch(function(){
+      $('go').textContent = '제출하기'; syncGo();
+      msg.className = 'msg show err'; msg.textContent = '네트워크 오류 — 다시 시도해주세요.';
+    });
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>
