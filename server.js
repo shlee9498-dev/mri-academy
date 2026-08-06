@@ -3395,6 +3395,12 @@ function gdcupBpi(members) {
   });
   return sum;
 }
+// 권장 초과 사유를 사람이 읽는 한 줄로. 신청 응답·운영진 웹훅이 같은 문구를 쓴다.
+function capWarnText(r) {
+  if (r.code === "bpi_cap_exceeded") return `팀 합산 BPI ${r.teamBpi} — 권장 ${r.cap} 대비 +${r.over}`;
+  if (r.code === "s_tier_limit") return `S급 ${r.count}명 — 권장 팀당 ${r.max}명`;
+  return r.code;
+}
 // 팀 구성 검증 (시즌 룰셋 cap 기준). 서버측 gdcupBpi가 정본 — 클라 전송 bpi 무시.
 function validateTeamComposition(members, season) {
   const rules = gdSeasonRules(season);
@@ -3566,8 +3572,12 @@ app.post("/api/gdcup-apply", async (req, res) => {
     // 지급 정보(별도 테이블 · owner 전용 조회)
     const payouts = rawMembers.map((m, i) => ({ member_idx: i, real_name: clip(m.real_name, 30), bank: clip(m.bank, 20), account_no: clip(m.account_no || m.account, 30), holder: clip(m.holder, 20) }));
     // 서버측 검증·재계산이 정본 — 클라 전송 bpi/weight는 무시. 상한/S급 위반 시 사유 배열 반환.
+    // 상한은 강제가 아니라 권장이다(2026-08-06 오너 방침). 초과해도 접수하고 경고만 돌려준다.
+    // 종전엔 400으로 막았는데, 마감 직전 솔로·팀 신청이 몰리는 구간에서 접수 자체가 끊겼다.
+    // 밸런스는 두 겹으로 잡힌다 — ① 가중치표가 39+ 구간(×0.85)을 이미 갖고 있어 초과 팀은
+    // 점수에서 자동 페널티를 받고, ② 운영진이 확정 전에 팀 구성을 조율한다.
     const validation = validateTeamComposition(members, season);
-    if (!validation.ok) return res.status(400).json({ error: "team_validation_failed", reasons: validation.reasons });
+    const capWarnings = validation.ok ? [] : validation.reasons;
     const bpi = validation.teamBpi;
     const weight = gdcupWeight(bpi, season);
     const contact = clip(b.contact, 60);
@@ -3616,6 +3626,9 @@ app.post("/api/gdcup-apply", async (req, res) => {
           { name: "멤버", value: mlines || "-", inline: false },
           { name: "팀 BPI", value: bpi != null ? (bpi + (weight != null ? (" (가중치 x" + weight + ")") : "")) : "-", inline: true },
           { name: "연락처", value: contact || "-", inline: true },
+          // 권장 초과분은 운영진 채널에 즉시 띄운다 — 접수는 되지만 조율 대상이라는 신호.
+          // 이게 없으면 초과 팀이 조용히 들어와 확정 단계에서야 드러난다.
+          ...(capWarnings.length ? [{ name: "⚠ 권장 초과", value: capWarnings.map(capWarnText).join("\n"), inline: false }] : []),
         ],
         footer: { text: count != null ? ("현재 " + count + "팀 신청") : "" },
         timestamp: new Date().toISOString(),
@@ -3640,8 +3653,11 @@ app.post("/api/gdcup-apply", async (req, res) => {
       };
       try { await fetch(LISTWH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "📋 새 팀이 합류했어요!", embeds: [pembed] }) }); } catch (e) { console.error("gdcup_list_webhook", e.message); }
     }
+    // capWarnings는 등록계 경고(registry.warnings)와 성격이 달라 따로 담는다 —
+    // 프론트가 "접수됨 + 조율 대상"으로 구분해 안내할 수 있어야 한다.
     res.json({ ok: true, teams: count, app_id: appId, updated,
-      verified: registry.verified, warnings: registry.warnings });
+      verified: registry.verified, warnings: registry.warnings,
+      capWarnings: capWarnings.map(capWarnText), capOk: capWarnings.length === 0 });
   } catch (e) { console.error("gdcup_apply_error", e?.status || "unhandled"); res.status(500).json({ error: "server_error" }); }   // 스택·본문 로그 금지
 });
 
@@ -3679,8 +3695,11 @@ app.post("/api/gdcup-add-member", async (req, res) => {
 
     const members = existing.concat(adds).slice(0, 4);
     const teamSeason = gdSeason(team.season);
-    const validation = validateTeamComposition(members, teamSeason);   // 합류 후 구성 검증(상한/S급)
-    if (!validation.ok) return res.status(422).json({ error: "team_validation_failed", reasons: validation.reasons });
+    // 상한은 권장이다(2026-08-06 오너 방침) — 초과해도 합류시키고 경고만 돌려준다.
+    // 이 경로가 실질적으로 가장 자주 막혔다: 솔로 신청자가 팀에 합류할 때 합산이 넘으면
+    // 422로 튕겨 나갔고, 신청자 입장에선 원인이 보이지 않았다.
+    const validation = validateTeamComposition(members, teamSeason);
+    const capWarnings = validation.ok ? [] : validation.reasons;
     const bpi = validation.teamBpi;
     const weight = gdcupWeight(bpi, teamSeason);
     await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(team.id)}`, { members, bpi, weight });
@@ -3714,7 +3733,8 @@ app.post("/api/gdcup-add-member", async (req, res) => {
       };
       try { await fetch(LISTWH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "➕ 팀원이 추가됐어요!", embeds: [pembed] }) }); } catch (e) { console.error("gdcup_add_list_webhook", e.message); }
     }
-    res.json({ ok: true, team_name: teamName, count: members.length, bpi, weight });
+    res.json({ ok: true, team_name: teamName, count: members.length, bpi, weight,
+      capWarnings: capWarnings.map(capWarnText), capOk: capWarnings.length === 0 });
   } catch (e) { console.error("gdcup_add_member_error", e); res.status(500).json({ error: "server_error" }); }
 });
 
