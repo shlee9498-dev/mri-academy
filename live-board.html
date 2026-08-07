@@ -73,20 +73,27 @@
   .col-labels .r { text-align:right; }
 
   /* ── 팀 줄 ── */
-  .rows { flex:1; display:flex; flex-direction:column; gap:2px; }
-  .team-row { flex:1; display:grid;
-    grid-template-columns:40px 10px 1fr 92px 66px; gap:10px; align-items:center;
-    padding:0 14px; background:rgba(15,13,21,0.65); border-radius:6px; }
-  .rank { font-family:Paperlogy,sans-serif; font-weight:900; font-size:19px;
+  /* ⚠ min-height:0 이 핵심이다. flex 아이템의 min-height 기본값은 auto 라, 자식 콘텐츠
+     높이 아래로는 줄어들지 않는다 — flex:1 을 줘도 축소가 막힌다. 16팀이 되자 rows 가
+     620px 를 넘겨 body 의 overflow:hidden 에 잘렸고 13위부터 화면에서 사라졌다.
+     행 높이 = (620 − 50 헤더 − 20 라벨 − 4 gap − 30 행간) / 16 ≈ 32px.
+     폰트·칩을 그 안에 들어가는 크기로 낮추고 line-height 를 1 로 고정해 여백을 없앤다. */
+  .rows { flex:1; min-height:0; display:flex; flex-direction:column; gap:2px; }
+  .team-row { flex:1 1 0; min-height:0; overflow:hidden; display:grid;
+    grid-template-columns:38px 10px 1fr 84px 60px; gap:10px; align-items:center;
+    padding:0 12px; background:rgba(15,13,21,0.65); border-radius:6px; }
+  .rank { font-family:Paperlogy,sans-serif; font-weight:900; font-size:16px; line-height:1;
     color:#c9c2d6; font-variant-numeric:tabular-nums; }
-  .team-chip { width:10px; height:20px; border-radius:3px; background:var(--team-color,#8d84a3); text-shadow:none; }
-  .team-name { display:flex; align-items:baseline; gap:7px; min-width:0; }
-  .team-name .kr { font-size:18px; font-weight:700; letter-spacing:-0.2px; white-space:nowrap; }
-  .team-name .team-tag { font-family:Paperlogy,sans-serif; font-weight:700; font-size:11px;
-    letter-spacing:1px; color:#8d84a3; }
-  .pts { text-align:right; font-family:Paperlogy,sans-serif; font-weight:800; font-size:19px;
-    font-variant-numeric:tabular-nums; }
-  .kills { text-align:right; font-weight:700; font-size:16px; color:#ff9d97;
+  .team-chip { width:10px; height:16px; border-radius:3px; background:var(--team-color,#8d84a3); text-shadow:none; }
+  .team-name { display:flex; align-items:baseline; gap:6px; min-width:0; }
+  /* 팀명이 길어졌다("아아 한잔주세요"·"영앤리치레코즈") — 넘치면 자르고 태그는 살린다 */
+  .team-name .kr { font-size:15px; line-height:1.1; font-weight:700; letter-spacing:-0.2px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .team-name .team-tag { font-family:Paperlogy,sans-serif; font-weight:700; font-size:10px;
+    line-height:1; letter-spacing:1px; color:#8d84a3; flex:none; }
+  .pts { text-align:right; font-family:Paperlogy,sans-serif; font-weight:800; font-size:16px;
+    line-height:1; font-variant-numeric:tabular-nums; }
+  .kills { text-align:right; font-weight:700; font-size:14px; line-height:1; color:#ff9d97;
     font-variant-numeric:tabular-nums; }
 
   /* 1위 골드 강조 */
