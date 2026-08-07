@@ -3800,11 +3800,19 @@ app.get("/api/gdcup-list", async (req, res) => {
 // 테이블 gdcup_scores(season int, round int, team_name text, placement int, team_kills int,
 //   player_kills jsonb [{ign,kills}], updated_at) UNIQUE(season,round,team_name)  ← 유니크 마이그레이션(DDL) 필요
 function gdcupPlacementPts(p){ const T={1:10,2:6,3:5,4:4,5:3,6:2,7:1,8:1}; return T[Number(p)] || 0; } // 9위↓ 0
+// reserves·roster_log·status 는 match-pull 의 미귀속 판정에만 쓴다. 기존 호출부는
+// weight·members 만 읽으므로 필드를 늘려도 영향이 없다.
 async function gdcupTeamsMap(season){
   const sf = (season!=null) ? `&season=eq.${season}` : "";
-  const rows = await sbSelect("gdcup_apps",`select=team_name,members,weight,bpi,status${sf}&status=neq.cancelled`);
+  const rows = await sbSelect("gdcup_apps",`select=team_name,members,weight,bpi,status,reserves,roster_log${sf}&status=neq.cancelled`);
   const map = {};
-  (rows||[]).forEach(t=>{ map[t.team_name] = { weight: (t.weight!=null ? Number(t.weight) : 1), members: Array.isArray(t.members)?t.members:[] }; });
+  (rows||[]).forEach(t=>{ map[t.team_name] = {
+    weight: (t.weight!=null ? Number(t.weight) : 1),
+    members: Array.isArray(t.members)?t.members:[],
+    reserves: Array.isArray(t.reserves)?t.reserves:[],
+    rosterLog: Array.isArray(t.roster_log)?t.roster_log:[],
+    status: t.status || "",
+  }; });
   return map;
 }
 
@@ -4219,8 +4227,40 @@ app.get("/api/gdcup-match-pull", async (req,res)=>{
         out[team_name] = { team_name, placement:r.rank, team_kills, players };
       }
     });
+    // ── 킬 미귀속 색출 ──────────────────────────────────────────────
+    // unmatched 는 "매치엔 있는데 로스터에 없는 닉"이라 매치 쪽 시선이다. 그 뒷면인
+    // "로스터엔 있는데 매치에 없는 선수"가 곧 킬이 통째로 비는 사람이다(카카오 등록 ↔
+    // 스팀 접속 같은 플랫폼 불일치, 닉 오탈자). 본선 R1 직후 전수 대조용.
+    //
+    // 교체로 빠진 선수를 오탐하지 않는 게 핵심이다 — R3 교체가 걸린 팀은 매 라운드
+    // 가짜 경보가 뜨면 목록 자체를 안 보게 된다. roster_log 에 out 으로 적혀 있고
+    // 그 자리 in 이 실제 매치에 있을 때만 정상 교체로 처리한다(계획+실측 둘 다 확인).
+    const inMatch = new Set();
+    Object.keys(m.parts||{}).forEach((pid)=>{ const p=m.parts[pid]; if(p&&p.name) inMatch.add(String(p.name).trim().toLowerCase()); });
+    const missing = [];
+    Object.keys(teamsMap).forEach((tn)=>{
+      const t = teamsMap[tn];
+      if (t.status !== "confirmed") return;                    // 미확정 신청은 출전하지 않는다
+      const resIn = (t.reserves||[]).filter((r)=>r&&r.ign&&inMatch.has(String(r.ign).trim().toLowerCase())).map((r)=>r.ign);
+      (t.members||[]).forEach((mm)=>{
+        const ign = mm && mm.ign ? String(mm.ign).trim() : "";
+        if (!ign || inMatch.has(ign.toLowerCase())) return;
+        const swap = (t.rosterLog||[]).find((r)=>r&&r.out&&String(r.out).trim().toLowerCase()===ign.toLowerCase());
+        const subIgn = swap && swap.in ? String(swap.in).trim() : "";
+        const substituted = !!(subIgn && inMatch.has(subIgn.toLowerCase()));
+        missing.push({ team_name:tn, ign, tier:(mm&&mm.tier)||"",
+          substituted,                                          // true = 계획된 교체가 실제로 이뤄짐
+          replacedBy: substituted ? subIgn : null,
+          reservesInMatch: resIn });                            // 계획에 없던 예비가 뛰고 있으면 여기 뜬다
+      });
+    });
+    // 진짜 경보(교체로 설명 안 되는 것)를 위로 올린다.
+    missing.sort((a,b)=> (a.substituted?1:0)-(b.substituted?1:0) || a.team_name.localeCompare(b.team_name));
+    const missingUnexplained = missing.filter((x)=>!x.substituted).length;
+
     res.json({ ok:true, matchId, pulledFrom, season, mapName:m.mapName, mode:m.mode, matchType:m.matchType,
-      teams: Object.values(out).sort((a,b)=>a.placement-b.placement), unmatched:[...new Set(unmatched)].slice(0,30) });
+      teams: Object.values(out).sort((a,b)=>a.placement-b.placement), unmatched:[...new Set(unmatched)].slice(0,30),
+      missing, missingUnexplained });
   }catch(e){ const st=e.status||500; res.status(st).json({error: st===404?"match_not_found": st===429?"rate_limit": st===503?"pubg_disabled":"server_error", detail:String(e.message||e).slice(0,140)}); }
 });
 
