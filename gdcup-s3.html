@@ -231,7 +231,6 @@ footer a{color:var(--ink-dim);text-decoration:none;}footer a:hover{color:var(--g
       운영진 확인을 거쳐 S 판정을 받을 수 있습니다.
     </p>
   </div>
-  <div class="callout"><strong>👑 T0 팀장 페널티</strong>: T0(괴물)이 팀장이면 BPI <strong>+1</strong> (10 → 11).</div>
   <div class="card">
     <div class="card-title">⚖️ 가중치 (계단식 · 시즌3 재산정)</div>
     <!-- 가중치표는 서버 meta가 정본 — 여기에 표를 두지 않는다(구표 하드코딩 표시 사고 재발 방지). 로드 실패 시 표를 비워둔다. -->
@@ -545,13 +544,13 @@ function memberTier(i){
 function updateBPI(){
   var sum=0,parts=[];
   for(var i=0;i<4;i++){
-    var t=memberTier(i); var v=t?BPI_MAP[t]:0; var lead=(i===0&&t==='T0'); if(lead)v+=1; sum+=v;
+    var t=memberTier(i); var v=t?BPI_MAP[t]:0; sum+=v;
     var au=document.querySelector('.member-auto[data-idx="'+i+'"]');
-    if(au)au.innerHTML=t?('→ <strong style="color:var(--gold)">'+t+'</strong> · BPI '+v+(lead?' (팀장 +1)':'')):'전적 입력 시 티어 자동 산정';
-    parts.push(t?(v+(lead?'*':'')):'_');
+    if(au)au.innerHTML=t?('→ <strong style="color:var(--gold)">'+t+'</strong> · BPI '+v):'전적 입력 시 티어 자동 산정';
+    parts.push(t?v:'_');
   }
   document.getElementById('bpiSum').textContent=sum;
-  document.getElementById('bpiBreakdown').textContent=parts.join(' + ')+' = '+sum+(parts.some(function(p){return String(p).indexOf('*')>=0;})?'  (* T0 팀장 +1)':'');
+  document.getElementById('bpiBreakdown').textContent=parts.join(' + ')+' = '+sum;
   var st=document.getElementById('bpiStatus');
   if(sum===0){st.innerHTML='전적 입력 시 자동 계산';}
   else{var w=getWeight(sum, readMembers().filter(function(m){return m.tier==='S';}).length);var c=w.mult===1.0?'var(--gold)':(w.mult>1?'var(--green)':'var(--orange)');
@@ -630,9 +629,9 @@ function generateApplication(){
   L.push('▎멤버 ('+fm.length+'/4명)');
   fm.forEach(function(m,i){
     var role=i===0?'👑 팀장':'멤버 '+(i+1);
-    var v=BPI_MAP[m.tier]; var t0=(i===0&&m.tier==='T0'); if(t0)v+=1;
+    var v=BPI_MAP[m.tier];
     L.push('  '+role);
-    L.push('    └ '+m.name+' (배그: '+m.ign+') · '+m.tier+' · BPI '+v+(t0?' (T0 팀장 +1)':''));
+    L.push('    └ '+m.name+' (배그: '+m.ign+') · '+m.tier+' · BPI '+v);
     L.push('       (신고: '+m.peak+' / 평균 '+m.dmg+'딜)');
     if(m.bank&&m.account){ var _ac=String(m.account).replace(/\D/g,''); var _mask=_ac.length>4?('****'+_ac.slice(-4)):'****'; L.push('       💳 '+m.bank+' '+_mask+(m.holder?' ('+m.holder+')':'')+' · 계좌 입력됨(본인명의)'); }
     else { L.push('       💳 계좌 미입력 — 수상 시 취합'); }
