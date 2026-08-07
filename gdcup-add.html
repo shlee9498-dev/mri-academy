@@ -189,10 +189,9 @@
   }
   function teamBpi(members){
     var sum = 0;
-    (members||[]).forEach(function(m,i){
-      var v = GD_BPI[m && m.tier] || 0;
-      if(i===0 && m && m.tier==='T0') v += 1; // T0 팀장 +1 (S급 가산 없음)
-      sum += v;
+    // T0 팀장 +1 은 2026-08-07 폐지 — server.js gdcupBpi 와 같은 식이어야 한다.
+    (members||[]).forEach(function(m){
+      sum += GD_BPI[m && m.tier] || 0;
     });
     return sum;
   }
