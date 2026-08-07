@@ -2449,11 +2449,10 @@ function suggestBPI(avgDamage, rankedTier, isTeamLeader, bestRP, damageSource = 
     tier = floor; pick = "ranked";                                   // 최종 = max(평딜, 티어보정)
     label = (TIERS.find((x) => x.t === tier) || {}).label || label;
   }
-  let bpi = GDCUP_BPI_SCALE[tier];
-  let leaderPenalty = 0;
-  if (tier === "T0" && isTeamLeader) { leaderPenalty = 1; bpi += 1; } // T0 팀장만 +1 (S급 가산 없음)
+  const bpi = GDCUP_BPI_SCALE[tier];
   return {
-    suggested: { tier, bpi, label, leaderPenalty },
+    // leaderPenalty: T0 팀장 +1 은 2026-08-07 폐지. 구 소비처 호환으로 필드는 0으로 남긴다.
+    suggested: { tier, bpi, label, leaderPenalty: 0 },
     // pick/decidedBy = **어느 규칙이 최종 티어를 정했는지**("damage" 경계 vs "ranked" 티어보정).
     //   avgDamage가 어느 통계에서 왔는지를 뜻하지 않는다 — 그건 damageSource가 나타낸다.
     //   (pick="ranked" + avgDamage=일겜값 조합이 모순처럼 보인다는 지적이 있었다. 모순이 아니라
@@ -2915,7 +2914,6 @@ app.get("/api/bpi-info", (_req, res) => {
         avgDmg: upper == null ? `${t.min}+` : `${t.min}~${upper}`,
         bpi: GDCUP_BPI_SCALE[t.t],
         label: t.label,
-        ...(t.t === "T0" ? { leaderPenalty: "+1 (T0만)" } : {}),
       };
     }),
     modeOrder: ["squad-fpp", "squad", "duo-fpp", "duo", "solo-fpp", "solo"],
@@ -3408,12 +3406,12 @@ function gdcupWeight(bpi, season, sCount) {
   return Math.max(0, Math.round((w - per * extra) * 100) / 100);
 }
 const GD_BPI = GDCUP_BPI_SCALE;                       // 정본 스케일 참조(S=13·T0=10…). 하드코딩 중복 제거.
+// T0 팀장 +1 은 2026-08-07 폐지(오너 결정) — 슬롯 순서가 BPI를 바꾸지 않는다.
+// 폐지 전에는 1번 슬롯이 T0인 팀만 +1이라, 같은 4인이라도 배열 순서에 따라 값이 흔들렸다.
 function gdcupBpi(members) {
   let sum = 0;
-  (members || []).forEach(function (m, i) {
-    let v = GD_BPI[m && m.tier] || 0;
-    if (i === 0 && m && m.tier === "T0") v += 1; // T0 팀장 +1 (S급 가산 없음)
-    sum += v;
+  (members || []).forEach(function (m) {
+    sum += GD_BPI[m && m.tier] || 0;
   });
   return sum;
 }
@@ -3473,7 +3471,9 @@ app.get("/api/gdcup-meta", async (req, res) => {
     sPenaltyPerExtraS: rules.sPenaltyPerExtraS || 0,
     cap: rules.cap,                            // { team, sTier } · 권장값. 초과해도 접수된다(2026-08-06)
     rounds: rules.rounds,
-    leaderBonus: { tier: "T0", bpi: 1 },       // T0 팀장 +1 (S급 가산 없음)
+    // T0 팀장 +1 폐지(2026-08-07). 키는 남겨 두되 null — 프론트가 "있으면 표시"로
+    // 분기하고 있어도 조용히 사라지게 하려는 것. 시즌2 기록은 구 규칙으로 동결된다.
+    leaderBonus: null,
     applyDeadline: GDCUP_APPLY_DEADLINE,
     applyOpen: gdcupApplyOpen(),
   });
