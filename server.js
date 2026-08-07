@@ -5153,6 +5153,12 @@ app.get("/api/admin/stats/report", async (req, res) => {
   res.json(statsRun);
 });
 
+// schemaOptional 선언을 여기로 올린다. 아래 admin-panel 마운트가 이 값을 넘기는데,
+// 원래 선언이 마운트보다 400줄 아래(const)에 있어 기동 즉시 TDZ로 죽었다
+//   ReferenceError: Cannot access 'schemaOptional' before initialization
+// node --check는 문법만 보므로 이 부류를 못 잡는다 — 실기동으로만 드러난다.
+const schemaOptional = {};
+
 // ── 운영진 정산·레슨로그 관리 패널 (Phase 0) ──
 // schemaOptional은 기동 시 probeOptionalSchema()가 채우는 같은 객체를 그대로 넘긴다.
 // 참조를 넘기므로 프로브가 끝나면 패널 쪽에서도 값이 보인다(매 요청 재조회 없음).
@@ -5294,7 +5300,7 @@ const SCHEMA_OPTIONAL = {
 // 선택 컬럼 존재 여부를 기동 시 1회 확인한다. 결과는 캐시해 매 요청 재조회하지 않는다.
 //   반환: { "payments.fee_amount": true, ... }
 // 조회 자체가 실패하면(네트워크·권한) false로 둔다 — 없는 것으로 보고 안전한 경로를 탄다.
-const schemaOptional = {};
+// (선언은 admin-panel 마운트보다 위로 올려 뒀다 — 아래 probeOptionalSchema가 채운다)
 async function probeOptionalSchema() {
   if (!process.env.SUPABASE_URL) return schemaOptional;
   for (const [table, cols] of Object.entries(SCHEMA_OPTIONAL)) {
