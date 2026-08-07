@@ -183,7 +183,12 @@ function render(teams){
       ?(t.verified?'<span class="badge b-confirmed">✅ 확정 · 검증됨</span>'
                   :'<span class="badge b-confirmed" title="강제확정 — 서버 검증 생략됨">✅ 확정 · ⚠️ 미검증</span>')
       :(st==='cancelled'?'<span class="badge b-cancelled">🗑 취소</span>':'<span class="badge b-applied">⏳ 신청 · 미검증</span>');
-    var memEdit=(t.members||[]).filter(function(m){return m.ign;}).map(function(m,mi){
+    // 🔴 닉이 빈 멤버도 반드시 그린다. 종전엔 filter(m=>m.ign)로 빼버려서,
+    // 아직 IGN을 못 받은 멤버가 편집기에 아예 안 뜨고 → saveTiers가 그 멤버를
+    // 빼고 저장 → 팀이 4인에서 3인으로 조용히 줄고 BPI·가중치가 어긋났다.
+    // 아래 blank 가드는 "그려진 칸이 비었을 때"만 걸려서 이 경로를 못 잡았다.
+    // (실제 사고: 현태팀 대승 IGN 미수신 상태에서 티어 저장 → 4인이 3인이 됨)
+    var memEdit=(t.members||[]).map(function(m,mi){
       // S를 맨 앞에 둔다. 종전엔 T0~T5뿐이라 운영진이 최상위 인원을 S로 지정할 방법이
       // 아예 없었고, 서버·BPI 스케일(S=13)에는 S가 있는데 이 화면에서만 막혀 있었다.
       var opts=['S','T0','T1','T2','T3','T4','T5'].map(function(tt){return '<option value="'+tt+'"'+(m.tier===tt?' selected':'')+'>'+tt+'</option>';}).join('');
@@ -228,7 +233,9 @@ function render(teams){
         +'<span style="font-size:13px;flex:0 0 auto;">'+(mi===0?'👑':'&nbsp;&nbsp;')+mark
         +'</span>'
         +'<input class="ign-edit" type="text" value="'+esc(m.ign||'')+'" maxlength="40" spellcheck="false" autocomplete="off"'
-        +' data-team="'+t.id+'" data-idx="'+mi+'" title="인게임 닉 — 고친 뒤 💾 저장하면 서버가 재검증합니다" style="'+inpStyle+'">'
+        +(m.ign?'':' placeholder="IGN 미수신 — 채워야 저장됩니다"')
+        +' data-team="'+t.id+'" data-idx="'+mi+'" title="인게임 닉 — 고친 뒤 💾 저장하면 서버가 재검증합니다" style="'+inpStyle
+        +(m.ign?'':';border-color:var(--gold)')+'">'
         +(m.peak?'<span title="본인이 신청서에 적은 값 — 판정 근거가 아닙니다" style="color:var(--ink-faint);font-size:11px;flex:0 0 auto;">신고 '+esc(m.peak)+'/'+esc(m.dmg||'?')+'딜</span>':'')
         +judgeBasis(m)
         +'<select class="tier-edit" data-team="'+t.id+'" data-idx="'+mi+'" data-name="'+esc(m.name||'')+'" data-peak="'+esc(m.peak||'')+'" data-dmg="'+esc(m.dmg||'')+'" style="background:var(--bg-elev);border:1px solid var(--line);color:var(--ink);padding:5px 8px;border-radius:6px;font-size:13px;flex:0 0 auto;">'+opts+'</select>'
