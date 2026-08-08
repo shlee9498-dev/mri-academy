@@ -15,7 +15,9 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+// 종료 태그는 `</script >`처럼 공백을 허용한다(HTML 스펙). `\s*`가 없으면
+// 그 블록을 못 닫고 다음 스크립트까지 본문으로 삼켜 파싱이 어긋난다.
+const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 
 // src= 가 있으면 본문이 없고, type이 module/JS가 아니면 JS가 아니다.
 function isJs(attrs) {
