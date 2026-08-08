@@ -1,0 +1,29 @@
+name: Code CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  check:
+    name: syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # package.json의 check = node --check server.js && node --check admin-panel.js
+      - name: npm run check
+        run: npm run check
+
+      # HTML 인라인 <script>는 위 검사가 보지 못한다. 뽑아서 따로 파싱한다.
+      # 이 저장소는 빌드 단계가 없어서 문법 오류가 배포까지 그대로 나간다.
+      - name: HTML 인라인 스크립트 문법 검사
+        run: node .github/scripts/check-inline-scripts.mjs

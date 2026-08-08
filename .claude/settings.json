@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git remote*)",
+      "Bash(git rev-parse*)",
+      "Bash(git rev-list*)",
+      "Bash(git fetch*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git checkout*)",
+      "Bash(git switch*)",
+      "Bash(git restore*)",
+      "Bash(git stash*)",
+      "Bash(git push -u origin claude/*)",
+      "Bash(git push origin claude/*)",
+
+      "Bash(npm run *)",
+      "Bash(npm test*)",
+      "Bash(npm ci*)",
+      "Bash(node --check*)",
+
+      "Bash(gh pr create*)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr checks*)",
+      "Bash(gh pr list*)",
+      "Bash(gh pr diff*)",
+
+      "mcp__Supabase__list_tables",
+      "mcp__Supabase__list_extensions",
+      "mcp__Supabase__list_migrations",
+      "mcp__Supabase__list_projects",
+      "mcp__Supabase__get_project",
+      "mcp__Supabase__get_project_url",
+      "mcp__Supabase__get_advisors",
+      "mcp__Supabase__get_logs",
+      "mcp__Supabase__search_docs"
+    ],
+    "ask": [
+      "Edit(apply.html)",
+      "Edit(admin-panel.js)",
+      "Edit(supabase_admin_panel.sql)",
+      "Edit(.github/workflows/*)",
+      "Edit(.claude/settings.json)",
+      "Edit(.claude/hooks/*)"
+    ],
+    "deny": [
+      "Bash(git push origin main*)",
+      "Bash(git push -u origin main*)",
+      "Bash(git push origin HEAD:main*)",
+      "Bash(git push origin +*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)",
+
+      "Bash(psql*)",
+      "Bash(supabase db*)",
+
+      "mcp__Supabase__apply_migration",
+      "mcp__Supabase__delete_branch",
+      "mcp__Supabase__reset_branch",
+      "mcp__Supabase__merge_branch",
+      "mcp__Supabase__pause_project",
+      "mcp__Supabase__restore_project",
+      "mcp__Supabase__deploy_edge_function"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__Supabase__execute_sql|mcp__Supabase__apply_migration",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/sql_gate.mjs\"",
+            "timeout": 10,
+            "statusMessage": "SQL 게이트 검사"
+          }
+        ]
+      }
+    ]
+  }
+}
