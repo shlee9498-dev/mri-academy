@@ -15,9 +15,12 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// 종료 태그는 `</script >`처럼 공백을 허용한다(HTML 스펙). `\s*`가 없으면
-// 그 블록을 못 닫고 다음 스크립트까지 본문으로 삼켜 파싱이 어긋난다.
-const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+// 종료 태그는 `</script>`만이 아니다. HTML 파서는 태그명 뒤에 공백·개행·`/`가
+// 오면 거기서 이름을 끊고, 남은 것은 속성처럼 취급해 버린다 —
+// `</script >` `</script\n bar>` `</script/>` 가 전부 스크립트를 닫는다.
+// 좁게 잡으면 그 블록을 못 닫고 다음 스크립트까지 본문으로 삼켜 파싱이 어긋난다.
+// `(?=[\s/>])`로 이름 경계를 확인한다 — `\b`를 쓰면 `</script-x>`까지 잘못 먹는다.
+const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script(?=[\s/>])[^>]*>/gi;
 
 // src= 가 있으면 본문이 없고, type이 module/JS가 아니면 JS가 아니다.
 function isJs(attrs) {
