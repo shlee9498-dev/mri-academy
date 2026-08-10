@@ -462,9 +462,12 @@ footer b{color:var(--gold)}
         <script>
         (function(){
           try{
-            fetch("https://mri-academy-production.up.railway.app/api/stats").then(function(r){return r.json();}).then(function(d){
-              var c=(d&&d.counts)||{}; var n=(Number(c.lessonseng)||0)+(Number(c.suganseng)||0);
-              if(d&&d.status==="ok"&&n>0){ var el=document.getElementById("heroLiveV"); if(el)el.textContent=n+"명"; }
+            // /api/enrollment의 count는 레슨생 ∪ 수강생을 Set으로 중복 제거한 값이다.
+            // counts.lessonseng + counts.suganseng을 더하면 두 역할을 함께 가진 사람이
+            // 두 번 세어져 실제보다 부풀려진다 — 기록으로 말하는 페이지에서 쓸 수 없다.
+            fetch("https://mri-academy-production.up.railway.app/api/enrollment").then(function(r){return r.json();}).then(function(d){
+              var n=Number(d&&d.count);
+              if(d&&d.status==="ok"&&Number.isFinite(n)&&n>0){ var el=document.getElementById("heroLiveV"); if(el)el.textContent=n+"명"; }
             }).catch(function(){});
           }catch(e){}
         })();
@@ -688,18 +691,18 @@ footer b{color:var(--gold)}
     <div class="prog-head"><span class="prog-tag" style="background:rgba(90,200,250,.12);color:var(--blue)">레슨</span> 서바이버 트레이너진 · <b>판수제</b> <span class="prog-sub">레벨테스트 무관 · 누구나 · 시간 여유롭게</span></div>
     <div class="plans">
       <div class="plan">
-        <div class="pn">10판</div><div class="po">50,000원</div><div class="pp">40,000원<span class="off">-20%</span></div><div class="pd">판당 4,000원 · 단기 집중 교정</div>
+        <div class="pn">10판</div><div class="po">50,000원</div><div class="pp">45,000원<span class="off">-10%</span></div><div class="pd">판당 4,500원 · 단기 집중 교정</div>
         <ul><li>에임 정밀 분석</li><li>포지셔닝 교정</li><li>즉시 배정</li><li>빠른 피드백</li></ul>
         <a class="pbtn" href="apply.html">신청하기 →</a>
       </div>
       <div class="plan hot">
         <div class="rib">인기 1위</div>
-        <div class="pn">21판</div><div class="po">105,000원</div><div class="pp">80,000원<span class="off">-24%</span></div><div class="pd">판당 3,810원 · 실전 다지기</div>
+        <div class="pn">21판</div><div class="po">105,000원</div><div class="pp">90,000원<span class="off">-14%</span></div><div class="pd">판당 4,286원 · 실전 다지기</div>
         <ul><li>게임 리뷰 포함</li><li>실시간 동행·전술 훈련</li><li>수업 후 리포트</li></ul>
         <a class="pbtn" href="apply.html">신청하기 →</a>
       </div>
       <div class="plan">
-        <div class="pn">33판</div><div class="po">165,000원</div><div class="pp">120,000원<span class="off">-27%</span></div><div class="pd">판당 3,636원 · 풀 시즌 패키지</div>
+        <div class="pn">33판</div><div class="po">165,000원</div><div class="pp">140,000원<span class="off">-15%</span></div><div class="pd">판당 4,242원 · 풀 시즌 패키지</div>
         <ul><li>시즌 전체 관리</li><li>주간 성장 리포트</li><li>무제한 Q&amp;A · 클랜 추천</li></ul>
         <a class="pbtn" href="apply.html">신청하기 →</a>
       </div>
@@ -788,23 +791,23 @@ footer b{color:var(--gold)}
       <div class="vip-block-label"><span class="vbl-line"></span><span>레슨 + 강의 세트 · 한 번에</span><span class="vbl-line"></span></div>
       <div class="plans vip-plans">
         <div class="plan vip-plan">
-          <div class="pn">입문 세트</div><div class="po">370,000원</div><div class="pp">290,000원<span class="off">특가</span></div><div class="pd">레슨 10판 + 강의 8회</div>
+          <div class="pn">입문 세트</div><div class="po">295,000원</div><div class="pp">270,000원<span class="off">특가</span></div><div class="pd">레슨 10판 + 강의 8회</div>
           <ul><li>레슨 10판</li><li>+ 강의 8회(초급)</li><li>기초→전략 입문</li></ul>
           <a class="pbtn" href="apply.html">세트 신청 →</a>
         </div>
         <div class="plan vip-plan hot">
           <div class="rib">추천</div>
-          <div class="pn">도약 세트</div><div class="po">490,000원</div><div class="pp">390,000원<span class="off">특가</span></div><div class="pd">레슨 20판 + 강의 8회</div>
-          <ul><li>레슨 20판</li><li>+ 강의 8회(중급)</li><li>실전→심화 완성</li></ul>
+          <div class="pn">도약 세트</div><div class="po">360,000원</div><div class="pp">330,000원<span class="off">특가</span></div><div class="pd">레슨 21판 + 강의 8회</div>
+          <ul><li>레슨 21판</li><li>+ 강의 8회(중급)</li><li>실전→심화 완성</li></ul>
           <a class="pbtn" href="apply.html">세트 신청 →</a>
         </div>
         <div class="plan vip-plan">
-          <div class="pn">마스터 세트</div><div class="po">610,000원</div><div class="pp">480,000원<span class="off">특가</span></div><div class="pd">레슨 30판 + 강의 8회</div>
-          <ul><li>레슨 30판</li><li>+ 강의 8회(심화)</li><li>시즌 풀관리·고점</li></ul>
+          <div class="pn">마스터 세트</div><div class="po">430,000원</div><div class="pp">380,000원<span class="off">특가</span></div><div class="pd">레슨 33판 + 강의 8회</div>
+          <ul><li>레슨 33판</li><li>+ 강의 8회(심화)</li><li>시즌 풀관리·고점</li></ul>
           <a class="pbtn" href="apply.html">세트 신청 →</a>
         </div>
       </div>
-      <p class="plan-note">세트는 이미 최대 할인된 레슨·강의를 한 번에 신청하는 구성입니다 · 강의 포함으로 상담(테스트) 비용 <b>20,000원</b> 1회 · 트레이너·일정 우선 배정</p>
+      <p class="plan-note">취소선 금액은 <b>같은 구성을 따로 신청할 때의 합계</b>입니다 — 세트로 묶으면 25,000~50,000원을 아낍니다 · 강의 포함으로 상담(테스트) 비용 <b>20,000원</b> 1회 · 트레이너·일정 우선 배정</p>
     </div>
   </section>
 
@@ -857,7 +860,7 @@ footer b{color:var(--gold)}
 
       <details>
         <summary><span class="q">Q</span>비용은 어떻게 되나요?<span class="mk">+</span></summary>
-        <div class="a"><b>상담비</b> — 레슨상담 <span class="hi">15,000원</span> / 강의상담 <span class="hi">20,000원</span>. 레슨을 먼저 받으신 뒤 강의를 신청하실 경우 강의상담비는 따로 받지 않습니다(차감/면제). <b>레슨 판수</b> — 10판 40,000 / 21판 80,000 / 33판 120,000원.</div>
+        <div class="a"><b>상담비</b> — 레슨상담 <span class="hi">15,000원</span> / 강의상담 <span class="hi">20,000원</span>. 레슨을 먼저 받으신 뒤 강의를 신청하실 경우 강의상담비는 따로 받지 않습니다(차감/면제). <b>레슨 판수</b> — 10판 45,000 / 21판 90,000 / 33판 140,000원.</div>
       </details>
 
       <details>
