@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>GmI G드컵 명예의 전당 | 역대 우승 기록</title>
-<meta name="description" content="GmI G드컵 역대 시즌 우승팀·킬 MVP·이벤트 기록 아카이브. 시즌1 경매 드래프트 내전, 시즌2 BPI 밸런스 대회." />
+<meta name="description" content="GmI G드컵 역대 시즌 우승팀·킬 MVP·이벤트 기록 아카이브. 시즌1 경매 드래프트 내전, 시즌2·3 BPI 밸런스 대회." />
 <meta property="og:title" content="GmI G드컵 명예의 전당" />
 <meta property="og:description" content="역대 G드컵 우승팀·킬 MVP·이벤트 기록" />
 <meta property="og:type" content="website" />
@@ -21,9 +21,10 @@ OWN-WORLD: #0a0a0c 그라운드, 골드 단일 액센트(챔피언·킬 MVP 수�
   Saira Condensed 대문자 레이블·순위 숫자 + Pretendard 800 한글,
   1px 괘선 구획(박스 감싸기 금지), 직각 모서리, 이모지 없는 절제된 시상 기록.
 STORY: 방문자는 "이 대회는 기록이 축적되는 진짜 대회"임을 확인하고
-  시즌3 신청으로 이동한다.
-FIRST VIEWPORT: 전당 타이틀 + 최신 시즌(시즌2) 챔피언 각인이 한 화면에.
-  주 행동 = 하단 시즌3 신청 CTA 하나.
+  클랜 디스코드로 이동한다.
+FIRST VIEWPORT: 전당 타이틀 + 최신 시즌(시즌3) 챔피언 각인이 한 화면에.
+  주 행동 = 하단 디스코드 CTA 하나. (다음 시즌 미정 — 시즌이 열리면
+  CTA를 신청 페이지로 되돌린다.)
 FORM: hall-of-fame ledger / 정적 HTML 단일 파일 / 챔피언 각인 스테이징.
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish
   review, the verdict, and DESIGN.md
@@ -83,6 +84,7 @@ main{position:relative;max-width:820px;margin:0 auto;padding:0 20px 64px}
 .rank .no{font-family:var(--disp);font-weight:800;font-size:26px;text-align:center;font-variant-numeric:tabular-nums}
 .rank.r2 .no{color:var(--silver)}
 .rank.r3 .no{color:var(--bronze)}
+.rank.r4 .no{color:var(--ink-dim)}
 .rank .tname{font-weight:800;font-size:17px;color:var(--ink)}
 .rank .slogan{color:var(--ink-dim);font-size:13px;font-style:italic}
 .rank .members{color:var(--ink-dim);font-size:13.5px;word-break:keep-all;margin-top:2px}
@@ -130,7 +132,7 @@ footer a:hover{color:var(--gold)}
     <span class="brand">GmI GDCUP</span>
     <nav>
       <a href="https://shlee9498-dev.github.io/gmi-clancup/">메인</a>
-      <a href="gdcup-s3.html">시즌3 신청</a>
+      <a href="gdcup-s3.html">시즌3 규정</a>
     </nav>
   </div>
 
@@ -139,6 +141,58 @@ footer a:hover{color:var(--gold)}
     <h1>명예의 전당</h1>
     <p>역대 시즌 우승팀 · 킬 MVP · 이벤트 기록. 여기 오르는 이름은 지워지지 않습니다.</p>
   </div>
+
+  <!-- ════════ 시즌 3 ════════ -->
+  <section class="season">
+    <div class="season-head">
+      <span class="season-tag">SEASON 3</span>
+      <h2>BPI 밸런스 대회</h2>
+      <span class="meta">16 TEAMS · 2026.08.07</span>
+    </div>
+
+    <div class="champ">
+      <div class="lbl">Champion</div>
+      <div class="tname">현태팀</div>
+      <div class="row2">
+        <div class="members"><b>Roster</b>GmI_HYE0N · VO2LET · GmI_SIN · Naver_net</div>
+        <div class="pts">59<small>PTS</small></div>
+      </div>
+    </div>
+
+    <div class="rank r2">
+      <div class="no">2</div>
+      <div>
+        <div class="tname">싱싱미역</div>
+        <div class="members">qormwhwakdrpa18 · dkdkPRF · 9sin-- · GOBAEPIL</div>
+      </div>
+      <div class="pts">48 PTS</div>
+    </div>
+    <div class="rank r3">
+      <div class="no">3</div>
+      <div>
+        <div class="tname">록초리단</div>
+        <div class="members">D_-an2ee · hand3manone · TieTou-Min · Dalilei</div>
+      </div>
+      <div class="pts">38 PTS</div>
+    </div>
+    <div class="rank r4">
+      <div class="no">4</div>
+      <div>
+        <div class="tname">영앤리치레코즈</div>
+        <div class="members">GmI_HJ · cyl0296 · GmI_YounGJuN · GmI_red</div>
+      </div>
+      <div class="pts">35 PTS</div>
+    </div>
+
+    <div class="awards">
+      <div class="aw"><div class="k">Kill MVP</div><div class="v"><span class="g">hand3manone</span><small>15킬</small></div></div>
+    </div>
+
+    <div class="note">
+      <b>방식</b> — 팀별 BPI 가중치로 전력을 맞춘 시즌제 대회. 16팀 참가.<br>
+      <b>점수</b> — (순위점 + 킬 + 연속보너스) × 팀 BPI 가중치.
+    </div>
+  </section>
 
   <!-- ════════ 시즌 2 ════════ -->
   <section class="season">
@@ -216,7 +270,7 @@ footer a:hover{color:var(--gold)}
 
   <!-- CTA -->
   <div class="cta">
-    <a href="gdcup-s3.html">다음 챔피언의 자리 — 시즌3 신청</a>
+    <a href="https://discord.gg/YfZD8d22wJ" target="_blank" rel="noopener">다음 챔피언의 자리 — GmI 디스코드</a>
   </div>
 
 </main>
@@ -225,7 +279,7 @@ footer a:hover{color:var(--gold)}
   <div>GmI 클랜 · G드컵 명예의 전당 · 2026 · 비영리 친목 대회</div>
   <div style="margin-top:8px;">
     <a href="https://shlee9498-dev.github.io/gmi-clancup/">메인</a> ·
-    <a href="gdcup-s3.html">시즌3 신청</a>
+    <a href="gdcup-s3.html">시즌3 규정</a>
   </div>
 </footer>
 
