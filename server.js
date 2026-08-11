@@ -939,6 +939,26 @@ if (process.env.DISCORD_TOKEN) {
       { name: "비고", description: "그 외 접수 정보(최고티어·플레이시간·교정희망 등)", type: 3, required: false },
     ],
   };
+  // /결제신청 — [트레이너] 수강생 결제(입금) 신고 → payment_requests(pending) → 오너 DM 승인.
+  //   (PR-3a) BOT_PAYREQ=1일 때만 등록. 승인돼도 payments 본표에는 넣지 않는다 —
+  //   시트가 정본인 병행 단계에서 payout_rate(NOT NULL) 산정은 정산 소관이라 봇이 추정하면
+  //   그 값이 눌러앉는다. 승인 레코드(§18)가 영구 기록이고 본표 편입은 시드·백필 대사가 한다.
+  const PAYREQ_CMD = {
+    name: "결제신청",
+    description: "[트레이너] 수강생 결제(입금) 신고 — 오너 승인 후 원장 반영",
+    options: [
+      { name: "학생", description: "수강생 이름(명부 표기와 동일하게)", type: 3, required: true },
+      { name: "금액", description: "입금액(원)", type: 4, required: true, min_value: 1000, max_value: 5000000 },
+      { name: "구분", description: "결제 구분", type: 3, required: true, choices: [
+        { name: "판수(레슨)", value: "판수" },
+        { name: "강의", value: "강의" },
+        { name: "상담", value: "상담" },
+        { name: "기타", value: "기타" } ] },
+      { name: "판수", description: "판수 패키지면 총 판수(예: 33)", type: 4, required: false, min_value: 1, max_value: 200 },
+      { name: "입금일", description: "입금일 YYYY-MM-DD(미입력=오늘)", type: 3, required: false },
+      { name: "메모", description: "메모(선택 · 예: 구가 적용 / 43판=33+10)", type: 3, required: false },
+    ],
+  };
   // /등록계현황 — [오너] 시즌 등록 현황·미등록자·중복 감지 (DM 전용, /승급과 동일 방식)
   const REGISTRY_STATUS_CMD = {
     name: "등록계현황",
@@ -961,8 +981,9 @@ if (process.env.DISCORD_TOKEN) {
       return;
     }
     try {
-      await client.application.commands.set([LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD], guildId);
-      console.log(`/수업등록·/판수정정·/등록계·/수강생등록 registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
+      const payreqCmds = process.env.BOT_PAYREQ === "1" ? [PAYREQ_CMD] : [];
+      await client.application.commands.set([LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD, ...payreqCmds], guildId);
+      console.log(`/수업등록·/판수정정·/등록계·/수강생등록${payreqCmds.length ? "·/결제신청" : ""} registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
     } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
   }
 
@@ -1726,6 +1747,121 @@ if (process.env.DISCORD_TOKEN) {
       return itx.update({ content: "취소했어. 기존 명부 행을 그대로 쓰면 돼.", components: [] });
     await itx.update({ content: "등록 진행 중…", components: [] });
     await runStudentRegister(itx, pending.p);
+  });
+
+  // ── /결제신청 : 트레이너 결제(입금) 신고 → payment_requests(pending) → 오너 DM 승인 ──
+  //   버튼 상태는 DB 행이 들고 있어 재기동을 넘겨도 동작한다(STU_PENDING류 메모리 상태 없음 —
+  //   customId에 신청 id를 실어 보낸다). 오너 DM 발송이 실패해도 신청은 pending으로 남는다.
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "결제신청") return;
+    if (process.env.BOT_PAYREQ !== "1")
+      return itx.reply({ content: "결제신청은 아직 비활성이야(BOT_PAYREQ 미설정).", ephemeral: true });
+    const lessonCh = process.env.LESSON_CHANNEL_ID;
+    if (lessonCh && itx.channelId !== lessonCh)
+      return itx.reply({ content: "이 명령은 #수업등록 채널에서만 사용 가능합니다.", ephemeral: true });
+    const trainer = TRAINER_MAP[itx.user.id];
+    if (!trainer)
+      return itx.reply({ content: "등록된 트레이너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
+    if (!hasSupabase())
+      return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+
+    const name = (itx.options.getString("학생") || "").trim();
+    const amount = itx.options.getInteger("금액");
+    const kind = itx.options.getString("구분");
+    const games = itx.options.getInteger("판수") ?? null;
+    const paidRaw = (itx.options.getString("입금일") || "").trim();
+    const memo = (itx.options.getString("메모") || "").trim() || null;
+    if (!name) return itx.reply({ content: "학생 이름을 입력해줘.", ephemeral: true });
+    if (kind === "판수" && !games)
+      return itx.reply({ content: "구분이 판수면 판수도 입력해줘(예: 33).", ephemeral: true });
+    let paid_on = kstToday();
+    if (paidRaw) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(paidRaw) || Number.isNaN(Date.parse(paidRaw)))
+        return itx.reply({ content: "입금일은 YYYY-MM-DD 형식으로 넣어줘(예: 2026-08-01).", ephemeral: true });
+      paid_on = paidRaw;
+    }
+
+    await itx.deferReply({ ephemeral: true });
+    let trainer_id = null;
+    try { trainer_id = (await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainer)}&limit=1`))[0]?.id ?? null; } catch (_) {}
+    let req;
+    try {
+      req = await sbInsert("payment_requests", {
+        student_name: name, trainer_id, trainer_name: trainer, kind, amount, games,
+        paid_on, memo, requested_by: itx.user.id,
+      });
+    } catch (e) {
+      console.error("payreq_insert", e?.message);
+      return itx.editReply("❌ 신청 저장에 실패했어. 운영자에게 문의해줘(§18 DDL 미실행 가능성).");
+    }
+    let dmOk = false;
+    if (process.env.MRI_OWNER_ID) {
+      try {
+        const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`payreq_ok:${req.id}`).setLabel("✅ 승인").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`payreq_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
+        );
+        await owner.send({
+          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}**\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}${memo ? `\n· 메모: ${memo}` : ""}`,
+          components: [row],
+        });
+        dmOk = true;
+      } catch (e) { console.error("payreq_dm", e?.message); }
+    }
+    await itx.editReply(
+      `✅ 결제 신청 접수 **#${req.id}** — ${name} · ${kind}${games ? ` ${games}판` : ""} · ${amount.toLocaleString("ko-KR")}원 · 입금일 ${paid_on}\n`
+      + (dmOk ? "오너 승인 대기 중이야." : "⚠️ 오너 DM 발송 실패 — 신청은 저장됐어(pending). 오너에게 직접 알려줘."));
+  });
+
+  // ── /결제신청 승인·반려 버튼 (오너 DM) — 처리 전 상태를 DB에서 재확인(중복 클릭 방어) ──
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isButton()) return;
+    const m = itx.customId.match(/^payreq_(ok|no):(\d+)$/);
+    if (!m) return;
+    if (!process.env.MRI_OWNER_ID || itx.user.id !== process.env.MRI_OWNER_ID)
+      return itx.reply({ content: "오너 전용 버튼이야.", ephemeral: true });
+    const reqId = Number(m[2]);
+    let q;
+    try { q = (await sbSelect("payment_requests", `select=*&id=eq.${reqId}&limit=1`))[0]; }
+    catch (e) { console.error("payreq_fetch", e?.message); }
+    if (!q) return itx.update({ content: `#${reqId} 신청을 못 찾았어(DB 확인 필요).`, components: [] });
+    if (q.status !== "pending")
+      return itx.update({ content: `#${reqId}은 이미 처리됐어(${q.status === "approved" ? "승인" : "반려"}).`, components: [] });
+
+    const approve = m[1] === "ok";
+    const patch = { status: approve ? "approved" : "rejected", decided_by: itx.user.id, decided_at: new Date().toISOString() };
+    if (approve) {
+      // 이름 해석은 승인 시점 1회 — 미해석(null)이어도 승인은 유효하다(원장 표기가 기준).
+      try { const sid = await resolveStudentId(q.student_name, q.trainer_id); if (sid != null) patch.student_id = sid; }
+      catch (e) { console.error("payreq_resolve", e?.message); }
+    }
+    try { await sbPatch("payment_requests", `id=eq.${reqId}`, patch); }
+    catch (e) {
+      console.error("payreq_patch", e?.message);
+      return itx.reply({ content: `#${reqId} 상태 갱신에 실패했어 — 버튼을 다시 눌러줘.`, ephemeral: true });
+    }
+    if (approve) {
+      const ledger = `${q.paid_on} | ${q.student_name} | ${q.trainer_name} | ${q.kind} | ${Number(q.amount).toLocaleString("ko-KR")}`
+        + (q.games ? ` | ${q.games}판` : "") + (q.memo ? ` | ${q.memo}` : "");
+      await itx.update({
+        content:
+          `✅ **#${reqId} 승인** — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원 (${q.kind}${q.games ? ` ${q.games}판` : ""})`
+          + (patch.student_id ? ` · 명부 #${patch.student_id}` : " · ⚠️ 명부 미매칭(이름 확인 필요)")
+          + `\n📋 결제_원장 기입 행(복붙):\n\`${ledger}\``
+          + `\n⚠️ 기입 전 원장 8월 구간 중복키(입금일|이름|금액) 확인 · 판수 결제면 레슨로그 결제금액·판수도 갱신.`,
+        components: [],
+      });
+    } else {
+      await itx.update({ content: `❌ **#${reqId} 반려** — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원`, components: [] });
+    }
+    // 신청 트레이너에게 결과 통보(best-effort — 실패해도 처리 자체는 완료)
+    try {
+      const requester = await client.users.fetch(q.requested_by);
+      await requester.send(approve
+        ? `✅ 결제 신청 #${reqId} 승인 — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원 (${q.kind}${q.games ? ` ${q.games}판` : ""})`
+        : `❌ 결제 신청 #${reqId} 반려 — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원. 내용 확인 후 다시 신청해줘.`);
+    } catch (e) { console.error("payreq_notify", e?.message); }
   });
 
   // ── /등록계현황 : [오너 DM] 시즌 등록 현황·미등록자(역할 G/M/I 대비)·중복 account_id 감지 ──
@@ -5336,6 +5472,12 @@ const REQUIRED_SCHEMA = {
 const SCHEMA_OPTIONAL = {
   payments: ["pay_channel", "fee_amount", "net_amount"],
 };
+
+// PR-3a: 결제 승인 큐(§18) — BOT_PAYREQ=1이면 필수(DDL 미실행을 기동 점검이 잡아야 한다),
+// 플래그 꺼진 배포에선 선택(기능 휴면인데 error·오너 DM 오탐을 내지 않는다).
+(process.env.BOT_PAYREQ === "1" ? REQUIRED_SCHEMA : SCHEMA_OPTIONAL).payment_requests =
+  ["id","status","student_name","student_id","trainer_id","trainer_name","kind",
+   "amount","games","paid_on","memo","requested_by","decided_by","decided_at","created_at"];
 
 // 선택 컬럼 존재 여부를 기동 시 1회 확인한다. 결과는 캐시해 매 요청 재조회하지 않는다.
 //   반환: { "payments.fee_amount": true, ... }

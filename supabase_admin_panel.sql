@@ -548,3 +548,34 @@ create unique index if not exists gdcup_live_season_round_team
 alter table public.gdcup_live enable row level security;   -- service_role만 통과
 -- 앞서 wiped_at 없이 만든 경우를 위한 보정 (멱등)
 alter table public.gdcup_live add column if not exists wiped_at timestamptz;
+
+-- ============================================================
+-- 18) 결제 신청 승인 큐 (2026-08-11 · PR-3a) — 트레이너 /결제신청 → 오너 DM 승인.
+--     매출 경로 일원화 1단계: "입금 사실이 오너 기억·DM에만 있는" 구간을 없앤다.
+--     승인돼도 payments 본표에는 넣지 않는다 — 시트가 정본인 병행 단계에서
+--     payout_rate(NOT NULL) 산정은 정산 소관이고, 봇이 추정하면 그 값이 눌러앉는다.
+--     본표 편입은 시드·백필 대사가 중복키(입금일|이름|금액)로 일괄 처리하며,
+--     이 테이블이 그 대사의 근거 원장이다. enrollments 도입(8월 중) 후에는
+--     승인 시 등록(enrollment) 생성이 이 흐름에 붙는다.
+-- ============================================================
+create table if not exists public.payment_requests (
+  id            bigint generated always as identity primary key,
+  status        text not null default 'pending'
+                check (status in ('pending','approved','rejected')),
+  student_name  text not null,                          -- 트레이너 입력 원문(해석 전 표기)
+  student_id    bigint references public.students(id),  -- 승인 시 resolve 성공하면 채움(미해석 null)
+  trainer_id    bigint references public.staff(id),
+  trainer_name  text not null,
+  kind          text not null check (kind in ('판수','강의','상담','기타')),
+  amount        int  not null check (amount > 0),
+  games         int  check (games is null or games > 0),  -- 판수제만
+  paid_on       date not null,                          -- 입금일(트레이너 신고)
+  memo          text,
+  requested_by  text not null,                          -- 신청 트레이너 디코 유저ID
+  decided_by    text,                                   -- 오너 디코 유저ID
+  decided_at    timestamptz,
+  created_at    timestamptz not null default now()
+);
+create index if not exists idx_payreq_pending on public.payment_requests (created_at)
+  where status = 'pending';
+alter table public.payment_requests enable row level security;   -- service_role만 통과
