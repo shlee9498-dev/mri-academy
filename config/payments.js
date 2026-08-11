@@ -27,16 +27,24 @@ export const PRODUCT_KEYS = /** @type {const} */ ([
 ]);
 
 /**
- * 판매가(원). 2026-08-06 기준 현행가이며 index.html·apply.html 표기와 대조 완료.
+ * 판매가(원). 2026-08-10 개정분 반영 (오너 확정값).
  *
  * ⚠️ 가격은 토스 심사 대상이다. 수정 전 반드시 오너 확인(저장소 규칙).
- * 2026-08-10 00:00부터 레슨 3종이 45,000 / 90,000 / 140,000으로 인상된다 —
- * 해당 변경은 별도 PR로 올리며 8/9 23시 이후 머지한다. 그전까지 현행가가 노출돼야 한다.
+ *
+ * 2026-08-10 개정 내역
+ *   레슨 3종  인상  40,000→45,000 / 80,000→90,000 / 120,000→140,000
+ *   세트 3종  개편  290,000→280,000 / 390,000→340,000 / 480,000→405,000
+ *             구성도 바뀐다: 강의 8회로 통일 + 레슨을 실제 판매 SKU(10·21·33판)에 맞춘다.
+ *             기존 세트는 20판·30판이라 단품에 없는 판수를 팔고 있었다.
+ *   직강 8회 3종 · 1:1 직강 · VIP DAY PASS · 상담비 2종  현행 유지
+ *
+ * 그로블 상품 가격은 그로블 대시보드에서 따로 수정한다 — 링크 URL은 유지되므로
+ * GROBLE_LINKS는 개정과 무관하게 그대로 둔다.
  */
 export const PRICES = {
-  lesson10: 40000,
-  lesson21: 80000,
-  lesson33: 120000,
+  lesson10: 45000,
+  lesson21: 90000,
+  lesson33: 140000,
 
   consultLesson: 15000,
   consultCourse: 20000,
@@ -49,10 +57,30 @@ export const PRICES = {
   oneOnOne: 70000,
   vipDayPass: 150000,
 
-  setEntry: 290000,
-  setLeap: 390000,
-  setMaster: 480000,
+  setEntry: 280000,
+  setLeap: 340000,
+  setMaster: 405000,
 };
+
+/**
+ * 세트 구성 — 어떤 단품을 묶었는지. 화면의 「개별 신청가」 비교가 이 표에서 나온다.
+ *
+ * 세트 할인폭을 별도 상수로 두지 않는 이유: 단품가가 바뀔 때마다 손으로 다시 계산해야
+ * 하고, 한 번 놓치면 화면에 "정가 X → 특가 Y"인데 X가 아무 근거 없는 숫자가 된다.
+ * 구성만 적어두고 합계는 계산해서 쓴다.
+ */
+export const SET_COMPONENTS = {
+  setEntry:  ["lesson10", "direct8_beginner"],
+  setLeap:   ["lesson21", "direct8_inter"],
+  setMaster: ["lesson33", "direct8_advanced"],
+};
+
+/** 세트를 단품으로 따로 살 때의 합계(원). setEntry → 295000 */
+export function setListPrice(setKey) {
+  const parts = SET_COMPONENTS[setKey];
+  if (!parts) return null;
+  return parts.reduce((sum, k) => sum + (PRICES[k] || 0), 0);
+}
 
 /**
  * 그로블(통신판매중개) 결제 링크. 오너가 그로블에서 발급해 여기 채운다.
