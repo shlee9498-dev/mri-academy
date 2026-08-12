@@ -315,11 +315,33 @@ staff 조회 (discord_id = ?)
 ```
 
 **핵심은 `requireScope`다.** `requireRole`만으로는 부족하다 —
-`docs/lecture-data-model.md:234`가 이미 지적한 문제다:
+역할만 보면 **트레이너 A가 트레이너 B의 수강생을 본다.**
 
-> `/api/admin/sessions` GET에 소유권 검사가 없다
+> **정정(2026-08-12).** v0.1은 이 자리에서 `docs/lecture-data-model.md:234`의
+> 「`/api/admin/sessions` GET에 소유권 검사가 없다」를 **현재 문제로** 인용했다.
+> 그 구멍은 **이미 막혔다** — 확인해보니 `admin-panel.js`에 소유권 게이트가
+> 공통화돼 있었다. 인용 출처도 함께 정정했다(§3.2에 해소 표기).
 
-역할만 보면 **트레이너 A가 트레이너 B의 수강생을 본다.** 스코프 규칙:
+### ⚠️ `/api/admin/*`는 이 설계가 필요 없다 — 이미 구현돼 있다
+
+조사 결과 `admin-panel.js`가 아래를 **모두 갖추고 있다.** 새로 만들 것이 아니라
+**이 구조를 정본으로 삼고, 강의·학생 API가 여기에 맞추면 된다.**
+
+| 헬퍼 | 동작 | 실패 시 |
+|---|---|---|
+| `ctx(req)` | `discord_id` → `staff` 행 해석, `isOwner` 산출 | — |
+| `requireIdentity(c, res)` | 비-owner는 본인 `staff`가 해석돼야 진행 | **fail-closed** — DB 오류 503, 미등록 403 |
+| `ownsStudent(c, id)` | 트레이너는 `trainer_id = c.me.id`인 학생만 | **fail-closed** — 조회 실패도 `false` |
+
+`/api/admin/overview`도 이미 스코프별로 응답을 나눈다 —
+`students`는 담당분만, `trainers`는 본인만, `revenue`는 비-owner에게 `null`,
+`scope: "owner"|"trainer"`를 내려준다.
+민감 라우트 4종(`export.csv`·`payments`·`staff`·`payouts`)은 `owner_only` 403이다.
+
+**즉 §4.2의 미들웨어 설계는 「신설」이 아니라 「`admin-panel.js` 패턴을 서버 전역으로
+끌어올리는 것」이다.** 특히 강의 API를 만들 때 `ownsStudent`를 반드시 가져가야 한다.
+
+스코프 규칙:
 
 | 역할 | 볼 수 있는 범위 |
 |---|---|

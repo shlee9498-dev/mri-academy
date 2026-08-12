@@ -231,7 +231,25 @@ if (!c.isOwner && c.me) computed = computed.filter((x) => x.trainer_id === c.me.
 
 → 규칙: **강의는 학생 페이로드에 절대 실리지 않는다.** owner 전용 별도 엔드포인트로만 나간다.
 
-### 3.2 복제 대상인 `/api/admin/sessions` GET에 소유권 검사가 없다
+### 3.2 ~~복제 대상인 `/api/admin/sessions` GET에 소유권 검사가 없다~~ → ✅ **해소됨**
+
+> **2026-08-12 정정.** 이 구멍은 막혔다. `admin-panel.js`에 `ownsStudent(c, studentId)`가
+> 공통 게이트로 들어갔고 GET·POST·DELETE **셋 다** 통과해야 한다. 조회 실패 시 `false`를
+> 돌려주는 fail-closed다. 아래 원문은 **당시 상태 기록**으로 남긴다 — 강의 API를 이 패턴으로
+> 복사할 때 `ownsStudent`를 반드시 함께 가져가라는 근거로 계속 유효하다.
+>
+> ```js
+> async function ownsStudent(c, studentId) {
+>   if (c.isOwner) return true;
+>   if (!c.me) return false;
+>   try {
+>     const s = (await sbSelect("students", `select=trainer_id&id=eq.${studentId}&limit=1`))[0];
+>     return !!s && s.trainer_id === c.me.id;
+>   } catch (e) { return false; }   // 확인 못 한 건 통과시키지 않는다
+> }
+> ```
+
+<details><summary>당시 원문 (해소 전 기록)</summary>
 
 ```js
 // admin-panel.js:399-405 — 현존 구멍
@@ -246,6 +264,8 @@ app.get("/api/admin/sessions", async (req, res) => {
 POST에는 담당 검사가 있다(414-417). **GET과 DELETE(426-435)에는 없다.**
 지금은 레슨 데이터라 피해가 제한적이지만, `/api/admin/course-sessions`를 이 패턴으로
 복사하면 강의가 전 트레이너에게 열린다. 강의 착수 전에 이 구멍을 먼저 막는 게 맞다.
+
+</details>
 
 ### 3.3 조회는 이미 스코프 밖에서 일어난다
 
