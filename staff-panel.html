@@ -2,6 +2,12 @@
 <html lang="ko"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
+<link rel="manifest" href="panel.webmanifest">
+<meta name="theme-color" content="#0a0a0c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MRI 패널">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>운영진 패널 · MRI ACADEMY</title>
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
@@ -11,9 +17,8 @@
   --disp:'Archivo Black',sans-serif;--body:'Pretendard Variable',sans-serif;--mono:ui-monospace,Menlo,monospace}
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.55;
-  background-image:radial-gradient(circle at 50% 0,rgba(245,197,24,.05),transparent 55%),
-   linear-gradient(rgba(245,197,24,.02) 1px,transparent 1px),linear-gradient(90deg,rgba(245,197,24,.02) 1px,transparent 1px);
-  background-size:auto,38px 38px,38px 38px;-webkit-font-smoothing:antialiased}
+  background-image:radial-gradient(circle at 50% 0,rgba(245,197,24,.05),transparent 55%);
+  -webkit-font-smoothing:antialiased}
 .wrap{max-width:1000px;margin:0 auto;padding:22px 16px 80px}
 a{color:var(--gold);text-decoration:none}
 .topbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
@@ -101,6 +106,20 @@ label.fl{font-size:11px;color:var(--ink-faint);display:flex;flex-direction:colum
 .sched-form .formrow:last-child{margin-bottom:0}
 .ck{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:var(--ink-dim);white-space:nowrap}
 .ck input{width:auto;accent-color:var(--gold)}
+/* ── C1 탭 계층 (표시 전용) — 첫 화면 = 수강생 업무, 나머지는 탭 뒤 기본 숨김 ── */
+.ptabs{display:flex;gap:4px;margin:16px 0 2px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.ptabs::-webkit-scrollbar{display:none}
+.ptab{font-family:var(--body);font-weight:800;font-size:13.5px;padding:11px 13px;border:0;background:none;color:var(--ink-faint);cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px;min-height:44px;transition:color .15s}
+.ptab:hover{color:var(--ink-dim)}
+.ptab.on{color:var(--gold);border-bottom-color:var(--gold)}
+.ptab:focus-visible{outline:2px solid var(--gold);outline-offset:-2px;border-radius:6px}
+.tabpane{display:none}
+.tabpane.on{display:block}
+/* 동명 경고 가드 — 색에만 의존하지 않는다(도트·볼드 리드 병용) */
+.dupwarn{display:none;margin-top:11px;padding:11px 13px;border:1px solid rgba(230,57,70,.45);border-radius:9px;background:rgba(230,57,70,.05);font-size:13px;line-height:1.6}
+.dupwarn .lead{color:var(--red);font-weight:800}
+.dupwarn .row{margin-top:6px;color:var(--ink-dim)}
+.dupwarn .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
 </style>
 </head><body>
 <div class="wrap">
@@ -168,16 +187,53 @@ async function reload(){
   READONLY = DATA.panelWrite !== true;
   const sb = document.getElementById("scopeBadge");
   sb.style.display="inline-block";
-  if(DATA.scope==="owner"){ sb.className="scope"; sb.textContent="OWNER · 전체"; STAFF = await api("/api/admin/staff").catch(()=>[]); renderOwner(); }
-  else { sb.className="scope tr"; sb.textContent="TRAINER · "+(DATA.me?DATA.me.name:""); renderTrainer(); }
-  // 🗓️ 일정 관리 + 🔗 운영 바로가기 — 로그인 후에만 렌더(reload는 인증 성공 후 호출).
-  // G드컵·전적 스냅샷·BPI는 owner 전용. 트레이너 화면은 「내 수강생 → 내 일정」으로 끝난다 —
-  // 관여할 수 없는 섹션을 빈 채로 남겨두면 화면만 길어지고 권한이 없는 것처럼 읽힌다.
   const isOwner = DATA.scope === "owner";
-  document.getElementById("app").insertAdjacentHTML("beforeend",
-    '<div id="schedwrap"></div>' + (isOwner ? '<div id="gdcupwrap"></div><div id="statswrap"></div><div id="bpiwrap"></div>' : '') + opsLinks(isOwner));
-  loadSchedule();
-  if(isOwner){ loadGdcup(); loadStats(); loadDist(); }
+  if(isOwner){ sb.className="scope"; sb.textContent="OWNER · 전체"; STAFF = await api("/api/admin/staff").catch(()=>[]); }
+  else { sb.className="scope tr"; sb.textContent="TRAINER · "+(DATA.me?DATA.me.name:""); }
+  // C1(2026-08-13): 첫 화면 = 수강생 업무만(목록·판수·차감·신규 추가·결제 등록).
+  // G드컵·정산·급여·도구는 탭 뒤 기본 숨김 — API·서버 무접촉, 렌더 배치와 호출 시점만 변경.
+  // 관여할 수 없는 섹션을 빈 채로 남겨두면 화면만 길어지고 권한이 없는 것처럼 읽힌다 —
+  // 트레이너 탭은 「수강생 → 일정 → 바로가기」로 끝난다.
+  const app = document.getElementById("app");
+  app.innerHTML = panelTabs(isOwner)
+    + '<div id="pane-stu" class="tabpane"></div>'
+    + '<div id="pane-sched" class="tabpane"><div id="schedwrap"></div></div>'
+    + (isOwner
+      ? '<div id="pane-gdcup" class="tabpane"><div id="gdcupwrap"></div></div>'
+        + '<div id="pane-pay" class="tabpane"></div>'
+        + '<div id="pane-salary" class="tabpane"></div>'
+        + '<div id="pane-tools" class="tabpane"><div id="toolswrap"></div><div id="statswrap"></div><div id="bpiwrap"></div><div id="opswrap"></div></div>'
+      : '<div id="pane-links" class="tabpane"><div id="opswrap"></div></div>');
+  if(isOwner){ renderOwnerStudents(); renderOwnerPay(); renderOwnerSalary(); renderOwnerTools(); }
+  else renderTrainer();
+  document.getElementById("opswrap").innerHTML = opsLinks(isOwner);
+  // reload()는 쓰기 후에도 불린다 — 현재 탭은 유지하고, 지연 로드는 다시 밟아 재조회한다.
+  for (const k of Object.keys(TAB_LOADED)) delete TAB_LOADED[k];
+  if(!isOwner && ["gdcup","pay","salary","tools"].includes(PANEL_TAB)) PANEL_TAB = "stu";
+  setTab(PANEL_TAB);
+}
+
+// ── C1 탭 — 표시 전용. 일정·G드컵·전적·BPI는 탭 첫 진입 때만 로드
+//    (시즌 오프인 G드컵을 부팅마다 조회하던 호출이 사라진다 — 엔드포인트·응답 처리 자체는 불변) ──
+let PANEL_TAB = "stu";
+const TAB_LOADED = {};
+function panelTabs(isOwner){
+  const t=(k,l)=>`<button type="button" class="ptab${PANEL_TAB===k?" on":""}" data-tab="${k}" role="tab" aria-selected="${PANEL_TAB===k}" onclick="setTab('${k}')">${l}</button>`;
+  return `<nav class="ptabs" role="tablist" aria-label="패널 영역">`
+    + t("stu","수강생") + t("sched","일정")
+    + (isOwner ? t("gdcup","G드컵")+t("pay","정산")+t("salary","급여")+t("tools","도구") : t("links","바로가기"))
+    + `</nav>`;
+}
+function setTab(k){
+  PANEL_TAB = k;
+  document.querySelectorAll(".ptab").forEach(b=>{ const on=b.dataset.tab===k; b.classList.toggle("on",on); b.setAttribute("aria-selected",String(on)); });
+  document.querySelectorAll(".tabpane").forEach(p=>p.classList.toggle("on", p.id==="pane-"+k));
+  if(!TAB_LOADED[k]){
+    TAB_LOADED[k] = true;
+    if(k==="sched") loadSchedule();
+    if(k==="gdcup") loadGdcup();
+    if(k==="tools"){ loadStats(); loadDist(); }
+  }
 }
 
 
@@ -518,9 +574,9 @@ async function copyWeek(force){
   toast(`${j.inserted}건 복사됨 → 다음 주`); SCHED.week=Math.min(2,SCHED.week+1); SCHED.editing=null; await loadSchedule();
 }
 
-// ── 트레이너 뷰 ──
+// ── 트레이너 뷰 (수강생 탭) ──
 function renderTrainer(){
-  const box = document.getElementById("app");
+  const box = document.getElementById("pane-stu");
   const studs = DATA.students||[];
   const me = DATA.trainers && DATA.trainers[0];
   box.innerHTML = `
@@ -567,10 +623,58 @@ function addSession(id){
   act(async ()=>{ await api("/api/admin/sessions","POST",{student_id:id,games,played_at,memo}); toast("판수 "+games+"판 기록됨"); });
 }
 
-// ── 사장(OWNER) 뷰 ──
-function renderOwner(){
-  const box = document.getElementById("app");
-  const T = DATA.trainers||[], E = DATA.employees||[], R = DATA.revenue||[], S = DATA.students||[];
+// ── 사장(OWNER) 뷰 — C1: 페인 4개로 분리 렌더. 마크업·핸들러는 종전 그대로, 배치만 바뀌었다 ──
+// 수강생 탭: 목록·판수·차감(판수 버튼)·신규 추가·결제 등록 — 첫 화면은 이것뿐이다.
+function renderOwnerStudents(){
+  const box = document.getElementById("pane-stu");
+  const S = DATA.students||[];
+  const unconfirmed = S.filter(s=>!s.rate_confirmed && s.played>=10).length;
+  box.innerHTML = `
+    <h1>수강생</h1>
+    <div class="sub">활성 ${S.filter(s=>s.status==="active").length}명 · 지급율 미확정 ${unconfirmed>0?`<b style="color:var(--gold)">${unconfirmed}건</b>`:"없음"} — 정산·급여·G드컵은 위 탭에 있습니다.</div>
+
+    <section style="margin-top:14px">
+      <div class="sec-h"><h2>판수 현황</h2><span class="tag">차감 = 판수 버튼 · 지급율 확정 필요 항목 우선</span><span class="line"></span></div>
+      <div class="card scroll"><table class="tbl"><thead><tr>
+        <th>수강생</th><th>담당</th><th>결제</th><th>진행</th><th>남은</th><th>지급율</th><th>지급예정</th><th>기록/확정</th>
+      </tr></thead><tbody>
+      ${ S.length ? S.map(stuRow).join("") : `<tr><td colspan="8" class="empty">수강생을 추가하세요</td></tr>` }
+      </tbody></table></div>
+    </section>
+
+    <section>
+      <div class="sec-h"><h2>신규 수강생 추가</h2><span class="tag">동명 기존 행 자동 검사</span><span class="line"></span></div>
+      <div class="card">
+        <div class="formrow">
+          <label class="fl">이름<input id="ns_name" class="w-m" placeholder="이름" oninput="DUP_OK=false"></label>
+          <label class="fl">디코닉<input id="ns_nick" class="w-m" placeholder="(선택)"></label>
+          <label class="fl">담당트레이너<select id="ns_tr">${trainerOpts()}</select></label>
+          <button class="btn gold sm" onclick="addStudent()">추가</button>
+        </div>
+        <div id="ns_warn" class="dupwarn" role="alert"></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-h"><h2>결제 입력 (등록)</h2><span class="tag">Phase1에서 토스 자동</span><span class="line"></span></div>
+      <div class="card"><div class="formrow">
+        <label class="fl">수강생<select id="pm_stu">${studentOpts()}</select></label>
+        <label class="fl">결제일<input type="date" id="pm_date" class="w-m" value="${today()}"></label>
+        <label class="fl">금액<input type="number" id="pm_amt" class="w-m" placeholder="120000"></label>
+        <label class="fl">판수<input type="number" id="pm_games" class="w-s" placeholder="33"></label>
+        <label class="fl">지급율<input type="number" step="0.05" min="0" max="1" id="pm_rate" class="w-s" placeholder="0.7"></label>
+        <label class="fl">유입<select id="pm_yt"><option value="">일반</option><option value="1">유튜브</option></select></label>
+        <label class="fl" style="flex:1;min-width:100px">메모<input id="pm_memo" placeholder="추가결제 등"></label>
+        <button class="btn gold sm" onclick="addPayment()">결제 추가</button>
+      </div></div>
+    </section>
+  `;
+}
+
+// 정산 탭: KPI + 트레이너 월 정산 — owner 전용, 기본 숨김.
+function renderOwnerPay(){
+  const box = document.getElementById("pane-pay");
+  const T = DATA.trainers||[], R = DATA.revenue||[], S = DATA.students||[];
   const totalNet = T.reduce((a,t)=>a+t.net,0);
   const unconfirmed = S.filter(s=>!s.rate_confirmed && s.played>=10).length;
   box.innerHTML = `
@@ -593,49 +697,32 @@ function renderOwner(){
         <td class="muted">${won(t.paid_out)}</td><td>${won(t.gross)}</td><td class="muted">${won(t.withholding)}</td>
         <td class="pay">${won(t.net)}</td>
         <td><button class="btn sm" onclick="payoutFor(${t.staff_id},'${esc(t.name)}',${t.gross})">지급기록</button></td>
-      </tr>`).join("") : `<tr><td colspan="8" class="empty">트레이너를 먼저 등록하세요 (아래 운영진 관리)</td></tr>` }
+      </tr>`).join("") : `<tr><td colspan="8" class="empty">트레이너를 먼저 등록하세요 (도구 탭 → 운영진 관리)</td></tr>` }
       </tbody></table></div>
     </section>
+  `;
+}
 
-    ${ E.length ? `<section>
+// 급여 탭: 직원 급여 — owner 전용, 기본 숨김.
+function renderOwnerSalary(){
+  const box = document.getElementById("pane-salary");
+  const E = DATA.employees||[];
+  box.innerHTML = E.length ? `
+    <section style="margin-top:14px">
       <div class="sec-h"><h2>직원 급여 (제안값)</h2><span class="tag">최종은 수동 확정</span><span class="line"></span></div>
       <div class="card scroll"><table class="tbl"><thead><tr><th>직원</th><th>기본급</th><th>당월매출</th><th>수수료(제안)</th><th>규칙</th><th></th></tr></thead><tbody>
       ${ E.map(e=>`<tr><td class="name">${esc(e.name)}</td><td>${won(e.base_salary)}</td><td class="muted">${won(e.month_revenue)}</td>
         <td class="pay">${won(e.suggest_commission)}</td><td class="muted" style="text-align:left;font-size:11px">${esc(e.comp_note||"")}</td>
         <td><button class="btn sm" onclick="payoutFor(${e.staff_id},'${esc(e.name)}',${(e.base_salary||0)+(e.suggest_commission||0)})">지급기록</button></td></tr>`).join("") }
       </tbody></table></div>
-    </section>`:"" }
+    </section>` : `<div class="empty" style="padding:40px 20px">등록된 직원이 없어요. 직원은 도구 탭 → 운영진 관리에서 추가합니다.</div>`;
+}
 
-    <section>
-      <div class="sec-h"><h2>수강생 정산</h2><span class="tag">지급율 확정 필요 항목 우선</span><span class="line"></span></div>
-      <div class="card scroll"><table class="tbl"><thead><tr>
-        <th>수강생</th><th>담당</th><th>결제</th><th>진행</th><th>남은</th><th>지급율</th><th>지급예정</th><th>기록/확정</th>
-      </tr></thead><tbody>
-      ${ S.length ? S.map(stuRow).join("") : `<tr><td colspan="8" class="empty">수강생을 추가하세요</td></tr>` }
-      </tbody></table></div>
-      <div class="formrow" style="margin-top:12px">
-        <label class="fl">＋수강생<input id="ns_name" class="w-m" placeholder="이름"></label>
-        <label class="fl">디코닉<input id="ns_nick" class="w-m" placeholder="(선택)"></label>
-        <label class="fl">담당트레이너<select id="ns_tr">${trainerOpts()}</select></label>
-        <button class="btn gold sm" onclick="addStudent()">추가</button>
-      </div>
-    </section>
-
-    <section>
-      <div class="sec-h"><h2>결제 입력</h2><span class="tag">Phase1에서 토스 자동</span><span class="line"></span></div>
-      <div class="card"><div class="formrow">
-        <label class="fl">수강생<select id="pm_stu">${studentOpts()}</select></label>
-        <label class="fl">결제일<input type="date" id="pm_date" class="w-m" value="${today()}"></label>
-        <label class="fl">금액<input type="number" id="pm_amt" class="w-m" placeholder="120000"></label>
-        <label class="fl">판수<input type="number" id="pm_games" class="w-s" placeholder="33"></label>
-        <label class="fl">지급율<input type="number" step="0.05" min="0" max="1" id="pm_rate" class="w-s" placeholder="0.7"></label>
-        <label class="fl">유입<select id="pm_yt"><option value="">일반</option><option value="1">유튜브</option></select></label>
-        <label class="fl" style="flex:1;min-width:100px">메모<input id="pm_memo" placeholder="추가결제 등"></label>
-        <button class="btn gold sm" onclick="addPayment()">결제 추가</button>
-      </div></div>
-    </section>
-
-    <section>
+// 도구 탭: 운영진 관리 + 내보내기 (+ 전적 스냅샷·BPI 분포·운영 바로가기 — 탭 첫 진입 시 로드)
+function renderOwnerTools(){
+  const box = document.getElementById("toolswrap");
+  box.innerHTML = `
+    <section style="margin-top:14px">
       <div class="sec-h"><h2>운영진 관리</h2><span class="tag">부트스트랩</span><span class="line"></span></div>
       <div class="card scroll"><table class="tbl"><thead><tr><th>이름</th><th>역할</th><th>디코ID</th><th>기본급</th></tr></thead><tbody>
       ${ STAFF.length ? STAFF.map(s=>`<tr><td class="name">${esc(s.name)}</td><td class="muted" style="text-align:left">${esc(s.role)}</td>
@@ -663,7 +750,7 @@ function renderOwner(){
 function stuRow(s){
   const rate = s.rate_confirmed ? `<span class="badge ok">${Math.round(s.applied_rate*100)}%</span>` : `<span class="badge sug">제안 ${Math.round(s.applied_rate*100)}%</span>`;
   const tName = (STAFF.find(x=>x.id===s.trainer_id)||{}).name || "—";
-  return `<tr>
+  return `<tr id="srow_${s.student_id}">
     <td class="name">${esc(s.name)}</td><td class="muted">${esc(tName)}</td>
     <td class="muted">${won(s.paid_amount)}<span style="font-size:10px">/${s.paid_games}판</span></td>
     <td>${s.played}판</td><td class="muted">${s.remain}</td><td>${rate}</td>
@@ -677,8 +764,36 @@ function stuRow(s){
 function trainerOpts(){ return `<option value="">미배정</option>`+STAFF.filter(s=>s.role==="trainer").map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join(""); }
 function studentOpts(){ return (DATA.students||[]).map(s=>`<option value="${s.student_id}">${esc(s.name)}</option>`).join(""); }
 
+// ── 동명 경고 가드 (C1) — 박유현 중복 실사고(8/13) 재발 방지.
+// 클라이언트 검사만이다: overview에 이미 실려 온 전체 목록과 대조하므로 추가 API 호출이 없다.
+// 서버측 가드(별칭·resolveStudentId 연계)는 admin-panel.js 소관이라 이 PR 범위 밖 — PR 본문에 보고.
+let DUP_OK = false;
+function dupWarnHtml(list){
+  const rows = list.map(s=>{
+    const tName = (STAFF.find(x=>x.id===s.trainer_id)||{}).name || "미배정";
+    return `<div class="row">기존 — <b>${esc(s.name)}</b> · 담당 ${esc(tName)} · ${esc(s.status||"-")} · 진행 ${s.played}/${s.paid_games}판 · 남은 ${s.remain}판</div>`;
+  }).join("");
+  return `<span class="lead">● 동명 수강생이 이미 있습니다</span> — 동일 인물이면 새 행을 만들지 말고 기존 행에 판수·결제를 기록하세요.
+    ${rows}
+    <div class="acts">
+      <button type="button" class="btn sm" onclick="showDupRow(${list[0].student_id})">기존 행 보기</button>
+      <button type="button" class="btn sm" onclick="DUP_OK=true;addStudent()">동명 신규로 계속</button>
+    </div>`;
+}
+function showDupRow(id){
+  setTab("stu");
+  const tr = document.getElementById("srow_"+id);
+  if(!tr) return;
+  tr.scrollIntoView({behavior:"smooth",block:"center"});
+  tr.style.transition="background .3s"; tr.style.background="rgba(245,197,24,.12)";
+  setTimeout(()=>{ tr.style.background=""; }, 1600);
+}
 function addStudent(){
   const name=document.getElementById("ns_name").value.trim(); if(!name) return toast("이름을 입력하세요",true);
+  const warn=document.getElementById("ns_warn");
+  const dups=(DATA.students||[]).filter(s=>String(s.name||"").trim()===name);
+  if(dups.length && !DUP_OK){ warn.style.display="block"; warn.innerHTML=dupWarnHtml(dups); return; }
+  DUP_OK=false; if(warn){ warn.style.display="none"; warn.innerHTML=""; }
   act(async ()=>{ await api("/api/admin/students","POST",{name,discord_nick:document.getElementById("ns_nick").value,trainer_id:document.getElementById("ns_tr").value||null}); toast("수강생 추가됨"); });
 }
 function addStaff(){
