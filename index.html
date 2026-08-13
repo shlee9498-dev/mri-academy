@@ -235,7 +235,10 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .ebar-left{font-size:11.5px;color:var(--ink-faint);margin-top:7px}
 .ebar-left b{color:var(--gold)}
 @media(max-width:560px){.enroll-bars{grid-template-columns:1fr}}
-.plan .pd{font-size:12.5px;color:var(--ink-faint);margin-bottom:16px}
+.plan .pd{font-size:12.5px;color:var(--ink-faint);margin-bottom:12px}
+/* 이런 분께 추천 — 카드마다 한 줄 고정. 강조색은 안 쓴다(골드는 가격·CTA 몫) */
+.plan .prec{font-size:12.5px;color:var(--ink-dim);line-height:1.55;margin-bottom:14px;padding-top:12px;border-top:1px solid var(--line)}
+.plan .prec .rl{display:block;font-size:10.5px;font-weight:800;letter-spacing:.06em;color:var(--ink-faint);margin-bottom:3px}
 .plan ul{list-style:none;margin-bottom:20px}
 .plan li{font-size:13px;color:var(--ink-dim);padding:6px 0;display:flex;gap:8px}
 .plan li::before{content:"✓";color:var(--green);font-weight:800}
@@ -529,7 +532,7 @@ footer b{color:var(--gold)}
   <section class="cases" id="cases">
     <div class="kick">Evidence</div>
     <div class="s-title">같은 판수, 다른 성적</div>
-    <p class="s-desc">기간이 아니라 판수 기준 비교 — 판수가 같은데 성적이 다르면, 오른 것은 실력입니다.</p>
+    <p class="s-desc">기간이 아니라 판수 기준 비교입니다. 판수가 같은데 성적이 다르면, 오른 것은 실력입니다.</p>
     <div class="case-row"><div class="case-nick">세**</div><div><div class="case-path"><span class="from">Gold 2,446</span> → <span class="to">서바이버 5,065</span> · 승률 60% · 600딜</div></div><div class="case-dur">12개월</div></div>
     <div class="case-row"><div class="case-nick">차**</div><div><div class="case-path"><span class="from">Gold · 100딜대</span> → <span class="to">마스터 3,465 · 208딜</span> · 카카오 서버 380위</div><div class="case-cond">418매치 · 상위 10위 280회(67%) · 평균순위 8.1</div></div><div class="case-dur">10개월</div></div>
     <div class="case-row"><div class="case-nick">숑**</div><div><div class="case-path"><span class="from">마스터 3,700 · 380딜</span> → <span class="to">4,560 · 500딜+</span></div><div class="case-cond">동일 200판 기준</div></div><div class="case-dur">4개월</div></div>
@@ -545,7 +548,7 @@ footer b{color:var(--gold)}
       <div style="font-size:32px;line-height:1">📅</div>
       <div style="flex:1;min-width:210px">
         <div style="font-family:var(--display);font-size:clamp(17px,3.4vw,21px);color:var(--ink);line-height:1.3">이번 주 레슨 일정 · <span style="color:var(--gold)">자리 모집중</span> 그룹 확인</div>
-        <div style="color:var(--ink-dim);font-size:13.5px;margin-top:5px">트레이너별 그룹 레슨·강의 시간표 — 비어있는 자리에 지금 합류하세요.</div>
+        <div style="color:var(--ink-dim);font-size:13.5px;margin-top:5px">트레이너별 그룹 레슨·강의 시간표입니다. 비어 있는 자리에 합류하실 수 있습니다.</div>
       </div>
       <span class="btn btn-gold" style="white-space:nowrap">레슨 일정 보기 →</span>
     </div>
@@ -564,7 +567,7 @@ footer b{color:var(--gold)}
 
     <div class="growth">
       <div class="gh">
-        <div class="gt">대표 수강생 '세인' 변화 — 30S → 36S 추적</div>
+        <div class="gt">대표 수강생 '세인' 변화 · 30S → 36S 추적</div>
         <span class="gtag">Gold → 서바이버 · 최고 5,065 RP</span>
       </div>
       <p class="gd">강의 전 골드(2,446)에서 출발 → 마스터 정착 → <b style="color:var(--gold)">수강 종료 후 자력으로 36S 서바이버 최고 5,065 RP 달성</b>. 36시즌 경쟁전 개편(크리스탈·서바이버 신설, 만점 9,999)으로 서바이버는 RP 3,700+ & 리전 상위권만 도달하는 최상위 티어입니다.</p>
@@ -649,7 +652,7 @@ footer b{color:var(--gold)}
     <div class="s-title">수업, 이렇게 진행돼요</div>
     <div style="background:var(--bg-card);border:1px solid var(--gold-soft);border-radius:10px;padding:20px 22px;margin-bottom:16px">
       <div style="font-family:var(--display);font-weight:800;font-size:20px;color:var(--ink)">새벽 3시도, 수업 시간입니다.</div>
-      <div style="font-size:13.5px;color:var(--ink-dim);margin-top:6px">연중무휴 24시간 — 1주일 전 조율이면 어떤 시간대든 맞춥니다.</div>
+      <div style="font-size:13.5px;color:var(--ink-dim);margin-top:6px">연중무휴 24시간입니다. 1주일 전 조율이면 어떤 시간대든 맞춥니다.</div>
     </div>
     <p class="s-desc">목표·실력에 맞춰 형식을 골라 진행합니다. 처음이면 상담 때 맞는 방식으로 안내해 드려요.</p>
 
@@ -699,14 +702,14 @@ footer b{color:var(--gold)}
     <div style="background:linear-gradient(135deg,rgba(245,197,24,.1),rgba(245,197,24,.02));border:1px solid var(--gold-soft,rgba(245,197,24,.3));border-radius:14px;padding:18px 20px;margin-bottom:28px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
       <div style="font-size:30px;">♾️</div>
       <div style="flex:1;min-width:240px;">
-        <div style="font-weight:800;font-size:15px;color:var(--gold);margin-bottom:4px;">수강생 평생 사후관리 — 모든 레슨·강의 공통</div>
-        <div style="font-size:13.5px;color:var(--ink-dim);line-height:1.6;">수강이 끝나도 끝이 아닙니다. <b style="color:var(--ink)">리플(다시보기) 피드백</b>과 <b style="color:var(--ink)">배틀그라운드 관련 질문</b>을 상시 답변 — 막히는 부분은 <b style="color:var(--ink)">재판(다음 판)까지 함께</b> 해결해 드립니다.</div>
+        <div style="font-weight:800;font-size:15px;color:var(--gold);margin-bottom:4px;">수강생 평생 사후관리 · 모든 레슨·강의 공통</div>
+        <div style="font-size:13.5px;color:var(--ink-dim);line-height:1.6;">수강이 끝나도 끝이 아닙니다. <b style="color:var(--ink)">리플(다시보기) 피드백</b>과 <b style="color:var(--ink)">배틀그라운드 관련 질문</b>을 상시 답변합니다. 막히는 부분은 <b style="color:var(--ink)">재판(다음 판)까지 함께</b> 해결해 드립니다.</div>
       </div>
     </div>
 
     <div class="promo-banner">
       <div class="pb-tag">🔥 OPEN 런칭 특가</div>
-      <div class="pb-main">지금은 <b>오픈 기념 특가</b> 진행 중 — 아래 정원 도달 시 정가로 전환됩니다</div>
+      <div class="pb-main">지금은 <b>오픈 기념 특가</b> 진행 중입니다. 아래 정원 도달 시 정가로 전환됩니다</div>
       <div class="enroll-bars">
         <div class="ebar">
           <div class="ebar-top"><span class="ebar-name">레슨</span><span class="ebar-num"><b id="lesNow">··</b> / 50명</span></div>
@@ -719,7 +722,7 @@ footer b{color:var(--gold)}
           <div class="ebar-left">정가 전환까지 <b id="couLeft">··</b></div>
         </div>
       </div>
-      <div class="pb-sub"><b style="color:var(--gold)">트레이너 1인당 정원 25명</b> — 수업 질을 지키기 위해 인원을 제한합니다. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b> 돌파 시 <b>각각 그 주 다음 주부터 정가로 전환</b>됩니다. 자리가 한정되어 있으니 <b style="color:var(--gold)">지금</b> 신청하세요.</div>
+      <div class="pb-sub"><b style="color:var(--gold)">트레이너 1인당 정원 25명</b>입니다. 수업 질을 지키기 위해 인원을 제한합니다. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b> 돌파 시 <b>각각 그 주 다음 주부터 정가로 전환</b>됩니다.</div>
     </div>
 
       <!-- 직강 패키지 -->
@@ -728,19 +731,22 @@ footer b{color:var(--gold)}
         <div class="plan vip-plan">
           <div class="rib">초급반</div>
           <div class="pn">8회 패키지</div><div class="po">320,000원</div><div class="pp">250,000원<span class="off">특가</span></div><div class="pd">1회 3시간 · 기초 입문</div>
-          <ul><li>강의 입문 추천</li><li>핵심 전략 8회 집중</li><li>부담 없는 첫 시작</li></ul>
+          <div class="prec"><span class="rl">이런 분께 추천</span>무엇부터 고쳐야 할지 모르겠는 분</div>
+          <ul><li>핵심 전략 8회 집중</li><li>부담 없는 첫 시작</li></ul>
           <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
         </div>
         <div class="plan vip-plan hot">
           <div class="rib">인기</div>
           <div class="pn">8회 패키지</div><div class="po">340,000원</div><div class="pp">270,000원<span class="off">특가</span></div><div class="pd">1회 3시간 · 체계적 과정</div>
-          <ul><li>단계별 전략 전수</li><li>주도권→포지션 4단계</li><li>가장 인기 있는 구성</li></ul>
+          <div class="prec"><span class="rl">이런 분께 추천</span>감으로 하던 판단에 기준을 세우고 싶은 분</div>
+          <ul><li>단계별 전략 전수</li><li>주도권→포지션 4단계</li></ul>
           <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
         </div>
         <div class="plan vip-plan">
           <div class="rib">심화</div>
           <div class="pn">8회 패키지</div><div class="po">360,000원</div><div class="pp">290,000원<span class="off">특가</span></div><div class="pd">1회 3시간 · 고점 돌파</div>
-          <ul><li>심화 전략·전적 관리</li><li>상위권 도약 집중</li><li>고점 돌파 구성</li></ul>
+          <div class="prec"><span class="rl">이런 분께 추천</span>실력은 붙었는데 고점에서 막히는 분</div>
+          <ul><li>심화 전략·전적 관리</li><li>상위권 도약 집중</li></ul>
           <a class="pbtn" href="apply.html">레벨테스트 신청 →</a>
         </div>
       </div>
@@ -751,17 +757,20 @@ footer b{color:var(--gold)}
       <div class="plans vip-plans">
         <div class="plan vip-plan">
           <div class="pn">입문 세트</div><div class="po">295,000원</div><div class="pp">280,000원<span class="off">-5%</span></div><div class="pd">강의 8회 + 레슨 10판</div>
+          <div class="prec"><span class="rl">이런 분께 추천</span>이론과 실전을 처음부터 같이 가고 싶은 분</div>
           <ul><li>강의 8회(초급)</li><li>+ 레슨 10판</li><li>기초→전략 입문</li></ul>
           <a class="pbtn" href="apply.html">세트 신청 →</a>
         </div>
         <div class="plan vip-plan hot">
           <div class="rib">추천</div>
           <div class="pn">도약 세트</div><div class="po">360,000원</div><div class="pp">340,000원<span class="off">-6%</span></div><div class="pd">강의 8회 + 레슨 21판</div>
+          <div class="prec"><span class="rl">이런 분께 추천</span>배운 것을 실제 판에서 굳히고 싶은 분</div>
           <ul><li>강의 8회(중급)</li><li>+ 레슨 21판</li><li>실전→심화 완성</li></ul>
           <a class="pbtn" href="apply.html">세트 신청 →</a>
         </div>
         <div class="plan vip-plan">
           <div class="pn">마스터 세트</div><div class="po">430,000원</div><div class="pp">405,000원<span class="off">-6%</span></div><div class="pd">강의 8회 + 레슨 33판</div>
+          <div class="prec"><span class="rl">이런 분께 추천</span>이번 시즌을 통째로 관리받고 싶은 분</div>
           <ul><li>강의 8회(심화)</li><li>+ 레슨 33판</li><li>시즌 풀관리·고점</li></ul>
           <a class="pbtn" href="apply.html">세트 신청 →</a>
         </div>
@@ -774,17 +783,20 @@ footer b{color:var(--gold)}
       <div class="plans">
         <div class="plan">
           <div class="pn">10판</div><div class="po">50,000원</div><div class="pp">45,000원<span class="off">-10%</span></div><div class="pd">판당 4,500원 · 단기 집중 교정</div>
+          <div class="prec"><span class="rl">이런 분께 추천</span>습관 하나를 빠르게 잡고 싶은 분</div>
           <ul><li>에임 정밀 분석</li><li>포지셔닝 교정</li><li>즉시 배정</li><li>빠른 피드백</li></ul>
           <a class="pbtn" href="apply.html">신청하기 →</a>
         </div>
         <div class="plan hot">
           <div class="rib">인기 1위</div>
           <div class="pn">21판</div><div class="po">105,000원</div><div class="pp">90,000원<span class="off">-14%</span></div><div class="pd">판당 4,286원 · 실전 다지기</div>
+          <div class="prec"><span class="rl">이런 분께 추천</span>실전에서 반복 교정이 필요한 분</div>
           <ul><li>게임 리뷰 포함</li><li>실시간 동행·전술 훈련</li><li>수업 후 리포트</li></ul>
           <a class="pbtn" href="apply.html">신청하기 →</a>
         </div>
         <div class="plan">
           <div class="pn">33판</div><div class="po">165,000원</div><div class="pp">140,000원<span class="off">-15%</span></div><div class="pd">판당 4,242원 · 풀 시즌 패키지</div>
+          <div class="prec"><span class="rl">이런 분께 추천</span>시즌 내내 붙어서 끌어올리고 싶은 분</div>
           <ul><li>시즌 전체 관리</li><li>주간 성장 리포트</li><li>무제한 Q&amp;A · 클랜 추천</li></ul>
           <a class="pbtn" href="apply.html">신청하기 →</a>
         </div>
@@ -800,21 +812,21 @@ footer b{color:var(--gold)}
   <section id="consult">
     <div class="kick">Consultation</div>
     <div class="s-title">상담 신청</div>
-    <p class="s-desc">상담비 결제 → AI 챗봇 진단 → 트레이너 자동 배정</p>
+    <p class="s-desc">상담은 세 단계로 진행합니다. ① <b>최근 다시보기·목표 확인</b> → ② <b>실력 진단</b> → ③ <b>맞는 수업·반 안내</b>. <b style="color:var(--ink)">상담만 받고 결정 안 하셔도 됩니다.</b></p>
     <a href="apply.html" style="display:block;max-width:420px;margin:0 auto 24px;background:linear-gradient(135deg,var(--gold),var(--gold-deep,#caa00f));color:#0a0a0c;text-align:center;padding:15px;border-radius:9px;font-weight:800;font-size:15px;text-decoration:none">📝 온라인 신청서 작성하기</a>
     <div class="cons">
       <div class="ccard">
         <div class="ct">레슨 상담</div><div class="cprice">15,000원</div>
         <div class="cstep"><span class="num">1</span><span>상담비 결제</span></div>
-        <div class="cstep"><span class="num">2</span><span>AI 챗봇 진단 — 성향·티어·목표 분석</span></div>
-        <div class="cstep"><span class="num">3</span><span>트레이너 배정 — 24시간 내 자동</span></div>
+        <div class="cstep"><span class="num">2</span><span>AI 챗봇 진단 · 성향·티어·목표 분석</span></div>
+        <div class="cstep"><span class="num">3</span><span>트레이너 배정 · 24시간 내 자동</span></div>
         <a class="cbtn" href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">💬 카카오로 신청하기</a>
         <a class="cbtn disc" href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener" data-disc-channel="상담문의">🎮 Discord 상담문의로</a>
       </div>
       <div class="ccard feature">
         <div class="ct">강의 상담</div><div class="cprice">20,000원</div>
         <div class="cstep"><span class="num">1</span><span>상담비 결제</span></div>
-        <div class="cstep"><span class="num">2</span><span>AI 챗봇 진단 — 성향·목표 분석</span></div>
+        <div class="cstep"><span class="num">2</span><span>AI 챗봇 진단 · 성향·목표 분석</span></div>
         <div class="cstep"><span class="num">3</span><span>이무리 클랜장 직접 담당</span></div>
         <a class="cbtn" href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">💬 카카오로 신청하기</a>
         <a class="cbtn disc" href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener" data-disc-channel="상담문의">🎮 Discord 상담문의로</a>
@@ -1013,7 +1025,7 @@ footer b{color:var(--gold)}
           <div><div class="nm">이무리 <span style="font-size:12px;color:var(--ink-faint)">(LeeMuri)</span></div>
             <div class="role">대표강사 · GmI 클랜장</div><div class="tr-id">🎮 GmI_mri</div></div></div>
         <div class="slogan">"이 상황에서 뭘 해야 하지?"를 명쾌하게 풀어드립니다</div>
-        <div class="tr-meta">배그 강의서버 국내 최초 창시. 전문 분석과 전략으로 도약시킵니다. 클래스별 <b>3시간 집중 교육</b> — 레벨테스트 합격자 한정.
+        <div class="tr-meta">배그 강의서버 국내 최초 창시. 전문 분석과 전략으로 도약시킵니다. 클래스별 <b>3시간 집중 교육</b> · 레벨테스트 합격자 한정.
           <div style="margin-top:8px"><span class="badge">강의상담 20,000</span><span class="badge">1회 3시간</span><span class="badge">50명+ 이력</span></div></div>
         <div class="tr-links">
           <a href="https://discord.com/users/318774590795022336" target="_blank" rel="noopener">💬 DM</a>
@@ -1087,10 +1099,10 @@ footer b{color:var(--gold)}
     <div class="kick">Archive</div>
     <div class="s-title">기록은 전부 공개돼 있습니다</div>
     <p class="s-desc">수강 전에 직접 확인하세요. 전부 실제 수강생의 기록입니다.</p>
-    <a class="arch-row" href="gmi-progress.html"><span><span class="t">성장 기록</span><span class="d"> — 수강생 티어·RP·딜 변화 추적</span></span><span class="go">보기 →</span></a>
-    <a class="arch-row" href="lesson-feedback.html"><span><span class="t">코칭 기록</span><span class="d"> — 레슨별 피드백 원문</span></span><span class="go">보기 →</span></a>
-    <a class="arch-row" href="community.html"><span><span class="t">커뮤니티</span><span class="d"> — 성장일지·후기</span></span><span class="go">보기 →</span></a>
-    <a class="arch-row" href="success.html"><span><span class="t">수료생</span><span class="d"> — 마스터·서바이버 달성 기록</span></span><span class="go">보기 →</span></a>
+    <a class="arch-row" href="gmi-progress.html"><span><span class="t">성장 기록</span><span class="d"> · 수강생 티어·RP·딜 변화 추적</span></span><span class="go">보기 →</span></a>
+    <a class="arch-row" href="lesson-feedback.html"><span><span class="t">코칭 기록</span><span class="d"> · 레슨별 피드백 원문</span></span><span class="go">보기 →</span></a>
+    <a class="arch-row" href="community.html"><span><span class="t">커뮤니티</span><span class="d"> · 성장일지·후기</span></span><span class="go">보기 →</span></a>
+    <a class="arch-row" href="success.html"><span><span class="t">수료생</span><span class="d"> · 마스터·서바이버 달성 기록</span></span><span class="go">보기 →</span></a>
   </section>
 
   <!-- SOOP -->
