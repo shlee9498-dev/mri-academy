@@ -246,6 +246,16 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .plan.hot .pbtn{background:var(--gold);color:#000;border-color:var(--gold)}
 .plan .pbtn:hover{transform:translateY(-1px);border-color:var(--gold-soft)}
 .plan-note{text-align:center;color:var(--ink-faint);font-size:12.5px;margin-top:20px}
+/* 뭐부터 시작할지 — 상황 → 추천 라우팅. 카드 격자가 아니라 행이다(비교가 아니라 분기라서) */
+.picks{display:flex;flex-direction:column;gap:8px}
+.pick{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--bg-card);border:1px solid var(--line);
+  border-radius:10px;padding:15px 18px;text-decoration:none;transition:border-color .18s}
+.pick:hover{border-color:var(--gold-soft)}
+.pick:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.pick .ps{flex:1;min-width:200px;font-size:13.5px;font-weight:800;color:var(--ink)}
+.pick .pr{flex:1.25;min-width:220px;font-size:13px;color:var(--ink-dim);line-height:1.55}
+.pick .pr b{color:var(--ink)}
+.pick .go{color:var(--ink-faint);font-size:12.5px;white-space:nowrap;margin-left:auto}
 @media(max-width:780px){.plans{grid-template-columns:1fr;gap:18px}.plans-4{grid-template-columns:1fr}}
 @media(min-width:781px) and (max-width:980px){.plans-4{grid-template-columns:repeat(2,1fr)}}
 
@@ -690,6 +700,35 @@ footer b{color:var(--gold)}
         <div class="a">이무리 클랜장이 직접 진행하는 <span class="hi">1회 3시간 예약제</span> 과정. 이론·복기 중심으로 <b>개념과 운영</b>을 잡아주는 단계로, 레벨테스트 합격자(또는 레슨 수료자) 대상입니다.</div>
       </details>
 
+    </div>
+  </section>
+
+  <!-- PICK -->
+  <section id="pick">
+    <div class="kick">Which one</div>
+    <div class="s-title">뭐부터 시작할지 고르기</div>
+    <p class="s-desc">지금 상황에 맞는 과정이 따로 있습니다. 애매하면 상담에서 같이 정하니 지금 확정하지 않으셔도 됩니다.</p>
+    <div class="picks">
+      <a class="pick" href="#plans">
+        <span class="ps">처음이거나, 다이아 2 · 평균 300딜 이하</span>
+        <span class="pr"><b>레슨(판수제)</b>부터. 테스트 없이 바로 시작합니다.</span>
+        <span class="go">가격 보기 →</span>
+      </a>
+      <a class="pick" href="#plans">
+        <span class="ps">기본기는 있는데 판단·운영이 흔들린다</span>
+        <span class="pr"><b>강의(이무리 직강 8회)</b>. 상담에서 초급·중급·심화를 배정합니다.</span>
+        <span class="go">가격 보기 →</span>
+      </a>
+      <a class="pick" href="#plans">
+        <span class="ps">이론과 실전을 한 번에 가고 싶다</span>
+        <span class="pr"><b>세트</b>. 강의와 레슨을 묶어 진행합니다.</span>
+        <span class="go">가격 보기 →</span>
+      </a>
+      <a class="pick" href="#vip">
+        <span class="ps">시간이 없어 하루에 몰아서 끝내고 싶다</span>
+        <span class="pr"><b>프리미엄 1:1 · VIP DAY PASS</b>. 종일 집중으로 진행합니다.</span>
+        <span class="go">자세히 →</span>
+      </a>
     </div>
   </section>
 
