@@ -456,7 +456,9 @@ function opsLinks(isOwner){
 
 // ── 🗓️ 일정 관리 (Phase S1) — schedule는 서버에서 읽기전용 게이트 예외라 act() 안 거치고 직접 쓴다 ──
 const SCHED = { week:0, kind:"lesson", editing:null, _byId:{} };
-const SCHED_FMT = { lesson:["관전형","참여형","1:1","그룹","자율연습","상담"], direct:["초급반","중급반","심화반","개인강의","그룹강의"] };
+// 레슨 형식 3분류(2026-08-13 오너 확정) — 구 라벨 매핑: 참여형·그룹 → 그룹레슨 / 1:1·개인 → 개인레슨.
+// schedule_events 0행 실측이라 과거 라벨 고아는 없다. 봇기록(시트) 이관 시 같은 매핑을 적용한다.
+const SCHED_FMT = { lesson:["개인레슨","그룹레슨","관전형","자율연습","상담"], direct:["초급반","중급반","심화반","개인강의","그룹강의"] };
 const DOW = ["일","월","화","수","목","금","토"];
 const dPlus = (d,n)=>{ const x=new Date(d+"T00:00:00Z"); x.setUTCDate(x.getUTCDate()+n); return x.toISOString().slice(0,10); };
 const schedDow = (d)=> DOW[new Date(d+"T00:00:00Z").getUTCDay()];

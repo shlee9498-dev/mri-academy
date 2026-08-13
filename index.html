@@ -271,6 +271,28 @@ section{padding:64px 0;border-top:1px solid var(--line)}
 .faq summary .mk{margin-left:auto;color:var(--ink-faint);transition:transform .2s;font-size:13px}
 .faq details[open] summary .mk{transform:rotate(45deg);color:var(--gold)}
 .faq .a{padding:0 18px 17px 44px;color:var(--ink-dim);font-size:13.5px;line-height:1.65}
+/* 레슨 유형 × 판수 차감 — 유형별로 단위가 다르다는 게 이 표의 요점이라 표로 둔다 */
+.lt-wrap{overflow-x:auto;margin-bottom:14px;background:var(--bg-card);border:1px solid var(--line);border-radius:10px}
+.lt{width:100%;border-collapse:collapse;font-size:13.5px;min-width:460px}
+.lt th{text-align:left;font-size:11px;letter-spacing:.07em;color:var(--ink-faint);font-weight:800;padding:15px 18px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.lt td{padding:14px 18px;border-bottom:1px solid var(--line);color:var(--ink-dim);line-height:1.6}
+.lt tbody tr:last-child td{border-bottom:0}
+.lt .ty{color:var(--ink);font-weight:800;white-space:nowrap}
+.lt .cut{color:var(--gold);font-weight:800;white-space:nowrap}
+.lt-lbl{display:none}
+.lt-note{font-size:12.5px;color:var(--ink-faint);line-height:1.6;margin-bottom:26px}
+/* 좁은 화면에선 가로 스크롤 대신 세로 스택 — 핵심 수치(차감)가 화면 밖으로 밀리지 않게 */
+@media (max-width:640px){
+  .lt-wrap{overflow-x:visible}
+  .lt{min-width:0}
+  .lt thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .lt tr{display:block;padding:14px 16px;border-bottom:1px solid var(--line)}
+  .lt tbody tr:last-child{border-bottom:0}
+  .lt td{display:block;padding:0;border:0}
+  .lt .ty{font-size:14.5px;margin-bottom:4px}
+  .lt .cut{margin-top:7px;white-space:normal}
+  .lt-lbl{display:inline;color:var(--ink-faint);font-weight:700}
+}
 .faq .a b{color:var(--ink)}
 .faq .a .hi{color:var(--gold);font-weight:700}
 .live-bar{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:800;color:var(--green);margin-bottom:24px}
@@ -630,21 +652,34 @@ footer b{color:var(--gold)}
       <div style="font-size:13.5px;color:var(--ink-dim);margin-top:6px">연중무휴 24시간 — 1주일 전 조율이면 어떤 시간대든 맞춥니다.</div>
     </div>
     <p class="s-desc">목표·실력에 맞춰 형식을 골라 진행합니다. 처음이면 상담 때 맞는 방식으로 안내해 드려요.</p>
+
+    <div class="lt-wrap">
+      <table class="lt">
+        <thead><tr><th>레슨 유형</th><th>진행 방식</th><th>판수 차감</th></tr></thead>
+        <tbody>
+          <tr><td class="ty">개인레슨</td><td>트레이너 1 : 수강생 1 · 처음부터 끝까지 전담</td><td class="cut"><span class="lt-lbl">판수 차감 </span>1시간 = 5판</td></tr>
+          <tr><td class="ty">그룹레슨</td><td>트레이너 1 : 수강생 3 · 같은 스쿼드에서 함께 플레이</td><td class="cut"><span class="lt-lbl">판수 차감 </span>플레이 1판 = 1판</td></tr>
+          <tr><td class="ty">관전형</td><td>트레이너 1 : 수강생 4 · 화면 공유 관전 · 로테이션 오더</td><td class="cut"><span class="lt-lbl">판수 차감 </span>플레이 1판 = 1판</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="lt-note">개인레슨은 <b style="color:var(--ink)">100% 1:1 전담</b>입니다. 인원이 모였다는 이유로 그룹으로 전환하지 않습니다. 아래에 각 유형을 자세히 정리했습니다.</p>
+
     <div class="faq">
 
       <details open>
-        <summary><span class="q">👀</span>관전형 레슨<span class="mk">+</span></summary>
-        <div class="a">트레이너가 <b>디스코드 화면 공유</b>로 여러분의 플레이를 실시간으로 보면서 그 자리에서 짚어드립니다. 한 번에 <span class="hi">최대 4명</span>. 본인이 놓치는 습관·판단을 즉시 교정하는 데 가장 효과적이에요.</div>
+        <summary><span class="q">🎯</span>개인레슨 (1:1)<span class="mk">+</span></summary>
+        <div class="a"><b>한 명만 집중</b>해서 진행합니다. 민감한 약점이나 세밀한 교정이 필요할 때 가장 빠르게 파고드는 방식이고, 등록부터 종료까지 <span class="hi">1:1이 유지</span>됩니다. 판수는 시간 기준으로 <b>1시간에 5판</b> 차감됩니다.</div>
       </details>
 
       <details>
-        <summary><span class="q">🎮</span>참여형 레슨<span class="mk">+</span></summary>
-        <div class="a">트레이너가 <b>같은 스쿼드에 들어가 함께 플레이</b>하며 코칭합니다 (<span class="hi">수강생 3명 + 강사 1명</span>). 합·오더·포지셔닝을 말로만 듣는 게 아니라 직접 보고 몸에 익히는 단계예요.</div>
+        <summary><span class="q">🎮</span>그룹레슨 (1:3)<span class="mk">+</span></summary>
+        <div class="a">트레이너가 <b>같은 스쿼드에 들어가 함께 플레이</b>하며 코칭합니다 (<span class="hi">수강생 3명 + 강사 1명</span>). 합·오더·포지셔닝을 말로만 듣는 게 아니라 직접 보고 몸에 익히는 단계예요. 실제로 플레이한 <b>1판이 1판</b>으로 차감됩니다.</div>
       </details>
 
       <details>
-        <summary><span class="q">🎯</span>1:1 집중 레슨<span class="mk">+</span></summary>
-        <div class="a"><b>한 명만 집중</b>해서 진행합니다. 민감한 약점이나 세밀한 교정이 필요할 때 가장 빠르게 파고드는 방식입니다.</div>
+        <summary><span class="q">👀</span>관전형 (1:4)<span class="mk">+</span></summary>
+        <div class="a">트레이너가 <b>디스코드 화면 공유</b>로 여러분의 플레이를 실시간으로 보면서 그 자리에서 짚어드립니다. 한 번에 <span class="hi">최대 4명</span>이 참여해 <b>로테이션으로 오더</b>를 맡고, 트레이너가 판단 근거를 바로 교정합니다. 실제로 플레이한 <b>1판이 1판</b>으로 차감됩니다.</div>
       </details>
 
       <details>
@@ -865,6 +900,21 @@ footer b{color:var(--gold)}
       </details>
 
       <details>
+        <summary><span class="q">Q</span>레슨은 정말 1:1인가요?<span class="mk">+</span></summary>
+        <div class="a"><b>개인레슨은 트레이너 1명 : 수강생 1명</b>으로만 진행되고, 등록 시점부터 종료까지 그대로 유지됩니다. 인원이 모였다는 이유로 그룹으로 전환하지 않습니다. 여럿이 함께 듣고 싶으시면 <span class="hi">그룹레슨(1:3)</span>이나 <span class="hi">관전형(1:4)</span>을 직접 고르실 수 있습니다.</div>
+      </details>
+
+      <details>
+        <summary><span class="q">Q</span>판수는 어떻게 차감되나요?<span class="mk">+</span></summary>
+        <div class="a">유형마다 기준이 다릅니다. <b>개인레슨</b>은 시간 기준으로 <span class="hi">1시간 = 5판</span>, <b>그룹레슨·관전형</b>은 실제로 플레이한 <span class="hi">1판 = 1판</span>입니다. 남은 판수는 담당 트레이너가 관리하고, 수업 때마다 알려드립니다.</div>
+      </details>
+
+      <details>
+        <summary><span class="q">Q</span>상담에서는 뭘 하나요?<span class="mk">+</span></summary>
+        <div class="a">세 단계로 진행합니다. ① <b>최근 다시보기·목표 확인</b> ② <b>실력 진단</b> ③ <b>맞는 수업·반 안내</b>. 지금 어디가 막혀 있는지 짚고 어떤 과정이 맞는지까지 알려드리는 자리라, <span class="hi">상담만 받고 결정 안 하셔도 됩니다.</span></div>
+      </details>
+
+      <details>
         <summary><span class="q">Q</span>비용은 어떻게 되나요?<span class="mk">+</span></summary>
         <div class="a"><b>상담비</b> — 레슨상담 <span class="hi">15,000원</span> / 강의상담 <span class="hi">20,000원</span>. 레슨을 먼저 받으신 뒤 강의를 신청하실 경우 강의상담비는 따로 받지 않습니다(차감/면제). <b>레슨 판수</b> — 10판 45,000 / 21판 90,000 / 33판 140,000원.</div>
       </details>
@@ -885,8 +935,8 @@ footer b{color:var(--gold)}
       </details>
 
       <details>
-        <summary><span class="q">Q</span>지인이랑 같이 들을 수 있나요?<span class="mk">+</span></summary>
-        <div class="a">네. 같은 실력대 <b>3명 + 강사 1명</b>으로 그룹 편성이 가능합니다. 지인분들도 함께 수강 신청하시고 3시간 일정만 맞추면 그룹강의로 진행할 수 있습니다.</div>
+        <summary><span class="q">Q</span>여러 명이 같이 들을 수 있나요?<span class="mk">+</span></summary>
+        <div class="a">네. 레슨은 <b>그룹레슨(수강생 3명 + 강사 1명)</b> 또는 <b>관전형(최대 4명)</b>으로 함께 들으실 수 있습니다. 강의(직강)도 같은 실력대 <b>3명 + 강사 1명</b>으로 편성되니, 지인분들과 함께 신청하시고 3시간 일정만 맞추면 됩니다.</div>
       </details>
 
       <details>
