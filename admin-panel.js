@@ -76,6 +76,19 @@ module.exports = function mountAdminPanel(app, deps) {
   const payBase = (p) =>
     (hasFeeColumns() && p.net_amount != null) ? Number(p.net_amount) : Number(p.amount || 0);
 
+  // ── 정산 귀속월 ────────────────────────────────────────
+  // paid_at(사실 = 실제 입금일)과 정산 인식월을 분리한다.
+  //
+  // 왜 분리하나: 지급이 끝난 달에 정정 행이 추가되면 그 달의 산출값이 사후에 바뀐다.
+  // 실제로 2026-08-13에 7월분 정정 행(id=126, 7/29 −10,000)이 들어와 7월 빵다 수수료
+  // 산출값이 움직였고, "8/2에 무엇을 근거로 얼마를 보냈는지"를 재현할 수 없게 됐다.
+  // 회계의 전기오류수정과 같은 방식으로, 마감월 정정분은 다음 열린 달에 인식한다.
+  //
+  // settled_period가 비어 있으면 paid_at의 월을 쓴다 → 기존 행은 산출값이 그대로다.
+  const hasSettledPeriod = () => schemaOptional["payments.settled_period"] === true;
+  const settlePeriod = (p) =>
+    (hasSettledPeriod() && p.settled_period) ? String(p.settled_period) : (p.paid_at || "").slice(0, 7);
+
   // 요청자 컨텍스트: 로그인 + 스태프 + staff 테이블 매핑(role, staff.id)
   //  meError: staff 조회가 DB오류로 실패(신원 미해석). '행 부재(부트스트랩)'와 구분 —
   //  전자는 fail-closed(503 재시도), 후자는 403. 둘 다 requireIdentity에서 스코프 차단.
@@ -235,7 +248,8 @@ module.exports = function mountAdminPanel(app, deps) {
   //   순매출 = floor100(금액/1.1) — 100원 버림 (시트 검증: 360,000→327,200 / 120,000→109,000 / 40,000→36,300).
   //   수수료 적용 대상: comp_note에 '6%' 또는 '순매출' 표기된 직원 (소영 등 기본급만은 제안 0).
   function computeStaffSalary(st, payments, period) {
-    const monthPays = payments.filter((p) => (p.paid_at || "").slice(0, 7) === period);
+    // 정산 귀속월 기준. settled_period가 없으면 paid_at 월 — 기존 행은 산출값 불변.
+    const monthPays = payments.filter((p) => settlePeriod(p) === period);
     // 2026-08부터 kind='lesson'만 6% 대상. 그전 달은 전 kind 합산(현행 동결) — 위 LESSON_ONLY_START 주석 참조.
     const base = period >= LESSON_ONLY_START ? monthPays.filter((p) => p.kind === "lesson") : monthPays;
     const netRevenue = sum(base, (p) => floor100(payBase(p) / 1.1));           // 당월 순매출(VAT 제외·버림)

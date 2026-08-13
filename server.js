@@ -5474,7 +5474,9 @@ const REQUIRED_SCHEMA = {
 // 않으므로 전부 선택 등재다. 시드·백필·봇 v2가 참조를 시작하는 PR에서 해당 테이블을
 // REQUIRED_SCHEMA로 승격한다(§18 payment_requests와 같은 승격 경로).
 const SCHEMA_OPTIONAL = {
-  payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id"],
+  // settled_period = 정산 귀속월(마감월 정정분을 다음 열린 달로 이월). 부재하면
+  // admin-panel이 paid_at 월로 떨어져 현행과 동일하게 동작한다.
+  payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id", "settled_period"],
   lesson_sessions: ["lesson_enrollment_id"],
   lesson_enrollments: ["id","student_id","trainer_id","games_total","started_on","ended_on",
                        "status","source","memo","created_by"],
