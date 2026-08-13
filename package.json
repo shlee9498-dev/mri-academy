@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check admin-panel.js && node --check config/fees.cjs"
+    "check": "node --check server.js && node --check admin-panel.js && node --check config/fees.cjs",
+    "smoke": "bash scripts/smoke.sh"
   },
   "engines": { "node": ">=18" },
   "dependencies": {
