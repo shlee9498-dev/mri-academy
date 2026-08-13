@@ -5469,8 +5469,17 @@ const REQUIRED_SCHEMA = {
 //
 // payments 3종은 fee/net 도입분이다. 부재하면 admin-panel이 hasFeeColumns=false로
 // 떨어져 amount를 그대로 쓴다 — 현행 계산과 완전히 동일하게 동작한다.
+//
+// §19 enrollments·settlements(2026-08-13)는 DDL-first 도입분 — 코드가 아직 참조하지
+// 않으므로 전부 선택 등재다. 시드·백필·봇 v2가 참조를 시작하는 PR에서 해당 테이블을
+// REQUIRED_SCHEMA로 승격한다(§18 payment_requests와 같은 승격 경로).
 const SCHEMA_OPTIONAL = {
-  payments: ["pay_channel", "fee_amount", "net_amount"],
+  payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id"],
+  lesson_sessions: ["lesson_enrollment_id"],
+  lesson_enrollments: ["id","student_id","trainer_id","games_total","started_on","ended_on",
+                       "status","source","memo","created_by"],
+  settlements: ["id","period","trainer_id","games","gross","consult_count","consult_add",
+                "status","payout_id","memo","created_by","confirmed_by","confirmed_at"],
 };
 
 // PR-3a: 결제 승인 큐(§18) — BOT_PAYREQ=1이면 필수(DDL 미실행을 기동 점검이 잡아야 한다),

@@ -579,3 +579,88 @@ create table if not exists public.payment_requests (
 create index if not exists idx_payreq_pending on public.payment_requests (created_at)
   where status = 'pending';
 alter table public.payment_requests enable row level security;   -- service_role만 통과
+
+-- ============================================================
+-- 19) 레슨 등록·정산 회차 (2026-08-13) — 시트→DB 전환의 레슨 축.
+--     설계 근거: docs/lesson-enrollment-model.md (§17 courses와 대칭 구조)
+--     ⚠️ DDL-first: 이 시점에 코드는 이 테이블들을 참조하지 않는다(SCHEMA_OPTIONAL 등재).
+--     시드 → 백필(8/18~22) → 봇 v2 재배선(8/24~27)이 순차로 얹히며, 코드 참조가
+--     시작되는 PR에서 REQUIRED_SCHEMA로 승격한다(§18 payment_requests와 같은 경로).
+-- ============================================================
+
+-- 19a) 정본 보정 — settled_period/settled_rate(정산 도장)는 실DB와 REQUIRED_SCHEMA에는
+--      있는데 이 파일에는 빠져 있었다(도장 도입 때 누락 — 8/7 재기동 로그 [schema] OK로
+--      실DB 존재는 확인됨). 재현 가능성 복구용 멱등 보정이며 실DB에서는 no-op이다.
+alter table public.lesson_sessions add column if not exists settled_period text;     -- '2026-07' = 그 회차로 지급 완료
+alter table public.lesson_sessions add column if not exists settled_rate   numeric;  -- 도장 시점 적용 요율(감사)
+
+-- 19b) 레슨 등록 — 계약(구매) 1건 = 1행. 결제 트랜치의 계약 승격이다.
+--      '추가결제'(재결제)는 같은 행의 갱신이 아니라 새 행이다 — 정산 엔진의 FIFO 경계
+--      (firstGames = 1차 트랜치, 이후 +5%p)가 이미 이 모델이고, §17 courses의
+--      "재등록이면 행이 2개"(허혜민 사례)와 대칭이다.
+--      환불은 행 삭제·금액 상계가 아니라 status='refunded' + 음수 payments 귀속으로 남긴다.
+create table if not exists public.lesson_enrollments (
+  id           bigint generated always as identity primary key,
+  student_id   bigint not null references public.students(id) on delete restrict,
+  trainer_id   bigint references public.staff(id),   -- 담당. students.trainer_id의 최종 이관처(병행수강 = 학생당 N행)
+  games_total  int  not null check (games_total > 0),-- 계약 판수(10·21·33). 수량 정본은 여기, 금액 정본은 payments
+  started_on   date not null,                        -- 등록일(1차 입금일)
+  ended_on     date,
+  status       text not null default 'active'
+               check (status in ('active','done','paused','refunded','cancelled')),
+  source       text not null default 'panel'
+               check (source in ('panel','sheet_import','bot')),
+  memo         text,
+  created_by   text,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+create index if not exists idx_lenroll_student on public.lesson_enrollments (student_id, started_on desc);
+create index if not exists idx_lenroll_trainer on public.lesson_enrollments (trainer_id) where status = 'active';
+
+-- 19c) 정산 회차 — (period × trainer) 확정 기록 1행. 도장(19a)이 세션에 흩어져 있는 것을
+--      회차 객체로 묶는다: 어떤 달을·누구에게·몇 판·얼마로 확정했는지 + 승인 감사.
+--      확정 흐름: draft(엔진 산출 동결) → confirmed(오너 확정 시 세션 도장 스탬프) → paid(payouts 연결).
+--      정산 확정은 영구 Level 0 — 이 테이블에 쓰는 주체도 오너(패널 owner 전용 쓰기)다.
+create table if not exists public.settlements (
+  id            bigint generated always as identity primary key,
+  period        text not null,                        -- 정산월 '2026-08' (payouts.period와 동일 표기)
+  trainer_id    bigint not null references public.staff(id),
+  games         int  not null default 0,              -- 이번 회차에 도장 찍은 판수
+  gross         int  not null default 0,              -- 엔진 산출 지급예정(동결값, floor100 적용 후)
+  consult_count int  not null default 0,              -- 상담 건수(레슨상담)
+  consult_add   int  not null default 0,              -- 상담 가산(건당 1만)
+  status        text not null default 'draft'
+                check (status in ('draft','confirmed','paid')),
+  payout_id     bigint references public.payouts(id), -- 실지급 연결(paid 전환 시)
+  memo          text,
+  created_by    text,
+  confirmed_by  text,                                 -- 오너 디코 유저ID
+  confirmed_at  timestamptz,
+  created_at    timestamptz not null default now(),
+  unique (period, trainer_id)                         -- 같은 달·같은 트레이너 이중 확정 차단
+);
+
+-- 19d) 결제를 레슨 등록에 귀속 + 양다리 차단.
+--      §17d(payments.course_id)와 합쳐 "한 결제는 강의·레슨 중 최대 한쪽"을 DB가 강제한다.
+--      (docs/lecture-data-model.md §2.3에서 예고한 마감. 환불 음수 행도 같은 등록을 가리킨다)
+alter table public.payments add column if not exists lesson_enrollment_id bigint references public.lesson_enrollments(id);
+create index if not exists idx_payments_lenroll on public.payments (lesson_enrollment_id)
+  where lesson_enrollment_id is not null;
+-- ⚠️ CHECK 제약은 컬럼 존재 프로브(REQUIRED_SCHEMA)로 잡히지 않는다 — 실행 확인은
+--    PR 체크리스트 + pg_constraint 조회로만 가능(§11c 사고와 동일 사각지대):
+--    select conname, pg_get_constraintdef(oid) from pg_constraint
+--     where conrelid='public.payments'::regclass and contype='c';
+do $$ begin
+  alter table public.payments add constraint chk_payments_single_attribution
+    check (num_nonnulls(course_id, lesson_enrollment_id) <= 1);
+exception when duplicate_object then null; end $$;
+
+-- 19e) 세션을 등록에 귀속 — 백필(8/18~22)에서 채운다. 그 전까지 null 정상.
+--      병행수강(트레이너 2명)의 스코프 단위가 학생→등록으로 내려가는 종착점이다.
+alter table public.lesson_sessions add column if not exists lesson_enrollment_id bigint references public.lesson_enrollments(id);
+create index if not exists idx_lsess_lenroll on public.lesson_sessions (lesson_enrollment_id)
+  where lesson_enrollment_id is not null;
+
+alter table public.lesson_enrollments enable row level security;   -- service_role만 통과
+alter table public.settlements        enable row level security;   -- service_role만 통과
