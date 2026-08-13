@@ -644,8 +644,9 @@ select conname, pg_get_constraintdef(oid) from pg_constraint
 
 ⚠ 1차 실행(8/14)에서 23503 — **staff에 id 9가 없다**(무리=9 가정 오류. 정본 주석 명단은
 현태·준구·무리·황다운·김소영 5명). 무리 귀속 SQL은 `name='무리' or role='owner'` **동적 해석
-2판**으로 재발행했고, 실제 staff id는 `select id,name,role from staff` 진단 회신으로 확정한다.
-같은 이유로 등록 시드 CTE의 담당 폴백(`students.trainer_id`)도 staff 실재 검증을 거치도록 보강.
+2판**으로 재발행. 같은 이유로 등록 시드 CTE의 담당 폴백(`students.trainer_id`)도 staff 실재
+검증을 거치도록 보강. **staff 실명단 확정(오너 진단 회신 8/14)**: 1 김소영(staff) · 2 준구(trainer) ·
+3 황다운(staff) · **4 무리(owner)** · 5 현태(trainer) — 이후 모든 시드·백필의 담당 번호 정본.
 
 **편집거리 1 후보 15쌍**도 뽑았지만 그대로 쓰면 안 된다 — 한국 이름은 1글자 차이가 흔해
 오탐이 대부분이다(김재성↔김현성, 주성준↔지성준 등은 실존하는 별개 인물로 보인다).
