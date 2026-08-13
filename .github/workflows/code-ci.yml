@@ -18,8 +18,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
-      # package.json의 check = node --check server.js && node --check admin-panel.js
+      # package.json의 check = node --check (server.js · admin-panel.js · config/fees.cjs)
       - name: npm run check
         run: npm run check
 
@@ -27,3 +28,14 @@ jobs:
       # 이 저장소는 빌드 단계가 없어서 문법 오류가 배포까지 그대로 나간다.
       - name: HTML 인라인 스크립트 문법 검사
         run: node .github/scripts/check-inline-scripts.mjs
+
+      # 위 검사는 전부 파싱이다. 실행 시점 오류(#160 TDZ — 파싱은 통과하고
+      # 기동 즉시 ReferenceError로 죽어 프로덕션 6분 전면 중단)는 실제로
+      # 켜 봐야만 잡힌다. 아래 두 스텝이 그 사각지대를 막는다.
+      - name: 의존성 설치 (스모크용)
+        run: npm ci --no-audit --no-fund
+
+      # 시크릿을 주지 않는다 — 외부 연동이 전부 opt-in이라 env 0개로 떠야 정상이다.
+      # 시크릿이 필요해지는 순간 그 자체가 설계 회귀 신호다.
+      - name: 부팅 스모크
+        run: npm run smoke
