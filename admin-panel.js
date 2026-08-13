@@ -8,6 +8,8 @@
 //       모든 쓰기는 admin_audit에 기록.
 // ============================================================
 
+const { PAY_CHANNELS, feeFor, netFor } = require("./config/fees.cjs");
+
 module.exports = function mountAdminPanel(app, deps) {
   const { getUser, sbSelect, sbInsert, sbPatch, sbDelete } = deps;
 
@@ -68,6 +70,8 @@ module.exports = function mountAdminPanel(app, deps) {
   const schemaOptional = deps.schemaOptional || {};
   const hasFeeColumns = () =>
     schemaOptional["payments.net_amount"] === true && schemaOptional["payments.fee_amount"] === true;
+  // 채널은 수수료 컬럼과 별개로 프로브된다 — 셋 중 일부만 실행된 상태를 가정한다.
+  const hasChannelColumn = () => schemaOptional["payments.pay_channel"] === true;
   // 결제 1건의 정산 기준액. 수수료 차감 후 순액이 있으면 그것을, 없으면 결제금액을 쓴다.
   const payBase = (p) =>
     (hasFeeColumns() && p.net_amount != null) ? Number(p.net_amount) : Number(p.amount || 0);
@@ -438,13 +442,24 @@ module.exports = function mountAdminPanel(app, deps) {
     const rate = Number(b.payout_rate);
     if (!student_id || !amount) return res.status(400).json({ error: "수강생·금액을 확인해 주세요." });
     if (!(rate >= 0 && rate <= 1)) return res.status(400).json({ error: "지급율은 0~1 (예: 0.7)" });
+    // 결제 채널. 미지정은 계좌이체 — 기존 119건이 전부 transfer라 기본값을 바꾸면 과거와 어긋난다.
+    const pay_channel = PAY_CHANNELS.includes(b.pay_channel) ? b.pay_channel : "transfer";
     try {
-      const row = await sbInsert("payments", {
+      const payload = {
         student_id, paid_at: validDate(b.paid_at), amount, games, payout_rate: rate,
         kind: ["lesson", "consult", "set", "sales", "direct_lecture"].includes(b.kind) ? b.kind : "lesson",
         via_youtube: !!b.via_youtube, memo: String(b.memo || "").slice(0, 200) || null, source: "manual",
-      });
-      await audit(c, "payment.add", `student:${student_id}`, { amount, games, rate });
+      };
+      // 수수료 컬럼은 DDL이 실행된 경우에만 실어 보낸다 — 없는 컬럼을 보내면 PostgREST가
+      // insert 전체를 거절한다(PGRST204). 기동 시 1회 프로브 결과만 본다.
+      if (hasChannelColumn()) payload.pay_channel = pay_channel;
+      if (hasFeeColumns()) {
+        // 율이 미확정이면 feeFor가 0을 준다 → net = amount. 추정치를 DB에 남기지 않는다.
+        payload.fee_amount = feeFor(pay_channel, amount);
+        payload.net_amount = netFor(pay_channel, amount);
+      }
+      const row = await sbInsert("payments", payload);
+      await audit(c, "payment.add", `student:${student_id}`, { amount, games, rate, pay_channel });
       res.json(row);
     } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
   });

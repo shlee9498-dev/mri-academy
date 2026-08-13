@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check admin-panel.js"
+    "check": "node --check server.js && node --check admin-panel.js && node --check config/fees.cjs"
   },
   "engines": { "node": ">=18" },
   "dependencies": {
