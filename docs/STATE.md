@@ -25,11 +25,11 @@
 - **대기**: —
 - **다음**: 해당 트랙이 첫 갱신 시 채울 것.
 
-## MRIacademy(수강관리) — 2026-08-11
+## MRIacademy(수강관리) — 2026-08-13
 
-- **진행**: 통합 전환 확정(D-day 9/3 · 시트→봇+DB, PR-1~6). 오너 1순위 재선언으로 승인 큐+/결제신청을 **PR-3a로 선행 분리해 구현**(§18 payment_requests + 봇 DM 승인 + `BOT_PAYREQ`). XLSX 전수 재검(중복 7건 판정)·시트 반영 지시서·STEP 0 정리 SQL 전달. lesson-schedule.html은 이미 `GET /api/schedule` 렌더 — 일정표 격차는 입력 일원화뿐(8/15~19 예정).
-- **대기**: 오너 — ① **STEP 0 PART A-r 재실행(8/11 "실행 완료" 회신은 미반영 — DB·pg 로그 실측, 흔적 없음)** ② PR-3a 머지 + §18 DDL + `BOT_PAYREQ=1` ③ 정희준 "재언급/신규" 판정 ④ 김운규·이한결 입금일.
-- **다음**: PR-3a 가동(8/12 목표) → enrollments·settlements DDL PR(8/13, 장익교 병합 동반) → 시드 → 레슨 백필(8/18~22) → 봇 v2 잔여 재배선(8/24~27).
+- **진행**: **enrollments·settlements DDL PR 제출**(§19 — `lesson_enrollments`(트랜치=등록)·`settlements`(period×trainer 확정) 신설, `payments.lesson_enrollment_id`+양다리 CHECK, 도장 컬럼 정본 보정. DDL-first·SCHEMA_OPTIONAL 등재, 설계 `docs/lesson-enrollment-model.md`). PR-3a는 #173으로 머지 확인. 이 세션의 Supabase MCP 조회가 권한 거부로 막혀 실측은 오너 검증 쿼리 방식으로 전환(장익교 검증 쿼리 채팅 전달).
+- **대기**: 오너 — ① **STEP 0 PART A-r 재실행(8/11 "실행 완료" 회신은 미반영 — DB·pg 로그 실측, 흔적 없음)** ② §18 DDL + `BOT_PAYREQ=1` + /결제신청 가동 확인(머지는 완료) ③ §19 DDL 실행 + 장익교 검증 쿼리 2건 회신 ④ 이강준 8/11 환불 상세(2차 등록 2건 금액·일자)·홍민기 신규 상세 ⑤ 정희준 "재언급/신규" 판정 · 김운규·이한결 입금일.
+- **다음**: 장익교 병합 → 시드(이강준 환불·홍민기 신규) → 레슨 백필(8/18~22, 상계 행 정정 대사 포함) → 봇 v2 잔여 재배선(8/24~27).
 
 ## 메인(총괄·조정) — 2026-08-12
 
