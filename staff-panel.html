@@ -119,6 +119,7 @@ label.fl{font-size:11px;color:var(--ink-faint);display:flex;flex-direction:colum
 .dupwarn{display:none;margin-top:11px;padding:11px 13px;border:1px solid rgba(230,57,70,.45);border-radius:9px;background:rgba(230,57,70,.05);font-size:13px;line-height:1.6}
 .dupwarn .lead{color:var(--red);font-weight:800}
 .dupwarn .row{margin-top:6px;color:var(--ink-dim)}
+.dupwarn .row b{color:var(--ink)}
 .dupwarn .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
 </style>
 </head><body>
@@ -766,21 +767,36 @@ function stuRow(s){
 function trainerOpts(){ return `<option value="">미배정</option>`+STAFF.filter(s=>s.role==="trainer").map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join(""); }
 function studentOpts(){ return (DATA.students||[]).map(s=>`<option value="${s.student_id}">${esc(s.name)}</option>`).join(""); }
 
-// ── 동명 경고 가드 (C1) — 박유현 중복 실사고(8/13) 재발 방지.
-// 클라이언트 검사만이다: overview에 이미 실려 온 전체 목록과 대조하므로 추가 API 호출이 없다.
-// 서버측 가드(별칭·resolveStudentId 연계)는 admin-panel.js 소관이라 이 PR 범위 밖 — PR 본문에 보고.
+// ── 동명 확인 — 봇 `/수강생등록`(server.js)의 동명 확인과 판정·선택지를 일치시킨다.
+// 두 입력 경로가 다르게 굴면 그 차이 자체가 다음 사고다(메인 트랙 지시 2026-08-13).
+// 봇과 맞춘 지점 4가지:
+//   ① 대상은 status='active' 행만  ② 차단하지 않고 경고 후 명시적 확인
+//   ③ 선택지 [그래도 등록]/[취소]  ④ 목록 표기 `#id(담당)`
+// 문안은 봇의 내용을 그대로 옮기되 어미만 이 화면의 존댓말에 맞췄다.
+// 병행수강 2행이 정상인 케이스가 실재한다(정희준·장익교 — 8/13 오너 판정) — 그래서 막지 않는다.
+// 클라이언트 검사다: overview에 이미 실려 온 목록과 대조하므로 추가 API 호출이 없다.
+// 서버측 강제(별칭·resolveStudentId 연계)는 admin-panel.js 소관 — 봇 v2 재배선에서 처리.
 let DUP_OK = false;
 function dupWarnHtml(list){
-  const rows = list.map(s=>{
-    const tName = (STAFF.find(x=>x.id===s.trainer_id)||{}).name || "미배정";
-    return `<div class="row">기존 — <b>${esc(s.name)}</b> · 담당 ${esc(tName)} · ${esc(s.status||"-")} · 진행 ${s.played}/${s.paid_games}판 · 남은 ${s.remain}판</div>`;
-  }).join("");
-  return `<span class="lead">● 동명 수강생이 이미 있습니다</span> — 동일 인물이면 새 행을 만들지 말고 기존 행에 판수·결제를 기록하세요.
-    ${rows}
+  const ids = list.map(s=>{
+    const tName = (STAFF.find(x=>x.id===s.trainer_id)||{}).name || "담당없음";
+    return `#${s.student_id}(${esc(tName)})`;
+  }).join(", ");
+  return `<span class="lead">⚠ '${esc(list[0].name)}' 이름의 활성 수강생이 이미 ${list.length}건 있습니다.</span>
+    <div class="row">· ${ids}</div>
+    <div class="row">병행수강처럼 <b>2행이 정상인 경우</b>도 있어서 막지는 않습니다.
+      같은 사람이면 [취소] 후 기존 행을 그대로 쓰시고, 다른 사람이거나 병행수강이면 [그래도 등록].</div>
     <div class="acts">
-      <button type="button" class="btn sm" onclick="showDupRow(${list[0].student_id})">기존 행 보기</button>
-      <button type="button" class="btn sm" onclick="DUP_OK=true;addStudent()">동명 신규로 계속</button>
+      <button type="button" class="btn sm danger" onclick="DUP_OK=true;addStudent()">그래도 등록</button>
+      <button type="button" class="btn sm" onclick="dupCancel(${list[0].student_id})">취소</button>
     </div>`;
+}
+// 봇의 "취소했어. 기존 명부 행을 그대로 쓰면 돼"에 대응 — 화면에선 그 행을 짚어준다.
+function dupCancel(id){
+  DUP_OK = false;
+  const w = document.getElementById("ns_warn");
+  if(w){ w.style.display="none"; w.innerHTML=""; }
+  showDupRow(id);
 }
 function showDupRow(id){
   setTab("stu");
@@ -793,7 +809,8 @@ function showDupRow(id){
 function addStudent(){
   const name=document.getElementById("ns_name").value.trim(); if(!name) return toast("이름을 입력하세요",true);
   const warn=document.getElementById("ns_warn");
-  const dups=(DATA.students||[]).filter(s=>String(s.name||"").trim()===name);
+  // 봇과 동일 판정 — 활성 행만 본다(종료·환불 행은 동명 경고 대상이 아니다)
+  const dups=(DATA.students||[]).filter(s=>String(s.name||"").trim()===name && s.status==="active");
   if(dups.length && !DUP_OK){ warn.style.display="block"; warn.innerHTML=dupWarnHtml(dups); return; }
   DUP_OK=false; if(warn){ warn.style.display="none"; warn.innerHTML=""; }
   act(async ()=>{ await api("/api/admin/students","POST",{name,discord_nick:document.getElementById("ns_nick").value,trainer_id:document.getElementById("ns_tr").value||null}); toast("수강생 추가됨"); });
