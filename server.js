@@ -20,6 +20,9 @@
 
 const express = require("express");
 const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require("discord.js");
+// 결제 채널 수수료율 정본. 봇(/결제신청)과 패널(admin-panel.js)이 같은 파일을 본다 —
+// 율을 두 곳에 적으면 한쪽만 고쳐지고 그 차이가 원장에 남는다.
+const { PAY_CHANNELS, FEE_RATES, feeFor, netFor, hasRate } = require("./config/fees.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -956,6 +959,13 @@ if (process.env.DISCORD_TOKEN) {
         { name: "기타", value: "기타" } ] },
       { name: "판수", description: "판수 패키지면 총 판수(예: 33)", type: 4, required: false, min_value: 1, max_value: 200 },
       { name: "입금일", description: "입금일 YYYY-MM-DD(미입력=오늘)", type: 3, required: false },
+      // 채널: 미입력이면 transfer(계좌이체) — 기존 신고가 전부 계좌이체였던 관행을 기본값으로 둔다.
+      //   값 집합은 config/fees.cjs의 PAY_CHANNELS = payments.pay_channel CHECK와 동일.
+      { name: "채널", description: "결제 채널(미입력=계좌이체)", type: 3, required: false, choices: [
+        { name: "계좌이체", value: "transfer" },
+        { name: "그로블(수수료 4.84%)", value: "groble" },
+        { name: "숨고", value: "soomgo" },
+        { name: "기타", value: "etc" } ] },
       { name: "메모", description: "메모(선택 · 예: 구가 적용 / 43판=33+10)", type: 3, required: false },
     ],
   };
@@ -1749,6 +1759,20 @@ if (process.env.DISCORD_TOKEN) {
     await runStudentRegister(itx, pending.p);
   });
 
+  // 승인 카드·원장 행에 쓰는 채널 표기. 율이 확정된 채널만 수수료를 보여준다 —
+  // 숨고처럼 미확정(FEE_RATES=null)이면 feeFor가 0을 주는데, 그 0을 "수수료 없음"으로
+  // 적어 내보내면 추정치가 원장에 눌러앉는다. 미확정은 미확정이라고 쓴다.
+  const CHANNEL_LABEL = { groble: "그로블", transfer: "계좌이체", soomgo: "숨고", etc: "기타" };
+  const won = (n) => Number(n).toLocaleString("ko-KR");
+  function channelLine(ch, amount) {
+    const label = CHANNEL_LABEL[ch] || ch;
+    if (ch === "transfer") return `${label} (수수료 없음)`;
+    if (!hasRate(ch)) return `${label} ⚠️ 수수료율 미확정 — 순액은 정산에서 확정`;
+    // 율은 문자열에 박지 않고 FEE_RATES에서 뽑는다 — 상수를 고쳤는데 안내문만 옛 숫자로 남는 걸 막는다.
+    const pct = (FEE_RATES[ch] * 100).toFixed(2).replace(/\.?0+$/, "");
+    return `**${label} 결제 — 수수료 ${pct}% 자동 계산**\n· 수수료: ${won(feeFor(ch, amount))}원 · 순액: **${won(netFor(ch, amount))}원**`;
+  }
+
   // ── /결제신청 : 트레이너 결제(입금) 신고 → payment_requests(pending) → 오너 DM 승인 ──
   //   버튼 상태는 DB 행이 들고 있어 재기동을 넘겨도 동작한다(STU_PENDING류 메모리 상태 없음 —
   //   customId에 신청 id를 실어 보낸다). 오너 DM 발송이 실패해도 신청은 pending으로 남는다.
@@ -1771,6 +1795,10 @@ if (process.env.DISCORD_TOKEN) {
     const games = itx.options.getInteger("판수") ?? null;
     const paidRaw = (itx.options.getString("입금일") || "").trim();
     const memo = (itx.options.getString("메모") || "").trim() || null;
+    // 화이트리스트 밖 값은 조용히 transfer로 떨군다 — CHECK 위반으로 신고 전체가 실패하는 것보다,
+    // 기본 채널로 접수되고 승인 화면에 채널이 보이는 편이 낫다(오너가 그 자리에서 반려 가능).
+    const rawChannel = itx.options.getString("채널");
+    const pay_channel = PAY_CHANNELS.includes(rawChannel) ? rawChannel : "transfer";
     if (!name) return itx.reply({ content: "학생 이름을 입력해줘.", ephemeral: true });
     if (kind === "판수" && !games)
       return itx.reply({ content: "구분이 판수면 판수도 입력해줘(예: 33).", ephemeral: true });
@@ -1788,7 +1816,7 @@ if (process.env.DISCORD_TOKEN) {
     try {
       req = await sbInsert("payment_requests", {
         student_name: name, trainer_id, trainer_name: trainer, kind, amount, games,
-        paid_on, memo, requested_by: itx.user.id,
+        paid_on, memo, pay_channel, requested_by: itx.user.id,
       });
     } catch (e) {
       console.error("payreq_insert", e?.message);
@@ -1803,14 +1831,14 @@ if (process.env.DISCORD_TOKEN) {
           new ButtonBuilder().setCustomId(`payreq_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
         );
         await owner.send({
-          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}**\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}${memo ? `\n· 메모: ${memo}` : ""}`,
+          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}**\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}\n· 채널: ${channelLine(pay_channel, amount)}${memo ? `\n· 메모: ${memo}` : ""}`,
           components: [row],
         });
         dmOk = true;
       } catch (e) { console.error("payreq_dm", e?.message); }
     }
     await itx.editReply(
-      `✅ 결제 신청 접수 **#${req.id}** — ${name} · ${kind}${games ? ` ${games}판` : ""} · ${amount.toLocaleString("ko-KR")}원 · 입금일 ${paid_on}\n`
+      `✅ 결제 신청 접수 **#${req.id}** — ${name} · ${kind}${games ? ` ${games}판` : ""} · ${amount.toLocaleString("ko-KR")}원 · ${CHANNEL_LABEL[pay_channel]} · 입금일 ${paid_on}\n`
       + (dmOk ? "오너 승인 대기 중이야." : "⚠️ 오너 DM 발송 실패 — 신청은 저장됐어(pending). 오너에게 직접 알려줘."));
   });
 
@@ -1842,12 +1870,20 @@ if (process.env.DISCORD_TOKEN) {
       return itx.reply({ content: `#${reqId} 상태 갱신에 실패했어 — 버튼을 다시 눌러줘.`, ephemeral: true });
     }
     if (approve) {
-      const ledger = `${q.paid_on} | ${q.student_name} | ${q.trainer_name} | ${q.kind} | ${Number(q.amount).toLocaleString("ko-KR")}`
-        + (q.games ? ` | ${q.games}판` : "") + (q.memo ? ` | ${q.memo}` : "");
+      // 원장 행에도 채널·수수료를 싣는다. 시트가 아직 정산 정본이라, 승인 화면에만 보이고
+      // 복붙 행에 없으면 그로블 수수료가 원장에서 통째로 누락된다.
+      const ch = q.pay_channel || "transfer";
+      const showFee = ch !== "transfer" && hasRate(ch);
+      const ledger = `${q.paid_on} | ${q.student_name} | ${q.trainer_name} | ${q.kind} | ${won(q.amount)}`
+        + (q.games ? ` | ${q.games}판` : "")
+        + ` | ${CHANNEL_LABEL[ch] || ch}`
+        + (showFee ? ` | 수수료 ${won(feeFor(ch, q.amount))} | 순액 ${won(netFor(ch, q.amount))}` : "")
+        + (q.memo ? ` | ${q.memo}` : "");
       await itx.update({
         content:
-          `✅ **#${reqId} 승인** — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원 (${q.kind}${q.games ? ` ${q.games}판` : ""})`
+          `✅ **#${reqId} 승인** — ${q.student_name} · ${won(q.amount)}원 (${q.kind}${q.games ? ` ${q.games}판` : ""})`
           + (patch.student_id ? ` · 명부 #${patch.student_id}` : " · ⚠️ 명부 미매칭(이름 확인 필요)")
+          + `\n· 채널: ${channelLine(ch, q.amount)}`
           + `\n📋 결제_원장 기입 행(복붙):\n\`${ledger}\``
           + `\n⚠️ 기입 전 원장 8월 구간 중복키(입금일|이름|금액) 확인 · 판수 결제면 레슨로그 결제금액·판수도 갱신.`,
         components: [],
@@ -5488,9 +5524,11 @@ const SCHEMA_OPTIONAL = {
 
 // PR-3a: 결제 승인 큐(§18) — BOT_PAYREQ=1이면 필수(DDL 미실행을 기동 점검이 잡아야 한다),
 // 플래그 꺼진 배포에선 선택(기능 휴면인데 error·오너 DM 오탐을 내지 않는다).
+// pay_channel은 /결제신청이 매 신고에 실어 보내므로 여기 없으면 컬럼 미실행을 못 잡는다
+// (INSERT가 PGRST204로 터질 때까지 모른다). 나머지 컬럼과 같은 등급으로 등재한다.
 (process.env.BOT_PAYREQ === "1" ? REQUIRED_SCHEMA : SCHEMA_OPTIONAL).payment_requests =
   ["id","status","student_name","student_id","trainer_id","trainer_name","kind",
-   "amount","games","paid_on","memo","requested_by","decided_by","decided_at","created_at"];
+   "amount","games","paid_on","memo","pay_channel","requested_by","decided_by","decided_at","created_at"];
 
 // 선택 컬럼 존재 여부를 기동 시 1회 확인한다. 결과는 캐시해 매 요청 재조회하지 않는다.
 //   반환: { "payments.fee_amount": true, ... }
