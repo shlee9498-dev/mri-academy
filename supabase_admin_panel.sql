@@ -580,6 +580,13 @@ create index if not exists idx_payreq_pending on public.payment_requests (create
   where status = 'pending';
 alter table public.payment_requests enable row level security;   -- service_role만 통과
 
+-- 18a) 결제 채널 (2026-08-14) — /결제신청이 신고 시점에 채널을 받아 승인 카드·원장 행에
+--      수수료를 계산해 싣는다. null 허용: 기존 행과 채널 미상 신고를 막지 않는다.
+--      값 집합은 config/fees.cjs의 PAY_CHANNELS = payments.pay_channel CHECK와 동일하게 유지한다.
+alter table public.payment_requests
+  add column if not exists pay_channel text
+  check (pay_channel is null or pay_channel in ('groble','transfer','soomgo','etc'));
+
 -- ============================================================
 -- 19) 레슨 등록·정산 회차 (2026-08-13) — 시트→DB 전환의 레슨 축.
 --     설계 근거: docs/lesson-enrollment-model.md (§17 courses와 대칭 구조)
