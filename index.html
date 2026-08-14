@@ -823,7 +823,7 @@ footer b{color:var(--gold)}
         <div class="plan">
           <div class="pn">10판</div><div class="po">50,000원</div><div class="pp">45,000원<span class="off">-10%</span></div><div class="pd">판당 4,500원 · 단기 집중 교정</div>
           <div class="prec"><span class="rl">이런 분께 추천</span>습관 하나를 빠르게 잡고 싶은 분</div>
-          <ul><li>에임 정밀 분석</li><li>포지셔닝 교정</li><li>즉시 배정</li><li>빠른 피드백</li></ul>
+          <ul><li>에임 정밀 분석</li><li>포지셔닝 교정</li><li>빠른 배정</li><li>빠른 피드백</li></ul>
           <a class="pbtn" href="apply.html">신청하기 →</a>
         </div>
         <div class="plan hot">
@@ -857,8 +857,8 @@ footer b{color:var(--gold)}
       <div class="ccard">
         <div class="ct">레슨 상담</div><div class="cprice">15,000원</div>
         <div class="cstep"><span class="num">1</span><span>상담비 결제</span></div>
-        <div class="cstep"><span class="num">2</span><span>AI 챗봇 진단 · 성향·티어·목표 분석</span></div>
-        <div class="cstep"><span class="num">3</span><span>트레이너 배정 · 24시간 내 자동</span></div>
+        <div class="cstep"><span class="num">2</span><span>AI 사전 진단 · 성향·티어·목표 분석</span></div>
+        <div class="cstep"><span class="num">3</span><span>운영진 확인 후 트레이너 배정 · 24시간 이내 안내</span></div>
         <a class="cbtn" href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">💬 카카오로 신청하기</a>
         <a class="cbtn disc" href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener" data-disc-channel="상담문의">🎮 Discord 상담문의로</a>
       </div>
@@ -1031,8 +1031,8 @@ footer b{color:var(--gold)}
   <section id="live">
     <div class="kick">Live Status</div>
     <div class="s-title">실시간 트레이너 현황</div>
-    <p class="s-desc">디스코드와 실시간 연동된 현재 담당 인원입니다.</p>
-    <div class="live-bar"><span class="live-dot"></span><span id="live-state">실시간 연동 · 5분마다 갱신</span></div>
+    <p class="s-desc">디스코드 기준 현재 담당 인원입니다. (5분마다 갱신)</p>
+    <div class="live-bar"><span class="live-dot"></span><span id="live-state">5분마다 갱신</span></div>
 
     <div class="live-tr">
       <div class="lcard"><div class="who">무리<small>대표강사 · 직강</small></div><div class="cnt" data-k="muri">19</div><div class="unit">담당 인원</div></div>
@@ -1107,12 +1107,11 @@ footer b{color:var(--gold)}
       <div class="ct">GmI 클랜 멤버 모집</div>
       <p class="cd">아카데미 수료 또는 레벨테스트 합격자 대상. 마스터급 멤버들과 스크림·전술·팀플레이를 훈련합니다.</p>
       <div style="background:rgba(245,197,24,.06);border:1px solid var(--gold-soft);border-radius:12px;padding:18px;margin:18px 0;text-align:left">
-        <div style="font-size:11px;font-weight:800;color:var(--gold);letter-spacing:.1em">🏆 UPCOMING · G드컵 시즌3</div>
-        <div style="font-family:var(--display);font-size:17px;margin:7px 0 4px">배그 클랜 대회 · 64명 16팀</div>
-        <div style="font-size:13px;color:var(--ink-dim)">본 매치 <b style="color:var(--gold)">8/7(금) 20:00</b> · <b style="color:var(--gold)">신청 접수 중</b> · 8/7(금) 낮 12시 마감 · T0~T5 BPI 밸런스 · 참가비 무료</div>
+        <div style="font-size:11px;font-weight:800;color:var(--gold);letter-spacing:.1em">🏆 G드컵 시즌4 · GmI 클랜 1주년</div>
+        <div style="font-family:var(--display);font-size:17px;margin:7px 0 4px">2026년 9월 12일 오후 8시 개최 예정</div>
+        <div style="font-size:13px;color:var(--ink-dim)">현재 시즌4 준비 중입니다. 신청 오픈 일정은 추후 별도 공지합니다.</div>
       </div>
       <div class="cta">
-        <a class="btn btn-gold" href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-s3.html" target="_blank" rel="noopener">🏆 G드컵 시즌3 신청</a>
         <a class="btn btn-ghost" href="https://discord.gg/YfZD8d22wJ" target="_blank" rel="noopener">Discord 클랜 입장</a>
       </div>
       <div class="feats">
@@ -1205,7 +1204,7 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
     });
     if (state && updatedAt) {
       const m = Math.max(0, Math.round((Date.now() - new Date(updatedAt)) / 60000));
-      state.textContent = m === 0 ? "실시간 연동 · 방금 업데이트" : `실시간 연동 · ${m}분 전 업데이트`;
+      state.textContent = m === 0 ? "방금 업데이트" : `${m}분 전 업데이트`;
     }
   } catch (e) {
     // API 미연결 시: 표시된 기준 수치 유지 (빈 화면 방지)
