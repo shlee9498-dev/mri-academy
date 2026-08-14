@@ -330,8 +330,12 @@ module.exports = function mountAdminPanel(app, deps) {
 
       const trainers = staff.filter((s) => s.role === "trainer")
         .map((s) => computeTrainer(s, computed, payouts, consultByTrainer));
+      // 급여 대상은 재직자만. active=false면 급여 제안 자체를 만들지 않는다
+      // (0원 행으로 남기면 "이번 달 0원 지급"과 "대상 아님"이 화면에서 구분되지 않는다).
+      // ⚠️ trainers에는 같은 필터를 걸지 않았다 — 퇴사 트레이너도 미지급 잔액이
+      //    남아 있을 수 있고, 목록에서 빼면 갚아야 할 돈이 화면에서 사라진다.
       const employees = c.isOwner
-        ? staff.filter((s) => s.role === "staff")
+        ? staff.filter((s) => s.role === "staff" && s.active !== false)
             .map((s) => computeStaffSalary(s, payments, period || currentPeriod()))
         : [];
 
