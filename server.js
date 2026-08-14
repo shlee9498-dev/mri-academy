@@ -3333,7 +3333,7 @@ app.post("/api/apply", async (req, res) => {
     if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
 
     const b = req.body || {};
-    const required = ["name", "gender", "discord", "phone", "applyType", "source", "platform", "nickname", "playtime", "focus"];
+    const required = ["name", "gender", "discord", "phone", "applyType", "source", "platform", "nickname", "playtime", "focus", "statsConsent"];
     for (const k of required) {
       if (!b[k] || String(b[k]).trim() === "") return res.status(400).json({ error: `필수 항목 누락: ${k}` });
     }
@@ -3372,6 +3372,7 @@ app.post("/api/apply", async (req, res) => {
         { name: "📞 연락처", value: clip(b.phone, 20), inline: true },
         { name: "💬 디스코드", value: clip(b.discord, 40), inline: true },
         { name: "🎟️ 할인코드", value: discountText, inline: true },
+        { name: "전적 동의", value: clip(b.statsConsent, 10) || "미기록", inline: true },
         { name: "🔗 UTM", value: [clip(b.utm_source, 40), clip(b.utm_medium, 40), clip(b.utm_content, 60)].filter(Boolean).join(" / ") || "—", inline: true },
       ],
       timestamp: new Date().toISOString(),
@@ -3403,6 +3404,7 @@ app.post("/api/apply", async (req, res) => {
           phone: clip(b.phone, 20),
           discord: clip(b.discord, 40),
           course: clip(b.applyType, 50),
+          statsConsent: clip(b.statsConsent, 10),
           memo: clip(b.memo || b.focus, 300),
         }),
       }).catch((e) => console.error("consult_sheet_error", e?.message));
