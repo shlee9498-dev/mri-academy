@@ -115,6 +115,16 @@ label.fl{font-size:11px;color:var(--ink-faint);display:flex;flex-direction:colum
 .ptab:focus-visible{outline:2px solid var(--gold);outline-offset:-2px;border-radius:6px}
 .tabpane{display:none}
 .tabpane.on{display:block}
+/* C2 담당 분리 — 필터 칩 + 담당별 섹션. 미배정은 배정 누락 감지용이라 항상 노출한다 */
+.tchips{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 2px}
+.tchip{font-family:var(--mono);font-size:11px;padding:5px 12px;border-radius:99px;border:1px solid var(--line);
+  background:var(--bg-el);color:var(--ink-dim);cursor:pointer;transition:.15s}
+.tchip:hover{color:var(--ink)}
+.tchip.on{border-color:var(--gold);color:var(--gold)}
+.tsec{margin-top:16px}
+.tsec .foldn{margin-top:8px}
+.tsec .foldn>summary{cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--ink-faint);padding:6px 0}
+.tsec .foldn>summary:hover{color:var(--ink-dim)}
 /* 동명 경고 가드 — 색에만 의존하지 않는다(도트·볼드 리드 병용) */
 .dupwarn{display:none;margin-top:11px;padding:11px 13px;border:1px solid rgba(230,57,70,.45);border-radius:9px;background:rgba(230,57,70,.05);font-size:13px;line-height:1.6}
 .dupwarn .lead{color:var(--red);font-weight:800}
@@ -588,26 +598,46 @@ function renderTrainer(){
       ? "판수 기록은 디스코드 <b>/수업등록</b>으로 해주세요. 이 화면은 진행 현황·지급예정 조회 전용입니다."
       : "수업 끝나면 진행한 판수를 여기 기록하세요."} 정산은 클랜장이 확정합니다.</div>
     ${ me ? `<div class="grid kpis" style="margin-bottom:8px">
-      <div class="kpi"><div class="l">담당 수강생</div><div class="v sm">${me.student_count}명</div></div>
+      <div class="kpi"><div class="l">내 등록 학생</div><div class="v sm">${studs.length}명${
+        studs.length !== me.student_count
+          ? `<span style="font-size:11px;color:var(--ink-faint)"> · 정산 대상 ${me.student_count}명</span>` : ""
+      }</div></div>
       <div class="kpi"><div class="l">이번 발생(누적)</div><div class="v">${won(me.lesson_accrued)}<span style="font-size:12px">원</span></div></div>
     </div>`:"" }
     ${ studs.length ? studs.map(stuCard).join("") : `<div class="empty">담당 수강생이 아직 없어요. 클랜장이 배정하면 표시됩니다.</div>` }
   `;
 }
 
+// 내 등록분 칩 — 병행수강이면 학생이 두 트레이너 화면에 뜨되 각자 자기 등록만 본다.
+// 중복 신청 사고(정희준: 준구가 이미 등록된 판수를 다시 신청할 뻔함)를 화면에서 막는 지점이다.
+function enrChips(s){
+  const E = s.enrollments || [];
+  if(!E.length) return `<span class="pill">등록 기록 없음</span>`;
+  return E.map(e=>{
+    const st = e.status && e.status!=="active" ? ` · ${esc(e.status)}` : "";
+    const on = e.started_on ? String(e.started_on).slice(5).replace("-","/") : "";
+    return `<span class="pill">내 등록 <b>${e.games_total}</b>판${on?` <span class="muted">${on}</span>`:""}${st}</span>`;
+  }).join("");
+}
+
 function stuCard(s){
+  // mine=false → 다른 트레이너 담당 학생인데 내 등록분이 있는 경우(병행수강).
+  // 금액·전체 진행은 남의 담당분까지 합산된 값이라 서버가 가려서 내려준다.
+  const mine = s.mine !== false;
   const bonusPill = s.bonus_new > 0 ? `<span class="pill">재결제분 <b>${s.bonus_new}</b>판(+5%p)</span>` : "";
   const rate = `<span class="badge ok">지급율 ${Math.round((s.base_rate||0)*100)}%</span>`;
+  const paraBadge = s.parallel ? `<span class="badge">병행수강</span>` : "";
   return `<div class="stu">
     <div class="top"><span class="nm">${esc(s.name)}</span>${s.discord_nick?`<span class="muted">${esc(s.discord_nick)}</span>`:""}
-      <span class="badge remain">남은 ${s.remain}판</span></div>
+      ${paraBadge}${mine?`<span class="badge remain">남은 ${s.remain}판</span>`:`<span class="badge">타 담당 · 내 등록분만</span>`}</div>
     <div class="prog">
-      <span class="pill">진행 <b>${s.played}</b>판</span>
+      ${enrChips(s)}
+      ${mine?`<span class="pill">진행 <b>${s.played}</b>판</span>
       <span class="pill">결제 ${s.paid_games}판</span>
       <span class="pill">신규 <b>${s.new_played}</b>판(7/20↑)</span>
       ${bonusPill}
       <span class="pill">지급예정 <b>${won(s.payable)}</b>원</span>
-      ${rate}
+      ${rate}`:``}
     </div>
     ${READONLY ? "" : `<div class="frm">
       <label class="fl">날짜<input type="date" class="w-m" id="sd_${s.student_id}" value="${today()}"></label>
@@ -637,12 +667,9 @@ function renderOwnerStudents(){
     <div class="sub">활성 ${S.filter(s=>s.status==="active").length}명 · 지급율 미확정 ${unconfirmed>0?`<b style="color:var(--gold)">${unconfirmed}건</b>`:"없음"} — 정산·급여·G드컵은 위 탭에 있습니다.</div>
 
     <section style="margin-top:14px">
-      <div class="sec-h"><h2>판수 현황</h2><span class="tag">차감 = 판수 버튼 · 지급율 확정 필요 항목 우선</span><span class="line"></span></div>
-      <div class="card scroll"><table class="tbl"><thead><tr>
-        <th>수강생</th><th>담당</th><th>결제</th><th>진행</th><th>남은</th><th>지급율</th><th>지급예정</th><th>기록/확정</th>
-      </tr></thead><tbody>
-      ${ S.length ? S.map(stuRow).join("") : `<tr><td colspan="8" class="empty">수강생을 추가하세요</td></tr>` }
-      </tbody></table></div>
+      <div class="sec-h"><h2>판수 현황</h2><span class="tag">담당별 분리 · 차감 = 판수 버튼</span><span class="line"></span></div>
+      ${trainerChips(S)}
+      <div id="stusecs">${trainerSections(S)}</div>
     </section>
 
     <section>
@@ -750,11 +777,70 @@ function renderOwnerTools(){
   `;
 }
 
-function stuRow(s){
+// ── C2: 담당별 섹션 (오너) ───────────────────────────────────────────
+// 학생이 아니라 **등록**이 담당을 정한다. 병행수강 학생은 각 담당 섹션에 자기 등록분으로 함께 뜬다.
+// (준구가 정희준의 이미 등록된 판수를 중복 신청할 뻔한 사고 — 화면이 담당을 안 나눠서 생겼다.)
+let TR_FILTER = "all";
+const inSec = (s,tid)=> tid===null ? !(s.trainer_ids||[]).length : (s.trainer_ids||[]).includes(tid);
+
+function secList(S){
+  const trs = (STAFF||[]).filter(x=>x.role==="trainer");
+  return [...trs.map(t=>({key:String(t.id), tid:t.id, name:t.name})), {key:"none", tid:null, name:"미배정"}];
+}
+function trainerChips(S){
+  const secs = secList(S);
+  const chip = (key,label,n)=>`<button type="button" class="tchip${TR_FILTER===key?" on":""}" onclick="setTrFilter('${key}')">${esc(label)}${n===null?"":` <b>${n}</b>`}</button>`;
+  return `<div class="tchips" role="group" aria-label="담당 필터">`
+    + chip("all","전체",S.length)
+    + secs.map(x=>chip(x.key,x.name,S.filter(s=>inSec(s,x.tid)).length)).join("")
+    + `</div>`;
+}
+function setTrFilter(k){
+  TR_FILTER = k;
+  const S = DATA.students||[];
+  document.querySelector("#pane-stu .tchips").outerHTML = trainerChips(S);
+  document.getElementById("stusecs").innerHTML = trainerSections(S);
+}
+function trainerSections(S){
+  const secs = secList(S).filter(x=> TR_FILTER==="all" || TR_FILTER===x.key);
+  if(!S.length) return `<div class="card"><div class="empty">수강생을 추가하세요</div></div>`;
+  return secs.map(x=>{
+    const mem = S.filter(s=>inSec(s,x.tid));
+    const act = mem.filter(s=>s.status==="active");
+    const rest = mem.filter(s=>s.status!=="active");
+    // 미배정은 0명이어도 섹션을 남긴다 — 배정 누락은 "안 보이는 것"이 아니라 "0으로 보이는 것"이어야 한다.
+    if(!mem.length && x.tid!==null) return "";
+    return `<section class="tsec">
+      <div class="sec-h"><h2>${esc(x.name)}</h2><span class="tag">${act.length}명${rest.length?` · 종료·중지 ${rest.length}`:""}</span><span class="line"></span></div>
+      <div class="card scroll">${stuTable(act, x.tid, x.tid===null?"이 섹션이 비어 있으면 정상입니다 — 담당 미배정자가 없습니다":"활성 수강생 없음")}</div>
+      ${rest.length?`<details class="foldn"><summary>종료·중지 ${rest.length}명 보기</summary>
+        <div class="card scroll" style="margin-top:8px">${stuTable(rest, x.tid, "")}</div></details>`:""}
+    </section>`;
+  }).join("") || `<div class="card"><div class="empty">해당 담당의 수강생이 없습니다</div></div>`;
+}
+function stuTable(rows, tid, emptyMsg){
+  return `<table class="tbl"><thead><tr>
+      <th>수강생</th><th>담당</th><th>내 등록</th><th>결제</th><th>진행</th><th>남은</th><th>지급율</th><th>지급예정</th><th>기록/확정</th>
+    </tr></thead><tbody>
+    ${ rows.length ? rows.map(s=>stuRow(s,tid)).join("") : `<tr><td colspan="9" class="empty">${esc(emptyMsg)}</td></tr>` }
+    </tbody></table>`;
+}
+// 섹션 담당(tid)이 주어지면 그 담당의 등록분만 칩으로 보여준다 — 병행수강이 섹션마다 다르게 표시된다.
+function ownerEnrCell(s, tid){
+  const E = (s.enrollments||[]).filter(e=> tid===null ? true : e.trainer_id===tid);
+  if(!E.length) return `<span class="muted">—</span>`;
+  return E.map(e=>`<span class="pill">${e.games_total}판</span>`).join(" ");
+}
+
+function stuRow(s, tid){
   const rate = s.rate_confirmed ? `<span class="badge ok">${Math.round(s.applied_rate*100)}%</span>` : `<span class="badge sug">제안 ${Math.round(s.applied_rate*100)}%</span>`;
   const tName = (STAFF.find(x=>x.id===s.trainer_id)||{}).name || "—";
-  return `<tr id="srow_${s.student_id}">
-    <td class="name">${esc(s.name)}</td><td class="muted">${esc(tName)}</td>
+  const para = s.parallel ? ` <span class="badge">병행</span>` : "";
+  // 병행수강 학생은 담당 섹션마다 한 번씩 나오므로 id가 아니라 class+data-sid로 잡는다
+  // (id를 쓰면 중복 id가 되고 getElementById가 첫 섹션만 집는다).
+  return `<tr class="srow" data-sid="${s.student_id}">
+    <td class="name">${esc(s.name)}${para}</td><td class="muted">${esc(tName)}</td>
+    <td>${ownerEnrCell(s, tid===undefined?null:tid)}</td>
     <td class="muted">${won(s.paid_amount)}<span style="font-size:10px">/${s.paid_games}판</span></td>
     <td>${s.played}판</td><td class="muted">${s.remain}</td><td>${rate}</td>
     <td class="pay">${won(s.payable)}</td>
@@ -800,11 +886,15 @@ function dupCancel(id){
 }
 function showDupRow(id){
   setTab("stu");
-  const tr = document.getElementById("srow_"+id);
-  if(!tr) return;
-  tr.scrollIntoView({behavior:"smooth",block:"center"});
-  tr.style.transition="background .3s"; tr.style.background="rgba(245,197,24,.12)";
-  setTimeout(()=>{ tr.style.background=""; }, 1600);
+  // 담당 필터가 걸려 있으면 대상 행이 화면에 없을 수 있다 — 전체로 풀고 다시 그린다.
+  if(typeof TR_FILTER!=="undefined" && TR_FILTER!=="all" && document.getElementById("stusecs")) setTrFilter("all");
+  const rows = document.querySelectorAll('.srow[data-sid="'+id+'"]');
+  if(!rows.length) return;
+  rows[0].scrollIntoView({behavior:"smooth",block:"center"});
+  rows.forEach(tr=>{                                  // 병행수강이면 두 섹션 모두 표시한다
+    tr.style.transition="background .3s"; tr.style.background="rgba(245,197,24,.12)";
+    setTimeout(()=>{ tr.style.background=""; }, 1600);
+  });
 }
 function addStudent(){
   const name=document.getElementById("ns_name").value.trim(); if(!name) return toast("이름을 입력하세요",true);
