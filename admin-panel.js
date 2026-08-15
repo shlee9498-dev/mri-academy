@@ -299,13 +299,18 @@ module.exports = function mountAdminPanel(app, deps) {
     if (!requireIdentity(c, res)) return;
     const period = String(req.query.period || "").match(/^\d{4}-\d{2}$/) ? req.query.period : null;
     try {
-      const [students, payments, sessions, payouts, staff, graduations] = await Promise.all([
+      const [students, payments, sessions, payouts, staff, graduations, enrollments] = await Promise.all([
         sbSelect("students", "select=*&order=name.asc"),
         sbSelect("payments", "select=*"),
         sbSelect("lesson_sessions", "select=student_id,games,played_at,settled_period,settled_rate"),
         sbSelect("payouts", "select=*"),
         sbSelect("staff", "select=*&order=id.asc"),
         sbSelect("graduations", "select=trainer_id,tier,weight,via_lesson,achieved_at").catch(() => []),
+        // 등록(enrollment) — 병행수강 표시의 정본. DDL 미실행 환경을 위해 실패는 빈 배열로 흡수한다
+        // (조회 실패가 패널 전체를 502로 만들면 표시 개선이 기존 화면을 죽이는 회귀가 된다).
+        sbSelect("lesson_enrollments",
+          "select=id,student_id,trainer_id,games_total,started_on,ended_on,status&order=started_on.asc")
+          .catch(() => []),
       ]);
       const payByStu = groupBy(payments, "student_id");
       const sessByStu = groupBy(sessions, "student_id");
@@ -325,11 +330,44 @@ module.exports = function mountAdminPanel(app, deps) {
           consultByTrainer[stu.trainer_id] = (consultByTrainer[stu.trainer_id] || 0) + 1;
       }
       let computed = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || [], gradByTrainer[s.trainer_id] || []));
-      // 트레이너는 본인 담당만 노출
-      if (!c.isOwner && c.me) computed = computed.filter((x) => x.trainer_id === c.me.id);
+
+      // ── 등록(enrollment) 기준 스코프 (C2) ─────────────────────────────
+      // 화면이 담당을 구분하지 못해 준구가 이미 등록된 판수를 중복 신청할 뻔한 사고(정희준)의 수정.
+      // 스코프 단위를 학생에서 등록으로 내린다 — 단 **조회 기준만** 바꾸고 산출은 건드리지 않는다.
+      // 안전한 이유: computeTrainer가 내부에서 `x.trainer_id === st.id`로 다시 거르므로,
+      // 여기서 목록을 넓혀도 트레이너 정산액은 종전과 바이트 단위로 같다. 그래서 스코프 필터는
+      // trainers 산출 **뒤에** 적용한다(넓힌 목록이 정산에 새어 들어갈 여지 자체를 없앤다).
+      const enrByStu = groupBy(enrollments, "student_id");
+      for (const x of computed) {
+        const list = (enrByStu[x.student_id] || []).map((e) => ({
+          id: e.id, trainer_id: e.trainer_id, games_total: e.games_total,
+          started_on: e.started_on, status: e.status,
+        }));
+        x.enrollments = list;
+        // 담당 후보 = 학생 담당 + 등록 담당. 병행수강이면 2개 이상이 된다.
+        x.trainer_ids = [...new Set([x.trainer_id, ...list.map((e) => e.trainer_id)].filter((v) => v != null))];
+        x.parallel = x.trainer_ids.length > 1;
+      }
 
       const trainers = staff.filter((s) => s.role === "trainer")
         .map((s) => computeTrainer(s, computed, payouts, consultByTrainer));
+
+      // 트레이너 노출: 본인 담당 학생 + 본인 등록분이 있는 학생. 등록으로만 걸린 학생은
+      // 금액이 남의 담당분까지 합산된 값이라 **가린다**(내 등록분 판수만 보여준다).
+      if (!c.isOwner && c.me) {
+        computed = computed
+          .filter((x) => x.trainer_ids.includes(c.me.id))
+          .map((x) => {
+            const mine = x.trainer_id === c.me.id;
+            const own = x.enrollments.filter((e) => e.trainer_id === c.me.id);
+            if (mine) return { ...x, mine: true, enrollments: own };
+            return {
+              ...x, mine: false, enrollments: own,
+              paid_amount: null, paid_games: null, unit_price: null, payable: null,
+              played: null, remain: null, new_played: null, base_new: null, bonus_new: null,
+            };
+          });
+      }
       // 급여 대상은 재직자만. active=false면 급여 제안 자체를 만들지 않는다
       // (0원 행으로 남기면 "이번 달 0원 지급"과 "대상 아님"이 화면에서 구분되지 않는다).
       // ⚠️ trainers에는 같은 필터를 걸지 않았다 — 퇴사 트레이너도 미지급 잔액이
