@@ -5455,8 +5455,10 @@ const REQUIRED_SCHEMA = {
                      "memo","created_by"],
   course_sessions:  ["id","held_on","start_time","end_time","duration_min","kind","label","status",
                      "source","is_partial","schedule_id","memo","created_by"],
+  // trainer_id 승격(2026-08-16) — §17e DDL 실행을 실DB에서 확인(courses 2행 전부 trainer_id=4).
   courses:          ["id","student_id","level","scheme","session_minutes","unit_price","units_total",
-                     "started_on","ended_on","status","source","verified_at","verified_by","memo","created_by"],
+                     "started_on","ended_on","status","source","verified_at","verified_by","memo","created_by",
+                     "trainer_id"],
   feedback:         ["id","grp","body","lesson_date","published","review_msg","src_channel",
                      "src_guild","src_msg","student_alias"],
   gdcup_apps:       ["id","team_name","slogan","members","bpi","weight","contact","ip","season",
@@ -5470,6 +5472,11 @@ const REQUIRED_SCHEMA = {
   gdcup_solos:      ["id","season","kind","ign","tier","discord","note","status","created_at"],
   gdcup_team_brand: ["team_name","captain","color","emblem","tag"],
   graduations:      ["trainer_id","student_name","student_id","tier","weight","via_lesson","achieved_at","note"],
+  // 승격(2026-08-16) — §19b/§19b-1 DDL 실행 + 백필 122행을 실DB에서 확인
+  // (등록 122행 전부 paid_amount 기입, bonus_games는 not null default 0).
+  // 코드가 참조를 시작했으므로(admin-panel 잔여·환불 파생) 이제 부재 = 진짜 장애다.
+  lesson_enrollments:["id","student_id","trainer_id","games_total","started_on","ended_on",
+                     "status","source","memo","created_by","paid_amount","bonus_games"],
   lesson_sessions:  ["id","student_id","trainer_id","played_at","games","memo","created_by",
                      "settled_period","settled_rate"],
   ops_state:        ["key","value","updated_at"],
@@ -5508,25 +5515,19 @@ const REQUIRED_SCHEMA = {
 // payments 3종은 fee/net 도입분이다. 부재하면 admin-panel이 hasFeeColumns=false로
 // 떨어져 amount를 그대로 쓴다 — 현행 계산과 완전히 동일하게 동작한다.
 //
-// §19 enrollments·settlements(2026-08-13)는 DDL-first 도입분 — 코드가 아직 참조하지
-// 않으므로 전부 선택 등재다. 시드·백필·봇 v2가 참조를 시작하는 PR에서 해당 테이블을
-// REQUIRED_SCHEMA로 승격한다(§18 payment_requests와 같은 승격 경로).
+// §19 enrollments·settlements(2026-08-13)는 DDL-first 도입분이었다. 그중
+// **lesson_enrollments는 2026-08-16에 REQUIRED_SCHEMA로 승격**됐다 — DDL 실행과 백필
+// 122행을 실DB에서 확인했고 코드가 참조를 시작했다(잔여·환불 파생). settlements는
+// 아직 코드가 안 쓰므로 선택 유지다. 승격 경로는 §18 payment_requests와 같다.
 const SCHEMA_OPTIONAL = {
   // settled_period = 정산 귀속월(마감월 정정분을 다음 열린 달로 이월). 부재하면
   // admin-panel이 paid_at 월로 떨어져 현행과 동일하게 동작한다.
-  payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id", "settled_period"],
-  // §17e courses.trainer_id — 강의 담당. admin-panel이 참조하지만 부재 시 courses 조회가
-  // 통째로 catch되어 빈 배열로 떨어지므로(강의 표시만 사라지고 패널은 산다) warn 등급이다.
-  // 위 주석대로 지금 자기점검엔 오탐이 남아 있어 여기에 error를 더하면 신호가 묻힌다.
-  // **오너가 DDL을 실행해 실재를 확인하면 REQUIRED_SCHEMA.courses로 옮긴다.**
-  courses: ["trainer_id"],
+  // deposit_ref(§19f 세트 묶음)는 DDL 발행만 된 상태다 — 오너 실행 대기이고 아직 코드가
+  // 참조하지 않는다. §19 enrollments와 같은 DDL-first 등재: 여기 없으면 실행 여부를
+  // 영영 확인할 길이 없다(컬럼 프로브가 유일한 감지 수단). 참조를 시작하는 PR에서 승격한다.
+  payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id", "settled_period",
+             "deposit_ref"],
   lesson_sessions: ["lesson_enrollment_id"],
-  // paid_amount·bonus_games(2026-08-16 단가 스냅샷)는 환불 산식의 유일한 입력이다.
-  // 부재하면 admin-panel이 축소 재요청으로 떨어져 등록 표시는 살고 파생값(잔여·환불)만
-  // 빠진다 — 현행 화면과 같다. 오너가 DDL+백필 122행을 확인하면 아래 전체를
-  // REQUIRED_SCHEMA로 승격한다(§17e courses.trainer_id와 같은 승격 경로).
-  lesson_enrollments: ["id","student_id","trainer_id","games_total","started_on","ended_on",
-                       "status","source","memo","created_by","paid_amount","bonus_games"],
   settlements: ["id","period","trainer_id","games","gross","consult_count","consult_add",
                 "status","payout_id","memo","created_by","confirmed_by","confirmed_at"],
 };
