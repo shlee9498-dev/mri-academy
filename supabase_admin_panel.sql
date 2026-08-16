@@ -634,6 +634,34 @@ create table if not exists public.lesson_enrollments (
 create index if not exists idx_lenroll_student on public.lesson_enrollments (student_id, started_on desc);
 create index if not exists idx_lenroll_trainer on public.lesson_enrollments (trainer_id) where status = 'active';
 
+-- 19b-1) 단가 스냅샷 (2026-08-16 오너 승인) — 환불 산식의 유일한 입력.
+--      환불 = round100(paid_amount × 유상잔여판수 ÷ (games_total − bonus_games))
+--
+--      paid_amount = 이 등록에 실제 귀속된 유효결제액. payments.amount의 복사가 아니다
+--        (초과입금·정정·세트 배분으로 갈린다 — 세트는 레슨 단품 정가를 넣는다).
+--      bonus_games = 무상 판수(리뷰 +3판 등). 대가가 없으므로 환불 분모에서 빠지고,
+--        소비는 **보너스 우선**이다(유상 판수보다 먼저 소진).
+--
+--      ⚠️ 왜 가격표를 못 쓰나 — 기존 수강생은 등록 당시 조건 유지가 정책이고(사이트 FAQ),
+--      실데이터가 이미 어긋나 있다: 구 단가 판당 4,000·3,636 vs 현 가격표 4,500·4,286·4,242.
+--      현 가격표로 환불하면 그 차이만큼 과·소지급이 난다. 단가는 등록 시점에 고정한다.
+--
+--      nullable인 이유: 백필 122행이 들어오기 전에 NOT NULL을 걸면 기존 행이 막힌다.
+--      신규 등록 경로의 필수화는 코드에서 강제한다(null이면 환불 계산 자체가 불가능).
+alter table public.lesson_enrollments add column if not exists paid_amount int;
+alter table public.lesson_enrollments add column if not exists bonus_games int not null default 0;
+
+-- 제약은 컬럼 존재 프로브로 잡히지 않는다(select=col&limit=0은 제약을 보지 않는다).
+-- 미실행을 자기점검이 영영 못 잡으므로 PR 본문 체크리스트로만 관리한다.
+-- drop→add 순서는 멱등성 확보용이다(add constraint에는 if not exists가 없다).
+alter table public.lesson_enrollments drop constraint if exists chk_lenroll_paid_amount;
+alter table public.lesson_enrollments add  constraint chk_lenroll_paid_amount
+  check (paid_amount is null or paid_amount >= 0);
+-- 무상 판수가 계약 판수를 넘으면 유상 판수가 음수가 되어 환불 산식이 깨진다.
+alter table public.lesson_enrollments drop constraint if exists chk_lenroll_bonus_le_total;
+alter table public.lesson_enrollments add  constraint chk_lenroll_bonus_le_total
+  check (bonus_games >= 0 and bonus_games <= games_total);
+
 -- 19c) 정산 회차 — (period × trainer) 확정 기록 1행. 도장(19a)이 세션에 흩어져 있는 것을
 --      회차 객체로 묶는다: 어떤 달을·누구에게·몇 판·얼마로 확정했는지 + 승인 감사.
 --      확정 흐름: draft(엔진 산출 동결) → confirmed(오너 확정 시 세션 도장 스탬프) → paid(payouts 연결).

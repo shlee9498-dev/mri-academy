@@ -156,6 +156,50 @@ module.exports = function mountAdminPanel(app, deps) {
     } catch (e) { console.error("audit_fail", e); }
   }
 
+  // ── 레슨 환불·소비 (순수 계산) · 2026-08-16 오너 승인 ─────
+  // 단가는 **등록 시점에 고정**된다: lesson_enrollments.paid_amount / bonus_games.
+  //
+  // ⚠️ 가격표(index.html 10판 45,000 / 21판 90,000 / 33판 140,000)를 환불 계산에
+  //    끌어오면 안 된다. 기존 수강생은 등록 당시 조건 유지가 정책이고(사이트 FAQ 명시),
+  //    실데이터가 이미 어긋나 있다 — 구 단가는 판당 4,000·3,636인데 현 가격표는
+  //    4,500·4,286·4,242다. 현 가격표로 환불하면 그 차이만큼 과·소지급이 난다.
+  //    그래서 환불의 입력은 가격표가 아니라 등록 행에 박힌 스냅샷뿐이다.
+  //
+  // 유상 판수 = games_total − bonus_games. 보너스(리뷰 +3판 등)는 대가가 없으므로
+  // 환불 분모에서 빠진다. 분모에 넣으면 판당단가가 희석돼 과소환불이 된다.
+
+  // 보너스 우선 소비 — 진행분은 **보너스판부터** 깎는다(오너 확정).
+  // 이 순서가 뒤집히면 같은 진행판수에도 유상잔여가 커져 환불이 과다해진다.
+  //   반환: { bonusUsed, paidUsed, bonusRemain, paidRemain, remain }
+  function consumeGames(enr, playedGames) {
+    const total = Math.max(0, Number(enr.games_total || 0));
+    const bonus = Math.min(total, Math.max(0, Number(enr.bonus_games || 0)));
+    const paidGames = total - bonus;
+    const played = Math.min(total, Math.max(0, Number(playedGames || 0)));
+    const bonusUsed = Math.min(bonus, played);          // 보너스 먼저
+    const paidUsed = Math.min(paidGames, played - bonusUsed);
+    return {
+      bonusUsed, paidUsed,
+      bonusRemain: bonus - bonusUsed,
+      paidRemain: paidGames - paidUsed,
+      remain: total - played,
+    };
+  }
+
+  // 환불액 = round100(paid_amount × 유상잔여판수 ÷ 유상판수)
+  // paid_amount가 null이면 **계산 불가로 null을 반환한다**. 결제액으로 추정하지 않는다 —
+  // 초과입금·정정·세트 배분으로 payments.amount와 갈릴 수 있고, 추정값이 환불에 쓰이면
+  // 그 오차가 그대로 지급 오류가 된다.
+  function refundAmount(enr, playedGames) {
+    if (enr.paid_amount === null || enr.paid_amount === undefined) return null;
+    const total = Math.max(0, Number(enr.games_total || 0));
+    const bonus = Math.min(total, Math.max(0, Number(enr.bonus_games || 0)));
+    const paidGames = total - bonus;
+    if (!(paidGames > 0)) return null;                  // 전액 무상 등록 — 환불 대상 없음
+    const { paidRemain } = consumeGames(enr, playedGames);
+    return round100((Number(enr.paid_amount) * paidRemain) / paidGames);
+  }
+
   // ── 정산 엔진 (순수 계산) · Phase 1.2 ─────────────────────
   // 지급율 = 트레이너 승급 base(65% + 래칫) / 재결제 진행분 +5%p.
   // 7/20 경계: lesson_sessions.played_at >= CUTOVER 만 신엔진 정산 (이전은 이월동결·별도).
@@ -302,15 +346,22 @@ module.exports = function mountAdminPanel(app, deps) {
       const [students, payments, sessions, payouts, staff, graduations, enrollments, courses] = await Promise.all([
         sbSelect("students", "select=*&order=name.asc"),
         sbSelect("payments", "select=*"),
-        sbSelect("lesson_sessions", "select=student_id,games,played_at,settled_period,settled_rate"),
+        // lesson_enrollment_id(§19 백필 대상)는 미실행 환경이 있어 축소 재요청으로 흡수한다.
+        // 이 값이 있어야 세션을 등록에 귀속시켜 등록별 잔여·환불을 산출할 수 있다.
+        sbSelect("lesson_sessions", "select=student_id,games,played_at,settled_period,settled_rate,lesson_enrollment_id")
+          .catch(() => sbSelect("lesson_sessions", "select=student_id,games,played_at,settled_period,settled_rate")),
         sbSelect("payouts", "select=*"),
         sbSelect("staff", "select=*&order=id.asc"),
         sbSelect("graduations", "select=trainer_id,tier,weight,via_lesson,achieved_at").catch(() => []),
         // 등록(enrollment) — 병행수강 표시의 정본. DDL 미실행 환경을 위해 실패는 빈 배열로 흡수한다
         // (조회 실패가 패널 전체를 502로 만들면 표시 개선이 기존 화면을 죽이는 회귀가 된다).
+        // paid_amount·bonus_games(2026-08-16 단가 스냅샷)는 오너 DDL 대기 중이라 축소
+        // 재요청으로 흡수한다. 한 번에 요청하고 실패했을 때만 줄이므로 정상 배포는 요청 1회다.
         sbSelect("lesson_enrollments",
-          "select=id,student_id,trainer_id,games_total,started_on,ended_on,status&order=started_on.asc")
-          .catch(() => []),
+          "select=id,student_id,trainer_id,games_total,started_on,ended_on,status,paid_amount,bonus_games&order=started_on.asc")
+          .catch(() => sbSelect("lesson_enrollments",
+            "select=id,student_id,trainer_id,games_total,started_on,ended_on,status&order=started_on.asc")
+            .catch(() => [])),
         // 강의(§17 courses) — 레슨과 **다른 축**이다. 단위가 판수가 아니라 회차(units_total)고
         // 지급이 없다. 여기서 읽는 목적은 담당 스코프와 표시뿐이며 정산엔 들어가지 않는다.
         // trainer_id(§17e)가 미실행이면 이 select가 400으로 떨어져 빈 배열이 된다 —
@@ -346,11 +397,45 @@ module.exports = function mountAdminPanel(app, deps) {
       // trainers 산출 **뒤에** 적용한다(넓힌 목록이 정산에 새어 들어갈 여지 자체를 없앤다).
       const enrByStu = groupBy(enrollments, "student_id");
       const crsByStu = groupBy(courses, "student_id");
+
+      // 등록별 진행판수 — 세션의 lesson_enrollment_id 귀속분만 센다(§19 백필 산출물).
+      // 미귀속 세션이 남아 있으면 그 학생의 등록별 잔여가 **실제보다 크게** 나오고,
+      // 잔여가 부풀면 환불도 그만큼 과다해진다. 그래서 학생 단위로 미귀속 판수를 세어
+      // 두고 남아 있으면 파생값(잔여·환불)을 통째로 null로 막는다 — 확정 전 숫자를
+      // 화면에 띄우면 틀린 값이 공식이 된다(§17a verified 게이트와 같은 논거).
+      const playedByEnr = {};
+      const unattachedByStu = {};
+      for (const s of sessions) {
+        const g = Number(s.games || 0);
+        if (s.lesson_enrollment_id != null)
+          playedByEnr[s.lesson_enrollment_id] = (playedByEnr[s.lesson_enrollment_id] || 0) + g;
+        else if (g > 0)
+          unattachedByStu[s.student_id] = (unattachedByStu[s.student_id] || 0) + g;
+      }
+
       for (const x of computed) {
-        const list = (enrByStu[x.student_id] || []).map((e) => ({
-          id: e.id, trainer_id: e.trainer_id, games_total: e.games_total,
-          started_on: e.started_on, status: e.status,
-        }));
+        // 이 학생의 세션이 전부 등록에 귀속됐을 때만 파생값을 낸다.
+        const attributed = !(unattachedByStu[x.student_id] > 0);
+        const list = (enrByStu[x.student_id] || []).map((e) => {
+          const row = {
+            id: e.id, trainer_id: e.trainer_id, games_total: e.games_total,
+            started_on: e.started_on, status: e.status,
+            paid_amount: e.paid_amount ?? null, bonus_games: e.bonus_games ?? null,
+          };
+          if (!attributed) return { ...row, derived: null };
+          const played = playedByEnr[e.id] || 0;
+          const used = consumeGames(e, played);
+          return {
+            ...row,
+            derived: {
+              played,
+              bonus_remain: used.bonusRemain,   // 보너스 우선 소비 후 남은 무상 판수
+              paid_remain: used.paidRemain,     // 환불 분자가 되는 유상 잔여
+              remain: used.remain,
+              refund: refundAmount(e, played),  // paid_amount 미기입이면 null
+            },
+          };
+        });
         x.enrollments = list;
         // 강의는 회차(units_total)로만 실어 보낸다. games_total과 같은 배열에 섞거나
         // 판수로 환산하지 않는다 — 계약총 판수에 회차가 더해지는 순간 잔여·차감이

@@ -5521,8 +5521,12 @@ const SCHEMA_OPTIONAL = {
   // **오너가 DDL을 실행해 실재를 확인하면 REQUIRED_SCHEMA.courses로 옮긴다.**
   courses: ["trainer_id"],
   lesson_sessions: ["lesson_enrollment_id"],
+  // paid_amount·bonus_games(2026-08-16 단가 스냅샷)는 환불 산식의 유일한 입력이다.
+  // 부재하면 admin-panel이 축소 재요청으로 떨어져 등록 표시는 살고 파생값(잔여·환불)만
+  // 빠진다 — 현행 화면과 같다. 오너가 DDL+백필 122행을 확인하면 아래 전체를
+  // REQUIRED_SCHEMA로 승격한다(§17e courses.trainer_id와 같은 승격 경로).
   lesson_enrollments: ["id","student_id","trainer_id","games_total","started_on","ended_on",
-                       "status","source","memo","created_by"],
+                       "status","source","memo","created_by","paid_amount","bonus_games"],
   settlements: ["id","period","trainer_id","games","gross","consult_count","consult_add",
                 "status","payout_id","memo","created_by","confirmed_by","confirmed_at"],
 };
