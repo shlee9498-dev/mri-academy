@@ -343,13 +343,17 @@ module.exports = function mountAdminPanel(app, deps) {
     if (!requireIdentity(c, res)) return;
     const period = String(req.query.period || "").match(/^\d{4}-\d{2}$/) ? req.query.period : null;
     try {
-      const [students, payments, sessions, payouts, staff, graduations, enrollments, courses] = await Promise.all([
+      const [students, payments, sessions, payouts, staff, graduations, enrollments, courses,
+             roster] = await Promise.all([
         sbSelect("students", "select=*&order=name.asc"),
         sbSelect("payments", "select=*"),
         // lesson_enrollment_id(§19 백필 대상)는 미실행 환경이 있어 축소 재요청으로 흡수한다.
         // 이 값이 있어야 세션을 등록에 귀속시켜 등록별 잔여·환불을 산출할 수 있다.
-        sbSelect("lesson_sessions", "select=student_id,games,played_at,settled_period,settled_rate,lesson_enrollment_id")
-          .catch(() => sbSelect("lesson_sessions", "select=student_id,games,played_at,settled_period,settled_rate")),
+        // trainer_id는 **세션 담당**이다 — 로스터 포함 기준(등록 담당 OR 세션 담당)의 절반이
+        // 여기서 나온다. 정산 엔진은 이 필드를 읽지 않으므로(computeStudent는 games·played_at·
+        // settled_period만 본다) 추가해도 산출값은 바이트 단위로 같다.
+        sbSelect("lesson_sessions", "select=student_id,trainer_id,games,played_at,settled_period,settled_rate,lesson_enrollment_id")
+          .catch(() => sbSelect("lesson_sessions", "select=student_id,trainer_id,games,played_at,settled_period,settled_rate")),
         sbSelect("payouts", "select=*"),
         sbSelect("staff", "select=*&order=id.asc"),
         sbSelect("graduations", "select=trainer_id,tier,weight,via_lesson,achieved_at").catch(() => []),
@@ -369,6 +373,11 @@ module.exports = function mountAdminPanel(app, deps) {
         sbSelect("courses",
           "select=id,student_id,trainer_id,level,scheme,units_total,started_on,status&order=started_on.asc")
           .catch(() => []),
+        // v_panel_roster(오너 발행) — 로스터 포함 기준의 정본. (trainer × student) 1행이고
+        // 포함 조건이 "등록 담당 OR 세션 담당"이다. 미실행이면 빈 배열로 떨어지고 아래에서
+        // 같은 규칙을 코드로 재구성한다(enrollments·courses와 같은 degrade 경로) — 뷰가
+        // 없다고 패널이 비면 DDL 실행 전까지 화면이 통째로 죽는 회귀가 된다.
+        sbSelect("v_panel_roster", "select=*").catch(() => []),
       ]);
       const payByStu = groupBy(payments, "student_id");
       const sessByStu = groupBy(sessions, "student_id");
@@ -413,6 +422,42 @@ module.exports = function mountAdminPanel(app, deps) {
           unattachedByStu[s.student_id] = (unattachedByStu[s.student_id] || 0) + g;
       }
 
+      // ── 로스터(C4) — 포함 기준을 "학생 담당"에서 "등록 담당 OR 세션 담당"으로 바꾼다 ──
+      // 주현성(60) 사고: students.trainer_id=현태 · 등록 #102도 현태인데 8/16 세션 6판은
+      // 준구가 진행했다. 준구 명의 등록이 없어 담당 필터에 안 걸렸고 준구 화면에서 학생이
+      // 통째로 사라졌다. 사이트 FAQ가 "레슨생은 특정 트레이너에 묶이지 않는다·병행 가능"을
+      // 명시하므로 정책이 맞고 필터가 틀렸다 — 세션 담당을 포함 기준에 더한다.
+      //
+      // 판수는 **학생 단위 총합**이고 트레이너별로 쪼개지지 않는다(세트 판수 전 유형
+      // 사용가능 정책과 같다). 그래서 잔여는 (trainer × student)가 아니라 student로 낸다.
+      //   잔여 = carry_games + Σ등록 games_total − Σ세션 games
+      const rosterByStu = {};                       // student_id → Set(trainer_id)
+      const addRoster = (sid, tid) => {
+        if (sid == null || tid == null) return;
+        (rosterByStu[sid] = rosterByStu[sid] || new Set()).add(tid);
+      };
+      for (const r of roster) addRoster(r.student_id, r.trainer_id);
+      // 뷰 미실행 시 같은 규칙을 코드로 재구성한다. 뷰가 있으면 이 루프는 이미 담긴 값에
+      // 흡수되므로(Set) 결과가 같다 — 한쪽이 빠져도 로스터가 좁아지지 않는 것이 목적이다.
+      for (const e of enrollments) addRoster(e.student_id, e.trainer_id);
+      for (const s of sessions)    addRoster(s.student_id, s.trainer_id);
+
+      const rosterRowByKey = {};                    // `${tid}:${sid}` → 뷰 원본 행(있으면)
+      for (const r of roster) rosterRowByKey[`${r.trainer_id}:${r.student_id}`] = r;
+
+      // 학생 단위 총합 — 뷰가 있으면 뷰 값을 쓰고, 없으면 여기서 낸다.
+      const enrTotalByStu = {}, bonusByStu = {}, usedByStu = {}, lastPlayedByStu = {};
+      for (const e of enrollments) {
+        enrTotalByStu[e.student_id] = (enrTotalByStu[e.student_id] || 0) + Number(e.games_total || 0);
+        bonusByStu[e.student_id]    = (bonusByStu[e.student_id]    || 0) + Number(e.bonus_games || 0);
+      }
+      for (const s of sessions) {
+        usedByStu[s.student_id] = (usedByStu[s.student_id] || 0) + Number(s.games || 0);
+        const d = String(s.played_at || "");
+        if (d && (!lastPlayedByStu[s.student_id] || d > lastPlayedByStu[s.student_id]))
+          lastPlayedByStu[s.student_id] = d;
+      }
+
       for (const x of computed) {
         // 이 학생의 세션이 전부 등록에 귀속됐을 때만 파생값을 낸다.
         const attributed = !(unattachedByStu[x.student_id] > 0);
@@ -445,11 +490,30 @@ module.exports = function mountAdminPanel(app, deps) {
           units_total: c.units_total, started_on: c.started_on, status: c.status,
         }));
         x.courses = clist;
-        // 담당 후보 = 학생 담당 + 레슨 등록 담당 + 강의 담당. 레슨(현태)·강의(무리)
-        // 병행이면 2개가 된다 — 이게 강의 학생이 오너 섹션에 뜨는 유일한 근거다.
-        x.trainer_ids = [...new Set([x.trainer_id, ...list.map((e) => e.trainer_id),
-                                     ...clist.map((c) => c.trainer_id)].filter((v) => v != null))];
+        // 담당 후보 = 로스터(등록 담당 ∪ 세션 담당) + 강의 담당. **학생 담당(trainer_id)은
+        // 더 이상 포함 기준이 아니다**(오너 8/16) — 등록도 세션도 없는 학생은 어느 트레이너
+        // 화면에도 뜨지 않고 오너 뷰의 「미배정」 섹션에 남는다. 그게 배정 누락 감지 지점이다.
+        // 강의(courses)는 판수가 아니라 회차라 로스터와 다른 축이고, 오너 직강 섹션의 근거라
+        // 그대로 합류시킨다.
+        const rset = rosterByStu[x.student_id] || new Set();
+        x.trainer_ids = [...new Set([...rset, ...clist.map((c) => c.trainer_id)].filter((v) => v != null))];
         x.parallel = x.trainer_ids.length > 1;
+
+        // 잔여·진행 상시 표시(오너 지시 2). 판수는 학생 단위 총합이라 트레이너별로
+        // 쪼개지지 않는다 — 어느 트레이너 화면에서 보든 같은 값이어야 맞다.
+        const granted = enrTotalByStu[x.student_id] || 0;
+        const used    = usedByStu[x.student_id] || 0;
+        // ⚠️ x.carry_games를 쓰면 안 된다 — computeStudent가 돌려주는 값은
+        // students.carry_games + 컷오버 이전 세션이라 이미 preSess가 더해져 있다.
+        // used에도 preSess가 들어 있으므로 그대로 빼면 preSess만큼 잔여가 부풀어 오른다.
+        // 산식의 carry_games는 **원본 컬럼**이다.
+        const carryRaw = Number((stuById[x.student_id] || {}).carry_games || 0);
+        x.games_granted = granted;
+        x.games_bonus   = bonusByStu[x.student_id] || 0;
+        x.games_used    = used;
+        x.games_left    = carryRaw + granted - used;
+        x.last_played   = lastPlayedByStu[x.student_id] || null;
+        x.has_session   = (sessByStu[x.student_id] || []).length > 0;
       }
 
       const trainers = staff.filter((s) => s.role === "trainer")
