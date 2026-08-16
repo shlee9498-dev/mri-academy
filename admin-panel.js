@@ -666,6 +666,25 @@ module.exports = function mountAdminPanel(app, deps) {
     const rate = Number(b.payout_rate);
     if (!student_id || !amount) return res.status(400).json({ error: "수강생·금액을 확인해 주세요." });
     if (!(rate >= 0 && rate <= 1)) return res.status(400).json({ error: "지급율은 0~1 (예: 0.7)" });
+    // 세트(kind='set')는 payments **2행**이다(§19f) — 강의행 + 레슨행이 같은 deposit_ref를
+    // 공유한다. 이 엔드포인트는 1행만 만들고 course_id·lesson_enrollment_id를 받지도 않으므로
+    // 여기서 세트를 만들면 구조적으로 반쪽짜리 행이 된다.
+    //
+    // ⚠️ 그 1행은 조용히 틀린다 — computeStudent의 판수 결제 필터가 ["lesson","set"]이라
+    // 강의분까지 레슨 결제로 세고, 단가(=금액/판수)가 통째로 부풀어 지급예정을 밀어올린다.
+    // 실측(2026-08-17 하네스 · 280,000 입문세트 · 10판 · 진행 4판):
+    //   2행(레슨행 45,000/10판) → 단가 4,500 · 지급예정 11,700
+    //   1행(280,000/10판)      → 단가 28,000 · 지급예정 72,800  = **6.22배 · +61,100원**
+    // 화면에는 "세트를 등록했다"로만 보이므로 금액이 틀린 줄 모른다.
+    //
+    // 그래서 받지 않고 2행 SQL 경로로 돌린다(생성 템플릿: docs/lecture-data-model.md §9.5).
+    // 결제 행 생성은 어차피 Level 0(오너 실행)이라 이 차단이 운영을 막지 않는다.
+    if (b.kind === "set") {
+      return res.status(400).json({
+        error: "set_needs_two_rows",
+        message: "세트 결제는 강의행+레슨행 2행이라 이 화면에서 만들 수 없습니다 — 2행 SQL(문서 §9.5)로 등록해 주세요.",
+      });
+    }
     // 결제 채널. 미지정은 계좌이체 — 기존 119건이 전부 transfer라 기본값을 바꾸면 과거와 어긋난다.
     const pay_channel = PAY_CHANNELS.includes(b.pay_channel) ? b.pay_channel : "transfer";
     try {

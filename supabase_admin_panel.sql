@@ -717,7 +717,8 @@ alter table public.lesson_sessions add column if not exists lesson_enrollment_id
 create index if not exists idx_lsess_lenroll on public.lesson_sessions (lesson_enrollment_id)
   where lesson_enrollment_id is not null;
 
--- 19f) 입금 묶음 — 세트 판매(2026-08-16 오너 확정). ⚠️ 미실행 · 오너 직접 실행 대기.
+-- 19f) 입금 묶음 — 세트 판매(2026-08-16 오너 확정). ✅ 실행 완료 (2026-08-17 실DB 실측:
+--      payments.deposit_ref 컬럼 + 부분 인덱스 idx_payments_deposit_ref 실재 · 사용 행 0).
 --
 --      세트 1건은 payments **2행**이다(강의행 + 레슨행). 1행으로 못 만드는 이유는 §19d의
 --      chk_payments_single_attribution — 한 결제는 course_id·lesson_enrollment_id 중
@@ -745,6 +746,14 @@ create index if not exists idx_lsess_lenroll on public.lesson_sessions (lesson_e
 alter table public.payments add column if not exists deposit_ref text;
 create index if not exists idx_payments_deposit_ref on public.payments (deposit_ref)
   where deposit_ref is not null;
+--      명명 규칙: 'D' || 입금일(YYYYMMDD) || '-' || 그날의 2자리 순번 → D20260817-01.
+--      통장 1줄이 키의 단위다(사람 이름을 넣지 않는다 — PII이고 동명이 있다). 'P'로 시작하는
+--      단일 결제 대체키(coalesce의 'P'||id)와 접두어가 달라 두 계열이 섞이지 않는다.
+--
+--      ⚠️ 묶음 무결성은 CHECK로 막을 수 없다 — "한 묶음은 정확히 2행이고 귀속이 서로 다르다"는
+--      행 간(cross-row) 조건이라 CHECK(행 단위)의 표현 범위 밖이다. 트리거는 결제 트랙 소관이라
+--      여기서 만들지 않는다. 대신 **상시 검산 쿼리**로 잡는다(반쪽 묶음·귀속 중복·통장 합 불일치):
+--        docs/lesson-enrollment-model.md §8.2 · 생성 템플릿은 docs/lecture-data-model.md §9.5
 
 -- 19g) payouts 금액 불변식 (2026-08-17 관제탑 지시). ⚠️ 미실행 · 오너 직접 실행 대기.
 --      컷오버(9/3) 전 제약 추가 대상.

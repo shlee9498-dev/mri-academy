@@ -5522,9 +5522,11 @@ const REQUIRED_SCHEMA = {
 const SCHEMA_OPTIONAL = {
   // settled_period = 정산 귀속월(마감월 정정분을 다음 열린 달로 이월). 부재하면
   // admin-panel이 paid_at 월로 떨어져 현행과 동일하게 동작한다.
-  // deposit_ref(§19f 세트 묶음)는 DDL 발행만 된 상태다 — 오너 실행 대기이고 아직 코드가
-  // 참조하지 않는다. §19 enrollments와 같은 DDL-first 등재: 여기 없으면 실행 여부를
-  // 영영 확인할 길이 없다(컬럼 프로브가 유일한 감지 수단). 참조를 시작하는 PR에서 승격한다.
+  // deposit_ref(§19f 세트 묶음)는 **DDL 실행 완료**다(2026-08-17 실DB 실측 — 컬럼 +
+  // 부분 인덱스 idx_payments_deposit_ref 실재). 그래도 REQUIRED로 올리지 않고 여기 둔다:
+  // 아직 **읽는 코드가 없다**(대조는 SQL 쪽 묶음 쿼리, 패널은 세트 생성을 400으로 막을 뿐).
+  // 없어도 코드가 정상 동작하는 컬럼을 REQUIRED에 올리면 부팅 error가 실동작과 무관하게
+  // 뜬다 — 이 표의 분류 기준이 그것이다. 패널·봇이 묶음을 읽기 시작하는 PR에서 승격한다.
   payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id", "settled_period",
              "deposit_ref"],
   lesson_sessions: ["lesson_enrollment_id"],
