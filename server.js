@@ -5515,6 +5515,11 @@ const SCHEMA_OPTIONAL = {
   // settled_period = 정산 귀속월(마감월 정정분을 다음 열린 달로 이월). 부재하면
   // admin-panel이 paid_at 월로 떨어져 현행과 동일하게 동작한다.
   payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id", "settled_period"],
+  // §17e courses.trainer_id — 강의 담당. admin-panel이 참조하지만 부재 시 courses 조회가
+  // 통째로 catch되어 빈 배열로 떨어지므로(강의 표시만 사라지고 패널은 산다) warn 등급이다.
+  // 위 주석대로 지금 자기점검엔 오탐이 남아 있어 여기에 error를 더하면 신호가 묻힌다.
+  // **오너가 DDL을 실행해 실재를 확인하면 REQUIRED_SCHEMA.courses로 옮긴다.**
+  courses: ["trainer_id"],
   lesson_sessions: ["lesson_enrollment_id"],
   lesson_enrollments: ["id","student_id","trainer_id","games_total","started_on","ended_on",
                        "status","source","memo","created_by"],

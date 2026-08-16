@@ -610,14 +610,26 @@ function renderTrainer(){
 
 // 내 등록분 칩 — 병행수강이면 학생이 두 트레이너 화면에 뜨되 각자 자기 등록만 본다.
 // 중복 신청 사고(정희준: 준구가 이미 등록된 판수를 다시 신청할 뻔함)를 화면에서 막는 지점이다.
+// units_total은 numeric(6,2)라 "8.00"으로 내려온다. Number를 거쳐 8 / 8.5로 보여준다.
+const unitTxt = v => v==null ? "?" : String(Number(v));
 function enrChips(s){
-  const E = s.enrollments || [];
-  if(!E.length) return `<span class="pill">등록 기록 없음</span>`;
-  return E.map(e=>{
-    const st = e.status && e.status!=="active" ? ` · ${esc(e.status)}` : "";
-    const on = e.started_on ? String(e.started_on).slice(5).replace("-","/") : "";
-    return `<span class="pill">내 등록 <b>${e.games_total}</b>판${on?` <span class="muted">${on}</span>`:""}${st}</span>`;
-  }).join("");
+  const E = s.enrollments || [], C = s.courses || [];
+  if(!E.length && !C.length) return `<span class="pill">등록 기록 없음</span>`;
+  const fmt = (status, started_on) => [
+    started_on ? ` <span class="muted">${String(started_on).slice(5).replace("-","/")}</span>` : "",
+    status && status!=="active" ? ` · ${esc(status)}` : "",
+  ];
+  const lesson = E.map(e=>{
+    const [on, st] = fmt(e.status, e.started_on);
+    return `<span class="pill">내 등록 <b>${e.games_total}</b>판${on}${st}</span>`;
+  });
+  // 강의는 회차 단위이고 지급이 없다 — 판수 칩과 라벨을 갈라 놓는다.
+  const lecture = C.map(c=>{
+    const [on, st] = fmt(c.status, c.started_on);
+    const lv = c.level ? `${esc(c.level)} ` : "";
+    return `<span class="pill">강의 ${lv}<b>${unitTxt(c.units_total)}</b>회${on}${st}</span>`;
+  });
+  return [...lesson, ...lecture].join("");
 }
 
 function stuCard(s){
@@ -627,9 +639,11 @@ function stuCard(s){
   const bonusPill = s.bonus_new > 0 ? `<span class="pill">재결제분 <b>${s.bonus_new}</b>판(+5%p)</span>` : "";
   const rate = `<span class="badge ok">지급율 ${Math.round((s.base_rate||0)*100)}%</span>`;
   const paraBadge = s.parallel ? `<span class="badge">병행수강</span>` : "";
+  // 강의는 판수·지급 축이 아니라서 '남은 N판'과 나란히 두면 오독된다. 뱃지로 축을 먼저 알린다.
+  const lecBadge = (s.courses||[]).length ? `<span class="badge">강의</span>` : "";
   return `<div class="stu">
     <div class="top"><span class="nm">${esc(s.name)}</span>${s.discord_nick?`<span class="muted">${esc(s.discord_nick)}</span>`:""}
-      ${paraBadge}${mine?`<span class="badge remain">남은 ${s.remain}판</span>`:`<span class="badge">타 담당 · 내 등록분만</span>`}</div>
+      ${paraBadge}${lecBadge}${mine?`<span class="badge remain">남은 ${s.remain}판</span>`:`<span class="badge">타 담당 · 내 등록분만</span>`}</div>
     <div class="prog">
       ${enrChips(s)}
       ${mine?`<span class="pill">진행 <b>${s.played}</b>판</span>
@@ -784,8 +798,19 @@ let TR_FILTER = "all";
 const inSec = (s,tid)=> tid===null ? !(s.trainer_ids||[]).length : (s.trainer_ids||[]).includes(tid);
 
 function secList(S){
-  const trs = (STAFF||[]).filter(x=>x.role==="trainer");
-  return [...trs.map(t=>({key:String(t.id), tid:t.id, name:t.name})), {key:"none", tid:null, name:"미배정"}];
+  const staff = STAFF||[];
+  const trs = staff.filter(x=>x.role==="trainer");
+  const secs = trs.map(t=>({key:String(t.id), tid:t.id, name:t.name}));
+  // 담당이 트레이너가 아닌 경우에도 섹션을 만든다 — 강의(§17 courses)는 오너 직강이라
+  // role='owner'가 담당이 된다. role로만 섹션을 만들면 강의 학생이 어느 섹션에도 안 뜬다.
+  // 실제 담당으로 등장할 때만 만들므로, 강의가 없으면 오너 섹션도 생기지 않는다.
+  const seen = new Set(trs.map(t=>t.id));
+  for(const s of S) for(const tid of (s.trainer_ids||[])){
+    if(tid==null || seen.has(tid)) continue;
+    seen.add(tid);
+    secs.push({key:String(tid), tid, name:(staff.find(x=>x.id===tid)||{}).name || `담당 #${tid}`});
+  }
+  return [...secs, {key:"none", tid:null, name:"미배정"}];
 }
 function trainerChips(S){
   const secs = secList(S);
@@ -820,7 +845,7 @@ function trainerSections(S){
 }
 function stuTable(rows, tid, emptyMsg){
   return `<table class="tbl"><thead><tr>
-      <th>수강생</th><th>담당</th><th>내 등록</th><th>결제</th><th>진행</th><th>남은</th><th>지급율</th><th>지급예정</th><th>기록/확정</th>
+      <th>수강생</th><th>담당</th><th>등록·강의</th><th>결제</th><th>진행</th><th>남은</th><th>지급율</th><th>지급예정</th><th>기록/확정</th>
     </tr></thead><tbody>
     ${ rows.length ? rows.map(s=>stuRow(s,tid)).join("") : `<tr><td colspan="9" class="empty">${esc(emptyMsg)}</td></tr>` }
     </tbody></table>`;
@@ -828,8 +853,11 @@ function stuTable(rows, tid, emptyMsg){
 // 섹션 담당(tid)이 주어지면 그 담당의 등록분만 칩으로 보여준다 — 병행수강이 섹션마다 다르게 표시된다.
 function ownerEnrCell(s, tid){
   const E = (s.enrollments||[]).filter(e=> tid===null ? true : e.trainer_id===tid);
-  if(!E.length) return `<span class="muted">—</span>`;
-  return E.map(e=>`<span class="pill">${e.games_total}판</span>`).join(" ");
+  const C = (s.courses||[]).filter(c=> tid===null ? true : c.trainer_id===tid);
+  if(!E.length && !C.length) return `<span class="muted">—</span>`;
+  // 강의는 판이 아니라 회차다. 라벨을 붙여 판수 칩과 절대 섞이지 않게 한다.
+  return [...E.map(e=>`<span class="pill">${e.games_total}판</span>`),
+          ...C.map(c=>`<span class="pill">강의 <b>${unitTxt(c.units_total)}</b>회</span>`)].join(" ");
 }
 
 function stuRow(s, tid){

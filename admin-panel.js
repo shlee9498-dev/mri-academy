@@ -299,7 +299,7 @@ module.exports = function mountAdminPanel(app, deps) {
     if (!requireIdentity(c, res)) return;
     const period = String(req.query.period || "").match(/^\d{4}-\d{2}$/) ? req.query.period : null;
     try {
-      const [students, payments, sessions, payouts, staff, graduations, enrollments] = await Promise.all([
+      const [students, payments, sessions, payouts, staff, graduations, enrollments, courses] = await Promise.all([
         sbSelect("students", "select=*&order=name.asc"),
         sbSelect("payments", "select=*"),
         sbSelect("lesson_sessions", "select=student_id,games,played_at,settled_period,settled_rate"),
@@ -310,6 +310,13 @@ module.exports = function mountAdminPanel(app, deps) {
         // (조회 실패가 패널 전체를 502로 만들면 표시 개선이 기존 화면을 죽이는 회귀가 된다).
         sbSelect("lesson_enrollments",
           "select=id,student_id,trainer_id,games_total,started_on,ended_on,status&order=started_on.asc")
+          .catch(() => []),
+        // 강의(§17 courses) — 레슨과 **다른 축**이다. 단위가 판수가 아니라 회차(units_total)고
+        // 지급이 없다. 여기서 읽는 목적은 담당 스코프와 표시뿐이며 정산엔 들어가지 않는다.
+        // trainer_id(§17e)가 미실행이면 이 select가 400으로 떨어져 빈 배열이 된다 —
+        // 강의 표시만 사라지고 패널은 종전대로 산다(enrollments와 같은 degrade 경로).
+        sbSelect("courses",
+          "select=id,student_id,trainer_id,level,scheme,units_total,started_on,status&order=started_on.asc")
           .catch(() => []),
       ]);
       const payByStu = groupBy(payments, "student_id");
@@ -338,14 +345,25 @@ module.exports = function mountAdminPanel(app, deps) {
       // 여기서 목록을 넓혀도 트레이너 정산액은 종전과 바이트 단위로 같다. 그래서 스코프 필터는
       // trainers 산출 **뒤에** 적용한다(넓힌 목록이 정산에 새어 들어갈 여지 자체를 없앤다).
       const enrByStu = groupBy(enrollments, "student_id");
+      const crsByStu = groupBy(courses, "student_id");
       for (const x of computed) {
         const list = (enrByStu[x.student_id] || []).map((e) => ({
           id: e.id, trainer_id: e.trainer_id, games_total: e.games_total,
           started_on: e.started_on, status: e.status,
         }));
         x.enrollments = list;
-        // 담당 후보 = 학생 담당 + 등록 담당. 병행수강이면 2개 이상이 된다.
-        x.trainer_ids = [...new Set([x.trainer_id, ...list.map((e) => e.trainer_id)].filter((v) => v != null))];
+        // 강의는 회차(units_total)로만 실어 보낸다. games_total과 같은 배열에 섞거나
+        // 판수로 환산하지 않는다 — 계약총 판수에 회차가 더해지는 순간 잔여·차감이
+        // 조용히 어긋난다(오너 확정: 강의에 판수 개념을 도입하지 않는다).
+        const clist = (crsByStu[x.student_id] || []).map((c) => ({
+          id: c.id, trainer_id: c.trainer_id, level: c.level, scheme: c.scheme,
+          units_total: c.units_total, started_on: c.started_on, status: c.status,
+        }));
+        x.courses = clist;
+        // 담당 후보 = 학생 담당 + 레슨 등록 담당 + 강의 담당. 레슨(현태)·강의(무리)
+        // 병행이면 2개가 된다 — 이게 강의 학생이 오너 섹션에 뜨는 유일한 근거다.
+        x.trainer_ids = [...new Set([x.trainer_id, ...list.map((e) => e.trainer_id),
+                                     ...clist.map((c) => c.trainer_id)].filter((v) => v != null))];
         x.parallel = x.trainer_ids.length > 1;
       }
 
@@ -360,9 +378,10 @@ module.exports = function mountAdminPanel(app, deps) {
           .map((x) => {
             const mine = x.trainer_id === c.me.id;
             const own = x.enrollments.filter((e) => e.trainer_id === c.me.id);
-            if (mine) return { ...x, mine: true, enrollments: own };
+            const ownC = x.courses.filter((cc) => cc.trainer_id === c.me.id);
+            if (mine) return { ...x, mine: true, enrollments: own, courses: ownC };
             return {
-              ...x, mine: false, enrollments: own,
+              ...x, mine: false, enrollments: own, courses: ownC,
               paid_amount: null, paid_games: null, unit_price: null, payable: null,
               played: null, remain: null, new_played: null, base_new: null, bonus_new: null,
             };

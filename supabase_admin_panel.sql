@@ -503,6 +503,15 @@ alter table public.payments add column if not exists course_id bigint references
 create index if not exists idx_payments_course on public.payments (course_id)
   where course_id is not null;
 
+-- 17e) 담당 — 강의는 대개 오너 직강이지만, 담당이 데이터에 없으면 화면이 강의를
+--      어느 담당으로도 묶지 못한다. 실제로 8월 강의 결제 2건의 담당 근거는
+--      payments.memo의 '담당 무리' 문자열뿐이었다(§19 정희준 건과 같은 결함).
+--      nullable로 둔다 — 재구성분(status='reconstructed')은 담당 미상일 수 있고,
+--      NOT NULL로 조이면 그 행을 아예 넣지 못한다.
+alter table public.courses add column if not exists trainer_id bigint references public.staff(id);
+create index if not exists idx_courses_trainer on public.courses (trainer_id)
+  where trainer_id is not null;
+
 alter table public.courses           enable row level security;
 alter table public.course_sessions   enable row level security;
 alter table public.course_attendance enable row level security;
