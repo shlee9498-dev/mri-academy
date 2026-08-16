@@ -950,3 +950,28 @@ major: 날짜 `pip`이 색만으로 구분(비활성 1.91:1) · 선택된 날짜
 courses 2행 시드 → `payments.course_id` 귀속 → C2 패널의 `trainer_ids` 계산에 강의 담당 합류.
 무리는 `role='owner'`라 현재 담당 섹션이 만들어지지 않으므로, **직강 담당으로서 섹션에 포함**하는
 프론트 보정도 같이 필요하다(오너 화면은 전체를 보지만 "누구의 강의인지"는 섹션으로만 드러난다).
+
+### 9.3 확정 — 강의는 `courses` (오너 판정 2026-08-16)
+
+오너가 §9.1 판정을 승인했다. **강의 축 = `courses`**, 단위는 **회차(`units_total`)** 를 유지하며
+강의에 판수 개념을 도입하지 않는다. 구현은 아래 4단계를 한 PR로 묶었다.
+
+| 단계 | 대상 | 실행 주체 |
+|---|---|---|
+| ① `courses.trainer_id` 신설 | `supabase_admin_panel.sql` §17e · `server.js` `SCHEMA_OPTIONAL` | 코드=PR / DB=**오너(Level 0)** |
+| ② courses 2행 시드 | 허혜민(57)·김해주(10) 심화반 8회 · 담당 `staff.id=4`(무리) | **오너** — PII라 미커밋, SQL 채팅 발행 |
+| ③ `payments.course_id` 귀속 | #137(허혜민)·#142(김해주) | **오너** |
+| ④ 패널 담당 스코프 합류 | `admin-panel.js` `trainer_ids` · `staff-panel.html` `secList` | PR |
+
+**④의 경계** — `trainer_ids`는 표시·조회 스코프 전용이다. `computeTrainer`가 내부에서
+`x.trainer_id === st.id`로 재필터하므로 목록을 넓혀도 정산 산출은 바이트 단위로 같다(C2와 동일 논거).
+강의는 지급이 없으므로 `courses`는 정산 입력에 아예 들어가지 않는다.
+
+**오너 섹션이 생기는 조건** — `staff-panel.html`의 `secList`는 `role==='trainer'`만 섹션으로 만들어
+무리(`role='owner'`)에게는 섹션이 없었다. 이제 **실제 담당으로 등장한 staff**를 섹션에 추가한다.
+role이 아니라 데이터가 섹션을 만들므로, 강의가 없으면 오너 섹션도 생기지 않는다(현행과 동일).
+
+**degrade 경로** — ①의 DDL이 미실행이면 `courses` select가 400으로 떨어져 `[]`가 된다.
+그러면 `trainer_ids`에 강의 담당이 안 붙고 오너 섹션도 안 생겨 **현행 화면과 완전히 같다**.
+그래서 `courses.trainer_id`는 `SCHEMA_OPTIONAL`(warn) 등재다 — 자기점검에 오탐이 남아 있는 동안
+error를 더하면 신호가 묻힌다. **오너가 DDL 실행을 확인하면 `REQUIRED_SCHEMA.courses`로 승격한다.**
