@@ -61,6 +61,10 @@ section{margin-top:28px}
 .badge.ok{color:var(--green);border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.08)}
 .badge.sug{color:var(--ink-faint);border-color:var(--line)}
 .badge.remain{color:var(--blue);border-color:rgba(90,200,250,.3);background:rgba(90,200,250,.07)}
+/* 잔여 경고 — 2판 이하 골드, 0 이하 적색. 상태색이라 골드 글로우 규칙(화면당 1개)과 무관하다 */
+.badge.warn{color:var(--gold);border-color:var(--gold-soft);background:rgba(245,197,24,.08)}
+.badge.danger{color:var(--red);border-color:rgba(230,57,70,.35);background:rgba(230,57,70,.08)}
+.sid{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);margin-left:5px;font-weight:600}
 .scroll{overflow-x:auto}
 .stu{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:14px 15px;margin-bottom:10px}
 .stu .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -641,13 +645,19 @@ function stuCard(s){
   const paraBadge = s.parallel ? `<span class="badge">병행수강</span>` : "";
   // 강의는 판수·지급 축이 아니라서 '남은 N판'과 나란히 두면 오독된다. 뱃지로 축을 먼저 알린다.
   const lecBadge = (s.courses||[]).length ? `<span class="badge">강의</span>` : "";
+  // 내 등록이 없는데 화면에 떴다 = 세션만 진행한 경우다(주현성 사고의 반대편).
+  // 트레이너가 "내가 등록시킨 학생이 아니다"를 알 수 있어야 한다(오너 지시 2).
+  const foreign = (s.enrollments||[]).length ? "" : `<span class="badge warn">타 트레이너 등록</span>`;
   return `<div class="stu">
-    <div class="top"><span class="nm">${esc(s.name)}</span>${s.discord_nick?`<span class="muted">${esc(s.discord_nick)}</span>`:""}
-      ${paraBadge}${lecBadge}${mine?`<span class="badge remain">남은 ${s.remain}판</span>`:`<span class="badge">타 담당 · 내 등록분만</span>`}</div>
+    <div class="top"><span class="nm">${esc(s.name)}<span class="sid">#${s.student_id}</span></span>${s.discord_nick?`<span class="muted">${esc(s.discord_nick)}</span>`:""}
+      ${paraBadge}${lecBadge}${foreign}${leftCell(s)}${mine?``:`<span class="badge">타 담당 · 금액 비공개</span>`}</div>
     <div class="prog">
       ${enrChips(s)}
-      ${mine?`<span class="pill">진행 <b>${s.played}</b>판</span>
-      <span class="pill">결제 ${s.paid_games}판</span>
+      <!-- 판수·최근수업은 담당 여부와 무관하게 항상 노출한다(오너 지시 2). 학생 단위
+           총합이라 트레이너별로 쪼개지지 않고, 금액이 아니므로 가림 대상도 아니다. -->
+      <span class="pill">진행 <b>${s.games_used ?? 0}</b>/${s.games_granted ?? 0}판</span>
+      <span class="pill">최근수업 ${s.last_played ? esc(s.last_played) : "—"}</span>
+      ${mine?`<span class="pill">결제 ${s.paid_games}판</span>
       <span class="pill">신규 <b>${s.new_played}</b>판(7/20↑)</span>
       ${bonusPill}
       <span class="pill">지급예정 <b>${won(s.payable)}</b>원</span>
@@ -667,7 +677,22 @@ function addSession(id){
   if(!(games>0)) return toast("진행판수를 1 이상 입력하세요", true);
   const played_at = document.getElementById("sd_"+id).value || today();
   const memo = document.getElementById("sm_"+id).value;
+  if(!confirmLeft(id, games)) return;
   act(async ()=>{ await api("/api/admin/sessions","POST",{student_id:id,games,played_at,memo}); toast("판수 "+games+"판 기록됨"); });
+}
+
+// 잔여 0 이하 / 이번 입력으로 초과 시 확인(오너 지시 2). 두 입력 경로(트레이너 카드 ·
+// 오너 표의 판수 버튼)가 같은 판정을 쓰도록 한 곳에 둔다 — 경로마다 다르게 굴면
+// 그 차이가 다음 사고다(동명 확인을 봇과 맞춘 것과 같은 이유).
+function confirmLeft(id, games){
+  const s=(DATA.students||[]).find(x=>x.student_id===id);
+  if(!s) return true;
+  const left=Number(s.games_left);
+  if(!Number.isFinite(left) || (left>0 && games<=left)) return true;
+  const msg = left<=0
+    ? `${s.name} #${id}\n잔여 ${left}판 — 이미 소진된 상태입니다.\n그래도 ${games}판을 기록할까요?`
+    : `${s.name} #${id}\n잔여 ${left}판인데 ${games}판을 기록하면 ${left-games}판이 됩니다.\n계속할까요?`;
+  return confirm(msg);
 }
 
 // ── 사장(OWNER) 뷰 — C1: 페인 4개로 분리 렌더. 마크업·핸들러는 종전 그대로, 배치만 바뀌었다 ──
@@ -845,11 +870,24 @@ function trainerSections(S){
 }
 function stuTable(rows, tid, emptyMsg){
   return `<table class="tbl"><thead><tr>
-      <th>수강생</th><th>담당</th><th>등록·강의</th><th>결제</th><th>진행</th><th>남은</th><th>지급율</th><th>지급예정</th><th>기록/확정</th>
+      <th>수강생</th><th>담당</th><th>등록·강의</th><th>결제</th><th>진행/총</th><th>남은</th><th>최근수업</th><th>지급율</th><th>지급예정</th><th>기록/확정</th>
     </tr></thead><tbody>
-    ${ rows.length ? rows.map(s=>stuRow(s,tid)).join("") : `<tr><td colspan="9" class="empty">${esc(emptyMsg)}</td></tr>` }
+    ${ rows.length ? rows.map(s=>stuRow(s,tid)).join("") : `<tr><td colspan="10" class="empty">${esc(emptyMsg)}</td></tr>` }
     </tbody></table>`;
 }
+
+// 잔여 판수 — 2판 이하 경고, 0 이하는 별도 표시(오너 지시 2).
+// 판수는 학생 단위 총합이라 어느 트레이너 화면에서 보든 같은 값이다.
+function leftCell(s){
+  const n = Number(s.games_left);
+  if(!Number.isFinite(n)) return `<span class="muted">—</span>`;
+  if(n <= 0)  return `<span class="badge danger">소진 ${n}판</span>`;
+  if(n <= 2)  return `<span class="badge warn">${n}판</span>`;
+  return `<span class="badge remain">${n}판</span>`;
+}
+// 동명이인 가드(오너 지시 3) — students에 이름 유니크 제약이 없고 주현성(60)·김현성(61)이
+// 실제로 공존한다. 모든 수강생 표시에 id를 병기해 화면에서 구분되게 한다.
+function nameWithId(s){ return `${esc(s.name)}<span class="sid">#${s.student_id}</span>`; }
 // 섹션 담당(tid)이 주어지면 그 담당의 등록분만 칩으로 보여준다 — 병행수강이 섹션마다 다르게 표시된다.
 function ownerEnrCell(s, tid){
   const E = (s.enrollments||[]).filter(e=> tid===null ? true : e.trainer_id===tid);
@@ -866,11 +904,19 @@ function stuRow(s, tid){
   const para = s.parallel ? ` <span class="badge">병행</span>` : "";
   // 병행수강 학생은 담당 섹션마다 한 번씩 나오므로 id가 아니라 class+data-sid로 잡는다
   // (id를 쓰면 중복 id가 되고 getElementById가 첫 섹션만 집는다).
+  // 이 섹션 담당의 등록이 없는데 화면에 떴다 = 세션만 진행한 경우다. 트레이너가
+  // "내 등록분이 아니다"를 구분할 수 있어야 하므로 배지로 명시한다(오너 지시 2).
+  const secTid = tid===undefined ? null : tid;
+  const hasEnr = secTid===null ? true : (s.enrollments||[]).some(e=>e.trainer_id===secTid);
+  const foreign = hasEnr ? "" : ` <span class="badge warn">타 트레이너 등록</span>`;
   return `<tr class="srow" data-sid="${s.student_id}">
-    <td class="name">${esc(s.name)}${para}</td><td class="muted">${esc(tName)}</td>
-    <td>${ownerEnrCell(s, tid===undefined?null:tid)}</td>
+    <td class="name">${nameWithId(s)}${para}${foreign}</td><td class="muted">${esc(tName)}</td>
+    <td>${ownerEnrCell(s, secTid)}</td>
     <td class="muted">${won(s.paid_amount)}<span style="font-size:10px">/${s.paid_games}판</span></td>
-    <td>${s.played}판</td><td class="muted">${s.remain}</td><td>${rate}</td>
+    <td>${s.games_used ?? 0}<span class="muted" style="font-size:10px">/${s.games_granted ?? 0}판</span></td>
+    <td>${leftCell(s)}</td>
+    <td class="muted" style="font-size:10.5px;white-space:nowrap">${s.last_played ? esc(s.last_played) : "—"}</td>
+    <td>${rate}</td>
     <td class="pay">${won(s.payable)}</td>
     <td style="white-space:nowrap">
       <button class="btn sm" onclick="sessFor(${s.student_id},'${esc(s.name)}')">판수</button>
@@ -879,7 +925,16 @@ function stuRow(s, tid){
 }
 
 function trainerOpts(){ return `<option value="">미배정</option>`+STAFF.filter(s=>s.role==="trainer").map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join(""); }
-function studentOpts(){ return (DATA.students||[]).map(s=>`<option value="${s.student_id}">${esc(s.name)}</option>`).join(""); }
+// 수강생 선택 = 이 패널의 검색 지점이다(자유 검색창이 없다). 동명이 2건 이상이면
+// 항목마다 표시해 잘못 고르는 것을 막는다 — id 병기와 같은 목적이다(오너 지시 3).
+function studentOpts(){
+  const list=(DATA.students||[]);
+  const cnt={}; for(const s of list){ const k=String(s.name||"").trim(); cnt[k]=(cnt[k]||0)+1; }
+  return list.map(s=>{
+    const dup = cnt[String(s.name||"").trim()] > 1;
+    return `<option value="${s.student_id}">${esc(s.name)} #${s.student_id}${dup?" ⚠ 동명 주의":""}</option>`;
+  }).join("");
+}
 
 // ── 동명 확인 — 봇 `/수강생등록`(server.js)의 동명 확인과 판정·선택지를 일치시킨다.
 // 두 입력 경로가 다르게 굴면 그 차이 자체가 다음 사고다(메인 트랙 지시 2026-08-13).
@@ -954,8 +1009,10 @@ function confirmRate(id,name,suggest){
   act(async ()=>{ await api("/api/admin/students/"+id,"PATCH",{payout_rate_set:v}); toast(v===null?"확정 해제됨":name+" 지급율 "+Math.round(v*100)+"% 확정"); });
 }
 function sessFor(id,name){
-  const g=prompt(`${name} · 진행판수 추가`,"3"); if(g===null) return;
+  const g=prompt(`${name} #${id} · 진행판수 추가`,"3"); if(g===null) return;
   const games=parseInt(g); if(!(games>0)) return toast("1 이상 입력",true);
+  // 막지는 않는다 — 판수를 먼저 진행하고 결제가 뒤늦게 들어오는 순서가 실재한다.
+  if(!confirmLeft(id, games)) return;
   act(async ()=>{ await api("/api/admin/sessions","POST",{student_id:id,games,played_at:today()}); toast(name+" "+games+"판 기록"); });
 }
 function payoutFor(staff_id,name,gross){
