@@ -73,7 +73,7 @@ DB `payments`는 백진환을 **07-25 · 120,000 한 행으로 상계**해 갖�
 
 | 필드 | 값 | 근거 |
 |---|---|---|
-| `amount` | 음수(통장 출금액) | 통장 1줄 = 1행 |
+| `amount` | 음수(통장 출금액) | 통장 1줄 = 묶음 1개 — 환불은 단일 귀속이라 1행·`deposit_ref` null |
 | `games` | **0 고정** | 수량 정본은 등록의 `games_total`. consult 3건 실측 관례와 동일 |
 | `payout_rate` | **0 고정** | 환불은 지급 계산 비참여(아래). 0이면 어떤 Σ(payments×rate) 집계도 환수를 만들지 않는다 |
 | `kind` | 원결제의 kind | '무엇의 환불인지'. 별도 kind 신설 없음 |
@@ -222,6 +222,35 @@ DB `payments`는 백진환을 **07-25 · 120,000 한 행으로 상계**해 갖�
 select conname, pg_get_constraintdef(oid) from pg_constraint
  where conrelid='public.payments'::regclass and contype='c';
 ```
+
+#### 묶음(`deposit_ref`) 검산 3종 — 세트 판매분 (2026-08-17 추가)
+
+세트 1건 = `payments` 2행이라(`lecture-data-model.md` §9.5) **행 단위 대조가 통장과 어긋난다.**
+대조 단위를 묶음으로 내린다. "한 묶음 = 정확히 2행 · 귀속 1+1"은 행 간 조건이라 CHECK로 막을 수
+없으므로 — **이 쿼리가 유일한 감지 수단이다.**
+
+```sql
+-- ① 통장 대조: 통장 1줄 = deposit_ref 1개. 단일 결제는 'P'||id로 자기 자신이 한 묶음.
+--    ⚠️ amount(총액)로 한다 — net_amount 합은 채널 수수료가 행마다 반올림돼 통장 순입금과
+--    최대 ±1원 어긋난다(groble 4.84% 실측 스윕).
+select coalesce(deposit_ref, 'P'||id) as ref, count(*) as rows, sum(amount) as amount
+  from public.payments group by 1 order by 3 desc;
+
+-- ② 반쪽 묶음 — deposit_ref가 있는데 2행이 아니다. **0건이어야 정상.**
+select deposit_ref, count(*) from public.payments
+ where deposit_ref is not null group by 1 having count(*) <> 2;
+
+-- ③ 귀속 짝 — 한 묶음은 강의행 1 + 레슨행 1. **0건이어야 정상.**
+select deposit_ref,
+       count(*) filter (where course_id is not null)            as 강의행,
+       count(*) filter (where lesson_enrollment_id is not null) as 레슨행
+  from public.payments where deposit_ref is not null group by 1
+ having count(*) filter (where course_id is not null) <> 1
+     or count(*) filter (where lesson_enrollment_id is not null) <> 1;
+```
+
+현재 실측(2026-08-17): `deposit_ref` 사용 행 **0** · `kind='set'` 행 **0** — 세트 실판매 전이라
+①만 기존 130행을 `'P'||id`로 그대로 훑고 ②③은 0건이다.
 
 ### 8.3 개시잔액 행은 세션이 아니다 (2026-08-15 실측 · 백필 규칙 확정)
 
