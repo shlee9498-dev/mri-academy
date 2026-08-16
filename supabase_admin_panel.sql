@@ -746,5 +746,26 @@ alter table public.payments add column if not exists deposit_ref text;
 create index if not exists idx_payments_deposit_ref on public.payments (deposit_ref)
   where deposit_ref is not null;
 
+-- 19g) payouts 금액 불변식 (2026-08-17 관제탑 지시). ⚠️ 미실행 · 오너 직접 실행 대기.
+--      컷오버(9/3) 전 제약 추가 대상.
+--
+--      payouts는 net = gross − withholding 이어야 하는데 이를 강제하는 CHECK가 없다.
+--      발견 경위: 준구 오귀속 정정 행 초안이 gross=0 · withholding=0 · net=1,550 으로
+--      짜였고(회수 예정액을 net에만 적었다) DB가 이를 그대로 받는다는 것이 확인됐다.
+--
+--      ⚠️ 이 형태는 조용히 틀린다 — 정산 엔진의 기지급 누적은 **gross만** 합산한다
+--      (admin-panel.js:280 `sum(payouts.filter(…), p => p.gross)`). net에만 적힌 금액은
+--      엔진이 영영 읽지 않으므로 "다음 달에 차감된다"가 성립하지 않는다.
+--      제약은 그 오기입을 INSERT 시점에 막는다.
+--
+--      기존 10행은 전부 이 조건을 만족한다(2026-08-17 실측 10/10) → 무중단 추가 가능.
+--      not valid 없이 바로 붙여도 검증이 통과한다.
+--
+--      환불·회수처럼 음수 지급이 필요하면 gross를 음수로 적는다 — net에만 적지 않는다.
+--      (gross·net의 부호 제약은 두지 않는다. 역행 행이 정당한 경로다.)
+alter table public.payouts drop constraint if exists chk_payouts_net_identity;
+alter table public.payouts add  constraint chk_payouts_net_identity
+  check (net = gross - withholding);
+
 alter table public.lesson_enrollments enable row level security;   -- service_role만 통과
 alter table public.settlements        enable row level security;   -- service_role만 통과
