@@ -347,7 +347,13 @@ function renderStats(){
     const urTxt=urBits.length?` (${urBits.join(" · ")})`:"";
     const nick=(r.nickChanges||[]).length ? (r.nickChanges||[]).map(n=>`<div class="srow"><b>${esc(n.student)}</b> · <span class="muted">${esc(n.from)} → </span><span style="color:var(--gold)">${esc(n.to)}</span></div>`).join("") : "";
     const inv=(r.needsInvestigation||[]).length ? (r.needsInvestigation||[]).map(i=>`<div class="srow"><b>${esc(i.student)}</b> · <span class="muted">${esc(i.reason)}</span></div>`).join("") : "";
-    body=`<div class="pill">마스터+ 달성률 <b>${r.masterRate}%</b> (${r.masterCount}/${rated})</div>${r.unlinked?` <span class="muted">· 미연결 ${r.unlinked}명${esc(urTxt)}</span>`:""}
+    // 달성률은 **연동 학생 표본률**이다. 분모를 뱃지 안에 박아 두지 않으면 전체 지표로 읽힌다
+    // (실측 13/68 = 19% 표본). 사이트·홍보 사용 금지 표기도 화면에 남긴다 — 수치만 옮겨 가는 걸 막는 건
+    // 코드가 아니라 이 문구뿐이다.
+    const ua = Number(r.unlinkedActive||0);
+    body=`<div class="pill">마스터+ 달성률 <b>${r.masterRate}%</b> (${r.masterCount}/${rated}) · 연동 ${rated}명 기준</div>${r.unlinked?` <span class="muted">· 전체 미연결 ${r.unlinked}명${esc(urTxt)}</span>`:""}
+      <div class="muted" style="margin-top:5px;font-size:11px">사내 전용 지표 — 연동 학생만의 표본률이라 사이트·홍보에 쓰지 않습니다.</div>
+      ${ua?`<div style="margin-top:8px"><span class="badge warn">미연동 active ${ua}명</span> <span class="muted" style="font-size:11px">← 실제 조치 대상(수료·중지 제외)</span></div>`:""}
       <div style="margin-top:11px;font-size:12.5px;font-weight:700">승급 후보 (미등록 마스터+)</div>${cand}`
       +(nick?`<div style="margin-top:11px;font-size:12.5px;font-weight:700">🔄 닉변 감지 (이력 기록됨)</div>${nick}`:"")
       +(inv?`<div style="margin-top:11px;font-size:12.5px;font-weight:700">🔍 수동 조사 필요 (dak.gg)</div>${inv}`:"");
@@ -363,7 +369,7 @@ async function runStats(){
   catch(e){ toast(e.message==="already_running"?"이미 실행 중":(e.message||"오류"), true); }
   pollStats();
 }
-function pollStats(){ clearInterval(_sti); _sti=setInterval(async()=>{ try{ SST=await api("/api/admin/stats/report"); renderStats(); if(!SST.running){ clearInterval(_sti); if(SST.finishedAt) toast("전적 스냅샷 완료 · 마스터+ "+SST.masterRate+"%"); } }catch(e){} }, 5000); }
+function pollStats(){ clearInterval(_sti); _sti=setInterval(async()=>{ try{ SST=await api("/api/admin/stats/report"); renderStats(); if(!SST.running){ clearInterval(_sti); if(SST.finishedAt) toast("전적 스냅샷 완료 · 마스터+ "+SST.masterRate+"% (연동 "+(SST.masterBasis??"?")+"명 기준)"); } }catch(e){} }, 5000); }
 
 // ── 📈 BPI 분포 (경쟁전 임계값 재보정용) ──────────────────────────
 // PUBG 10 RPM 때문에 오너가 닉을 하나씩 조회할 수 없다. 서버가 닉당 7초 페이싱으로
@@ -650,7 +656,7 @@ function stuCard(s){
   const foreign = (s.enrollments||[]).length ? "" : `<span class="badge warn">타 트레이너 등록</span>`;
   return `<div class="stu">
     <div class="top"><span class="nm">${esc(s.name)}<span class="sid">#${s.student_id}</span></span>${s.discord_nick?`<span class="muted">${esc(s.discord_nick)}</span>`:""}
-      ${paraBadge}${lecBadge}${foreign}${leftCell(s)}${mine?``:`<span class="badge">타 담당 · 금액 비공개</span>`}</div>
+      ${paraBadge}${lecBadge}${foreign}${pubgBadge(s)}${leftCell(s)}${mine?``:`<span class="badge">타 담당 · 금액 비공개</span>`}</div>
     <div class="prog">
       ${enrChips(s)}
       <!-- 판수·최근수업은 담당 여부와 무관하게 항상 노출한다(오너 지시 2). 학생 단위
@@ -679,6 +685,39 @@ function addSession(id){
   const memo = document.getElementById("sm_"+id).value;
   if(!confirmLeft(id, games)) return;
   act(async ()=>{ await api("/api/admin/sessions","POST",{student_id:id,games,played_at,memo}); toast("판수 "+games+"판 기록됨"); });
+}
+
+// ── PUBG 연동 배지 (관제탑 8/18 지시 1-3) ────────────────────────────
+// active 45명 중 연동은 8명뿐이라 전적 추적이 사실상 멈춰 있다. 배지만 달면 "알아도 못 고치는"
+// 화면이 되므로 미연동은 **클릭 = 요청 문구 복사**까지 한 동작으로 붙인다.
+// 판정은 서버가 내려준 pubg_linked만 쓴다 — 화면에서 다시 계산하면 스냅샷 대상 판정과 어긋난다.
+function pubgBadge(s){
+  if(s.pubg_linked) return `<span class="badge ok" title="${esc(s.pubg_name||"")}">PUBG 연동</span>`;
+  return `<span class="badge warn" role="button" tabindex="0" style="cursor:pointer"
+    title="클릭하면 연동 요청 문구가 복사됩니다"
+    onclick="copyLinkReq(${s.student_id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();copyLinkReq(${s.student_id});}">PUBG 미연동 · 문구복사</span>`;
+}
+function copyLinkReq(id){
+  const s=(DATA.students||[]).find(x=>x.student_id===id); if(!s) return;
+  const txt = `${s.name}님, 성장 기록(전적 추적)을 위해 PUBG 계정 연동이 필요합니다.\n`
+    + `아래 두 가지만 알려주시면 됩니다.\n`
+    + `1) 인게임 닉네임 (대소문자까지 정확히)\n`
+    + `2) 플랫폼 (스팀 / 카카오)\n\n`
+    + `연동하면 티어·평균 딜량 변화가 자동으로 기록돼서 수업 전후 비교가 남습니다.`;
+  copyText(txt, ()=>toast(s.name+" 연동 요청 문구 복사됨"));
+}
+// 복사 헬퍼 — https가 아니거나 권한이 없으면 navigator.clipboard가 없다(apply.html과 같은 폴백).
+function copyText(text, done){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text, done));
+  } else fallbackCopy(text, done);
+}
+function fallbackCopy(text, done){
+  const ta=document.createElement("textarea");
+  ta.value=text; ta.setAttribute("readonly",""); ta.style.position="fixed"; ta.style.opacity="0";
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand("copy"); done && done(); }catch(e){ toast("복사 실패 — 직접 선택해 주세요", true); }
+  document.body.removeChild(ta);
 }
 
 // 잔여 0 이하 / 이번 입력으로 초과 시 확인(오너 지시 2). 두 입력 경로(트레이너 카드 ·
@@ -910,7 +949,7 @@ function stuRow(s, tid){
   const hasEnr = secTid===null ? true : (s.enrollments||[]).some(e=>e.trainer_id===secTid);
   const foreign = hasEnr ? "" : ` <span class="badge warn">타 트레이너 등록</span>`;
   return `<tr class="srow" data-sid="${s.student_id}">
-    <td class="name">${nameWithId(s)}${para}${foreign}</td><td class="muted">${esc(tName)}</td>
+    <td class="name">${nameWithId(s)}${para}${foreign} ${pubgBadge(s)}</td><td class="muted">${esc(tName)}</td>
     <td>${ownerEnrCell(s, secTid)}</td>
     <td class="muted">${won(s.paid_amount)}<span style="font-size:10px">/${s.paid_games}판</span></td>
     <td>${s.games_used ?? 0}<span class="muted" style="font-size:10px">/${s.games_granted ?? 0}판</span></td>
