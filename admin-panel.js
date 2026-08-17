@@ -352,7 +352,9 @@ module.exports = function mountAdminPanel(app, deps) {
         // trainer_id는 **세션 담당**이다 — 로스터 포함 기준(등록 담당 OR 세션 담당)의 절반이
         // 여기서 나온다. 정산 엔진은 이 필드를 읽지 않으므로(computeStudent는 games·played_at·
         // settled_period만 본다) 추가해도 산출값은 바이트 단위로 같다.
-        sbSelect("lesson_sessions", "select=student_id,trainer_id,games,played_at,settled_period,settled_rate,lesson_enrollment_id")
+        // created_by는 개시잔액(시트 이관 스냅) 판별용이다 — 7/19 한 날짜에 54행이 몰려 있어
+        // 그대로 두면 전원의 "최근수업"이 이관일로 찍힌다(관제탑 8/18 지시 5-3).
+        sbSelect("lesson_sessions", "select=student_id,trainer_id,games,played_at,settled_period,settled_rate,lesson_enrollment_id,created_by")
           .catch(() => sbSelect("lesson_sessions", "select=student_id,trainer_id,games,played_at,settled_period,settled_rate")),
         sbSelect("payouts", "select=*"),
         sbSelect("staff", "select=*&order=id.asc"),
@@ -452,7 +454,14 @@ module.exports = function mountAdminPanel(app, deps) {
         bonusByStu[e.student_id]    = (bonusByStu[e.student_id]    || 0) + Number(e.bonus_games || 0);
       }
       for (const s of sessions) {
+        // 차감(진행판수)에는 개시잔액이 **반드시** 들어간다 — 그게 이관 시점까지의 진행분이다.
         usedByStu[s.student_id] = (usedByStu[s.student_id] || 0) + Number(s.games || 0);
+        // 최근수업만 개시잔액을 뺀다. 그 행의 played_at은 수업일이 아니라 **이관일**(2026-07-19)이라
+        // 김해주·박성민·이희훈처럼 실세션이 없는 학생까지 "7/19에 수업함"으로 보인다.
+        // 판별은 created_by='seed' — 실측상 seed 54행이 전부 7/19이고 7/19에 비-seed 행은 0이라
+        // 정확히 갈린다. 날짜+판수 휴리스틱은 못 쓴다(seed 최소 판수가 5라 소량 행을 놓친다).
+        // created_by가 없는 축소 select로 떨어진 환경에서는 undefined라 종전대로 동작한다.
+        if (s.created_by === "seed") continue;
         const d = String(s.played_at || "");
         if (d && (!lastPlayedByStu[s.student_id] || d > lastPlayedByStu[s.student_id]))
           lastPlayedByStu[s.student_id] = d;
@@ -514,6 +523,12 @@ module.exports = function mountAdminPanel(app, deps) {
         x.games_left    = carryRaw + granted - used;
         x.last_played   = lastPlayedByStu[x.student_id] || null;
         x.has_session   = (sessByStu[x.student_id] || []).length > 0;
+        // PUBG 연동 상태(관제탑 8/18 지시 1-3). 판정식은 server.js runStatsSnapshot의
+        // isLinked와 **글자 단위로 같아야 한다** — 패널이 "연동됨"이라 표시한 학생이
+        // 스냅샷 대상에서 빠지면 배지가 거짓말이 된다.
+        const sRow = stuById[x.student_id] || {};
+        x.pubg_linked = !!(sRow.pubg_platform && (sRow.pubg_account_id || sRow.pubg_name));
+        x.pubg_name   = sRow.pubg_name || null;
       }
 
       const trainers = staff.filter((s) => s.role === "trainer")

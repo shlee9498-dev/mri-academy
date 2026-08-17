@@ -252,6 +252,27 @@ select deposit_ref,
 현재 실측(2026-08-17): `deposit_ref` 사용 행 **0** · `kind='set'` 행 **0** — 세트 실판매 전이라
 ①만 기존 130행을 `'P'||id`로 그대로 훑고 ②③은 0건이다.
 
+#### ④ 빈 학생 행 — 등록·결제가 **둘 다** 0인 active 학생 (2026-08-18 추가)
+
+```sql
+select s.id, s.name, s.trainer_id, s.created_at
+  from public.students s
+ where s.status = 'active'
+   and not exists (select 1 from public.lesson_enrollments e where e.student_id = s.id)
+   and not exists (select 1 from public.payments p           where p.student_id = s.id)
+   and not exists (select 1 from public.courses c            where c.student_id = s.id)
+ order by s.created_at;
+```
+
+박지훈(#76)이 5일간 이 상태로 조용히 있었다(`docs/data-integrity-2026-08-18.md` §6).
+학생 행만 만들어 두고 결제·등록 시드가 보류되면 **어느 화면에도 이상으로 뜨지 않는다** —
+패널에서는 「미배정」 섹션의 정상 행처럼 보이고, 잔여 알림은 등록이 없어 대상에서 빠진다.
+상담만 받고 아직 등록 전인 학생도 여기 걸리므로 **0건이 정답은 아니다** — 목록을 보고
+"보류 중인 건이 맞는지"를 확인하는 용도다.
+
+실측(2026-08-18) **2건**: 하홍진 #72(8/01 · 17일째) · 박지훈 #76(8/13 · 5일째). 둘 다 담당 5.
+STATE.md에 「미배정 섹션으로 간다」로만 적혀 있던 두 명이 **같은 형태**였다는 게 이 쿼리로 드러난다.
+
 ### 8.3 개시잔액 행은 세션이 아니다 (2026-08-15 실측 · 백필 규칙 확정)
 
 `lesson_sessions`에는 성격이 다른 두 종류가 섞여 있다. 백필(D3)의 귀속 규칙이 여기서 갈린다.

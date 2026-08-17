@@ -1900,6 +1900,53 @@ if (process.env.DISCORD_TOKEN) {
     } catch (e) { console.error("payreq_notify", e?.message); }
   });
 
+  // ── 승급 DM 액션 버튼 (트레이너 DM · 관제탑 8/18 지시 2) ───────────────────
+  // 문구 "복사" 버튼 — 디스코드에는 클립보드 API가 없다. 코드블록으로 ephemeral 회신하면
+  // 모바일·데스크톱 모두 한 번 탭으로 복사된다(가장 가까운 구현).
+  // 상태는 DB가 들고 있어 재기동을 넘긴다 — customId에는 student_id만 싣는다(payreq와 같은 이유).
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isButton()) return;
+    const m = itx.customId.match(/^promo_(congrats|review|case):(\d+)$/);
+    if (!m) return;
+    const sid = Number(m[2]);
+    if (!hasSupabase()) return itx.reply({ content: "DB 연동 준비 전이야.", ephemeral: true });
+    let stu = null, snap = null;
+    try {
+      stu = (await sbSelect("students", `select=id,name,trainer_id&id=eq.${sid}&limit=1`))[0] || null;
+      snap = (await sbSelect("student_snapshots",
+        `select=tier,sub_tier,best_rank_point,created_at&student_id=eq.${sid}&snapshot_type=eq.tracking&order=created_at.desc&limit=1`))[0] || null;
+    } catch (e) { console.error("promo_btn_fetch", e?.message); }
+    if (!stu) return itx.reply({ content: `#${sid} 학생을 못 찾았어(명부 확인 필요).`, ephemeral: true });
+    const tier = snap ? tierLabel(snap.tier, snap.sub_tier, snap.best_rank_point) : "현재 티어";
+    if (m[1] === "case") {
+      // graduations 등재는 **트레이너 지급율 래칫에 직접 반영**된다(0.65 + floor(Σweight/5)×0.01).
+      // 그래서 신청만 오너에게 넘기고 자동 삽입하지 않는다 — 영구 Level 0(정산).
+      let ok = false;
+      try {
+        if (process.env.MRI_OWNER_ID) {
+          const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+          await owner.send(`🗂️ **케이스 등재 신청** — ${stu.name} #${stu.id}\n`
+            + `· 신청: ${TRAINER_MAP[itx.user.id] || itx.user.username}\n· 티어: ${tier}\n`
+            + `· 신청 시각: ${kstNow().date} ${kstNow().hm} (KST)\n`
+            + `※ \`graduations\` 등재는 지급율 래칫에 반영되므로 자동 삽입하지 않았습니다 — 오너가 직접 실행하세요.`);
+          ok = true;
+        }
+      } catch (e) { console.error("promo_case_dm", e?.message); }
+      return itx.reply({ content: ok
+        ? `✅ 케이스 등재 신청을 오너에게 보냈어 — ${stu.name} #${stu.id} · ${tier}\n등재 여부는 오너가 판단해(자동 등재 아님).`
+        : `⚠️ 오너 DM 발송에 실패했어. ${stu.name} #${stu.id} · ${tier} 로 직접 전달해줘.`, ephemeral: true });
+    }
+    const text = m[1] === "congrats"
+      ? `${stu.name}님, ${tier} 달성 축하드립니다! 🎉\n`
+        + `수업에서 짚었던 부분이 그대로 전적에 나왔습니다.\n`
+        + `다음 구간도 같은 방식으로 잡아드릴게요.`
+      : `${stu.name}님, ${tier} 달성 축하드립니다!\n`
+        + `괜찮으시면 이번 성장 과정에 대한 짧은 후기를 남겨주실 수 있을까요?\n`
+        + `· 수업 전 가장 답답했던 점\n· 수업 후 달라진 점 한 가지\n`
+        + `두세 줄이면 충분합니다. 남겨주신 후기는 동의하신 범위 안에서만 사용합니다.`;
+    return itx.reply({ content: `📋 ${m[1] === "congrats" ? "축하" : "후기 요청"} 문구 — 아래를 탭하면 복사돼:\n\`\`\`\n${text}\n\`\`\``, ephemeral: true });
+  });
+
   // ── /등록계현황 : [오너 DM] 시즌 등록 현황·미등록자(역할 G/M/I 대비)·중복 account_id 감지 ──
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand() || itx.commandName !== "등록계현황") return;
@@ -5231,13 +5278,50 @@ async function pubgNameByAccount(platform, accountId) {
   const d = await pubgGet(`/shards/${platform}/players/${accountId}`, 1800000);
   return d?.data?.attributes?.name || null;
 }
-let statsRun = { running: false, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], nickChanges: [], needsInvestigation: [], promotions: [], masterRate: null, masterCount: null, startedAt: null, finishedAt: null, error: null };
+// ── 승급 DM 수신자 해석 (관제탑 8/18 지시 2·4-6) ────────────────────────────
+// 정본은 **세션 담당**이다. students.trainer_id로 보내면 장익교 승급 DM이 현태에게 가는데
+// 35판을 진행한 건 준구다(§4.6 `docs/settlement-session-basis.md`). 통지는 금액을 만들지
+// 않으므로 정산 전환(S4)을 기다리지 않고 먼저 세션 기준을 쓴다.
+//   1) 최근 90일 실세션 최다 진행 → 2) 동률이면 최근 세션 → 3) 등록 담당 → 4) 학생 담당
+// 개시잔액(created_by='seed')은 제외한다 — 54행이 7/19 하루에 몰려 있어 "최다"를 왜곡한다.
+const PROMO_WINDOW_DAYS = 90;
+function resolvePromoTrainer(sid, sessions, enrollments, stuRow) {
+  const cut = new Date(Date.now() - PROMO_WINDOW_DAYS * 86400000).toISOString().slice(0, 10);
+  const mine = sessions.filter((s) => s.student_id === sid && s.trainer_id != null
+    && s.created_by !== "seed" && String(s.played_at || "") >= cut);
+  if (mine.length) {
+    const gamesBy = {}, lastBy = {};
+    for (const s of mine) {
+      gamesBy[s.trainer_id] = (gamesBy[s.trainer_id] || 0) + Number(s.games || 0);
+      const d = String(s.played_at || "");
+      if (!lastBy[s.trainer_id] || d > lastBy[s.trainer_id]) lastBy[s.trainer_id] = d;
+    }
+    let best = null;
+    for (const tid of Object.keys(gamesBy)) {
+      const cand = { trainer_id: Number(tid), games: gamesBy[tid], last: lastBy[tid] };
+      if (!best || cand.games > best.games || (cand.games === best.games && cand.last > best.last)) best = cand;
+    }
+    if (best) return { trainer_id: best.trainer_id, basis: `최근 ${PROMO_WINDOW_DAYS}일 세션 ${best.games}판` };
+  }
+  const enr = enrollments.filter((e) => e.student_id === sid && e.trainer_id != null)
+    .sort((a, b) => String(b.started_on || "").localeCompare(String(a.started_on || "")))[0];
+  if (enr) return { trainer_id: enr.trainer_id, basis: "등록 담당(실세션 없음)" };
+  return { trainer_id: stuRow?.trainer_id ?? null, basis: "학생 담당(폴백)" };
+}
+
+// ⚠️ masterRate는 **연동 학생만의 표본률**이지 전체 지표가 아니다(2026-08-18 관제탑 지시 1).
+// 실측 기준: students 68 · 연동 13 · active 45 중 연동 8. 즉 분모 13은 전체의 19%다.
+// 이 수치를 사이트·홍보에 노출하면 표본 편향을 그대로 광고하는 셈이라 **내부 전용**이고,
+// 응답에 masterBasis/internalOnly를 함께 실어 소비처가 표본을 모르고 쓰는 경로를 막는다.
+// unlinkedActive는 별도 축이다 — unlinked(55)는 done·paused를 포함해 체감이 안 되고,
+// 실제 조치 대상은 active 미연동(37)뿐이다.
+let statsRun = { running: false, total: 0, done: 0, unlinked: 0, unlinkedActive: 0, unlinkedReasons: null, report: [], candidates: [], candidatesExcluded: 0, nickChanges: [], needsInvestigation: [], promotions: [], promotionsExcluded: 0, masterRate: null, masterCount: null, masterBasis: null, internalOnly: true, startedAt: null, finishedAt: null, error: null };
 async function runStatsSnapshot() {
-  statsRun = { running: true, total: 0, done: 0, unlinked: 0, unlinkedReasons: null, report: [], candidates: [], nickChanges: [], needsInvestigation: [], promotions: [], masterRate: null, masterCount: null, insertFails: 0, insertFailMsg: null, startedAt: Date.now(), finishedAt: null, error: null };
+  statsRun = { running: true, total: 0, done: 0, unlinked: 0, unlinkedActive: 0, unlinkedReasons: null, report: [], candidates: [], candidatesExcluded: 0, nickChanges: [], needsInvestigation: [], promotions: [], promotionsExcluded: 0, masterRate: null, masterCount: null, masterBasis: null, internalOnly: true, insertFails: 0, insertFailMsg: null, startedAt: Date.now(), finishedAt: null, error: null };
   try {
     // pubg 연결 학생은 status 무관 전원 조회 — 수료생(마스터 배출자)이 달성률·PROOF의 핵심이라 제외 금지
     const students = await sbSelect("students", "select=id,name,trainer_id,status,pubg_platform,pubg_name,pubg_account_id&order=name.asc");
-    const staff = await sbSelect("staff", "select=id,name");
+    const staff = await sbSelect("staff", "select=id,name,discord_id");   // discord_id = 승급 DM 수신자(지시 2)
     const nameOf = {}; staff.forEach((s) => { nameOf[s.id] = s.name; });
     const grads = await sbSelect("graduations", "select=student_name,student_id");
     const gset = new Set();
@@ -5249,15 +5333,22 @@ async function runStatsSnapshot() {
       accts.forEach((a) => { curNameOf[a.student_id] = a.pubg_name; });
     } catch (e) { console.error("stacc_load", e?.message); }
     // 승급 감지 기준값 — 학생별 직전 tracking 스냅샷 tier_index (최신 1건)
-    const prevIdxOf = {};
+    const prevIdxOf = {}, prevRowOf = {};
     try {
-      const prevSnaps = await sbSelect("student_snapshots", "select=student_id,tier_index,created_at&snapshot_type=eq.tracking&order=created_at.desc");
-      prevSnaps.forEach((r) => { if (r.student_id != null && prevIdxOf[r.student_id] === undefined) prevIdxOf[r.student_id] = r.tier_index; });
+      const prevSnaps = await sbSelect("student_snapshots", "select=student_id,tier_index,tier,sub_tier,best_rank_point,created_at&snapshot_type=eq.tracking&order=created_at.desc");
+      prevSnaps.forEach((r) => {
+        if (r.student_id != null && prevIdxOf[r.student_id] === undefined) {
+          prevIdxOf[r.student_id] = r.tier_index;
+          prevRowOf[r.student_id] = r;                              // 이전 티어 **라벨**용 — DM에 "무엇에서" 올랐는지 없으면 승급이 사실로 안 읽힌다
+        }
+      });
     } catch (e) { console.error("prev_snap_load", e?.message); }
     const isLinked = (s) => s.pubg_platform && (s.pubg_account_id || s.pubg_name);
     const linked = students.filter(isLinked);
     const unlinkedList = students.filter((s) => !isLinked(s));
     statsRun.total = linked.length; statsRun.unlinked = unlinkedList.length;
+    // 조치 대상은 active 미연동뿐이다 — 전체 미연결에는 수료·중지가 섞여 체감이 안 된다.
+    statsRun.unlinkedActive = unlinkedList.filter((s) => s.status === "active").length;
     statsRun.unlinkedReasons = {                                    // 왜 대상에서 빠졌나(화면 표시용)
       no_platform: unlinkedList.filter((s) => !s.pubg_platform).length,               // 플랫폼(steam/kakao) 미시드
       no_name_no_id: unlinkedList.filter((s) => s.pubg_platform && !s.pubg_account_id && !s.pubg_name).length, // 플랫폼O·닉/accountId 없음
@@ -5313,14 +5404,24 @@ async function runStatsSnapshot() {
         const provisional = snap.tierIdx >= 8;                              // 서바이버=실시간 상위등수 구간(시즌중 미확정), 마스터=달성시 확정
         const candLabel = provisional ? "서바이버 구간 진입 (시즌 중 — 확정 아님)" : snap.tierLabel;
         const registered = gset.has("id:" + s.id) || gset.has("nm:" + String(s.name || "").trim());
-        const row = { student: s.name, trainer: nameOf[s.trainer_id] || null, status: s.status, tier: snap.tierLabel, cand_label: candLabel, provisional, best_rank_point: snap.bestRP, avg_damage: snap.avgDamage, master_plus: masterPlus, registered };
+        const row = { student_id: s.id, student: s.name, trainer: nameOf[s.trainer_id] || null, status: s.status, tier: snap.tierLabel, cand_label: candLabel, provisional, best_rank_point: snap.bestRP, avg_damage: snap.avgDamage, master_plus: masterPlus, registered };
         statsRun.report.push(row);
-        if (masterPlus && !registered) statsRun.candidates.push(row);
-        // 승급 감지 (직전 스냅샷 대비 신규 크로싱) — 오너 DM 전용. 이전 스냅샷 없으면 스킵(최초=베이스라인).
+        // ⚠️ report(=달성률·PROOF)에는 수료생을 남긴다 — 마스터 배출 사례가 거기서 나온다.
+        // 그러나 **승급 후보·승급 DM은 진행 중인 학생만**이다(관제탑 8/18 지시 2).
+        // 박성민(#25)이 status='done'인데 후보로 떠서 나온 지시다. 두 축이 다른 목록이라
+        // 같은 필터를 쓰면 어느 한쪽이 반드시 틀린다.
+        const liveStu = s.status !== "done" && s.status !== "paused";
+        if (masterPlus && !registered) { if (liveStu) statsRun.candidates.push(row); else statsRun.candidatesExcluded++; }
+        // 승급 감지 (직전 스냅샷 대비 신규 크로싱). 이전 스냅샷 없으면 스킵(최초=베이스라인).
         const prevIdx = prevIdxOf[s.id];
         if (prevIdx != null) {
-          if (prevIdx < 8 && snap.tierIdx >= 8) statsRun.promotions.push({ student: s.name, trainer: nameOf[s.trainer_id] || null, tier: "서바이버", provisional: true });
-          else if (prevIdx < 7 && snap.tierIdx >= 7) statsRun.promotions.push({ student: s.name, trainer: nameOf[s.trainer_id] || null, tier: "마스터", provisional: false });
+          const pr = prevRowOf[s.id];
+          const prevLabel = pr ? tierLabel(pr.tier, pr.sub_tier, pr.best_rank_point) : "이전 미상";
+          const base = { student_id: s.id, student: s.name, trainer: nameOf[s.trainer_id] || null, prev_tier: prevLabel, cur_tier: snap.tierLabel };
+          // 서바이버는 시즌 중 상위등수 구간이라 **확정이 아니다**. 확정 승급과 섞어 DM을 보내면
+          // 내려갔을 때 정정 비용이 생긴다 — 라벨과 필드를 분리한다(지시 2).
+          if (prevIdx < 8 && snap.tierIdx >= 8) { if (liveStu) statsRun.promotions.push({ ...base, tier: "서바이버", provisional: true }); else statsRun.promotionsExcluded++; }
+          else if (prevIdx < 7 && snap.tierIdx >= 7) { if (liveStu) statsRun.promotions.push({ ...base, tier: "마스터", provisional: false }); else statsRun.promotionsExcluded++; }
         }
         statsRun.done++;
         await sleepT(7000);                                                 // 10 RPM 보호(계정당 ~7s)
@@ -5334,6 +5435,59 @@ async function runStatsSnapshot() {
     const mp = rated.filter((r) => r.master_plus).length;
     statsRun.masterCount = mp;
     statsRun.masterRate = rated.length ? +((mp / rated.length) * 100).toFixed(1) : null;
+    statsRun.masterBasis = rated.length;                            // 분모를 값으로 실어 보낸다 — 표본을 모르고 쓰는 소비처를 막는 유일한 수단
+
+    // ── 승급 DM — 담당 트레이너에게 개별 발송 (관제탑 8/18 지시 2) ─────────────
+    // ⚠️ **수강생 DM은 지금 불가능하다** — students.discord_id가 68명 전원 NULL이다(실측).
+    // staff.discord_id는 3명 있으므로 트레이너 통지만 구현한다. 수강생 직접 통지는 본인 연결이
+    // 생긴 뒤 별건이고, 그때도 이 함수가 아니라 학생 연결 파이프라인이 주체다.
+    const promoDelivery = [];
+    if (statsRun.promotions.length && botClient) {
+      let psess = [], penr = [];
+      try {
+        psess = await sbSelect("lesson_sessions", "select=student_id,trainer_id,games,played_at,created_by");
+        penr  = await sbSelect("lesson_enrollments", "select=student_id,trainer_id,started_on").catch(() => []);
+      } catch (e) { console.error("promo_scope_load", e?.message); }
+      const staffById = {}; staff.forEach((t) => { staffById[t.id] = t; });
+      const stuRowById = {}; students.forEach((s) => { stuRowById[s.id] = s; });
+      const { date: kd, hm: kh } = kstNow();
+      for (const p of statsRun.promotions) {
+        const r = resolvePromoTrainer(p.student_id, psess, penr, stuRowById[p.student_id]);
+        const tr = r.trainer_id != null ? staffById[r.trainer_id] : null;
+        p.dm_trainer = tr?.name || null; p.dm_basis = r.basis;
+        if (!tr || !tr.discord_id) {
+          p.dm = "미발송";
+          promoDelivery.push(`· ${p.student} → ${tr?.name || "담당 미상"} ❌ 디코ID 없음`);
+          continue;
+        }
+        try {
+          const u = await botClient.users.fetch(tr.discord_id);
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`promo_congrats:${p.student_id}`).setLabel("🎉 축하 문구").setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId(`promo_review:${p.student_id}`).setLabel("✍️ 후기 요청 문구").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId(`promo_case:${p.student_id}`).setLabel("🗂️ 케이스 등재 신청").setStyle(ButtonStyle.Success),
+          );
+          await u.send({
+            content: `🆙 **${p.student}** #${p.student_id} 승급 감지\n`
+              + `· ${p.prev_tier} → **${p.cur_tier}**\n`
+              + `· 판정: ${p.provisional ? "⚡ 서바이버 구간 진입 — **시즌 중이라 확정이 아닙니다**(내려갈 수 있어요)" : "🎖️ 마스터 확정"}\n`
+              + `· 감지: ${kd} ${kh} (KST)\n`
+              + `· 수신 근거: ${r.basis}\n\n`
+              + (p.provisional
+                  ? `확정 안내는 마스터부터 하는 걸 권합니다 — 미확정 구간을 축하하면 내려갔을 때 정정 비용이 생깁니다.`
+                  : `아래 버튼으로 문구를 받아 학생에게 전달해줘.`),
+            components: [row],
+          });
+          p.dm = "발송";
+          promoDelivery.push(`· ${p.student} → ${tr.name} ✅ (${r.basis})`);
+        } catch (e) {
+          console.error("promo_dm", p.student, e?.message);
+          p.dm = "실패";
+          promoDelivery.push(`· ${p.student} → ${tr.name} ❌ ${e?.message || "DM 실패"}`);
+        }
+      }
+    }
+    statsRun.promoDelivery = promoDelivery;
     if (botClient && process.env.MRI_OWNER_ID) {
       try {
         const owner = await botClient.users.fetch(process.env.MRI_OWNER_ID);
@@ -5346,10 +5500,25 @@ async function runStatsSnapshot() {
         const invest = statsRun.needsInvestigation.length
           ? statsRun.needsInvestigation.map((i) => `· ${i.student} — ${i.reason}`).join("\n")
           : "없음";
+        // 확정(마스터)과 미확정(서바이버 구간)을 **섹션으로 갈라** 적는다 — 한 줄 안에서
+        // 아이콘으로만 구분하면 훑어볼 때 같은 등급으로 읽힌다(지시 2).
+        const fixed = statsRun.promotions.filter((p) => !p.provisional);
+        const prov  = statsRun.promotions.filter((p) => p.provisional);
+        const pLine = (p) => `· ${p.student} #${p.student_id} · ${p.prev_tier} → ${p.cur_tier}`
+          + ` · DM ${p.dm === "발송" ? `✅ ${p.dm_trainer}` : `❌ ${p.dm || "미발송"}${p.dm_trainer ? ` (${p.dm_trainer})` : ""}`}`;
         const promo = statsRun.promotions.length
-          ? statsRun.promotions.map((p) => `· ${p.student} (${p.trainer || "미배정"}) → ${p.provisional ? "⚡ 서바이버 구간 진입(시즌 중 미확정)" : "🎖️ 마스터 확정"}`).join("\n")
+          ? [fixed.length ? `🎖️ 확정(마스터+)\n${fixed.map(pLine).join("\n")}` : "",
+             prov.length ? `⚡ 서바이버 구간 진입 — 시즌 중·확정 아님\n${prov.map(pLine).join("\n")}` : ""].filter(Boolean).join("\n\n")
           : "없음";
-        await owner.send(`📊 전적 스냅샷 완료 — ${rated.length}명 조회 (미연결 ${statsRun.unlinked})${statsRun.insertFails ? `\n⚠️ DB 적재 실패 ${statsRun.insertFails}건 — ${statsRun.insertFailMsg}` : ""}\n마스터+ 달성률: **${statsRun.masterRate}%** (${mp}/${rated.length})\n\n🆙 승급 감지(직전 대비):\n${promo}\n\n승급 후보(미등록 마스터+):\n${cand}\n\n🔄 닉변 감지(이력 기록됨):\n${nick}\n\n🔍 수동 조사 필요(dak.gg):\n${invest}\n\n전체 리포트: GET /api/admin/stats/report`);
+        await owner.send(`📊 전적 스냅샷 완료 — 연동 ${rated.length}명 조회${statsRun.insertFails ? `\n⚠️ DB 적재 실패 ${statsRun.insertFails}건 — ${statsRun.insertFailMsg}` : ""}\n`
+          + `마스터+ 달성률: **${statsRun.masterRate}%** (${mp}/${rated.length}) — 연동 ${rated.length}명 기준\n`
+          + `　↳ 전체 지표가 아닙니다(사내 전용 · 사이트·홍보 사용 금지)\n`
+          + `🔗 미연동 active 학생 **${statsRun.unlinkedActive}명** ← 조치 대상 (전체 미연결 ${statsRun.unlinked}명 · 수료·중지 포함)\n\n`
+          + `🆙 승급 감지(직전 대비):\n${promo}`
+          + `${statsRun.promotionsExcluded ? `\n(수료·중지 ${statsRun.promotionsExcluded}명은 승급 판정에서 제외)` : ""}\n\n`
+          + `승급 후보(미등록 마스터+):\n${cand}`
+          + `${statsRun.candidatesExcluded ? `\n(수료·중지 ${statsRun.candidatesExcluded}명 제외 — 달성률 분자에는 그대로 남습니다)` : ""}\n\n`
+          + `🔄 닉변 감지(이력 기록됨):\n${nick}\n\n🔍 수동 조사 필요(dak.gg):\n${invest}\n\n전체 리포트: GET /api/admin/stats/report`);
       } catch (e) { console.error("stats_owner_dm", e?.message); }
     }
   } catch (e) { console.error("stats_batch", e?.message); statsRun.error = e?.message || "batch_error"; }
@@ -5637,29 +5806,136 @@ async function maybeRunDaily(key, hhmm, fn, label) {
 // Phase B Operation CI 숙주(현재는 스텁) — schema drift·Apps Script ping 대조·API smoke·env 존재가 여기 얹힘.
 // 실패 시 오너 DM, 성공 시 침묵. 지금은 no-op.
 async function runSelfCheck() { /* Phase B */ }
-// 직강 잔여회차 알림 — 강의일정 시트에서 잔여 조회(서버는 표시만, 계산 안 함). remain≤2만 오너 DM, 전원≥3=침묵.
-// 데이터 원천=시트(결제원장 아님). 웹훅 1회 재시도 후 실패 시 오너 DM. Phase 2에서 DB 기반 승격 예정(경량 브리지).
-async function runDirectStatus() {
-  const webhook = process.env.SHEET_WEBHOOK_URL;
-  if (!webhook) { console.log("[cron] direct_status: SHEET_WEBHOOK_URL 미설정 — 스킵"); return; }
-  let data = null;
-  for (let attempt = 1; attempt <= 2; attempt++) {                 // 1회 재시도
-    try {
-      const r = await fetch(webhook, { method: "POST", redirect: "follow", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "direct_status", secret: process.env.SHEET_SECRET || "" }) });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok && Array.isArray(d.students)) { data = d; break; }
-      if (attempt === 2) { await ownerDM(`❌ [cron] 직강 잔여회차 조회 실패 — 시트 응답 이상(HTTP ${r.status}). Apps Script의 direct_status 핸들러 확인 필요.`); return; }
-    } catch (e) {
-      if (attempt === 2) { await ownerDM(`❌ [cron] 직강 잔여회차 조회 실패 — ${e?.message || "네트워크 오류"}`); return; }
-    }
-    await new Promise((res) => setTimeout(res, 3000));            // 재시도 전 짧은 대기
+// ── 잔여 산식 정본 (관제탑 8/18 지시 3 — 시트 → DB 전환) ──────────────────
+// 봇이 시트를 읽어 **구 체계 36회 데이터**를 그대로 뿌리고 있었다:
+//   허혜민 봇 "잔여 -1 (37/36)"  ↔ DB 강의 8회(신 체계 재등록) + 레슨 109판 중 63소진
+//   이희훈 봇 "잔여 1 (17/24)"   ↔ DB 레슨 30판 중 8소진 = 잔여 22 · status=paused
+// 8/16에 시드한 courses 2행이 시트에 없으니 시트는 영영 못 따라온다 → 정본을 DB로 옮긴다.
+// 시트는 **대조용으로만** 남긴다(3-3): 어긋나면 알림 대신 경고를 낸다. 음수 잔여를 그대로
+// 발송하면 신뢰가 깎이므로 음수는 정상 알림 경로로 내보내지 않는다.
+//
+// 산식은 v_panel_roster · staff-panel과 **같아야 한다**:
+//   레슨 잔여판수 = students.carry_games + Σ lesson_enrollments.games_total − Σ lesson_sessions.games
+//   강의 잔여회차 = courses.units_total − Σ course_attendance.units
+// 두 축은 단위가 다르다(판 vs 회차) — 합치거나 환산하지 않는다(오너 확정).
+const DIRECT_LOW = 2;                       // 알림 임계(종전과 동일)
+const ENR_DEAD = ["refunded", "void", "cancelled"];   // 잔여에서 빼는 등록 상태
+async function remainFromDB() {
+  const [students, enrollments, sessions, courses, attend] = await Promise.all([
+    sbSelect("students", "select=id,name,status,carry_games"),
+    sbSelect("lesson_enrollments", "select=student_id,games_total,status").catch(() => []),
+    sbSelect("lesson_sessions", "select=student_id,games"),
+    sbSelect("courses", "select=id,student_id,units_total,status").catch(() => []),
+    sbSelect("course_attendance", "select=course_id,units,status").catch(() => []),
+  ]);
+  const stuById = {}; students.forEach((s) => { stuById[s.id] = s; });
+  const grantedBy = {}, usedBy = {}, usedByCourse = {};
+  for (const e of enrollments) {
+    if (ENR_DEAD.includes(String(e.status || ""))) continue;
+    grantedBy[e.student_id] = (grantedBy[e.student_id] || 0) + Number(e.games_total || 0);
   }
-  const low = (data.students || []).filter((s) => Number(s.remain) <= 2);
-  if (!low.length) { console.log("[cron] direct_status: 전원 remain≥3 — 침묵"); return; }
-  const lines = low.sort((a, b) => Number(a.remain) - Number(b.remain))
-    .map((s) => `${Number(s.remain) <= 0 ? "⚠️ " : "· "}${s.name}: 잔여 ${s.remain} (수강 ${s.attended}/${s.total})`);
-  await ownerDM(`🎓 직강 잔여회차 알림 (remain ≤2)\n${lines.join("\n")}`);
+  for (const s of sessions) usedBy[s.student_id] = (usedBy[s.student_id] || 0) + Number(s.games || 0);
+  for (const a of attend) {
+    if (String(a.status || "") === "cancelled") continue;
+    usedByCourse[a.course_id] = (usedByCourse[a.course_id] || 0) + Number(a.units || 0);
+  }
+  const lessons = [], lectures = [];
+  for (const s of students) {
+    if (s.status !== "active") continue;               // 수료·중지는 잔여 독촉 대상이 아니다
+    const granted = grantedBy[s.id] || 0;
+    if (!granted) continue;                            // 레슨 등록이 없으면 판수 축 자체가 없다
+    const used = usedBy[s.id] || 0;
+    lessons.push({ id: s.id, name: s.name, remain: Number(s.carry_games || 0) + granted - used, granted, used });
+  }
+  for (const c of courses) {
+    if (String(c.status || "") !== "active") continue;
+    const stu = stuById[c.student_id];
+    if (!stu || stu.status !== "active") continue;
+    const total = Number(c.units_total || 0), used = usedByCourse[c.id] || 0;
+    lectures.push({ id: stu.id, name: stu.name, course_id: c.id, remain: total - used, total, used });
+  }
+  return { lessons, lectures, attendRows: attend.length };
+}
+// 시트 조회는 대조 전용 — 실패해도 알림을 막지 않는다(정본이 아니므로).
+async function fetchSheetDirect() {
+  const webhook = process.env.SHEET_WEBHOOK_URL;
+  if (!webhook) return null;
+  try {
+    const r = await fetch(webhook, { method: "POST", redirect: "follow", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "direct_status", secret: process.env.SHEET_SECRET || "" }) });
+    const d = await r.json().catch(() => ({}));
+    return (r.ok && Array.isArray(d.students)) ? d.students : null;
+  } catch (_) { return null; }
+}
+// 경고 중복 억제 — 백필이 끝날 때까지 같은 불일치가 매일 오면 읽지 않게 된다.
+// 서명이 바뀌거나 7일이 지날 때만 다시 알린다(runDirectStale과 같은 논거).
+const DIRECT_WARN_REPEAT_DAYS = 7;
+async function warnOnce(key, sig, text) {
+  const { date } = kstNow();
+  const st = (await opsStateGet(key)) || {};
+  const days = st.since ? Math.floor((Date.parse(date) - Date.parse(st.since)) / 86400000) : 999;
+  if (st.sig === sig && days < DIRECT_WARN_REPEAT_DAYS) return false;
+  await opsStateSet(key, { sig, since: date });
+  await ownerDM(text);
+  return true;
+}
+async function runDirectStatus() {
+  if (!process.env.SUPABASE_URL) { console.log("[cron] direct_status: SUPABASE_URL 미설정 — 스킵"); return; }
+  let db;
+  try { db = await remainFromDB(); }
+  catch (e) { await ownerDM(`❌ [cron] 잔여 조회 실패 — DB(${e?.message || "unknown"}). 시트가 아니라 DB가 정본입니다.`); return; }
+  const sheet = await fetchSheetDirect();
+  // ── 대조: 시트가 있는 이름만 본다. 시트에만 있는 이름도 불일치로 센다(DB 미등록 신호). ──
+  const diffs = [];
+  if (sheet) {
+    const dbByName = {};
+    for (const r of db.lectures) dbByName[String(r.name).trim()] = r.remain;
+    for (const s of sheet) {
+      const nm = String(s.name || "").trim(); if (!nm) continue;
+      const sheetRemain = Number(s.remain);
+      if (!Number.isFinite(sheetRemain)) continue;
+      const dbRemain = dbByName[nm];
+      if (dbRemain === undefined) diffs.push(`· ${nm}: 시트 ${sheetRemain} ↔ DB 강의 등록 없음`);
+      else if (dbRemain !== sheetRemain) diffs.push(`· ${nm}: 시트 ${sheetRemain} ↔ DB ${dbRemain}`);
+    }
+  }
+  // ── 경고와 알림을 **분리한다** ────────────────────────────────────────
+  // 초판은 불일치가 있으면 return으로 전체 알림을 덮었는데, 실측상 음수 잔여 2건(장익교 −60 ·
+  // 조윤표 −2)이 개시잔액 미귀속 때문에 **상시** 떠 있다. 그대로 두면 정상 잔여 임박(김해주 0 ·
+  // 이도윤 0 · 오현주 1 · 윤지민 1)이 백필이 끝날 때까지 영영 안 나간다 — 경고가 신호를 죽인다.
+  // 그래서 음수 행만 목록에서 빼고, 남은 행은 정상 발송한다.
+  const neg = [...db.lectures, ...db.lessons].filter((r) => r.remain < 0);
+  if (neg.length) {
+    await warnOnce("direct:negative", neg.map((n) => `${n.id}:${n.remain}`).join(","),
+      `⚠️ 음수 잔여 ${neg.length}건 — 알림 목록에서 제외했습니다\n`
+      + neg.map((n) => `· ${n.name} #${n.id}: ${n.remain} (진행 ${n.used}/${n.granted ?? n.total})`).join("\n")
+      + `\n\n원인은 개시잔액(7/19 시드 54행·1,783판)이 등록에 귀속되지 않아 진행분이 계약분을 넘긴 것입니다.`
+      + `\n백필 규칙 확정(대기 ①) 전까지는 이 값이 실제 잔여가 아닙니다.`
+      + `\n같은 내용은 ${DIRECT_WARN_REPEAT_DAYS}일간 다시 보내지 않습니다.`);
+  }
+  // 시트 불일치는 **강의 축만** 덮는다 — 시트가 다루는 축이 거기뿐이라 레슨까지 막을 근거가 없다.
+  let lecSuppressed = false;
+  if (diffs.length) {
+    lecSuppressed = true;
+    await warnOnce("direct:mismatch", JSON.stringify(diffs),
+      `⚠️ 강의 잔여 시트↔DB 불일치 ${diffs.length}건 — 강의 알림을 보류했습니다 (정본=DB)\n`
+      + diffs.slice(0, 15).join("\n") + (diffs.length > 15 ? `\n… 외 ${diffs.length - 15}건` : "")
+      + (db.attendRows === 0 ? `\n\n※ course_attendance 0행 — 강의 진행이 DB에 아직 없어 전원 "미소진"으로 나옵니다. 강의 등록 19행 백필(대기 ⑤)이 끝나야 대조가 맞습니다.` : "")
+      + `\n같은 내용은 ${DIRECT_WARN_REPEAT_DAYS}일간 다시 보내지 않습니다.`);
+  }
+  const lowLec = lecSuppressed ? []
+    : db.lectures.filter((r) => r.remain >= 0 && r.remain <= DIRECT_LOW).sort((a, b) => a.remain - b.remain);
+  const lowLes = db.lessons.filter((r) => r.remain >= 0 && r.remain <= DIRECT_LOW).sort((a, b) => a.remain - b.remain);
+  if (!lowLec.length && !lowLes.length) { console.log("[cron] direct_status: 발송 대상 없음 — 침묵"); return; }
+  const secLec = lowLec.length
+    ? `\n[강의 잔여회차]\n${lowLec.map((r) => `${r.remain <= 0 ? "⚠️ " : "· "}${r.name} #${r.id}: 잔여 ${r.remain}회 (수강 ${r.used}/${r.total})`).join("\n")}` : "";
+  const secLes = lowLes.length
+    ? `\n[레슨 잔여판수]\n${lowLes.map((r) => `${r.remain <= 0 ? "⚠️ " : "· "}${r.name} #${r.id}: 잔여 ${r.remain}판 (진행 ${r.used}/${r.granted})`).join("\n")}` : "";
+  // 정상 알림도 서명 기반으로 억제한다 — 같은 목록이 매일 오면 읽지 않게 되고, 그때부터
+  // 이 알림은 없는 것과 같다(변화가 있으면 서명이 바뀌어 즉시 다시 나간다).
+  const sent = await warnOnce("direct:low", secLec + secLes,
+    `🎓 잔여 알림 (≤${DIRECT_LOW} · 정본=DB${sheet && !diffs.length ? " · 시트 대조 일치" : ""})${secLec}${secLes}`);
+  console.log(`[cron] direct_status: 강의 ${lowLec.length}·레슨 ${lowLes.length} — ${sent ? "발송" : "중복 억제"}`);
 }
 // 직강 기록 정체 감지 — 잔여가 아니라 "누적 수강회차가 안 늘어난 기간"을 본다.
 // 위 runDirectStatus는 잔여≤2인 사람만 알린다. 그런데 기록이 통째로 멈추면 잔여가
@@ -5713,7 +5989,7 @@ async function cronTick() {
     await maybeRunDaily("selfcheck", "05:00", runSelfCheck, "Operation self-check");   // Phase B(현재 no-op)
   }
   if (DIRECT_STATUS_ENABLED) {
-    await maybeRunDaily("directStatus", "05:10", runDirectStatus, "직강 잔여회차");     // 기존 T2 게이트 재사용
+    await maybeRunDaily("directStatus", "05:10", runDirectStatus, "잔여 알림(DB 정본)");  // 기존 T2 게이트 재사용
   }
   await maybeRunDaily("fbPending", "05:15", runFeedbackPending, "미승인 피드백");       // 별도 env 불요(크론 활성 시 항상)
   // DIRECT_STATUS 게이트를 타지 않는다 — 게이트를 하나 더 두면 그 게이트가 꺼져서
