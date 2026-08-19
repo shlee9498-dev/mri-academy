@@ -438,11 +438,23 @@ module.exports = function mountAdminPanel(app, deps) {
         if (sid == null || tid == null) return;
         (rosterByStu[sid] = rosterByStu[sid] || new Set()).add(tid);
       };
-      for (const r of roster) addRoster(r.student_id, r.trainer_id);
-      // 뷰 미실행 시 같은 규칙을 코드로 재구성한다. 뷰가 있으면 이 루프는 이미 담긴 값에
-      // 흡수되므로(Set) 결과가 같다 — 한쪽이 빠져도 로스터가 좁아지지 않는 것이 목적이다.
-      for (const e of enrollments) addRoster(e.student_id, e.trainer_id);
-      for (const s of sessions)    addRoster(s.student_id, s.trainer_id);
+      // 로스터 포함의 정본은 뷰다(관제탑 8/19 뷰 경로 전환 승인). 종전에는 뷰 ∪ 코드
+      // 재구성을 항상 합집합으로 썼는데, 그러면 뷰가 정책을 좁혀도(환불·취소 등록 제외,
+      // 3경로의 active·paused 한정) 코드 합집합이 도로 넓혀서 정책 변경이 화면에 영영
+      // 못 닿는다. 전환 시점 실측(2026-08-19): 코드 2경로는 뷰의 부분집합이다(빠지는
+      // (trainer×student) 쌍 0) — 이 전환 자체는 표시 무회귀다.
+      if (roster.length) {
+        for (const r of roster) addRoster(r.student_id, r.trainer_id);
+      } else {
+        // degrade(뷰 부재·조회 실패만 이 분기로 온다): 등록 담당 ∪ 세션 담당 2경로 재구성.
+        // 3번째 경로(students.trainer_id)는 로스터 정책이라 코드가 임의 복원하지 않는다 —
+        // 뷰가 죽으면 하홍진(72)·박지훈(76)형 학생이 화면에서 빠진다(step1 §2-2에 기록된
+        // 한계 그대로다. 조용히 넓히는 것보다 기록된 좁힘이 낫다).
+        // 빈 배열은 "행 0"과 "실패"를 못 가르지만(catch가 []로 눌렀다), 재학생이 있는 한
+        // 뷰 행 0은 실패뿐이라 실무상 안전하다.
+        for (const e of enrollments) addRoster(e.student_id, e.trainer_id);
+        for (const s of sessions)    addRoster(s.student_id, s.trainer_id);
+      }
 
       const rosterRowByKey = {};                    // `${tid}:${sid}` → 뷰 원본 행(있으면)
       for (const r of roster) rosterRowByKey[`${r.trainer_id}:${r.student_id}`] = r;

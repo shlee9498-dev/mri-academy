@@ -20,6 +20,36 @@
 
 **직강 담당 = `staff` id 4 「무리」(role=owner).** 기존 `courses` 2행 모두 `trainer_id=4`다.
 
+### 0.0 테이블 실물 대조(2026-08-19 · 관제탑 지시) — 생성 구문 불요 확정
+
+`course_sessions`·`course_attendance`는 실DB에 **이미 존재**하고 §17b·§17c 설계와
+**전 항목 일치**한다. 대조만 했다 — **임의 alter 없음.**
+
+| 항목 | course_sessions | course_attendance |
+|---|---|---|
+| 컬럼 | 14/14 일치(순서까지) | 10/10 일치(순서까지) |
+| `id` | identity ✅ | identity ✅ |
+| CHECK | duration_min>0 · kind 2종 · status 3종 · source 4종 ✅ | units>=0 · status 3종 ✅ |
+| FK | schedule_id→schedule_events ✅ | session CASCADE · course RESTRICT ✅ |
+| UNIQUE | 없음(설계대로 — `not exists`가 유일한 멱등 장치) | (session_id, course_id) ✅ |
+| numeric | — | units·units_auto = **numeric(4,2)** ✅ |
+| 부분 인덱스 | idx_csess_date · idx_csess_pending ✅ | idx_catt_course ✅ |
+| RLS / 행수 | on / 0행 | on / 0행 |
+
+**생성 경로**: §19g 포함분이 **아니다** — §19g에는 course 테이블 문장 자체가 없다
+(payouts 제약 + RLS 2줄뿐). 두 축의 근거로 **§17 「강의 축 SQL 5종」(§17a~e) 실행분**으로 판정한다.
+
+1. `docs/STATE.md` 8/16 해소 기록 「강의 축 SQL 5종 실행 완료」 — §17a(courses)·17b(course_sessions)·
+   17c(course_attendance)·17d(payments.course_id)·17e(courses.trainer_id) = 정확히 5종이고,
+   17d·17e의 산출물(`payments.course_id`·`courses.trainer_id`)도 실DB에 실재한다.
+2. `pg_class` OID 순서 — course_sessions(18310)·course_attendance(18334)는
+   payment_requests(18470 · §18 · 8/11~14 실행) **이전**, clan_registry(18103 · 7월 말 사용 개시)
+   **이후**다. 즉 생성은 7월 말~8/14 사이 → 8/16 확인 기록과 정합.
+
+**따라서 이 패키지에 생성 DDL은 없고 필요하지도 않다.** STEP D는 처음부터 INSERT만이었고
+그대로 유지한다. 두 테이블은 §19g 게이트와 만지는 대상이 다르지만(물리 의존 없음),
+**발행 순서는 관제탑 지시(게이트 OPEN 후)를 따른다.**
+
 ### 0.1 이민규(26) — 상태 오류가 실측으로 더 강해진다
 
 | 항목 | 값 |
