@@ -86,68 +86,80 @@ CHECK를 확장한 실익이 여기 있다. 다만 그 실익은 `admin-panel.js
 
 ---
 
-## 2. 확인 요청 ② — §19g는 `v_panel_roster`가 **아니다**
+## 2. ⚠️ 게이트 실측 — **부분 실행 상태다** (2026-08-19 재조회)
 
-`supabase_admin_panel.sql:758` 실물:
+관제탑 지시대로 §19g 전 항목 AND로 판정했다. **단일 조건으로 봤으면 놓쳤을 상태**가 나왔다.
 
-```
--- 19g) payouts 금액 불변식 (2026-08-17 관제탑 지시). ⚠️ 미실행 · 오너 직접 실행 대기.
-```
-
-**§19g = `chk_payouts_net_identity`** — `payouts`에 `net = gross − withholding` CHECK를 거는 건이다
-(PR #227에서 발행). 로스터 뷰와 무관하다.
-
-### 2-1. `v_panel_roster`는 이 저장소에 정의가 없다
-
-| 검색 대상 | 결과 |
-|---|---|
-| `supabase_admin_panel.sql` 내 `v_panel_roster` | **0건** |
-| repo 전체(`*.sql` `*.js` `*.md` `*.html`) 내 `is_prospect` | **0건** |
-| `admin-panel.js` 내 참조 | `:382` `sbSelect("v_panel_roster", …).catch(() => [])` — **읽기만** |
-
-→ **관제탑 수정본(`is_prospect` 포함 · 3경로 union)이 저장소에 들어온 적이 없다.**
-   따라서 **글자 단위 대조를 할 수 없다.** 본문 재전송을 요청한다.
-
-### 2-2. 대신 코드가 쓰는 규칙을 그대로 적어 둔다 — 여기서 이미 차이가 보인다
-
-`admin-panel.js:441-445`의 degrade 재구성:
-
-```js
-for (const r of roster)      addRoster(r.student_id, r.trainer_id);  // 뷰가 있으면
-for (const e of enrollments) addRoster(e.student_id, e.trainer_id);  // 경로 1
-for (const s of sessions)    addRoster(s.student_id, s.trainer_id);  // 경로 2
-```
-
-**코드는 2경로(등록 ∪ 세션)다. `students.trainer_id`는 C4에서 의도적으로 걷어냈다.**
-관제탑 수정본은 3경로(+ `students.trainer_id`)라고 하셨으므로 **실질 차이가 있다.**
-
-| | 2경로(현행 코드) | 3경로(관제탑 수정본) |
+| 게이트 항목 | 실측 | |
 |---|---|---|
-| 하홍진(72)·박지훈(76)<br>(등록·세션 **둘 다 없음**) | 오너 **「미배정」** 섹션 | **현태** 섹션 |
-| `is_prospect` | 개념 없음 | 있음(추정: 등록·세션 없이 담당만 있는 학생 표시) |
+| `chk_payouts_net_identity` | **없음** | ❌ |
+| `v_panel_roster` 뷰 | **존재** | ✅ |
+| `v_panel_roster.is_prospect` | **존재** | ✅ |
+| `payments.handler_id` | **존재** | ✅ |
+| `payments_kind_check` 확장(§19h) | 존재 | ✅ 선행 완료분 |
 
-**3경로가 더 낫다고 본다.** 2경로는 저 2명을 담당 화면에서 아예 지워버리는데, `is_prospect`는
-지우지 않고 **「예비」로 표시**해서 담당이 계속 보게 만든다. C4 당시 이 2명이 미배정으로 빠지는 걸
-「부작용 실측」으로만 적고 해결하진 못했는데, `is_prospect`가 그 해결책이다.
+### 판정: **PARTIAL(부분 실행)** — 통과 아님. 빠진 것은 `chk_payouts_net_identity` 하나다.
 
-### 2-3. ⚠️ 다만 3경로 뷰를 실행하면 degrade 경로와 어긋난다
+「통과/미통과」 이분법이면 이 상태가 미통과로만 보이고, 그 사이에 **`v_panel_roster`가 이미
+생겼다는 사실이 묻힌다** — 실제로 직전 회차까지 나는 그걸 못 보고 「뷰 없음」으로 보고했다.
+관제탑의 게이트 정밀화 지시가 정확히 이 구멍을 잡았다.
 
-union 구조라 **뷰가 로스터를 넓히는 방향**이므로 안전하긴 하다(코드 주석의 의도 그대로).
-그러나 결과가 이렇게 갈린다:
+**3상태 표기를 앞으로 쓴다**: `OPEN`(전 항목) / **`PARTIAL`(일부 — 빠진 항목 명시)** / `CLOSED`(전무).
 
-- **뷰 실행 시**: 하홍진·박지훈이 현태 섹션에 뜬다
-- **뷰 미실행 시**: 코드가 2경로만 재구성 → 미배정으로 간다
+### 2-1. `v_panel_roster` 본문 — **DB에서 추출했다. 재전송 불요**
 
-즉 **뷰의 존재 여부로 화면이 달라진다.** 그리고 `is_prospect`는 `admin-panel.js`가 읽지 않으므로
-(grep 0건) 뷰에 넣어도 **화면엔 안 나온다** — 컬럼만 있고 배지가 없는 상태가 된다.
+본문 재전송을 기다리고 있었으나 **뷰가 이미 실행돼 있어 정의를 그대로 읽어왔다**(`pg_get_viewdef`).
+아래가 실측 정의이고 관제탑이 승인한 3경로·`is_prospect`와 일치한다.
 
-→ 정본을 3경로로 판정하시면, 내가 **같은 PR에서** 두 가지를 맞춘다(둘 다 MRIacademy 소관):
-   ① `admin-panel.js`의 degrade 재구성에 `students.trainer_id` 경로 추가 — ⚠️ 이 파일은 결제 트랙
-      소관이라 **내가 못 고친다. 결제 트랙 요구사항 문서(§3)에 3번 항목으로 넣었다.**
-   ② `staff-panel.html`에 `is_prospect` 「예비」 배지 — 이건 내 소관이라 바로 한다.
+```sql
+create or replace view public.v_panel_roster as
+with h as (                                        -- 로스터 포함 기준 3경로
+  select student_id, trainer_id from lesson_enrollments
+   where trainer_id is not null and status = any (array['active','done','paused'])
+  union
+  select student_id, trainer_id from lesson_sessions
+   where trainer_id is not null
+  union
+  select id, trainer_id from students               -- ← 3번째 경로(관제탑 8/19 승인)
+   where trainer_id is not null and status = any (array['active','paused'])
+), g as (
+  select student_id, sum(games_total) granted, sum(bonus_games) bonus
+    from lesson_enrollments
+   where status = any (array['active','done','paused']) group by student_id
+), u as (
+  select student_id, sum(games) used, max(played_at) last_played
+    from lesson_sessions group by student_id
+)
+select h.trainer_id, st.name trainer_name, s.id student_id, s.name student_name, s.status,
+       coalesce(s.carry_games,0) + coalesce(g.granted,0)                       games_granted,
+       coalesce(g.bonus,0)                                                     games_bonus,
+       coalesce(u.used,0)                                                      games_used,
+       coalesce(s.carry_games,0) + coalesce(g.granted,0) - coalesce(u.used,0)  games_left,
+       u.last_played,
+       exists (select 1 from lesson_enrollments e2
+                where e2.student_id=s.id and e2.trainer_id=h.trainer_id
+                  and e2.status = any (array['active','done','paused']))       has_enrollment,
+       exists (select 1 from lesson_sessions s2
+                where s2.student_id=s.id and s2.trainer_id=h.trainer_id)       has_session,
+       g.student_id is null and u.student_id is null                           is_prospect
+  from h
+  join students s on s.id = h.student_id
+  left join staff st on st.id = h.trainer_id
+  left join g on g.student_id = s.id
+  left join u on u.student_id = s.id;
+```
 
----
+잔여 산식이 **뷰·`admin-panel.js`·봇 잔여 알림 세 곳에서 동일**하다
+(`carry_games + Σgames_total − Σsessions.games`).
 
+### 2-2. ⚠️ 뷰가 사라지면 **조용히 2경로로 떨어진다**
+
+`admin-panel.js`의 degrade 경로는 **등록 ∪ 세션 2경로**다. 지금은 뷰가 있어 3경로로 돌지만,
+뷰가 드롭되면 `students.trainer_id`로만 걸린 학생(하홍진 72 · 박지훈 76)이 **에러 없이 사라진다.**
+
+→ 이번 PR에서 `is_prospect`를 코드가 읽게 하면서 **degrade 시에도 같은 판정을 코드로 재구성**했다
+(`등록 없음 && 세션 없음`). 배지는 뷰 유무와 무관하게 뜬다. 다만 **3번째 경로 자체의 degrade 복원은
+별건**이다 — 로스터 포함 여부는 정책이라 코드가 임의로 정하지 않는다.
 ## 3. STEP 1 복붙 블록 — §19g만 남았다
 
 §19h는 실행 완료(§0)이므로 **STEP 1에서 실제로 실행할 것은 §19g 하나**다.
@@ -204,6 +216,37 @@ CHECK ((kind = ANY (ARRAY['lesson'::text, 'course'::text, 'consult'::text, 'set'
 
 ---
 
+## 3-4. 김규완(#130) `handler_id` — STEP 1에 함께 넣어도 된다
+
+관제탑 8/19 판정 4. **범위·근거 정정을 반영했다.** `handler_id` 컬럼은 **이미 존재하고**,
+`consult` 6행 전부 `handler_id`가 **null**이다(실측).
+
+| # | 학생 | 입금일 | 금액 | memo | 처리 |
+|---|---|---|---:|---|---|
+| 109 | 김현성 | 07-17 | 15,000 | `신규 레슨상담(토스 7/17)` — **담당 표기 없음** | ⛔ 미결(§6) |
+| 117 | 박동민 | 07-26 | 15,000 | `레슨상담 · 현태 가산` | ⛔ 동결 |
+| 118 | 이영민 | 07-27 | 15,000 | `레슨상담 · 준구 가산` | ⛔ 동결 |
+| **130** | **김규완** | **08-07** | **15,000** | `… · 담당 무리` | ✅ **채운다** |
+| 129 | 김은희 | 08-11 | 20,000 | `강의상담 · 담당 미정` | ⏭ STEP 3 |
+| 131 | 김대태 | 08-11 | 20,000 | `강의상담 · 담당 미정` | ⏭ STEP 3 |
+
+**7월분 3건 동결 근거가 실측으로 확인됐다** — `payouts`에 **8월 지급 4건**이 있다.
+7월분이 이미 시트로 나갔으므로 지금 채우면 엔진이 같은 가산을 다시 얹는다.
+
+```sql
+update public.payments set handler_id = 4          -- 무리(owner)
+ where id = 130 and kind = 'consult' and handler_id is null;
+
+-- 사후 검증: #130만 4 · 나머지 5행 null 유지
+select id, handler_id, left(coalesce(memo,''),30) memo
+  from public.payments where kind='consult' order by paid_at;
+```
+
+⚠️ 이건 `kind` 변경이 아니라 **담당 지정**이라 지금 실행해도 안전하다. `consult`는 그대로라
+`admin-panel.js:396` 필터에 계속 걸리고, 가산 귀속만 `students.trainer_id` → `handler_id`로 바뀐다.
+
+---
+
 ## 4. STEP 3로 미루는 블록 — `consult` 마이그레이션 (지금 실행 금지)
 
 **`admin-panel.js` 1·2번 배포 확인 후에** 결제 시드와 같은 블록으로 실행한다. 근거는 §1-2.
@@ -242,13 +285,27 @@ alter table public.payments add  constraint payments_kind_check
 
 ## 6. 미결 — 관제탑 회신 필요
 
+**A~E는 8/19 판정으로 전부 해소됐다.** 남은 것은 아래 2건이다.
+
 | # | 항목 | 필요한 것 |
 |---|---|---|
-| A | `v_panel_roster` 본문 | 수정본 전문 재전송(저장소에 없어 대조 불가). 3경로·`is_prospect` 정의 포함 |
-| B | 로스터 정본 판정 | 2경로(현행 코드) vs 3경로(수정본). **3경로 권고** — 근거 §2-2 |
-| C | `consult` UPDATE 순서 | STEP 1 → **STEP 3 이관 권고**. 근거 §1-2 |
-| D | 김규완(79) 담당 | memo엔 「담당 무리」인데 `students.trainer_id`가 NULL — 채우면 가산 10,000 복구 |
-| E | 김은희(78)·김대태(80) 담당 | 채우기 **전에** `admin-panel.js` 배포 필요. 안 그러면 20,000 과가산(§1-3) |
+| **F** | **김현성(#109) 담당** | memo가 `신규 레슨상담(토스 7/17)`뿐이라 **담당 표기가 아예 없다**. 7월분이라 동결 대상이긴 하나, 7월 정산 시트 대조 시 이 건의 가산이 누구에게 갔는지 확인이 필요하다 |
+| **G** | **7월분 3건(#109·#117·#118) 시트 대조** | 오너가 시트에서 7월 정산에 가산이 반영됐는지 확인 후 판정. 확인 전까지 어느 STEP에도 넣지 않는다 |
 
-STEP 2(직강 축 백필 A~E)는 지시대로 **STEP 1 검증 지문을 받은 뒤** 별도 발행한다.
+### 해소된 항목 (기록)
+
+| # | 항목 | 결과 |
+|---|---|---|
+| A | `v_panel_roster` 본문 | ✅ **DB에서 추출**(§2-1) — 재전송 불요 |
+| B | 로스터 경로 | ✅ **3경로 승인**. 뷰 실측도 3경로 |
+| C | `consult` UPDATE 순서 | ✅ **STEP 3 이관 승인** |
+| D | 김규완 담당 | ✅ **#130 `handler_id`=4**(§3-4). 단 축이 `students.trainer_id`가 아니라 **`payments.handler_id`**였다 |
+| E | 김은희·김대태 | ✅ **STEP 3 이관** — `admin-panel.js` 배포 후 |
+
+⚠️ **D의 축을 정정한다.** 나는 「`students.trainer_id`가 NULL이라 채우면 가산 복구」로 보고했는데,
+실제 가산 귀속 축은 **`payments.handler_id`**이고 그 컬럼은 이미 존재한다. `students.trainer_id`를
+건드리면 그 학생의 **다른 결제·세션 귀속까지 함께 움직인다** — 상담 1건 때문에 학생 담당을 바꾸는 건
+범위가 과하다. `handler_id` 한 칸만 채우는 것이 맞다.
+
+STEP 2(직강 축 백필 A~E)는 지시대로 **게이트 `OPEN` 확인 후** 별도 발행한다.
 이민규(26) `status` 복구를 STEP 2에 포함하라는 판정도 접수했다(봇기록 8/16 준구 10판·누적 43 실재).
