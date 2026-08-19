@@ -1,0 +1,184 @@
+# 레슨 세션 → 등록 귀속 백필 (`lesson_sessions.lesson_enrollment_id`)
+
+> 관제탑 8/18 「lesson_sessions 미귀속이 매일 늘고 있다 — 백필의 최우선 항목」에 대한 회신.
+> **SQL은 발행만 한다. 실행은 오너가 Supabase SQL Editor에서 한다.**
+> 수치는 전부 실DB 직접 조회(2026-08-19).
+>
+> ⚠️ 이 문서는 **레슨 축**이다. STEP 2(직강 축 백필)와 다르고 §19g 게이트에 걸리지 않는다 —
+> `chk_payouts_net_identity`는 `payouts` 제약이고 여기 SQL은 `lesson_sessions`만 만진다.
+> 실행 순서는 관제탑이 정한다.
+
+---
+
+## 1. 「127행 미귀속」의 실제 분해 — 백필 분모는 127이 아니라 73이다
+
+| 구분 | 행 | 처리 |
+|---|---:|---|
+| 전체 `lesson_sessions` | 127 | |
+| `lesson_enrollment_id is null` | **127** | 귀속된 행이 아직 0이다 |
+| ├ `created_by='seed'` (개시잔액 차감) | **54** | **NULL이 정상** — 백필 대상 아님 |
+| └ 실판수 | **73** | 백필 대상 |
+
+**seed 54행을 백필하면 안 되는 이유**: 개시잔액은 `students.carry_games`가 부여 측이고
+seed 세션이 사용 측이다. 잔여 산식이 `carry_games + Σgames_total − Σsessions.games`이므로
+seed 행을 등록에 붙이면 그 등록의 진행판수가 이월분만큼 부풀고, **등록별 잔여가 그만큼 줄어든다.**
+등록이 부여하지 않은 판수를 등록이 소비한 것으로 적는 셈이다.
+
+→ 「127행」으로 세면 분모가 74% 과대하다. 실제 미해결은 **73행**이다.
+
+---
+
+## 2. 73행의 귀속 가능성 — 산술적으로 유일한 29행 / 정책이 필요한 44행
+
+| 구간 | 행 | 판수 | 최근 7일 | 성격 |
+|---|---:|---:|---:|---|
+| **B. 유일 등록 + `carry_games=0`** | **29** | 143 | **8** | 붙일 등록이 하나뿐 — **추측 아님** |
+| **D. active 등록 다수** | 44 | 266 | 3 | FIFO 분배 필요 — **지금은 계산 불가** |
+| A. 등록 0건 / C. carry>0 단일 | 0 | 0 | 0 | 해당 없음 |
+
+`status in ('active','paused')` 로 엄격히 세도 B는 그대로 29행/143판/**11명**이다
+(paused 등록이 겹치는 학생이 없다).
+
+### 2-1. D구간을 지금 자동 분배하면 안 되는 이유 — 순환 의존
+
+FIFO 경계는 「그 등록이 몇 판 남았나」로 정해지는데, 등록별 잔여는 **과거 세션의 귀속이
+끝나야** 구해진다. 미귀속 백로그가 남아 있는 동안 등록별 잔여는 정의되지 않는다
+(`admin-panel.js:412`가 바로 그 이유로 파생값을 null로 막는다).
+→ 지금 D를 나누면 **잔여를 모르는 상태에서 잔여 기준으로 나누는** 자기참조가 된다.
+
+B를 먼저 확정하면 그 11명의 잔여가 계산 가능해지고, D의 일부가 B로 내려온다.
+**반복 수렴이 맞는 순서**다 — 한 번에 다 붙이려는 시도가 틀린 접근이다.
+
+---
+
+## 3. 백필 SQL (B구간 29행) — 발행
+
+### 3-1. 사전 검증 (실행 전. 기대: 29 / 143 / 11)
+
+```sql
+with uniq as (
+  select e.student_id, min(e.id) as enr_id
+    from lesson_enrollments e
+    join students s on s.id = e.student_id
+   where e.status in ('active','paused') and coalesce(s.carry_games,0) = 0
+   group by e.student_id
+  having count(*) = 1
+)
+select count(*) as 백필대상행, sum(ls.games) as 판수, count(distinct ls.student_id) as 학생수
+  from lesson_sessions ls join uniq u on u.student_id = ls.student_id
+ where ls.lesson_enrollment_id is null and ls.created_by is distinct from 'seed';
+```
+
+### 3-2. 잔여 음수 사전 점검 (기대: `잔여음수_학생 = 0`)
+
+붙인 뒤 잔여가 음수가 되면 귀속이 틀렸거나 초과수강이다 — **붙이기 전에** 본다.
+2026-08-19 실측 = 11명 전원 0 이상, 최소 잔여 1.
+
+```sql
+with uniq as (
+  select e.student_id, min(e.id) enr_id, min(e.games_total) tot, min(coalesce(e.bonus_games,0)) bonus
+    from lesson_enrollments e join students s on s.id = e.student_id
+   where e.status in ('active','paused') and coalesce(s.carry_games,0)=0
+   group by e.student_id having count(*)=1
+), used as (
+  select student_id, sum(games) g from lesson_sessions
+   where created_by is distinct from 'seed' group by student_id
+)
+select count(*) as 대상학생,
+       count(*) filter (where u.tot + u.bonus - coalesce(x.g,0) < 0) as 잔여음수_학생,
+       min(u.tot + u.bonus - coalesce(x.g,0)) as 최소잔여
+  from uniq u left join used x on x.student_id = u.student_id
+ where exists (select 1 from lesson_sessions z where z.student_id = u.student_id
+                 and z.lesson_enrollment_id is null and z.created_by is distinct from 'seed');
+```
+
+### 3-3. 실행 블록
+
+```sql
+-- 레슨 세션 → 등록 귀속 백필 (B구간: 유일 등록 + carry_games=0)
+-- seed(개시잔액 차감) 행은 제외한다 — 등록이 부여하지 않은 판수다.
+-- 등록이 여러 건인 학생(44행)은 건드리지 않는다 — FIFO는 이 백필 이후에 계산 가능해진다.
+with uniq as (
+  select e.student_id, min(e.id) as enr_id
+    from lesson_enrollments e
+    join students s on s.id = e.student_id
+   where e.status in ('active','paused') and coalesce(s.carry_games,0) = 0
+   group by e.student_id
+  having count(*) = 1
+)
+update public.lesson_sessions ls
+   set lesson_enrollment_id = u.enr_id
+  from uniq u
+ where ls.student_id = u.student_id
+   and ls.lesson_enrollment_id is null
+   and ls.created_by is distinct from 'seed';
+-- 기대: UPDATE 29
+```
+
+### 3-4. 사후 검증
+
+```sql
+-- ① 남은 미귀속 분해. 기대: seed 54 · 실판수 44 (D구간)
+select coalesce(created_by,'(null)') as created_by, count(*), sum(games)
+  from public.lesson_sessions where lesson_enrollment_id is null
+ group by 1 order by 2 desc;
+
+-- ② B구간이 0으로 떨어졌는지. 기대: 0행
+with uniq as (
+  select e.student_id from lesson_enrollments e join students s on s.id=e.student_id
+   where e.status in ('active','paused') and coalesce(s.carry_games,0)=0
+   group by e.student_id having count(*)=1)
+select count(*) from lesson_sessions ls join uniq u on u.student_id=ls.student_id
+ where ls.lesson_enrollment_id is null and ls.created_by is distinct from 'seed';
+
+-- ③ 붙인 뒤 등록별 잔여에 음수가 없는지. 기대: 0행
+select e.id, e.student_id,
+       e.games_total + coalesce(e.bonus_games,0) - coalesce(sum(ls.games),0) as 잔여
+  from lesson_enrollments e
+  left join lesson_sessions ls on ls.lesson_enrollment_id = e.id
+ group by e.id, e.student_id
+having e.games_total + coalesce(e.bonus_games,0) - coalesce(sum(ls.games),0) < 0;
+```
+
+**롤백**: 이 백필로 붙은 행만 되돌리려면 `update lesson_sessions set lesson_enrollment_id=null
+where lesson_enrollment_id is not null;` — 현재 귀속된 행이 0이므로 백필 직후에 한해 안전하다.
+D구간을 나중에 붙인 뒤에는 이 롤백을 쓰면 안 된다.
+
+---
+
+## 4. 유입 차단 — 코드로 처리했다 (이 PR)
+
+백필만 하면 **다음 주에 또 쌓인다.** 최근 7일 신규 미귀속이 11행이고 그중 8행이 B구간,
+즉 붙일 수 있었는데 안 붙인 것이다. 원인은 하나다:
+
+> `server.js` `dualWriteSessions()`가 `lesson_enrollment_id`를 **아예 안 넣는다.**
+> `/수업등록`이 도는 한 미귀속은 계속 생산된다.
+
+이번 PR에서 `resolveEnrollmentId(studentId)`를 넣어 **B구간과 같은 규칙**으로만 귀속한다:
+
+- `students.carry_games = 0` **AND** `status in ('active','paused')` 등록이 **정확히 1건** → 붙인다
+- 그 외(등록 다수 · carry 잔여 · 조회 실패) → **null 유지 = 종전 동작.** 회귀 없음
+
+백필 SQL과 코드가 **같은 규칙**이라 둘의 결과가 어긋나지 않는다.
+
+### 4-1. 컬럼 부재 degrade — 판수 유실을 막는다
+
+`lesson_sessions.lesson_enrollment_id`는 `SCHEMA_OPTIONAL`이다. 컬럼이 없는 배포에
+이 키를 실어 보내면 PGRST204로 **INSERT 전체가 죽고 판수가 통째로 유실**된다.
+귀속은 부가가치이고 판수 기록이 본체이므로, 실패 시 컬럼을 뺀 축소 재요청으로 한 번 흡수한다
+(`admin-panel.js:350`과 같은 처리). 다만 조용히 넘기지 않는다 —
+`dualwrite_enr_column_missing` 로그 + `warnOnce`로 하루 1회 오너 DM.
+
+### 4-2. 미귀속 자체는 DM하지 않는다
+
+D구간 학생은 매 수업마다 미귀속이 정상 발생한다 — DM하면 소음이다.
+`dualwrite_unattached` 콘솔 로그만 남기고, 화면에서는 `admin-panel.js:412` 가드가
+그 학생의 등록별 잔여를 null로 막아 이미 드러난다.
+
+---
+
+## 5. 이 백필이 풀어주는 것
+
+지금 `admin-panel.js:412`의 가드 때문에 **미귀속 판수가 1판이라도 있는 학생은 등록별
+잔여·환불이 통째로 null**이다. 미귀속이 127/127이므로 사실상 전원이 막혀 있다.
+B구간 29행을 붙이면 **11명의 등록별 잔여가 화면에 살아난다.**

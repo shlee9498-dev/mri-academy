@@ -1097,26 +1097,60 @@ if (process.env.DISCORD_TOKEN) {
   // /수업등록 성공분을 DB lesson_sessions에도 기록(시트 병행·검증용).
   //   시트가 진실인 단계 — DB insert는 best-effort: 실패/이름 미매칭이어도 명령 성공(오너 DM만).
   async function dualWriteSessions(trainerName, students, memo, createdBy) {
-    if (!hasSupabase()) return { skipped: true, miss: [] };
+    if (!hasSupabase()) return { skipped: true, miss: [], unattached: [] };
     const played_at = kstToday();
     let trainer_id = null;
     try {
       const st = await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainerName)}&limit=1`);
       trainer_id = st[0] ? st[0].id : null;
     } catch (e) { console.error("dualwrite_staff_lookup", e?.message); }
-    const rows = [], miss = [];
+    const rows = [], miss = [], unattached = [];
     for (const s of students) {
       try {
         const sid = await resolveStudentId(s.name, trainer_id);   // 병행수강 2행이면 본인 담당 행 우선
-        if (sid != null) rows.push({ student_id: sid, trainer_id, played_at, games: s.games, memo: memo || null, created_by: createdBy });
-        else miss.push(s.name);
+        if (sid == null) { miss.push(s.name); continue; }
+        const enrId = await resolveEnrollmentId(sid);
+        if (enrId == null) unattached.push(s.name);
+        rows.push({ student_id: sid, trainer_id, played_at, games: s.games, memo: memo || null,
+                    created_by: createdBy, lesson_enrollment_id: enrId });
       } catch (e) { console.error("dualwrite_student_lookup", s.name, e?.message); miss.push(s.name); }
     }
     if (rows.length) {
       try { await sbInsert("lesson_sessions", rows); }
-      catch (e) { console.error("dualwrite_insert", e?.message); return { error: true, miss }; }
+      catch (e) {
+        // lesson_enrollment_id는 SCHEMA_OPTIONAL이다 — 컬럼이 없는 배포에서는 PGRST204로
+        // **INSERT 전체가 죽고 판수가 통째로 유실**된다. 귀속은 부가가치이고 판수 기록이
+        // 본체이므로, 실패하면 컬럼을 뺀 축소 재요청으로 한 번 흡수한다(admin-panel.js:350과 같은 처리).
+        // 조용히 넘기지 않고 별도 코드로 남긴다 — 이게 안 보이면 미귀속이 영영 쌓인다.
+        console.error("dualwrite_insert", e?.message);
+        try {
+          await sbInsert("lesson_sessions", rows.map(({ lesson_enrollment_id, ...r }) => r));
+          console.error("dualwrite_enr_column_missing", "lesson_enrollment_id 없이 재기록", rows.length);
+          // degraded면 이 배치는 전건 미귀속이다. unattached에 id를 섞지 않는다(로그 필드는 이름 계열).
+          // "전건"이라는 사실은 degraded 플래그가 나르고, 알림은 warnOnce가 하루 1회로 묶는다.
+          return { inserted: rows.length, miss, unattached, degraded: true };
+        } catch (e2) { console.error("dualwrite_insert_retry", e2?.message); return { error: true, miss, unattached }; }
+      }
     }
-    return { inserted: rows.length, miss };
+    return { inserted: rows.length, miss, unattached };
+  }
+  // 세션 → 등록 귀속(§19). **산술적으로 유일할 때만** 붙이고 모호하면 null로 남긴다.
+  //   조건: 그 학생의 status in (active,paused) 등록이 정확히 1건 **AND** carry_games = 0.
+  //
+  //   왜 이 조건뿐인가 — 등록이 여러 건이면 FIFO로 갈라야 하는데, FIFO 경계는 과거 세션의
+  //   귀속이 끝나야 계산된다. 미귀속 백로그가 남아 있는 동안은 등록별 잔여 자체를 못 구하므로
+  //   지금 시점의 자동 분배는 추측이 된다(2026-08-19 실측: 미귀속 실판수 73행 중 44행이 이 구간).
+  //   carry_games > 0이면 개시잔액이 먼저 소비되므로 이 판수가 이월 소비인지 등록 소비인지 갈린다.
+  //
+  //   모호하면 null = 종전 동작 그대로다(회귀 없음). 남은 구간은 백필 SQL로 오너가 처리한다.
+  async function resolveEnrollmentId(studentId) {
+    try {
+      const st = await sbSelect("students", `select=carry_games&id=eq.${studentId}&limit=1`);
+      if (Number(st[0]?.carry_games || 0) !== 0) return null;
+      const es = await sbSelect("lesson_enrollments",
+        `select=id&student_id=eq.${studentId}&status=in.(active,paused)&limit=2`);
+      return es.length === 1 ? es[0].id : null;      // 2건 이상이면 FIFO 정책 필요 → null
+    } catch (e) { console.error("dualwrite_enr_lookup", studentId, e?.message); return null; }
   }
   // 이름→students.id 해석. 미매칭 null.
   // 동명 다행(병행수강 의도적 2행 포함) 결정론: ① status='active' 우선
@@ -1303,12 +1337,20 @@ if (process.env.DISCORD_TOKEN) {
         const sheetOk = students.filter((s) => okNames.has(s.name));
         if (updated.length && !sheetOk.length)
           console.error("dualwrite_name_echo_mismatch", updated.map((u) => u.name).join(","));   // 시트 응답 이름이 입력과 불일치 — DB 미기록
-        const dw = sheetOk.length ? await dualWriteSessions(trainer, sheetOk, memo, itx.user.id) : { inserted: 0, miss: [] };
+        const dw = sheetOk.length ? await dualWriteSessions(trainer, sheetOk, memo, itx.user.id) : { inserted: 0, miss: [], unattached: [] };
         if (dw && dw.miss && dw.miss.length && process.env.MRI_OWNER_ID) {
           const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
           // '시트 기록됨'을 단정하지 않음 — 시트 응답 기준 updated 건수만 명시(검증 불가한 성공 주장 제거).
           await owner.send(`⚠️ /수업등록 DB 미매칭 — ${trainer}: ${dw.miss.join(", ")} (시트 응답상 기록 ${updated.length}건) · students 테이블 이름 확인/보정 필요`);
         }
+        // 미귀속(등록 다수·carry 잔여)은 정상 경로다 — 매 수업마다 DM하면 소음이라 로그만 남긴다.
+        // 패널이 그 학생의 등록별 잔여를 null로 막으므로(admin-panel.js:412) 화면에서도 드러난다.
+        if (dw && dw.unattached && dw.unattached.length)
+          console.error("dualwrite_unattached", trainer, dw.unattached.join(","));
+        // 반대로 컬럼 자체가 없어 축소 재요청으로 떨어진 건 설비 결함이다 — 하루 1회로 묶어 알린다.
+        if (dw && dw.degraded)
+          await warnOnce("dualwrite_enr_column", "missing",
+            "⚠️ lesson_sessions.lesson_enrollment_id 컬럼이 없어 /수업등록이 귀속 없이 기록되고 있다 — §19 DDL 실행 확인 필요");
       } catch (e) { console.error("dualwrite_failed", e?.message); }
       if (histLines.length) lines.push("", ...histLines);          // 상담 이력 표시(전환 추적)
       await itx.editReply(lines.join("\n"));
