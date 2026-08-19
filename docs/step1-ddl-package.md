@@ -90,15 +90,28 @@ CHECK를 확장한 실익이 여기 있다. 다만 그 실익은 `admin-panel.js
 
 관제탑 지시대로 §19g 전 항목 AND로 판정했다. **단일 조건으로 봤으면 놓쳤을 상태**가 나왔다.
 
-| 게이트 항목 | 실측 | |
-|---|---|---|
-| `chk_payouts_net_identity` | **없음** | ❌ |
-| `v_panel_roster` 뷰 | **존재** | ✅ |
-| `v_panel_roster.is_prospect` | **존재** | ✅ |
-| `payments.handler_id` | **존재** | ✅ |
-| `payments_kind_check` 확장(§19h) | 존재 | ✅ 선행 완료분 |
+**2026-08-19 재조회(2회차) — 항목을 §19g 본문 전체로 넓혔다.** 직전 표는 §19g의 RLS 2줄을
+빠뜨리고 있었다(제약 1줄만 게이트로 봤다). 「전 항목 AND」 지시를 문자 그대로 다시 적용한 결과다.
 
-### 판정: **PARTIAL(부분 실행)** — 통과 아님. 빠진 것은 `chk_payouts_net_identity` 하나다.
+| 게이트 항목 | 출처 | 실측 | |
+|---|---|---|---|
+| `chk_payouts_net_identity` | §19g | **없음** | ❌ |
+| RLS `lesson_enrollments` | §19g | 켜짐 | ✅ |
+| RLS `settlements` | §19g | 켜짐 | ✅ |
+| `v_panel_roster` 뷰 | S1 선행 | 존재 | ✅ |
+| `v_panel_roster.is_prospect` | S1 선행 | 존재 | ✅ |
+| `payments.handler_id` | S1 선행 | 존재 | ✅ |
+| `payments.deposit_ref` | §19f | 존재 | ✅ |
+| `payments_kind_check` 확장 | §19h | 10종 | ✅ |
+
+### 판정: **PARTIAL(부분 실행) 7/8** — 빠진 것은 `chk_payouts_net_identity` 하나다.
+
+**RLS는 켜졌는데 제약만 없다** — §19g를 통째로 붙여 실행했다면 나올 수 없는 조합이다
+(제약 문장이 RLS 문장보다 앞에 있어서, 제약에서 실패하면 RLS도 안 걸린다).
+→ RLS 2줄은 다른 시점에 별도로 실행된 것이고, **§19g 블록은 아직 한 번도 안 돌았다**고 읽는다.
+
+**「위반 행 때문에 실패한 것」은 아니다** — 실측 `payouts` 10행 전량이 조건을 만족한다
+(위반 0 · null 0). 지금 붙여도 무중단으로 통과한다. 즉 실행만 남았다.
 
 「통과/미통과」 이분법이면 이 상태가 미통과로만 보이고, 그 사이에 **`v_panel_roster`가 이미
 생겼다는 사실이 묻힌다** — 실제로 직전 회차까지 나는 그걸 못 보고 「뷰 없음」으로 보고했다.
