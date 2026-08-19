@@ -778,3 +778,35 @@ alter table public.payouts add  constraint chk_payouts_net_identity
 
 alter table public.lesson_enrollments enable row level security;   -- service_role만 통과
 alter table public.settlements        enable row level security;   -- service_role만 통과
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §19h  payments.kind 확장 — 상담 축 분리 + 조정행 (관제탑 채택 2026-08-18)
+-- ═══════════════════════════════════════════════════════════════════════════
+--      추가 3종: lesson_consult · lecture_consult · adjust
+--
+--      왜 consult 하나로 뭉치지 않는가(관제탑 판정, MRIacademy의 A안 기각):
+--        상담 가산이 종류별로 다르다 — 레슨상담은 트레이너 건당 10,000 가산,
+--        강의상담은 무가산. 한 값으로 뭉치면 컷오버 후 자동 가산에서 오가산이 재발한다.
+--        즉 이건 표기 취향이 아니라 **지급액이 갈리는 축**이다.
+--
+--      ⚠️ 이 DDL만 실행하면 조용히 틀린다 — 코드가 새 값을 모른다(전부 결제 트랙 소관):
+--        1. admin-panel.js:396  `if (p.kind !== "consult" ...) continue;`
+--           → lesson_consult로 넣는 순간 **건당 10,000 가산이 0이 된다.**
+--              CHECK를 확장한 목적 자체가 이 가산을 지키려는 것인데 결과가 정반대가 된다.
+--        2. admin-panel.js:708  kind 화이트리스트가 ["lesson","consult","set","sales",
+--           "direct_lecture"] 뿐 → 새 값을 보내면 **조용히 'lesson'으로 바뀐다.**
+--              20,000 강의상담이 lesson으로 들어가면 빵다 6% base(kind='lesson')에 섞인다.
+--        3. `adjust`는 payouts_kind_check에 이미 있다(monthly·consult·sales·adjust).
+--           같은 이름이 두 테이블에서 다른 뜻이 된다 — payouts는 '지급 조정',
+--           payments는 '매출 취소분 상쇄'. 조회할 때 섞이지 않도록 표기에 주의.
+--
+--      기존 consult 3건(#129·#130·#131)의 재분류는 관제탑이 후행 과제로 분리했다.
+--      그동안 consult와 lesson_consult가 공존하므로 **가산 기준이 두 갈래**다 —
+--      1번을 고치기 전까지는 어느 쪽도 정확하지 않다.
+--
+--      제약 변경이라 컬럼 프로브로는 감지되지 않는다(REQUIRED_SCHEMA 사각지대).
+--      실행 여부는 PR 본문 체크리스트로만 관리한다.
+alter table public.payments drop constraint if exists payments_kind_check;
+alter table public.payments add  constraint payments_kind_check
+  check (kind = any (array['lesson','course','consult','set','sales','etc',
+    'refund','lesson_consult','lecture_consult','adjust']::text[]));

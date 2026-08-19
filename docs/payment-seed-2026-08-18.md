@@ -27,25 +27,46 @@ lesson · course · consult · set · sales · etc · refund
 그대로 실행하면 해당 INSERT가 `violates check constraint "payments_kind_check"`로 떨어진다.
 **한 트랜잭션에 묶어 실행하면 10행 전체가 롤백된다.**
 
-#### 선택지
+#### ✅ 확정 — CHECK 확장 (관제탑 판정 2026-08-18 · 제 A안은 기각)
 
-| 안 | 방법 | 장점 | 단점 |
+제가 낸 「`consult` 하나로 뭉치기」는 **기각됐고 근거가 타당하다**:
+**상담 가산이 종류별로 다르다** — 레슨상담은 트레이너 **건당 10,000 가산**, 강의상담은 **무가산**.
+뭉치면 컷오버 후 자동 가산에서 오가산이 재발한다. 표기 취향이 아니라 **지급액이 갈리는 축**이다.
+
+DDL은 `supabase_admin_panel.sql` **§19h**에 정본으로 반영했다(관제탑 전문 그대로):
+
+```sql
+alter table public.payments drop constraint if exists payments_kind_check;
+alter table public.payments add  constraint payments_kind_check
+  check (kind = any (array['lesson','course','consult','set','sales','etc',
+    'refund','lesson_consult','lecture_consult','adjust']::text[]));
+-- 마지막에: NOTIFY pgrst, 'reload schema';
+```
+
+#### ⚠️ 그런데 이 DDL만 실행하면 조용히 틀린다 — 코드가 새 값을 모른다
+
+**세 곳 전부 `admin-panel.js`(결제 트랙 소관)라 이 트랙은 통지만 한다.**
+
+| # | 위치 | 현재 | 새 kind가 들어오면 |
 |---|---|---|---|
-| **A (권고)** | 기존 허용값으로 매핑 + `memo`에 축 표기 | DDL 0건 · 오늘 실행 가능 | 상담 축이 `memo` 문자열에만 남음 |
-| B | `payments_kind_check`를 확장하는 DDL 실행 | 축이 컬럼으로 남음 | **`payments` 스키마는 결제 트랙 주도** — MRIacademy가 단독 결정 불가. 기존 코드(`computeStaffSalary`의 `kind==='lesson'` 등)가 새 값을 모름 |
+| **1** | `admin-panel.js:396` | `if (p.kind !== "consult" \|\| !(p.amount > 0)) continue;` | **레슨상담 건당 10,000 가산이 0이 된다** |
+| **2** | `admin-panel.js:708` | 화이트리스트 `["lesson","consult","set","sales","direct_lecture"]` | 새 값을 보내면 **조용히 `lesson`으로 치환**된다 |
+| **3** | `payouts_kind_check` | `monthly · consult · sales · adjust` | `adjust`가 **두 테이블에서 다른 뜻**이 된다(지급 조정 ↔ 매출 상쇄) |
 
-**A안 매핑** — 이미 저장소에 선례가 있다. 김대태 #131(8/11 · 20,000)이 **강의 상담인데
-`kind='consult'` + `memo='강의상담 · 담당 미정'`** 으로 들어가 있다. 같은 형식을 따른다:
+> **1번이 가장 위험하다.** CHECK를 확장한 목적 자체가 「레슨상담 가산을 지키는 것」인데,
+> 엔진을 함께 고치지 않으면 **결과가 정반대**가 된다 — `consult`로 넣으면 가산되던 것이
+> `lesson_consult`로 넣는 순간 사라진다.
+>
+> **2번은 더 조용하다.** 패널에서 `lecture_consult`를 보내면 400이 아니라 `lesson`으로 바뀌어
+> 저장된다. 20,000 강의상담이 `lesson`이 되면 **빵다 순매출 6% base에 섞인다**(`kind==='lesson'`).
+>
+> 기존 `consult` 3건(#129·#130·#131) 재분류는 관제탑이 후행 과제로 분리했다. 그동안
+> **`consult`와 `lesson_consult`가 공존**하므로 가산 기준이 두 갈래다 — 1번을 고치기 전까지는
+> 어느 쪽도 정확하지 않다.
 
-| 지시서 | → 실제 `kind` | `memo` 접두 |
-|---|---|---|
-| `lecture_consult` | `consult` | `강의상담 · ` |
-| `lesson_consult` | `consult` | `레슨상담 · ` |
-| `adjust` | `course` (음수) | `강의 취소분 상쇄 · ` |
-
-> ⚠️ **상담 축 분리(`lesson_consult`/`lecture_consult`)는 이미 백로그에 있는 별건이다**
-> (작업목록 #3 「상담 kind 분리 PR」). 그 PR이 머지되면 이 행들의 `kind`를 일괄 변경하면 된다 —
-> `memo` 접두가 그때 이관 키가 된다.
+**→ 결제 트랙 요청**: 1·2번 수정이 이 시드 실행의 **선행 조건**이다. 순서는
+`§19h DDL` → `admin-panel.js 1·2번 수정 배포` → `시드 INSERT`.
+1·2번 전에 시드를 넣으면 레슨상담 가산이 빠진 채로 8월 정산이 돌아간다.
 
 ### 0-2. 건수가 맞지 않는다 — 헤더 **9건** vs 목록 **10행**
 
@@ -64,28 +85,52 @@ lesson · course · consult · set · sales · etc · refund
 | 9 | 08-18 | 좌송희 | lesson_consult | 15,000 |
 | 10 | 08-18 | 주현성(60) | lesson | 120,000 |
 
-「매출 9건」은 **음수 2행(#5·#6)을 매출로 세지 않고 순증 8행 + 1**로 셌거나, 박지훈 4행을
-1건으로 묶어 센 것으로 보인다. **행 수는 10이 맞는지 확인 바란다** — 이 숫자가 사후 검증
-SELECT의 기대값이라 어긋나면 검산이 통째로 무의미해진다.
+**✅ 확정(관제탑 2026-08-18): 10행이 정답이고 헤더 「9건」은 오기다.** 박지훈 4행 포함 총 10행.
+검증 SELECT ①의 기대값을 **10**으로 고정한다.
 
-### 0-3. 박성민 「등록① done 처리」 — **①을 특정할 수 없다**
+### 0-3. 박성민 — ✅ 확정. 단 **축이 `lesson_enrollments`가 아니라 `courses`였다**
 
-박성민(#25)의 `lesson_enrollments`는 **4행이고 전부 10판·담당 준구·status=active**다:
+관제탑 회신으로 확정: **① done + ② 생성**, 통장 8/14 22:56 +290,000 확인.
 
-| enrollment id | 시작일 | 판수 | 상태 |
-|---:|---|---:|---|
-| 47 | 2026-05-13 | 10 | active |
-| 46 | 2026-05-17 | 10 | active |
-| 45 | 2026-05-27 | 10 | active |
-| 44 | 2026-06-12 | 10 | active |
+**제 초판 지적을 정정한다.** 저는 「등록①」을 `lesson_enrollments`(4행 · 10판씩)로 읽고
+「①을 특정할 수 없다」고 회신했는데, 회신 내용(**심화 12회 / 심화 8회 · 단가 36,250**)을 보면
+**`courses`(강의) 축**이다. 박성민의 `courses`는 현재 **0행**이므로 ①·② 둘 다 **신규 생성**이고,
+「done 처리」는 기존 행을 닫는 게 아니라 **처음부터 `status='done'`으로 넣는 것**이다.
+→ 따라서 이 두 행은 이 문서가 아니라 **`lecture-axis-backfill.md` STEP C**에서 실행한다(P-6 순서).
 
-「①」이 **가장 이른 것(47)**인지 **가장 늦은 것(44)**인지 지시서로 판별되지 않는다.
-게다가 박성민은 **계약 40판 / 진행 40판 = 잔여 0**이라(7/19 개시잔액 40판 한 행) 4행 모두
-소진된 상태다 — 하나만 `done`으로 바꾸면 나머지 3행이 active로 남아 **잔여 0인데 열린 등록이
-3개**인 상태가 된다.
+| | 관제탑 스펙 | `courses` 컬럼 매핑 |
+|---|---|---|
+| ① | 심화 **12회** · 360,000 · used 20 · done · **closed_at** 2026-08-14 | `level='심화반'` · `units_total=12` · `unit_price=30000`(360,000/12) · `status='done'` · **`ended_on`** =2026-08-14 |
+| ② | 심화 **8회** · 290,000(36,250) · **opened** 2026-08-14 · 초과 8회 소급 · used 8 · 잔여 0 · done | `units_total=8` · `unit_price=36250` · **`started_on`** =2026-08-14 · `status='done'` |
 
-**권고: 4행 전부 `done`.** 잔여가 0이면 열린 등록이 남을 이유가 없다. 다만 이건 판정 사항이라
-아래 SQL은 **주석 처리**해 두었다.
+**스키마 매핑 3건을 바꿔 적었다** — 지시서 용어가 실제 컬럼과 다르다:
+
+- `closed_at` → **`ended_on`** (`courses`에 `closed_at`은 없다)
+- `opened` → **`started_on`**
+- `used` → **컬럼이 아니다.** 진행분은 `course_attendance`(세션×강의)에서 파생된다 —
+  `courses`에 넣을 자리가 없다.
+
+②의 단가 36,250은 **기존 2행(허혜민·김해주)과 정확히 같다**(180분 · 36,250 · 8회 = 290,000).
+직강 표준 단가가 이미 확립돼 있다는 뜻이라 ②는 관례에 그대로 들어맞는다.
+
+#### ⚠️ Q-3 — ① 「used 20」을 그대로 넣으면 ①의 잔여가 **−8**이 된다
+
+①은 계약 **12회**인데 진행이 **20회**다. 초과 8회를 ②로 소급 귀속하는 게 이번 판정의 골자이므로,
+`course_attendance`는 **①에 12행 · ②에 8행**으로 갈라 붙여야 둘 다 잔여 0이 된다(12+8=20 ✓).
+
+- ①에 20행을 전부 붙이면 → ① 잔여 **−8**, ② 잔여 8. 잔여 알림에 음수로 뜬다.
+- ①에 12행, ②에 8행 → **둘 다 0** ✅ (관제탑이 적은 「② used 8 · 잔여 0」과 일치)
+
+이 해석으로 진행하되, **어느 8회를 ②로 넘길지(날짜 기준)** 는 강의일정표에서 정해야 한다 —
+시간순 뒤 8회를 ②로 보는 것이 자연스럽다. **확인 요망.**
+
+#### Q-2 — ①의 `started_on`이 없다
+
+`courses.started_on`은 NOT NULL인데 지시서에 ①의 **개설일**이 없다(`closed_at`만 있다).
+강의일정표의 최초 수업일 또는 최초 결제일로 채워야 한다. **값 회신 필요.**
+
+`memo`에는 지시서 문구를 그대로 넣는다:
+`구단가 미수 240,000을 신체계 290,000으로 정산(8/11 오너 협의)`
 
 ---
 
@@ -137,18 +182,21 @@ SELECT의 기대값이라 어긋나면 검산이 통째로 무의미해진다.
 |---|---|---:|---|
 | 1 | `course` | +290,000 | 강의 |
 | 2 | `refund` | −200,000 | 강의(환불) |
-| 3 | `course` | −90,000 | 강의(취소분 상쇄) |
+| 3 | `adjust` | −90,000 | 강의(취소분 상쇄) |
 | 4 | `lesson` | +90,000 · 21판 | 레슨 |
 | | **합계** | **+90,000** | 통장 순액과 일치 ✅ |
 
 ⚠️ **`sum(amount) group by kind`로 집계하면 course는 0이 아니라 200,000이 된다** —
 환불 −200,000이 `refund`로 빠져 있기 때문이다. 「course 순액 0」은 **환불을 차감한 뒤** 성립한다.
 
-| 집계 방식 | course 순액 |
+| 집계 방식 | 강의축 순액 |
 |---|---:|
-| `kind='course'` 합 | 200,000 |
-| `kind IN ('course','refund')` 합 | **0** ✅ |
-| 행 3까지 `refund`로 바꿀 경우 `kind='course'` 합 | 90,000 ❌ |
+| `kind='course'` 합 | 290,000 |
+| `kind IN ('course','refund')` 합 | 90,000 |
+| **`kind IN ('course','refund','adjust')` 합** | **0** ✅ |
+
+§19h로 `adjust`가 독립 kind가 됐으므로 **강의축 집계는 3종을 함께 더해야** 0이 된다.
+`adjust`를 빼면 90,000이 남고, `refund`까지 빼면 290,000이 남는다.
 
 **권고: 위 표대로 두고 8월 매출 집계 쿼리에서 `refund`를 함께 계산한다**(§6 검증 ③).
 행 2를 `course` 음수로 바꾸면 kind 합만으로 0이 되지만, **환불 사실이 `kind`에서 사라진다** —
@@ -205,14 +253,14 @@ select v.sid, v.paid_at, v.amount, v.games, v.kind, v.rate, 'manual', 'transfer'
     -- ③ 김대태 레슨 (신가)
     (80, date '2026-08-17',   45000, 10, 'lesson', 0.70,
      '담당 현태 · 신규 10판 (신가 45,000 · 8/10 시행)'),
-    -- ④ 이동찬 강의상담  ← 지시서 lecture_consult
-    (0,  date '2026-08-17',   20000,  0, 'consult', 0.70,
+    -- ④ 이동찬 강의상담 (아래 둘째 블록에서 처리 — sid 미확정)
+    (0,  date '2026-08-17',   20000,  0, 'lecture_consult', 0.70,
      '강의상담 · 무리 상담 → 현태 인계'),
     -- ⑤ 박지훈 환불
     (76, date '2026-08-17', -200000,  0, 'refund', 0.00,
      '강의 취소 환불 (통장 출금 실측 8/17)'),
-    -- ⑥ 박지훈 강의 취소분 상쇄  ← 지시서 adjust
-    (76, date '2026-08-17',  -90000,  0, 'course', 0.00,
+    -- ⑥ 박지훈 강의 취소분 상쇄 (§19h로 kind='adjust' 사용 가능해짐)
+    (76, date '2026-08-17',  -90000,  0, 'adjust', 0.00,
      '강의 취소분 상쇄 · 레슨 전환분 (통장 무영향 — ⑦과 합계 0)'),
     -- ⑦ 박지훈 레슨 전환 (신가)
     (76, date '2026-08-17',   90000, 21, 'lesson', 0.70,
@@ -220,8 +268,8 @@ select v.sid, v.paid_at, v.amount, v.games, v.kind, v.rate, 'manual', 'transfer'
     -- ⑧ 윤지민 레슨 (구가 경과조치)
     (12, date '2026-08-18',   80000, 21, 'lesson', 0.70,
      '담당 준구 · 21판 · 구가 경과조치 · 차기 결제부터 신가'),
-    -- ⑨ 좌송희 레슨상담  ← 지시서 lesson_consult
-    (0,  date '2026-08-18',   15000,  0, 'consult', 0.70,
+    -- ⑨ 좌송희 레슨상담 (아래 둘째 블록에서 처리 — sid 미확정)
+    (0,  date '2026-08-18',   15000,  0, 'lesson_consult', 0.70,
      '레슨상담 · 트레이너 일정 불가로 무리 직접 진행'),
     -- ⑩ 주현성 레슨 (구가 경과조치)
     (60, date '2026-08-18',  120000, 33, 'lesson', 0.70,
@@ -237,16 +285,16 @@ select v.sid, v.paid_at, v.amount, v.games, v.kind, v.rate, 'manual', 'transfer'
 -- ④⑨ — 이름으로 학생을 찾아 붙인다(§3 실행 후에만 성립)
 insert into public.payments
   (student_id, paid_at, amount, games, kind, payout_rate, source, pay_channel, memo)
-select s.id, v.paid_at, v.amount, 0, 'consult', 0.70, 'manual', 'transfer', v.memo
+select s.id, v.paid_at, v.amount, 0, v.kind, 0.70, 'manual', 'transfer', v.memo
   from (values
-    ('이동찬', date '2026-08-17', 20000, '강의상담 · 무리 상담 → 현태 인계'),
-    ('좌송희', date '2026-08-18', 15000, '레슨상담 · 트레이너 일정 불가로 무리 직접 진행')
-  ) as v(name, paid_at, amount, memo)
+    ('이동찬', date '2026-08-17', 20000, 'lecture_consult', '강의상담 · 무리 상담 → 현태 인계'),
+    ('좌송희', date '2026-08-18', 15000, 'lesson_consult',  '레슨상담 · 트레이너 일정 불가로 무리 직접 진행')
+  ) as v(name, paid_at, amount, kind, memo)
   join public.students s on btrim(s.name) = v.name
  where not exists (
    select 1 from public.payments p
     where p.student_id = s.id and p.paid_at = v.paid_at
-      and p.amount = v.amount and p.kind = 'consult'
+      and p.amount = v.amount and p.kind = v.kind
  );
 ```
 
@@ -336,7 +384,7 @@ select p.paid_at, s.name, p.kind, p.amount, p.games, p.payout_rate, left(coalesc
 
 ```sql
 select sum(amount) 순액,                                   -- 기대 90,000 (통장 순액)
-       sum(amount) filter (where kind in ('course','refund')) 강의축,   -- 기대 0
+       sum(amount) filter (where kind in ('course','refund','adjust')) 강의축,  -- 기대 0
        sum(amount) filter (where kind = 'lesson')            레슨축,     -- 기대 90,000
        sum(games)                                            판수        -- 기대 21
   from public.payments where student_id = 76;
@@ -394,17 +442,34 @@ select id, name, trainer_id, left(coalesce(note,''),60) note
 
 ---
 
-## 8. 오너 판정 필요
+## 8. 판정 결과 (관제탑 2026-08-18 회신 반영)
 
-| ID | 항목 | 권고 |
+| ID | 항목 | 결과 |
 |---|---|---|
-| **P-1** | `kind` 3종 매핑 (§0-1) | **A안**(`consult`/`course`로 매핑 + memo 축 표기) — DDL 0건 · 김대태 #131 선례와 동일 |
-| **P-2** | 행 수 9 vs 10 (§0-2) | **10행**이 맞는지 확인 |
-| **P-3** | 박성민 「등록①」 (§0-3) | **4행 전부 `done`** (잔여 0이므로) |
-| **P-4** | 박지훈 취소 강의를 `courses`에 남길지 (§2) | 남기면 축이 FK로 고정됨 — 직강 백필 STEP C와 함께 판정 |
-| **P-5** | `payout_rate` 관례 적용 (§1-2) | lesson·consult 0.70 / course·음수 0 |
-| **P-6** | 박성민 `courses` 행 (8회) | **직강 백필 STEP C**에 포함해야 `course_id` 귀속이 가능하다 — 명단에 있는지 확인 |
+| **P-1** | `kind` 3종 | ✅ **CHECK 확장 채택**(제 A안 기각 · 근거 타당 — 상담 가산이 종류별로 다름). DDL은 §19h |
+| **P-2** | 행 수 | ✅ **10행**. 헤더 「9건」은 오기 |
+| **P-3** | 박성민 등록 | ✅ **① done + ② 생성**. 상세는 §0-3 — 단 축이 `courses`라 `lecture-axis-backfill.md` STEP C에서 실행 |
+| **P-4** | 박지훈 취소 강의 `courses` 행 | 미회신 — `adjust` 채택으로 급하지 않음(축이 kind로 구분됨) |
+| **P-5** | `payout_rate` 관례 | 미회신 — 관례값(lesson·consult 0.70 / course·음수 0)으로 발행. **다르면 지급액이 바뀐다** |
+| **P-6** | 순서 | ✅ **2(직강 백필) → 1(판정 반영) → 3(결제 시드)** 승인. `course_id`를 시드 시점에 붙인다 |
 
-⚠️ **P-6은 순서 의존이다.** `payments.course_id`로 강의 결제를 묶으려면 `courses` 행이 먼저 있어야
-한다. 지금 발행한 §4는 `course_id` 없이 넣으므로 나중에 UPDATE로 붙일 수 있지만, 직강 백필
-(`docs/lecture-axis-backfill.md` STEP C)을 **먼저 실행하면 한 번에 끝난다.**
+### ⛔ 새로 생긴 선행 조건 — 코드 2건 (결제 트랙)
+
+§0-1에서 확인한 대로 **§19h DDL만 실행하면 조용히 틀린다.**
+
+| # | 파일 | 수정 | 안 고치면 |
+|---|---|---|---|
+| 1 | `admin-panel.js:396` | 가산 대상에 `lesson_consult` 포함 | 레슨상담 건당 10,000 가산 **0원** |
+| 2 | `admin-panel.js:708` | kind 화이트리스트에 3종 추가 | 패널 입력이 **조용히 `lesson`으로 치환** |
+
+**실행 순서**: `§19h DDL` → `admin-panel.js 1·2 배포` → `시드 INSERT`.
+이 순서를 지키지 않으면 8월 정산이 레슨상담 가산 없이 돌아간다.
+
+### 아직 회신이 필요한 것
+
+| # | 항목 |
+|---|---|
+| **Q-1** | **STEP C 별첨 16행이 도착하지 않았다** — 「별첨 16행(박성민 2행 포함) 전달」이라고만 되어 있고 표가 없다. 이게 없으면 STEP C를 채울 수 없다 |
+| **Q-2** | 박성민 ① `started_on`(개설일)이 지시서에 없다 — `courses.started_on`은 NOT NULL |
+| **Q-3** | 박성민 ① `used 20`의 귀속 해석 — §0-3 참조 |
+| **Q-4** | P-5 `payout_rate` 관례 확인 |
