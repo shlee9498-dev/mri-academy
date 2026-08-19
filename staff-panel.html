@@ -656,7 +656,7 @@ function stuCard(s){
   const foreign = (s.enrollments||[]).length ? "" : `<span class="badge warn">타 트레이너 등록</span>`;
   return `<div class="stu">
     <div class="top"><span class="nm">${esc(s.name)}<span class="sid">#${s.student_id}</span></span>${s.discord_nick?`<span class="muted">${esc(s.discord_nick)}</span>`:""}
-      ${paraBadge}${lecBadge}${foreign}${pubgBadge(s)}${leftCell(s)}${mine?``:`<span class="badge">타 담당 · 금액 비공개</span>`}</div>
+      ${paraBadge}${lecBadge}${foreign}${prospectBadge(s)}${pubgBadge(s)}${leftCell(s)}${mine?``:`<span class="badge">타 담당 · 금액 비공개</span>`}</div>
     <div class="prog">
       ${enrChips(s)}
       <!-- 판수·최근수업은 담당 여부와 무관하게 항상 노출한다(오너 지시 2). 학생 단위
@@ -685,6 +685,15 @@ function addSession(id){
   const memo = document.getElementById("sm_"+id).value;
   if(!confirmLeft(id, games)) return;
   act(async ()=>{ await api("/api/admin/sessions","POST",{student_id:id,games,played_at,memo}); toast("판수 "+games+"판 기록됨"); });
+}
+
+// ── 미결제 배지 (관제탑 8/19 판정 2) ──────────────────────────────────
+// is_prospect = 등록도 세션도 없는 학생. 상담만 받고 결제 전인 팔로우업 대상이다.
+// 로스터 3경로(등록·세션·students.trainer_id) 중 세 번째로만 걸려 들어오므로,
+// 배지가 없으면 화면에서 "왜 여기 있는지 모를 학생"이 된다 — 하홍진 72·박지훈 76이 그 형태다.
+function prospectBadge(s){
+  if(!s.is_prospect) return "";
+  return `<span class="badge warn" title="등록·세션 기록이 없습니다 — 상담 후 결제 대기">미결제</span>`;
 }
 
 // ── PUBG 연동 배지 (관제탑 8/18 지시 1-3) ────────────────────────────
@@ -949,7 +958,7 @@ function stuRow(s, tid){
   const hasEnr = secTid===null ? true : (s.enrollments||[]).some(e=>e.trainer_id===secTid);
   const foreign = hasEnr ? "" : ` <span class="badge warn">타 트레이너 등록</span>`;
   return `<tr class="srow" data-sid="${s.student_id}">
-    <td class="name">${nameWithId(s)}${para}${foreign} ${pubgBadge(s)}</td><td class="muted">${esc(tName)}</td>
+    <td class="name">${nameWithId(s)}${para}${foreign} ${prospectBadge(s)}${pubgBadge(s)}</td><td class="muted">${esc(tName)}</td>
     <td>${ownerEnrCell(s, secTid)}</td>
     <td class="muted">${won(s.paid_amount)}<span style="font-size:10px">/${s.paid_games}판</span></td>
     <td>${s.games_used ?? 0}<span class="muted" style="font-size:10px">/${s.games_granted ?? 0}판</span></td>

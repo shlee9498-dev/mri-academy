@@ -446,6 +446,11 @@ module.exports = function mountAdminPanel(app, deps) {
 
       const rosterRowByKey = {};                    // `${tid}:${sid}` → 뷰 원본 행(있으면)
       for (const r of roster) rosterRowByKey[`${r.trainer_id}:${r.student_id}`] = r;
+      // is_prospect = 등록도 세션도 없는 학생(미결제 대기). 뷰가 student 단위로 내므로
+      // 어느 트레이너 행에서 읽어도 값이 같다. 관제탑 8/19 판정 2 — 이들을 담당 화면에서
+      // 지우지 않고 **배지로 구분**한다(하홍진 72·박지훈 76이 이 형태다).
+      const prospectByStu = {};
+      for (const r of roster) if (r.is_prospect != null) prospectByStu[r.student_id] = !!r.is_prospect;
 
       // 학생 단위 총합 — 뷰가 있으면 뷰 값을 쓰고, 없으면 여기서 낸다.
       const enrTotalByStu = {}, bonusByStu = {}, usedByStu = {}, lastPlayedByStu = {};
@@ -529,6 +534,10 @@ module.exports = function mountAdminPanel(app, deps) {
         const sRow = stuById[x.student_id] || {};
         x.pubg_linked = !!(sRow.pubg_platform && (sRow.pubg_account_id || sRow.pubg_name));
         x.pubg_name   = sRow.pubg_name || null;
+        // 미결제 대기 — 뷰 값이 있으면 그대로 쓰고, 없으면(degrade) 같은 규칙을 코드로 낸다.
+        // 뷰 유무로 배지가 사라지면 "결제가 들어왔다"로 오독된다.
+        x.is_prospect = prospectByStu[x.student_id]
+          ?? (!(enrByStu[x.student_id] || []).length && !(sessByStu[x.student_id] || []).length);
       }
 
       const trainers = staff.filter((s) => s.role === "trainer")
