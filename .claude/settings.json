@@ -36,6 +36,7 @@
       "Bash(gh pr list*)",
       "Bash(gh pr diff*)",
 
+      "mcp__Supabase__execute_sql",
       "mcp__Supabase__list_tables",
       "mcp__Supabase__list_extensions",
       "mcp__Supabase__list_migrations",

@@ -165,8 +165,9 @@ select student_id, count(*) from public.payments
 select count(*) from public.payments
  where paid_at = date '2026-08-18' and memo like '%구가 경과조치%';
 
--- ⑤ 잔여 파생 스팟체크. 기대(시드만 반영 시): 윤지민 granted 33→54 · 주현성 10→43 · 이한결 116→126
+-- ⑤ 잔여 파생 스팟체크. 기대(시드만 반영 시): 윤지민 granted 33→54 · 주현성 10→43 · 이한결 61→71
 --    (세션 귀속 백필이 먼저 실행됐다면 잔여 숫자는 같고 귀속 분포만 다르다)
+--    (정정 8/21: 이한결 기대치는 61→71이 맞다 — 초판 116→126은 산출 오기. 실측 등록 5건 합 61 + 신규 10)
 select s.id, s.name,
        (select coalesce(sum(games_total),0) from lesson_enrollments e
          where e.student_id=s.id and e.status in ('active','paused','done')) as granted
