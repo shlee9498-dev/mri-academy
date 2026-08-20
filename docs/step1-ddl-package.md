@@ -106,6 +106,11 @@ CHECK를 확장한 실익이 여기 있다. 다만 그 실익은 `admin-panel.js
 
 ### 판정: **PARTIAL(부분 실행) 7/8** — 빠진 것은 `chk_payouts_net_identity` 하나다.
 
+> **갱신 2026-08-19 22:05Z — `chk_payouts_net_identity` 실행 확인 → 게이트 OPEN(8/8).**
+> 정의 실측 `CHECK ((net = (gross - withholding)))` — §3-2 발행분과 일치. `payouts` 10행
+> 위반 0 · null 0. 이로써 STEP 1은 **전 항목 완료**이고 STEP 2(직강 축 백필)가 발행됐다
+> (`docs/lecture-axis-backfill.md` 머리의 「발행 확정」 참조).
+
 **RLS는 켜졌는데 제약만 없다** — §19g를 통째로 붙여 실행했다면 나올 수 없는 조합이다
 (제약 문장이 RLS 문장보다 앞에 있어서, 제약에서 실패하면 RLS도 안 걸린다).
 → RLS 2줄은 다른 시점에 별도로 실행된 것이고, **§19g 블록은 아직 한 번도 안 돌았다**고 읽는다.
