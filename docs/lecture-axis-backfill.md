@@ -174,6 +174,15 @@ select v.name, 'active', 4, 'steam', 0, '직강 백필 2026-08-18(강의일정�
 - `trainer_id = 4`(무리) — 직강 담당. 기존 `courses` 2행과 같은 값이다.
 - `status='active'` · `carry_games=0` · `pubg_platform='steam'`(기존 시드 관례).
 - **`note`에 출처를 남긴다** — 나중에 "이 6명은 어디서 왔나"를 이 컬럼 하나로 답할 수 있어야 한다.
+- **길영패 실명 확정(관제탑 8/21)** — 결제_원장의 「길영태」는 오타·동일인. 등재 후 note에
+  매핑을 남긴다(원장 원본은 수정하지 않는다):
+
+```sql
+update public.students
+   set note = coalesce(note||' | ','') || '결제_원장 표기 길영태 = 동일인(오타, 관제탑 8/21 확정)'
+ where btrim(name) = '길영패'
+   and coalesce(note,'') not like '%길영태%';
+```
 
 #### ⚠️ A-1 동명 가드 — 김준성 ≠ 박준성
 
@@ -252,133 +261,91 @@ select id, name, status,
 
 ---
 
-### STEP C — `courses` 15명 백필
+### STEP C — `courses` 백필 (v2 · 구 체계 재작성 2026-08-21)
 
-**명단·반·회차·단가는 시트에만 있다.** 아래는 오너가 `VALUES`만 채우면 나머지가 파생되는 형태다.
-직접 값을 지어내지 않았다 — 지어낸 숫자가 한 번 들어가면 그게 정본이 된다.
+> **v1(신체계 8회 가정)은 폐기됐다** — 원장 실측 결과 직강 결제는 전부 **구 체계
+> 정규(12회/36회)**다(관제탑 8/21). 신체계 250/270/290K를 역산 적용하지 않는다 —
+> 허혜민 #137 판정과 같은 축이다. `scheme='old'` · 실계약액 · 실회차 그대로.
 
-**사전 검증**:
+**원장 실측 8건 → 처리 분류** (student_id는 실측 매칭 · 신종근 56·권태완 39 **이미 등재**):
 
-```sql
-select c.id, s.name, c.level, c.scheme, c.units_total, c.status, c.started_on, c.trainer_id
-  from public.courses c join public.students s on s.id = c.student_id order by c.id;
--- 현재 기대: 2행(허혜민 #1 · 김해주 #2 · 둘 다 심화반 8회 · trainer_id=4)
-```
+| 학생 | 결제일 | 실계약 | 회차 | 처리 |
+|---|---|---:|---|---|
+| 박선우 | 4/10 | 360,000 | 12회 | ✅ VALUES (STEP A 등재 후) |
+| 권태완(39) | 4/11 | 360,000 | 12회 | ✅ VALUES |
+| 길영패 | 5/6 | 360,000 | 12회 | ✅ VALUES — **실명 확정**(원장 「길영태」= 오타·동일인. 원장 원본은 수정하지 않는다 — 매핑 기록만) |
+| 양정현 | 6/6 | 360,000 | 12회 | ✅ VALUES |
+| 김준성 | 4/21 | 870,000 | **36회** | ⚠️ **Q-3** — `unit_price`가 integer인데 870,000/36은 비정수. **#137 패턴**(단가 정가 30,000 유지 · 실계약 870,000/차액 210,000은 memo) 제안 — 판정 요청. VALUES에는 이 패턴으로 채워 두었다 |
+| 양형석(43) | 4/3 | 360,000(12회) → 4/10 **−120,000 레슨 전환** | | ⚠️ **Q-4** — 전환 후 계약 표현(240,000/8회 축소 기입 vs 12회 + 전환 memo) 판정 대기. VALUES 제외 |
+| 신종근(56) | 3/18 | 254,000 | 「3차」 | ⚠️ **Q-5** — 회차·단가 불명(254,000은 12회 정가도 아니다). VALUES 제외. `students.status='done'`이라 복구 여부도 함께 판정 |
+| 박성민(25) | 6/12 | 360,000 **+ 미입금 90,000(초과 3회)** | 12회 | **C-1 재작성** — 기존 Q-2(①개설일)는 **6/12로 해소** |
 
-**실행** — 이름으로 학생을 찾아 붙이므로 STEP A가 **반드시** 먼저다:
+박성진·최창운은 명단·반만 확보(원장 결제 **미확인**) — VALUES 제외, 결제 확인 대기.
+
+**실행** — `<반>`·`<분>`은 관제탑 별첨(명단·반)이 채운다. 반 이름은 내가 모르는 값이라
+지어내지 않는다(기존 2행 관례는 심화반·180분이나 구체계 반 구성은 별개일 수 있다):
 
 ```sql
 insert into public.courses
   (student_id, level, scheme, session_minutes, unit_price, units_total,
    started_on, status, source, trainer_id, memo)
-select s.id, v.level, 'new', v.session_minutes, v.unit_price, v.units_total,
-       v.started_on, 'active', 'sheet_import', 4, '직강 백필 2026-08-18'
+select s.id, v.level, 'old', v.mins, v.price, v.units, v.started, 'active', 'sheet_import', 4, v.memo
   from (values
-    -- (이름,        반,        분,   단가,     총회차, 시작일)
-    ('홍길동',        '심화반',  180,  36250,    8,     date '2026-06-29')
-    -- … 시트에서 채운다(관제탑 별첨 16행 · 박성민 2행 포함)
-    --
-    -- ⚠️ 위 값은 **실측 관례**다(허혜민 #1·김해주 #2 두 행이 전부 180분·36,250·8회·심화반).
-    --    36,250 × 8 = 290,000 — 결제 시드의 강의 금액과 정확히 일치한다.
-    --    반·회차가 다르면 단가도 다르니 시트 값을 그대로 옮길 것.
-  ) as v(name, level, session_minutes, unit_price, units_total, started_on)
+    ('박선우',   '<반>', 180, 30000, 12, date '2026-04-10', '직강 백필(구체계) · 원장 4/10 360,000'),
+    ('권태완',   '<반>', 180, 30000, 12, date '2026-04-11', '직강 백필(구체계) · 원장 4/11 360,000'),
+    ('길영패',   '<반>', 180, 30000, 12, date '2026-05-06', '직강 백필(구체계) · 원장 5/6 360,000 · 원장 표기 길영태 = 동일인(오타, 관제탑 8/21 확정)'),
+    ('양정현',   '<반>', 180, 30000, 12, date '2026-06-06', '직강 백필(구체계) · 원장 6/6 360,000'),
+    -- Q-3 판정 전 임시 형태(#137 패턴). 기각되면 이 행만 빼고 실행한다.
+    ('김준성',   '<반>', 180, 30000, 36, date '2026-04-21', '직강 백필(구체계) · 실계약 870,000(정가 1,080,000 − 할인 210,000, #137 패턴: 단가 정가 유지·차액 memo) · 원장 4/21')
+  ) as v(name, level, mins, price, units, started, memo)
   join public.students s on btrim(s.name) = v.name
  where not exists (
-   select 1 from public.courses c
-    where c.student_id = s.id and c.started_on = v.started_on
+   select 1 from public.courses c where c.student_id = s.id and c.started_on = v.started
  );
+-- 기대: INSERT 5 (Q-3 기각 시 4)
 ```
 
-**제약 화이트리스트** (위반하면 INSERT 전체가 실패한다):
-
-| 컬럼 | 허용값 |
-|---|---|
-| `level` | `초급반` · `중급반` · `심화반` · `개인강의` · `기타` |
-| `scheme` | `old` · `new` |
-| `status` | `active` · `done` · `paused` · `cancelled` · `reconstructed` |
-| `source` | `panel` · `sheet_import` · `bot` · `photo_recount` |
-| `session_minutes` · `unit_price` | **> 0** (NOT NULL) |
-| `units_total` | null 이거나 **> 0** |
-
-⚠️ **`courses`에는 유니크 제약이 없다.** 위 `not exists`(학생+시작일)가 유일한 멱등 장치다.
-같은 학생이 같은 날 두 강의를 시작하는 경우는 없으므로 실무상 안전하지만, 재실행 시
-**반드시 사후 검증으로 행수를 확인**할 것.
+`session_minutes=180`은 기존 2행 관례를 따른 **잠정값**이다 — 구체계 수업 길이가 다르면
+별첨에서 정정한다. `started_on`은 원장 결제일이다(개설일 별도 확인 시 그 값으로).
 
 **사후 검증**:
 
 ```sql
-select count(*) 총강의, count(*) filter (where source='sheet_import') 백필분,
-       count(distinct student_id) 학생수
-  from public.courses;
--- 기대: 총 17행(기존 2 + 백필 15) · 백필분 15 · 학생 17
+select s.name, c.scheme, c.unit_price, c.units_total, c.started_on, c.status
+  from public.courses c join public.students s on s.id = c.student_id
+ where c.source = 'sheet_import' order by c.started_on;
+-- 기대: scheme 전부 'old' · 신체계 단가(31,250/36,250 등) 0행
 
-select s.name, count(*) from public.courses c join public.students s on s.id=c.student_id
- group by 1 having count(*) > 1;   -- 중복 등재 감지. 병행 수강이 아니면 0행이어야 한다
+select count(*) from public.courses where scheme = 'new' and source = 'sheet_import';
+-- 기대: 0 (백필분에 신체계가 섞이면 안 된다)
 ```
 
 ---
 
-#### C-1. 박성민(#25) 2행 — 관제탑 확정 (2026-08-18)
+#### C-1. 박성민(25) — v2 재작성 (2026-08-21 · 신체계 행 폐기)
 
-결제 시드 P-3 판정이 이 STEP으로 내려온다(`payment-seed-2026-08-18.md` §0-3).
-`courses`가 0행이라 **①·② 둘 다 신규 생성**이고, ①은 처음부터 `status='done'`으로 넣는다.
+v1의 ②행(신체계 8회 290,000 소급 귀속)은 **폐기**한다 — 원장 실측이 구 체계 단일
+계약(6/12 360,000/12회)이고, 초과 3회분 90,000은 **미입금**이다.
+
+- 기존 Q-2(①개설일 불명)는 원장 실측 **6/12로 해소**됐다.
+- **미입금 90,000은 `payments`에 넣지 않는다** — `courses.memo`에만 기록한다.
+  (미입금을 매출로 적는 순간 정산·순매출이 부푼다. 입금되면 그때 payments 행을 만든다.)
 
 ```sql
 insert into public.courses
   (student_id, level, scheme, session_minutes, unit_price, units_total,
    started_on, ended_on, status, source, trainer_id, memo)
-select 25, v.level, v.scheme, 180, v.price, v.units,
-       v.started, v.ended, 'done', 'sheet_import', 4, v.memo
-  from (values
-    -- ① 구체계 12회 360,000 (30,000/회) — 개설일 확인 필요(Q-2)
-    ('심화반', 'old', 30000, 12, date '<①개설일>', date '2026-08-14',
-     '구체계 12회 360,000 · 진행 20회 중 12회 귀속 · 초과 8회는 ②로 소급'),
-    -- ② 신체계 8회 290,000 (36,250/회) — 초과 8회 소급 귀속
-    ('심화반', 'new', 36250,  8, date '2026-08-14', date '2026-08-14',
-     '신체계 8회 290,000 · 초과 8회 소급 귀속 · 구단가 미수 240,000을 신체계 290,000으로 정산(8/11 오너 협의)')
-  ) as v(level, scheme, price, units, started, ended, memo)
+select 25, '<반>', 'old', 180, 30000, 12, date '2026-06-12', date '2026-08-14', 'done',
+       'sheet_import', 4,
+       '직강 백필(구체계) · 원장 6/12 360,000/12회 · 진행 15회 = 계약 12 + 초과 3회 · 초과분 90,000 미입금(payments 미기록 — 입금 시 별도 행) · 관제탑 8/21 재작성'
  where not exists (
-   select 1 from public.courses c where c.student_id = 25 and c.started_on = v.started
+   select 1 from public.courses c where c.student_id = 25 and c.started_on = date '2026-06-12'
  );
+-- 기대: INSERT 1
 ```
 
-**용어 → 컬럼 매핑**(지시서 표현이 실제 컬럼과 다르다): `closed_at` → `ended_on` ·
-`opened` → `started_on` · `used` → **컬럼 없음**(진행분은 `course_attendance`에서 파생).
-
-⚠️ **참석 분배가 핵심이다.** ①은 계약 12회인데 진행이 20회다. STEP D-2에서
-**①에 12행 · ②에 8행**으로 갈라 붙여야 둘 다 잔여 0이 된다(12+8=20).
-①에 20행을 전부 붙이면 **① 잔여 −8**로 음수 경고에 걸린다.
-어느 8회를 ②로 넘길지는 **시간순 뒤 8회**를 권고하며 강의일정표로 확정한다.
-
-#### C-2. 엄태현 — **보류 권고** (관제탑 확인 요망 ①에 대한 회신)
-
-시트가 **완료 47 / 잔여 37 / 신청 36**으로 삼불일치다. **15행 먼저 넣고 엄태현은 뒤로 빼는 것**을
-권고한다.
-
-**역산하지 말아야 하는 이유**: 세 숫자 중 어느 것도 나머지 둘에서 유도되지 않는다.
-「잔여 37 기준 역산」을 하려면 계약 = 37 + 완료인데, 완료를 47로 잡으면 84회, 36으로 잡으면 73회다 —
-**기준을 고를 근거가 지시서 안에 없다.** 임의로 고른 숫자가 들어가면 그 값이 정본이 되고,
-`course_attendance`가 그 위에 쌓인 뒤에는 되돌리기가 번거로워진다.
-
-**보류 비용은 거의 0이다**: `courses` INSERT는 `not exists(student_id, started_on)` 가드라
-나중에 1행만 추가하면 되고, `course_attendance`도 `UNIQUE(session_id, course_id)`라 이미 만든
-세션에 나중에 참석만 붙일 수 있다. **먼저 넣고 나중에 고치는 것보다 나중에 넣는 편이 싸다.**
-
-→ **시트 원본(완료·잔여·신청 세 칸의 산출 근거) 확인 후 1행 추가.**
-
-#### C-3. 8/15·8/17 직강 수업분 — **이미 반영돼 있다** (확인 요망 ②에 대한 회신)
-
-STEP D-1의 세션 목록에 **8건 전부**가 들어 있다: 06-29 · 07-04 · 07-05 · 08-05 · 08-09 · 08-10 ·
-**08-15 · 08-17**. 누락 없다.
-
-다만 지시서의 「STEP C 실행 전 `used`에 합산하라」는 **이 설계에서는 성립하지 않는다** —
-`courses`에 `used` 컬럼이 없기 때문이다. 진행분은 전부 `course_attendance`(STEP D-2)가 만든다.
-즉 **STEP C는 계약축, STEP D는 진행축**이고, 8/15·8/17은 STEP D에서 자동으로 잡힌다.
-
-> ⚠️ 별첨 표에 `used` 칼럼이 있다면 **그 값을 `courses`에 넣을 자리가 없다.**
-> 그 숫자는 STEP D-2의 참석 행수와 일치해야 하는 검산값으로 쓰는 게 맞다.
-
----
+⚠️ v1 ①행(`<①개설일>` placeholder)이 이미 실행됐을 가능성은 없다 — placeholder는 SQL
+오류가 나므로 실행 자체가 안 된다. `courses`에서 student 25는 현재 0행(실측)이다.
 
 ### STEP D — `course_sessions` + `course_attendance`
 
