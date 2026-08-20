@@ -1,131 +1,176 @@
-# payments 시드 3건 — 승인 큐 id 6·7·8 (2026-08-19)
+# payments 시드 3건 — 승인 큐 id 6·7·8 (재발행 v2 · 2026-08-20)
 
-> 관제탑 2026-08-19 「id 8 판정 완료 — 승인 큐 3건 전부 시드 가능」에 대한 회신.
-> **SQL은 발행만 한다. 실행은 오너가 Supabase SQL Editor에서 한다.**
-> 수치는 `payment_requests` 실DB 직접 조회(2026-08-19).
-
----
-
-## 🔴 0. 실행 보류 — 관제탑 재판정(2026-08-19 저녁). §3을 실행하지 마시오
-
-날짜 검증이 미결이다. **트레이너 확인 회신 전까지 이 문서의 INSERT는 실행 금지다.**
-(발행이 재판정보다 먼저였다 — 이 배너가 그 발행을 보류로 되돌린다.)
-
-| 큐 | paid_on(큐) | created_at | decided_at | 문제 |
-|---|---|---|---|---|
-| #6 윤지민 | **8/18** | 8/17 16:09:01 | 8/17 16:09:08 | **결제일이 신청·승인보다 미래 — 순서 역전** |
-| #7 주현성 | 8/18 | 8/18 04:36 | 8/18 04:42 | 당일 순서 정상 — 단 아래 진술 불일치는 공통 |
-| #8 이한결 | 8/18 | 8/18 06:02 | 8/18 06:13 | 〃 |
-
-**트레이너 진술은 8월 8일이다** — 큐와 열흘 차. 이 차이는 표기 문제가 아니라 **처리 경로를
-가른다**: 8/8이면 백필 커트라인(8/17) **안**이라 백필 경로, 8/18이면 **밖**이라 신규 경로다.
-§3의 `paid_at='2026-08-18'`은 큐 값을 그대로 옮긴 것이므로 **날짜 자체가 미확정**이다.
-
-트레이너 확인이 오면: ① 확정 일자로 §3의 `paid_at` 3곳을 고쳐 재발행하고 ② §4의 ⓪ 날짜
-검증을 함께 돌린다. #6의 역전이 「미래 일자 선신고」였는지 「오기입」이었는지도 그 회신이 가른다.
-8/8로 확정되면 이 3건은 백필 경로 재편입 대상이라 **§3 자체를 다시 짠다** — 지금 형태로
-실행하면 안 되는 이유가 하나 더 생기는 셈이다.
+> 관제탑 2026-08-20 「id 8 판정 완료 · 날짜 확정」에 대한 재발행.
+> **SQL은 발행만 한다. 실행은 오너가 SQL Editor에서, 검증은 관제탑이 돌린다.**
+> 수치는 실DB 직접 조회(2026-08-20).
 
 ---
 
-## 1. 대상 — 실측 대조 완료
+## 0. 보류 해제 이력 (v1 → v2)
 
-`payment_requests` 실물과 관제탑 지시가 **3건 전부 일치**한다. 학생 id는 지시문에 없어
-추정하지 않고 **큐 행의 `student_id`를 그대로 썼다.**
+| 시점 | 상태 | 근거 |
+|---|---|---|
+| 8/19 저녁 | 🔴 **실행 보류** | 트레이너 진술 8/8 vs 큐 8/18 열흘 차 · #6 결제일>승인일 역전 |
+| **8/20** | ✅ **해제 · 재발행** | **오너 통장 확인 — 셋 다 8/18 입금 확정. 진술 8/8은 착오.** |
 
-| 큐 id | 학생 | `student_id` | 금액 | 판수 | 입금일 | 담당 | 채널 | status |
-|---:|---|---:|---:|---:|---|---|---|---|
-| 6 | 윤지민 | **12** | 80,000 | 21 | 2026-08-18 | 준구(2) | transfer | approved |
-| 7 | 주현성 | **60** | 120,000 | 33 | 2026-08-18 | 준구(2) | transfer | approved |
-| 8 | 이한결 | **3** | 40,000 | 10 | 2026-08-18 | 준구(2) | transfer | approved |
+- #6의 `decided_at 8/17 < paid_on 8/18`은 **「신청·승인 후 입금」 순서로 정상** — 이상 거래 아님.
+  이에 따라 날짜 가드 설계는 「차단」이 아니라 **「경고+사유입력」**으로 낮춘다
+  (`docs/payment-track-requirements.md` §4에 반영).
+- 8/18 확정 = 백필 커트라인(8/17) **밖** → 이 3건은 백필 대상이 아니라 **시드 직접 입력**이고
+  시트 덤프에도 포함되지 않는다.
 
-**id 8 이한결 = 정상 건**(오너 통장 확인 8/19). 중복이 아니라 id 3(8/5)과 **별건 재결제**다.
-실측으로도 뒷받침된다 — 이한결(3)에게 `payments #139`(8/5 · 40,000 · 10판)가 이미 있고
-이번 건은 8/18로 날짜가 다르다. void 처리하지 않는다.
+## 0-1. ⚠️ 실행 순서 — **세션 귀속 백필(23행)을 먼저, 이 시드를 나중에**
 
-**중복 방지 확인**: `payments`에 `student_id in (12,60,3) and paid_at='2026-08-18'`인 행 **0건**.
+이 시드는 등록(enrollment) 3행을 함께 만든다. 그 순간 윤지민(12)·주현성(60)의
+active 등록이 1→2건이 되어 **「유일 등록」 조건이 깨진다**(김예지 부담 행과 같은 메커니즘).
+
+실측: 두 사람의 미귀속 세션 = 윤지민 5행/32판 · 주현성 2행/6판.
+
+| 순서 | 세션 귀속 백필 기대치 |
+|---|---|
+| **백필 → 시드** (권장) | **23행/125판/10명 그대로** ✅ |
+| 시드 → 백필 | 16행/87판/8명으로 붕괴 — 7행/38판이 FIFO 대기(D구간)로 밀린다 ❌ |
+
+> 이한결(3)은 이미 등록 5건(D구간)이라 순서 무관.
 
 ---
 
-## 2. 컬럼 확인 (추정 없음)
+## 1. 대상 — 실측 대조 (v1과 동일 · 날짜 확정 반영)
 
-- 날짜 컬럼은 `paid_at`이다(`paid_on` 아님).
-- **rate 0.70은 `payments.payout_rate`** 이다 — `lesson_enrollments`에는 rate 컬럼이 없다.
-- `pay_channel='transfer'` → `config/fees.cjs`의 `TRANSFER_FEE_RATE = 0` →
-  **`fee_amount = 0` · `net_amount = amount`**. (추정이 아니라 확정된 무수수료다.)
+| 큐 id | 학생 | `student_id` | 금액 | 판수 | 입금일(확정) | 담당 | 채널 |
+|---:|---|---:|---:|---:|---|---|---|
+| 6 | 윤지민 | **12** | 80,000 | 21 | **2026-08-18** | 준구(2) | transfer |
+| 7 | 주현성 | **60** | 120,000 | 33 | **2026-08-18** | 준구(2) | transfer |
+| 8 | 이한결 | **3** | 40,000 | 10 | **2026-08-18** | 준구(2) | transfer |
+
+- **id 8 = 정상 건 확정**(오너 통장 확인 8/19~20). #139(8/5)와 별건 재결제.
+- 이한결 기존 `payments` 5건(3/28·4/2·5/2·7/9·8/5) 실측 일치 — **이번 건은 6번째 결제 행**이다
+  (관제탑 문구 「5회째」는 나열 5건에 *이어지는* 건이므로 행 수로는 6번째가 맞다. 재결제
+  회차로 세면 5회째 — 셈법 차이일 뿐 대상 특정에는 영향 없다).
+- **중복 방지 실측**: `paid_at='2026-08-18'`인 payments 0건 · `started_on='2026-08-18'`인
+  enrollments 0건 — 멱등 키로 안전하다.
 
 ---
 
-## 3. 실행 블록
+## 2. 스키마·관례 실측 (추정 없음 · 전부 2026-08-20 직접 조회)
+
+| 항목 | 실측 |
+|---|---|
+| 날짜 컬럼 | `payments.paid_at` (`paid_on` 아님) |
+| rate 0.70 | **`payments.payout_rate`** (`lesson_enrollments`에는 rate 컬럼 없음) |
+| transfer 수수료 | `TRANSFER_FEE_RATE = 0` (확정된 무수수료) → `fee_amount=0 · net_amount=amount` |
+| `lesson_enrollments.source` | CHECK 3종(`panel`·`sheet_import`·`bot`)뿐 |
+| 승인 큐 편입 전례 | 등록 119~122 = **`source='bot'` · `created_by='payreq'`** ← 이 관례를 따른다 |
+| `started_on` | NOT NULL → 8/18 필수 기입 |
+| CHECK | `games_total>0` · `bonus_games 0~games_total` · `paid_amount>=0` 전부 충족 |
+| `handler_id` | **넣지 않는다**(v1과 차이) — 상담 가산 축이라 `kind='lesson'`엔 무의미하고, 담당은 등록의 `trainer_id=2`가 진다 |
+
+---
+
+## 3. 실행 블록 — 2단계 (재실행 안전)
+
+한 CTE로 묶지 않고 두 단계로 가른다 — ①만 실행된 반쪽 상태에서 재실행해도
+②가 마저 채워진다(CTE 묶음은 반쪽 상태가 영구화된다).
+
+### ① 등록 3행 (`lesson_enrollments`)
 
 ```sql
--- payments 시드 3건 — 승인 큐 id 6·7·8 (관제탑 2026-08-19 판정)
--- 구가 경과조치분. 채널 transfer라 수수료 0 · net = amount.
-insert into public.payments
-  (student_id, paid_at, amount, games, kind, payout_rate, handler_id,
-   pay_channel, fee_amount, net_amount, source, memo)
-values
-  (12, '2026-08-18',  80000, 21, 'lesson', 0.70, 2, 'transfer', 0,  80000, 'payreq#6',
-   '구가 경과조치 · 차기 결제부터 신가(45,000/90,000/140,000) 적용'),
-  (60, '2026-08-18', 120000, 33, 'lesson', 0.70, 2, 'transfer', 0, 120000, 'payreq#7',
-   '구가 경과조치 · 차기 결제부터 신가(45,000/90,000/140,000) 적용'),
-  (3,  '2026-08-18',  40000, 10, 'lesson', 0.70, 2, 'transfer', 0,  40000, 'payreq#8',
-   '구가 경과조치 · 차기 결제부터 신가(45,000/90,000/140,000) 적용');
+-- 승인 큐 6·7·8 대응 등록. 전례(등록 119~122: source='bot'·created_by='payreq')를 따른다.
+insert into public.lesson_enrollments
+  (student_id, trainer_id, games_total, started_on, status, source, memo, created_by,
+   paid_amount, bonus_games)
+select v.sid, 2, v.games, date '2026-08-18', 'active', 'bot',
+       'seed:payreq#' || v.req || ' · 구가 경과조치 · 차기 결제부터 신가(45,000/90,000/140,000) 적용',
+       'payreq', v.amount, 0
+  from (values (12, 21,  80000, 6),
+               (60, 33, 120000, 7),
+               (3,  10,  40000, 8)) as v(sid, games, amount, req)
+ where not exists (
+   select 1 from public.lesson_enrollments e
+    where e.student_id = v.sid and e.started_on = date '2026-08-18'
+ );
+-- 기대: INSERT 3
 ```
 
-⚠️ `handler_id`는 **상담 가산 축**이다(`payments.handler_id`). 담당 트레이너를 뜻하는 값으로
-넣었으나, 상담 가산이 `kind='consult'`에만 걸리므로 `kind='lesson'`인 이 3행에는
-가산 영향이 없다. **의미가 겹쳐 보이면 이 3행에서는 `handler_id`를 빼도 된다** — 오너 판단.
+### ② 결제 3행 (`payments`) — ①의 등록에 연결
+
+```sql
+insert into public.payments
+  (student_id, paid_at, amount, games, kind, payout_rate,
+   pay_channel, fee_amount, net_amount, source, memo, lesson_enrollment_id)
+select v.sid, date '2026-08-18', v.amount, v.games, 'lesson', 0.70,
+       'transfer', 0, v.amount, 'payreq#' || v.req,
+       '구가 경과조치 · 차기 결제부터 신가(45,000/90,000/140,000) 적용',
+       e.id
+  from (values (12, 21,  80000, 6),
+               (60, 33, 120000, 7),
+               (3,  10,  40000, 8)) as v(sid, games, amount, req)
+  join public.lesson_enrollments e
+    on e.student_id = v.sid and e.started_on = date '2026-08-18'
+ where not exists (
+   select 1 from public.payments p where p.source = 'payreq#' || v.req
+ );
+-- 기대: INSERT 3
+
+notify pgrst, 'reload schema';
+```
+
+`payment_requests.status`는 **approved 유지** — 바꾸지 않는다.
 
 ---
 
-## 4. 사후 검증
+## 4. 사후 검증 (관제탑 실행분)
 
 ```sql
--- ⓪ 날짜 검증(관제탑 8/19 추가) — 금액·판수 검증만으로는 이 3건의 핵심 리스크를 못 잡는다.
--- (a) paid_at이 트레이너 확정 일자와 일치하는지. 기대: 3행 전부 확정 일자
-select id, student_id, paid_at from public.payments
- where source in ('payreq#6','payreq#7','payreq#8') order by id;
--- (b) 결제일이 승인일보다 미래인 순서 역전이 없는지. 기대: 0행
-select p.source, p.paid_at::date as 결제일, q.decided_at::date as 승인일
+-- ⓪ 날짜. 기대: 3행 전부 2026-08-18.
+--    (b) 순서 역전 검사 — #6 1행이 나오는 것이 정상이다(신청·승인 후 입금, 관제탑 8/20 판정).
+--    0행 강제 아님 — 이 검사의 용도는 "역전 건이 새로 늘었는지" 감시로 바뀐다.
+select p.source, p.paid_at::date as 결제일, q.decided_at::date as 승인일,
+       (p.paid_at::date > q.decided_at::date) as 역전
   from public.payments p
   join public.payment_requests q on ('payreq#' || q.id) = p.source
- where p.paid_at::date > q.decided_at::date;
+ order by p.source;
 
--- ① 3행이 들어갔는지. 기대: 3행 · 합계 240,000 · 64판
-select id, student_id, paid_at, amount, games, kind, payout_rate, pay_channel,
-       fee_amount, net_amount, source, memo
+-- ① payments 3행. 기대: 3행 · 합계 240,000 · 64판 · 전부 lesson_enrollment_id not null
+select id, student_id, paid_at, amount, games, payout_rate, lesson_enrollment_id, source
   from public.payments where source in ('payreq#6','payreq#7','payreq#8') order by id;
 
--- ② 중복이 생기지 않았는지. 기대: 각 1행
-select student_id, paid_at, count(*) from public.payments
- where student_id in (12,60,3) and paid_at = '2026-08-18' group by 1,2;
+-- ② 등록 3행 + 연결 정합. 기대: 3행 · 등록별 paid_amount=결제 amount · games_total=결제 games
+select e.id, e.student_id, e.games_total, e.paid_amount, e.bonus_games, e.trainer_id,
+       p.id as payment_id, p.amount, p.games
+  from public.lesson_enrollments e
+  join public.payments p on p.lesson_enrollment_id = e.id
+ where e.started_on = date '2026-08-18' order by e.id;
 
--- ③ 경과조치 태그가 전부 붙었는지. 기대: 3행
+-- ③ 중복 없음. 기대: 학생당 8/18 등록 1행 · 결제 1행
+select student_id, count(*) from public.lesson_enrollments
+ where started_on = date '2026-08-18' group by 1 having count(*) > 1;
+select student_id, count(*) from public.payments
+ where paid_at = date '2026-08-18' group by 1 having count(*) > 1;
+
+-- ④ 경과조치 태그. 기대: 3행
 select count(*) from public.payments
- where paid_at = '2026-08-18' and memo like '%구가 경과조치%';
+ where paid_at = date '2026-08-18' and memo like '%구가 경과조치%';
+
+-- ⑤ 잔여 파생 스팟체크. 기대(시드만 반영 시): 윤지민 granted 33→54 · 주현성 10→43 · 이한결 116→126
+--    (세션 귀속 백필이 먼저 실행됐다면 잔여 숫자는 같고 귀속 분포만 다르다)
+select s.id, s.name,
+       (select coalesce(sum(games_total),0) from lesson_enrollments e
+         where e.student_id=s.id and e.status in ('active','paused','done')) as granted
+  from students s where s.id in (12,60,3) order by s.id;
 ```
 
 ---
 
-## 5. `payment_requests` 역참조 — **링크 컬럼이 없다**
+## 5. `payment_requests` 역참조 — 링크 컬럼 없음 (v1과 동일)
 
-실측 컬럼: `id, status, student_name, student_id, trainer_id, trainer_name, kind, amount,
-games, paid_on, memo, requested_by, decided_by, decided_at, created_at, pay_channel`
-→ `payments.id`를 가리키는 컬럼이 **없다.**
-
-관제탑 조건부 지시(「없다면 승인 핸들러 설계에 링크 컬럼을 포함할 것」)가 발동한다.
-
-**당장의 대체**: 위 SQL은 `payments.source`에 `payreq#6/7/8`을 적어 **역방향 추적은 가능**하게 했다.
-정방향(`payment_requests` → `payments`)은 여전히 불가하므로, 승인 핸들러 설계 시
-`payment_requests.payment_id` 추가를 포함한다. **DDL은 그 설계와 함께 발행한다** —
-지금 컬럼만 만들면 쓰는 코드가 없어 `REQUIRED_SCHEMA` 사각지대가 된다.
-
-`status`는 `approved` 유지다(지시대로 변경하지 않는다).
+정방향(`payment_requests`→`payments`) 컬럼이 없다 → **승인 핸들러 설계에 `payment_id` 포함**
+(`docs/payment-track-requirements.md` §4). 당장은 `payments.source='payreq#N'`으로 역방향 추적.
+DDL은 그 설계와 함께 발행한다.
 
 ---
 
-## 6. 경과조치 명단 4명 (기록)
+## 6. 경과조치 명단 — 4명 **확정** (관제탑 8/20)
 
 | 학생 | 입금일 | 금액 | 판수 |
 |---|---|---:|---:|
@@ -134,32 +179,11 @@ games, paid_on, memo, requested_by, decided_by, decided_at, created_at, pay_chan
 | 주현성(60) | 8/18 | 120,000 | 33 |
 | 이한결(3) | 8/18 | 40,000 | 10 |
 
-**8/10 신가 시행 후에도 구가 결제가 4건 발생했다.** 원인은 트레이너 고지 누락이고
-재발 가능성이 높다 → §7 가드.
+8/10 신가 시행 후 구가 결제 4건 — 트레이너 고지 누락이 원인. **재공지는 오너가 별도 발송한다.**
 
 ---
 
-## 7. `/결제신청` 가격 가드 — 요구사항 (구현 보류)
+## 7. `/결제신청` 가격 가드 — 요구사항은 `payment-track-requirements.md` §5로 이관
 
-금액 입력 시 정가표와 대조해 **경고**한다. **차단하지 않는다** — 경과조치 건이 실재한다.
-
-| 구분 | 10판 | 21판 | 33판 |
-|---|---:|---:|---:|
-| **신가**(8/10~) | 45,000 | 90,000 | 140,000 |
-| **구가**(폐지) | 40,000 | 80,000 | 120,000 |
-
-- 구가 금액 입력 시: 「구가격입니다. 8/10부터 신가 적용 — 계속하시겠습니까?」
-- 금액↔판수 불일치 시에도 동일 경고.
-
-### 7-1. ⚠️ 왜 지금 구현하지 않는가 — 트랙 경계
-
-**가격표는 결제 트랙 소관**이고(CLAUDE.md 「가격·환불·footer 사업자표기」),
-저장소 규칙상 **가격 수정 전 사용자 확인이 필수**다(토스 심사 대상).
-가드 자체는 봇(MRIacademy 소관)이지만 **숫자의 정본을 내가 새로 만들 수 없다.**
-
-현재 `config/fees.cjs`에는 **수수료율만 있고 정가표가 없다.** 가드를 구현하려면
-정가표 상수가 먼저 있어야 하고, 그 파일의 소관은 결제 트랙이다.
-
-**요청**: 결제 트랙이 `config/fees.cjs`(또는 형제 파일)에 정가표 상수를 신설한다.
-그 상수가 생기면 MRIacademy가 `/결제신청`·`/수업등록`에서 참조해 가드를 붙인다.
-**봇 쪽 구현은 봇 v2 재배선(8/24~27) 창구에서 한다.**
+정가표 상수 신설은 결제 트랙 소관이므로 **요구사항 문서에 추가만** 했다(관제탑 8/20).
+봇 쪽 가드 구현은 상수 수령 후 봇 v2 창구(8/24~27)에서 한다.
