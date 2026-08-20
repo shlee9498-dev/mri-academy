@@ -164,7 +164,7 @@ select id, name, status, trainer_id from public.students
 
 ```sql
 insert into public.students (name, status, trainer_id, pubg_platform, carry_games, note)
-select v.name, 'active', 4, 'steam', 0, '직강 백필 2026-08-18(강의일정표 시트)'
+select v.name, 'active', 4, 'steam', 0, '직강 백필 2026-08-18(강의일정표 시트) · owner_sql'
   from (values ('박성진'),('최창운'),('박선우'),('길영패'),('김준성'),('양정현')) as v(name)
  where not exists (
    select 1 from public.students s where btrim(s.name) = v.name
@@ -179,7 +179,7 @@ select v.name, 'active', 4, 'steam', 0, '직강 백필 2026-08-18(강의일정�
 
 ```sql
 update public.students
-   set note = coalesce(note||' | ','') || '결제_원장 표기 길영태 = 동일인(오타, 관제탑 8/21 확정)'
+   set note = coalesce(note||' | ','') || '결제_원장 표기 길영태 = 동일인(오타, 관제탑 8/21 확정) · owner_sql'
  where btrim(name) = '길영패'
    and coalesce(note,'') not like '%길영태%';
 ```
@@ -291,12 +291,12 @@ insert into public.courses
    started_on, status, source, trainer_id, memo)
 select s.id, v.level, 'old', v.mins, v.price, v.units, v.started, 'active', 'sheet_import', 4, v.memo
   from (values
-    ('박선우',   '<반>', 180, 30000, 12, date '2026-04-10', '직강 백필(구체계) · 원장 4/10 360,000'),
-    ('권태완',   '<반>', 180, 30000, 12, date '2026-04-11', '직강 백필(구체계) · 원장 4/11 360,000'),
-    ('길영패',   '<반>', 180, 30000, 12, date '2026-05-06', '직강 백필(구체계) · 원장 5/6 360,000 · 원장 표기 길영태 = 동일인(오타, 관제탑 8/21 확정)'),
-    ('양정현',   '<반>', 180, 30000, 12, date '2026-06-06', '직강 백필(구체계) · 원장 6/6 360,000'),
+    ('박선우',   '<반>', 180, 30000, 12, date '2026-04-10', '직강 백필(구체계) · 원장 4/10 360,000 · owner_sql'),
+    ('권태완',   '<반>', 180, 30000, 12, date '2026-04-11', '직강 백필(구체계) · 원장 4/11 360,000 · owner_sql'),
+    ('길영패',   '<반>', 180, 30000, 12, date '2026-05-06', '직강 백필(구체계) · 원장 5/6 360,000 · 원장 표기 길영태 = 동일인(오타, 관제탑 8/21 확정) · owner_sql'),
+    ('양정현',   '<반>', 180, 30000, 12, date '2026-06-06', '직강 백필(구체계) · 원장 6/6 360,000 · owner_sql'),
     -- Q-3 판정 전 임시 형태(#137 패턴). 기각되면 이 행만 빼고 실행한다.
-    ('김준성',   '<반>', 180, 30000, 36, date '2026-04-21', '직강 백필(구체계) · 실계약 870,000(정가 1,080,000 − 할인 210,000, #137 패턴: 단가 정가 유지·차액 memo) · 원장 4/21')
+    ('김준성',   '<반>', 180, 30000, 36, date '2026-04-21', '직강 백필(구체계) · 실계약 870,000(정가 1,080,000 − 할인 210,000, #137 패턴: 단가 정가 유지·차액 memo) · 원장 4/21 · owner_sql')
   ) as v(name, level, mins, price, units, started, memo)
   join public.students s on btrim(s.name) = v.name
  where not exists (
@@ -304,6 +304,9 @@ select s.id, v.level, 'old', v.mins, v.price, v.units, v.started, 'active', 'she
  );
 -- 기대: INSERT 5 (Q-3 기각 시 4)
 ```
+
+memo 말미 `owner_sql` = 오너 직접 실행분 표기 표준(관제탑 8/20). `courses.source`는
+데이터 출처 표기라 `'sheet_import'` 유지(표준의 `'panel'`은 `lesson_enrollments` 값이다).
 
 `session_minutes=180`은 기존 2행 관례를 따른 **잠정값**이다 — 구체계 수업 길이가 다르면
 별첨에서 정정한다. `started_on`은 원장 결제일이다(개설일 별도 확인 시 그 값으로).
@@ -337,7 +340,7 @@ insert into public.courses
    started_on, ended_on, status, source, trainer_id, memo)
 select 25, '<반>', 'old', 180, 30000, 12, date '2026-06-12', date '2026-08-14', 'done',
        'sheet_import', 4,
-       '직강 백필(구체계) · 원장 6/12 360,000/12회 · 진행 15회 = 계약 12 + 초과 3회 · 초과분 90,000 미입금(payments 미기록 — 입금 시 별도 행) · 관제탑 8/21 재작성'
+       '직강 백필(구체계) · 원장 6/12 360,000/12회 · 진행 15회 = 계약 12 + 초과 3회 · 초과분 90,000 미입금(payments 미기록 — 입금 시 별도 행) · 관제탑 8/21 재작성 · owner_sql'
  where not exists (
    select 1 from public.courses c where c.student_id = 25 and c.started_on = date '2026-06-12'
  );
