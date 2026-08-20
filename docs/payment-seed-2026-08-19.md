@@ -52,6 +52,18 @@ active 등록이 1→2건이 되어 **「유일 등록」 조건이 깨진다**(
 
 ---
 
+## 1-1. 📌 오너 직접 실행분 표기 표준 (관제탑 8/20 확정 — 이 문서 v2.1에 반영)
+
+| 항목 | 값 |
+|---|---|
+| `payments.source` | **`'manual'`** — CHECK 실측 `(manual|api)` 2종뿐. v2의 `'payreq#N'`은 **이 CHECK에 걸린다** → 큐 연계는 memo로 이동 |
+| `lesson_enrollments.source` | **`'panel'`** — CHECK 실측 `(panel|sheet_import|bot)`. v2의 `'bot'`에서 변경 |
+| 실행 주체 표식 | **memo 말미 `'owner_sql'`** 로 통일 |
+| `created_by` | 기능적 계보 표기로 유지(이 시드는 `'payreq'` — 등록 119~122 전례). 실행 주체 표식이 아니다 |
+
+두 테이블의 source 허용값이 서로 다른 것이 CHECK 위반 2회의 원인이었다.
+**통일 여부는 컷오버 후 검토 항목으로만 등재**(`settlement-corrections.md` C-3) — 지금 변경 금지.
+
 ## 2. 스키마·관례 실측 (추정 없음 · 전부 2026-08-20 직접 조회)
 
 | 항목 | 실측 |
@@ -75,12 +87,12 @@ active 등록이 1→2건이 되어 **「유일 등록」 조건이 깨진다**(
 ### ① 등록 3행 (`lesson_enrollments`)
 
 ```sql
--- 승인 큐 6·7·8 대응 등록. 전례(등록 119~122: source='bot'·created_by='payreq')를 따른다.
+-- 승인 큐 6·7·8 대응 등록. source='panel'(오너 직접 실행분 표준 8/20) · created_by='payreq'(큐 계보).
 insert into public.lesson_enrollments
   (student_id, trainer_id, games_total, started_on, status, source, memo, created_by,
    paid_amount, bonus_games)
-select v.sid, 2, v.games, date '2026-08-18', 'active', 'bot',
-       'seed:payreq#' || v.req || ' · 구가 경과조치 · 차기 결제부터 신가(45,000/90,000/140,000) 적용',
+select v.sid, 2, v.games, date '2026-08-18', 'active', 'panel',
+       'seed:payreq#' || v.req || ' · 구가 경과조치 · 차기 결제부터 신가(45,000/90,000/140,000) 적용 · owner_sql',
        'payreq', v.amount, 0
   from (values (12, 21,  80000, 6),
                (60, 33, 120000, 7),
@@ -99,8 +111,8 @@ insert into public.payments
   (student_id, paid_at, amount, games, kind, payout_rate,
    pay_channel, fee_amount, net_amount, source, memo, lesson_enrollment_id)
 select v.sid, date '2026-08-18', v.amount, v.games, 'lesson', 0.70,
-       'transfer', 0, v.amount, 'payreq#' || v.req,
-       '구가 경과조치 · 차기 결제부터 신가(45,000/90,000/140,000) 적용',
+       'transfer', 0, v.amount, 'manual',
+       'seed:payreq#' || v.req || ' · 구가 경과조치 · 차기 결제부터 신가(45,000/90,000/140,000) 적용 · owner_sql',
        e.id
   from (values (12, 21,  80000, 6),
                (60, 33, 120000, 7),
@@ -108,9 +120,10 @@ select v.sid, date '2026-08-18', v.amount, v.games, 'lesson', 0.70,
   join public.lesson_enrollments e
     on e.student_id = v.sid and e.started_on = date '2026-08-18'
  where not exists (
-   select 1 from public.payments p where p.source = 'payreq#' || v.req
+   select 1 from public.payments p where p.memo like 'seed:payreq#' || v.req || ' ·%'
  );
 -- 기대: INSERT 3
+-- source는 'manual'이다 — CHECK (manual|api) 실측. 큐 연계('payreq#N')는 memo 접두로 옮겼다.
 
 notify pgrst, 'reload schema';
 ```
@@ -125,15 +138,15 @@ notify pgrst, 'reload schema';
 -- ⓪ 날짜. 기대: 3행 전부 2026-08-18.
 --    (b) 순서 역전 검사 — #6 1행이 나오는 것이 정상이다(신청·승인 후 입금, 관제탑 8/20 판정).
 --    0행 강제 아님 — 이 검사의 용도는 "역전 건이 새로 늘었는지" 감시로 바뀐다.
-select p.source, p.paid_at::date as 결제일, q.decided_at::date as 승인일,
+select p.memo, p.paid_at::date as 결제일, q.decided_at::date as 승인일,
        (p.paid_at::date > q.decided_at::date) as 역전
   from public.payments p
-  join public.payment_requests q on ('payreq#' || q.id) = p.source
- order by p.source;
+  join public.payment_requests q on p.memo like 'seed:payreq#' || q.id || ' ·%'
+ order by q.id;
 
--- ① payments 3행. 기대: 3행 · 합계 240,000 · 64판 · 전부 lesson_enrollment_id not null
+-- ① payments 3행. 기대: 3행 · 합계 240,000 · 64판 · 전부 lesson_enrollment_id not null · source='manual'
 select id, student_id, paid_at, amount, games, payout_rate, lesson_enrollment_id, source
-  from public.payments where source in ('payreq#6','payreq#7','payreq#8') order by id;
+  from public.payments where memo like 'seed:payreq#%' order by id;
 
 -- ② 등록 3행 + 연결 정합. 기대: 3행 · 등록별 paid_amount=결제 amount · games_total=결제 games
 select e.id, e.student_id, e.games_total, e.paid_amount, e.bonus_games, e.trainer_id,
@@ -165,8 +178,8 @@ select s.id, s.name,
 ## 5. `payment_requests` 역참조 — 링크 컬럼 없음 (v1과 동일)
 
 정방향(`payment_requests`→`payments`) 컬럼이 없다 → **승인 핸들러 설계에 `payment_id` 포함**
-(`docs/payment-track-requirements.md` §4). 당장은 `payments.source='payreq#N'`으로 역방향 추적.
-DDL은 그 설계와 함께 발행한다.
+(`docs/payment-track-requirements.md` §6). 당장은 **`payments.memo`의 `seed:payreq#N` 접두**로
+역방향 추적한다(v2의 source 방식은 CHECK 위반이라 폐기 — §1-1). DDL은 그 설계와 함께 발행한다.
 
 ---
 

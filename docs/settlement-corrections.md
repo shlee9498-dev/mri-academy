@@ -25,3 +25,4 @@
 |---|---|---:|---|
 | C-1 | **빵다 4~5월 차감 불일치** — 계산 74,630 vs 기록 91,130 | 차이 **16,500** | 관제탑 8/21 등재. **지금 손대지 않는다** |
 | C-2 | 환불 2건 `kind='refund'` 정리 (#124·#126) | — | 기존 백로그 편입(중복 등재 방지용 상호 참조) |
+| C-3 | **`source` 허용값 테이블 간 상이** — payments `(manual·api)` vs lesson_enrollments `(panel·sheet_import·bot)` vs courses `(panel·sheet_import·bot·photo_recount)`. 관제탑 발행 SQL이 CHECK에 2회 걸린 원인 | — | **통일 여부는 컷오버 후 검토만**(관제탑 8/20) — 지금 변경 금지. 표기 표준은 `payment-seed-2026-08-19.md` §1-1 |
