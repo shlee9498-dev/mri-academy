@@ -1523,6 +1523,166 @@ if (process.env.DISCORD_TOKEN) {
   const REG_PENDING = new Map();                 // discord_id → { platform, ign, realName, activeHours, at }
   const REG_PENDING_TTL_MS = 10 * 60 * 1000;
 
+  // 등록 반영 핵심(SCD-2 이력 + clan_registry upsert). 즉시 등록과 전환 승인이 공유한다 —
+  // 두 벌로 두면 한쪽만 고쳐져서 어긋난다. discordName이 null이면 키를 빼서 기존값을 보존한다.
+  async function applyRegistryChange({ discordId, discordName, realName, platform, pubgName, accountId, activeHours, pwsEligible, season, historyNote }) {
+    const enc = encodeURIComponent(discordId);
+    const prev = (await sbSelect("clan_registry", `select=id,platform,pubg_name,account_id&discord_id=eq.${enc}&season=eq.${season}&limit=1`))[0];
+    const changed = !prev || prev.account_id !== accountId || prev.platform !== platform;
+    const nowIso = new Date().toISOString();
+    if (changed) {
+      try {
+        if (prev) await sbPatch("registry_history", `discord_id=eq.${enc}&season=eq.${season}&valid_to=is.null`, { valid_to: nowIso });
+        await sbInsert("registry_history", { discord_id: discordId, season, platform, pubg_name: pubgName, account_id: accountId, real_name: realName, valid_from: nowIso, note: historyNote || (prev ? "등록계 변경" : "최초등록") });
+      } catch (e) { console.error("registry_history", e?.message); }
+    }
+    const upsertRow = {
+      discord_id: discordId, real_name: realName, platform, pubg_name: pubgName, account_id: accountId,
+      season, verified_at: nowIso, updated_at: nowIso,
+      ownership_confirmed: true, confirmed_at: nowIso,   // 명의 확인(버튼/승인) 통과분만 여기 도달
+    };
+    if (discordName) upsertRow.discord_name = discordName;
+    if (activeHours) upsertRow.active_hours = activeHours;
+    // PWS 자격은 자기신고 boolean만 남긴다(생년월일 미수집). 컬럼 DDL 전이면 payload에서 제외 —
+    // 없는 컬럼을 넣으면 PGRST204로 등록 전체가 실패한다.
+    if (schemaOptional["clan_registry.pws_eligible"] && typeof pwsEligible === "boolean")
+      upsertRow.pws_eligible = pwsEligible;
+    await sbUpsert("clan_registry", upsertRow, "discord_id,season");
+    return prev;
+  }
+
+  // ── 전환 승인 게이트 접수 (관제탑 설계 승인 2026-08-21 · §20 DDL 실행 후 활성) ──
+  // true = 게이트가 처리함(즉시 교체 금지). false = §20 테이블 미실행 degrade(종전 즉시 교체).
+  async function queueRegistryTransfer(itx, p) {
+    const enc = encodeURIComponent(itx.user.id);
+    const nowIso = new Date().toISOString();
+    let rows;
+    try {
+      rows = await sbSelect("registry_transfer_requests",
+        `select=id,status,expires_at,to_pubg_name&discord_id=eq.${enc}&season=eq.${p.season}&status=eq.pending`);
+    } catch (e) {
+      // §20 미실행 — 게이트 없이 종전 동작으로 떨어진다. 조용히 넘기면 게이트가 안 켜진 걸
+      // 영영 모르므로 하루 1회 오너에게 알린다(dualwrite_enr_column과 같은 처리).
+      await warnOnce("regxfer_table", "missing",
+        "⚠️ registry_transfer_requests 미실행 — 등록계 전환이 승인 게이트 없이 즉시 교체되고 있다(§20 DDL 실행 필요)");
+      return false;
+    }
+    // ② 7일 마감 — 스케줄러 없이 조회 시점에 만료 처리(lazy)
+    const expired = rows.filter((r) => r.expires_at && r.expires_at < nowIso);
+    for (const r of expired) {
+      try { await sbPatch("registry_transfer_requests", `id=eq.${r.id}&status=eq.pending`, { status: "expired", decided_at: nowIso, memo: "7일 경과 자동 만료" }); }
+      catch (e) { console.error("regxfer_expire", e?.message); }
+    }
+    const active = rows.filter((r) => !expired.includes(r));
+    if (active.length) {
+      await itx.editReply({
+        content: `⏳ 이미 전환 승인 대기 중이야 — 신청 계정: **${active[0].to_pubg_name}**\n`
+          + `승인 전까지는 기존 등록계(**${p.prev.pubg_name}**)가 그대로 유효해. 결과는 DM으로 알려줄게.`,
+        components: [],
+      });
+      return true;
+    }
+    const tier = p.prev.platform === p.platform ? "T1" : "T2";   // 계정 교체 / 플랫폼 교차
+    let req;
+    try {
+      req = await sbInsert("registry_transfer_requests", {
+        discord_id: itx.user.id, season: p.season, tier,
+        from_platform: p.prev.platform, from_pubg_name: p.prev.pubg_name, from_account_id: p.prev.account_id,
+        to_platform: p.platform, to_pubg_name: p.pubgName, to_account_id: p.accountId,
+        real_name: p.realName, active_hours: p.activeHours,
+        pws_eligible: typeof p.pwsEligible === "boolean" ? p.pwsEligible : null,
+        expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
+      });
+    } catch (e) {
+      // INSERT 실패를 즉시 교체로 흘리면 게이트 우회가 된다 — 교체하지 않고 재시도 안내.
+      console.error("regxfer_insert", e?.message);
+      await itx.editReply({ content: "전환 신청 저장에 실패했어. 잠시 후 `/등록계`를 다시 실행해줘.", components: [] });
+      return true;
+    }
+    if (process.env.MRI_OWNER_ID) {
+      try {
+        const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`regxfer_ok:${req.id}`).setLabel("✅ 전환 승인").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`regxfer_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
+        );
+        await owner.send({
+          content: `🔁 **등록계 전환 신청 #${req.id}** (${tier}${tier === "T2" ? " · 플랫폼 교차" : ""})\n`
+            + `· 신청자: <@${itx.user.id}>\n`
+            + `· 기존: ${p.prev.pubg_name} (${p.prev.platform})\n`
+            + `· 신규: **${p.pubgName}** (${p.platform}) · 티어 ${p.tierText}\n`
+            + `· 마감: 7일(경과 시 자동 만료)`,
+          components: [row],
+        });
+      } catch (e) { console.error("regxfer_dm", e?.message); }   // DM 실패해도 접수 유지 — /등록계현황 대기 섹션이 백업
+    }
+    await itx.editReply({
+      content: `⏳ **전환 승인 대기 접수** (#${req.id}${tier === "T2" ? " · 플랫폼 교차" : ""})\n`
+        + `· 기존: ${p.prev.pubg_name} → 신규: **${p.pubgName}**\n\n`
+        + `계정이 바뀌는 전환은 운영진 승인 후 반영돼.\n`
+        + `**승인 전까지는 기존 등록계(${p.prev.pubg_name})가 그대로 유효해.**\n`
+        + `7일 안에 처리되지 않으면 자동 만료되고, 결과는 DM으로 알려줄게.`,
+      components: [],
+    });
+    return true;
+  }
+
+  // ── 전환 승인·반려 버튼 (오너 DM) — payreq 패턴: 처리 전 DB 재확인(중복 클릭 방어) ──
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isButton()) return;
+    const m = itx.customId.match(/^regxfer_(ok|no):(\d+)$/);
+    if (!m) return;
+    if (!process.env.MRI_OWNER_ID || itx.user.id !== process.env.MRI_OWNER_ID)
+      return itx.reply({ content: "오너 전용 버튼이야.", ephemeral: true });
+    const reqId = Number(m[2]);
+    let q;
+    try { q = (await sbSelect("registry_transfer_requests", `select=*&id=eq.${reqId}&limit=1`))[0]; }
+    catch (e) { console.error("regxfer_fetch", e?.message); }
+    if (!q) return itx.update({ content: `#${reqId} 신청을 못 찾았어(DB 확인 필요).`, components: [] });
+    if (q.status !== "pending")
+      return itx.update({ content: `#${reqId}은 이미 처리됐어(${q.status}).`, components: [] });
+    const nowIso = new Date().toISOString();
+    if (q.expires_at && q.expires_at < nowIso) {
+      try { await sbPatch("registry_transfer_requests", `id=eq.${reqId}&status=eq.pending`, { status: "expired", decided_at: nowIso, memo: "7일 경과 자동 만료" }); }
+      catch (e) { console.error("regxfer_expire_btn", e?.message); }
+      return itx.update({ content: `#${reqId}은 7일이 지나 만료됐어 — 신청자가 /등록계를 다시 실행해야 해.`, components: [] });
+    }
+    const approve = m[1] === "ok";
+    if (approve) {
+      // 승인 = 이 시점에 SCD-2 전이 + upsert(③). 신청 스냅샷 값으로 반영한다.
+      let discordName = null;
+      try { const u = await client.users.fetch(q.discord_id); discordName = u.globalName || u.username; } catch (_) {}
+      try {
+        await applyRegistryChange({
+          discordId: q.discord_id, discordName, realName: q.real_name,
+          platform: q.to_platform, pubgName: q.to_pubg_name, accountId: q.to_account_id,
+          activeHours: q.active_hours,
+          pwsEligible: typeof q.pws_eligible === "boolean" ? q.pws_eligible : undefined,
+          season: q.season, historyNote: "전환승인",
+        });
+      } catch (e) {
+        console.error("regxfer_apply", e?.message);
+        return itx.reply({ content: `#${reqId} 반영 실패 — 버튼을 다시 눌러줘. (${e?.message || "오류"})`, ephemeral: true });
+      }
+    }
+    try {
+      await sbPatch("registry_transfer_requests", `id=eq.${reqId}&status=eq.pending`,
+        { status: approve ? "approved" : "rejected", decided_at: nowIso, decided_by: itx.user.id });
+    } catch (e) { console.error("regxfer_patch", e?.message); }
+    await itx.update({
+      content: approve
+        ? `✅ **전환 #${reqId} 승인** — ${q.from_pubg_name} → **${q.to_pubg_name}** (${q.to_platform}) 반영 완료`
+        : `❌ **전환 #${reqId} 반려** — 기존 등록계(${q.from_pubg_name}) 유지`,
+      components: [],
+    });
+    try {
+      const requester = await client.users.fetch(q.discord_id);
+      await requester.send(approve
+        ? `✅ 등록계 전환 승인 — **${q.to_pubg_name}** (${q.to_platform})로 반영됐어.`
+        : `❌ 등록계 전환 반려 — 기존 등록계(**${q.from_pubg_name}**)가 그대로 유지돼. 문의는 운영진에게.`);
+    } catch (e) { console.error("regxfer_notify", e?.message); }
+  });
+
   // 기존 등록 로직(PUBG 실존확인 → SCD-2 이력 → clan_registry upsert). 확인 버튼에서 호출.
   async function runRegistryRegister(itx, p) {
     const { platform, ign, realName, activeHours, pwsEligible, isReturning } = p;
@@ -1546,28 +1706,25 @@ if (process.env.DISCORD_TOKEN) {
       catch (_) { /* 랭크 조회 실패는 무시 — 등록 자체는 진행 */ }
       // 3) 기존 등록(디코ID×시즌) 조회 → 변경 감지
       const prev = (await sbSelect("clan_registry", `select=id,platform,pubg_name,account_id&discord_id=eq.${encodeURIComponent(itx.user.id)}&season=eq.${season}&limit=1`))[0];
-      const changed = !prev || prev.account_id !== accountId || prev.platform !== platform;
-      const nowIso = new Date().toISOString();
-      // 4) SCD-2 이력: 최초등록 or 변경 시 이전 구간 마감 + 새 행(덮어쓰기 금지)
-      if (changed) {
-        try {
-          if (prev) await sbPatch("registry_history", `discord_id=eq.${encodeURIComponent(itx.user.id)}&season=eq.${season}&valid_to=is.null`, { valid_to: nowIso });
-          await sbInsert("registry_history", { discord_id: itx.user.id, season, platform, pubg_name: resolvedName, account_id: accountId, real_name: realName, valid_from: nowIso, note: prev ? "등록계 변경" : "최초등록" });
-        } catch (e) { console.error("registry_history", e?.message); }
+      // ── 전환 승인 게이트 (관제탑 설계 승인 8/21 · ①효력 ②7일 마감 ③SCD-2는 승인 시점) ──
+      // T0(같은 계정 — 닉·실명·시간대만 변경)는 즉시 반영. 계정이 바뀌는 재등록(T1 동일
+      // 플랫폼 / T2 플랫폼 교차)은 즉시 교체하지 않고 오너 승인 대기로 돌린다. 승인 전까지
+      // 기존 등록계가 유효하며(①) clan_registry·registry_history는 여기서 건드리지 않는다(③).
+      // 쿨다운(시즌 N회·최소 경과 D일)은 판정 미도착 — 미구현(settlement-corrections 대기).
+      if (prev && prev.account_id !== accountId) {
+        const queued = await queueRegistryTransfer(itx, {
+          prev, season, platform, pubgName: resolvedName, accountId,
+          realName, activeHours, pwsEligible, tierText,
+        });
+        if (queued) return;   // 대기 접수(또는 기존 대기 안내) — 즉시 교체하지 않는다
+        // false = §20 테이블 미실행 degrade: 종전 즉시 교체로 진행(DDL 실행 전 회귀 방지)
       }
-      // 5) clan_registry upsert (discord_id,season). 시간대 미입력 시 payload에서 제외 → 기존값 보존.
-      const upsertRow = {
-        discord_id: itx.user.id, discord_name: itx.user.globalName || itx.user.username,
-        real_name: realName, platform, pubg_name: resolvedName, account_id: accountId,
-        season, verified_at: nowIso, updated_at: nowIso,
-        ownership_confirmed: true, confirmed_at: nowIso,   // 명의 확인 버튼 통과분만 여기 도달
-      };
-      if (activeHours) upsertRow.active_hours = activeHours;
-      // PWS 자격은 자기신고 boolean만 남긴다(생년월일 미수집). 컬럼 DDL 전이면 payload에서 제외 —
-      // 없는 컬럼을 넣으면 PGRST204로 등록 전체가 실패한다.
-      if (schemaOptional["clan_registry.pws_eligible"] && typeof pwsEligible === "boolean")
-        upsertRow.pws_eligible = pwsEligible;
-      await sbUpsert("clan_registry", upsertRow, "discord_id,season");
+      // 4)~5) SCD-2 이력 + upsert — 승인 경로와 공유하는 applyRegistryChange로 반영
+      await applyRegistryChange({
+        discordId: itx.user.id,
+        discordName: itx.user.globalName || itx.user.username,
+        realName, platform, pubgName: resolvedName, accountId, activeHours, pwsEligible, season,
+      });
       // 6) 응답 카드 + 명의 규칙 고정 안내
       await itx.editReply({
         content:
@@ -2067,7 +2224,16 @@ if (process.env.DISCORD_TOKEN) {
       const dupLine = dupAcc.length
         ? "⚠️ 중복 account_id(계정공유·타인명의 의심):\n" + dupAcc.map(([, names]) => `· ${names.join(" / ")}`).join("\n")
         : "중복 account_id 없음";
-      await itx.editReply(`📋 등록계 현황 (시즌 ${season})\n등록 ${rows.length}건\n${hourLine}\n${confirmLine}\n\n${unregLine}\n\n${dupLine}`);
+      // 전환 승인 대기(§20 게이트). 테이블 미실행이면 섹션 자체를 생략한다(degrade).
+      let pendLine = "";
+      try {
+        const pend = await sbSelect("registry_transfer_requests",
+          `select=id,tier,from_pubg_name,to_pubg_name,expires_at&season=eq.${season}&status=eq.pending`);
+        if (pend.length)
+          pendLine = `\n\n⏳ 전환 승인 대기 **${pend.length}건** — 오너 DM 버튼으로 처리\n`
+            + pend.map((r) => `· #${r.id} ${r.from_pubg_name} → ${r.to_pubg_name} (${r.tier}, ~${String(r.expires_at).slice(0, 10)})`).join("\n");
+      } catch (_) {}
+      await itx.editReply(`📋 등록계 현황 (시즌 ${season})\n등록 ${rows.length}건\n${hourLine}\n${confirmLine}\n\n${unregLine}\n\n${dupLine}${pendLine}`);
     } catch (e) {
       console.error("registry_status_failed", e?.message);
       await itx.editReply("현황 조회 중 오류가 났어.");
@@ -5774,6 +5940,10 @@ const SCHEMA_OPTIONAL = {
   payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id", "settled_period",
              "deposit_ref"],
   lesson_sessions: ["lesson_enrollment_id"],
+  // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
+  registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
+    "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",
+    "pws_eligible","status","requested_at","expires_at","decided_at","decided_by","memo"],
   // pws_eligible = PWS 자격 자기신고. DDL 미실행 배포에선 upsert payload에서 빠져
   // 등록 자체는 현행대로 동작한다(자격 분리만 휴면).
   clan_registry: ["pws_eligible"],

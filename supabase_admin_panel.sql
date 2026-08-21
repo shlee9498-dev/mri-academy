@@ -820,3 +820,43 @@ alter table public.payments drop constraint if exists payments_kind_check;
 alter table public.payments add  constraint payments_kind_check
   check (kind = any (array['lesson','course','consult','set','sales','etc',
     'refund','lesson_consult','lecture_consult','adjust']::text[]));
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §20  등록계 전환 승인 게이트 (관제탑 설계 승인 2026-08-21 · 카지노 휴면 대행분)
+--      ⚠️ 미실행 · 발행만 — 후속 DDL 동결(P-1 건) 해소 후 오너가 SQL Editor에서 실행.
+--      코드(§ server.js queueRegistryTransfer)는 이 테이블이 없으면 종전 동작(즉시 교체)으로
+--      degrade하고 warnOnce로 하루 1회만 알린다 — 머지·배포만으로는 게이트가 켜지지 않는다.
+--
+--      승인 3요소(관제탑 8/21):
+--        ①효력 — 승인 전까지 이전 계정이 유효하다(pending 동안 clan_registry 불변).
+--        ②7일 마감 — expires_at 경과분은 조회 시점에 자동 만료(lazy · 스케줄러 없음).
+--        ③이전 계정 유지·SCD-2 — registry_history 전이는 승인 시점에만 일어난다
+--          (note='전환승인'). pending 이력은 이 테이블 행이 보존한다.
+--      T0(account_id 동일·닉만 변경)는 게이트 미대상 — 즉시 반영이라 행이 생기지 않는다.
+--      쿨다운(시즌당 N회·최소 경과 D일)은 판정 미도착 — 이 DDL에 포함하지 않는다.
+create table if not exists public.registry_transfer_requests (
+  id               bigint generated always as identity primary key,
+  discord_id       text not null,
+  season           integer not null,
+  tier             text not null check (tier in ('T1','T2')),   -- T1 계정 교체 · T2 플랫폼 교차
+  from_platform    text,
+  from_pubg_name   text,
+  from_account_id  text,
+  to_platform      text not null,
+  to_pubg_name     text not null,
+  to_account_id    text not null,
+  real_name        text,
+  active_hours     text,
+  pws_eligible     boolean,
+  status           text not null default 'pending'
+                   check (status in ('pending','approved','rejected','expired')),
+  requested_at     timestamptz not null default now(),
+  expires_at       timestamptz not null,
+  decided_at       timestamptz,
+  decided_by       text,
+  memo             text
+);
+create index if not exists idx_regxfer_pending
+  on public.registry_transfer_requests (discord_id, season)
+  where status = 'pending';
+alter table public.registry_transfer_requests enable row level security;   -- service_role만 통과
