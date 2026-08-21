@@ -1558,8 +1558,10 @@ if (process.env.DISCORD_TOKEN) {
     const nowIso = new Date().toISOString();
     let rows;
     try {
+      // 쿨다운 판정(관제탑 8/22: 시즌당 1회 — 승인·반려·만료 무관 신청 행 수로 센다)을 위해
+      // pending만이 아니라 이 시즌 전체 이력을 읽는다.
       rows = await sbSelect("registry_transfer_requests",
-        `select=id,status,expires_at,to_pubg_name&discord_id=eq.${enc}&season=eq.${p.season}&status=eq.pending`);
+        `select=id,status,expires_at,to_pubg_name&discord_id=eq.${enc}&season=eq.${p.season}`);
     } catch (e) {
       // §20 미실행 — 게이트 없이 종전 동작으로 떨어진다. 조용히 넘기면 게이트가 안 켜진 걸
       // 영영 모르므로 하루 1회 오너에게 알린다(dualwrite_enr_column과 같은 처리).
@@ -1568,12 +1570,12 @@ if (process.env.DISCORD_TOKEN) {
       return false;
     }
     // ② 7일 마감 — 스케줄러 없이 조회 시점에 만료 처리(lazy)
-    const expired = rows.filter((r) => r.expires_at && r.expires_at < nowIso);
+    const expired = rows.filter((r) => r.status === "pending" && r.expires_at && r.expires_at < nowIso);
     for (const r of expired) {
       try { await sbPatch("registry_transfer_requests", `id=eq.${r.id}&status=eq.pending`, { status: "expired", decided_at: nowIso, memo: "7일 경과 자동 만료" }); }
       catch (e) { console.error("regxfer_expire", e?.message); }
     }
-    const active = rows.filter((r) => !expired.includes(r));
+    const active = rows.filter((r) => r.status === "pending" && !expired.includes(r));
     if (active.length) {
       await itx.editReply({
         content: `⏳ 이미 전환 승인 대기 중이야 — 신청 계정: **${active[0].to_pubg_name}**\n`
@@ -1583,6 +1585,11 @@ if (process.env.DISCORD_TOKEN) {
       return true;
     }
     const tier = p.prev.platform === p.platform ? "T1" : "T2";   // 계정 교체 / 플랫폼 교차
+    // 쿨다운(관제탑 8/22): 시즌당 1회. 승인·반려·만료 무관하게 "신청했던 행 수"로 센다.
+    // 봇이 차단하지 않는다 — 접수는 하되 초과 사실을 신청자·오너 양쪽에 표시하고
+    // 오너 재량 판단(승인/반려 버튼)을 경유시킨다.
+    const priorCount = rows.length - active.length;   // 이번 시즌의 기결(승인·반려·만료) 신청 수
+    const overCooldown = priorCount >= 1;
     let req;
     try {
       req = await sbInsert("registry_transfer_requests", {
@@ -1611,13 +1618,15 @@ if (process.env.DISCORD_TOKEN) {
             + `· 신청자: <@${itx.user.id}>\n`
             + `· 기존: ${p.prev.pubg_name} (${p.prev.platform})\n`
             + `· 신규: **${p.pubgName}** (${p.platform}) · 티어 ${p.tierText}\n`
-            + `· 마감: 7일(경과 시 자동 만료)`,
+            + `· 마감: 7일(경과 시 자동 만료)`
+            + (overCooldown ? `\n⚠️ **시즌당 1회 제한 초과** — 이번 시즌 ${priorCount + 1}회째 신청. 재량 판단 대상.` : ""),
           components: [row],
         });
       } catch (e) { console.error("regxfer_dm", e?.message); }   // DM 실패해도 접수 유지 — /등록계현황 대기 섹션이 백업
     }
     await itx.editReply({
       content: `⏳ **전환 승인 대기 접수** (#${req.id}${tier === "T2" ? " · 플랫폼 교차" : ""})\n`
+        + (overCooldown ? `⚠️ 전환은 **시즌당 1회**가 원칙이야 — 이번 신청은 운영진 재량 심사로 넘어가.\n` : "")
         + `· 기존: ${p.prev.pubg_name} → 신규: **${p.pubgName}**\n\n`
         + `계정이 바뀌는 전환은 운영진 승인 후 반영돼.\n`
         + `**승인 전까지는 기존 등록계(${p.prev.pubg_name})가 그대로 유효해.**\n`

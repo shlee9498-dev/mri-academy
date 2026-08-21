@@ -1,9 +1,11 @@
-# Groble 결제 알림 자동화 — 설계 (2026-08-22)
+# Groble 결제 알림 자동화 — 설계 (2026-08-22 · 관제탑 판정 반영)
 
 > 관제탑 지시. **설계 발행까지 — 구현 착수는 오너 승인 후.**
 > 웹훅 지원 여부 미확정(오너 문의 중) — 웹훅 없이 동작하고, 열리면 오너 단계만 빠지는 구조.
+> 8/22 관제탑 판정 반영: pay_channel='groble'(card 불요) · source='api'+`bot_approve:{승인자}` ·
+> `BOT_PAY_AUTOCREATE` 기본 false(9/3 컷오버 시 전환) · 매핑표 금액 = 정가표 참조 승인.
 
-## 0. 선행 회신 — 「승인해도 payments 미생성」은 버그가 아니라 설계된 동작이다
+## 0. 선행 회신 — 「승인해도 payments 미생성」은 버그가 아니라 설계된 동작이다 (관제탑 인정)
 
 `/결제신청` 승인 버튼 핸들러 실측(`server.js` payreq 버튼): 승인 = `payment_requests.status`
 patch + **결제_원장 기입 행(복붙) 제공**까지다. `payments` INSERT 코드는 존재하지 않는다.
@@ -12,15 +14,17 @@ patch + **결제_원장 기입 행(복붙) 제공**까지다. `payments` INSERT 
 반영은 오너 시드 경로(payreq#N 시드)가 담당해 왔다.
 
 → 따라서 Phase 1의 「승인 시 payments 생성」은 버그 수정이 아니라 **정책 전환**이다.
-   이중기입을 피하려면 활성 조건이 필요하다: **env 플래그 `BOT_PAY_AUTOCREATE=1`** 게이트
-   (미설정 = 현행 유지). 켜는 시점은 관제탑/오너가 정한다 — 켠 순간부터 해당 승인 건은
-   시트 기입 대상에서 제외하는 운영 규칙이 함께 필요하다(원장 복붙 행 문구도 분기).
+   관제탑 8/22 판정: **설계 인정** — 박지훈(payreq#76) 건 조사는 하차(버그 아님, 시드 경로가
+   정상 커버). 활성 조건은 **env 플래그 `BOT_PAY_AUTOCREATE`** 게이트로 확정:
+   - **기본 false**(미설정 = 현행 유지). **9/2까지 비활성 유지**, **9/3 컷오버와 함께 =true 전환**
+     (컷오버 체크리스트 C-4로 등재 — `docs/settlement-corrections.md` §C).
+   - 켠 순간부터 해당 승인 건은 시트 기입 대상에서 제외(원장 복붙 행 문구도 분기).
 
 ## 1. 상수 — Groble 상품코드 매핑표 (웹훅 연동 시 그대로 재사용)
 
 `config/fees.cjs`(결제 트랙 소관) 또는 형제 `.cjs`에 상수 분리. **가격 숫자는 정가표
 상수(payment-track-requirements.md §7)와 단일 소스** — 매핑표는 코드→(담당·판수·kind)만
-갖고 금액은 정가표를 참조하는 구조를 권고(가격 개정 시 두 곳이 어긋나지 않게).
+갖고 금액은 정가표를 참조하는 구조(가격 개정 시 두 곳이 어긋나지 않게). **관제탑 8/22 승인.**
 
 | 코드 | 담당 | 내용 | 금액(정본) |
 |---|---|---|---|
@@ -37,10 +41,11 @@ patch + **결제_원장 기입 행(복붙) 제공**까지다. `payments` INSERT 
 1. **입력**: `상품코드` 옵션 추가(선택). 입력 시 매핑표로 담당·판수·금액·kind 자동 판별
    — 수동 입력값과 불일치하면 경고(차단 아님 · 경과조치 전례).
 2. **승인 시 payments 생성**(`BOT_PAY_AUTOCREATE=1`일 때만):
-   - `pay_channel='card'` — ⚠️ **현행 CHECK(groble|transfer|soomgo|etc)에 'card' 없음.**
-     STEP 3 묶음의 CHECK 확장이 **선행**이다(확장 전 실행하면 INSERT 실패).
-   - `memo` 접두 `groble:{코드}` + 표준 말미 `owner_sql`(승인 주체는 오너 버튼이므로 표기
-     규칙 재확인 필요 — 자동 생성분 표식을 `bot_approve`로 별도 둘지 판정 요청).
+   - `pay_channel='groble'` — **관제탑 8/22 판정: 'card' 불요.** 현행 CHECK
+     (groble|transfer|soomgo|etc)에 이미 있어 **CHECK 확장 선행 조건 없음**.
+   - `source='api'` + `memo` 접두 `groble:{코드}` + **말미 `bot_approve:{승인자}`** —
+     관제탑 8/22 판정. 봇 자동 생성분 표식이며, 오너 직접분은 현행대로
+     `source='manual'` + 말미 `owner_sql` 유지(두 경로가 memo·source로 구분된다).
    - `payout_rate`는 **gross(정가) 기준**. ⚠️ 선행 이슈: `admin-panel.js:76` payBase가
      net_amount 우선이라 **fee_amount/net_amount를 기입하면 지급이 net 기준이 된다**
      (기보고 — 결제 트랙 분리 수정 필요). 분리 전까지 자동 생성분은 fee/net을 **비워 두고**
@@ -69,8 +74,9 @@ patch + **결제_원장 기입 행(복붙) 제공**까지다. `payments` INSERT 
 
 | 항목 | 소관 | 상태 |
 |---|---|---|
-| pay_channel CHECK에 'card' 추가 | 결제 트랙(STEP 3 묶음 동의됨) | 대기 |
 | 정가표 상수 | 결제 트랙(§7 요청 중) | 대기 |
 | payBase net 경로 분리(지급=gross) | 결제 트랙(기보고) | 대기 |
-| `BOT_PAY_AUTOCREATE` 활성 판정 + 시트 이중기입 규칙 | 관제탑/오너 | 판정 요청 |
-| 자동 생성분 표식(`owner_sql` vs `bot_approve`) | 관제탑 | 판정 요청 |
+| `BOT_PAY_AUTOCREATE` 활성 시점 | 관제탑 판정 완료 | **9/3 컷오버 시 =true** (C-4) |
+| 자동 생성분 표식 | 관제탑 판정 완료 | **`source='api'` + `bot_approve:{승인자}`** |
+
+~~pay_channel CHECK에 'card' 추가~~ — 8/22 판정으로 삭제('groble' 사용, CHECK에 기존재).
