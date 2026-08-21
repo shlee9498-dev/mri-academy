@@ -1525,7 +1525,7 @@ if (process.env.DISCORD_TOKEN) {
 
   // 기존 등록 로직(PUBG 실존확인 → SCD-2 이력 → clan_registry upsert). 확인 버튼에서 호출.
   async function runRegistryRegister(itx, p) {
-    const { platform, ign, realName, activeHours } = p;
+    const { platform, ign, realName, activeHours, pwsEligible, isReturning } = p;
     const season = PUBG_CUR_SEASON_NUM;   // 스냅샷 파이프라인과 공유하는 단일 시즌 상수
     try {
       // 1) PUBG 실존 확인 (닉→accountId, I/l/i/1·o/O/0 변형 재시도)
@@ -1563,6 +1563,10 @@ if (process.env.DISCORD_TOKEN) {
         ownership_confirmed: true, confirmed_at: nowIso,   // 명의 확인 버튼 통과분만 여기 도달
       };
       if (activeHours) upsertRow.active_hours = activeHours;
+      // PWS 자격은 자기신고 boolean만 남긴다(생년월일 미수집). 컬럼 DDL 전이면 payload에서 제외 —
+      // 없는 컬럼을 넣으면 PGRST204로 등록 전체가 실패한다.
+      if (schemaOptional["clan_registry.pws_eligible"] && typeof pwsEligible === "boolean")
+        upsertRow.pws_eligible = pwsEligible;
       await sbUpsert("clan_registry", upsertRow, "discord_id,season");
       // 6) 응답 카드 + 명의 규칙 고정 안내
       await itx.editReply({
@@ -1570,10 +1574,14 @@ if (process.env.DISCORD_TOKEN) {
           `✅ 등록계 등록 완료 (시즌 ${season})\n`
           + `· 닉: **${resolvedName}**\n· 플랫폼: ${platform === "kakao" ? "카카오" : "스팀"}\n· 현시즌 티어: ${tierText}\n`
           + (activeHours ? `· 주 접속: ${activeHours}\n` : "")
-          + `· 명의 확인: ✅ 본인 명의·거래 이력 없음\n`
+          + `· 명의 확인: ✅ 본인 명의·가족 명의 아님·거래 이력 없음\n`
+          + (typeof pwsEligible === "boolean"
+              ? `· PWS 출전 자격: ${pwsEligible ? "✅ 만 15세 이상" : "❌ 만 15세 미만(클랜 활동은 그대로)"}\n`
+              : "")
           + (prev ? "\n♻️ 기존 등록계에서 변경됨(이력 보존).\n" : "")
           + `\n📌 등록계는 본계정 1개. 부계정은 인게임 클랜 **Gmriacademy** 가입으로 관리합니다.`
-          + `\n📌 본인 명의 계정만 등록 가능(가족 명의는 증빙 필요). 계정거래·대리 ID는 본계·부계 모두 불가.`,
+          + `\n📌 본인 명의(본인 인증) 계정만 등록 가능. 가족 명의는 실사용자가 본인이어도 불가 — 등록계는 PWS 출전 자격 확인을 겸하며, 대회 규정상 타인 명의 계정은 인정되지 않습니다(계정 공유 실격 판례 있음).`
+          + (isReturning ? `\n📌 ${season + 1}시즌부터 본인 명의 필수입니다. 지금 가족 명의로 등록돼 있다면 ${season + 1}시즌 유지 심사 전에 본인 명의로 전환해 주세요.` : ""),
         components: [],
       });
     } catch (e) {
@@ -1593,25 +1601,43 @@ if (process.env.DISCORD_TOKEN) {
     if (!ign) return itx.reply({ content: "인게임 닉을 입력해줘.", ephemeral: true });
     if (!process.env.SUPABASE_URL) return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
 
-    REG_PENDING.set(itx.user.id, { platform, ign, realName, activeHours, at: Date.now() });
+    await itx.deferReply({ ephemeral: true });
+    // 이전 시즌 등록 이력 = 유예 대상(기존 등록자). 43시즌 재등록·갱신은 통과시키되
+    // "44시즌부터 본인 명의 필수"를 고지한다 — 재등록을 막으면 등급 유지 경로가 끊겨
+    // 유예가 공문이 된다. 조회 실패 시 신규로 취급(고지가 빠질 뿐 등록은 정상).
+    const nextSeason = PUBG_CUR_SEASON_NUM + 1;   // 고지 문구를 시즌 상수에서 파생 — 하드코딩하면 상수와 어긋난다
+    let isReturning = false;
+    try {
+      const prior = await sbSelect("clan_registry",
+        `select=season&discord_id=eq.${encodeURIComponent(itx.user.id)}&season=lt.${PUBG_CUR_SEASON_NUM}&limit=1`);
+      isReturning = prior.length > 0;
+    } catch (e) { console.error("registry_prior_lookup", e?.message); }
+
+    REG_PENDING.set(itx.user.id, { platform, ign, realName, activeHours, isReturning, at: Date.now() });
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("regown_ok").setLabel("확인").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("regown_ok").setLabel("확인 · 만 15세 이상").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("regown_u15").setLabel("확인 · 만 15세 미만").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("regown_no").setLabel("해당 없음").setStyle(ButtonStyle.Secondary),
     );
-    await itx.reply({
+    await itx.editReply({
       content:
         `📝 등록 전 확인 (${platform === "kakao" ? "카카오" : "스팀"} · **${ign}**)\n\n`
-        + `> **이 계정은 본인 명의이며, 계정거래·양도 이력이 없습니다**\n\n`
+        + `> **이 계정은 내가 직접 본인 인증한 본인 명의 계정이며, 가족 명의가 아니고, 계정거래·양도 이력이 없습니다.**\n\n`
         + `등록계는 **본계정 1개**만 등록돼. 이미 등록한 계정이 있으면 이 계정으로 **교체**돼(이력은 보존).\n`
         + `부계정은 인게임 클랜 **Gmriacademy** 가입으로 관리해줘.\n\n`
-        + `해당하면 [확인], 아니면 [해당 없음]을 눌러줘.`,
-      components: [row], ephemeral: true,
+        + `나이는 **저장하지 않아** — PWS 출전 자격 확인용으로 버튼만 나뉘어 있어.\n`
+        + `만 15세 미만이어도 **등록은 되고 클랜 활동도 그대로**야. 대회 자격만 분리돼.\n\n`
+        + (isReturning
+            ? `⚠️ **${PUBG_CUR_SEASON_NUM}시즌은 기존 등록자의 갱신을 허용해.** 다만 **${nextSeason}시즌부터는 본인 명의만** 가능해 — 지금 가족 명의라면 ${nextSeason}시즌 유지 심사 전에 전환해줘.\n\n`
+            : "")
+        + `위 문장이 사실이면 나이에 맞는 [확인]을, 아니면 [해당 없음]을 눌러줘.`,
+      components: [row],
     });
   });
 
   // ── /등록계 명의 확인 버튼 처리 ──
   client.on("interactionCreate", async (itx) => {
-    if (!itx.isButton() || (itx.customId !== "regown_ok" && itx.customId !== "regown_no")) return;
+    if (!itx.isButton() || !["regown_ok", "regown_u15", "regown_no"].includes(itx.customId)) return;
     const pending = REG_PENDING.get(itx.user.id);
     if (!pending || Date.now() - pending.at > REG_PENDING_TTL_MS) {
       REG_PENDING.delete(itx.user.id);
@@ -1620,16 +1646,23 @@ if (process.env.DISCORD_TOKEN) {
     REG_PENDING.delete(itx.user.id);
 
     if (itx.customId === "regown_no") {
+      // 기존 등록자는 소급 박탈 대상이 아니다 — 갱신을 포기해도 43시즌 지위는 그대로 유지된다.
+      // 신규에게만 2군 안내를 준다(1군 기준 미충족).
       return itx.update({
-        content:
-          "거래 이력이 있는 계정은 GmI 2군 소속으로 활동하실 수 있습니다.\n"
-          + "1군 등록계는 본인 명의·거래 이력 없는 계정만 가능합니다.\n\n"
-          + "2군 등록은 운영진에게 문의해줘.",
+        content: pending.isReturning
+          ? `알겠어. **${PUBG_CUR_SEASON_NUM}시즌 기존 등록은 그대로 유지**돼 — 이번 갱신만 진행되지 않아.\n`
+            + `다만 **${PUBG_CUR_SEASON_NUM + 1}시즌부터는 본인 명의(본인 인증) 계정만** 등록할 수 있어.\n`
+            + `가족 명의로 등록돼 있다면 ${PUBG_CUR_SEASON_NUM + 1}시즌 유지 심사 전에 본인 명의로 전환해줘.\n\n`
+            + "전환·소명은 운영진에게 문의해줘."
+          : "1군 등록계는 **본인 명의(본인 인증)·가족 명의 아님·거래 이력 없음**을 모두 충족해야 해.\n"
+            + "거래 이력이 있는 계정은 GmI **2군** 소속으로 활동하실 수 있습니다.\n\n"
+            + "2군 등록은 운영진에게 문의해줘.",
         components: [],
       });
     }
+    const pwsEligible = itx.customId === "regown_ok";   // 자기신고 boolean만 남긴다(나이·생년월일 미저장)
     await itx.update({ content: "✅ 확인됨. 등록 진행 중…", components: [] });
-    await runRegistryRegister(itx, pending);
+    await runRegistryRegister(itx, { ...pending, pwsEligible });
   });
 
   // ── /수강생등록 : 신규 수강생 명단 등록 (students + 시트 레슨로그 행) ──
@@ -5741,6 +5774,9 @@ const SCHEMA_OPTIONAL = {
   payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id", "settled_period",
              "deposit_ref"],
   lesson_sessions: ["lesson_enrollment_id"],
+  // pws_eligible = PWS 자격 자기신고. DDL 미실행 배포에선 upsert payload에서 빠져
+  // 등록 자체는 현행대로 동작한다(자격 분리만 휴면).
+  clan_registry: ["pws_eligible"],
   settlements: ["id","period","trainer_id","games","gross","consult_count","consult_add",
                 "status","payout_id","memo","created_by","confirmed_by","confirmed_at"],
 };

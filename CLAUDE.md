@@ -44,6 +44,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - 구체 범위: `server.js`의 `GDCUP_*` 상수(`GDCUP_SEASONS`·`GDCUP_WEIGHT_S3`·`GDCUP_BPI_SCALE`·`TIERS` 등)와
     `/api/gdcup-*` 라우트 전체, `gdcup_apps`·`gdcup_scores`·`gdcup_solos`·`gdcup_team_brand`·`gdcup_payouts`·`gdcup_attendance` 테이블,
     `GDCUP_*` 환경변수, `track:casino` 라벨이 붙은 이슈.
+    **등록계도 GmI 소관이다**(2026-08-22 확정) — `/등록계`·`/등록계현황` 슬래시 명령, `clan_registry`·`registry_history` 테이블,
+    본계정 명의·PWS 출전 자격 판정. G드컵과 같은 형태로 **코드는 `server.js`에 있고 소관은 GmI**다.
+  - **카지노 트랙 휴면 중에는 코드 소재 저장소 담당 세션이 관제탑 승인을 경유해 대행한다.**
+    대행분도 소관은 GmI에 남으며, 트랙 복귀 시 인수인계 대상이다.
   - 단 **DDL·env·데이터 변경은 트랙과 무관하게 Level 0**(오너 실행)이다. 소관이 생겼다고 자동화되지 않는다.
   - 2026-08 비수기에 G드컵 백엔드를 GmI 생태계로 이전할 예정이다(오너 방침). 이전 완료 시 이 줄은 삭제한다.
 
