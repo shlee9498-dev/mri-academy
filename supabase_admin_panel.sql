@@ -276,6 +276,11 @@ alter table public.clan_registry add column if not exists active_hours text;
 -- /등록계현황의 "명의 미확인" 목록에 뜬다(소급 확인 대상).
 alter table public.clan_registry add column if not exists ownership_confirmed boolean not null default false;
 alter table public.clan_registry add column if not exists confirmed_at timestamptz;
+-- PWS 출전 자격(만 15세 이상 자기신고). 등록 자체는 나이와 무관하게 허용하고
+-- (등록계는 클랜원 관리를 겸한다) 이 플래그로 대회 자격만 분리한다.
+-- 생년월일·나이는 저장하지 않는다 — 실명·연락처 미수집과 같은 PII 최소수집 축.
+-- null = 미신고(자기신고 도입 전 등록분) / true = 만 15세 이상 / false = 미만.
+alter table public.clan_registry add column if not exists pws_eligible boolean;
 create index if not exists idx_registry_season  on public.clan_registry (season);
 create index if not exists idx_registry_account on public.clan_registry (account_id) where account_id is not null;
 
