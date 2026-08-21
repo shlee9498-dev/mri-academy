@@ -441,6 +441,69 @@ select count(*) 세션, (select count(*) from public.course_attendance) 참석�
 
 ### STEP E — 결제 대조 (`kind='course'`)
 
+#### P-1 직강 결제 원장 시드 — 발행 (2026-08-21 · 관제탑 검토 후 위임 실행)
+
+> STEP C 실행 지문 확인 완료(courses 2→8행 · old 6행) 후 발행한다(관제탑 8/21).
+> **실행 금지 — 관제탑 검토를 거쳐 위임 실행한다**(양형석 −120,000 음수 행 포함이라 한 번 더 본다).
+> **원본 대조표 병기(재발 방지 절차): 9행 · 순액 3,164,000** (원장 8건 + 전환 음수 1행 =
+> 360,000×6 + 870,000 + 254,000 − 120,000).
+
+표기 관례는 기존 course 결제 2건(#137·#142) 실측을 따른다:
+`kind='course'` · `payout_rate=0`(직강 — 지급 없음) · `pay_channel='transfer'` ·
+`settled_period=null`(컷오버 전) · `fee_amount`·`net_amount` **생략**(v4·기존 course 관례 —
+엔진 payBase가 null이면 amount로 폴백하므로 transfer 수수료 0과 동작 동일).
+
+```sql
+insert into public.payments
+  (student_id, paid_at, amount, kind, games, pay_channel, source, payout_rate, settled_period, course_id, memo)
+select s.id, v.d, v.amt, 'course', 0, 'transfer', 'manual', 0, null,
+       c.id,
+       v.memo || ' — 직강 결제 원장 시드(2026-08-21) · owner_sql'
+from (values
+  (date '2026-03-18','신종근', 254000, null::date,
+   '정규강의 추가분(3차) · 1·2차 원장 개시 이전 — 금액 불명(W-5) · 계약 행 보류로 course_id 미연결'),
+  (date '2026-04-03','양형석', 360000, date '2026-04-03', '구체계 12회 360,000'),
+  (date '2026-04-10','양형석',-120000, date '2026-04-03',
+   '레슨 전환 환불 — 원계약 4/3 360,000에서 −120,000(Q-4: 계약 원본 12회 유지, 전환은 이 음수 행이 담당)'),
+  (date '2026-04-10','박선우', 360000, date '2026-04-10', '구체계 12회 360,000'),
+  (date '2026-04-11','권태완', 360000, date '2026-04-11', '구체계 12회 360,000'),
+  (date '2026-04-21','김준성', 870000, date '2026-04-21',
+   '구체계 36회 실계약 870,000(정가 1,080,000 − 할인 210,000 · #137 패턴)'),
+  (date '2026-05-06','길영패', 360000, date '2026-05-06', '구체계 12회 360,000 · 원장 표기 길영태 = 동일인'),
+  (date '2026-06-06','양정현', 360000, date '2026-06-06', '구체계 12회 360,000'),
+  (date '2026-06-12','박성민', 360000, null::date,
+   '구체계 12회 360,000 · 초과 3회분 90,000 미입금(매출 미기록 — 입금 시 별도 행) · C-1 미실행으로 course_id 미연결(실행 후 UPDATE 연결)')
+) as v(d, name, amt, course_started, memo)
+join public.students s on btrim(s.name) = v.name
+left join public.courses c on c.student_id = s.id and c.started_on = v.course_started
+where (select count(*) from public.students s2 where btrim(s2.name) = v.name) = 1
+  and not exists (select 1 from public.payments p
+                  where p.student_id = s.id and p.paid_at = v.d and p.amount = v.amt);
+-- 기대: INSERT 9 · course_id 연결 7행(양형석 음수 행은 원계약 4/3에 연결) · 미연결 2행(신종근 W-5 · 박성민 C-1 미실행)
+```
+
+**사후 검증**:
+
+```sql
+-- ① 행수·순액. 기대: 9행 · 3,164,000
+select count(*) as 행수, sum(amount) as 순액
+  from public.payments where memo like '%직강 결제 원장 시드(2026-08-21)%';
+
+-- ② kind='course' 전체. 기대: 11행(기존 2 + 신규 9)
+select count(*) from public.payments where kind = 'course';
+
+-- ③ course_id 미연결. 기대: 신종근·박성민 2행뿐
+select s.name, p.paid_at, p.amount from public.payments p
+  join public.students s on s.id = p.student_id
+ where p.memo like '%직강 결제 원장 시드%' and p.course_id is null;
+```
+
+**검토 요청 사항(관제탑)**: ⓐ 양형석 음수 행의 kind='course'·rate 0·원계약 course_id 연결 방식
+ⓑ 신종근·박성민 course_id 미연결 상태로 시드할지, 계약 행(W-5·C-1) 해소 후로 미룰지
+ⓒ fee/net 생략(관례) vs 명기(payreq 방식) — 위 발행은 관례를 따랐다.
+
+
+
 현재 `payments.kind='course'`는 **2건뿐**이다(#137·#142). 직강 15명 대비 **13건 이상 누락**이
 예상된다는 관제탑 판단과 실측이 일치한다.
 
