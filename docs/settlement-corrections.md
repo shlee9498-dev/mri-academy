@@ -35,6 +35,9 @@
 | C-2 | 환불 2건 `kind='refund'` 정리 (#124·#126) | — | 기존 백로그 편입(중복 등재 방지용 상호 참조) |
 | C-3 | **`source` 허용값 테이블 간 상이** — payments `(manual·api)` vs lesson_enrollments `(panel·sheet_import·bot)` vs courses `(panel·sheet_import·bot·photo_recount)`. 관제탑 발행 SQL이 CHECK에 2회 걸린 원인 | — | **통일 여부는 컷오버 후 검토만**(관제탑 8/20) — 지금 변경 금지. 표기 표준은 `payment-seed-2026-08-19.md` §1-1 |
 | C-4 | **`BOT_PAY_AUTOCREATE=true` 전환** (Railway env) — 봇 승인 시 payments 자동 생성 활성 | — | 관제탑 8/22 판정: **9/2까지 비활성(기본 false), 9/3 컷오버와 함께 전환**. 전환 시점부터 봇 승인 건은 시트 기입 제외(이중기입 방지). 설계: `groble-payment-automation.md` §0·§2 |
+| C-5 | **`PUBG_CURRENT_SEASON_NUM` 9/9 갱신 → 44** (Railway env) | — | 관제탑 8/25 — 44시즌 시작 **2026-09-09**. ⚠️ **코드 기본값이 41**이라 미설정 방치 시 판정이 세 시즌 밀린다. ⚠️ **선행 확인**: DB 실측이 전량 **42시즌**(clan_registry 38명·registry_history 51행)이라 현재 env가 42일 가능성 — 43을 건너뛰면 43시즌 이력이 영구 공백. 오너가 현재 값 확인 후 갱신. `season44-cutover.md` §0-(3)·§2 |
+| C-6 | **`GMI_NEXT_SEASON_START=2026-09-09`** (Railway env) | — | 전환 마감(9/2) 검사용. ⚠️ **현재 코드가 이 env를 읽지 않는다**(구현 미포함) — 설정만으로는 마감이 걸리지 않는다. 마감 검사 A안(코드 ~10줄) 승인 시 이 세션 구현. `season44-cutover.md` §4 |
+| C-7 | **`GDCUP_CURRENT_SEASON` 3→4** (⚠️ env 아님 — `server.js:3836` **코드 상수**) | — | 시즌4 대회 9/12. 코드 변경 + 배포 필요. `/api/gdcup-meta`가 이 값을 내보내 gmi-clancup이 받아 쓰므로 상수만 올리면 프론트는 자동 반영. GmI 소관 대행 — 관제탑 승인 후. `season44-cutover.md` §5-1 |
 
 
 ## 4. 발행 예정 (이 세션 담당 · 시점 조건부)
