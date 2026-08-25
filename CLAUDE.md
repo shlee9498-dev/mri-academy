@@ -125,11 +125,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Codex**: Phase C까지 **repo 접근 금지** 유지. Phase C에서 `docs/`·테스트코드·로그분석 **lane 한정**, Code CI 통과 조건부 개방 검토.
 - **Phase 로드맵**: **A**(~8/7, 동결 — 자동머지 없음) / **B**(8월 중순, CI 구축: Code CI + Operation self-check + 배포 후 smoke) / **C**(9월~, 자동머지 단계적 개방).
 
+## 스킬 사용 규칙 (2026-08-21 관제탑 · 8-24 보고규칙 확정)
+- **스킬은 판정을 대체하지 않는다.** 관제탑 판정·오너 승인 게이트는 그대로다.
+- **DB·정산·결제에 닿는 작업에서 스킬 출력을 그대로 실행하지 않는다.** 반드시 실측 지문으로 재확인한다.
+- **보고 규칙**: 스킬 발동 시 **어떤 스킬이 왜 걸렸는지 한 줄**. 페이지·디자인·DDL 등 **스킬 대상 작업이
+  있었는데 발동 0건이면 「대상 작업 있었으나 미발동」으로 명시**한다. 대상 작업 자체가 없었으면 생략 가능.
+  (전 작업에 0건 보고를 강제하면 노이즈가 된다 — 대상 작업이 있었던 턴만이다.)
+- **`mri-canonical-operations` = 상시 적용.** DDL·데이터 변경·PR 전 과정. "예상 밖 파일이 바뀌면 중단"이
+  여기 있고, 이 규칙이 #132·#136 유형을 사전 차단했다. 우선순위 최상위.
+- **`humanize-korean` = 미설치 · 설치 시 적용.** 설치 보류(2026-08-24) — 외부 발송 문안의 최종 작성은
+  관제탑 소관이고 세션 산출물(SQL·보고·PR)은 전부 사용 금지 범위라 설치해도 쓸 곳이 없다.
+  금지: SQL·커밋 메시지·PR 본문·기술 보고서·검증 지문(숫자·식별자·제약명이 문장 다듬기로 바뀌면 대조가 깨진다).
+  허용: 수강생·트레이너 대상 안내문 **초안까지만**.
+- **신규 스킬은 관제탑 승인 없이 설치하지 않는다.** 설치 요청 시 **읽기 범위·네트워크·트리거 방식** 3항목을
+  먼저 조사해 회신한다. 특히 **에이전트 스킬 디렉터리(`~/.claude/skills/` 등)에 쓰는 설치 스크립트는
+  세션 능력 주입 벡터**라 승인 불가다(2026-08-21 Agent Reach 판정).
+
 # 명령어
 빌드 단계 없음(정적 HTML + Node 서버). 테스트 프레임워크 없음.
 - `npm start` — `node server.js` (서버 + 디스코드 봇 기동)
 - `npm run check` — `node --check server.js && node --check admin-panel.js` (구문 검사; 커밋 전 필수)
 - HTML 인라인 스크립트 검사: `<script>`~`</script>`를 뽑아 `.mjs`로 저장 후 `node --check`
+- `*.html` 편집 시 **impeccable detect 무출력까지** 수정:
+  `node .claude/skills/impeccable/scripts/detect.mjs <파일>`
+  ⚠️ **저장소 밖 경로는 조용히 건너뛴다**(출력 0 = 통과가 아니라 미검사). 저장소 내 상대경로로 넘길 것.
+  ⚠️ `--quiet`는 무출력일 때 아무것도 안 찍는다 — 건수 파싱은 `N anti-pattern found` 줄로 할 것.
+  ※ 같은 규칙이 gmi-clancup `CLAUDE.md:34`에도 있다. **한쪽을 고치면 반대쪽도 고친다**(따로 갱신되면 또 갈라진다).
 - 실행/검증엔 실제 env(SUPABASE_*·DISCORD_TOKEN·PUBG_API_KEY 등)가 필요 → 로컬은 구문 검사 위주.
   프로덕션 API(mri-academy-production.up.railway.app)는 이 환경에서 도달 불가.
 
