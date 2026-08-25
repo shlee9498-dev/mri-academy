@@ -38,16 +38,25 @@ grep 'BOT_REGXFER'      server.js  →  0건
 
 **→ 「가동」의 실체는 env 설정이 아니라 §20 DDL 실행이다.**
 
-### (2) §20 DDL **미실행** — 게이트가 지금 꺼져 있다 (8/25 밤 배포 로그로 재확인)
+### (2) §20 DDL — ✅ **실행 완료(8/25 밤 · 오너 지시 위임), 게이트 가동**
+
+오너 지시(「② §20 DDL + clan_registry.pws_eligible + NOTIFY pgrst」)로 세션이 정본
+원문(`supabase_admin_panel.sql` §20 + :273~285) 그대로 실행. 검증 원시 출력:
 
 ```
-information_schema.tables → registry_transfer_requests : 없음
-Railway 8/25 08:39 배포 로그 → [schema] warn registry_transfer_requests.* 전 컬럼
-                              + clan_registry.pws_eligible ← 미실행
+regxfer_cols = [id, discord_id, season, tier, from_platform, from_pubg_name,
+  from_account_id, to_platform, to_pubg_name, to_account_id, real_name,
+  active_hours, pws_eligible, status, requested_at, decided_at, decided_by, memo]
+  → 18컬럼 · expires_at 없음(= #260 정본) · regxfer_rows 0 · rls_on true
+regxfer_idx = [idx_regxfer_pending, registry_transfer_requests_pkey]
+pws_col = 1 · registry_state = {rows: 38, pws_null: 38}(전원 미신고 — 설계 기대값)
+registry_idx = [clan_registry_discord_id_season_key, clan_registry_pkey,
+  idx_registry_account, idx_registry_season]
+NOTIFY pgrst, 'reload schema' — 같은 배치에서 실행
 ```
 
-**지금 이 순간 등록계 전환은 승인 없이 즉시 교체되고 있다.** 공지가 나가기 전에
-DDL을 실행해야 공지 내용(「전환은 승인 후 반영」)과 실제 동작이 일치한다.
+**이 순간부터 전환은 pending 큐로 간다**(재배포 불요). 배포 로그의 `[schema] warn
+(optional)` 경고는 다음 재기동부터 사라진다. 다음 = ③ `/등록계` 실기 확인(오너).
 
 ### (3) ~~시즌 번호 밀림 가능성~~ → **해소(8/25 밤): 밀림이 아니라 관제탑 인식 오류**
 
@@ -84,7 +93,7 @@ DDL을 실행해야 공지 내용(「전환은 승인 후 반영」)과 실제 �
 | # | 작업 | 주체 | 비고 |
 |---|---|---|---|
 | 1 | ~~`PUBG_CURRENT_SEASON_NUM` 현재 값 확인~~ | 오너 | ✅ **완료(8/25): 42 확정** — env·DB·공식 일치, 선행 정정 불요 |
-| 2 | **§20 DDL + `clan_registry` 확장 DDL(:275~285 · pws_eligible) 실행** + `NOTIFY pgrst, 'reload schema';` | 오너 | **이게 「가동」의 실체.** 실행 즉시 게이트 켜짐(재배포 불요) |
+| 2 | ~~§20 DDL + `clan_registry` 확장 DDL 실행 + NOTIFY~~ | 오너 | ✅ **실행 완료(8/25 밤 · 오너 지시 위임 — §0-(2) 검증 지문). 게이트 가동 중** |
 | 3 | 실행 확인 — `/등록계`로 전환 시도 시 pending 접수되는지 | 오너 | 또는 `information_schema.tables` 조회 |
 | 4 | **43시즌 공지** 발행 | 오너/관제탑 | §3 문구 |
 | 5 | `GMI_NEXT_SEASON_START=2026-09-09` 설정 | 오너 | 마감 검사 A안 구현·배포 완료(#263) — env 설정 시 실효 |
@@ -146,7 +155,7 @@ gdcup-s4 규정 페이지는 생성 시 같은 방식을 적용한다.
 ## 6. 판정·확인 요청 — 처리 현황 (8/25 밤)
 
 1. ~~`PUBG_CURRENT_SEASON_NUM` 현재 값~~ → **해소: 42 확정**(§0-(3))
-2. **§20 DDL 실행 시점**(오너) — 공지 전 실행 권고 · **유일한 남은 선행**
+2. ~~§20 DDL 실행~~ → **해소(8/25 밤 · 위임 실행 완료)** — 남은 선행 = ③ 실기 확인 · ④ 공지
 3. ~~마감 검사 A안~~ → **구현 완료**(§4)
 4. ~~`GDCUP_CURRENT_SEASON` 3→4~~ → **구현 완료**(§5-1)
 5. ~~BPI 기준 meta~~ → **구현 완료 + season 42 정정**(§5-3)
