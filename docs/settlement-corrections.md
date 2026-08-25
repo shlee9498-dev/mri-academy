@@ -36,7 +36,7 @@
 | C-3 | **`source` 허용값 테이블 간 상이** — payments `(manual·api)` vs lesson_enrollments `(panel·sheet_import·bot)` vs courses `(panel·sheet_import·bot·photo_recount)`. 관제탑 발행 SQL이 CHECK에 2회 걸린 원인 | — | **통일 여부는 컷오버 후 검토만**(관제탑 8/20) — 지금 변경 금지. 표기 표준은 `payment-seed-2026-08-19.md` §1-1 |
 | C-4 | **`BOT_PAY_AUTOCREATE=true` 전환** (Railway env) — 봇 승인 시 payments 자동 생성 활성 | — | 관제탑 8/22 판정: **9/2까지 비활성(기본 false), 9/3 컷오버와 함께 전환**. 전환 시점부터 봇 승인 건은 시트 기입 제외(이중기입 방지). 설계: `groble-payment-automation.md` §0·§2 |
 | C-5 | **`PUBG_CURRENT_SEASON_NUM` 9/9 갱신 42→43** (Railway env) | — | 관제탑 8/25 밤 시즌 전면 정정 — **현재 42 확정**(env·DB·PUBG 공식 3자 일치. 구 「→44」 표기와 「42→44 점프」 판정은 관제탑 인식 오류로 철회). 43시즌 시작 **2026-09-09**. ⚠️ **코드 기본값이 41**이라 env 미설정 방치 금지. `season43-cutover.md` §0-(3)·§2 |
-| C-6 | **`GMI_NEXT_SEASON_START=2026-09-09`** (Railway env) | — | 전환 마감(9/2) 검사용. 값 불변 — 2026-09-09는 **43시즌** 시작일(명칭만 8/25 밤 정정). **A안 구현·#263 머지 배포 완료(8/25)** — env 설정 시 실효. 미설정이면 검사 생략(fail-open). 마감일(9/2) 당일까지 접수, 9/3부터 차단. `season43-cutover.md` §4 |
+| C-6 | **`GMI_NEXT_SEASON_START=2026-09-09`** (Railway env) | — | 전환 마감(9/2) 검사용. 값 불변 — 2026-09-09는 **43시즌** 시작일(명칭만 8/25 밤 정정). **A안 구현·#263 머지 배포 완료(8/25)** — **env 설정 완료(8/25 밤 · 관제탑·세션 양측 변수 목록 실측)** → 재배포로 실효. 미설정이면 검사 생략(fail-open). 마감일(9/2) 당일까지 접수, 9/3부터 차단. `season43-cutover.md` §4 |
 | C-7 | **`GDCUP_CURRENT_SEASON` 3→4** (코드 상수) | — | **구현·#263 머지 배포 완료(8/25)** — 상수 4 + `GDCUP_SEASONS[4]`(시즌3 전면 승계·규칙 미확정 전제 명시·bpi 기준 내장 — **8/25 밤 bpi.season 43→42 정정**, asOf 2026-09-08 불변). **G드컵 시즌4는 대회 넘버라 시즌 정정과 무관(불변)**. 시즌3 페이지는 season=3 명시 호출이라 무사(실측). `season43-cutover.md` §5 |
 
 
