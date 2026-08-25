@@ -154,7 +154,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   완전한 문서로 넘길 것. ※ 8-25 재실측 정정 — 구 표기 "저장소 밖 경로 스킵"은 오진이었다(당시
   대조 파일에 골격이 없었음). 위치는 무관: 저장소 밖 파일·밖에 복사한 스크립트 모두 정상 검출된다.
   ⚠️ `--quiet`는 무출력일 때 아무것도 안 찍는다 — 건수 파싱은 `N anti-pattern found` 줄로 할 것.
-  ※ 같은 규칙이 gmi-clancup `CLAUDE.md:34`에도 있다. **한쪽을 고치면 반대쪽도 고친다**(따로 갱신되면 또 갈라진다).
+  ※ 같은 규칙이 gmi-clancup `CLAUDE.md:4`에도 있다. **한쪽을 고치면 반대쪽도 고친다**(따로 갱신되면 또 갈라진다).
 - 실행/검증엔 실제 env(SUPABASE_*·DISCORD_TOKEN·PUBG_API_KEY 등)가 필요 → 로컬은 구문 검사 위주.
   프로덕션 API(mri-academy-production.up.railway.app)는 이 환경에서 도달 불가.
 
