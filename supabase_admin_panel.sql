@@ -860,3 +860,31 @@ create index if not exists idx_regxfer_pending
   on public.registry_transfer_requests (discord_id, season)
   where status = 'pending';
 alter table public.registry_transfer_requests enable row level security;   -- service_role만 통과
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 21) 트레이너 노쇼 · 무료 보상 수업 기록 (2026-08-24 관제탑 지시 · 설계 발행).
+--     ⚠️ 미실행 · 오너 직접 실행 대기. 설계 근거·판정 요청: docs/trainer-noshow-compensation.md
+--
+--     배경: 현행 CHECK (games <> 0)이 0판 세션을 전면 차단해 「무료 보상 수업 games=0」
+--     기록이 INSERT 단계에서 실패한다(0판 행 실측 0건). 제약을 푸는 대신 종류축을 세워
+--     정상 수업의 0판 오등록은 계속 막고 comp·no_show만 0판을 강제한다.
+alter table public.lesson_sessions
+  add column if not exists session_kind   text not null default 'lesson',
+  add column if not exists no_show_by     bigint references public.staff(id),
+  add column if not exists no_show_reason text;
+
+alter table public.lesson_sessions drop constraint if exists chk_lesson_sessions_kind;
+alter table public.lesson_sessions add  constraint chk_lesson_sessions_kind
+  check (session_kind in ('lesson','comp','no_show'));
+
+-- games 제약 교체 — 종류별로 양방향 강제(정상 수업 0판 금지 · comp/no_show는 0판 강제).
+-- ⚠️ 제약 변경은 컬럼 존재 프로브로 감지되지 않는다 — PR 체크리스트로만 관리한다.
+alter table public.lesson_sessions drop constraint if exists lesson_sessions_games_check;
+alter table public.lesson_sessions drop constraint if exists chk_lesson_sessions_games;
+alter table public.lesson_sessions add  constraint chk_lesson_sessions_games
+  check ((session_kind =  'lesson' and games <> 0)
+      or (session_kind <> 'lesson' and games =  0));
+
+create index if not exists idx_lesson_sessions_no_show
+  on public.lesson_sessions (no_show_by, played_at) where session_kind = 'no_show';
+-- notify pgrst, 'reload schema';
