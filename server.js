@@ -6193,7 +6193,7 @@ async function remainFromDB() {
     if (String(a.status || "") === "cancelled") continue;
     usedByCourse[a.course_id] = (usedByCourse[a.course_id] || 0) + Number(a.units || 0);
   }
-  const lessons = [], lectures = [];
+  const lessons = [], lectures = [], lecFiltered = {};
   for (const s of students) {
     if (s.status !== "active") continue;               // 수료·중지는 잔여 독촉 대상이 아니다
     const granted = grantedBy[s.id] || 0;
@@ -6202,13 +6202,26 @@ async function remainFromDB() {
     lessons.push({ id: s.id, name: s.name, remain: Number(s.carry_games || 0) + granted - used, granted, used });
   }
   for (const c of courses) {
-    if (String(c.status || "") !== "active") continue;
     const stu = stuById[c.student_id];
-    if (!stu || stu.status !== "active") continue;
+    const cSt = String(c.status || ""), sSt = stu ? String(stu.status || "") : null;
+    if (cSt !== "active" || !stu || sSt !== "active") {
+      // 알림(독촉) 대상은 아니지만 "등록 없음"과는 전혀 다르다 — 실제로 STEP C-2 시드
+      // 4명(강의 paused 1 · 학생 paused/done 3)이 전부 "DB 강의 등록 없음"으로 찍혀
+      // 오탐 소동이 났다(관제탑 8/26). 대조 문구가 원인을 구분할 수 있게 사유를 남긴다.
+      const nm = stu ? String(stu.name).trim() : null;
+      if (nm && !lecFiltered[nm]) {
+        lecFiltered[nm] = cSt === "paused" ? "중단(잔액 보존)"
+          : cSt !== "active" ? `강의 ${cSt}`
+          : sSt === "paused" ? "학생 중단"
+          : sSt === "done" ? "학생 수료(강의 계약 잔여 有)"
+          : `학생 ${sSt}`;
+      }
+      continue;
+    }
     const total = Number(c.units_total || 0), used = usedByCourse[c.id] || 0;
     lectures.push({ id: stu.id, name: stu.name, course_id: c.id, remain: total - used, total, used });
   }
-  return { lessons, lectures, attendRows: attend.length };
+  return { lessons, lectures, lecFiltered, attendRows: attend.length };
 }
 // 시트 조회는 대조 전용 — 실패해도 알림을 막지 않는다(정본이 아니므로).
 async function fetchSheetDirect() {
@@ -6262,7 +6275,12 @@ async function runDirectStatus() {
       const sheetRemain = Number(s.remain);
       if (!Number.isFinite(sheetRemain)) continue;
       const dbRemain = dbByName[nm];
-      if (dbRemain === undefined) diffs.push(`· ${nm}: 시트 ${sheetRemain} ↔ DB 강의 등록 없음`);
+      if (dbRemain === undefined) {
+        // 조회 조건(강의/학생 상태)에 걸린 경우와 실제 부재를 구분한다(관제탑 8/26 정정).
+        const why = db.lecFiltered && db.lecFiltered[nm];
+        diffs.push(why ? `· ${nm}: 시트 ${sheetRemain} ↔ DB ${why} — 알림 제외`
+                       : `· ${nm}: 시트 ${sheetRemain} ↔ DB 강의 등록 없음`);
+      }
       else if (dbRemain !== sheetRemain) diffs.push(`· ${nm}: 시트 ${sheetRemain} ↔ DB ${dbRemain}`);
     }
   }
@@ -6287,7 +6305,7 @@ async function runDirectStatus() {
     await warnOnce("direct:mismatch", JSON.stringify(diffs),
       `⚠️ 강의 잔여 시트↔DB 불일치 ${diffs.length}건 — 강의 알림을 보류했습니다 (정본=DB)\n`
       + diffs.slice(0, 15).join("\n") + (diffs.length > 15 ? `\n… 외 ${diffs.length - 15}건` : "")
-      + (db.attendRows === 0 ? `\n\n※ course_attendance 0행 — 강의 진행이 DB에 아직 없어 전원 "미소진"으로 나옵니다. 강의 등록 19행 백필(대기 ⑤)이 끝나야 대조가 맞습니다.` : "")
+      + (db.attendRows === 0 ? `\n\n※ course_attendance 0행 — 강의 진행이 DB에 아직 없어 전원 "미소진"으로 나옵니다. courses 시드는 STEP C로 완료(15행) — STEP D 백필(course_sessions·course_attendance, 오너 추출본 대기)이 끝나야 대조가 맞습니다.` : "")
       + `\n같은 내용은 ${DIRECT_WARN_REPEAT_DAYS}일간 다시 보내지 않습니다.`);
   }
   const lowLec = lecSuppressed ? []
