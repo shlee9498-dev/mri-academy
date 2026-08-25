@@ -1639,7 +1639,7 @@ if (process.env.DISCORD_TOKEN) {
           content: `🔁 **등록계 전환 신청 #${req.id}** (${tier}${tier === "T2" ? " · 플랫폼 교차" : ""})\n`
             + `· 신청자: <@${itx.user.id}>\n`
             + `· 기존: ${p.prev.pubg_name} (${p.prev.platform})\n`
-            + `· 신규: **${p.pubgName}** (${p.platform}) · 티어 ${p.tierText}`
+            + `· 신규: **${p.pubgName}** (${p.platform}) · ${p.season}시즌 최고 ${p.tierText}`
             + (overCooldown ? `\n⚠️ **시즌당 1회 제한 초과** — 이번 시즌 ${priorCount + 1}회째 신청. 재량 판단 대상.` : ""),
           components: [row],
         });
@@ -1755,7 +1755,7 @@ if (process.env.DISCORD_TOKEN) {
       await itx.editReply({
         content:
           `✅ 등록계 등록 완료 (시즌 ${season})\n`
-          + `· 닉: **${resolvedName}**\n· 플랫폼: ${platform === "kakao" ? "카카오" : "스팀"}\n· 현시즌 티어: ${tierText}\n`
+          + `· 닉: **${resolvedName}**\n· 플랫폼: ${platform === "kakao" ? "카카오" : "스팀"}\n· ${PUBG_CUR_SEASON_NUM}시즌 최고: ${tierText}\n`
           + (activeHours ? `· 주 접속: ${activeHours}\n` : "")
           + `· 명의 확인: ✅ 본인 명의·가족 명의 아님·거래 이력 없음\n`
           + (typeof pwsEligible === "boolean"
