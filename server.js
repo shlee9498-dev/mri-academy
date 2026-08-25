@@ -1554,8 +1554,18 @@ if (process.env.DISCORD_TOKEN) {
   // ── 전환 승인 게이트 접수 (관제탑 설계 승인 2026-08-21 · §20 DDL 실행 후 활성) ──
   // true = 게이트가 처리함(즉시 교체 금지). false = §20 테이블 미실행 degrade(종전 즉시 교체).
   async function queueRegistryTransfer(itx, p) {
+    // 전환 신청 마감(관제탑 8/25 A안 승인): 다음 시즌 시작 1주일 전까지 접수(마감일 당일 포함).
+    // GMI_NEXT_SEASON_START 미설정·형식 오류면 검사 생략(fail-open) — 마감은 승인 게이트의
+    // 보조 규칙이지 대체가 아니다. 테이블 유무와 무관하게 적용되므로 §20 조회보다 앞에 둔다.
+    const seasonStart = (process.env.GMI_NEXT_SEASON_START || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(seasonStart)) {
+      const cutoff = new Date(Date.parse(seasonStart + "T00:00:00Z") - 7 * 86400000).toISOString().slice(0, 10);
+      if (kstToday() > cutoff) {
+        await itx.editReply(`⏳ 이번 시즌 전환 신청은 **마감**됐어(마감 ${cutoff} · 다음 시즌 시작 ${seasonStart}의 1주일 전).\n다음 시즌 등록 기간에 신규 등록으로 진행해줘.`);
+        return true;   // 접수하지 않되 게이트는 처리됨 — 즉시 교체로 떨어지면 마감이 무의미해진다
+      }
+    }
     const enc = encodeURIComponent(itx.user.id);
-    const nowIso = new Date().toISOString();
     let rows;
     try {
       // 쿨다운 판정(관제탑 8/22: 시즌당 1회 — 승인·반려·만료 무관 신청 행 수로 센다)을 위해
@@ -1569,13 +1579,9 @@ if (process.env.DISCORD_TOKEN) {
         "⚠️ registry_transfer_requests 미실행 — 등록계 전환이 승인 게이트 없이 즉시 교체되고 있다(§20 DDL 실행 필요)");
       return false;
     }
-    // ② 7일 마감 — 스케줄러 없이 조회 시점에 만료 처리(lazy)
-    const expired = rows.filter((r) => r.status === "pending" && r.expires_at && r.expires_at < nowIso);
-    for (const r of expired) {
-      try { await sbPatch("registry_transfer_requests", `id=eq.${r.id}&status=eq.pending`, { status: "expired", decided_at: nowIso, memo: "7일 경과 자동 만료" }); }
-      catch (e) { console.error("regxfer_expire", e?.message); }
-    }
-    const active = rows.filter((r) => r.status === "pending" && !expired.includes(r));
+    // 자동 만료 없음(관제탑 8/25 — #260 설계 정본 채택): 오너 승인 지연이 신청자 불이익이
+    // 되면 안 된다. pending은 지워지지 않고 매일 오너 알림(runRegxferPendingAlert)에 노출된다.
+    const active = rows.filter((r) => r.status === "pending");
     if (active.length) {
       await itx.editReply({
         content: `⏳ 이미 전환 승인 대기 중이야 — 신청 계정: **${active[0].to_pubg_name}**\n`
@@ -1588,7 +1594,7 @@ if (process.env.DISCORD_TOKEN) {
     // 쿨다운(관제탑 8/22): 시즌당 1회. 승인·반려·만료 무관하게 "신청했던 행 수"로 센다.
     // 봇이 차단하지 않는다 — 접수는 하되 초과 사실을 신청자·오너 양쪽에 표시하고
     // 오너 재량 판단(승인/반려 버튼)을 경유시킨다.
-    const priorCount = rows.length - active.length;   // 이번 시즌의 기결(승인·반려·만료) 신청 수
+    const priorCount = rows.length - active.length;   // 이번 시즌의 기결(승인·반려) 신청 수
     const overCooldown = priorCount >= 1;
     let req;
     try {
@@ -1598,7 +1604,6 @@ if (process.env.DISCORD_TOKEN) {
         to_platform: p.platform, to_pubg_name: p.pubgName, to_account_id: p.accountId,
         real_name: p.realName, active_hours: p.activeHours,
         pws_eligible: typeof p.pwsEligible === "boolean" ? p.pwsEligible : null,
-        expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
       });
     } catch (e) {
       // INSERT 실패를 즉시 교체로 흘리면 게이트 우회가 된다 — 교체하지 않고 재시도 안내.
@@ -1617,8 +1622,7 @@ if (process.env.DISCORD_TOKEN) {
           content: `🔁 **등록계 전환 신청 #${req.id}** (${tier}${tier === "T2" ? " · 플랫폼 교차" : ""})\n`
             + `· 신청자: <@${itx.user.id}>\n`
             + `· 기존: ${p.prev.pubg_name} (${p.prev.platform})\n`
-            + `· 신규: **${p.pubgName}** (${p.platform}) · 티어 ${p.tierText}\n`
-            + `· 마감: 7일(경과 시 자동 만료)`
+            + `· 신규: **${p.pubgName}** (${p.platform}) · 티어 ${p.tierText}`
             + (overCooldown ? `\n⚠️ **시즌당 1회 제한 초과** — 이번 시즌 ${priorCount + 1}회째 신청. 재량 판단 대상.` : ""),
           components: [row],
         });
@@ -1630,7 +1634,7 @@ if (process.env.DISCORD_TOKEN) {
         + `· 기존: ${p.prev.pubg_name} → 신규: **${p.pubgName}**\n\n`
         + `계정이 바뀌는 전환은 운영진 승인 후 반영돼.\n`
         + `**승인 전까지는 기존 등록계(${p.prev.pubg_name})가 그대로 유효해.**\n`
-        + `7일 안에 처리되지 않으면 자동 만료되고, 결과는 DM으로 알려줄게.`,
+        + `처리 결과는 DM으로 알려줄게 — 처리 전까지 신청은 계속 유효해.`,
       components: [],
     });
     return true;
@@ -1651,11 +1655,7 @@ if (process.env.DISCORD_TOKEN) {
     if (q.status !== "pending")
       return itx.update({ content: `#${reqId}은 이미 처리됐어(${q.status}).`, components: [] });
     const nowIso = new Date().toISOString();
-    if (q.expires_at && q.expires_at < nowIso) {
-      try { await sbPatch("registry_transfer_requests", `id=eq.${reqId}&status=eq.pending`, { status: "expired", decided_at: nowIso, memo: "7일 경과 자동 만료" }); }
-      catch (e) { console.error("regxfer_expire_btn", e?.message); }
-      return itx.update({ content: `#${reqId}은 7일이 지나 만료됐어 — 신청자가 /등록계를 다시 실행해야 해.`, components: [] });
-    }
+    // 자동 만료 없음(관제탑 8/25) — pending은 처리 전까지 유효하다. 버튼은 언제 눌러도 반영된다.
     const approve = m[1] === "ok";
     if (approve) {
       // 승인 = 이 시점에 SCD-2 전이 + upsert(③). 신청 스냅샷 값으로 반영한다.
@@ -2237,10 +2237,10 @@ if (process.env.DISCORD_TOKEN) {
       let pendLine = "";
       try {
         const pend = await sbSelect("registry_transfer_requests",
-          `select=id,tier,from_pubg_name,to_pubg_name,expires_at&season=eq.${season}&status=eq.pending`);
+          `select=id,tier,from_pubg_name,to_pubg_name,requested_at&season=eq.${season}&status=eq.pending`);
         if (pend.length)
           pendLine = `\n\n⏳ 전환 승인 대기 **${pend.length}건** — 오너 DM 버튼으로 처리\n`
-            + pend.map((r) => `· #${r.id} ${r.from_pubg_name} → ${r.to_pubg_name} (${r.tier}, ~${String(r.expires_at).slice(0, 10)})`).join("\n");
+            + pend.map((r) => `· #${r.id} ${r.from_pubg_name} → ${r.to_pubg_name} (${r.tier}, ${String(r.requested_at).slice(0, 10)} 신청)`).join("\n");
       } catch (_) {}
       await itx.editReply(`📋 등록계 현황 (시즌 ${season})\n등록 ${rows.length}건\n${hourLine}\n${confirmLine}\n\n${unregLine}\n\n${dupLine}${pendLine}`);
     } catch (e) {
@@ -3833,7 +3833,7 @@ app.get("/api/gdcup-count", async (req, res) => {
   } catch (e) { res.json({ teams: 0, target: 16 }); }
 });
 // ── 시즌 룰셋 (단일 상수) ── 라운드·가중치표·상한·보너스모드를 시즌별로 분리 ──
-const GDCUP_CURRENT_SEASON = 3;
+const GDCUP_CURRENT_SEASON = 4;
 const GDCUP_WEIGHT_S2 = [[0,16,1.3],[17,19,1.2],[20,21,1.1],[22,23,1.0],[24,25,0.9],[26,28,0.8],[29,31,0.7],[32,9999,0.6]]; // 시즌2 구표(동결)
 // ⚠️ 가중치표·BPI 스케일의 단일 정본. 프론트(gdcup-s3.html)에 복제하지 말 것 —
 //    시즌3에서 양쪽 하드코딩이 어긋나 신청자에게 틀린 배율이 표시된 사고가 있었다.
@@ -3861,6 +3861,13 @@ const GDCUP_SEASONS = {
   3: { rounds: [1,2,3,4,5],   weightTable: GDCUP_WEIGHT_S3, cap: { team: 38, sTier: 1 }, bonusMode: "pre_weight",
        sPenaltyPerExtraS: GDCUP_S_PENALTY_S3,   // S 2명째부터 1명당 차감 (cap 은 권장값으로만 남는다)
        streak: { top4: 2, chicken: 4 } },   // 연속 Top4 +2 · 연속 치킨 +4(대체) — BPI 곱하기 전 라운드 점수에 합산
+  // 시즌4 규칙은 미확정 — 시즌3 전면 승계(관제탑 8/25 상수 변경 승인 시점 기준).
+  // 규칙이 바뀌면 이 엔트리만 갱신한다. bpi = BPI 산정 기준(대회 9/12가 44시즌 3일차라
+  // 새 시즌 전적이 사실상 없다 — 2026-09-08 시점 43시즌 최종 전적으로 고정, 관제탑 8/25).
+  4: { rounds: [1,2,3,4,5],   weightTable: GDCUP_WEIGHT_S3, cap: { team: 38, sTier: 1 }, bonusMode: "pre_weight",
+       sPenaltyPerExtraS: GDCUP_S_PENALTY_S3,
+       streak: { top4: 2, chicken: 4 },
+       bpi: { asOf: "2026-09-08", season: 43 } },
 };
 function gdSeasonRules(season) { return GDCUP_SEASONS[season] || GDCUP_SEASONS[GDCUP_CURRENT_SEASON]; }
 function gdcupRounds(season) { return gdSeasonRules(season).rounds; }
@@ -3942,6 +3949,9 @@ app.get("/api/gdcup-meta", async (req, res) => {
     sPenaltyPerExtraS: rules.sPenaltyPerExtraS || 0,
     cap: rules.cap,                            // { team, sTier } · 권장값. 초과해도 접수된다(2026-08-06)
     rounds: rules.rounds,
+    // BPI 산정 기준 시점(시즌4~). 신청 폼·규정·오버레이가 이 값을 렌더한다 — 프론트에
+    // 날짜·시즌을 하드코딩하지 말 것(구 표 ×1.0 사고와 같은 갈라짐 방지 · 관제탑 8/25).
+    bpi: rules.bpi || null,
     // T0 팀장 +1 폐지(2026-08-07). 키는 남겨 두되 null — 프론트가 "있으면 표시"로
     // 분기하고 있어도 조용히 사라지게 하려는 것. 시즌2 기록은 구 규칙으로 동결된다.
     leaderBonus: null,
@@ -5952,7 +5962,7 @@ const SCHEMA_OPTIONAL = {
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",
-    "pws_eligible","status","requested_at","expires_at","decided_at","decided_by","memo"],
+    "pws_eligible","status","requested_at","decided_at","decided_by","memo"],
   // pws_eligible = PWS 자격 자기신고. DDL 미실행 배포에선 upsert payload에서 빠져
   // 등록 자체는 현행대로 동작한다(자격 분리만 휴면).
   clan_registry: ["pws_eligible"],
@@ -6136,6 +6146,19 @@ async function warnOnce(key, sig, text) {
   await ownerDM(text);
   return true;
 }
+// 등록계 전환 pending 상시 노출(관제탑 8/25 — 자동 만료 제거의 대가): 만료로 지우는 대신
+// 미승인 건을 매일 오너에게 보인다. §20 미실행이면 조용히 스킵(접수 경로의 warnOnce가 담당).
+async function runRegxferPendingAlert() {
+  let rows;
+  try {
+    rows = await sbSelect("registry_transfer_requests",
+      "select=id,discord_id,tier,to_pubg_name,requested_at&status=eq.pending&order=requested_at.asc");
+  } catch (_) { return; }
+  if (!rows.length) return;
+  const lines = rows.map((r) => `· #${r.id} <@${r.discord_id}> → ${r.to_pubg_name} (${r.tier} · ${String(r.requested_at).slice(0, 10)} 신청)`);
+  await ownerDM(`⏳ **등록계 전환 승인 대기 ${rows.length}건** — 자동 만료가 없으니 처리 전까지 계속 남아 있어.\n${lines.join("\n")}\n(승인·반려는 접수 시 온 DM 버튼 또는 /등록계현황 확인)`);
+}
+
 async function runDirectStatus() {
   if (!process.env.SUPABASE_URL) { console.log("[cron] direct_status: SUPABASE_URL 미설정 — 스킵"); return; }
   let db;
@@ -6247,6 +6270,7 @@ async function cronTick() {
   }
   if (DIRECT_STATUS_ENABLED) {
     await maybeRunDaily("directStatus", "05:10", runDirectStatus, "잔여 알림(DB 정본)");  // 기존 T2 게이트 재사용
+    await maybeRunDaily("regxferPending", "05:20", runRegxferPendingAlert, "등록계 전환 대기 알림");
   }
   await maybeRunDaily("fbPending", "05:15", runFeedbackPending, "미승인 피드백");       // 별도 env 불요(크론 활성 시 항상)
   // DIRECT_STATUS 게이트를 타지 않는다 — 게이트를 하나 더 두면 그 게이트가 꺼져서
