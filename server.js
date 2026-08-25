@@ -1768,8 +1768,9 @@ if (process.env.DISCORD_TOKEN) {
     if (!process.env.SUPABASE_URL) return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
 
     await itx.deferReply({ ephemeral: true });
-    // 이전 시즌 등록 이력 = 유예 대상(기존 등록자). 43시즌 재등록·갱신은 통과시키되
-    // "44시즌부터 본인 명의 필수"를 고지한다 — 재등록을 막으면 등급 유지 경로가 끊겨
+    // 이전 시즌 등록 이력 = 유예 대상(기존 등록자). 재등록·갱신은 통과시키되
+    // "다음 시즌부터 본인 명의 필수"를 고지한다(번호는 아래 nextSeason 파생 — 주석에도
+    // 시즌 번호를 박지 않는다, 관제탑 8/25 시즌 정정). 재등록을 막으면 등급 유지 경로가 끊겨
     // 유예가 공문이 된다. 조회 실패 시 신규로 취급(고지가 빠질 뿐 등록은 정상).
     const nextSeason = PUBG_CUR_SEASON_NUM + 1;   // 고지 문구를 시즌 상수에서 파생 — 하드코딩하면 상수와 어긋난다
     let isReturning = false;
@@ -1812,7 +1813,7 @@ if (process.env.DISCORD_TOKEN) {
     REG_PENDING.delete(itx.user.id);
 
     if (itx.customId === "regown_no") {
-      // 기존 등록자는 소급 박탈 대상이 아니다 — 갱신을 포기해도 43시즌 지위는 그대로 유지된다.
+      // 기존 등록자는 소급 박탈 대상이 아니다 — 갱신을 포기해도 현 시즌 지위는 그대로 유지된다.
       // 신규에게만 2군 안내를 준다(1군 기준 미충족).
       return itx.update({
         content: pending.isReturning
@@ -3862,12 +3863,12 @@ const GDCUP_SEASONS = {
        sPenaltyPerExtraS: GDCUP_S_PENALTY_S3,   // S 2명째부터 1명당 차감 (cap 은 권장값으로만 남는다)
        streak: { top4: 2, chicken: 4 } },   // 연속 Top4 +2 · 연속 치킨 +4(대체) — BPI 곱하기 전 라운드 점수에 합산
   // 시즌4 규칙은 미확정 — 시즌3 전면 승계(관제탑 8/25 상수 변경 승인 시점 기준).
-  // 규칙이 바뀌면 이 엔트리만 갱신한다. bpi = BPI 산정 기준(대회 9/12가 44시즌 3일차라
-  // 새 시즌 전적이 사실상 없다 — 2026-09-08 시점 43시즌 최종 전적으로 고정, 관제탑 8/25).
+  // 규칙이 바뀌면 이 엔트리만 갱신한다. bpi = BPI 산정 기준(대회 9/12가 PUBG 43시즌 3일차라
+  // 새 시즌 전적이 사실상 없다 — 2026-09-08 시점 42시즌 최종 전적으로 고정, 관제탑 8/25 시즌 정정).
   4: { rounds: [1,2,3,4,5],   weightTable: GDCUP_WEIGHT_S3, cap: { team: 38, sTier: 1 }, bonusMode: "pre_weight",
        sPenaltyPerExtraS: GDCUP_S_PENALTY_S3,
        streak: { top4: 2, chicken: 4 },
-       bpi: { asOf: "2026-09-08", season: 43 } },
+       bpi: { asOf: "2026-09-08", season: 42 } },
 };
 function gdSeasonRules(season) { return GDCUP_SEASONS[season] || GDCUP_SEASONS[GDCUP_CURRENT_SEASON]; }
 function gdcupRounds(season) { return gdSeasonRules(season).rounds; }
