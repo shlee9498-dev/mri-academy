@@ -693,6 +693,77 @@ module.exports = function mountAdminPanel(app, deps) {
     } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
   });
 
+  // ── 결제 내역 리스트 (Phase 1 · 읽기 전용 · owner — 관제탑 8/25 범위 확정) ──
+  // BOT_PAY_AUTOCREATE(9/3~) 이후 "방금 승인한 결제가 들어갔나"를 확인하는 창구.
+  // 쓰기 없음 — 결제 수정은 봇 승인 큐·오너 SQL로만 간다(경로를 늘리지 않는다).
+  const PAYLIST_KINDS = ["lesson", "course", "consult", "set", "sales", "etc", "refund", "lesson_consult", "lecture_consult", "adjust"];
+  // 연결 기대축: lesson·set = 판수 등록(lesson_enrollment_id) / course = 강의 계약(course_id).
+  // 그 외 kind는 연결 무대상 — 미연결 카운트에 넣으면 상담·환불이 전부 경고로 떠 무의미해진다.
+  const linkStateOf = (p) =>
+    (p.kind === "lesson" || p.kind === "set") ? (p.lesson_enrollment_id != null ? "linked" : "unlinked")
+      : p.kind === "course" ? (p.course_id != null ? "linked" : "unlinked")
+      : "none";
+  app.get("/api/admin/payments", async (req, res) => {
+    if (!ready()) return res.status(503).json({ error: "disabled" });
+    const c = await ctx(req);
+    if (!c) return res.status(403).json({ error: "staff_only" });
+    if (!c.isOwner) return res.status(403).json({ error: "owner_only" });
+    try {
+      const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+      const off = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+      const [students, staff] = await Promise.all([
+        sbSelectRetry("paylist", "students", "select=id,name,trainer_id"),
+        sbSelectRetry("paylist", "staff", "select=id,name"),
+      ]);
+      const stuById = {}; for (const s of students) stuById[s.id] = s;
+      const staffName = {}; for (const s of staff) staffName[s.id] = s.name;
+      // 이름·담당 필터는 students 축 — id 집합으로 좁혀 in-list로 넘긴다(조인 임베드 없이).
+      let ids = null;
+      const nameQ = String(req.query.student || "").trim();
+      if (nameQ) ids = students.filter((s) => (s.name || "").includes(nameQ)).map((s) => s.id);
+      const trQ = parseInt(req.query.trainer, 10);
+      if (Number.isFinite(trQ)) {
+        const own = new Set(students.filter((s) => s.trainer_id === trQ).map((s) => s.id));
+        ids = ids ? ids.filter((id) => own.has(id)) : [...own];
+      }
+      // 당월 요약(건수·총액·미연결)은 필터·페이지와 무관하게 당월 전체 기준으로 센다.
+      const monthStart = `${currentPeriod()}-01`;
+      const month = await sbSelectRetry("paylist", "payments",
+        `select=id,amount,kind,lesson_enrollment_id,course_id&paid_at=gte.${monthStart}`);
+      const summary = {
+        period: currentPeriod(), count: month.length,
+        total: sum(month, (p) => Number(p.amount) || 0),
+        unlinked: month.filter((p) => linkStateOf(p) === "unlinked").length,
+      };
+      let rows = [];
+      if (!ids || ids.length) {
+        let q = "select=id,student_id,paid_at,amount,kind,games,pay_channel,lesson_enrollment_id,course_id,memo"
+          + `&order=paid_at.desc,id.desc&limit=${lim}&offset=${off}`;
+        const from = String(req.query.from || ""), to = String(req.query.to || "");
+        if (/^\d{4}-\d{2}-\d{2}$/.test(from)) q += `&paid_at=gte.${from}`;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(to)) q += `&paid_at=lte.${to}`;
+        if (PAYLIST_KINDS.includes(req.query.kind)) q += `&kind=eq.${req.query.kind}`;
+        if (PAY_CHANNELS.includes(req.query.channel)) q += `&pay_channel=eq.${req.query.channel}`;
+        if (ids) q += `&student_id=in.(${ids.join(",")})`;
+        rows = await sbSelectRetry("paylist", "payments", q);
+      }
+      res.json({
+        summary,
+        hasMore: rows.length === lim,
+        rows: rows.map((p) => {
+          const st = stuById[p.student_id] || {};
+          return {
+            id: p.id, paid_at: p.paid_at, amount: p.amount, kind: p.kind, games: p.games,
+            pay_channel: p.pay_channel || "transfer",
+            student: st.name || `#${p.student_id}`, student_id: p.student_id,
+            trainer: staffName[st.trainer_id] || "—",
+            link: linkStateOf(p), memo: p.memo || "",
+          };
+        }),
+      });
+    } catch (e) { console.error("paylist", e); res.status(502).json({ error: "db" }); }
+  });
+
   // ── 결제 (owner 전용 — Phase1에서 토스 자동) ────────────
   app.post("/api/admin/payments", async (req, res) => {
     const c = await ctx(req); if (!c) return res.status(403).json({ error: "staff_only" });
