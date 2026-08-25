@@ -1109,7 +1109,7 @@ if (process.env.DISCORD_TOKEN) {
       try {
         const sid = await resolveStudentId(s.name, trainer_id);   // 병행수강 2행이면 본인 담당 행 우선
         if (sid == null) { miss.push(s.name); continue; }
-        const enrId = await resolveEnrollmentId(sid);
+        const enrId = await resolveEnrollmentId(sid, trainer_id);
         if (enrId == null) unattached.push(s.name);
         rows.push({ student_id: sid, trainer_id, played_at, games: s.games, memo: memo || null,
                     created_by: createdBy, lesson_enrollment_id: enrId });
@@ -1143,13 +1143,27 @@ if (process.env.DISCORD_TOKEN) {
   //   carry_games > 0이면 개시잔액이 먼저 소비되므로 이 판수가 이월 소비인지 등록 소비인지 갈린다.
   //
   //   모호하면 null = 종전 동작 그대로다(회귀 없음). 남은 구간은 백필 SQL로 오너가 처리한다.
-  async function resolveEnrollmentId(studentId) {
+  // §7-2 FIFO 승격(관제탑 8/25 · 부분 초과 ⓐ 채택): 트레이너 일치 필수 → started_on 오름차순
+  // → 잔여>0 첫 등록에 귀속(잔여 부족해도 통째 — straddle (b) 판례 동형, FK 1개라 쪼개기 불가).
+  // 전 등록 소진·트레이너 미해석·carry_games 잔존은 null → 미귀속 + 오너 알림(unattached 경로).
+  // 초과 배정(잔여 ≤ 0 등록에 붙이기)은 자동 경로에서 하지 않는다 — 백필 위임 판정 전용.
+  async function resolveEnrollmentId(studentId, trainerId) {
     try {
       const st = await sbSelect("students", `select=carry_games&id=eq.${studentId}&limit=1`);
       if (Number(st[0]?.carry_games || 0) !== 0) return null;
+      if (trainerId == null) return null;              // 트레이너 일치가 규칙 1 — 미해석이면 귀속 금지
       const es = await sbSelect("lesson_enrollments",
-        `select=id&student_id=eq.${studentId}&status=in.(active,paused)&limit=2`);
-      return es.length === 1 ? es[0].id : null;      // 2건 이상이면 FIFO 정책 필요 → null
+        `select=id,games_total,bonus_games&student_id=eq.${studentId}&trainer_id=eq.${trainerId}`
+        + `&status=in.(active,paused)&order=started_on.asc,id.asc`);
+      for (const e of es) {
+        let used = 0;
+        try {
+          const ss = await sbSelect("lesson_sessions", `select=games&lesson_enrollment_id=eq.${e.id}`);
+          used = ss.reduce((a, r) => a + Number(r.games || 0), 0);
+        } catch (err) { console.error("dualwrite_enr_used", e.id, err?.message); return null; }
+        if (Number(e.games_total || 0) + Number(e.bonus_games || 0) - used > 0) return e.id;
+      }
+      return null;                                     // 전 등록 소진 — 규칙 4
     } catch (e) { console.error("dualwrite_enr_lookup", studentId, e?.message); return null; }
   }
   // 이름→students.id 해석. 미매칭 null.
@@ -1570,8 +1584,11 @@ if (process.env.DISCORD_TOKEN) {
     try {
       // 쿨다운 판정(관제탑 8/22: 시즌당 1회 — 승인·반려·만료 무관 신청 행 수로 센다)을 위해
       // pending만이 아니라 이 시즌 전체 이력을 읽는다.
+      // ⚠️ select 목록에 없는 컬럼이 섞이면 PostgREST 42703(400)으로 이 조회 전체가 죽고
+      // catch가 「테이블 미실행」으로 오판해 게이트가 영영 안 켜진다 — 8/25 실사고:
+      // 만료 제거(#263)에서 expires_at을 여기서만 빼먹어 §20 실행 후에도 즉시 교체로 degrade했다.
       rows = await sbSelect("registry_transfer_requests",
-        `select=id,status,expires_at,to_pubg_name&discord_id=eq.${enc}&season=eq.${p.season}`);
+        `select=id,status,to_pubg_name&discord_id=eq.${enc}&season=eq.${p.season}`);
     } catch (e) {
       // §20 미실행 — 게이트 없이 종전 동작으로 떨어진다. 조용히 넘기면 게이트가 안 켜진 걸
       // 영영 모르므로 하루 1회 오너에게 알린다(dualwrite_enr_column과 같은 처리).
