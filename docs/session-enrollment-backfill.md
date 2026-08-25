@@ -588,3 +588,27 @@ select count(*) from lesson_sessions
 | **straddle 3건** — 윤지민 138(5) · 김대윤 133(10) · 박주환 132(16) | 3 | 31 | 세션이 등록 경계에 걸침. (a) 후속 등록으로 통째 배정 (b) 선행 등록에 배정·초과 허용 중 판정 요청 — 쪼개기는 불가(FK 1개) |
 
 검산: 41 + 21 = 62행 · 229 + 123 = 352판.
+
+### 7-7. 신규 유입 미귀속 2행 — 발행 (2026-08-25 자체 점검 적발 · **실행 위임 대기**)
+
+8/25 00:44 KST 봇 기록(`created_by=444839…`) 2행이 미귀속으로 유입됐다(비시드 미귀속 11→13).
+**버그가 아니라 설계된 보수 동작**: `resolveEnrollmentId`(server.js:1146)는 active/paused
+등록이 **정확히 1건**일 때만 자동 귀속하고, 2건 이상이면 「FIFO 정책 필요 → null」로
+남긴다. 두 학생 모두 8/18 연장 결제(등록 127·128)로 다중 등록 상태가 된 뒤의 첫 수업이다.
+
+| 세션 | 학생 | 판수 | FIFO 귀속처 | 근거(§7-2 승인 규칙) |
+|---|---|---|---|---|
+| #145 (8/25 · trainer 2) | 윤지민(12) | 4 | **등록 127**(8/18 · 잔여 16) | 선행 25(7/18)는 잔여 −4로 소진 — 기귀속 선차감. 음수 등록에 더 붙이지 않는다 |
+| #146 (8/25 · trainer 2) | 주현성(60) | 4 | **등록 128**(8/18 · 잔여 17) | 트레이너 일치 필수(주현성 판례 그 자체) — 102는 trainer 5라 제외 |
+
+```sql
+-- §7-7 신규 유입 2행 귀속 (2026-08-25 발행 · 실행은 관제탑 위임 승인 후)
+update lesson_sessions set lesson_enrollment_id = 127 where id = 145 and lesson_enrollment_id is null;
+update lesson_sessions set lesson_enrollment_id = 128 where id = 146 and lesson_enrollment_id is null;
+-- 사후검증 기대: 비시드 미귀속 13→11(W-2만 잔존) · 등록 127 잔여 16→12 · 128 잔여 17→13
+select count(*) from lesson_sessions where lesson_enrollment_id is null and created_by <> 'seed';
+```
+
+구조 메모: 연장 결제로 다중 등록이 된 학생마다 같은 유형이 반복 유입된다. §7-2가 관제탑
+승인 규칙이 된 지금은 `resolveEnrollmentId`를 FIFO로 승격(트레이너 일치 → started_on 순 →
+잔여 남은 첫 등록)할 수 있다 — **봇 v2 재배선(#8) 검토 항목으로 제안**, 이 문서는 발행만.
