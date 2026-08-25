@@ -2912,8 +2912,10 @@ const RANKED_TIER_MINS = (() => {
 const RANKED_TIERS = ["S", "T0", "T1", "T2", "T3", "T4"]
   .map((t, i) => ({ min: RANKED_TIER_MINS[i], t, label: (TIERS.find((x) => x.t === t) || {}).label || t }))
   .concat([{ min: 0, t: "T5", label: "신예" }]);
-// 경쟁전 표본이 이 판수 미만이면 "표본 부족"으로 본다. 현재는 계측 집계에서만 쓰이고
-// 판정에는 관여하지 않는다(BPI 티어는 여전히 일겜 평딜 기준 — 경쟁전 전환은 임계값 재보정과 동시 적용).
+// 경쟁전 표본이 이 판수 미만이면 "표본 부족"으로 본다. computeBPI의 판정 딜 소스 게이트
+// (useRanked)와 계측 집계가 같이 쓴다 — 충족 시 경쟁전 평딜(RANKED_TIERS), 미달 시 일겜
+// 폴백(TIERS)이고, 일겜 폴백 상태의 S급은 자동 확정하지 않는다(S급 보류 게이트 참조).
+// (구 주석 "판정에는 관여하지 않는다"는 경쟁전 전환 이전 서술 — 2026-08-25 정정.)
 const RANKED_MIN_ROUNDS = Number(process.env.RANKED_MIN_ROUNDS || 10);
 // 현대 PUBG 경쟁전 사다리: …Platinum < Crystal < Diamond < Master < 서바이버(RP≥SURVIVOR_CUT).
 // 티어 상향 보정(현시즌 rankedTier): 서바이버→최소S / 마스터→최소T0 / 크리스탈·다이아→최소T1 / 플레이하→보정없음.
@@ -2945,7 +2947,9 @@ function suggestBPI(avgDamage, rankedTier, isTeamLeader, bestRP, damageSource = 
     //   (pick="ranked" + avgDamage=일겜값 조합이 모순처럼 보인다는 지적이 있었다. 모순이 아니라
     //    서로 다른 두 가지를 가리키는 필드다. pick은 기존 소비처 호환용으로 남긴다.)
     basis: {
-      avgDamage, damageSource: "sample",
+      // damageSource는 파라미터 값 그대로 — 종전엔 리터럴 "sample"로 굳어 있었다(파라미터
+      // 무시). computeBPI가 호출 직후 덮어써서 실해는 없었지만, 직접 호출부가 생기면 함정이다.
+      avgDamage, damageSource,
       rankedTier: rankedTier || null, isTeamLeader: !!isTeamLeader,
       pick, decidedBy: pick,
     },
@@ -3113,7 +3117,7 @@ async function computeBPI(platform, nickname, isLeader) {
       ...base,
       sample: null, ranked: null, rankedTier: null,
       suggested: null, basis: null, confirmedBy: null,
-      lowConfidence: true,
+      lowConfidence: true, judgmentPending: false,
       warnings: ["최근 두 시즌 매치 기록 없음 — 계정은 확인됨, 티어는 신고값 유지"],
     };
   }
@@ -3144,6 +3148,17 @@ async function computeBPI(platform, nickname, isLeader) {
   bpi.basis.minRounds = RANKED_MIN_ROUNDS;
   const lowConfidence = (useRanked ? false : rp < 10) || seasonSource === "previous" || !useRanked;
 
+  // ── S급 보류 게이트 (관제탑 확정 2026-08-25) ──
+  // 저신뢰 표본(경쟁전 판수 미달로 일겜 폴백·일겜 소표본·직전 시즌 폴백)의 딜 경계로는
+  // S급을 자동 확정하지 않는다. 시즌 초엔 경쟁전 판수가 전부 적어 lowConfidence가 대량
+  // 발생하는데, 그때 일겜 딜(400+)로 S를 주면 팀 밸런스가 무너진다.
+  // 서바이버 RP 보정(gdcupRankedFloor === "S")의 S는 실측 RP 기반이라 보류 대상이 아니다.
+  // suggested=null은 기존 소비처 규약("판정 없으면 신고 tier 유지")을 그대로 탄다 —
+  // basis는 남겨 화면이 보류 사유(딜 소스·판수)를 설명할 수 있게 한다.
+  const judgmentPending = lowConfidence && bpi.suggested.tier === "S"
+    && gdcupRankedFloor(rankedTier, rankedStats?.bestRankPoint ?? null) !== "S";
+  if (judgmentPending) bpi.suggested = null;
+
   return {
     ...base,
     sample: {
@@ -3152,8 +3167,9 @@ async function computeBPI(platform, nickname, isLeader) {
       kda: stats?.kda || null, winRate: rp ? wins / rp : 0,
     },
     ranked: rankedStats, rankedTier,
-    ...bpi, lowConfidence,
+    ...bpi, lowConfidence, judgmentPending,
     warnings: [
+      ...(judgmentPending ? ["표본 부족 상태의 S급 딜량 — 자동 판정 보류, 운영진 확인 필요"] : []),
       ...(rp < 10 ? [`매치 ${rp}판 — 표본 적음, 운영진 재검증 필요`] : []),
       ...(seasonSource === "previous" ? ["현재 시즌 기록 없음 — 직전 시즌 기준으로 판정"] : []),
     ],
@@ -3324,6 +3340,10 @@ async function verifyTeamTiers(team) {
       rankedAvgDamage: best.basis?.rankedAvgDamage ?? null,
       rankedRounds: best.basis?.rankedRounds ?? null,
       bpi: sv.bpi ?? null,
+      lowConfidence: !!best.lowConfidence,
+      // S급 보류 — suggested가 비워져 내려온 상태(신고 tier 유지). 조용히 넘어가면 안 되는
+      // 값이라 확정 화면·목록 스탬프까지 그대로 흘려보낸다.
+      judgmentPending: !!best.judgmentPending,
     });
     if (noSeason) out.reasons.push({ code: "no_season_data", idx: i, ign });
     serverMembers.push({ ...m, tier: sv.tier || m.tier });   // 판정 없으면 신고값 유지
@@ -3500,7 +3520,7 @@ async function refreshDist(source = "registry") {
     const detail = [];
     const rankedVals = [], sampleVals = [], ratios = [];
     let total = 0, rankedTotal = 0, rankedThin = 0, rankedMissing = 0;
-    let notFound = 0, noSeasonData = 0;
+    let notFound = 0, noSeasonData = 0, pendingS = 0;
     for (const t of targets) {
       const nick = t.nick;
       try {
@@ -3516,7 +3536,29 @@ async function refreshDist(source = "registry") {
         }
         const platform = r.platform || t.platform;
         // 계정은 있으나 시즌 기록이 없으면 집계 대상이 아니다(판정값 자체가 없음).
-        if (!r.suggested || !r.sample) { noSeasonData++; continue; }
+        if (!r.sample) { noSeasonData++; continue; }
+        // S급 보류(judgmentPending) — 시즌 기록은 있는데 판정만 비워진 상태. "기록 없음"으로
+        // 세면 9/8 증빙 스냅에서 보류 인원이 증발한다. 티어 분포에는 안 넣되(판정값이 없다)
+        // 카운트와 상세 행은 남긴다 — 보류야말로 재보정·운영 확인의 대상이다.
+        if (!r.suggested) {
+          if (!r.judgmentPending) { noSeasonData++; continue; }
+          pendingS++;
+          detail.push({
+            nick: r.nickname, platform,
+            team: t.team, claimedTier: t.claimedTier, claimedDmg: t.claimedDmg,
+            tierMismatch: null,                       // 서버 판정이 없어 비교 불가 — false로 두면 "일치"처럼 읽힌다
+            sampleMode: r.sample.mode,
+            sampleAvgDamage: r.sample.avgDamage, sampleRounds: r.sample.roundsPlayed,
+            rankedAvgDamage: r.ranked?.avgDamage ?? null, rankedRounds: r.ranked?.roundsPlayed ?? 0,
+            rankedTier: r.rankedTier || null,
+            currentRankPoint: r.ranked?.currentRankPoint ?? null,
+            bestRankPoint: r.ranked?.bestRankPoint ?? null,
+            currentTier: null, currentBpi: null, pick: r.basis?.pick || null,
+            pending: true,
+            ratio: null,
+          });
+          continue;
+        }
         byTier[r.suggested.tier] = (byTier[r.suggested.tier] || 0) + 1;
         byDamage[dmgBucket(r.sample.avgDamage)]++;
         total++;
@@ -3562,6 +3604,7 @@ async function refreshDist(source = "registry") {
       counted: rankedTotal,          // 경쟁전 표본 충분
       thin: rankedThin,              // 경쟁전 판수 부족 (< minRounds)
       missing: rankedMissing,        // 경쟁전 기록 자체 없음
+      pendingS,                      // S급 보류(표본 부족 딜로 S 경계) — 분포 미포함, 상세 행에는 있음
       byDamage: byRankedDamage,
       stats: summarize(rankedVals),
       sampleStats: summarize(sampleVals),   // 같은 인원의 일겜 평딜 (비교용)
@@ -3574,7 +3617,8 @@ async function refreshDist(source = "registry") {
     DIST_DETAIL = detail;
     console.log("dist refreshed", "source=" + source, JSON.stringify(DIST.byTier),
       "targets=" + targets.length, "total=" + total, "notFound=" + notFound,
-      "ranked=" + rankedTotal + "/thin=" + rankedThin + "/missing=" + rankedMissing);
+      "ranked=" + rankedTotal + "/thin=" + rankedThin + "/missing=" + rankedMissing
+      + "/pendingS=" + pendingS);
   } catch (e) { console.error("dist_error", e?.message); DIST.status = "error"; }
 }
 if (process.env.PUBG_API_KEY) {
@@ -3592,7 +3636,8 @@ app.get("/api/pubg-dist-detail", (req, res) => {
   if (String(req.query.format || "").toLowerCase() === "tsv") {
     const cols = ["nick", "platform", "team", "claimedTier", "claimedDmg",
       "rankedAvgDamage", "rankedRounds", "bestRankPoint", "rankedTier",
-      "sampleAvgDamage", "sampleRounds", "ratio", "currentTier", "currentBpi", "tierMismatch"];
+      "sampleAvgDamage", "sampleRounds", "ratio", "currentTier", "currentBpi", "tierMismatch",
+      "pending"];
     const lines = [cols.join("\t")].concat(
       DIST_DETAIL.map((r) => cols.map((c) => (r[c] == null ? "" : String(r[c]))).join("\t")));
     res.type("text/plain; charset=utf-8");
@@ -3654,6 +3699,11 @@ function codeStatus(code, now) {
 async function diagnoseBpi(platform, nick) {
   const fmt = (r, extra) => {
     const s = r.suggested;
+    // S급 보류 — suggested가 비워지지만 시즌 기록은 있다. 아래 '기록 없음' 분기로 떨어지면
+    // 오문구가 나가므로 먼저 가른다.
+    if (!s && r.judgmentPending && r.sample) {
+      return `⏸ 판정 보류(표본 부족 상태의 S급 딜) · 평균딜 ${r.sample.avgDamage} · ${r.sample.roundsPlayed}판 — 운영진 확인 필요` + (extra || "");
+    }
     // 계정은 있으나 최근 두 시즌 기록이 없으면 판정값이 없다 — 참가 자격 문제가 아니므로
     // 실패가 아니라 '기록 없음'으로 적는다.
     if (!s || !r.sample) {
@@ -4840,13 +4890,17 @@ app.get("/api/gdcup-admin-list", async (req, res) => {
         pubgJudgeDmg: (raw[i] && raw[i].pubgJudgeDmg) ?? null,
         pubgRankedDmg: (raw[i] && raw[i].pubgRankedDmg) ?? null,
         pubgRankedRounds: (raw[i] && raw[i].pubgRankedRounds) ?? null,
+        pubgSeasonSource: (raw[i] && raw[i].pubgSeasonSource) || null,
+        pubgPending: !!(raw[i] && raw[i].pubgPending),
       }));
       return { ...r, verified: !!r.verified_at, members,
         // 예비·교체는 계좌·실명을 담지 않는다(gdcup_payouts 전용 경계 그대로).
         reserves: sanitizeReserves(r.reserves), rosterLog: sortRosterLog(r.roster_log),
         // 조치가 필요한 건 not_found 뿐 — no_season은 참가 가능한 정상 상태다.
         pubgFailed: members.filter((m) => m.pubgState === "not_found").length,
-        pubgNoSeason: members.filter((m) => m.pubgState === "no_season").length };
+        pubgNoSeason: members.filter((m) => m.pubgState === "no_season").length,
+        // S급 보류 인원 — 0이 아니면 운영진 확인 전이다. 조용히 확정으로 넘어가면 안 된다.
+        pubgPending: members.filter((m) => m.pubgPending).length };
     });
     res.json({ teams });
   } catch (e) { res.status(500).json({ error: "server_error" }); }
@@ -4874,7 +4928,12 @@ function stampPubgVerify(members, v) {
       pubgDmgSource: r.damageSource || null,      // "ranked" | "sample"
       pubgJudgeDmg: r.judgeDamage ?? null,        // 실제 판정에 쓰인 평딜
       pubgRankedDmg: r.rankedAvgDamage ?? null,
-      pubgRankedRounds: r.rankedRounds ?? null };
+      pubgRankedRounds: r.rankedRounds ?? null,
+      // 어느 시즌 데이터로 판정했나("current"|"previous") — §5-4 산정 창 사후 판별의 정본.
+      pubgSeasonSource: r.seasonSource || null,
+      // S급 보류(표본 부족 딜로 S 경계 도달 — 자동 확정 안 함, 신고 tier 유지 중).
+      pubgPending: !!r.judgmentPending,
+      pubgLowConfidence: !!r.lowConfidence };
   });
 }
 
@@ -4945,6 +5004,14 @@ app.post("/api/gdcup-confirm", limit("gdConfirm", 30, 60_000), gdConfirmPubgGate
       patch.bpi = sv.teamBpi;
       patch.weight = gdcupWeight(sv.teamBpi, season0, sv.sCount);
       patch.verified_at = new Date().toISOString();
+      // 판정 근거 영구 스냅(멤버별 seasonSource·딜 소스·보류 여부) — §5-4 산정 창 사후
+      // 판별의 정본. verify_json 컬럼은 DDL·REQUIRED_SCHEMA에 있었지만 기록하는 코드가
+      // 없었다(2026-08-25 실측) — 여기서부터 기록한다. PII 없음(ign·판정 수치뿐).
+      patch.verify_json = { at: patch.verified_at, forced: false, members: v.members };
+    } else if (status === "confirmed" && force) {
+      // 강제확정 구분 — verified_at은 남기지 않는다(검증 미통과). DDL 주석 정본:
+      // "강제확정은 verified_at null + verify_json.forced=true 로 구분된다."
+      patch.verify_json = { at: new Date().toISOString(), forced: true };
     }
     const updated = await sbPatch("gdcup_apps", `id=eq.${encodeURIComponent(b.id)}`, patch);
     const team = Array.isArray(updated) ? updated[0] : updated;
@@ -5051,6 +5118,8 @@ app.post("/api/gdcup-edit", limit("gdEdit", 10, 60_000), async (req, res) => {
             found: !!m.serverTier,
             clientTier: m.clientTier || null,
             mismatch: !!m.mismatch,
+            // S급 보류 — found=false와 구분해야 한다(닉은 잡혔고 판정만 보류).
+            pending: !!m.judgmentPending,
           })),
           notFound: (v.reasons || []).filter((r) => r.code === "player_not_found").map((r) => r.ign),
           ok: !!v.ok, serverBpi: v.serverBpi ?? null, reasons: v.reasons || [],
