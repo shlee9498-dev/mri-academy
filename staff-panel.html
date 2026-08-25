@@ -817,7 +817,64 @@ function renderOwnerPay(){
       </tr>`).join("") : `<tr><td colspan="8" class="empty">트레이너를 먼저 등록하세요 (도구 탭 → 운영진 관리)</td></tr>` }
       </tbody></table></div>
     </section>
+
+    <section>
+      <div class="sec-h"><h2>결제 내역</h2><span class="tag">읽기 전용 — 수정은 봇 승인 큐·오너 SQL로만</span><span class="line"></span></div>
+      <div id="paysum" style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px"></div>
+      <div class="frm" style="margin:0 0 10px">
+        <label class="fl">시작<input type="date" id="pl_from" class="w-m"></label>
+        <label class="fl">끝<input type="date" id="pl_to" class="w-m"></label>
+        <label class="fl">수강생<input type="text" id="pl_stu" class="w-m" placeholder="이름"></label>
+        <label class="fl">담당<select id="pl_tr" class="w-m"><option value="">전체</option>${(STAFF||[]).map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select></label>
+        <label class="fl">종류<select id="pl_kind" class="w-s"><option value="">전체</option><option value="lesson">레슨</option><option value="course">직강</option><option value="consult">상담</option><option value="set">세트</option><option value="refund">환불</option></select></label>
+        <label class="fl">수단<select id="pl_ch" class="w-s"><option value="">전체</option><option value="transfer">계좌이체</option><option value="groble">그로블</option><option value="soomgo">숨고</option><option value="etc">기타</option></select></label>
+        <button class="btn sm gold" onclick="loadPayList(true)">조회</button>
+      </div>
+      <div class="card scroll"><table class="tbl"><thead><tr>
+        <th>날짜</th><th>수강생</th><th style="text-align:right">금액</th><th>종류</th><th>담당</th><th>수단</th><th>연결</th>
+      </tr></thead><tbody id="paylist-body"><tr><td colspan="7" class="empty">불러오는 중…</td></tr></tbody></table></div>
+      <div style="margin-top:8px"><button class="btn sm" id="pl_more" style="display:none" onclick="loadPayList(false)">더 불러오기</button></div>
+    </section>
   `;
+  loadPayList(true);
+}
+
+// 결제 내역 (owner · 읽기 전용 — 관제탑 8/25). memo는 셀에 노출하지 않고 행 hover(title)로만 —
+// 내부 판정 이력이 들어 있다. 미연결 배지 = 결제만 있고 등록·계약 연결이 없는 상태(박유현형 사고 감지).
+const PAYKIND_KO={lesson:"레슨",course:"직강",consult:"상담",set:"세트",refund:"환불",sales:"영업",etc:"기타",lesson_consult:"레슨상담",lecture_consult:"강의상담",adjust:"조정"};
+const PAYCH_KO={transfer:"계좌이체",groble:"그로블",soomgo:"숨고",etc:"기타"};
+let PL={off:0,lim:50};
+async function loadPayList(reset){
+  if(reset) PL.off=0;
+  const q=new URLSearchParams({limit:PL.lim,offset:PL.off});
+  const v=(id)=>{const el=document.getElementById(id);return el?el.value:"";};
+  if(v("pl_from"))q.set("from",v("pl_from")); if(v("pl_to"))q.set("to",v("pl_to"));
+  if(v("pl_stu"))q.set("student",v("pl_stu")); if(v("pl_tr"))q.set("trainer",v("pl_tr"));
+  if(v("pl_kind"))q.set("kind",v("pl_kind")); if(v("pl_ch"))q.set("channel",v("pl_ch"));
+  let d; try{ d=await api("/api/admin/payments?"+q.toString()); }catch(e){ toast(e.message||"결제 내역 조회 실패",true); return; }
+  const sm=document.getElementById("paysum");
+  if(sm&&d.summary) sm.innerHTML=
+    `<span class="pill">${esc(d.summary.period)} 건수 <b>${d.summary.count}</b>건</span>`
+    +`<span class="pill">총액 <b>${won(d.summary.total)}</b>원</span>`
+    +`<span class="pill"${d.summary.unlinked?' style="border-color:var(--red);color:var(--red)"':''}>미연결 <b>${d.summary.unlinked}</b>건</span>`;
+  const body=document.getElementById("paylist-body");
+  const rows=(d.rows||[]).map(r=>{
+    const neg=Number(r.amount)<0;
+    const link=r.link==="unlinked"?`<span class="badge warn">⚠️ 미연결</span>`
+      :r.link==="linked"?`<span class="badge ok">✓</span>`:`<span class="muted">—</span>`;
+    return `<tr title="${esc(r.memo)}">
+      <td class="muted" style="white-space:nowrap">${esc(r.paid_at)}</td>
+      <td class="name">${esc(r.student)}<span class="sid">#${r.student_id}</span></td>
+      <td style="text-align:right;font-weight:800${neg?";color:var(--red)":""}">${won(r.amount)}${r.games?`<span class="muted" style="font-weight:400"> · ${r.games}판</span>`:""}</td>
+      <td>${PAYKIND_KO[r.kind]||esc(r.kind)}</td>
+      <td class="muted">${esc(r.trainer)}</td>
+      <td class="muted">${PAYCH_KO[r.pay_channel]||esc(r.pay_channel)}</td>
+      <td>${link}</td></tr>`;
+  }).join("");
+  if(reset) body.innerHTML = rows || `<tr><td colspan="7" class="empty">결제 내역 없음</td></tr>`;
+  else if(rows) body.insertAdjacentHTML("beforeend", rows);
+  PL.off += (d.rows||[]).length;
+  const more=document.getElementById("pl_more"); if(more) more.style.display = d.hasMore ? "" : "none";
 }
 
 // 급여 탭: 직원 급여 — owner 전용, 기본 숨김.
