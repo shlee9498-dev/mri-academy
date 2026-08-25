@@ -849,9 +849,10 @@ create table if not exists public.registry_transfer_requests (
   active_hours     text,
   pws_eligible     boolean,
   status           text not null default 'pending'
-                   check (status in ('pending','approved','rejected','expired')),
+                   check (status in ('pending','approved','rejected')),
+                   -- 자동 만료 없음(관제탑 8/25 · #260 정본): pending은 처리 전까지 유효하고
+                   -- 매일 오너 알림에 노출된다. expired 상태·expires_at 컬럼은 두지 않는다.
   requested_at     timestamptz not null default now(),
-  expires_at       timestamptz not null,
   decided_at       timestamptz,
   decided_by       text,
   memo             text
