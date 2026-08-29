@@ -2144,7 +2144,7 @@ if (process.env.DISCORD_TOKEN) {
           + (patch.student_id ? ` · 명부 #${patch.student_id}` : " · ⚠️ 명부 미매칭(이름 확인 필요)")
           + `\n· 채널: ${channelLine(ch, q.amount)}`
           + `\n📋 결제_원장 기입 행(복붙):\n\`${ledger}\``
-          + `\n⚠️ 기입 전 원장 8월 구간 중복키(입금일|이름|금액) 확인 · 판수 결제면 레슨로그 결제금액·판수도 갱신.`,
+          + `\n⚠️ 기입 전 원장 ${Number(String(q.paid_on).slice(5, 7))}월 구간 중복키(입금일|이름|금액) 확인 · 판수 결제면 레슨로그 결제금액·판수도 갱신.`,
         components: [],
       });
     } else {
