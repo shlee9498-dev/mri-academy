@@ -466,7 +466,7 @@ footer b{color:var(--gold)}
       <a href="#proof">성과</a><a href="#plans">가격</a><a href="#vip" style="color:var(--gold);font-weight:800;">⭐1:1</a><a href="#how">수업방식</a><a href="#consult">상담</a>
       <a href="#faq">FAQ</a>
       <a href="#trainers">트레이너</a><a href="trainer-recruit.html">트레이너모집</a><a href="#clan">클랜</a>
-      <a href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-s3.html" target="_blank" rel="noopener">클랜컵</a>
+      <a href="https://shlee9498-dev.github.io/gmi-clancup/" target="_blank" rel="noopener">클랜컵</a>
       <a href="gmi-progress.html">성장기록</a>
       <a href="lesson-feedback.html">코칭기록</a>
       <a href="community.html">후기</a>
@@ -492,7 +492,7 @@ footer b{color:var(--gold)}
           <div class="chip"><div class="l">마스터·서바이버 배출</div><div class="v">30명+<span class="ar">3년</span></div></div>
           <!-- 실시간 카운터 승격 — API 성공 시에만 실수치로 교체, 실패·지연 시 아래 정적 문구 유지(빈칸·0 금지) -->
           <div class="chip"><div class="l">지금 훈련 중</div><div class="v" id="heroLiveV">50명+</div></div>
-          <div class="chip"><div class="l">클랜 창설 4개월</div><div class="v">클랜원 80명</div></div>
+          <div class="chip"><div class="l">GmI 클랜</div><div class="v">클랜원 80명</div></div>
         </div>
         <script>
         (function(){
@@ -572,7 +572,7 @@ footer b{color:var(--gold)}
     <div class="stats3">
       <div class="bigstat"><div class="big">30명+</div><div class="lab">마스터·서바이버 배출</div><div class="sm">2023~ · 방송·전적 기록 기반</div></div>
       <div class="bigstat"><div class="big">100명+</div><div class="lab">2개월 이상 수강생</div><div class="sm">현재 활성 50명+</div></div>
-      <div class="bigstat"><div class="big">80명</div><div class="lab">클랜원 · 창설 4개월</div><div class="sm">GmI 클랜</div></div>
+      <div class="bigstat"><div class="big">80명</div><div class="lab">클랜원</div><div class="sm">GmI 클랜</div></div>
     </div>
 
     <div class="growth">
@@ -747,20 +747,8 @@ footer b{color:var(--gold)}
     </div>
 
     <div class="promo-banner">
-      <div class="pb-tag">🔥 OPEN 런칭 특가</div>
-      <div class="pb-main">지금은 <b>오픈 기념 특가</b> 진행 중입니다. 아래 정원 도달 시 정가로 전환됩니다</div>
-      <div class="enroll-bars">
-        <div class="ebar">
-          <div class="ebar-top"><span class="ebar-name">레슨</span><span class="ebar-num"><b id="lesNow">··</b> / 50명</span></div>
-          <div class="ebar-track"><div class="ebar-fill les" id="lesFill"></div></div>
-          <div class="ebar-left">정가 전환까지 <b id="lesLeft">··</b></div>
-        </div>
-        <div class="ebar">
-          <div class="ebar-top"><span class="ebar-name gold">강의</span><span class="ebar-num"><b id="couNow">··</b> / 25명</span></div>
-          <div class="ebar-track"><div class="ebar-fill" id="couFill"></div></div>
-          <div class="ebar-left">정가 전환까지 <b id="couLeft">··</b></div>
-        </div>
-      </div>
+      <div class="pb-tag">🔥 특가 진행 중</div>
+      <div class="pb-main">지금은 <b>특가</b> 진행 중입니다. 아래 정원 도달 시 정가로 전환됩니다</div>
       <div class="pb-sub"><b style="color:var(--gold)">트레이너 1인당 정원 25명</b>입니다. 수업 질을 지키기 위해 인원을 제한합니다. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b> 돌파 시 <b>각각 그 주 다음 주부터 정가로 전환</b>됩니다.</div>
     </div>
 
@@ -1165,7 +1153,7 @@ footer b{color:var(--gold)}
       <a href="#trainers">트레이너</a><a href="trainer-recruit.html">트레이너 모집</a><a href="gmi-progress.html">성장기록</a>
       <a href="lesson-schedule.html">일정</a><a href="lesson-feedback.html">코칭기록</a>
       <a href="community.html">후기</a>
-      <a href="https://shlee9498-dev.github.io/gmi-clancup/gdcup-s3.html" target="_blank" rel="noopener">클랜컵</a>
+      <a href="https://shlee9498-dev.github.io/gmi-clancup/" target="_blank" rel="noopener">클랜컵</a>
     </div>
     <div class="fl">
       <a href="terms.html">이용약관</a>
@@ -1210,33 +1198,6 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
     // API 미연결 시: 표시된 기준 수치 유지 (빈 화면 방지)
     if (state) state.textContent = "현황 (기준 데이터)";
   }
-})();
-// 정가 전환 진행바 (레슨생 50 / 수강생 25 · 각각 독립 트리거 · /api/stats 구동)
-(async function () {
-  const lesNow = document.getElementById("lesNow"), lesFill = document.getElementById("lesFill"), lesLeft = document.getElementById("lesLeft");
-  const couNow = document.getElementById("couNow"), couFill = document.getElementById("couFill"), couLeft = document.getElementById("couLeft");
-  if (!lesNow || !couNow) return;
-  function setBar(nowEl, fillEl, leftEl, count, target) {
-    const c = Math.max(0, count | 0);
-    nowEl.textContent = c;
-    fillEl.style.width = Math.min(100, Math.round((c / target) * 100)) + "%";
-    const remain = Math.max(0, target - c);
-    if (remain === 0) { fillEl.classList.add("full"); leftEl.textContent = "전환 임박!"; }
-    else { leftEl.textContent = remain + "명"; }
-  }
-  let les = 26, cou = 15; // API 미연결 시 기준값 (2026-07-05 실측)
-  try {
-    const r = await fetch(STATS_API + "/api/stats", { cache: "no-store" });
-    if (r.ok) {
-      const d = await r.json();
-      if (d && d.counts) {
-        if (typeof d.counts.lessonseng === "number") les = d.counts.lessonseng;
-        if (typeof d.counts.suganseng === "number") cou = d.counts.suganseng;
-      }
-    }
-  } catch (e) { /* 기준값 유지 */ }
-  setBar(lesNow, lesFill, lesLeft, les, 50);
-  setBar(couNow, couFill, couLeft, cou, 25);
 })();
 </script>
 <!-- 챗봇 위젯 -->
