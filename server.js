@@ -1218,9 +1218,9 @@ if (process.env.DISCORD_TOKEN) {
     if (!trainer)
       return itx.reply({ content: "등록된 트레이너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
 
+    // 시트는 best-effort다 — 미설정·실패여도 명령을 막지 않는다(컷오버 대비).
+    // 조기 반환이 있던 자리: 시트가 꺼지면 DB 기록까지 함께 끊겨 진행 판수가 통째로 사라졌다(김한성 25판 사례).
     const webhook = process.env.SHEET_WEBHOOK_URL;
-    if (!webhook)
-      return itx.reply({ content: "시트 연동이 아직 설정 전이야(SHEET_WEBHOOK_URL 미배포). 운영진에게 문의해줘.", ephemeral: true });
 
     const guboon = itx.options.getString("구분") || "레슨";
     const lessonType = itx.options.getString("유형");
@@ -1264,7 +1264,7 @@ if (process.env.DISCORD_TOKEN) {
       }
       // 시트 payload에 구분 전송(베스트에포트) — Apps Script의 구분 수신 핸들러는 Gemini 별도 배포. 실패=비치명적(consults가 진실).
       try {
-        await fetch(webhook, { method: "POST", redirect: "follow", headers: { "Content-Type": "application/json" },
+        if (webhook) await fetch(webhook, { method: "POST", redirect: "follow", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ secret: process.env.SHEET_SECRET || "", type: "register", 구분: guboon, trainer, students: names.map((name) => ({ name })), memo }) });
       } catch (e) { console.error("consult_sheet", e?.message); }
       const label = guboon === "진단상담" ? "진단상담" : "강의(직강)";
@@ -1290,31 +1290,40 @@ if (process.env.DISCORD_TOKEN) {
       students = names.map((name) => ({ name, games }));
     }
     try {
-      const r = await fetch(webhook, {
-        method: "POST",
-        redirect: "follow", // Apps Script /exec: POST→302→JSON, 리다이렉트 추적 필수(Node fetch 기본값이나 명시)
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          secret: process.env.SHEET_SECRET || "",
-          type: "lesson",
-          구분: "레슨",
-          trainer,
-          lessonType,
-          students,
-          memo,
-        }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok || data.ok === false)
-        return itx.editReply(`시트 등록 실패: ${data.error || r.status}. 잠시 후 다시 시도해줘.`);
+      // 시트 호출은 실패해도 흐름을 끊지 않는다 — sheetErr로 강등하고 DB 기록으로 넘어간다.
+      let sheetErr = null, data = {};
+      if (!webhook) sheetErr = "시트 연동 미설정";
+      else {
+        const r = await fetch(webhook, {
+          method: "POST",
+          redirect: "follow", // Apps Script /exec: POST→302→JSON, 리다이렉트 추적 필수(Node fetch 기본값이나 명시)
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            secret: process.env.SHEET_SECRET || "",
+            type: "lesson",
+            구분: "레슨",
+            trainer,
+            lessonType,
+            students,
+            memo,
+          }),
+        });
+        data = await r.json().catch(() => ({}));
+        if (!r.ok || data.ok === false) sheetErr = String(data.error || r.status);
+      }
 
       // v3 응답: updated[{name,added,total}] + notFound[]
       const updated = Array.isArray(data.updated) ? data.updated : [];
       const notFound = Array.isArray(data.notFound) ? data.notFound : [];
-      const noneRecorded = updated.length === 0;   // 시트 응답이 ok여도 실기록 0건이면 성공으로 표기 금지
-      const lines = [noneRecorded
+      const noneRecorded = !sheetErr && updated.length === 0;   // 시트 응답이 ok여도 실기록 0건이면 성공으로 표기 금지
+      const lines = [sheetErr
+        ? `⚠️ 수업 등록 — ${trainer} · ${lessonType} · **시트 미기록**(${sheetErr})`
+        : noneRecorded
         ? `⚠️ 수업 등록 — ${trainer} · ${lessonType} · **시트 기록 0건**(아래 확인)`
         : `✅ 수업 등록 — ${trainer} · ${lessonType}`];
+      // ⛔ 재시도 유도 금지 — 시트가 안 받아도 판수는 DB에 들어갔다. 재등록은 곧 중복 적립이다.
+      if (sheetErr)
+        lines.push(`↳ 판수는 **DB에 정상 기록**됐어. ⛔ **재시도하지 마세요** — 다시 등록하면 중복 적립돼. 시트 반영은 운영진이 처리해.`);
       if (updated.length)
         lines.push(...updated.map((u) => `· ${u.name} +${u.added}판 → 누적 ${u.total}판`));
       if (notFound.length) {
@@ -1348,7 +1357,9 @@ if (process.env.DISCORD_TOKEN) {
       // 명부 보정 후 재시도 때 DB가 중복된다(시트=진실인 병행 단계에서 DB는 시트를 미러링).
       try {
         const okNames = new Set(updated.map((u) => String(u.name || "").trim()));
-        const sheetOk = students.filter((s) => okNames.has(s.name));
+        // 시트가 응답한 구간에서만 교집합을 쓴다. 시트 미설정·실패 구간에서는 "시트=진실" 전제가
+        // 성립하지 않으므로 입력 전원을 DB에 쓴다 — 그러지 않으면 진행 판수가 어디에도 안 남는다.
+        const sheetOk = sheetErr ? students : students.filter((s) => okNames.has(s.name));
         if (updated.length && !sheetOk.length)
           console.error("dualwrite_name_echo_mismatch", updated.map((u) => u.name).join(","));   // 시트 응답 이름이 입력과 불일치 — DB 미기록
         const dw = sheetOk.length ? await dualWriteSessions(trainer, sheetOk, memo, itx.user.id) : { inserted: 0, miss: [], unattached: [] };
