@@ -891,3 +891,77 @@ alter table public.lesson_sessions add  constraint chk_lesson_sessions_games
 create index if not exists idx_lesson_sessions_no_show
   on public.lesson_sessions (no_show_by, played_at) where session_kind = 'no_show';
 -- notify pgrst, 'reload schema';
+
+-- ============================================================
+-- §22  수강생 전용 포털 S1-a (2026-09-03 · 오너 지시)
+--      ⚠️ 미실행 · 오너 직접 실행 대기. 정본: mri-student-app repo
+--      docs/MRI_수강생앱_정본_v0.2.3_2026-09-03.md §4.2 · 부록 A
+--
+--      원칙(정본 v0.2.3): 앱·트레이너 포털은 lesson_sessions·lesson_enrollments·students를
+--      어떤 경로로도 UPDATE하지 않는다. 서술 데이터(제목·일기·피드백)는 전부 별도 테이블이다.
+--      실행 전까지 server.js는 제목=미정·일기/피드백=없음으로 degrade하고 일기 쓰기만 503으로 막는다.
+-- ============================================================
+
+-- 22a) 수업 제목 (S-05) — lesson_sessions에 컬럼을 붙이지 않는다.
+create table if not exists public.lesson_session_titles (
+  session_id      bigint primary key references public.lesson_sessions(id) on delete cascade,
+  title           text not null check (char_length(title) <= 60),
+  set_by_staff_id bigint not null references public.staff(id),   -- 표시명은 서버가 staff에서 조회
+  set_at          timestamptz not null default now()
+);
+alter table public.lesson_session_titles enable row level security;
+
+-- 22b) 일기 (S-08) — 세션×학생 1건. ⑦: settled_period가 찍힌 세션에도 작성·수정 허용
+--      (불변인 것은 정산 필드뿐이고 이 경로는 lesson_sessions를 건드리지 않는다).
+create table if not exists public.lesson_journals (
+  id          bigint generated always as identity primary key,
+  session_id  bigint not null references public.lesson_sessions(id) on delete cascade,
+  student_id  bigint not null references public.students(id) on delete cascade,
+  body        text not null check (char_length(body) <= 4000),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  unique (session_id, student_id)
+);
+create index if not exists idx_journals_student on public.lesson_journals (student_id);
+alter table public.lesson_journals enable row level security;
+
+-- 22c) 트레이너 피드백 — 일기에 달린다.
+create table if not exists public.journal_feedback (
+  id          bigint generated always as identity primary key,
+  journal_id  bigint not null references public.lesson_journals(id) on delete cascade,
+  trainer_id  bigint not null references public.staff(id),
+  body        text not null check (char_length(body) <= 4000),
+  created_at  timestamptz not null default now()
+);
+create index if not exists idx_jfeedback_journal on public.journal_feedback (journal_id);
+alter table public.journal_feedback enable row level security;
+
+-- 22d) 상담 신청 유실 차단 — /api/apply가 지금까지 디스코드 웹훅으로만 나가고
+--      어디에도 저장되지 않았다. source는 '유입 경로'가 아니라 **접수 채널**이다.
+alter table public.consults add column if not exists source        text;
+alter table public.consults add column if not exists phone         text;
+alter table public.consults add column if not exists platform      text;
+alter table public.consults add column if not exists game_nick     text;
+alter table public.consults add column if not exists playtime      text;
+alter table public.consults add column if not exists focus         text;
+alter table public.consults add column if not exists stats_consent boolean;
+
+alter table public.consults drop constraint if exists chk_consults_source;
+alter table public.consults add  constraint chk_consults_source
+  check (source is null or source in ('site','discord','kakao','soomgo'));
+
+-- 22d-1) [제안 — 오너 승인 시 실행] 폼의 '유입 경로'(유튜브·지인·숨고 등) 전용 컬럼.
+--        22d의 source와 이름이 겹치는 다른 개념이라 분리를 제안한다. 이 컬럼이 없으면
+--        server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다(유실은 없고 질의만 불편).
+-- alter table public.consults add column if not exists inflow text;
+
+-- 22e) 트레이너 연락처 — 동의가 없으면 API 응답에서 생략한다(코드가 강제).
+alter table public.staff add column if not exists contact_phone      text;
+alter table public.staff add column if not exists contact_consent_at timestamptz;
+
+-- ⚠️ 실행 순서 주의: contact_consent_at을 채우기 **전에** mri-student-app 쪽
+--    금지 필드 가드에 trainerContactPhone 예외가 먼저 머지돼야 한다. 순서가 뒤집히면
+--    앱 가드가 phone 어간으로 응답 전체를 throw해서 홈 화면이 통째로 죽는다.
+
+-- 실행 후 필수:
+-- notify pgrst, 'reload schema';
