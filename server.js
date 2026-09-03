@@ -881,7 +881,9 @@ if (process.env.DISCORD_TOKEN) {
         { name: "그룹 참여형(최대 3명)", value: "참여형" },
         { name: "개인 1:1", value: "개인" } ] },
       { name: "판수", description: "그룹 수업 진행 판수(기본 1, 여러 판 한 번에 등록)", type: 4, required: false, min_value: 1, max_value: 100 },
-      { name: "시간", description: "개인수업 시간(시간 단위, 1시간=5판)", type: 10, required: false },
+      // max_value=3(15판): 차감표 최대가 2시간(10판)이고 3시간 초과 단일 세션은 운영에 없다.
+      // 판수 옵션(type 4)은 max 100으로 막혀 있는데 시간만 뚫려 있어 오타 한 번에 대량 차감이 났다.
+      { name: "시간", description: "개인수업 시간(30분=0.5 · 1시간=5판 · 최대 3)", type: 10, required: false, min_value: 0.5, max_value: 3 },
       { name: "메모", description: "메모(선택)", type: 3, required: false },
     ],
   };
@@ -1280,10 +1282,11 @@ if (process.env.DISCORD_TOKEN) {
     if (cap && names.length > cap)
       return itx.editReply(`${lessonType}은 최대 ${cap}명이야. (입력: ${names.length}명)`);
     // 판수 산정: 그룹=판수 옵션(기본 1, 각 학생 동일 판수), 개인=시간×5 (유효판만 트레이너가 등록)
-    let students;
+    let students, overHours = null;
     if (lessonType === "개인") {
       if (!hours || hours <= 0) return itx.editReply("개인 수업은 '시간'을 입력해줘 (1시간=5판).");
       const games = Math.round(hours * 5);
+      if (hours > 2) overHours = hours;   // 거부는 아니고 확인만 — 정당한 장시간 수업을 막지 않는다
       students = names.map((name) => ({ name, games }));
     } else {
       const games = gamesInput && gamesInput > 0 ? gamesInput : 1;
@@ -1324,6 +1327,8 @@ if (process.env.DISCORD_TOKEN) {
       // ⛔ 재시도 유도 금지 — 시트가 안 받아도 판수는 DB에 들어갔다. 재등록은 곧 중복 적립이다.
       if (sheetErr)
         lines.push(`↳ 판수는 **DB에 정상 기록**됐어. ⛔ **재시도하지 마세요** — 다시 등록하면 중복 적립돼. 시트 반영은 운영진이 처리해.`);
+      if (overHours)
+        lines.push(`⚠️ **2시간(10판)을 넘는 입력이야**(${overHours}시간 = ${Math.round(overHours * 5)}판). 맞으면 그대로 두고, 오타면 \`/판수정정\`으로 고쳐줘.`);
       if (updated.length)
         lines.push(...updated.map((u) => `· ${u.name} +${u.added}판 → 누적 ${u.total}판`));
       if (notFound.length) {
