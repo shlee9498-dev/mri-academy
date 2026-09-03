@@ -487,13 +487,23 @@ app.delete("/api/replies/:id", async (req, res) => {
 });
 
 
+// ── 레슨 차감표 (단일 정본 · 2026-09-03 오너 확정) ──────────────────────────
+// 개인 1:1만 시간→판수로 환산한다. 그룹은 시간과 무관하게 진행 판수를 직접 입력한다.
+// 30분(3판)은 폐기됐다. ⚠️ 표를 바꾸려면 이 상수 하나만 고친다 — 봇 옵션·검증·챗봇 안내가 전부 여기서 파생한다.
+// (종전에는 Math.round(hours*5) 계수와 챗봇 프롬프트 문자열이 따로 있어 이원화돼 있었다.)
+const LESSON_HOURS_TO_GAMES = { 1: 5, 1.5: 8, 2: 10 };
+const LESSON_HOURS_LABEL = (h) => (h === 1.5 ? "1시간30분" : `${h}시간`);
+const LESSON_HOURS_TEXT = Object.keys(LESSON_HOURS_TO_GAMES)
+  .map(Number).sort((a, b) => a - b)
+  .map((h) => `${LESSON_HOURS_LABEL(h)} ${LESSON_HOURS_TO_GAMES[h]}판`).join(" · ");
+
 // ═══════════════════ 챗봇 ═══════════════════════════════════
 const SYSTEM = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우미입니다. 존댓말로, 따뜻하되 군더더기 없이 답하세요.
 
 [핵심 사실 — 라이브 사이트 PLANS·FAQ 원문이 정본]
 - 레슨: 판수(Game) 기준. 서바이버 트레이너진 진행. 레벨테스트 무관, 누구나 가능. 개인/그룹 선택.
 - 레슨 요금(특가): 10판 40,000 / 21판 80,000 / 33판 120,000원.
-- **구매 단위 = 판수 패키지(10·21·33판). 시간별 차감표(30분 3판·1시간 5판·1시간30분 8판·2시간 10판)는
+- **구매 단위 = 판수 패키지(10·21·33판). 시간별 차감표(개인 1:1 — ${LESSON_HOURS_TEXT} · 그룹은 진행 판수 그대로)는
   구매한 판수를 어떻게 소비하는지 안내용일 뿐, 판매 단위가 아닙니다.**
   가격 문의에는 반드시 **최소 10판 40,000원**을 시작점으로 답하세요. "3판부터 가능" 식으로 답하지 마세요.
 - 1:1 직강(이무리) 2시간: 첫 체험 50,000원 / 이후 70,000원.
@@ -881,9 +891,12 @@ if (process.env.DISCORD_TOKEN) {
         { name: "그룹 참여형(최대 3명)", value: "참여형" },
         { name: "개인 1:1", value: "개인" } ] },
       { name: "판수", description: "그룹 수업 진행 판수(기본 1, 여러 판 한 번에 등록)", type: 4, required: false, min_value: 1, max_value: 100 },
-      // max_value=3(15판): 차감표 최대가 2시간(10판)이고 3시간 초과 단일 세션은 운영에 없다.
-      // 판수 옵션(type 4)은 max 100으로 막혀 있는데 시간만 뚫려 있어 오타 한 번에 대량 차감이 났다.
-      { name: "시간", description: "개인수업 시간(30분=0.5 · 1시간=5판 · 최대 3)", type: 10, required: false, min_value: 0.5, max_value: 3 },
+      // 차감표에 있는 값만 고르게 한다(30분 폐기 · 최대 2시간). 자유 입력이던 시절엔 오타 한 번에 대량 차감이 났다.
+      // choices로 클라이언트를 막고, 서버에서도 LESSON_HOURS_TO_GAMES 조회로 한 번 더 막는다.
+      { name: "시간", description: "개인 1:1 수업 시간(그룹은 판수 칸 사용)", type: 10, required: false,
+        min_value: 1, max_value: 2,
+        choices: Object.keys(LESSON_HOURS_TO_GAMES).map(Number).sort((a, b) => a - b)
+          .map((h) => ({ name: `${LESSON_HOURS_LABEL(h)} (${LESSON_HOURS_TO_GAMES[h]}판)`, value: h })) },
       { name: "메모", description: "메모(선택)", type: 3, required: false },
     ],
   };
@@ -1281,12 +1294,14 @@ if (process.env.DISCORD_TOKEN) {
     const cap = LESSON_CAP[lessonType];
     if (cap && names.length > cap)
       return itx.editReply(`${lessonType}은 최대 ${cap}명이야. (입력: ${names.length}명)`);
-    // 판수 산정: 그룹=판수 옵션(기본 1, 각 학생 동일 판수), 개인=시간×5 (유효판만 트레이너가 등록)
-    let students, overHours = null;
+    // 판수 산정: 그룹=판수 옵션(기본 1, 각 학생 동일 판수), 개인=차감표 매핑(LESSON_HOURS_TO_GAMES)
+    let students;
     if (lessonType === "개인") {
-      if (!hours || hours <= 0) return itx.editReply("개인 수업은 '시간'을 입력해줘 (1시간=5판).");
-      const games = Math.round(hours * 5);
-      if (hours > 2) overHours = hours;   // 거부는 아니고 확인만 — 정당한 장시간 수업을 막지 않는다
+      if (!hours || hours <= 0) return itx.editReply(`개인 수업은 '시간'을 입력해줘 (${LESSON_HOURS_TEXT}).`);
+      // 계수(hours*5) 폐기 — 차감표에 있는 값만 인정한다. 30분(3판)은 2026-09-03 오너 확정으로 폐기됐다.
+      const games = LESSON_HOURS_TO_GAMES[hours];
+      if (!games)
+        return itx.editReply(`⚠️ ${hours}시간은 차감표에 없어. **${LESSON_HOURS_TEXT}** 중에서 골라줘.`);
       students = names.map((name) => ({ name, games }));
     } else {
       const games = gamesInput && gamesInput > 0 ? gamesInput : 1;
@@ -1327,8 +1342,6 @@ if (process.env.DISCORD_TOKEN) {
       // ⛔ 재시도 유도 금지 — 시트가 안 받아도 판수는 DB에 들어갔다. 재등록은 곧 중복 적립이다.
       if (sheetErr)
         lines.push(`↳ 판수는 **DB에 정상 기록**됐어. ⛔ **재시도하지 마세요** — 다시 등록하면 중복 적립돼. 시트 반영은 운영진이 처리해.`);
-      if (overHours)
-        lines.push(`⚠️ **2시간(10판)을 넘는 입력이야**(${overHours}시간 = ${Math.round(overHours * 5)}판). 맞으면 그대로 두고, 오타면 \`/판수정정\`으로 고쳐줘.`);
       if (updated.length)
         lines.push(...updated.map((u) => `· ${u.name} +${u.added}판 → 누적 ${u.total}판`));
       if (notFound.length) {
