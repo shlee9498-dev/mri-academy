@@ -3799,6 +3799,42 @@ app.post("/api/apply", async (req, res) => {
       embed.fields.push({ name: "메모", value: clip(b.memo, 300), inline: false });
     }
 
+    // [유실 차단] consults 행 생성 — 웹훅보다 먼저. 지금까지 신청은 디스코드 웹훅으로만 나가고
+    // 어디에도 남지 않아, 채널을 놓치면 그대로 유실됐다.
+    //   · 저장 실패해도 웹훅은 반드시 나간다(순서: 저장 → 웹훅). 신청자에게 실패를 전가하지 않는다.
+    //   · 신규 컬럼은 오너가 DDL을 실행한 뒤에야 생긴다. schemaOptional로 존재하는 컬럼만 실어
+    //     보내므로, DDL 실행 전 배포에서도 기본 컬럼으로 저장이 시작된다(전량 유실 방지).
+    //   · 전화번호는 여기까지만 온다. 수강생 포털 API 응답에는 어떤 경로로도 넣지 않는다.
+    try {
+      const has = (c) => schemaOptional[`consults.${c}`] === true;
+      const inflow = clip(b.source, 50);                       // 폼의 '유입 경로'(유튜브·지인 등)
+      const row = {
+        kind: /직강|강의/.test(String(b.applyType || "")) ? "direct_lecture" : "consult",
+        student_name: clip(b.name, 30),
+        trainer_name: clip(b.trainer, 30) || null,
+        status: "pending",
+      };
+      // consults.source는 '유입 경로'가 아니라 '접수 채널'이다(site|discord|kakao|soomgo).
+      // 폼의 유입 경로는 이름이 겹치므로 inflow 컬럼이 생기기 전까지 memo 앞에 적어 보존한다.
+      if (has("source")) row.source = "site";
+      if (has("phone")) row.phone = clip(b.phone, 20);
+      if (has("platform")) row.platform = clip(b.platform, 10);
+      if (has("game_nick")) row.game_nick = clip(b.nickname, 40);
+      if (has("playtime")) row.playtime = clip(b.playtime, 80);
+      if (has("focus")) row.focus = clip(b.focus, 200);
+      if (has("stats_consent")) row.stats_consent = String(b.statsConsent) === "동의";
+      const memoParts = [];
+      if (has("inflow")) row.inflow = inflow;
+      else if (inflow) memoParts.push(`유입: ${inflow}`);
+      if (!has("game_nick")) memoParts.push(`${clip(b.platform, 10)}/${clip(b.nickname, 40)}`);
+      if (b.memo && String(b.memo).trim()) memoParts.push(clip(b.memo, 300));
+      if (memoParts.length) row.memo = memoParts.join(" · ").slice(0, 500);
+      await sbInsert("consults", row);
+    } catch (e) {
+      // 값은 로그에 남기지 않는다(신청자 개인정보). 실패 사실과 코드만.
+      console.error("apply_consult_save_failed", e?.message);
+    }
+
     const wr = await fetch(WEBHOOK, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -5910,6 +5946,12 @@ const schemaOptional = {};
 // 참조를 넘기므로 프로브가 끝나면 패널 쪽에서도 값이 보인다(매 요청 재조회 없음).
 require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete, schemaOptional });
 
+// ── 수강생 전용 포털 API (S1-a · /api/student-portal/*) ──
+// 앱(mri-student-app)이 x-portal-secret 공유비밀로만 호출한다. 라우트를 server.js에 직접
+// 넣지 않고 별도 파일에 둔 이유: 이 파일은 여러 트랙 코드가 공존해서(CLAUDE.md 경계 규칙)
+// 새 라우트군을 인라인하면 동시 작업 충돌면이 그만큼 넓어진다.
+require("./student-portal.cjs")(app, { sbSelect, sbInsert, sbPatch, limit });
+
 // [재발 방지] 기동 시 시트 웹훅 연결 식별 — 어느 Apps Script 배포(=어느 스프레드시트)에 붙는지 즉시 확인.
 //   봇은 SHEET_ID가 아니라 SHEET_WEBHOOK_URL(Apps Script /exec)로 씀 → 배포ID가 정본/구 시트 식별키.
 //   (2026-07 사고: Apps Script 재배포/재바인딩 후 webhook URL 미갱신 → 봇이 구 시트에 계속 기록)
@@ -6062,6 +6104,12 @@ const SCHEMA_OPTIONAL = {
   payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id", "settled_period",
              "deposit_ref"],
   lesson_sessions: ["lesson_enrollment_id"],
+  // /api/apply 유실 차단(S1-a) — 오너 DDL 실행 전까지 부재. 있는 컬럼만 골라 INSERT하므로
+  // 미실행 배포에서도 기본 컬럼으로 저장은 된다. 실행 확인 후 REQUIRED_SCHEMA로 승격한다.
+  // inflow는 폼의 '유입 경로'용 제안 컬럼이다(오너 승인 시 추가) — 없으면 memo 앞에 적힌다.
+  consults: ["source", "phone", "platform", "game_nick", "playtime", "focus", "stats_consent", "inflow"],
+  // §22e 트레이너 연락처 — 동의(contact_consent_at)가 있을 때만 /summary에 실린다.
+  staff: ["contact_phone", "contact_consent_at"],
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",
@@ -6071,6 +6119,14 @@ const SCHEMA_OPTIONAL = {
   clan_registry: ["pws_eligible"],
   settlements: ["id","period","trainer_id","games","gross","consult_count","consult_add",
                 "status","payout_id","memo","created_by","confirmed_by","confirmed_at"],
+  // 수강생앱 정본 v0.2.3 §4.2 — S1-a 시점엔 DDL 미실행이라 선택(warn)으로 둔다.
+  // student-portal.cjs가 기동 프로브로 부재를 감지해 제목=미정·일기/피드백=없음으로 degrade하고,
+  // 일기 쓰기만 503으로 막는다. **오너가 DDL을 실행하고 실DB에서 확인한 뒤 REQUIRED_SCHEMA로
+  // 승격한다** — 승격 경로는 §18 payment_requests·§19b lesson_enrollments와 같다.
+  // 지금 REQUIRED에 넣으면 미실행 배포에서 기동 error와 오너 DM이 실동작과 무관하게 뜬다.
+  lesson_session_titles: ["session_id","title","set_by_staff_id","set_at"],
+  lesson_journals:       ["id","session_id","student_id","body","created_at","updated_at"],
+  journal_feedback:      ["id","journal_id","trainer_id","body","created_at"],
 };
 
 // PR-3a: 결제 승인 큐(§18) — BOT_PAYREQ=1이면 필수(DDL 미실행을 기동 점검이 잡아야 한다),

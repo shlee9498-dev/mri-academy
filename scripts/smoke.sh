@@ -109,5 +109,21 @@ if [[ "$admin" == 404* ]]; then
 fi
 echo "  ✓ /api/admin/overview → $admin  (404 아님 = 마운트 성공)"
 
+# 수강생 포털 마운트 확인. env 0개라 게이트가 503 portal_unavailable로 답하는 것이 정상이고,
+# 404면 라우트가 안 붙은 것 = 마운트 실패(admin-panel과 같은 실패 모드).
+portal="$(probe /api/student-portal/summary 2>/dev/null)" || portal=""
+if [[ -z "$portal" ]]; then
+  echo "❌ GET /api/student-portal/summary 응답 없음 — 요청 도중 서버가 죽었을 수 있다."
+  dump_log
+  exit 1
+fi
+if [[ "$portal" == 404* ]]; then
+  echo "❌ GET /api/student-portal/summary → $portal"
+  echo "   404 = student-portal이 마운트되지 않았다."
+  dump_log
+  exit 1
+fi
+echo "  ✓ /api/student-portal/summary → $portal  (404 아님 = 마운트 성공)"
+
 echo "✅ 부팅 스모크 통과 — env 0개로 기동·서빙·마운트 확인"
 exit 0

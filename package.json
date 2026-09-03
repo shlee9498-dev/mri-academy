@@ -6,8 +6,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check admin-panel.js && node --check config/fees.cjs",
-    "smoke": "bash scripts/smoke.sh"
+    "check": "node --check server.js && node --check admin-panel.js && node --check student-portal.cjs && node --check config/fees.cjs",
+    "smoke": "bash scripts/smoke.sh",
+    "verify:portal": "node scripts/portal-verify.mjs"
   },
   "engines": { "node": ">=18" },
   "dependencies": {
