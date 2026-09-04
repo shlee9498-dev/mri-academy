@@ -1162,7 +1162,28 @@ if (process.env.DISCORD_TOKEN) {
         } catch (e2) { console.error("dualwrite_insert_retry", e2?.message); return { error: true, miss, unattached }; }
       }
     }
+    await closeBookingsFor(trainer_id, rows.map((r) => r.student_id), played_at);
     return { inserted: rows.length, miss, unattached };
+  }
+
+  // 예약 종료 연동(§23f · 오너 판정 2026-09-04). 수업을 등록하면 그 날 그 수강생의
+  // 예약을 done 으로 닫는다 — 트레이너가 포털에서 따로 누르지 않아도 되게.
+  //   · 맞는 예약이 없으면 아무것도 안 한다(예약 없이 진행한 수업도 정상).
+  //   · 판수는 여기서 건드리지 않는다. 이미 lesson_sessions 에 들어갔고, done 전이는
+  //     그 자리를 비켜주는 것뿐이다(선차감을 계속 붙들면 같은 판이 두 번 빠진다).
+  //   · 베스트에포트다. 실패해도 판수 기록을 되돌리지 않는다 — 예약 상태가 늦게 닫히면
+  //     48시간 뒤 pending_review 로 올라가 트레이너 홈에 보인다(§23g).
+  async function closeBookingsFor(trainerId, studentIds, playedAt) {
+    if (!trainerId || !studentIds.length) return;
+    try {
+      const out = await sbRpc("complete_bookings_for_session", {
+        p_trainer_id: trainerId, p_student_ids: [...new Set(studentIds)], p_played_at: playedAt,
+      });
+      if (out?.closed) console.log("[booking] /수업등록 연동 — 예약", out.closed, "건 done 전이");
+    } catch (e) {
+      // §23 미실행 배포에서는 함수가 없어 매번 여기로 온다 — 소음이라 코드만 남긴다.
+      console.error("close_bookings", e?.message);
+    }
   }
   // 세션 → 등록 귀속(§19). **산술적으로 유일할 때만** 붙이고 모호하면 null로 남긴다.
   //   조건: 그 학생의 status in (active,paused) 등록이 정확히 1건 **AND** carry_games = 0.

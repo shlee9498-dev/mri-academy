@@ -226,6 +226,10 @@ module.exports = function mountBookingApi(app, deps) {
 
   // GET /slots — 내 슬롯 + 예약 현황(다가오는 것부터)
   app.get(`${TRAINER}/slots`, requireTrainer, wrap(async (req, res) => {
+    // 48시간 폴백을 읽기 직전에 돌린다 — 크론(T2_CRON 옵트인)에만 맡기면 미설정 배포에서
+    // 「확인 필요」가 영영 안 뜬다. 멱등이고 대상이 없으면 0행이라 비용이 사실상 없다.
+    try { await sbRpc("sweep_pending_review", {}); }
+    catch (e) { console.error("booking_sweep", e?.message); }   // 실패해도 목록은 보여준다
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), MAX_DAYS);
     const from = new Date(Date.now() - 86400_000).toISOString();
     const until = new Date(Date.now() + days * 86400_000).toISOString();
@@ -235,8 +239,10 @@ module.exports = function mountBookingApi(app, deps) {
     if (!slots.length) return sendTrainer(res, { slots: [] });
 
     const ids = slots.map((s) => s.id);
+    // booked 만 보면 「확인 필요」(pending_review)가 목록에서 사라진다 — 둘 다 가져온다.
     const books = await sbSelect("slot_bookings",
-      `select=slot_id,student_id,status,duration_min&status=eq.booked&slot_id=in.(${ids.join(",")})`);
+      `select=id,slot_id,student_id,status,duration_min,span_head_id`
+      + `&status=in.(booked,pending_review)&span_head_id=is.null&slot_id=in.(${ids.join(",")})`);
     const sids = [...new Set(books.map((b) => b.student_id))];
     // 트레이너 화면이므로 수강생 표시명은 내려준다(수강생 포털의 신원 차폐 규칙과 대상이 다르다).
     const names = sids.length
@@ -245,7 +251,11 @@ module.exports = function mountBookingApi(app, deps) {
       : {};
     const by = {};
     for (const b of books) (by[b.slot_id] = by[b.slot_id] || []).push({
-      studentDisplayName: names[b.student_id] || "?", durationMin: b.duration_min ?? null,
+      id: opaqueId("booking", b.id),
+      studentDisplayName: names[b.student_id] || "?",
+      durationMin: b.duration_min ?? null,
+      status: b.status,
+      needsReview: b.status === "pending_review",   // 트레이너 홈의 「확인 필요」 배지
     });
 
     sendTrainer(res, {
@@ -257,6 +267,25 @@ module.exports = function mountBookingApi(app, deps) {
       })),
     });
   }));
+
+  // POST /bookings/:id/complete · /no-show — 예약을 닫는다(오너 판정 2026-09-04).
+  // ⚠️ 상태만 바꾼다. 판수는 봇 /수업등록 경로 하나뿐이고 여기서는 건드리지 않는다.
+  //    개인 선차감은 이미 잡혀 있어 done 이어도 추가 차감이 없고, no_show 는 선차감을
+  //    그대로 둬서 판수 소진으로 남는다(§23 portal_remaining_games 의 상태 목록 참조).
+  //    본인 슬롯 여부는 §23 resolve_booking 이 trainer_id 대조로 판정한다 — 아니면 403.
+  const resolveRoute = (suffix, status) =>
+    app.post(`${TRAINER}/bookings/:id/${suffix}`, limit("trainerResolve", 60, 60_000),
+      bodyOnly([]), requireTrainer, wrap(async (req, res) => {
+        const bookingId = readOpaqueId("booking", req.params.id);
+        if (bookingId == null) return fail(res, 400, "invalid_body");
+        const out = await sbRpc("resolve_booking", {
+          p_trainer_id: req.staff.id, p_booking_id: bookingId, p_status: status,
+        });
+        if (out?.error) return rpcFail(res, out.error);
+        sendTrainer(res, { resolved: true, status: out.status });
+      }));
+  resolveRoute("complete", "done");
+  resolveRoute("no-show", "no_show");
 
   // DELETE /slots/:id — 예약자 전원 복원 + DM
   app.delete(`${TRAINER}/slots/:id`, requireTrainer, wrap(async (req, res) => {
