@@ -965,3 +965,225 @@ alter table public.staff add column if not exists contact_consent_at timestamptz
 
 -- 실행 후 필수:
 -- notify pgrst, 'reload schema';
+
+-- ============================================================
+-- §23  예약·슬롯 S1-b (2026-09-04 · 오너 지시)
+--      ⚠️ 미실행 · 오너 직접 실행 대기. 실행 후 마지막에 NOTIFY pgrst 까지.
+--
+--      왜 함수(RPC)가 필요한가: 정원 초과 방지는 unique 제약만으로 안 된다.
+--      "현재 booked 수를 세고 → capacity 미만이면 insert" 는 읽고-쓰는 두 단계라
+--      두 요청이 동시에 통과할 수 있다. PostgREST 는 여러 문장을 한 트랜잭션으로
+--      묶어주지 못하므로(요청 1건 = 문장 1건), 잠금·검사·삽입을 **하나의 plpgsql
+--      함수 안**에 넣고 서버가 /rest/v1/rpc/ 로 호출한다. 함수 본문은 단일
+--      트랜잭션이라 select ... for update 로 잡은 잠금이 insert 까지 유지된다.
+-- ============================================================
+
+create table if not exists public.trainer_slots (
+  id          bigint generated always as identity primary key,
+  trainer_id  bigint not null references public.staff(id),
+  slot_start  timestamptz not null,
+  lesson_type text not null check (lesson_type in ('personal','spectate','participate')),
+  capacity    int  not null default 1 check (capacity >= 1),
+  status      text not null default 'open' check (status in ('open','closed','cancelled')),
+  created_at  timestamptz not null default now(),
+  unique (trainer_id, slot_start)
+);
+create index if not exists idx_trainer_slots_open
+  on public.trainer_slots (trainer_id, slot_start) where status = 'open';
+alter table public.trainer_slots enable row level security;
+
+create table if not exists public.slot_bookings (
+  id           bigint generated always as identity primary key,
+  slot_id      bigint not null references public.trainer_slots(id) on delete cascade,
+  student_id   bigint not null references public.students(id) on delete cascade,
+  games_held   int  not null default 0,   -- 개인 선차감분. 그룹은 0
+  duration_min int,                        -- 개인만. 머리 행에만 채운다
+  status       text not null default 'booked' check (status in ('booked','cancelled','done','no_show')),
+  booked_at    timestamptz not null default now(),
+  cancelled_at timestamptz,
+  -- ⬇ 오너 제안 DDL에 없던 유일한 추가 컬럼이다.
+  -- 개인 1시간 = 30분 슬롯 2칸을 함께 점유하는데, 취소 때 "어느 칸들이 한 예약이었나"를
+  -- 되짚을 키가 없으면 연속 칸 복원이 불가능하다(시간 근접만으로 추측하면 인접한 별개
+  -- 예약까지 함께 풀린다). 머리 행은 null, 꼬리 행은 머리 행 id 를 가리킨다.
+  span_head_id bigint references public.slot_bookings(id) on delete cascade,
+  unique (slot_id, student_id)
+);
+create index if not exists idx_slot_bookings_student on public.slot_bookings (student_id, booked_at);
+create index if not exists idx_slot_bookings_slot    on public.slot_bookings (slot_id) where status = 'booked';
+create index if not exists idx_slot_bookings_span    on public.slot_bookings (span_head_id);
+alter table public.slot_bookings enable row level security;
+
+-- ── 23a) 잔여 판수 (선차감 반영) ─────────────────────────────────────────────
+-- 잔여 = carry_games + Σ enrollments.games_total − Σ sessions.games − Σ 유효 선차감
+-- ⚠️ 이 식은 student-portal.cjs 의 lessonAggregate() 와 **같이 움직여야 한다.**
+--    여기(SQL)는 예약 게이트의 집행본, 저기(JS)는 화면 표시본이다. 한쪽만 고치면
+--    "화면엔 5판 남았는데 예약은 거부" 같은 어긋남이 난다.
+-- 선차감이 "유효"한 창: 예약이 booked 이고 슬롯 시작이 48시간 이내 과거~미래.
+--    지난 수업의 선차감을 영구히 붙들면, 트레이너가 /수업등록으로 실제 판수를 넣은 뒤
+--    같은 판이 두 번 빠진다. 48시간이 지나면 선차감을 놓고 lesson_sessions 를 진실로 본다.
+create or replace function public.portal_remaining_games(p_student_id bigint)
+returns int
+language sql stable security definer set search_path = public as $$
+  select coalesce((select carry_games from students where id = p_student_id), 0)
+       + coalesce((select sum(games_total) from lesson_enrollments
+                    where student_id = p_student_id and status in ('active','done','paused')), 0)
+       - coalesce((select sum(games) from lesson_sessions where student_id = p_student_id), 0)
+       - coalesce((select sum(b.games_held) from slot_bookings b
+                     join trainer_slots s on s.id = b.slot_id
+                    where b.student_id = p_student_id
+                      and b.status = 'booked'
+                      and s.slot_start >= now() - interval '48 hours'), 0);
+$$;
+
+-- ── 23b) 예약 (개인·그룹 공용) ───────────────────────────────────────────────
+-- 반환은 항상 jsonb 1건. 실패는 예외가 아니라 {"error":"코드"} 로 돌려준다 —
+-- 예외로 던지면 PostgREST 가 500 으로 감싸버려 서버가 409 코드를 구분할 수 없다.
+create or replace function public.book_slot(
+  p_student_id  bigint,
+  p_slot_id     bigint,
+  p_duration_min int default null
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_slot      trainer_slots%rowtype;
+  v_games     int;
+  v_need      int;
+  v_remaining int;
+  v_booked    int;
+  v_head      bigint;
+  v_ids       bigint[];
+begin
+  -- 이 잠금이 이 함수의 존재 이유다. 같은 슬롯을 노리는 동시 요청은 여기서 줄을 선다.
+  select * into v_slot from trainer_slots where id = p_slot_id for update;
+  if not found                     then return jsonb_build_object('error','slot_not_found'); end if;
+  if v_slot.status <> 'open'       then return jsonb_build_object('error','slot_taken');     end if;
+  if v_slot.slot_start <= now()    then return jsonb_build_object('error','slot_taken');     end if;
+
+  v_remaining := portal_remaining_games(p_student_id);
+
+  if v_slot.lesson_type = 'personal' then
+    if p_duration_min is null then return jsonb_build_object('error','invalid_body'); end if;
+    -- 차감표는 server.js 의 LESSON_HOURS_TO_GAMES 와 같은 값이다(1h 5 · 1.5h 8 · 2h 10).
+    v_games := case p_duration_min when 60 then 5 when 90 then 8 when 120 then 10 else null end;
+    if v_games is null then return jsonb_build_object('error','invalid_body'); end if;
+    if v_remaining < v_games then return jsonb_build_object('error','insufficient_games'); end if;
+    v_need := p_duration_min / 30;
+
+    -- 연속 칸을 한꺼번에 잠근다. 하나라도 이미 닫혔으면 개수가 모자라 slot_taken.
+    -- 교착(deadlock) 없음: 범위는 **항상 머리 슬롯에서 시작**하므로 머리가 그 범위의
+    -- 최솟값이고, order by slot_start 로 잠그니 모든 트랜잭션이 slot_start 오름차순으로만
+    -- 잠금을 잡는다. 잠금 순서가 전역으로 한 방향이면 사이클이 생기지 않는다.
+    select array_agg(id order by slot_start) into v_ids from (
+      select id, slot_start from trainer_slots
+       where trainer_id  = v_slot.trainer_id
+         and lesson_type = 'personal'
+         and status      = 'open'
+         and slot_start >= v_slot.slot_start
+         and slot_start <  v_slot.slot_start + make_interval(mins => p_duration_min)
+       order by slot_start
+       for update
+    ) s;
+    if v_ids is null or array_length(v_ids, 1) <> v_need then
+      return jsonb_build_object('error','slot_taken');
+    end if;
+
+    insert into slot_bookings (slot_id, student_id, games_held, duration_min, status)
+      values (v_slot.id, p_student_id, v_games, p_duration_min, 'booked')
+      returning id into v_head;
+    insert into slot_bookings (slot_id, student_id, games_held, status, span_head_id)
+      select x, p_student_id, 0, 'booked', v_head from unnest(v_ids) x where x <> v_slot.id;
+    update trainer_slots set status = 'closed' where id = any(v_ids);
+
+    return jsonb_build_object('bookingId', v_head, 'gamesHeld', v_games, 'slotsHeld', v_need);
+  end if;
+
+  -- 그룹(관전형·참여형): 선차감 없음. 잔여 1판 이상만.
+  if p_duration_min is not null then return jsonb_build_object('error','invalid_body'); end if;
+  if v_remaining < 1 then return jsonb_build_object('error','insufficient_games'); end if;
+  select count(*) into v_booked from slot_bookings where slot_id = v_slot.id and status = 'booked';
+  if v_booked >= v_slot.capacity then return jsonb_build_object('error','slot_full'); end if;
+
+  insert into slot_bookings (slot_id, student_id, games_held, status)
+    values (v_slot.id, p_student_id, 0, 'booked')
+    returning id into v_head;
+  return jsonb_build_object('bookingId', v_head, 'gamesHeld', 0, 'slotsHeld', 1);
+
+exception
+  -- unique (slot_id, student_id) — 같은 슬롯 재예약. 경합으로도 여기 올 수 있다.
+  when unique_violation then return jsonb_build_object('error','slot_taken');
+end;
+$$;
+
+-- ── 23c) 수강생 취소 ─────────────────────────────────────────────────────────
+-- 12시간 창이 지나면 아무것도 바꾸지 않고 cancel_window_passed 를 돌려준다.
+-- 늦은 취소를 앱에서 허용하면 개인 10판이 탭 한 번으로 소멸한다 — 그 판정은
+-- 트레이너 재량이고 조정 경로는 /판수정정 하나뿐이다(오너 지시).
+create or replace function public.cancel_booking(
+  p_student_id bigint,
+  p_booking_id bigint
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_b     slot_bookings%rowtype;
+  v_start timestamptz;
+  v_ids   bigint[];
+begin
+  select * into v_b from slot_bookings where id = p_booking_id for update;
+  if not found                          then return jsonb_build_object('error','not_found'); end if;
+  if v_b.student_id <> p_student_id     then return jsonb_build_object('error','scope_denied'); end if;
+  if v_b.span_head_id is not null       then return jsonb_build_object('error','not_found'); end if;  -- 꼬리 행은 직접 취소 대상이 아니다
+  if v_b.status <> 'booked'             then return jsonb_build_object('error','not_found'); end if;
+
+  select slot_start into v_start from trainer_slots where id = v_b.slot_id;
+  if v_start - now() < interval '12 hours' then
+    return jsonb_build_object('error','cancel_window_passed');
+  end if;
+
+  select array_agg(slot_id) into v_ids from slot_bookings
+    where id = v_b.id or span_head_id = v_b.id;
+  update slot_bookings set status = 'cancelled', cancelled_at = now(), games_held = 0
+    where id = v_b.id or span_head_id = v_b.id;
+  -- 개인이 닫아둔 칸만 되연다. 그룹 슬롯은 애초에 open 이라 이 update 가 건드리지 않는다.
+  update trainer_slots set status = 'open' where id = any(v_ids) and status = 'closed';
+
+  return jsonb_build_object('cancelled', true, 'gamesRestored', v_b.games_held);
+end;
+$$;
+
+-- ── 23d) 트레이너 슬롯 취소 (예약자 전원 복원) ───────────────────────────────
+-- 12시간 창과 무관하게 100% 복원한다 — 트레이너 사정이므로 수강생에게 불이익이 없다.
+-- 반환의 studentIds 로 서버가 봇 DM 을 보낸다.
+create or replace function public.cancel_slot(
+  p_trainer_id bigint,
+  p_slot_id    bigint
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_slot  trainer_slots%rowtype;
+  v_heads bigint[];
+  v_ids   bigint[];
+  v_subj  bigint[];
+begin
+  select * into v_slot from trainer_slots where id = p_slot_id for update;
+  if not found                        then return jsonb_build_object('error','not_found');    end if;
+  if v_slot.trainer_id <> p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
+
+  -- 이 슬롯에 걸린 예약의 머리 행들(꼬리로 걸린 개인 예약의 머리까지 거슬러 올라간다)
+  select array_agg(distinct coalesce(span_head_id, id)) into v_heads
+    from slot_bookings where slot_id = p_slot_id and status = 'booked';
+
+  if v_heads is not null then
+    select array_agg(slot_id), array_agg(distinct student_id) into v_ids, v_subj
+      from slot_bookings where id = any(v_heads) or span_head_id = any(v_heads);
+    update slot_bookings set status = 'cancelled', cancelled_at = now(), games_held = 0
+      where id = any(v_heads) or span_head_id = any(v_heads);
+    update trainer_slots set status = 'open' where id = any(v_ids) and status = 'closed';
+  end if;
+
+  update trainer_slots set status = 'cancelled' where id = p_slot_id;
+  return jsonb_build_object('cancelled', true, 'studentIds', coalesce(to_jsonb(v_subj), '[]'::jsonb));
+end;
+$$;
+
+-- 실행 후 필수:
+-- notify pgrst, 'reload schema';

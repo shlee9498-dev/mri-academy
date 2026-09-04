@@ -173,6 +173,17 @@ async function sbUpsert(table, row, onConflict) {
   if (!r.ok) await sbThrow("upsert", table, r);
   return (await r.json())[0];
 }
+// PostgREST 함수 호출. sbInsert 와 달리 **여러 문장을 한 트랜잭션으로 묶기 위해** 쓴다 —
+// select ... for update 로 잡은 잠금이 insert 까지 유지되는 유일한 경로다(§23 예약 정원).
+// 함수는 실패를 예외가 아니라 {"error":"코드"} 로 돌려준다. 예외로 던지면 PostgREST 가
+// 500 으로 감싸버려 호출부가 409 코드를 구분할 수 없다.
+async function sbRpc(fn, args) {
+  const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: "POST", headers: sbHeaders(), body: JSON.stringify(args || {}),
+  });
+  if (!r.ok) await sbThrow("rpc", fn, r);
+  return r.json();
+}
 async function sbDelete(table, filter) {
   const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?${filter}`, {
     method: "DELETE", headers: sbHeaders(),
@@ -5983,7 +5994,13 @@ require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete, 
 // 앱(mri-student-app)이 x-portal-secret 공유비밀로만 호출한다. 라우트를 server.js에 직접
 // 넣지 않고 별도 파일에 둔 이유: 이 파일은 여러 트랙 코드가 공존해서(CLAUDE.md 경계 규칙)
 // 새 라우트군을 인라인하면 동시 작업 충돌면이 그만큼 넓어진다.
-require("./student-portal.cjs")(app, { sbSelect, sbInsert, sbPatch, limit });
+const studentPortal = require("./student-portal.cjs")(app, { sbSelect, sbInsert, sbPatch, limit });
+
+// ── 예약·슬롯 (S1-b · /api/student-portal/{availability,bookings} + /api/trainer-portal/*) ──
+// student-portal 뒤에 마운트해야 그 파일이 건 공유비밀 게이트(app.use(PREFIX))가 먼저 돈다.
+require("./booking-api.cjs")(app, {
+  sbSelect, sbInsert, sbRpc, limit, getUser, discordDM, portal: studentPortal,
+});
 
 // [재발 방지] 기동 시 시트 웹훅 연결 식별 — 어느 Apps Script 배포(=어느 스프레드시트)에 붙는지 즉시 확인.
 //   봇은 SHEET_ID가 아니라 SHEET_WEBHOOK_URL(Apps Script /exec)로 씀 → 배포ID가 정본/구 시트 식별키.
@@ -6024,6 +6041,13 @@ async function opsStateGet(key) {
 async function opsStateSet(key, value) {
   try { await sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key"); }
   catch (e) { console.error("ops_state_set", key, e?.message); }
+}
+// 임의 사용자 DM. 봇이 없거나 DM 차단이면 조용히 넘어간다 — 알림 실패가
+// 예약 자체를 되돌리면 안 된다(예약은 이미 커밋됐다).
+async function discordDM(discordId, msg) {
+  if (!botClient || !discordId) return false;
+  try { const u = await botClient.users.fetch(String(discordId)); await u.send(msg); return true; }
+  catch (e) { console.error("discord_dm", String(discordId).slice(0, 4) + "…", e?.message); return false; }
 }
 async function ownerDM(msg) {
   if (!botClient || !process.env.MRI_OWNER_ID) return;
@@ -6163,6 +6187,12 @@ const SCHEMA_OPTIONAL = {
   clan_registry: ["pws_eligible"],
   settlements: ["id","period","trainer_id","games","gross","consult_count","consult_add",
                 "status","payout_id","memo","created_by","confirmed_by","confirmed_at"],
+  // §23 예약·슬롯(S1-b) — 오너 DDL 실행 전까지 선택. booking-api.cjs 가 기동 프로브로
+  // 부재를 감지해 예약 라우트군만 503 으로 막고, 나머지 포털·봇은 그대로 돈다.
+  // 실행 확인 후 REQUIRED_SCHEMA 로 승격한다 — 승격 경로는 §22와 같다.
+  trainer_slots: ["id","trainer_id","slot_start","lesson_type","capacity","status","created_at"],
+  slot_bookings: ["id","slot_id","student_id","games_held","duration_min","status",
+                  "booked_at","cancelled_at","span_head_id"],
   // 수강생앱 정본 v0.2.3 §4.2의 3테이블(lesson_session_titles·lesson_journals·journal_feedback)은
   // 2026-09-04에 REQUIRED_SCHEMA로 승격됐다 — 오너 DDL 실행 + 실DB 확인 + 포털 가동.
   // 승격 경로는 §18 payment_requests·§19b lesson_enrollments와 같다.
