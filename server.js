@@ -886,10 +886,14 @@ if (process.env.DISCORD_TOKEN) {
         { name: "레슨", value: "레슨" },
         { name: "강의(직강)", value: "강의" },
         { name: "진단상담", value: "진단상담" } ] },
-      { name: "유형", description: "레슨 유형(구분=레슨일 때 필수)", type: 3, required: false, choices: [
+      // ⚠️ 순서가 곧 기본값이다 — 디스코드 슬래시 명령에는 choices 기본 선택 기능이 없어서,
+      //    목록 맨 위 항목이 사실상 기본으로 눌린다. 종전엔 그룹 2종이 위에 있고 「개인 1:1」이
+      //    맨 밑이라 1:1 수업이 참여형으로 찍히는 오등록이 났다(1판 차감 → 과소차감).
+      //    미선택 시 서버가 "개인"으로 폴백하는 것과 짝이다(아래 lessonKind).
+      { name: "유형", description: "레슨 유형(미선택 시 개인 1:1). 그룹은 반드시 직접 고를 것", type: 3, required: false, choices: [
+        { name: "개인 1:1 (기본)", value: "개인" },
         { name: "그룹 관전형(최대 4명)", value: "관전형" },
-        { name: "그룹 참여형(최대 3명)", value: "참여형" },
-        { name: "개인 1:1", value: "개인" } ] },
+        { name: "그룹 참여형(최대 3명)", value: "참여형" } ] },
       { name: "판수", description: "그룹 수업 진행 판수(기본 1, 여러 판 한 번에 등록)", type: 4, required: false, min_value: 1, max_value: 100 },
       // 차감표에 있는 값만 고르게 한다(30분 폐기 · 최대 2시간). 자유 입력이던 시절엔 오타 한 번에 대량 차감이 났다.
       // choices로 클라이언트를 막고, 서버에서도 LESSON_HOURS_TO_GAMES 조회로 한 번 더 막는다.
@@ -1289,14 +1293,19 @@ if (process.env.DISCORD_TOKEN) {
       return itx.editReply(out.join("\n"));
     }
 
-    // ── 구분=레슨 : 기존 흐름(유형 필수) ──
-    if (!lessonType) return itx.editReply("레슨은 '유형'을 선택해줘 (관전형/참여형/개인).");
-    const cap = LESSON_CAP[lessonType];
+    // ── 구분=레슨 : 유형별 판수 산정(유형 미선택 시 개인) ──
+    // 유형 미선택 = 개인 1:1 (2026-09-03 오너 확정). 그룹은 명시적으로 골라야만 그룹 차감된다.
+    // 폴백이 조용히 틀릴 위험은 낮다 — 개인은 '시간'이 필수라, 유형·시간을 함께 빠뜨리면
+    // 아래에서 차감표 안내와 함께 거부된다. 실제로 적용된 유형은 회신 첫 줄에 항상 표기된다.
+    const lessonKind = lessonType || "개인";
+    const kindDefaulted = !lessonType;
+    const cap = LESSON_CAP[lessonKind];
     if (cap && names.length > cap)
-      return itx.editReply(`${lessonType}은 최대 ${cap}명이야. (입력: ${names.length}명)`);
+      return itx.editReply(`${lessonKind}은 최대 ${cap}명이야. (입력: ${names.length}명)`
+        + (kindDefaulted ? `\n↳ '유형'을 안 골라서 **개인 1:1**로 처리했어. 그룹이면 유형을 직접 선택해줘.` : ""));
     // 판수 산정: 그룹=판수 옵션(기본 1, 각 학생 동일 판수), 개인=차감표 매핑(LESSON_HOURS_TO_GAMES)
     let students;
-    if (lessonType === "개인") {
+    if (lessonKind === "개인") {
       if (!hours || hours <= 0) return itx.editReply(`개인 수업은 '시간'을 입력해줘 (${LESSON_HOURS_TEXT}).`);
       // 계수(hours*5) 폐기 — 차감표에 있는 값만 인정한다. 30분(3판)은 2026-09-03 오너 확정으로 폐기됐다.
       const games = LESSON_HOURS_TO_GAMES[hours];
@@ -1321,7 +1330,7 @@ if (process.env.DISCORD_TOKEN) {
             type: "lesson",
             구분: "레슨",
             trainer,
-            lessonType,
+            lessonType: lessonKind,
             students,
             memo,
           }),
@@ -1335,10 +1344,13 @@ if (process.env.DISCORD_TOKEN) {
       const notFound = Array.isArray(data.notFound) ? data.notFound : [];
       const noneRecorded = !sheetErr && updated.length === 0;   // 시트 응답이 ok여도 실기록 0건이면 성공으로 표기 금지
       const lines = [sheetErr
-        ? `⚠️ 수업 등록 — ${trainer} · ${lessonType} · **시트 미기록**(${sheetErr})`
+        ? `⚠️ 수업 등록 — ${trainer} · ${lessonKind} · **시트 미기록**(${sheetErr})`
         : noneRecorded
-        ? `⚠️ 수업 등록 — ${trainer} · ${lessonType} · **시트 기록 0건**(아래 확인)`
-        : `✅ 수업 등록 — ${trainer} · ${lessonType}`];
+        ? `⚠️ 수업 등록 — ${trainer} · ${lessonKind} · **시트 기록 0건**(아래 확인)`
+        : `✅ 수업 등록 — ${trainer} · ${lessonKind}`];
+      // 폴백으로 개인이 된 건은 반드시 알린다 — 그룹인데 안 골랐으면 지금 정정해야 한다.
+      if (kindDefaulted)
+        lines.push(`↳ '유형' 미선택이라 **개인 1:1**로 처리했어. 그룹이었으면 \`/판수정정\`으로 고쳐줘.`);
       // ⛔ 재시도 유도 금지 — 시트가 안 받아도 판수는 DB에 들어갔다. 재등록은 곧 중복 적립이다.
       if (sheetErr)
         lines.push(`↳ 판수는 **DB에 정상 기록**됐어. ⛔ **재시도하지 마세요** — 다시 등록하면 중복 적립돼. 시트 반영은 운영진이 처리해.`);
