@@ -22,6 +22,12 @@ const DURATION_MIN = [60, 90, 120];
 const SLOT_MIN = 30;                 // 슬롯 단위. §23 trainer_slots 의 전개 간격과 같다.
 const MAX_DAYS = 60;                 // /availability 조회 상한
 const MAX_SLOTS_PER_OPEN = 48;       // 슬롯 열기 1회당 최대 칸 수(= 24시간)
+// 트레이너 슬롯 목록의 과거 조회 창. 종전 1일이었는데 그러면 pending_review(48시간 경과)가
+// **창 밖으로 떨어져 「확인 필요」가 영영 안 보였다** — #298 의 결함이다. 등록 누락 감지도
+// 지난 수업을 봐야 성립하므로 2주로 넓힌다.
+const TRAINER_LOOKBACK_DAYS = 14;
+// KST 날짜. server.js 의 kstToday() 와 **같은 식**이어야 봇이 넣은 played_at 과 경계가 맞는다.
+const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
 
 module.exports = function mountBookingApi(app, deps) {
   const { sbSelect, sbInsert, sbRpc, limit, getUser, discordDM, portal } = deps;
@@ -231,7 +237,7 @@ module.exports = function mountBookingApi(app, deps) {
     try { await sbRpc("sweep_pending_review", {}); }
     catch (e) { console.error("booking_sweep", e?.message); }   // 실패해도 목록은 보여준다
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), MAX_DAYS);
-    const from = new Date(Date.now() - 86400_000).toISOString();
+    const from = new Date(Date.now() - TRAINER_LOOKBACK_DAYS * 86400_000).toISOString();
     const until = new Date(Date.now() + days * 86400_000).toISOString();
     const slots = await sbSelect("trainer_slots",
       `select=id,slot_start,lesson_type,capacity,status&trainer_id=eq.${req.staff.id}`
@@ -239,11 +245,33 @@ module.exports = function mountBookingApi(app, deps) {
     if (!slots.length) return sendTrainer(res, { slots: [] });
 
     const ids = slots.map((s) => s.id);
-    // booked 만 보면 「확인 필요」(pending_review)가 목록에서 사라진다 — 둘 다 가져온다.
+    // booked 만 보면 「확인 필요」(pending_review)가 목록에서 사라진다. done 도 가져온다 —
+    // 아래 등록 누락 감지의 대상이다.
     const books = await sbSelect("slot_bookings",
       `select=id,slot_id,student_id,status,duration_min,span_head_id`
-      + `&status=in.(booked,pending_review)&span_head_id=is.null&slot_id=in.(${ids.join(",")})`);
+      + `&status=in.(booked,pending_review,done)&span_head_id=is.null&slot_id=in.(${ids.join(",")})`);
     const sids = [...new Set(books.map((b) => b.student_id))];
+
+    // 등록 누락 감지(오너 판정 2026-09-04): done 인데 같은 날(트레이너+날짜+수강생)
+    // lesson_sessions 행이 없는 예약. **차단·자동정정 없음 — 플래그만 올린다.**
+    // done 전이에 세션 행 존재 조건을 걸지 않기로 했다. 「예약이 판수를 검사한다」는 새 결합이
+    // 「판수는 봇 경로만」 원칙을 깨는 비용이 더 크고, 정상 흐름에선 봇이 done 을 자동으로 찍는다.
+    // 날짜 축은 kstDate() = 봇 kstToday() 와 같은 식이라 경계가 어긋나지 않는다.
+    const slotStart = Object.fromEntries(slots.map((s) => [s.id, s.slot_start]));
+    const doneBooks = books.filter((b) => b.status === "done");
+    const regMissing = new Set();
+    if (doneBooks.length) {
+      const dates = [...new Set(doneBooks.map((b) => kstDate(slotStart[b.slot_id])))];
+      const dsids = [...new Set(doneBooks.map((b) => b.student_id))];
+      try {
+        const sess = await sbSelect("lesson_sessions",
+          `select=student_id,played_at&trainer_id=eq.${req.staff.id}`
+          + `&student_id=in.(${dsids.join(",")})&played_at=in.(${dates.join(",")})`);
+        const have = new Set(sess.map((r) => `${r.student_id}|${r.played_at}`));
+        for (const b of doneBooks)
+          if (!have.has(`${b.student_id}|${kstDate(slotStart[b.slot_id])}`)) regMissing.add(b.id);
+      } catch (e) { console.error("booking_regcheck", e?.message); }   // 감지 실패는 플래그 생략으로
+    }
     // 트레이너 화면이므로 수강생 표시명은 내려준다(수강생 포털의 신원 차폐 규칙과 대상이 다르다).
     const names = sids.length
       ? Object.fromEntries((await sbSelect("students", `select=id,name&id=in.(${sids.join(",")})`))
@@ -256,6 +284,7 @@ module.exports = function mountBookingApi(app, deps) {
       durationMin: b.duration_min ?? null,
       status: b.status,
       needsReview: b.status === "pending_review",   // 트레이너 홈의 「확인 필요」 배지
+      registrationMissing: regMissing.has(b.id),    // 「등록 누락?」 배지 — done 인데 세션 행 없음
     });
 
     sendTrainer(res, {
