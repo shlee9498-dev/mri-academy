@@ -1306,6 +1306,14 @@ if (process.env.DISCORD_TOKEN) {
     // 판수 산정: 그룹=판수 옵션(기본 1, 각 학생 동일 판수), 개인=차감표 매핑(LESSON_HOURS_TO_GAMES)
     let students;
     if (lessonKind === "개인") {
+      // 판수를 채웠는데 유형을 안 골랐으면 그룹을 의도한 것이다. #293 폴백이 개인으로 보내
+      // "시간을 입력해줘"라는 엉뚱한 안내가 나가면, 트레이너가 명령을 쪼개 다시 넣는다
+      // (실측 ls145·146 — 같은 날 2명을 1분 간격 두 건으로 분할 등록). 여기서 짚어준다.
+      if (kindDefaulted && gamesInput && gamesInput > 0)
+        return itx.editReply(`'유형'을 안 골랐는데 '판수'가 들어와서 뭘 하려는지 애매해.\n`
+          + `· 그룹이면 **유형(관전형/참여형)** 을 고르고 다시 보내줘 — 여러 명·여러 판을 한 번에 넣을 수 있어 `
+          + `(예: \`학생: 가,나  유형: 참여형  판수: ${gamesInput}\`).\n`
+          + `· 개인 1:1이면 '판수' 대신 **시간**을 골라줘 (${LESSON_HOURS_TEXT}).`);
       if (!hours || hours <= 0) return itx.editReply(`개인 수업은 '시간'을 입력해줘 (${LESSON_HOURS_TEXT}).`);
       // 계수(hours*5) 폐기 — 차감표에 있는 값만 인정한다. 30분(3판)은 2026-09-03 오너 확정으로 폐기됐다.
       const games = LESSON_HOURS_TO_GAMES[hours];
