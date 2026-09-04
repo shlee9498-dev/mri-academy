@@ -341,20 +341,42 @@ module.exports = function mountStudentPortal(app, deps) {
   }
 
   // ── 정정쌍 순합 (정본 v0.2.3 C-6: 처리 주체는 Railway) ──────────
-  // 등록 오류 → 정정 행은 memo 「대상 #N」으로 원본을 가리킨다. 원본에 합산한 뒤
-  // 정정 행 자체는 응답에서 제거한다. 앱은 memo를 받지 않는다.
+  // 정정 행은 음수 games로 들어온다. 이걸 원본에 합산해 하루치 순합만 내보낸다.
+  //
+  // ⚠️ memo 파싱을 쓰지 않는다(2026-09-04 오너 판정). 구현은 memo의 「대상 #N」을
+  //    정규식으로 읽었는데 실제 표기가 「대상 세션 #N」이라 매칭이 0건이었고, 폴딩에
+  //    실패한 음수 행이 뒤이은 games>0 필터에 걸려 **응답에서 조용히 사라졌다**.
+  //    잔여(/summary)는 음수를 포함해 계산되므로 화면의 목록 합과 잔여가 어긋났다
+  //    (실측 7행·-131판·5명). 사람이 쓰는 자유 텍스트를 키로 삼은 게 원인이라,
+  //    표기가 바뀌어도 깨지지 않는 자연키 (학생, 진행일)로 접는다.
+  //
+  // 접는 단위는 하루다. 정정 행은 항상 원본과 같은 날짜로 들어오므로(실측 6묶음 전건),
+  // 같은 날 행을 합치면 memo 없이도 원본·정정이 같은 묶음에 들어온다.
+  //   · 음수가 없는 날 → 손대지 않는다(세션별 행 그대로. 제목·일기 연결 유지).
+  //   · 음수가 있고 순합 > 0 → 그 날을 한 행으로 접는다. 대표는 가장 이른 양수 행이라
+  //     제목·일기가 원본 세션에 계속 붙는다.
+  //   · 음수가 있고 순합 <= 0 → 접을 대상이 없다. 이력에서 빼고 로그만 남긴다.
+  //     이 경우 목록 합이 잔여와 그만큼 어긋난다 — 의도된 선택이다(오너 판정).
   function foldCorrections(rows) {
-    const byId = new Map(rows.map((r) => [r.id, { ...r, games: Number(r.games || 0) }]));
-    for (const r of rows) {
-      const m = String(r.memo || "").match(/대상\s*#\s*(\d+)/);
-      if (!m) continue;
-      const target = byId.get(Number(m[1]));
-      if (!target || target.id === r.id) continue;
-      target.games += Number(r.games || 0);
-      byId.delete(r.id);
+    const norm = rows.map((r) => ({ ...r, games: Number(r.games || 0) }));
+    const byDay = new Map();                       // "학생일자" → 같은 날 행들
+    for (const r of norm) {
+      const key = String(r.played_at);
+      if (!byDay.has(key)) byDay.set(key, []);
+      byDay.get(key).push(r);
     }
-    // games<=0 행은 내보내지 않는다(부록 A: games<0 없음 + 순합이 0이면 표시할 게 없다)
-    return [...byId.values()].filter((r) => r.games > 0);
+    const out = [], dropped = [];
+    for (const group of byDay.values()) {
+      if (!group.some((r) => r.games < 0)) { out.push(...group); continue; }
+      const net = group.reduce((a, r) => a + r.games, 0);
+      // 대표 = 가장 이른 양수 행(원본). 양수가 없으면 순합도 음수라 아래에서 걸러진다.
+      const head = group.filter((r) => r.games > 0).sort((a, b) => a.id - b.id)[0];
+      if (net > 0 && head) out.push({ ...head, games: net });
+      else dropped.push(...group.map((r) => r.id));
+    }
+    if (dropped.length)
+      console.warn("portal_sessions_netted_out", "순합<=0 이라 이력에서 제외한 세션:", dropped.join(","));
+    return out.sort((a, b) => String(b.played_at).localeCompare(String(a.played_at)));
   }
 
   // ════════════════ GET /sessions ════════════════

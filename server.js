@@ -1306,6 +1306,14 @@ if (process.env.DISCORD_TOKEN) {
     // 판수 산정: 그룹=판수 옵션(기본 1, 각 학생 동일 판수), 개인=차감표 매핑(LESSON_HOURS_TO_GAMES)
     let students;
     if (lessonKind === "개인") {
+      // 판수를 채웠는데 유형을 안 골랐으면 그룹을 의도한 것이다. #293 폴백이 개인으로 보내
+      // "시간을 입력해줘"라는 엉뚱한 안내가 나가면, 트레이너가 명령을 쪼개 다시 넣는다
+      // (실측 ls145·146 — 같은 날 2명을 1분 간격 두 건으로 분할 등록). 여기서 짚어준다.
+      if (kindDefaulted && gamesInput && gamesInput > 0)
+        return itx.editReply(`'유형'을 안 골랐는데 '판수'가 들어와서 뭘 하려는지 애매해.\n`
+          + `· 그룹이면 **유형(관전형/참여형)** 을 고르고 다시 보내줘 — 여러 명·여러 판을 한 번에 넣을 수 있어 `
+          + `(예: \`학생: 가,나  유형: 참여형  판수: ${gamesInput}\`).\n`
+          + `· 개인 1:1이면 '판수' 대신 **시간**을 골라줘 (${LESSON_HOURS_TEXT}).`);
       if (!hours || hours <= 0) return itx.editReply(`개인 수업은 '시간'을 입력해줘 (${LESSON_HOURS_TEXT}).`);
       // 계수(hours*5) 폐기 — 차감표에 있는 값만 인정한다. 30분(3판)은 2026-09-03 오너 확정으로 폐기됐다.
       const games = LESSON_HOURS_TO_GAMES[hours];
@@ -6049,7 +6057,10 @@ const REQUIRED_SCHEMA = {
   clan_registry:    ["id","discord_id","discord_name","real_name","platform","pubg_name","account_id",
                      "season","verified_at","updated_at","active_hours","ownership_confirmed","confirmed_at"],
   consults:         ["kind","student_name","student_id","trainer_name","trainer_id","registered_by",
-                     "registered_at","status","memo"],
+                     "registered_at","status","memo",
+                     // §22d 승격(2026-09-04) — 오너 DDL 실행 완료를 실DB에서 확인했고
+                     // /api/apply가 이 컬럼들에 쓴다. inflow만 SCHEMA_OPTIONAL에 남는다(22d-1 미실행).
+                     "source","phone","platform","game_nick","playtime","focus","stats_consent"],
   course_attendance:["id","session_id","course_id","units","units_auto","adjust_reason","status",
                      "memo","created_by"],
   course_sessions:  ["id","held_on","start_time","end_time","duration_min","kind","label","status",
@@ -6092,7 +6103,10 @@ const REQUIRED_SCHEMA = {
   reviews:          ["id","discord_id","discord_name","trainer","content","hidden"],
   schedule_events:  ["id","kind","event_date","start_time","end_time","trainer_id","format","title",
                      "participants","capacity","memo","is_public","is_recruiting","status","created_by"],
-  staff:            ["id","discord_id","name","role","active","base_salary","comp_note"],
+  // §22e 승격(2026-09-04) — contact_phone·contact_consent_at은 student-portal.cjs가 읽는다
+  // (동의가 있는 트레이너만 /summary에 연락처를 싣는다). DDL 실행 확인 완료.
+  staff:            ["id","discord_id","name","role","active","base_salary","comp_note",
+                     "contact_phone","contact_consent_at"],
   student_accounts: ["student_id","platform","pubg_name","account_id","is_main","valid_from","valid_to","note"],
   student_aliases:  ["id","student_id","alias","kind","source"],
   student_snapshots:["id","student_id","discord_id","discord_name","platform","player_name","account_id",
@@ -6101,6 +6115,13 @@ const REQUIRED_SCHEMA = {
   students:         ["id","name","discord_nick","trainer_id","status","note","carry_games",
                      "payout_rate_set","pubg_platform","pubg_name","pubg_account_id",
                      "discord_id","discord_src"],
+  // §22a~c 승격(2026-09-04) — 오너가 DDL을 실행하고 실DB에서 3테이블 존재를 확인했다.
+  // student-portal.cjs가 제목·일기·피드백을 여기서 읽고 쓴다(포털 가동 중).
+  // 런타임 프로브(tableReady)는 그대로 둔다 — 부재 시 degrade는 유지하고,
+  // 부팅 자기점검만 warn→error로 올려 "미실행을 영영 못 잡는" 사각지대를 없앤다.
+  lesson_session_titles: ["session_id","title","set_by_staff_id","set_at"],
+  lesson_journals:       ["id","session_id","student_id","body","created_at","updated_at"],
+  journal_feedback:      ["id","journal_id","trainer_id","body","created_at"],
 };
 
 // ── 선택 컬럼 (warn 레벨) ────────────────────────────────────────────────────
@@ -6129,12 +6150,10 @@ const SCHEMA_OPTIONAL = {
   payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id", "settled_period",
              "deposit_ref"],
   lesson_sessions: ["lesson_enrollment_id"],
-  // /api/apply 유실 차단(S1-a) — 오너 DDL 실행 전까지 부재. 있는 컬럼만 골라 INSERT하므로
-  // 미실행 배포에서도 기본 컬럼으로 저장은 된다. 실행 확인 후 REQUIRED_SCHEMA로 승격한다.
-  // inflow는 폼의 '유입 경로'용 제안 컬럼이다(오너 승인 시 추가) — 없으면 memo 앞에 적힌다.
-  consults: ["source", "phone", "platform", "game_nick", "playtime", "focus", "stats_consent", "inflow"],
-  // §22e 트레이너 연락처 — 동의(contact_consent_at)가 있을 때만 /summary에 실린다.
-  staff: ["contact_phone", "contact_consent_at"],
+  // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
+  // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
+  // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
+  consults: ["inflow"],
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",
@@ -6144,14 +6163,9 @@ const SCHEMA_OPTIONAL = {
   clan_registry: ["pws_eligible"],
   settlements: ["id","period","trainer_id","games","gross","consult_count","consult_add",
                 "status","payout_id","memo","created_by","confirmed_by","confirmed_at"],
-  // 수강생앱 정본 v0.2.3 §4.2 — S1-a 시점엔 DDL 미실행이라 선택(warn)으로 둔다.
-  // student-portal.cjs가 기동 프로브로 부재를 감지해 제목=미정·일기/피드백=없음으로 degrade하고,
-  // 일기 쓰기만 503으로 막는다. **오너가 DDL을 실행하고 실DB에서 확인한 뒤 REQUIRED_SCHEMA로
-  // 승격한다** — 승격 경로는 §18 payment_requests·§19b lesson_enrollments와 같다.
-  // 지금 REQUIRED에 넣으면 미실행 배포에서 기동 error와 오너 DM이 실동작과 무관하게 뜬다.
-  lesson_session_titles: ["session_id","title","set_by_staff_id","set_at"],
-  lesson_journals:       ["id","session_id","student_id","body","created_at","updated_at"],
-  journal_feedback:      ["id","journal_id","trainer_id","body","created_at"],
+  // 수강생앱 정본 v0.2.3 §4.2의 3테이블(lesson_session_titles·lesson_journals·journal_feedback)은
+  // 2026-09-04에 REQUIRED_SCHEMA로 승격됐다 — 오너 DDL 실행 + 실DB 확인 + 포털 가동.
+  // 승격 경로는 §18 payment_requests·§19b lesson_enrollments와 같다.
 };
 
 // PR-3a: 결제 승인 큐(§18) — BOT_PAYREQ=1이면 필수(DDL 미실행을 기동 점검이 잡아야 한다),
