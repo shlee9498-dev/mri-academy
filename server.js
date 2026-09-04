@@ -6167,6 +6167,14 @@ const REQUIRED_SCHEMA = {
   lesson_session_titles: ["session_id","title","set_by_staff_id","set_at"],
   lesson_journals:       ["id","session_id","student_id","body","created_at","updated_at"],
   journal_feedback:      ["id","journal_id","trainer_id","body","created_at"],
+  // §23 승격(2026-09-04) — 오너가 §23 DDL을 실행했고 실DB에서 확인했다(테이블 2 · 함수 7 ·
+  // chk_slot_bookings_status에 pending_review 포함 · RLS on). booking-api.cjs가 예약·슬롯을
+  // 여기서 읽고 쓰고, 봇 /수업등록이 complete_bookings_for_session으로 닫는다.
+  // 기동 프로브(tablesReady → 503 degrade)는 §22와 같은 이유로 그대로 둔다 —
+  // 부팅 자기점검만 warn→error로 올려 미실행을 잡는다.
+  trainer_slots: ["id","trainer_id","slot_start","lesson_type","capacity","status","created_at"],
+  slot_bookings: ["id","slot_id","student_id","games_held","duration_min","status",
+                  "booked_at","cancelled_at","span_head_id"],
 };
 
 // ── 선택 컬럼 (warn 레벨) ────────────────────────────────────────────────────
@@ -6208,12 +6216,8 @@ const SCHEMA_OPTIONAL = {
   clan_registry: ["pws_eligible"],
   settlements: ["id","period","trainer_id","games","gross","consult_count","consult_add",
                 "status","payout_id","memo","created_by","confirmed_by","confirmed_at"],
-  // §23 예약·슬롯(S1-b) — 오너 DDL 실행 전까지 선택. booking-api.cjs 가 기동 프로브로
-  // 부재를 감지해 예약 라우트군만 503 으로 막고, 나머지 포털·봇은 그대로 돈다.
-  // 실행 확인 후 REQUIRED_SCHEMA 로 승격한다 — 승격 경로는 §22와 같다.
-  trainer_slots: ["id","trainer_id","slot_start","lesson_type","capacity","status","created_at"],
-  slot_bookings: ["id","slot_id","student_id","games_held","duration_min","status",
-                  "booked_at","cancelled_at","span_head_id"],
+  // §23 예약·슬롯(trainer_slots·slot_bookings)은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다
+  // — 오너 DDL 실행 + 실DB 확인(테이블 2·함수 7·status check에 pending_review 포함).
   // 수강생앱 정본 v0.2.3 §4.2의 3테이블(lesson_session_titles·lesson_journals·journal_feedback)은
   // 2026-09-04에 REQUIRED_SCHEMA로 승격됐다 — 오너 DDL 실행 + 실DB 확인 + 포털 가동.
   // 승격 경로는 §18 payment_requests·§19b lesson_enrollments와 같다.

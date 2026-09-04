@@ -968,7 +968,10 @@ alter table public.staff add column if not exists contact_consent_at timestamptz
 
 -- ============================================================
 -- §23  예약·슬롯 S1-b (2026-09-04 · 오너 지시)
---      ⚠️ 미실행 · 오너 직접 실행 대기. 실행 후 마지막에 NOTIFY pgrst 까지.
+--      ✅ 실행 완료 2026-09-04 (오너 실행 · 실DB 실측: trainer_slots·slot_bookings 2테이블 ·
+--         함수 7종 · chk_slot_bookings_status에 pending_review 포함 · RLS on · 행 0).
+--         PostgREST 캐시는 Supabase 기본 이벤트 트리거(pgrst_ddl_watch)가 DDL 직후 자동 갱신한다 —
+--         그래도 관행대로 마지막 NOTIFY 는 유지한다.
 --
 --      왜 함수(RPC)가 필요한가: 정원 초과 방지는 unique 제약만으로 안 된다.
 --      "현재 booked 수를 세고 → capacity 미만이면 insert" 는 읽고-쓰는 두 단계라
