@@ -237,17 +237,20 @@ module.exports = function mountStudentPortal(app, deps) {
     };
   }
 
-  // 예약 선차감 합계(개인만 · booked · 슬롯 시작이 48시간 이내 과거~미래).
-  // 48시간이 지나면 놓는다 — 트레이너가 /수업등록으로 실제 판수를 넣은 뒤에도 붙들면
-  // 같은 판이 두 번 빠진다. §23 portal_remaining_games() 의 창과 같은 값이다.
+  // 예약 선차감 합계(개인만). 살아 있는 상태 = booked · pending_review · no_show.
+  //   · done      → 놓는다. 봇 /수업등록 이 넣은 lesson_sessions 행이 그 자리를 대신한다.
+  //   · cancelled → 놓는다(취소 시 games_held 를 0 으로 내린다).
+  //   · no_show   → 유지한다. 노쇼는 판수 소진이고 lesson_sessions 행이 없어 이게 유일한 차감이다.
+  // ⚠️ 이 상태 목록은 §23 portal_remaining_games() 와 **글자 그대로 같아야 한다.**
+  //    한쪽만 고치면 "화면엔 5판 남았는데 예약은 insufficient_games" 가 난다.
+  //    종전의 48시간 시간창은 폐기했다 — 이제 상태가 의미를 나른다(§23g sweep_pending_review).
   // §23 미실행 배포에서는 테이블이 없어 0 으로 떨어진다(예약 기능 자체가 휴면).
+  const HELD_STATUSES = ["booked", "pending_review", "no_show"];
   async function heldGames(studentId) {
     if (!bookingReady) return 0;
     try {
-      const cutoff = new Date(Date.now() - 48 * 3600_000).toISOString();
       const rows = await sbSelect("slot_bookings",
-        `select=games_held,trainer_slots!inner(slot_start)&student_id=eq.${studentId}`
-        + `&status=eq.booked&trainer_slots.slot_start=gte.${cutoff}`);
+        `select=games_held&student_id=eq.${studentId}&status=in.(${HELD_STATUSES.join(",")})`);
       return rows.reduce((a, r) => a + Number(r.games_held || 0), 0);
     } catch { return 0; }
   }

@@ -998,7 +998,11 @@ create table if not exists public.slot_bookings (
   student_id   bigint not null references public.students(id) on delete cascade,
   games_held   int  not null default 0,   -- 개인 선차감분. 그룹은 0
   duration_min int,                        -- 개인만. 머리 행에만 채운다
-  status       text not null default 'booked' check (status in ('booked','cancelled','done','no_show')),
+  -- pending_review = 슬롯 시각이 48시간 지나도 트레이너가 닫지 않은 예약.
+  -- 자동으로 done·no_show 를 찍지 않는다(오너 판정 2026-09-04) — 판정 주체는 트레이너뿐이고,
+  -- 시간은 "확인이 필요하다"는 사실만 표시한다.
+  status       text not null default 'booked'
+               check (status in ('booked','cancelled','done','no_show','pending_review')),
   booked_at    timestamptz not null default now(),
   cancelled_at timestamptz,
   -- ⬇ 오너 제안 DDL에 없던 유일한 추가 컬럼이다.
@@ -1008,6 +1012,12 @@ create table if not exists public.slot_bookings (
   span_head_id bigint references public.slot_bookings(id) on delete cascade,
   unique (slot_id, student_id)
 );
+-- 이미 §23 을 실행한 DB 에서도 status 허용값이 늘어나도록 제약을 다시 건다(멱등).
+alter table public.slot_bookings drop constraint if exists slot_bookings_status_check;
+alter table public.slot_bookings drop constraint if exists chk_slot_bookings_status;
+alter table public.slot_bookings add  constraint chk_slot_bookings_status
+  check (status in ('booked','cancelled','done','no_show','pending_review'));
+
 create index if not exists idx_slot_bookings_student on public.slot_bookings (student_id, booked_at);
 create index if not exists idx_slot_bookings_slot    on public.slot_bookings (slot_id) where status = 'booked';
 create index if not exists idx_slot_bookings_span    on public.slot_bookings (span_head_id);
@@ -1018,9 +1028,15 @@ alter table public.slot_bookings enable row level security;
 -- ⚠️ 이 식은 student-portal.cjs 의 lessonAggregate() 와 **같이 움직여야 한다.**
 --    여기(SQL)는 예약 게이트의 집행본, 저기(JS)는 화면 표시본이다. 한쪽만 고치면
 --    "화면엔 5판 남았는데 예약은 거부" 같은 어긋남이 난다.
--- 선차감이 "유효"한 창: 예약이 booked 이고 슬롯 시작이 48시간 이내 과거~미래.
---    지난 수업의 선차감을 영구히 붙들면, 트레이너가 /수업등록으로 실제 판수를 넣은 뒤
---    같은 판이 두 번 빠진다. 48시간이 지나면 선차감을 놓고 lesson_sessions 를 진실로 본다.
+-- 선차감이 살아 있는 상태: booked · pending_review · no_show.
+--    · done      → 놓는다. 봇 /수업등록 이 넣은 lesson_sessions 행이 그 자리를 대신한다.
+--                  (여기서 안 놓으면 같은 판이 두 번 빠진다)
+--    · cancelled → 놓는다. 취소 시 games_held 를 0 으로 내린다.
+--    · no_show   → **유지한다.** 노쇼는 판수를 소진한 것으로 본다(오너 판정 2026-09-04).
+--                  lesson_sessions 행이 없으므로 이 선차감이 유일한 차감 기록이다.
+--    · pending_review → 유지한다. 아직 판정 전이라 놓을 근거가 없다.
+-- ⚠️ 종전의 "48시간 지나면 놓는다"는 시간창은 폐기했다. 이제 상태가 의미를 나른다 —
+--    48시간은 놓는 조건이 아니라 pending_review 로 올리는 조건이다(sweep_pending_review).
 create or replace function public.portal_remaining_games(p_student_id bigint)
 returns int
 language sql stable security definer set search_path = public as $$
@@ -1028,11 +1044,9 @@ language sql stable security definer set search_path = public as $$
        + coalesce((select sum(games_total) from lesson_enrollments
                     where student_id = p_student_id and status in ('active','done','paused')), 0)
        - coalesce((select sum(games) from lesson_sessions where student_id = p_student_id), 0)
-       - coalesce((select sum(b.games_held) from slot_bookings b
-                     join trainer_slots s on s.id = b.slot_id
-                    where b.student_id = p_student_id
-                      and b.status = 'booked'
-                      and s.slot_start >= now() - interval '48 hours'), 0);
+       - coalesce((select sum(games_held) from slot_bookings
+                    where student_id = p_student_id
+                      and status in ('booked','pending_review','no_show')), 0);
 $$;
 
 -- ── 23b) 예약 (개인·그룹 공용) ───────────────────────────────────────────────
@@ -1182,6 +1196,98 @@ begin
 
   update trainer_slots set status = 'cancelled' where id = p_slot_id;
   return jsonb_build_object('cancelled', true, 'studentIds', coalesce(to_jsonb(v_subj), '[]'::jsonb));
+end;
+$$;
+
+-- ── 23e) 트레이너 종료 처리 (done · no_show) ────────────────────────────────
+-- 오너 판정 2026-09-04: **예약을 닫는 주체는 트레이너다.** 시간은 폴백일 뿐이다.
+-- 이 함수는 상태만 바꾼다 — 판수는 건드리지 않는다(판수 경로는 봇 /수업등록 하나뿐).
+--   · done    → 선차감을 놓는다. 실제 차감은 봇이 넣은 lesson_sessions 행이 맡는다.
+--   · no_show → 선차감을 **그대로 둔다**. lesson_sessions 행이 없으므로 이 선차감이
+--               유일한 차감 기록이 된다(정본대로 노쇼는 판수 소진).
+-- 개인 예약의 꼬리 행까지 함께 전이한다 — 머리만 닫으면 꼬리가 booked 로 남아
+-- 선차감 계산과 「확인 필요」 목록이 둘 다 어긋난다.
+create or replace function public.resolve_booking(
+  p_trainer_id bigint,
+  p_booking_id bigint,
+  p_status     text
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_b     slot_bookings%rowtype;
+  v_owner bigint;
+begin
+  if p_status not in ('done','no_show') then return jsonb_build_object('error','invalid_body'); end if;
+
+  select * into v_b from slot_bookings where id = p_booking_id for update;
+  if not found                   then return jsonb_build_object('error','not_found'); end if;
+  if v_b.span_head_id is not null then return jsonb_build_object('error','not_found'); end if;
+  if v_b.status not in ('booked','pending_review') then return jsonb_build_object('error','not_found'); end if;
+
+  select trainer_id into v_owner from trainer_slots where id = v_b.slot_id;
+  if v_owner is distinct from p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
+
+  update slot_bookings set status = p_status
+    where id = v_b.id or span_head_id = v_b.id;
+  return jsonb_build_object('resolved', true, 'status', p_status, 'gamesHeld', v_b.games_held);
+end;
+$$;
+
+-- ── 23f) 봇 /수업등록 연동 ───────────────────────────────────────────────────
+-- 같은 트레이너·같은 날·해당 수강생의 booked(또는 pending_review) 예약을 done 으로 닫는다.
+-- ⚠️ "같은 시간대"로 맞추고 싶어도 못 맞춘다 — lesson_sessions.played_at 은 **date** 라
+--    시각 정보가 아예 없다(실측). 그래서 트레이너 + 날짜 + 수강생 세 축으로 맞춘다.
+--    시각 대신 수강생 축이 들어가 오히려 더 좁게 맞는다.
+-- 맞는 예약이 없으면 아무것도 하지 않는다 — 예약 없이 진행한 수업도 정상이다(오너 지시).
+-- 날짜 경계는 KST 다. p_played_at 은 봇이 kstToday() 로 만든 날짜라 그대로 KST 로 해석한다.
+create or replace function public.complete_bookings_for_session(
+  p_trainer_id  bigint,
+  p_student_ids bigint[],
+  p_played_at   date
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_from timestamptz := (p_played_at::text || ' 00:00:00+09')::timestamptz;
+  v_to   timestamptz := v_from + interval '1 day';
+  v_ids  bigint[];
+begin
+  if p_student_ids is null or array_length(p_student_ids, 1) is null then
+    return jsonb_build_object('closed', 0);
+  end if;
+
+  select array_agg(b.id) into v_ids
+    from slot_bookings b
+    join trainer_slots s on s.id = b.slot_id
+   where s.trainer_id = p_trainer_id
+     and s.slot_start >= v_from and s.slot_start < v_to
+     and b.student_id = any(p_student_ids)
+     and b.span_head_id is null
+     and b.status in ('booked','pending_review');
+
+  if v_ids is null then return jsonb_build_object('closed', 0); end if;
+  update slot_bookings set status = 'done'
+    where id = any(v_ids) or span_head_id = any(v_ids);
+  return jsonb_build_object('closed', array_length(v_ids, 1));
+end;
+$$;
+
+-- ── 23g) 48시간 폴백 — booked → pending_review ──────────────────────────────
+-- 자동으로 done·no_show 를 찍지 않는다. "확인이 필요하다"는 표시만 올린다.
+-- 트레이너 포털이 슬롯 목록을 읽기 직전에 호출한다 — 크론에 의존하지 않기 위해서다
+-- (이 저장소의 크론은 T2_CRON 옵트인이라, 크론에만 맡기면 미설정 배포에서 영영 안 돈다).
+-- 멱등이고 대상 행이 없으면 0 을 돌려준다.
+create or replace function public.sweep_pending_review()
+returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int;
+begin
+  update slot_bookings b set status = 'pending_review'
+    from trainer_slots s
+   where s.id = b.slot_id
+     and b.status = 'booked'
+     and s.slot_start < now() - interval '48 hours';
+  get diagnostics v_n = row_count;
+  return v_n;
 end;
 $$;
 
