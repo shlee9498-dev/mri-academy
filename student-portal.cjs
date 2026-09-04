@@ -121,6 +121,7 @@ module.exports = function mountStudentPortal(app, deps) {
   // 기동 시 1회. 결과 캐시 — 매 요청 재조회하지 않는다.
   const tableReady = {};
   let staffContactReady = false;      // staff.contact_phone·contact_consent_at (§22e) 실행 여부
+  let bookingReady = false;           // §23 예약 테이블 실행 여부(미실행이면 선차감·다음예약 조회를 건너뛴다)
   async function probeTables() {
     for (const t of OPTIONAL_TABLES) {
       try { await sbSelect(t, "select=*&limit=0"); tableReady[t] = true; }
@@ -128,6 +129,9 @@ module.exports = function mountStudentPortal(app, deps) {
     }
     try { await sbSelect("staff", "select=contact_phone,contact_consent_at&limit=0"); staffContactReady = true; }
     catch { staffContactReady = false; }
+    // 프로브해두지 않으면 §23 미실행 배포에서 /summary 마다 실패 요청이 2건씩 더 나간다.
+    try { await sbSelect("slot_bookings", "select=id&limit=0"); bookingReady = true; }
+    catch { bookingReady = false; }
     const missing = OPTIONAL_TABLES.filter((t) => !tableReady[t]);
     console.log(`[portal] student-portal ${ready() ? "활성" : "비활성(env 미설정)"}` +
       (missing.length ? ` · 정본 4.2 DDL 미실행: ${missing.join(", ")} (읽기 degrade, 일기 쓰기 차단)` : " · 정본 4.2 테이블 전부 확인"));
@@ -211,15 +215,19 @@ module.exports = function mountStudentPortal(app, deps) {
   // 잔여 = carry_games + Σ lesson_enrollments.games_total − Σ lesson_sessions.games
   // 음수는 그대로 둔다. 0 클램프 금지(정본 v0.2.2 B-4).
   async function lessonAggregate(studentId) {
-    const [stu, enrolls, sessions] = await Promise.all([
+    const [stu, enrolls, sessions, held] = await Promise.all([
       sbSelect("students", `select=carry_games,trainer_id&id=eq.${studentId}`),
       sbSelect("lesson_enrollments", `select=games_total&student_id=eq.${studentId}&status=in.(active,done,paused)`),
       sbSelect("lesson_sessions", `select=games,trainer_id,created_at&student_id=eq.${studentId}`),
+      heldGames(studentId),
     ]);
     const carry = Number(stu[0]?.carry_games || 0);
     const registered = carry + enrolls.reduce((a, r) => a + Number(r.games_total || 0), 0);
     const played = sessions.reduce((a, r) => a + Number(r.games || 0), 0);
-    const remaining = registered - played;
+    // 선차감(예약 대기분)을 빼야 화면과 예약 게이트가 같은 숫자를 본다.
+    // ⚠️ 여기와 §23 portal_remaining_games() 는 **같이 움직여야 한다.** 한쪽만 고치면
+    //    "화면엔 5판 남았는데 예약은 insufficient_games" 같은 어긋남이 난다.
+    const remaining = registered - played - held;
     const asOf = sessions.reduce((mx, r) => (r.created_at > mx ? r.created_at : mx), "");
     return {
       registered, played, remaining,
@@ -227,6 +235,21 @@ module.exports = function mountStudentPortal(app, deps) {
       activeTrainerIds: [...new Set(sessions.map((r) => r.trainer_id).filter(Boolean))],
       asOf: asOf || new Date(0).toISOString(),
     };
+  }
+
+  // 예약 선차감 합계(개인만 · booked · 슬롯 시작이 48시간 이내 과거~미래).
+  // 48시간이 지나면 놓는다 — 트레이너가 /수업등록으로 실제 판수를 넣은 뒤에도 붙들면
+  // 같은 판이 두 번 빠진다. §23 portal_remaining_games() 의 창과 같은 값이다.
+  // §23 미실행 배포에서는 테이블이 없어 0 으로 떨어진다(예약 기능 자체가 휴면).
+  async function heldGames(studentId) {
+    if (!bookingReady) return 0;
+    try {
+      const cutoff = new Date(Date.now() - 48 * 3600_000).toISOString();
+      const rows = await sbSelect("slot_bookings",
+        `select=games_held,trainer_slots!inner(slot_start)&student_id=eq.${studentId}`
+        + `&status=eq.booked&trainer_slots.slot_start=gte.${cutoff}`);
+      return rows.reduce((a, r) => a + Number(r.games_held || 0), 0);
+    } catch { return 0; }
   }
 
   // staff id → 표시명. 응답에는 표시명만 나간다(실명 컬럼이 곧 표시명이라 그대로 쓴다).
@@ -248,6 +271,28 @@ module.exports = function mountStudentPortal(app, deps) {
         .filter((r) => r.contact_consent_at && r.contact_phone)
         .map((r) => [r.id, r.contact_phone]));
     } catch { return {}; }
+  }
+
+  // 다가오는 예약 1건. §23 미실행이면 null(종전과 같은 응답 모양).
+  async function nextBookingFor(studentId) {
+    if (!bookingReady) return null;
+    try {
+      const nowIso = new Date().toISOString();
+      const rows = await sbSelect("slot_bookings",
+        `select=id,games_held,duration_min,trainer_slots!inner(slot_start,lesson_type)`
+        + `&student_id=eq.${studentId}&status=eq.booked&span_head_id=is.null`
+        + `&trainer_slots.slot_start=gte.${nowIso}`
+        + `&order=trainer_slots(slot_start).asc&limit=1`);
+      const b = rows[0];
+      if (!b) return null;
+      return {
+        id: opaqueId("booking", b.id),
+        startAt: b.trainer_slots.slot_start,
+        lessonType: b.trainer_slots.lesson_type,
+        durationMin: b.duration_min ?? null,
+        gamesHeld: Number(b.games_held || 0),
+      };
+    } catch { return null; }
   }
 
   // ════════════════ GET /summary ════════════════
@@ -293,8 +338,7 @@ module.exports = function mountStudentPortal(app, deps) {
       },
       trainers,
       asOf: agg.asOf,
-      // 예약은 S1-b. 테이블(slot_bookings)이 아직 없어 항상 null 이다.
-      nextBooking: null,
+      nextBooking: await nextBookingFor(sid),
       pendingJournalCount,
       courses: await coursesFor(sid),
     });
@@ -504,4 +548,8 @@ module.exports = function mountStudentPortal(app, deps) {
 
   // 기동 시 1회 프로브. 실패해도 서버를 막지 않는다.
   probeTables().catch((e) => console.error("portal_probe", e?.message));
+
+  // 예약 모듈(booking-api.cjs)이 **같은** 세션 서명·불투명 id 체계를 써야 한다.
+  // 복제하면 SESSION_SECRET 파생 규칙이 갈라져 한쪽 토큰이 다른 쪽에서 안 풀린다.
+  return { readSession, opaqueId, readOpaqueId, fail, scrub };
 };
