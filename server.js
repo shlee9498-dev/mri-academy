@@ -972,6 +972,32 @@ if (process.env.DISCORD_TOKEN) {
       { name: "비고", description: "그 외 접수 정보(최고티어·플레이시간·교정희망 등)", type: 3, required: false },
     ],
   };
+  // ── 수강생 계정 연결 3종 (오너 지시 2026-09-05 · 수강생앱 정본 v0.2.3 §7) ──
+  //   students.discord_id 가 명부 87명 전원 null(실측)이라 앱 /exchange(discord_id 정확일치 1건)가
+  //   전원에게 403 account_link_pending 을 낸다. 이름·닉네임 자동 매칭과 일괄 백필은 금지
+  //   (입금자명≠학생명 사례 다수) — 트레이너·오너가 한 명씩 명시적으로 잇는다.
+  //   수강생 옵션은 자동완성(미연결만 후보)이고 값은 students.id 다. 목록에서 고르지 않고 이름을
+  //   직접 치면 정확일치 1명일 때만 받는다(동명은 거부 → 목록에서 담당·#번호로 구분).
+  const LINK_CMD = {
+    name: "연결승인",
+    description: "[트레이너·오너] 디스코드 계정 ↔ 수강생 명부 연결 — 앱 로그인이 열립니다",
+    options: [
+      { name: "대상", description: "연결할 디스코드 유저(수강생 본인 계정)", type: 6, required: true },
+      { name: "수강생", description: "수강생 — 미연결만 자동완성, 목록에서 고르세요", type: 3, required: true, autocomplete: true },
+    ],
+  };
+  const UNLINK_CMD = {
+    name: "연결해제",
+    description: "[오너] 수강생 계정 연결 해제 — 오연결 정정용(재연결은 /연결승인)",
+    options: [
+      { name: "수강생", description: "연결된 수강생 — 자동완성 목록에서 고르세요", type: 3, required: true, autocomplete: true },
+    ],
+  };
+  const LINK_STATUS_CMD = {
+    name: "연결현황",
+    description: "[트레이너·오너] 수강생 계정 연결 현황 — 연결 수 · 미연결 목록(담당별)",
+    options: [],
+  };
   // /결제신청 — [트레이너] 수강생 결제(입금) 신고 → payment_requests(pending) → 오너 DM 승인.
   //   (PR-3a) BOT_PAYREQ=1일 때만 등록. 승인돼도 payments 본표에는 넣지 않는다 —
   //   시트가 정본인 병행 단계에서 payout_rate(NOT NULL) 산정은 정산 소관이라 봇이 추정하면
@@ -1022,8 +1048,9 @@ if (process.env.DISCORD_TOKEN) {
     }
     try {
       const payreqCmds = process.env.BOT_PAYREQ === "1" ? [PAYREQ_CMD] : [];
-      await client.application.commands.set([LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD, ...payreqCmds], guildId);
-      console.log(`/수업등록·/판수정정·/등록계·/수강생등록${payreqCmds.length ? "·/결제신청" : ""} registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
+      await client.application.commands.set(
+        [LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD, LINK_CMD, UNLINK_CMD, LINK_STATUS_CMD, ...payreqCmds], guildId);
+      console.log(`/수업등록·/판수정정·/등록계·/수강생등록·/연결승인·/연결해제·/연결현황${payreqCmds.length ? "·/결제신청" : ""} registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
     } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
   }
 
@@ -2097,6 +2124,183 @@ if (process.env.DISCORD_TOKEN) {
       return itx.update({ content: "취소했어. 기존 명부 행을 그대로 쓰면 돼.", components: [] });
     await itx.update({ content: "등록 진행 중…", components: [] });
     await runStudentRegister(itx, pending.p);
+  });
+
+  // ── 수강생 계정 연결: /연결승인 · /연결해제 · /연결현황 ──
+  //   권한은 /판수정정과 같은 규칙 — TRAINER_MAP(디코ID→트레이너명) 또는 MRI_OWNER_ID.
+  //   응답은 전부 ephemeral(본인만). 성공 시 대상 유저에게 DM 1통(오너 지정 문안).
+  const linkActor = (itx) => {
+    const isOwner = !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
+    const trainer = TRAINER_MAP[itx.user.id] || null;
+    return { isOwner, trainer, allowed: isOwner || !!trainer, label: isOwner ? "owner(디스코드)" : trainer };
+  };
+  async function staffNameMap() {
+    const m = {};
+    try { (await sbSelect("staff", "select=id,name")).forEach((r) => { m[r.id] = r.name; }); }
+    catch (e) { console.error("link_staff_map", e?.message); }
+    return m;
+  }
+  const LINK_STATUS_TAG = { active: "", paused: " (보류)", done: " (수료)" };
+  // 자동완성 표시명 — 동명이인은 담당·#번호로 구분한다. 디스코드 제한 100자.
+  const linkChoiceName = (s, staffById) =>
+    `${s.name}${LINK_STATUS_TAG[s.status] ?? ` (${s.status})`} · ${staffById[s.trainer_id] || "담당없음"} · #${s.id}`.slice(0, 100);
+  // 제출값 → 학생 행. 자동완성 값(=id)이 정상 경로. 이름을 직접 쳤으면 정확일치 1명일 때만.
+  async function resolveLinkStudent(raw, { linked }) {
+    const v = String(raw || "").trim();
+    if (!v) return { error: "not_found" };
+    const cols = "select=id,name,status,trainer_id,discord_id";
+    if (/^\d{1,10}$/.test(v)) {
+      const rows = await sbSelect("students", `${cols}&id=eq.${v}&limit=1`);
+      return rows[0] ? { row: rows[0] } : { error: "not_found" };
+    }
+    const rows = await sbSelect("students",
+      `${cols}&name=eq.${encodeURIComponent(v)}&discord_id=${linked ? "not.is.null" : "is.null"}&order=id.asc`);
+    if (rows.length === 1) return { row: rows[0] };
+    return { error: rows.length ? "ambiguous" : "not_found" };
+  }
+
+  // 자동완성 — 승인은 미연결, 해제는 연결된 학생만 후보. 수료(done)도 넣되 태그로 구분한다.
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isAutocomplete() || (itx.commandName !== "연결승인" && itx.commandName !== "연결해제")) return;
+    try {
+      const focused = itx.options.getFocused(true);
+      if (focused.name !== "수강생" || !linkActor(itx).allowed || !hasSupabase()) return await itx.respond([]);
+      const linked = itx.commandName === "연결해제";
+      // PostgREST 예약문자(, . ( ) *)는 검색어에서 뺀다 — 필터 문법이 깨지는 걸 막는다.
+      const q = String(focused.value || "").trim().replace(/[,.()*]/g, "").slice(0, 40);
+      let filter = `select=id,name,status,trainer_id&discord_id=${linked ? "not.is.null" : "is.null"}&order=status.asc,name.asc&limit=100`;
+      if (q) filter += `&name=ilike.*${encodeURIComponent(q)}*`;
+      const [rows, staffById] = await Promise.all([sbSelect("students", filter), staffNameMap()]);
+      await itx.respond(rows.slice(0, 25).map((s) => ({ name: linkChoiceName(s, staffById), value: String(s.id) })));
+    } catch (e) {
+      console.error("link_autocomplete", e?.message);
+      try { await itx.respond([]); } catch (_) {}
+    }
+  });
+
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "연결승인") return;
+    const actor = linkActor(itx);
+    if (!actor.allowed)
+      return itx.reply({ content: "등록된 트레이너·오너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
+    if (!hasSupabase())
+      return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+    const target = itx.options.getUser("대상");
+    if (!target) return itx.reply({ content: "대상 유저를 지정해줘.", ephemeral: true });
+    if (target.bot) return itx.reply({ content: "봇 계정은 연결할 수 없어. 수강생 본인 계정을 지정해줘.", ephemeral: true });
+
+    await itx.deferReply({ ephemeral: true });
+    try {
+      const picked = await resolveLinkStudent(itx.options.getString("수강생"), { linked: false });
+      if (picked.error === "ambiguous")
+        return itx.editReply("❌ 같은 이름의 미연결 수강생이 여러 명이야. 자동완성 목록에서 담당·#번호를 보고 골라줘.");
+      if (!picked.row) return itx.editReply("❌ 수강생을 찾을 수 없어. 자동완성 목록에서 골라줘.");
+      const s = picked.row;
+      if (s.discord_id)
+        return itx.editReply(`❌ **${s.name}**(#${s.id})은 이미 연결돼 있어. 재연결이 필요하면 오너가 \`/연결해제\`를 먼저 해야 해.`);
+      // 1:1 강제 — 이 디스코드 계정이 이미 다른 학생에 걸려 있으면 거부. 앱 /exchange 가
+      // discord_id 정확일치 **1건**을 요구하므로 2행이 되는 순간 그 계정은 로그인이 막힌다.
+      const dup = await sbSelect("students", `select=id,name&discord_id=eq.${encodeURIComponent(target.id)}&limit=1`);
+      if (dup.length)
+        return itx.editReply(`❌ 그 디스코드 계정은 이미 **${dup[0].name}**(#${dup[0].id})에 연결돼 있어. 한 계정은 한 명에게만 연결돼.`);
+      // discord_id=is.null 을 함께 걸어 경합 시 덮어쓰기를 막는다 — 갱신 0행이면 그사이 누가 먼저 연결한 것.
+      const updated = await sbPatch("students", `id=eq.${s.id}&discord_id=is.null`,
+        { discord_id: String(target.id), discord_src: "app_link" });
+      if (!updated.length)
+        return itx.editReply(`❌ 그사이 **${s.name}**(#${s.id})이 다른 계정에 연결됐어. \`/연결현황\`으로 확인해줘.`);
+
+      const dmOk = await discordDM(target.id, "연결됐어요. 앱에서 다시 로그인하면 판수와 수업 기록이 보여요");
+      try {
+        await sbInsert("admin_audit", {
+          actor_id: itx.user.id, actor_name: actor.label, action: "student.link",
+          target: `student:${s.id}`, detail: { discord_id: String(target.id), discord_src: "app_link", dm: dmOk },
+        });
+      } catch (e) { console.error("link_audit", e?.message); }
+      await itx.editReply(
+        `✅ 연결 완료 — **${s.name}**(#${s.id}) ↔ <@${target.id}>\n`
+        + (dmOk ? "📨 본인에게 안내 DM을 보냈어(앱 재로그인 안내)."
+                : "⚠️ 안내 DM을 못 보냈어(DM 차단?). 앱에서 다시 로그인하라고 직접 알려줘."));
+    } catch (e) {
+      console.error("link_failed", e?.status || e?.message);
+      await itx.editReply("❌ 연결 중 오류가 났어. 잠시 후 다시 시도해줘.");
+    }
+  });
+
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "연결해제") return;
+    const actor = linkActor(itx);
+    if (!actor.isOwner) return itx.reply({ content: "오너만 사용할 수 있어.", ephemeral: true });
+    if (!hasSupabase())
+      return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+
+    await itx.deferReply({ ephemeral: true });
+    try {
+      const picked = await resolveLinkStudent(itx.options.getString("수강생"), { linked: true });
+      if (picked.error === "ambiguous")
+        return itx.editReply("❌ 같은 이름의 연결된 수강생이 여러 명이야. 자동완성 목록에서 골라줘.");
+      if (!picked.row) return itx.editReply("❌ 수강생을 찾을 수 없어. 자동완성 목록에서 골라줘.");
+      const s = picked.row;
+      if (!s.discord_id) return itx.editReply(`ℹ️ **${s.name}**(#${s.id})은 이미 미연결 상태야.`);
+      await sbPatch("students", `id=eq.${s.id}`, { discord_id: null, discord_src: null });
+      try {
+        await sbInsert("admin_audit", {
+          actor_id: itx.user.id, actor_name: actor.label, action: "student.unlink",
+          target: `student:${s.id}`, detail: { prev_discord_id: String(s.discord_id) },
+        });
+      } catch (e) { console.error("unlink_audit", e?.message); }
+      await itx.editReply(`✅ 연결 해제 — **${s.name}**(#${s.id}). 재연결은 \`/연결승인\`으로.`);
+    } catch (e) {
+      console.error("unlink_failed", e?.status || e?.message);
+      await itx.editReply("❌ 해제 중 오류가 났어. 잠시 후 다시 시도해줘.");
+    }
+  });
+
+  // 연결 현황 — 활성·보류(앱 대상)를 기준으로 세고, 수료는 한 줄로 따로 센다. 미연결은 담당별 명단.
+  function linkStatusText(rows, staffById) {
+    const base = rows.filter((r) => r.status !== "done");
+    const done = rows.filter((r) => r.status === "done");
+    const linked = base.filter((r) => r.discord_id).length;
+    const groups = {};
+    for (const r of base.filter((x) => !x.discord_id)) {
+      const t = staffById[r.trainer_id] || "담당없음";
+      (groups[t] ||= []).push(r.name + (r.status === "paused" ? "(보류)" : ""));
+    }
+    let out = `📇 **수강생 계정 연결 현황** — 연결 **${linked}/${base.length}**명 (활성·보류 기준)\n`
+      + `수료 ${done.length}명은 별도: 연결 ${done.filter((r) => r.discord_id).length}명\n`
+      + (base.length - linked ? `\n**미연결 ${base.length - linked}명** (담당별)\n` : "\n미연결 없음 🎉\n");
+    // 디스코드 2000자 제한 — 담당 한 줄이 넘치면 이름을 잘라 「… 외 n명」으로 닫는다.
+    const LIMIT = 1900;
+    for (const [t, names] of Object.entries(groups).sort((a, b) => b[1].length - a[1].length)) {
+      const head = `**${t}** (${names.length}): `;
+      const room = LIMIT - out.length - 1;
+      if (room < head.length + 20) { out += "… (길어서 생략)\n"; break; }
+      let line = head + names.join(", ");
+      if (line.length > room) {
+        const kept = []; let len = head.length + 12;   // 12 = " … 외 nn명" 여유
+        for (const n of names) { if (len + n.length + 2 > room) break; kept.push(n); len += n.length + 2; }
+        line = `${head}${kept.join(", ")} … 외 ${names.length - kept.length}명`;
+      }
+      out += line + "\n";
+    }
+    return out;
+  }
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "연결현황") return;
+    if (!linkActor(itx).allowed)
+      return itx.reply({ content: "등록된 트레이너·오너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
+    if (!hasSupabase())
+      return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+    await itx.deferReply({ ephemeral: true });
+    try {
+      const [rows, staffById] = await Promise.all([
+        sbSelect("students", "select=id,name,status,trainer_id,discord_id&order=name.asc"),
+        staffNameMap(),
+      ]);
+      await itx.editReply(linkStatusText(rows, staffById));
+    } catch (e) {
+      console.error("link_status_failed", e?.status || e?.message);
+      await itx.editReply("❌ 조회 중 오류가 났어. 잠시 후 다시 시도해줘.");
+    }
   });
 
   // 승인 카드·원장 행에 쓰는 채널 표기. 율이 확정된 채널만 수수료를 보여준다 —
