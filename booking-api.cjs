@@ -111,7 +111,14 @@ module.exports = function mountBookingApi(app, deps) {
 
   // ══════════════ 수강생 ══════════════
 
-  // GET /availability?days=14 — 담당·수업 이력이 있는 트레이너의 open 슬롯.
+  // GET /availability?days=14 — 담당·수업 이력이 있는 트레이너의 open 슬롯
+  //   + **내가 예약해서 닫힌 슬롯**(status=closed, bookedByMe). 앱 실측 보고(오너 2026-09-05):
+  //   개인 예약이 칸을 closed 로 바꾸는데 open 만 내려주니 새로고침하면 내 예약이 화면에서
+  //   사라졌다. 그룹 예약을 여러 건 잡은 수강생은 취소 수단도 없었다(bookedByMe 만 있고
+  //   예약 id 가 없어서). 그래서 ① status 를 싣고 ② 내 예약 칸에는 bookingId 를 싣는다.
+  //   개인 예약의 꼬리 칸은 머리 예약 id 를 가리킨다 — 어느 칸에서 취소해도 한 예약이
+  //   통째로 풀린다(cancel_booking 이 꼬리 id 는 not_found 로 거절하므로 머리를 줘야 한다).
+  //   남의 예약으로 닫힌 칸은 내려주지 않는다(그냥 없는 칸이다).
   app.get(`${STUDENT}/availability`, requireStudent, wrap(async (req, res) => {
     const sid = req.portal.sub;
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), MAX_DAYS);
@@ -128,7 +135,8 @@ module.exports = function mountBookingApi(app, deps) {
     const nowIso = new Date().toISOString();
     const [slots, names] = await Promise.all([
       sbSelect("trainer_slots",
-        `select=id,trainer_id,slot_start,lesson_type,capacity&status=eq.open`
+        // closed 도 받아서 아래에서 "내 예약" 만 남긴다. cancelled 는 처음부터 제외.
+        `select=id,trainer_id,slot_start,lesson_type,capacity,status&status=in.(open,closed)`
         + `&trainer_id=in.(${tids.join(",")})&slot_start=gte.${nowIso}&slot_start=lt.${until}`
         + `&order=slot_start.asc`),
       sbSelect("staff", `select=id,name&id=in.(${tids.join(",")})`),
@@ -139,23 +147,28 @@ module.exports = function mountBookingApi(app, deps) {
     const ids = slots.map((s) => s.id);
     // 예약수는 슬롯별 집계가 필요한데 PostgREST 로는 group by 를 못 쓴다 — 한 번에 받아 센다.
     const books = await sbSelect("slot_bookings",
-      `select=slot_id,student_id&status=eq.booked&slot_id=in.(${ids.join(",")})`);
-    const cnt = {}, mine = new Set();
+      `select=id,slot_id,student_id,span_head_id&status=eq.booked&slot_id=in.(${ids.join(",")})`);
+    const cnt = {}, mine = new Map();   // slot_id → 취소에 쓸 예약 id(머리 행)
     for (const b of books) {
       cnt[b.slot_id] = (cnt[b.slot_id] || 0) + 1;
-      if (b.student_id === sid) mine.add(b.slot_id);
+      if (b.student_id === sid) mine.set(b.slot_id, b.span_head_id ?? b.id);
     }
+    // open 이거나 내가 예약한 칸만. 남의 개인 예약으로 닫힌 칸은 빠진다.
+    const visible = slots.filter((s) => s.status === "open" || mine.has(s.id));
 
     send(res, {
-      slots: slots.map((s) => ({
+      slots: visible.map((s) => ({
         id: opaqueId("slot", s.id),
         startAt: s.slot_start,
         slotMinutes: SLOT_MIN,
         lessonType: s.lesson_type,
         trainerDisplayName: nameOf[s.trainer_id] || "미배정",
         capacity: s.capacity,
+        status: s.status,                     // "open" | "closed" — closed 는 내 개인 예약 칸뿐
         bookedCount: cnt[s.id] || 0,
         bookedByMe: mine.has(s.id),
+        // 내 예약일 때만. DELETE /bookings/:id 에 그대로 넘기면 된다.
+        ...(mine.has(s.id) ? { bookingId: opaqueId("booking", mine.get(s.id)) } : {}),
       })),
       // 개인은 이 중에서 고른다. 그룹은 길이 선택이 없다.
       personalDurations: DURATION_MIN,
