@@ -2241,8 +2241,17 @@ if (process.env.DISCORD_TOKEN) {
       if (dup.length)
         return itx.editReply(`❌ 그 디스코드 계정은 이미 **${dup[0].name}**(#${dup[0].id})에 연결돼 있어. 한 계정은 한 명에게만 연결돼.`);
       // discord_id=is.null 을 함께 걸어 경합 시 덮어쓰기를 막는다 — 갱신 0행이면 그사이 누가 먼저 연결한 것.
-      const updated = await sbPatch("students", `id=eq.${s.id}&discord_id=is.null`,
-        { discord_id: String(target.id), discord_src: "app_link" });
+      // 1:1 은 DB 도 지킨다 — §11 부분 유니크 인덱스 idx_students_discord(discord_id, not null).
+      // 위 사전 조회와 경합해 같은 계정이 먼저 들어가면 PATCH 가 409(23505)로 떨어지므로 문구로 돌려준다.
+      let updated;
+      try {
+        updated = await sbPatch("students", `id=eq.${s.id}&discord_id=is.null`,
+          { discord_id: String(target.id), discord_src: "app_link" });
+      } catch (e) {
+        if (e?.status === 409 || /23505|idx_students_discord/.test(String(e?.body || "")))
+          return itx.editReply("❌ 그 디스코드 계정은 이미 다른 학생에 연결돼 있어(DB 유니크). 한 계정은 한 명에게만 연결돼.");
+        throw e;
+      }
       if (!updated.length)
         return itx.editReply(`❌ 그사이 **${s.name}**(#${s.id})이 다른 계정에 연결됐어. \`/연결현황\`으로 확인해줘.`);
 
