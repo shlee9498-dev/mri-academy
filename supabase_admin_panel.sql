@@ -147,7 +147,12 @@ alter table public.students add column if not exists pubg_account_id text;   -- 
 -- 음성 참여 자동기록(voiceStateUpdate)이 주는 건 이 숫자 ID 하나뿐이라, 이게 없으면 붙일 데가 없다.
 -- unique 제약이 아니라 부분 유니크 인덱스 — 미연결(null)이 다수여야 하고, 값이 있을 때만 중복을 막는다.
 alter table public.students add column if not exists discord_id  text;
-alter table public.students add column if not exists discord_src text;   -- 백필 경로 기록(account/nick/manual)
+alter table public.students add column if not exists discord_src text;
+-- discord_src 값 체계(2026-09-07 정리):
+--   app_link      봇 /연결승인 이 기록(정식 경로 · admin_audit student.link 동반). /연결해제 는 두 컬럼을 null 로.
+--   manual        오너가 SQL 로 직접 넣은 행(봇 밖 경로 — 코드가 쓰지 않는다). 검증 근거는 별도 기록 필요.
+--   account/nick  §11 백필 설계값(계정 매칭·닉 매칭). 이름·닉 자동 매칭은 금지돼 코드가 쓰지 않는다.
+--   실측 2026-09-07: 87행 전부 null — 아직 어느 값도 기록된 적 없음.
 create unique index if not exists idx_students_discord
   on public.students (discord_id) where discord_id is not null;
 -- student_snapshots는 성장추적 시스템이 이미 생성함. 여기선 컬럼만 확장(idempotent).
