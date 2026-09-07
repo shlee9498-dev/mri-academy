@@ -65,10 +65,17 @@ function chatDailyExceeded() {
 // express-rate-limit을 쓰지 않는 이유: 단일 인스턴스라 공유 store가 불필요하고,
 // 이 패턴은 /api/chat에서 이미 가동 중이다. 의존성을 늘리지 않는 쪽을 택했다.
 // (CodeQL은 커스텀 리미터를 인식하지 못해 경고가 남을 수 있다 — 실제 방어가 목적)
+// reject(res, retryAfter) — 선택. 429 본문을 라우트군이 정한다. 기본은 { error: "too_many_requests", retry_after }
+//   (gdcup-score 등 기존 프론트가 이 형태를 읽는다). 포털·예약 라우트는 정본 부록 A 한 형태
+//   { error: { code: "rate_limited" } } 를 넘긴다. Retry-After 헤더는 어느 쪽이든 싣는다.
+// 키 우선순위 = req.portalClientIp → x-forwarded-for 첫 항목 → req.ip.
+//   portalClientIp 는 student-portal 의 공유비밀 게이트만 채운다(앱이 x-client-ip 로 준 최종 사용자 IP).
+//   게이트 밖 라우트에는 없으므로 외부 호출자가 그 헤더로 버킷을 고를 수 없고, 종전과 같이 동작한다.
 const rlBuckets = new Map();
-function limit(name, max, windowMs) {
+function limit(name, max, windowMs, reject) {
   return (req, res, next) => {
-    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "?";
+    const ip = req.portalClientIp
+      || req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "?";
     const key = name + ":" + ip, now = Date.now();
     const arr = (rlBuckets.get(key) || []).filter((t) => now - t < windowMs);
     if (rlBuckets.size > 5000) rlBuckets.clear();
@@ -80,6 +87,7 @@ function limit(name, max, windowMs) {
       // 가장 오래된 통과 요청이 창에서 빠지는 시점까지 남은 초. 프론트 카운트다운용.
       const retryAfter = Math.max(1, Math.ceil((windowMs - (now - arr[0])) / 1000));
       res.set("Retry-After", String(retryAfter));
+      if (reject) return reject(res, retryAfter);
       return res.status(429).json({ error: "too_many_requests", retry_after: retryAfter });
     }
     arr.push(now); rlBuckets.set(key, arr);

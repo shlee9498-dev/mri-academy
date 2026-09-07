@@ -32,6 +32,9 @@ const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().
 module.exports = function mountBookingApi(app, deps) {
   const { sbSelect, sbInsert, sbRpc, limit, getUser, discordDM, portal } = deps;
   const { readSession, opaqueId, readOpaqueId, fail, scrub } = portal;
+  // 429 도 부록 A 한 형태(rate_limited). 키·창은 server.js limit() 그대로.
+  const rateLimit = (name, max, windowMs) =>
+    limit(name, max, windowMs, (res) => fail(res, 429, "rate_limited"));
 
   const STUDENT = "/api/student-portal";
   const TRAINER = "/api/trainer-portal";
@@ -176,7 +179,7 @@ module.exports = function mountBookingApi(app, deps) {
   }));
 
   // POST /bookings — { slotId, durationMin? }
-  app.post(`${STUDENT}/bookings`, limit("portalBooking", 30, 60_000), bodyOnly(["slotId", "durationMin"]),
+  app.post(`${STUDENT}/bookings`, rateLimit("portalBooking", 30, 60_000), bodyOnly(["slotId", "durationMin"]),
     requireStudent, wrap(async (req, res) => {
       const slotId = readOpaqueId("slot", req.body?.slotId);
       if (slotId == null) return fail(res, 400, "invalid_body");
@@ -208,7 +211,7 @@ module.exports = function mountBookingApi(app, deps) {
   // ══════════════ 트레이너 ══════════════
 
   // POST /slots — { startAt, endAt, lessonType, capacity? } → 30분 칸으로 전개
-  app.post(`${TRAINER}/slots`, limit("trainerSlots", 20, 60_000),
+  app.post(`${TRAINER}/slots`, rateLimit("trainerSlots", 20, 60_000),
     bodyOnly(["startAt", "endAt", "lessonType", "capacity"]), requireTrainer, wrap(async (req, res) => {
       const { startAt, endAt, lessonType } = req.body || {};
       const capacity = req.body?.capacity ?? 1;
@@ -316,7 +319,7 @@ module.exports = function mountBookingApi(app, deps) {
   //    그대로 둬서 판수 소진으로 남는다(§23 portal_remaining_games 의 상태 목록 참조).
   //    본인 슬롯 여부는 §23 resolve_booking 이 trainer_id 대조로 판정한다 — 아니면 403.
   const resolveRoute = (suffix, status) =>
-    app.post(`${TRAINER}/bookings/:id/${suffix}`, limit("trainerResolve", 60, 60_000),
+    app.post(`${TRAINER}/bookings/:id/${suffix}`, rateLimit("trainerResolve", 60, 60_000),
       bodyOnly([]), requireTrainer, wrap(async (req, res) => {
         const bookingId = readOpaqueId("booking", req.params.id);
         if (bookingId == null) return fail(res, 400, "invalid_body");

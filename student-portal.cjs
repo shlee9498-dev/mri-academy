@@ -33,6 +33,10 @@ module.exports = function mountStudentPortal(app, deps) {
 
   // ── 오류 응답: 항상 { error: { code } } 한 형태. 메시지·상세 없음(부록 A) ──
   const fail = (res, status, code) => res.status(status).json({ error: { code } });
+  // 429 도 같은 형태(rate_limited). 공용 limit() 기본 본문 { error: "too_many_requests" } 는 부록 A 가
+  // 아니라 앱이 임시 매핑하고 있었다(앱 #11). Retry-After 헤더는 limit() 이 그대로 싣는다.
+  const rateLimit = (name, max, windowMs) =>
+    limit(name, max, windowMs, (res) => fail(res, 429, "rate_limited"));
 
   // ── 상수시간 문자열 비교 (길이 노출 방지 위해 해시 후 비교) ──
   function safeEqual(a, b) {
@@ -138,11 +142,32 @@ module.exports = function mountStudentPortal(app, deps) {
   }
 
   // ── 게이트: 공유 비밀 + env 준비 ──────────────────────────────
+  // 통과한 요청은 앱(공유비밀 보유자)이 보낸 것이다. 앱이 x-client-ip 로 실어 준 최종 사용자 IP 를
+  // 레이트리밋 키로 신뢰한다(req.portalClientIp → server.js limit()). 이 값이 없으면 종전대로
+  // x-forwarded-for 첫 항목. x-forwarded-for 를 그대로 믿기 어려운 이유: Railway 프록시가 보증하는
+  // 헤더는 X-Real-IP(= 직접 접속한 쪽, 앱 호출이면 Vercel egress)뿐이고 x-forwarded-for 를
+  // 덧붙이는지/덮어쓰는지는 문서에 없다. 덮어쓰면 전 수강생이 egress IP 한 버킷에 묶인다.
+  // 게이트 밖 라우트는 portalClientIp 를 갖지 않으므로 외부 호출자가 이 헤더로 버킷을 고를 수 없다.
+  const IPISH = /^[0-9a-fA-F.:]{3,45}$/;
+  let headerShapeLogged = 0;
   app.use(PREFIX, (req, res, next) => {
     if (!ready()) return fail(res, 503, "portal_unavailable");
     const got = req.headers["x-portal-secret"];
     if (!got || !safeEqual(got, process.env.RAILWAY_PORTAL_SHARED_SECRET)) {
       return fail(res, 403, "scope_denied");
+    }
+    const cip = String(req.headers["x-client-ip"] || "").trim();
+    if (IPISH.test(cip)) req.portalClientIp = cip;
+    // 배포 후 실측용(부팅당 5건) — 프록시가 x-forwarded-for 를 덧붙이는지/덮어쓰는지 판정.
+    // IP 자체는 남기지 않는다: 항목 수와 xff[0]==x-real-ip 여부만.
+    //   xff[0]≠x-real-ip → 앱이 보낸 IP 가 살아남음(그대로 통과 또는 덧붙임) / == → 덮어씀(egress 로 묶임).
+    if (headerShapeLogged < 5) {
+      headerShapeLogged++;
+      const xff = String(req.headers["x-forwarded-for"] || "").split(",").map((s) => s.trim()).filter(Boolean);
+      const real = String(req.headers["x-real-ip"] || "").trim();
+      console.log(`[portal] 헤더 형태 ${headerShapeLogged}/5 — xff 항목 ${xff.length}` +
+        ` · xff[0]==x-real-ip ${xff.length && real ? String(xff[0] === real) : "판정불가"}` +
+        ` · x-client-ip ${req.portalClientIp ? "있음" : "없음"}`);
     }
     next();
   });
@@ -176,7 +201,7 @@ module.exports = function mountStudentPortal(app, deps) {
   // ════════════════ POST /exchange ════════════════
   // Discord access token → /users/@me 재검증 → students.discord_id 정확일치 1건 → 세션.
   // 토큰은 이 호출에서만 쓰이고 저장·로그하지 않는다.
-  app.post(`${PREFIX}/exchange`, limit("portalExchange", 20, 60_000), bodyOnly([]), wrap(async (req, res) => {
+  app.post(`${PREFIX}/exchange`, rateLimit("portalExchange", 20, 60_000), bodyOnly([]), wrap(async (req, res) => {
     const token = req.headers["x-discord-token"];
     if (!token) return fail(res, 401, "session_expired");
 
@@ -496,7 +521,7 @@ module.exports = function mountStudentPortal(app, deps) {
   // ⑦(정본 v0.2.3 C-3): settled_period 가 찍힌 세션에도 일기 작성·수정을 허용한다.
   // 불변인 것은 정산 필드뿐이고, 이 경로는 lesson_sessions 를 건드리지 않는다.
   app.put(`${PREFIX}/sessions/:id/journal`,
-    limit("portalJournal", 60, 60_000), bodyOnly(["body"]), requireStudent,
+    rateLimit("portalJournal", 60, 60_000), bodyOnly(["body"]), requireStudent,
     wrap(async (req, res) => {
       const body = req.body?.body;
       if (typeof body !== "string") return fail(res, 400, "invalid_body");
