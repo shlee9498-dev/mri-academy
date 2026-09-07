@@ -998,6 +998,7 @@ if (process.env.DISCORD_TOKEN) {
     description: "[트레이너·오너] 수강생 계정 연결 현황 — 연결 수 · 미연결 목록(담당별)",
     options: [],
   };
+  const LINK_CMDS = [LINK_CMD, UNLINK_CMD, LINK_STATUS_CMD];
   // /결제신청 — [트레이너] 수강생 결제(입금) 신고 → payment_requests(pending) → 오너 DM 승인.
   //   (PR-3a) BOT_PAYREQ=1일 때만 등록. 승인돼도 payments 본표에는 넣지 않는다 —
   //   시트가 정본인 병행 단계에서 payout_rate(NOT NULL) 산정은 정산 소관이라 봇이 추정하면
@@ -1049,9 +1050,24 @@ if (process.env.DISCORD_TOKEN) {
     try {
       const payreqCmds = process.env.BOT_PAYREQ === "1" ? [PAYREQ_CMD] : [];
       await client.application.commands.set(
-        [LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD, LINK_CMD, UNLINK_CMD, LINK_STATUS_CMD, ...payreqCmds], guildId);
+        [LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD, ...LINK_CMDS, ...payreqCmds], guildId);
       console.log(`/수업등록·/판수정정·/등록계·/수강생등록·/연결승인·/연결해제·/연결현황${payreqCmds.length ? "·/결제신청" : ""} registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
     } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
+  }
+  // 계정 연결 3종 추가 등록 — 수강생이 있는 서버가 GUILD_ID·LESSON_GUILD_ID 둘 다 아닐 때만 쓴다
+  // (LINK_GUILD_IDS 쉼표구분). set() 은 그 길드의 명령을 통째로 바꾸므로 두 주 길드는 각자의 목록으로
+  // 등록하고, 여기서는 그 둘을 건너뛴다.
+  const extraLinkGuilds = () => (process.env.LINK_GUILD_IDS || "").split(",").map((s) => s.trim())
+    .filter((g) => g && g !== process.env.GUILD_ID && g !== process.env.LESSON_GUILD_ID);
+  async function registerLinkExtraGuilds(ctx, onlyGuild) {
+    for (const g of extraLinkGuilds()) {
+      if (onlyGuild && g !== onlyGuild) continue;
+      if (!client.guilds.cache.has(g)) { console.warn(`⚠️ 봇이 LINK_GUILD_IDS(${g}) 길드에 없음 [${ctx}] → 초대 후 자동 등록됩니다.`); continue; }
+      try {
+        await client.application.commands.set(LINK_CMDS, g);
+        console.log(`/연결승인·/연결해제·/연결현황 registered to LINK_GUILD_IDS(${g}) [${ctx}]`);
+      } catch (e) { console.error("link_guild_register_failed", g, ctx, e?.message); }
+    }
   }
 
   client.once("ready", async () => {
@@ -1116,12 +1132,17 @@ if (process.env.DISCORD_TOKEN) {
       // 안전 폴백으로 GUILD_ID에 함께 등록(별도 set()이 서로의 명령을 덮어쓰는 사고 방지).
       const lessonGuild = process.env.LESSON_GUILD_ID;
       const splitLesson = lessonGuild && lessonGuild !== process.env.GUILD_ID;
-      const mainCmds = splitLesson ? cmds : [...cmds, LESSON_CMD, CORRECTION_CMD];
+      // 계정 연결 3종은 **메인 길드에도** 둔다(오너 정정 2026-09-06). 수강생은 MRI ACADEMY 서버에
+      // 있고 GmI(LESSON_GUILD_ID)에는 없어서, GmI에서 /연결승인을 열면 유저 옵션에 수강생이 안 뜬다
+      // (유저 옵션은 그 길드 멤버만 고를 수 있다). 권한은 길드가 아니라 staff 명부 기준이라
+      // 어느 길드에서 실행해도 같은 규칙이 돈다.
+      const mainCmds = [...(splitLesson ? cmds : [...cmds, LESSON_CMD, CORRECTION_CMD]), ...LINK_CMDS];
       if (process.env.GUILD_ID) await client.application.commands.set(mainCmds, process.env.GUILD_ID);
       else await client.application.commands.set(mainCmds);
-      console.log("slash commands registered (main guild):", mainCmds.map((c) => c.name).join(", "));
+      console.log(`slash commands registered (main guild ${process.env.GUILD_ID || "global"}):`, mainCmds.map((c) => c.name).join(", "));
       // /수업등록 → GmI 서버(LESSON_GUILD_ID)에만 등록 (트레이너 운영 채널이 GmI에 있음)
       if (splitLesson) await registerLessonCmd(lessonGuild, "ready");
+      await registerLinkExtraGuilds("ready");
       // Phase 1.4 — /승급 글로벌 등록(DM 사용 위함). create=이름 기준 upsert, 기존 명령 미삭제.
       try { await client.application.commands.create(SUNG_CMD); console.log("/승급 registered (global · DM 전용)"); }
       catch (e) { console.error("sung_register_failed", e?.message); }
@@ -1138,6 +1159,7 @@ if (process.env.DISCORD_TOKEN) {
     if (lessonGuild && lessonGuild !== process.env.GUILD_ID && guild.id === lessonGuild) {
       await registerLessonCmd(lessonGuild, "guildCreate");
     }
+    await registerLinkExtraGuilds("guildCreate", guild.id);
   });
   const isStaff = (id) => STAFF_IDS.includes(id);
 
@@ -2127,13 +2149,28 @@ if (process.env.DISCORD_TOKEN) {
   });
 
   // ── 수강생 계정 연결: /연결승인 · /연결해제 · /연결현황 ──
-  //   권한은 /판수정정과 같은 규칙 — TRAINER_MAP(디코ID→트레이너명) 또는 MRI_OWNER_ID.
+  //   권한은 **staff 명부 기준**(discord_id 정확일치 · active) — 길드 멤버십도 TRAINER_MAP 도 아니다
+  //   (오너 정정 2026-09-06: 두 길드에 등록되므로 어느 길드에서 실행해도 같은 규칙이어야 한다).
+  //     · 승인·현황: role trainer 또는 owner    · 해제: owner 만
+  //     · MRI_OWNER_ID 는 staff 행이 없거나 discord_id 가 비어도 오너로 인정한다(잠김 방지 폴백)
   //   응답은 전부 ephemeral(본인만). 성공 시 대상 유저에게 DM 1통(오너 지정 문안).
-  const linkActor = (itx) => {
-    const isOwner = !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
-    const trainer = TRAINER_MAP[itx.user.id] || null;
-    return { isOwner, trainer, allowed: isOwner || !!trainer, label: isOwner ? "owner(디스코드)" : trainer };
-  };
+  async function linkActor(itx) {
+    const uid = itx.user.id;
+    const envOwner = !!process.env.MRI_OWNER_ID && uid === process.env.MRI_OWNER_ID;
+    let row = null;
+    try {
+      row = (await sbSelect("staff",
+        `select=id,name,role,active&discord_id=eq.${encodeURIComponent(uid)}&limit=1`))[0] || null;
+    } catch (e) { console.error("link_staff_lookup", e?.message); }
+    const active = !!row && row.active !== false;
+    const isOwner = envOwner || (active && row.role === "owner");
+    const isTrainer = active && (row.role === "trainer" || row.role === "owner");
+    return {
+      isOwner, allowed: isOwner || isTrainer,
+      label: isOwner ? "owner(디스코드)" : (row?.name || null), staffId: row?.id ?? null,
+    };
+  }
+  const LINK_DENY = "staff 명부에 디스코드 계정이 등록된 트레이너·오너만 사용할 수 있어. 운영진에게 문의해줘.";
   async function staffNameMap() {
     const m = {};
     try { (await sbSelect("staff", "select=id,name")).forEach((r) => { m[r.id] = r.name; }); }
@@ -2164,7 +2201,8 @@ if (process.env.DISCORD_TOKEN) {
     if (!itx.isAutocomplete() || (itx.commandName !== "연결승인" && itx.commandName !== "연결해제")) return;
     try {
       const focused = itx.options.getFocused(true);
-      if (focused.name !== "수강생" || !linkActor(itx).allowed || !hasSupabase()) return await itx.respond([]);
+      if (focused.name !== "수강생" || !hasSupabase()) return await itx.respond([]);
+      if (!(await linkActor(itx)).allowed) return await itx.respond([]);   // 권한 없으면 명단을 보여주지 않는다
       const linked = itx.commandName === "연결해제";
       // PostgREST 예약문자(, . ( ) *)는 검색어에서 뺀다 — 필터 문법이 깨지는 걸 막는다.
       const q = String(focused.value || "").trim().replace(/[,.()*]/g, "").slice(0, 40);
@@ -2180,11 +2218,10 @@ if (process.env.DISCORD_TOKEN) {
 
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand() || itx.commandName !== "연결승인") return;
-    const actor = linkActor(itx);
-    if (!actor.allowed)
-      return itx.reply({ content: "등록된 트레이너·오너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
     if (!hasSupabase())
       return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+    const actor = await linkActor(itx);
+    if (!actor.allowed) return itx.reply({ content: LINK_DENY, ephemeral: true });
     const target = itx.options.getUser("대상");
     if (!target) return itx.reply({ content: "대상 유저를 지정해줘.", ephemeral: true });
     if (target.bot) return itx.reply({ content: "봇 계정은 연결할 수 없어. 수강생 본인 계정을 지정해줘.", ephemeral: true });
@@ -2228,10 +2265,10 @@ if (process.env.DISCORD_TOKEN) {
 
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand() || itx.commandName !== "연결해제") return;
-    const actor = linkActor(itx);
-    if (!actor.isOwner) return itx.reply({ content: "오너만 사용할 수 있어.", ephemeral: true });
     if (!hasSupabase())
       return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+    const actor = await linkActor(itx);
+    if (!actor.isOwner) return itx.reply({ content: "오너만 사용할 수 있어.", ephemeral: true });
 
     await itx.deferReply({ ephemeral: true });
     try {
@@ -2286,10 +2323,9 @@ if (process.env.DISCORD_TOKEN) {
   }
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand() || itx.commandName !== "연결현황") return;
-    if (!linkActor(itx).allowed)
-      return itx.reply({ content: "등록된 트레이너·오너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
     if (!hasSupabase())
       return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+    if (!(await linkActor(itx)).allowed) return itx.reply({ content: LINK_DENY, ephemeral: true });
     await itx.deferReply({ ephemeral: true });
     try {
       const [rows, staffById] = await Promise.all([
