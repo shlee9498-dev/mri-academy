@@ -150,10 +150,28 @@ module.exports = function mountStudentPortal(app, deps) {
   // 게이트 밖 라우트는 portalClientIp 를 갖지 않으므로 외부 호출자가 이 헤더로 버킷을 고를 수 없다.
   const IPISH = /^[0-9a-fA-F.:]{3,45}$/;
   let headerShapeLogged = 0;
+  let denyLogged = 0;
   app.use(PREFIX, (req, res, next) => {
     if (!ready()) return fail(res, 503, "portal_unavailable");
-    const got = req.headers["x-portal-secret"];
-    if (!got || !safeEqual(got, process.env.RAILWAY_PORTAL_SHARED_SECRET)) {
+    // 공유비밀 비교는 **앞뒤 공백을 무시한다**. 대시보드에 붙여넣을 때 개행·공백이 딸려 들어가는 사고가
+    // 실제로 있었고(2026-09-08 앱 연동), 화면에는 403 scope_denied 한 줄로만 보여 값이 다른 건지
+    // 공백이 붙은 건지 구분이 안 됐다. 트림은 "다른 비밀"을 통과시키지 않는다 — 양쪽에서 감싼 공백만 뗀다.
+    const rawGot = req.headers["x-portal-secret"];
+    const got = typeof rawGot === "string" ? rawGot.trim() : "";
+    const want = String(process.env.RAILWAY_PORTAL_SHARED_SECRET || "").trim();
+    if (!got || !safeEqual(got, want)) {
+      // 거부 진단(부팅당 5건). **값·해시는 절대 남기지 않는다** — 유무·길이·공백 여부뿐.
+      //   「없음」        → 앱이 x-portal-secret 을 안 보냄(또는 중간에서 벗겨짐)
+      //   길이 다름      → 값 자체가 다름(환경 스코프 · env 변경 후 미재배포 의심)
+      //   길이 같고 불일치 → 다른 비밀을 같은 길이로 넣은 것
+      if (denyLogged < 5) {
+        denyLogged++;
+        const shown = typeof rawGot === "string" ? rawGot : "";
+        console.warn(`[portal] scope_denied ${denyLogged}/5 — x-portal-secret ${rawGot === undefined ? "없음" : "있음"}`
+          + (rawGot === undefined ? "" : ` · 길이 수신 ${shown.length}(트림 ${got.length}) / 서버 ${want.length}`
+            + ` · 감싼공백 ${shown !== got ? "있음" : "없음"}`)
+          + ` · path ${(req.originalUrl || "").split("?")[0]}`);
+      }
       return fail(res, 403, "scope_denied");
     }
     const cip = String(req.headers["x-client-ip"] || "").trim();
