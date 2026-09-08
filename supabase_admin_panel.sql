@@ -150,9 +150,13 @@ alter table public.students add column if not exists discord_id  text;
 alter table public.students add column if not exists discord_src text;
 -- discord_src 값 체계(2026-09-07 정리):
 --   app_link      봇 /연결승인 이 기록(정식 경로 · admin_audit student.link 동반). /연결해제 는 두 컬럼을 null 로.
+--   self_request  수강생 /연결신청 → 운영진이 승인 카드 버튼을 누른 경로(§24 · 2026-09-08 신설).
+--                 app_link 과 같은 정식 경로이고 audit 도 student.link 로 같다. 다른 건 **누가 시작했는가**뿐이라
+--                 값을 나눠 둔다 — 나중에 "자가신청이 실제로 승인자 부담을 줄였나"를 이 값으로만 셀 수 있다.
 --   manual        오너가 SQL 로 직접 넣은 행(봇 밖 경로 — 코드가 쓰지 않는다). 검증 근거는 별도 기록 필요.
 --   account/nick  §11 백필 설계값(계정 매칭·닉 매칭). 이름·닉 자동 매칭은 금지돼 코드가 쓰지 않는다.
---   실측 2026-09-07: 87행 전부 null — 아직 어느 값도 기록된 적 없음.
+--   실측 2026-09-08: 87행 전부 null. 9/7 시타로 app_link 2행이 들어갔다가 오너가 SQL 로 되돌렸다
+--     (감사 로그 미기록 — student.link audit 2건만 남아 있다. 이후 되돌리기는 /연결해제 경로를 쓴다).
 create unique index if not exists idx_students_discord
   on public.students (discord_id) where discord_id is not null;
 -- student_snapshots는 성장추적 시스템이 이미 생성함. 여기선 컬럼만 확장(idempotent).
@@ -1298,6 +1302,48 @@ begin
   return v_n;
 end;
 $$;
+
+-- 실행 후 필수:
+-- notify pgrst, 'reload schema';
+
+-- ============================================================
+-- §24  수강생 자가신청 연결 큐 (2026-09-08 · 오너 지시 · 안 B 채택)
+--      승인자 3명이 69명을 일일이 /연결승인 으로 치던 걸, 수강생이 /연결신청 으로
+--      먼저 움직이고 승인자는 **버튼 한 번**만 누르게 바꾼다.
+--
+--      ⚠️ 자동 매칭은 여전히 금지다. 이름 유사도는 후보 3명을 카드에 **제시할 뿐**이고,
+--         students.discord_id 를 쓰는 건 사람이 버튼을 누른 순간뿐이다.
+--         (신청자가 남의 이름을 대도 승인자가 걸러 낸다 — 그게 이 게이트의 존재 이유다.)
+--
+--      왜 테이블인가(안 A = customId 인코딩만 쓰는 안을 버린 이유): 신청이 유실되면
+--      수강생은 자기가 신청한 줄 알고 계속 기다린다. 카드가 유일한 대기열이면
+--      채널 삭제·DM 실패로 신청이 조용히 사라지고 재발 시 원인 추적도 불가능하다.
+--      §18 payment_requests·§20 registry_transfer_requests 와 같은 패턴을 쓴다.
+--
+--      ⚠️ PII: claimed_name 은 신청자가 자유 입력한 실명 후보다. 이 테이블은
+--         봇 승인 카드(운영진 전용 채널)와 service_role 에서만 읽는다.
+--         staff-panel·gdcup-admin 어디에도 노출하지 않는다.
+-- ============================================================
+create table if not exists public.student_link_requests (
+  id            bigint generated always as identity primary key,
+  status        text not null default 'pending'
+                check (status in ('pending','approved','rejected','cancelled')),
+  discord_id    text not null,                            -- 신청자 디스코드 유저ID
+  discord_tag   text,                                     -- 신청 시점 username(표시용 · 변경 가능)
+  claimed_name  text not null,                            -- 신청자가 입력한 이름 원문(해석 전)
+  student_id    bigint references public.students(id),    -- 승인 시 채움
+  decided_by    text,                                     -- 승인·거절한 운영진 디코 유저ID
+  decided_at    timestamptz,
+  created_at    timestamptz not null default now()
+);
+-- 대기 중복 차단 — 같은 디스코드 계정의 pending 은 1건만.
+-- 글로벌 명령이라 봇이 있는 모든 서버에서 실행 가능하다. 이 인덱스가 연타·장난 신청의 1차 방어선이고,
+-- 봇은 INSERT 가 23505 로 떨어지는 걸 「이미 대기 중」 문구로 돌려준다(경합에도 안전).
+create unique index if not exists idx_linkreq_pending_one
+  on public.student_link_requests (discord_id) where status = 'pending';
+create index if not exists idx_linkreq_pending
+  on public.student_link_requests (created_at) where status = 'pending';
+alter table public.student_link_requests enable row level security;   -- service_role만 통과
 
 -- 실행 후 필수:
 -- notify pgrst, 'reload schema';
