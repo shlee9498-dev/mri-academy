@@ -1020,11 +1020,11 @@ if (process.env.DISCORD_TOKEN) {
   //                     이유가 그 옵션이고, 그래서 **승인이 버튼**이어야 한다(DM 카드에서도 처리 가능).
   const LINKREQ_CMD = {
     name: "연결신청",
-    description: "[수강생] 앱 로그인 계정 연결 신청 — 운영진 승인 후 연결됩니다",
+    description: "[수강생] 앱 로그인 계정 연결 신청 — 운영진이 확인하면 연결돼요",
     integrationTypes: [0],
     contexts: [0, 1],   // 0=Guild · 1=BotDM → 어느 서버에서도, DM 에서도
     options: [
-      { name: "이름", description: "수강 등록할 때 쓴 이름", type: 3, required: true },
+      { name: "이름", description: "수강 등록할 때 쓴 이름 — 닉네임 말고 실명이에요", type: 3, required: true },
     ],
   };
   // /결제신청 — [트레이너] 수강생 결제(입금) 신고 → payment_requests(pending) → 오너 DM 승인.
@@ -2288,7 +2288,7 @@ if (process.env.DISCORD_TOKEN) {
       if (!updated.length)
         return itx.editReply(`❌ 그사이 **${s.name}**(#${s.id})이 다른 계정에 연결됐어. \`/연결현황\`으로 확인해줘.`);
 
-      const dmOk = await discordDM(target.id, "연결됐어요. 앱에서 다시 로그인하면 판수와 수업 기록이 보여요");
+      const dmOk = await discordDM(target.id, "연결됐어요! 🎉 앱에서 다시 로그인하면 잔여 판수와 수업 기록이 바로 보여요 🔓");
       try {
         await sbInsert("admin_audit", {
           actor_id: itx.user.id, actor_name: actor.label, action: "student.link",
@@ -2498,10 +2498,11 @@ if (process.env.DISCORD_TOKEN) {
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand() || itx.commandName !== "연결신청") return;
     if (!hasSupabase())
-      return itx.reply({ content: "DB 연동 준비 전이에요. 운영진에게 문의해 주세요.", ephemeral: true });
+      return itx.reply({ content: "지금은 연결 신청을 받을 수 없어요. 잠시 후 다시 해볼까요?\n"
+        + "계속 안 되면 담당 트레이너에게 편하게 물어보세요 💬", ephemeral: true });
     const claimed = (itx.options.getString("이름") || "").trim().slice(0, 40);
     if (claimed.length < 2)
-      return itx.reply({ content: "수강 등록할 때 쓴 **이름**을 정확히 입력해 주세요(2자 이상).", ephemeral: true });
+      return itx.reply({ content: "등록할 때 쓴 이름을 적어주세요 — 2자 이상이면 돼요 ✏️", ephemeral: true });
 
     await itx.deferReply({ ephemeral: true });
     try {
@@ -2509,7 +2510,8 @@ if (process.env.DISCORD_TOKEN) {
       const mine = await sbSelect("students",
         `select=id,name&discord_id=eq.${encodeURIComponent(itx.user.id)}&limit=1`);
       if (mine.length)
-        return itx.editReply(`ℹ️ 이 디스코드 계정은 이미 **${mine[0].name}** 님으로 연결돼 있어요. 앱에서 바로 로그인하면 돼요.`);
+        return itx.editReply(`이미 연결돼 있어요! 🎉 **${mine[0].name}** 님으로 되어 있어요.\n`
+          + "앱에서 바로 로그인하면 잔여 판수와 수업 기록이 보여요 🔓");
 
       let req;
       try {
@@ -2521,9 +2523,13 @@ if (process.env.DISCORD_TOKEN) {
       } catch (e) {
         // §24 pending 부분 유니크(idx_linkreq_pending_one) 위반 = 이미 대기 중인 신청이 있다.
         if (e?.status === 409 || /23505|idx_linkreq_pending_one/.test(String(e?.body || "")))
-          return itx.editReply("⏳ 이미 접수된 신청이 대기 중이에요. 운영진이 확인하면 DM으로 알려드릴게요.");
-        console.error("linkreq_insert", e?.message);
-        return itx.editReply("❌ 신청 저장에 실패했어요(§24 DDL 미실행 가능성). 운영진에게 문의해 주세요.");
+          return itx.editReply("이미 신청이 접수돼 있어요! 운영진이 확인하면 DM으로 알려드릴게요 💬\n"
+            + "조금만 기다려 주세요.");
+        // §24 DDL 미실행이면 여기로 떨어진다. 그 진단은 **콘솔에만** 남긴다 —
+        // 수강생 화면에 내부 섹션 번호를 노출하지 않는다.
+        console.error("linkreq_insert (§24 DDL 미실행 가능성)", e?.message);
+        return itx.editReply("신청이 저장되지 않았어요. 잠시 후 다시 해볼까요?\n"
+          + "계속 안 되면 담당 트레이너에게 편하게 물어보세요 💬");
       }
 
       // 후보 산출이 실패해도 신청은 유효하다 — 후보 0건 카드로 넘기고 승인자가 수동 지정한다.
@@ -2531,12 +2537,14 @@ if (process.env.DISCORD_TOKEN) {
         .catch((e) => { console.error("linkreq_candidates", e?.message); return []; });
       const posted = await postLinkReqCard(req, itx.user, cands);
       await itx.editReply(
-        `✅ 연결 신청이 접수됐어요 **#${req.id}** — 입력한 이름: **${claimed}**\n`
-        + "운영진이 확인하고 승인하면 **DM으로 알려드릴게요.** 승인 후 앱에서 다시 로그인하면 판수와 수업 기록이 보여요.\n"
-        + (posted ? "" : "⚠️ 승인 카드 게시에 실패했어요 — 신청은 접수됐으니 담당 트레이너에게 한 번 알려 주세요."));
+        `거의 다 왔어요! 🎉 연결 신청을 받았어요 (#${req.id} · 적어주신 이름 「${claimed}」)\n`
+        + "운영진이 확인하면 DM으로 알려드릴게요 💬\n"
+        + "확인이 끝나면 앱에서 다시 로그인하면 바로 보여요.\n"
+        // 카드 게시 실패는 우리 쪽 사정이다 — 수강생에게 경고로 던지지 않고 창구만 열어 둔다.
+        + (posted ? "" : "\n확인이 조금 늦어질 수 있어요. 급하면 담당 트레이너에게 편하게 물어보세요."));
     } catch (e) {
       console.error("linkreq_failed", e?.status || e?.message);
-      await itx.editReply("❌ 신청 중 오류가 났어요. 잠시 후 다시 시도해 주세요.");
+      await itx.editReply("잠깐 문제가 생겼어요. 잠시 후 다시 해볼까요?");
     }
   });
 
@@ -2548,18 +2556,26 @@ if (process.env.DISCORD_TOKEN) {
     if (!itx.isButton()) return;
     const m = itx.customId.match(/^linkreq_(ok|no):(\d+)(?::(\d+))?$/);
     if (!m) return;
+    // ↓ deferUpdate 이전이라 reply() 가 맞다(아직 아무 응답도 안 보냈다).
     if (!hasSupabase()) return itx.reply({ content: "DB 연동 준비 전이야.", ephemeral: true });
+    // 디스코드 상호작용은 **3초 안에 응답**하지 않으면 "상호작용에 실패했습니다"로 죽는다.
+    // 승인 경로는 update() 전에 staff 조회·신청 조회·학생 조회·중복 조회·PATCH 2회·DM·audit 으로
+    // 왕복이 8~9회다 — 한 번만 느려도 예산을 넘긴다. customId 가 확정된 뒤(다른 버튼 핸들러를
+    // 가로채지 않도록 반드시 매치 이후에) deferUpdate 로 먼저 확인 응답을 보내고,
+    // 이후 회신은 editReply(원 메시지 수정) · followUp(개인 안내)으로 나눈다.
+    try { await itx.deferUpdate(); }
+    catch (e) { console.error("linkreq_defer", e?.message); return; }
     const actor = await linkActor(itx);
-    if (!actor.allowed) return itx.reply({ content: LINK_DENY, ephemeral: true });
+    if (!actor.allowed) return itx.followUp({ content: LINK_DENY, ephemeral: true });
 
     const reqId = Number(m[2]);
     let q;
     try { q = (await sbSelect("student_link_requests", `select=*&id=eq.${reqId}&limit=1`))[0]; }
     catch (e) { console.error("linkreq_fetch", e?.message); }
-    if (!q) return itx.update({ content: `#${reqId} 신청을 못 찾았어(DB 확인 필요).`, components: [] });
+    if (!q) return itx.editReply({ content: `#${reqId} 신청을 못 찾았어(DB 확인 필요).`, components: [] });
     if (q.status !== "pending") {
       const tag = { approved: "승인", rejected: "거절", cancelled: "취소" }[q.status] || q.status;
-      return itx.update({ content: `#${reqId}은 이미 처리됐어(${tag}).`, components: [] });
+      return itx.editReply({ content: `#${reqId}은 이미 처리됐어(${tag}).`, components: [] });
     }
 
     // ── 거절 ──
@@ -2569,17 +2585,18 @@ if (process.env.DISCORD_TOKEN) {
           { status: "rejected", decided_by: itx.user.id, decided_at: new Date().toISOString() });
       } catch (e) {
         console.error("linkreq_reject", e?.message);
-        return itx.reply({ content: `#${reqId} 상태 갱신에 실패했어 — 버튼을 다시 눌러줘.`, ephemeral: true });
+        return itx.followUp({ content: `#${reqId} 상태 갱신에 실패했어 — 버튼을 다시 눌러줘.`, ephemeral: true });
       }
       const dmOk = await discordDM(q.discord_id,
-        "계정 연결 신청이 반려됐어요. 수강 등록할 때 쓴 이름이 맞는지 확인하고 담당 트레이너에게 문의해 주세요.");
+        "그 이름으로는 수강생 기록을 못 찾았어요. 등록할 때 쓴 이름으로 `/연결신청`을 다시 해주시겠어요?\n"
+        + "막히면 담당 트레이너에게 편하게 물어보세요 💬");
       try {
         await sbInsert("admin_audit", {
           actor_id: itx.user.id, actor_name: actor.label, action: "student.link_reject",
           target: `linkreq:${reqId}`, detail: { claimed_name: q.claimed_name, dm: dmOk },
         });
       } catch (e) { console.error("linkreq_reject_audit", e?.message); }
-      return itx.update({
+      return itx.editReply({
         content: `❌ **#${reqId} 거절** — 입력한 이름 「${q.claimed_name}」 · 처리 ${actor.label || "운영진"}`
           + (dmOk ? "" : "\n⚠️ 신청자에게 DM 을 못 보냈어(DM 차단?)."),
         components: [],
@@ -2589,7 +2606,7 @@ if (process.env.DISCORD_TOKEN) {
     // ── 승인 ──
     const sid = Number(m[3]);
     if (!sid)
-      return itx.reply({ content: "이 버튼에는 수강생이 실려 있지 않아. `/연결승인` 으로 직접 지정해줘.", ephemeral: true });
+      return itx.followUp({ content: "이 버튼에는 수강생이 실려 있지 않아. `/연결승인` 으로 직접 지정해줘.", ephemeral: true });
     try {
       // ⚠️ 「이 후보를 못 쓴다」는 신청 자체의 실패가 아니다. 카드를 지우면(components: [])
       //    신청은 pending 으로 남는데 §24 pending 유니크 때문에 그 수강생은 재신청도 못 하고
@@ -2597,9 +2614,9 @@ if (process.env.DISCORD_TOKEN) {
       //    그래서 이 분기들은 **카드를 그대로 두고** ephemeral 로만 알린다(다른 후보 클릭 가능).
       const s = (await sbSelect("students", `select=id,name,status,discord_id&id=eq.${sid}&limit=1`))[0];
       if (!s)
-        return itx.reply({ content: `#${reqId} — 수강생 #${sid}을 명부에서 못 찾았어. 다른 후보나 \`/연결승인\` 으로.`, ephemeral: true });
+        return itx.followUp({ content: `#${reqId} — 수강생 #${sid}을 명부에서 못 찾았어. 다른 후보나 \`/연결승인\` 으로.`, ephemeral: true });
       if (s.discord_id)
-        return itx.reply({
+        return itx.followUp({
           content: `⚠️ **${s.name}**(#${s.id})은 이미 연결돼 있어. 다른 후보를 누르거나, 재연결이면 오너가 \`/연결해제\` 먼저.`,
           ephemeral: true,
         });
@@ -2613,7 +2630,7 @@ if (process.env.DISCORD_TOKEN) {
           await sbPatch("student_link_requests", `id=eq.${reqId}&status=eq.pending`,
             { status: "cancelled", decided_by: itx.user.id, decided_at: new Date().toISOString() });
         } catch (e) { console.error("linkreq_cancel_patch", e?.message); }
-        return itx.update({
+        return itx.editReply({
           content: `⚠️ **#${reqId} 종료** — 신청자 계정은 이미 **${dup[0].name}**(#${dup[0].id})에 연결돼 있어.`
             + " 한 계정은 한 명에게만 연결돼. 오연결이면 오너가 `/연결해제` 후 다시 신청받아줘.",
           components: [],
@@ -2626,14 +2643,14 @@ if (process.env.DISCORD_TOKEN) {
           { discord_id: String(q.discord_id), discord_src: "self_request" });
       } catch (e) {
         if (e?.status === 409 || /23505|idx_students_discord/.test(String(e?.body || "")))
-          return itx.update({
+          return itx.editReply({
             content: `⚠️ #${reqId} — 신청자 계정이 이미 다른 학생에 연결돼 있어(DB 유니크).`,
             components: [],
           });
         throw e;
       }
       if (!updated.length)   // 경합 — 위와 같은 이유로 카드를 남긴다(다른 후보로 재시도 가능)
-        return itx.reply({
+        return itx.followUp({
           content: `⚠️ 그사이 **${s.name}**(#${s.id})이 다른 계정에 연결됐어. 다른 후보를 누르거나 \`/연결현황\` 으로 확인해줘.`,
           ephemeral: true,
         });
@@ -2645,7 +2662,7 @@ if (process.env.DISCORD_TOKEN) {
           { status: "approved", student_id: sid, decided_by: itx.user.id, decided_at: new Date().toISOString() });
       } catch (e) { console.error("linkreq_approve_patch", e?.message); }
       const dmOk = await discordDM(q.discord_id,
-        "연결됐어요. 앱에서 다시 로그인하면 판수와 수업 기록이 보여요");
+        "연결됐어요! 🎉 앱에서 다시 로그인하면 잔여 판수와 수업 기록이 바로 보여요 🔓");
       try {
         await sbInsert("admin_audit", {
           actor_id: itx.user.id, actor_name: actor.label, action: "student.link",
@@ -2654,7 +2671,7 @@ if (process.env.DISCORD_TOKEN) {
                     via: `linkreq:${reqId}`, claimed_name: q.claimed_name, dm: dmOk },
         });
       } catch (e) { console.error("linkreq_approve_audit", e?.message); }
-      await itx.update({
+      await itx.editReply({
         content: `✅ **#${reqId} 승인** — **${s.name}**(#${s.id}) ↔ <@${q.discord_id}> · 처리 ${actor.label || "운영진"}\n`
           + (dmOk ? "📨 신청자에게 안내 DM을 보냈어(앱 재로그인 안내)."
                   : "⚠️ 안내 DM 을 못 보냈어(DM 차단?). 앱에서 다시 로그인하라고 직접 알려줘."),
@@ -2662,7 +2679,7 @@ if (process.env.DISCORD_TOKEN) {
       });
     } catch (e) {
       console.error("linkreq_approve_failed", e?.status || e?.message);
-      try { await itx.reply({ content: `#${reqId} 처리 중 오류가 났어 — 버튼을 다시 눌러줘.`, ephemeral: true }); }
+      try { await itx.followUp({ content: `#${reqId} 처리 중 오류가 났어 — 버튼을 다시 눌러줘.`, ephemeral: true }); }
       catch (_) {}
     }
   });
