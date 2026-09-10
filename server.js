@@ -1440,8 +1440,13 @@ if (process.env.DISCORD_TOKEN) {
     }
     try {
       // 시트 호출은 실패해도 흐름을 끊지 않는다 — sheetErr로 강등하고 DB 기록으로 넘어간다.
+      // ⚠️ 「연동 꺼짐」과 「연동 장애」를 구분한다(2026-09-10 관제탑 보고).
+      //    webhook 미설정은 **설정 상태**지 장애가 아니다 — DB 단독 기록이 정상 경로다.
+      //    이걸 ⚠️「시트 미기록」으로 표기하니 트레이너가 등록 실패로 읽고 재시도할 뻔했다
+      //    (재시도 = 중복 적립). 반대로 webhook이 설정됐는데 호출이 깨진 건 진짜 장애라 경고 유지.
       let sheetErr = null, data = {};
-      if (!webhook) sheetErr = "시트 연동 미설정";
+      const sheetOff = !webhook;
+      if (sheetOff) sheetErr = "시트 연동 꺼짐";
       else {
         const r = await fetch(webhook, {
           method: "POST",
@@ -1465,7 +1470,7 @@ if (process.env.DISCORD_TOKEN) {
       const updated = Array.isArray(data.updated) ? data.updated : [];
       const notFound = Array.isArray(data.notFound) ? data.notFound : [];
       const noneRecorded = !sheetErr && updated.length === 0;   // 시트 응답이 ok여도 실기록 0건이면 성공으로 표기 금지
-      const lines = [sheetErr
+      const lines = [sheetErr && !sheetOff
         ? `⚠️ 수업 등록 — ${trainer} · ${lessonKind} · **시트 미기록**(${sheetErr})`
         : noneRecorded
         ? `⚠️ 수업 등록 — ${trainer} · ${lessonKind} · **시트 기록 0건**(아래 확인)`
@@ -1474,8 +1479,13 @@ if (process.env.DISCORD_TOKEN) {
       if (kindDefaulted)
         lines.push(`↳ '유형' 미선택이라 **개인 1:1**로 처리했어. 그룹이었으면 \`/판수정정\`으로 고쳐줘.`);
       // ⛔ 재시도 유도 금지 — 시트가 안 받아도 판수는 DB에 들어갔다. 재등록은 곧 중복 적립이다.
+      // 재시도 금지는 두 경로 모두 유지한다(중복 적립 방지). 다른 건 「실패했다」는 인상뿐이다.
+      // 시트가 실제로 동기화된다고는 쓰지 않는다 — 미러가 있는지 확인된 바 없다(사실 확인 전 금지).
       if (sheetErr)
-        lines.push(`↳ 판수는 **DB에 정상 기록**됐어. ⛔ **재시도하지 마세요** — 다시 등록하면 중복 적립돼. 시트 반영은 운영진이 처리해.`);
+        lines.push(sheetOff
+          ? `↳ 판수는 **DB에 기록**됐고 정산에 반영돼. 시트 반영은 운영진이 처리해.\n`
+            + `   ⛔ 이미 등록됐으니 **다시 등록하지 마** — 중복 적립돼.`
+          : `↳ 판수는 **DB에 정상 기록**됐어. ⛔ **재시도하지 마세요** — 다시 등록하면 중복 적립돼. 시트 반영은 운영진이 처리해.`);
       if (updated.length)
         lines.push(...updated.map((u) => `· ${u.name} +${u.added}판 → 누적 ${u.total}판`));
       if (notFound.length) {
@@ -1676,7 +1686,7 @@ if (process.env.DISCORD_TOKEN) {
         + `· 정정: **${delta > 0 ? "+" : ""}${delta}판** (대상 수업 ${target.played_at})\n`
         + `· 진행판수: ${before} → **${after}**\n· 사유: ${reason}\n`
         + (webhook ? (sheetOk ? "· 시트 반영 완료" : "· ⚠️ 시트 반영 실패 — 운영진에게 알려줘(DB는 기록됨)")
-                   : "· 시트 연동 미설정 — DB에만 기록됨")
+                   : "· DB에 기록됨 — 시트 반영은 운영진이 처리해")
       );
     } catch (e) {
       console.error("correction_failed", e?.status || e?.message);
@@ -2038,7 +2048,7 @@ if (process.env.DISCORD_TOKEN) {
     //    미배포면 여기서 실패한다. 그 경우 DB만 남으므로 "사용 가능" 안내를 하지 않는다.
     let sheetOk = false, sheetErr = null;
     const webhook = process.env.SHEET_WEBHOOK_URL;
-    if (!webhook) sheetErr = "SHEET_WEBHOOK_URL 미설정";
+    if (!webhook) sheetErr = "시트 연동 꺼짐";
     else {
       try {
         const r = await fetch(webhook, {
@@ -2062,6 +2072,12 @@ if (process.env.DISCORD_TOKEN) {
 
     if (sheetOk) {
       lines.push(`✅ 시트 명부 등록 — 레슨로그(${p.trainer}) 행 생성 (진행판수 0)`);
+      lines.push("", `🎉 **등록 완료. 이제 \`/수업등록\` 사용 가능합니다.**`);
+      lines.push(`↳ 결제 등록은 오너가 입금 확인 후 별도로 처리해.`);
+    } else if (!webhook) {
+      // 연동 꺼짐 = 설정 상태. 이 경우 /수업등록은 시트 행 없이도 DB에 정상 기록되므로
+      // 트레이너를 막지 않는다. (막는 안내는 연동이 켜져 있는데 실패한 경우에만 맞다.)
+      lines.push(`· 시트 명부는 만들지 않았어 — 시트 연동이 꺼져 있어.`);
       lines.push("", `🎉 **등록 완료. 이제 \`/수업등록\` 사용 가능합니다.**`);
       lines.push(`↳ 결제 등록은 오너가 입금 확인 후 별도로 처리해.`);
     } else {
