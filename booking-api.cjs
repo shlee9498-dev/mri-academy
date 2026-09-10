@@ -26,6 +26,8 @@ const MAX_SLOTS_PER_OPEN = 48;       // 슬롯 열기 1회당 최대 칸 수(= 2
 // **창 밖으로 떨어져 「확인 필요」가 영영 안 보였다** — #298 의 결함이다. 등록 누락 감지도
 // 지난 수업을 봐야 성립하므로 2주로 넓힌다.
 const TRAINER_LOOKBACK_DAYS = 14;
+// /availability 의 isMyTrainer 판정 창(오너 규격 2026-09-10): 최근 90일 lesson_sessions 기록.
+const MY_TRAINER_WINDOW_DAYS = 90;
 // KST 날짜. server.js 의 kstToday() 와 **같은 식**이어야 봇이 넣은 played_at 과 경계가 맞는다.
 const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
 
@@ -114,7 +116,10 @@ module.exports = function mountBookingApi(app, deps) {
 
   // ══════════════ 수강생 ══════════════
 
-  // GET /availability?days=14 — 담당·수업 이력이 있는 트레이너의 open 슬롯
+  // GET /availability?days=14 — **활성 트레이너 전원**의 open 슬롯
+  //   (오너 지시 2026-09-10 ②: 담당 밖 트레이너도 예약 허용 — 차단이 아니라 안내. 병행수강 8명과
+  //   담당 정정 이력이 있어 students.trainer_id 단일값으로 막으면 실제 운영을 못 담는다.
+  //   대신 슬롯마다 isMyTrainer 를 실어 앱이 「담당/최근 수업 트레이너」를 구분해 보여준다.)
   //   + **내가 예약해서 닫힌 슬롯**(status=closed, bookedByMe). 앱 실측 보고(오너 2026-09-05):
   //   개인 예약이 칸을 closed 로 바꾸는데 open 만 내려주니 새로고침하면 내 예약이 화면에서
   //   사라졌다. 그룹 예약을 여러 건 잡은 수강생은 취소 수단도 없었다(bookedByMe 만 있고
@@ -126,28 +131,29 @@ module.exports = function mountBookingApi(app, deps) {
     const sid = req.portal.sub;
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), MAX_DAYS);
     const until = new Date(Date.now() + days * 86400_000).toISOString();
-
-    // 볼 수 있는 트레이너 = 담당 + 실제로 수업한 적 있는 트레이너. 전체 공개가 아니다.
-    const [stu, sess] = await Promise.all([
-      sbSelect("students", `select=trainer_id&id=eq.${sid}`),
-      sbSelect("lesson_sessions", `select=trainer_id&student_id=eq.${sid}`),
-    ]);
-    const tids = [...new Set([stu[0]?.trainer_id, ...sess.map((r) => r.trainer_id)].filter(Boolean))];
-    if (!tids.length) return send(res, { slots: [] });
-
     const nowIso = new Date().toISOString();
-    const [slots, names] = await Promise.all([
+    // isMyTrainer 판정(오너 규격) = students.trainer_id 일치 OR 최근 90일 lesson_sessions 에 기록.
+    // played_at 은 date(KST) 라 경계도 kstDate 로 맞춘다(봇 kstToday 와 같은 식).
+    const since = kstDate(new Date(Date.now() - MY_TRAINER_WINDOW_DAYS * 86400_000).toISOString());
+
+    const [stu, sess, slots] = await Promise.all([
+      sbSelect("students", `select=trainer_id&id=eq.${sid}`),
+      sbSelect("lesson_sessions", `select=trainer_id&student_id=eq.${sid}&played_at=gte.${since}`),
       sbSelect("trainer_slots",
-        // closed 도 받아서 아래에서 "내 예약" 만 남긴다. cancelled 는 처음부터 제외.
+        // 트레이너 필터 없음 — 전원. closed 도 받아서 아래에서 "내 예약" 만 남긴다. cancelled 는 제외.
         `select=id,trainer_id,slot_start,lesson_type,capacity,status&status=in.(open,closed)`
-        + `&trainer_id=in.(${tids.join(",")})&slot_start=gte.${nowIso}&slot_start=lt.${until}`
-        + `&order=slot_start.asc`),
-      sbSelect("staff", `select=id,name&id=in.(${tids.join(",")})`),
+        + `&slot_start=gte.${nowIso}&slot_start=lt.${until}&order=slot_start.asc`),
     ]);
+    const myTrainers = new Set([stu[0]?.trainer_id, ...sess.map((r) => r.trainer_id)].filter(Boolean));
     if (!slots.length) return send(res, { slots: [] });
 
-    const nameOf = Object.fromEntries(names.map((r) => [r.id, r.name]));
-    const ids = slots.map((s) => s.id);
+    // 슬롯 주인 중 비활성 staff 는 뺀다 — 퇴사한 트레이너의 미정리 슬롯이 수강생에게 보이면 안 된다.
+    const tids = [...new Set(slots.map((s) => s.trainer_id))];
+    const staff = await sbSelect("staff", `select=id,name,active&id=in.(${tids.join(",")})`);
+    const nameOf = Object.fromEntries(staff.filter((r) => r.active !== false).map((r) => [r.id, r.name]));
+    const live = slots.filter((s) => nameOf[s.trainer_id]);
+    if (!live.length) return send(res, { slots: [] });
+    const ids = live.map((s) => s.id);
     // 예약수는 슬롯별 집계가 필요한데 PostgREST 로는 group by 를 못 쓴다 — 한 번에 받아 센다.
     const books = await sbSelect("slot_bookings",
       `select=id,slot_id,student_id,span_head_id&status=eq.booked&slot_id=in.(${ids.join(",")})`);
@@ -157,7 +163,7 @@ module.exports = function mountBookingApi(app, deps) {
       if (b.student_id === sid) mine.set(b.slot_id, b.span_head_id ?? b.id);
     }
     // open 이거나 내가 예약한 칸만. 남의 개인 예약으로 닫힌 칸은 빠진다.
-    const visible = slots.filter((s) => s.status === "open" || mine.has(s.id));
+    const visible = live.filter((s) => s.status === "open" || mine.has(s.id));
 
     send(res, {
       slots: visible.map((s) => ({
@@ -166,6 +172,8 @@ module.exports = function mountBookingApi(app, deps) {
         slotMinutes: SLOT_MIN,
         lessonType: s.lesson_type,
         trainerDisplayName: nameOf[s.trainer_id] || "미배정",
+        // 담당이거나 최근 90일에 수업한 트레이너면 true. 예약 자체는 false 여도 허용된다(안내용).
+        isMyTrainer: myTrainers.has(s.trainer_id),
         capacity: s.capacity,
         status: s.status,                     // "open" | "closed" — closed 는 내 개인 예약 칸뿐
         bookedCount: cnt[s.id] || 0,
@@ -215,7 +223,7 @@ module.exports = function mountBookingApi(app, deps) {
     bodyOnly(["startAt", "endAt", "lessonType", "capacity"]), requireTrainer, wrap(async (req, res) => {
       const { startAt, endAt, lessonType } = req.body || {};
       const capacity = req.body?.capacity ?? 1;
-      if (!["personal", "spectate", "participate"].includes(lessonType))
+      if (!["personal", "spectate", "participate", "consult"].includes(lessonType))
         return fail(res, 400, "invalid_body");
       if (!Number.isInteger(capacity) || capacity < 1 || capacity > 8)
         return fail(res, 400, "invalid_body");
@@ -225,8 +233,9 @@ module.exports = function mountBookingApi(app, deps) {
         return fail(res, 400, "invalid_body");      // 30분 격자에 맞아야 연속칸 계산이 성립한다
       const n = (t1 - t0) / (SLOT_MIN * 60_000);
       if (n > MAX_SLOTS_PER_OPEN) return fail(res, 400, "invalid_body");
-      // 개인은 정원이 구조적으로 1이다 — 클라이언트가 뭘 보내든 무시한다.
-      const cap = lessonType === "personal" ? 1 : capacity;
+      // 개인·상담은 정원이 구조적으로 1이다 — 클라이언트가 뭘 보내든 무시한다.
+      // (상담은 §25 · 오너 지시 2026-09-10. 30분 = 슬롯 1칸이라 길이 옵션도 없다.)
+      const cap = (lessonType === "personal" || lessonType === "consult") ? 1 : capacity;
 
       const rows = [];
       for (let i = 0; i < n; i++)
@@ -346,25 +355,40 @@ module.exports = function mountBookingApi(app, deps) {
   // 전부 베스트에포트다. DM 실패가 예약을 되돌리지 않는다 — 예약은 이미 커밋됐고,
   // 되돌리면 "성공했는데 사라진 예약"이라는 더 나쁜 상태가 된다.
   const fmt = (iso) => new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
-  const TYPE_LABEL = { personal: "개인 1:1", spectate: "그룹 관전형", participate: "그룹 참여형" };
+  const TYPE_LABEL = { personal: "개인 1:1", spectate: "그룹 관전형", participate: "그룹 참여형", consult: "상담" };
 
+  // 관계자 = 진행 트레이너(슬롯 주인 · tr) + 담당 트레이너(students.trainer_id · owner).
+  // owner 는 **진행과 다를 때만** 채운다 — 같은 사람에게 두 통 보내지 않는다.
+  // 담당 밖 트레이너에게 예약이 잡히면 담당도 알아야 한다(오너 지시 2026-09-10 ②).
   async function slotAndPeople(slotId, studentId) {
     const [slot] = await sbSelect("trainer_slots",
       `select=slot_start,lesson_type,trainer_id&id=eq.${slotId}`);
     if (!slot) return null;
     const [stu] = studentId
-      ? await sbSelect("students", `select=name,discord_id&id=eq.${studentId}`) : [null];
-    const [tr] = await sbSelect("staff", `select=name,discord_id&id=eq.${slot.trainer_id}`);
-    return { slot, stu, tr };
+      ? await sbSelect("students", `select=name,discord_id,trainer_id&id=eq.${studentId}`) : [null];
+    const ids = [...new Set([slot.trainer_id, stu?.trainer_id].filter(Boolean))];
+    const staff = await sbSelect("staff", `select=id,name,discord_id&id=in.(${ids.join(",")})`);
+    const byId = Object.fromEntries(staff.map((r) => [r.id, r]));
+    const tr = byId[slot.trainer_id] || null;
+    const owner = stu?.trainer_id && stu.trainer_id !== slot.trainer_id ? (byId[stu.trainer_id] || null) : null;
+    return { slot, stu, tr, owner };
   }
 
   async function notifyBooking(slotId, studentId, _kind, gamesHeld) {
     const p = await slotAndPeople(slotId, studentId);
     if (!p) return;
     const when = fmt(p.slot.slot_start), type = TYPE_LABEL[p.slot.lesson_type] || p.slot.lesson_type;
-    const held = gamesHeld > 0 ? ` · **${gamesHeld}판 선차감**` : " · 판수는 수업 후 차감";
-    await discordDM(p.stu?.discord_id, `✅ 예약 완료 — ${when} · ${type}${held}\n담당 ${p.tr?.name || "미배정"}`);
+    // 수강생 DM — ui-copy. 차감·상담료 문장은 §2(돈 문구 절제)라 담백하게, 첫 줄만 기쁨.
+    // 「담당」→「진행」: 담당 밖 트레이너 예약이 생기면서 슬롯 주인이 담당이 아닐 수 있다.
+    const held = p.slot.lesson_type === "consult" ? "판수 차감은 없어요. 상담료는 별도예요."
+      : gamesHeld > 0 ? `${gamesHeld}판이 먼저 차감되고, 수업 기록이 등록되면 맞춰져요.`
+      : "판수는 수업 후에 차감돼요.";
+    await discordDM(p.stu?.discord_id, `예약 완료! 🎉 ${when} · ${type} · 진행 ${p.tr?.name || "미배정"}\n${held}`);
     await discordDM(p.tr?.discord_id, `📅 예약 접수 — ${when} · ${type} · ${p.stu?.name || "?"}`);
+    // 담당 밖 트레이너에게 잡힌 예약 — 담당에게도 한 통. 누가 진행하는지까지 적는다.
+    if (p.owner)
+      await discordDM(p.owner.discord_id,
+        `📅 담당 수강생 예약 — ${when} · ${type} · ${p.stu?.name || "?"} → 진행 ${p.tr?.name || "?"}`);
   }
 
   async function notifyCancelByStudent(bookingId, studentId, restored) {
@@ -376,6 +400,11 @@ module.exports = function mountBookingApi(app, deps) {
     const back = restored > 0 ? ` · ${restored}판 복원` : "";
     await discordDM(p.stu?.discord_id, `🚫 예약 취소 — ${when}${back}`);
     await discordDM(p.tr?.discord_id, `🚫 예약 취소 — ${when} · ${p.stu?.name || "?"}`);
+    // 접수 DM 을 받은 담당은 취소도 받아야 한다 — 아니면 담당 쪽엔 있지도 않은 예약이 남는다.
+    // (오너 규격은 「예약 성공 시」만 명시했다. 접수·취소가 짝이라 같이 보낸다 — PR 에 별도 표기.)
+    if (p.owner)
+      await discordDM(p.owner.discord_id,
+        `🚫 담당 수강생 예약 취소 — ${when} · ${p.stu?.name || "?"} (진행 ${p.tr?.name || "?"})`);
   }
 
   async function notifyTrainerCancel(slotId, studentIds, trainerName) {

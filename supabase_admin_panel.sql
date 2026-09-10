@@ -1064,6 +1064,9 @@ $$;
 -- ── 23b) 예약 (개인·그룹 공용) ───────────────────────────────────────────────
 -- 반환은 항상 jsonb 1건. 실패는 예외가 아니라 {"error":"코드"} 로 돌려준다 —
 -- 예외로 던지면 PostgREST 가 500 으로 감싸버려 서버가 409 코드를 구분할 수 없다.
+-- ⚠️ 이 함수의 **정본은 §25 로 이동**했다(상담 consult 분기 · 2026-09-10). 아래 본문은 §23 만
+--    단독 실행한 DB 의 재현용이고, 파일 전체를 다시 돌리면 §25 가 이 정의를 덮어쓴다.
+--    수정은 §25 에서만 한다 — 두 곳을 따로 고치면 갈라진다.
 create or replace function public.book_slot(
   p_student_id  bigint,
   p_slot_id     bigint,
@@ -1344,6 +1347,103 @@ create unique index if not exists idx_linkreq_pending_one
 create index if not exists idx_linkreq_pending
   on public.student_link_requests (created_at) where status = 'pending';
 alter table public.student_link_requests enable row level security;   -- service_role만 통과
+
+-- 실행 후 필수:
+-- notify pgrst, 'reload schema';
+
+-- ============================================================
+-- §25  예약 확장 — 상담(consult) 슬롯 유형 (2026-09-10 · 오너 지시)
+--      「처음이면 10분 상담 먼저」 권고가 성립하려면 상담을 앱에서 잡을 수 있어야 한다.
+--      규격(오너): lesson_type 'consult' · 정원 1 · 30분(=슬롯 1칸) · games_held 0 ·
+--      **잔여 판수 0·음수여도 예약 가능**(insufficient_games 검사 제외) · 결제(상담료)는 앱 밖 ·
+--      완료 처리는 다른 유형과 동일(resolve_booking · sweep_pending_review 무변경).
+--
+--      ⚠️ 제약(check) 변경은 기동 점검의 컬럼 존재 프로브로 못 잡는다 — PR 체크리스트로만 관리.
+--      ⚠️ 담당 밖 트레이너 예약 허용(오너 지시 ②)은 DDL 변경이 없다 — book_slot 은 원래
+--         트레이너를 검사하지 않았고, 「볼 수 있는 트레이너」 제한은 서버(booking-api.cjs)에만
+--         있었다. 그쪽에서 푼다.
+-- ============================================================
+-- 25a) lesson_type 허용값 확장. 제약명은 §23 create table 의 인라인 check 가 받은 자동 생성명
+--      (실DB 실측 2026-09-10: trainer_slots_lesson_type_check). 멱등 — drop if exists 후 재생성.
+alter table public.trainer_slots drop constraint if exists trainer_slots_lesson_type_check;
+alter table public.trainer_slots add  constraint trainer_slots_lesson_type_check
+  check (lesson_type in ('personal','spectate','participate','consult'));
+
+-- 25b) book_slot() 정본 — §23b 와 동일하되 그룹 경로의 잔여 판수 게이트에 consult 예외 1줄.
+--      상담은 그룹과 같은 경로(선차감 0 · 정원 count)를 탄다. 개인 경로(연속칸·선차감)는 무관.
+--      정원 1 은 서버가 슬롯 생성 시 강제한다(personal 과 같은 방식) — DB 는 capacity 만 본다.
+create or replace function public.book_slot(
+  p_student_id  bigint,
+  p_slot_id     bigint,
+  p_duration_min int default null
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_slot      trainer_slots%rowtype;
+  v_games     int;
+  v_need      int;
+  v_remaining int;
+  v_booked    int;
+  v_head      bigint;
+  v_ids       bigint[];
+begin
+  select * into v_slot from trainer_slots where id = p_slot_id for update;
+  if not found                     then return jsonb_build_object('error','slot_not_found'); end if;
+  if v_slot.status <> 'open'       then return jsonb_build_object('error','slot_taken');     end if;
+  if v_slot.slot_start <= now()    then return jsonb_build_object('error','slot_taken');     end if;
+
+  v_remaining := portal_remaining_games(p_student_id);
+
+  if v_slot.lesson_type = 'personal' then
+    if p_duration_min is null then return jsonb_build_object('error','invalid_body'); end if;
+    v_games := case p_duration_min when 60 then 5 when 90 then 8 when 120 then 10 else null end;
+    if v_games is null then return jsonb_build_object('error','invalid_body'); end if;
+    if v_remaining < v_games then return jsonb_build_object('error','insufficient_games'); end if;
+    v_need := p_duration_min / 30;
+
+    select array_agg(id order by slot_start) into v_ids from (
+      select id, slot_start from trainer_slots
+       where trainer_id  = v_slot.trainer_id
+         and lesson_type = 'personal'
+         and status      = 'open'
+         and slot_start >= v_slot.slot_start
+         and slot_start <  v_slot.slot_start + make_interval(mins => p_duration_min)
+       order by slot_start
+       for update
+    ) s;
+    if v_ids is null or array_length(v_ids, 1) <> v_need then
+      return jsonb_build_object('error','slot_taken');
+    end if;
+
+    insert into slot_bookings (slot_id, student_id, games_held, duration_min, status)
+      values (v_slot.id, p_student_id, v_games, p_duration_min, 'booked')
+      returning id into v_head;
+    insert into slot_bookings (slot_id, student_id, games_held, status, span_head_id)
+      select x, p_student_id, 0, 'booked', v_head from unnest(v_ids) x where x <> v_slot.id;
+    update trainer_slots set status = 'closed' where id = any(v_ids);
+
+    return jsonb_build_object('bookingId', v_head, 'gamesHeld', v_games, 'slotsHeld', v_need);
+  end if;
+
+  -- 그룹(관전형·참여형) · 상담(consult): 선차감 없음.
+  if p_duration_min is not null then return jsonb_build_object('error','invalid_body'); end if;
+  -- 잔여 판수 게이트. **상담은 제외** — 판수를 쓰는 예약이 아니고 결제(상담료)는 앱 밖이라,
+  -- 잔여 0·음수인 신규·재등록 대기 수강생도 상담은 잡을 수 있어야 한다(오너 지시 2026-09-10).
+  if v_slot.lesson_type <> 'consult' and v_remaining < 1 then
+    return jsonb_build_object('error','insufficient_games');
+  end if;
+  select count(*) into v_booked from slot_bookings where slot_id = v_slot.id and status = 'booked';
+  if v_booked >= v_slot.capacity then return jsonb_build_object('error','slot_full'); end if;
+
+  insert into slot_bookings (slot_id, student_id, games_held, status)
+    values (v_slot.id, p_student_id, 0, 'booked')
+    returning id into v_head;
+  return jsonb_build_object('bookingId', v_head, 'gamesHeld', 0, 'slotsHeld', 1);
+
+exception
+  when unique_violation then return jsonb_build_object('error','slot_taken');
+end;
+$$;
 
 -- 실행 후 필수:
 -- notify pgrst, 'reload schema';
