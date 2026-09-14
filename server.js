@@ -4817,9 +4817,43 @@ app.get("/api/gdcup-payouts", async (req, res) => {
   if (!process.env.SUPABASE_URL) return res.json({ payouts: [] });
   try {
     const season = gdSeason(req.query.season);
-    const rows = await sbSelect("gdcup_payouts", `select=app_id,member_idx,real_name,bank,account_no,holder&season=eq.${season}&order=app_id.asc,member_idx.asc`);
+    // paid_* 3컬럼은 SCHEMA_OPTIONAL — DDL 미실행 배포에서는 명시 select가 400으로
+    // 터지므로 구 컬럼셋으로 폴백한다(휴면 기능 패턴). 실행 후엔 지급 상태가 함께 내려간다.
+    let rows;
+    try {
+      rows = await sbSelect("gdcup_payouts", `select=app_id,member_idx,real_name,bank,account_no,holder,paid_at,paid_amount,paid_memo&season=eq.${season}&order=app_id.asc,member_idx.asc`);
+    } catch (_) {
+      rows = await sbSelect("gdcup_payouts", `select=app_id,member_idx,real_name,bank,account_no,holder&season=eq.${season}&order=app_id.asc,member_idx.asc`);
+    }
     res.json({ payouts: rows });
   } catch (e) { console.error("gdcup_payouts", e?.status || "fail"); res.status(500).json({ error: "server_error" }); }
+});
+
+// 지급 완료 기록 — owner 전용. 시즌4부터: 입금 후 paid_at·paid_amount·paid_memo를 남긴다
+// (시즌5 재발 방지 — 지급 이력이 없어 완료 여부를 채팅 기억에 의존하던 문제).
+// paid=false 면 기록 해제(오입력 정정). 계좌·실명 값은 여기서 절대 건드리지 않는다.
+app.post("/api/gdcup-payout-paid", async (req, res) => {
+  if (!gdcupIsOwner(req)) return res.status(403).json({ error: "owner_only" });
+  if (!process.env.SUPABASE_URL) return res.status(503).json({ error: "no_db" });
+  try {
+    const b = req.body || {};
+    const appId = Number(b.app_id), idx = Number(b.member_idx);
+    if (!Number.isFinite(appId) || !Number.isFinite(idx)) return res.status(400).json({ error: "bad_target" });
+    const paid = b.paid !== false;
+    const patch = paid
+      ? { paid_at: new Date().toISOString(),
+          paid_amount: Number.isFinite(Number(b.amount)) ? Math.round(Number(b.amount)) : null,
+          paid_memo: String(b.memo || "").slice(0, 120) || null }
+      : { paid_at: null, paid_amount: null, paid_memo: null };
+    const rows = await sbPatch("gdcup_payouts", `app_id=eq.${appId}&member_idx=eq.${idx}`, patch);
+    if (!rows || !rows.length) return res.status(404).json({ error: "payout_not_found" });
+    res.json({ ok: true, paid, row: { app_id: appId, member_idx: idx, paid_at: patch.paid_at, paid_amount: patch.paid_amount } });
+  } catch (e) {
+    // PGRST204 = paid_* 컬럼 부재(DDL 미실행) — 무엇을 해야 하는지 그대로 알린다.
+    console.error("gdcup_payout_paid", e?.status || e?.message || "fail");
+    res.status(409).json({ error: "ddl_not_applied",
+      message: "gdcup_payouts에 paid_at·paid_amount·paid_memo 컬럼이 없어요 — supabase_admin_panel.sql의 해당 DDL을 실행한 뒤 다시 시도해 주세요." });
+  }
 });
 
 // 상금 정산 CSV — owner 전용. ranks=appId:순위,appId:순위 · prizes=순위:금액,순위:금액
@@ -6830,6 +6864,9 @@ const SCHEMA_OPTIONAL = {
   // pws_eligible = PWS 자격 자기신고. DDL 미실행 배포에선 upsert payload에서 빠져
   // 등록 자체는 현행대로 동작한다(자격 분리만 휴면).
   clan_registry: ["pws_eligible"],
+  // 지급 완료 기록(시즌4~) — 미실행이면 /api/gdcup-payouts가 구 컬럼셋으로 폴백하고
+  // /api/gdcup-payout-paid는 409(ddl_not_applied)로 안내한다. 계좌 조회·CSV는 종전대로.
+  gdcup_payouts: ["paid_at", "paid_amount", "paid_memo"],
   settlements: ["id","period","trainer_id","games","gross","consult_count","consult_add",
                 "status","payout_id","memo","created_by","confirmed_by","confirmed_at"],
   // §23 예약·슬롯(trainer_slots·slot_bookings)은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다
