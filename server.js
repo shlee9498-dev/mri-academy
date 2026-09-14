@@ -4817,13 +4817,18 @@ app.get("/api/gdcup-payouts", async (req, res) => {
   if (!process.env.SUPABASE_URL) return res.json({ payouts: [] });
   try {
     const season = gdSeason(req.query.season);
-    // paid_* 3컬럼은 SCHEMA_OPTIONAL — DDL 미실행 배포에서는 명시 select가 400으로
-    // 터지므로 구 컬럼셋으로 폴백한다(휴면 기능 패턴). 실행 후엔 지급 상태가 함께 내려간다.
+    // paid_* 3컬럼·ign은 SCHEMA_OPTIONAL — DDL 미실행 배포에서는 명시 select가 400으로
+    // 터지므로 구 컬럼셋으로 단계 폴백한다(휴면 기능 패턴). ign은 로스터 교체 시 이탈자
+    // 계좌 행을 화면이 식별하는 키다(§F 2026-09-14 — 시즌4에서 3팀 교체 후 계좌가 남았다).
     let rows;
     try {
-      rows = await sbSelect("gdcup_payouts", `select=app_id,member_idx,real_name,bank,account_no,holder,paid_at,paid_amount,paid_memo&season=eq.${season}&order=app_id.asc,member_idx.asc`);
+      rows = await sbSelect("gdcup_payouts", `select=app_id,member_idx,ign,real_name,bank,account_no,holder,paid_at,paid_amount,paid_memo&season=eq.${season}&order=app_id.asc,member_idx.asc`);
     } catch (_) {
-      rows = await sbSelect("gdcup_payouts", `select=app_id,member_idx,real_name,bank,account_no,holder&season=eq.${season}&order=app_id.asc,member_idx.asc`);
+      try {
+        rows = await sbSelect("gdcup_payouts", `select=app_id,member_idx,real_name,bank,account_no,holder,paid_at,paid_amount,paid_memo&season=eq.${season}&order=app_id.asc,member_idx.asc`);
+      } catch (_2) {
+        rows = await sbSelect("gdcup_payouts", `select=app_id,member_idx,real_name,bank,account_no,holder&season=eq.${season}&order=app_id.asc,member_idx.asc`);
+      }
     }
     res.json({ payouts: rows });
   } catch (e) { console.error("gdcup_payouts", e?.status || "fail"); res.status(500).json({ error: "server_error" }); }
@@ -4919,8 +4924,9 @@ app.post("/api/gdcup-apply", async (req, res) => {
     const rawMembers = Array.isArray(b.members) ? b.members.slice(0, 4) : [];
     // 공개 저장분(gdcup_apps.members) — 계좌·실명 제외. 민감정보는 gdcup_payouts로 분리.
     const members = rawMembers.map(m => ({ name: clip(m.name, 30), ign: clip(m.ign, 40), tier: clip(m.tier, 4), peak: clip(m.peak, 10), dmg: clip(m.dmg, 6), discord: clip(m.discord, 40) }));
-    // 지급 정보(별도 테이블 · owner 전용 조회)
-    const payouts = rawMembers.map((m, i) => ({ member_idx: i, real_name: clip(m.real_name, 30), bank: clip(m.bank, 20), account_no: clip(m.account_no || m.account, 30), holder: clip(m.holder, 20) }));
+    // 지급 정보(별도 테이블 · owner 전용 조회). ign을 함께 저장해 로스터 교체 후에도
+    // 이 계좌가 누구 것이었는지 남긴다(§F — member_idx만으론 교체 시 어긋난다).
+    const payouts = rawMembers.map((m, i) => ({ member_idx: i, ign: clip(m.ign, 40) || null, real_name: clip(m.real_name, 30), bank: clip(m.bank, 20), account_no: clip(m.account_no || m.account, 30), holder: clip(m.holder, 20) }));
     // 서버측 검증·재계산이 정본 — 클라 전송 bpi/weight는 무시. 상한/S급 위반 시 사유 배열 반환.
     // 상한은 강제가 아니라 권장이다(2026-08-06 오너 방침). 초과해도 접수하고 경고만 돌려준다.
     // 종전엔 400으로 막았는데, 마감 직전 솔로·팀 신청이 몰리는 구간에서 접수 자체가 끊겼다.
@@ -4956,7 +4962,13 @@ app.post("/api/gdcup-apply", async (req, res) => {
         if (appId != null) {
           const filled = payouts.filter((p) => p.bank || p.account_no || p.holder || p.real_name)
             .map((p) => ({ ...p, app_id: appId, season }));
-          if (filled.length) await sbUpsert("gdcup_payouts", filled, "app_id,member_idx");
+          if (filled.length) {
+            try { await sbUpsert("gdcup_payouts", filled, "app_id,member_idx"); }
+            catch (_) {
+              // ign 컬럼 DDL 미실행 배포 — 컬럼 하나 때문에 접수가 막히면 안 된다. ign만 빼고 재시도.
+              await sbUpsert("gdcup_payouts", filled.map(({ ign, ...rest }) => rest), "app_id,member_idx");
+            }
+          }
         }
         const rows = await sbSelect("gdcup_apps", `select=id&status=neq.cancelled&season=eq.${season}`);
         count = rows.length;
@@ -6866,7 +6878,9 @@ const SCHEMA_OPTIONAL = {
   clan_registry: ["pws_eligible"],
   // 지급 완료 기록(시즌4~) — 미실행이면 /api/gdcup-payouts가 구 컬럼셋으로 폴백하고
   // /api/gdcup-payout-paid는 409(ddl_not_applied)로 안내한다. 계좌 조회·CSV는 종전대로.
-  gdcup_payouts: ["paid_at", "paid_amount", "paid_memo"],
+  // ign(§F 2026-09-14) — 미실행이면 접수 upsert가 ign만 빼고 재시도하고 조회는 폴백,
+  // 이탈자 계좌 경고만 휴면한다.
+  gdcup_payouts: ["paid_at", "paid_amount", "paid_memo", "ign"],
   settlements: ["id","period","trainer_id","games","gross","consult_count","consult_add",
                 "status","payout_id","memo","created_by","confirmed_by","confirmed_at"],
   // §23 예약·슬롯(trainer_slots·slot_bookings)은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다
