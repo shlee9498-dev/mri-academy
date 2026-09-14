@@ -215,6 +215,7 @@ async function reload(){
     + '<div id="pane-sched" class="tabpane"><div id="schedwrap"></div></div>'
     + (isOwner
       ? '<div id="pane-gdcup" class="tabpane"><div id="gdcupwrap"></div></div>'
+        + '<div id="pane-gdpay" class="tabpane"><div id="gdpaywrap"></div></div>'
         + '<div id="pane-pay" class="tabpane"></div>'
         + '<div id="pane-salary" class="tabpane"></div>'
         + '<div id="pane-tools" class="tabpane"><div id="toolswrap"></div><div id="statswrap"></div><div id="bpiwrap"></div><div id="opswrap"></div></div>'
@@ -224,7 +225,7 @@ async function reload(){
   document.getElementById("opswrap").innerHTML = opsLinks(isOwner);
   // reload()는 쓰기 후에도 불린다 — 현재 탭은 유지하고, 지연 로드는 다시 밟아 재조회한다.
   for (const k of Object.keys(TAB_LOADED)) delete TAB_LOADED[k];
-  if(!isOwner && ["gdcup","pay","salary","tools"].includes(PANEL_TAB)) PANEL_TAB = "stu";
+  if(!isOwner && ["gdcup","gdpay","pay","salary","tools"].includes(PANEL_TAB)) PANEL_TAB = "stu";
   setTab(PANEL_TAB);
 }
 
@@ -236,7 +237,7 @@ function panelTabs(isOwner){
   const t=(k,l)=>`<button type="button" class="ptab${PANEL_TAB===k?" on":""}" data-tab="${k}" role="tab" aria-selected="${PANEL_TAB===k}" onclick="setTab('${k}')">${l}</button>`;
   return `<nav class="ptabs" role="tablist" aria-label="패널 영역">`
     + t("stu","수강생") + t("sched","일정")
-    + (isOwner ? t("gdcup","G드컵")+t("pay","정산")+t("salary","급여")+t("tools","도구") : t("links","바로가기"))
+    + (isOwner ? t("gdcup","G드컵")+t("gdpay","💸 입금")+t("pay","정산")+t("salary","급여")+t("tools","도구") : t("links","바로가기"))
     + `</nav>`;
 }
 function setTab(k){
@@ -247,6 +248,7 @@ function setTab(k){
     TAB_LOADED[k] = true;
     if(k==="sched") loadSchedule();
     if(k==="gdcup") loadGdcup();
+    if(k==="gdpay") loadGdPay();
     if(k==="tools"){ loadStats(); loadDist(); }
   }
 }
@@ -259,13 +261,15 @@ let GD_SEASON = 0, GD_TEAMS = [], GD_PAY = null, GD_STAND = null;   // 0 = 미�
 // 시즌별 상금표(확정값·관제탑 2026-09-14). 순위는 하드코딩하지 않는다 — gdcup_scores 등재 후
 // API standings로 산출되며, 등재 전에는 입금 목록이 안내문만 띄운다. 시즌5는 이 표만 갱신.
 const GD_PRIZES = { 4: { team: { 1: 200000, 2: 120000, 3: 108000, 4: 40000 }, mvp: { ign: "Ash2ra", amount: 30000 } } };
+async function gdInitSeason(){
+  if(GD_SEASON) return;
+  try{ const m = await api("/api/gdcup-meta"); GD_SEASON = Number(m.currentSeason) || 4; }
+  catch(_){ GD_SEASON = 4; }   // meta 실패 시에도 구 시즌(3)으로 떨어지지 않게
+}
 async function loadGdcup(){
   const w = document.getElementById("gdcupwrap"); if(!w) return;
   try{
-    if(!GD_SEASON){
-      try{ const m = await api("/api/gdcup-meta"); GD_SEASON = Number(m.currentSeason) || 4; }
-      catch(_){ GD_SEASON = 4; }   // meta 실패 시에도 구 시즌(3)으로 떨어지지 않게
-    }
+    await gdInitSeason();
     const r = await api("/api/gdcup-apps?season="+GD_SEASON);
     GD_TEAMS = r.teams || [];
     renderGdcup(r.unverified || 0);
@@ -311,10 +315,8 @@ function renderGdcup(unverified){
     ${unverified ? `<div class="empty" style="margin-bottom:10px">⚠️ 등록계 미등록 멤버 <b>${unverified}명</b> — <code>/등록계</code> 안내 필요 (상시 접수)</div>` : ""}
     ${isOwner ? `<div style="display:flex;gap:8px;margin-bottom:11px;flex-wrap:wrap">
       <button class="btn" onclick="toggleGdPayouts()">${GD_PAY ? "계좌 숨기기" : "💳 계좌 보기"}</button>
-      ${GD_PRIZES[GD_SEASON] ? `<button class="btn" onclick="toggleGdPayList()">${GD_STAND ? "입금 목록 닫기" : "💸 입금 목록"}</button>` : ""}
       <button class="btn" onclick="downloadGdCsv()">⬇️ 정산 CSV</button>
     </div>` : ""}
-    ${isOwner && GD_STAND ? gdPayListHtml() : ""}
     ${rows}
   </section>`;
 }
@@ -332,67 +334,113 @@ async function gdMarkPaid(appId, idx, paid, defAmt){
     const r = await api("/api/gdcup-payouts?season="+GD_SEASON);
     GD_PAY = {};
     (r.payouts||[]).forEach(x => { (GD_PAY[x.app_id] = GD_PAY[x.app_id] || []).push(x); });
-    renderGdcup(0); toast(paid ? "지급 기록됨" : "지급 기록 해제됨");
+    // 지급✓는 두 화면(신청 현황 계좌 보기 · 입금 탭)에 다 있다 — 열려 있는 탭만 다시 그린다.
+    if(PANEL_TAB === "gdpay") renderGdPay(); else renderGdcup(0);
+    toast(paid ? "지급 기록됨" : "지급 기록 해제됨");
   }catch(e){ alert("지급 기록 실패: "+e.message); }
 }
-// ── 💸 입금 작업 목록 (owner · 시즌 상금표 있는 시즌만) ──
-// 순위(API standings) → 팀 내 members 순으로 정렬. 계좌·실명은 읽기 전용 표시만.
-function gdPayListHtml(){
-  const cfg = GD_PRIZES[GD_SEASON];
-  const box = (inner)=>`<div style="margin-bottom:14px;padding:11px 12px;background:var(--bg-el);border-radius:10px">${inner}</div>`;
-  if(!GD_STAND || !GD_STAND.length || !(GD_STAND[0] && GD_STAND[0].points > 0))
-    return box(`<b>💸 입금 목록</b><div class="empty" style="margin-top:8px">점수가 아직 등재 전이에요 — gdcup_scores 등재 후 순위대로 자동 정렬돼요.</div>`);
-  const rows = [];
-  GD_STAND.slice(0, 4).forEach((st, ri)=>{
-    const rank = ri + 1, t2 = GD_TEAMS.find(x => x.team_name === st.name);
-    if(!t2 || !cfg.team[rank]) return;
-    const per = cfg.team[rank] / 4;
-    (t2.members || []).forEach((m, idx)=>{
-      const pay = ((GD_PAY && GD_PAY[t2.id]) || []).find(x => x.member_idx === idx) || null;
-      const mvpExtra = (cfg.mvp && m.ign === cfg.mvp.ign) ? cfg.mvp.amount : 0;
-      rows.push({ rank, team: t2.team_name, leader: t2.leader_discord, ign: m.ign, per, pay, app: t2.id, idx, mvpExtra, mvpRow: false });
-      if(mvpExtra) rows.push({ rank, team: t2.team_name, leader: t2.leader_discord, ign: m.ign, per: mvpExtra, pay, app: t2.id, idx, mvpExtra: 0, mvpRow: true });
-    });
-  });
-  const total = rows.reduce((s2, r)=>s2 + r.per, 0);
-  const memberRows = rows.filter(r => !r.mvpRow);
-  const paidRows = memberRows.filter(r => r.pay && r.pay.paid_at);
-  // 잔여 = 총액 − Σ(완료 행: paid_amount 기록값 우선, 없으면 산출액(킬 MVP 겸직은 합계))
-  const paidSum = paidRows.reduce((s2, r)=>s2 + (r.pay.paid_amount != null ? Number(r.pay.paid_amount) : r.per + r.mvpExtra), 0);
-  const line = (r)=>{
-    const p = r.pay, paid = p && p.paid_at;
-    const badge = r.mvpRow ? `<span style="color:var(--gold);font-weight:700">킬MVP</span>` : `<b>${r.rank}위</b>`;
-    const acct = p ? `${esc(p.bank||"-")} ${esc(p.account_no||"-")} (${esc(p.holder||"-")})`
-                   : `<span style="color:#fbbf24;font-weight:700">미수집</span>${r.leader ? ` · 팀장 ${esc(r.leader)}` : ""}`;
-    const warn = (p && p.real_name && p.holder && p.real_name !== p.holder) ? ` <span style="color:#f87171">⚠️ 실명≠예금주</span>` : "";
-    const amt = `<b>${Number(r.per).toLocaleString()}원</b>` + (r.mvpExtra ? ` <span style="color:var(--ink-faint)">(+킬MVP ${Number(r.mvpExtra).toLocaleString()} → 합 ${Number(r.per + r.mvpExtra).toLocaleString()})</span>` : "");
-    const btn = r.mvpRow ? `<span style="color:var(--ink-faint);font-size:11px">↑ 우승 행에서 합계로 기록해요</span>`
-      : (p ? (paid ? `<button class="btn sm" onclick="gdMarkPaid(${r.app},${r.idx},false)">해제</button>`
-                   : `<button class="btn sm" onclick="gdMarkPaid(${r.app},${r.idx},true,${r.per + r.mvpExtra})">지급✓</button>`) : "");
-    return `<div style="${paid ? "opacity:.45;" : ""}display:flex;gap:7px;flex-wrap:wrap;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:12.5px;line-height:1.7">
-      ${badge} <b>${esc(r.team)}</b> · ${esc(r.ign)} · ${p ? esc(p.real_name||"-") : "—"} · ${acct}${warn} · ${amt}
-      ${paid ? `<span style="color:#4ade80">✅ ${String(p.paid_at).slice(0,10)}</span>` : ""} ${btn}</div>`;
-  };
-  const isPaid = (r)=>r.pay && r.pay.paid_at;
-  const open2 = rows.filter(r => !isPaid(r)).map(line).join("");
-  const donel = rows.filter(isPaid).map(line).join("");
-  return box(`<b>💸 입금 목록</b> <span style="color:var(--ink-faint);font-size:12px">순위 → 팀 내 순서 · 5위 이하 상금 없음(미표시)</span>
-    <div style="margin:8px 0;font-size:12.5px">총 ${total.toLocaleString()}원 · 수령인 ${memberRows.length}명 · 지급 완료 <b>${paidRows.length}/${memberRows.length}</b> · 잔여 <b>${Math.max(0, total - paidSum).toLocaleString()}원</b></div>
-    ${open2 || `<div class="empty">남은 입금이 없어요 🎉</div>`}
-    ${donel ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--ink-faint)">지급 완료 (${paidRows.length})</summary>${donel}</details>` : ""}`);
-}
-async function toggleGdPayList(){
-  if(GD_STAND){ GD_STAND = null; renderGdcup(0); return; }
+// ── 💸 입금 탭 (owner 전용) — 입금만을 위한 화면 ──
+// 티어·BPI·딜량·연락처는 여기 표시하지 않는다(신청 현황 탭 소관). 계좌·실명은 읽기 전용.
+// 정렬은 API standings(gdcup_scores)로만 — 등재 전에는 안내만 띄우고 신청 순서로 폴백하지 않는다
+// (신청 순 폴백은 순위처럼 읽혀 오히려 혼란을 준다 · 관제탑 2026-09-14).
+async function loadGdPay(){
+  const w = document.getElementById("gdpaywrap"); if(!w) return;
+  w.innerHTML = `<section class="ops"><h2 class="ops-h">💸 입금</h2><div class="empty">불러오는 중…</div></section>`;
   try{
-    if(!GD_PAY){
-      const r = await api("/api/gdcup-payouts?season="+GD_SEASON);
-      GD_PAY = {};
-      (r.payouts||[]).forEach(x => { (GD_PAY[x.app_id] = GD_PAY[x.app_id] || []).push(x); });
+    await gdInitSeason();
+    if(!GD_TEAMS.length){
+      const r = await api("/api/gdcup-apps?season="+GD_SEASON);
+      GD_TEAMS = r.teams || [];
     }
+    const p = await api("/api/gdcup-payouts?season="+GD_SEASON);
+    GD_PAY = {};
+    (p.payouts||[]).forEach(x => { (GD_PAY[x.app_id] = GD_PAY[x.app_id] || []).push(x); });
     const d = await api("/api/gdcup-scores?season="+GD_SEASON);
     GD_STAND = d.standings || [];
-    renderGdcup(0);
-  }catch(e){ alert("입금 목록을 불러오지 못했어요: "+e.message+"\n(오너 계정만 볼 수 있어요)"); }
+    renderGdPay();
+  }catch(e){
+    w.innerHTML = `<section class="ops"><h2 class="ops-h">💸 입금</h2><div class="empty">불러오지 못했어요 (${esc(e.message)}) — 오너 계정만 볼 수 있어요.</div></section>`;
+  }
+}
+async function copyAcct(s){
+  try{ await navigator.clipboard.writeText(s); toast("계좌번호 복사됨"); }
+  catch(_){ prompt("자동 복사가 안 돼요 — 아래 번호를 직접 복사하세요.", s); }
+}
+function gdPayRow(r){
+  const p = r.p;
+  // 예금주는 실명과 다를 때만 노출한다(이체 전 확인용) — 평소엔 줄을 짧게 유지.
+  const warn = (p && p.real_name && p.holder && p.real_name !== p.holder)
+    ? ` <span style="color:#f87171;font-size:12px">⚠️ 예금주 ${esc(p.holder)}</span>` : "";
+  const acct = p
+    ? `${esc(p.bank||"-")} <span style="letter-spacing:.3px">${esc(p.account_no||"-")}</span> <button class="btn sm" onclick="copyAcct('${esc(p.account_no||"")}')">복사</button>`
+    : `<span style="color:#fbbf24;font-weight:700">계좌 미수집</span>${r.leader ? ` <span style="color:var(--ink-faint);font-size:11px">팀장 ${esc(r.leader)}</span>` : ""}`;
+  const btn = r.mvpTag
+    ? `<span style="color:var(--ink-faint);font-size:11px">↑ 위 행에서 합계로 기록</span>`
+    : (p ? (r.paid ? `<button class="btn sm" onclick="gdMarkPaid(${r.app},${r.idx},false)">해제</button>`
+                   : `<button class="btn sm" onclick="gdMarkPaid(${r.app},${r.idx},true,${r.defAmt})">지급✓</button>`) : "");
+  return `<div style="${r.paid ? "opacity:.4;" : ""}display:flex;gap:9px;flex-wrap:wrap;align-items:center;padding:6px 0 6px 6px;border-bottom:1px solid rgba(255,255,255,.06);font-size:13px;line-height:1.7">
+    <span style="width:18px;color:var(--ink-faint)">${r.num}</span>
+    <b style="min-width:104px">${esc(r.ign||"-")}</b>
+    <span style="min-width:48px">${p ? esc(p.real_name||"-") : "—"}</span>
+    <span>${acct}</span>${warn}
+    <b style="margin-left:auto">${Number(r.amt).toLocaleString()}원</b>
+    ${r.mvpTag ? `<span style="color:var(--gold);font-weight:700;font-size:11px">← ${r.mvpTag}</span>` : ""}
+    ${r.paid ? `<span style="color:#4ade80;font-size:12px">✅ ${String(p.paid_at).slice(0,10)}</span>` : ""}
+    ${btn}
+  </div>`;
+}
+function renderGdPay(){
+  const w = document.getElementById("gdpaywrap"); if(!w) return;
+  const cfg = GD_PRIZES[GD_SEASON];
+  const head = `<h2 class="ops-h">💸 입금 <span style="font-weight:400;color:var(--ink-faint);font-size:13px">시즌 ${GD_SEASON} · 순위순 · 5위 이하 상금 없음(미표시)</span></h2>`;
+  if(!cfg){
+    w.innerHTML = `<section class="ops">${head}<div class="empty">시즌 ${GD_SEASON} 상금표가 아직 없어요 — GD_PRIZES에 확정값을 넣으면 열려요.</div></section>`;
+    return;
+  }
+  if(!GD_STAND || !GD_STAND.length || !(GD_STAND[0] && GD_STAND[0].points > 0)){
+    w.innerHTML = `<section class="ops">${head}<div class="empty">점수 미등재 — 정렬을 못 해요. gdcup_scores 등재 후 순위대로 자동 정렬돼요.</div></section>`;
+    return;
+  }
+  const medal = { 1: "🥇", 2: "🥈", 3: "🥉" };
+  const circled = ["①","②","③","④","⑤","⑥"];
+  const won = (n)=>Number(n).toLocaleString()+"원";
+  let members = 0, paidCnt = 0, paidSum = 0;
+  const blocks = [];
+  GD_STAND.slice(0, Object.keys(cfg.team).length).forEach((st, ri)=>{
+    const rank = ri + 1, prize = cfg.team[rank];
+    if(!prize) return;
+    const t2 = GD_TEAMS.find(x => x.team_name === st.name);
+    if(!t2){ blocks.push(`<div class="empty" style="margin-bottom:10px">⚠️ ${rank}위 「${esc(st.name)}」 — 신청 팀 목록과 이름이 안 맞아요. gdcup_scores의 팀명을 확인해주세요.</div>`); return; }
+    const mems = t2.members || [];
+    const per = mems.length ? Math.floor(prize / mems.length) : 0;   // 팀 상금 ÷ 실제 인원 — 인원수 하드코딩 금지
+    const pays = (GD_PAY && GD_PAY[t2.id]) || [];
+    const missing = mems.filter((_, i)=>!pays.find(x => x.member_idx === i)).length;
+    const rows = [];
+    mems.forEach((m, idx)=>{
+      const p = pays.find(x => x.member_idx === idx) || null;
+      const mvpExtra = (cfg.mvp && m.ign === cfg.mvp.ign) ? cfg.mvp.amount : 0;
+      const paid = !!(p && p.paid_at);
+      members++;
+      if(paid) { paidCnt++; paidSum += p.paid_amount != null ? Number(p.paid_amount) : per + mvpExtra; }
+      rows.push(gdPayRow({ num: circled[idx]||String(idx+1), ign: m.ign, p, amt: per, mvpTag: "", app: t2.id, idx, defAmt: per + mvpExtra, paid, leader: t2.leader_discord }));
+      // 킬 MVP는 같은 사람 아래 별도 줄 — 지급 기록은 위 행에서 합계(defAmt)로 한 번만 한다.
+      if(mvpExtra) rows.push(gdPayRow({ num: "", ign: m.ign, p, amt: mvpExtra, mvpTag: "킬 MVP", app: t2.id, idx, defAmt: 0, paid, leader: t2.leader_discord }));
+    });
+    blocks.push(`<div style="margin-bottom:16px">
+      <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:3px">
+        <b style="font-size:14px">${medal[rank]||""} ${rank}위 ${esc(t2.team_name)}</b>
+        <span style="color:var(--ink-faint);font-size:12px">각 ${won(per)}</span>
+        ${missing ? `<span style="color:#fbbf24;font-size:12px;font-weight:700">⚠️ 계좌 미수집 ${missing}명</span>` : ""}
+      </div>
+      ${rows.join("")}
+    </div>`);
+  });
+  const total = Object.values(cfg.team).reduce((a,b)=>a+b,0) + (cfg.mvp ? cfg.mvp.amount : 0);
+  const summary = `<div style="margin-bottom:13px;padding:10px 12px;background:var(--bg-el);border-radius:10px;font-size:13px;display:flex;gap:16px;flex-wrap:wrap">
+    <span>총 <b>${won(total)}</b></span><span>수령인 <b>${members}명</b></span>
+    <span>지급 완료 <b style="color:#4ade80">${paidCnt}명</b></span><span>잔여 <b>${won(Math.max(0, total - paidSum))}</b></span>
+  </div>`;
+  w.innerHTML = `<section class="ops">${head}${summary}${blocks.join("")}</section>`;
 }
 async function toggleGdPayouts(){
   if(GD_PAY){ GD_PAY = null; renderGdcup(0); return; }
