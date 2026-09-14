@@ -382,6 +382,12 @@ create table if not exists public.gdcup_payouts (
 create index if not exists idx_gdcup_payouts_season on public.gdcup_payouts (season);
 alter table public.gdcup_payouts enable row level security;   -- service_role만 통과
 
+-- 지급 완료 기록 (시즌4~, 2026-09-14 관제탑 승인) — 입금 후 오너가 staff-panel에서 체크.
+-- 계좌 파기(마스킹)는 지급 완료 확인 후 별도 SQL로 — paid_at이 그 선행 조건이다.
+alter table public.gdcup_payouts add column if not exists paid_at     timestamptz;
+alter table public.gdcup_payouts add column if not exists paid_amount int;
+alter table public.gdcup_payouts add column if not exists paid_memo   text;
+
 -- 팀장 디코ID (신청 수정 재접근 키). gdcup_apps는 수동 생성분이라 컬럼만 추가.
 alter table public.gdcup_apps add column if not exists leader_discord text;
 create index if not exists idx_gdcup_apps_leader on public.gdcup_apps (season, leader_discord);

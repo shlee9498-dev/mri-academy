@@ -255,10 +255,14 @@ function setTab(k){
 // ── 🏆 G드컵 신청 현황 (staff) · 계좌·CSV는 owner 전용 ──
 // 계좌는 서버가 owner에게만 내려준다(/api/gdcup-payouts). 여기서 감추는 건 표시상 편의일 뿐,
 // 실제 차단은 서버가 한다.
-let GD_SEASON = 3, GD_TEAMS = [], GD_PAY = null;
+let GD_SEASON = 0, GD_TEAMS = [], GD_PAY = null;   // 0 = 미결정 — meta.currentSeason으로 초기화(시즌 하드코딩 금지)
 async function loadGdcup(){
   const w = document.getElementById("gdcupwrap"); if(!w) return;
   try{
+    if(!GD_SEASON){
+      try{ const m = await api("/api/gdcup-meta"); GD_SEASON = Number(m.currentSeason) || 4; }
+      catch(_){ GD_SEASON = 4; }   // meta 실패 시에도 구 시즌(3)으로 떨어지지 않게
+    }
     const r = await api("/api/gdcup-apps?season="+GD_SEASON);
     GD_TEAMS = r.teams || [];
     renderGdcup(r.unverified || 0);
@@ -283,7 +287,10 @@ function renderGdcup(unverified){
     const when = t2.created_at ? String(t2.created_at).slice(0,16).replace("T"," ") : "";
     const pay = (isOwner && GD_PAY) ? (GD_PAY[t2.id]||[]) : null;
     const payHtml = pay ? `<div style="margin-top:8px;padding:9px 10px;background:var(--bg-el);border-radius:8px;font-size:12px;line-height:1.8">
-      ${pay.length ? pay.map(x=>`💳 ${esc(x.real_name||"-")} · ${esc(x.bank||"-")} ${esc(x.account_no||"-")} (${esc(x.holder||"-")})`).join("<br>")
+      ${pay.length ? pay.map(x=>`💳 ${esc(x.real_name||"-")} · ${esc(x.bank||"-")} ${esc(x.account_no||"-")} (${esc(x.holder||"-")})`
+        + (x.paid_at
+            ? ` <span style="color:#4ade80">✅ 지급완료 ${String(x.paid_at).slice(0,10)}${x.paid_amount!=null?" · "+Number(x.paid_amount).toLocaleString()+"원":""}</span> <button class="btn sm" onclick="gdMarkPaid(${x.app_id},${x.member_idx},false)">해제</button>`
+            : ` <button class="btn sm" onclick="gdMarkPaid(${x.app_id},${x.member_idx},true)">지급✓</button>`)).join("<br>")
                    : '<span style="color:var(--ink-faint)">계좌 미입력</span>'}
     </div>` : "";
     return `<div class="srow" style="margin-bottom:9px">
@@ -305,6 +312,22 @@ function renderGdcup(unverified){
     </div>` : ""}
     ${rows}
   </section>`;
+}
+async function gdMarkPaid(appId, idx, paid){
+  // 지급 완료 기록(시즌4~). 서버가 paid_at을 찍는다 — 계좌·실명 값은 건드리지 않는다.
+  let amount = null;
+  if(paid){
+    const v = prompt("지급액(원) — 숫자만. 비우면 금액 없이 기록해요.", "");
+    if(v === null) return;
+    if(v.trim()){ amount = Number(v.replace(/[^0-9]/g,"")); if(!(amount>0)) return alert("금액이 숫자가 아니에요."); }
+  } else if(!confirm("지급 기록을 해제할까요? (오입력 정정용)")) return;
+  try{
+    await api("/api/gdcup-payout-paid","POST",{ app_id: appId, member_idx: idx, paid, amount });
+    const r = await api("/api/gdcup-payouts?season="+GD_SEASON);
+    GD_PAY = {};
+    (r.payouts||[]).forEach(x => { (GD_PAY[x.app_id] = GD_PAY[x.app_id] || []).push(x); });
+    renderGdcup(0); toast(paid ? "지급 기록됨" : "지급 기록 해제됨");
+  }catch(e){ alert("지급 기록 실패: "+e.message); }
 }
 async function toggleGdPayouts(){
   if(GD_PAY){ GD_PAY = null; renderGdcup(0); return; }
