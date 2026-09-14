@@ -255,7 +255,10 @@ function setTab(k){
 // ── 🏆 G드컵 신청 현황 (staff) · 계좌·CSV는 owner 전용 ──
 // 계좌는 서버가 owner에게만 내려준다(/api/gdcup-payouts). 여기서 감추는 건 표시상 편의일 뿐,
 // 실제 차단은 서버가 한다.
-let GD_SEASON = 0, GD_TEAMS = [], GD_PAY = null;   // 0 = 미결정 — meta.currentSeason으로 초기화(시즌 하드코딩 금지)
+let GD_SEASON = 0, GD_TEAMS = [], GD_PAY = null, GD_STAND = null;   // 0 = 미결정 — meta.currentSeason으로 초기화(시즌 하드코딩 금지)
+// 시즌별 상금표(확정값·관제탑 2026-09-14). 순위는 하드코딩하지 않는다 — gdcup_scores 등재 후
+// API standings로 산출되며, 등재 전에는 입금 목록이 안내문만 띄운다. 시즌5는 이 표만 갱신.
+const GD_PRIZES = { 4: { team: { 1: 200000, 2: 120000, 3: 108000, 4: 40000 }, mvp: { ign: "Ash2ra", amount: 30000 } } };
 async function loadGdcup(){
   const w = document.getElementById("gdcupwrap"); if(!w) return;
   try{
@@ -308,16 +311,19 @@ function renderGdcup(unverified){
     ${unverified ? `<div class="empty" style="margin-bottom:10px">⚠️ 등록계 미등록 멤버 <b>${unverified}명</b> — <code>/등록계</code> 안내 필요 (상시 접수)</div>` : ""}
     ${isOwner ? `<div style="display:flex;gap:8px;margin-bottom:11px;flex-wrap:wrap">
       <button class="btn" onclick="toggleGdPayouts()">${GD_PAY ? "계좌 숨기기" : "💳 계좌 보기"}</button>
+      ${GD_PRIZES[GD_SEASON] ? `<button class="btn" onclick="toggleGdPayList()">${GD_STAND ? "입금 목록 닫기" : "💸 입금 목록"}</button>` : ""}
       <button class="btn" onclick="downloadGdCsv()">⬇️ 정산 CSV</button>
     </div>` : ""}
+    ${isOwner && GD_STAND ? gdPayListHtml() : ""}
     ${rows}
   </section>`;
 }
-async function gdMarkPaid(appId, idx, paid){
+async function gdMarkPaid(appId, idx, paid, defAmt){
   // 지급 완료 기록(시즌4~). 서버가 paid_at을 찍는다 — 계좌·실명 값은 건드리지 않는다.
+  // defAmt = 입금 목록이 계산한 산출액(킬 MVP 겸직이면 합계) — 프롬프트 기본값으로만 쓴다.
   let amount = null;
   if(paid){
-    const v = prompt("지급액(원) — 숫자만. 비우면 금액 없이 기록해요.", "");
+    const v = prompt("지급액(원) — 숫자만. 비우면 금액 없이 기록해요.", defAmt != null ? String(defAmt) : "");
     if(v === null) return;
     if(v.trim()){ amount = Number(v.replace(/[^0-9]/g,"")); if(!(amount>0)) return alert("금액이 숫자가 아니에요."); }
   } else if(!confirm("지급 기록을 해제할까요? (오입력 정정용)")) return;
@@ -328,6 +334,65 @@ async function gdMarkPaid(appId, idx, paid){
     (r.payouts||[]).forEach(x => { (GD_PAY[x.app_id] = GD_PAY[x.app_id] || []).push(x); });
     renderGdcup(0); toast(paid ? "지급 기록됨" : "지급 기록 해제됨");
   }catch(e){ alert("지급 기록 실패: "+e.message); }
+}
+// ── 💸 입금 작업 목록 (owner · 시즌 상금표 있는 시즌만) ──
+// 순위(API standings) → 팀 내 members 순으로 정렬. 계좌·실명은 읽기 전용 표시만.
+function gdPayListHtml(){
+  const cfg = GD_PRIZES[GD_SEASON];
+  const box = (inner)=>`<div style="margin-bottom:14px;padding:11px 12px;background:var(--bg-el);border-radius:10px">${inner}</div>`;
+  if(!GD_STAND || !GD_STAND.length || !(GD_STAND[0] && GD_STAND[0].points > 0))
+    return box(`<b>💸 입금 목록</b><div class="empty" style="margin-top:8px">점수가 아직 등재 전이에요 — gdcup_scores 등재 후 순위대로 자동 정렬돼요.</div>`);
+  const rows = [];
+  GD_STAND.slice(0, 4).forEach((st, ri)=>{
+    const rank = ri + 1, t2 = GD_TEAMS.find(x => x.team_name === st.name);
+    if(!t2 || !cfg.team[rank]) return;
+    const per = cfg.team[rank] / 4;
+    (t2.members || []).forEach((m, idx)=>{
+      const pay = ((GD_PAY && GD_PAY[t2.id]) || []).find(x => x.member_idx === idx) || null;
+      const mvpExtra = (cfg.mvp && m.ign === cfg.mvp.ign) ? cfg.mvp.amount : 0;
+      rows.push({ rank, team: t2.team_name, leader: t2.leader_discord, ign: m.ign, per, pay, app: t2.id, idx, mvpExtra, mvpRow: false });
+      if(mvpExtra) rows.push({ rank, team: t2.team_name, leader: t2.leader_discord, ign: m.ign, per: mvpExtra, pay, app: t2.id, idx, mvpExtra: 0, mvpRow: true });
+    });
+  });
+  const total = rows.reduce((s2, r)=>s2 + r.per, 0);
+  const memberRows = rows.filter(r => !r.mvpRow);
+  const paidRows = memberRows.filter(r => r.pay && r.pay.paid_at);
+  // 잔여 = 총액 − Σ(완료 행: paid_amount 기록값 우선, 없으면 산출액(킬 MVP 겸직은 합계))
+  const paidSum = paidRows.reduce((s2, r)=>s2 + (r.pay.paid_amount != null ? Number(r.pay.paid_amount) : r.per + r.mvpExtra), 0);
+  const line = (r)=>{
+    const p = r.pay, paid = p && p.paid_at;
+    const badge = r.mvpRow ? `<span style="color:var(--gold);font-weight:700">킬MVP</span>` : `<b>${r.rank}위</b>`;
+    const acct = p ? `${esc(p.bank||"-")} ${esc(p.account_no||"-")} (${esc(p.holder||"-")})`
+                   : `<span style="color:#fbbf24;font-weight:700">미수집</span>${r.leader ? ` · 팀장 ${esc(r.leader)}` : ""}`;
+    const warn = (p && p.real_name && p.holder && p.real_name !== p.holder) ? ` <span style="color:#f87171">⚠️ 실명≠예금주</span>` : "";
+    const amt = `<b>${Number(r.per).toLocaleString()}원</b>` + (r.mvpExtra ? ` <span style="color:var(--ink-faint)">(+킬MVP ${Number(r.mvpExtra).toLocaleString()} → 합 ${Number(r.per + r.mvpExtra).toLocaleString()})</span>` : "");
+    const btn = r.mvpRow ? `<span style="color:var(--ink-faint);font-size:11px">↑ 우승 행에서 합계로 기록해요</span>`
+      : (p ? (paid ? `<button class="btn sm" onclick="gdMarkPaid(${r.app},${r.idx},false)">해제</button>`
+                   : `<button class="btn sm" onclick="gdMarkPaid(${r.app},${r.idx},true,${r.per + r.mvpExtra})">지급✓</button>`) : "");
+    return `<div style="${paid ? "opacity:.45;" : ""}display:flex;gap:7px;flex-wrap:wrap;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:12.5px;line-height:1.7">
+      ${badge} <b>${esc(r.team)}</b> · ${esc(r.ign)} · ${p ? esc(p.real_name||"-") : "—"} · ${acct}${warn} · ${amt}
+      ${paid ? `<span style="color:#4ade80">✅ ${String(p.paid_at).slice(0,10)}</span>` : ""} ${btn}</div>`;
+  };
+  const isPaid = (r)=>r.pay && r.pay.paid_at;
+  const open2 = rows.filter(r => !isPaid(r)).map(line).join("");
+  const donel = rows.filter(isPaid).map(line).join("");
+  return box(`<b>💸 입금 목록</b> <span style="color:var(--ink-faint);font-size:12px">순위 → 팀 내 순서 · 5위 이하 상금 없음(미표시)</span>
+    <div style="margin:8px 0;font-size:12.5px">총 ${total.toLocaleString()}원 · 수령인 ${memberRows.length}명 · 지급 완료 <b>${paidRows.length}/${memberRows.length}</b> · 잔여 <b>${Math.max(0, total - paidSum).toLocaleString()}원</b></div>
+    ${open2 || `<div class="empty">남은 입금이 없어요 🎉</div>`}
+    ${donel ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--ink-faint)">지급 완료 (${paidRows.length})</summary>${donel}</details>` : ""}`);
+}
+async function toggleGdPayList(){
+  if(GD_STAND){ GD_STAND = null; renderGdcup(0); return; }
+  try{
+    if(!GD_PAY){
+      const r = await api("/api/gdcup-payouts?season="+GD_SEASON);
+      GD_PAY = {};
+      (r.payouts||[]).forEach(x => { (GD_PAY[x.app_id] = GD_PAY[x.app_id] || []).push(x); });
+    }
+    const d = await api("/api/gdcup-scores?season="+GD_SEASON);
+    GD_STAND = d.standings || [];
+    renderGdcup(0);
+  }catch(e){ alert("입금 목록을 불러오지 못했어요: "+e.message+"\n(오너 계정만 볼 수 있어요)"); }
 }
 async function toggleGdPayouts(){
   if(GD_PAY){ GD_PAY = null; renderGdcup(0); return; }
