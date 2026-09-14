@@ -295,6 +295,8 @@ function renderGdcup(unverified){
     const pay = (isOwner && GD_PAY) ? (GD_PAY[t2.id]||[]) : null;
     const payHtml = pay ? `<div style="margin-top:8px;padding:9px 10px;background:var(--bg-el);border-radius:8px;font-size:12px;line-height:1.8">
       ${pay.length ? pay.map(x=>`💳 ${esc(x.real_name||"-")} · ${esc(x.bank||"-")} ${esc(x.account_no||"-")} (${esc(x.holder||"-")})`
+        + ((x.ign && !(t2.members||[]).some(m2 => m2.ign === x.ign))
+            ? ` <span style="color:#f87171;font-weight:700">⚠️ 이탈자 ${esc(x.ign)} — 현 로스터에 없음</span>` : "")
         + (x.paid_at
             ? ` <span style="color:#4ade80">✅ 지급완료 ${String(x.paid_at).slice(0,10)}${x.paid_amount!=null?" · "+Number(x.paid_amount).toLocaleString()+"원":""}</span> <button class="btn sm" onclick="gdMarkPaid(${x.app_id},${x.member_idx},false)">해제</button>`
             : ` <button class="btn sm" onclick="gdMarkPaid(${x.app_id},${x.member_idx},true)">지급✓</button>`)).join("<br>")
@@ -414,23 +416,30 @@ function renderGdPay(){
     const mems = t2.members || [];
     const per = mems.length ? Math.floor(prize / mems.length) : 0;   // 팀 상금 ÷ 실제 인원 — 인원수 하드코딩 금지
     const pays = (GD_PAY && GD_PAY[t2.id]) || [];
-    const missing = mems.filter((_, i)=>!pays.find(x => x.member_idx === i)).length;
+    // ign 우선 매칭(§F) — ign 있는 행은 ign으로만, ign 없는 구 시즌 행만 member_idx로.
+    // 로스터 교체 시 이탈자 계좌가 새 멤버 자리에 붙던 사고(시즌4 파워레인저) 재발 방지.
+    // 매칭 실패는 경고 표시까지만 — 자동 보정 금지, 사람이 판단한다(관제탑 2026-09-14).
+    const payFor = (m, i)=>pays.find(x => x.ign ? x.ign === m.ign : x.member_idx === i) || null;
+    const stale = pays.filter(x => x.ign && !mems.some(m => m.ign === x.ign));
+    const missing = mems.filter((m, i)=>!payFor(m, i)).length;
     const rows = [];
     mems.forEach((m, idx)=>{
-      const p = pays.find(x => x.member_idx === idx) || null;
+      const p = payFor(m, idx);
+      const tgt = p ? p.member_idx : idx;   // 지급✓는 매칭된 행의 member_idx로 기록한다
       const mvpExtra = (cfg.mvp && m.ign === cfg.mvp.ign) ? cfg.mvp.amount : 0;
       const paid = !!(p && p.paid_at);
       members++;
       if(paid) { paidCnt++; paidSum += p.paid_amount != null ? Number(p.paid_amount) : per + mvpExtra; }
-      rows.push(gdPayRow({ num: circled[idx]||String(idx+1), ign: m.ign, p, amt: per, mvpTag: "", app: t2.id, idx, defAmt: per + mvpExtra, paid, leader: t2.leader_discord }));
+      rows.push(gdPayRow({ num: circled[idx]||String(idx+1), ign: m.ign, p, amt: per, mvpTag: "", app: t2.id, idx: tgt, defAmt: per + mvpExtra, paid, leader: t2.leader_discord }));
       // 킬 MVP는 같은 사람 아래 별도 줄 — 지급 기록은 위 행에서 합계(defAmt)로 한 번만 한다.
-      if(mvpExtra) rows.push(gdPayRow({ num: "", ign: m.ign, p, amt: mvpExtra, mvpTag: "킬 MVP", app: t2.id, idx, defAmt: 0, paid, leader: t2.leader_discord }));
+      if(mvpExtra) rows.push(gdPayRow({ num: "", ign: m.ign, p, amt: mvpExtra, mvpTag: "킬 MVP", app: t2.id, idx: tgt, defAmt: 0, paid, leader: t2.leader_discord }));
     });
     blocks.push(`<div style="margin-bottom:16px">
       <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:3px">
         <b style="font-size:14px">${medal[rank]||""} ${rank}위 ${esc(t2.team_name)}</b>
         <span style="color:var(--ink-faint);font-size:12px">각 ${won(per)}</span>
         ${missing ? `<span style="color:#fbbf24;font-size:12px;font-weight:700">⚠️ 계좌 미수집 ${missing}명</span>` : ""}
+        ${stale.length ? `<span style="color:#f87171;font-size:12px;font-weight:700">⚠️ 이탈자 계좌 ${stale.length}건 — 지급 대상 아님 (${stale.map(x=>esc(x.ign)).join(", ")})</span>` : ""}
       </div>
       ${rows.join("")}
     </div>`);

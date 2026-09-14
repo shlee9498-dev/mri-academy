@@ -388,6 +388,12 @@ alter table public.gdcup_payouts add column if not exists paid_at     timestampt
 alter table public.gdcup_payouts add column if not exists paid_amount int;
 alter table public.gdcup_payouts add column if not exists paid_memo   text;
 
+-- ign 키 (§F 2026-09-14 관제탑 승인) — 로스터 교체 시 member_idx만으론 계좌가 어긋난다
+-- (시즌4에서 3팀 교체 후 이탈자 계좌가 남아 새 멤버 자리에 표시된 사고).
+-- 신청 접수가 members[i].ign을 함께 저장하고, 화면은 ign 우선 매칭 + 불일치 경고만 띄운다
+-- (자동 보정 금지 — 매칭 실패는 사람이 판단한다). 구 시즌 행은 null 유지(idx 폴백).
+alter table public.gdcup_payouts add column if not exists ign text;
+
 -- 팀장 디코ID (신청 수정 재접근 키). gdcup_apps는 수동 생성분이라 컬럼만 추가.
 alter table public.gdcup_apps add column if not exists leader_discord text;
 create index if not exists idx_gdcup_apps_leader on public.gdcup_apps (season, leader_discord);
