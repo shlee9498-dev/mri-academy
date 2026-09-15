@@ -1,11 +1,11 @@
 // ============================================================
 // MRI ACADEMY · 예약·슬롯 API — S1-b
 //   수강생: /api/student-portal/{availability,bookings}   (포털 세션)
-//   트레이너: /api/trainer-portal/*                        (기존 Discord JWT)
+//   트레이너: /api/trainer-portal/*   (trainer-portal.cjs 의 게이트·세션 판정을 그대로 쓴다)
 // server.js 에서 require('./booking-api.cjs')(app, deps) 로 장착한다.
 //
-// ⚠️ student-portal.cjs **뒤에** 마운트해야 한다. 그 파일이 app.use(PREFIX)로 건
-//    공유비밀 게이트가 먼저 돌아야 수강생 라우트가 보호된다.
+// ⚠️ student-portal.cjs · trainer-portal.cjs **뒤에** 마운트해야 한다. 두 파일이 app.use(PREFIX)로 건
+//    공유비밀 게이트가 먼저 돌아야 수강생·트레이너 라우트가 보호된다(트레이너 게이트는 2026-09-15 오너 결정).
 //
 // 설계 전제(정본 v0.2.3 + 오너 지시 2026-09-04)
 //  1) 세션 scope 고정. 수강생은 studentId 를 보내지 않는다 — 세션 안의 sub 만 쓴다.
@@ -32,8 +32,10 @@ const MY_TRAINER_WINDOW_DAYS = 90;
 const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
 
 module.exports = function mountBookingApi(app, deps) {
-  const { sbSelect, sbInsert, sbRpc, limit, getUser, discordDM, portal } = deps;
+  const { sbSelect, sbInsert, sbRpc, limit, discordDM, portal, trainer } = deps;
   const { readSession, opaqueId, readOpaqueId, fail, scrub } = portal;
+  // 트레이너 판정(포털 세션 또는 사이트 JWT → staff 명부)과 응답 가드(scrubTrainer)는 trainer-portal.cjs 한 곳이 정본이다.
+  const { requireTrainer: requireTrainerBase, sendTrainer } = trainer;
   // 429 도 부록 A 한 형태(rate_limited). 키·창은 server.js limit() 그대로.
   const rateLimit = (name, max, windowMs) =>
     limit(name, max, windowMs, (res) => fail(res, 429, "rate_limited"));
@@ -45,12 +47,9 @@ module.exports = function mountBookingApi(app, deps) {
     !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SESSION_SECRET);
   // 수강생 응답은 scrub 을 통과해야 한다(신원·금액 키 차단 — 앱 가드와 같은 규칙).
   const send = (res, obj) => res.json(scrub(obj));
-  // ⚠️ 트레이너 응답은 scrub 을 태우지 않는다. scrub 은 "수강생 앱에 신원을 흘리지 않는다"는
-  //    규칙이라 `student` 어간을 막는데, 트레이너 화면은 누가 예약했는지 보는 것이 목적이다
-  //    (studentDisplayName 이 실제로 scrub 에 걸리는 것을 확인했다). 대상이 다른 응답에
-  //    같은 필터를 걸면 기능이 죽거나, 통과시키려고 규칙에 구멍을 내게 된다.
-  //    대신 여기서 내려보내는 키를 좁게 유지한다 — 표시명·길이·상태뿐이고 연락처·금액은 없다.
-  const sendTrainer = (res, obj) => res.json(obj);
+  // ⚠️ 트레이너 응답은 수강생 scrub 이 아니라 trainer-portal 의 scrubTrainer 를 탄다(sendTrainer).
+  //    scrub 은 "수강생 앱에 신원을 흘리지 않는다"는 규칙이라 `student` 어간을 막는데, 트레이너 화면은
+  //    누가 예약했는지 보는 것이 목적이다. scrubTrainer 는 대신 연락처·계좌·금액·memo 를 막는다.
 
   // §23 미실행 배포에서 라우트가 500 을 뿜지 않도록 기동 시 1회 프로브한다.
   let tablesReady = false;
@@ -87,24 +86,12 @@ module.exports = function mountBookingApi(app, deps) {
     next();
   }
 
-  // 트레이너는 포털 세션이 아니라 기존 Discord JWT 를 쓴다(staff-panel 과 같은 경로).
-  // 별도 트레이너 세션 체계를 새로 만들지 않는 이유: 검증된 인증을 하나 더 늘리면
-  // 만료·회수 규칙이 두 벌이 된다. 트레이너 화면은 이미 이 JWT 로 붙는다.
-  async function requireTrainer(req, res, next) {
+  // 트레이너 판정은 trainer-portal.cjs 의 requireTrainer(포털 세션 scope trainer 또는 기존 사이트 JWT).
+  // 여기서는 §23 예약 테이블 준비 여부만 앞에 더한다 — 미실행 배포에서 라우트가 500 을 뿜지 않게.
+  function requireTrainer(req, res, next) {
     if (!ready()) return fail(res, 503, "portal_unavailable");
     if (!tablesReady) return fail(res, 503, "portal_unavailable");
-    const u = getUser(req);
-    if (!u) return fail(res, 401, "session_expired");
-    try {
-      const rows = await sbSelect("staff",
-        `select=id,name,active&discord_id=eq.${encodeURIComponent(u.id)}&limit=1`);
-      if (!rows[0] || rows[0].active === false) return fail(res, 403, "scope_denied");
-      req.staff = rows[0];
-      next();
-    } catch (e) {
-      console.error("booking_trainer_lookup", e?.message);
-      fail(res, 503, "portal_unavailable");
-    }
+    return requireTrainerBase(req, res, next);
   }
 
   // DB 함수가 돌려준 error 코드 → HTTP 상태. 목록에 없는 코드는 400 으로 떨어뜨린다.

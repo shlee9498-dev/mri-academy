@@ -6675,8 +6675,15 @@ const studentPortal = require("./student-portal.cjs")(app, { sbSelect, sbInsert,
 
 // ── 예약·슬롯 (S1-b · /api/student-portal/{availability,bookings} + /api/trainer-portal/*) ──
 // student-portal 뒤에 마운트해야 그 파일이 건 공유비밀 게이트(app.use(PREFIX))가 먼저 돈다.
+// ── 트레이너 전용 포털 API (S1-c · /api/trainer-portal/{exchange,students,journals,sessions}) ──
+// student-portal 과 같은 x-portal-secret 게이트·세션 서명을 쓴다(오너 결정 2026-09-15). booking-api 의
+// /slots·/bookings 라우트도 이 모듈이 건 게이트 뒤에 서므로 **booking-api 보다 먼저** 마운트한다.
+const trainerPortal = require("./trainer-portal.cjs")(app, {
+  sbSelect, sbInsert, sbUpsert, limit, getUser, portal: studentPortal,
+});
+
 require("./booking-api.cjs")(app, {
-  sbSelect, sbInsert, sbRpc, limit, getUser, discordDM, portal: studentPortal,
+  sbSelect, sbInsert, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,
 });
 
 // [재발 방지] 기동 시 시트 웹훅 연결 식별 — 어느 Apps Script 배포(=어느 스프레드시트)에 붙는지 즉시 확인.

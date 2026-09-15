@@ -151,7 +151,9 @@ module.exports = function mountStudentPortal(app, deps) {
   const IPISH = /^[0-9a-fA-F.:]{3,45}$/;
   let headerShapeLogged = 0;
   let denyLogged = 0;
-  app.use(PREFIX, (req, res, next) => {
+  // 게이트 본체. 트레이너 포털(trainer-portal.cjs)도 **같은 함수**를 app.use 로 건다 —
+  // 비밀 비교·트림 규칙·거부 진단이 두 벌이 되지 않게 여기 한 곳에만 둔다(오너 결정 2026-09-15 ①).
+  const sharedSecretGate = (req, res, next) => {
     if (!ready()) return fail(res, 503, "portal_unavailable");
     // 공유비밀 비교는 **앞뒤 공백을 무시한다**. 대시보드에 붙여넣을 때 개행·공백이 딸려 들어가는 사고가
     // 실제로 있었고(2026-09-08 앱 연동), 화면에는 403 scope_denied 한 줄로만 보여 값이 다른 건지
@@ -188,7 +190,8 @@ module.exports = function mountStudentPortal(app, deps) {
         ` · x-client-ip ${req.portalClientIp ? "있음" : "없음"}`);
     }
     next();
-  });
+  };
+  app.use(PREFIX, sharedSecretGate);
 
   // ── 쓰기 body 화이트리스트 (정본 v0.2.3 4번) ────────────────────
   // 허용 키 외 키가 하나라도 오면 400. **세션 검사보다 먼저** 돈다.
@@ -597,5 +600,6 @@ module.exports = function mountStudentPortal(app, deps) {
 
   // 예약 모듈(booking-api.cjs)이 **같은** 세션 서명·불투명 id 체계를 써야 한다.
   // 복제하면 SESSION_SECRET 파생 규칙이 갈라져 한쪽 토큰이 다른 쪽에서 안 풀린다.
-  return { readSession, opaqueId, readOpaqueId, fail, scrub };
+  // trainer-portal.cjs 는 여기에 더해 세션 발급(issueSession)과 공유비밀 게이트를 그대로 쓴다.
+  return { readSession, issueSession, opaqueId, readOpaqueId, fail, scrub, sharedSecretGate };
 };
