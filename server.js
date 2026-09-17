@@ -6904,6 +6904,10 @@ const SCHEMA_OPTIONAL = {
 (process.env.BOT_PAYREQ === "1" ? REQUIRED_SCHEMA : SCHEMA_OPTIONAL).payment_requests =
   ["id","status","student_name","student_id","trainer_id","trainer_name","kind",
    "amount","games","paid_on","memo","pay_channel","requested_by","decided_by","decided_at","created_at"];
+// §18b 역참조(2026-09-17 · 관제탑 지시 2·4) — 승인 큐 → 본표(payments·lesson_enrollments) 연결 컬럼.
+// 없어도 감시 크론(runPayreqUnreflected)이 memo 표식·자연키로 판정하므로 선택 등급이다(부팅 warn 만).
+// DDL 실행 후 채워지면 판정 1순위가 되고, #13·#15 같은 "금액이 다른 대응 행"도 연결로 해소된다.
+SCHEMA_OPTIONAL.payment_requests = [...(SCHEMA_OPTIONAL.payment_requests || []), "payment_id", "lesson_enrollment_id"];
 
 // 선택 컬럼 존재 여부를 기동 시 1회 확인한다. 결과는 캐시해 매 요청 재조회하지 않는다.
 //   반환: { "payments.fee_amount": true, ... }
@@ -7208,6 +7212,35 @@ async function runFeedbackPending() {
   const oldestDays = Math.max(1, Math.round((Date.now() - new Date(rows[0].created_at)) / 86400000));
   await ownerDM(`📝 미승인 피드백 ${rows.length}건 (최장 대기 ${oldestDays}일)\n검수 채널에서 ✅(공개) / ❌(반려)로 처리해주세요 — ✅ 즉시 사이트 노출.`);
 }
+// 승인 큐 미반영 감시(관제탑 2026-09-17 지시 4 · 8/19 지시 3 재발행) — approved 인데 본표(payments)에
+// 대응 행이 없는 신청을 매일 오너 DM 으로 알린다. 승인 핸들러(payreq_ok)는 설계상(PR-3a) payments 를
+// 만들지 않아 편입은 시드 SQL(Level 0)이 하는데, 그 사이가 알림 없이 3주(17건) 쌓인 것이 이 크론의 이유다.
+// 판정은 payreq-monitor.cjs(순수 함수): payment_id → memo 표식 payreq#N → 자연키 → 분할 합산 순.
+// 0건 = 침묵. 1건 이상 = 매일 발송(서명 억제 없음 — 쌓이는 동안 조용해지면 안 된다). 로그엔 id 만 남긴다.
+const payreqMonitor = require("./payreq-monitor.cjs");
+async function runPayreqUnreflected() {
+  if (!process.env.SUPABASE_URL) return;
+  if (process.env.BOT_PAYREQ !== "1") { console.log("[cron] payreqUnreflected: BOT_PAYREQ 미설정 — 스킵"); return; }
+  const linkColumn = !!schemaOptional["payment_requests.payment_id"];
+  const cols = "id,status,student_id,student_name,trainer_name,kind,amount,games,paid_on,decided_at" + (linkColumn ? ",payment_id" : "");
+  const reqs = await sbSelect("payment_requests", `status=eq.approved&select=${cols}&order=id.asc&limit=1000`);
+  if (!reqs || !reqs.length) { console.log("[cron] payreqUnreflected: approved 0건 — 침묵"); return; }
+  const sids = [...new Set(reqs.map((r) => r.student_id).filter((x) => x != null))];
+  const byStudent = sids.length ? `&student_id=in.(${sids.join(",")})` : null;
+  // 표식(payreq#N) 행은 학생 필터 밖에서도 잡는다 — 명부 미연결(student_id null) 신청의 유일한 판정 근거다.
+  const [payA, payB, enrA, enrB] = await Promise.all([
+    byStudent ? sbSelect("payments", `select=id,student_id,paid_at,amount,memo${byStudent}&limit=5000`) : [],
+    sbSelect("payments", "select=id,student_id,paid_at,amount,memo&memo=like.*payreq%23*&limit=1000"),
+    byStudent ? sbSelect("lesson_enrollments", `select=id,student_id,memo${byStudent}&limit=5000`) : [],
+    sbSelect("lesson_enrollments", "select=id,student_id,memo&memo=like.*payreq%23*&limit=1000"),
+  ]);
+  const dedupe = (a, b) => { const m = new Map(); for (const r of [...(a || []), ...(b || [])]) m.set(r.id, r); return [...m.values()]; };
+  const { date } = kstNow();
+  const { reflected, unreflected } = payreqMonitor.classify(reqs, dedupe(payA, payB), dedupe(enrA, enrB), date);
+  if (!unreflected.length) { console.log(`[cron] payreqUnreflected: 0건 (반영 ${reflected}) — 침묵`); return; }
+  console.log(`[cron] payreqUnreflected: ${unreflected.length}건 (ids ${unreflected.map((r) => r.id).join(",")}) · 반영 ${reflected} — 발송`);
+  await ownerDM(payreqMonitor.formatOwnerDM(unreflected, { linkColumn }));
+}
 async function cronTick() {
   if (T2_ENABLED) {
     await maybeRunDaily("stats", "05:00", runStatsSnapshot, "일일 전적 스냅샷");
@@ -7218,6 +7251,7 @@ async function cronTick() {
     await maybeRunDaily("regxferPending", "05:20", runRegxferPendingAlert, "등록계 전환 대기 알림");
   }
   await maybeRunDaily("fbPending", "05:15", runFeedbackPending, "미승인 피드백");       // 별도 env 불요(크론 활성 시 항상)
+  await maybeRunDaily("payreqUnreflected", "05:25", runPayreqUnreflected, "승인 큐 미반영 감시");   // BOT_PAYREQ=1 이면 항상 — 함수가 스스로 스킵
   // DIRECT_STATUS 게이트를 타지 않는다 — 게이트를 하나 더 두면 그 게이트가 꺼져서
   // 침묵하는 경우를 또 못 잡는다. 웹훅이 없으면 함수가 스스로 스킵한다.
   await maybeRunDaily("directStale", "05:20", runDirectStale, "직강 기록 정체");
