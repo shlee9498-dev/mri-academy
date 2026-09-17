@@ -671,6 +671,16 @@ declare
   v_paidm   text;
   v_open    text := to_char((now() at time zone 'Asia/Seoul')::date, 'YYYY-MM');
   v_settled text;
+  -- v1.1 세트 분해용
+  v_level   text;
+  v_course_amt integer;
+  v_lesson_amt integer;
+  v_games   integer;
+  v_unit    integer;
+  v_cid     bigint;
+  v_ref     text;
+  v_fee_c   integer;
+  v_fee_l   integer;
 begin
   select * into r from public.payment_requests where id = p_id for update;
   if not found then raise exception 'payreq #% 없음', p_id; end if;
@@ -691,6 +701,15 @@ begin
        and not exists (select 1 from public.payment_requests q where q.payment_id = p.id)
      order by p.id limit 1;
   end if;
+  -- ③' 세트는 2행이라 단일 금액이 안 맞는다 — 같은 deposit_ref 묶음 합이 신청 금액이면 레슨행에 연결(v1.1)
+  if v_pid is null and r.kind = '세트' then
+    select p.id into v_pid from public.payments p
+     where p.student_id = r.student_id and p.paid_at = r.paid_on and p.kind = 'set'
+       and p.lesson_enrollment_id is not null and p.deposit_ref is not null
+       and (select sum(q.amount) from public.payments q where q.deposit_ref = p.deposit_ref) = r.amount
+       and not exists (select 1 from public.payment_requests x where x.payment_id = p.id)
+     order by p.id limit 1;
+  end if;
   if v_pid is not null then
     select e.id into v_eid from public.lesson_enrollments e
      where e.student_id = r.student_id
@@ -703,7 +722,7 @@ begin
   -- ④ 생성 (v1: 판수·상담)
   v_kind := case r.kind when '판수' then 'lesson' when '상담' then 'consult'
                         when '강의' then 'course' when '세트' then 'set' else 'etc' end;
-  if v_kind not in ('lesson', 'consult') then
+  if v_kind not in ('lesson', 'consult', 'set') then
     return 'manual:' || v_kind;
   end if;
   v_ch  := coalesce(r.pay_channel, 'transfer');
@@ -714,6 +733,47 @@ begin
     if exists (select 1 from public.period_locks l where l.period = v_settled and l.released_at is null) then
       raise exception '입금월 % 과 현재 월 % 이 모두 잠겨 있습니다 — payreq #% 은 수동 편입', v_paidm, v_settled, p_id;
     end if;
+  end if;
+  if v_kind = 'set' then
+    -- v1.1 세트 자동 분해(관제탑 9/17 정가표 확정 · 입문 할인 0 은 오너 판정 대기 — 현 표대로).
+    --   입문 280,000 = 초급 235,000 + 10판 45,000 · 도약 340,000 = 중급 250,000(정가 270,000−20,000) + 21판 90,000
+    --   마스터 405,000 = 심화 265,000(정가 290,000−25,000) + 33판 140,000. §9.5: 두 행 kind='set' · 강의행이 할인 흡수 ·
+    --   레슨행 정가 · courses.unit_price 는 정가/8 · deposit_ref 로 통장 1줄 묶음. 봇 /결제신청 SET_GAMES 와 같은 표.
+    case r.amount
+      when 280000 then v_level := '초급반'; v_course_amt := 235000; v_lesson_amt := 45000;  v_games := 10; v_unit := 29375;
+      when 340000 then v_level := '중급반'; v_course_amt := 250000; v_lesson_amt := 90000;  v_games := 21; v_unit := 33750;
+      when 405000 then v_level := '심화반'; v_course_amt := 265000; v_lesson_amt := 140000; v_games := 33; v_unit := 36250;
+      else raise exception '세트 금액 % 은 정가표(280,000·340,000·405,000)에 없습니다 — payreq #% 은 수동 편입', r.amount, p_id;
+    end case;
+    v_ref := 'D' || to_char(r.paid_on, 'YYYYMMDD') || '-'
+          || lpad(((select count(distinct q.deposit_ref) from public.payments q
+                     where q.deposit_ref like 'D' || to_char(r.paid_on, 'YYYYMMDD') || '-%') + 1)::text, 2, '0');
+    insert into public.courses
+      (student_id, level, scheme, session_minutes, unit_price, units_total, started_on, status, source, memo, created_by, trainer_id)
+    values (r.student_id, v_level, 'new', 180, v_unit, 8, r.paid_on, 'active', 'bot',
+            v_mark || ' 대응 · 세트 강의분 · 정가 ' || (v_unit * 8) || ' · 세트할인 ' || (v_unit * 8 - v_course_amt) || ' 은 결제 강의행 흡수 · 승인 자동 편입',
+            'payreq', (select st.id from public.staff st where st.role = 'owner' and st.active order by st.id limit 1))
+    returning id into v_cid;
+    insert into public.lesson_enrollments
+      (student_id, trainer_id, games_total, started_on, status, source, memo, created_by, paid_amount, bonus_games)
+    values (r.student_id, r.trainer_id, v_games, r.paid_on, 'active', 'bot',
+            v_mark || ' 대응 · 세트 레슨분 ' || v_games || '판 · 정가 유지 · 승인 자동 편입', 'payreq', v_lesson_amt, 0)
+    returning id into v_eid;
+    v_fee_c := case when v_ch = 'groble' then round(v_course_amt * 0.0484)::integer else 0 end;
+    v_fee_l := case when v_ch = 'groble' then round(v_lesson_amt * 0.0484)::integer else 0 end;
+    insert into public.payments
+      (student_id, paid_at, amount, games, kind, payout_rate, pay_channel, fee_amount, net_amount,
+       source, memo, deposit_ref, course_id, settled_period)
+    values (r.student_id, r.paid_on, v_course_amt, 0, 'set', 0, v_ch, v_fee_c, v_course_amt - v_fee_c, 'api',
+            v_mark || ' 대응 · 세트 강의분(' || v_level || ' 8회) · 할인 흡수 · 승인 자동 편입', v_ref, v_cid, v_settled);
+    insert into public.payments
+      (student_id, paid_at, amount, games, kind, payout_rate, pay_channel, fee_amount, net_amount,
+       source, memo, deposit_ref, lesson_enrollment_id, settled_period)
+    values (r.student_id, r.paid_on, v_lesson_amt, v_games, 'set', 0.70, v_ch, v_fee_l, v_lesson_amt - v_fee_l, 'api',
+            v_mark || ' 대응 · 세트 레슨분 · 담당 ' || coalesce(r.trainer_name, '-') || ' · 승인 자동 편입', v_ref, v_eid, v_settled)
+    returning id into v_pid;
+    update public.payment_requests set payment_id = v_pid, lesson_enrollment_id = v_eid where id = p_id;
+    return 'created:set:' || v_pid || '+course:' || v_cid;
   end if;
   if v_kind = 'lesson' then
     if coalesce(r.games, 0) <= 0 then
@@ -743,9 +803,11 @@ language plpgsql security definer set search_path = public as $$
 declare
   r      public.payment_requests%rowtype;
   p      public.payments%rowtype;
+  q      public.payments%rowtype;
   v_re   text := '(^|[^0-9])payreq#' || p_id || '([^0-9]|$)';
   v_today date := (now() at time zone 'Asia/Seoul')::date;
   v_adj  bigint;
+  v_n    integer := 0;
 begin
   select * into r from public.payment_requests where id = p_id for update;
   if not found or r.payment_id is null then return 'skip:unlinked'; end if;
@@ -754,22 +816,35 @@ begin
   if exists (select 1 from public.payments a where a.kind = 'adjust' and a.memo ~ v_re) then
     return 'skip:already_voided';
   end if;
-  insert into public.payments
-    (student_id, paid_at, amount, games, kind, payout_rate, pay_channel, fee_amount, net_amount,
-     source, memo, settled_period)
-  values (p.student_id, v_today, -p.amount, -coalesce(p.games, 0), 'adjust', p.payout_rate, p.pay_channel, 0,
-          -coalesce(p.net_amount, p.amount - p.fee_amount), 'api',
-          'payreq#' || p_id || ' void 역행 — 원행 payments #' || p.id
-            || case when p.fee_amount > 0 then ' · 원행 수수료 ' || p.fee_amount || '원 미역행' else '' end,
-          to_char(v_today, 'YYYY-MM'))
-  returning id into v_adj;
+  -- 세트(v1.1)는 deposit_ref 로 묶인 형제행(강의행)까지 함께 역행하고 courses 도 cancelled 로 닫는다.
+  for q in select * from public.payments x
+            where x.id = p.id
+               or (p.deposit_ref is not null and x.deposit_ref = p.deposit_ref and x.kind <> 'adjust')
+            order by x.id
+  loop
+    insert into public.payments
+      (student_id, paid_at, amount, games, kind, payout_rate, pay_channel, fee_amount, net_amount,
+       source, memo, settled_period)
+    values (q.student_id, v_today, -q.amount, -coalesce(q.games, 0), 'adjust', q.payout_rate, q.pay_channel, 0,
+            -coalesce(q.net_amount, q.amount - q.fee_amount), 'api',
+            'payreq#' || p_id || ' void 역행 — 원행 payments #' || q.id
+              || case when q.fee_amount > 0 then ' · 원행 수수료 ' || q.fee_amount || '원 미역행' else '' end,
+            to_char(v_today, 'YYYY-MM'))
+    returning id into v_adj;
+    v_n := v_n + 1;
+    if q.course_id is not null then
+      update public.courses
+         set status = 'cancelled', ended_on = v_today, memo = coalesce(memo, '') || ' · void payreq#' || p_id
+       where id = q.course_id and status = 'active';
+    end if;
+  end loop;
   if r.lesson_enrollment_id is not null then
     update public.lesson_enrollments
        set status = 'cancelled', ended_on = v_today,
            memo = coalesce(memo, '') || ' · void payreq#' || p_id
      where id = r.lesson_enrollment_id and status = 'active';
   end if;
-  return 'voided:' || v_adj;
+  return 'voided:' || v_n || ':' || v_adj;
 end $$;
 
 create or replace function public.trg_payreq_status_fn() returns trigger
@@ -796,6 +871,14 @@ comment on column public.payments.payout_rate is
   '기록 전용 · 지급 계산 미참조. 지급 정본 = graduations 래칫(trainerBaseRateAt · played_at 기준 · 0.65+floor(Σweight/5)×0.01 · cap 0.70) + 재결제 0.05 → lesson_sessions.settled_rate 스냅샷. 백필 기록 규칙: 2026-05 이전 0.60 · 이후 0.70 · course/lecture_consult/refund/adjust 0 (관제탑 2026-09-17 ⑤)';
 comment on column public.students.payout_rate_set is
   '구 필드(제안/확정 개념 폐지) · 지급 계산 미참조 · 정본은 graduations 래칫 (관제탑 2026-09-17 ⑤)';
+
+-- 18f) 세트 kind (v1.1 · 2026-09-17 · 관제탑 정가표 확정 후 착수 승인) — /결제신청 구분에 '세트' 추가.
+--      §18d payreq_apply 가 금액으로 상품을 판별해 courses + 등록 + payments 2행(kind='set' · deposit_ref)으로
+--      분해한다. **실행 순서: §18f → §18d 재실행**(함수 갱신 · create or replace 라 멱등). 위 create table 의
+--      CHECK 는 구 4종이라 새 DB 재현 시 이 블록이 덮어쓴다. 실DB 에서는 CHECK 재생성만 일어난다.
+alter table public.payment_requests drop constraint if exists payment_requests_kind_check;
+alter table public.payment_requests add constraint payment_requests_kind_check
+  check (kind in ('판수','강의','상담','기타','세트'));
 
 -- ============================================================
 -- 19) 레슨 등록·정산 회차 (2026-08-13) — 시트→DB 전환의 레슨 축.
@@ -1150,6 +1233,19 @@ alter table public.consults add  constraint chk_consults_source
 --        22d의 source와 이름이 겹치는 다른 개념이라 분리를 제안한다. 이 컬럼이 없으면
 --        server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다(유실은 없고 질의만 불편).
 -- alter table public.consults add column if not exists inflow text;
+
+-- 22f) 신청 UTM 3컬럼 (2026-09-17 · 관제탑 UTM 집계 경로 확인) — index.html 트레이너 소개 CTA 가
+--      apply.html?utm_source=site&utm_medium=trainers&utm_content=hyuntae|jungu|muri 로 진입하고 폼이 제출 payload 에
+--      실어 보내는데, 서버는 디스코드 embed 에만 표시하고 어디에도 저장하지 않았다(실측: consults 에 utm 컬럼 없음 ·
+--      Google Form 미사용). 이 컬럼이 없으면 /api/apply 가 memo 에 `utm: a/b/c` 로 남긴다(SCHEMA_OPTIONAL · 폴백).
+--      집계: select utm_content, count(*) from consults where utm_medium='trainers' and utm_content <> 'muri' group by 1;
+--      (muri 는 오너 유입이라 트레이너 비교에서 분리 — 관제탑 9/17)
+alter table public.consults
+  add column if not exists utm_source  text,
+  add column if not exists utm_medium  text,
+  add column if not exists utm_content text;
+create index if not exists idx_consults_utm on public.consults (utm_medium, utm_content)
+  where utm_medium is not null;
 
 -- 22e) 트레이너 연락처 — 동의가 없으면 API 응답에서 생략한다(코드가 강제).
 alter table public.staff add column if not exists contact_phone      text;

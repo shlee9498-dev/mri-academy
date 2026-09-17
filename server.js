@@ -1032,7 +1032,7 @@ if (process.env.DISCORD_TOKEN) {
   //   시트가 정본인 병행 단계에서 payout_rate(NOT NULL) 산정은 정산 소관이라 봇이 추정하면
   //   그 값이 눌러앉는다. 승인 레코드(§18)가 영구 기록이고 본표 편입은 시드·백필 대사가 한다.
   //   ▶ 2026-09-17(관제탑 지시 A): 본표 편입은 DB 트리거 §18d(payreq_apply)가 승인 전이 시 같은 트랜잭션에서
-  //     한다 — 판수·상담 자동, 강의·세트·기타 수동. 봇은 결과(payment_id)를 카드에 보이고, 명부 미연결이면
+  //     한다 — 판수·상담·세트(v1.1 · 정가표 분해) 자동, 강의·기타 수동. 봇은 결과(payment_id)를 카드에 보이고, 명부 미연결이면
   //     승인 자체를 막는다. 미반영은 일일 크론(runPayreqUnreflected)이 알린다.
   const PAYREQ_CMD = {
     name: "결제신청",
@@ -1044,6 +1044,7 @@ if (process.env.DISCORD_TOKEN) {
         { name: "판수(레슨)", value: "판수" },
         { name: "강의", value: "강의" },
         { name: "상담", value: "상담" },
+        { name: "세트(강의+레슨 · 280,000/340,000/405,000)", value: "세트" },
         { name: "기타", value: "기타" } ] },
       { name: "판수", description: "판수 패키지면 총 판수(예: 33)", type: 4, required: false, min_value: 1, max_value: 200 },
       { name: "입금일", description: "입금일 YYYY-MM-DD(미입력=오늘)", type: 3, required: false },
@@ -2736,7 +2737,7 @@ if (process.env.DISCORD_TOKEN) {
     const name = (itx.options.getString("학생") || "").trim();
     const amount = itx.options.getInteger("금액");
     const kind = itx.options.getString("구분");
-    const games = itx.options.getInteger("판수") ?? null;
+    let games = itx.options.getInteger("판수") ?? null;
     const paidRaw = (itx.options.getString("입금일") || "").trim();
     const memo = (itx.options.getString("메모") || "").trim() || null;
     // 화이트리스트 밖 값은 조용히 transfer로 떨군다 — CHECK 위반으로 신고 전체가 실패하는 것보다,
@@ -2746,6 +2747,14 @@ if (process.env.DISCORD_TOKEN) {
     if (!name) return itx.reply({ content: "학생 이름을 입력해줘.", ephemeral: true });
     if (kind === "판수" && !games)
       return itx.reply({ content: "구분이 판수면 판수도 입력해줘(예: 33).", ephemeral: true });
+    // 세트(v1.1): 금액이 상품을 결정하고 판수는 정가표에서 온다 — 서버 §18d payreq_apply 의 표와 같아야 한다.
+    //   입문 280,000(10판) · 도약 340,000(21판) · 마스터 405,000(33판). 표 밖 금액은 접수 단계에서 막는다(승인 시 예외보다 빠르다).
+    const SET_GAMES = { 280000: 10, 340000: 21, 405000: 33 };
+    if (kind === "세트") {
+      if (!SET_GAMES[amount])
+        return itx.reply({ content: "세트 금액은 280,000(입문) · 340,000(도약) · 405,000(마스터) 중 하나여야 해. 금액을 확인해줘.", ephemeral: true });
+      games = SET_GAMES[amount];
+    }
     let paid_on = kstToday();
     if (paidRaw) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(paidRaw) || Number.isNaN(Date.parse(paidRaw)))
@@ -2843,7 +2852,7 @@ if (process.env.DISCORD_TOKEN) {
       // 본표 반영 결과 — §18b 역참조가 있으면 트리거가 채운 payment_id 가 응답 행에 실려 온다.
       const row = Array.isArray(patched) ? patched[0] : null;
       const linked = row && Object.prototype.hasOwnProperty.call(row, "payment_id") ? row.payment_id : undefined;
-      const autoKind = q.kind === "판수" || q.kind === "상담";
+      const autoKind = ["판수", "상담", "세트"].includes(q.kind);
       const ledgerNote = linked
         ? `\n🧾 본표 반영: payments #${linked}${row.lesson_enrollment_id ? ` · 등록 #${row.lesson_enrollment_id}` : ""}`
         : (linked === undefined
@@ -4513,8 +4522,15 @@ app.post("/api/apply", async (req, res) => {
     //     보내므로, DDL 실행 전 배포에서도 기본 컬럼으로 저장이 시작된다(전량 유실 방지).
     //   · 전화번호는 여기까지만 온다. 수강생 포털 API 응답에는 어떤 경로로도 넣지 않는다.
     try {
-      const has = (c) => schemaOptional[`consults.${c}`] === true;
+      // ⚠️ 2026-09-17 실측 정정: §22d 7컬럼이 9/4 에 REQUIRED_SCHEMA 로 승격되면서 probeOptionalSchema 가 더는
+      //   프로브하지 않아 has() 가 전부 false 였다 — 9/4 이후 신청 3건(8·9·10)이 source·phone·platform·game_nick·
+      //   playtime·focus·stats_consent 를 전부 null 로 저장하고 memo 폴백만 남겼다. REQUIRED 는 부팅 점검이
+      //   실재를 보장하므로 존재로 본다. (관제탑 9/17 UTM 집계 경로 확인에서 드러남)
+      const has = (c) => schemaOptional[`consults.${c}`] === true || (REQUIRED_SCHEMA.consults || []).includes(c);
       const inflow = clip(b.source, 50);                       // 폼의 '유입 경로'(유튜브·지인 등)
+      // UTM(index.html 트레이너 CTA → apply.html 진입 시 캡처 → 제출 payload). 종전에는 디스코드 embed 에만 실리고
+      // 어디에도 저장되지 않아 집계가 성립하지 않았다. §22f 컬럼이 있으면 컬럼에, 없으면 memo 에 `utm: a/b/c` 로 남긴다.
+      const utm = { utm_source: clip(b.utm_source, 40), utm_medium: clip(b.utm_medium, 40), utm_content: clip(b.utm_content, 60) };
       const row = {
         kind: /직강|강의/.test(String(b.applyType || "")) ? "direct_lecture" : "consult",
         student_name: clip(b.name, 30),
@@ -4533,6 +4549,9 @@ app.post("/api/apply", async (req, res) => {
       const memoParts = [];
       if (has("inflow")) row.inflow = inflow;
       else if (inflow) memoParts.push(`유입: ${inflow}`);
+      const utmVals = Object.values(utm).filter(Boolean);
+      if (has("utm_source")) Object.assign(row, { utm_source: utm.utm_source || null, utm_medium: utm.utm_medium || null, utm_content: utm.utm_content || null });
+      else if (utmVals.length) memoParts.push(`utm: ${[utm.utm_source, utm.utm_medium, utm.utm_content].map((v) => v || "-").join("/")}`);
       if (!has("game_nick")) memoParts.push(`${clip(b.platform, 10)}/${clip(b.nickname, 40)}`);
       if (b.memo && String(b.memo).trim()) memoParts.push(clip(b.memo, 300));
       if (memoParts.length) row.memo = memoParts.join(" · ").slice(0, 500);
@@ -6916,7 +6935,7 @@ const SCHEMA_OPTIONAL = {
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
-  consults: ["inflow"],
+  consults: ["inflow", "utm_source", "utm_medium", "utm_content"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계)
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",
