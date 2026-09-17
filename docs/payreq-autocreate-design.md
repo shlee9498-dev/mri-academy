@@ -34,7 +34,7 @@
 |---|---|
 | `kind` | `판수`→`lesson` · `상담`→`consult` · `강의`→`course` · `세트`→`set` · `기타`→`etc` |
 | `requested_by` | `staff.discord_id` 로 해석 — 실측 2종 = 준구(staff 2) · 현태(staff 5). `payment_requests.trainer_id` 가 접수 시 이미 채워진다 |
-| `payout_rate` | 0.70(레슨·상담 · 관제탑 9/17 정본 확정). **지급 계산 미참조 실측(9/17)**: `computeStudent` 는 `graduations` 래칫(`trainerBaseRateAt` · 세션 played_at 기준) + 재결제 보너스 0.05 만 읽고, 정산 확정 시 `lesson_sessions.settled_rate` 에 스냅샷한다. `payments.payout_rate`·`students.payout_rate_set` 은 어디서도 읽지 않는 이력·구 필드. 백필 기록 규칙(관제탑 ⑤): 2026-05 이전 0.60 · 이후 0.70 · course·lecture_consult·refund·adjust 0 |
+| `payout_rate` | 0.70(레슨·상담 · 관제탑 9/17 정본 확정). **지급 계산 미참조 실측(9/17)**: `computeStudent` 는 `graduations` 래칫(`trainerBaseRateAt` · 세션 played_at 기준) + 재결제 보너스 0.05 만 읽고, 정산 확정 시 `lesson_sessions.settled_rate` 에 스냅샷한다. `payments.payout_rate`·`students.payout_rate_set` 은 어디서도 읽지 않는 이력·구 필드. 백필 기록 규칙(관제탑 ⑤): 2026-05 이전 0.60 · 이후 0.70 · course·lecture_consult·refund·adjust 0. 오독 방지 = **§18e 컬럼 주석**(관제탑 (b) 채택 · 개명 보류) |
 | `settled_period` | 기본 null(입금월). 입금월이 `period_locks` 에 잠겨 있으면 현재 열린 달(KST)로 이월. 둘 다 잠겨 있으면 예외(수동) |
 | `source` | `payments 'api'`(CHECK manual\|api) · `lesson_enrollments 'bot'` |
 | 수수료 | `config/fees.cjs` 와 동일 — groble 4.84% 반올림, 그 외 0(미확정 추정 금지) |
@@ -42,7 +42,7 @@
 
 ## 4. 자동 범위 v1 / v1.1
 - **v1 자동**: 판수 · 상담. **수동**: 강의(`courses` 행 필요) · 세트(§9.5 2행 · `deposit_ref` · `courses`+등록 선행) · 기타.
-- **v1.1 세트 자동 분해**(관제탑 9/17 이월 승인): `/결제신청` kind `세트` 추가 → 금액으로 상품 판별 → `courses` 행 + 등록 + `payments` 2행(`kind='set'` · `deposit_ref` · 강의행이 할인 흡수 · 레슨행 정가). **정가표 확정(관제탑 9/17)**: 초급 235,000 · 중급 270,000 · 심화 290,000 → 입문 280,000 = 강의행 235,000(할인 0) + 레슨 10판 45,000 · 도약 340,000 = 강의행 250,000(할인 20,000) + 레슨 21판 90,000 · 마스터 405,000 = 강의행 265,000(할인 25,000) + 레슨 33판 140,000. 남은 의존: `payment_requests.kind` CHECK 에 `'세트'` 추가(DDL) · 강의 level 매핑(입문→초급반 · 도약→중급반 · 마스터→심화반). PR #325 머지 후 별도 PR.
+- **v1.1 세트 자동 분해**(관제탑 9/17 이월 승인): `/결제신청` kind `세트` 추가 → 금액으로 상품 판별 → `courses` 행 + 등록 + `payments` 2행(`kind='set'` · `deposit_ref` · 강의행이 할인 흡수 · 레슨행 정가). **정가표 확정(관제탑 9/17)**: 초급 235,000 · 중급 270,000 · 심화 290,000 → 입문 280,000 = 강의행 235,000(할인 0) + 레슨 10판 45,000 · 도약 340,000 = 강의행 250,000(할인 20,000) + 레슨 21판 90,000 · 마스터 405,000 = 강의행 265,000(할인 25,000) + 레슨 33판 140,000. 남은 의존: `payment_requests.kind` CHECK 에 `'세트'` 추가(DDL) · 강의 level 매핑(입문→초급반 · 도약→중급반 · 마스터→심화반). PR #325 머지 후 별도 PR. ⚠ 입문 할인 0 이 의도된 값인지(초급 정가 250,000 기준이면 15,000 할인이 일관) 오너 판정 대기 — 확정 전까지 현 표대로 구현.
 - **v1.1 선입금 크레딧 kind**(관제탑 ④): 지금은 `etc` + memo + `deposit_ref` 묶음. 반복 유형이라 `credit`(또는 `deposit`) kind 신설 검토 — `payments` CHECK 변경이라 결제 트랙 주도, 정산 엔진 집계 제외 규칙 동반.
 
 ## 5. 취소 역행의 한계 (결제 트랙 확인 항목)

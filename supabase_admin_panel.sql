@@ -788,6 +788,15 @@ create trigger trg_payreq_status
   for each row execute function public.trg_payreq_status_fn();
 -- payreq_apply 안의 UPDATE 는 status 를 SET 하지 않으므로 이 트리거를 다시 깨우지 않는다.
 
+-- 18e) payout_rate 컬럼 주석 (2026-09-17 · 관제탑 판정 ⑤ (b)) — 이름이 「지급률」로 읽히지만 지급 계산은
+--      graduations 래칫(admin-panel trainerBaseRateAt · 세션 played_at 기준) + 재결제 0.05 → lesson_sessions.settled_rate
+--      스냅샷만 참조한다. 두 컬럼은 기록·이력용이며 어떤 산출에도 쓰이지 않는다(관제탑도 오독한 지점).
+--      개명((a) record_rate)은 참조처(패널 입력·목록·시드 문서)가 많아 보류. comment 는 재실행 시 덮어써 멱등.
+comment on column public.payments.payout_rate is
+  '기록 전용 · 지급 계산 미참조. 지급 정본 = graduations 래칫(trainerBaseRateAt · played_at 기준 · 0.65+floor(Σweight/5)×0.01 · cap 0.70) + 재결제 0.05 → lesson_sessions.settled_rate 스냅샷. 백필 기록 규칙: 2026-05 이전 0.60 · 이후 0.70 · course/lecture_consult/refund/adjust 0 (관제탑 2026-09-17 ⑤)';
+comment on column public.students.payout_rate_set is
+  '구 필드(제안/확정 개념 폐지) · 지급 계산 미참조 · 정본은 graduations 래칫 (관제탑 2026-09-17 ⑤)';
+
 -- ============================================================
 -- 19) 레슨 등록·정산 회차 (2026-08-13) — 시트→DB 전환의 레슨 축.
 --     설계 근거: docs/lesson-enrollment-model.md (§17 courses와 대칭 구조)
