@@ -34,7 +34,7 @@
 |---|---|
 | `kind` | `판수`→`lesson` · `상담`→`consult` · `강의`→`course` · `세트`→`set` · `기타`→`etc` |
 | `requested_by` | `staff.discord_id` 로 해석 — 실측 2종 = 준구(staff 2) · 현태(staff 5). `payment_requests.trainer_id` 가 접수 시 이미 채워진다 |
-| `payout_rate` | 0.70(레슨·상담 · 실측 2026-07~09 전건). 지급 계산은 `graduations` 래칫 정본이라 표시·이력용 — **값의 정본은 결제 트랙** |
+| `payout_rate` | 0.70(레슨·상담 · 관제탑 9/17 정본 확정). **지급 계산 미참조 실측(9/17)**: `computeStudent` 는 `graduations` 래칫(`trainerBaseRateAt` · 세션 played_at 기준) + 재결제 보너스 0.05 만 읽고, 정산 확정 시 `lesson_sessions.settled_rate` 에 스냅샷한다. `payments.payout_rate`·`students.payout_rate_set` 은 어디서도 읽지 않는 이력·구 필드. 백필 기록 규칙(관제탑 ⑤): 2026-05 이전 0.60 · 이후 0.70 · course·lecture_consult·refund·adjust 0 |
 | `settled_period` | 기본 null(입금월). 입금월이 `period_locks` 에 잠겨 있으면 현재 열린 달(KST)로 이월. 둘 다 잠겨 있으면 예외(수동) |
 | `source` | `payments 'api'`(CHECK manual\|api) · `lesson_enrollments 'bot'` |
 | 수수료 | `config/fees.cjs` 와 동일 — groble 4.84% 반올림, 그 외 0(미확정 추정 금지) |
@@ -42,7 +42,8 @@
 
 ## 4. 자동 범위 v1 / v1.1
 - **v1 자동**: 판수 · 상담. **수동**: 강의(`courses` 행 필요) · 세트(§9.5 2행 · `deposit_ref` · `courses`+등록 선행) · 기타.
-- **v1.1 세트 자동 분해**(관제탑 후속): `/결제신청` kind `세트` 추가 → 금액으로 상품 판별(입문 280,000 · 도약 340,000 · 마스터 405,000) → `courses` 행 + 등록 + `payments` 2행(`kind='set'` · 강의행이 할인 흡수 · 레슨행 정가). **의존**: 초급 강의 정가(중급 270,000 · 심화 290,000 은 실측 확정, 초급은 미확정) · `payment_requests.kind` CHECK 에 `'세트'` 추가(DDL). 정가표 확정 후 별도 PR.
+- **v1.1 세트 자동 분해**(관제탑 9/17 이월 승인): `/결제신청` kind `세트` 추가 → 금액으로 상품 판별 → `courses` 행 + 등록 + `payments` 2행(`kind='set'` · `deposit_ref` · 강의행이 할인 흡수 · 레슨행 정가). **정가표 확정(관제탑 9/17)**: 초급 235,000 · 중급 270,000 · 심화 290,000 → 입문 280,000 = 강의행 235,000(할인 0) + 레슨 10판 45,000 · 도약 340,000 = 강의행 250,000(할인 20,000) + 레슨 21판 90,000 · 마스터 405,000 = 강의행 265,000(할인 25,000) + 레슨 33판 140,000. 남은 의존: `payment_requests.kind` CHECK 에 `'세트'` 추가(DDL) · 강의 level 매핑(입문→초급반 · 도약→중급반 · 마스터→심화반). PR #325 머지 후 별도 PR.
+- **v1.1 선입금 크레딧 kind**(관제탑 ④): 지금은 `etc` + memo + `deposit_ref` 묶음. 반복 유형이라 `credit`(또는 `deposit`) kind 신설 검토 — `payments` CHECK 변경이라 결제 트랙 주도, 정산 엔진 집계 제외 규칙 동반.
 
 ## 5. 취소 역행의 한계 (결제 트랙 확인 항목)
 - `adjust` 음수 행은 `fee_amount` CHECK(≥0) 때문에 수수료를 역행하지 않는다(memo 에 표기).
@@ -50,7 +51,7 @@
 
 ## 6. 재처리 절차 (오너 · SQL Editor · 순서 고정)
 1. §18b → §18c → §18d 실행 + `notify pgrst, 'reload schema'`.
-2. 데이터 정정(채팅 발행): #19 명부 연결·입금일 9/1 · #15 금액 40,000 · #13·#15 수동 연결(기존 행) · #26 void(관제탑 SQL) · #20 보류(제외).
+2. 데이터 정정(채팅 발행 · 관제탑 9/17 판정 반영): #19 명부 연결·입금일 9/1 · #15 금액 40,000 → 결제 113 연결 · #13 = 기존 174/130 연결 유지 + memo 에 이력 전문(8월 잠금 존중 · payments 재구성 생략) · #10 = 결제 189 연결 + 신청명 오기 정정(박유현) · #26 void · #20 보류(제외). 김정환(97) 20,000 은 상담비 — 8월 잠금이라 `payments` 191 은 두고 `consults`(kind `clan`) + 등록 139 memo 로 이력 보존.
 3. `select id, payreq_apply(id) from payment_requests where status='approved' and id <> 20 order by id;` → 기대: 기존 행 있는 신청 `linked`, #19·21·22·23·24·25 `created`(6건 · 545,000원 · 127판).
 4. 검증 SELECT(채팅 발행) · 크론 다음날 DM 0건(#20 판정 전까지 1건).
 
