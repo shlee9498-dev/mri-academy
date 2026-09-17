@@ -1031,6 +1031,9 @@ if (process.env.DISCORD_TOKEN) {
   //   (PR-3a) BOT_PAYREQ=1일 때만 등록. 승인돼도 payments 본표에는 넣지 않는다 —
   //   시트가 정본인 병행 단계에서 payout_rate(NOT NULL) 산정은 정산 소관이라 봇이 추정하면
   //   그 값이 눌러앉는다. 승인 레코드(§18)가 영구 기록이고 본표 편입은 시드·백필 대사가 한다.
+  //   ▶ 2026-09-17(관제탑 지시 A): 본표 편입은 DB 트리거 §18d(payreq_apply)가 승인 전이 시 같은 트랜잭션에서
+  //     한다 — 판수·상담 자동, 강의·세트·기타 수동. 봇은 결과(payment_id)를 카드에 보이고, 명부 미연결이면
+  //     승인 자체를 막는다. 미반영은 일일 크론(runPayreqUnreflected)이 알린다.
   const PAYREQ_CMD = {
     name: "결제신청",
     description: "[트레이너] 수강생 결제(입금) 신고 — 오너 승인 후 원장 반영",
@@ -2753,6 +2756,15 @@ if (process.env.DISCORD_TOKEN) {
     await itx.deferReply({ ephemeral: true });
     let trainer_id = null;
     try { trainer_id = (await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainer)}&limit=1`))[0]?.id ?? null; } catch (_) {}
+    // 중복 신청 경고(관제탑 9/17 지시 A 요건 5) — 같은 학생·금액·입금일 신청이 살아 있으면 접수는 받되
+    // 트레이너 응답과 오너 카드 양쪽에 표시한다. 차단이 아니라 확인 문구다(#25/#26 형태 · 준구 자진 신고 선례).
+    let dup = null;
+    try {
+      dup = (await sbSelect("payment_requests",
+        `select=id,status&student_name=eq.${encodeURIComponent(name)}&amount=eq.${amount}&paid_on=eq.${paid_on}`
+        + "&status=in.(pending,approved)&order=id.desc&limit=1"))[0] || null;
+    } catch (e) { console.error("payreq_dupcheck", e?.message); }
+    const dupLine = dup ? `⚠️ 중복 의심 — 같은 학생·금액·입금일 신청 #${dup.id}(${dup.status === "approved" ? "승인됨" : "대기"})이 이미 있어` : "";
     let req;
     try {
       req = await sbInsert("payment_requests", {
@@ -2772,7 +2784,7 @@ if (process.env.DISCORD_TOKEN) {
           new ButtonBuilder().setCustomId(`payreq_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
         );
         await owner.send({
-          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}**\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}\n· 채널: ${channelLine(pay_channel, amount)}${memo ? `\n· 메모: ${memo}` : ""}`,
+          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}**\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}\n· 채널: ${channelLine(pay_channel, amount)}${memo ? `\n· 메모: ${memo}` : ""}${dupLine ? `\n${dupLine}` : ""}`,
           components: [row],
         });
         dmOk = true;
@@ -2780,7 +2792,8 @@ if (process.env.DISCORD_TOKEN) {
     }
     await itx.editReply(
       `✅ 결제 신청 접수 **#${req.id}** — ${name} · ${kind}${games ? ` ${games}판` : ""} · ${amount.toLocaleString("ko-KR")}원 · ${CHANNEL_LABEL[pay_channel]} · 입금일 ${paid_on}\n`
-      + (dmOk ? "오너 승인 대기 중이야." : "⚠️ 오너 DM 발송 실패 — 신청은 저장됐어(pending). 오너에게 직접 알려줘."));
+      + (dmOk ? "오너 승인 대기 중이야." : "⚠️ 오너 DM 발송 실패 — 신청은 저장됐어(pending). 오너에게 직접 알려줘.")
+      + (dupLine ? `\n${dupLine} — 중복이면 오너에게 반려를 요청해줘.` : ""));
   });
 
   // ── /결제신청 승인·반려 버튼 (오너 DM) — 처리 전 상태를 DB에서 재확인(중복 클릭 방어) ──
@@ -2801,16 +2814,43 @@ if (process.env.DISCORD_TOKEN) {
     const approve = m[1] === "ok";
     const patch = { status: approve ? "approved" : "rejected", decided_by: itx.user.id, decided_at: new Date().toISOString() };
     if (approve) {
-      // 이름 해석은 승인 시점 1회 — 미해석(null)이어도 승인은 유효하다(원장 표기가 기준).
-      try { const sid = await resolveStudentId(q.student_name, q.trainer_id); if (sid != null) patch.student_id = sid; }
+      // 이름 해석은 승인 시점 1회. 미해석(null)이면 **승인을 막는다**(관제탑 8/23 §1-4 · 9/17 지시 A 요건 1) —
+      // §18d 트리거가 student_id 없이는 본표를 만들 수 없고, 예전처럼 approved 만 남기면 미반영이 조용히 쌓인다.
+      let sid = null;
+      try { sid = await resolveStudentId(q.student_name, q.trainer_id); }
       catch (e) { console.error("payreq_resolve", e?.message); }
+      if (sid == null)
+        return itx.reply({
+          content: `#${reqId} 승인 보류 — 명부에서 "${q.student_name}"을 못 찾았어(오타·동명·미등록). \`/수강생등록\` 또는 명부 연결 후 이 버튼을 다시 눌러줘.`,
+          ephemeral: true,
+        });
+      patch.student_id = sid;
     }
-    try { await sbPatch("payment_requests", `id=eq.${reqId}`, patch); }
+    let patched = null;
+    try { patched = await sbPatch("payment_requests", `id=eq.${reqId}`, patch); }
     catch (e) {
+      // §18d 트리거 예외(잠금·판수 없음 등)가 여기로 온다 — 상태는 롤백돼 pending 그대로다.
+      // 사유를 오너에게 그대로 보인다(조용히 넘어가는 것이 9/17 사고의 본질 — 요건 3).
       console.error("payreq_patch", e?.message);
-      return itx.reply({ content: `#${reqId} 상태 갱신에 실패했어 — 버튼을 다시 눌러줘.`, ephemeral: true });
+      let why = "";
+      try { why = String(JSON.parse(e?.body || "{}").message || ""); } catch (_) {}
+      return itx.reply({
+        content: `#${reqId} 상태 갱신이 DB에서 거부됐어${why ? ` — ${why.slice(0, 300)}` : ""}\n원인을 고친 뒤 버튼을 다시 눌러줘(신청은 pending 그대로).`,
+        ephemeral: true,
+      });
     }
     if (approve) {
+      // 본표 반영 결과 — §18b 역참조가 있으면 트리거가 채운 payment_id 가 응답 행에 실려 온다.
+      const row = Array.isArray(patched) ? patched[0] : null;
+      const linked = row && Object.prototype.hasOwnProperty.call(row, "payment_id") ? row.payment_id : undefined;
+      const autoKind = q.kind === "판수" || q.kind === "상담";
+      const ledgerNote = linked
+        ? `\n🧾 본표 반영: payments #${linked}${row.lesson_enrollment_id ? ` · 등록 #${row.lesson_enrollment_id}` : ""}`
+        : (linked === undefined
+            ? "\n⚠️ 본표 연결 상태 미확인(§18b 역참조 컬럼 미실행) — 일일 미반영 알림이 잡아."
+            : (autoKind
+                ? "\n⚠️ 본표 미반영 — §18d 트리거 미실행이거나 기존 행 연결 실패. 일일 미반영 알림이 잡아."
+                : `\n📎 ${q.kind} 결제는 자동 편입 대상이 아니야 — 수동 편입(SQL) 필요. 일일 미반영 알림에 남아.`));
       // 원장 행에도 채널·수수료를 싣는다. 시트가 아직 정산 정본이라, 승인 화면에만 보이고
       // 복붙 행에 없으면 그로블 수수료가 원장에서 통째로 누락된다.
       const ch = q.pay_channel || "transfer";
@@ -2823,8 +2863,9 @@ if (process.env.DISCORD_TOKEN) {
       await itx.update({
         content:
           `✅ **#${reqId} 승인** — ${q.student_name} · ${won(q.amount)}원 (${q.kind}${q.games ? ` ${q.games}판` : ""})`
-          + (patch.student_id ? ` · 명부 #${patch.student_id}` : " · ⚠️ 명부 미매칭(이름 확인 필요)")
+          + ` · 명부 #${patch.student_id}`
           + `\n· 채널: ${channelLine(ch, q.amount)}`
+          + ledgerNote
           + `\n📋 결제_원장 기입 행(복붙):\n\`${ledger}\``
           + `\n⚠️ 기입 전 원장 ${Number(String(q.paid_on).slice(5, 7))}월 구간 중복키(입금일|이름|금액) 확인 · 판수 결제면 레슨로그 결제금액·판수도 갱신.`,
         components: [],
