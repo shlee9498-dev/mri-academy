@@ -622,6 +622,26 @@ alter table public.payment_requests
   add column if not exists pay_channel text
   check (pay_channel is null or pay_channel in ('groble','transfer','soomgo','etc'));
 
+-- 18b) 본표 역참조 (2026-09-17 · 관제탑 지시 2·4) — 승인 큐 행이 어느 payments·lesson_enrollments
+--      행으로 편입됐는지 가리킨다. 감시 크론(server.js runPayreqUnreflected)이 이 컬럼을 1순위 판정
+--      근거로 쓰고, 없으면 memo 표식(payreq#N)·자연키(student_id|paid_on|amount)로 폴백한다.
+--      null 허용: 기존 행·미편입 행을 막지 않는다. on delete set null: 본표 행을 지워도(void 정정)
+--      큐 행은 남고 연결만 풀린다. SCHEMA_OPTIONAL 등재(코드는 폴백 동작) — 오너 실행 후 그대로 둔다.
+--      ⚠️ 미실행 상태의 실측(9/17): approved 25건 중 편입 표식이 memo 에만 있어 대조가 사람 눈에 의존했다.
+alter table public.payment_requests
+  add column if not exists payment_id bigint references public.payments(id) on delete set null,
+  add column if not exists lesson_enrollment_id bigint references public.lesson_enrollments(id) on delete set null;
+create index if not exists idx_payreq_unlinked on public.payment_requests (id)
+  where status = 'approved' and payment_id is null;
+
+-- 18c) 정본 보정 (2026-09-17 실측) — 실DB 의 status CHECK 는 'void' 를 포함한다(id 1 void 실재 ·
+--      payment_requests_status_check = pending|approved|rejected|void). 위 create table 의 CHECK 에는
+--      빠져 있어 새 DB 재현 시 void 정정(중복 신청 무효화 선례)이 막힌다. 실DB 에서는 같은 정의로
+--      재생성되는 no-op 이다.
+alter table public.payment_requests drop constraint if exists payment_requests_status_check;
+alter table public.payment_requests add constraint payment_requests_status_check
+  check (status in ('pending','approved','rejected','void'));
+
 -- ============================================================
 -- 19) 레슨 등록·정산 회차 (2026-08-13) — 시트→DB 전환의 레슨 축.
 --     설계 근거: docs/lesson-enrollment-model.md (§17 courses와 대칭 구조)
