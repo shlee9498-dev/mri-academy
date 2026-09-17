@@ -592,6 +592,8 @@ alter table public.gdcup_live add column if not exists wiped_at timestamptz;
 --     본표 편입은 시드·백필 대사가 중복키(입금일|이름|금액)로 일괄 처리하며,
 --     이 테이블이 그 대사의 근거 원장이다. enrollments 도입(8월 중) 후에는
 --     승인 시 등록(enrollment) 생성이 이 흐름에 붙는다.
+--     ▶ 2026-09-17 갱신(관제탑 지시 A): 본표 편입은 §18d 트리거(payreq_apply)가 승인 전이 시
+--       같은 트랜잭션에서 한다 — 판수·상담 자동, 강의·세트·기타 수동. 위 문단은 그 이전의 설계 기록이다.
 -- ============================================================
 create table if not exists public.payment_requests (
   id            bigint generated always as identity primary key,
@@ -641,6 +643,159 @@ create index if not exists idx_payreq_unlinked on public.payment_requests (id)
 alter table public.payment_requests drop constraint if exists payment_requests_status_check;
 alter table public.payment_requests add constraint payment_requests_status_check
   check (status in ('pending','approved','rejected','void'));
+
+-- 18d) 승인 → 본표 자동 편입 트리거 (2026-09-17 · 관제탑 지시 A · (B) DB 트리거 채택)
+--      승인 경로가 늘어도(DM 버튼·패널·오너 SQL) 한 곳이 잡는다. 요건 대응:
+--        1 원자성 — 같은 트랜잭션. payreq_apply 가 예외를 내면 status UPDATE 자체가 롤백된다.
+--        2 멱등성 — payment_id 가 채워져 있으면 skip. 기존 행이 있으면 생성 대신 연결(표식 payreq#N ·
+--          자연키 학생|입금일|금액 · 다른 신청에 미연결 행만) — 8/26·9/2 시드분 재처리가 중복이 되지 않게.
+--        3 실패 통지 — 예외 문구가 승인 주체(DM 버튼이면 오너 카드)에 그대로 뜬다. 놓친 건은 일일 크론.
+--        4 취소 — approved→void 전이 시 payreq_void: adjust 역행 + 등록 cancelled. 본표 행 삭제 없음.
+--        5 중복 경고 — 봇 /결제신청 접수 단계(같은 학생·금액·입금일 신청 존재 시 확인 문구).
+--        6 매핑 — '판수'→lesson · '상담'→consult · '강의'→course · '세트'→set · '기타'→etc.
+--          자동 생성은 lesson·consult 만(v1). course·set·etc 는 courses 행·정가표가 필요해 'manual' 반환(승인은 성립).
+--          payout_rate 0.70 · settled_period = 입금월이 잠겨 있으면 현재 열린 달(KST) · source='api' ·
+--          수수료 = config/fees.cjs 와 동일(groble 4.84% 반올림 · 그 외 0).
+--      재처리 = select payreq_apply(id) — 트리거와 같은 함수라 "구조가 동작하는지"가 재처리로 검증된다.
+create or replace function public.payreq_apply(p_id bigint) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  r         public.payment_requests%rowtype;
+  v_mark    text := 'payreq#' || p_id;
+  v_re      text := '(^|[^0-9])payreq#' || p_id || '([^0-9]|$)';
+  v_kind    text;
+  v_pid     bigint;
+  v_eid     bigint;
+  v_ch      text;
+  v_fee     integer;
+  v_paidm   text;
+  v_open    text := to_char((now() at time zone 'Asia/Seoul')::date, 'YYYY-MM');
+  v_settled text;
+begin
+  select * into r from public.payment_requests where id = p_id for update;
+  if not found then raise exception 'payreq #% 없음', p_id; end if;
+  if r.status <> 'approved' then return 'skip:' || r.status; end if;
+  if r.payment_id is not null then return 'skip:linked:' || r.payment_id; end if;
+  if r.student_id is null then
+    raise exception '명부 미연결 — payreq #% 의 student_id 가 비어 있습니다. 수강생 등록·연결 후 다시 승인하세요.', p_id;
+  end if;
+
+  -- ② 기존 행 연결: memo 표식
+  select p.id into v_pid from public.payments p
+   where p.student_id = r.student_id and p.memo ~ v_re
+   order by p.id limit 1;
+  -- ③ 자연키(다른 신청에 아직 연결되지 않은 행만)
+  if v_pid is null then
+    select p.id into v_pid from public.payments p
+     where p.student_id = r.student_id and p.paid_at = r.paid_on and p.amount = r.amount
+       and not exists (select 1 from public.payment_requests q where q.payment_id = p.id)
+     order by p.id limit 1;
+  end if;
+  if v_pid is not null then
+    select e.id into v_eid from public.lesson_enrollments e
+     where e.student_id = r.student_id
+       and (e.memo ~ v_re or (e.started_on = r.paid_on and e.games_total is not distinct from r.games))
+     order by e.id desc limit 1;
+    update public.payment_requests set payment_id = v_pid, lesson_enrollment_id = v_eid where id = p_id;
+    return 'linked:' || v_pid;
+  end if;
+
+  -- ④ 생성 (v1: 판수·상담)
+  v_kind := case r.kind when '판수' then 'lesson' when '상담' then 'consult'
+                        when '강의' then 'course' when '세트' then 'set' else 'etc' end;
+  if v_kind not in ('lesson', 'consult') then
+    return 'manual:' || v_kind;
+  end if;
+  v_ch  := coalesce(r.pay_channel, 'transfer');
+  v_fee := case when v_ch = 'groble' then round(r.amount * 0.0484)::integer else 0 end;
+  v_paidm := to_char(r.paid_on, 'YYYY-MM');
+  if exists (select 1 from public.period_locks l where l.period = v_paidm and l.released_at is null) then
+    v_settled := v_open;
+    if exists (select 1 from public.period_locks l where l.period = v_settled and l.released_at is null) then
+      raise exception '입금월 % 과 현재 월 % 이 모두 잠겨 있습니다 — payreq #% 은 수동 편입', v_paidm, v_settled, p_id;
+    end if;
+  end if;
+  if v_kind = 'lesson' then
+    if coalesce(r.games, 0) <= 0 then
+      raise exception '판수 결제인데 판수가 비어 있습니다 — payreq #%', p_id;
+    end if;
+    insert into public.lesson_enrollments
+      (student_id, trainer_id, games_total, started_on, status, source, memo, created_by, paid_amount, bonus_games)
+    values (r.student_id, r.trainer_id, r.games, r.paid_on, 'active', 'bot',
+            v_mark || ' 대응 · 승인 자동 편입', 'payreq', r.amount, 0)
+    returning id into v_eid;
+  end if;
+  insert into public.payments
+    (student_id, paid_at, amount, games, kind, payout_rate, pay_channel, fee_amount, net_amount,
+     source, memo, lesson_enrollment_id, settled_period)
+  values (r.student_id, r.paid_on, r.amount, case when v_kind = 'lesson' then r.games else 0 end,
+          v_kind, 0.70, v_ch, v_fee, r.amount - v_fee, 'api',
+          v_mark || ' 대응 · 담당 ' || coalesce(r.trainer_name, '-') || ' · 승인 자동 편입', v_eid, v_settled)
+  returning id into v_pid;
+  update public.payment_requests set payment_id = v_pid, lesson_enrollment_id = v_eid where id = p_id;
+  return 'created:' || v_pid;
+end $$;
+
+-- 취소 역행 — 본표 행을 지우지 않는다(요건 4). adjust 음수 행(현재 열린 달 귀속) + 등록 cancelled.
+--   fee_amount 는 CHECK(>=0)라 0 으로 두고 순액만 역행한다. 정산 엔진의 adjust 처리는 결제 트랙 확인 항목.
+create or replace function public.payreq_void(p_id bigint) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  r      public.payment_requests%rowtype;
+  p      public.payments%rowtype;
+  v_re   text := '(^|[^0-9])payreq#' || p_id || '([^0-9]|$)';
+  v_today date := (now() at time zone 'Asia/Seoul')::date;
+  v_adj  bigint;
+begin
+  select * into r from public.payment_requests where id = p_id for update;
+  if not found or r.payment_id is null then return 'skip:unlinked'; end if;
+  select * into p from public.payments where id = r.payment_id;
+  if not found then return 'skip:payment_missing'; end if;
+  if exists (select 1 from public.payments a where a.kind = 'adjust' and a.memo ~ v_re) then
+    return 'skip:already_voided';
+  end if;
+  insert into public.payments
+    (student_id, paid_at, amount, games, kind, payout_rate, pay_channel, fee_amount, net_amount,
+     source, memo, settled_period)
+  values (p.student_id, v_today, -p.amount, -coalesce(p.games, 0), 'adjust', p.payout_rate, p.pay_channel, 0,
+          -coalesce(p.net_amount, p.amount - p.fee_amount), 'api',
+          'payreq#' || p_id || ' void 역행 — 원행 payments #' || p.id
+            || case when p.fee_amount > 0 then ' · 원행 수수료 ' || p.fee_amount || '원 미역행' else '' end,
+          to_char(v_today, 'YYYY-MM'))
+  returning id into v_adj;
+  if r.lesson_enrollment_id is not null then
+    update public.lesson_enrollments
+       set status = 'cancelled', ended_on = v_today,
+           memo = coalesce(memo, '') || ' · void payreq#' || p_id
+     where id = r.lesson_enrollment_id and status = 'active';
+  end if;
+  return 'voided:' || v_adj;
+end $$;
+
+create or replace function public.trg_payreq_status_fn() returns trigger
+language plpgsql as $$
+begin
+  if new.status = 'approved' and old.status is distinct from 'approved' then
+    perform public.payreq_apply(new.id);      -- 예외 → 이 UPDATE 전체 롤백(원자성)
+  elsif new.status = 'void' and old.status = 'approved' then
+    perform public.payreq_void(new.id);
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_payreq_status on public.payment_requests;
+create trigger trg_payreq_status
+  after update of status on public.payment_requests
+  for each row execute function public.trg_payreq_status_fn();
+-- payreq_apply 안의 UPDATE 는 status 를 SET 하지 않으므로 이 트리거를 다시 깨우지 않는다.
+
+-- 18e) payout_rate 컬럼 주석 (2026-09-17 · 관제탑 판정 ⑤ (b)) — 이름이 「지급률」로 읽히지만 지급 계산은
+--      graduations 래칫(admin-panel trainerBaseRateAt · 세션 played_at 기준) + 재결제 0.05 → lesson_sessions.settled_rate
+--      스냅샷만 참조한다. 두 컬럼은 기록·이력용이며 어떤 산출에도 쓰이지 않는다(관제탑도 오독한 지점).
+--      개명((a) record_rate)은 참조처(패널 입력·목록·시드 문서)가 많아 보류. comment 는 재실행 시 덮어써 멱등.
+comment on column public.payments.payout_rate is
+  '기록 전용 · 지급 계산 미참조. 지급 정본 = graduations 래칫(trainerBaseRateAt · played_at 기준 · 0.65+floor(Σweight/5)×0.01 · cap 0.70) + 재결제 0.05 → lesson_sessions.settled_rate 스냅샷. 백필 기록 규칙: 2026-05 이전 0.60 · 이후 0.70 · course/lecture_consult/refund/adjust 0 (관제탑 2026-09-17 ⑤)';
+comment on column public.students.payout_rate_set is
+  '구 필드(제안/확정 개념 폐지) · 지급 계산 미참조 · 정본은 graduations 래칫 (관제탑 2026-09-17 ⑤)';
 
 -- ============================================================
 -- 19) 레슨 등록·정산 회차 (2026-08-13) — 시트→DB 전환의 레슨 축.
