@@ -1234,6 +1234,19 @@ alter table public.consults add  constraint chk_consults_source
 --        server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다(유실은 없고 질의만 불편).
 -- alter table public.consults add column if not exists inflow text;
 
+-- 22f) 신청 UTM 3컬럼 (2026-09-17 · 관제탑 UTM 집계 경로 확인) — index.html 트레이너 소개 CTA 가
+--      apply.html?utm_source=site&utm_medium=trainers&utm_content=hyuntae|jungu|muri 로 진입하고 폼이 제출 payload 에
+--      실어 보내는데, 서버는 디스코드 embed 에만 표시하고 어디에도 저장하지 않았다(실측: consults 에 utm 컬럼 없음 ·
+--      Google Form 미사용). 이 컬럼이 없으면 /api/apply 가 memo 에 `utm: a/b/c` 로 남긴다(SCHEMA_OPTIONAL · 폴백).
+--      집계: select utm_content, count(*) from consults where utm_medium='trainers' and utm_content <> 'muri' group by 1;
+--      (muri 는 오너 유입이라 트레이너 비교에서 분리 — 관제탑 9/17)
+alter table public.consults
+  add column if not exists utm_source  text,
+  add column if not exists utm_medium  text,
+  add column if not exists utm_content text;
+create index if not exists idx_consults_utm on public.consults (utm_medium, utm_content)
+  where utm_medium is not null;
+
 -- 22e) 트레이너 연락처 — 동의가 없으면 API 응답에서 생략한다(코드가 강제).
 alter table public.staff add column if not exists contact_phone      text;
 alter table public.staff add column if not exists contact_consent_at timestamptz;

@@ -4522,8 +4522,15 @@ app.post("/api/apply", async (req, res) => {
     //     보내므로, DDL 실행 전 배포에서도 기본 컬럼으로 저장이 시작된다(전량 유실 방지).
     //   · 전화번호는 여기까지만 온다. 수강생 포털 API 응답에는 어떤 경로로도 넣지 않는다.
     try {
-      const has = (c) => schemaOptional[`consults.${c}`] === true;
+      // ⚠️ 2026-09-17 실측 정정: §22d 7컬럼이 9/4 에 REQUIRED_SCHEMA 로 승격되면서 probeOptionalSchema 가 더는
+      //   프로브하지 않아 has() 가 전부 false 였다 — 9/4 이후 신청 3건(8·9·10)이 source·phone·platform·game_nick·
+      //   playtime·focus·stats_consent 를 전부 null 로 저장하고 memo 폴백만 남겼다. REQUIRED 는 부팅 점검이
+      //   실재를 보장하므로 존재로 본다. (관제탑 9/17 UTM 집계 경로 확인에서 드러남)
+      const has = (c) => schemaOptional[`consults.${c}`] === true || (REQUIRED_SCHEMA.consults || []).includes(c);
       const inflow = clip(b.source, 50);                       // 폼의 '유입 경로'(유튜브·지인 등)
+      // UTM(index.html 트레이너 CTA → apply.html 진입 시 캡처 → 제출 payload). 종전에는 디스코드 embed 에만 실리고
+      // 어디에도 저장되지 않아 집계가 성립하지 않았다. §22f 컬럼이 있으면 컬럼에, 없으면 memo 에 `utm: a/b/c` 로 남긴다.
+      const utm = { utm_source: clip(b.utm_source, 40), utm_medium: clip(b.utm_medium, 40), utm_content: clip(b.utm_content, 60) };
       const row = {
         kind: /직강|강의/.test(String(b.applyType || "")) ? "direct_lecture" : "consult",
         student_name: clip(b.name, 30),
@@ -4542,6 +4549,9 @@ app.post("/api/apply", async (req, res) => {
       const memoParts = [];
       if (has("inflow")) row.inflow = inflow;
       else if (inflow) memoParts.push(`유입: ${inflow}`);
+      const utmVals = Object.values(utm).filter(Boolean);
+      if (has("utm_source")) Object.assign(row, { utm_source: utm.utm_source || null, utm_medium: utm.utm_medium || null, utm_content: utm.utm_content || null });
+      else if (utmVals.length) memoParts.push(`utm: ${[utm.utm_source, utm.utm_medium, utm.utm_content].map((v) => v || "-").join("/")}`);
       if (!has("game_nick")) memoParts.push(`${clip(b.platform, 10)}/${clip(b.nickname, 40)}`);
       if (b.memo && String(b.memo).trim()) memoParts.push(clip(b.memo, 300));
       if (memoParts.length) row.memo = memoParts.join(" · ").slice(0, 500);
@@ -6925,7 +6935,7 @@ const SCHEMA_OPTIONAL = {
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
-  consults: ["inflow"],
+  consults: ["inflow", "utm_source", "utm_medium", "utm_content"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계)
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",
