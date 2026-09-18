@@ -20,6 +20,10 @@
 //     · 값은 로그에 남기지 않는다 — 경로와 키만.
 //  4) 이 모듈은 lesson_sessions·lesson_enrollments·students 를 UPDATE 하지 않는다(정본 4.2 원칙).
 //     쓰는 테이블은 journal_feedback(insert)·lesson_session_titles(upsert) 둘뿐이다.
+//  5) 게이트 실패 코드 분리(오너 요청 2026-09-18 · 앱 라우팅): x-portal-secret 불일치 = 403 scope_denied(게이트 · 수강생과 공유),
+//     Discord 계정이 staff 명부에 없거나 비활성 = 403 not_staff(이 모듈만 · 앱은 /pending). 수강생 세션으로 트레이너
+//     라우트를 치거나 범위 밖 수강생을 찌르면 그대로 scope_denied — 코드 하나가 두 원인을 가리던 것을 나눴다.
+//  6) POST /logout: 수강생 포털과 같은 무상태 204. 서버는 세션을 저장하지 않으므로 폐기는 앱의 쿠키 삭제다.
 // ============================================================
 
 // 잔여 판수 공식 — §23 portal_remaining_games() · student-portal.cjs lessonAggregate() 와 **같은 식**이다.
@@ -114,7 +118,8 @@ module.exports = function mountTrainerPortal(app, deps) {
 
   // ── 트레이너 판정: 포털 세션(scope trainer) 또는 기존 사이트 JWT — 둘 다 staff 명부가 기준 ──
   // x-portal-session 이 오면 그 경로로만 판정한다(있는데 못 풀면 401 · scope 가 다르면 403).
-  // 없으면 Authorization: Bearer(사이트 JWT) → staff.discord_id 정확일치. 비활성 staff 는 403.
+  // 없으면 Authorization: Bearer(사이트 JWT) → staff.discord_id 정확일치.
+  // 명부에 없거나 비활성이면 403 not_staff(게이트의 scope_denied 와 분리 · 앱은 /pending 으로 보낸다).
   async function requireTrainer(req, res, next) {
     if (!ready()) return fail(res, 503, "portal_unavailable");
     try {
@@ -132,7 +137,7 @@ module.exports = function mountTrainerPortal(app, deps) {
         rows = await sbSelect("staff",
           `select=id,name,role,active&discord_id=eq.${encodeURIComponent(u.id)}&limit=1`);
       }
-      if (!rows[0] || rows[0].active === false) return fail(res, 403, "scope_denied");
+      if (!rows[0] || rows[0].active === false) return fail(res, 403, "not_staff");
       req.staff = rows[0];
       next();
     } catch (e) {
@@ -166,8 +171,9 @@ module.exports = function mountTrainerPortal(app, deps) {
 
   // ════════════════ POST /exchange ════════════════
   // Discord access token → /users/@me 재검증 → staff.discord_id 정확일치·active → scope trainer 세션.
-  // 토큰은 이 호출에서만 쓰이고 저장·로그하지 않는다. 명부에 없으면 403 scope_denied —
-  // 수강생의 account_link_pending 과 달리 트레이너는 자가신청 경로가 없다(오너가 staff 에 넣는다).
+  // 토큰은 이 호출에서만 쓰이고 저장·로그하지 않는다. 명부에 없거나 비활성이면 403 not_staff(게이트의
+  // scope_denied 와 분리 · 앱은 /pending) — 수강생의 account_link_pending 과 달리 트레이너는 자가신청 경로가
+  // 없다(오너가 staff 에 넣는다). discord_id 가 2행 이상이면 명부 오류라 같은 코드로 막고 로그만 남긴다.
   app.post(`${TRAINER}/exchange`, rateLimit("trainerExchange", 20, 60_000), bodyOnly([]), wrap(async (req, res) => {
     if (!ready()) return fail(res, 503, "portal_unavailable");
     const token = req.headers["x-discord-token"];
@@ -187,7 +193,8 @@ module.exports = function mountTrainerPortal(app, deps) {
 
     const rows = await sbSelect("staff",
       `select=id,name,role,active&discord_id=eq.${encodeURIComponent(discordId)}&limit=2`);
-    if (rows.length !== 1 || rows[0].active === false) return fail(res, 403, "scope_denied");
+    if (rows.length > 1) console.error("trainer_staff_dup", "discord_id 가 staff 2행 이상에 있음");   // 값은 남기지 않는다
+    if (rows.length !== 1 || rows[0].active === false) return fail(res, 403, "not_staff");
 
     // 유휴 8h / 절대 24h 는 앱 쿠키가 관리한다. 서버 세션은 절대수명만 건다(수강생과 동일).
     const sid = issueSession(
@@ -196,6 +203,13 @@ module.exports = function mountTrainerPortal(app, deps) {
     );
     sendTrainer(res, { sid, displayName: rows[0].name, role: rows[0].role });
   }));
+
+  // ════════════════ POST /logout ════════════════
+  // 수강생 포털 /logout 과 같은 규격: 204 · body 없음 · 세션 헤더 불요(검사하지 않는다).
+  // 서버가 세션 상태를 들고 있지 않다(무상태 서명 · 절대수명 24h) — 앱이 쿠키를 버리는 것이 폐기이므로
+  // 앱은 이 호출이 실패해도 쿠키를 지운다(오너 2026-09-18 · 공용 PC 이탈 경로). 유출된 sid 는 만료까지 유효하다.
+  app.post(`${TRAINER}/logout`, rateLimit("trainerLogout", 60, 60_000), bodyOnly([]),
+    wrap(async (_req, res) => res.status(204).end()));
 
   // ════════════════ GET /students ════════════════
   // 범위 내 수강생 1인 1행. 판수 4종은 벌크 4쿼리로 계산한다(학생당 RPC 를 돌리지 않는다).
