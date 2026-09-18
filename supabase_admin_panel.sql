@@ -629,7 +629,7 @@ alter table public.payment_requests
 --      근거로 쓰고, 없으면 memo 표식(payreq#N)·자연키(student_id|paid_on|amount)로 폴백한다.
 --      null 허용: 기존 행·미편입 행을 막지 않는다. on delete set null: 본표 행을 지워도(void 정정)
 --      큐 행은 남고 연결만 풀린다. SCHEMA_OPTIONAL 등재(코드는 폴백 동작) — 오너 실행 후 그대로 둔다.
---      ⚠️ 미실행 상태의 실측(9/17): approved 25건 중 편입 표식이 memo 에만 있어 대조가 사람 눈에 의존했다.
+--      ⚠️ 미실행 상태의 실측(9/17): approved 25건 중 편입 표식이 memo 에만 있어 대조가 사람 눈에 의존했다. 2026-09-18 실행 완료.
 alter table public.payment_requests
   add column if not exists payment_id bigint references public.payments(id) on delete set null,
   add column if not exists lesson_enrollment_id bigint references public.lesson_enrollments(id) on delete set null;
@@ -874,7 +874,7 @@ comment on column public.students.payout_rate_set is
 
 -- 18f) 세트 kind (v1.1 · 2026-09-17 · 관제탑 정가표 확정 후 착수 승인) — /결제신청 구분에 '세트' 추가.
 --      §18d payreq_apply 가 금액으로 상품을 판별해 courses + 등록 + payments 2행(kind='set' · deposit_ref)으로
---      분해한다. **실행 순서: §18f → §18d 재실행**(함수 갱신 · create or replace 라 멱등). 위 create table 의
+--      분해한다. 실행 순서: §18d 가 v1.1 본문이면 이 블록만(#325 판 §18d 가 든 DB 에서만 §18d 재실행 · 멱등). 실DB 2026-09-18 실행 완료. 위 create table 의
 --      CHECK 는 구 4종이라 새 DB 재현 시 이 블록이 덮어쓴다. 실DB 에서는 CHECK 재생성만 일어난다.
 alter table public.payment_requests drop constraint if exists payment_requests_kind_check;
 alter table public.payment_requests add constraint payment_requests_kind_check
@@ -1239,7 +1239,7 @@ alter table public.consults add  constraint chk_consults_source
 --      실어 보내는데, 서버는 디스코드 embed 에만 표시하고 어디에도 저장하지 않았다(실측: consults 에 utm 컬럼 없음 ·
 --      Google Form 미사용). 이 컬럼이 없으면 /api/apply 가 memo 에 `utm: a/b/c` 로 남긴다(SCHEMA_OPTIONAL · 폴백).
 --      집계: select utm_content, count(*) from consults where utm_medium='trainers' and utm_content <> 'muri' group by 1;
---      (muri 는 오너 유입이라 트레이너 비교에서 분리 — 관제탑 9/17)
+--      (muri 는 오너 유입이라 트레이너 비교에서 분리 — 관제탑 9/17). 실DB 2026-09-18 실행 완료(3컬럼 + idx_consults_utm).
 alter table public.consults
   add column if not exists utm_source  text,
   add column if not exists utm_medium  text,
