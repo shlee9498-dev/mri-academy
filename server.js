@@ -2849,8 +2849,14 @@ if (process.env.DISCORD_TOKEN) {
       });
     }
     if (approve) {
-      // 본표 반영 결과 — §18b 역참조가 있으면 트리거가 채운 payment_id 가 응답 행에 실려 온다.
-      const row = Array.isArray(patched) ? patched[0] : null;
+      // 본표 반영 결과 — PATCH 응답(RETURNING)은 §18d AFTER 트리거가 payment_id 를 채우기 **전** 스냅샷이라
+      // 항상 null 로 온다(9/20 #28 실측: payments 213·등록 153 이 생성됐는데 카드는 「본표 미반영」을 찍었다).
+      // 그래서 갱신 뒤 같은 행을 다시 읽는다. 컬럼 자체가 없으면(§18b 미실행) 종전대로 undefined.
+      let row = Array.isArray(patched) ? patched[0] : null;
+      if (row && Object.prototype.hasOwnProperty.call(row, "payment_id")) {
+        try { row = (await sbSelect("payment_requests", `select=payment_id,lesson_enrollment_id&id=eq.${reqId}&limit=1`))[0] || row; }
+        catch (e) { console.error("payreq_relink", e?.message); }
+      }
       const linked = row && Object.prototype.hasOwnProperty.call(row, "payment_id") ? row.payment_id : undefined;
       const autoKind = ["판수", "상담", "세트"].includes(q.kind);
       const ledgerNote = linked
