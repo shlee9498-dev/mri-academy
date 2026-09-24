@@ -288,13 +288,14 @@ module.exports = function mountBookingApi(app, deps) {
     }
     // 트레이너 화면이므로 수강생 표시명은 내려준다(수강생 포털의 신원 차폐 규칙과 대상이 다르다).
     const names = sids.length
-      ? Object.fromEntries((await sbSelect("students", `select=id,name&id=in.(${sids.join(",")})`))
-          .map((r) => [r.id, r.name]))
+      ? Object.fromEntries((await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})`))
+          .map((r) => [r.id, r]))
       : {};
     const by = {};
     for (const b of books) (by[b.slot_id] = by[b.slot_id] || []).push({
       id: opaqueId("booking", b.id),
-      studentDisplayName: names[b.student_id] || "?",
+      studentDisplayName: names[b.student_id]?.name || "?",
+      studentPubgName: names[b.student_id]?.pubg_name || null,   // students.pubg_name · 없으면 null(오너 요청 2026-09-25)
       durationMin: b.duration_min ?? null,
       bookedAt: b.booked_at,                        // 예약 생성 시각(ISO · NOT NULL) — 앱 「새 예약」 카드 기준(오너 요청 2026-09-24 b)
       status: b.status,

@@ -149,12 +149,13 @@ module.exports = function mountTrainerPortal(app, deps) {
   // ── 범위: 담당(students.trainer_id) ∪ 최근 90일 내 내가 진행한 수강생 ──
   // 담당은 active·paused 만(종료 수강생은 목록에서 뺀다). 90일 진행분은 상태 무관 — 병행수강·담당 정정
   // 이력이 있어 담당 단일값으로 막으면 실제 운영을 못 담는다(booking-api isMyTrainer 와 같은 판단).
-  // 반환: Map<studentId, {id, name, status, carry_games, isPrimary}>
+  // 반환: Map<studentId, {id, name, status, carry_games, pubg_name, isPrimary}>
+  //   pubg_name = 배그 닉네임(오너 요청 2026-09-25 · 명부 표시 「이름(pubg_name)」). 비어 있으면 null 로 내려간다.
   async function scopedStudents(staffId) {
     const since = kstDate(Date.now() - SCOPE_WINDOW_DAYS * 86400_000);
     const [own, recent] = await Promise.all([
       sbSelect("students",
-        `select=id,name,status,carry_games&trainer_id=eq.${staffId}&status=in.(active,paused)&order=name.asc`),
+        `select=id,name,status,carry_games,pubg_name&trainer_id=eq.${staffId}&status=in.(active,paused)&order=name.asc`),
       sbSelect("lesson_sessions",
         `select=student_id&trainer_id=eq.${staffId}&played_at=gte.${since}`),
     ]);
@@ -162,7 +163,7 @@ module.exports = function mountTrainerPortal(app, deps) {
     for (const s of own) map.set(s.id, { ...s, isPrimary: true });
     const extra = [...new Set(recent.map((r) => r.student_id))].filter((id) => id && !map.has(id));
     if (extra.length) {
-      const rows = await sbSelect("students", `select=id,name,status,carry_games&id=in.(${extra.join(",")})`);
+      const rows = await sbSelect("students", `select=id,name,status,carry_games,pubg_name&id=in.(${extra.join(",")})`);
       for (const s of rows) map.set(s.id, { ...s, isPrimary: false });
     }
     return map;
@@ -253,6 +254,7 @@ module.exports = function mountTrainerPortal(app, deps) {
         return {
           id: opaqueId("student", s.id),
           displayName: s.name,
+          pubgName: s.pubg_name || null,    // students.pubg_name(배그 닉네임) · 없으면 null → 앱은 이름만 표시(오너 요청 2026-09-25)
           status: s.status,                 // active · paused · done
           isPrimary: s.isPrimary,           // 담당 여부(false = 최근 90일 진행만)
           registeredGames: reg,
@@ -301,6 +303,7 @@ module.exports = function mountTrainerPortal(app, deps) {
         id: opaqueId("journal", j.id),
         sessionId: opaqueId("session", j.session_id),
         studentDisplayName: scope.get(j.student_id)?.name || "?",
+        studentPubgName: scope.get(j.student_id)?.pubg_name || null,   // 배그 닉네임 · null 가능(2026-09-25)
         playedOn: sess[j.session_id]?.played_at || null,
         sessionByMe: sess[j.session_id]?.trainer_id === req.staff.id,
         title: title[j.session_id] ?? null,      // null → 화면 "미정"

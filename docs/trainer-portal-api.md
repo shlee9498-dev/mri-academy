@@ -8,6 +8,9 @@
 > ⑥ 응답 필드마다 nullable·값 집합 명시(§7).
 > 오너 요청 2026-09-24(앱 후속): ⑦ 취소한 슬롯 재오픈 `POST /slots/:id/reopen`(행 삭제 없음 · 예약 미복원 · 빈 칸으로만)
 > ⑧ `GET /slots` 의 예약마다 `bookedAt`(ISO) — 앱 「새 예약」 카드 기준. 정원 상한 8 은 변경 없음.
+> 오너 요청 2026-09-25(반장 · 명부 표시 「이름(pubg_name)」): ⑨ `GET /students[].pubgName` · `GET /journals[].studentPubgName` ·
+> `GET /slots` `bookings[].studentPubgName` = `students.pubg_name`(배그 닉네임). **비어 있으면 null** — 앱은 null 이면 이름만 표시한다.
+> 수강생 포털 `GET /summary` 도 본인 값을 `pubgName` 으로 내린다(같은 키 · 수강생 scrub 통과 확인).
 
 ## 1. 호출 규약
 | 항목 | 값 |
@@ -62,7 +65,7 @@ body 없음(다른 키 있으면 400) · 세션 헤더 **불요**(있어도 검�
 ### GET /students — 범위 내 수강생 (120회/분)
 ```json
 { "students": [ {
-  "id": "…", "displayName": "학생A", "status": "active",
+  "id": "…", "displayName": "학생A", "pubgName": "nick_A", "status": "active",
   "isPrimary": true,
   "registeredGames": 33, "playedGames": 13, "playedWithMe": 5,
   "heldGames": 5, "remainingGames": 15,
@@ -75,12 +78,13 @@ body 없음(다른 키 있으면 400) · 세션 헤더 **불요**(있어도 검�
 - `remainingGames` = registered − played − held. **음수 그대로**(0 클램프 금지). §23 `portal_remaining_games()` · 수강생 앱 `/summary` 와 같은 식.
 - 정렬: 담당(isPrimary) 먼저, 이름순. `status` ∈ active · paused · done(done 은 90일 진행분에만 나타난다).
 - `lastLessonOn` 은 **`lesson_sessions` 행이 하나도 없을 때만 null**(신규 수강생 · 아직 수업 전). 예약만 있고 수업이 없어도 null.
+- `pubgName` = `students.pubg_name`(배그 닉네임 · 2026-09-25 추가). 비어 있으면 **null** — 앱은 「이름」만 표시하고, 있으면 「이름(pubgName)」.
 
 ### GET /journals?days=30 — 범위 내 수강생의 수업 일기 (120회/분 · days 1~180 · 최근 갱신순 최대 200건)
 ```json
 { "journals": [ {
   "id": "…", "sessionId": "…",
-  "studentDisplayName": "학생A", "playedOn": "2026-09-10", "sessionByMe": true,
+  "studentDisplayName": "학생A", "studentPubgName": "nick_A", "playedOn": "2026-09-10", "sessionByMe": true,
   "title": "교전 기본", "body": "…", "updatedAt": "2026-09-11T00:00:00Z",
   "hasFeedback": false, "hasMyFeedback": false
 } ] }
@@ -113,7 +117,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
   "id": "…", "startAt": "2026-09-20T10:00:00+00:00", "slotMinutes": 30,
   "lessonType": "personal", "capacity": 1, "status": "open",
   "bookings": [ {
-    "id": "…", "studentDisplayName": "학생A", "durationMin": 60,
+    "id": "…", "studentDisplayName": "학생A", "studentPubgName": "nick_A", "durationMin": 60,
     "bookedAt": "2026-09-18T03:12:45+00:00",
     "status": "booked", "needsReview": false, "registrationMissing": false
   } ]
@@ -137,7 +141,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 - 푸시·DM: 피드백 작성 시 수강생 DM 은 v1 에 없다(후속 후보).
 - 서버 측 세션 회수: `/logout` 은 무상태 no-op(§2). 거부 목록은 v2.
 
-## 7. 응답 필드 nullable · 값 집합 (2026-09-18 · 2026-09-24 `bookedAt`·`reopen` 추가 · 코드·DB 제약 실측)
+## 7. 응답 필드 nullable · 값 집합 (2026-09-18 · 2026-09-24 `bookedAt`·`reopen` 추가 · 2026-09-25 `pubgName`·`studentPubgName` 추가 · 코드·DB 제약 실측)
 「null」 열이 **아니오**면 그 필드는 항상 값이 있다 — 앱의 null 방어는 두어도 되지만 계약상 필요 없다.
 
 | 라우트 | 필드 | 타입 | null | 값 집합 · 조건 |
@@ -147,6 +151,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | | `role` | string | 아니오 | `trainer` · `staff` · `owner` |
 | GET /students | `id` | string | 아니오 | 불투명 id |
 | | `displayName` | string | 아니오 | `students.name`(NOT NULL) |
+| | `pubgName` | string | **가능** | `students.pubg_name`(배그 닉네임) · 비어 있으면 null → 앱은 이름만 표시 |
 | | `status` | string | 아니오 | `active` · `paused` · `done` |
 | | `isPrimary` | boolean | 아니오 | true = 담당, false = 최근 90일 진행만 |
 | | `registeredGames` `playedGames` `playedWithMe` `heldGames` | integer | 아니오 | ≥ 0 |
@@ -154,6 +159,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | | `lastLessonOn` | string(YYYY-MM-DD) | **가능** | `lesson_sessions` 0건이면 null(아직 수업 전) |
 | GET /journals | `id` `sessionId` | string | 아니오 | 불투명 id |
 | | `studentDisplayName` | string | 아니오 | 범위 맵에서 채움 · `"?"` 발생 조건 없음 |
+| | `studentPubgName` | string | **가능** | 범위 맵의 `students.pubg_name` · 비어 있으면 null |
 | | `playedOn` | string(YYYY-MM-DD) | 아니오 | FK + NOT NULL |
 | | `sessionByMe` | boolean | 아니오 | 세션 `trainer_id` 가 나면 true(세션에 트레이너가 없으면 false) |
 | | `title` | string | **가능** | null = 미정(제목 미설정) |
@@ -171,6 +177,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | | `status` | string | 아니오 | `open` · `closed` · `cancelled` |
 | | `bookings[]` | array | 아니오 | 빈 배열 가능 |
 | | `bookings[].id` `studentDisplayName` | string | 아니오 | FK + NOT NULL |
+| | `bookings[].studentPubgName` | string | **가능** | `students.pubg_name` · 비어 있으면 null |
 | | `bookings[].bookedAt` | string(ISO) | 아니오 | `slot_bookings.booked_at`(NOT NULL · 예약 생성 시각 · 서버 now()) |
 | | `bookings[].durationMin` | integer | **가능** | 개인 60·90·120 / 그룹 null |
 | | `bookings[].status` | string | 아니오 | `booked` · `pending_review` · `done` (`no_show`·`cancelled` 는 목록 밖) |
