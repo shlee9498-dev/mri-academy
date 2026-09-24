@@ -129,8 +129,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 
 **DELETE /slots/:id** → `{ "cancelled": true, "notified": 2 }`. `booked` 예약자 전원 복원(선차감 0 · 예약 `cancelled`)·DM, 슬롯은 `cancelled`. 남의 슬롯은 403.
 
-**POST /slots/:id/reopen** (60회/분 · body 없음 · 2026-09-24 신설) → `{ "reopened": true }`. 내가 `DELETE /slots/:id` 로 취소한 칸을 **빈 칸**으로 되살린다 — 행을 지우지 않고 `status` 만 `cancelled → open`. 취소 때 풀린 예약은 되살리지 않는다(예약자에게는 이미 취소 DM 이 나갔다) · 수강생이 다시 잡아야 하고 DM 은 없다. `cancelled` 가 아닌 칸(open·closed)은 409 `slot_not_cancelled`, 시작 시각이 지난 칸은 409 `slot_in_past`, 남의 칸은 403 `scope_denied`, 없는 id 는 404 `not_found`.
-⚠️ 알려진 한계 — 취소당했던 수강생 **본인**이 같은 칸을 다시 잡으면 409 `slot_taken` 이다. `slot_bookings` 의 unique(slot_id, student_id) 가 `cancelled` 예약 행에도 걸리기 때문이고(수강생이 스스로 취소한 뒤 같은 칸을 다시 잡을 때와 같은 기존 제약), 다른 수강생은 정상으로 잡힌다. 푸는 방법은 DDL(부분 유니크 인덱스)뿐이라 오너 판정 대기 — 앱은 그때까지 이 오류를 「다른 시간을 골라 주세요」 계열로 안내한다.
+**POST /slots/:id/reopen** (60회/분 · body 없음 · 2026-09-24 신설) → `{ "reopened": true }`. 내가 `DELETE /slots/:id` 로 취소한 칸을 **빈 칸**으로 되살린다 — 행을 지우지 않고 `status` 만 `cancelled → open`. 취소 때 풀린 예약은 되살리지 않는다(예약자에게는 이미 취소 DM 이 나갔다) · 수강생이 다시 잡아야 하고 DM 은 없다. `cancelled` 가 아닌 칸(open·closed)은 409 `slot_not_cancelled`, 시작 시각이 지난 칸은 409 `slot_in_past`, 남의 칸은 403 `scope_denied`, 없는 id 는 404 `not_found`. 취소당했던 수강생 **본인**이 같은 칸을 다시 잡는 것도 정상이다 — 유니크가 취소되지 않은 예약 행에만 걸린다(§26 부분 유니크 인덱스 `uq_slot_bookings_active` · 2026-09-25 실행 확인). 같은 이유로 수강생이 스스로 취소한 뒤 같은 칸을 다시 잡는 것도 정상이다.
 
 ## 6. 하지 않는 것
 - 판수 기록·정정: 봇 `/수업등록` `/판수정정` 만. 이 포털은 lesson_sessions·lesson_enrollments·students 를 UPDATE 하지 않는다.

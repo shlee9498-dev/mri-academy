@@ -1637,6 +1637,10 @@ alter table public.student_link_requests enable row level security;   -- service
 
 -- ============================================================
 -- §25  예약 확장 — 상담(consult) 슬롯 유형 (2026-09-10 · 오너 지시)
+--      ✅ 25b 실행 완료 2026-09-25 (오너 실행 · 실DB 실측 20:3x UTC: book_slot 1행 · identity
+--         `p_student_id bigint, p_slot_id bigint, p_duration_min integer` · consult 분기 있음 ·
+--         CR 제거 md5 09ad7a2c3e95742bb4bee9cf5e20e61c = 정본 · length 3067). 검증값이 3133/8d781b9b… 로 나온 것은
+--         윈도우 붙여넣기로 줄바꿈이 CRLF 로 저장된 것뿐(66줄 × 1자) — 로직 동일. 이후 함수 검증은 아래 「줄바꿈 무관」 쿼리로.
 --      「처음이면 10분 상담 먼저」 권고가 성립하려면 상담을 앱에서 잡을 수 있어야 한다.
 --      규격(오너): lesson_type 'consult' · 정원 1 · 30분(=슬롯 1칸) · games_held 0 ·
 --      **잔여 판수 0·음수여도 예약 가능**(insufficient_games 검사 제외) · 결제(상담료)는 앱 밖 ·
@@ -1729,11 +1733,19 @@ exception
 end;
 $$;
 
+-- 검증(줄바꿈 무관 · 2026-09-25 오너 지시 — 윈도우 붙여넣기는 CRLF 로 저장되므로 CR 을 빼고 대조한다):
+--   select count(*) as fn_rows, bool_or(prosrc like '%consult%') as has_consult,
+--          max(length(replace(prosrc, E'\r', ''))) as src_len_lf, max(md5(replace(prosrc, E'\r', ''))) as src_md5_lf
+--     from pg_proc where proname = 'book_slot' and pronamespace = 'public'::regnamespace;
+--   -- 기대: 1 · true · 3067 · 09ad7a2c3e95742bb4bee9cf5e20e61c
 -- 실행 후 필수:
 -- notify pgrst, 'reload schema';
 
 -- ============================================================
 -- §26  예약 유니크 완화 — 취소된 예약 행은 유니크 대상에서 제외 (2026-09-24 · 오너 판정)
+--      ✅ 실행 완료 2026-09-25 (오너 실행 · 실DB 실측 20:3x UTC: slot_bookings unique 제약 0 ·
+--         `uq_slot_bookings_active` = CREATE UNIQUE INDEX … (slot_id, student_id) WHERE (status <> 'cancelled'::text) ·
+--         구 인덱스 slot_bookings_slot_id_student_id_key 0 · notify 완료). 재오픈 슬롯 재예약 409 slot_taken 해소.
 --      배경: slot_bookings 의 unique (slot_id, student_id) 가 status='cancelled' 행에도 걸려,
 --      ① 트레이너가 슬롯을 취소(§23d cancel_slot)하고 되살린(POST /slots/:id/reopen) 뒤,
 --      ② 수강생이 스스로 취소(§23c cancel_booking)한 뒤
