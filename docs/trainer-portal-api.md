@@ -6,6 +6,8 @@
 > ② `POST /exchange` 신설 · `requireTrainer` 는 포털 세션과 기존 사이트 JWT 둘 다 수용 ③ 실명은 `displayName` 키로만.
 > 오너 요청 2026-09-18(앱 mock 단계): ④ `POST /logout` 신설 ⑤ 게이트 실패 코드 분리(`scope_denied` / `not_staff`)
 > ⑥ 응답 필드마다 nullable·값 집합 명시(§7).
+> 오너 요청 2026-09-24(앱 후속): ⑦ 취소한 슬롯 재오픈 `POST /slots/:id/reopen`(행 삭제 없음 · 예약 미복원 · 빈 칸으로만)
+> ⑧ `GET /slots` 의 예약마다 `bookedAt`(ISO) — 앱 「새 예약」 카드 기준. 정원 상한 8 은 변경 없음.
 
 ## 1. 호출 규약
 | 항목 | 값 |
@@ -17,7 +19,7 @@
 | 오류 형태 | 항상 `{ "error": { "code": "…" } }` · 메시지·상세 없음 |
 | id | 전부 서명된 불투명 문자열. DB id 를 보내면 400 |
 
-오류 코드: 400 `invalid_body` · 401 `session_expired` · 403 `scope_denied` / `not_staff` · 404 `not_found` / `slot_not_found` · 409 `slot_taken` / `slot_full` / `insufficient_games` / `cancel_window_passed` · 422 `feedback_too_long` / `title_too_long` · 429 `rate_limited`(Retry-After 헤더) · 503 `portal_unavailable`.
+오류 코드: 400 `invalid_body` · 401 `session_expired` · 403 `scope_denied` / `not_staff` · 404 `not_found` / `slot_not_found` · 409 `slot_taken` / `slot_full` / `insufficient_games` / `cancel_window_passed` / `slot_not_cancelled` / `slot_in_past` · 422 `feedback_too_long` / `title_too_long` · 429 `rate_limited`(Retry-After 헤더) · 503 `portal_unavailable`.
 
 ### 1.1 403 두 코드의 경계 (2026-09-18 확정)
 | 코드 | 원인 | 나오는 곳 | 앱 처리 |
@@ -112,6 +114,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
   "lessonType": "personal", "capacity": 1, "status": "open",
   "bookings": [ {
     "id": "…", "studentDisplayName": "학생A", "durationMin": 60,
+    "bookedAt": "2026-09-18T03:12:45+00:00",
     "status": "booked", "needsReview": false, "registrationMissing": false
   } ]
 } ] }
@@ -120,10 +123,14 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 - `bookings` 에는 **`booked` · `pending_review` · `done` 만** 들어간다. `no_show` · `cancelled` 예약은 목록에 없다(선차감은 `no_show` 가 유지되지만 이 목록의 대상은 아니다). 개인 예약의 꼬리 칸(span 후속)도 빠지고 머리 칸 1건만 온다.
 - `needsReview` = `status === "pending_review"`(트레이너 홈 「확인 필요」 배지) · `registrationMissing` = `done` 인데 같은 날 `lesson_sessions` 행이 없음(「등록 누락?」 배지 · 감지만, 차단·자동정정 없음).
 - `durationMin` 은 개인 예약이면 60·90·120, 그룹 예약이면 **null**.
+- `bookedAt` = 예약이 들어온 시각(ISO · `slot_bookings.booked_at` · 항상 값 있음 · 2026-09-24 추가). 「새 예약」 카드의 최근순 정렬·N시간 이내 강조는 앱이 이 값으로 한다 — 서버는 슬롯만 `startAt` 오름차순으로 주고 슬롯 안의 예약 순서는 보장하지 않는다.
 
 **POST /bookings/:id/complete** · **POST /bookings/:id/no-show** (60회/분 · body 없음) → `{ "resolved": true, "status": "done" | "no_show" }`. 대상은 `booked`·`pending_review` 머리 행만 — 이미 끝난 예약·꼬리 칸·없는 id 는 404, 남의 슬롯은 403 `scope_denied`. 판수는 건드리지 않는다(봇 `/수업등록` 경로 하나뿐).
 
 **DELETE /slots/:id** → `{ "cancelled": true, "notified": 2 }`. `booked` 예약자 전원 복원(선차감 0 · 예약 `cancelled`)·DM, 슬롯은 `cancelled`. 남의 슬롯은 403.
+
+**POST /slots/:id/reopen** (60회/분 · body 없음 · 2026-09-24 신설) → `{ "reopened": true }`. 내가 `DELETE /slots/:id` 로 취소한 칸을 **빈 칸**으로 되살린다 — 행을 지우지 않고 `status` 만 `cancelled → open`. 취소 때 풀린 예약은 되살리지 않는다(예약자에게는 이미 취소 DM 이 나갔다) · 수강생이 다시 잡아야 하고 DM 은 없다. `cancelled` 가 아닌 칸(open·closed)은 409 `slot_not_cancelled`, 시작 시각이 지난 칸은 409 `slot_in_past`, 남의 칸은 403 `scope_denied`, 없는 id 는 404 `not_found`.
+⚠️ 알려진 한계 — 취소당했던 수강생 **본인**이 같은 칸을 다시 잡으면 409 `slot_taken` 이다. `slot_bookings` 의 unique(slot_id, student_id) 가 `cancelled` 예약 행에도 걸리기 때문이고(수강생이 스스로 취소한 뒤 같은 칸을 다시 잡을 때와 같은 기존 제약), 다른 수강생은 정상으로 잡힌다. 푸는 방법은 DDL(부분 유니크 인덱스)뿐이라 오너 판정 대기 — 앱은 그때까지 이 오류를 「다른 시간을 골라 주세요」 계열로 안내한다.
 
 ## 6. 하지 않는 것
 - 판수 기록·정정: 봇 `/수업등록` `/판수정정` 만. 이 포털은 lesson_sessions·lesson_enrollments·students 를 UPDATE 하지 않는다.
@@ -131,7 +138,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 - 푸시·DM: 피드백 작성 시 수강생 DM 은 v1 에 없다(후속 후보).
 - 서버 측 세션 회수: `/logout` 은 무상태 no-op(§2). 거부 목록은 v2.
 
-## 7. 응답 필드 nullable · 값 집합 (2026-09-18 · 코드·DB 제약 실측)
+## 7. 응답 필드 nullable · 값 집합 (2026-09-18 · 2026-09-24 `bookedAt`·`reopen` 추가 · 코드·DB 제약 실측)
 「null」 열이 **아니오**면 그 필드는 항상 값이 있다 — 앱의 null 방어는 두어도 되지만 계약상 필요 없다.
 
 | 라우트 | 필드 | 타입 | null | 값 집합 · 조건 |
@@ -165,6 +172,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | | `status` | string | 아니오 | `open` · `closed` · `cancelled` |
 | | `bookings[]` | array | 아니오 | 빈 배열 가능 |
 | | `bookings[].id` `studentDisplayName` | string | 아니오 | FK + NOT NULL |
+| | `bookings[].bookedAt` | string(ISO) | 아니오 | `slot_bookings.booked_at`(NOT NULL · 예약 생성 시각 · 서버 now()) |
 | | `bookings[].durationMin` | integer | **가능** | 개인 60·90·120 / 그룹 null |
 | | `bookings[].status` | string | 아니오 | `booked` · `pending_review` · `done` (`no_show`·`cancelled` 는 목록 밖) |
 | | `bookings[].needsReview` `registrationMissing` | boolean | 아니오 | |
@@ -172,4 +180,5 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | | `status` | string | 아니오 | `done` · `no_show` |
 | DELETE /slots/:id | `cancelled` | boolean | 아니오 | true |
 | | `notified` | integer | 아니오 | DM 대상 수 |
+| POST /slots/:id/reopen | `reopened` | boolean | 아니오 | true(그 외는 오류 응답) |
 | POST /logout | (본문 없음) | — | — | 204 |

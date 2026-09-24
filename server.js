@@ -6749,7 +6749,7 @@ const trainerPortal = require("./trainer-portal.cjs")(app, {
 });
 
 require("./booking-api.cjs")(app, {
-  sbSelect, sbInsert, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,
+  sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,
 });
 
 // [재발 방지] 기동 시 시트 웹훅 연결 식별 — 어느 Apps Script 배포(=어느 스프레드시트)에 붙는지 즉시 확인.
