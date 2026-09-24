@@ -1,8 +1,8 @@
-# 수업 복기(레슨 피드백) 구조 설계 — 초안
+# 수업 복기(레슨 피드백) 구조 설계 — 초안 v2
 
-> 상태: **설계 초안 · 코드 없음** (오너 지시 2026-09-24). 서버 DB·API 구현은 경비 담당 — 이 문서가 확정되면 §3 DDL·§9 API 를 그대로 넘긴다.
-> 근거: 현태 C그룹 준님 복기 엑셀 4개(9.13 · 9.16 · 9.18 · 9.21) 실측 + 파싱 규칙 프로토타입 실행 결과(§10).
-> 기존 것과의 관계: `lesson_sessions`(레슨 앵커) · `courses`/`course_sessions`(강의 앵커) · `lesson_journals`/`journal_feedback`(일기 피드백 · 수강생 앱 S-08) · `feedback`(디스코드 채널 → 사이트 홍보용, `server.js` 「피드백 월」). **홍보용 `feedback` 은 건드리지 않는다** — 같은 채널 메시지를 두 갈래로 받는다(§8).
+> 상태: **설계 초안 v2 · 코드 없음** (오너 지시 2026-09-24 + 보강). 서버 DB·API·봇은 경비 담당 — 확정 후 §12 요구사항 목록·§3 DDL·§10 API 를 넘긴다. 앱 화면은 반장.
+> v2 에서 바뀐 전제: **첨부 엑셀 4개는 트레이너가 아니라 레슨생(준님)이 직접 만든 복기다.** 주 작성자 = 수강생, 트레이너는 그 위에 피드백. 엑셀 가져오기는 보조 입구(수강생 앱에서 초안으로 불러와 이어 편집). 파싱 실측(§9)은 그대로.
+> 근거: 엑셀 4개(9.13 · 9.16 · 9.18 · 9.21) 실측 + 파싱 프로토타입 · 기존 `lesson_sessions` `courses`/`course_sessions` `lesson_journals`/`journal_feedback` · `feedback`(디스코드 → 사이트 홍보용, `server.js` 「피드백 월」).
 
 ---
 
@@ -10,16 +10,19 @@
 
 | 질문 | 결론 |
 |---|---|
-| 단위 | **복기 1건(`lesson_reviews`) = 수업 1회.** 그 아래 판(`review_games`) → 페이즈(`review_phases`) → 이미지(`review_images`). 구조 없는 피드백은 판·페이즈 없이 복기 1건에 본문만 |
-| 앵커 | 레슨생 `lesson_sessions.id` · 강의생 `course_sessions.id`(+ `course_id` 로 학생 특정). **둘 중 하나만** — CHECK 로 강제 |
-| 페이즈 번호 | **유일하지 않다**(같은 판에 「4페)」 4번). 순서(`ord`)가 정본이고 번호·범위는 라벨 |
-| 이미지 | 페이즈당 **1~3장**(실측 최대 3) · Supabase Storage `lesson-reviews` 버킷(비공개) · 앱은 서버가 발급한 서명 URL 로만 본다 |
-| 분류·태그 | 규칙 기반 **제안**을 `suggested_*` 컬럼에 두고, 작성자가 확인한 값만 `kind`/`tags` 에 쓴다. 자동 확정 없음 |
-| 디스코드 피드백 | 같은 테이블 `lesson_reviews.source='discord'` · `body` 만 채움 · 판·페이즈 0건. 채널 메시지 1건 = 복기 1건(같은 날 여러 건은 합치지 않는다) |
+| 무엇 | **복기 1건 = 수업 1회의 기록.** 판 → 페이즈 → 이미지 구조를 가질 수도, 구조 없이 글만일 수도 있다. 같은 테이블 |
+| 누가 | 수강생이 쓴다(`author_role='student'`). 트레이너가 먼저 쓴 것(디스코드 이관 포함)은 `author_role='trainer'`. 트레이너 답은 별도 `review_feedback` |
+| 앵커 | 레슨생 `lesson_sessions.id` / 강의생 `course_sessions.id + course_id` 택1. draft 는 앵커 없이도 존재 |
+| 그림 | 이미지 원본에 합성하지 않는다. **작성자별 벡터 레이어**(`review_annotations`)로 저장 · 보기에서 켜고 끄기 |
+| 일기 | **복기가 일기를 흡수한다**(§7 권장안 B′). 수강생에게 「기록하는 곳」은 수업 상세의 카드 하나 |
+| 이미지 | 원본 보존 + 표시용 WebP + 썸네일. 페이즈당 ≤4장 · 복기당 ≤60장 · 장당 ≤8MB (§8) |
+| 분류·태그 | 규칙 제안(`suggested_*`) → 사람이 확정. 자동 확정 없음. 집계는 확정값만 |
+| 공개 | 본인 · 담당 트레이너 · 오너. 외부 공개는 `consent_public_at`(옵트인) 있을 때만 — 자리만 |
+| 출시 | 1차(작성·기본 그리기·총평) → 2차(모바일 편집·트레이너 그리기·과제·알림) → 3차(집계·디스코드 이관·맵 바탕·옵트인) (§11) |
 
 ---
 
-## 1. 원본 실측 (엑셀 4개)
+## 1. 원본 실측 (엑셀 4개 · 수강생 작성)
 
 | 파일 | 행 | 텍스트 셀 | 이미지 | 판 | 페이즈 | 이미지 매칭 |
 |---|---|---|---|---|---|---|
@@ -28,317 +31,412 @@
 | 9.18 | 355 | 41 | 23 | 3 (테이고·미라마·에란겔) | 16 | 23/23 |
 | 9.21 | 358 | 46 | 23 | 3 (미라마·태이고·미라마) | 19 | 23/23 |
 
-구조(공통):
-- 시트 1장, A열만 씀(다른 열 텍스트 0건), 병합 셀 0.
-- `1.에란겔` / `2. 론도` — 판 헤더(순번 + 맵). 「2.」 뒤 공백 유무 섞임.
-- `1페)` / `2페~3페)` / `2~3페)` / `1페~2폐)`(오타) / `4페~점자)` / `1페)텍스트`(닫는 괄호 뒤 바로 본문) — 페이즈 헤더. 헤더 셀 자체에 첫 문장이 붙어 있다.
-- **이미지는 페이즈 헤더 위에** 온다(판 헤더 → 이미지 → 「1페)」 → 해설 …). 앵커는 A열 행. 가끔 F·K열에 나란히 1~2장 더(같은 행 범위) → 그 페이즈에 2~3장.
-- 「교전디테일)」 「디테일)」 — 페이즈 번호 없는 소제목이 해설 중간에 온다(9.18 · 9.21 각 1~2회).
-- `*` 로 시작하는 줄 = 강조. 「적이 못한점 :」 「적의 실수는」 = 상대 관점 해설(학생의 아쉬운 점이 아니다).
-- 같은 판 안에서 **같은 페이즈 번호가 반복**된다(9.13 태이고 「4페)」 ×4 · 9.16 론도 「4페)」 ×3). 한 페이즈를 여러 장면으로 쪼갠 것.
-- 판 번호가 1~6페 전부 있지 않다(9.16 미라마는 5페부터). 자기장이 튀어 앞 페이즈를 안 적은 것.
+- 시트 1장, A열만(다른 열 텍스트 0), 병합 0. `1.에란겔` 판 헤더 · `1페)` `2페~3페)` `1페~2폐)`(오타) `4페~점자)` 페이즈 헤더(셀에 첫 문장 포함).
+- **이미지는 페이즈 헤더 위**. 가끔 F·K열에 나란히 → 페이즈당 1~3장(3장 3건).
+- 「교전디테일)」 소제목이 해설 중간에(3건). `*` 시작 줄 = 강조. 「적이 못한점 :」 = 상대 관점.
+- **같은 판에 같은 페이즈 번호 반복**(「4페)」 ×4) — 한 페이즈를 여러 장면으로 쪼갬. 번호가 유일하지 않다.
+- 이미지 92장 · 236~738 × 151~598px · 3KB~607KB · 파일당 5~7MB(합 25MB). 게임 미니맵·화면 캡처에 선·원 주석(그림판).
 
-이미지: 92장 · 236~738 × 151~598 px · 3KB~607KB · 합계 25.0MB (파일당 5~7MB). 전부 PNG 게임 화면 캡처(미니맵 + 선·원 주석).
+작성자가 수강생이라는 점에서 읽히는 것: 페이즈마다 「캡처 1장 + 3~6줄」이 자연스러운 작성 단위이고, 그림 주석은 이미 하고 있던 행동이다. 앱 도구는 이 단위를 그대로 카드로 만들면 된다.
 
 ## 2. 데이터 모델
 
 ```
-students ─┬─ lesson_sessions ──┐
-          └─ courses ──────────┤ (course_sessions 와 함께)
-                               ▼
-                       lesson_reviews          복기 1건 = 수업 1회 (또는 채널 피드백 1건)
-                         ├─ review_games       판 (순번·맵)
-                         │    └─ review_phases 페이즈 (순서·번호 라벨·해설·핵심·아쉬운 점·태그)
-                         │         └─ review_images (1~3장 · Storage 경로)
-                         └─ review_topics      복기×태그 집계용(파생 · §5)
+students ─┬─ lesson_sessions ─┐
+          └─ courses ─────────┤(+course_sessions)
+                              ▼
+                      lesson_reviews            복기 1건 = 수업 1회 · author_role student|trainer
+                        ├─ review_games         판 (ord · 맵)
+                        │    └─ review_phases   페이즈 (ord · 번호 라벨 · lines jsonb · tags)
+                        │         └─ review_images   이미지 (원본·표시본·썸네일 경로)
+                        │              └─ review_annotations  그림 레이어 (작성자별 1개 · 벡터 jsonb)
+                        ├─ review_feedback      트레이너 답 (페이즈 코멘트 · 💡⚠️ 동의/수정 · 총평 · 과제)
+                        └─ review_reads         읽음 (누가 언제 열었나 — 안 읽음 표시)
+review_tags                                     태그 사전
 ```
 
-### 2.1 앵커 — 레슨생과 강의생이 다르다
+### 2.1 앵커 (v1 과 같음)
 
-| 대상 | 앵커 | 학생 특정 | 담당 트레이너 |
+| 대상 | 앵커 | 학생 | 트레이너 |
 |---|---|---|---|
-| 레슨생 | `lesson_sessions.id` | `lesson_sessions.student_id` | `lesson_sessions.trainer_id` (진행) · `students.trainer_id` (담당) |
-| 무리 강의생 | `course_sessions.id` + **`course_id`** | `courses.student_id` (세션은 그룹이라 학생을 모른다 — `course_attendance` 와 같은 이유) | 오너(직강) |
+| 레슨생 | `lesson_sessions.id` | `lesson_sessions.student_id` | 진행 `lesson_sessions.trainer_id` · 담당 `students.trainer_id` |
+| 강의생 | `course_sessions.id` + `course_id` | `courses.student_id` | 오너 |
 
-→ `lesson_reviews` 는 `lesson_session_id` / `course_session_id + course_id` 둘 중 **정확히 하나**를 갖는다. `student_id` 는 파생값이지만 조회·RLS 단순화를 위해 **비정규화해 저장**하고 트리거로 앵커와 일치를 검사한다.
+`student_id` 는 비정규화 저장 + 트리거로 앵커와 일치 검사. **draft 는 앵커 없음 허용**(수강생이 「수업 선택」 전에 쓰기 시작 · 디스코드 이관분 앵커 불명). publish 시점에 앵커 필수.
 
-### 2.2 페이즈 라벨
+### 2.2 구조 있음 / 없음을 한 테이블에
 
-`phase_from int` · `phase_to int null` · `phase_to_end bool`(「~점자」「~끝」) · `ord int`(판 안 순서, 정본). 화면 라벨은 `phase_from==phase_to → "4페"` · 범위 `"2~3페"` · 끝 `"4페~끝"` · 같은 라벨이 반복되면 `"4페 (2)"`.
+- 구조 없음: `review_games` 0건, `body` 에 본문. 기존 일기(`lesson_journals.body`)와 같은 모양 → §7 이관이 그대로 된다.
+- 구조 있음: `body` 는 머리말(선택), 나머지는 판·페이즈.
+- 「나중에 구조로 옮기기」: 작성 화면에서 「판 추가」를 누르면 `body` 가 첫 판·첫 페이즈의 첫 줄로 이동(작성자 확인 후). 데이터상으로는 이동일 뿐 변환 없음.
 
-### 2.3 해설 줄 — 페이즈 본문은 줄 단위로 둔다
-
-핵심·아쉬운 점 표시와 태그 제안이 **줄 단위**라서 본문을 통짜 텍스트로 두면 「이 줄이 핵심」을 표현할 수 없다. `review_lines`(줄) 를 두는 대신 `review_phases.lines jsonb` 로 둔다 — 줄 수가 1~7이고 줄만 따로 조회할 일이 없다.
+### 2.3 페이즈 줄 (`lines jsonb`)
 
 ```jsonc
-// review_phases.lines
-[
-  { "ord": 1, "text": "1선은 우선 다음땅 빌드업을 위해 앞땅을 먹어두고 나머지 시야분배", "kind": null,     "suggested_kind": null },
-  { "ord": 2, "text": "여기서 중요한건 4선이 바라보고있는 우측 두팀이 우선순위의 적임을 인지해야함", "kind": "key", "suggested_kind": "key" },
-  { "ord": 5, "text": "(4선 혼자 막는 상황이면 …)", "kind": "note", "suggested_kind": null }
-]
-// kind ∈ null(해설) · "key"(💡핵심) · "caveat"(⚠️아쉬운 점) · "enemy"(상대 관점 · 참고) · "detail"(교전디테일 소제목 아래)
+[{ "ord": 1, "text": "…", "kind": null, "suggested_kind": "key" },
+ { "ord": 2, "text": "…", "kind": "caveat", "suggested_kind": "caveat" }]
+// kind ∈ null · key(💡) · caveat(⚠️) · enemy(상대 관점) · detail(교전디테일)
 ```
-`kind` 는 작성자가 확정한 값, `suggested_kind` 는 규칙이 낸 제안(§4). 저장 시 `kind` 가 null 이면 화면은 평문으로 보여준다 — 제안이 자동으로 강조되지 않는다.
+`kind` = 작성자 확정, `suggested_kind` = 규칙 제안(§6). 줄 쪼개기·합치기는 클라이언트가 배열을 다시 보낸다(줄 단위 API 없음 — 페이즈 통째 PUT).
+
+### 2.4 그림 레이어 (`review_annotations`)
+
+- 이미지 1장 × 작성자 1명 = 레이어 1행. `unique (image_id, author_kind, author_id)`.
+- 좌표는 **이미지 기준 정규화(0~1)** — 표시 크기·확대와 무관하게 재생.
+- `shapes jsonb` 배열. 도형 종류: `pen`(점 배열 · 저장 전 Douglas-Peucker 단순화) · `arrow`(from,to) · `ellipse`(cx,cy,rx,ry) · `rect` · `text`(x,y,text,size) · `number`(x,y,n). 공통: `color` `width` `id`.
+- 실행취소/다시실행은 클라이언트 스택. 저장은 레이어 전체를 디바운스(2초) PUT — 부분 패치 없음(충돌 단순화 · 한 레이어는 한 사람만 쓴다).
+- `version int` 낙관적 잠금: PUT 에 `version` 을 실어 다르면 409 `annotation_conflict`(같은 사람이 두 기기에서 열었을 때).
+- 원본 이미지는 절대 바뀌지 않는다. 내보내기(합성 PNG)는 3차 후보.
+
+```jsonc
+{ "v": 1, "shapes": [
+  { "id": "s1", "t": "arrow", "from": [0.12, 0.40], "to": [0.55, 0.31], "color": "#FF3B3B", "width": 3 },
+  { "id": "s2", "t": "ellipse", "cx": 0.62, "cy": 0.44, "rx": 0.08, "ry": 0.06, "color": "#00E5FF", "width": 3 },
+  { "id": "s3", "t": "text", "x": 0.30, "y": 0.70, "text": "1선 다음땅", "size": 0.03, "color": "#FFFFFF" },
+  { "id": "s4", "t": "pen", "pts": [[0.1,0.1],[0.12,0.13]], "color": "#FFE100", "width": 2 },
+  { "id": "s5", "t": "number", "x": 0.5, "y": 0.5, "n": 1, "color": "#FF3B3B" } ] }
+```
+
+### 2.5 트레이너 답 (`review_feedback`)
+
+한 행 = 답 조각 하나. `kind`:
+- `comment` — 페이즈 코멘트(`phase_id` 필수)
+- `mark` — 수강생의 💡⚠️ 줄에 동의/수정(`phase_id` + `line_ord` + `verdict ∈ agree|revise` + `body` 선택)
+- `overall` — 총평(`phase_id` null)
+- `task` — 다음 수업 과제(`phase_id` null · `due_session_id` 선택)
+그리기는 `review_annotations`(author_kind='trainer') 로 — `review_feedback` 행이 아니다.
+**답 기한·페이즈별 필수 여부는 오너 결정 사항 — 이 문서는 제약을 두지 않는다**(§13).
 
 ## 3. DDL (제안 · 경비 구현분)
 
 ```sql
--- 23) 수업 복기 — 엑셀(구조 있음) · 디스코드 채널(구조 없음) · 앱 직접 작성(후속) 공용
+-- 23) 수업 복기
 create table if not exists public.lesson_reviews (
   id                 bigint generated always as identity primary key,
   student_id         bigint not null references public.students(id) on delete cascade,
-  lesson_session_id  bigint references public.lesson_sessions(id) on delete cascade,
-  course_session_id  bigint references public.course_sessions(id) on delete cascade,
-  course_id          bigint references public.courses(id) on delete cascade,
-  author_staff_id    bigint references public.staff(id),             -- 작성 트레이너(오너 직강 포함)
-  source             text not null check (source in ('xlsx','discord','app')),
-  status             text not null default 'draft' check (status in ('draft','published')),  -- 미리보기 저장 → 확인 후 공개
-  title              text check (char_length(title) <= 60),          -- 없으면 앱은 날짜·맵으로 만든다
-  body               text check (char_length(body) <= 8000),         -- 구조 없는 피드백 본문(discord) · 엑셀은 null
-  src_file_name      text,                                            -- 원본 파일명(9.13 강의.xlsx) · discord 는 null
-  src_guild          text, src_channel text, src_msg text,            -- discord 원문 좌표(홍보용 feedback 과 같은 키)
+  lesson_session_id  bigint references public.lesson_sessions(id) on delete set null,
+  course_session_id  bigint references public.course_sessions(id) on delete set null,
+  course_id          bigint references public.courses(id) on delete set null,
+  author_role        text not null check (author_role in ('student','trainer')),
+  author_staff_id    bigint references public.staff(id),          -- trainer 일 때
+  source             text not null check (source in ('app','xlsx','discord','journal_import')),
+  status             text not null default 'draft' check (status in ('draft','published')),
+  title              text check (char_length(title) <= 60),
+  body               text check (char_length(body) <= 8000),     -- 구조 없는 본문 · 구조 있으면 머리말
+  src_file_name      text, src_guild text, src_channel text, src_msg text,
+  consent_public_at  timestamptz,                                 -- 외부 공개 옵트인(3차 · 자리만)
   created_at         timestamptz not null default now(),
   updated_at         timestamptz not null default now(),
   published_at       timestamptz,
-  -- 앵커는 정확히 하나: 레슨 세션 또는 (강의 세션 + 등록)
   constraint chk_review_anchor check (
+    status = 'draft' or
     (lesson_session_id is not null and course_session_id is null and course_id is null) or
-    (lesson_session_id is null and course_session_id is not null and course_id is not null)
-  ),
-  constraint chk_review_body check (source <> 'discord' or body is not null),
-  unique (src_msg)                                                     -- 채널 메시지 1건 = 복기 1건 (재수집 멱등)
+    (lesson_session_id is null and course_session_id is not null and course_id is not null)),
+  constraint chk_review_author check (author_role = 'student' or author_staff_id is not null),
+  unique (src_msg)
 );
-create index if not exists idx_reviews_student on public.lesson_reviews (student_id, created_at desc);
+create index if not exists idx_reviews_student on public.lesson_reviews (student_id, updated_at desc);
 create index if not exists idx_reviews_lesson_session on public.lesson_reviews (lesson_session_id);
-create index if not exists idx_reviews_course on public.lesson_reviews (course_id, course_session_id);
-
--- 앵커 ↔ student_id 일치 검사(트리거). 레슨: lesson_sessions.student_id · 강의: courses.student_id
--- (경비: before insert/update 트리거 · 불일치면 raise)
+create unique index if not exists uq_reviews_student_session on public.lesson_reviews (lesson_session_id, author_role)
+  where lesson_session_id is not null and author_role = 'student';   -- 수강생 복기는 세션당 1건(일기와 같은 규칙)
 
 create table if not exists public.review_games (
-  id          bigint generated always as identity primary key,
-  review_id   bigint not null references public.lesson_reviews(id) on delete cascade,
-  ord         int  not null check (ord >= 1),                         -- 파일 안 순서(정본). 헤더의 숫자와 다를 수 있다(9.16 「2.」 중복)
-  seq_label   int,                                                    -- 헤더에 적힌 순번(참고)
-  map         text not null check (map in ('에란겔','미라마','태이고','론도','사녹','비켄디','데스턴','파라모','카라킨','기타')),
-  map_raw     text,                                                   -- 원문(테이고 등 표기 그대로)
-  unique (review_id, ord)
-);
+  id bigint generated always as identity primary key,
+  review_id bigint not null references public.lesson_reviews(id) on delete cascade,
+  ord int not null check (ord >= 1), seq_label int,
+  map text not null check (map in ('에란겔','미라마','태이고','론도','사녹','비켄디','데스턴','파라모','카라킨','기타')),
+  map_raw text, unique (review_id, ord));
 
 create table if not exists public.review_phases (
-  id             bigint generated always as identity primary key,
-  game_id        bigint not null references public.review_games(id) on delete cascade,
-  ord            int  not null check (ord >= 1),                      -- 판 안 순서(정본)
-  phase_from     int  not null check (phase_from between 1 and 9),
-  phase_to       int  check (phase_to is null or phase_to >= phase_from),
-  phase_to_end   boolean not null default false,                      -- 「4페~점자)」「~끝」
-  header_raw     text,                                                -- 헤더 셀 원문(「4페~점자) 」) — 라벨 규칙 밖일 때 화면 폴백
-  lines          jsonb not null default '[]'::jsonb,                  -- §2.3
-  tags           text[] not null default '{}',                        -- 작성자 확정 태그(§5 목록)
-  suggested_tags text[] not null default '{}',                        -- 규칙 제안(확정 전 비교용 · 화면엔 안 나감)
-  unique (game_id, ord)
-);
+  id bigint generated always as identity primary key,
+  game_id bigint not null references public.review_games(id) on delete cascade,
+  ord int not null check (ord >= 1),
+  phase_from int check (phase_from between 0 and 9), phase_to int check (phase_to is null or phase_to >= phase_from),
+  phase_to_end boolean not null default false, header_raw text,
+  lines jsonb not null default '[]'::jsonb,
+  tags text[] not null default '{}', suggested_tags text[] not null default '{}',
+  unique (game_id, ord));
 
 create table if not exists public.review_images (
-  id           bigint generated always as identity primary key,
-  phase_id     bigint not null references public.review_phases(id) on delete cascade,
-  ord          int  not null check (ord between 1 and 4),             -- 실측 최대 3 · 여유 1
-  storage_path text not null unique,                                  -- §6 경로 규칙
-  width        int, height int, bytes int,
-  sha256       text not null,                                         -- 같은 이미지 재업로드 판별
-  unique (phase_id, ord)
-);
+  id bigint generated always as identity primary key,
+  review_id bigint not null references public.lesson_reviews(id) on delete cascade,   -- 구조 없는 복기의 이미지도 받는다
+  phase_id bigint references public.review_phases(id) on delete cascade,             -- null = 페이즈 없음(본문 첨부)
+  ord int not null check (ord between 1 and 4),
+  original_path text not null unique, display_path text, thumb_path text,             -- §8
+  width int, height int, bytes int, sha256 text not null,
+  uploaded_by_role text not null check (uploaded_by_role in ('student','trainer')),
+  created_at timestamptz not null default now(),
+  unique (phase_id, ord));
 
--- 태그 누적 집계는 뷰로(저장 안 함 · §5)
+create table if not exists public.review_annotations (
+  id bigint generated always as identity primary key,
+  image_id bigint not null references public.review_images(id) on delete cascade,
+  author_kind text not null check (author_kind in ('student','trainer')),
+  author_id bigint not null,                                        -- students.id 또는 staff.id
+  shapes jsonb not null default '{"v":1,"shapes":[]}'::jsonb,
+  version int not null default 1,
+  updated_at timestamptz not null default now(),
+  unique (image_id, author_kind, author_id));
+
+create table if not exists public.review_feedback (
+  id bigint generated always as identity primary key,
+  review_id bigint not null references public.lesson_reviews(id) on delete cascade,
+  trainer_id bigint not null references public.staff(id),
+  kind text not null check (kind in ('comment','mark','overall','task')),
+  phase_id bigint references public.review_phases(id) on delete cascade,
+  line_ord int, verdict text check (verdict in ('agree','revise')),
+  body text check (char_length(body) <= 4000),
+  due_session_id bigint references public.lesson_sessions(id),
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+  constraint chk_fb_shape check (
+    (kind = 'comment' and phase_id is not null and body is not null) or
+    (kind = 'mark' and phase_id is not null and line_ord is not null and verdict is not null) or
+    (kind in ('overall','task') and phase_id is null and body is not null)));
+create index if not exists idx_rfeedback_review on public.review_feedback (review_id);
+
+create table if not exists public.review_reads (
+  review_id bigint not null references public.lesson_reviews(id) on delete cascade,
+  reader_kind text not null check (reader_kind in ('student','trainer')), reader_id bigint not null,
+  read_at timestamptz not null default now(), primary key (review_id, reader_kind, reader_id));
+
+create table if not exists public.review_tags (name text primary key, ord int not null, active boolean not null default true);
+
 create or replace view public.review_topic_counts as
-  select r.student_id, r.id as review_id, r.created_at, unnest(p.tags) as tag
-  from public.lesson_reviews r
-  join public.review_games g on g.review_id = r.id
-  join public.review_phases p on p.game_id = g.id
-  where r.status = 'published';
-
-alter table public.lesson_reviews enable row level security;   -- 서버(service role)만 접근 · 앱은 포털 API 경유(기존 규칙과 동일)
-alter table public.review_games   enable row level security;
-alter table public.review_phases  enable row level security;
-alter table public.review_images  enable row level security;
+  select r.student_id, r.id as review_id, r.published_at, unnest(p.tags) as tag
+  from public.lesson_reviews r join public.review_games g on g.review_id = r.id
+  join public.review_phases p on p.game_id = g.id where r.status = 'published';
+-- RLS: 전부 enable · service role 만. 앱은 포털 API 경유(기존 규칙).
 ```
 
-원칙 준수: `lesson_sessions`·`lesson_enrollments`·`students`·`courses` 는 **UPDATE 하지 않는다**(정본 4.2 원칙 그대로). 복기는 판수·정산과 무관.
+원칙: `lesson_sessions` `lesson_enrollments` `students` `courses` UPDATE 없음. 복기는 판수·정산과 무관.
 
-## 4. 엑셀 가져오기 — 파싱 규칙
+## 4. 수강생 복기 작성 화면 (핵심 · 수강생 앱)
 
-입력: `.xlsx` 1개 = 수업 1회. 트레이너 앱이 업로드 → 서버가 파싱 → **draft** 로 저장 + 미리보기 응답 → 트레이너 확인 → publish.
+진입: 수업 상세 `/sessions/[id]` 의 「기록 📝」 카드(§7 로 일기와 통합) → `/sessions/[id]/review/edit`. 수업을 아직 고르지 않았으면 `/reviews/new` → 첫 저장 때 수업 선택(최근 세션 목록 · 「아직 등록 전 수업」이면 앵커 없이 draft).
 
-### 4.1 셀 → 구조
+### 4.1 PC 웹 (주력 · ≥1024px)
 
-| # | 규칙 | 정규식(제안) | 실측 |
-|---|---|---|---|
-| G1 | **판 헤더**: A열 셀 전체가 `순번 + 구분자 + 맵이름` | `^\s*(\d+)\s*[.)]\s*([가-힣A-Za-z]+)\s*$` | 12/12 |
-| G2 | 맵 이름 정규화 표: 테이고→태이고 등. 표에 없으면 `map='기타'` + `map_raw` 보존 + 경고 | | 「테이고」 3회 |
-| G3 | 판 `ord` 는 **등장 순서**. 헤더 숫자는 `seq_label` 로만 보관 | | 9.16 「2.미라마」「2. 론도」 |
-| P1 | **페이즈 헤더**: `숫자 [페\|폐]? [~ 숫자\|점자\|끝 [페]?]? )` + 나머지는 첫 줄 | `^\s*(\d+)\s*(?:페\|폐)?\s*(?:[~\-～]\s*(\d+\|점자\|끝\|엔딩)\s*(?:페\|폐)?)?\s*[)）]\s*(.*)$` | 77/77 |
-| P2 | 페이즈 `ord` 는 판 안 등장 순서. 같은 번호 반복 허용 | | 반복 15건 |
-| P3 | 「~점자」「~끝」 → `phase_to_end=true` · 「폐」 → 「페」로 읽되 경고 | | 각 1건 |
-| L1 | 헤더가 아닌 A열 셀 = **현재 페이즈의 다음 줄** | | |
-| L2 | `교전디테일)` `디테일)` 로 시작 → 현재 페이즈에 `kind='detail'` 줄로(새 페이즈 아님) | `^\s*(교전\s*디테일\|디테일)\s*[)）:]` | 3건 |
-| I1 | 이미지 → **앵커 행보다 아래에 있는 첫 페이즈 헤더**에 붙인다(같은 행 범위의 F·K열 이미지도 같은 페이즈) · `ord` 는 열 순 | | 92/92 |
-| I2 | 이미지가 판 헤더 행을 걸쳐 있으면(9.16 r86~99 · 판 헤더 r96) 그래도 아래 첫 페이즈 — 경고만 | | 1건 |
-| I3 | 페이즈당 이미지 0장 → 경고(저장은 됨) · 4장 이상 → 경고 + 4장까지만 | | 0장 1건 · 3장 3건 |
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ ← 9/13(토) · 트레이너 현태 · 5판       [저장됨 · 방금]      [미리보기] [보내기] │
+├──────────────┬───────────────────────────────────────────────────────────────┤
+│ 판           │  판 1 · 에란겔                                    [맵 ▾] [⋯]   │
+│ ● 1 에란겔    │ ┌─ 1페 ───────────────────────────── [1페 ▾ ~ ▾] [⧉] [↕] [✕] ┐ │
+│ ○ 2 미라마    │ │ ┌──────────────┐  비동을 보면 밀베까진 3티어기 때문에 …    │ │
+│ ○ 3 태이고    │ │ │  캡처 1      │  안겹치는 서쪽 라인으로 동선탐            │ │
+│ + 판 추가     │ │ │ (클릭→그리기) │  ─────────────────────────────           │ │
+│              │ │ └──────────────┘  💡 핵심  ⚠️ 아쉬운 점  # 태그 ▾           │ │
+│ 페이즈       │ │ [+ 이미지: 붙여넣기 Ctrl+V · 끌어놓기 · 파일]                  │ │
+│  1페 ·1장·2줄 │ └───────────────────────────────────────────────────────────┘ │
+│  2페 ·1장·1줄 │ ┌─ 3페 ─────────────────────────────────────────────────────┐ │
+│  3페 ·1장·5줄 │ │ …                                                          │ │
+│  + 페이즈     │ │ 줄 앞 토글: [ ] 평문 [💡] 핵심 [⚠️] 아쉬움 (규칙 제안은 점선)  │ │
+│              │ └───────────────────────────────────────────────────────────┘ │
+│ 구조 없이 쓰기│  + 페이즈 추가                                                  │
+└──────────────┴───────────────────────────────────────────────────────────────┘
+```
+- 왼쪽 트리 = 판/페이즈 목차 · 드래그로 순서 변경(판 안 페이즈, 판 자체). 오른쪽은 선택한 판의 페이즈 카드 세로 스크롤.
+- 페이즈 카드: 번호·범위 드롭다운(1~9 · 「~끝」) · 복제(⧉) · 이동(↕) · 삭제(✕). 이미지 영역 + 줄 편집기(한 줄 = 한 항목, Enter 로 새 줄, Backspace 로 합치기). 줄마다 💡/⚠️ 토글. 규칙 제안(§6)은 **점선 테두리**로만 표시 — 클릭해야 확정.
+- 이미지 넣기: 붙여넣기(캡처 직후 Ctrl+V 가 주 경로) · 드래그앤드롭 · 파일 선택 다중 · 순서 드래그. 4장 초과·8MB 초과는 즉시 안내(§8).
+- 「구조 없이 쓰기」: 판 트리 없이 본문 편집기 + 이미지 첨부. 「판으로 나누기」 버튼으로 §2.2 이동.
+- 자동 저장: 3초 디바운스 · 변경 단위 PUT · 상단에 `저장됨 · 방금` / `저장 중…` / `저장 안 됨 — 다시 시도` · 네트워크 끊김 시 localStorage 에 마지막 본문 보관 후 복구 안내. 페이지 이탈 시 미저장이면 경고.
+- 「보내기」 = publish. 담당 트레이너에게 알림(2차). publish 후에도 수정 가능(수정되면 트레이너에게 「수정됨」 표시).
+- 엑셀 가져오기: 「파일에서 불러오기」 → 서버 파싱(§5) → 이 화면에 draft 로 열림 + 경고 목록 패널. 이어서 편집.
 
-### 4.2 규칙 밖 셀 처리 — 버리지 않는다
+### 4.2 모바일 (≤480px · 보기 + 짧은 수정)
 
-| 상황 | 처리 |
+```
+┌ ← 9/13 복기            [저장됨] ┐
+│ [1 에란겔][2 미라마][3 태이고] +  │  ← 판 탭(가로 스크롤)
+│ ┌ 1페 ───────────────── [⋯] ┐   │
+│ │ [캡처 1  (탭→확대·그리기)] │   │
+│ │ 비동을 보면 밀베까진 …      │   │  ← 줄 탭 → 인라인 편집
+│ │ 💡 여기서 중요한건 …        │   │
+│ │ + 이미지(갤러리·카메라)      │   │
+│ └────────────────────────────┘   │
+│ ┌ 2페 …                          │
+│         [+ 페이즈]               │
+│ 홈  수업  예약  설정              │
+└─────────────────────────────────┘
+```
+- 순서 변경은 [⋯] → 「위로/아래로」 버튼(모바일 드래그 안 씀). 복제·삭제도 [⋯].
+- 긴 글 작성은 PC 안내(「PC 에서 쓰면 붙여넣기·그리기가 편해요」 1회 배너).
+
+## 5. 이미지 위에 그리기 (그림판 대체)
+
+### 5.1 도구 · 화면
+
+```
+┌ 그리기 · 1페 캡처 1                                         [레이어: 나 ●] [현태 ○]  [닫기] ┐
+│ [✏ 펜][→ 화살표][○ 원][□ 사각][T 텍스트][① 번호][⌫ 지우개]  색 ●●●●●●  굵기 ─ ━ ▬  [↶][↷] │
+│ ┌───────────────────────────────────────────────────────────────────────────────────┐ │
+│ │                    (이미지 · 휠/핀치 확대 · 스페이스+드래그 / 두 손가락 이동)          │ │
+│ └───────────────────────────────────────────────────────────────────────────────────┘ │
+│ 자동 저장됨                                                                      [완료] │
+└───────────────────────────────────────────────────────────────────────────────────────┘
+```
+- 색 6개 고정 팔레트(빨강 · 하양 · 노랑 · 하늘 · 초록 · 검정) + 굵기 3단. 원본 실측 주석색(빨강·초록·하늘·노랑)을 덮는다.
+- 텍스트: 클릭 위치에 입력 상자 · 크기는 이미지 대비 비율 저장.
+- 번호 스티커: 클릭마다 1,2,3… 자동 증가(같은 레이어 안).
+- 지우개 = 도형 단위 삭제(픽셀 지우개 아님 — 벡터라 자연스럽다).
+- 실행취소/다시실행: 클라이언트 스택 50단계 · 저장은 디바운스 2초 레이어 전체 PUT(§2.4).
+- 렌더: `<canvas>` 2장 겹침(원본 + 레이어) 또는 SVG 오버레이. 정규화 좌표라 확대 상태에서 그려도 저장값은 같다.
+
+### 5.2 확대 상태에서 그리기 · 모바일 제스처 구분
+
+| 입력 | 동작 |
 |---|---|
-| 첫 판 헤더 앞 텍스트 | `lesson_reviews.body` 에 「머리말」로 보관 + 경고 (실측 0건) |
-| 판 헤더 뒤·첫 페이즈 앞 텍스트 | 그 판의 첫 페이즈를 `phase_from=0`(「시작 전」) 로 만들어 담고 경고 (실측 0건) |
-| A열 밖 텍스트 | `lesson_reviews.body` 에 `[규칙 밖 · F12]` 접두로 보관 + 경고 (실측 0건) |
-| 페이즈 헤더 뒤 이미지·텍스트 0 | 빈 페이즈로 저장 + 경고 |
-| 판·페이즈 없이 텍스트만 있는 파일 | `source='xlsx'` 지만 구조 0 · `body` 에 전문 → §8 구조 없는 피드백과 같은 모양 |
-| 파일 간 **동일 문장 반복** | 저장은 하되 미리보기에 「이전 복기(9.13 · 미라마 3페)와 같은 줄 4개」 경고 — 복붙 잔재 확인용 (실측 9.16 ↔ 9.13 3줄) |
-| 시트 2장 이상 | 첫 시트만 · 경고 |
+| PC 마우스 드래그 | 그리기(현재 도구) |
+| PC 휠 · Ctrl+휠 | 확대/축소(커서 기준) |
+| PC 스페이스+드래그 · 가운데 버튼 | 이동(팬) |
+| 모바일 한 손가락 | **그리기** — 단, 「이동 모드」 토글이 켜져 있으면 팬 |
+| 모바일 두 손가락 | 항상 핀치 확대 + 팬(그리기 중이던 한 손가락 스트로크는 두 번째 손가락이 닿는 순간 취소) |
+| 모바일 스타일러스(pointerType=pen) | 항상 그리기 · 손가락은 항상 팬 (팜 리젝션) |
+| 길게 누름 | 도형 선택 → 이동/삭제 |
 
-경고는 파싱 응답 `warnings[]` 로 미리보기에 뜨고 저장되지 않는다(트레이너가 보고 고치는 용도). **어떤 셀도 조용히 사라지지 않는다.**
+한 손가락 = 그리기 기본, 상단 「✋ 이동」 토글로 전환. 이 규칙을 화면에 1회 안내.
 
-### 4.3 이미지 반출
+### 5.3 레이어
 
-xlsx 안 `xl/media/*.png` 를 그대로(재인코딩 없음) Storage 에 올린다. 원본 바이트 보존이 목적이라 리사이즈하지 않는다. 앱 표시용 축소는 서명 URL 의 Supabase 이미지 변환(`?width=`)으로 요청 시 처리.
+- 작성자별 1레이어. 수강생 레이어(기본 표시) · 트레이너 레이어(트레이너 색 = 하양/주황 계열 기본, 켜고 끄기).
+- 트레이너는 수강생 레이어를 **수정할 수 없다** — 자기 레이어에 고쳐 그린다. 수강생도 트레이너 레이어를 못 만진다.
+- 보기 화면: 레이어 토글 칩 「나 · 현태」. 둘 다 켠 상태가 기본.
+- 맵 바탕 이미지(맵 전체 그림 위에 그리기): **선택지로만**. 출처·사용 권한 확인이 먼저(게임사 이미지). 1차는 수강생이 올린 캡처 위에만.
 
-## 5. 핵심·아쉬운 점 자동 분류 · 주제 태그
+## 6. 핵심·아쉬운 점 제안 · 태그 (v1 과 같음 · 요약)
 
-### 5.1 줄 분류(제안) — `suggested_kind`
+- 규칙: `enemy`(적이 못한점·적의 실수) 우선 → `key`(중요한건·우선순위·핵심·무조건·항상·필수·`*` 시작) · `caveat`(놓치·못함·하지 말·말고·자제·부족한점·내문제점·이상한 판단·실수·했어야·됬음·늦·뇌정지·죽음·잘못). 실측 189줄: key 29 · caveat 34 · 둘 다 8 · enemy 5 · 없음 129(68%).
+- 화면: 제안은 점선 강조, 확정은 실선 배경(💡 blue-soft · ⚠️ amber-soft). 한 줄에 두 신호면 둘 다 제안 → 작성자가 줄을 쪼갠다.
+- 태그 12개 초안: `시야·정보` `우선순위` `동선·진행` `차량` `교전` `빌드업` `포탑각` `연막·투척` `파밍·템포` `자기장` `콜·소통` `포지션`. 사전 테이블 `review_tags` · 자유 태그 없음.
+- 집계(3차): `review_topic_counts` 뷰 · 최근 n건 · 확정 태그만. 4파일 상위: 포탑각 · 시야·정보 · 포지션.
 
-| 제안 | 규칙(어느 하나라도) | 실측 후보 수(4파일 189줄) |
+## 7. 기존 일기(`lesson_journals` + `journal_feedback`)와의 관계
+
+| 선택지 | 내용 | 장점 | 단점 |
+|---|---|---|---|
+| A 대체 | 일기 화면·테이블 삭제, 복기만 | 단순 | 이미 쓴 일기·피드백 데이터와 화면이 사라진다 · 서버 계약(수강생 앱 S-08 · 트레이너 포털 /journals) 파기 |
+| B 일기의 한 종류 | `lesson_journals.kind='review'` 추가, 구조는 별도 테이블로 연결 | 기존 API 유지 | 일기 테이블(세션×학생 1건 · body 4000자)에 판·페이즈·이미지·레이어를 얹는 꼴 — 제약(4000자·unique)과 충돌, 두 테이블이 한 개념을 반쯤씩 갖는다 |
+| **B′ 복기가 일기를 흡수 (권장)** | `lesson_reviews` 가 정본. 기존 일기 = 「구조 없는 복기(source=journal_import)」로 이관, `journal_feedback` = `review_feedback(kind=overall)` 로 이관. 기존 `/journal` `/feedback` 라우트는 **호환 뷰**로 유지(내부에서 lesson_reviews 를 읽고 씀) | 수강생에게 기록하는 곳이 **하나**(수업 상세 「기록」 카드) · 데이터도 하나 · 앱·트레이너 포털 계약 안 깨짐 · 이관은 행 복사라 되돌리기 쉬움 | 서버에 이관 스크립트 + 호환 라우트 작업(경비) · 세션당 수강생 복기 1건 규칙을 일기에서 물려받는다(원하는 규칙이다) |
+| C 따로 둠 | 일기와 복기를 나란히 | 작업 최소 | 기록 장소가 둘 — 오너가 피하려는 상태 |
+
+권장 B′. 화면에서는 「기록 📝」 카드 하나: 글만 쓰면 지금 일기와 같고, 「판 추가」를 누르면 복기가 된다. 트레이너 답도 한 곳(`review_feedback`). 이관 순서: 1차 출시 직전 `lesson_journals` → `lesson_reviews`(source=journal_import · author_role=student · 앵커 그대로) · `journal_feedback` → `review_feedback(overall)` · 원본 테이블은 읽기 전용으로 남겨 두고 한 달 뒤 정리.
+
+## 8. 이미지 저장 · 용량
+
+### 8.1 파생본
+
+| 종류 | 형식 | 규격 | 용도 | 추정 크기 |
+|---|---|---|---|---|
+| 원본 | 업로드 그대로(PNG/JPEG/WebP) | 재인코딩 없음 · 장당 ≤8MB | 그리기 바탕 · 다운로드 | 실측 평균 270KB(그림판 캡처) · 게임 풀샷은 1~3MB |
+| 표시본 | WebP q80 | 긴 변 1600px 이하로 축소(작으면 그대로) | 복기 화면 · 그리기 뷰 | 90~180KB |
+| 썸네일 | WebP q70 | 긴 변 320px | 목록·판 탭 미리보기 | 10~20KB |
+
+생성은 서버(업로드 직후 · sharp) — 앱은 원본만 올린다. 경로: `students/{sid}/reviews/{rid}/{image_id}.{orig|disp|thumb}.{ext}`. 버킷 비공개 · 서명 URL 10분 · 접근 판정은 서버(§10).
+
+### 8.2 추정치
+
+| 단위 | 계산 | 값 |
 |---|---|---|
-| `enemy`(먼저 판정) | 「적이 못한점」「적이 잘못한」「적의 실수」 | 5 |
-| `key` | 「중요한건」「우선순위」「핵심」「무조건」「항상」「필수」 · 줄이 `*` 로 시작 · 「연습 잘」 | 29 |
-| `caveat` | 「놓치」「못함/못했/못한」「하지 말」「말고」「자제」「부족한점」「내문제점」「이상한 판단」「실수」「그러지말」「했어야」「됬음/됐음」「늦」「뇌정지」「어이없」「죽음/뒤짐」「잘못」 | 34 |
-| 둘 다 걸림 | key·caveat 동시 → **둘 다 제안**하고 확정은 작성자 | 8 |
-| 없음 | 평문 해설 | 129 (68%) |
+| 복기 1건 | 23장 × (원본 0.3~2MB + 표시 0.15 + 썸네일 0.02) | **약 8~50MB** (실측 4파일 기준 8MB · 풀샷이면 50MB) |
+| 수강생 1명 · 월 | 주 2회 수업 × 4주 = 8건 | **약 60~400MB** |
+| 수강생 30명 · 월 | | **2~12GB** |
+| 1년 누적(30명) | | 25~150GB |
 
-한 줄에 두 신호가 섞인 경우(「여기서 3페때 시야놓치고 … 날개는 끝까지 시야떼지말기」)가 실제로 흔하다. 그래서 줄 단위 `kind` 하나만 두지 않고 **작성자가 한 줄을 둘로 쪼갤 수 있게** 미리보기에서 줄 편집을 허용한다.
+Supabase Storage: Pro 100GB 포함 · 초과 GB당 과금. 풀샷 원본이 지배적이라 **원본 업로드 전 클라이언트 리사이즈(긴 변 2560px · JPEG/WebP q90)** 를 기본으로 두면 원본 평균 400KB → 30명 월 3GB 안쪽. 원본 보존 원칙과의 절충: 「원본」 = 클라이언트가 보낸 파일이고 화면 캡처는 2560px 이 이미 원본 해상도다.
 
-### 5.2 태그 목록 초안 — 12개
+### 8.3 한도(제안)
 
-`시야·정보` `우선순위` `동선·진행` `차량` `교전` `빌드업` `포탑각` `연막·투척` `파밍·템포` `자기장` `콜·소통` `포지션`
+| 항목 | 한도 | 초과 시 |
+|---|---|---|
+| 장당 | 8MB · 긴 변 4096px | 앱이 클라이언트 리사이즈 후 재시도 · 그래도 넘으면 안내 |
+| 페이즈당 | 4장 | 5번째 거부 |
+| 복기당 | 60장 | 거부 |
+| 수강생 월 | 200장 · 1GB | 거부 + 안내 · 오너가 상향 가능 |
+| 형식 | png · jpeg · webp | 그 외 거부 |
 
-키워드 사전(제안 규칙)은 프로토타입 그대로 — 예: 포탑각 ← 「포탑」「각벌」「끝각」「양각」「날개」「한각」 · 교전 ← 「피킹」「샷각」「초탄」「섬광」「1인칭/3인칭」「눕」「견착」. 4파일 태그 분포(페이즈 수):
+## 9. 엑셀 가져오기 — 파싱 규칙 · 실행 결과
 
-| 파일 | 상위 태그 |
-|---|---|
-| 9.13 | 포탑각 12 · 시야·정보 11 · 포지션 8 · 연막·투척 7 · 파밍·템포 7 |
-| 9.16 | 시야·정보 13 · 빌드업 11 · 포탑각 11 · 포지션 10 · 자기장 8 |
-| 9.18 | 포지션 9 · 동선·진행 7 · 교전 6 · 시야·정보 5 · 포탑각 5 |
-| 9.21 | 동선·진행 9 · 파밍·템포 6 · 빌드업 5 · 포탑각 5 · 포지션 5 |
+입구는 **수강생 앱**(「파일에서 불러오기」) → 서버 파싱 → draft → 편집 화면(§4). 트레이너 앱 업로드는 이관용 보조(같은 라우트 · `author_role='trainer'` 또는 대리 업로드 시 `student`로 지정).
 
-→ 「포탑각」「시야·정보」「포지션」이 4주 내내 상위 = 이 학생의 반복 주제. 집계가 의미 있게 나온다.
+규칙(v1 §4 그대로): G1 판 헤더 `^\s*(\d+)\s*[.)]\s*([가-힣A-Za-z]+)\s*$` · G2 맵 정규화(테이고→태이고) · G3 판 ord = 등장 순 · P1 페이즈 헤더 `^\s*(\d+)\s*(?:페|폐)?\s*(?:[~\-～]\s*(\d+|점자|끝|엔딩)\s*(?:페|폐)?)?\s*[)）]\s*(.*)$` · P2 같은 번호 반복 허용 · P3 「~점자」→`to_end` · L1 다음 줄 · L2 「교전디테일)」→detail 줄 · I1 이미지 → 아래 첫 페이즈 헤더(같은 행 범위 F·K열도) · I2 판 헤더 걸침은 경고 · I3 0장·4장+ 경고. **규칙 밖 셀은 버리지 않고** `body` 머리말/경고로.
 
-목록은 트레이너가 늘릴 수 있어야 한다 → `review_tags(name, active, ord)` 사전 테이블 1개 추가(경비 구현 시 포함). 자유 태그는 두지 않는다(집계가 깨진다).
+프로토타입 실행(exceljs · 스크래치 · 저장소 코드 아님):
 
-### 5.3 누적 집계 — 「최근 n번 수업에서 자주 나온 것」
+| 파일 | 판 | 페이즈 | 이미지 | 핵심/아쉬움 후보 | 경고 |
+|---|---|---|---|---|---|
+| 9.13 | 에란겔 5 · 미라마 6 · 태이고 10 | 21 | 21/21 | 10 / 11 | 없음 |
+| 9.16 | 테이고 5 · 미라마 5 · 론도 11 | 21 | 25/25 | 7 / 7 | `dup_game_seq`(「2.」 ×2) · `image_crosses_game`(r86) · `phase_without_image`(미라마 7페#2) · `duplicate_lines_with_prev_review`(미라마 3페 r149~151 = 9.13 과 동일 — 복붙 잔재?) |
+| 9.18 | 테이고 6 · 미라마 5 · 에란겔 5 | 16 | 23/23 | 4 / 8 | `too_many_images`(3장 ×2) |
+| 9.21 | 미라마 5 · 태이고 8 · 미라마 6 | 19 | 23/23 | 8 / 8 | `phase_to_word`(「4페~점자)」) · `typo_phase`(「폐」) · `too_many_images`(3장) |
 
-`review_topic_counts` 뷰에서 학생별 최근 n건(`created_at desc limit n` 의 review_id 집합) 안 태그 빈도. 응답 예: `{ "window": 4, "topics": [{ "tag": "포탑각", "reviews": 4, "phases": 33 }, …] }` — `reviews` = 그 태그가 한 번이라도 나온 복기 수, `phases` = 페이즈 수. 화면은 `reviews/window` 로 「4번 중 4번」.
+규칙 밖 셀 0건 · 이미지 92장 전부 매칭 · 원본 바이트 그대로 추출(1장 눈으로 확인). 확인 필요: 9.16 「3페」 복붙 잔재 삭제 여부 · 「점자」 뜻.
 
-**확정 태그(`tags`)만 센다.** `suggested_tags` 는 집계에 들어가지 않는다.
+## 10. API (경비 구현 · 계약 초안 · 키 이름 정본)
 
-## 6. 이미지 저장 — Supabase Storage
+수강생 포털 `/api/student-portal` · 트레이너 포털 `/api/trainer-portal` 규약(게이트·세션·`{ error: { code } }`·scrub) 그대로.
 
-- 버킷 `lesson-reviews` · **비공개**(public=false) · 파일 크기 상한 2MB(실측 최대 607KB) · MIME png/jpeg/webp.
-- 경로: `students/{student_id}/reviews/{review_id}/g{game_ord}-p{phase_ord}-{img_ord}.{ext}`
-  - 학생 접두를 앞에 두어 정책(아래)이 접두 문자열 비교 하나로 끝난다. 복기 삭제 = 접두 `students/{sid}/reviews/{rid}/` 일괄 삭제.
-- 접근: 앱은 Supabase 를 직접 부르지 않는다(수강생 앱 S-04 · 트레이너 앱 동일). 서버 포털 API 가 **서명 URL(만료 10분)** 을 응답에 실어 준다(§9). 그래서 Storage 정책은 service role 전용으로 잠그고 「학생 본인 + 담당 트레이너」 판정은 서버 라우트에서 한다:
-  - 학생: 세션 `sub` = `lesson_reviews.student_id`
-  - 트레이너: `lesson_reviews.author_staff_id = 나` **또는** 트레이너 포털 범위 규칙(§3 문서: 담당 ∪ 최근 90일 진행) 안의 학생
-  - 오너: 전부
-- 서명 URL 은 로그·응답 가드 대상 밖(값이지만 만료형). 키 이름 `imageUrl` 은 scrub 어간에 걸리지 않는다(`url`).
+### 10.1 수강생(쓰기 포함)
 
-## 7. 수강생 앱 표시
+| 라우트 | 요청 | 응답 |
+|---|---|---|
+| `GET /reviews?days=90` | | `{ reviews:[{ id, sessionId, playedAt, title, status, authorRole, gameCount, imageCount, hasFeedback, unreadFeedback, updatedAt }] }` |
+| `POST /reviews` | `{ sessionId? }` | `{ review }` (draft 생성 · 세션당 1건이면 기존 반환) |
+| `GET /reviews/:id` | | `{ review: { …, body, games:[{ id, ord, map, phases:[{ id, ord, phaseFrom, phaseTo, phaseToEnd, lines, tags, suggestedTags, images:[{ id, ord, displayUrl, thumbUrl, originalUrl, width, height, annotations:[{ authorRole, authorDisplayName, shapes, version }] }] }] }], feedback:[{ id, kind, phaseId, lineOrd, verdict, body, trainerDisplayName, createdAt }] } }` |
+| `PUT /reviews/:id` | `{ title?, body?, sessionId? }` | `{ review }` |
+| `POST /reviews/:id/games` · `PUT /games/:id` · `DELETE` · `PUT /reviews/:id/games/order` | `{ map }` · `{ ord[] }` | |
+| `POST /games/:id/phases` · `PUT /phases/:id` · `DELETE` · `POST /phases/:id/duplicate` · `PUT /games/:id/phases/order` | `{ phaseFrom, phaseTo, phaseToEnd, lines, tags }` | 페이즈 통째 |
+| `POST /reviews/:id/images` | multipart `file` + `phaseId?` + `ord?` | `{ image }` (서버가 파생본 생성) |
+| `DELETE /images/:id` · `PUT /phases/:id/images/order` | | |
+| `PUT /images/:id/annotation` | `{ version, shapes }` | `{ version }` · 409 `annotation_conflict` |
+| `POST /reviews/:id/publish` | | `{ published: true }` |
+| `POST /reviews/import` | multipart xlsx + `sessionId?` | `{ review, warnings:[{ code, row?, detail }] }` |
+| `POST /reviews/:id/read` | | 읽음 기록 |
+| `GET /review-topics?window=4` | | `{ window, topics:[{ tag, reviews, phases }] }` (3차) |
+| `/sessions` 응답 | | `sessions[].hasReview` · `reviewStatus` · `unreadFeedback` 추가(부록 A 개정) |
+| 호환 | `GET/PUT /sessions/:id/journal` · `GET /sessions/:id/feedback` | 내부에서 lesson_reviews 를 읽고 씀(§7 B′) |
 
-경로: 수업 상세(`/sessions/[id]`) 안에 「복기 📋」 카드 추가 → 탭하면 `/sessions/[id]/review`.
+### 10.2 트레이너
 
-```
-TopBar 「9/13 복기」 ← back
-[판 탭]  1 에란겔 | 2 미라마 | 3 태이고        ← SegmentControl(옵션 value=game.ord)
-─ 세로 스크롤 ─
-┌ 1페 ───────────────────────┐
-│ [이미지 1]  (탭 → 전체화면 확대·핀치)  │
-│ 비동을 보면 밀베까진 3티어기 때문에 … │
-└─────────────────────────────┘
-┌ 3페 ───────────────────────┐
-│ [이미지]                              │
-│ 1선은 우선 다음땅 빌드업을 위해 …    │
-│ 💡 여기서 중요한건 4선이 바라보고있는 … │   ← kind=key: blue-soft 배경 · 💡
-│ 2선 3선에게 해당적 막아야한다고 …    │
-└─────────────────────────────┘
-┌ 4페 (2) ────────────────────┐
-│ ⚠️ 여기서 3페때 시야놓치고 강제하지 … │   ← kind=caveat: amber-soft 배경 · ⚠️
-│ (적 관점) 적이 못한점 : …            │   ← kind=enemy: slate 텍스트 · 라벨 「적 관점」
-└─────────────────────────────┘
-[태그 칩] 포탑각 · 시야·정보 · 연막·투척
-```
+| 라우트 | 요청 | 응답 |
+|---|---|---|
+| `GET /reviews?days=30&status=` | | 범위 내 수강생 복기 목록 + `unread` · `awaitingReply` |
+| `GET /reviews/:id` | | 수강생과 같은 구조 + `suggested*` 포함 |
+| `POST /reviews/:id/feedback` · `PUT /feedback/:id` · `DELETE` | `{ kind, phaseId?, lineOrd?, verdict?, body?, dueSessionId? }` | `{ feedback }` |
+| `PUT /images/:id/annotation` | 트레이너 레이어(자기 것만) | |
+| `POST /reviews` (author_role=trainer) · `POST /reviews/import` | 트레이너가 먼저 쓰는 복기 · 이관용 | |
+| `GET /reviews/pending-anchor` | 디스코드 이관분 앵커 없음 | |
 
-- 구조 없는 복기(`source='discord'` 또는 판 0건): 판 탭 없이 본문 카드 하나 + 날짜 · 작성자.
-- 홈 「최근 수업」 행에 `hasReview` 배지(「📋 복기 왔어요」) — 서버 `/sessions` 응답에 불리언 1개 추가(부록 A 개정).
-- 수업 상세 하단 「자주 나온 주제 (최근 4번)」 칩 3개 — §5.3 응답.
-- 문구는 `.claude/skills/ui-copy` 톤. 아쉬운 점 강조는 「⚠️」 이모지만, 느낌표 없이(오류·손해 문구 절제 규칙).
-- 컴포넌트: 기존 8종으로 충분(Card · SegmentControl · Badge · TopBar). 이미지 확대는 `<dialog>` 한 개.
+오류 코드 추가: `review_limit_images` · `image_too_large` · `image_type` · `annotation_conflict` · `review_published_readonly`(없음 — publish 후에도 수정 가능하므로 미사용) · 파싱 경고 코드(§9).
+scrub: `mapRaw` `headerRaw` `srcFileName` 통과 · `src_msg` `src_channel` 은 응답에 싣지 않는다.
 
-## 8. 디스코드 채널 피드백 이관 — 같은 테이블에
+## 11. 단계별 출시 계획
 
-지금 봇(`server.js` 「피드백 월」)은 트레이너 피드백 서버의 `A그룹-순대` 식 채널 메시지를 → Claude 로 익명·순화 → `feedback`(홍보용 · 승인 후 사이트 공개)에 넣는다. **그 경로는 그대로 두고**, 같은 `messageCreate` 에서 한 갈래를 더 낸다:
-
-1. 채널명 → 그룹 + 학생 원문(`parseFeedbackChannel`) → `students` 매칭(디코닉 정확일치 → 없으면 **미매칭 큐**에 두고 사람이 잇는다. 자동 추정 금지).
-2. 매칭되면 `lesson_reviews` 에 `source='discord'` · `body=원문 그대로`(순화본 아님 — 학생에게 가는 건 트레이너 원문) · `src_msg` unique 로 멱등 · `author_staff_id` = 길드→트레이너 매핑(`FEEDBACK_TRAINER_MAP` 을 staff.id 로 바꾼 표) · `status='draft'`.
-3. 앵커: 본문 날짜(`extractDate`) 또는 메시지 날짜와 같은 `played_at` 의 `lesson_sessions`(같은 학생·같은 트레이너) 1건이면 연결, 0건·2건 이상이면 **앵커 없음 상태로 draft** 보관 → 트레이너 앱 「연결 대기」 목록에서 사람이 고른다. 그래서 §3 `chk_review_anchor` 는 `status='draft'` 일 때 앵커 둘 다 null 을 허용해야 한다 → 제약을 `status='published' → 앵커 정확히 하나` 로 바꾼다(경비: CHECK 에 `status='draft' or (…)`).
-4. 메시지에 첨부 이미지가 있으면 `review_images` 로 — 판·페이즈가 없으므로 **가상 판 1 · 페이즈 0(「전체」)** 아래에 붙인다. 화면은 판 탭 없이 이미지 + 본문.
-5. 과거 메시지 일괄 이관: 채널 히스토리를 날짜 오름차순으로 같은 규칙으로 흘려 넣는다(멱등이라 재실행 안전). 이관분은 `status='draft'` 로 두고 트레이너가 앱에서 한 번에 publish.
-
-홍보용 `feedback` 과의 차이: 그쪽은 익명·순화·공개 승인, 이쪽은 실명(학생 본인만 봄)·원문·앵커 연결. 같은 메시지가 두 테이블에 각각 1행 — `src_msg` 로 서로 찾을 수 있다.
-
-## 9. API (경비 구현 · 계약 초안)
-
-트레이너 포털(`/api/trainer-portal`) · 수강생 포털(`/api/student-portal`) 규약(게이트·세션·`{ error: { code } }`·scrub) 그대로. 키는 이 표가 정본.
-
-| 라우트 | 누가 | 요청 | 응답 |
+| 단계 | 포함 | 제외(다음 단계) | 완료 판정 |
 |---|---|---|---|
-| `POST /trainer-portal/reviews/parse` | 트레이너 | multipart `file`(xlsx ≤ 30MB) + `lessonSessionId` 또는 `courseSessionId+courseId` | `{ reviewId, status:"draft", games:[{ord, map, mapRaw, phases:[{ord, label, headerRaw, lines:[{ord,text,suggestedKind}], suggestedTags, images:[{ord, url, width, height}]}]}], warnings:[{code, row?, detail}] }` — 파싱과 동시에 draft 저장 |
-| `PUT /trainer-portal/reviews/:id` | 트레이너(작성자) | 미리보기에서 고친 전체 구조(`kind`·`tags`·줄 쪼개기·페이즈 삭제) | 같은 모양 |
-| `POST /trainer-portal/reviews/:id/publish` | 작성자 | 없음 | `{ published: true }` |
-| `GET /trainer-portal/reviews?studentId=&days=` | 트레이너(범위 내) | | 목록(제목·날짜·source·status·판 수) |
-| `GET /trainer-portal/reviews/pending-anchor` | 트레이너 | | 디스코드 이관분 중 앵커 없는 draft |
-| `GET /student-portal/sessions/:id/review` | 학생 본인 | | `{ review: {…같은 구조, kind 확정값만, suggested* 없음, images[].url = 서명 URL 10분} \| null }` |
-| `GET /student-portal/review-topics?window=4` | 학생 | | `{ window, topics:[{tag, reviews, phases}] }` |
-| `/sessions` 응답 | | | `sessions[].hasReview: boolean` 추가 |
+| **1차 — 쓰고 · 그리고 · 답 받는다** | 수강생 PC 작성 화면(판·페이즈·줄·💡⚠️ 수동) · 이미지 붙여넣기/드래그/다중 · 자동 저장 · **그리기 기본(펜·화살표·원·텍스트·색 6·굵기·실행취소/다시실행·지우개)** 수강생 레이어 · 확대 · 모바일 보기(판 탭·카드·이미지 확대·레이어 보기) · 트레이너 앱: 목록(안 읽음·답 대기) · 페이즈 코멘트 · 총평 · 일기 이관(B′) + 호환 라우트 · 엑셀 가져오기 초안 · Storage 파생본 · 한도 | 규칙 제안 · 태그 · 순서 드래그(1차는 위/아래 버튼) · 복제 · 트레이너 그리기 · 💡⚠️ 동의 · 과제 · 알림 · 사각형·번호 스티커 | 준님이 9/28 수업을 앱에서 복기하고 현태가 총평+페이즈 코멘트를 남긴다. 엑셀 4개가 앱 화면에서 열린다 |
+| **2차 — 편집 편의 · 트레이너 도구** | 모바일 짧은 수정 · 순서 드래그 · 카드 복제 · 트레이너 레이어(자기 색 · 켜고 끄기) · 💡⚠️ 동의/수정 · 다음 수업 과제 · 새 피드백 알림(Discord DM · 앱 배지) · 규칙 제안(점선) · 태그 확정 UI · 사각형 · 번호 스티커 · 스타일러스 팜 리젝션 | 집계 · 이관 · 맵 바탕 | 트레이너가 수강생 캡처 위에 자기 색으로 고쳐 그리고 수강생 앱에서 두 레이어가 보인다 |
+| **3차 — 누적 · 이관 · 공개** | 최근 n회 태그 집계 · 디스코드 채널 피드백 이관(§ v1 8 · `source='discord'` 갈래 · 앵커 큐) · 맵 바탕 이미지(권한 확인 후) · 외부 공개 옵트인(`consent_public_at` + 익명화 · 사이트 성장 사례) · 합성 PNG 내보내기 · 강의생(course) 화면 | | |
 
-경고 코드(파싱): `unknown_map` · `dup_game_seq` · `typo_phase` · `phase_to_word` · `phase_without_image` · `too_many_images` · `text_before_first_game` · `text_outside_col_A` · `image_crosses_game` · `duplicate_lines_with_prev_review` · `extra_sheets`.
+1차에서 그리기를 빼지 않는 이유: 그림판이 하던 일을 앱이 못 하면 엑셀로 돌아간다.
 
-scrub: 응답 키에 `name`·`memo`·`discord` 어간이 없어야 한다 — `mapRaw` `headerRaw` `srcFileName` 은 통과, `src_msg`·`src_channel` 은 **응답에 싣지 않는다**(`discord` 어간이 아니어도 값이 식별자다).
+## 12. 서버(mri-academy · 경비)에 필요한 것 — 요구사항 목록
 
-## 10. 프로토타입 실행 결과 (파싱 규칙 검증)
+1. **DDL** §3 전부 + 앵커 일치 트리거 + `review_tags` 시드 12개 + RLS enable.
+2. **Storage** 버킷 `lesson-reviews`(비공개) · 서명 URL 발급 헬퍼(10분) · 업로드 시 sharp 로 표시본/썸네일 생성 · 삭제 시 3파일 정리 · 한도 검사(§8.3).
+3. **수강생 포털 쓰기 API** §10.1 — 지금 수강생 포털은 일기 PUT 하나뿐이라 multipart 업로드 · 본문 크기(8000자) · 레이트리밋(업로드 30/분 · 저장 120/분) 새로 잡아야 한다. 세션당 수강생 복기 1건 unique.
+4. **트레이너 포털 API** §10.2 · 범위 규칙(담당 ∪ 90일) 그대로 · `review_reads` 로 안 읽음.
+5. **일기 이관 스크립트**(B′) + 호환 라우트(`/journal` `/feedback` 이 lesson_reviews 를 보게) + `/sessions` 응답 확장(`hasReview` `reviewStatus` `unreadFeedback`) → 수강생 앱 정본 부록 A 개정은 반장.
+6. **엑셀 파싱** §9 규칙(exceljs) · 경고 코드 · 이미지 반출 → Storage · 30MB 상한 · 파일당 1회 멱등(sha256).
+7. **알림**(2차) publish → 담당 트레이너 DM · 피드백 → 수강생 DM(기존 `discordDM` 헬퍼).
+8. **디스코드 이관**(3차) `messageCreate` 갈래 · 학생 매칭(디코닉 정확일치) · 앵커 큐 · 과거 히스토리 드라이런.
+9. **응답 가드** 새 키 검토: `annotations` `shapes` `verdict` `dueSessionId` 는 어간에 안 걸린다. `authorDisplayName` 허용(displayName 계열).
+10. **정본 4.2 원칙 유지**: lesson_sessions·students·courses UPDATE 없음.
 
-`exceljs` 로 §4 규칙을 그대로 구현해 4개 파일에 돌렸다(스크립트는 스크래치 · 저장소에 없음).
+## 13. 오너 확정 필요
 
-| 파일 | 판 | 페이즈 | 이미지 매칭 | 핵심 후보 | 아쉬운 점 후보 | 경고 |
-|---|---|---|---|---|---|---|
-| 9.13 | 에란겔 5 · 미라마 6 · 태이고 10 | 21 | 21/21 · 전부 1장 | 10 | 11 | 없음 |
-| 9.16 | 테이고 5 · 미라마 5 · 론도 11 | 21 | 25/25 · 2장 5회 | 7 | 7 | `image_crosses_game`(r86) · `phase_without_image`(미라마 7페#2 r154) · **`dup_game_seq`**(「2.」 두 번) · **`duplicate_lines_with_prev_review`**(미라마 3페 r149~151 = 9.13 미라마 3페와 동일 3줄 — 복붙 잔재로 보임) |
-| 9.18 | 테이고 6 · 미라마 5 · 에란겔 5 | 16 | 23/23 · **3장 2회** | 4 | 8 | `too_many_images`(미라마 4페 · 5~6페) |
-| 9.21 | 미라마 5 · 태이고 8 · 미라마 6 | 19 | 23/23 · 3장 1회 | 8 | 8 | `phase_to_word`(「4페~점자)」) · `typo_phase`(「1페~2폐)」) · `too_many_images`(태이고 4페#3) |
-
-- 규칙 밖 셀: **0건** (A열 밖 텍스트 없음 · 첫 판 앞 텍스트 없음 · 판 헤더와 첫 페이즈 사이 텍스트 없음).
-- 이미지 92장 전부 어떤 페이즈에든 붙었다. 파일에서 꺼낸 PNG 는 원본 바이트 그대로(재인코딩 없음) — 눈으로 1장 확인(에란겔 3페 미니맵 캡처 · 빌드업 선 주석).
-- 확인 필요(오너·현태): 9.16 「2.미라마」 5·6·7페 뒤에 「3페」가 오고 그 내용이 9.13 과 같다 → 지울 것인지. 「4페~점자)」의 「점자」 뜻(「점작」 오타면 「~끝」으로 읽는 게 맞는지).
-
-## 11. 확정이 필요한 것 (오너)
-
-1. 페이즈 반복 라벨 「4페 (2)」 표기 — 아니면 「4페-a/b」.
-2. 태그 12개 초안 승인 · 추가·삭제.
-3. 디스코드 이관 시 `body` 는 **원문**(순화본 아님) — 학생이 보는 것이라 트레이너 원문이 맞다고 봤다. 반대면 순화본.
-4. 학생 매칭 실패·앵커 불명 건은 자동 추정 없이 큐 → 트레이너가 앱에서 연결. 동의?
-5. 강의생(무리 직강) 복기도 같은 화면으로 — 수강생 앱에 강의 세션 목록이 아직 없다(`/summary.courses` 만). 강의 세션 상세 화면이 먼저 필요하다 → 별건.
-
-## 12. 다음 단계
-
-- 오너 확정(§11) → 경비: §3 DDL(+ `review_tags` · 앵커 트리거 · draft 예외) · §9 API · 봇 갈래(§8) · Storage 버킷.
-- 반장: 트레이너 앱 업로드·미리보기 화면(§9 계약 기준) · 수강생 앱 복기 화면(§7) — mock 부터.
-- 이관 전 한 번: 채널 히스토리 건수·학생 매칭률 실측(드라이런) 보고.
+1. §7 B′(복기가 일기를 흡수 · 호환 라우트 유지) 채택 여부.
+2. 답 기한 · 페이즈별 필수/총평만 — 비워 둠(§2.5).
+3. 한도 §8.3 · 클라이언트 리사이즈 2560px 을 「원본」으로 볼지.
+4. 태그 12개 · 반복 페이즈 라벨 「4페 (2)」.
+5. 맵 바탕 이미지 출처·권한(3차 전).
+6. 1차 완료 판정(준님 9/28 수업) 일정 현실성.
