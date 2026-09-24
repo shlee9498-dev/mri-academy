@@ -378,6 +378,11 @@ module.exports = function mountStudentPortal(app, deps) {
       pendingJournalCount = sess.filter((s) => !written.has(s.id)).length;
     }
 
+    // 본인 배그 닉네임 — 명부 표시 「이름(pubg_name)」 용(오너 요청 2026-09-25 · 트레이너 포털과 같은 키). 없으면 null.
+    let pubgName = null;
+    try { pubgName = (await sbSelect("students", `select=pubg_name&id=eq.${sid}&limit=1`))[0]?.pubg_name || null; }
+    catch (e) { console.error("summary_pubg_name", e?.message); }
+
     send(res, {
       lesson: {
         registeredGames: agg.registered,
@@ -389,6 +394,7 @@ module.exports = function mountStudentPortal(app, deps) {
       asOf: agg.asOf,
       nextBooking: await nextBookingFor(sid),
       pendingJournalCount,
+      pubgName,
       courses: await coursesFor(sid),
     });
   }));
