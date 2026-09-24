@@ -1,12 +1,16 @@
 # 수업 복기 서버 설계 — DDL 전문 · Storage · 권한 · API · 자기점검 · 구현 순서 (2026-09-25 · 오너 지시 · 설계만)
 
-> 상태: **제안 · 실행·코드 착수 금지.** 화면·데이터 요구사항의 정본은 `mri-student-app/docs/lesson-review-design.md` **v2.3**(PR #19)이다.
+> 상태: **제안 · 실행·코드 착수 금지.** 화면·데이터 요구사항의 정본은 `mri-student-app/docs/lesson-review-design.md` **v2.4**(PR #20 · 머지)이다.
 > 이 문서는 그 요구사항(§2·§3·§8·§10·§12)을 **실DB 기준 이름**으로 DDL·서버 판정·API 계약에 내린 것이고,
 > 이 세션이 앞서 회신한 디스코드 이관 설계(`feedback_channel_map` · 공지 필터 · `feedback` 59행 처리)를 같은 DDL 안에 넣는다.
 > v2.4 가 올라오면 그 기준으로 이 문서를 갱신한다.
 >
 > 오너 결정(9/25): Supabase 조직 **Pro 전환** · 복기 이미지는 **Supabase Storage**(외부 저장소 없음) · 일기는 1차부터 통합 대상이되
-> 이관은 v2.3 §7 대로 2차(`lesson_journals`·`journal_feedback`·`/journal` 라우트는 삭제 없이 동결).
+> 이관은 v2.4 §7 대로 2차(`lesson_journals`·`journal_feedback`·`/journal` 라우트는 삭제 없이 동결).
+>
+> **v2.4 정렬(2026-09-25 · 오너 지시)**: v2.4 §14 는 §29 와의 차이 29건 중 27건을 §29 쪽으로 맞췄고, 남은 「경비 반영 필요」 2건 — ① 미발송 draft 이미지 정리 일일 작업(§3.7) ② 앵커 유실 상태의 응답(§5.5) — 을 이 판에 넣었다.
+> 오너 답(9/25): 권한 없는 접근 = **404** · `sharp` **승인** · `exceljs` **1차 제외**(서버 재파싱 없음) · published 삭제 = **수강생은 숨김만**(트레이너 답도 함께 숨김 · 되살리기는 오너만 · 완전 삭제 API 없음) · 트레이너 답 기한 = 값 없이 자리만.
+> 순서(오너): **Pro 전환(오너) → §29 DDL 전문 제안(이 문서) → 지휘탑 대조 → 오너 실행·검증 → 서버 코드 PR.** 그 전까지 DDL 실행·코드 착수 금지.
 >
 > 원칙: DDL 은 오너가 SQL Editor 에서 단독 실행하고 마지막에 `notify pgrst`. 코드는 **DDL 실행·검증 뒤에** 배포한다(#331 순서 반복 금지).
 > 실행 시점에 스키마 3곳(`supabase_admin_panel.sql` §29 · `REQUIRED_SCHEMA` · 실DB)을 함께 맞춘다(§6).
@@ -20,18 +24,20 @@
 | Storage | 비공개 버킷 `lesson-reviews` 1 (SQL 로 생성 · 8MB · png/jpeg/webp) |
 | § 번호 | **§29**. §28 은 닉네임 설계(`payment_requests.pubg_name`)에 예약 — 미채택이면 §29 를 §28 로 당긴다 |
 | 실행 순서 | 29a 태그 사전 → 29b 본체 8테이블 → 29c 함수·트리거 → 29d 이관 표 → 29e `feedback` 공지 11행 `rejected` → 29f 버킷 → 29g 검증 → `notify pgrst` |
-| env | **추가 없음.** 선택 2개(`REVIEW_BUCKET` · `REVIEW_SIGN_TTL_SEC`)는 기본값 내장 · Railway 전용 · Vercel 없음 |
-| 새 의존성(승인 필요) | `sharp`(표시본·썸네일) · `exceljs`(엑셀 가져오기 · PR-4) — **설치 전 오너 승인**(이 저장소는 빌드 단계 없음 · Railway 만) |
-| 1차 규모 | DDL 1회(오너) + 서버 Draft PR 4개 + 계약 문서 1개(반장 인계) — §7 |
+| env | **제안 1개**: `REVIEW_DRAFT_SWEEP`(Railway · 미설정/`dryrun` = 로그만 · `delete` = 실제 삭제 · §3.7). 선택 2개(`REVIEW_BUCKET` · `REVIEW_SIGN_TTL_SEC`)는 기본값 내장. Vercel 없음 |
+| 새 의존성 | `sharp`(표시본·썸네일) — **승인(오너 9/25)** · `exceljs` — **1차 제외**(서버 재파싱 없음 · 엑셀 가져오기는 서버 밖 · §5.1) |
+| 1차 규모 | DDL 1회(오너) + 서버 Draft PR **3개**(PR-1 텍스트 API · PR-2 이미지·그리기·draft 정리 작업 · PR-3 트레이너 API) + 계약 문서 1개(반장 인계) — §7 |
+| published 삭제 | 없음 — 수강생은 **숨김**(`lesson_reviews.hidden_at`) · 트레이너 답도 함께 숨김 · 되살리기 오너 SQL · 완전 삭제 API 없음(오너 9/25 · §4 · §5.5) |
+| 권한 없는 접근 | **404** `review_not_found` — 존재 여부를 노출하지 않는다(오너 9/25 · 403 없음) |
 
 ## 1. 설계 문서 ↔ 실DB 대조 (차이 목록 · DB 기준으로 맞춤 · 2026-09-24 19:5x UTC 실측)
 
-| # | 대상 | v2.3 표기 | 실DB | 이 문서의 처리 |
+| # | 대상 | v2.4 표기 | 실DB | 이 문서의 처리 |
 |---|---|---|---|---|
 | 1 | `feedback` | 12컬럼 나열(id·created_at 없음) · "확인 필요" | **14컬럼** `id trainer! grp!(A/B/C) student_alias lesson_date body! raw src_guild src_channel src_msg review_msg published! rejected! created_at!` · `unique(src_msg)` · RLS on · **59행**(공지 접두 11 · rejected 0 · published 0 · raw·src_msg 전부 있음 · 채널 11 · 길드 1 · 별칭 10 · 수업일 2026-05-30~09-09) | §27 기록 그대로. 홍보 월(`server.js` 「피드백 월」)은 손대지 않는다. 이관 원본은 `raw` |
 | 2 | 디스코드 좌표 타입 | 명시 없음 | `feedback.src_*` = **text**(snowflake) | 새 테이블도 text · 유니크는 `src_msg` 하나 |
 | 3 | `lesson_journals` · `journal_feedback` | 행 수 확인 필요 | **0행 · 0행** · FK 는 `on delete cascade`(세션·학생) · body ≤4000 | 2차 이관은 행 복사 0건 = 사실상 호환 라우트 전환만. 복기의 앵커 FK 는 일기와 달리 **set null**(#7) |
-| 4 | `students` | id name discord_nick trainer_id status | 동일 + `pubg_name`(닉네임 설계와 공용) · status ∈ active·done·paused | v2.3 「종료」 = `done` |
+| 4 | `students` | id name discord_nick trainer_id status | 동일 + `pubg_name`(닉네임 설계와 공용) · status ∈ active·done·paused | v2.4 「종료」 = `done` |
 | 5 | `courses` · `course_sessions` · `course_attendance` | 열거 컬럼 | 동일(+ `courses.trainer_id` nullable · `course_attendance` unique(session_id, course_id) · session FK cascade) | 강의 앵커 = `course_session_id` + `course_id` 둘 다(세션 행은 학생을 모른다) |
 | 6 | `anchor_kind` | lesson · course · none (draft 는 미정 허용) | — | 미정을 값으로 둔다: **`pending`**(draft 전용). 「수업 없이 자유 기록」= `none` 과 화면·DB 모두 구분 |
 | 7 | 앵커 행 삭제 | ⑤ 복기는 남기고 앵커만 비운다 | `lesson_journals` 는 cascade | 앵커 FK 3개 전부 **`on delete set null`** · CHECK 는 「종류에 맞지 않는 다른 앵커가 없을 것」만 검사해 유실(id null) 상태를 허용 → 앱은 「연결 끊김 · 다시 고르기」 |
@@ -46,6 +52,11 @@
 | 16 | 범위 함수 | 담당 ∪ 최근 90일 | `trainer-portal.cjs` `scopedStudents(staffId)` — 담당(active·paused) ∪ 90일 진행(상태 무관) · `booking-api.cjs` `isMyTrainer` 동일 창 | 그대로 재사용(§4) |
 | 17 | 응답 키 가드 | scrub 통과 | 수강생 `scrub`: 정확 `studentid discordid name realname phone email` · 어간 `payout settle fee commission net revenue amount price payment memo createdby student discord phone email`(예외 `feedback hasfeedback trainercontactphone`) · 트레이너 `scrubTrainer`: 연락처·계좌·금액·memo | §5 키 목록은 전부 통과하도록 정했다(`memo`·`student*`·`*Name` 단독 키 없음) |
 | 18 | 본문 크기 | 8000자 · multipart | `express.json` 전역 256kb(`server.js:28`) | 이미지·xlsx 는 **raw 바이너리** 라우트 한정 `express.raw`(8mb / 30mb) — multipart 파서 의존성 없음(§5.4 계약 차이) |
+| 19 | 엑셀 가져오기 | §9·§10.1 서버 파싱(raw xlsx · `exceljs`) | — | **1차 제외(오너 9/25 · 서버 재파싱 없음)** — `POST /reviews/import` 는 2차 보류. 1차 엑셀 입력은 앱이 파싱해 일반 API(`POST /reviews` · games · phases · images)로 만든다(반장) |
+| 20 | published 삭제 | 오너 SQL 만(§14 19) | — | 수강생 **숨김** `POST /reviews/:id/hide` → `hidden_at` · 트레이너 답도 함께 안 보임 · 되살리기 = 오너 SQL · 완전 삭제 API 없음(§4 · §5.5) |
+| 21 | 권한 없는 접근 | 403/404 열린 질문(§13 8) | — | **404** `review_not_found` 통일 · 숨김 복기도 404 |
+| 22 | 앵커 유실 응답 | 앱은 `anchorKind='lesson'` + `sessionId=null` 로 읽음(§14 2) | — | 그대로 유효 + 파생 키 **`anchorStatus`** 를 함께 내린다(§5.5 · 컬럼 없음) |
+| 23 | draft 이미지 정리 | §8.5 ② 일일 작업 요청 | — | **§3.7 신설**(KST 04:00 · 90일 · 이미지만 · 드라이런 2주 → `REVIEW_DRAFT_SWEEP=delete`) |
 
 ## 2. DDL 전문 — §29 (⚠️ 미실행 · 오너가 SQL Editor 에서 단독 실행)
 
@@ -67,13 +78,13 @@ select count(*) from storage.buckets where id = 'lesson-reviews';   -- 기대: 0
 
 ```sql
 -- ============================================================
--- §29  수업 복기(lesson reviews) — 정본 mri-student-app/docs/lesson-review-design.md v2.3 + 디스코드 이관 설계
+-- §29  수업 복기(lesson reviews) — 정본 mri-student-app/docs/lesson-review-design.md v2.4(#20) + 디스코드 이관 설계
 --      (2026-09-25 · 오너 지시 · ⚠️ 미실행 — 오너 판정 후 실행)
 --      순서: 29a 태그 사전 → 29b 본체 → 29c 함수·트리거 → 29d 이관 표 → 29e feedback 공지 → 29f 버킷 → 29g 검증 → notify
 --      원칙: RLS 전부 on · service_role 만(포털 API 경유 · auth.uid 없음) · lesson_sessions·students·courses 는 UPDATE 하지 않는다
 -- ============================================================
 
--- ── 29a 태그 사전 (v2.3 §6.2 채택 12개 · slug 고정 · label 은 사전 UPDATE 로만 바꾼다) ──
+-- ── 29a 태그 사전 (v2.4 §6.2 채택 12개 · slug 고정 · label 은 사전 UPDATE 로만 바꾼다) ──
 create table if not exists public.review_tags (
   slug   text primary key,
   label  text not null,
@@ -121,6 +132,7 @@ create table if not exists public.lesson_reviews (
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now(),
   published_at         timestamptz,
+  hidden_at            timestamptz,                                 -- 수강생 숨김(published 만 · 트레이너 답도 함께 안 보임 · 되살리기는 오너 SQL · 완전 삭제 없음 · 오너 9/25)
   -- 종류에 맞지 않는 앵커는 금지. 종류에 맞는 앵커의 유실(on delete set null → id null)은 허용한다(연결 끊김 상태).
   constraint chk_lr_anchor check (
     (anchor_kind = 'lesson'  and course_session_id is null and course_id is null) or
@@ -137,6 +149,7 @@ create table if not exists public.lesson_reviews (
       and (author_role = 'trainer' or recipient_trainer_id is not null)
     )
   ),
+  constraint chk_lr_hidden check (hidden_at is null or status = 'published'),   -- draft 는 숨기지 않는다(지운다)
   constraint uq_lr_src_msg unique (src_msg)                          -- 디스코드 재수집 멱등(feedback.src_msg 와 같은 규칙)
 );
 -- 「수업 연결이 있을 때만」 수강생 1명 × 수업 1회 = 1건 (자유 기록 · 트레이너 작성분은 제한 없음)
@@ -151,6 +164,7 @@ create index if not exists idx_lr_lesson_session   on public.lesson_reviews (les
 create index if not exists idx_lr_course           on public.lesson_reviews (course_id, course_session_id);
 create index if not exists idx_lr_recipient        on public.lesson_reviews (recipient_trainer_id, status, published_at desc);
 create index if not exists idx_lr_pending_anchor   on public.lesson_reviews (source, created_at) where anchor_kind = 'pending';
+create index if not exists idx_lr_draft_sweep      on public.lesson_reviews (updated_at) where status = 'draft';   -- §3.7 일일 정리 대상 조회
 alter table public.lesson_reviews enable row level security;
 
 -- review_games — 판
@@ -249,7 +263,7 @@ create table if not exists public.review_reads (
 alter table public.review_reads enable row level security;
 
 -- ── 29c 함수·트리거 ──
--- (1) 앵커 ↔ 학생 일치 (v2.3 §3.1 ②). 앵커가 없으면 통과. 유실(id null)도 통과.
+-- (1) 앵커 ↔ 학생 일치 (v2.4 §3.1 ②). 앵커가 없으면 통과. 유실(id null)도 통과.
 create or replace function public.trg_lr_anchor_fn() returns trigger
 language plpgsql as $$
 declare v_sid bigint;
@@ -377,9 +391,9 @@ select c.relname, c.relrowsecurity
 select count(*) filter (where active) as active, count(*) as total from public.review_tags;   -- 기대: 12 · 12
 -- ③ 제약·인덱스
 select conname from pg_constraint where conrelid = 'public.lesson_reviews'::regclass and contype in ('c','u') order by 1;
---   기대: chk_lr_anchor · chk_lr_author · chk_lr_course_pair · chk_lr_published · uq_lr_src_msg (+ 컬럼 check 들)
+--   기대: chk_lr_anchor · chk_lr_author · chk_lr_course_pair · chk_lr_hidden · chk_lr_published · uq_lr_src_msg (+ 컬럼 check 들)
 select indexname from pg_indexes where schemaname = 'public' and tablename = 'lesson_reviews' order by 1;
---   기대: idx_lr_course · idx_lr_lesson_session · idx_lr_pending_anchor · idx_lr_recipient · idx_lr_student_updated · lesson_reviews_pkey · uq_lr_src_msg · uq_lr_student_course · uq_lr_student_lesson
+--   기대: idx_lr_course · idx_lr_draft_sweep · idx_lr_lesson_session · idx_lr_pending_anchor · idx_lr_recipient · idx_lr_student_updated · lesson_reviews_pkey · uq_lr_src_msg · uq_lr_student_course · uq_lr_student_lesson
 select conname, condeferrable, condeferred from pg_constraint
  where conname in ('uq_rg_ord','uq_rp_ord','uq_ri_ord');            -- 기대: 3행 · true · true
 -- ④ 함수·트리거
@@ -445,7 +459,7 @@ notify pgrst, 'reload schema';
 서버(`review-api.cjs`) 업로드 직후 · `sharp` 로 표시본·썸네일 생성 → 3파일 업로드 → `display_path`·`thumb_path` 저장. 생성 실패는 `display_path=null` 로 두고 응답의 `displayUrl` 은 원본 서명 URL 로 대체(재생성은 다음 조회 때 1회 시도). **`sharp` 는 네이티브 모듈이라 설치 전 승인 항목**(Railway Nixpacks/Node 20 에서 prebuilt 바이너리 사용 · 메모리 +30~60MB). 미승인 시 1차는 원본만(egress 가 §8.4 추정보다 3~4배).
 
 ### 3.4 서명 URL
-- 발급: service_role `POST {SUPABASE_URL}/storage/v1/object/sign/lesson-reviews` body `{ "expiresIn": 600, "paths": [...] }`(배치) → 각 `signedURL` 에 `{SUPABASE_URL}/storage/v1` 를 앞에 붙인다. **만료 10분**(v2.3 §8.1). 응답 키 `displayUrl` `thumbUrl` `originalUrl`.
+- 발급: service_role `POST {SUPABASE_URL}/storage/v1/object/sign/lesson-reviews` body `{ "expiresIn": 600, "paths": [...] }`(배치) → 각 `signedURL` 에 `{SUPABASE_URL}/storage/v1` 를 앞에 붙인다. **만료 10분**(v2.4 §8.1). 응답 키 `displayUrl` `thumbUrl` `originalUrl`.
 - 발급 조건 = §4 `canRead`. URL 자체는 누구나 열 수 있으므로 10분을 넘기지 않고, 목록 응답에는 썸네일만 싣는다(상세에서 표시본·원본).
 - 업로드: `POST {SUPABASE_URL}/storage/v1/object/lesson-reviews/{path}` (`Content-Type` 실제 MIME · `x-upsert: false`). 삭제: `DELETE {SUPABASE_URL}/storage/v1/object/lesson-reviews` body `{ "prefixes": [path...] }`.
 - 헬퍼는 `server.js` 의 `sbSelect` 류와 같은 자리(`storageSign/storagePut/storageDelete`)에 두고 `review-api.cjs` 가 deps 로 받는다.
@@ -454,13 +468,31 @@ notify pgrst, 'reload schema';
 - 이미지·페이즈·판·복기 삭제는 **서버가 먼저 Storage 3파일을 지우고** 행을 지운다(DB cascade 는 안전망). 실패한 객체는 로그 `[review] storage_orphan path=` 로 남긴다.
 - 고아 점검(오너 · 월 1회): `select name from storage.objects o where o.bucket_id = 'lesson-reviews' and not exists (select 1 from public.review_images i where o.name in (i.original_path, i.display_path, i.thumb_path));` → 0행 기대. 있으면 위 DELETE API 로 정리.
 
-### 3.6 한도 검사 위치 (v2.3 §8.3)
+### 3.6 한도 검사 위치 (v2.4 §8.3)
 | 한도 | 어디서 | 실패 코드 |
 |---|---|---|
 | 장당 8MB · png/jpeg/webp | 서버 raw 파서 limit + 버킷 `file_size_limit`·`allowed_mime_types`(2중) | `image_too_large` · `image_type` |
 | 페이즈당 4장 · 복기당 60장 | 서버(`review_images` count) | `review_limit_images` |
 | 수강생 월 200장 · 1GB | 서버 RPC `review_month_usage` | `review_limit_month` |
 | 본문 8000자 · 제목 60자 · 줄 200개/페이즈 · 줄 1000자 | 서버 + DB check | `review_too_long` |
+
+### 3.7 미발송 draft 이미지 정리 — 일일 작업 (v2.4 §8.5 ② · 오너 9/25)
+| 항목 | 규칙 |
+|---|---|
+| 대상 | `lesson_reviews.status = 'draft'` 이고 **마지막 수정(`updated_at`) 후 90일** 지난 복기의 `review_images` 전부(+ 그 위 `review_annotations` 는 cascade). **published 제외.** 글(제목 · 본문 · 판 · 페이즈 · 줄 · 태그)은 남긴다 — 복기 자체를 잃지 않는다 |
+| 시각 | 매일 **KST 04:00 = 19:00 UTC** · `server.js` 일일 크론 자리(기존 `payreqUnreflected` 스케줄러와 같은 방식 · 봇 프로세스) · 1회 상한 200장(초과분은 다음 날) |
+| 모드 | env `REVIEW_DRAFT_SWEEP` — 미설정 또는 `dryrun` = **지울 목록을 세기만**(건수 · 바이트 로그) · `delete` = Storage 3파일 삭제 → `review_images` 행 삭제. **처음 2주는 드라이런**(PR-2 배포일부터) → 오너가 로그를 보고 확인 → env 를 `delete` 로(Level 0 · 오너) |
+| 로그 | `[review] draft_sweep mode=dryrun cutoff=YYYY-MM-DD reviews=N images=M bytes=B` · delete 모드는 `deleted=M failed=F` 추가. **id · 경로 · 이름 없음**(건수·용량만). 실패 객체는 §3.5 `[review] storage_orphan` 로 |
+| 즉시 삭제 · 점검 | 지운 이미지 즉시 삭제(§3.5)와 **월 1회 점검 SQL**(§3.5 · `storage.objects` − `review_images`)은 그대로 — 이 작업은 그 둘을 대체하지 않는다 |
+| `updated_at` 기준 | 서버 관례대로 서버가 갱신한다. **이미지 업로드 · 그리기 저장 · 판·페이즈 변경도 `lesson_reviews.updated_at` 을 갱신**해야 「마지막 수정」이 맞다(PR-1·PR-2 구현 지침) |
+| 예고 배지 | 2차(알림과 함께 「보내지 않은 복기의 사진은 n일 뒤 정리돼요」). 1차는 예고 없이 드라이런만 |
+| 오너 미리보기 SQL | 아래 — 드라이런 로그와 같은 수를 낸다 |
+
+```sql
+select count(distinct r.id) as reviews, count(i.id) as images, coalesce(sum(i.bytes), 0) as bytes
+  from public.lesson_reviews r join public.review_images i on i.review_id = r.id
+ where r.status = 'draft' and r.updated_at < now() - interval '90 days';
+```
 
 ## 4. 권한 판정 (서버 라우트 · RLS 아님)
 
@@ -470,33 +502,37 @@ notify pgrst, 'reload schema';
 |---|---|
 | `reviewOwner(actor, r)` | 수강생: `r.student_id === sub` · 트레이너: `r.author_role === 'trainer' && r.author_staff_id === staff.id` |
 | `reviewCanRead(actor, r)` | 오너 → true · 수강생 → `reviewOwner` · 트레이너 → `reviewOwner` ∨ `r.recipient_trainer_id === staff.id` ∨ `scopedStudents(staff.id).has(r.student_id)`(담당 ∪ 최근 90일 진행 · `trainer-portal.cjs` 재사용) |
-| `reviewCanEdit(actor, r)` | `reviewOwner` (published 뒤에도 편집 가능 — v2.3 §4.1 · 수정되면 `updated_at > published_at` 로 「수정됨」) |
-| `reviewCanReply(actor, r)` | 오너 → true · 트레이너 → `r.recipient_trainer_id === staff.id`(v2.3 §2.6 B: 답은 받는 1명 · 열람자는 읽기만) · `r.status = 'published'` 일 때만 |
+| `reviewCanEdit(actor, r)` | `reviewOwner` ∧ `hidden_at is null` (published 뒤에도 편집 가능 — v2.4 §4.1 · 수정되면 `updated_at > published_at` 로 「수정됨」) |
+| `reviewCanReply(actor, r)` | 오너 → true · 트레이너 → `r.recipient_trainer_id === staff.id`(v2.4 §2.6 B: 답은 받는 1명 · 열람자는 읽기만) · `r.status = 'published'` ∧ `hidden_at is null` 일 때만 |
 | `annotationCanWrite(actor, img)` | `reviewCanRead` ∧ 레이어가 내 것(`author_kind/author_id` = 행위자) — 남의 레이어는 어떤 경우에도 수정 불가 |
 | `signedUrlAllowed(actor, img)` | `reviewCanRead` |
 | `recipientCandidates(sub)` | 담당(`students.trainer_id` · staff active) ∪ 최근 90일 `lesson_sessions.trainer_id`(staff active) · 기본 = 최근 수업 트레이너 · 없으면 담당 · 둘 다 없으면 publish 400 `recipient_required` |
 | `recipientFor(r)` | anchor lesson → `lesson_sessions.trainer_id` · course → 오너(staff role=owner active 1명) · none → 요청값(후보 밖 400 `recipient_invalid`) · 트레이너 작성분 → null |
+| `reviewCanHide(actor, r)` | 수강생 본인 ∧ `status = 'published'` ∧ 아직 안 숨김 → `hidden_at = now()`. draft 는 숨기지 않고 지운다(`DELETE`) |
+| 숨김의 효과 | `hidden_at` 이 있으면 수강생·트레이너 어느 조회에서도 **404 `review_not_found`**(목록에서도 빠짐 · `review_feedback` 도 함께 안 보임 · 알림 없음). 오너만 `hidden: true` 로 본다 |
+| 되살리기 | **오너 SQL 만**: `update public.lesson_reviews set hidden_at = null where id = <id>;` — API 없음(오너 9/25). 완전 삭제 API 도 없음 |
 
 의사코드(수강생 라우트 공통 앞단):
 ```js
 const r = await loadReview(id);            // 없으면 404 review_not_found
-if (!reviewCanRead(actor, r)) return fail(res, 403, "review_scope_denied");   // 존재 여부를 흘리지 않으려면 404 로 통일해도 된다(오너 판정)
+if (!reviewCanRead(actor, r) || (r.hidden_at && !actor.isOwner)) return fail(res, 404, "review_not_found");   // 권한 없음·숨김 모두 404 — 존재 여부를 흘리지 않는다(오너 9/25)
 ```
 읽음(`review_reads`)은 GET 상세에서 upsert · 「안 읽음」 = `review_reads.read_at < max(feedback.created_at)` 또는 행 없음.
 
-## 5. API 목록 (v2.3 §10 기준 · 1차/2차/3차) · 한도 · 레이트리밋
+## 5. API 목록 (v2.4 §10 기준 · 1차/2차/3차) · 한도 · 레이트리밋
 
 규약: `/api/student-portal/*` 는 공유비밀 게이트 + 세션(`requireStudent`) + `scrub`, `/api/trainer-portal/*` 는 `requireTrainer` + `scrubTrainer`. 오류는 `{ error: { code } }`. 레이트리밋은 `limit()` 키 이름 고정(아래).
 
 ### 5.1 수강생 (`/api/student-portal`)
 | 단계 | 라우트 | 요청 | 응답 · 비고 |
 |---|---|---|---|
-| 1차 | `GET /reviews?days=90` | | `{ reviews:[{ id, anchorKind, sessionId, courseId, courseSessionId, playedAt, title, status, authorRole, recipientDisplayName, gameCount, imageCount, hasFeedback, unreadFeedback, updatedAt, publishedAt }] }` |
+| 1차 | `GET /reviews?days=90` | | `{ reviews:[{ id, anchorKind, anchorStatus, sessionId, courseId, courseSessionId, playedAt, title, status, authorRole, recipientDisplayName, gameCount, imageCount, hasFeedback, unreadFeedback, updatedAt, publishedAt }] }` · 숨김(`hidden_at`) 제외 |
 | 1차 | `GET /reviews/recipients` | | `{ recipients:[{ staffId, displayName, isPrimary, lastLessonOn }], defaultStaffId }` |
 | 1차 | `POST /reviews` | `{ anchorKind: "lesson"\|"course"\|"none"\|"pending", sessionId?, courseId?, courseSessionId? }` | `{ review, existing }` — 연결 세션에 이미 1건이면 그 행 + `existing:true` |
-| 1차 | `GET /reviews/:id` | | v2.3 §10.1 구조 그대로(games→phases→images→annotations · feedback). 이미지 URL 은 서명 10분 |
+| 1차 | `GET /reviews/:id` | | v2.4 §10.1 구조 그대로(games→phases→images→annotations · feedback) + `anchorStatus`(§5.5). 이미지 URL 은 서명 10분. 숨김·권한 없음 = 404 |
 | 1차 | `PUT /reviews/:id` | `{ title?, body?, anchorKind?, sessionId?, courseId?, courseSessionId? }` | `{ review }` · 앵커 변경은 draft 또는 앵커 유실 상태에서만 |
-| 1차 | `DELETE /reviews/:id` | | draft 만(published 는 삭제 불가 · 오너 SQL) · Storage 정리 |
+| 1차 | `DELETE /reviews/:id` | | 204 · **draft 만**(published 는 409 `review_not_draft`) · Storage 3파일 정리 |
+| 1차 | `POST /reviews/:id/hide` | | 204 · **published 본인만** · `hidden_at = now()` · 이후 모든 조회 404 · 트레이너 답도 함께 안 보임 · 되살리기 API 없음(오너 SQL) · draft 는 409 `review_not_published` |
 | 1차 | `POST /reviews/:id/games` · `PUT /games/:id` · `DELETE /games/:id` · `PUT /reviews/:id/games/order` | `{ map?, seqLabel? }` · `{ ord:[gameId…] }` | 순서는 RPC `review_set_order('game', reviewId, ids)` |
 | 1차 | `POST /games/:id/phases` · `PUT /phases/:id` · `DELETE /phases/:id` · `PUT /games/:id/phases/order` | `{ phaseFrom, phaseTo, phaseToEnd, headerRaw?, lines, tags }` (페이즈 통째) | 태그 3개·사전 검사(400 `phase_tags_limit` · `tag_unknown`) |
 | 2차 | `POST /phases/:id/duplicate` | | 줄·태그 복제 · 이미지는 복제 안 함 |
@@ -506,19 +542,19 @@ if (!reviewCanRead(actor, r)) return fail(res, 403, "review_scope_denied");   //
 | 1차 | `PUT /images/:id/annotation` | `{ version, shapes }` | `{ version }` · `version` 불일치 409 `annotation_conflict` (PATCH `id=eq&version=eq` 0행 = 충돌) · 수강생 레이어만 |
 | 1차 | `POST /reviews/:id/publish` | `{ recipientTrainerId? }` — none 앵커면 필수 | `{ published:true, recipientDisplayName }` · pending 앵커는 400 `anchor_required` |
 | 1차 | `POST /reviews/:id/read` | | 204 |
-| 1차(초안 · PR-4) | `POST /reviews/import?sessionId=` | raw `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` ≤30MB | `{ review, warnings:[{ code, row?, detail }] }` · 파일당 1회 멱등(sha256 = `srcFileName`+해시) |
-| 3차 | `GET /review-topics?window=4` | | v2.3 §6.3 |
+| 2차 보류 | `POST /reviews/import?sessionId=` | raw xlsx ≤30MB | **1차 없음** — 서버 재파싱 없음(오너 9/25 · `exceljs` 미채택). 1차 엑셀 입력은 앱이 파싱해 `POST /reviews` → games → phases → images 로 만든다(`source='xlsx'` · `srcFileName` 은 `PUT /reviews/:id` 로) |
+| 3차 | `GET /review-topics?window=4` | | v2.4 §6.3 |
 | 1차 | `GET /sessions` 확장 | | `sessions[].hasReview` · `reviewStatus` · `unreadFeedback` |
 | 2차 | 호환 `GET/PUT /sessions/:id/journal` · `GET /sessions/:id/feedback` | | 내부에서 `lesson_reviews` 를 읽고 씀(§7 B′) |
 
 ### 5.2 트레이너 (`/api/trainer-portal`)
 | 단계 | 라우트 | 비고 |
 |---|---|---|
-| 1차 | `GET /reviews?days=30&status=` | 범위 = `recipient_trainer_id = 나` ∪ `scopedStudents` 학생의 published · `unread` · `awaitingReply`(내가 recipient 이고 내 답 0건) |
+| 1차 | `GET /reviews?days=30&status=` | 범위 = `recipient_trainer_id = 나` ∪ `scopedStudents` 학생의 published · **숨김 제외** · `unread` · `awaitingReply`(내가 recipient 이고 내 답 0건) · `replyDueAt: null`(답 기한 — 오너 결정 대기 · 값 없이 자리만 · 컬럼 없음) |
 | 1차 | `GET /reviews/:id` | 수강생 구조 + `suggested*` · `canReply` 플래그(열람자에게 「답은 받는 트레이너가」 안내용) |
 | 1차 | `POST /reviews/:id/feedback` · `PUT /feedback/:id` · `DELETE /feedback/:id` | 1차 kind = comment · overall / 2차 = mark · task · `reviewCanReply` |
 | 2차 | `PUT /images/:id/annotation` | 트레이너 레이어(자기 것만) |
-| 2차 | `POST /reviews`(author_role=trainer) · `POST /reviews/import` | 트레이너가 먼저 쓰는 복기 · 이관 보조 |
+| 2차 | `POST /reviews`(author_role=trainer) | 트레이너가 먼저 쓰는 복기 · 이관 보조(`import` 는 서버 파싱 없음 — 앱 파싱 후 같은 API) |
 | 3차 | `GET /reviews/pending-anchor` | 디스코드 이관분 `anchor_kind='pending'` 큐 |
 
 ### 5.3 한도 · 레이트리밋 · 오류 코드
@@ -532,7 +568,7 @@ if (!reviewCanRead(actor, r)) return fail(res, 403, "review_scope_denied");   //
 | `reviewImport` | 5/10분 |
 | raw 본문 | 이미지 8MB · xlsx 30MB (라우트 한정 `express.raw`) |
 
-오류 코드(추가분): `review_not_found` · `review_scope_denied` · `review_not_draft` · `anchor_required` · `anchor_taken`(세션에 이미 1건 · POST 는 existing 반환이라 PUT 앵커 변경에서만) · `anchor_student_mismatch` · `recipient_required` · `recipient_invalid` · `phase_tags_limit` · `tag_unknown` · `review_too_long` · `review_limit_images` · `review_limit_month` · `image_too_large` · `image_type` · `annotation_conflict` · `order_ids_mismatch` · `import_too_large` · `import_parse_failed` · 파싱 경고 코드는 v2.3 §9.2.
+오류 코드(추가분): `review_not_found`(404 — 없음 · 권한 없음 · 숨김 모두. `review_scope_denied` 는 **쓰지 않는다**) · `review_not_draft` · `review_not_published` · `anchor_required` · `anchor_taken`(세션에 이미 1건 · POST 는 existing 반환이라 PUT 앵커 변경에서만) · `anchor_student_mismatch` · `recipient_required` · `recipient_invalid` · `phase_tags_limit` · `tag_unknown` · `review_too_long` · `review_limit_images` · `review_limit_month` · `image_too_large` · `image_type` · `annotation_conflict` · `order_ids_mismatch`. (`import_too_large` · `import_parse_failed` · 파싱 경고 코드는 2차 보류분 — 1차 없음.)
 
 ### 5.4 계약 차이 — 반장 인계([MRIacademy → 다른 세션])
 1. 업로드는 multipart 가 아니라 **raw 바이너리 1파일/요청**(`Content-Type` = 실제 MIME · `?phaseId&ord`). 앱은 `fetch(url, { body: file })` 로 보낸다. 이유: 서버에 multipart 파서 의존성을 안 들인다.
@@ -541,6 +577,21 @@ if (!reviewCanRead(actor, r)) return fail(res, 403, "review_scope_denied");   //
 4. `DELETE /reviews/:id` 가 있다(draft 만).
 5. 이미지 URL 은 **10분 서명** — 앱은 캐시하지 말고 상세 재조회 때 새 URL 을 쓴다. 목록에는 `thumbUrl` 만.
 6. 응답 키에 `student*`·`memo`·`*Name` 단독 키 없음(scrub). `srcFileName`·`recipientDisplayName`·`authorDisplayName` 은 통과.
+7. 권한 없음·숨김·없음은 전부 **404 `review_not_found`**(403 없음).
+8. `anchorStatus`(§5.5)가 목록·상세에 있다. `anchorKind='lesson'` + `sessionId=null` 로 읽는 방식(v2.4 §14 2)도 그대로 성립한다.
+9. published 복기는 `DELETE` 가 아니라 **`POST /reviews/:id/hide`**(숨김). 되살리기·완전 삭제 API 없음.
+10. 엑셀 가져오기 API 는 1차에 없다 — 앱이 파싱해 일반 API 로 만든다.
+
+### 5.5 앵커 유실 · 숨김 응답 (v2.4 §14 2 · 오너 9/25)
+| 키 | 값 | 뜻 |
+|---|---|---|
+| `anchorStatus` | `linked` | 앵커 종류에 맞는 id 가 있다(`lesson` + `sessionId` · `course` + `courseId`·`courseSessionId`) |
+| | `lost` | `anchorKind` 는 `lesson`/`course` 인데 연결된 수업·강의 행이 사라져 id 가 **null**(FK `on delete set null`) → 앱 「연결 끊김 · 다시 고르기」. `PUT /reviews/:id` 로 앵커 재지정 가능(draft 가 아니어도 이 상태에서는 허용) |
+| | `none` | 자유 기록(`anchorKind='none'`) |
+| | `pending` | draft 에서 아직 안 고름(`anchorKind='pending'`) |
+| `hidden` | boolean | **오너 응답에만** 있다. 수강생·트레이너에게 숨김 복기는 404 라 이 키가 갈 일이 없다 |
+- `anchorStatus` 는 저장하지 않는 파생 값(서버가 `anchor_kind` 와 세 id 로 계산). 컬럼·DDL 변경 없음.
+- `lost` 는 published 상태에서도 생길 수 있다(수업 행 정정 삭제). 목록·상세 모두 같은 규칙.
 
 ## 6. REQUIRED_SCHEMA 추가 계획 (기동 자기점검 · PR-1)
 
@@ -549,7 +600,7 @@ if (!reviewCanRead(actor, r)) return fail(res, 403, "review_scope_denied");   //
 review_tags:          ["slug","label","ord","active"],
 lesson_reviews:       ["id","student_id","anchor_kind","lesson_session_id","course_session_id","course_id","author_role",
                        "author_staff_id","recipient_trainer_id","source","status","title","body","src_file_name",
-                       "src_guild","src_channel","src_msg","consent_public_at","created_at","updated_at","published_at"],
+                       "src_guild","src_channel","src_msg","consent_public_at","created_at","updated_at","published_at","hidden_at"],
 review_games:         ["id","review_id","ord","seq_label","map","map_raw"],
 review_phases:        ["id","game_id","ord","phase_from","phase_to","phase_to_end","header_raw","lines","tags","suggested_tags"],
 review_images:        ["id","review_id","phase_id","ord","original_path","display_path","thumb_path","width","height",
@@ -566,19 +617,20 @@ feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_
 
 | 순서 | 무엇 | 누가 | 비고 |
 |---|---|---|---|
-| 0 | 이 문서 Draft PR → 오너 판정(§9 열린 질문 포함) | 이 세션 | 코드 없음 |
-| 1 | §29 DDL 실행 + 29g 검증값 회신 + Pro 전환 | 오너 | Level 0 |
-| 2 | **PR-1** `review-api.cjs`(수강생 텍스트 API: reviews·games·phases·publish·recipients·read·`/sessions` 확장) + Storage 헬퍼 + `REQUIRED_SCHEMA` §6 + `supabase_admin_panel.sql` §29 정본 편입 | 이 세션 | DDL 검증 뒤 배포 |
-| 3 | **PR-2** 이미지 업로드·파생본·서명 URL·삭제 + 그리기 레이어 PUT(수강생) | 이 세션 | `sharp` 승인 뒤 |
-| 4 | **PR-3** 트레이너 포털(목록·상세·comment/overall·읽음) + `docs/trainer-portal-api.md` §8 계약 | 이 세션 | |
-| 5 | **PR-4** 엑셀 가져오기(파싱 규칙 §9 · 경고 코드 · 이미지 반출) | 이 세션 | `exceljs` 승인 뒤 · 9/28 테스트 입력 전까지 |
-| 6 | 계약 문서(수강생 포털 부록 A 개정분 = §5.1·5.4)를 [MRIacademy → 다른 세션] 로 인계 | 이 세션 → 반장 | 앱 구현은 반장 |
-| 2차 | PR-5 mark·task·트레이너 레이어·복제·순서 API · PR-6 알림(`discordDM` · publish→recipient · 답→수강생) · PR-7 일기 호환 라우트(행 0 이라 이관 스크립트 없이 전환) | 이 세션 | |
+| 0 | 이 문서(v2.4 정렬본) Draft PR → 오너 판정 | 이 세션 | 코드 없음 |
+| 1 | **Supabase Pro 전환** | 오너 | 대시보드 · 완료 시점 회신 |
+| 2 | §29 DDL 전문 제안(= §2 · 이 판) → **지휘탑 대조** | 이 세션 → 지휘탑 | 대조 결과에 따라 문서만 수정 |
+| 3 | §29 DDL 실행 + 29g 검증값 회신 + 29f 버킷 | 오너 | Level 0 · 검증은 줄바꿈 무관 방식(함수 md5 는 CR 제거) |
+| 4 | **PR-1** `review-api.cjs`(수강생 텍스트 API: reviews·games·phases·publish·hide·recipients·read·`/sessions` 확장) + Storage 헬퍼 + `REQUIRED_SCHEMA` §6 + `supabase_admin_panel.sql` §29 정본 편입 | 이 세션 | DDL 검증 뒤 배포 |
+| 5 | **PR-2** 이미지 업로드·파생본(`sharp` 승인됨)·서명 URL·삭제 + 그리기 레이어 PUT(수강생) + **§3.7 draft 정리 일일 작업(드라이런)** | 이 세션 | 배포일부터 드라이런 2주 → 오너 확인 → `REVIEW_DRAFT_SWEEP=delete` |
+| 6 | **PR-3** 트레이너 포털(목록·상세·comment/overall·읽음·`canReply`·`replyDueAt` 자리) + `docs/trainer-portal-api.md` §8 계약 | 이 세션 | |
+| 7 | 계약 문서(수강생 포털 부록 A 개정분 = §5.1·§5.4·§5.5)를 [MRIacademy → 다른 세션] 로 인계 | 이 세션 → 반장 | 앱 착수는 PR-2 배포 뒤(v2.4 §11) |
+| 2차 | PR-5 mark·task·트레이너 레이어·복제·순서 API · PR-6 알림(`discordDM` · publish→recipient · 답→수강생 · 정리 예고 배지) · PR-7 일기 호환 라우트(행 0 이라 이관 스크립트 없음) · 엑셀 서버 파싱은 필요해지면 그때 `exceljs` 승인 요청 | 이 세션 | |
 | 3차 | PR-8 디스코드 이관(§8) · PR-9 `review-topics` 집계 | 이 세션 | |
 
-- **1차 = DDL 1회 + Draft PR 4개 + 인계 문서 1개.** 각 PR 은 `npm run check` + 기동 로그 `[schema] OK` 확인 뒤 다음으로.
-- **의존성(설치 전 승인)**: `sharp`(PR-2) · `exceljs`(PR-4). 둘 다 Railway 서버 전용 · 프론트 무관. 승인 전에는 PR-2 를 「원본만」 모드로 낼 수 있다.
-- **env 추가 없음.** 선택: `REVIEW_BUCKET`(기본 `lesson-reviews`) · `REVIEW_SIGN_TTL_SEC`(기본 600) — Railway 만 · 미설정이면 기본값. Vercel 변경 없음. `SUPABASE_URL`·`SUPABASE_SERVICE_ROLE_KEY` 로 Storage 까지 접근한다(추가 키 없음).
+- **1차 = Pro 전환 + DDL 1회 + Draft PR 3개 + 인계 문서 1개.** 각 PR 은 `npm run check` + 기동 로그 `[schema] OK` 확인 뒤 다음으로. **DDL 실행·검증 전에는 코드 착수 금지**(#331 순서 반복 금지).
+- **의존성**: `sharp` **승인(오너 9/25)** — PR-2 에서 설치(Railway 서버 전용 · 프론트 무관). `exceljs` **1차 제외** — 서버 재파싱 없음.
+- **env 제안 1개(사전 보고)**: `REVIEW_DRAFT_SWEEP` — 용도 = §3.7 일일 정리 모드(미설정/`dryrun` = 로그만 · `delete` = 실제 삭제) · 어디에 = **Railway** 서비스 변수 · 설정 시점 = PR-2 배포 후 드라이런 2주 뒤 오너가 `delete` 로. 선택: `REVIEW_BUCKET`(기본 `lesson-reviews`) · `REVIEW_SIGN_TTL_SEC`(기본 600) — 미설정이면 기본값. Vercel 변경 없음. `SUPABASE_URL`·`SUPABASE_SERVICE_ROLE_KEY` 로 Storage 까지 접근한다(추가 키 없음).
 
 ## 8. 디스코드 이관 (3차 · 이 세션 설계 통합)
 
@@ -588,10 +640,12 @@ feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_
 4. 홍보용 `feedback` 테이블·「피드백 월」은 그대로. 이관은 **복사**이고 원본을 바꾸지 않는다(29e 의 rejected 만 예외).
 5. 드라이런: 실제 insert 전에 매핑·앵커 판정 결과를 표(채널 id · 건수 · 앵커 확정/보류)로 회신 — 채널명은 적지 않는다.
 
-## 9. 열린 질문 (오너 판정)
+## 9. 열린 질문 — 답(오너 9/25) · 남은 것
 
-1. `review_scope_denied` 를 403 으로 낼지 404 로 통일할지(존재 여부 노출).
-2. `sharp` · `exceljs` 승인 여부(§7). 미승인 시 1차 이미지는 원본만, 가져오기는 2차.
-3. published 복기 삭제 = 오너 SQL 만(제안). 수강생 삭제를 허용할지.
-4. §28/§29 번호 — 닉네임 설계 DDL 채택 여부에 따라 확정.
-5. 트레이너 답 기한·페이즈별 필수 여부(v2.3 §2.5 · 제약 없음 유지 제안).
+| # | 질문 | 답 | 반영 |
+|---|---|---|---|
+| 1 | 권한 없는 복기 접근 403/404 | **404**(존재 여부 노출 안 함) | §4 · §5.3 · §5.4 7 · `review_scope_denied` 폐기 |
+| 2 | `sharp` · `exceljs` 승인 | `sharp` **승인** · `exceljs` **1차 제외**(서버 재파싱 없음) | §0 · §5.1 import 2차 보류 · §7 PR-4 삭제(1차 PR 3개) |
+| 3 | published 삭제 | 수강생은 **숨김만** · 트레이너 답도 함께 숨김 · 되살리기 오너만 · 완전 삭제 API 없음 | `hidden_at` 컬럼 + `chk_lr_hidden` · `POST /reviews/:id/hide` · §4 · §5.5 · §6 |
+| 4 | §28/§29 번호 | **미정** — 닉네임 설계(`payment_requests.pubg_name`) 채택 여부에 따라 | 실행 시 확정 |
+| 5 | 트레이너 답 기한 · 페이즈별 필수 | **오너 결정 대기 · 값 없이 자리만** | 컬럼·제약 없음 · 트레이너 목록 `replyDueAt: null`(§5.2) · 정해지면 서버 상수 1개로 계산(DDL 없음) |
