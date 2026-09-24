@@ -3065,7 +3065,7 @@ if (process.env.DISCORD_TOKEN) {
   // ── /피드백채널현황 : 레슨 피드백 서버(FEEDBACK_GUILD_IDS) 채널 실측 — 오너 전용 · 읽기만 ──
   //   오너 요청 2026-09-24 ③. 세션(Claude Code)은 DISCORD_TOKEN 을 쓸 수 없어 봇이 대신 센다.
   //   서버별: 전체 채널 수 · 텍스트 채널 수 · 봇이 읽을 수 있는 채널 수(ViewChannel + ReadMessageHistory) ·
-  //   채널별 메시지 수 · 첨부 수 · 가장 오래된 메시지 시각 · 권한이 막힌 채널과 부족한 권한.
+  //   채널별 메시지 수 · 첨부 수 · 첫/마지막 메시지 시각 · 권한이 막힌 채널과 부족한 권한. 본문은 로그에 남기지 않는다.
   //   **읽기만 한다** — send/edit/delete/react 없음. FEEDBACK_GUILD_IDS 는 읽기만 하고 바꾸지 않는다.
   //   결과는 에페메럴 요약(서버 단위) + 콘솔 로그 [fbscan](채널 단위 · 세션이 Railway 로그로 수집).
   //   페이싱: 페이지(100건)마다 350ms · 채널당 5,000건 상한 · 전체 12분 예산(디스코드 인터랙션 토큰 15분 안에 끝낸다).
@@ -3113,7 +3113,7 @@ if (process.env.DISCORD_TOKEN) {
             console.log(`[fbscan] skipped guild=${gid} ch=${ch.id} name=${ch.name} reason=time_budget`);
             continue;
           }
-          let count = 0, att = 0, oldest = null, before, capped = false;
+          let count = 0, att = 0, oldest = null, newest = null, before, capped = false;
           try {
             for (;;) {
               const page = await ch.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
@@ -3121,6 +3121,7 @@ if (process.env.DISCORD_TOKEN) {
               for (const m of page.values()) {
                 count++; att += m.attachments.size;
                 if (oldest == null || m.createdTimestamp < oldest) oldest = m.createdTimestamp;
+                if (newest == null || m.createdTimestamp > newest) newest = m.createdTimestamp;
               }
               before = page.last().id;                       // fetch 는 최신순 — 마지막이 가장 오래된 것
               if (page.size < 100) break;
@@ -3132,7 +3133,7 @@ if (process.env.DISCORD_TOKEN) {
             continue;
           }
           msgsTotal += count; attTotal += att;
-          console.log(`[fbscan] ch guild=${gid} ch=${ch.id} name=${ch.name} msgs=${count}${capped ? "+" : ""} att=${att} oldest=${oldest ? new Date(oldest).toISOString() : "-"}`);
+          console.log(`[fbscan] ch guild=${gid} ch=${ch.id} name=${ch.name} msgs=${count}${capped ? "+" : ""} att=${att} oldest=${oldest ? new Date(oldest).toISOString() : "-"} newest=${newest ? new Date(newest).toISOString() : "-"}`);
         }
         console.log(`[fbscan] guild=${gid} name=${guild.name} channels=${all.size} text=${textChs.length} readable=${readable} blocked=${blocked} skipped=${skipped} msgs=${msgsTotal} att=${attTotal}`);
         lines.push(`· **${guild.name}** — 채널 ${all.size}(텍스트 ${textChs.length}) · 읽기 가능 ${readable} · 권한 막힘 ${blocked}${skipped ? ` · 시간 예산으로 건너뜀 ${skipped}` : ""} · 메시지 ${msgsTotal} · 첨부 ${attTotal}`);
