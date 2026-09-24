@@ -57,3 +57,22 @@
 
 ## 7. 롤백
 `drop trigger if exists trg_payreq_status on public.payment_requests;` 한 줄. 함수는 남겨도 무해(재처리용). 역참조 컬럼은 유지.
+
+## 8. 명부(student_id) 연결 시점 — 3중 해석 + DB 최후 가드 (2026-09-24 · 관제탑 개선 (a))
+
+실측(9/24 #27): 명부 등록 전에 `/결제신청`이 들어와 `student_id` null 로 저장됐고, 오너가 SQL 로 `approved` 를 찍자
+§18d `payreq_apply` 가 「명부 미연결 — student_id 비어 있음」으로 RAISE → 롤백됐다. **원자성 요건은 설계대로 동작**했고
+(approved 인데 payments 없는 상태 미발생), 오너가 students 103 을 수동 연결한 뒤 재승인해 payments 214 · 등록 154 가 생겼다.
+빠져 있던 것은 「나중에 명부가 생겨도 신청이 자동으로 이어지지 않는다」였다. 채택안 (a) — 등록 순서와 무관하게 결과가 같아진다.
+
+| 시점 | 무엇을 | 어디서 | 미해석이면 |
+|---|---|---|---|
+| ① 신청(`/결제신청`) | `resolveStudentId(이름, 담당)` 1회 → 있으면 `student_id` 저장 | server.js /결제신청 insert | null 로 저장 · 트레이너 응답과 오너 카드에 「명부 미연결 → /수강생등록 하면 자동으로 이어져」 표시 |
+| ② 등록(`/수강생등록`) | 같은 이름 · `pending` · `student_id is null` 신청을 새 students.id 로 PATCH | server.js `runStudentRegister` 1b | 동명 active 행이 있어 「그래도 등록」한 경우는 잇지 않는다(어느 행인지 사람이 정한다 → ③이 담당·상태로 고른다) |
+| ③ 승인(카드 ✅) | 종전 그대로 `resolveStudentId` → 미해석이면 승인 보류 | server.js payreq_ok | 「승인 보류 — 명부에서 못 찾았어」 · 신청은 pending 유지 |
+| ④ DB | §18d `payreq_apply`: `student_id` null 이면 RAISE → 상태 롤백 | 트리거(변경 없음) | SQL 승인 경로의 최후 가드 — ①②로 null 이 드물어져 발동 빈도만 준다 |
+
+- ②는 `status=eq.pending` 만 잇는다. `void`·`rejected`·`approved` 는 건드리지 않는다(approved 는 §18d 이후 null 이 존재할 수 없다).
+- 이름은 정확일치만(`resolveStudentId` 와 같은 원칙 — 유사도 매칭 금지 · 오귀속은 정산 오류).
+- 오너 DM(신규 등록 알림)에 `🔗 결제신청 #N 자동 연결` 한 줄이 붙는다. 승인은 여전히 카드 ✅ 로만 한다.
+- 기각한 (b)(오너 카드 「명부 미연결」 표시 + 연결 버튼)의 표시 부분만 ①에 흡수했다 — 버튼은 두지 않는다(연결 주체는 `/수강생등록`).
