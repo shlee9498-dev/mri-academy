@@ -2050,22 +2050,7 @@ if (process.env.DISCORD_TOKEN) {
       return itx.editReply(`❌ 명부(DB) 등록 실패 — ${e?.message || "오류"}\n↳ 시트는 건드리지 않았어. 운영자에게 문의해줘.`);
     }
 
-    // 1b) 명부 미연결 결제신청 자동 연결(관제탑 9/24 개선 (a)) — 신청(/결제신청)이 등록보다 먼저 들어온 경우.
-    //     같은 이름 · pending · student_id null 만 잇는다. 동명 active 행이 이미 있으면(p.dupNames) 어느 행인지
-    //     사람이 정해야 하므로 여기서는 잇지 않는다 — 승인 시점의 resolveStudentId 가 담당·상태로 고른다.
-    //     실측 배경(9/24 #27): 등록 전 신청 → student_id null → 오너 SQL 승인 → §18d RAISE(원자성은 지켜졌다).
-    let linkedReqs = [];
-    if (studentId != null && !p.dupNames) {
-      try {
-        const rows = await sbPatch("payment_requests",
-          `student_id=is.null&status=eq.pending&student_name=eq.${encodeURIComponent(p.name)}`, { student_id: studentId });
-        linkedReqs = (Array.isArray(rows) ? rows : []).map((r) => r.id);
-        if (linkedReqs.length) {
-          lines.push(`🔗 결제신청 #${linkedReqs.join(" #")} 명부 연결됨 — 오너 승인 대기는 그대로`);
-          console.log(`[payreq] autolink students.id=${studentId} ← payment_requests ${linkedReqs.join(",")}`);
-        }
-      } catch (e) { console.error("payreq_autolink", e?.message); }
-    }
+    // 결제신청 자동 연결은 두지 않는다(오너 판정 2026-09-24) — 명부 연결은 승인 카드에서 승인자가 확인·확정한다.
 
     // 2) 시트 — 레슨로그 탭에 행 생성. Apps Script 핸들러(type: student.add) 필요.
     //    미배포면 여기서 실패한다. 그 경우 DB만 남으므로 "사용 가능" 안내를 하지 않는다.
@@ -2121,7 +2106,6 @@ if (process.env.DISCORD_TOKEN) {
           p.ign ? `· 인게임닉: ${p.ign}${p.platform ? ` (${p.platform === "kakao" ? "카카오" : "스팀"})` : ""}` : null,
           p.note ? `· 비고: ${p.note}` : null,
           studentId ? `· students.id = ${studentId}` : null,
-          linkedReqs.length ? `· 🔗 결제신청 #${linkedReqs.join(" #")} 자동 연결 — 승인 대기 그대로(카드 ✅ 로 진행)` : null,
           p.dupNames ? `· ⚠️ 동명 active 행 있음(트레이너가 확인 후 진행): ${p.dupNames}` : null,
           "",
           sheetOk
@@ -2794,17 +2778,12 @@ if (process.env.DISCORD_TOKEN) {
         + "&status=in.(pending,approved)&order=id.desc&limit=1"))[0] || null;
     } catch (e) { console.error("payreq_dupcheck", e?.message); }
     const dupLine = dup ? `⚠️ 중복 의심 — 같은 학생·금액·입금일 신청 #${dup.id}(${dup.status === "approved" ? "승인됨" : "대기"})이 이미 있어` : "";
-    // 명부 해석을 신청 시점에도 1회 한다(관제탑 9/24 개선 (a) 보완) — 명부가 이미 있으면 student_id 를 지금 채워
-    // 오너가 SQL 로 승인해도 §18d 가 「명부 미연결」로 막지 않는다. 없으면 null 로 두고, /수강생등록이 이어 준다.
-    // 승인 시점 해석(payreq_ok)은 그대로 — 그때 다시 풀리는 이름은 그때 채운다.
-    let sid = null;
-    try { sid = await resolveStudentId(name, trainer_id); }
-    catch (e) { console.error("payreq_resolve_at_request", e?.message); }
-    const rosterLine = sid != null ? `연결됨(#${sid})` : "**미연결** — /수강생등록 하면 자동으로 이어져";
+    // 명부 연결은 **승인 시점에만** 한다(오너 판정 2026-09-24) — 판수·금액이 붙는 연결이라 신청 시점·등록 직후의
+    // 자동 연결은 두지 않는다. 승인 카드 ✅ 가 후보를 펼치고 승인자가 확인·변경한 뒤 승인과 함께 확정한다.
     let req;
     try {
       req = await sbInsert("payment_requests", {
-        student_name: name, student_id: sid, trainer_id, trainer_name: trainer, kind, amount, games,
+        student_name: name, trainer_id, trainer_name: trainer, kind, amount, games,
         paid_on, memo, pay_channel, requested_by: itx.user.id,
       });
     } catch (e) {
@@ -2820,7 +2799,7 @@ if (process.env.DISCORD_TOKEN) {
           new ButtonBuilder().setCustomId(`payreq_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
         );
         await owner.send({
-          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}**\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}\n· 채널: ${channelLine(pay_channel, amount)}\n· 명부: ${rosterLine}${memo ? `\n· 메모: ${memo}` : ""}${dupLine ? `\n${dupLine}` : ""}`,
+          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}**\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}\n· 채널: ${channelLine(pay_channel, amount)}${memo ? `\n· 메모: ${memo}` : ""}${dupLine ? `\n${dupLine}` : ""}`,
           components: [row],
         });
         dmOk = true;
@@ -2829,44 +2808,154 @@ if (process.env.DISCORD_TOKEN) {
     await itx.editReply(
       `✅ 결제 신청 접수 **#${req.id}** — ${name} · ${kind}${games ? ` ${games}판` : ""} · ${amount.toLocaleString("ko-KR")}원 · ${CHANNEL_LABEL[pay_channel]} · 입금일 ${paid_on}\n`
       + (dmOk ? "오너 승인 대기 중이야." : "⚠️ 오너 DM 발송 실패 — 신청은 저장됐어(pending). 오너에게 직접 알려줘.")
-      + `\n📇 명부 ${rosterLine}`
       + (dupLine ? `\n${dupLine} — 중복이면 오너에게 반려를 요청해줘.` : ""));
   });
 
-  // ── /결제신청 승인·반려 버튼 (오너 DM) — 처리 전 상태를 DB에서 재확인(중복 클릭 방어) ──
-  client.on("interactionCreate", async (itx) => {
-    if (!itx.isButton()) return;
-    const m = itx.customId.match(/^payreq_(ok|no):(\d+)$/);
-    if (!m) return;
-    if (!process.env.MRI_OWNER_ID || itx.user.id !== process.env.MRI_OWNER_ID)
-      return itx.reply({ content: "오너 전용 버튼이야.", ephemeral: true });
-    const reqId = Number(m[2]);
-    let q;
-    try { q = (await sbSelect("payment_requests", `select=*&id=eq.${reqId}&limit=1`))[0]; }
-    catch (e) { console.error("payreq_fetch", e?.message); }
-    if (!q) return itx.update({ content: `#${reqId} 신청을 못 찾았어(DB 확인 필요).`, components: [] });
-    if (q.status !== "pending")
-      return itx.update({ content: `#${reqId}은 이미 처리됐어(${q.status === "approved" ? "승인" : "반려"}).`, components: [] });
+  // ── /결제신청 승인·반려 (오너 DM) — v2: 승인 시점에 명부 연결 대상을 펼치고, 승인자가 확인한 뒤 승인과 함께 확정 ──
+  //   오너 판정 2026-09-24: 판수·금액이 붙는 연결이라 「잘못 연결되는 것」을 막는 쪽으로 간다.
+  //     · 신청 시점·등록 직후 자동 연결 없음(제거). 이름 정확일치(students.name → student_aliases.alias) 후보를 ✅ 시점에 펼친다.
+  //     · 후보 1명 → 이름·담당·상태·디코 연결·최근 수업일·잔여 판수를 보여주고 「이 대상으로 승인」 · 「대상 변경」.
+  //     · 후보 2명 이상 → 자동 연결하지 않고 「대상 선택 필요」(선택 메뉴). 0명 → 보류 + 「대상 변경」(이름·명부 번호 입력).
+  //     · 승인(status=approved + student_id)은 payreq_go 에서만 일어난다. 반려는 어느 단계에서든 payreq_no.
+  //   상태는 DB 가 들고 있어 재기동을 넘긴다 — customId 에는 신청 id 와 명부 id 만 싣는다. 판수·금액 데이터는 손대지 않는다.
+  const PAYREQ_MARK = "\n\n📇 **명부 연결 대상**";
+  const PAYREQ_STATUS_KO = { active: "활성", paused: "보류", done: "수료" };
+  const payreqBaseText = (msg) => String(msg?.content || "").split(PAYREQ_MARK)[0];
+  const isPayreqOwner = (itx) => !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
 
-    const approve = m[1] === "ok";
+  // 이름 정확일치 후보 — 상태 무관하게 전부(수료·보류 행이 정답인 재등록 케이스가 있다). 유사도 매칭 없음.
+  async function payreqCandidates(name) {
+    const n = encodeURIComponent(String(name || "").trim());
+    if (!n) return [];
+    let rows = [];
+    try { rows = await sbSelect("students", `select=id,name,status,trainer_id,discord_id&name=eq.${n}&order=id.asc`); }
+    catch (e) { console.error("payreq_cand", e?.message); }
+    try {
+      const al = await sbSelect("student_aliases", `select=student_id&alias=eq.${n}`);
+      const extra = [...new Set(al.map((a) => a.student_id))].filter((id) => !rows.some((r) => r.id === id));
+      if (extra.length)
+        rows = rows.concat(await sbSelect("students", `select=id,name,status,trainer_id,discord_id&id=in.(${extra.join(",")})&order=id.asc`));
+    } catch (e) { console.error("payreq_cand_alias", e?.message); }   // 별칭 테이블 미생성이어도 이름 후보는 살린다
+    return rows;
+  }
+  async function payreqStudentById(id) {
+    if (!Number.isInteger(id) || id <= 0) return null;
+    try { return (await sbSelect("students", `select=id,name,status,trainer_id,discord_id&id=eq.${id}&limit=1`))[0] || null; }
+    catch (e) { console.error("payreq_student", e?.message); return null; }
+  }
+  // 후보 상세 — 담당(staff) · 상태 · 디코 연결(students.discord_id) · 최근 수업일(lesson_sessions) · 잔여 판수(§23 portal_remaining_games · 실패 시 ?)
+  async function payreqDescribe(rows) {
+    const staff = await staffNameMap();
+    const out = [];
+    for (const r of rows) {
+      let last = "-", remain = "?";
+      try { last = (await sbSelect("lesson_sessions", `select=played_at&student_id=eq.${r.id}&order=played_at.desc&limit=1`))[0]?.played_at || "-"; } catch (_) {}
+      try { const v = await sbRpc("portal_remaining_games", { p_student_id: r.id }); if (v != null && !Number.isNaN(Number(v))) remain = String(v); } catch (_) {}
+      const trainer = staff[r.trainer_id] || "없음";
+      out.push({
+        ...r, last, remain, trainer,
+        line: `**${r.name}** · 명부 #${r.id} · 담당 ${trainer} · ${PAYREQ_STATUS_KO[r.status] || r.status}`
+          + ` · 디코 ${r.discord_id ? "연결됨" : "미연결"} · 최근 수업 ${last} · 잔여 ${remain}판`,
+      });
+    }
+    return out;
+  }
+  function payreqButtons(reqId, sid) {
+    const row = new ActionRowBuilder();
+    if (sid != null)
+      row.addComponents(new ButtonBuilder().setCustomId(`payreq_go:${reqId}:${sid}`).setLabel("✅ 이 대상으로 승인").setStyle(ButtonStyle.Success));
+    row.addComponents(
+      new ButtonBuilder().setCustomId(`payreq_pick:${reqId}`).setLabel("🔎 대상 변경").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`payreq_no:${reqId}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
+    );
+    return row;
+  }
+  // 카드를 「확인 단계」로 바꾼다. 후보 0 = 보류 · 1 = 승인 버튼 · 2+ = 선택 메뉴(자동 연결 없음).
+  async function payreqShowTargets(itx, reqId, q, cands, note) {
+    const base = payreqBaseText(itx.message);
+    const tail = note ? `\n${note}` : "";
+    if (!cands.length) {
+      return itx.update({
+        content: base + PAYREQ_MARK + `\n승인 보류 — 명부에서 "${q.student_name}"을 못 찾았어(오타·동명·미등록). \`/수강생등록\` 뒤 다시 ✅, 또는 「대상 변경」에 이름·명부 번호를 넣어줘.` + tail,
+        components: [payreqButtons(reqId, null)],
+      });
+    }
+    const det = await payreqDescribe(cands);
+    if (det.length === 1) {
+      return itx.update({
+        content: base + PAYREQ_MARK + `\n${det[0].line}` + tail + `\n맞으면 「이 대상으로 승인」 — 승인과 함께 명부 #${det[0].id} 로 확정돼. 다른 사람이면 「대상 변경」.`,
+        components: [payreqButtons(reqId, det[0].id)],
+      });
+    }
+    const menu = new StringSelectMenuBuilder().setCustomId(`payreq_sel:${reqId}`).setPlaceholder("대상 선택 필요 — 명부 행을 고르세요")
+      .addOptions(det.slice(0, 25).map((d) => ({
+        label: `${d.name} · #${d.id} · ${PAYREQ_STATUS_KO[d.status] || d.status}`.slice(0, 100),
+        description: `담당 ${d.trainer} · 디코 ${d.discord_id ? "연결" : "미연결"} · 최근 ${d.last} · 잔여 ${d.remain}판`.slice(0, 100),
+        value: String(d.id),
+      })));
+    return itx.update({
+      content: base + PAYREQ_MARK + `\n⚠️ **대상 선택 필요** — "${q.student_name}" 에 명부 ${det.length}행이 걸려 자동으로 잇지 않아.\n`
+        + det.map((d) => `· ${d.line}`).join("\n") + tail,
+      components: [new ActionRowBuilder().addComponents(menu), payreqButtons(reqId, null)],
+    });
+  }
+  // 처리 전 상태를 DB 에서 재확인(중복 클릭 방어). pending 이 아니면 카드를 닫고 null.
+  async function payreqLoadPending(itx, reqId) {
+    let q = null;
+    try { q = (await sbSelect("payment_requests", `select=*&id=eq.${reqId}&limit=1`))[0] || null; }
+    catch (e) { console.error("payreq_fetch", e?.message); }
+    if (!q) { await itx.update({ content: `#${reqId} 신청을 못 찾았어(DB 확인 필요).`, components: [] }); return null; }
+    if (q.status !== "pending") {
+      await itx.update({ content: `#${reqId}은 이미 처리됐어(${q.status === "approved" ? "승인" : q.status === "rejected" ? "반려" : q.status}).`, components: [] });
+      return null;
+    }
+    return q;
+  }
+
+  client.on("interactionCreate", async (itx) => {
+    if (!(itx.isButton() || itx.isStringSelectMenu() || itx.isModalSubmit())) return;
+    const m = String(itx.customId || "").match(/^payreq_(ok|no|go|pick|pickm|sel):(\d+)(?::(\d+))?$/);
+    if (!m) return;
+    const action = m[1], reqId = Number(m[2]), arg = m[3] != null ? Number(m[3]) : null;
+    if (!isPayreqOwner(itx)) return itx.reply({ content: "오너 전용 버튼이야.", ephemeral: true });
+
+    // 「대상 변경」 — 모달(이름 또는 명부 번호). 모달은 첫 응답이어야 해서 DB 조회보다 먼저 연다.
+    if (action === "pick") {
+      const modal = new ModalBuilder().setCustomId(`payreq_pickm:${reqId}`).setTitle(`#${reqId} 명부 연결 대상 변경`);
+      modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId("q").setLabel("수강생 이름(정확히) 또는 명부 번호").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(40)));
+      return itx.showModal(modal);
+    }
+    if (action === "pickm" && !itx.isFromMessage())
+      return itx.reply({ content: "카드에서 「대상 변경」을 다시 눌러줘.", ephemeral: true });
+
+    const q = await payreqLoadPending(itx, reqId);
+    if (!q) return;
+
+    if (action === "ok") return payreqShowTargets(itx, reqId, q, await payreqCandidates(q.student_name), null);   // ✅ = 확인 단계(승인 아님)
+    if (action === "sel") {
+      const s = await payreqStudentById(Number(itx.values?.[0]));
+      return payreqShowTargets(itx, reqId, q, s ? [s] : [], s ? "선택한 대상이야." : "선택한 명부 행을 못 찾았어.");
+    }
+    if (action === "pickm") {
+      const text = String(itx.fields.getTextInputValue("q") || "").trim();
+      const cands = /^\d+$/.test(text) ? [await payreqStudentById(Number(text))].filter(Boolean) : await payreqCandidates(text);
+      return payreqShowTargets(itx, reqId, q, cands, `입력: "${text}"`);
+    }
+
+    const approve = action === "go";
     const patch = { status: approve ? "approved" : "rejected", decided_by: itx.user.id, decided_at: new Date().toISOString() };
+    let target = null;
     if (approve) {
-      // 이름 해석은 승인 시점 1회. 미해석(null)이면 **승인을 막는다**(관제탑 8/23 §1-4 · 9/17 지시 A 요건 1) —
-      // §18d 트리거가 student_id 없이는 본표를 만들 수 없고, 예전처럼 approved 만 남기면 미반영이 조용히 쌓인다.
-      let sid = null;
-      try { sid = await resolveStudentId(q.student_name, q.trainer_id); }
-      catch (e) { console.error("payreq_resolve", e?.message); }
-      if (sid == null)
-        return itx.reply({
-          content: `#${reqId} 승인 보류 — 명부에서 "${q.student_name}"을 못 찾았어(오타·동명·미등록). \`/수강생등록\` 또는 명부 연결 후 이 버튼을 다시 눌러줘.`,
-          ephemeral: true,
-        });
-      patch.student_id = sid;
+      // 승인은 승인자가 고른 명부 행으로만 — §18d 트리거가 student_id 없이는 본표를 만들 수 없고, 잘못 붙으면 판수·금액이 남에게 간다.
+      target = await payreqStudentById(arg);
+      if (!target) return itx.reply({ content: `명부 #${arg} 행이 없어. 「대상 변경」으로 다시 골라줘.`, ephemeral: true });
+      patch.student_id = target.id;
     }
     let patched = null;
     try { patched = await sbPatch("payment_requests", `id=eq.${reqId}`, patch); }
     catch (e) {
-      // §18d 트리거 예외(잠금·판수 없음 등)가 여기로 온다 — 상태는 롤백돼 pending 그대로다.
+      // §18d 트리거 예외(잠금·판수 없음·명부 미연결 등)가 여기로 온다 — 상태는 롤백돼 pending 그대로다.
       // 사유를 오너에게 그대로 보인다(조용히 넘어가는 것이 9/17 사고의 본질 — 요건 3).
       console.error("payreq_patch", e?.message);
       let why = "";
@@ -2877,9 +2966,9 @@ if (process.env.DISCORD_TOKEN) {
       });
     }
     if (approve) {
+      console.log(`[payreq] approve #${reqId} → students.id=${target.id} (승인자 확정)`);
       // 본표 반영 결과 — PATCH 응답(RETURNING)은 §18d AFTER 트리거가 payment_id 를 채우기 **전** 스냅샷이라
-      // 항상 null 로 온다(9/20 #28 실측: payments 213·등록 153 이 생성됐는데 카드는 「본표 미반영」을 찍었다).
-      // 그래서 갱신 뒤 같은 행을 다시 읽는다. 컬럼 자체가 없으면(§18b 미실행) 종전대로 undefined.
+      // 항상 null 로 온다(9/20 #28 실측). 그래서 갱신 뒤 같은 행을 다시 읽는다. 컬럼 자체가 없으면(§18b 미실행) 종전대로 undefined.
       let row = Array.isArray(patched) ? patched[0] : null;
       if (row && Object.prototype.hasOwnProperty.call(row, "payment_id")) {
         try { row = (await sbSelect("payment_requests", `select=payment_id,lesson_enrollment_id&id=eq.${reqId}&limit=1`))[0] || row; }
@@ -2906,7 +2995,7 @@ if (process.env.DISCORD_TOKEN) {
       await itx.update({
         content:
           `✅ **#${reqId} 승인** — ${q.student_name} · ${won(q.amount)}원 (${q.kind}${q.games ? ` ${q.games}판` : ""})`
-          + ` · 명부 #${patch.student_id}`
+          + ` · 명부 #${target.id} ${target.name}${target.name !== q.student_name ? `(신청명 ${q.student_name})` : ""}`
           + `\n· 채널: ${channelLine(ch, q.amount)}`
           + ledgerNote
           + `\n📋 결제_원장 기입 행(복붙):\n\`${ledger}\``
