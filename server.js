@@ -1214,7 +1214,7 @@ if (process.env.DISCORD_TOKEN) {
   const hasSupabase = () => !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
   // /수업등록 성공분을 DB lesson_sessions에도 기록(시트 병행·검증용).
   //   시트가 진실인 단계 — DB insert는 best-effort: 실패/이름 미매칭이어도 명령 성공(오너 DM만).
-  async function dualWriteSessions(trainerName, students, memo, createdBy) {
+  async function dualWriteSessions(trainerName, students, memo, createdBy, sidOf) {
     if (!hasSupabase()) return { skipped: true, miss: [], unattached: [] };
     const played_at = kstToday();
     let trainer_id = null;
@@ -1225,7 +1225,8 @@ if (process.env.DISCORD_TOKEN) {
     const rows = [], miss = [], unattached = [];
     for (const s of students) {
       try {
-        const sid = await resolveStudentId(s.name, trainer_id);   // 병행수강 2행이면 본인 담당 행 우선
+        // 호출자가 확정한 명부 id(동명 선택 완료분)를 우선 쓴다. 없으면 이름 해석 — 동명이면 null → miss(오너 DM).
+        const sid = sidOf && sidOf[s.name] != null ? sidOf[s.name] : await resolveStudentId(s.name);
         if (sid == null) { miss.push(s.name); continue; }
         const enrId = await resolveEnrollmentId(sid, trainer_id);
         if (enrId == null) unattached.push(s.name);
@@ -1305,34 +1306,75 @@ if (process.env.DISCORD_TOKEN) {
       return null;                                     // 전 등록 소진 — 규칙 4
     } catch (e) { console.error("dualwrite_enr_lookup", studentId, e?.message); return null; }
   }
-  // 이름→students.id 해석. 미매칭 null.
-  // 동명 다행(병행수강 의도적 2행 포함) 결정론: ① status='active' 우선
-  // ② trainerId 주어지면 그 트레이너 담당(trainer_id) 행 우선 ③ 동률이면 id 오름차순(먼저 등록된 행).
-  // 과거엔 limit=1 무정렬이라 아무 행이나 집었다 — 동명 중복행에 판수가 붙는 사고의 원인.
   // 이름 → student_id 해석. 순서: ① students.name 정확일치 ② student_aliases ③ 미해석(null).
   //  유사도·편집거리 매칭은 넣지 않는다 — 1글자 차이인 별개 인물이 실재하고
   //  (김재성↔김현성 · 주성준↔지성준), 오탐이 곧 오귀속이며 오귀속은 정산 오류다.
   //  미해석은 지금처럼 null로 두고 /수업등록의 오너 DM 경로가 처리한다.
-  async function resolveStudentId(name, trainerId) {
-    try {
-      const rows = await sbSelect("students", `select=id,status,trainer_id&name=eq.${encodeURIComponent(name)}&order=id.asc`);
-      if (!rows.length) {
-        // 별칭 조회 — 원장/시트 표기가 students.name과 다른 경우.
-        // 테이블 미생성(DDL 미실행) 시에도 기존 동작(null)으로 안전하게 떨어진다.
-        try {
-          const al = await sbSelect("student_aliases", `select=student_id&alias=eq.${encodeURIComponent(name)}&limit=1`);
-          if (al.length) return al[0].student_id;
-        } catch (e) { console.error("resolve_alias", name, e?.message); }
-        return null;
-      }
-      // 동명 다행을 드러낸다 — 조용히 한쪽만 갱신되던 게 정희준/정희훈이 갈라진 구조다.
-      if (rows.length > 1)
-        console.warn(`[resolve] 동명 ${rows.length}행 — "${name}" (id: ${rows.map((r) => r.id).join(",")}) · 중복/병행수강 확인 필요`);
-      const rank = (r) => (r.status === "active" ? 0 : 2) + (trainerId != null && r.trainer_id === trainerId ? 0 : 1);
-      let best = rows[0];
-      for (const r of rows) if (rank(r) < rank(best)) best = r;   // 동률은 id.asc 순서 유지
-      return best.id;
-    } catch (e) { console.error("resolve_student", name, e?.message); return null; }
+  // ⚠️ 동명 2행 이상이면 **고르지 않고 null** (오너 판정 2026-09-25). 종전엔 활성 > 담당 > 낮은 id 순으로
+  //    조용히 한 행을 골랐다 — 「내 담당은 수료·상대 담당은 활성」이면 남의 활성 행에 판수가 붙는 구조였다
+  //    (실측: 동명 3쌍 6행 · 봇 기록은 아직 0건). 후보가 필요한 호출자는 resolveStudentCandidates()로 받아
+  //    트레이너에게 고르게 한다 — 고르기 전에는 어디에도 쓰지 않는다.
+  async function resolveStudentId(name) {
+    try { return (await resolveStudentCandidates(name)).sid; }
+    catch (e) { console.error("resolve_student", name, e?.message); return null; }
+  }
+  // 이름 → 후보 전부. { sid, cands } — 1행이면 sid 확정 · 0행이면 null(미해석) · 2행 이상이면 null(선택 필요).
+  // 별칭(student_aliases.alias)도 전부 본다 — 같은 별칭이 두 명에게 걸려 있으면 그것도 선택 필요다.
+  const STUDENT_PICK_COLS = "select=id,name,status,trainer_id,pubg_name";
+  async function resolveStudentCandidates(name) {
+    const n = encodeURIComponent(name);
+    let rows = await sbSelect("students", `${STUDENT_PICK_COLS}&name=eq.${n}&order=id.asc`);
+    if (!rows.length) {
+      // 별칭 조회 — 원장/시트 표기가 students.name과 다른 경우. 테이블 미생성(DDL 미실행) 시에도 null로 안전하게 떨어진다.
+      let ids = [];
+      try { ids = [...new Set((await sbSelect("student_aliases", `select=student_id&alias=eq.${n}`)).map((a) => Number(a.student_id)).filter(Number.isFinite))]; }
+      catch (e) { console.error("resolve_alias", name, e?.message); }
+      rows = ids.length ? await sbSelect("students", `${STUDENT_PICK_COLS}&id=in.(${ids.join(",")})&order=id.asc`) : [];
+    }
+    if (rows.length > 1)
+      console.warn(`[resolve] 동명 ${rows.length}행 — "${name}" (id: ${rows.map((r) => r.id).join(",")}) · 선택 필요`);
+    return { sid: rows.length === 1 ? rows[0].id : null, cands: rows };
+  }
+  // 선택지 한 줄 = 이름(닉네임) · 담당 · 상태 / 잔여 N판 · 명부 #id — 트레이너가 "내 학생인지"를 보고 고른다.
+  //   닉네임 = students.pubg_name(없으면 이름만). 잔여 = §23 portal_remaining_games(실패 시 ?). 디스코드 라벨 100자.
+  const studentLabel = (s) => `${s.name}${s.pubg_name ? `(${s.pubg_name})` : ""}`;
+  const STU_STATUS_KO = { active: "활성", paused: "보류", done: "수료" };
+  async function studentPickOptions(cands) {
+    const staff = {};
+    try { (await sbSelect("staff", "select=id,name")).forEach((r) => { staff[r.id] = r.name; }); } catch (_) {}
+    const out = [];
+    for (const c of cands.slice(0, 25)) {
+      let remain = "?";
+      try { const v = await sbRpc("portal_remaining_games", { p_student_id: c.id }); if (v != null && !Number.isNaN(Number(v))) remain = String(v); } catch (_) {}
+      out.push({
+        label: `${studentLabel(c)} · ${staff[c.trainer_id] || "담당없음"} · ${STU_STATUS_KO[c.status] || c.status}`.slice(0, 100),
+        description: `잔여 ${remain}판 · 명부 #${c.id}`.slice(0, 100),
+        value: String(c.id),
+      });
+    }
+    return out;
+  }
+  // /수업등록 동명 선택 대기 — 고르기 전에는 시트·DB·상담 소급 어디에도 쓰지 않는다.
+  const LESSON_PENDING = new Map();                 // discord_id → { ctx, at }
+  const LESSON_PENDING_TTL_MS = 10 * 60 * 1000;
+  // 동명 선택 메시지 — 미확정 이름마다 메뉴 1개(한 메시지 최대 5개 · 디스코드 행 제한). 초과분은 고르는 대로 이어진다.
+  async function lessonPickMessage(ctx) {
+    const open = ctx.ambiguous.filter((a) => a.sid == null);
+    const rows = [];
+    for (const a of open.slice(0, 5)) {
+      rows.push(new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId(`lesson_pick:${ctx.ambiguous.indexOf(a)}`)
+          .setPlaceholder(`「${a.name}」 — 누구인지 고르기`.slice(0, 150))
+          .addOptions(await studentPickOptions(a.cands))));
+    }
+    const done = ctx.ambiguous.filter((a) => a.sid != null).map((a) => `· ${a.name} → 명부 #${a.sid}`);
+    return {
+      content: `⚠️ **동명 수강생이 있어 — 누구인지 골라줘.** 고르기 전에는 시트·DB 어디에도 기록되지 않아.\n`
+        + open.map((a) => `· ${a.name}: 명부 ${a.cands.length}행`).join("\n")
+        + (done.length ? `\n\n확정됨\n${done.join("\n")}` : "")
+        + (open.length > 5 ? "\n\n(한 번에 5명까지 — 고르면 나머지가 이어져)" : ""),
+      components: rows,
+    };
   }
   // 상담(진단상담) 이력 조회 — 이름별 최근 1건. /수업등록 시 "○○님 상담 이력" 표시용.
   async function consultHistoryFor(names) {
@@ -1375,16 +1417,107 @@ if (process.env.DISCORD_TOKEN) {
 
     await itx.deferReply({ ephemeral: true });
 
-    // 명령 트레이너의 staff.id — 동명 다행(병행수강) 매칭 시 본인 담당 행 우선용
+    // 명령 트레이너의 staff.id — 상담 로그(trainer_id)용
     let trainerStaffId = null;
     try { trainerStaffId = (await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainer)}&limit=1`))[0]?.id ?? null; } catch (_) {}
 
-    // 이름→student_id 해석 + 과거 미연결 상담로그 소급 연결(모든 구분 공통)
-    const sidOf = {};
+    // ── 구분=레슨 : 유형별 판수 산정(유형 미선택 시 개인) — 동명 선택보다 먼저 검증한다 ──
+    // 고르게 해 놓고 시간·판수 누락으로 거부하면 헛수고라, 입력 오류는 여기서 먼저 거른다.
+    // 유형 미선택 = 개인 1:1 (2026-09-03 오너 확정). 그룹은 명시적으로 골라야만 그룹 차감된다.
+    // 폴백이 조용히 틀릴 위험은 낮다 — 개인은 '시간'이 필수라, 유형·시간을 함께 빠뜨리면
+    // 아래에서 차감표 안내와 함께 거부된다. 실제로 적용된 유형은 회신 첫 줄에 항상 표기된다.
+    const lessonKind = lessonType || "개인";
+    const kindDefaulted = !lessonType;
+    let students = null;
+    if (guboon === "레슨") {
+      const cap = LESSON_CAP[lessonKind];
+      if (cap && names.length > cap)
+        return itx.editReply(`${lessonKind}은 최대 ${cap}명이야. (입력: ${names.length}명)`
+          + (kindDefaulted ? `\n↳ '유형'을 안 골라서 **개인 1:1**로 처리했어. 그룹이면 유형을 직접 선택해줘.` : ""));
+      // 판수 산정: 그룹=판수 옵션(기본 1, 각 학생 동일 판수), 개인=차감표 매핑(LESSON_HOURS_TO_GAMES)
+      if (lessonKind === "개인") {
+        // 판수를 채웠는데 유형을 안 골랐으면 그룹을 의도한 것이다. #293 폴백이 개인으로 보내
+        // "시간을 입력해줘"라는 엉뚱한 안내가 나가면, 트레이너가 명령을 쪼개 다시 넣는다
+        // (실측 ls145·146 — 같은 날 2명을 1분 간격 두 건으로 분할 등록). 여기서 짚어준다.
+        if (kindDefaulted && gamesInput && gamesInput > 0)
+          return itx.editReply(`'유형'을 안 골랐는데 '판수'가 들어와서 뭘 하려는지 애매해.\n`
+            + `· 그룹이면 **유형(관전형/참여형)** 을 고르고 다시 보내줘 — 여러 명·여러 판을 한 번에 넣을 수 있어 `
+            + `(예: \`학생: 가,나  유형: 참여형  판수: ${gamesInput}\`).\n`
+            + `· 개인 1:1이면 '판수' 대신 **시간**을 골라줘 (${LESSON_HOURS_TEXT}).`);
+        if (!hours || hours <= 0) return itx.editReply(`개인 수업은 '시간'을 입력해줘 (${LESSON_HOURS_TEXT}).`);
+        // 계수(hours*5) 폐기 — 차감표에 있는 값만 인정한다. 30분(3판)은 2026-09-03 오너 확정으로 폐기됐다.
+        const games = LESSON_HOURS_TO_GAMES[hours];
+        if (!games)
+          return itx.editReply(`⚠️ ${hours}시간은 차감표에 없어. **${LESSON_HOURS_TEXT}** 중에서 골라줘.`);
+        students = names.map((name) => ({ name, games }));
+      } else {
+        const games = gamesInput && gamesInput > 0 ? gamesInput : 1;
+        students = names.map((name) => ({ name, games }));
+      }
+    }
+
+    // ── 이름 → 명부 해석 (오너 판정 2026-09-25) ──
+    // 동명(2행 이상)은 조용히 고르지 않는다. 트레이너가 메뉴에서 고르기 전에는 시트·DB·상담 소급
+    // 어디에도 쓰지 않는다 — 어느 행에 붙느냐가 곧 판수·정산이다.
+    // 1행 = 확정 · 0행 = 미해석(null · 기존처럼 오너 DM 경로) · 2행 이상 = 선택 대기.
+    const ctx = { trainer, trainerStaffId, guboon, lessonKind, kindDefaulted, memo, names, students, webhook,
+                  sidOf: {}, ambiguous: [] };
     for (const name of names) {
-      const sid = await resolveStudentId(name, trainerStaffId);
-      sidOf[name] = sid;
-      if (sid != null) { try { await sbPatch("consults", `student_name=eq.${encodeURIComponent(name)}&student_id=is.null`, { student_id: sid }); } catch (_) {} }
+      let r = { sid: null, cands: [] };
+      try { r = await resolveStudentCandidates(name); } catch (e) { console.error("lesson_resolve", e?.message); }
+      if (r.cands.length > 1) ctx.ambiguous.push({ name, cands: r.cands, sid: null });
+      else ctx.sidOf[name] = r.sid;
+    }
+    if (ctx.ambiguous.length) {
+      LESSON_PENDING.set(itx.user.id, { ctx, at: Date.now() });
+      try { return await itx.editReply(await lessonPickMessage(ctx)); }
+      catch (e) {
+        console.error("lesson_pick_prepare", e?.message);
+        LESSON_PENDING.delete(itx.user.id);
+        return itx.editReply("❌ 동명 후보를 불러오지 못했어. **기록하지 않았어**(판수 변경 없음) — 운영진에게 알려줘.");
+      }
+    }
+    return runLessonRegister(itx, ctx);
+  });
+
+  // 동명 선택 메뉴 응답 — 고른 이름을 확정하고, 전원 확정되면 그때 등록을 실행한다.
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isStringSelectMenu() || !itx.customId.startsWith("lesson_pick:")) return;
+    const pend = LESSON_PENDING.get(itx.user.id);
+    if (!pend || Date.now() - pend.at > LESSON_PENDING_TTL_MS) {
+      LESSON_PENDING.delete(itx.user.id);
+      return itx.update({ content: "선택 시간이 지나 **기록하지 않았어**(판수 변경 없음).", components: [] });
+    }
+    const { ctx } = pend;
+    const a = ctx.ambiguous[Number(itx.customId.slice("lesson_pick:".length))];
+    const sid = Number(itx.values?.[0]);
+    if (!a || a.sid != null || !a.cands.some((c) => Number(c.id) === sid)) {
+      // 후보 밖의 값·이미 확정된 항목 — 기록하지 않고 멈춘다(재시도 유도 없음).
+      LESSON_PENDING.delete(itx.user.id);
+      return itx.update({ content: "선택값이 후보에 없어 **기록하지 않았어**(판수 변경 없음).", components: [] });
+    }
+    a.sid = sid;
+    ctx.sidOf[a.name] = sid;
+    console.log(`[resolve] 동명 선택 → students.id=${sid} (수업등록)`);
+    if (ctx.ambiguous.some((x) => x.sid == null)) {
+      pend.at = Date.now();
+      return itx.update(await lessonPickMessage(ctx));
+    }
+    LESSON_PENDING.delete(itx.user.id);
+    await itx.update({ content: "전원 확정 — 기록 중…", components: [] });
+    return runLessonRegister(itx, ctx);
+  });
+
+  // 등록 본체 — 명부가 전부 확정된 뒤에만 들어온다(슬래시 직접 · 동명 선택 완료, 두 경로 공용).
+  async function runLessonRegister(itx, ctx) {
+    const { trainer, trainerStaffId, guboon, lessonKind, kindDefaulted, memo, names, students, webhook, sidOf, ambiguous } = ctx;
+    const pickedNames = new Set(ambiguous.map((a) => a.name));
+
+    // 과거 미연결 상담로그 소급 연결(모든 구분 공통) — 동명으로 고른 이름은 제외한다.
+    // 과거 상담이 두 사람 중 누구 것인지 이름만으로는 알 수 없다 → 오너가 수동으로 붙인다.
+    for (const name of names) {
+      const sid = sidOf[name];
+      if (sid != null && !pickedNames.has(name)) { try { await sbPatch("consults", `student_name=eq.${encodeURIComponent(name)}&student_id=is.null`, { student_id: sid }); } catch (_) {} }
     }
     const hist = await consultHistoryFor(names);                    // 상담 이력 표시(공통)
     const histLines = hist.map((h) => `💬 ${h.name}님 ${h.date} 진단상담 이력 있음`);
@@ -1413,37 +1546,7 @@ if (process.env.DISCORD_TOKEN) {
       return itx.editReply(out.join("\n"));
     }
 
-    // ── 구분=레슨 : 유형별 판수 산정(유형 미선택 시 개인) ──
-    // 유형 미선택 = 개인 1:1 (2026-09-03 오너 확정). 그룹은 명시적으로 골라야만 그룹 차감된다.
-    // 폴백이 조용히 틀릴 위험은 낮다 — 개인은 '시간'이 필수라, 유형·시간을 함께 빠뜨리면
-    // 아래에서 차감표 안내와 함께 거부된다. 실제로 적용된 유형은 회신 첫 줄에 항상 표기된다.
-    const lessonKind = lessonType || "개인";
-    const kindDefaulted = !lessonType;
-    const cap = LESSON_CAP[lessonKind];
-    if (cap && names.length > cap)
-      return itx.editReply(`${lessonKind}은 최대 ${cap}명이야. (입력: ${names.length}명)`
-        + (kindDefaulted ? `\n↳ '유형'을 안 골라서 **개인 1:1**로 처리했어. 그룹이면 유형을 직접 선택해줘.` : ""));
-    // 판수 산정: 그룹=판수 옵션(기본 1, 각 학생 동일 판수), 개인=차감표 매핑(LESSON_HOURS_TO_GAMES)
-    let students;
-    if (lessonKind === "개인") {
-      // 판수를 채웠는데 유형을 안 골랐으면 그룹을 의도한 것이다. #293 폴백이 개인으로 보내
-      // "시간을 입력해줘"라는 엉뚱한 안내가 나가면, 트레이너가 명령을 쪼개 다시 넣는다
-      // (실측 ls145·146 — 같은 날 2명을 1분 간격 두 건으로 분할 등록). 여기서 짚어준다.
-      if (kindDefaulted && gamesInput && gamesInput > 0)
-        return itx.editReply(`'유형'을 안 골랐는데 '판수'가 들어와서 뭘 하려는지 애매해.\n`
-          + `· 그룹이면 **유형(관전형/참여형)** 을 고르고 다시 보내줘 — 여러 명·여러 판을 한 번에 넣을 수 있어 `
-          + `(예: \`학생: 가,나  유형: 참여형  판수: ${gamesInput}\`).\n`
-          + `· 개인 1:1이면 '판수' 대신 **시간**을 골라줘 (${LESSON_HOURS_TEXT}).`);
-      if (!hours || hours <= 0) return itx.editReply(`개인 수업은 '시간'을 입력해줘 (${LESSON_HOURS_TEXT}).`);
-      // 계수(hours*5) 폐기 — 차감표에 있는 값만 인정한다. 30분(3판)은 2026-09-03 오너 확정으로 폐기됐다.
-      const games = LESSON_HOURS_TO_GAMES[hours];
-      if (!games)
-        return itx.editReply(`⚠️ ${hours}시간은 차감표에 없어. **${LESSON_HOURS_TEXT}** 중에서 골라줘.`);
-      students = names.map((name) => ({ name, games }));
-    } else {
-      const games = gamesInput && gamesInput > 0 ? gamesInput : 1;
-      students = names.map((name) => ({ name, games }));
-    }
+    // ── 구분=레슨 : 시트(있으면) → DB 기록. 판수·유형 검증은 슬래시 핸들러에서 이미 끝났다 ──
     try {
       // 시트 호출은 실패해도 흐름을 끊지 않는다 — sheetErr로 강등하고 DB 기록으로 넘어간다.
       // ⚠️ 「연동 꺼짐」과 「연동 장애」를 구분한다(2026-09-10 관제탑 보고).
@@ -1530,7 +1633,7 @@ if (process.env.DISCORD_TOKEN) {
         const sheetOk = sheetErr ? students : students.filter((s) => okNames.has(s.name));
         if (updated.length && !sheetOk.length)
           console.error("dualwrite_name_echo_mismatch", updated.map((u) => u.name).join(","));   // 시트 응답 이름이 입력과 불일치 — DB 미기록
-        const dw = sheetOk.length ? await dualWriteSessions(trainer, sheetOk, memo, itx.user.id) : { inserted: 0, miss: [], unattached: [] };
+        const dw = sheetOk.length ? await dualWriteSessions(trainer, sheetOk, memo, itx.user.id, sidOf) : { inserted: 0, miss: [], unattached: [] };
         if (dw && dw.miss && dw.miss.length && process.env.MRI_OWNER_ID) {
           const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
           // '시트 기록됨'을 단정하지 않음 — 시트 응답 기준 updated 건수만 명시(검증 불가한 성공 주장 제거).
@@ -1549,9 +1652,10 @@ if (process.env.DISCORD_TOKEN) {
       await itx.editReply(lines.join("\n"));
     } catch (e) {
       console.error("lesson_register_failed", e?.message);
-      await itx.editReply("등록 중 오류가 났어. 잠시 후 다시 시도해줘.");
+      // ⛔ 재시도 유도 금지 — 시트·DB 중 일부가 이미 기록됐을 수 있다. 다시 등록하면 중복 적립이다.
+      await itx.editReply("등록 중 오류가 났어. ⛔ **다시 등록하지 마** — 일부가 이미 기록됐을 수 있어. 운영진에게 알려줘.");
     }
-  });
+  }
 
   // ── /판수정정 : 오등록 판수 보정 (append-only 보정 행) ──
   // 세션을 지우거나 고치지 않는다 — 원본이 남아야 오등록 추적이 되고, carry_games(7/20 이월
@@ -1559,7 +1663,7 @@ if (process.env.DISCORD_TOKEN) {
   // ⚠️ played_at은 반드시 '정정 대상 세션과 같은 날짜'여야 한다. computeStudent가
   //    played_at < CUTOVER 로 이월/신규를 가르므로, 날짜가 다른 구간에 들어가면 지급액이 틀어진다.
   //    그래서 트레이너가 날짜를 직접 입력하지 못하게 하고, 대상 세션을 고르게 한다.
-  const CORRECTION_PENDING = new Map();      // discord_id → { sid, name, delta, reason, at }
+  const CORRECTION_PENDING = new Map();      // discord_id → { stage: "student"(cands) | "session"(sid), name, delta, reason, at, … }
   const CORRECTION_TTL_MS = 10 * 60 * 1000;
 
   client.on("interactionCreate", async (itx) => {
@@ -1585,43 +1689,82 @@ if (process.env.DISCORD_TOKEN) {
         trainerId = (await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainer)}&limit=1`))[0]?.id ?? null;
         if (trainerId == null) return itx.editReply("❌ 트레이너 정보를 찾을 수 없어. 운영진에게 문의해줘.");
       }
-      const sid = await resolveStudentId(name, trainerId);
-      if (sid == null) return itx.editReply(`❌ "${name}" 학생을 찾을 수 없어. 이름을 정확히 입력해줘.`);
-      const scope = trainerId != null ? `&trainer_id=eq.${trainerId}` : "";
-      const rows = await sbSelect("lesson_sessions",
-        `select=id,played_at,games,memo&student_id=eq.${sid}${scope}&order=played_at.desc,id.desc&limit=20`);
-      if (!rows.length)
-        return itx.editReply(`❌ ${name}님의 ${isOwner ? "" : "내 담당 "}수업 기록이 없어. 정정할 대상이 없어.`);
-
-      CORRECTION_PENDING.set(itx.user.id, { sid, name, delta, reason, at: Date.now(), isOwner, trainerId });
-
-      const opts = rows.slice(0, 24).map((r) => ({
-        label: `${r.played_at} · ${r.games > 0 ? "+" : ""}${r.games}판`,
-        description: (r.memo || "").slice(0, 90) || "메모 없음",
-        value: String(r.id),
-      }));
-      opts.push({ label: "❓ 어느 수업인지 모르겠음", description: "오너에게 확인 요청 (임의 날짜 입력 방지)", value: "unknown" });
-
-      const menu = new StringSelectMenuBuilder()
-        .setCustomId("corr_pick").setPlaceholder("정정할 대상 수업을 선택").addOptions(opts);
-      await itx.editReply({
-        content: `📝 **${name}** · 정정 **${delta > 0 ? "+" : ""}${delta}판** · 사유: ${reason}\n\n`
-          + "어느 수업의 기록을 정정하는지 골라줘. 고른 수업의 **날짜로** 보정이 기록돼\n"
-          + "7/20 이월/신규 구간이 어긋나지 않아.",
-        components: [new ActionRowBuilder().addComponents(menu)],
-      });
+      // 동명 2행 이상이면 고르기 전까지 아무것도 기록하지 않는다(오너 판정 2026-09-25). 1단계 명부 → 2단계 수업.
+      const { sid, cands } = await resolveStudentCandidates(name);
+      if (!cands.length) return itx.editReply(`❌ "${name}" 학생을 찾을 수 없어. 이름을 정확히 입력해줘.`);
+      if (sid == null) {
+        CORRECTION_PENDING.set(itx.user.id, { stage: "student", cands, name, delta, reason, at: Date.now(), isOwner, trainerId });
+        const menu = new StringSelectMenuBuilder()
+          .setCustomId("corr_student").setPlaceholder("동명 수강생 — 누구인지 선택").addOptions(await studentPickOptions(cands));
+        return itx.editReply({
+          content: `⚠️ **「${name}」 이름의 수강생이 ${cands.length}명이야.** 누구의 판수를 정정하는지 먼저 골라줘.\n고르기 전에는 아무것도 기록되지 않아.`,
+          components: [new ActionRowBuilder().addComponents(menu)],
+        });
+      }
+      await correctionShowSessions(itx, { sid, name, delta, reason, isOwner, trainerId });
     } catch (e) {
       console.error("correction_prepare_failed", e?.status || e?.message);
-      await itx.editReply("❌ 조회 중 오류가 났어. 잠시 후 다시 시도해줘.");
+      await itx.editReply("❌ 조회 중 오류가 났어. **기록하지 않았어** — 운영진에게 알려줘.");
     }
   });
+
+  // 1단계 응답 — 동명 후보에서 명부 행을 고르면 2단계(대상 수업 선택)로 간다.
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isStringSelectMenu() || itx.customId !== "corr_student") return;
+    const pend = CORRECTION_PENDING.get(itx.user.id);
+    if (!pend || pend.stage !== "student" || Date.now() - pend.at > CORRECTION_TTL_MS) {
+      CORRECTION_PENDING.delete(itx.user.id);
+      return itx.update({ content: "선택 시간이 지나 **기록하지 않았어**(판수 변경 없음).", components: [] });
+    }
+    const sid = Number(itx.values?.[0]);
+    if (!pend.cands.some((c) => Number(c.id) === sid)) {
+      CORRECTION_PENDING.delete(itx.user.id);
+      return itx.update({ content: "선택값이 후보에 없어 **기록하지 않았어**(판수 변경 없음).", components: [] });
+    }
+    console.log(`[resolve] 동명 선택 → students.id=${sid} (판수정정)`);
+    await itx.update({ content: "확인 중…", components: [] });
+    try { await correctionShowSessions(itx, { ...pend, sid }); }
+    catch (e) {
+      console.error("correction_prepare_failed", e?.status || e?.message);
+      await itx.editReply("❌ 조회 중 오류가 났어. **기록하지 않았어** — 운영진에게 알려줘.");
+    }
+  });
+
+  // 2단계 — 대상 수업 선택. 고른 수업의 날짜로 보정이 기록된다(7/20 이월/신규 구간 보존).
+  async function correctionShowSessions(itx, { sid, name, delta, reason, isOwner, trainerId }) {
+    const scope = trainerId != null ? `&trainer_id=eq.${trainerId}` : "";
+    const rows = await sbSelect("lesson_sessions",
+      `select=id,played_at,games,memo&student_id=eq.${sid}${scope}&order=played_at.desc,id.desc&limit=20`);
+    if (!rows.length) {
+      CORRECTION_PENDING.delete(itx.user.id);
+      return itx.editReply(`❌ ${name}(명부 #${sid})님의 ${isOwner ? "" : "내 담당 "}수업 기록이 없어. 정정할 대상이 없어.`);
+    }
+
+    CORRECTION_PENDING.set(itx.user.id, { stage: "session", sid, name, delta, reason, at: Date.now(), isOwner, trainerId });
+
+    const opts = rows.slice(0, 24).map((r) => ({
+      label: `${r.played_at} · ${r.games > 0 ? "+" : ""}${r.games}판`,
+      description: (r.memo || "").slice(0, 90) || "메모 없음",
+      value: String(r.id),
+    }));
+    opts.push({ label: "❓ 어느 수업인지 모르겠음", description: "오너에게 확인 요청 (임의 날짜 입력 방지)", value: "unknown" });
+
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId("corr_pick").setPlaceholder("정정할 대상 수업을 선택").addOptions(opts);
+    await itx.editReply({
+      content: `📝 **${name}** (명부 #${sid}) · 정정 **${delta > 0 ? "+" : ""}${delta}판** · 사유: ${reason}\n\n`
+        + "어느 수업의 기록을 정정하는지 골라줘. 고른 수업의 **날짜로** 보정이 기록돼\n"
+        + "7/20 이월/신규 구간이 어긋나지 않아.",
+      components: [new ActionRowBuilder().addComponents(menu)],
+    });
+  }
 
   client.on("interactionCreate", async (itx) => {
     if (!itx.isStringSelectMenu() || itx.customId !== "corr_pick") return;
     const pend = CORRECTION_PENDING.get(itx.user.id);
-    if (!pend || Date.now() - pend.at > CORRECTION_TTL_MS) {
+    if (!pend || pend.stage !== "session" || Date.now() - pend.at > CORRECTION_TTL_MS) {
       CORRECTION_PENDING.delete(itx.user.id);
-      return itx.update({ content: "시간이 지났어. `/판수정정`을 다시 실행해줘.", components: [] });
+      return itx.update({ content: "선택 시간이 지나 **기록하지 않았어**(판수 변경 없음).", components: [] });
     }
     CORRECTION_PENDING.delete(itx.user.id);
     const picked = itx.values[0];
@@ -1644,7 +1787,7 @@ if (process.env.DISCORD_TOKEN) {
     await itx.update({ content: "기록 중…", components: [] });
     try {
       const target = (await sbSelect("lesson_sessions", `select=id,played_at,games,trainer_id&id=eq.${picked}&limit=1`))[0];
-      if (!target) return itx.editReply("❌ 대상 수업을 찾을 수 없어. 다시 시도해줘.");
+      if (!target) return itx.editReply("❌ 대상 수업을 찾을 수 없어 — **기록하지 않았어**.");
 
       const before = await totalPlayedOf(sid);
       const row = {
