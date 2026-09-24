@@ -1158,6 +1158,8 @@ if (process.env.DISCORD_TOKEN) {
         { name: "참석현황", description: "[운영진] 참석/불참 집계 + 미응답자 명단", options: [{ name: "역할", description: "미응답자를 점검할 역할(선택)", type: 8, required: false }] },
         { name: "성장등록버튼", description: "[운영진] 수강생 성장(전적) 등록 버튼을 이 채널에 게시", options: [] },
         { name: "성장재계산", description: "[운영진] 등록된 모든 수강생 성장 데이터 재계산(TPP/시즌 보정·현재시즌 갱신)", options: [] },
+        // 오너 요청 2026-09-24 ③ — 레슨 피드백 서버 채널 실측(읽기만). 결과는 에페메럴 요약 + 서버 로그 [fbscan].
+        { name: "피드백채널현황", description: "[오너] 레슨 피드백 서버 채널 실측 — 읽기 가능/전체 · 메시지·첨부 수 · 권한 막힌 채널 (읽기만)", options: [] },
       ];
       // 기존 명령은 GUILD_ID(피드백/운영 서버)에 그대로 유지 — 피드백 워크플로우 무파손.
       // 수업등록을 별도 길드(LESSON_GUILD_ID=GmI)로 분리. 단 두 값이 같거나 LESSON 미설정이면
@@ -3058,6 +3060,91 @@ if (process.env.DISCORD_TOKEN) {
       console.error("sung_failed", e?.message);
       await itx.editReply("승급 등록 중 오류가 났어. 잠시 후 다시 시도해줘.");
     }
+  });
+
+  // ── /피드백채널현황 : 레슨 피드백 서버(FEEDBACK_GUILD_IDS) 채널 실측 — 오너 전용 · 읽기만 ──
+  //   오너 요청 2026-09-24 ③. 세션(Claude Code)은 DISCORD_TOKEN 을 쓸 수 없어 봇이 대신 센다.
+  //   서버별: 전체 채널 수 · 텍스트 채널 수 · 봇이 읽을 수 있는 채널 수(ViewChannel + ReadMessageHistory) ·
+  //   채널별 메시지 수 · 첨부 수 · 첫/마지막 메시지 시각 · 권한이 막힌 채널과 부족한 권한. 본문은 로그에 남기지 않는다.
+  //   **읽기만 한다** — send/edit/delete/react 없음. FEEDBACK_GUILD_IDS 는 읽기만 하고 바꾸지 않는다.
+  //   결과는 에페메럴 요약(서버 단위) + 콘솔 로그 [fbscan](채널 단위 · 세션이 Railway 로그로 수집).
+  //   페이싱: 페이지(100건)마다 350ms · 채널당 5,000건 상한 · 전체 12분 예산(디스코드 인터랙션 토큰 15분 안에 끝낸다).
+  const FBSCAN_MAX_MSGS_PER_CH = 5000;
+  const FBSCAN_PAGE_DELAY_MS = 350;
+  const FBSCAN_TIME_BUDGET_MS = 12 * 60 * 1000;
+  let fbscanRunning = false;
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "피드백채널현황") return;
+    if (!process.env.MRI_OWNER_ID || itx.user.id !== process.env.MRI_OWNER_ID)
+      return itx.reply({ content: "오너만 쓸 수 있어.", ephemeral: true });
+    if (!FB_GUILDS.length)
+      return itx.reply({ content: "FEEDBACK_GUILD_IDS 미설정 — 실측할 서버가 없어.", ephemeral: true });
+    if (fbscanRunning)
+      return itx.reply({ content: "이미 실측 중이야. 끝나면 로그에 `[fbscan] done` 이 찍혀.", ephemeral: true });
+    fbscanRunning = true;
+    await itx.deferReply({ ephemeral: true });
+    const started = Date.now();
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const lines = [];
+    try {
+      for (const gid of FB_GUILDS) {
+        let guild;
+        try { guild = await client.guilds.fetch(gid); }
+        catch (e) { console.log(`[fbscan] guild=${gid} unreachable err=${e?.message}`); lines.push(`· ${gid}: 접근 불가(봇 미입장?)`); continue; }
+        const me = guild.members.me || await guild.members.fetchMe();
+        const all = await guild.channels.fetch();
+        // 텍스트 계열만 센다: GuildText(0) · GuildAnnouncement(5). 카테고리·음성·포럼·스레드는 전체 수에만 들어간다.
+        const textChs = [...all.values()].filter((c) => c && (c.type === 0 || c.type === 5))
+          .sort((a, b) => (a.rawPosition ?? 0) - (b.rawPosition ?? 0));
+        let readable = 0, blocked = 0, skipped = 0, msgsTotal = 0, attTotal = 0;
+        for (const ch of textChs) {
+          const perms = ch.permissionsFor(me);
+          const missing = [];
+          if (!perms?.has("ViewChannel")) missing.push("ViewChannel");
+          if (!perms?.has("ReadMessageHistory")) missing.push("ReadMessageHistory");
+          if (missing.length) {
+            blocked++;
+            console.log(`[fbscan] blocked guild=${gid} ch=${ch.id} name=${ch.name} missing=${missing.join("+")}`);
+            continue;
+          }
+          readable++;
+          if (Date.now() - started > FBSCAN_TIME_BUDGET_MS) {
+            skipped++;
+            console.log(`[fbscan] skipped guild=${gid} ch=${ch.id} name=${ch.name} reason=time_budget`);
+            continue;
+          }
+          let count = 0, att = 0, oldest = null, newest = null, before, capped = false;
+          try {
+            for (;;) {
+              const page = await ch.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+              if (!page.size) break;
+              for (const m of page.values()) {
+                count++; att += m.attachments.size;
+                if (oldest == null || m.createdTimestamp < oldest) oldest = m.createdTimestamp;
+                if (newest == null || m.createdTimestamp > newest) newest = m.createdTimestamp;
+              }
+              before = page.last().id;                       // fetch 는 최신순 — 마지막이 가장 오래된 것
+              if (page.size < 100) break;
+              if (count >= FBSCAN_MAX_MSGS_PER_CH) { capped = true; break; }
+              await sleep(FBSCAN_PAGE_DELAY_MS);
+            }
+          } catch (e) {
+            console.log(`[fbscan] error guild=${gid} ch=${ch.id} name=${ch.name} err=${e?.message}`);
+            continue;
+          }
+          msgsTotal += count; attTotal += att;
+          console.log(`[fbscan] ch guild=${gid} ch=${ch.id} name=${ch.name} msgs=${count}${capped ? "+" : ""} att=${att} oldest=${oldest ? new Date(oldest).toISOString() : "-"} newest=${newest ? new Date(newest).toISOString() : "-"}`);
+        }
+        console.log(`[fbscan] guild=${gid} name=${guild.name} channels=${all.size} text=${textChs.length} readable=${readable} blocked=${blocked} skipped=${skipped} msgs=${msgsTotal} att=${attTotal}`);
+        lines.push(`· **${guild.name}** — 채널 ${all.size}(텍스트 ${textChs.length}) · 읽기 가능 ${readable} · 권한 막힘 ${blocked}${skipped ? ` · 시간 예산으로 건너뜀 ${skipped}` : ""} · 메시지 ${msgsTotal} · 첨부 ${attTotal}`);
+      }
+      const secs = Math.round((Date.now() - started) / 1000);
+      console.log(`[fbscan] done guilds=${FB_GUILDS.length} elapsed=${secs}s`);
+      await itx.editReply(`🔎 피드백 채널 실측 완료 (${secs}초 · 읽기만)\n${lines.join("\n")}\n채널별 메시지·첨부·최고 메시지일과 권한 막힌 채널 목록은 서버 로그 \`[fbscan]\` 에 있어.`);
+    } catch (e) {
+      console.error("fbscan_failed", e?.message);
+      await itx.editReply("실측 실패 — 서버 로그 fbscan_failed 확인.").catch(() => {});
+    } finally { fbscanRunning = false; }
   });
 
   client.on("interactionCreate", async (itx) => {

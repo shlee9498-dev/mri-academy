@@ -1306,7 +1306,7 @@ create table if not exists public.slot_bookings (
   -- 되짚을 키가 없으면 연속 칸 복원이 불가능하다(시간 근접만으로 추측하면 인접한 별개
   -- 예약까지 함께 풀린다). 머리 행은 null, 꼬리 행은 머리 행 id 를 가리킨다.
   span_head_id bigint references public.slot_bookings(id) on delete cascade,
-  unique (slot_id, student_id)
+  unique (slot_id, student_id)             -- §26 이 부분 유니크 인덱스(취소 행 제외)로 대체한다 — 새 DB 도 §26 까지 실행하면 같은 상태
 );
 -- 이미 §23 을 실행한 DB 에서도 status 허용값이 늘어나도록 제약을 다시 건다(멱등).
 alter table public.slot_bookings drop constraint if exists slot_bookings_status_check;
@@ -1729,5 +1729,35 @@ exception
 end;
 $$;
 
+-- 실행 후 필수:
+-- notify pgrst, 'reload schema';
+
+-- ============================================================
+-- §26  예약 유니크 완화 — 취소된 예약 행은 유니크 대상에서 제외 (2026-09-24 · 오너 판정)
+--      배경: slot_bookings 의 unique (slot_id, student_id) 가 status='cancelled' 행에도 걸려,
+--      ① 트레이너가 슬롯을 취소(§23d cancel_slot)하고 되살린(POST /slots/:id/reopen) 뒤,
+--      ② 수강생이 스스로 취소(§23c cancel_booking)한 뒤
+--      같은 수강생이 같은 슬롯을 다시 잡으면 book_slot() 이 unique_violation → slot_taken 으로 거절했다.
+--      판정(오너 2026-09-24): 취소 행은 판수 복원 이력이라 되살리지 않고, 재예약은 **새 행**으로 받는다.
+--      → 유니크를 「취소되지 않은 행」에만 거는 부분 유니크 인덱스로 바꾼다.
+--      실측(2026-09-24 · 저장소 전수 grep): ON CONFLICT (slot_id, student_id) 를 쓰는 함수·라우트 없음 —
+--      §23b/§25b book_slot 은 insert … returning + exception when unique_violation 뿐이고,
+--      server.js·booking-api.cjs 에 sbUpsert("slot_bookings") 없음 → 부분 인덱스로 바꿔도 깨지는 구문 없음.
+--      unique_violation 예외 경로는 부분 인덱스 위반도 같은 SQLSTATE(23505)라 그대로 slot_taken 을 돌려준다.
+--      실행 순서: §25b 검증 완료 후. 멱등 — drop constraint if exists → create index if not exists.
+--      ⚠️ 제약 변경은 기동 점검(컬럼 프로브)으로 못 잡는다 — PR 체크리스트로만 관리.
+-- 적용 전 검사(기대 0행 — 취소 안 된 예약 기준 slot_id+student_id 중복):
+--   select slot_id, student_id, count(*) from public.slot_bookings
+--    where status <> 'cancelled' group by 1, 2 having count(*) > 1;
+alter table public.slot_bookings drop constraint if exists slot_bookings_slot_id_student_id_key;
+create unique index if not exists uq_slot_bookings_active
+  on public.slot_bookings (slot_id, student_id)
+  where status <> 'cancelled';
+-- 검증(기대값):
+--   select count(*) from pg_constraint where conrelid = 'public.slot_bookings'::regclass and contype = 'u';      -- 0
+--   select indexdef from pg_indexes where schemaname = 'public' and indexname = 'uq_slot_bookings_active';
+--   -- CREATE UNIQUE INDEX uq_slot_bookings_active ON public.slot_bookings USING btree (slot_id, student_id) WHERE (status <> 'cancelled'::text)
+--   select count(*) from pg_indexes where schemaname = 'public' and tablename = 'slot_bookings'
+--    and indexname = 'slot_bookings_slot_id_student_id_key';                                                    -- 0
 -- 실행 후 필수:
 -- notify pgrst, 'reload schema';
