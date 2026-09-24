@@ -1501,7 +1501,8 @@ if (process.env.DISCORD_TOKEN) {
     console.log(`[resolve] 동명 선택 → students.id=${sid} (수업등록)`);
     if (ctx.ambiguous.some((x) => x.sid == null)) {
       pend.at = Date.now();
-      return itx.update(await lessonPickMessage(ctx));
+      await itx.deferUpdate();                     // 후보 조회(잔여 판수 RPC)가 3초를 넘겨도 상호작용이 죽지 않게
+      return itx.editReply(await lessonPickMessage(ctx));
     }
     LESSON_PENDING.delete(itx.user.id);
     await itx.update({ content: "전원 확정 — 기록 중…", components: [] });
