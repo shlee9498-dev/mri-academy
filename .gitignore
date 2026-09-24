@@ -11,3 +11,6 @@ node_modules/
 
 # Claude Code 로컬 설정 (impeccable 훅 — 개인 로컬 전용, install 명령으로 재생성)
 .claude/settings.local.json
+
+# 실측·검증 스크립트의 로컬 출력(feedback-audit 등) — ID 가 들어가므로 커밋 금지
+tmp/
