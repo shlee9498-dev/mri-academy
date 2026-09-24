@@ -2050,6 +2050,23 @@ if (process.env.DISCORD_TOKEN) {
       return itx.editReply(`❌ 명부(DB) 등록 실패 — ${e?.message || "오류"}\n↳ 시트는 건드리지 않았어. 운영자에게 문의해줘.`);
     }
 
+    // 1b) 명부 미연결 결제신청 자동 연결(관제탑 9/24 개선 (a)) — 신청(/결제신청)이 등록보다 먼저 들어온 경우.
+    //     같은 이름 · pending · student_id null 만 잇는다. 동명 active 행이 이미 있으면(p.dupNames) 어느 행인지
+    //     사람이 정해야 하므로 여기서는 잇지 않는다 — 승인 시점의 resolveStudentId 가 담당·상태로 고른다.
+    //     실측 배경(9/24 #27): 등록 전 신청 → student_id null → 오너 SQL 승인 → §18d RAISE(원자성은 지켜졌다).
+    let linkedReqs = [];
+    if (studentId != null && !p.dupNames) {
+      try {
+        const rows = await sbPatch("payment_requests",
+          `student_id=is.null&status=eq.pending&student_name=eq.${encodeURIComponent(p.name)}`, { student_id: studentId });
+        linkedReqs = (Array.isArray(rows) ? rows : []).map((r) => r.id);
+        if (linkedReqs.length) {
+          lines.push(`🔗 결제신청 #${linkedReqs.join(" #")} 명부 연결됨 — 오너 승인 대기는 그대로`);
+          console.log(`[payreq] autolink students.id=${studentId} ← payment_requests ${linkedReqs.join(",")}`);
+        }
+      } catch (e) { console.error("payreq_autolink", e?.message); }
+    }
+
     // 2) 시트 — 레슨로그 탭에 행 생성. Apps Script 핸들러(type: student.add) 필요.
     //    미배포면 여기서 실패한다. 그 경우 DB만 남으므로 "사용 가능" 안내를 하지 않는다.
     let sheetOk = false, sheetErr = null;
@@ -2104,6 +2121,7 @@ if (process.env.DISCORD_TOKEN) {
           p.ign ? `· 인게임닉: ${p.ign}${p.platform ? ` (${p.platform === "kakao" ? "카카오" : "스팀"})` : ""}` : null,
           p.note ? `· 비고: ${p.note}` : null,
           studentId ? `· students.id = ${studentId}` : null,
+          linkedReqs.length ? `· 🔗 결제신청 #${linkedReqs.join(" #")} 자동 연결 — 승인 대기 그대로(카드 ✅ 로 진행)` : null,
           p.dupNames ? `· ⚠️ 동명 active 행 있음(트레이너가 확인 후 진행): ${p.dupNames}` : null,
           "",
           sheetOk
@@ -2776,10 +2794,17 @@ if (process.env.DISCORD_TOKEN) {
         + "&status=in.(pending,approved)&order=id.desc&limit=1"))[0] || null;
     } catch (e) { console.error("payreq_dupcheck", e?.message); }
     const dupLine = dup ? `⚠️ 중복 의심 — 같은 학생·금액·입금일 신청 #${dup.id}(${dup.status === "approved" ? "승인됨" : "대기"})이 이미 있어` : "";
+    // 명부 해석을 신청 시점에도 1회 한다(관제탑 9/24 개선 (a) 보완) — 명부가 이미 있으면 student_id 를 지금 채워
+    // 오너가 SQL 로 승인해도 §18d 가 「명부 미연결」로 막지 않는다. 없으면 null 로 두고, /수강생등록이 이어 준다.
+    // 승인 시점 해석(payreq_ok)은 그대로 — 그때 다시 풀리는 이름은 그때 채운다.
+    let sid = null;
+    try { sid = await resolveStudentId(name, trainer_id); }
+    catch (e) { console.error("payreq_resolve_at_request", e?.message); }
+    const rosterLine = sid != null ? `연결됨(#${sid})` : "**미연결** — /수강생등록 하면 자동으로 이어져";
     let req;
     try {
       req = await sbInsert("payment_requests", {
-        student_name: name, trainer_id, trainer_name: trainer, kind, amount, games,
+        student_name: name, student_id: sid, trainer_id, trainer_name: trainer, kind, amount, games,
         paid_on, memo, pay_channel, requested_by: itx.user.id,
       });
     } catch (e) {
@@ -2795,7 +2820,7 @@ if (process.env.DISCORD_TOKEN) {
           new ButtonBuilder().setCustomId(`payreq_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
         );
         await owner.send({
-          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}**\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}\n· 채널: ${channelLine(pay_channel, amount)}${memo ? `\n· 메모: ${memo}` : ""}${dupLine ? `\n${dupLine}` : ""}`,
+          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}**\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}\n· 채널: ${channelLine(pay_channel, amount)}\n· 명부: ${rosterLine}${memo ? `\n· 메모: ${memo}` : ""}${dupLine ? `\n${dupLine}` : ""}`,
           components: [row],
         });
         dmOk = true;
@@ -2804,6 +2829,7 @@ if (process.env.DISCORD_TOKEN) {
     await itx.editReply(
       `✅ 결제 신청 접수 **#${req.id}** — ${name} · ${kind}${games ? ` ${games}판` : ""} · ${amount.toLocaleString("ko-KR")}원 · ${CHANNEL_LABEL[pay_channel]} · 입금일 ${paid_on}\n`
       + (dmOk ? "오너 승인 대기 중이야." : "⚠️ 오너 DM 발송 실패 — 신청은 저장됐어(pending). 오너에게 직접 알려줘.")
+      + `\n📇 명부 ${rosterLine}`
       + (dupLine ? `\n${dupLine} — 중복이면 오너에게 반려를 요청해줘.` : ""));
   });
 
