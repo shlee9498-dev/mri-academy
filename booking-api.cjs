@@ -32,7 +32,7 @@ const MY_TRAINER_WINDOW_DAYS = 90;
 const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
 
 module.exports = function mountBookingApi(app, deps) {
-  const { sbSelect, sbInsert, sbRpc, limit, discordDM, portal, trainer } = deps;
+  const { sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal, trainer } = deps;
   const { readSession, opaqueId, readOpaqueId, fail, scrub } = portal;
   // 트레이너 판정(포털 세션 또는 사이트 JWT → staff 명부)과 응답 가드(scrubTrainer)는 trainer-portal.cjs 한 곳이 정본이다.
   const { requireTrainer: requireTrainerBase, sendTrainer } = trainer;
@@ -98,6 +98,8 @@ module.exports = function mountBookingApi(app, deps) {
   const STATUS = {
     slot_taken: 409, slot_full: 409, insufficient_games: 409, cancel_window_passed: 409,
     slot_not_found: 404, not_found: 404, scope_denied: 403, invalid_body: 400,
+    // reopen(오너 요청 2026-09-24 a) — DB 함수가 아니라 서버 판정이지만 같은 표에 둔다(코드 목록 한 곳).
+    slot_not_cancelled: 409, slot_in_past: 409,
   };
   const rpcFail = (res, code) => fail(res, STATUS[code] || 400, code);
 
@@ -260,7 +262,7 @@ module.exports = function mountBookingApi(app, deps) {
     // booked 만 보면 「확인 필요」(pending_review)가 목록에서 사라진다. done 도 가져온다 —
     // 아래 등록 누락 감지의 대상이다.
     const books = await sbSelect("slot_bookings",
-      `select=id,slot_id,student_id,status,duration_min,span_head_id`
+      `select=id,slot_id,student_id,status,duration_min,span_head_id,booked_at`
       + `&status=in.(booked,pending_review,done)&span_head_id=is.null&slot_id=in.(${ids.join(",")})`);
     const sids = [...new Set(books.map((b) => b.student_id))];
 
@@ -294,6 +296,7 @@ module.exports = function mountBookingApi(app, deps) {
       id: opaqueId("booking", b.id),
       studentDisplayName: names[b.student_id] || "?",
       durationMin: b.duration_min ?? null,
+      bookedAt: b.booked_at,                        // 예약 생성 시각(ISO · NOT NULL) — 앱 「새 예약」 카드 기준(오너 요청 2026-09-24 b)
       status: b.status,
       needsReview: b.status === "pending_review",   // 트레이너 홈의 「확인 필요」 배지
       registrationMissing: regMissing.has(b.id),    // 「등록 누락?」 배지 — done 인데 세션 행 없음
@@ -337,6 +340,29 @@ module.exports = function mountBookingApi(app, deps) {
     notifyTrainerCancel(slotId, out.studentIds || [], req.staff.name).catch(() => {});
     sendTrainer(res, { cancelled: true, notified: (out.studentIds || []).length });
   }));
+
+  // POST /slots/:id/reopen — 취소한 칸을 **빈 칸**으로 되살린다(오너 요청 2026-09-24 a).
+  //   행을 지우지 않고 status 만 cancelled → open. 예약(slot_bookings)은 건드리지 않는다 — 취소 때
+  //   이미 cancelled 로 닫혔고 예약자에게 취소 DM 이 나갔으므로, 되살리면 「취소됐다더니 다시 잡혀 있는」
+  //   예약이 된다. 되살린 칸은 빈 칸이고 수강생이 다시 잡는다(DM 없음).
+  //   지난 칸은 거부한다 — book_slot 도 slot_start <= now() 를 slot_taken 으로 거절하므로 열어도 못 잡는다.
+  //   DB 함수 없이 PATCH 필터(id·trainer_id·status=cancelled)로 원자성을 얻는다 — 경합하면 한쪽만 0행을 받는다.
+  //   ⚠️ 알려진 한계: slot_bookings 의 unique(slot_id, student_id) 가 취소된 예약 행에도 걸려, 취소당했던
+  //   수강생 본인이 같은 칸을 다시 잡으면 slot_taken 이다(수강생 취소 후 재예약과 같은 기존 제약 · DDL 로만 풀린다).
+  app.post(`${TRAINER}/slots/:id/reopen`, rateLimit("trainerReopen", 60, 60_000), bodyOnly([]), requireTrainer,
+    wrap(async (req, res) => {
+      const slotId = readOpaqueId("slot", req.params.id);
+      if (slotId == null) return fail(res, 400, "invalid_body");
+      const [slot] = await sbSelect("trainer_slots", `select=id,trainer_id,status,slot_start&id=eq.${slotId}`);
+      if (!slot) return rpcFail(res, "not_found");
+      if (Number(slot.trainer_id) !== Number(req.staff.id)) return rpcFail(res, "scope_denied");
+      if (slot.status !== "cancelled") return rpcFail(res, "slot_not_cancelled");   // open·closed 둘 다
+      if (Date.parse(slot.slot_start) <= Date.now()) return rpcFail(res, "slot_in_past");
+      const rows = await sbPatch("trainer_slots",
+        `id=eq.${slotId}&trainer_id=eq.${req.staff.id}&status=eq.cancelled`, { status: "open" });
+      if (!Array.isArray(rows) || !rows.length) return rpcFail(res, "slot_not_cancelled");   // 읽기와 PATCH 사이에 상태가 바뀜
+      sendTrainer(res, { reopened: true });
+    }));
 
   // ══════════════ 알림 ══════════════
   // 전부 베스트에포트다. DM 실패가 예약을 되돌리지 않는다 — 예약은 이미 커밋됐고,
