@@ -1761,3 +1761,34 @@ create unique index if not exists uq_slot_bookings_active
 --    and indexname = 'slot_bookings_slot_id_student_id_key';                                                    -- 0
 -- 실행 후 필수:
 -- notify pgrst, 'reload schema';
+
+-- ============================================================
+-- §27  feedback 테이블 — 기존 테이블 기록용 · **실행 금지** (2026-09-24 · 오너 지시)
+--      이 테이블은 이 파일에 create table 정본이 없다(2026-06 이전 수동 생성 · 저장소 밖). server.js 「피드백 월」
+--      (트레이너 피드백 서버 메시지 → Claude 정제 → 미공개 저장 → 검수 채널 ✅/❌)과 /api/feedback-public 이 읽고 쓴다.
+--      아래는 2026-09-24 19:03 UTC information_schema·pg_constraint·pg_indexes 실측을 그대로 옮긴 것이다.
+--      **전부 주석이다 — 실행하지 않는다.** 복기 통합 설계(지휘탑)가 확정될 때까지 이 테이블의 DDL 은 만들지 않는다.
+--      REQUIRED_SCHEMA.feedback(server.js)은 같은 날 14컬럼 전부로 승격했다(부팅 자기점검이 4컬럼 누락을 못 잡던 구멍 해소).
+--
+--   create table public.feedback (                       -- ← 기록용. 실DB 에 이미 존재.
+--     id            bigint generated always as identity primary key,
+--     trainer       text        not null,                -- 길드 → 트레이너명(FEEDBACK_TRAINER_MAP)
+--     grp           text        not null check (grp in ('A','B','C')),   -- 제약명 feedback_grp_check
+--     student_alias text,                                -- 가명(닉 첫 글자 + ○)
+--     lesson_date   date,
+--     body          text        not null,                -- Claude 정제본(공개용)
+--     raw           text,                                -- 디스코드 원문(이관 재수집 근거 · 59/59 존재)
+--     src_guild     text,
+--     src_channel   text,
+--     src_msg       text        unique,                  -- 제약명 feedback_src_msg_key (멱등키)
+--     review_msg    text,                                -- 검수 채널 프리뷰 메시지 id(59행 전부 null · 프리뷰 게시 실패 이력)
+--     published     boolean     not null default false,
+--     rejected      boolean     not null default false,
+--     created_at    timestamptz not null default now()
+--   );
+--   create index feedback_pub_idx on public.feedback (published, grp, lesson_date desc);
+--   alter table public.feedback enable row level security;   -- relrowsecurity = true (실측)
+--
+--   실측 행 상태(2026-09-24): 59행 · published 0 · rejected 0 · 공지문(📢) 11 · review_msg null 59 · src_guild 1 · src_channel 11.
+--   이관 판정(지휘탑 통합 전 초안): 홍보용 테이블 유지 시 이 블록을 create table if not exists 로 승격 · 폐지 시 REQUIRED 항목과
+--   수집·공개 경로를 함께 제거. 어느 쪽이든 오너 결정 전에는 손대지 않는다.
