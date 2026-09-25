@@ -3,7 +3,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { IGN_LATER, parseIgnInput, sameIgn, compareIgn, ignGuardFilter, platLabel, ignChoices } = require("../pubg-name.cjs");
+const { IGN_LATER, parseIgnInput, sameIgn, compareIgn, ignGuardFilter, platLabel, ignLookupLine, ignChoices } = require("../pubg-name.cjs");
 
 test("정상 닉 — 앞뒤 공백 제거 · 영문·숫자·-·_", () => {
   assert.deepEqual(parseIgnInput("  Test_User1 "), { ign: "Test_User1", later: false });
@@ -62,4 +62,15 @@ test("자동완성 후보 — 쓴 값 → 명부 닉(중복 제거) → 나중�
   assert.deepEqual(ignChoices("테스트", { allowLater: false }).length, 0);   // 형식 밖 입력은 후보로 올리지 않는다
   assert.ok(ignChoices("", { allowLater: true }).every((x) => x.name.length <= 100));
   assert.equal(ignChoices("", { roster: Array.from({ length: 40 }, (_, i) => ({ ign: `n${i}x` })) }).length, 25);
+});
+
+test("PUBG 조회 결과 한 줄 — 찾음 · 보정 · 그래도 저장 · 실패 · 건너뜀", () => {
+  assert.match(ignLookupLine({ status: "found", name: "Test_User1" }, "Test_User1", "steam"), /PUBG\(스팀\) 확인 ✅ 계정 번호까지/);
+  const fixed = ignLookupLine({ status: "found", name: "Test_UserI" }, " Test_User1 ", "kakao");
+  assert.match(fixed, /\*\*Test_UserI\*\* \(입력값 Test_User1 → 비슷한 글자 보정\)/);
+  assert.match(fixed, /PUBG\(카카오\)/);
+  assert.match(ignLookupLine({ status: "unverified" }, "x1", "steam"), /못 찾은 닉을 그대로 저장/);
+  assert.match(ignLookupLine({ status: "error" }, "x1", "steam"), /확인 없이 저장/);
+  assert.equal(ignLookupLine({ status: "skipped" }, "x1", "steam"), "");
+  assert.equal(ignLookupLine(null, "x1", "steam"), "");
 });

@@ -42,6 +42,22 @@ function ignGuardFilter(cur) {
 // 플랫폼 표기 — students.pubg_platform 기본값이 'steam' 이라 「스팀」이 확인된 값이 아닐 수 있다(호출부가 안내).
 const platLabel = (p) => (p === "kakao" ? "카카오" : p === "steam" ? "스팀" : "미상");
 
+// PUBG 실존 조회 결과 한 줄(트레이너·오너 대상 봇 문구 · 기존 반말체 유지)
+//   found = 찾음(정식 닉이 입력과 다르면 보정 표시) · unverified = 못 찾았지만 「그래도 저장」 · error = 조회 실패(저장은 진행) · 그 외 빈 줄
+function ignLookupLine(res, typed, platform) {
+  const pl = platLabel(platform);
+  const t = String(typed ?? "").trim();
+  switch (res?.status) {
+    case "found":
+      return res.name && res.name !== t
+        ? `🎮 PUBG(${pl}) 확인 ✅ **${res.name}** (입력값 ${t} → 비슷한 글자 보정)`
+        : `🎮 PUBG(${pl}) 확인 ✅ 계정 번호까지 저장했어`;
+    case "unverified": return `⚠️ PUBG(${pl})에서 못 찾은 닉을 그대로 저장했어 — 계정 번호는 비어 있어(맞는지 한 번 더 확인해줘)`;
+    case "error": return "⚠️ PUBG 조회가 잠깐 안 돼서 확인 없이 저장했어 — 계정 번호는 비어 있어";
+    default: return "";
+  }
+}
+
 // 자동완성 후보 — 쓴 값(형식이 맞을 때) → 명부 닉(중복 제거) → 「나중에 입력」(허용 시). 디스코드 한도 25개 · 이름 100자.
 function ignChoices(typed, { allowLater = false, roster = [] } = {}) {
   const out = [];
@@ -56,4 +72,4 @@ function ignChoices(typed, { allowLater = false, roster = [] } = {}) {
   return out.slice(0, 25);
 }
 
-module.exports = { IGN_LATER, IGN_RE, parseIgnInput, sameIgn, compareIgn, ignGuardFilter, platLabel, ignChoices };
+module.exports = { IGN_LATER, IGN_RE, parseIgnInput, sameIgn, compareIgn, ignGuardFilter, platLabel, ignLookupLine, ignChoices };

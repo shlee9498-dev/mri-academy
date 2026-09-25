@@ -882,6 +882,8 @@ if (!reviewCanRead(actor, r) || (r.hidden_at && !actor.isOwner)) return fail(res
 | 1차 | `GET /sessions` 확장 | | `sessions[].hasReview` · `reviewStatus` · `unreadFeedback` · **`reviewDue`**(v2.7 39: `played_at` = 오늘(KST) ∧ 그 세션에 수강생 작성 복기 없음 → 홈 「오늘 수업 복기」 카드 · 넘기기는 기기 저장 · 3칸 양식은 서버 변경 없음 = `body` 제목줄) |
 | 2차 | 호환 `GET/PUT /sessions/:id/journal` · `GET /sessions/:id/feedback` | | 내부에서 `lesson_reviews` 를 읽고 씀(§7 B′) |
 
+- **작성자 닉 = 조회 시점 `students.pubg_name`**(복기 행에 복사하지 않는다) — 닉 변경은 `students.pubg_account_id` 기준 by-account 조회(Phase T · 닉네임 후속 PR 부터 입력 시 계정 id 저장)가 `pubg_name` 을 갱신하므로 공유 피드가 닉 변경에 끊기지 않는다(오너 9/25).
+
 ### 5.2 트레이너 (`/api/trainer-portal`)
 | 단계 | 라우트 | 비고 |
 |---|---|---|
