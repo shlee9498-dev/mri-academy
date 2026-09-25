@@ -14,7 +14,7 @@
 // 사망 판정: 텔레메트리 LogPlayerKillV2 의 victim 이면 사망 — 단 로그아웃 상태에서 난 사망(나간 뒤 남은 캐릭터)은 제외,
 //          팀 winPlace 1 + deathType alive 는 감점 없음(블루칩 부활 치킨). 기절(LogPlayerMakeGroggy)은 사망 아님.
 //          텔레메트리 실패 판만 deathType ≠ "alive" 로 대체(카드 「판정: deathType(대체)」) · 명령 옵션으로 전부 deathType 도 가능.
-//          ※ 재접속 대비로 LogPlayerLogin 도 읽는다 — 로그아웃 → 재접속 → 사망은 감점한다(정본은 「로그아웃 이후 제외」만 적음).
+//          재접속: 「Logout 이후 ~ 다음 Login 이전 구간의 사망만 제외」(관제탑 2026-09-26 정본 보완 · 승인) — 재접속 뒤 플레이 중 사망은 감점.
 // 조회: /players 는 무캐시(ttl 0) · 분당 10회라 6.5초 간격 · /matches 도 무캐시(창 밖 판까지 훑어 1시간 캐시에 쌓이면 메모리) ·
 //       텔레메트리는 pubgGet 을 쓰지 않고 fetch 스트리밍으로 필요한 이벤트만 뽑고 원본은 버린다 · 판 하나씩 순서대로.
 //       뽑은 결과는 event_matches.deaths 에 저장해 다시 집계할 때 건너뛴다.
@@ -155,6 +155,7 @@ function telemetryVerdict(ev, member, place) {
     ...(e.logouts || []).map((t) => [Date.parse(t), 0]),
     ...(e.logins || []).map((t) => [Date.parse(t), 1]),
   ].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  // 사망 시각 직전의 세션 이벤트가 Logout 이면 제외 = [Logout, 다음 Login) 구간(같은 시각의 Logout 은 이미 나간 것으로 본다)
   const loggedOutAt = (t) => { let out = false; for (const [ts, kind] of sessions) { if (ts > t) break; out = kind === 0; } return out; };
   const deaths = (e.kills || []).map((t) => Date.parse(t)).sort((a, b) => a - b);
   const counted = deaths.filter((t) => !loggedOutAt(t));
