@@ -7427,6 +7427,11 @@ require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete, 
 // 새 라우트군을 인라인하면 동시 작업 충돌면이 그만큼 넓어진다.
 const studentPortal = require("./student-portal.cjs")(app, { sbSelect, sbInsert, sbPatch, limit });
 
+// ── 수업 복기 API(§29 PR-1 · /api/student-portal/{reviews,games,phases,feed} + /sessions 확장) ──
+// student-portal 뒤 — 그 파일이 건 공유비밀 게이트·세션·불투명 id·scrub 을 같은 함수로 쓴다. 트레이너 쪽은 PR-3.
+// §29 표가 없으면 이 라우트군만 503(기존 포털 라우트는 그대로 · 기동 로그 [review]).
+require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch, sbUpsert, sbDelete, sbRpc, limit, portal: studentPortal });
+
 // ── 예약·슬롯 (S1-b · /api/student-portal/{availability,bookings} + /api/trainer-portal/*) ──
 // student-portal 뒤에 마운트해야 그 파일이 건 공유비밀 게이트(app.use(PREFIX))가 먼저 돈다.
 // ── 트레이너 전용 포털 API (S1-c · /api/trainer-portal/{exchange,students,journals,sessions}) ──

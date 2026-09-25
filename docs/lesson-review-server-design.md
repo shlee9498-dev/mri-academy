@@ -926,6 +926,7 @@ if (!reviewCanRead(actor, r) || (r.hidden_at && !actor.isOwner)) return fail(res
 14. **반응**: `POST/DELETE /reviews/:id/reactions/:emoji` 멱등 토글 · 응답 `reactionCounts`·`myReactions` · `reactors` 는 본인·트레이너 상세에만.
 15. **`sessions[].reviewDue`**: 오늘(KST) 수업 ∧ 내 복기 없음. 3칸 양식(🎯/🔥/📝)은 서버 변경 없이 `body` 제목줄 — 앱이 제목줄로 나눠 보여 준다(v2.7 §15.7).
 16. **엑셀 파싱분은 `POST /reviews` 에 `source:'xlsx'` 를 보낸다** — 서버가 이관분(`source <> 'app'`)의 `visibility` 를 `private` 로 강제하는 근거(§8 · 오너 9/25).
+17. **PR-1 구현에서 정한 것(계약 = `docs/trainer-portal-api.md` §8)**: `unreadFeedback` 은 가드 어간 `fee` 에 걸려 서버 scrub 예외 추가 · **앱 가드 예외도 필요**(반장) · `POST /reviews` 는 상세, `PUT /reviews/:id` 는 요약을 돌려준다 · 페이즈 PUT 은 부분 갱신 · 판 20 · 판당 페이즈 30(서버 안전 한도) · 피드 태그 여러 개 = OR · 반응은 보낸 복기에만 · 보내기 멱등 · 트레이너가 쓴 이관 복기는 수강생이 범위만 바꾼다(내용·삭제 404) · 숨긴 복기가 잡은 수업에 새로 만들면 409 `anchor_taken` · 강의 앵커 id 를 주는 API 는 아직 없음(3차).
 
 ### 5.5 앵커 유실 · 숨김 응답 (v2.5 §14 2 · 오너 9/25 — 추가 키 없음)
 | 상태 | 응답 | 앱 처리 |
@@ -969,7 +970,7 @@ feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_
 | 2 | §29 초안(#345) → v2.6 최종(#347) → **v2.7 판정 ✅(9/26 · #25 · DDL 동일) → 「최종」 블록(= §2 · 이 판)** | 이 세션 | 기존 표 변경 0 → 시험 브랜치 생략 |
 | 3 | 「최종」 블록 0~10 · VA 운영 실행 **✅ 2026-09-25** · 이 세션 실DB 지문 대조 일치(§2.14) · 정본 SQL §29 + REQUIRED_SCHEMA 11표 동기 | 오너 → 이 세션 | Level 0 |
 | 3′ | **닉네임 확보 PR**(/수강생등록 · /결제신청 · 승인 카드 · 신청서 생년월일 제거 — 오너 9/25 · PR-1 보다 먼저) | 이 세션 | 공유 피드 작성자 표시 · §30a 스냅샷이 닉네임에 의존 |
-| 4 | **PR-1** `review-api.cjs`(수강생 텍스트 API: reviews·games·phases·publish(+visibility)·visibility 변경·delete(=숨김 포함)·recipients·read·**feed·reactions**·`/sessions` 확장(+`reviewDue`)) + Storage 헬퍼 + `REQUIRED_SCHEMA` §6(11표) + `supabase_admin_panel.sql` §29 정본 편입 | 이 세션 | DDL 검증 뒤 배포 |
+| 4 | **PR-1 — 구현 Draft PR(2026-09-25 · 계약 = `docs/trainer-portal-api.md` §8 · 로컬 PG16+PostgREST 통합 시험 126항목)** `review-api.cjs`(수강생 텍스트 API: reviews·games·phases·publish(+visibility)·visibility 변경·delete(=숨김 포함)·recipients·read·**feed·reactions**·`/sessions` 확장(+`reviewDue`)) + Storage 헬퍼 + `REQUIRED_SCHEMA` §6(11표) + `supabase_admin_panel.sql` §29 정본 편입 | 이 세션 | DDL 검증 뒤 배포 |
 | 5 | **PR-2** 이미지 업로드·파생본(`sharp` 승인됨)·서명 URL·삭제 + 그리기 레이어 PUT(수강생) + **§3.7 draft 정리 일일 작업(드라이런 기본 ON · `review_purge_log` · 목록 `imagePurgeAt`)** | 이 세션 | 배포일부터 드라이런 2주 → 오너가 로그를 본 뒤 전환 시점 결정 → `REVIEW_DRAFT_SWEEP=delete` |
 | 6 | **PR-3** 트레이너 포털(목록·상세·comment/overall·읽음·`canReply`·`replyDueAt` 자리 · **feed·reactions(한 번 탭)·공유 열람(활성 트레이너 전원)** · task 는 2차지만 `due_invalid` 검사 함수는 여기서) + `docs/trainer-portal-api.md` §8 계약 | 이 세션 | |
 | 7 | 계약 문서(수강생 포털 부록 A 개정분 = §5.1·§5.4·§5.5)를 [MRIacademy → 다른 세션] 로 인계 | 이 세션 → 반장 | 앱 착수는 PR-2 배포 뒤(v2.5 §11) |

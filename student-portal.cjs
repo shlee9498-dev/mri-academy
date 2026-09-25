@@ -101,7 +101,9 @@ module.exports = function mountStudentPortal(app, deps) {
   //  · feedback·hasFeedback — 어간 fee
   //  · trainerContactPhone  — 어간 phone. 트레이너가 공개에 동의한 연락처만 실린다.
   //    ⚠️ 앱(mri-student-app) 가드에 같은 예외가 머지된 뒤에야 실제로 값이 나가야 한다.
-  const CONTRACT_EXCEPTIONS = ["feedback", "hasfeedback", "trainercontactphone"];
+  //  · unreadFeedback — 어간 fee. 수업 복기 목록·/sessions 확장(§29 PR-1 · v2.7 §10.1 계약 키).
+  //    앱 가드 CONTRACT_KEY_EXCEPTIONS 에 같은 키(원문 `unreadFeedback`)가 들어가야 앱이 받는다(반장 인계).
+  const CONTRACT_EXCEPTIONS = ["feedback", "hasfeedback", "trainercontactphone", "unreadfeedback"];
   function scrub(value, path = "$") {
     if (Array.isArray(value)) { value.forEach((v, i) => scrub(v, `${path}[${i}]`)); return value; }
     if (value && typeof value === "object") {
@@ -202,6 +204,11 @@ module.exports = function mountStudentPortal(app, deps) {
     for (const k of Object.keys(b)) if (!allowed.includes(k)) return fail(res, 400, "invalid_body");
     next();
   };
+
+  // ── 다른 모듈이 얹는 확장 자리 ──
+  // review-api.cjs(§29 PR-1)가 마운트되면 sessionExtras 를 채운다 → /sessions 항목에
+  // hasReview · reviewStatus · unreadFeedback · reviewDue 가 붙는다. 비어 있거나 실패하면 종전 응답 그대로.
+  const hooks = { sessionExtras: null };
 
   // ── 세션 요구 ────────────────────────────────────────────────
   function session(req) { return readSession(req.headers["x-portal-session"]); }
@@ -505,6 +512,13 @@ module.exports = function mountStudentPortal(app, deps) {
       }
     }
 
+    // 수업 복기 확장(§29 PR-1) — 실패해도 목록은 종전대로 내려간다.
+    let extras = new Map();
+    if (hooks.sessionExtras) {
+      try { extras = await hooks.sessionExtras(sid, rows); }
+      catch (e) { console.error("portal_session_extras", e?.message); }
+    }
+
     send(res, {
       sessions: rows.map((r) => ({
         id: opaqueId("session", r.id),
@@ -514,6 +528,7 @@ module.exports = function mountStudentPortal(app, deps) {
         trainerDisplayName: names[r.trainer_id] || "미배정",
         hasJournal: journaled.has(r.id),
         hasFeedback: feedbacked.has(r.id),
+        ...(extras.get(r.id) || {}),
       })),
     });
   }));
@@ -607,5 +622,6 @@ module.exports = function mountStudentPortal(app, deps) {
   // 예약 모듈(booking-api.cjs)이 **같은** 세션 서명·불투명 id 체계를 써야 한다.
   // 복제하면 SESSION_SECRET 파생 규칙이 갈라져 한쪽 토큰이 다른 쪽에서 안 풀린다.
   // trainer-portal.cjs 는 여기에 더해 세션 발급(issueSession)과 공유비밀 게이트를 그대로 쓴다.
-  return { readSession, issueSession, opaqueId, readOpaqueId, fail, scrub, sharedSecretGate };
+  // review-api.cjs(§29)는 requireStudent(세션 판정 한 벌) · hooks(/sessions 확장 자리)까지 받는다.
+  return { readSession, issueSession, opaqueId, readOpaqueId, fail, scrub, sharedSecretGate, requireStudent, hooks };
 };
