@@ -233,6 +233,10 @@ const orientedSize = (m) => (m && m.orientation >= 5
 const imagePath = (sid, rid, iid, kind, ext) => `students/${sid}/reviews/${rid}/${iid}.${kind}.${ext}`;
 const derivPath = (orig, kind) => (/\.orig\.[a-z]+$/.test(orig || "") ? orig.replace(/\.orig\.[a-z]+$/, `.${kind}.webp`) : null);
 const isPendingPath = (p) => String(p || "").startsWith("pending/");      // 업로드 도중(자리만 잡은 행)
+// Storage URL 에 들어가는 경로는 이 모양만(숫자 id · 정해진 종류·확장자) — `..`·`/` 끼워 넣기로 다른 Storage·REST 경로를
+// service_role 로 부르는 일이 구조적으로 없게 한다(업로드·내려받기 URL 을 만들기 전에 검사).
+const STORAGE_PATH_RE = /^students\/\d{1,18}\/reviews\/\d{1,18}\/\d{1,18}\.(?:orig|disp|thumb)\.(?:png|jpg|webp)$/;
+const isStoragePath = (p) => typeof p === "string" && STORAGE_PATH_RE.test(p);
 
 // 그리기 레이어(v2.7 §2.4 · 앱 src/lib/review/types.ts Shape) — 도형 종류별 키가 정확히 이 목록이어야 한다.
 // 허용 키 밖은 400: 응답 가드(scrub)가 모르는 키로 상세 전체를 503 내지 않게, 저장 전에 막는다.
@@ -432,12 +436,14 @@ module.exports = function mountReviewApi(app, deps) {
   }
   // 업로드(§3.4 · x-upsert false = 같은 경로 덮어쓰기 금지 · 다시 만들기만 upsert) · 내려받기(파생본 다시 만들기용)
   async function putObject(p, buf, mime, { upsert = false } = {}) {
+    if (!isStoragePath(p)) throw new Error("storage_path_invalid");
     const r = await fetch(`${process.env.SUPABASE_URL}/storage/v1/object/${BUCKET}/${p}`, {
       method: "POST", headers: storageHeaders({ "Content-Type": mime, "x-upsert": upsert ? "true" : "false" }), body: buf,
     });
     if (!r.ok) { const err = new Error(`storage_put_${r.status}`); err.status = r.status; throw err; }
   }
   async function getObject(p) {
+    if (!isStoragePath(p)) throw new Error("storage_path_invalid");
     const r = await fetch(`${process.env.SUPABASE_URL}/storage/v1/object/${BUCKET}/${p}`, { headers: storageHeaders() });
     if (!r.ok) { const err = new Error(`storage_get_${r.status}`); err.status = r.status; throw err; }
     return Buffer.from(await r.arrayBuffer());
@@ -471,7 +477,7 @@ module.exports = function mountReviewApi(app, deps) {
   function retryDerivatives(images) {
     if (!sharp) return;
     for (const i of images) {
-      if ((i.display_path && i.thumb_path) || deriveRetried.has(i.id) || !derivPath(i.original_path, "disp")) continue;
+      if ((i.display_path && i.thumb_path) || deriveRetried.has(i.id) || !isStoragePath(i.original_path)) continue;
       deriveRetried.add(i.id);
       (async () => {
         const d = await makeDerivatives(await getObject(i.original_path));
@@ -1217,7 +1223,11 @@ module.exports = function mountReviewApi(app, deps) {
       if (!/^[1-9]\d{0,2}$/.test(String(q.ord))) return fail(res, 400, "invalid_body");
       wantOrd = Number(q.ord);
     }
-    const buf = req.body;
+    // 본문 = raw 파서가 읽은 Buffer(Content-Type 이 image/* 가 아니면 파서가 건너뛰어 {} 등). 배열·문자열 모양을
+    // 여기서 먼저 가른다(요청 값의 타입 혼동 방지) — 아래는 전부 Buffer 로만 쓴다.
+    const body = req.body;
+    if (Array.isArray(body) || typeof body !== "object" || !Buffer.isBuffer(body)) return fail(res, 400, "image_type");
+    const buf = body;
     const kind = sniffImage(buf);
     if (!kind) return fail(res, 400, "image_type");
     const sha = crypto.createHash("sha256").update(buf).digest("hex");
@@ -1255,11 +1265,12 @@ module.exports = function mountReviewApi(app, deps) {
       } catch (e) { if (pgErr(e).code !== "23505") throw e; }                 // 자리(ord)가 겹쳤다 → 맨 뒤로 다시
     }
     if (!row) throw new Error("image_ord_retry_exhausted");
-    const imageId = row.id;
+    const imageId = Number(row.id);
+    const sid = Number(r.student_id), rid = Number(r.id);                  // 경로 = DB 숫자 id 만(세션·요청 값을 직접 넣지 않는다)
     const paths = {
-      orig: imagePath(sub, r.id, imageId, "orig", kind.ext),
-      disp: imagePath(sub, r.id, imageId, "disp", "webp"),
-      thumb: imagePath(sub, r.id, imageId, "thumb", "webp"),
+      orig: imagePath(sid, rid, imageId, "orig", kind.ext),
+      disp: imagePath(sid, rid, imageId, "disp", "webp"),
+      thumb: imagePath(sid, rid, imageId, "thumb", "webp"),
     };
     const stored = [];
     try {
@@ -1492,6 +1503,6 @@ module.exports = function mountReviewApi(app, deps) {
 module.exports._test = {
   studentDisplay, normalizeLines, linesOut, normalizeTags, parsePhaseBody, checkPhaseRange, parseGameBody,
   reactionSummary, topTags, imagePurgeAt, unreadFrom, signCursor, readCursor, pgErr,
-  sniffImage, orientedSize, imagePath, derivPath, isPendingPath, normalizeShapes, sweepMode, planSweep,
+  sniffImage, orientedSize, imagePath, derivPath, isPendingPath, isStoragePath, normalizeShapes, sweepMode, planSweep,
   REVIEW_EMOJIS, MAPS, LIMITS,
 };

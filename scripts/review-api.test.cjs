@@ -134,6 +134,15 @@ test("경로 — id 만 · 파생본은 원본 경로에서 · 자리 행 판별
   assert.equal(T.derivPath("imports/x.png", "disp"), null);
   assert.equal(T.isPendingPath("pending/abc"), true);
   assert.equal(T.isPendingPath("students/1/reviews/2/3.orig.png"), false);
+  // Storage URL 에 넣는 경로 — 숫자 id · 정해진 종류·확장자만(끼워 넣기 차단)
+  assert.equal(T.isStoragePath("students/101/reviews/7/55.orig.jpg"), true);
+  assert.equal(T.isStoragePath("students/101/reviews/7/55.disp.webp"), true);
+  assert.equal(T.isStoragePath("students/101/reviews/7/../../../rest/v1/x.orig.png"), false);
+  assert.equal(T.isStoragePath("students/1/reviews/2/3.orig.gif"), false);
+  assert.equal(T.isStoragePath("students/1/reviews/2/3.orig.png?x=1"), false);
+  assert.equal(T.isStoragePath("pending/abc"), false);
+  assert.equal(T.isStoragePath(["students/1/reviews/2/3.orig.png"]), false);
+  assert.equal(T.isStoragePath(null), false);
 });
 
 test("그리기 도형 — v2.7 §2.4 종류별 키 정확히 · 값 범위 · 상한", () => {
