@@ -71,13 +71,30 @@ test("사망 판정(텔레메트리): 사망 · 로그아웃 뒤 제외 · 재�
 
 test("점수: 정본 카드 예(3킬 · 딜 720 · 전원 사망 → 0) · 이탈 −10 · 음수 · 딜 합 floor", () => {
   const members = [{ slot: 1, kills: 1, damage: 300 }, { slot: 2, kills: 1, damage: 200 }, { slot: 3, kills: 1, damage: 120 }, { slot: 4, kills: 0, damage: 100 }];
-  assert.deepEqual(T.scoreGame({ members, deadSlots: [1, 2, 3, 4] }), { kills: 3, damage: 720, dmgPts: 7, penalty: 10, base: 0, score: 0 });
+  assert.deepEqual(T.scoreGame({ members, deadSlots: [1, 2, 3, 4] }), { kills: 3, damage: 720, dmgPts: 7, chicken: 0, penalty: 10, base: 0, score: 0 });
   assert.equal(T.scoreGame({ members, deadSlots: [1, 2, 3, 4], leave: true }).score, -10);
   assert.equal(T.scoreGame({ members: members.map((x) => ({ ...x, kills: 0, damage: 10 })), deadSlots: [1, 2] }).score, -7);
   // 선수별 floor 가 아니라 합의 floor: 99.6 × 2 = 199.2 → 1점
   assert.equal(T.scoreGame({ members: [{ slot: 1, kills: 0, damage: 99.6 }, { slot: 2, kills: 0, damage: 99.6 }], deadSlots: [] }).dmgPts, 1);
   // 부동소수 합 오차: 0.1+0.2+99.7 = 100.00000000000001 또는 99.99999999999999 → 1점
   assert.equal(T.scoreGame({ members: [{ slot: 1, kills: 0, damage: 0.1 }, { slot: 2, kills: 0, damage: 0.2 }, { slot: 3, kills: 0, damage: 99.7 }], deadSlots: [] }).dmgPts, 1);
+});
+
+test("점수: 치킨 판 +8(관제탑 9/26) — 감점은 그대로 · 이탈은 −10 고정 · 카드 「🐔 +8」", () => {
+  const members = [{ slot: 1, kills: 1, damage: 200 }, { slot: 2, kills: 1, damage: 280 }, { slot: 3, kills: 0, damage: 0 }, { slot: 4, kills: 0, damage: 0 }];
+  // 관제탑 카드 예: 2킬 +2 · 딜 480 +4 · 🐔 +8 · 감점 0 → 14
+  const g = T.scoreGame({ members, deadSlots: [], place: 1 });
+  assert.deepEqual(g, { kills: 2, damage: 480, dmgPts: 4, chicken: 8, penalty: 0, base: 14, score: 14 });
+  assert.equal(T.scoreGame({ members, deadSlots: [1, 3], place: 1 }).score, 8);      // 치킨이어도 1·3번 사망 −6
+  assert.equal(T.scoreGame({ members, deadSlots: [], place: 2 }).score, 6);          // 2위는 가산 없음
+  const lv = T.scoreGame({ members, deadSlots: [], place: 1, leave: true });
+  assert.deepEqual([lv.score, lv.base], [-10, 14]);                                  // 이탈 = −10 고정(치킨 무시) · 원래 점수엔 치킨 포함
+  const at = { seq: 2, map: "Baltic_Main", createdAtMs: Date.parse("2026-09-26T12:40:00Z"), place: 1, deadSlots: [], members };
+  assert.equal(T.formatCard({ ...at, ...g }), "2판 에란겔 21:40 · 🍗1위 · 2킬 +2 · 딜 480 +4 · 🐔 +8 · 감점 0 → 14");
+  assert.equal(T.formatCard({ ...at, ...lv, leave: true }), "2판 에란겔 21:40 · 🍗1위 · 이탈 → -10 고정 (원래 2킬 · 딜 480 · 🐔 +8 · 감점 0 → 14)");
+  assert.doesNotMatch(T.formatCard({ ...at, ...T.scoreGame({ members, deadSlots: [], place: 2 }), place: 2 }), /🐔/);
+  // /킬내기이탈 이 저장값(kills · damage_sum · win_place · penalty)으로 다시 셀 때도 같은 식
+  assert.deepEqual([T.baseScore(2, 480, 1, 0), T.baseScore(2, 480, 2, 0), T.baseScore(2, 480, 1, 6)], [14, 6, 8]);
 });
 
 test("순위: 총점 → 치킨 → 킬 → 딜 · 완전 동점은 같은 순위", () => {

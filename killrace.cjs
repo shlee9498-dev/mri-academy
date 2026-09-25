@@ -9,18 +9,21 @@
 // 판 인정: createdAt ∈ [window_start, window_end)(노래방룰 = 끝 시각 전에 시작한 판까지)
 //          + 등록 4명이 같은 matchId 의 같은 roster + gameMode squad·squad-fpp + matchType official(일반).
 //          3명만 뛴 판 = 불인정(「3인」) · 경쟁전·아케이드 등 = 「제외」.
-// 판 점수: Σ4인 kills + floor(Σ4인 damageDealt / 100) − Σ 사망 슬롯 감점(1번 4 · 2번 3 · 3번 2 · 4번 1 · 선수당 판 1회).
-//          이탈 판 = −10 고정(킬·딜·감점 무시 · 오너 /킬내기이탈). 음수 허용. 총점 = Σ판. 동점 = 치킨 수 → 킬 → 딜.
+// 판 점수: Σ4인 kills + floor(Σ4인 damageDealt / 100) + (팀 winPlace 1 이면 치킨 +8) − Σ 사망 슬롯 감점
+//          (1번 4 · 2번 3 · 3번 2 · 4번 1 · 선수당 판 1회) — 치킨 +8 은 관제탑 2026-09-26 확정. 치킨 판도 사망 감점은 그대로
+//          (블루칩 부활 후 최종 생존만 면제 — 아래 사망 판정).
+//          이탈 판 = −10 고정(킬·딜·치킨·감점 무시 · 오너 /킬내기이탈). 음수 허용. 총점 = Σ판. 동점 = 치킨 수 → 킬 → 딜.
 // 사망 판정: 텔레메트리 LogPlayerKillV2 의 victim 이면 사망 — 단 로그아웃 상태에서 난 사망(나간 뒤 남은 캐릭터)은 제외,
 //          팀 winPlace 1 + deathType alive 는 감점 없음(블루칩 부활 치킨). 기절(LogPlayerMakeGroggy)은 사망 아님.
 //          텔레메트리 실패 판만 deathType ≠ "alive" 로 대체(카드 「판정: deathType(대체)」) · 명령 옵션으로 전부 deathType 도 가능.
-//          ※ 재접속 대비로 LogPlayerLogin 도 읽는다 — 로그아웃 → 재접속 → 사망은 감점한다(정본은 「로그아웃 이후 제외」만 적음).
+//          재접속: 「Logout 이후 ~ 다음 Login 이전 구간의 사망만 제외」(관제탑 2026-09-26 정본 보완 · 승인) — 재접속 뒤 플레이 중 사망은 감점.
 // 조회: /players 는 무캐시(ttl 0) · 분당 10회라 6.5초 간격 · /matches 도 무캐시(창 밖 판까지 훑어 1시간 캐시에 쌓이면 메모리) ·
 //       텔레메트리는 pubgGet 을 쓰지 않고 fetch 스트리밍으로 필요한 이벤트만 뽑고 원본은 버린다 · 판 하나씩 순서대로.
 //       뽑은 결과는 event_matches.deaths 에 저장해 다시 집계할 때 건너뛴다.
 
 const SLOT_PENALTY = [4, 3, 2, 1];              // 1번(최상위 티어) 사망 = −4 … 4번 = −1 · 전원 = −10
 const LEAVE_SCORE = -10;                        // 이탈 판 고정 점수
+const CHICKEN_BONUS = 8;                        // 팀 winPlace 1 판 가산(관제탑 2026-09-26)
 const OK_MODES = new Set(["squad", "squad-fpp"]);
 const NEAR_MS = 30 * 60 * 1000;                 // 창 앞뒤 30분 안의 4인 판은 「시간 밖」 으로 보여 준다(노래방룰 시비 대비)
 const OLDER_STOP = 3;                           // 창 시작 30분 전보다 오래된 판이 연속 3개면 그 팀 훑기를 멈춘다(목록은 최신순)
@@ -155,6 +158,7 @@ function telemetryVerdict(ev, member, place) {
     ...(e.logouts || []).map((t) => [Date.parse(t), 0]),
     ...(e.logins || []).map((t) => [Date.parse(t), 1]),
   ].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  // 사망 시각 직전의 세션 이벤트가 Logout 이면 제외 = [Logout, 다음 Login) 구간(같은 시각의 Logout 은 이미 나간 것으로 본다)
   const loggedOutAt = (t) => { let out = false; for (const [ts, kind] of sessions) { if (ts > t) break; out = kind === 0; } return out; };
   const deaths = (e.kills || []).map((t) => Date.parse(t)).sort((a, b) => a - b);
   const counted = deaths.filter((t) => !loggedOutAt(t));
@@ -164,13 +168,17 @@ function telemetryVerdict(ev, member, place) {
 }
 const deathTypeVerdict = (member) => ({ dead: member.deathType !== "alive", why: "deathType" });
 
+// 판 기본 점수(이탈 표시 전) — 집계(scoreGame)와 /킬내기이탈(저장값으로 다시 셈)이 같은 식을 쓴다
+const dmgPoints = (damage) => Math.floor(damage / 100 + 1e-9);
+const chickenPoints = (place) => (Number(place) === 1 ? CHICKEN_BONUS : 0);
+const baseScore = (kills, damage, place, penalty) => kills + dmgPoints(damage) + chickenPoints(place) - penalty;
+
 function scoreGame(g) {
   const kills = sum(g.members, (x) => x.kills);
   const damage = Math.round(sum(g.members, (x) => x.damage) * 100) / 100;
-  const dmgPts = Math.floor(damage / 100 + 1e-9);
   const penalty = sum(g.deadSlots || [], (slot) => SLOT_PENALTY[slot - 1] || 0);
-  const base = kills + dmgPts - penalty;
-  return { kills, damage, dmgPts, penalty, base, score: g.leave ? LEAVE_SCORE : base };
+  const base = baseScore(kills, damage, g.place, penalty);
+  return { kills, damage, dmgPts: dmgPoints(damage), chicken: chickenPoints(g.place), penalty, base, score: g.leave ? LEAVE_SCORE : base };
 }
 
 // 순위 — 총점 → 치킨 수 → 킬 합 → 딜 합(이탈 판의 킬·딜·치킨은 뺀다 = 「무시」)
@@ -197,9 +205,10 @@ function formatCard(g) {
   const head = `${g.seq}판 ${mapKo(g.map)} ${kstHm(g.createdAtMs)}`;
   const place = g.place === 1 ? "🍗1위" : `${g.place || "?"}위`;
   const pen = g.penalty ? `-${g.penalty}(${g.deadSlots.join("·")}번)` : "0";
+  const chick = g.chicken ? ` · 🐔 +${g.chicken}` : "";
   const body = g.leave
-    ? `이탈 → ${LEAVE_SCORE} 고정 (원래 ${g.kills}킬 · 딜 ${num(Math.floor(g.damage))} · 감점 ${pen} → ${g.base})`
-    : `${g.kills}킬 +${g.kills} · 딜 ${num(Math.floor(g.damage))} +${g.dmgPts} · 감점 ${pen} → ${g.score}`;
+    ? `이탈 → ${LEAVE_SCORE} 고정 (원래 ${g.kills}킬 · 딜 ${num(Math.floor(g.damage))}${chick} · 감점 ${pen} → ${g.base})`
+    : `${g.kills}킬 +${g.kills} · 딜 ${num(Math.floor(g.damage))} +${g.dmgPts}${chick} · 감점 ${pen} → ${g.score}`;
   const marks = [];
   if (g.encounter && g.encounter.length) marks.push(`참가팀 조우(${g.encounter.join(", ")})`);
   if (g.used === "deathType_fallback") marks.push("판정: deathType(대체)");
@@ -653,11 +662,11 @@ function createKillrace(deps) {
       throw userErr(`「${name}」 팀을 못 찾았어요. 등록된 팀: ${teams.map((t) => t.name).join(", ") || "없음"}`);
     }
     const q = `event_id=eq.${ev.id}&team_name=eq.${encodeURIComponent(name)}`;
-    const rows = await sbSelect("event_matches", `select=match_id,seq,map,created_at,kills,damage_sum,penalty,score,leave_flag&${q}&seq=eq.${Number(seq)}`);
+    const rows = await sbSelect("event_matches", `select=match_id,seq,map,created_at,kills,damage_sum,win_place,penalty,score,leave_flag&${q}&seq=eq.${Number(seq)}`);
     if (!rows.length) throw userErr(`${name} ${seq}판이 없어요. /킬내기집계 를 먼저 돌리면 판 번호가 생겨요!`);
     const row = rows[0];
     const kills = Number(row.kills) || 0; const damage = Number(row.damage_sum) || 0; const penalty = Number(row.penalty) || 0;
-    const base = kills + Math.floor(damage / 100 + 1e-9) - penalty;
+    const base = baseScore(kills, damage, row.win_place, penalty);
     const leave = !clear;
     const score = leave ? LEAVE_SCORE : base;
     await sbPatch("event_matches", `${q}&match_id=eq.${encodeURIComponent(row.match_id)}`,
@@ -780,7 +789,7 @@ function createKillrace(deps) {
 module.exports = {
   COMMANDS, createKillrace,
   _test: {
-    SLOT_PENALTY, LEAVE_SCORE, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
+    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, formatExcluded, formatReport, formatPublic,
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote,
   },
