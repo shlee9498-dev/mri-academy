@@ -1816,7 +1816,8 @@ comment on column public.payment_requests.pubg_name is '신고 시 트레이너�
 
 -- ============================================================
 -- §28b payment_requests.pubg_platform · pubg_account_id — /결제신청 신고 플랫폼 · PUBG 실존 조회 결과 (오너 지시 2026-09-25 닉네임 후속)
---      ⚠️ 미실행 — 오너 실행 대기(2026-09-25 제안). 실행 전에는 server.js 가 SCHEMA_OPTIONAL 로 보고 닉만 저장한다(종전 동작).
+--      ✅ 실행 확인 2026-09-25 (오너 실행 · 실DB 실측 09:0x UTC: 21칸 · 두 칸 text · nullable · 기본값 없음 · 코멘트 일치 · 채워진 행 0/28 ·
+--         #351 배포 부팅 08:59 UTC `[schema] OK (optional)` 두 줄 → 재기동 불필요) → server.js REQUIRED_SCHEMA 로 승격(3곳 동기).
 --      nullable 두 칸 · 기본값 없음 · 기존 28행은 null 로 남는다(백필 없음). 메타데이터만 바뀌는 ALTER 라 표를 다시 쓰지 않는다.
 --      students 쪽은 기존 컬럼(pubg_platform · pubg_account_id)을 쓴다 — 이 절은 신청 표만.
 alter table public.payment_requests add column if not exists pubg_platform text;
