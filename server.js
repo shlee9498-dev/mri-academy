@@ -7258,6 +7258,24 @@ const REQUIRED_SCHEMA = {
   trainer_slots: ["id","trainer_id","slot_start","lesson_type","capacity","status","created_at"],
   slot_bookings: ["id","slot_id","student_id","games_held","duration_min","status",
                   "booked_at","cancelled_at","span_head_id"],
+  // §29 수업 복기 11표(2026-09-25 오너 운영 실행 · 실DB 지문 9항 = 정본 해시 일치 확인). 읽고 쓰는 코드는 PR-1(review-api.cjs)부터지만
+  // 3곳 동기(정본 SQL §29 · 이 목록 · 실DB) 규칙대로 먼저 올린다 — 부팅 [schema] OK 줄이 notify pgrst 뒤 PostgREST 가
+  // 새 표·컬럼을 보는지까지 확인해 준다. 컬럼 목록은 docs/lesson-review-server-design.md §6 과 글자 단위로 같다.
+  review_tags:          ["slug","label","ord","active"],
+  lesson_reviews:       ["id","student_id","anchor_kind","lesson_session_id","course_session_id","course_id","author_role",
+                         "author_staff_id","recipient_trainer_id","source","status","title","body","src_file_name",
+                         "src_guild","src_channel","src_msg","consent_public_at","created_at","updated_at","published_at","hidden_at",
+                         "visibility","visibility_changed_at"],
+  review_games:         ["id","review_id","ord","seq_label","map","map_raw"],
+  review_phases:        ["id","game_id","ord","phase_from","phase_to","phase_to_end","header_raw","lines","tags","suggested_tags"],
+  review_images:        ["id","review_id","phase_id","ord","original_path","display_path","thumb_path","width","height",
+                         "bytes","sha256","uploaded_by_role","created_at"],
+  review_annotations:   ["id","image_id","author_kind","author_id","shapes","version","updated_at"],
+  review_feedback:      ["id","review_id","trainer_id","kind","phase_id","line_ord","verdict","body","due_booking_id","due_at","created_at","updated_at"],
+  review_purge_log:     ["id","ran_at","dry_run","review_id","images","bytes","purged_at"],
+  review_reads:         ["review_id","reader_kind","reader_id","read_at"],
+  review_reactions:     ["review_id","phase_id","reactor_kind","reactor_id","emoji","created_at"],
+  feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
 };
 
 // ── 선택 컬럼 (warn 레벨) ────────────────────────────────────────────────────
@@ -7317,7 +7335,9 @@ const SCHEMA_OPTIONAL = {
 // (INSERT가 PGRST204로 터질 때까지 모른다). 나머지 컬럼과 같은 등급으로 등재한다.
 (process.env.BOT_PAYREQ === "1" ? REQUIRED_SCHEMA : SCHEMA_OPTIONAL).payment_requests =
   ["id","status","student_name","student_id","trainer_id","trainer_name","kind",
-   "amount","games","paid_on","memo","pay_channel","requested_by","decided_by","decided_at","created_at"];
+   "amount","games","paid_on","memo","pay_channel","requested_by","decided_by","decided_at","created_at",
+   // §28 신고 닉네임 — 운영에 이미 있음(2026-09-25 실측) · 정본·이 목록 누락분을 동기. /결제신청 이 쓰는 건 닉네임 확보 PR.
+   "pubg_name"];
 // §18b 역참조(2026-09-17 · 관제탑 지시 2·4) — 승인 큐 → 본표(payments·lesson_enrollments) 연결 컬럼.
 // 없어도 감시 크론(runPayreqUnreflected)이 memo 표식·자연키로 판정하므로 선택 등급이다(부팅 warn 만).
 // DDL 실행 후 채워지면 판정 1순위가 되고, #13·#15 같은 "금액이 다른 대응 행"도 연결로 해소된다.

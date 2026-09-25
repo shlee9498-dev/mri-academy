@@ -1,7 +1,7 @@
 # 수업 복기 서버 설계 — DDL 전문 · Storage · 권한 · API · 자기점검 · 구현 순서 (2026-09-25 · 오너 지시 · 설계만)
 
 > 상태: **제안 · 실행·코드 착수 금지.** 화면·데이터 요구사항의 정본은 `mri-student-app/docs/lesson-review-design.md` **v2.5**(PR #22 · 머지)이다.
-> **✅ §29 「최종」(오너 9/26 판정 완료)** — 반장 **v2.7**(#25 · §14b 34~40 · v2.6 오너 판정 6건 확정) 반영: 공개 범위 `visibility` · 반응 표 · 열람 판정 확장 · 공유 피드 · `reviewDue` · 이관 작성자 판정. `students.review_group` 은 넣지 않는다(40 · 1차 그룹 기능 제외 · `group` 값만 허용). 이관 복기(디스코드 · 엑셀)는 **`visibility = 'private'`** 로 들어간다(§8). **실행은 오너 · 운영 블록별(기존 표 변경 0 → 시험 브랜치 생략).**
+> **✅ §29 운영 실행 완료(2026-09-25 · 오너 · VA 11·true·0·0 · 실DB 지문 9항 = 정본 해시 일치 · §2.14)** · **「최종」(오너 판정)** — 반장 **v2.7**(#25 · §14b 34~40 · v2.6 오너 판정 6건 확정) 반영: 공개 범위 `visibility` · 반응 표 · 열람 판정 확장 · 공유 피드 · `reviewDue` · 이관 작성자 판정. `students.review_group` 은 넣지 않는다(40 · 1차 그룹 기능 제외 · `group` 값만 허용). 이관 복기(디스코드 · 엑셀)는 **`visibility = 'private'`** 로 들어간다(§8). **실행은 오너 · 운영 블록별(기존 표 변경 0 → 시험 브랜치 생략).**
 > 이 문서는 그 요구사항(§2·§3·§8·§10·§12)을 **실DB 기준 이름**으로 DDL·서버 판정·API 계약에 내린 것이고,
 > 이 세션이 앞서 회신한 디스코드 이관 설계(`feedback_channel_map` · 공지 필터 · `feedback` 59행 처리)를 같은 DDL 안에 넣는다.
 > v2.6 이 올라오면 그 기준으로 이 문서를 갱신한다.
@@ -24,7 +24,7 @@
 | 함수·트리거 | 앵커 일치 트리거 1 · 태그 검증 트리거 1 · 순서 변경 RPC 1 · 월 사용량 RPC 1 |
 | Storage | 비공개 버킷 `lesson-reviews` 1 (SQL 로 생성 · 8MB · png/jpeg/webp) |
 | § 번호 | **§29 = 수업 복기(확정 · 이 세션 판단)** · §28 = 닉네임 설계 `payment_requests.pubg_name`(판정 대기 · 미채택이면 결번 유지 — 번호를 당기지 않는다) · §27 = feedback 기록. STATE 에 대응표 1줄 |
-| 상태 | **Pro 전환 ✅(9/25)** · v2.7 판정 ✅(9/26 · DDL 은 v2.6 과 동일) · **DDL 「최종」 = §2(운영 실행 대기 · 오너)** · 로컬 PostgreSQL 16 사전 검증 통과(별도 세션 · 멱등 2회 · 되돌리기·재적용 · 프로브 41/41 · §2.12) · 기존 표 변경 0 → 시험 브랜치 생략 · 코드 착수는 운영 실행·값 회신 뒤 |
+| 상태 | **✅ 운영 실행 완료 2026-09-25**(오너 · 블록 0~10 · VA 11·true·0·0) · 실DB 지문 9항(컬럼 101 · 제약 76 · 인덱스 33 · 트리거 2 · 함수 4 · RLS 11 · 태그 12 · 버킷 · 정책 0) = 로컬 정본 해시 일치(§2.14) · 정본 SQL §29 · REQUIRED_SCHEMA 11표 동기(3곳) · **다음 = 닉네임 확보 PR → PR-1**(오너 순서 9/25) |
 | 실행 순서 | **블록 0 사전 조회 → 본문 1~8**(태그 사전 · `lesson_reviews`+visibility · games·phases+피드 인덱스 · images·annotations · feedback·reads·purge_log · **reactions** · 함수·트리거 · 매핑표) **→ V1~V8 → 9 버킷(+V9) → 10 notify → VA** · D1(3차) · M1(월 1회 점검) |
 | v2.7 반영(34~40) | `visibility`+`visibility_changed_at`+`idx_lr_feed`(34 · `group` 은 CHECK 에 남기고 서버가 400 `visibility_invalid`) · 열람 판정 §4(35 · C안 90일 · 활성 트레이너 읽기·반응 · 답은 받는 트레이너만 · group 판정 없음) · `GET /feed` §5.1·§5.2(36 · 수강생 = pubg_name→디코닉→「수강생」 · **트레이너 = `authorDisplayName`(이름)+`authorPubgName`**) · `review_reactions` + `POST/DELETE /reviews/:id/reactions/:emoji` + `reviewReact` 60/분(37) · `PUT /reviews/visibility` 권한 = 그 복기의 수강생 본인(작성자가 트레이너여도) · 이관 작성자 = 메시지 작성자 discord id §8 · 이관분 private(38) · `sessions[].reviewDue`(39) · `students.review_group` 1차 DDL 제외(40) |
 | env | **제안 1개**: `REVIEW_DRAFT_SWEEP`(Railway · 미설정/`dryrun` = 로그만 · `delete` = 실제 삭제 · §3.7). 선택 2개(`REVIEW_BUCKET` · `REVIEW_SIGN_TTL_SEC`)는 기본값 내장. Vercel 없음 |
@@ -748,10 +748,24 @@ order by 1, 2;
 | 동작 프로브 **41/41**(트랜잭션 안 · rollback) | 초안 33건 + v2.6 8건: visibility 기본 private · 허용값 밖 거부 · students 변경+publish · 반응 정상/중복 PK/이모지 밖/`on conflict do nothing`/복기 삭제 캐스케이드 · 피드 부분 인덱스·GIN 확인 |
 | 한계 | Storage 는 스텁(upsert 구문만) · notify 는 로컬 무의미 · 트리거 정의 md5 는 메이저 버전 차이 가능 · `slot_bookings` FK 는 구문만 |
 
-### 2.13 실행 뒤 3곳 동기 — PR-1 에서 한 번에
+### 2.13 실행 뒤 3곳 동기 — ✅ 2026-09-25 완료(정본 SQL §29 · REQUIRED_SCHEMA 11표) · 나머지(추가 프로브 2 · review-api.cjs)는 PR-1
 - `supabase_admin_panel.sql` 에 블록 1~10 본문을 **§29** 로 넣고 머리말을 「✅ 실행 완료 (날짜 · 실측값)」 로 바꾼다(D1 은 3차에 §29e 로 · M1 은 주석으로).
 - `server.js` `REQUIRED_SCHEMA` 에 §6 항목(11표)을 넣는다(기동 자기점검).
 - 실DB 는 오너 실행분. 검증값(V1~V9 · VA)은 PR 본문 체크리스트로 대조한다.
+
+### 2.14 운영 실행 결과 · 적용 검토 (2026-09-25 · 오너 실행 뒤 이 세션 실DB 실측)
+
+| 항목 | 결과 |
+|---|---|
+| 오너 VA | tables 11 · rls_all true · reviews 0 · policies 0 |
+| 실DB 지문 9항(`collate "C"` 정렬 · md5) | 컬럼 101 · 제약 76 · 인덱스 33 · 트리거 2 · 함수 4 · RLS 11 · 태그 12 · 버킷 1 · 정책 0 — **로컬 정본 실행 결과와 9/9 해시 일치**(= 블록 1~10 이 빠짐없이 그대로 적용). 정본 SQL(`supabase_admin_panel.sql` §29)만으로 새 DB 를 만들어도 같은 9/9 |
+| V7 트리거 정의 md5 | PG17 값 = PG16 값(283599e3… · 4816cc60…) |
+| 데이터 | 11표 전부 0행 · 버킷 객체 0 — VA 프로브가 남긴 행 없음 |
+| 의도적으로 미실행 | D1(3차 이관 때) · M1(월 1회 점검) · R(되돌리기) · §30a(별도 · 닉네임 PR·PR-1 뒤) |
+| 권한 | 새 표 ACL = 기존 표와 같음(anon·authenticated 는 Dxtm 만 — 읽기·쓰기 없음) · RLS 정책 0 = service_role 만 |
+| advisor | 새 WARN 4 = 함수 4개 `search_path` 미고정(SECURITY INVOKER 이고 본문이 전부 `public.` 한정이라 실위험 낮음 · 보강은 `alter function … set search_path = ''` 한 블록 · 선택) · 새 INFO 11 = RLS 정책 없음(기존 표 전부와 같은 설계) |
+| 관찰(§29 무관 · 기존) | SECURITY DEFINER 함수 12개가 anon·authenticated 로 실행 가능(`book_slot`·`payreq_apply` 등 · advisor WARN) — 앱 코드에 anon 키가 없어 현재 경로는 없지만 키가 새면 직접 호출 가능. 별도 판정 대상 |
+| PostgREST 캐시 | 블록 10 notify 실행 · 다음 배포 부팅 로그 `[schema] OK lesson_reviews (24 cols)` 등 11줄로 확인(REQUIRED_SCHEMA 동기분) |
 
 ## 3. Storage
 
@@ -951,7 +965,8 @@ feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_
 | 0 | 이 문서(v2.5 정렬본) Draft PR → 오너 판정 | 이 세션 | 코드 없음 |
 | 1 | **Supabase Pro 전환** | 오너 | **✅ 완료(오너 9/25)** |
 | 2 | §29 초안(#345) → v2.6 최종(#347) → **v2.7 판정 ✅(9/26 · #25 · DDL 동일) → 「최종」 블록(= §2 · 이 판)** | 이 세션 | 기존 표 변경 0 → 시험 브랜치 생략 |
-| 3 | 「최종」 블록 0~10 · VA 운영 실행 + V1~V9·VA 값 회신(§2.11) | 오너 | Level 0 · 함수 md5 는 CR 제거 · 실행 뒤 이 세션이 실DB 대조 |
+| 3 | 「최종」 블록 0~10 · VA 운영 실행 **✅ 2026-09-25** · 이 세션 실DB 지문 대조 일치(§2.14) · 정본 SQL §29 + REQUIRED_SCHEMA 11표 동기 | 오너 → 이 세션 | Level 0 |
+| 3′ | **닉네임 확보 PR**(/수강생등록 · /결제신청 · 승인 카드 · 신청서 생년월일 제거 — 오너 9/25 · PR-1 보다 먼저) | 이 세션 | 공유 피드 작성자 표시 · §30a 스냅샷이 닉네임에 의존 |
 | 4 | **PR-1** `review-api.cjs`(수강생 텍스트 API: reviews·games·phases·publish(+visibility)·visibility 변경·delete(=숨김 포함)·recipients·read·**feed·reactions**·`/sessions` 확장(+`reviewDue`)) + Storage 헬퍼 + `REQUIRED_SCHEMA` §6(11표) + `supabase_admin_panel.sql` §29 정본 편입 | 이 세션 | DDL 검증 뒤 배포 |
 | 5 | **PR-2** 이미지 업로드·파생본(`sharp` 승인됨)·서명 URL·삭제 + 그리기 레이어 PUT(수강생) + **§3.7 draft 정리 일일 작업(드라이런 기본 ON · `review_purge_log` · 목록 `imagePurgeAt`)** | 이 세션 | 배포일부터 드라이런 2주 → 오너가 로그를 본 뒤 전환 시점 결정 → `REVIEW_DRAFT_SWEEP=delete` |
 | 6 | **PR-3** 트레이너 포털(목록·상세·comment/overall·읽음·`canReply`·`replyDueAt` 자리 · **feed·reactions(한 번 탭)·공유 열람(활성 트레이너 전원)** · task 는 2차지만 `due_invalid` 검사 함수는 여기서) + `docs/trainer-portal-api.md` §8 계약 | 이 세션 | |
