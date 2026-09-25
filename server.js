@@ -7428,7 +7428,7 @@ require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete, 
 const studentPortal = require("./student-portal.cjs")(app, { sbSelect, sbInsert, sbPatch, limit });
 
 // ── 수업 복기 API(§29 PR-1·PR-2 · /api/student-portal/{reviews,games,phases,images,feed} + /sessions 확장) ──
-// student-portal 뒤 — 그 파일이 건 공유비밀 게이트·세션·불투명 id·scrub 을 같은 함수로 쓴다. 트레이너 쪽은 PR-3.
+// student-portal 뒤 — 그 파일이 건 공유비밀 게이트·세션·불투명 id·scrub 을 같은 함수로 쓴다. 트레이너 쪽은 아래 mountTrainer(PR-3).
 // §29 표가 없으면 이 라우트군만 503(기존 포털 라우트는 그대로 · 기동 로그 [review]).
 // 초안 사진 정리(§3.7)는 아래 cronTick 이 reviewApi.draftSweep 을 부른다(env REVIEW_DRAFT_SWEEP · 기본 드라이런).
 const reviewApi = require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch, sbUpsert, sbDelete, sbRpc, limit, portal: studentPortal });
@@ -7441,6 +7441,10 @@ const reviewApi = require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch
 const trainerPortal = require("./trainer-portal.cjs")(app, {
   sbSelect, sbInsert, sbUpsert, limit, getUser, portal: studentPortal,
 });
+
+// ── 수업 복기 트레이너 라우트(§29 PR-3 · /api/trainer-portal/{reviews,feedback,feed}) ──
+// trainer-portal 뒤 — 그 파일이 건 게이트 뒤에 서고, 트레이너 판정·범위(담당 ∪ 최근 90일)·응답 가드를 같은 함수로 쓴다.
+reviewApi.mountTrainer(trainerPortal);
 
 require("./booking-api.cjs")(app, {
   sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,

@@ -196,3 +196,56 @@ test("초안 사진 정리 한 회분 — 복기별 묶음 · 상한 넘치면 �
   assert.deepEqual([p.groups.length, p.groups[0].images.length, p.groups[0].bytes, p.capped], [1, 200, 2000, true]);
   assert.deepEqual(T.planSweep([], 200), { groups: [], capped: false });
 });
+
+test("트레이너 안 읽음 — 읽은 기록이 없거나 읽은 뒤에 수강생이 고쳤으면", () => {
+  assert.equal(T.trainerUnread(null, "2026-09-25T10:00:00Z"), true);
+  assert.equal(T.trainerUnread("2026-09-25T11:00:00Z", "2026-09-25T10:00:00Z"), false);
+  assert.equal(T.trainerUnread("2026-09-25T10:00:00Z", "2026-09-25T10:00:00Z"), false);   // 같은 시각 = 읽음
+  assert.equal(T.trainerUnread("2026-09-25T10:00:00Z", "2026-09-25T10:00:01Z"), true);
+});
+
+test("트레이너 답 본문 — 1차 comment·overall · 모양은 DDL chk_rf_shape 와 같다 · mark·task 는 켜야 받는다", () => {
+  const P = (b, on) => T.parseFeedbackBody(b, on);
+  assert.deepEqual(P({ kind: "comment", phaseId: "ph", body: " 코멘트 " }).value,
+    { kind: "comment", phaseKey: "ph", body: "코멘트", lineOrd: null, verdict: null, dueKey: null });
+  assert.deepEqual(P({ kind: "overall", body: "총평", phaseId: null }).value,
+    { kind: "overall", phaseKey: null, body: "총평", lineOrd: null, verdict: null, dueKey: null });
+  const bad = (b, on) => P(b, on).error;
+  assert.equal(bad({ kind: "comment", body: "x" }), "invalid_body");                        // phaseId 없음
+  assert.equal(bad({ kind: "comment", phaseId: "ph" }), "invalid_body");                    // body 없음
+  assert.equal(bad({ kind: "comment", phaseId: 7, body: "x" }), "invalid_body");            // id 는 불투명 문자열
+  assert.equal(bad({ kind: "comment", phaseId: "ph", body: "x", verdict: "agree" }), "invalid_body");
+  assert.equal(bad({ kind: "overall", phaseId: "ph", body: "x" }), "invalid_body");
+  assert.equal(bad({ kind: "overall", body: " \n " }), "invalid_body");                     // 공백뿐 = 없음
+  assert.equal(bad({ kind: "overall", body: 5 }), "invalid_body");
+  assert.equal(bad({ kind: "overall", body: "x".repeat(4001) }), "review_too_long");
+  assert.equal(P({ kind: "overall", body: "x".repeat(4000) }).value.body.length, 4000);
+  assert.equal(bad({ kind: "overall", body: "x", dueBookingId: "b" }), "invalid_body");     // 기한은 task 에만(chk_rf_due)
+  assert.equal(bad({ kind: "praise", body: "x" }), "invalid_body");
+  assert.equal(bad([]), "invalid_body");
+  // 2차 종류 — 기본(1차)은 거부, 켜면 모양 검사
+  assert.equal(bad({ kind: "mark", phaseId: "ph", lineOrd: 1, verdict: "agree" }), "invalid_body");
+  assert.equal(bad({ kind: "task", body: "x", dueBookingId: "b" }), "invalid_body");
+  const all = ["comment", "mark", "overall", "task"];
+  assert.deepEqual(P({ kind: "mark", phaseId: "ph", lineOrd: 2, verdict: "revise" }, all).value,
+    { kind: "mark", phaseKey: "ph", body: null, lineOrd: 2, verdict: "revise", dueKey: null });
+  assert.equal(bad({ kind: "mark", phaseId: "ph", lineOrd: 0, verdict: "agree" }, all), "invalid_body");
+  assert.equal(bad({ kind: "mark", phaseId: "ph", lineOrd: 1, verdict: "maybe" }, all), "invalid_body");
+  assert.deepEqual(P({ kind: "task", body: "과제", dueBookingId: "b" }, all).value.dueKey, "b");
+  assert.equal(bad({ kind: "task", body: "과제" }, all), "invalid_body");                   // 기한 필수
+  assert.equal(bad({ kind: "task", body: "과제", dueBookingId: "b", phaseId: "ph" }, all), "invalid_body");
+});
+
+test("과제 기한 검사 — 그 수강생의 예약 · 내 슬롯 · booked · 미래 · due_at = 슬롯 시작", () => {
+  const now = Date.parse("2026-09-25T00:00:00Z");
+  const booking = { id: 9, slot_id: 5, student_id: 101, status: "booked" };
+  const slot = { id: 5, trainer_id: 1, slot_start: "2026-09-27T11:00:00+00:00" };
+  const base = { booking, slot, studentId: 101, staffId: 1, nowMs: now };
+  assert.equal(T.dueCheck(base), "2026-09-27T11:00:00+00:00");
+  assert.equal(T.dueCheck({ ...base, studentId: 102 }), null);                              // 다른 수강생 예약
+  assert.equal(T.dueCheck({ ...base, staffId: 2 }), null);                                  // 남의 슬롯
+  assert.equal(T.dueCheck({ ...base, booking: { ...booking, status: "cancelled" } }), null);
+  assert.equal(T.dueCheck({ ...base, slot: { ...slot, slot_start: "2026-09-24T11:00:00Z" } }), null);   // 지난 슬롯
+  assert.equal(T.dueCheck({ ...base, slot: { ...slot, id: 6 } }), null);                   // 예약과 슬롯이 안 맞음
+  assert.equal(T.dueCheck({ ...base, booking: null }), null);
+});
