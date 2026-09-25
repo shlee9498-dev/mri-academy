@@ -268,6 +268,17 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 > · ①·② 모두 **숨긴 복기도 「있음」으로 센다** — 이미 쓴 사람을 다시 재촉하지 않는다(`sessions[].reviewDue` 와 같은 기준).
 > · 복기 모듈이 꺼져 있으면 **키 자체가 없다**(앱은 없음 = false) · 예약 표(§23) 미실행 배포에서는 ②가 늘 false 다.
 > · `sessions[].reviewDue` 는 **바뀌지 않는다**(등록된 수업 축 · 목록 배지용).
+>
+> **모양(앱 구현용 · 2026-09-26 오너 요청)**
+>
+> | 항목 | 값 |
+> |---|---|
+> | 키 이름 | `reviewDueToday` — `GET /api/student-portal/summary` 응답의 **최상위**(`sessions[]` 안이 아니다) |
+> | 타입 | `boolean` — `true` 또는 `false` 뿐이다 |
+> | null | **없다.** 이 키가 내려오면 값은 반드시 boolean 이다 |
+> | 키가 없을 때 | 복기 모듈이 꺼진 배포에서는 **키 자체가 응답에 없다.** 앱은 `없음 = false` 로 읽는다(`sessions[]` 의 복기 네 키와 같은 규칙) |
+> | 기준 시각 | **KST(UTC+9)**. ①의 「오늘」 = `lesson_sessions.played_at`(date) 가 KST 오늘 · ②의 「오늘 예약」 = `trainer_slots.slot_start` 가 KST 오늘 0시~24시 · ②의 「끝났다」·①②의 「오늘 쓴 복기」 판정은 **서버가 응답을 만드는 시각** 기준 |
+> | 계산 시점 | 요청마다 새로 센다(캐시 없음) — 수업을 등록하거나 복기를 쓰면 다음 `/summary` 부터 바로 바뀐다 |
 
 ### 8.4 상세(`GET /reviews/:id` · `POST /reviews`)
 요약의 `id` · 앵커 3 id · `playedAt` · `title` · `status` · `authorRole` · `visibility` · `publishedAt` · `updatedAt` · `imagePurgeAt` 에 더해:
