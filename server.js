@@ -8052,7 +8052,7 @@ if (T2_ENABLED || DIRECT_STATUS_ENABLED) {
   console.log("[cron] 비활성 (T2_CRON=1 / DIRECT_STATUS=1 로 옵트인)");
 }
 
-app.listen(PORT, () => console.log("listening on " + PORT));
+app.listen(PORT, () => console.log(`listening on ${PORT} · node ${process.version}`));   // 런타임 판본 확인(engines 22.x · 되돌리면 v18 로 찍힌다)
 
 // 스키마 자기점검 — 기동 1회. 봇 로그인(ownerDM용) 여유를 두고 실행.
 setTimeout(() => {
