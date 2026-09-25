@@ -25,6 +25,8 @@ const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, Bu
 const { PAY_CHANNELS, FEE_RATES, feeFor, netFor, hasRate } = require("./config/fees.cjs");
 // 배그 닉네임 입력 규칙(/수강생등록 · /결제신청 · /닉네임등록 공용 · 순수 함수 · 테스트 scripts/pubg-name.test.cjs)
 const { parseIgnInput, sameIgn, compareIgn, ignChoices, ignGuardFilter, platLabel, ignLookupLine } = require("./pubg-name.cjs");
+// GmI 킬내기 집계(대승배 · 관제탑 2026-09-25 · GmI 소관 대행 · 1회성) — 명령 정의·판정·집계·DM (테스트 scripts/killrace.test.cjs)
+const killrace = require("./killrace.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -1107,9 +1109,11 @@ if (process.env.DISCORD_TOKEN) {
     }
     try {
       const payreqCmds = process.env.BOT_PAYREQ === "1" ? [PAYREQ_CMD] : [];
-      await client.application.commands.set(
-        [LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD, ...LINK_CMDS, ...payreqCmds], guildId);
-      console.log(`/수업등록·/판수정정·/등록계·/수강생등록·/연결승인·/연결해제·/연결현황·/닉네임등록${payreqCmds.length ? "·/결제신청" : ""} registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
+      // set() 은 이 길드 명령을 통째로 바꾼다 — 여기 없는 명령은 사라진다. 로그를 배열에서 뽑아 누락을 부팅 로그로 확인한다.
+      // 킬내기 3종(GmI · 오너 전용)은 맨 뒤에 붙인다.
+      const list = [LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD, ...LINK_CMDS, ...payreqCmds, ...killrace.COMMANDS];
+      await client.application.commands.set(list, guildId);
+      console.log(`${list.map((c) => "/" + c.name).join("·")} registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
     } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
   }
   // 계정 연결 3종 추가 등록 — 수강생이 있는 서버가 GUILD_ID·LESSON_GUILD_ID 둘 다 아닐 때만 쓴다
@@ -1226,6 +1230,13 @@ if (process.env.DISCORD_TOKEN) {
     }
     await registerLinkExtraGuilds("guildCreate", guild.id);
   });
+
+  // ── GmI 킬내기 3종(/킬내기팀등록 · /킬내기집계 · /킬내기이탈) — 오너 전용 · 결과는 오너 DM ──
+  // 소관 GmI(카지노 트랙 휴면 중 관제탑 승인 대행). 판정·집계·문구는 killrace.cjs 한 곳에 있다.
+  // pubgGet·pubgMatch·sb* 는 모듈 레벨 함수 선언이라 여기서 그대로 넘긴다.
+  const killraceBot = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch });
+  client.on("interactionCreate", (itx) => killraceBot.handle(itx).catch((e) => console.error("[killrace] handler", e?.message)));
+
   const isStaff = (id) => STAFF_IDS.includes(id);
 
   // ── /수업등록 : 트레이너 수업 등록 → 구글시트 Apps Script 웹훅 (기존 핸들러와 독립) ──
@@ -6245,19 +6256,27 @@ app.get("/api/gdcup-team-brands", async (req,res)=>{
 });
 
 // ── PUBG 매치 자동 파싱 → 라운드 점수 프리필 (저장은 사람이 검토 후) ──
-async function pubgMatch(platform, matchId){
+async function pubgMatch(platform, matchId, ttlMs){
   // 매치 결과는 확정 후 불변이라 캐시가 안전하고, 자동 감지가 같은 매치를 반복 조회하므로
   // 캐시가 오히려 PUBG 쿼터를 아낀다. (종전 `0`도 `0 || 3600_000`으로 1시간이었다 —
   // 이제 0이 진짜 무캐시가 됐으므로 의도대로 1시간을 명시한다. 동작 변화 없음.)
-  const data = await pubgGet(`/shards/${platform}/matches/${matchId}`, 3600_000);
+  // ttlMs 는 킬내기 집계(killrace.cjs)만 0 으로 넘긴다 — 창 밖 판까지 훑어서 1시간 캐시에 쌓이면 메모리를 먹는다.
+  // G드컵 match-pull 은 인자 없이 부르므로 종전대로 1시간.
+  const data = await pubgGet(`/shards/${platform}/matches/${matchId}`, ttlMs === undefined ? 3600_000 : ttlMs);
   const inc = data.included || [];
-  const parts = {}; const rosters = [];
+  const parts = {}; const rosters = []; let telemetryUrl = "";
+  // name·kills·winPlace·rank·pids 는 G드컵이 쓰는 필드라 그대로 둔다. accountId·damageDealt·deathType·won·
+  // createdAt·telemetryUrl 은 킬내기 집계용으로 덧붙인 것(G드컵 응답에는 실리지 않는다).
   inc.forEach(it=>{
-    if(it.type==="participant"){ const s=(it.attributes&&it.attributes.stats)||{}; parts[it.id]={ name:s.name||"", kills:Number(s.kills)||0, winPlace:Number(s.winPlace)||0 }; }
-    else if(it.type==="roster"){ const s=(it.attributes&&it.attributes.stats)||{}; const pd=(it.relationships&&it.relationships.participants&&it.relationships.participants.data)||[]; rosters.push({ rank:Number(s.rank)||0, pids:pd.map(p=>p.id) }); }
+    if(it.type==="participant"){ const s=(it.attributes&&it.attributes.stats)||{}; parts[it.id]={ name:s.name||"", kills:Number(s.kills)||0, winPlace:Number(s.winPlace)||0,
+      accountId:s.playerId||"", damageDealt:Number(s.damageDealt)||0, deathType:s.deathType||"" }; }
+    else if(it.type==="roster"){ const s=(it.attributes&&it.attributes.stats)||{}; const pd=(it.relationships&&it.relationships.participants&&it.relationships.participants.data)||[]; rosters.push({ rank:Number(s.rank)||0, pids:pd.map(p=>p.id),
+      won:String(it.attributes&&it.attributes.won)==="true" }); }
+    else if(it.type==="asset" && !telemetryUrl && it.attributes && it.attributes.URL){ telemetryUrl = String(it.attributes.URL); }
   });
   const attr=(data.data&&data.data.attributes)||{};
-  return { rosters, parts, mapName:attr.mapName||"", mode:attr.gameMode||"", matchType:attr.matchType||"" };
+  return { rosters, parts, mapName:attr.mapName||"", mode:attr.gameMode||"", matchType:attr.matchType||"",
+           createdAt:attr.createdAt||"", telemetryUrl };
 }
 // [관리자] 매치에서 팀별 순위·킬 자동 추출
 app.get("/api/gdcup-match-pull", async (req,res)=>{

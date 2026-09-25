@@ -2171,3 +2171,47 @@ notify pgrst, 'reload schema';
 --    where (r.anchor_kind = 'lesson' and r.lesson_session_id is null) or (r.anchor_kind = 'course' and r.course_id is null)
 --   order by 1, 2;
 --   -- 기대 0행. mismatch 두 종류는 조사 대상(명부 정정 이력 대조) · not_attended 는 서버 검사 누락 · anchor_lost 는 건수만 기록
+
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- §31  GmI 킬내기 이벤트 표 — 기록용 (오너 실행 완료 2026-09-25 · 관제탑 「대승배 GmI 킬내기 집계 봇」 정본 · 1회성)
+--      소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행). 코드 = killrace.cjs(/킬내기팀등록 · /킬내기집계 · /킬내기이탈).
+--      아래는 2026-09-25 15:2x UTC 실DB 실측(information_schema · pg_constraint · pg_indexes · RLS)을 그대로 옮긴 것이다.
+--      전부 if not exists 라 다시 실행해도 바뀌는 것이 없다. REQUIRED_SCHEMA 에는 넣지 않는다(관제탑 지시 · 1회성).
+--      event_defs 1행(대승배 · 2026-09-26 12:10~14:10 UTC = 21:10~23:10 KST)은 오너가 넣은 데이터라 여기 적지 않는다.
+--      G드컵 표(gdcup_*)와 무관하다 — 킬내기 코드는 gdcup_* 를 읽지도 쓰지도 않는다.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+create table if not exists public.event_defs (
+  id           bigint generated always as identity primary key,
+  name         text        not null,
+  window_start timestamptz not null,                     -- 판 인정 = createdAt ≥ window_start
+  window_end   timestamptz not null,                     --          createdAt < window_end (노래방룰 = 끝 시각 전에 시작한 판까지)
+  created_at   timestamptz not null default now()
+);
+create table if not exists public.event_teams (
+  event_id  bigint not null references public.event_defs(id) on delete cascade,
+  team_name text   not null,
+  platform  text   not null check (platform in ('steam','kakao')),   -- 제약명 event_teams_platform_check · 한 팀 = 한 플랫폼
+  members   jsonb  not null,                             -- [{ slot 1~4, ign, accountId }] · slot 1 = 최상위 티어(사망 감점 4)
+  primary key (event_id, team_name)
+);
+create table if not exists public.event_matches (
+  event_id   bigint      not null references public.event_defs(id) on delete cascade,
+  team_name  text        not null,
+  match_id   text        not null,
+  seq        integer,                                    -- 팀별 인정 판 순번(시작 시각 순) · 제외 판 = null
+  map        text,
+  created_at timestamptz,                                -- 매치 시작 시각
+  damage_sum numeric,                                    -- 4인 damageDealt 합 → floor(합/100) 점
+  kills      integer,
+  win_place  integer,
+  deaths     jsonb,                                      -- { used, members[], verdict[], telemetry{ players{ kills·logouts·logins } } } · 재집계 때 텔레메트리 건너뜀
+  penalty    integer,                                    -- 사망 슬롯 감점 합(1번 4 · 2번 3 · 3번 2 · 4번 1)
+  leave_flag boolean     not null default false,         -- 오너 /킬내기이탈 · 집계는 이 열을 덮지 않는다
+  score      integer,                                    -- 판 점수(이탈 = −10 고정) · 제외 판 = null
+  flags      jsonb,                                      -- { sig, mode, matchType, tel, encounter[], excluded{code,reason}, deadSlots[], source }
+  updated_at timestamptz not null default now(),
+  primary key (event_id, team_name, match_id)
+);
+alter table public.event_defs    enable row level security;   -- 정책 0 = service_role 만
+alter table public.event_teams   enable row level security;
+alter table public.event_matches enable row level security;
