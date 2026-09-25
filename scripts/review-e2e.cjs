@@ -189,7 +189,21 @@ const eq = (a, b, msg) => { assert.deepEqual(a, b, msg); passed++; };
   eq(r.json.recipients.map((x) => x.displayName), ["TrainerA", "OwnerO"], "recipients = 담당·최근 + 오너(최근 20일) · 비활성 제외 · 최근순");
   eq(r.json.recipients.map((x) => x.isPrimary), [true, false], "isPrimary");
   eq(r.json.defaultStaffId, O("staff", 1), "default = 최근 수업 트레이너");
-  eq((await call("GET", "/reviews/recipients", { sess: s5 })).json, { recipients: [], defaultStaffId: null }, "no candidates");
+  eq(r.json.defaultVisibility, null, "defaultVisibility null — 보낸 적 없음(첫 보내기는 범위 필수)");
+  eq((await call("GET", "/reviews/recipients", { sess: s5 })).json, { recipients: [], defaultStaffId: null, defaultVisibility: null }, "no candidates");
+  // 계약 보강 B(9/26) — defaultVisibility = 보내기에서 범위를 생략했을 때 서버가 쓰는 값(lastPublishedVisibility 한 곳)
+  const dv = async (sess) => (await call("GET", "/reviews/recipients", { sess })).json.defaultVisibility;
+  psql(`insert into lesson_reviews (student_id, anchor_kind, author_role, status, published_at, recipient_trainer_id, visibility, title)
+        values (105, 'none', 'student', 'published', now() - interval '2 hours', 1, 'students', 'dv-old'),
+               (105, 'none', 'student', 'published', now() - interval '1 hour', 1, 'group', 'dv-new')`);
+  eq(await dv(s5), "private", "defaultVisibility — 설정할 수 없는 값(group) = private");
+  psql(`update lesson_reviews set visibility = 'private', hidden_at = now() where student_id = 105 and title = 'dv-new'`);
+  eq(await dv(s5), "private", "defaultVisibility — 숨긴 복기도 센다(dv-old students 로 내려가지 않음)");
+  psql(`insert into lesson_reviews (student_id, anchor_kind, author_role, author_staff_id, source, status, published_at, visibility, title)
+        values (105, 'none', 'trainer', 1, 'discord', 'published', now(), 'students', 'dv-trainer')`);
+  eq(await dv(s5), "private", "defaultVisibility — 트레이너가 쓴 이관 복기는 세지 않는다");
+  psql(`delete from lesson_reviews where student_id = 105 and title like 'dv-%'`);
+  eq(await dv(s5), null, "defaultVisibility — 다 지우면 다시 null");
 
   // 2) 만들기 — lesson · 같은 수업 재요청 = existing · 남의 수업 = mismatch · none · pending · 잘못된 몸통
   r = await call("POST", "/reviews", { sess: s1, body: { anchorKind: "lesson", sessionId: O("session", 1001) } });
@@ -266,6 +280,7 @@ const eq = (a, b, msg) => { assert.deepEqual(a, b, msg); passed++; };
   r = await call("POST", `/reviews/${rvL.id}/publish`, { sess: s1, body: { visibility: "students" } });
   eq(r.json, { published: true, recipientDisplayName: "TrainerA", visibility: "students" }, "publish lesson");
   eq((await call("POST", `/reviews/${rvL.id}/publish`, { sess: s1, body: {} })).json, { published: true, recipientDisplayName: "TrainerA", visibility: "students" }, "publish idempotent");
+  eq(await dv(s1), "students", "defaultVisibility = 마지막으로 보낸 범위(아래 rvN 이 범위 생략으로 받는 값과 같다)");
   // 자유 기록 — 받는 사람 필수 · 후보 밖 거부 · 범위 생략 = 마지막 값
   eq((await call("POST", `/reviews/${rvN.id}/publish`, { sess: s1, body: {} })).json.error.code, "recipient_required", "none needs recipient");
   eq((await call("POST", `/reviews/${rvN.id}/publish`, { sess: s1, body: { recipientTrainerId: O("staff", 3) } })).json.error.code, "recipient_invalid", "inactive trainer");
@@ -273,6 +288,7 @@ const eq = (a, b, msg) => { assert.deepEqual(a, b, msg); passed++; };
   eq(r.json, { published: true, recipientDisplayName: "OwnerO", visibility: "students" }, "none publish · 마지막 범위");
   // 엑셀 출처 — students 를 보내도 private 강제
   eq((await call("POST", `/reviews/${rvX.id}/publish`, { sess: s1, body: { visibility: "students", recipientTrainerId: O("staff", 1) } })).json.visibility, "private", "xlsx forced private");
+  eq(await dv(s1), "private", "defaultVisibility — 엑셀 출처(private 강제)도 마지막 보낸 복기로 센다(보내기 생략 규칙과 같다)");
   // 강의 앵커 — 받는 사람 = 오너
   const rvC = (await call("POST", "/reviews", { sess: s1, body: { anchorKind: "course", courseId: O("course", 201), courseSessionId: O("csession", 301) } })).json.review;
   eq((await call("POST", `/reviews/${rvC.id}/publish`, { sess: s1, body: { visibility: "private" } })).json.recipientDisplayName, "OwnerO", "course → owner");
@@ -384,6 +400,7 @@ const eq = (a, b, msg) => { assert.deepEqual(a, b, msg); passed++; };
   eq((await call("PUT", `/reviews/${tr.id}`, { sess: s1, body: { title: "x" } })).status, 404, "trainer-authored edit 404");
   eq((await call("DELETE", `/reviews/${tr.id}`, { sess: s1 })).status, 404, "trainer-authored delete 404");
   eq((await call("PUT", `/reviews/${tr.id}/visibility`, { sess: s1, body: { visibility: "students" } })).json.visibility, "students", "trainer-authored visibility ok");
+  eq(await dv(s1), "private", "defaultVisibility — 트레이너가 쓴 이관 복기(students)는 세지 않는다 · 숨긴 rvL 뒤 rvC(private) 그대로");
   eq((await call("GET", `/reviews/${tr.id}`, { sess: s2 })).json.review.authorDisplayName, "TrainerA", "trainer-authored display");
 
   // 13-2) 판 수정·삭제 · 페이즈 삭제 · 한도
