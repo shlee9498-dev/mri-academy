@@ -33,3 +33,13 @@ insert into public.course_sessions (id, held_on, duration_min) overriding system
   (301, (now() at time zone 'Asia/Seoul')::date - 5, 120),
   (302, (now() at time zone 'Asia/Seoul')::date - 3, 120);
 insert into public.course_attendance (session_id, course_id, units) values (301, 201, 1), (302, 202, 1);
+-- 계약 보강 D(2026-09-26) — /summary reviewDueToday 용 예약 픽스처.
+-- 105 = 오늘 수업도 복기도 없고 「끝난 예약」만 있는 수강생(= 등록 전 구간). 103 = 아직 안 끝난 예약(카드 안 뜸).
+delete from public.slot_bookings where student_id between 100 and 199;
+delete from public.trainer_slots where id between 900 and 999;
+insert into public.trainer_slots (id, trainer_id, slot_start, lesson_type, capacity, status) overriding system value values
+  (901, 1, date_trunc('hour', now()) - interval '3 hours', 'personal', 1, 'open'),   -- 3시간 전 시작 → 끝남
+  (902, 1, date_trunc('hour', now()) + interval '3 hours', 'personal', 1, 'open');   -- 3시간 뒤 시작 → 안 끝남
+insert into public.slot_bookings (slot_id, student_id, games_held, duration_min, status) values
+  (901, 105, 0, 60, 'booked'),
+  (902, 103, 0, 60, 'booked');

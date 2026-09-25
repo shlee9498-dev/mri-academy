@@ -195,7 +195,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 > 오너 지시(9/25): 복기 계약은 이 문서에 둔다. **PR-1·PR-2 는 수강생 앱이 부르는 `/api/student-portal/*` 라우트**다. **트레이너 포털 복기 라우트는 PR-3 = §8.9**(`/api/trainer-portal/*`).
 > 정본: 요구사항 = mri-student-app `docs/lesson-review-design.md` v2.7(§10·§15) · 판정 = `docs/lesson-review-server-design.md` §4·§5 · DDL = `supabase_admin_panel.sql` §29(2026-09-25 운영 실행).
 > 코드 = `review-api.cjs`(+ `student-portal.cjs` 의 `/sessions` 확장). 로컬 PostgreSQL 16 + PostgREST 12 통합 시험 126항목 통과(§8.7).
-> **계약 보강(반장 1차 착수 · 2026-09-26)**: A `unreadFeedback` scrub 예외 = PR-1 에 이미 있음(§8.6) · B `defaultVisibility` = §8.2 `GET /reviews/recipients` 행(이번 추가) · D `reviewDue` = §8.3 끝 — **예약 조건은 아직 없다**(모양 결정 대기 · 같은 곳에 적었다).
+> **계약 보강(반장 1차 착수 · 2026-09-26)**: A `unreadFeedback` scrub 예외 = PR-1 에 이미 있음(§8.6) · B `defaultVisibility` = §8.2 `GET /reviews/recipients` 행(이번 추가) · D `reviewDue` = §8.3 끝 — **예약 조건은 `GET /summary` 의 최상위 `reviewDueToday` 로 들어갔다**(2026-09-26 오너 판정 · 아래 §8.3 끝).
 > **PR-2(사진 · 그리기 · 초안 사진 정리)** = §8.2 표 끝 3줄 + §8.8 — 통합 시험 87항목 추가(합 213 · 운영 판본 = Node 22 + `sharp` 0.35.4 에서 213/213).
 
 ### 8.1 호출 규약 (수강생 포털과 같다)
@@ -260,7 +260,14 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `reactionCounts` | object | 아니오 | `{ "👍": 2, … }` · 없으면 `{}` |
 
 `GET /sessions` 의 `sessions[]` 추가 필드: `hasReview`(boolean · 그 수업에 내가 쓴 복기 · 숨긴 것은 false) · `reviewStatus`(`draft` · `published` · 복기 없으면 null) · `unreadFeedback`(boolean) · `reviewDue`(boolean · **수업일(KST) = 오늘 ∧ 그 수업에 내 복기 없음** → 홈 「오늘 수업 복기」 카드 · 숨긴 복기가 있으면 false). 복기 모듈이 꺼져 있으면 네 키가 없다(앱은 없음 = false).
-> ⚠️ `reviewDue` 의 **예약 조건(「오늘 예약(booked) 종료 시각이 지났으면 true」 · 반장 계약 보강 D)은 아직 없다.** `sessions[]` 는 등록된 수업(`lesson_sessions`)만 한 줄씩 내려준다. 예약이 아직 `booked` 인 수업은 트레이너가 `/수업등록` 하기 전이라 행 자체가 없어서 이 키를 붙일 자리가 없다(등록하면 예약이 `done` 이 되고 그 행의 `playedAt` = 오늘이라 지금 조건으로 잡힌다). 예약 조건을 살리려면 응답 모양을 정해야 한다 — 오너 판정 대기(최상위 키 추가 안 · 서버 PR 설명 참조).
+> **예약 조건 = `GET /summary` 의 최상위 `reviewDueToday`(boolean · 계약 보강 D · 2026-09-26 오너 판정).** `sessions[]` 는 등록된 수업(`lesson_sessions`)만 한 줄씩 내려주는데, 아직 `booked` 인 예약은 트레이너가 `/수업등록` 하기 전이라 행 자체가 없어 키를 붙일 자리가 없다. 그래서 홈 카드용 한 개짜리 판정만 `/summary` 로 뺐다(홈이 이미 부르는 응답 · 같은 자리에 `nextBooking` 이 있다).
+>
+> `reviewDueToday` = ① **오늘(KST) 수업 중 내 복기가 없는 게 있다** ∨ ② **오늘 예약이 끝났는데 아직 등록 전이고, 오늘 내가 쓴 복기가 하나도 없다**.
+> · ②의 「끝났다」 = `trainer_slots.slot_start` + `coalesce(slot_bookings.duration_min, 30)분` ≤ 지금 — §23 에 끝 시각 컬럼이 없어 계산한다(개인 레슨은 `duration_min`(머리 행) · 그 외는 슬롯 1칸 30분).
+> · 트레이너가 `/수업등록` 을 하면 그 예약은 `done` 이 되므로 ②에 남는 건 「끝났는데 아직 등록 전」뿐이다(①과 겹쳐서 두 번 세지 않는다).
+> · ①·② 모두 **숨긴 복기도 「있음」으로 센다** — 이미 쓴 사람을 다시 재촉하지 않는다(`sessions[].reviewDue` 와 같은 기준).
+> · 복기 모듈이 꺼져 있으면 **키 자체가 없다**(앱은 없음 = false) · 예약 표(§23) 미실행 배포에서는 ②가 늘 false 다.
+> · `sessions[].reviewDue` 는 **바뀌지 않는다**(등록된 수업 축 · 목록 배지용).
 
 ### 8.4 상세(`GET /reviews/:id` · `POST /reviews`)
 요약의 `id` · 앵커 3 id · `playedAt` · `title` · `status` · `authorRole` · `visibility` · `publishedAt` · `updatedAt` · `imagePurgeAt` 에 더해:
@@ -290,6 +297,8 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 
 ### 8.7 시험 (PR-1)
 로컬 PostgreSQL 16(정본 SQL 로드 = 운영 §29 와 지문 9/9 같은 판) + PostgREST 12 + `student-portal.cjs` + `review-api.cjs`(서버의 `sb*` 헬퍼·`limit()` 원문 그대로) · 가짜 픽스처 · PR-1 126항목: 게이트·세션 · 후보(비활성 제외·기본값) · 만들기(existing · 남의 수업 · 강의 출석 대조 · 원시 id 거부 · 추가 키 거부) · 수정·길이·앵커 잠금 · 판·페이즈 CRUD·순서·한도·트리거 태그 검사 · 보내기(범위 필수·group 거부·마지막 값·엑셀 private·받는 사람 규칙·멱등) · `/sessions` 넷 · 피드(범위 C안 · 태그 OR · 맵 · 커서 27건 · 위조 커서) · 공유 상세 가림 · 반응(멱등 · 작성자만 반응자) · 안 읽음 → 열람 → 읽음 · 범위 변경(단건·일괄 skipped) · draft 삭제(파일 먼저) · 숨김(404 · 목록·피드 제외 · 수업 재작성 409) · 트레이너 작성 이관 복기(범위만) · **모든 응답 본문에 실명 0** · scrub 걸림 0.
+**계약 보강 D 7항목 추가(2026-09-26 · 합 310/310)** — `reviewDueToday`: 오늘 수업에 복기 없음 = true · 있음 = false · 끝난 예약만 있어도(등록 전) true · 안 끝난 예약은 false · 오늘 복기를 쓰면 사라짐 · 기존 `/summary` 키 유지.
+
 **계약 보강 B 8항목 추가(2026-09-26 · 합 303/303 · 로컬 PostgreSQL 16 + PostgREST 12.2.3 · Node 22 · `sharp` 0.35.4)** — `defaultVisibility` null(보낸 적 없음 · 후보 없음 응답 모양) · 마지막 보낸 범위 = 뒤이은 범위 생략 보내기 값 · 엑셀 출처 private 도 셈 · `group` → private · 숨긴 복기도 셈 · 트레이너가 쓴 이관 복기 제외(두 번) · 지우면 다시 null.
 **PR-2 87항목 추가(합 213 · 운영 판본 Node 22 + `sharp` 0.35.4 에서 213/213 · 첫 배포 판본 Node 18.20.8 + 0.34.5 에서도 213/213)** — 가짜 Storage(메모리) · 합성 사진: 올리기(경로 §3.2 · bytes · sha256 · 표시본 1600 · 썸네일 320 WebP · EXIF 방향 6 → 600×800 · 거짓 Content-Type 은 실제 형식으로 · 작은 사진 안 키움 · ord 지정·충돌 시 맨 뒤) · 재시도 existing · sha 머리 불일치 · gif·가짜 png·image/* 아님·빈 본문 거부 · 8MB 초과·머리만 큰 png 413 · 다른 복기 페이즈·남의 복기·트레이너 이관 복기·숨긴 복기 404 · 보낸 복기 추가 · 페이즈 4 · 복기 60 · 월 200장·1GB · 원본 올리기 실패 = 503(행·파일 안 남음) · 표시본 실패 = 원본 대신 → 다음 조회 때 다시 만들기 · 그리기(0→1→2 · 옛 버전·없는데 3 = 409 · 키·v·본문 키·version 형식 400 · 도형 301 · 본문 256kb JSON 413 · 깨진 JSON 400 · 상세·DB 모양) · 공유 열람(원본 URL 없음 · mine false · 그리기·삭제 404 · 피드 썸네일) · 자리 행 404·상세 제외 · 사진 삭제(파일 3 · 행 · 레이어) · 초안 사진 정리(드라이런 = 기록만 · 알 수 없는 env = 드라이런 · 파일 실패 복기는 남김 · 삭제 · 글·판·페이즈 남음 · 보낸 복기 제외 · 하루 지난 자리 행 · 상한 200장 → 180장 capped · 로그 형식·경로/이름 없음).
 

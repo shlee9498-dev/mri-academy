@@ -208,7 +208,9 @@ module.exports = function mountStudentPortal(app, deps) {
   // ── 다른 모듈이 얹는 확장 자리 ──
   // review-api.cjs(§29 PR-1)가 마운트되면 sessionExtras 를 채운다 → /sessions 항목에
   // hasReview · reviewStatus · unreadFeedback · reviewDue 가 붙는다. 비어 있거나 실패하면 종전 응답 그대로.
-  const hooks = { sessionExtras: null };
+  // summaryExtras(계약 보강 D · 2026-09-26 오너 판정)는 /summary 에 reviewDueToday 를 붙인다 —
+  // 등록 전 예약은 lesson_sessions 행이 없어서 sessions[] 안에 실을 칸이 없다(그래서 최상위 키).
+  const hooks = { sessionExtras: null, summaryExtras: null };
 
   // ── 세션 요구 ────────────────────────────────────────────────
   function session(req) { return readSession(req.headers["x-portal-session"]); }
@@ -351,6 +353,25 @@ module.exports = function mountStudentPortal(app, deps) {
     } catch { return null; }
   }
 
+  // 오늘(KST) 예약 중 끝난 시각이 지난 booked 가 하나라도 있나(계약 보강 D).
+  // §23 에 끝 시각 컬럼이 없다 — 개인 레슨은 duration_min(머리 행에만 있다), 그 외는 슬롯 1칸 30분.
+  // 트레이너가 /수업등록 을 하면 예약이 done 으로 바뀌므로, 여기 남는 건 「끝났는데 아직 등록 전」뿐이다.
+  const SLOT_MIN = 30;
+  async function endedBookingToday(studentId) {
+    if (!bookingReady) return false;
+    try {
+      const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+      const dayStart = new Date(`${today}T00:00:00+09:00`).toISOString();
+      const dayEnd = new Date(Date.parse(dayStart) + 86400_000).toISOString();
+      const rows = await sbSelect("slot_bookings",
+        "select=duration_min,trainer_slots!inner(slot_start)"
+        + `&student_id=eq.${studentId}&status=eq.booked&span_head_id=is.null`
+        + `&trainer_slots.slot_start=gte.${dayStart}&trainer_slots.slot_start=lt.${dayEnd}`);
+      const nowMs = Date.now();
+      return rows.some((b) => Date.parse(b.trainer_slots.slot_start) + (Number(b.duration_min) || SLOT_MIN) * 60_000 <= nowMs);
+    } catch (e) { console.error("summary_ended_booking", e?.message); return false; }
+  }
+
   // ════════════════ GET /summary ════════════════
   app.get(`${PREFIX}/summary`, requireStudent, wrap(async (req, res) => {
     const sid = req.portal.sub;
@@ -390,6 +411,13 @@ module.exports = function mountStudentPortal(app, deps) {
     try { pubgName = (await sbSelect("students", `select=pubg_name&id=eq.${sid}&limit=1`))[0]?.pubg_name || null; }
     catch (e) { console.error("summary_pubg_name", e?.message); }
 
+    // 복기 모듈이 꺼져 있으면 키 자체가 없다(/sessions 확장과 같은 규칙 · 앱은 없음 = false).
+    let reviewExtras = {};
+    if (hooks.summaryExtras) {
+      try { reviewExtras = (await hooks.summaryExtras(sid, { endedBookingToday: await endedBookingToday(sid) })) || {}; }
+      catch (e) { console.error("summary_review_extras", e?.message); }
+    }
+
     send(res, {
       lesson: {
         registeredGames: agg.registered,
@@ -403,6 +431,7 @@ module.exports = function mountStudentPortal(app, deps) {
       pendingJournalCount,
       pubgName,
       courses: await coursesFor(sid),
+      ...reviewExtras,
     });
   }));
 
