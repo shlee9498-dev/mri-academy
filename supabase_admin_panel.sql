@@ -2203,11 +2203,11 @@ create table if not exists public.event_matches (
   created_at timestamptz,                                -- 매치 시작 시각
   damage_sum numeric,                                    -- 4인 damageDealt 합 → floor(합/100) 점
   kills      integer,
-  win_place  integer,
+  win_place  integer,                                    -- 팀 최종 순위 · 1 이면 치킨 +8(관제탑 2026-09-26) · /킬내기이탈 해제 때도 이 값으로 다시 센다
   deaths     jsonb,                                      -- { used, members[], verdict[], telemetry{ players{ kills·logouts·logins } } } · 재집계 때 텔레메트리 건너뜀
   penalty    integer,                                    -- 사망 슬롯 감점 합(1번 4 · 2번 3 · 3번 2 · 4번 1)
   leave_flag boolean     not null default false,         -- 오너 /킬내기이탈 · 집계는 이 열을 덮지 않는다
-  score      integer,                                    -- 판 점수(이탈 = −10 고정) · 제외 판 = null
+  score      integer,                                    -- 판 점수 = 킬 + floor(딜/100) + 치킨 +8 − 감점 (이탈 = −10 고정) · 제외 판 = null
   flags      jsonb,                                      -- { sig, mode, matchType, tel, encounter[], excluded{code,reason}, deadSlots[], source }
   updated_at timestamptz not null default now(),
   primary key (event_id, team_name, match_id)

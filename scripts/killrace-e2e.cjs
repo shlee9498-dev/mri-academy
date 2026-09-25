@@ -118,7 +118,7 @@ const all = [...A, ...B, ...K, RX];
 // mA1 — 3킬 · 딜 720 · 4명 사망 → 0 (정본 카드 예)
 match("mA1", "steam", { at: at.A1, rosters: [sq(3, pl4(A, [{ kills: 2, dmg: 300 }, { kills: 1, dmg: 200 }, { kills: 0, dmg: 120, dt: "byzone" }, { kills: 0, dmg: 100 }])), sq(1, [{ pl: RX, dt: "alive" }])],
   tel: telemetry(at.A1, [groggy(at.A1, 10, A[0]), kill(at.A1, 11, A[0]), kill(at.A1, 12, A[1]), kill(at.A1, 13, A[2]), kill(at.A1, 14, A[3])], all) });
-// mA2 — A 치킨: 2번 블루칩 부활(사망 기록 있지만 alive) · 4번 사망 → 11 + 14 − 1 = 24 · B 7위 전원 사망 → 2 + 3 − 10 = −5 · 참가팀 조우
+// mA2 — A 치킨: 2번 블루칩 부활(사망 기록 있지만 alive) · 4번 사망 → 11 + 14 + 8(치킨) − 1 = 32 · B 7위 전원 사망 → 2 + 3 − 10 = −5 · 참가팀 조우
 match("mA2", "steam", { at: at.A2, map: "Desert_Main", mode: "squad-fpp", gzip: true,
   rosters: [sq(1, pl4(A, [{ kills: 5, dmg: 500, dt: "alive" }, { kills: 3, dmg: 400, dt: "alive" }, { kills: 2, dmg: 300, dt: "alive" }, { kills: 1, dmg: 250 }])),
     sq(7, pl4(B, [{ kills: 1, dmg: 100 }, { kills: 1, dmg: 100 }, { kills: 0, dmg: 50 }, { kills: 0, dmg: 50 }]))],
@@ -132,8 +132,8 @@ for (const [id, t] of [["mA6", at.A6], ["mO2", at.O2], ["mO3", at.O3], ["mO4", "
 // mA7 — 3번이 살아서 나감(로그아웃 뒤 캐릭터 사망 = 감점 없음) · 1·2·4번 사망 → 1 + 1 − 8 = −6
 match("mA7", "steam", { at: at.A7, rosters: [sq(10, pl4(A, [{ kills: 1, dmg: 150 }, {}, { dt: "logout" }, {}]))],
   tel: telemetry(at.A7, [kill(at.A7, 4, A[0]), kill(at.A7, 5, A[1]), { _T: "LogPlayerLogout", accountId: A[2].id, _D: T0(at.A7, 5) }, kill(at.A7, 7, A[2]), kill(at.A7, 8, A[3])], all) });
-// mB1 — B 2위 · 텔레메트리 실패 → deathType 대체(3·4번 사망) → 12 + 12 − 3 = 21
-const urlB1 = match("mB1", "steam", { at: at.B1, rosters: [sq(2, pl4(B, [{ kills: 4, dmg: 400, dt: "alive" }, { kills: 4, dmg: 400, dt: "alive" }, { kills: 2, dmg: 200 }, { kills: 2, dmg: 200, dt: "byzone" }]))],
+// mB1 — B 2위 · 텔레메트리 실패 → deathType 대체(3·4번 사망) → 16 + 16 − 3 = 29 (A 의 치킨 +8 만큼 올려 뒤 단계의 순위 뒤집힘·동점을 유지)
+const urlB1 = match("mB1", "steam", { at: at.B1, rosters: [sq(2, pl4(B, [{ kills: 6, dmg: 600, dt: "alive" }, { kills: 6, dmg: 600, dt: "alive" }, { kills: 2, dmg: 200 }, { kills: 2, dmg: 200, dt: "byzone" }]))],
   tel: telemetry(at.B1, [kill(at.B1, 10, B[2]), kill(at.B1, 12, B[3])], all), telFail: true });
 // mK1 — 카카오 · 4위 · 전원 사망 → 8 + 8 − 10 = 6 (gzip)
 match("mK1", "kakao", { at: at.K1, map: "Tiger_Main", gzip: true, rosters: [sq(4, pl4(K, [{ kills: 2, dmg: 200 }, { kills: 2, dmg: 200 }, { kills: 2, dmg: 200 }, { kills: 2, dmg: 200 }]))],
@@ -203,20 +203,20 @@ const has = (text, needle, msg) => { assert.ok(String(text).includes(needle), `$
     const r1 = await run("킬내기집계");
     has(r1.last, "📊 DM으로 보냈어요! 3팀 · 인정 6판");
     const dm1 = r1.dm;
-    has(dm1, "1위 TeamA 18점 (3판 · 🍗1 · 15킬 · 딜 2,320)");
-    has(dm1, "2위 TeamB 16점 (2판 · 🍗0 · 14킬 · 딜 1,500)");
+    has(dm1, "1위 TeamA 26점 (3판 · 🍗1 · 15킬 · 딜 2,320)");
+    has(dm1, "2위 TeamB 24점 (2판 · 🍗0 · 18킬 · 딜 1,900)");
     has(dm1, "3위 TeamK 6점 (1판 · 🍗0 · 8킬 · 딜 800)");
     has(dm1, "1판 에란겔 21:14 · 3위 · 3킬 +3 · 딜 720 +7 · 감점 -10(1·2·3·4번) → 0");
-    has(dm1, "2판 미라마 21:50 · 🍗1위 · 11킬 +11 · 딜 1,450 +14 · 감점 -1(4번) → 24 · 참가팀 조우(TeamB)\n");   // 블루칩 선수는 deathType 도 alive — 다름 표시 없음
+    has(dm1, "2판 미라마 21:50 · 🍗1위 · 11킬 +11 · 딜 1,450 +14 · 🐔 +8 · 감점 -1(4번) → 32 · 참가팀 조우(TeamB)\n");   // 블루칩 선수는 deathType 도 alive — 다름 표시 없음
     has(dm1, "3판 에란겔 22:55 · 10위 · 1킬 +1 · 딜 150 +1 · 감점 -8(1·2·4번) → -6 · deathType 과 다름: 3번 로그아웃 뒤 사망");
     has(dm1, "1판 미라마 21:50 · 7위 · 2킬 +2 · 딜 300 +3 · 감점 -10(1·2·3·4번) → -5 · 참가팀 조우(TeamA)");
-    has(dm1, "2판 에란겔 22:00 · 2위 · 12킬 +12 · 딜 1,200 +12 · 감점 -3(3·4번) → 21 · 판정: deathType(대체)");
+    has(dm1, "2판 에란겔 22:00 · 2위 · 16킬 +16 · 딜 1,600 +16 · 감점 -3(3·4번) → 29 · 판정: deathType(대체)");
     has(dm1, "1판 태이고 22:10 · 4위 · 8킬 +8 · 딜 800 +8 · 감점 -10(1·2·3·4번) → 6");
     has(dm1, "제외 · 22:30 사녹 · 3인(4번 빠짐)");
     has(dm1, "제외 · 22:40 에란겔 · 경쟁전");
     has(dm1, "제외 · 23:12 에란겔 · 시간 밖(23:10 이후 시작)");
     ok(!dm1.includes("23:50"), "창 끝 30분 뒤 판은 안 보임");
-    has(dm1, "🏆 TestEvent 킬내기 결과\n🥇 1위 TeamA — 18점\n🥈 2위 TeamB — 16점\n🥉 3위 TeamK — 6점");
+    has(dm1, "🏆 TestEvent 킬내기 결과\n🥇 1위 TeamA — 26점\n🥈 2위 TeamB — 24점\n🥉 3위 TeamK — 6점");
     has(dm1, "인정 6판 · 텔레메트리 5판 · 대체 1판 · 저장분 0판 · 제외 3판");
     ok(r1.dms.every((d) => d.length <= 2000), "DM 한 통 2000자 이하");
     eq(calls.telemetry.length, 5, "텔레메트리는 판당 1회(조우 판 mA2 는 한 번) — mA1·mA2·mA7·mB1·mK1");
@@ -236,7 +236,7 @@ const has = (text, needle, msg) => { assert.ok(String(text).includes(needle), `$
 
     // 3) 이탈 표시 → 점수 −10 · 팀 총점
     const lv = await run("킬내기이탈", { 팀명: "TeamA", 판번호: 3 });
-    has(lv.last, "이탈로 표시했어요 — TeamA 3판(에란겔 22:55) → -10점 고정 (원래 -6점)"); has(lv.last, "팀 총점 14점");
+    has(lv.last, "이탈로 표시했어요 — TeamA 3판(에란겔 22:55) → -10점 고정 (원래 -6점)"); has(lv.last, "팀 총점 22점");
     const nf = await run("킬내기이탈", { 팀명: "TeamA", 판번호: 9 });
     has(nf.last, "TeamA 9판이 없어요");
     const nt = await run("킬내기이탈", { 팀명: "없는팀", 판번호: 1 });
@@ -246,19 +246,24 @@ const has = (text, needle, msg) => { assert.ok(String(text).includes(needle), `$
     calls.telemetry.length = 0;
     const r2 = await run("킬내기집계");
     eq(calls.telemetry, [urlB1], "재집계: 저장된 추출 결과는 건너뛰고 실패했던 mB1 만 다시");
-    has(r2.dm, "1위 TeamB 16점"); has(r2.dm, "2위 TeamA 14점");
+    has(r2.dm, "1위 TeamB 24점"); has(r2.dm, "2위 TeamA 22점");
     has(r2.dm, "3판 에란겔 22:55 · 10위 · 이탈 → -10 고정 (원래 1킬 · 딜 150 · 감점 -8(1·2·4번) → -6)");
     const R2 = await rows();
     eq([R2["TeamA|mA7"].leave_flag, R2["TeamA|mA7"].score], [true, -10], "이탈 표시 보존");
     // 텔레메트리 복구 → 대체 표시 사라짐(같은 판정)
     TELEMETRY.get(urlB1).fail = false;
     const r3 = await run("킬내기집계");
-    has(r3.dm, "2판 에란겔 22:00 · 2위 · 12킬 +12 · 딜 1,200 +12 · 감점 -3(3·4번) → 21\n");
+    has(r3.dm, "2판 에란겔 22:00 · 2위 · 16킬 +16 · 딜 1,600 +16 · 감점 -3(3·4번) → 29\n");
     has(r3.dm, "텔레메트리 6판 · 대체 0판");
 
     // 5) 이탈 해제
     const un = await run("킬내기이탈", { 팀명: "TeamA", 판번호: 3, 해제: true });
-    has(un.last, "이탈 표시를 풀었어요 — TeamA 3판(에란겔 22:55) → -6점"); has(un.last, "팀 총점 18점");
+    has(un.last, "이탈 표시를 풀었어요 — TeamA 3판(에란겔 22:55) → -6점"); has(un.last, "팀 총점 26점");
+    // 치킨 판 이탈 왕복 — /킬내기이탈 이 저장값으로 다시 셀 때도 치킨 +8(win_place 1)이 들어간다
+    const lvC = await run("킬내기이탈", { 팀명: "TeamA", 판번호: 2 });
+    has(lvC.last, "이탈로 표시했어요 — TeamA 2판(미라마 21:50) → -10점 고정 (원래 32점)"); has(lvC.last, "팀 총점 -16점");
+    const unC = await run("킬내기이탈", { 팀명: "TeamA", 판번호: 2, 해제: true });
+    has(unC.last, "이탈 표시를 풀었어요 — TeamA 2판(미라마 21:50) → 32점"); has(unC.last, "팀 총점 26점");
 
     // 6) deathType 판정 — 텔레메트리 안 받음 · 로그아웃 선수도 감점 · 저장된 텔레메트리는 보존
     calls.telemetry.length = 0;
@@ -266,15 +271,15 @@ const has = (text, needle, msg) => { assert.ok(String(text).includes(needle), `$
     eq(calls.telemetry.length, 0, "deathType 판정은 텔레메트리를 안 받는다");
     has(r4.dm, "판정 deathType");
     has(r4.dm, "3판 에란겔 22:55 · 10위 · 1킬 +1 · 딜 150 +1 · 감점 -10(1·2·3·4번) → -8");
-    // 총점 16 동점 → 치킨 수(A 1 · B 0)로 A 가 위
-    has(r4.dm, "1위 TeamA 16점 (3판 · 🍗1"); has(r4.dm, "2위 TeamB 16점 (2판 · 🍗0"); has(r4.dm, "(동점은 치킨 수 → 킬 → 딜 순으로 정했어요)");
+    // 총점 24 동점 → 치킨 수(A 1 · B 0)로 A 가 위
+    has(r4.dm, "1위 TeamA 24점 (3판 · 🍗1"); has(r4.dm, "2위 TeamB 24점 (2판 · 🍗0"); has(r4.dm, "(동점은 치킨 수 → 킬 → 딜 순으로 정했어요)");
     ok((await rows())["TeamA|mA1"].deaths.telemetry != null, "deathType 로 돌려도 저장된 텔레메트리 보존");
 
     // 7) PUBG 목록에서 판이 빠져도(잘린 응답) 저장된 인정 판은 남는다
     A.forEach((pl) => { pl.matches = pl.matches.filter((x) => x !== "mA1"); });
     const r5 = await run("킬내기집계");
     has(r5.dm, "1판 에란겔 21:14 · 3위 · 3킬 +3 · 딜 720 +7 · 감점 -10(1·2·3·4번) → 0 · 저장분");
-    has(r5.dm, "1위 TeamA 18점");
+    has(r5.dm, "1위 TeamA 26점");
 
     // 8) 팀 구성이 바뀌면(슬롯 순서) 목록에서 빠진 옛 판은 버리고 순번을 비운다
     K.forEach((pl) => { pl.matches = []; });
