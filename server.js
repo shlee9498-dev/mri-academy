@@ -5375,6 +5375,12 @@ app.get("/", (_req, res) =>
 // 화면(gdcup-admin.html 등)이 시즌3 운영 중에도 시즌2 데이터를 보고 있었다.
 // ⚠️ 아카이브 페이지(gdcup-s2/history)는 반드시 season을 명시해야 한다 — 생략하면 현재 시즌이 온다.
 function gdSeason(v) { const n = parseInt(v, 10); return (n >= 1 && n <= 9) ? n : GDCUP_CURRENT_SEASON; }
+// 대승배 GmI 킬내기(2026-09-26 · 1회) — 신청 폼(gmi-clancup killnaegi.html)이 G드컵 신청 API를 예약 키 season=9로 재사용한다.
+// 웹훅 게시 문구만 킬내기용으로 분기한다: 「G드컵 시즌9」 대신 대회명 · BPI·가중치·권장 상한·티어 표기 없음.
+// 저장·검증·API 응답은 그대로이고, 시즌 2~4 게시 본문은 한 글자도 바뀌지 않는다.
+const KILLNAEGI_SEASON = 9;
+const KILLNAEGI_LABEL = "대승배 GmI 킬내기";
+const isKillnaegi = (season) => Number(season) === KILLNAEGI_SEASON;
 app.get("/api/gdcup-count", async (req, res) => {
   try {
     if (!process.env.SUPABASE_URL) return res.json({ teams: 0, target: 16 });
@@ -5742,20 +5748,21 @@ app.post("/api/gdcup-apply", async (req, res) => {
     const WEBHOOK = process.env.GDCUP_APPLY_WEBHOOK;
     const PING = process.env.GDCUP_PING || "";
     if (WEBHOOK) {
+      const kn = isKillnaegi(season);   // 킬내기: 슬로건 칸 = 폼이 채운 신청 정보(플랫폼·방송동의·클랜원) · 티어/BPI/상한 없음
       // "최고 X/Y딜"이 판정 근거처럼 읽혀 오판정 의심을 부른 사고가 있었다(Ez_time-).
       // 신청 시점엔 서버 검증 전이라 근거가 아예 없다 — 자기신고값임을 문구로 못박는다.
-      const mlines = members.map((m, i) => (i === 0 ? "[팀장] " : "[팀원" + (i + 1) + "] ") + m.name + " (" + m.ign + ") · " + m.tier + (m.peak ? " · 신고 " + m.peak + "/" + (m.dmg || "?") + "딜" : "")).join("\n");
+      const mlines = members.map((m, i) => (i === 0 ? "[팀장] " : "[팀원" + (i + 1) + "] ") + m.name + " (" + m.ign + ")" + (kn ? "" : " · " + m.tier + (m.peak ? " · 신고 " + m.peak + "/" + (m.dmg || "?") + "딜" : ""))).join("\n");
       const embed = {
-        title: "G드컵 시즌" + season + " 팀 신청 - " + teamName,
+        title: (kn ? KILLNAEGI_LABEL : "G드컵 시즌" + season) + " 팀 신청 - " + teamName,
         color: 0xf5c518,
         fields: [
-          { name: "슬로건", value: clip(b.slogan, 60) || "-", inline: false },
+          { name: kn ? "신청 정보" : "슬로건", value: clip(b.slogan, 60) || "-", inline: false },
           { name: "멤버", value: mlines || "-", inline: false },
-          { name: "팀 BPI", value: bpi != null ? (bpi + (weight != null ? (" (가중치 x" + weight + ")") : "")) : "-", inline: true },
+          ...(kn ? [] : [{ name: "팀 BPI", value: bpi != null ? (bpi + (weight != null ? (" (가중치 x" + weight + ")") : "")) : "-", inline: true }]),
           { name: "연락처", value: contact || "-", inline: true },
           // 권장 초과분은 운영진 채널에 즉시 띄운다 — 접수는 되지만 조율 대상이라는 신호.
           // 이게 없으면 초과 팀이 조용히 들어와 확정 단계에서야 드러난다.
-          ...(capWarnings.length ? [{ name: "⚠ 권장 초과", value: capWarnings.map(capWarnText).join("\n"), inline: false }] : []),
+          ...(!kn && capWarnings.length ? [{ name: "⚠ 권장 초과", value: capWarnings.map(capWarnText).join("\n"), inline: false }] : []),
         ],
         footer: { text: count != null ? ("현재 " + count + "팀 신청") : "" },
         timestamp: new Date().toISOString(),
@@ -5774,7 +5781,7 @@ app.post("/api/gdcup-apply", async (req, res) => {
         title: "🎮 " + teamName,
         color: 0xf5c518,
         description: (clip(b.slogan, 60) ? ("\"" + clip(b.slogan, 60) + "\"\n") : "") + (plines || "") + recruitLine,
-        fields: [{ name: "팀 BPI", value: bpi != null ? String(bpi) : "-", inline: true }],
+        ...(isKillnaegi(season) ? {} : { fields: [{ name: "팀 BPI", value: bpi != null ? String(bpi) : "-", inline: true }] }),
         footer: { text: count != null ? ("현재 " + count + "팀 신청 중") : "" },
         timestamp: new Date().toISOString(),
       };
@@ -5841,7 +5848,7 @@ app.post("/api/gdcup-add-member", async (req, res) => {
         fields: [
           { name: "추가된 멤버", value: addLines || "-", inline: false },
           { name: "현재 인원", value: members.length + "명", inline: true },
-          { name: "팀 BPI", value: bpi + " (가중치 x" + weight + ")", inline: true },
+          ...(isKillnaegi(teamSeason) ? [] : [{ name: "팀 BPI", value: bpi + " (가중치 x" + weight + ")", inline: true }]),
         ],
         timestamp: new Date().toISOString(),
       };
@@ -5855,7 +5862,7 @@ app.post("/api/gdcup-add-member", async (req, res) => {
         title: "🎮 " + teamName + " (팀원 추가)",
         color: 0x10b981,
         description: plines + recruitLine,
-        fields: [{ name: "팀 BPI", value: String(bpi), inline: true }],
+        ...(isKillnaegi(teamSeason) ? {} : { fields: [{ name: "팀 BPI", value: String(bpi), inline: true }] }),
         timestamp: new Date().toISOString(),
       };
       try { await fetch(LISTWH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: "➕ 팀원이 추가됐어요!", embeds: [pembed] }) }); } catch (e) { console.error("gdcup_add_list_webhook", e.message); }
@@ -6567,7 +6574,7 @@ app.post("/api/gdcup-confirm", limit("gdConfirm", 30, 60_000), gdConfirmPubgGate
         title: "✅ 참가 확정 - " + (team.team_name || ""),
         color: 0x10b981,
         description: "참가가 확정되었습니다.",
-        footer: { text: "팀 BPI " + (team.bpi != null ? team.bpi : "-") },
+        ...(isKillnaegi(team.season) ? {} : { footer: { text: "팀 BPI " + (team.bpi != null ? team.bpi : "-") } }),
         timestamp: new Date().toISOString(),
       };
       try { await fetch(WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: (process.env.GDCUP_PING ? process.env.GDCUP_PING + " " : "") + "✅ 참가 확정", embeds: [embed] }) }); } catch (e) { console.error("deposit_webhook", e.message); }
@@ -6717,10 +6724,11 @@ app.post("/api/gdcup-edit", limit("gdEdit", 10, 60_000), async (req, res) => {
         title: "✏️ 팀 정보 수정됨 — " + (team.team_name || ""),
         color: 0xf5c518,
         description: (plines || "") + recruitLine,
-        fields: [{ name: "팀 BPI", value: String(bpi) + " (가중치 ×" + weight + ")", inline: true }],
+        ...(isKillnaegi(teamSeason) ? {} : { fields: [{ name: "팀 BPI", value: String(bpi) + " (가중치 ×" + weight + ")", inline: true }] }),
         timestamp: new Date().toISOString(),
       };
-      try { await fetch(LISTWH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: (process.env.GDCUP_PING ? process.env.GDCUP_PING + " " : "") + "✏️ 팀 티어가 수정됐어요 (최신 BPI 반영)", embeds: [pembed] }) }); } catch (e) { console.error("gdcup_edit_webhook", e.message); }
+      const editMsg = isKillnaegi(teamSeason) ? "✏️ 팀 정보가 수정됐어요" : "✏️ 팀 티어가 수정됐어요 (최신 BPI 반영)";
+      try { await fetch(LISTWH, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: (process.env.GDCUP_PING ? process.env.GDCUP_PING + " " : "") + editMsg, embeds: [pembed] }) }); } catch (e) { console.error("gdcup_edit_webhook", e.message); }
     }
     // verify가 서버 판정을 반영했으면 그 값이 최신 — 프론트에 재조회를 요구하지 않는다.
     const finalBpi = (verify && verify.applied) ? verify.teamBpi : bpi;
@@ -6808,12 +6816,13 @@ app.post("/api/gdcup-board", async (req, res) => {
     const season = gdSeason(req.body && req.body.season);
     const teams = await sbSelect("gdcup_apps", `select=team_name,members,bpi,status&status=neq.cancelled&season=eq.${season}&order=created_at.asc`);
     const solos = await sbSelect("gdcup_solos", `select=ign,tier,discord,status&status=neq.cancelled&season=eq.${season}&order=created_at.asc`);
+    const kn = isKillnaegi(season);
     const recruiting = teams.filter(function (t) { const fm = (t.members || []).filter(function (m) { return m.ign; }); return fm.length > 0 && fm.length < 4; });
-    const teamLines = recruiting.map(function (t) { const fm = (t.members || []).filter(function (m) { return m.ign; }); return "🎮 **" + t.team_name + "** · 🔍 용병 " + (4 - fm.length) + "명 (현재 " + fm.length + "/4, BPI " + (t.bpi != null ? t.bpi : "-") + ")"; }).join("\n") || "_모집중인 팀 없음_";
+    const teamLines = recruiting.map(function (t) { const fm = (t.members || []).filter(function (m) { return m.ign; }); return "🎮 **" + t.team_name + "** · 🔍 용병 " + (4 - fm.length) + "명 (현재 " + fm.length + "/4" + (kn ? "" : ", BPI " + (t.bpi != null ? t.bpi : "-")) + ")"; }).join("\n") || "_모집중인 팀 없음_";
     const waiting = solos.filter(function (s) { return s.status !== "matched"; });
     const soloLines = waiting.map(function (s) { return "🙋 " + s.ign + (s.tier ? " (" + s.tier + ")" : "") + (s.discord ? " · @" + s.discord : ""); }).join("\n") || "_대기 솔로 없음_";
     const embed = {
-      title: "📋 G드컵 시즌" + season + " — 현재 모집 현황",
+      title: "📋 " + (kn ? KILLNAEGI_LABEL : "G드컵 시즌" + season) + " — 현재 모집 현황",
       color: 0xf5c518,
       fields: [
         { name: "🔍 용병 모집중인 팀 (" + recruiting.length + ")", value: teamLines.slice(0, 1000), inline: false },
@@ -6895,7 +6904,7 @@ app.post("/api/gdcup-solo", async (req, res) => {
         title: kindTxt, color: 0x5ac8fa,
         fields: [
           { name: "인게임닉", value: rec.ign || "-", inline: true },
-          { name: "티어", value: rec.tier || "-", inline: true },
+          ...(isKillnaegi(rec.season) ? [] : [{ name: "티어", value: rec.tier || "-", inline: true }]),
           { name: "디스코드", value: rec.discord || "-", inline: true },
           { name: "한마디", value: rec.note || "-", inline: false },
         ],
