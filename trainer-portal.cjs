@@ -370,5 +370,6 @@ module.exports = function mountTrainerPortal(app, deps) {
   probeTables().catch((e) => console.error("trainer_portal_probe", e?.message));
 
   // booking-api.cjs 가 같은 판정·가드를 쓴다 — 두 벌이 되면 만료·회수·차단 규칙이 갈라진다.
-  return { requireTrainer, sendTrainer, scrubTrainer };
+  // 복기 트레이너 라우트(review-api.cjs mountTrainer · PR-3)도 같은 판정·범위·가드를 쓴다(복제 금지).
+  return { requireTrainer, sendTrainer, scrubTrainer, scopedStudents };
 };

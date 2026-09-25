@@ -59,7 +59,7 @@ body 없음(다른 키 있으면 400) · 세션 헤더 **불요**(있어도 검�
 - 금지(정확일치): `name` `realName` `studentId` `discordId` `trainerId` `staffId`
 - 금지(어간 포함): `phone` `email` `account` `bank` `address` `contact` `discord` `memo` `payout` `settle` `fee` `commission` `amount` `price` `payment` `revenue`
 - 예외: `feedback` `hasFeedback` `hasMyFeedback` `feedbackId`(어간 fee)
-- 표시명은 `displayName` · `studentDisplayName` 키로만 나간다. 판수(games)는 허용, 금액은 어디에도 없다.
+- 표시명은 `displayName` 계열 키로만 나간다 — `displayName` · `studentDisplayName` · (복기 §8.9) `authorDisplayName` · `recipientDisplayName` · `trainerDisplayName`, 배그 닉은 `pubgName` · `studentPubgName` · `authorPubgName`. 판수(games)는 허용, 금액은 어디에도 없다.
 - 값은 서버 로그에 남기지 않는다(키 경로만).
 
 ## 5. 라우트
@@ -190,9 +190,9 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | POST /slots/:id/reopen | `reopened` | boolean | 아니오 | true(그 외는 오류 응답) |
 | POST /logout | (본문 없음) | — | — | 204 |
 
-## 8. 수업 복기 API (§29 · PR-1·PR-2 = 수강생 포털 · 2026-09-25)
+## 8. 수업 복기 API (§29 · PR-1·PR-2 = 수강생 포털 · PR-3 = 트레이너 포털 · 2026-09-25)
 
-> 오너 지시(9/25): 복기 계약은 이 문서에 둔다. **PR-1 은 수강생 앱이 부르는 `/api/student-portal/*` 라우트**다(트레이너 포털 복기 라우트는 PR-3 에서 §8.6 에 붙인다).
+> 오너 지시(9/25): 복기 계약은 이 문서에 둔다. **PR-1·PR-2 는 수강생 앱이 부르는 `/api/student-portal/*` 라우트**다. **트레이너 포털 복기 라우트는 PR-3 = §8.9**(`/api/trainer-portal/*`).
 > 정본: 요구사항 = mri-student-app `docs/lesson-review-design.md` v2.7(§10·§15) · 판정 = `docs/lesson-review-server-design.md` §4·§5 · DDL = `supabase_admin_panel.sql` §29(2026-09-25 운영 실행).
 > 코드 = `review-api.cjs`(+ `student-portal.cjs` 의 `/sessions` 확장). 로컬 PostgreSQL 16 + PostgREST 12 통합 시험 126항목 통과(§8.7).
 > **PR-2(사진 · 그리기 · 초안 사진 정리)** = §8.2 표 끝 3줄 + §8.8 — 통합 시험 87항목 추가(합 213 · 운영 판본 = Node 22 + `sharp` 0.35.4 에서 213/213).
@@ -323,3 +323,52 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 공통: 좌표 -1~2(앱은 0~1 로 자른다 · 여유) · `color` = `#rgb` 또는 `#rrggbb` · `width` 0 초과 32 이하. 저장 형식은 `{ v:1, shapes:[…] }` 이고 상세는 `v`·`shapes` 로 풀어서 내린다(PR-1 표기의 `shapes` 를 **도형 배열**로 확정).
 
 **초안 사진 정리(서버 일일 작업 · 설계 §3.7)** — 보내지 않은 복기(draft)를 **마지막 수정 뒤 90일** 두면 그 복기의 사진(+그리기 레이어)을 지운다. 글·판·페이즈·줄·태그는 남는다 · 보낸 복기는 대상이 아니다 · 목록의 `imagePurgeAt` 이 그 날이다(사진·그리기·판·페이즈 수정이 날짜를 미룬다). **배포 뒤 처음 2주는 드라이런**(지울 목록만 기록 · 아무것도 안 지운다) → 오너가 기록을 본 뒤 실제 삭제를 켠다(env `REVIEW_DRAFT_SWEEP=delete`). 앱은 정리 14일 전(76일째)부터 「n일 뒤 사진 정리」 배지(v2.7 §8.5) — 알림(DM)은 2차.
+
+### 8.9 트레이너 포털 복기 (PR-3 · 2026-09-25)
+베이스 `/api/trainer-portal` — 게이트·세션·오류 형태는 §1·§2 그대로(`requireTrainer` · 응답은 §4 scrubTrainer). 레이트리밋은 수강생 복기와 같은 키(`reviewRead` 120/분 · `reviewWrite` 120/분 · `reviewReact` 60/분). **권한 없음 · 숨김 · 초안 · 없음은 전부 404 `review_not_found`**(403 없음 — 게이트·세션 오류만 §1.1 그대로). 본문 파서 오류도 계약 코드(413 `review_too_long` · 400 `invalid_body`).
+
+**볼 수 있는 복기**(설계 §4 · 보낸 복기만)
+| 누가 | 무엇 |
+|---|---|
+| 받는 트레이너 · 범위(§3) 안 수강생의 트레이너 · 오너 | 보낸 복기 전체 필드(세션·강의 id · 원본 사진 URL · 받는 사람 · 파일명) |
+| 활성 트레이너 전원 | 공개 범위 「수강생 전체」(`visibility=students`) 복기 — 공개 열람 필드(세션·강의 id null · 원본 URL 없음 · 받는 사람·파일명 null) |
+| 아무도 | 수강생 초안(draft) · 숨긴 복기(오너 확인은 SQL) |
+
+답(`canReply`) = **받는 트레이너 · 오너**. 나머지는 읽기·반응만(앱 안내 「답은 받는 트레이너가 해요」).
+
+| 라우트 | 본문 | 응답 · 규칙 |
+|---|---|---|
+| `GET /reviews?days=30&status=published` | | `{ reviews:[요약] }` — 받는 트레이너가 나 ∪ 범위 안 수강생의 **보낸** 복기(공개분은 `/feed`) · 숨김 제외 · 보낸 시각 최신순 · 최대 200 · `days` 1~365(기본 30 · **보낸 시각** 기준 · 범위 밖 값은 기본값) · `status` 는 `published` 만(다른 값 400 `invalid_body` · 트레이너 초안은 2차) |
+| `GET /reviews/:id` | | `{ review: 상세 }` — 수강생 상세(§8.4) 구조 + 아래 트레이너 필드 · 열면 읽음 기록 |
+| `POST /reviews/:id/feedback` | `{ kind, phaseId?, body }` | `{ feedback }` — 받는 트레이너·오너만(아니면 404) · **1차 `kind` = `comment`**(`phaseId` = 그 복기의 페이즈 · 필수) · **`overall`**(총평 · `phaseId` 없음) · `body` 1~4000자(앞뒤 공백 제거 · 공백뿐 400 `invalid_body` · 초과 400 `review_too_long`) · `mark`·`task`·`lineOrd`·`verdict`·`dueBookingId` 는 **2차**(지금 보내면 400 `invalid_body`) |
+| `PUT /feedback/:id` | `{ body }` | `{ feedback }` — **내 답만**(오너도 남의 답은 404) · 본문만 바뀐다(종류·페이즈 그대로) · `updatedAt` 갱신 |
+| `DELETE /feedback/:id` | | 204 — 내 답(오너는 누구 답이든) |
+| `GET /feed?tag=&map=&days=&cursor=` | | 수강생 `/feed`(§8.2 · §8.5)와 같은 필터·커서 · **활성 트레이너 전원** · 항목의 작성자 = `authorDisplayName`(이름) + `authorPubgName` |
+| `POST /reviews/:id/reactions/:emoji` · `DELETE …` | | `{ reactionCounts, myReactions }` — 볼 수 있는 보낸 복기에만 · 이모지 6개(§8.2) · **반응만으로는 `awaitingReply` 가 풀리지 않는다**(답 = comment·overall) |
+
+**요약(목록 한 줄)** — 수강생 요약(§8.3)의 `id` · `anchorKind` · `sessionId` · `courseId` · `courseSessionId` · `playedAt` · `title` · `status`(늘 `published`) · `authorRole` · `gameCount` · `imageCount` · `hasFeedback` · `updatedAt` · `publishedAt` · `visibility` · `reactionCounts` 에 더해:
+| 필드 | 타입 | null | 값 |
+|---|---|---|---|
+| `authorDisplayName` | string | 아니오 | 쓴 사람 — 수강생 = 이름 · 트레이너 작성분 = 트레이너 이름 |
+| `authorPubgName` | string | 가능 | 쓴 수강생의 배그 닉 · 트레이너 작성분 null |
+| `studentDisplayName` · `studentPubgName` | string | 이름 아니오 · 닉 가능 | 그 복기의 수강생 — 과제 기한 후보(`GET /slots` 의 `bookings[].studentDisplayName`)와 맞춰 볼 때 쓴다 |
+| `recipientDisplayName` | string | 가능 | 받는 트레이너 이름 |
+| `isRecipient` | boolean | 아니오 | 내가 받는 트레이너 |
+| `unread` | boolean | 아니오 | 내가 연 적 없음 ∨ 연 뒤에 수강생이 고침(`updatedAt` > 읽은 시각 · 답·반응은 `updatedAt` 을 바꾸지 않는다) |
+| `awaitingReply` | boolean | 아니오 | 내가 받는 트레이너 ∧ 내 답(comment·overall) 0건 — 「답 기다려요」 묶음(오래된 순 정렬은 앱) |
+| `replyDueAt` | null | 늘 null | 답 기한 자리 — 오너 결정 대기(컬럼 없음) |
+| `myReactions` | string[] | 아니오 | 내가 누른 이모지 — 「👍 한 번 탭」 토글 판단 |
+
+**상세**(수강생 상세 §8.4 에 더하거나 달라지는 것)
+| 필드 | 값 |
+|---|---|
+| `authorDisplayName` · `authorPubgName` · `studentDisplayName` · `studentPubgName` · `isRecipient` · `replyDueAt` | 요약과 같다 |
+| `canReply` | 답 입력을 보여 줄지(받는 트레이너 · 오너) |
+| `readOnly` | 늘 true(내용 편집은 수강생 · 트레이너 작성 복기는 2차) |
+| `feedback[]` | `{ id, kind, phaseId, lineOrd, verdict, body, trainerDisplayName, dueAt, createdAt, updatedAt, mine }` — `mine` = 내 답(고치기·지우기) · 수강생 응답에는 `mine` 키가 없다 |
+| `reactions.reactors[]` | 누가 눌렀는지 `{ emoji, role, displayName }` — 모든 트레이너에게 · 수강생 반응자 = 이름 |
+| 사진 | 받는 사람·범위·오너면 `originalUrl` 포함 · 공개 열람자는 표시본·썸네일만 · `annotations[].authorDisplayName` 수강생 레이어 = 이름 · `mine` = 내 레이어(트레이너 그리기는 2차) |
+
+**시험** — 통합 82항목 추가(합 295 · 로컬 PostgreSQL 16 + PostgREST 12 + trainer-portal · 트레이너 3명: 담당·받는 사람 / 오너 / 담당 없는 활성 트레이너 + 비활성 1명): 게이트·세션(`not_staff` · 수강생 세션 `scope_denied`) · 목록 범위(수신 ∪ 범위 · 초안·숨김 제외 · 오너 · 빈 목록) · 안 읽음 → 상세 열람 = 읽음 · 답 대기(반응으로는 안 풀림 · 답 → 풀림 · 답을 지우면 다시) · 공개 열람자(원본 URL·받는 사람·세션 id 없음 · 반응자 보임 · 답 404) · 숨김은 오너도 404 · 답 검증(comment phaseId 필수 · 다른 복기 페이즈 · 원시 id · overall 에 phaseId · mark·task = 2차 · 4000자 · 빈 본문 · 추가 키 · 깨진 JSON) · 고치기·지우기 권한 · 수강생 쪽(새 답 = 안 읽음 · 상세에 `mine` 없음) · 트레이너 피드(이름 + pubg_name · 커서) · 수강생 피드는 그대로(pubg 만 · `authorPubgName` 없음) · scrubTrainer 503 없음 · **수강생 응답 실명 0**(트레이너 응답은 따로 모은다). 단위 3개 추가(합 44): 트레이너 안 읽음 · 답 본문 모양 · 과제 기한 검사(2차용).
+
+**트레이너 앱 인계(1차)**: 목록 「답 기다려요」 묶음 = `awaitingReply` · 줄마다 👍 한 번 탭 = `POST …/reactions/👍`(`myReactions` 에 있으면 `DELETE`) · 상세 답 입력은 `canReply` 일 때만(아니면 「답은 받는 트레이너가 해요」) · 페이즈 코멘트 = `comment` + `phaseId` · 총평 = `overall` · 「공개」 탭 = `GET /feed` · 이름 옆 배그 닉 = `*PubgName`(null 이면 이름만).

@@ -11,7 +11,8 @@ truncate public.lesson_reviews, public.course_attendance, public.course_sessions
 delete from public.students where id between 100 and 199;
 delete from public.staff where id between 1 and 9;
 insert into public.staff (id, discord_id, name, role, active) overriding system value values
-  (1, 'd-t1', 'TrainerA', 'trainer', true), (2, 'd-o2', 'OwnerO', 'owner', true), (3, 'd-t3', 'TrainerOld', 'trainer', false);
+  (1, 'd-t1', 'TrainerA', 'trainer', true), (2, 'd-o2', 'OwnerO', 'owner', true), (3, 'd-t3', 'TrainerOld', 'trainer', false),
+  (4, 'd-t4', 'TrainerB', 'trainer', true);   -- PR-3: 담당·최근 수업 없는 활성 트레이너(공개 복기만 읽는 열람자)
 insert into public.students (id, name, discord_nick, trainer_id, status, pubg_name, pubg_platform) overriding system value values
   (101, 'TestStudentOne',   'dn1', 1, 'active', 'Test_User1', 'steam'),
   (102, 'TestStudentTwo',   'dn2', 1, 'active', null, null),

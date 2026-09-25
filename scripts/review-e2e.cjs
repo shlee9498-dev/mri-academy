@@ -1,4 +1,5 @@
-// 수업 복기 API 로컬 통합 시험(§29 PR-1·PR-2 · CI 밖 · 수동 실행) — PostgreSQL + PostgREST + student-portal.cjs + review-api.cjs
+// 수업 복기 API 로컬 통합 시험(§29 PR-1·PR-2·PR-3 · CI 밖 · 수동 실행) — PostgreSQL + PostgREST + student-portal.cjs + review-api.cjs
+//   + trainer-portal.cjs(PR-3 트레이너 라우트 = review-api mountTrainer)
 //   server.js 의 sb* 헬퍼·limit() 원문을 그대로 뽑아 쓴다(복제 구현 아님). 픽스처는 전부 가짜 값(scripts/review-e2e.seed.sql).
 //   Storage 는 가짜(메모리) — 서명 · 올리기 · 내려받기 · 삭제 · 버킷 조회. 시험 사진은 sharp 로 만든 단색·합성 이미지.
 // 준비(한 번):
@@ -88,11 +89,14 @@ proxy.use(async (req, res) => {
   res.send(Buffer.from(await r.arrayBuffer()));
 });
 
-// ── 앱: student-portal → review-api (server.js 와 같은 순서) ──
+// ── 앱: student-portal → review-api → trainer-portal → mountTrainer (server.js 와 같은 순서) ──
 const app = express();
 app.use(express.json({ limit: "256kb" }));
 const portal = require(path.join(REPO, "student-portal.cjs"))(app, { sbSelect: deps.sbSelect, sbInsert: deps.sbInsert, sbPatch: deps.sbPatch, limit: deps.limit });
 const api = require(path.join(REPO, "review-api.cjs"))(app, { ...deps, portal });
+const trainerPortal = require(path.join(REPO, "trainer-portal.cjs"))(app,
+  { sbSelect: deps.sbSelect, sbInsert: deps.sbInsert, sbUpsert: deps.sbUpsert, limit: deps.limit, getUser: () => null, portal });
+api.mountTrainer(trainerPortal);
 
 const texts = [];
 async function call(method, pth, { sess, body, secret = "test-portal-secret" } = {}) {
@@ -131,7 +135,22 @@ async function rawCall(method, pth, sess, body, type = "application/json") {
   let json = null; try { json = JSON.parse(text); } catch {}
   return { status: r.status, json, text };
 }
+// 트레이너 포털 호출(PR-3) — 트레이너 화면은 이름이 실리므로 응답을 texts(수강생 실명 검사)와 따로 모은다
+const ttexts = [];
+async function tcall(method, pth, { sess, body, raw, secret = "test-portal-secret" } = {}) {
+  const headers = { "x-portal-secret": secret, "x-client-ip": "10.2.0." + (sess?.ip || 1) };
+  if (sess) headers["x-portal-session"] = sess.sid;
+  if (body !== undefined || raw !== undefined) headers["content-type"] = "application/json";
+  const r = await fetch(`http://127.0.0.1:${APPP}/api/trainer-portal` + pth,
+    { method, headers, body: raw !== undefined ? raw : body === undefined ? undefined : JSON.stringify(body) });
+  const text = await r.text();
+  ttexts.push(text);
+  let json = null; try { json = JSON.parse(text); } catch {}
+  return { status: r.status, json, text };
+}
 const S = (sub, ip) => ({ sid: portal.issueSession({ provider: "discord", pid: "p" + sub, sub, scope: "student" }, 3600), ip });
+const TS = (staffId, ip) => ({ sid: portal.issueSession({ provider: "discord", pid: "t" + staffId, sub: staffId, scope: "trainer" }, 3600), ip });
+const PID = (o) => portal.readOpaqueId("rphase", o);
 const RID = (o) => portal.readOpaqueId("review", o);
 const IID = (o) => portal.readOpaqueId("rimage", o);
 const sha256 = (b) => crypto.createHash("sha256").update(b).digest("hex");
@@ -586,10 +605,146 @@ const eq = (a, b, msg) => { assert.deepEqual(a, b, msg); passed++; };
   ok(logs.every((l) => /^\[review\] draft_sweep mode=(dryrun|delete) cutoff=\d{4}-\d{2}-\d{2} reviews=\d+ images=\d+ bytes=\d+( deleted=\d+ failed=\d+)?( capped=1)?( pending=\d+)?$/.test(l)), "로그 형식(건수·용량만)");
   ok(logs.every((l) => !l.includes("students/") && !l.includes("Test")), "로그에 경로·이름 없음");
 
+  // 19) 트레이너 포털(PR-3) — 게이트 · 목록(담당·수신분 · 안 읽음 · 답 대기) · 상세(canReply · 공개 열람자) · 반응 · 답 · 공유 피드
+  const tA = TS(1, 41), tO = TS(2, 42), tB = TS(4, 43), tOld = TS(3, 44);
+  eq((await tcall("GET", "/reviews", { sess: tA, secret: "wrong" })).status, 403, "t gate");
+  eq((await tcall("GET", "/reviews", {})).json, { error: { code: "session_expired" } }, "t no session");
+  eq((await tcall("GET", "/reviews", { sess: tOld })).json, { error: { code: "not_staff" } }, "t 비활성 = not_staff");
+  eq((await tcall("GET", "/reviews", { sess: { sid: s1.sid, ip: 45 } })).json, { error: { code: "scope_denied" } }, "수강생 세션으로 트레이너 라우트");
+  const u1 = S(101, 46), u2 = S(102, 47);
+  // rT1 = 102 자유 기록 → TrainerA · 나만 / rT2 = 101 자유 기록 → OwnerO · 수강생 전체 + 사진 / rT3 = 102 초안
+  const rT1 = (await call("POST", "/reviews", { sess: u2, body: { anchorKind: "none" } })).json.review;
+  const gT1 = (await call("POST", `/reviews/${rT1.id}/games`, { sess: u2, body: { map: "에란겔" } })).json.game;
+  const pT1 = (await call("POST", `/games/${gT1.id}/phases`, { sess: u2, body: { phaseFrom: 1, lines: [{ text: "가짜 줄", kind: "key" }], tags: [] } })).json.phase;
+  eq((await call("POST", `/reviews/${rT1.id}/publish`, { sess: u2, body: { recipientTrainerId: O("staff", 1), visibility: "private" } })).json.recipientDisplayName, "TrainerA", "rT1 → A");
+  const rT2 = (await call("POST", "/reviews", { sess: u1, body: { anchorKind: "none" } })).json.review;
+  const gT2 = (await call("POST", `/reviews/${rT2.id}/games`, { sess: u1, body: { map: "미라마" } })).json.game;
+  const pT2 = (await call("POST", `/games/${gT2.id}/phases`, { sess: u1, body: { phaseFrom: 2, lines: [{ text: "가짜 줄 2" }], tags: [] } })).json.phase;
+  eq((await upload(u1, rT2.id, await solid(640, 360, "#224466"), { phaseId: pT2.id })).status, 200, "rT2 사진");
+  eq((await call("POST", `/reviews/${rT2.id}/publish`, { sess: u1, body: { recipientTrainerId: O("staff", 2), visibility: "students" } })).json.recipientDisplayName, "OwnerO", "rT2 → owner · students");
+  const rT3 = (await call("POST", "/reviews", { sess: u2, body: { anchorKind: "none" } })).json.review;
+  const find = (list, id) => (list || []).find((x) => x.id === id);
+
+  // 목록
+  let tl = await tcall("GET", "/reviews", { sess: tA });
+  eq(tl.status, 200, "t list 200");
+  const a1 = find(tl.json.reviews, rT1.id), a2 = find(tl.json.reviews, rT2.id);
+  eq([a1.isRecipient, a1.awaitingReply, a1.unread, a1.replyDueAt, a1.visibility, a1.gameCount, a1.hasFeedback, a1.myReactions],
+    [true, true, true, null, "private", 1, false, []], "A: rT1 받는 사람 · 답 대기 · 안 읽음");
+  eq([a1.authorDisplayName, a1.authorPubgName, a1.studentDisplayName, a1.studentPubgName, a1.recipientDisplayName, a1.authorRole],
+    ["TestStudentTwo", null, "TestStudentTwo", null, "TrainerA", "student"], "A: 이름(pubg_name) — 트레이너 화면");
+  eq([a2.isRecipient, a2.awaitingReply, a2.authorPubgName, a2.recipientDisplayName, a2.imageCount], [false, false, "Test_User1", "OwnerO", 1], "A: rT2 = 담당 범위(받는 사람 아님)");
+  ok(!find(tl.json.reviews, rT3.id) && tl.json.reviews.every((x) => x.status === "published"), "A: 초안 없음 · 보낸 복기만");
+  const hiddenIds = psql("select coalesce(string_agg(id::text, ','), '') from lesson_reviews where hidden_at is not null").split(",").filter(Boolean).map(Number);
+  ok(hiddenIds.length > 0 && tl.json.reviews.every((x) => !hiddenIds.includes(RID(x.id))), "A: 숨긴 복기 없음");
+  eq((await tcall("GET", "/reviews?status=draft", { sess: tA })).json.error.code, "invalid_body", "status 는 published 만(1차)");
+  eq((await tcall("GET", "/reviews?days=1&status=published", { sess: tA })).status, 200, "days · status=published");
+  tl = await tcall("GET", "/reviews", { sess: tO });
+  ok(find(tl.json.reviews, rT2.id)?.awaitingReply === true && !find(tl.json.reviews, rT1.id), "owner 목록 = 수신 ∪ 범위(101) · rT2 답 대기 · rT1 없음");
+  eq((await tcall("GET", "/reviews", { sess: tB })).json, { reviews: [] }, "B: 담당·수신 없음 = 빈 목록(공개분은 /feed)");
+
+  // 상세
+  let td = await tcall("GET", `/reviews/${rT1.id}`, { sess: tA });
+  const d1 = td.json.review;
+  eq([td.status, d1.canReply, d1.isRecipient, d1.readOnly, d1.replyDueAt, d1.authorDisplayName, d1.studentDisplayName, d1.studentPubgName, d1.recipientDisplayName],
+    [200, true, true, true, null, "TestStudentTwo", "TestStudentTwo", null, "TrainerA"], "A 상세: canReply · 이름");
+  eq([d1.games[0].phases[0].suggestedTags, d1.games[0].phases[0].lines[0].suggestedKind, d1.feedback, d1.reactions.reactors], [[], null, [], []], "suggested* · 답·반응 없음 · reactors 키");
+  eq(find((await tcall("GET", "/reviews", { sess: tA })).json.reviews, rT1.id).unread, false, "상세 열람 = 읽음(트레이너)");
+  eq(psql(`select count(*) from review_reads where reader_kind = 'trainer' and reader_id = 1 and review_id = ${RID(rT1.id)}`), "1", "review_reads trainer 1행");
+  td = await tcall("GET", `/reviews/${rT2.id}`, { sess: tA });
+  eq([td.json.review.canReply, td.json.review.isRecipient, td.json.review.recipientDisplayName], [false, false, "OwnerO"], "A: rT2 읽기만(답은 받는 트레이너)");
+  ok(!!td.json.review.games[0].phases[0].images[0].originalUrl, "A(담당 범위): 원본 URL 있음");
+  td = await tcall("GET", `/reviews/${rT2.id}`, { sess: tB });
+  const d2b = td.json.review;
+  eq([td.status, d2b.canReply, d2b.anchorKind, d2b.recipientDisplayName, d2b.visibilityChangedAt, "originalUrl" in d2b.games[0].phases[0].images[0], Array.isArray(d2b.reactions.reactors), d2b.authorPubgName],
+    [200, false, "none", null, null, false, true, "Test_User1"], "B(공개 열람자): 읽기 전용 · 원본 URL·받는 사람 없음 · 반응자 보임");
+  eq((await tcall("GET", `/reviews/${rT1.id}`, { sess: tB })).status, 404, "B: 나만 복기 404");
+  eq((await tcall("GET", `/reviews/${rT3.id}`, { sess: tA })).status, 404, "초안 404");
+  eq((await tcall("GET", `/reviews/${O("review", hiddenIds[0])}`, { sess: tO })).status, 404, "숨김은 오너도 404(확인은 SQL)");
+  td = await tcall("GET", `/reviews/${rT1.id}`, { sess: tO });
+  eq([td.status, td.json.review.canReply, td.json.review.isRecipient], [200, true, false], "owner: 보낸 복기 전부 읽고 답");
+
+  // 반응(트레이너) — 반응만으로는 답 대기가 안 풀린다
+  eq((await tcall("POST", `/reviews/${rT1.id}/reactions/${enc("🔥")}`, { sess: tA })).json, { reactionCounts: { "🔥": 1 }, myReactions: ["🔥"] }, "A 반응");
+  eq((await tcall("POST", `/reviews/${rT1.id}/reactions/${enc("🔥")}`, { sess: tA })).json.reactionCounts, { "🔥": 1 }, "t 반응 멱등");
+  const a1b = find((await tcall("GET", "/reviews", { sess: tA })).json.reviews, rT1.id);
+  eq([a1b.awaitingReply, a1b.myReactions, a1b.reactionCounts], [true, ["🔥"], { "🔥": 1 }], "반응만으로 답 대기 안 풀림");
+  eq((await tcall("POST", `/reviews/${rT1.id}/reactions/${enc("😡")}`, { sess: tA })).json.error.code, "emoji_invalid", "t emoji invalid");
+  eq((await tcall("POST", `/reviews/${rT1.id}/reactions/${enc("👍")}`, { sess: tB })).status, 404, "B: 못 보는 복기 반응 404");
+  eq((await tcall("POST", `/reviews/${rT2.id}/reactions/${enc("👍")}`, { sess: tB })).json.myReactions, ["👍"], "B: 공개 복기 반응");
+  eq(psql(`select reactor_kind||':'||reactor_id from review_reactions where review_id = ${RID(rT2.id)}`), "trainer:4", "DB reactor_kind trainer");
+  eq((await call("GET", `/reviews/${rT2.id}`, { sess: u1 })).json.review.reactions.reactors, [{ emoji: "👍", role: "trainer", displayName: "TrainerB" }], "작성자 화면: 트레이너 반응자");
+  eq((await tcall("DELETE", `/reviews/${rT1.id}/reactions/${enc("🔥")}`, { sess: tA })).json, { reactionCounts: {}, myReactions: [] }, "t 반응 끄기");
+
+  // 답 — 검증 · 권한 · 저장 · 답 대기 풀림 · 수강생 안 읽음
+  const fb = (o, sess = tA) => tcall("POST", `/reviews/${rT1.id}/feedback`, { sess, body: o });
+  eq((await fb({ kind: "comment", body: "x" })).json.error.code, "invalid_body", "comment 은 phaseId 필수");
+  eq((await fb({ kind: "comment", phaseId: pT2.id, body: "x" })).json.error.code, "invalid_body", "다른 복기의 페이즈");
+  eq((await fb({ kind: "comment", phaseId: "1", body: "x" })).json.error.code, "invalid_body", "원시 phase id");
+  eq((await fb({ kind: "overall", phaseId: pT1.id, body: "x" })).json.error.code, "invalid_body", "overall 에 phaseId");
+  eq((await fb({ kind: "mark", phaseId: pT1.id, lineOrd: 1, verdict: "agree" })).json.error.code, "invalid_body", "mark = 2차");
+  eq((await fb({ kind: "task", body: "x", dueBookingId: "x" })).json.error.code, "invalid_body", "task = 2차");
+  eq((await fb({ kind: "overall", body: "x".repeat(4001) })).json.error.code, "review_too_long", "본문 4000자");
+  eq((await fb({ kind: "overall", body: "   " })).json.error.code, "invalid_body", "빈 본문");
+  eq((await fb({ kind: "overall", body: "x", trainerId: 1 })).json.error.code, "invalid_body", "추가 키");
+  eq((await tcall("POST", `/reviews/${rT1.id}/feedback`, { sess: tA, raw: "{bad" })).json, { error: { code: "invalid_body" } }, "깨진 JSON = 계약 오류 코드");
+  eq((await tcall("POST", `/reviews/${rT2.id}/feedback`, { sess: tA, body: { kind: "overall", body: "x" } })).json, { error: { code: "review_not_found" } }, "받는 트레이너 아님 = 404");
+  eq((await tcall("POST", `/reviews/${rT2.id}/feedback`, { sess: tB, body: { kind: "overall", body: "x" } })).status, 404, "공개 열람자 답 404");
+  eq((await tcall("POST", `/reviews/${rT3.id}/feedback`, { sess: tA, body: { kind: "overall", body: "x" } })).status, 404, "초안에 답 404");
+  let rr = await fb({ kind: "comment", phaseId: pT1.id, body: " 가짜 코멘트 " });
+  const fC = rr.json.feedback;
+  eq([rr.status, fC.kind, fC.body, fC.phaseId, fC.lineOrd, fC.mine, fC.trainerDisplayName, fC.dueAt], [200, "comment", "가짜 코멘트", pT1.id, null, true, "TrainerA", null], "comment 저장(앞뒤 공백 걷음)");
+  rr = await fb({ kind: "overall", body: "가짜 총평" });
+  const fO = rr.json.feedback;
+  eq([rr.status, fO.kind, fO.phaseId], [200, "overall", null], "overall 저장");
+  eq(psql(`select string_agg(kind||':'||coalesce(phase_id::text,'-')||':'||trainer_id, ',' order by id) from review_feedback where review_id = ${RID(rT1.id)}`),
+    `comment:${PID(pT1.id)}:1,overall:-:1`, "DB 모양");
+  const a1c = find((await tcall("GET", "/reviews", { sess: tA })).json.reviews, rT1.id);
+  eq([a1c.awaitingReply, a1c.hasFeedback], [false, true], "답 → 답 대기 풀림");
+  eq((await tcall("GET", `/reviews/${rT1.id}`, { sess: tA })).json.review.feedback.map((f) => [f.kind, f.mine]), [["comment", true], ["overall", true]], "t 상세: 내 답 mine");
+  let sli = find((await call("GET", "/reviews", { sess: u2 })).json.reviews, rT1.id);
+  eq([sli.hasFeedback, sli.unreadFeedback], [true, true], "수강생: 새 답 = 안 읽음");
+  rr = await call("GET", `/reviews/${rT1.id}`, { sess: u2 });
+  eq(rr.json.review.feedback.map((f) => [f.kind, f.body, f.trainerDisplayName, "mine" in f]), [["comment", "가짜 코멘트", "TrainerA", false], ["overall", "가짜 총평", "TrainerA", false]], "수강생 상세: 답 · mine 키 없음");
+  eq(find((await call("GET", "/reviews", { sess: u2 })).json.reviews, rT1.id).unreadFeedback, false, "수강생 열람 = 읽음");
+  eq((await tcall("POST", `/reviews/${rT2.id}/feedback`, { sess: tO, body: { kind: "overall", body: "오너 총평" } })).status, 200, "owner = 받는 트레이너 답");
+  eq((await fb({ kind: "overall", body: "오너 추가" }, tO)).json.feedback.mine, true, "owner 는 받는 사람 아니어도 답");
+  eq(find((await tcall("GET", "/reviews", { sess: tO })).json.reviews, rT2.id).awaitingReply, false, "owner 답 → 풀림");
+
+  // 답 고치기 · 지우기
+  rr = await tcall("PUT", `/feedback/${fC.id}`, { sess: tA, body: { body: "고친 코멘트" } });
+  eq([rr.status, rr.json.feedback.body, rr.json.feedback.id, rr.json.feedback.kind], [200, "고친 코멘트", fC.id, "comment"], "내 답 고치기");
+  ok(new Date(rr.json.feedback.updatedAt) > new Date(fC.updatedAt), "updatedAt 갱신");
+  eq((await tcall("PUT", `/feedback/${fC.id}`, { sess: tB, body: { body: "x" } })).status, 404, "남의 답 고치기 404");
+  eq((await tcall("PUT", `/feedback/${fC.id}`, { sess: tO, body: { body: "x" } })).status, 404, "오너도 남의 답 고치기 404");
+  eq((await tcall("PUT", `/feedback/${fC.id}`, { sess: tA, body: { body: "x", kind: "overall" } })).json.error.code, "invalid_body", "PUT 은 body 만");
+  eq((await tcall("PUT", `/feedback/${fC.id}`, { sess: tA, body: { body: " " } })).json.error.code, "invalid_body", "PUT 빈 본문");
+  eq((await tcall("PUT", `/feedback/${fC.id}`, { sess: tA, body: { body: "x".repeat(4001) } })).json.error.code, "review_too_long", "PUT 4000자");
+  eq((await tcall("PUT", "/feedback/forged", { sess: tA, body: { body: "x" } })).status, 404, "위조 id 404");
+  eq((await tcall("DELETE", `/feedback/${fO.id}`, { sess: tB })).status, 404, "남의 답 지우기 404");
+  eq((await tcall("DELETE", `/feedback/${fO.id}`, { sess: tO })).status, 204, "오너는 누구 답이든 지운다");
+  eq((await tcall("DELETE", `/feedback/${fC.id}`, { sess: tA })).status, 204, "내 답 지우기");
+  eq(psql(`select count(*) from review_feedback where review_id = ${RID(rT1.id)} and trainer_id = 1`), "0", "A 답 0건");
+  eq(find((await tcall("GET", "/reviews", { sess: tA })).json.reviews, rT1.id).awaitingReply, true, "답을 다 지우면 다시 답 대기");
+
+  // 공유 피드(트레이너) — 활성 트레이너 전원 · 이름 + authorPubgName · 수강생 피드는 그대로
+  rr = await tcall("GET", "/feed", { sess: tB });
+  const tfi = find(rr.json.items, rT2.id);
+  eq([rr.status, tfi.authorDisplayName, tfi.authorPubgName, tfi.myReactions, tfi.hasTrainerComment], [200, "TestStudentOne", "Test_User1", ["👍"], true], "t 피드: 이름 + pubg_name · 내 반응");
+  ok(!find(rr.json.items, rT1.id) && typeof rr.json.nextCursor === "string", "t 피드: 나만 복기 없음 · 커서");
+  const rr2 = await tcall("GET", `/feed?cursor=${encodeURIComponent(rr.json.nextCursor)}`, { sess: tB });
+  ok(rr2.status === 200 && rr2.json.items.length > 0 && !rr2.json.items.some((x) => find(rr.json.items, x.id)), "t 피드 2쪽");
+  ok(rr.json.items.every((x) => x.authorRole !== "student" || typeof x.authorDisplayName === "string"), "t 피드 작성자 표시");
+  eq((await tcall("GET", "/feed?tag=BAD", { sess: tB })).json.error.code, "invalid_body", "t 피드 잘못된 태그");
+  const sfi = find((await call("GET", "/feed", { sess: u2 })).json.items, rT2.id);
+  eq([sfi.authorDisplayName, "authorPubgName" in sfi], ["Test_User1", false], "수강생 피드: pubg 만 · authorPubgName 키 없음");
+  ok(!ttexts.some((t) => t.includes("portal_unavailable")), "트레이너 응답 503 없음(scrubTrainer 통과)");
+  ok(ttexts.some((t) => t.includes("TestStudentTwo")), "트레이너 화면엔 이름이 실린다(대조)");
+
   // 최종) 실명 누출 검사 — 모든 응답 본문
   ok(!texts.some((t) => t.includes("TestStudent")), "응답 어디에도 실명 없음");
   ok(!texts.some((t) => t.includes("portal_forbidden_field")), "scrub 걸림 없음");
-  console.log(`OK ${passed} checks · responses ${texts.length} · storage signed ${storageLog.signed} · puts ${storageLog.puts}`);
+  console.log(`OK ${passed} checks · responses ${texts.length}+${ttexts.length}(트레이너) · storage signed ${storageLog.signed} · puts ${storageLog.puts}`);
   try { fs.unlinkSync(GEN); } catch {}
   process.exit(0);
 })().catch((e) => { console.error("FAIL", e?.message); console.error(e?.stack?.split("\n").slice(0, 4).join("\n")); process.exit(1); });

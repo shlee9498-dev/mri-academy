@@ -1,22 +1,29 @@
 // ============================================================
 // MRI ACADEMY · 수업 복기 API — 수강생 포털 1차(§29 PR-1 텍스트·공개 범위·공유 피드·반응 · PR-2 사진·그리기·초안 사진 정리)
+//                                + 트레이너 포털 1차(PR-3 목록·상세·답·공유 피드·반응)
 // 경로: `/api/student-portal/{reviews, games, phases, images, feed}` + `/sessions` 항목 확장
+//       `/api/trainer-portal/{reviews, feedback, feed}` (PR-3 · mountTrainer)
 // server.js 에서 require("./review-api.cjs")(app, deps) — student-portal.cjs **뒤**에 마운트한다
 // (그 파일이 건 공유비밀 게이트 · 세션 서명 · 불투명 id · scrub 을 같은 함수로 쓴다 · 복제 금지).
+// 트레이너 라우트는 반환값의 mountTrainer(trainerPortal) 로 **trainer-portal.cjs 뒤에** 붙인다 — 그 파일이 건
+// 트레이너 게이트 · requireTrainer · 범위(scopedStudents) · scrubTrainer 를 같은 함수로 쓴다.
 //
 // 정본: 요구사항 = mri-student-app docs/lesson-review-design.md v2.7(§2.4·§8·§10·§15) · 판정·API = docs/lesson-review-server-design.md §3·§4·§5
 //       · DDL = supabase_admin_panel.sql §29(2026-09-25 운영 실행 · 기동 점검 [schema] OK 11표) · 계약 = docs/trainer-portal-api.md §8
 // PR-1 범위: 복기·판·페이즈 CRUD · 보내기(+공개 범위) · 범위 변경(단건·일괄) · 삭제(draft)/숨김(published) · 받는 사람 후보
 //            · 읽음 · 공유 피드 · 반응 · /sessions 확장(hasReview · reviewStatus · unreadFeedback · reviewDue).
 // PR-2 범위: 사진 업로드(raw 바이너리 · 파생본 sharp) · 사진 삭제 · 그리기 레이어(수강생) · 초안 사진 정리 일일 작업(§3.7 ·
-//            env REVIEW_DRAFT_SWEEP · 기본 드라이런 — server.js cronTick 이 draftSweep 을 부른다). 트레이너 포털 = PR-3.
+//            env REVIEW_DRAFT_SWEEP · 기본 드라이런 — server.js cronTick 이 draftSweep 을 부른다).
+// PR-3 범위: 트레이너 목록(담당·수신분 · 안 읽음 · 답 대기) · 상세(canReply) · 답(comment·overall · mark·task 는 2차)
+//            · 공유 피드(활성 트레이너 전원 · 이름 + pubg_name) · 반응(트레이너).
 //
 // 원칙(어기면 설계 위반)
 //  1) 본인 = 세션 sub(students.id). 클라이언트는 studentId 를 보내지 않는다. 응답 id 는 전부 불투명(kind 분리).
 //  2) 권한 없음 · 숨김 · 없음은 전부 404 review_not_found — 존재 여부를 흘리지 않는다(403 없음 · 오너 9/25).
 //  3) lesson_sessions · students · courses · course_sessions 는 읽기만(정본 4.2).
-//  4) 수강생 화면의 작성자 표시 = pubg_name → 디스코드 닉 → 「수강생」. 실명(students.name)은 어떤 응답에도 싣지 않는다.
+//  4) 수강생 화면의 작성자 표시 = pubg_name → 디스코드 닉 → 「수강생」. 실명(students.name)은 수강생 포털 응답에 싣지 않는다.
 //     남의 복기에는 세션·강의 id · 받는 트레이너 · 원본 이미지 URL · 누가 눌렀는지 목록을 싣지 않는다(v2.7 §15.4).
+//     트레이너 포털 응답만 「이름(pubg_name)」 — displayName 계열 키로만 싣고 scrubTrainer 를 탄다(v2.7 36 · trainer-portal 원칙 3).
 //  5) 값(본문·닉·이름)은 로그에 남기지 않는다 — 경로 · 코드 · 건수만.
 // ============================================================
 "use strict";
@@ -29,14 +36,19 @@ const APP_LINE_KINDS = [null, "key", "caveat"];                                 
 const ANCHOR_KINDS = ["lesson", "course", "none", "pending"];
 const VIS_SETTABLE = ["private", "students"];                                      // group 은 1차 400 visibility_invalid(v2.7 34·40)
 const SOURCES_BY_STUDENT = ["app", "xlsx"];                                        // discord · journal_import 는 서버 이관 전용
+const FEEDBACK_KINDS = ["comment", "mark", "overall", "task"];                     // DDL review_feedback.kind check
+const FEEDBACK_KINDS_ON = ["comment", "overall"];                                  // 1차(설계 §5.2) — mark·task 는 2차(켜기 = 여기에 추가)
+const VERDICTS = ["agree", "revise"];                                              // DDL review_feedback.verdict check
 const LIMITS = { title: 60, body: 8000, lines: 200, line: 1000, tags: 3, header: 500, seqLabel: 20, mapRaw: 60,
                  srcFileName: 200, games: 20, phases: 30, bulk: 200, list: 200,
                  phaseImages: 4, reviewImages: 60, monthImages: 200, monthBytes: 1024 ** 3,              // §3.6 · v2.7 §8.3
-                 shapes: 300, penPoints: 1000, points: 8000, shapeText: 200 };
+                 shapes: 300, penPoints: 1000, points: 8000, shapeText: 200,
+                 feedback: 4000 };                                                                        // DDL review_feedback.body ≤ 4000
 // games·phases 상한은 설계 밖 서버 안전 한도(엑셀 4개 실측 최대 3판 · 판당 11페이즈) — 넘치면 review_too_long.
 // 그리기 상한(shapes·points)도 서버 안전 한도 — 최대치 레이어가 JSON 256kb(server.js express.json) 안에 든다.
 const SHARE_WINDOW_DAYS = 90;        // 「수강생 전체」 C안(v2.7 §15.2) — done 이면 마지막 수업 90일 안
 const RECIPIENT_WINDOW_DAYS = 90;    // 받는 사람 후보 = 담당 ∪ 최근 90일 수업 트레이너(§4)
+const TRAINER_LIST_DAYS = 30;        // 트레이너 목록 기본 창(설계 §5.2 · 보낸 시각 기준 · days 1~365)
 const FEED_PAGE = 20;
 const FEED_ID_CAP = 2000;            // 태그·맵 필터 후보 id 상한(1차 규모 · 넘치면 최근 것부터)
 const PURGE_DAYS = 90;               // §3.7 — 마지막 수정 90일 지난 draft 의 사진 정리(목록 imagePurgeAt 과 같은 기준)
@@ -199,6 +211,51 @@ function unreadFrom(lastFeedbackAt, readAt) {
   if (!lastFeedbackAt) return false;
   if (!readAt) return true;
   return new Date(readAt).getTime() < new Date(lastFeedbackAt).getTime();
+}
+
+// 트레이너 안 읽음 — 읽은 기록이 없거나, 읽은 뒤에 수강생이 고쳤으면(보낸 뒤 수정 = 「수정됨」 · 답·반응은 updated_at 을 안 바꾼다)
+function trainerUnread(readAt, updatedAt) {
+  if (!readAt) return true;
+  return new Date(readAt).getTime() < new Date(updatedAt).getTime();
+}
+
+// 트레이너 답 본문(설계 §5.2 · DDL chk_rf_shape · chk_rf_due 와 같은 모양을 저장 전에 본다) — 켠 종류만 받는다(1차 comment·overall)
+//   comment = phaseId + body · overall = body(페이즈 없음) · mark = phaseId + lineOrd + verdict(body 선택) · task = body + dueBookingId
+//   id 는 불투명 문자열 그대로 돌려준다(풀이·소속 검사는 라우트) · body 는 앞뒤 공백을 걷고 빈 값은 없는 것으로 본다
+function parseFeedbackBody(b, kindsOn = FEEDBACK_KINDS_ON) {
+  if (!b || typeof b !== "object" || Array.isArray(b)) return { error: "invalid_body" };
+  const kind = b.kind;
+  if (!FEEDBACK_KINDS.includes(kind) || !kindsOn.includes(kind)) return { error: "invalid_body" };
+  const has = (v) => v !== undefined && v !== null;
+  const phaseKey = has(b.phaseId) ? b.phaseId : null;
+  const dueKey = has(b.dueBookingId) ? b.dueBookingId : null;
+  const lineOrd = has(b.lineOrd) ? b.lineOrd : null;
+  const verdict = has(b.verdict) ? b.verdict : null;
+  if ((phaseKey !== null && typeof phaseKey !== "string") || (dueKey !== null && typeof dueKey !== "string")) return { error: "invalid_body" };
+  let body = null;
+  if (has(b.body)) {
+    if (typeof b.body !== "string") return { error: "invalid_body" };
+    body = b.body.trim() || null;
+    if (body && body.length > LIMITS.feedback) return { error: "review_too_long" };
+  }
+  const bad =
+    kind === "comment" ? !phaseKey || !body || lineOrd !== null || verdict !== null || dueKey !== null
+    : kind === "overall" ? phaseKey !== null || !body || lineOrd !== null || verdict !== null || dueKey !== null
+    : kind === "mark" ? !phaseKey || !Number.isInteger(lineOrd) || lineOrd < 1 || !VERDICTS.includes(verdict) || dueKey !== null
+    : phaseKey !== null || !body || lineOrd !== null || verdict !== null || !dueKey;             // task
+  if (bad) return { error: "invalid_body" };
+  return { value: { kind, phaseKey, body, lineOrd, verdict, dueKey } };
+}
+
+// 과제 기한 검사(설계 §4 feedbackDueValid · task 를 켜는 2차에 쓴다) — ① 그 복기 수강생의 예약 ② 슬롯 주인이 나
+// ③ booked ④ 슬롯 시작이 미래. 통과하면 due_at = 그 슬롯 시작 스냅샷(요청값은 받지 않는다) · 아니면 null → 400 due_invalid
+function dueCheck({ booking, slot, studentId, staffId, nowMs }) {
+  if (!booking || !slot) return null;
+  if (Number(booking.slot_id) !== Number(slot.id)) return null;
+  if (Number(booking.student_id) !== Number(studentId) || Number(slot.trainer_id) !== Number(staffId)) return null;
+  if (booking.status !== "booked") return null;
+  const t = Date.parse(slot.slot_start);
+  return Number.isFinite(t) && t > nowMs ? slot.slot_start : null;
 }
 
 // 피드 커서 — (published_at, id) 를 서명한다(위조 방지 · opaqueId 와 같은 HMAC 방식)
@@ -383,6 +440,7 @@ module.exports = function mountReviewApi(app, deps) {
       tagOrder = t.map((r) => r.slug);
     } catch { tagOrder = []; }
     console.log(`[review] 수강생 복기 API ${ready ? "활성" : "비활성 — §29 lesson_reviews 없음(503 portal_unavailable)"} · 태그 ${tagOrder.length}/12`);
+    if (ready) console.log(`[review] 트레이너 복기 API ${trainerMounted ? "활성" : "미장착 — server.js 에서 mountTrainer 를 부르지 않았다"}`);
     if (ready && tagOrder.length < 12) console.warn(`⚠️ review_tags seed ${tagOrder.length}/12`);
     if (ready) {
       // PR-2 — 파생본 도구 · 월 한도 RPC · 초안 사진 정리 모드(값 그대로가 아니라 해석한 모드만 찍는다)
@@ -520,6 +578,13 @@ module.exports = function mountReviewApi(app, deps) {
     if (!l) return {};
     const rows = await sbSelect("students", `select=id,pubg_name,discord_nick&id=in.(${l})`);
     return Object.fromEntries(rows.map((r) => [r.id, studentDisplay(r)]));
+  }
+  // 트레이너 화면 전용 — 이름 + pubg_name(「이름(pubg_name)」 · v2.7 36). 수강생 포털 응답에는 절대 쓰지 않는다(원칙 4).
+  async function studentNameMap(ids) {
+    const l = inList(ids);
+    if (!l) return {};
+    const rows = await sbSelect("students", `select=id,name,pubg_name&id=in.(${l})`);
+    return Object.fromEntries(rows.map((r) => [r.id, { name: r.name || null, pubg_name: r.pubg_name || null }]));
   }
   // 수업일 — lesson → lesson_sessions.played_at · course → course_sessions.held_on · 그 외 null
   async function playedAtMap(rows) {
@@ -663,25 +728,29 @@ module.exports = function mountReviewApi(app, deps) {
   // 사진 응답 모양(상세 · 업로드 응답 공통) — URL 은 서명 10분 · 원본 URL 은 내 복기에만(v2.7 §15.4).
   //   표시본이 없으면(파생본 실패) 내 복기는 원본 URL 로 대신한다 · 공유 열람자는 null(원본을 주지 않는다).
   //   그리기 레이어 = 작성자별 1개 { authorRole, authorDisplayName, v, shapes:[도형], version, mine }.
-  async function imageViews(sub, own, images) {
+  //   viewer = { kind: student|trainer, id } — 트레이너 화면이면 수강생 작성자 표시가 이름(v2.7 36) · mine 은 보는 사람 기준.
+  async function imageViews(viewer, own, images) {
     const out = new Map();
     if (!images.length) return out;
     const annots = await sbSelect("review_annotations",
       `select=image_id,author_kind,author_id,shapes,version&image_id=in.(${inList(images.map((i) => i.id))})&order=id.asc`);
-    const [tnames, sdisp, urls] = await Promise.all([
+    const trainerView = viewer.kind === "trainer";
+    const annotStudents = annots.filter((a) => a.author_kind === "student").map((a) => a.author_id);
+    const [tnames, snames, urls] = await Promise.all([
       staffNameMap(annots.filter((a) => a.author_kind === "trainer").map((a) => a.author_id)),
-      studentDisplayMap(annots.filter((a) => a.author_kind === "student").map((a) => a.author_id)),
+      trainerView ? studentNameMap(annotStudents) : studentDisplayMap(annotStudents),
       signPaths(images.flatMap((i) => (own ? [i.original_path, i.display_path, i.thumb_path] : [i.display_path, i.thumb_path]))),
     ]);
+    const sLabel = (id) => (trainerView ? snames[id]?.name : snames[id]) || "수강생";
     const annotBy = new Map();
     for (const a of annots) {
       const s = a.shapes && typeof a.shapes === "object" && !Array.isArray(a.shapes) ? a.shapes : {};
       if (!annotBy.has(a.image_id)) annotBy.set(a.image_id, []);
       annotBy.get(a.image_id).push({
         authorRole: a.author_kind,
-        authorDisplayName: a.author_kind === "trainer" ? tnames[a.author_id] || "트레이너" : sdisp[a.author_id] || "수강생",
+        authorDisplayName: a.author_kind === "trainer" ? tnames[a.author_id] || "트레이너" : sLabel(a.author_id),
         v: s.v ?? 1, shapes: Array.isArray(s.shapes) ? s.shapes : [], version: a.version,
-        mine: a.author_kind === "student" && Number(a.author_id) === Number(sub),
+        mine: a.author_kind === viewer.kind && Number(a.author_id) === Number(viewer.id),
       });
     }
     for (const i of images) out.set(i.id, {
@@ -695,9 +764,22 @@ module.exports = function mountReviewApi(app, deps) {
     return out;
   }
 
-  // 상세 — 본인(편집 가능 여부 포함) · 공유 열람자(읽기 전용 · 원본 URL·반응자·세션 id·받는 트레이너 없음)
-  async function detail(sub, r) {
-    const own = isOwn(sub, r);
+  // 답 한 줄(상세 · 답 쓰기 응답 공통) — mine 은 트레이너 화면에만(내 답이면 고치기·지우기 · 수강생 응답에는 키 없음)
+  const feedbackOut = (f, trainerName, viewerStaffId) => ({
+    id: opaqueId("rfeedback", f.id), kind: f.kind,
+    phaseId: f.phase_id ? opaqueId("rphase", f.phase_id) : null, lineOrd: f.line_ord ?? null,
+    verdict: f.verdict ?? null, body: f.body ?? null, trainerDisplayName: trainerName || "트레이너",
+    dueAt: f.due_at ?? null, createdAt: f.created_at, updatedAt: f.updated_at,
+    ...(viewerStaffId !== undefined ? { mine: Number(f.trainer_id) === Number(viewerStaffId) } : {}),
+  });
+
+  // 상세 — 수강생: 본인(편집 가능 여부 포함) · 공유 열람자(읽기 전용 · 원본 URL·반응자·세션 id·받는 트레이너 없음)
+  //        트레이너(PR-3): acc = trainerAccess 판정 · full(담당·수신·오너·작성자)이면 본인과 같은 범위의 필드 · 아니면 공유 열람자와 같다
+  //        + 누가 눌렀는지 · 이름(pubg_name) · canReply · isRecipient · replyDueAt(자리만 · null)
+  const detail = (sub, r) => detailFor({ kind: "student", id: sub }, r);
+  async function detailFor(viewer, r, acc) {
+    const trainerView = viewer.kind === "trainer";
+    const own = trainerView ? !!acc?.full : isOwn(viewer.id, r);
     const games = await sbSelect("review_games", `select=id,ord,seq_label,map,map_raw&review_id=eq.${r.id}&order=ord.asc`);
     const gl = inList(games.map((g) => g.id));
     const [phases, images, feedback, reacts, playedAt] = await Promise.all([
@@ -711,9 +793,11 @@ module.exports = function mountReviewApi(app, deps) {
     const trainerIds = [r.recipient_trainer_id, r.author_staff_id, ...feedback.map((f) => f.trainer_id),
       ...reacts.filter((x) => x.reactor_kind === "trainer").map((x) => x.reactor_id)];
     const studentIds = [r.student_id, ...reacts.filter((x) => x.reactor_kind === "student").map((x) => x.reactor_id)];
-    const [tnames, sdisp, views] = await Promise.all([staffNameMap(trainerIds), studentDisplayMap(studentIds), imageViews(sub, own, images)]);
+    const [tnames, people, views] = await Promise.all([
+      staffNameMap(trainerIds), trainerView ? studentNameMap(studentIds) : studentDisplayMap(studentIds), imageViews(viewer, own, images)]);
     retryDerivatives(images);
-    const whoOf = (kind, id) => (kind === "trainer" ? tnames[id] || "트레이너" : sdisp[id] || "수강생");
+    const sLabel = (id) => (trainerView ? people[id]?.name : people[id]) || "수강생";
+    const whoOf = (kind, id) => (kind === "trainer" ? tnames[id] || "트레이너" : sLabel(id));
     const byPhase = new Map(), attachments = [];
     for (const i of images) {
       if (i.phase_id == null) { attachments.push(views.get(i.id)); continue; }
@@ -725,8 +809,8 @@ module.exports = function mountReviewApi(app, deps) {
       if (!phasesByGame.has(p.game_id)) phasesByGame.set(p.game_id, []);
       phasesByGame.get(p.game_id).push(phaseOut(p, byPhase.get(p.id) || []));
     }
-    const rs = reactionSummary(reacts, "student", sub);
-    const authorDisplayName = r.author_role === "trainer" ? tnames[r.author_staff_id] || "트레이너" : sdisp[r.student_id] || "수강생";
+    const rs = reactionSummary(reacts, viewer.kind, viewer.id);
+    const authorDisplayName = r.author_role === "trainer" ? tnames[r.author_staff_id] || "트레이너" : sLabel(r.student_id);
     return {
       id: opaqueId("review", r.id),
       ...anchorIds(r, own),
@@ -745,20 +829,21 @@ module.exports = function mountReviewApi(app, deps) {
       updatedAt: r.updated_at,
       publishedAt: r.published_at ?? null,
       imagePurgeAt: own ? imagePurgeAt(r, images.length > 0) : null,
-      readOnly: !canEdit(sub, r),
+      readOnly: trainerView ? true : !canEdit(viewer.id, r),
       games: games.map((g) => gameOut(g, phasesByGame.get(g.id) || [])),
       attachments,
-      feedback: feedback.map((f) => ({
-        id: opaqueId("rfeedback", f.id), kind: f.kind,
-        phaseId: f.phase_id ? opaqueId("rphase", f.phase_id) : null, lineOrd: f.line_ord ?? null,
-        verdict: f.verdict ?? null, body: f.body ?? null, trainerDisplayName: tnames[f.trainer_id] || "트레이너",
-        dueAt: f.due_at ?? null, createdAt: f.created_at, updatedAt: f.updated_at,
-      })),
+      feedback: feedback.map((f) => feedbackOut(f, tnames[f.trainer_id], trainerView ? viewer.id : undefined)),
       reactions: {
         counts: rs.counts, mine: rs.mine,
-        // 누가 눌렀는지는 작성자 본인에게만(v2.7 §15.5 · 트레이너는 PR-3 트레이너 포털에서)
-        ...(own ? { reactors: reacts.map((x) => ({ emoji: x.emoji, role: x.reactor_kind, displayName: whoOf(x.reactor_kind, x.reactor_id) })) } : {}),
+        // 누가 눌렀는지는 작성자 본인과 트레이너에게만(v2.7 §15.5)
+        ...(own || trainerView ? { reactors: reacts.map((x) => ({ emoji: x.emoji, role: x.reactor_kind, displayName: whoOf(x.reactor_kind, x.reactor_id) })) } : {}),
       },
+      ...(trainerView ? {
+        authorPubgName: r.author_role === "trainer" ? null : people[r.student_id]?.pubg_name || null,
+        studentDisplayName: people[r.student_id]?.name || "수강생",       // 그 복기의 수강생 — 예약(bookings[].studentDisplayName)과 맞춰 볼 때 쓴다
+        studentPubgName: people[r.student_id]?.pubg_name || null,
+        canReply: !!acc?.reply, isRecipient: !!acc?.recipient, replyDueAt: null,
+      } : {}),
     };
   }
 
@@ -1052,21 +1137,26 @@ module.exports = function mountReviewApi(app, deps) {
     res.status(204).end();
   }));
 
-  // 반응 토글(복기 단위 · 사람당 이모지별 1개 · 멱등) — 볼 수 있는 published 복기에만(내 복기에도 가능)
+  // 반응 토글(복기 단위 · 사람당 이모지별 1개 · 멱등) — 수강생·트레이너 공통 · 요약은 누른 사람 기준
+  async function toggleReaction(r, viewer, emoji, on) {
+    if (on)
+      await sbUpsert("review_reactions", { review_id: r.id, phase_id: null, reactor_kind: viewer.kind, reactor_id: viewer.id, emoji },
+        "review_id,reactor_kind,reactor_id,emoji");
+    else
+      await sbDelete("review_reactions",
+        `review_id=eq.${r.id}&reactor_kind=eq.${viewer.kind}&reactor_id=eq.${viewer.id}&emoji=eq.${encodeURIComponent(emoji)}`);
+    const rows = await sbSelect("review_reactions", `select=reactor_kind,reactor_id,emoji&review_id=eq.${r.id}`);
+    const s = reactionSummary(rows, viewer.kind, viewer.id);
+    return { reactionCounts: s.counts, myReactions: s.mine };
+  }
+  // 볼 수 있는 published 복기에만(내 복기에도 가능)
   const react = (on) => wrap(async (req, res) => {
     const sub = req.portal.sub;
     const emoji = String(req.params.emoji || "");
     if (!REVIEW_EMOJIS.includes(emoji)) return fail(res, 400, "emoji_invalid");
     const r = await loadReview(readOpaqueId("review", req.params.id));
     if (!(await canRead(sub, r)) || r.status !== "published") return NOT_FOUND(res);
-    if (on)
-      await sbUpsert("review_reactions", { review_id: r.id, phase_id: null, reactor_kind: "student", reactor_id: sub, emoji },
-        "review_id,reactor_kind,reactor_id,emoji");
-    else
-      await sbDelete("review_reactions", `review_id=eq.${r.id}&reactor_kind=eq.student&reactor_id=eq.${sub}&emoji=eq.${encodeURIComponent(emoji)}`);
-    const rows = await sbSelect("review_reactions", `select=reactor_kind,reactor_id,emoji&review_id=eq.${r.id}`);
-    const s = reactionSummary(rows, "student", sub);
-    send(res, { reactionCounts: s.counts, myReactions: s.mine });
+    send(res, await toggleReaction(r, { kind: "student", id: sub }, emoji, on));
   });
   app.post(`${P}/reviews/:id/reactions/:emoji`, reactLimit, bodyOnly([]), requireStudent, needReady, react(true));
   app.delete(`${P}/reviews/:id/reactions/:emoji`, reactLimit, requireStudent, needReady, react(false));
@@ -1243,7 +1333,7 @@ module.exports = function mountReviewApi(app, deps) {
     if (claimed !== undefined && String(claimed).trim().toLowerCase() !== sha) return fail(res, 400, "invalid_body");
     const place = `review_id=eq.${r.id}&phase_id=${phaseId ? `eq.${phaseId}` : "is.null"}`;
     const dup = (await sbSelect("review_images", `select=${IMAGE_COLS}&${place}&sha256=eq.${sha}&${LIVE_IMAGE}&order=id.asc&limit=1`))[0];
-    if (dup) return send(res, { image: (await imageViews(sub, true, [dup])).get(dup.id), existing: true });
+    if (dup) return send(res, { image: (await imageViews({ kind: "student", id: sub }, true, [dup])).get(dup.id), existing: true });
     // 한도(§3.6) — 페이즈 4장 · 복기 60장 · 수강생 월 200장/1GB(KST 월 · RPC review_month_usage)
     if (phaseId && (await sbSelect("review_images", `select=id&${place}&${LIVE_IMAGE}`)).length >= LIMITS.phaseImages)
       return fail(res, 400, "review_limit_images");
@@ -1301,7 +1391,7 @@ module.exports = function mountReviewApi(app, deps) {
     }
     await touch(r.id);
     console.log(`[review] image #${imageId} review #${r.id} ${kind.ext} bytes=${buf.length} deriv=${row.display_path && row.thumb_path ? "ok" : "none"}`);
-    send(res, { image: (await imageViews(sub, true, [row])).get(imageId), existing: false });
+    send(res, { image: (await imageViews({ kind: "student", id: sub }, true, [row])).get(imageId), existing: false });
   }));
 
   // DELETE /images/:id — 파일 먼저(3파일 · §3.5) → 행(그림 레이어는 cascade)
@@ -1347,21 +1437,30 @@ module.exports = function mountReviewApi(app, deps) {
     send(res, { version });
   }));
 
-  // ── 공유 피드 GET /feed?tag=&tag=&map=&days=30|90&cursor= (v2.7 §15.4) ──
-  //   범위 = visibility students ∧ published ∧ 숨김 아님 ∧ 보는 사람이 「수강생 전체」 범위 안(아니면 빈 목록)
+  // ── 공유 피드 GET /feed?tag=&tag=&map=&days=30|90&cursor= (v2.7 §15.4) — 수강생 · 트레이너(PR-3) 공통 ──
+  //   범위 = visibility students ∧ published ∧ 숨김 아님 · 수강생은 보는 사람이 「수강생 전체」 범위 안(아니면 빈 목록) ·
+  //   트레이너는 활성 트레이너 전원(requireTrainer 가 비활성을 막는다 · v2.7 35)
   //   태그 여러 개 = 하나라도 있는 복기(OR) · 맵과 같이 주면 둘 다 만족 · 정렬 = 보낸 시각 최신순 · 20건 커서
-  app.get(`${P}/feed`, readLimit, requireStudent, needReady, wrap(async (req, res) => {
-    const sub = req.portal.sub;
-    const q = req.query || {};
+  //   작성자 표시: 수강생 화면 = pubg_name → 디코닉 → 「수강생」 · 트레이너 화면 = 이름 + authorPubgName(v2.7 36)
+  function parseFeedQuery(q) {
     const tags = [].concat(q.tag ?? []).map(String);
-    if (tags.some((t) => !/^[a-z_]{1,32}$/.test(t)) || tags.length > 12) return fail(res, 400, "invalid_body");
+    if (tags.some((t) => !/^[a-z_]{1,32}$/.test(t)) || tags.length > 12) return { error: "invalid_body" };
     const map = q.map === undefined ? null : String(q.map);
-    if (map !== null && !MAPS.includes(map)) return fail(res, 400, "invalid_body");
+    if (map !== null && !MAPS.includes(map)) return { error: "invalid_body" };
     const days = String(q.days) === "90" ? 90 : 30;
     const cur = q.cursor === undefined ? null : readCursor(process.env.SESSION_SECRET, q.cursor);
-    if (q.cursor !== undefined && !cur) return fail(res, 400, "invalid_body");
+    if (q.cursor !== undefined && !cur) return { error: "invalid_body" };
+    return { tags, map, days, cur };
+  }
+  app.get(`${P}/feed`, readLimit, requireStudent, needReady, wrap(async (req, res) => {
+    const sub = req.portal.sub;
+    const fq = parseFeedQuery(req.query || {});
+    if (fq.error) return fail(res, 400, fq.error);
     if (!(await inShareScope(sub))) return send(res, { items: [], nextCursor: null });
-
+    send(res, await feedPage(fq, { kind: "student", id: sub }));
+  }));
+  async function feedPage({ tags, map, days, cur }, viewer) {
+    const trainerView = viewer.kind === "trainer";
     let idSet = null;
     if (tags.length) {
       const ph = await sbSelect("review_phases",
@@ -1373,7 +1472,7 @@ module.exports = function mountReviewApi(app, deps) {
       const ms = new Set(gs.map((x) => x.review_id));
       idSet = idSet ? new Set([...idSet].filter((x) => ms.has(x))) : ms;
     }
-    if (idSet && !idSet.size) return send(res, { items: [], nextCursor: null });
+    if (idSet && !idSet.size) return { items: [], nextCursor: null };
     const since = new Date(Date.now() - days * 86400_000).toISOString();
     let qs = "select=id,student_id,author_role,author_staff_id,lesson_session_id,course_session_id,status,published_at"
       + `&status=eq.published&hidden_at=is.null&visibility=eq.students&published_at=gte.${encodeURIComponent(since)}`
@@ -1382,7 +1481,7 @@ module.exports = function mountReviewApi(app, deps) {
     if (idSet) qs += `&id=in.(${[...idSet].slice(0, FEED_ID_CAP).join(",")})`;
     const rows = await sbSelect("lesson_reviews", qs);
     const page = rows.slice(0, FEED_PAGE);
-    if (!page.length) return send(res, { items: [], nextCursor: null });
+    if (!page.length) return { items: [], nextCursor: null };
     const l = inList(page.map((r) => r.id));
     const [games, reacts, fb, imgs, playedAt, sdisp, tnames] = await Promise.all([
       sbSelect("review_games", `select=id,review_id,ord,map&review_id=in.(${l})&order=ord.asc`),
@@ -1390,7 +1489,7 @@ module.exports = function mountReviewApi(app, deps) {
       sbSelect("review_feedback", `select=review_id&review_id=in.(${l})&kind=in.(comment,overall)`),
       sbSelect("review_images", `select=review_id,thumb_path,created_at&review_id=in.(${l})&thumb_path=not.is.null&order=created_at.asc`),
       playedAtMap(page),
-      studentDisplayMap(page.filter((r) => r.author_role === "student").map((r) => r.student_id)),
+      (trainerView ? studentNameMap : studentDisplayMap)(page.filter((r) => r.author_role === "student").map((r) => r.student_id)),
       staffNameMap(page.filter((r) => r.author_role === "trainer").map((r) => r.author_staff_id)),
     ]);
     const gl = inList(games.map((g) => g.id));
@@ -1404,10 +1503,13 @@ module.exports = function mountReviewApi(app, deps) {
     const urls = await signPaths([...thumbOf.values()]);
     const items = page.map((r) => {
       const gs = gBy.get(r.id) || [];
-      const rs = reactionSummary(rBy.get(r.id), "student", sub);
+      const rs = reactionSummary(rBy.get(r.id), viewer.kind, viewer.id);
+      const byTrainer = r.author_role === "trainer";
       return {
         id: opaqueId("review", r.id),
-        authorDisplayName: r.author_role === "trainer" ? tnames[r.author_staff_id] || "트레이너" : sdisp[r.student_id] || "수강생",
+        authorDisplayName: byTrainer ? tnames[r.author_staff_id] || "트레이너"
+          : (trainerView ? sdisp[r.student_id]?.name : sdisp[r.student_id]) || "수강생",
+        ...(trainerView ? { authorPubgName: byTrainer ? null : sdisp[r.student_id]?.pubg_name || null } : {}),
         authorRole: r.author_role,
         playedAt: playedAt(r),
         publishedAt: r.published_at,
@@ -1421,8 +1523,8 @@ module.exports = function mountReviewApi(app, deps) {
       };
     });
     const last = page[page.length - 1];
-    send(res, { items, nextCursor: rows.length > FEED_PAGE ? signCursor(process.env.SESSION_SECRET, last.published_at, last.id) : null });
-  }));
+    return { items, nextCursor: rows.length > FEED_PAGE ? signCursor(process.env.SESSION_SECRET, last.published_at, last.id) : null };
+  }
 
   // ── /sessions 확장(student-portal.cjs 가 부른다) — 수업마다 내 복기 유무·상태·안 읽은 답·오늘 복기 카드 ──
   //   reviewDue = 수업일(KST) = 오늘 ∧ 그 수업에 내가 쓴 복기 없음(숨긴 것도 「있음」 — 유니크라 새로 못 만든다)
@@ -1504,13 +1606,216 @@ module.exports = function mountReviewApi(app, deps) {
     return sum;
   }
 
+  // ════════════════ 트레이너 포털(PR-3 · 설계 §4·§5.2) ════════════════
+  // trainer-portal.cjs 뒤에 server.js 가 부른다 — 그 파일이 건 게이트(app.use(/api/trainer-portal)) 뒤에 서야 하고,
+  // 트레이너 판정(requireTrainer) · 범위(scopedStudents = 담당 ∪ 최근 90일 진행) · 응답 가드(scrubTrainer)는 그 파일이 정본이다.
+  let trainerMounted = false;
+  function mountTrainer(trainer) {
+    const { requireTrainer, sendTrainer, scopedStudents } = trainer || {};
+    if (!requireTrainer || !sendTrainer || !scopedStudents) throw new Error("mountTrainer: trainer-portal deps missing");
+    const T = "/api/trainer-portal";
+    trainerMounted = true;
+
+    // 설계 §4 트레이너 판정 — 숨김은 누구에게나 404 · 수강생 초안은 트레이너에게 없다(작성자 트레이너만 · 2차)
+    //   full  = 오너 ∨ 받는 트레이너 ∨ 작성자 ∨ 범위 안 수강생(담당 ∪ 최근 90일) — 본인과 같은 범위의 필드(세션 id · 원본 URL · 받는 사람)
+    //   read  = full ∨ 공개 범위 「수강생 전체」(활성 트레이너 전원 · v2.7 35) · reply = read ∧ (오너 ∨ 받는 트레이너)(§2.6 B)
+    async function trainerAccess(staff, r) {
+      const none = { read: false, full: false, reply: false, recipient: false };
+      if (!r || r.hidden_at) return none;
+      const me = Number(staff.id);
+      const owner = staff.role === "owner";
+      const author = r.author_role === "trainer" && Number(r.author_staff_id) === me;
+      const recipient = r.recipient_trainer_id != null && Number(r.recipient_trainer_id) === me;
+      if (r.status !== "published") return author ? { read: true, full: true, reply: false, recipient } : none;
+      let full = owner || recipient || author;
+      if (!full) full = (await scopedStudents(me)).has(Number(r.student_id));
+      const read = full || r.visibility === "students";
+      return { read, full, reply: read && (owner || recipient), recipient };
+    }
+
+    // 목록 한 줄(트레이너) — 담당·수신분 · 안 읽음 · 답 대기(내가 받는 트레이너 ∧ 내 답(comment·overall) 0건 · 반응은 답이 아니다)
+    async function trainerSummaries(staff, rows) {
+      if (!rows.length) return [];
+      const me = Number(staff.id);
+      const l = inList(rows.map((r) => r.id));
+      const [games, images, fb, reads, reacts, playedAt, tnames, people] = await Promise.all([
+        sbSelect("review_games", `select=review_id&review_id=in.(${l})`),
+        sbSelect("review_images", `select=review_id&review_id=in.(${l})&${LIVE_IMAGE}`),
+        sbSelect("review_feedback", `select=review_id,trainer_id,kind&review_id=in.(${l})`),
+        sbSelect("review_reads", `select=review_id,read_at&reader_kind=eq.trainer&reader_id=eq.${me}&review_id=in.(${l})`),
+        sbSelect("review_reactions", `select=review_id,emoji,reactor_kind,reactor_id&review_id=in.(${l})`),
+        playedAtMap(rows),
+        staffNameMap(rows.flatMap((r) => [r.recipient_trainer_id, r.author_staff_id])),
+        studentNameMap(rows.map((r) => r.student_id)),
+      ]);
+      const cnt = (arr) => arr.reduce((m, x) => m.set(x.review_id, (m.get(x.review_id) || 0) + 1), new Map());
+      const gc = cnt(games), ic = cnt(images), fc = cnt(fb);
+      const answered = new Set(fb.filter((f) => Number(f.trainer_id) === me && (f.kind === "comment" || f.kind === "overall")).map((f) => f.review_id));
+      const readAt = new Map(reads.map((x) => [x.review_id, x.read_at]));
+      const rx = new Map();
+      for (const x of reacts) { if (!rx.has(x.review_id)) rx.set(x.review_id, []); rx.get(x.review_id).push(x); }
+      return rows.map((r) => {
+        const isRecipient = r.recipient_trainer_id != null && Number(r.recipient_trainer_id) === me;
+        const byTrainer = r.author_role === "trainer";
+        const st = people[r.student_id] || {};
+        const rs = reactionSummary(rx.get(r.id), "trainer", me);
+        return {
+          id: opaqueId("review", r.id),
+          ...anchorIds(r, true),
+          playedAt: playedAt(r),
+          title: r.title ?? null,
+          status: r.status,
+          authorRole: r.author_role,
+          authorDisplayName: byTrainer ? tnames[r.author_staff_id] || "트레이너" : st.name || "수강생",
+          authorPubgName: byTrainer ? null : st.pubg_name || null,
+          studentDisplayName: st.name || "수강생",
+          studentPubgName: st.pubg_name || null,
+          recipientDisplayName: r.recipient_trainer_id ? tnames[r.recipient_trainer_id] || null : null,
+          isRecipient,
+          gameCount: gc.get(r.id) || 0,
+          imageCount: ic.get(r.id) || 0,
+          hasFeedback: (fc.get(r.id) || 0) > 0,
+          unread: trainerUnread(readAt.get(r.id), r.updated_at),
+          awaitingReply: isRecipient && !answered.has(r.id),
+          replyDueAt: null,                                       // 답 기한 — 오너 결정 대기 · 값 없이 자리만(설계 §5.2)
+          updatedAt: r.updated_at,
+          publishedAt: r.published_at ?? null,
+          visibility: r.visibility,
+          reactionCounts: rs.counts,
+          myReactions: rs.mine,
+        };
+      });
+    }
+
+    // GET /reviews?days=30&status=published — 담당·수신분(공유분은 /feed) · 보낸 복기만 · 숨김 제외 · 보낸 시각 최신순 · 최대 200
+    app.get(`${T}/reviews`, readLimit, requireTrainer, needReady, wrap(async (req, res) => {
+      const q = req.query || {};
+      if (q.status !== undefined && q.status !== "published") return fail(res, 400, "invalid_body");   // 1차는 published 뿐
+      const d = Number(q.days);
+      const days = Number.isInteger(d) && d >= 1 && d <= 365 ? d : TRAINER_LIST_DAYS;
+      const me = Number(req.staff.id);
+      const scope = [...(await scopedStudents(me)).keys()];
+      const or = [`recipient_trainer_id.eq.${me}`, ...(scope.length ? [`student_id.in.(${scope.join(",")})`] : [])];
+      const since = new Date(Date.now() - days * 86400_000).toISOString();
+      const rows = await sbSelect("lesson_reviews",
+        `select=${REVIEW_COLS}&status=eq.published&hidden_at=is.null&published_at=gte.${encodeURIComponent(since)}`
+        + `&or=${encodeURIComponent(`(${or.join(",")})`)}&order=published_at.desc,id.desc&limit=${LIMITS.list}`);
+      sendTrainer(res, { reviews: await trainerSummaries(req.staff, rows) });
+    }));
+
+    // GET /feed — 수강생과 같은 필터·커서 · 활성 트레이너 전원 · 작성자 = 이름 + authorPubgName
+    app.get(`${T}/feed`, readLimit, requireTrainer, needReady, wrap(async (req, res) => {
+      const fq = parseFeedQuery(req.query || {});
+      if (fq.error) return fail(res, 400, fq.error);
+      sendTrainer(res, await feedPage(fq, { kind: "trainer", id: Number(req.staff.id) }));
+    }));
+
+    // GET /reviews/:id — 상세 + canReply(열람자에겐 「답은 받는 트레이너가 해요」) · 읽음 기록(트레이너)
+    app.get(`${T}/reviews/:id`, readLimit, requireTrainer, needReady, wrap(async (req, res) => {
+      const r = await loadReview(readOpaqueId("review", req.params.id));
+      const acc = await trainerAccess(req.staff, r);
+      if (!acc.read) return NOT_FOUND(res);
+      const out = await detailFor({ kind: "trainer", id: Number(req.staff.id) }, r, acc);
+      try { await sbUpsert("review_reads", { review_id: r.id, reader_kind: "trainer", reader_id: req.staff.id, read_at: nowIso() }, "review_id,reader_kind,reader_id"); }
+      catch (e) { console.error("review_read_upsert", pgErr(e).code || e?.status); }
+      sendTrainer(res, { review: out });
+    }));
+
+    // 반응(트레이너) — 볼 수 있는 보낸 복기에만 · 반응만으로는 「답 기다려요」가 풀리지 않는다(§15.6)
+    const reactTrainer = (on) => wrap(async (req, res) => {
+      const emoji = String(req.params.emoji || "");
+      if (!REVIEW_EMOJIS.includes(emoji)) return fail(res, 400, "emoji_invalid");
+      const r = await loadReview(readOpaqueId("review", req.params.id));
+      const acc = await trainerAccess(req.staff, r);
+      if (!acc.read || r.status !== "published") return NOT_FOUND(res);
+      sendTrainer(res, await toggleReaction(r, { kind: "trainer", id: Number(req.staff.id) }, emoji, on));
+    });
+    app.post(`${T}/reviews/:id/reactions/:emoji`, reactLimit, bodyOnly([]), requireTrainer, needReady, reactTrainer(true));
+    app.delete(`${T}/reviews/:id/reactions/:emoji`, reactLimit, requireTrainer, needReady, reactTrainer(false));
+
+    // POST /reviews/:id/feedback — 답(받는 트레이너 · 오너) · 1차 kind = comment(페이즈 콕) · overall(총평)
+    //   phaseId 는 그 복기의 페이즈여야 한다 · task(2차)의 기한은 dueCheck(내 슬롯의 그 수강생 booked 미래 예약 · due_at 스냅샷)
+    app.post(`${T}/reviews/:id/feedback`, writeLimit, bodyOnly(["kind", "phaseId", "lineOrd", "verdict", "body", "dueBookingId"]),
+      requireTrainer, needReady, wrap(async (req, res) => {
+        const me = Number(req.staff.id);
+        const r = await loadReview(readOpaqueId("review", req.params.id));
+        const acc = await trainerAccess(req.staff, r);
+        if (!acc.reply) return NOT_FOUND(res);                  // 권한 없음 = 404(403 없음 · 원칙 2) — 앱은 canReply 로 입력을 숨긴다
+        const pb = parseFeedbackBody(req.body);
+        if (pb.error) return fail(res, 400, pb.error);
+        const v = pb.value;
+        let phaseId = null;
+        if (v.phaseKey) {
+          phaseId = readOpaqueId("rphase", v.phaseKey);
+          const ph = phaseId
+            ? (await sbSelect("review_phases", `select=id,lines,review_games!inner(review_id)&id=eq.${phaseId}&limit=1`))[0] : null;
+          if (!ph || Number(ph.review_games?.review_id) !== Number(r.id)) return fail(res, 400, "invalid_body");
+          if (v.kind === "mark" && !(Array.isArray(ph.lines) ? ph.lines : []).some((x) => x.ord === v.lineOrd)) return fail(res, 400, "invalid_body");
+        }
+        let due = { due_booking_id: null, due_at: null };
+        if (v.kind === "task") {
+          const bid = readOpaqueId("booking", v.dueKey);
+          const booking = bid ? (await sbSelect("slot_bookings", `select=id,slot_id,student_id,status&id=eq.${bid}&limit=1`))[0] : null;
+          const slot = booking ? (await sbSelect("trainer_slots", `select=id,trainer_id,slot_start&id=eq.${booking.slot_id}&limit=1`))[0] : null;
+          const at = dueCheck({ booking, slot, studentId: r.student_id, staffId: me, nowMs: Date.now() });
+          if (!at) return fail(res, 400, "due_invalid");
+          due = { due_booking_id: booking.id, due_at: at };
+        }
+        let row;
+        try {
+          row = await sbInsert("review_feedback", {
+            review_id: r.id, trainer_id: me, kind: v.kind, phase_id: phaseId, line_ord: v.lineOrd, verdict: v.verdict, body: v.body, ...due,
+          });
+        } catch (e) { return failDb(res, e); }
+        console.log(`[review] feedback #${row.id} review #${r.id} kind=${row.kind} staff#${me}`);
+        sendTrainer(res, { feedback: feedbackOut(row, req.staff.name, me) });
+      }));
+
+    // PUT /feedback/:id — 내 답의 본문만 고친다(1차 · 종류·페이즈는 그대로) · 복기를 여전히 볼 수 있어야 한다
+    app.put(`${T}/feedback/:id`, writeLimit, bodyOnly(["body"]), requireTrainer, needReady, wrap(async (req, res) => {
+      const me = Number(req.staff.id);
+      const fid = readOpaqueId("rfeedback", req.params.id);
+      const f = fid ? (await sbSelect("review_feedback", `select=id,review_id,trainer_id,kind&id=eq.${fid}&limit=1`))[0] : null;
+      if (!f || Number(f.trainer_id) !== me) return NOT_FOUND(res);
+      if (!(await trainerAccess(req.staff, await loadReview(f.review_id))).read) return NOT_FOUND(res);
+      const b = req.body || {};
+      if (typeof b.body !== "string" || !b.body.trim() || f.kind === "mark") return fail(res, 400, "invalid_body");
+      const body = b.body.trim();
+      if (body.length > LIMITS.feedback) return fail(res, 400, "review_too_long");
+      const rows = await sbPatch("review_feedback", `id=eq.${f.id}&trainer_id=eq.${me}`, { body, updated_at: nowIso() });
+      if (!rows.length) return NOT_FOUND(res);
+      sendTrainer(res, { feedback: feedbackOut(rows[0], req.staff.name, me) });
+    }));
+
+    // DELETE /feedback/:id — 내 답(오너는 누구 답이든) · 204
+    app.delete(`${T}/feedback/:id`, writeLimit, requireTrainer, needReady, wrap(async (req, res) => {
+      const me = Number(req.staff.id);
+      const fid = readOpaqueId("rfeedback", req.params.id);
+      const f = fid ? (await sbSelect("review_feedback", `select=id,review_id,trainer_id&id=eq.${fid}&limit=1`))[0] : null;
+      if (!f || (Number(f.trainer_id) !== me && req.staff.role !== "owner")) return NOT_FOUND(res);
+      if (!(await trainerAccess(req.staff, await loadReview(f.review_id))).read) return NOT_FOUND(res);
+      await sbDelete("review_feedback", `id=eq.${f.id}`);
+      console.log(`[review] feedback #${f.id} delete staff#${me}`);
+      res.status(204).end();
+    }));
+
+    // 본문 파서 오류 — 트레이너 복기 라우트군도 계약 오류 코드로(수강생 쪽과 같은 규칙)
+    app.use([`${T}/reviews`, `${T}/feedback`, `${T}/feed`], (err, req, res, next) => {
+      if (res.headersSent) return next(err);
+      if (err?.type === "entity.too.large") return fail(res, 413, "review_too_long");
+      if (err?.type === "entity.parse.failed") return fail(res, 400, "invalid_body");
+      next(err);
+    });
+  }
+
   const probed = probe().catch((e) => console.error("review_probe", e?.message));
-  return { ready: () => ready, draftSweep };
+  return { ready: () => ready, draftSweep, mountTrainer };
 };
 
 module.exports._test = {
   studentDisplay, normalizeLines, linesOut, normalizeTags, parsePhaseBody, checkPhaseRange, parseGameBody,
   reactionSummary, topTags, imagePurgeAt, unreadFrom, signCursor, readCursor, pgErr,
+  trainerUnread, parseFeedbackBody, dueCheck,
   sniffImage, orientedSize, imagePath, derivPath, isPendingPath, isStoragePath, normalizeShapes, sweepMode, planSweep,
   REVIEW_EMOJIS, MAPS, LIMITS,
 };
