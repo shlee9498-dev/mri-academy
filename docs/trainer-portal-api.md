@@ -11,6 +11,7 @@
 > 오너 요청 2026-09-25(반장 · 명부 표시 「이름(pubg_name)」): ⑨ `GET /students[].pubgName` · `GET /journals[].studentPubgName` ·
 > `GET /slots` `bookings[].studentPubgName` = `students.pubg_name`(배그 닉네임). **비어 있으면 null** — 앱은 null 이면 이름만 표시한다.
 > 수강생 포털 `GET /summary` 도 본인 값을 `pubgName` 으로 내린다(같은 키 · 수강생 scrub 통과 확인).
+> 오너 지시 2026-09-25(§29 복기 PR-1): ⑩ **수업 복기 계약은 이 문서 §8** — PR-1 = 수강생 앱이 부르는 `/api/student-portal/*` 복기 라우트 + `GET /sessions` 확장 · 트레이너 포털 복기 라우트는 PR-3 에서 같은 절에 붙인다.
 
 ## 1. 호출 규약
 | 항목 | 값 |
@@ -188,3 +189,97 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | | `notified` | integer | 아니오 | DM 대상 수 |
 | POST /slots/:id/reopen | `reopened` | boolean | 아니오 | true(그 외는 오류 응답) |
 | POST /logout | (본문 없음) | — | — | 204 |
+
+## 8. 수업 복기 API (§29 · PR-1 = 수강생 포털 · 2026-09-25)
+
+> 오너 지시(9/25): 복기 계약은 이 문서에 둔다. **PR-1 은 수강생 앱이 부르는 `/api/student-portal/*` 라우트**다(트레이너 포털 복기 라우트는 PR-3 에서 §8.6 에 붙인다).
+> 정본: 요구사항 = mri-student-app `docs/lesson-review-design.md` v2.7(§10·§15) · 판정 = `docs/lesson-review-server-design.md` §4·§5 · DDL = `supabase_admin_panel.sql` §29(2026-09-25 운영 실행).
+> 코드 = `review-api.cjs`(+ `student-portal.cjs` 의 `/sessions` 확장). 로컬 PostgreSQL 16 + PostgREST 12 통합 시험 126항목 통과(§8.7).
+
+### 8.1 호출 규약 (수강생 포털과 같다)
+| 항목 | 값 |
+|---|---|
+| 베이스 | `https://mri-academy-production.up.railway.app/api/student-portal` |
+| 게이트 · 세션 | `x-portal-secret` + `x-portal-session`(수강생 scope) — 수강생 포털 그대로. 세션 없음 401 `session_expired` · 연결 대기 403 `account_link_pending` |
+| id | 전부 서명된 불투명 문자열 · 종류별로 다르다: 복기 `review` · 판 `rgame` · 페이즈 `rphase` · 이미지 `rimage` · 답 `rfeedback` · 트레이너 `staff` · 수업 `session`(= `GET /sessions` 의 `id` 와 같은 값) · 강의 `course` · 강의 회차 `csession` |
+| 권한 없음 · 숨김 · 없음 | 전부 **404 `review_not_found`**(존재 여부를 흘리지 않는다 · 403 없음) |
+| §29 표 없음 | 이 라우트군만 503 `portal_unavailable`(기동 로그 `[review]`) — 나머지 포털 라우트는 그대로 |
+| 레이트리밋(분당 · 사용자 IP 별) | 읽기 `reviewRead` 120 · 쓰기 `reviewWrite` 120 · 보내기 `reviewPublish` 20 · 반응 `reviewReact` 60 → 429 `rate_limited` + `Retry-After` |
+| 쓰기 본문 | 허용 키 밖이 하나라도 오면 400 `invalid_body`(수강생 포털 규칙) |
+
+오류 코드(추가분): 400 `anchor_student_mismatch` · `anchor_required` · `visibility_required` · `visibility_invalid` · `recipient_required` · `recipient_invalid` · `phase_tags_limit` · `tag_unknown` · `review_too_long` · `order_ids_mismatch` · `emoji_invalid` · 404 `review_not_found` · 409 `anchor_taken` · `review_not_draft`.
+
+### 8.2 라우트 (PR-1 확정)
+| 라우트 | 본문 | 응답 · 규칙 |
+|---|---|---|
+| `GET /reviews?days=90` | | `{ reviews: [요약 §8.3] }` — 내 복기(숨김 제외) · 최근 수정순 · 최대 200 · `days` 1~365(기본 90 · 수정 시각 기준) |
+| `GET /reviews/recipients` | | `{ recipients:[{ staffId, displayName, isPrimary, lastLessonOn }], defaultStaffId }` — 담당 ∪ 최근 90일 수업 트레이너(비활성 제외) · 최근 수업순 · 기본 = 최근 수업 트레이너 → 없으면 담당 · 둘 다 없으면 빈 배열 + null |
+| `POST /reviews` | `{ anchorKind, sessionId?, courseId?, courseSessionId?, source? }` | `{ review: 상세 §8.4, existing }` — `anchorKind` = `lesson`(sessionId) · `course`(courseId+courseSessionId) · `none` · `pending`. 수업·강의 연결이 있고 내 복기가 이미 있으면 새로 만들지 않고 그 복기 + `existing:true` · 그 복기를 숨겼으면 409 `anchor_taken` · 남의 수업·강의 400 `anchor_student_mismatch` · `source` = `app`(기본) · `xlsx`(앱이 엑셀을 파싱해 만들 때) |
+| `GET /reviews/:id` | | `{ review: 상세 §8.4 }` — 내 복기 · 또는 공유 복기(`visibility=students` · 보냄 · 숨김 아님 · 내가 「수강생 전체」 범위 안). 내 복기면 읽음 기록 |
+| `PUT /reviews/:id` | `{ title?, body?, srcFileName?, anchorKind?, sessionId?, courseId?, courseSessionId? }` | `{ review: 요약 §8.3 }` — 내가 쓴 복기만(보낸 뒤에도 수정 가능 → `updatedAt > publishedAt` = 「수정됨」). 제목 60 · 본문 8000 · 파일명 200자 넘으면 400 `review_too_long`. 앵커는 `anchorKind` 와 같이만 · draft 또는 연결 끊김일 때만(아니면 409 `review_not_draft`) · 보낸 복기를 `pending` 으로는 400 `anchor_required` · 이미 복기가 있는 수업이면 409 `anchor_taken` |
+| `DELETE /reviews/:id` | | 204 — draft = 삭제(사진 파일 먼저) · 보낸 복기 = **숨김**(목록·상세·피드·트레이너 어디에도 안 나옴 · 되살리기·완전 삭제는 오너 SQL) |
+| `POST /reviews/:id/publish` | `{ recipientTrainerId?, visibility? }` | `{ published:true, recipientDisplayName, visibility }` — `pending` 400 `anchor_required`. **범위**: 요청값(`private`·`students` · `group` 은 400 `visibility_invalid`) → 없으면 내가 마지막으로 보낸 복기의 값 → 그것도 없으면(첫 보내기) 400 `visibility_required` · 엑셀 출처(`source ≠ app`)는 요청값과 무관하게 `private`. **받는 트레이너**: 수업 = 그 수업 트레이너 · 강의 = 오너 · 자유 기록(또는 연결 끊김) = `recipientTrainerId` 필수(없으면 400 `recipient_required` · 후보 밖 400 `recipient_invalid`). 이미 보낸 복기면 현재 상태를 돌려준다(멱등) |
+| `PUT /reviews/:id/visibility` | `{ visibility }` | `{ visibility, visibilityChangedAt }` — 내 복기(트레이너가 쓴 이관 복기 포함) · 숨김 아님 · 보낸 뒤에도 · 좁히면 즉시 남에게 404 |
+| `PUT /reviews/visibility` | `{ ids:[…≤200], visibility }` | `{ updated, skipped }` — 내 복기만 바꾼다 · 남의 것 · 숨김 · 잘못된 id 는 `skipped` 에 보낸 값 그대로 |
+| `POST /reviews/:id/read` | | 204 — 내 복기만 읽음 기록(공유 열람은 기록하지 않음) |
+| `POST /reviews/:id/reactions/:emoji` · `DELETE …` | | `{ reactionCounts, myReactions }` — 👍 🔥 💡 🙌 💪 🎯 만(그 외 400 `emoji_invalid` · URL 인코딩해서 보낸다) · 볼 수 있는 **보낸** 복기에만(내 복기에도 가능) · 멱등 토글 |
+| `POST /reviews/:id/games` | `{ map?, seqLabel?, mapRaw? }` | `{ game }` — 맵 10개(에란겔 · 미라마 · 태이고 · 론도 · 사녹 · 비켄디 · 데스턴 · 파라모 · 카라킨 · 기타) 또는 null · 판 20개까지(넘으면 400 `review_too_long`) · 순서는 맨 뒤 |
+| `PUT /games/:id` · `DELETE /games/:id` | 같은 본문 | `{ game }`(phases 키 없음) · 204(페이즈·사진 함께) |
+| `PUT /reviews/:id/games/order` | `{ ord:[gameId…] }` | 204 — 빠진 형제는 뒤에 붙는다 · 남의 id · 잘못된 id 400 `order_ids_mismatch` |
+| `POST /games/:id/phases` | `{ phaseFrom?, phaseTo?, phaseToEnd?, headerRaw?, lines?, tags? }` | `{ phase }` — `phaseFrom` 0~9(기본 1 · 0 = 시작 전) · `phaseTo` null 또는 ≥ phaseFrom · 줄 200개 · 줄 1000자 · 머리말 500자 · 태그 3개(slug · 중복 제거 · 넘으면 400 `phase_tags_limit` · 사전에 없으면 400 `tag_unknown`) · 판당 30개 |
+| `PUT /phases/:id` · `DELETE /phases/:id` | 같은 본문(**부분 갱신** — 보낸 키만 바뀐다 · `lines` 는 배열 통째) | `{ phase }`(images 키 없음) · 204 |
+| `PUT /games/:id/phases/order` | `{ ord:[phaseId…] }` | 204 · 규칙은 판 순서와 같다 |
+| `GET /feed?tag=&tag=&map=&days=30\|90&cursor=` | | `{ items:[피드 §8.5], nextCursor }` — `visibility=students` · 보냄 · 숨김 아님 · 20건 · 보낸 시각 최신순. **내가 「수강생 전체」 범위 밖이면 빈 목록**(active·paused 또는 done 이면서 마지막 수업 90일 안). 태그 여러 개 = **하나라도** 있는 복기 · 맵과 같이 주면 둘 다 · 잘못된 태그·맵·커서 400 `invalid_body` · `days` 기본 30 |
+
+줄(`lines[]`) 요청 키는 `text` · `kind` · `suggestedKind` 뿐이다(순서 = 배열 순서 · 서버가 `ord` 를 다시 매긴다). `kind` = null · `key`(💡) · `caveat`(⚠️) — **엑셀 출처 복기만** `enemy` · `detail` 도 받는다(앱 작성 복기에 보내면 400 `invalid_body`).
+`GET /sessions` 항목에 넷이 붙는다(§8.3 끝 표).
+
+### 8.3 요약(목록 한 줄 · `PUT /reviews/:id` 응답) — nullable · 값 집합
+| 필드 | 타입 | null | 값 · 조건 |
+|---|---|---|---|
+| `id` | string | 아니오 | 불투명 `review` |
+| `anchorKind` | string | 아니오 | `lesson` · `course` · `none` · `pending` |
+| `sessionId` · `courseId` · `courseSessionId` | string | **가능** | 앵커 종류에 맞는 것만 값. **연결 끊김 = `anchorKind` 는 lesson/course 인데 id 가 null**(추가 키 없음 · 서버 설계 §5.5) |
+| `playedAt` | string(YYYY-MM-DD) | **가능** | 수업일(강의 = 회차 날짜) · none·pending · 연결 끊김은 null |
+| `title` | string | **가능** | |
+| `status` | string | 아니오 | `draft` · `published` |
+| `authorRole` | string | 아니오 | `student` · `trainer`(트레이너가 쓴 이관 복기 — 내용 수정·삭제 불가 · 범위만) |
+| `recipientDisplayName` | string | **가능** | 보낸 복기의 받는 트레이너 · draft 는 null |
+| `gameCount` · `imageCount` | integer | 아니오 | ≥ 0 |
+| `hasFeedback` · `unreadFeedback` | boolean | 아니오 | 답 있음 · 내가 마지막으로 연 뒤에 새 답이 있음 |
+| `updatedAt` | string(ISO) | 아니오 | 판·페이즈 변경도 반영 |
+| `publishedAt` | string(ISO) | **가능** | draft 는 null |
+| `imagePurgeAt` | string(ISO) | **가능** | **사진이 있는 draft 만** = 마지막 수정 + 90일(그 날 사진 정리 · 정리 작업은 PR-2) |
+| `visibility` | string | 아니오 | `private` · `students`(`group` 은 1차에 생기지 않는다) · draft 는 `private` 로 시작 |
+| `reactionCounts` | object | 아니오 | `{ "👍": 2, … }` · 없으면 `{}` |
+
+`GET /sessions` 의 `sessions[]` 추가 필드: `hasReview`(boolean · 그 수업에 내가 쓴 복기 · 숨긴 것은 false) · `reviewStatus`(`draft` · `published` · 복기 없으면 null) · `unreadFeedback`(boolean) · `reviewDue`(boolean · **수업일(KST) = 오늘 ∧ 그 수업에 내 복기 없음** → 홈 「오늘 수업 복기」 카드 · 숨긴 복기가 있으면 false). 복기 모듈이 꺼져 있으면 네 키가 없다(앱은 없음 = false).
+
+### 8.4 상세(`GET /reviews/:id` · `POST /reviews`)
+요약의 `id` · 앵커 3 id · `playedAt` · `title` · `status` · `authorRole` · `visibility` · `publishedAt` · `updatedAt` · `imagePurgeAt` 에 더해:
+
+| 필드 | 타입 | null | 값 · 조건 |
+|---|---|---|---|
+| `body` | string | **가능** | 3칸 양식은 제목줄(🎯 · 🔥 · 📝)로 나눈 본문 그대로(서버는 나누지 않는다) |
+| `source` | string | 아니오 | `app` · `xlsx` · `discord` · `journal_import` |
+| `authorDisplayName` | string | 아니오 | 수강생이 쓴 복기 = `pubg_name` → 디스코드 닉 → 「수강생」 · 트레이너가 쓴 복기 = 트레이너 표시명 · **실명 없음** |
+| `recipientDisplayName` · `visibilityChangedAt` · `srcFileName` | string | **가능** | **내 복기에만** 값(공유 열람은 늘 null) |
+| `createdAt` | string(ISO) | 아니오 | |
+| `readOnly` | boolean | 아니오 | true = 공유 열람 · 트레이너가 쓴 복기 → 편집 라우트는 404 |
+| `games[]` | array | 아니오 | `{ id, ord, seqLabel, map, mapRaw, phases:[{ id, ord, phaseFrom, phaseTo, phaseToEnd, headerRaw, lines:[{ ord, text, kind, suggestedKind }], tags, suggestedTags, images:[이미지] }] }` · ord 순 |
+| `attachments[]` | array | 아니오 | 페이즈에 붙지 않은 사진(이미지 모양 같음) |
+| 이미지 | object | — | `{ id, ord, displayUrl, thumbUrl, originalUrl?, width, height, annotations:[{ authorRole, authorDisplayName, shapes, version, mine }] }` · URL 은 **서명 10분**(캐시하지 말고 상세를 다시 부를 때 새 URL) · `originalUrl` 은 **내 복기에만** · 업로드·그리기 저장은 PR-2 |
+| `feedback[]` | array | 아니오 | `{ id, kind, phaseId, lineOrd, verdict, body, trainerDisplayName, dueAt, createdAt, updatedAt }` · `kind` = `comment` · `overall`(1차) · `mark` · `task`(2차) · 공유 열람에도 보인다(복기의 범위를 따른다) |
+| `reactions` | object | 아니오 | `{ counts, mine, reactors? }` — `reactors`(`[{ emoji, role, displayName }]`)는 **작성자 본인에게만** |
+
+### 8.5 피드 한 줄(`GET /feed`)
+`{ id, authorDisplayName, authorRole, playedAt(null 가능 · 없으면 publishedAt 을 보인다), publishedAt, gameCount, maps(판 순서 · 중복 제거), tags(확정 태그 많이 쓰인 순 최대 3), reactionCounts, myReactions, hasTrainerComment(총평·코멘트 있음), thumbUrl(첫 사진 썸네일 · 서명 10분 · 없으면 null) }` — 잔여·결제·담당·세션 id·메모·원본 URL 없음. `nextCursor` = 다음 쪽이 있으면 서명된 문자열(그대로 다시 보낸다) · 끝이면 null.
+
+### 8.6 앱 쪽에 필요한 것(반장 인계) · PR-1 에 없는 것
+- **앱 응답 가드(`src/lib/portal/guard.ts`) `CONTRACT_KEY_EXCEPTIONS` 에 `unreadFeedback` 추가 필요** — 어간 `fee` 에 걸린다(v2.7 §12 9 의 키 검토에서 빠진 키). 서버 scrub 에는 이 PR 에서 같은 예외를 넣었다. 앱에 없으면 `GET /reviews` · `GET /sessions` 응답에서 가드가 throw 한다.
+- 강의 앵커(`course`)는 서버가 받지만 **강의·회차 불투명 id 를 내려 주는 API 는 아직 없다**(강의생 화면 = 3차) — 1차 앱은 `lesson` · `none` · `pending` 만 쓴다.
+- PR-2: 사진 업로드(raw 바이너리 · 파생본) · 사진 삭제 · 그리기 레이어 PUT · draft 사진 정리(드라이런) · `REVIEW_DRAFT_SWEEP`(env · 그 PR 전에 이름·값·위치 보고).
+- PR-3: 트레이너 포털 복기 라우트(목록 · 상세 · 코멘트·총평 · 읽음 · 피드 · 반응) — 이 절 §8.7 뒤에 붙인다.
+
+### 8.7 시험 (PR-1)
+로컬 PostgreSQL 16(정본 SQL 로드 = 운영 §29 와 지문 9/9 같은 판) + PostgREST 12 + `student-portal.cjs` + `review-api.cjs`(서버의 `sb*` 헬퍼·`limit()` 원문 그대로) · 가짜 픽스처 · 126항목: 게이트·세션 · 후보(비활성 제외·기본값) · 만들기(existing · 남의 수업 · 강의 출석 대조 · 원시 id 거부 · 추가 키 거부) · 수정·길이·앵커 잠금 · 판·페이즈 CRUD·순서·한도·트리거 태그 검사 · 보내기(범위 필수·group 거부·마지막 값·엑셀 private·받는 사람 규칙·멱등) · `/sessions` 넷 · 피드(범위 C안 · 태그 OR · 맵 · 커서 27건 · 위조 커서) · 공유 상세 가림 · 반응(멱등 · 작성자만 반응자) · 안 읽음 → 열람 → 읽음 · 범위 변경(단건·일괄 skipped) · draft 삭제(파일 먼저) · 숨김(404 · 목록·피드 제외 · 수업 재작성 409) · 트레이너 작성 이관 복기(범위만) · **모든 응답 본문에 실명 0** · scrub 걸림 0.
