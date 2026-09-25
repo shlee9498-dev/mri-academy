@@ -135,6 +135,18 @@ test("공개 발표 요약: 메달 · 음수 · 동점 안내", () => {
   assert.match(txt, /수고 많으셨어요! 🎉$/);
 });
 
+test("결과 채널 게시(게시:true): 끝난 뒤 = 발표문 그대로 · 진행 중 = 「잠정」 중간 순위", () => {
+  const teams = T.rankTeams([{ team: { name: "A" }, total: 5, chickens: 1, kills: 1, damage: 1 },
+    { team: { name: "B" }, total: -3, chickens: 0, kills: 0, damage: 0 }]);
+  const ev = { name: "대승배 GmI 킬내기", end: Date.parse("2026-09-26T14:10:00Z") };
+  const done = T.formatChannelPost({ ev, teams, at: ev.end });                       // 끝난 뒤(경계 포함) = 발표문
+  assert.equal(done, T.formatPublic({ ev, teams }).split("\n").slice(1).join("\n"));
+  const live = T.formatChannelPost({ ev, teams, at: Date.parse("2026-09-26T13:00:00Z") });
+  assert.match(live, /^⏳ 대승배 GmI 킬내기 중간 순위 \(22:00 기준 · 잠정\)\n🥇 1위 A — 5점\n🥈 2위 B — -3점\n/);
+  assert.match(live, /순위는 바뀔 수 있어요/);
+  assert.doesNotMatch(live, /수고 많으셨어요/);                                       // 진행 중에 마무리 인사를 붙이지 않는다
+});
+
 // ── 텔레메트리 스트리밍 ──
 const EVENTS = [
   { _T: "LogMatchDefinition", MatchId: "m1", _D: "2026-09-26T12:13:00.000Z" },
@@ -204,8 +216,10 @@ test("닉 → 선수: 정확히 같은 닉 우선 · 대소문자만 다른 후�
   assert.equal(T.pickPlayer([], "abc"), null);
 });
 
-test("명령 3종: 이름·필수 옵션 먼저 · 오너 전용 표기", () => {
+test("명령 3종: 이름·필수 옵션 먼저 · 오너 전용 표기 · 게시 옵션", () => {
   assert.deepEqual(k.COMMANDS.map((c) => c.name), ["킬내기팀등록", "킬내기집계", "킬내기이탈"]);
+  const post = k.COMMANDS.find((c) => c.name === "킬내기집계").options.find((o) => o.name === "게시");
+  assert.deepEqual([post.type, !!post.required], [5, false], "게시 = 선택 boolean(기본 false)");
   for (const c of k.COMMANDS) {
     const req = c.options.map((o) => !!o.required);
     assert.deepEqual(req, [...req].sort((x, y) => Number(y) - Number(x)), `${c.name} 필수 옵션이 앞`);

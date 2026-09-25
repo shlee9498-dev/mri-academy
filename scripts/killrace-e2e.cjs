@@ -147,12 +147,16 @@ K.forEach((pl) => { pl.matches = ["mK1"]; });
 const OWNER = "owner-1";
 const logs = [];
 const log = { log: (...a) => logs.push(a.join(" ")), warn: (...a) => logs.push(a.join(" ")), error: (...a) => logs.push(a.join(" ")) };
+const krEnv = { MRI_OWNER_ID: OWNER, SUPABASE_URL: process.env.SUPABASE_URL, PUBG_API_KEY: "fake" };
 const bot = killrace.createKillrace({ ...db, pubgGet, pubgMatch, fetchImpl, log, playersGapMs: 0,
-  env: { MRI_OWNER_ID: OWNER, SUPABASE_URL: process.env.SUPABASE_URL, PUBG_API_KEY: "fake" } });
+  env: krEnv });
+const posts = { here: [], fixed: [] };                 // 게시된 채널 메시지(명령 친 채널 · env 채널)
 async function run(commandName, opts = {}, userId = OWNER) {
   const out = { replies: [], dms: [], deferred: false };
   await bot.handle({
     commandName, isChatInputCommand: () => true,
+    channel: { send: async (m) => { posts.here.push(m.content); } },
+    client: { channels: { fetch: async (id) => (id === "chan-9" ? { send: async (m) => { posts.fixed.push(m.content); } } : null) } },
     user: { id: userId, send: async (m) => { out.dms.push(m.content); } },
     options: { getString: (k) => opts[k] ?? null, getInteger: (k) => opts[k] ?? null, getBoolean: (k) => opts[k] ?? null },
     reply: async (m) => { out.replies.push(m.content); }, deferReply: async () => { out.deferred = true; },
@@ -288,6 +292,27 @@ const has = (text, needle, msg) => { assert.ok(String(text).includes(needle), `$
     has(r6.dm, "TeamK: 팀 구성이 바뀌어 예전 저장 판 1개(1판)는 빼고 순번을 비웠어요");
     has(r6.dm, "【3위】 TeamK — 0점 · 0판"); has(r6.dm, "인정된 판이 없어요.");
     eq([(await rows())["TeamK|mK1"].seq, (await rows())["TeamK|mK1"].score], [null, null], "옛 판 순번·점수 비움");
+
+    // 8-2) 결과 채널 게시(게시:true) — 진행 중이면 잠정 · 명령 친 채널 · env 채널 · DM 은 그대로
+    const pv = await run("킬내기집계", { 게시: true });
+    eq([posts.here.length, posts.fixed.length], [1, 0], "env 없으면 명령 친 채널에 1개");
+    has(posts.here[0], "⏳ TestEvent 킬내기 중간 순위");                       // 시험 시각이 창 안이라 잠정
+    has(posts.here[0], "🥇 1위");
+    ok(!/수고 많으셨어요/.test(posts.here[0]), "진행 중에는 마무리 인사 없음");
+    has(pv.last, "결과 채널에 중간 순위(잠정)로 올렸어요");
+    ok(pv.dm.length > 0, "게시해도 DM 은 그대로 온다");
+    krEnv.KILLRACE_RESULT_CHANNEL_ID = "chan-9";
+    const pv2 = await run("킬내기집계", { 게시: true });
+    eq([posts.here.length, posts.fixed.length], [1, 1], "env 있으면 그 채널에만");
+    has(pv2.last, "결과 채널에");
+    krEnv.KILLRACE_RESULT_CHANNEL_ID = "chan-none";                      // fetch → null
+    const pv3 = await run("킬내기집계", { 게시: true });
+    has(pv3.last, "게시는 못 했어요");                                          // 집계·DM 은 그대로 성공
+    ok(pv3.dm.length > 0, "게시 실패해도 DM 은 온다");
+    delete krEnv.KILLRACE_RESULT_CHANNEL_ID;
+    const pv4 = await run("킬내기집계");
+    eq([posts.here.length, posts.fixed.length], [1, 1], "게시 안 주면 채널에 아무것도 안 올린다");
+    ok(!/결과 채널/.test(pv4.last), "게시 안 하면 회신에도 게시 언급 없음");
 
     // 9) 진단(실측 ①③) — 살아서 나간 선수의 판: deathType · KillV2 · 로그아웃 · 텔레메트리 크기
     // 7) 에서 mA1 을 목록에서 뺐다 → [mA8, mA5, mA7, …] · 로그인 00:00 = 경기 시작 전 로비 입장

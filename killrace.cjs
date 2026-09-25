@@ -64,6 +64,7 @@ const COMMANDS = [
       { name: "진단닉", description: "[실측] 이 닉의 최근 판 하나를 진단해 DM(저장 안 함)", type: 3, required: false },
       { name: "진단플랫폼", description: "[실측] 진단닉 플랫폼(기본 스팀)", type: 3, required: false, choices: PLATFORM_CHOICES },
       { name: "진단순번", description: "[실측] 최근 몇 번째 판(기본 1 = 가장 최근)", type: 4, required: false, min_value: 1, max_value: 20 },
+      { name: "게시", description: "순위를 결과 채널에도 올려요(기본 false · DM 은 그대로 와요)", type: 5, required: false },
     ],
   },
   {
@@ -256,14 +257,28 @@ function formatReport(res) {
   return splitMessages(blocks);
 }
 
-function formatPublic(res) {
+const rankLines = (res) => res.teams.map((t) => `${t.rank <= 3 ? MEDAL[t.rank - 1] + " " : ""}${t.rank}위 ${t.team.name} — ${t.total}점`);
+function publicBody(res) {
   const tie = res.teams.some((t) => t.tieBroken);
   return [
-    "📋 공개 발표용 — 아래를 그대로 복사해서 쓰세요",
     `🏆 ${res.ev.name} 결과`,
-    ...res.teams.map((t) => `${t.rank <= 3 ? MEDAL[t.rank - 1] + " " : ""}${t.rank}위 ${t.team.name} — ${t.total}점`),
+    ...rankLines(res),
     ...(tie ? ["(동점은 치킨 수 → 킬 → 딜 순으로 정했어요)"] : []),
     "참가해 주신 모든 분, 정말 수고 많으셨어요! 🎉",
+  ].join("\n");
+}
+function formatPublic(res) {
+  return "📋 공개 발표용 — 아래를 그대로 복사해서 쓰세요\n" + publicBody(res);
+}
+
+// 결과 채널 게시(/킬내기집계 게시:true) — 대회가 안 끝났으면 「잠정」으로 올린다.
+// 라운드 사이에 올린 중간 순위를 최종으로 읽으면 항의가 나온다 — 끝난 뒤 게시만 발표문이다.
+function formatChannelPost(res) {
+  if (res.at >= res.ev.end) return publicBody(res);
+  return [
+    `⏳ ${res.ev.name} 중간 순위 (${kstHm(res.at)} 기준 · 잠정)`,
+    ...rankLines(res),
+    "아직 진행 중이라 순위는 바뀔 수 있어요. 최종 결과는 끝나고 올려요!",
   ].join("\n");
 }
 
@@ -653,6 +668,15 @@ function createKillrace(deps) {
     return { ev, deathMode, teams: summary, warn, stale: stale.length, stats, at: now(), ms: now() - t0 };
   }
 
+  // 게시할 채널 — KILLRACE_RESULT_CHANNEL_ID 가 있으면 그 채널, 없으면 명령을 친 채널.
+  // env 없이도 오늘 쓸 수 있게 둘 다 받는다(env 추가는 오너 소관이라 대회 전에 못 기다린다).
+  async function resultChannel(itx) {
+    const id = env.KILLRACE_RESULT_CHANNEL_ID;
+    const ch = id && itx.client && itx.client.channels ? await itx.client.channels.fetch(id) : itx.channel;
+    if (!ch || typeof ch.send !== "function") throw new Error(id ? "result_channel_unusable" : "no_channel");
+    return ch;
+  }
+
   // ── /킬내기이탈 ──
   async function setLeave({ teamName, seq, clear }) {
     const ev = await currentEvent();
@@ -761,11 +785,22 @@ function createKillrace(deps) {
           try { for (const part of parts) { await itx.user.send({ content: part }); sent++; } }
           catch (e) { log.error("[killrace] dm_failed", e && e.message); }
           const games = sum(res.teams, (t) => t.games.length);
+          let posted = "";
+          if (itx.options.getBoolean("게시")) {
+            try {
+              await (await resultChannel(itx)).send({ content: formatChannelPost(res) });
+              posted = res.at >= res.ev.end ? " · 결과 채널에 올렸어요" : " · 결과 채널에 중간 순위(잠정)로 올렸어요";
+              log.log(`[killrace] post_ok event#${res.ev.id} live=${res.at < res.ev.end}`);
+            } catch (e) {
+              posted = ` · 게시는 못 했어요(${shortErr(e).slice(0, 40)})`;
+              log.error("[killrace] post_failed", logSafe(e));
+            }
+          }
           log.log(`[killrace] aggregate event#${res.ev.id} mode=${res.deathMode} teams=${res.teams.length} games=${games} fetched=${res.stats.fetched} telemetry=${res.stats.telemetry} fallback=${res.stats.fallback} stored=${res.stats.stored} warn=${res.warn.length} ms=${res.ms}`);
           if (sent < parts.length) {
-            return itx.editReply({ content: `DM을 끝까지 못 보냈어요(${sent}/${parts.length}). 봇 DM이 막혀 있는지 확인해 주세요.\n\n${parts[0].slice(0, 1700)}` });
+            return itx.editReply({ content: `DM을 끝까지 못 보냈어요(${sent}/${parts.length}). 봇 DM이 막혀 있는지 확인해 주세요.${posted}\n\n${parts[0].slice(0, 1700)}` });
           }
-          return itx.editReply({ content: `📊 DM으로 보냈어요! ${res.teams.length}팀 · 인정 ${games}판 · ${Math.round(res.ms / 1000)}초` });
+          return itx.editReply({ content: `📊 DM으로 보냈어요! ${res.teams.length}팀 · 인정 ${games}판 · ${Math.round(res.ms / 1000)}초${posted}` });
         } finally { busy = false; }
       }
       const r = await setLeave({ teamName: itx.options.getString("팀명"), seq: itx.options.getInteger("판번호"), clear: !!itx.options.getBoolean("해제") });
@@ -790,7 +825,7 @@ module.exports = {
   COMMANDS, createKillrace,
   _test: {
     SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
-    telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, formatExcluded, formatReport, formatPublic,
+    telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, formatExcluded, formatReport, formatPublic, formatChannelPost,
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote,
   },
 };
