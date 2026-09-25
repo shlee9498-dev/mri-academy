@@ -3190,9 +3190,9 @@ if (process.env.DISCORD_TOKEN) {
       student_name: name, trainer_id, trainer_name: trainer, kind, amount, games,
       paid_on, memo, pay_channel, requested_by: itx.user.id, pubg_name,
     };
-    // §28b 플랫폼·계정 id — 컬럼이 있을 때만 싣는다(미실행 배포에선 닉만 · 부팅 점검 SCHEMA_OPTIONAL 결과 기준)
-    if (schemaOptional["payment_requests.pubg_platform"]) reqRow.pubg_platform = c.platform;
-    if (schemaOptional["payment_requests.pubg_account_id"]) reqRow.pubg_account_id = c.accountId || null;
+    // §28b 플랫폼·계정 id(2026-09-25 운영 실행 확인 · REQUIRED 승격) — 조회 실패·못 찾음이면 계정 id 는 null
+    reqRow.pubg_platform = c.platform;
+    reqRow.pubg_account_id = c.accountId || null;
     let req;
     try {
       req = await sbInsert("payment_requests", reqRow);
@@ -7684,14 +7684,14 @@ const SCHEMA_OPTIONAL = {
   ["id","status","student_name","student_id","trainer_id","trainer_name","kind",
    "amount","games","paid_on","memo","pay_channel","requested_by","decided_by","decided_at","created_at",
    // §28 신고 닉네임 — 운영에 이미 있음(2026-09-25 실측) · 정본·이 목록 누락분을 동기. /결제신청 이 쓰는 건 닉네임 확보 PR.
-   "pubg_name"];
+   "pubg_name",
+   // §28b 신고 플랫폼·PUBG 계정 id — 2026-09-25 오너 실행 · 실DB 실측(21칸 · text · nullable · 기본값 없음)
+   //   · #351 배포 부팅(08:59 UTC) (optional) OK 두 줄 확인 → 선택에서 필수로 승격(/결제신청 이 매 신고에 싣는다).
+   "pubg_platform", "pubg_account_id"];
 // §18b 역참조(2026-09-17 · 관제탑 지시 2·4) — 승인 큐 → 본표(payments·lesson_enrollments) 연결 컬럼.
 // 없어도 감시 크론(runPayreqUnreflected)이 memo 표식·자연키로 판정하므로 선택 등급이다(부팅 warn 만).
 // DDL 실행 후 채워지면 판정 1순위가 되고, #13·#15 같은 "금액이 다른 대응 행"도 연결로 해소된다.
 SCHEMA_OPTIONAL.payment_requests = [...(SCHEMA_OPTIONAL.payment_requests || []), "payment_id", "lesson_enrollment_id"];
-// §28b 신고 플랫폼·PUBG 계정 id(2026-09-25 닉네임 후속 · 오너 실행 대기) — 없으면 /결제신청 은 닉만 저장하고
-// 승인 뒤 채우기 버튼은 명부 플랫폼을 그대로 둔다(종전 동작). 실행·확인되면 REQUIRED 로 올린다.
-SCHEMA_OPTIONAL.payment_requests.push("pubg_platform", "pubg_account_id");
 
 // 선택 컬럼 존재 여부를 기동 시 1회 확인한다. 결과는 캐시해 매 요청 재조회하지 않는다.
 //   반환: { "payments.fee_amount": true, ... }
