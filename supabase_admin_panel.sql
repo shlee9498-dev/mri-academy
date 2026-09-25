@@ -1815,6 +1815,18 @@ comment on column public.payment_requests.pubg_name is '신고 시 트레이너�
 -- notify pgrst, 'reload schema';
 
 -- ============================================================
+-- §28b payment_requests.pubg_platform · pubg_account_id — /결제신청 신고 플랫폼 · PUBG 실존 조회 결과 (오너 지시 2026-09-25 닉네임 후속)
+--      ⚠️ 미실행 — 오너 실행 대기(2026-09-25 제안). 실행 전에는 server.js 가 SCHEMA_OPTIONAL 로 보고 닉만 저장한다(종전 동작).
+--      nullable 두 칸 · 기본값 없음 · 기존 28행은 null 로 남는다(백필 없음). 메타데이터만 바뀌는 ALTER 라 표를 다시 쓰지 않는다.
+--      students 쪽은 기존 컬럼(pubg_platform · pubg_account_id)을 쓴다 — 이 절은 신청 표만.
+alter table public.payment_requests add column if not exists pubg_platform text;
+alter table public.payment_requests add column if not exists pubg_account_id text;
+comment on column public.payment_requests.pubg_platform is '신고 닉네임의 PUBG 플랫폼(steam|kakao) — /결제신청 에서 트레이너가 고른 값 · 기본값 없음';
+comment on column public.payment_requests.pubg_account_id is '신고 시 PUBG 실존 조회로 얻은 계정 id(account.…) — 못 찾았거나 조회 실패면 null';
+-- 실행 후 필수:
+-- notify pgrst, 'reload schema';
+
+-- ============================================================
 -- §29  수업 복기(lesson reviews) — 정본 mri-student-app/docs/lesson-review-design.md v2.7(#25 · §14b 34~40)
 --      ✅ 실행 완료 2026-09-25 (오너 · 운영 SQL Editor 블록별 · 07:0x UTC 전후). VA = 11 · true · 0 · 0.
 --      실DB 지문(07:1x UTC) 9항 — 컬럼 101 · 제약 76 · 인덱스 33 · 트리거 2 · 함수 4 · RLS 11 · 태그 12 · 버킷 1 · 정책 0 —

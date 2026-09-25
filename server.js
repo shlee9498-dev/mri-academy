@@ -24,7 +24,7 @@ const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, Bu
 // 율을 두 곳에 적으면 한쪽만 고쳐지고 그 차이가 원장에 남는다.
 const { PAY_CHANNELS, FEE_RATES, feeFor, netFor, hasRate } = require("./config/fees.cjs");
 // 배그 닉네임 입력 규칙(/수강생등록 · /결제신청 · /닉네임등록 공용 · 순수 함수 · 테스트 scripts/pubg-name.test.cjs)
-const { parseIgnInput, sameIgn, compareIgn, ignChoices, ignGuardFilter, platLabel } = require("./pubg-name.cjs");
+const { parseIgnInput, sameIgn, compareIgn, ignChoices, ignGuardFilter, platLabel, ignLookupLine } = require("./pubg-name.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -975,9 +975,11 @@ if (process.env.DISCORD_TOKEN) {
       // 인게임닉 필수(오너 2026-09-25 · 닉네임 확보) — 모르면 자동완성의 「나중에 입력」 → 등록 뒤 담당에게 입력 요청 DM → /닉네임등록.
       //   디스코드 규칙상 필수 옵션이 선택 옵션보다 앞에 와야 해서 디코닉을 플랫폼 뒤로 옮겼다.
       { name: "인게임닉", description: "PUBG 인게임 닉 — 모르면 자동완성의 「나중에 입력」을 고르세요", type: 3, required: true, autocomplete: true },
-      { name: "플랫폼", description: "PUBG 플랫폼(인게임닉 입력 시 필수)", type: 3, required: false, choices: [
+      // 플랫폼 필수 · 기본값 없음(오너 2026-09-25 후속) — 닉을 넣었으면 스팀/카카오 · 「모름」은 닉을 나중에 넣을 때만(명부 null · steam 으로 채우지 않는다).
+      { name: "플랫폼", description: "PUBG 플랫폼 — 닉을 「나중에 입력」하면 모름도 고를 수 있어요", type: 3, required: true, choices: [
+        { name: "스팀", value: "steam" },
         { name: "카카오", value: "kakao" },
-        { name: "스팀", value: "steam" } ] },
+        { name: "모름(닉 나중에 입력일 때만)", value: "unknown" } ] },
       { name: "디코닉", description: "디스코드 닉(선택)", type: 3, required: false },
       { name: "유입경로", description: "유입경로(예: 유튜브 / 지인소개 / 디스코드)", type: 3, required: false },
       // 접수 양식의 나머지(성별·연락처·최고티어·플레이시간·교정희망)는 비고로 받는다. 생년월일은 받지 않는다(오너 §28 판정 2026-09-25).
@@ -1066,6 +1068,10 @@ if (process.env.DISCORD_TOKEN) {
         { name: "기타", value: "기타" } ] },
       // §28 신고 닉네임(필수 · 오너 「§28 판정 그대로」 2026-09-25) — 승인 카드가 명부 닉과 대조한다. 명부가 비어 있으면 승인 뒤 오너 버튼으로만 채운다.
       { name: "배그닉네임", description: "수강생 배그 인게임 닉네임(명부에 있으면 자동완성)", type: 3, required: true, autocomplete: true },
+      // 플랫폼 필수 · 기본값 없음(오너 2026-09-25 후속) — 이 플랫폼에서 PUBG 실존 조회 1회 · 결과(계정 id)는 §28b 컬럼이 있을 때 신청에 싣는다.
+      { name: "플랫폼", description: "배그닉네임의 PUBG 플랫폼", type: 3, required: true, choices: [
+        { name: "스팀", value: "steam" },
+        { name: "카카오", value: "kakao" } ] },
       { name: "판수", description: "판수 패키지면 총 판수(예: 33)", type: 4, required: false, min_value: 1, max_value: 200 },
       { name: "입금일", description: "입금일 YYYY-MM-DD(미입력=오늘)", type: 3, required: false },
       // 채널: 미입력이면 transfer(계좌이체) — 기존 신고가 전부 계좌이체였던 관행을 기본값으로 둔다.
@@ -2198,6 +2204,52 @@ if (process.env.DISCORD_TOKEN) {
   const STU_PENDING = new Map();                 // discord_id → { payload, at }
   const STU_PENDING_TTL_MS = 10 * 60 * 1000;
 
+  // ── 배그 닉 실존 조회(오너 2026-09-25 후속) — /수강생등록 · /결제신청 · /닉네임등록 공용 ──
+  //   입력 1건당 findPlayer 1회(nameVariants 를 한 요청에 · 찾은 결과는 1시간 캐시). 대화형 1회라 배치 페이싱(sleepT 7초)은 걸지 않는다.
+  //   found = 계정 id·정식 닉 · not_found = PUBG 404 · error = 키 없음·레이트리밋(429)·5xx → 조회 실패는 저장을 막지 않는다(계정 id 만 비움).
+  async function lookupIgn(platform, ign) {
+    if (!ign || (platform !== "steam" && platform !== "kakao")) return { status: "skipped" };
+    try {
+      const pl = await findPlayer(platform, ign);
+      return { status: "found", accountId: pl?.id || null, name: pl?.attributes?.name || ign };
+    } catch (e) {
+      if (e?.status === 404) return { status: "not_found" };
+      console.error("ign_lookup", platform, e?.status || "", e?.message);
+      return { status: "error" };
+    }
+  }
+  // 「찾을 수 없음 — 그래도 저장 / 다시 입력」 대기(명령별 · 사람당 1건 · 10분). 저장은 각 명령의 이어 가기 함수가 한다.
+  const IGN_PENDING = new Map();    // `${kind}:${discordId}` → { at, run }
+  const IGN_RETRY_CMD = { stu: "`/수강생등록`", pay: "`/결제신청`", nick: "`/닉네임등록`" };
+  function ignNotFoundPrompt(kind, uid, run, typed, platform, what) {
+    IGN_PENDING.set(`${kind}:${uid}`, { at: Date.now(), run });
+    return {
+      content: `🔎 PUBG(${platLabel(platform)})에서 **${typed}** 를 찾을 수 없어 — 철자·플랫폼을 확인해줘.\n`
+        + `맞으면 「그래도 저장」(${what}) · 고치려면 「다시 입력」.`,
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`ignnf:save:${kind}`).setLabel("그래도 저장").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`ignnf:retry:${kind}`).setLabel("다시 입력").setStyle(ButtonStyle.Secondary))],
+    };
+  }
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isButton()) return;
+    const m = String(itx.customId || "").match(/^ignnf:(save|retry):(stu|pay|nick)$/);
+    if (!m) return;
+    const key = `${m[2]}:${itx.user.id}`;
+    const pending = IGN_PENDING.get(key);
+    IGN_PENDING.delete(key);
+    if (!pending || Date.now() - pending.at > STU_PENDING_TTL_MS)
+      return itx.update({ content: `확인 시간이 지났어. ${IGN_RETRY_CMD[m[2]]} 를 다시 실행해줘.`, components: [] });
+    if (m[1] === "retry")
+      return itx.update({ content: `취소했어 — ${IGN_RETRY_CMD[m[2]]} 를 다시 실행해서 닉네임·플랫폼을 고쳐 넣어줘.`, components: [] });
+    await itx.update({ content: "PUBG 확인 없이 저장하는 중…", components: [] });
+    try { await pending.run(itx); }
+    catch (e) {
+      console.error("ign_nf_run", m[2], e?.message);
+      try { await itx.editReply("저장 중 오류가 났어. 운영진에게 알려줘."); } catch (_) {}
+    }
+  });
+
   async function runStudentRegister(itx, p) {
     const lines = [];
     // 1) DB — students insert. 실패하면 시트도 건드리지 않는다(한쪽만 생기는 상태 방지).
@@ -2205,10 +2257,11 @@ if (process.env.DISCORD_TOKEN) {
     try {
       const row = await sbInsert("students", {
         name: p.name, discord_nick: p.discordNick, trainer_id: p.trainerId, status: "active",
-        pubg_platform: p.platform, pubg_name: p.ign, note: p.note,
+        pubg_platform: p.platform, pubg_name: p.ign, pubg_account_id: p.accountId || null, note: p.note,
       });
       studentId = (Array.isArray(row) ? row[0] : row)?.id ?? null;
       lines.push(`✅ 명부(DB) 등록 — ${p.name} · 담당 ${p.trainer}`);
+      if (p.ignLine) lines.push(p.ignLine);
     } catch (e) {
       console.error("student_add_db", e?.message);
       return itx.editReply(`❌ 명부(DB) 등록 실패 — ${e?.message || "오류"}\n↳ 시트는 건드리지 않았어. 운영자에게 문의해줘.`);
@@ -2277,8 +2330,8 @@ if (process.env.DISCORD_TOKEN) {
           `🆕 신규 수강생 등록 — **${p.name}** (담당 ${p.trainer}, 등록자 <@${itx.user.id}>)`,
           `· 신청구분: ${p.applyKind}${p.inflow ? ` · 유입경로: ${p.inflow}` : ""}`,
           p.discordNick ? `· 디코닉: ${p.discordNick}` : null,
-          p.ign ? `· 인게임닉: ${p.ign}${p.platform ? ` (${p.platform === "kakao" ? "카카오" : "스팀"})` : ""}`
-            : (p.ignLater ? "· 인게임닉: 나중에 입력(담당에게 입력 요청 DM · /닉네임등록)" : null),
+          p.ign ? `· 인게임닉: ${p.ign} (${platLabel(p.platform)} · PUBG ${p.accountId ? "확인" : "미확인"})`
+            : (p.ignLater ? `· 인게임닉: 나중에 입력(플랫폼 ${platLabel(p.platform)} · 담당에게 입력 요청 DM · /닉네임등록)` : null),
           p.note ? `· 비고: ${p.note}` : null,
           studentId ? `· students.id = ${studentId}` : null,
           p.dupNames ? `· ⚠️ 동명 active 행 있음(트레이너가 확인 후 진행): ${p.dupNames}` : null,
@@ -2316,15 +2369,17 @@ if (process.env.DISCORD_TOKEN) {
         ? "인게임닉을 넣어줘 — 모르면 자동완성에서 「나중에 입력」을 골라줘."
         : "배그 닉네임 형식이 아니야 — 영문·숫자·-·_ 로 된 인게임 닉을 넣어줘(공백·한글 없이). 모르면 「나중에 입력」을 골라줘.", ephemeral: true });
     const ign = ignIn.ign;
-    const platform = itx.options.getString("플랫폼") || null;
+    // 플랫폼 필수 · 기본값 없음 — 닉을 넣었으면 스팀/카카오 중 하나 · 「모름」은 닉을 나중에 넣을 때만(명부 null).
+    const platRaw = itx.options.getString("플랫폼");
+    const platform = platRaw === "steam" || platRaw === "kakao" ? platRaw : null;
     if (ign && !platform)
-      return itx.reply({ content: "인게임닉을 넣었으면 플랫폼(스팀/카카오)도 골라줘.", ephemeral: true });
+      return itx.reply({ content: "인게임닉을 넣었으면 플랫폼은 스팀이나 카카오로 골라줘(「모름」은 닉을 나중에 넣을 때만).", ephemeral: true });
 
     const p = {
       name, trainer,
       applyKind: itx.options.getString("신청구분"),
       discordNick: (itx.options.getString("디코닉") || "").trim() || null,
-      ign, platform: ign ? platform : null, ignLater: !!ignIn.later,
+      ign, platform, ignLater: !!ignIn.later, accountId: null, ignLine: "",
       inflow: (itx.options.getString("유입경로") || "").trim() || null,
       trainerId: null, note: null, dupNames: null,
     };
@@ -2340,6 +2395,22 @@ if (process.env.DISCORD_TOKEN) {
     if (p.trainerId == null)
       return itx.editReply(`❌ 트레이너 '${trainer}'를 staff에서 못 찾았어. 운영자에게 문의해줘(TRAINER_MAP 이름과 staff.name 불일치).`);
 
+    // PUBG 실존 조회(입력 1건당 1회) — 찾으면 계정 id·정식 닉 · 못 찾으면 「그래도 저장 / 다시 입력」 · 조회 실패는 저장을 막지 않는다.
+    if (p.ign) {
+      const lk = await lookupIgn(p.platform, p.ign);
+      if (lk.status === "not_found")
+        return itx.editReply(ignNotFoundPrompt("stu", itx.user.id,
+          (i2) => studentAfterLookup(i2, { ...p, ignLine: ignLookupLine({ status: "unverified" }, p.ign, p.platform) }),
+          p.ign, p.platform, "계정 확인 없이 등록"));
+      if (lk.status === "found") { p.accountId = lk.accountId; p.ign = lk.name || p.ign; }
+      p.ignLine = ignLookupLine(lk, ign, p.platform);
+    }
+    return studentAfterLookup(itx, p);
+  });
+
+  // /수강생등록 2단계 — 동명 확인(있으면 버튼) → 등록. PUBG 「그래도 저장」 버튼에서도 여기로 이어진다.
+  async function studentAfterLookup(itx, p) {
+    const name = p.name;
     // 동명 active 행 — 차단이 아니라 경고 후 확인. 병행수강 2행이 정상인 케이스가 있다(이희훈·장익교).
     let dups = [];
     try {
@@ -2369,7 +2440,7 @@ if (process.env.DISCORD_TOKEN) {
         + `같은 사람이면 [취소]하고 기존 행을 그대로 쓰면 돼. 다른 사람이거나 병행수강이면 [그래도 등록].`,
       components: [row],
     });
-  });
+  }
 
   // ── /수강생등록 동명 확인 버튼 ──
   client.on("interactionCreate", async (itx) => {
@@ -2515,11 +2586,13 @@ if (process.env.DISCORD_TOKEN) {
     const ignIn = parseIgnInput(itx.options.getString("닉네임"));
     if (ignIn.error)
       return itx.reply({ content: "배그 닉네임 형식이 아니야 — 영문·숫자·-·_ 로 된 인게임 닉을 넣어줘(공백·한글 없이).", ephemeral: true });
-    const platform = itx.options.getString("플랫폼") === "kakao" ? "kakao" : "steam";
+    const platform = itx.options.getString("플랫폼");
+    if (platform !== "steam" && platform !== "kakao")
+      return itx.reply({ content: "플랫폼(스팀/카카오)을 골라줘.", ephemeral: true });
     await itx.deferReply({ ephemeral: true });
     // 자동완성 값 = 명부 id. 이름을 직접 쳤으면 정확일치 1명일 때만(동명은 목록에서 #번호로).
     const raw = String(itx.options.getString("수강생") || "").trim();
-    const cols = "select=id,name,status,trainer_id,pubg_name,pubg_platform";
+    const cols = "select=id,name,status,trainer_id,pubg_name,pubg_platform,pubg_account_id";
     let rows = [];
     try {
       rows = /^\d{1,10}$/.test(raw)
@@ -2536,15 +2609,32 @@ if (process.env.DISCORD_TOKEN) {
       return itx.editReply(`${row.name}(명부 #${row.id})은 내 담당이나 최근 90일 수업 수강생이 아니야 — 담당 트레이너나 오너가 넣어줘.`);
     const cur = String(row.pubg_name ?? "").trim();
     const sameNick = sameIgn(cur, ignIn.ign);
-    if (cur === ignIn.ign && row.pubg_platform === platform)
-      return itx.editReply(`이미 **${cur}** (${platLabel(platform)})로 등록돼 있어 ✅ 바꿀 게 없어.`);
-    // 트레이너 = 빈 칸 채우기 + 같은 닉의 플랫폼·대소문자 정정(명부 플랫폼 기본값이 steam 이라 정정이 필요하다) · 다른 닉으로 교체는 오너만.
+    const samePlat = row.pubg_platform === platform;
+    if (cur === ignIn.ign && samePlat && row.pubg_account_id)
+      return itx.editReply(`이미 **${cur}** (${platLabel(platform)} · PUBG 확인)로 등록돼 있어 ✅ 바꿀 게 없어.`);
+    // 트레이너 = 빈 칸 채우기 + 같은 닉의 플랫폼·대소문자 정정·계정 확인(명부 플랫폼 기본값이 steam 이라 정정이 필요하다) · 다른 닉으로 교체는 오너만.
     if (cur && !sameNick && !actor.isOwner)
       return itx.editReply(`이미 **${cur}** 로 등록돼 있어. 다른 닉으로 바꿔야 하면 오너에게 말해줘 — 트레이너는 빈 칸 채우기와 같은 닉의 플랫폼 정정만 할 수 있어.`);
-    const kind = !cur ? "등록" : (sameNick ? "정정" : "교체");
+    const kind = !cur ? "등록" : (!sameNick ? "교체" : (cur === ignIn.ign && samePlat ? "확인" : "정정"));
+    // PUBG 실존 조회(입력 1건당 1회) — 찾으면 계정 id·정식 닉 · 못 찾으면 「그래도 저장 / 다시 입력」 · 조회 실패는 저장을 막지 않는다.
+    const c = { row, cur, kind, platform, ign: ignIn.ign, accountId: null, ignLine: "", actor };
+    const lk = await lookupIgn(platform, ignIn.ign);
+    if (lk.status === "not_found")
+      return itx.editReply(ignNotFoundPrompt("nick", itx.user.id,
+        (i2) => nickApply(i2, { ...c, ignLine: ignLookupLine({ status: "unverified" }, ignIn.ign, platform) }),
+        ignIn.ign, platform, "계정 확인 없이 명부에 저장"));
+    if (lk.status === "found") { c.accountId = lk.accountId; c.ign = lk.name || ignIn.ign; }
+    c.ignLine = ignLookupLine(lk, ignIn.ign, platform);
+    return nickApply(itx, c);
+  });
+
+  // /닉네임등록 저장 — 읽은 값 가드 · 닉·플랫폼·계정 id 를 한 번에(닉이나 플랫폼이 바뀌면 옛 계정 id 는 비운다) · admin_audit.
+  async function nickApply(itx, c) {
+    const { row, cur, actor } = c;
     let patched = null;
     try {
-      patched = await sbPatch("students", `id=eq.${row.id}&${ignGuardFilter(row.pubg_name ?? null)}`, { pubg_name: ignIn.ign, pubg_platform: platform });
+      patched = await sbPatch("students", `id=eq.${row.id}&${ignGuardFilter(row.pubg_name ?? null)}`,
+        { pubg_name: c.ign, pubg_platform: c.platform, pubg_account_id: c.accountId || null });
     } catch (e) {
       console.error("nick_patch", e?.message);
       return itx.editReply("명부 저장에 실패했어. 운영진에게 알려줘.");
@@ -2555,13 +2645,15 @@ if (process.env.DISCORD_TOKEN) {
       await sbInsert("admin_audit", {
         actor_id: itx.user.id, actor_name: actor.label || itx.user.globalName || itx.user.username,
         action: "student.pubg_name", target: `student:${row.id}`,
-        detail: { from: cur || null, from_platform: row.pubg_platform || null, to: ignIn.ign, platform, via: "/닉네임등록" },
+        detail: { from: cur || null, from_platform: row.pubg_platform || null, to: c.ign, platform: c.platform,
+                  account: !!c.accountId, via: "/닉네임등록" },
       });
     } catch (e) { console.error("nick_audit", e?.message); }
-    console.log(`[nick] student#${row.id} pubg_name ${kind} (${actor.isOwner ? "owner" : `staff#${actor.staffId}`})`);
-    return itx.editReply(`✅ ${row.name}(명부 #${row.id}) 배그 닉네임 ${kind} — **${ignIn.ign}** (${platLabel(platform)})`
-      + (cur ? `\n↳ 이전 값: ${cur} (${platLabel(row.pubg_platform)})` : ""));
-  });
+    console.log(`[nick] student#${row.id} pubg_name ${c.kind} (${actor.isOwner ? "owner" : `staff#${actor.staffId}`} · account ${c.accountId ? "ok" : "none"})`);
+    return itx.editReply(`✅ ${row.name}(명부 #${row.id}) 배그 닉네임 ${c.kind} — **${c.ign}** (${platLabel(c.platform)})`
+      + (cur ? `\n↳ 이전 값: ${cur} (${platLabel(row.pubg_platform)})` : "")
+      + (c.ignLine ? `\n${c.ignLine}` : ""));
+  }
 
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand() || itx.commandName !== "연결승인") return;
@@ -3044,6 +3136,9 @@ if (process.env.DISCORD_TOKEN) {
     if (ignIn.error)
       return itx.reply({ content: "배그 닉네임을 넣어줘 — 영문·숫자·-·_ 로 된 인게임 닉(공백·한글 없이). 명부에 있으면 자동완성에 떠.", ephemeral: true });
     const pubg_name = ignIn.ign;
+    const payPlat = itx.options.getString("플랫폼");
+    if (payPlat !== "steam" && payPlat !== "kakao")
+      return itx.reply({ content: "배그닉네임의 플랫폼(스팀/카카오)을 골라줘.", ephemeral: true });
     if (kind === "판수" && !games)
       return itx.reply({ content: "구분이 판수면 판수도 입력해줘(예: 33).", ephemeral: true });
     // 세트(v1.1): 금액이 상품을 결정하고 판수는 정가표에서 온다 — 서버 §18d payreq_apply 의 표와 같아야 한다.
@@ -3073,18 +3168,39 @@ if (process.env.DISCORD_TOKEN) {
         + "&status=in.(pending,approved)&order=id.desc&limit=1"))[0] || null;
     } catch (e) { console.error("payreq_dupcheck", e?.message); }
     const dupLine = dup ? `⚠️ 중복 의심 — 같은 학생·금액·입금일 신청 #${dup.id}(${dup.status === "approved" ? "승인됨" : "대기"})이 이미 있어` : "";
+    // PUBG 실존 조회(입력 1건당 1회 · 실패는 접수를 막지 않는다) — 찾으면 정식 닉·계정 id 를 신청에 싣는다(§28b 컬럼이 있을 때).
+    const c = { name, trainer, trainer_id, kind, amount, games, paid_on, memo, pay_channel, dupLine,
+                pubg_name, platform: payPlat, accountId: null, ignLine: "" };
+    const lk = await lookupIgn(payPlat, pubg_name);
+    if (lk.status === "not_found")
+      return itx.editReply(ignNotFoundPrompt("pay", itx.user.id,
+        (i2) => payreqSubmit(i2, { ...c, ignLine: ignLookupLine({ status: "unverified" }, pubg_name, payPlat) }),
+        pubg_name, payPlat, "계정 확인 없이 신청 접수"));
+    if (lk.status === "found") { c.accountId = lk.accountId; c.pubg_name = lk.name || pubg_name; }
+    c.ignLine = ignLookupLine(lk, pubg_name, payPlat);
+    return payreqSubmit(itx, c);
+  });
+
+  // /결제신청 접수 — payment_requests(pending) 저장 → 오너 DM 카드. PUBG 「그래도 저장」 버튼에서도 여기로 이어진다.
+  async function payreqSubmit(itx, c) {
+    const { name, trainer, trainer_id, kind, amount, games, paid_on, memo, pay_channel, dupLine, pubg_name } = c;
     // 명부 연결은 **승인 시점에만** 한다(오너 판정 2026-09-24) — 판수·금액이 붙는 연결이라 신청 시점·등록 직후의
     // 자동 연결은 두지 않는다. 승인 카드 ✅ 가 후보를 펼치고 승인자가 확인·변경한 뒤 승인과 함께 확정한다.
+    const reqRow = {
+      student_name: name, trainer_id, trainer_name: trainer, kind, amount, games,
+      paid_on, memo, pay_channel, requested_by: itx.user.id, pubg_name,
+    };
+    // §28b 플랫폼·계정 id — 컬럼이 있을 때만 싣는다(미실행 배포에선 닉만 · 부팅 점검 SCHEMA_OPTIONAL 결과 기준)
+    if (schemaOptional["payment_requests.pubg_platform"]) reqRow.pubg_platform = c.platform;
+    if (schemaOptional["payment_requests.pubg_account_id"]) reqRow.pubg_account_id = c.accountId || null;
     let req;
     try {
-      req = await sbInsert("payment_requests", {
-        student_name: name, trainer_id, trainer_name: trainer, kind, amount, games,
-        paid_on, memo, pay_channel, requested_by: itx.user.id, pubg_name,
-      });
+      req = await sbInsert("payment_requests", reqRow);
     } catch (e) {
       console.error("payreq_insert", e?.message);
       return itx.editReply("❌ 신청 저장에 실패했어. 운영자에게 문의해줘(§18 DDL 미실행 가능성).");
     }
+    const nickLine = `닉 ${pubg_name}(${platLabel(c.platform)} · PUBG ${c.accountId ? "확인" : "미확인"})`;
     let dmOk = false;
     if (process.env.MRI_OWNER_ID) {
       try {
@@ -3094,7 +3210,7 @@ if (process.env.DISCORD_TOKEN) {
           new ButtonBuilder().setCustomId(`payreq_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
         );
         await owner.send({
-          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}** · 닉 ${pubg_name}\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}\n· 채널: ${channelLine(pay_channel, amount)}${memo ? `\n· 메모: ${memo}` : ""}${dupLine ? `\n${dupLine}` : ""}`,
+          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}** · ${nickLine}\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}\n· 채널: ${channelLine(pay_channel, amount)}${memo ? `\n· 메모: ${memo}` : ""}${dupLine ? `\n${dupLine}` : ""}`,
           components: [row],
         });
         dmOk = true;
@@ -3103,8 +3219,9 @@ if (process.env.DISCORD_TOKEN) {
     await itx.editReply(
       `✅ 결제 신청 접수 **#${req.id}** — ${name}(${pubg_name}) · ${kind}${games ? ` ${games}판` : ""} · ${amount.toLocaleString("ko-KR")}원 · ${CHANNEL_LABEL[pay_channel]} · 입금일 ${paid_on}\n`
       + (dmOk ? "오너 승인 대기 중이야." : "⚠️ 오너 DM 발송 실패 — 신청은 저장됐어(pending). 오너에게 직접 알려줘.")
+      + (c.ignLine ? `\n${c.ignLine}` : "")
       + (dupLine ? `\n${dupLine} — 중복이면 오너에게 반려를 요청해줘.` : ""));
-  });
+  }
 
   // ── /결제신청 승인·반려 (오너 DM) — v2: 승인 시점에 명부 연결 대상을 펼치고, 승인자가 확인한 뒤 승인과 함께 확정 ──
   //   오너 판정 2026-09-24: 판수·금액이 붙는 연결이라 「잘못 연결되는 것」을 막는 쪽으로 간다.
@@ -3301,7 +3418,8 @@ if (process.env.DISCORD_TOKEN) {
       //   아래 「명부 닉네임 채우기」 버튼(오너가 누를 때만)으로 뗐다 — §28 설계의 「옵션」을 건별 선택으로 둔다.
       const nk = compareIgn(q.pubg_name, target.pubg_name);
       const nickNote = nk === "fill"
-        ? `\n🎮 명부 닉네임 비어 있음 — 신고 닉 **${String(q.pubg_name).trim()}** 로 채우려면 아래 버튼(선택 · 플랫폼은 명부값 ${platLabel(target.pubg_platform)} 그대로)`
+        ? `\n🎮 명부 닉네임 비어 있음 — 신고 닉 **${String(q.pubg_name).trim()}** 로 채우려면 아래 버튼(선택 · `
+          + (q.pubg_platform ? `플랫폼 ${platLabel(q.pubg_platform)} · PUBG ${q.pubg_account_id ? "확인" : "미확인"} 도 함께)` : `플랫폼은 명부값 ${platLabel(target.pubg_platform)} 그대로)`)
         : (nk === "diff"
             ? `\n⚠️ 신고 닉 ${String(q.pubg_name).trim()} ≠ 명부 닉 ${target.pubg_name} — 명부는 그대로야(바꾸려면 오너가 /닉네임등록)`
             : "");
@@ -3343,7 +3461,7 @@ if (process.env.DISCORD_TOKEN) {
     const close = (line) => itx.update({ content: `${itx.message?.content || ""}\n${line}`.slice(0, 2000), components: [] });
     let q = null, st = null;
     try {
-      q = (await sbSelect("payment_requests", `select=id,status,student_id,pubg_name&id=eq.${reqId}&limit=1`))[0] || null;
+      q = (await sbSelect("payment_requests", `select=*&id=eq.${reqId}&limit=1`))[0] || null;   // * = §28b 컬럼이 있으면 함께
       if (q?.student_id)
         st = (await sbSelect("students", `select=id,pubg_name,pubg_platform&id=eq.${q.student_id}&limit=1`))[0] || null;
     } catch (e) {
@@ -3357,7 +3475,13 @@ if (process.env.DISCORD_TOKEN) {
         : (nk === "none" ? "· 신고 닉이 없어서 채울 값이 없어" : "· 명부 닉네임은 그 사이 다른 값으로 채워졌어 — 그대로 뒀어"));
     const nick = String(q.pubg_name).trim();
     let f = null;
-    try { f = await sbPatch("students", `id=eq.${st.id}&${ignGuardFilter(st.pubg_name ?? null)}`, { pubg_name: nick }); }
+    // 신청에 플랫폼이 있으면(§28b) 닉·플랫폼·계정 id 를 함께 — 신고 플랫폼으로 조회한 결과라 짝이 맞는다. 없으면 닉만(명부 플랫폼 유지).
+    const fill = { pubg_name: nick };
+    if (q.pubg_platform === "steam" || q.pubg_platform === "kakao") {
+      fill.pubg_platform = q.pubg_platform;
+      fill.pubg_account_id = q.pubg_account_id || null;
+    }
+    try { f = await sbPatch("students", `id=eq.${st.id}&${ignGuardFilter(st.pubg_name ?? null)}`, fill); }
     catch (e) {
       console.error("payreq_nick_fill", e?.message);
       return itx.reply({ content: "명부 저장에 실패했어. /닉네임등록 으로 넣어줘.", ephemeral: true });
@@ -3367,11 +3491,13 @@ if (process.env.DISCORD_TOKEN) {
       await sbInsert("admin_audit", {
         actor_id: itx.user.id, actor_name: itx.user.globalName || itx.user.username,
         action: "student.pubg_name", target: `student:${st.id}`,
-        detail: { from: null, to: nick, platform: st.pubg_platform || null, via: `payreq#${reqId}` },
+        detail: { from: null, to: nick, platform: fill.pubg_platform || st.pubg_platform || null, account: !!fill.pubg_account_id, via: `payreq#${reqId}` },
       });
     } catch (e) { console.error("payreq_nick_audit", e?.message); }
     console.log(`[nick] student#${st.id} pubg_name 등록 (payreq#${reqId} · owner)`);
-    return close(`🎮 명부 닉네임 채움 ✅ **${nick}** — 플랫폼은 명부값 ${platLabel(st.pubg_platform)} 그대로(다르면 /닉네임등록)`);
+    return close(fill.pubg_platform
+      ? `🎮 명부 닉네임 채움 ✅ **${nick}** — 플랫폼 ${platLabel(fill.pubg_platform)} · PUBG ${fill.pubg_account_id ? "확인" : "미확인"}`
+      : `🎮 명부 닉네임 채움 ✅ **${nick}** — 플랫폼은 명부값 ${platLabel(st.pubg_platform)} 그대로(다르면 /닉네임등록)`);
   });
 
   // ── 승급 DM 액션 버튼 (트레이너 DM · 관제탑 8/18 지시 2) ───────────────────
@@ -7558,6 +7684,9 @@ const SCHEMA_OPTIONAL = {
 // 없어도 감시 크론(runPayreqUnreflected)이 memo 표식·자연키로 판정하므로 선택 등급이다(부팅 warn 만).
 // DDL 실행 후 채워지면 판정 1순위가 되고, #13·#15 같은 "금액이 다른 대응 행"도 연결로 해소된다.
 SCHEMA_OPTIONAL.payment_requests = [...(SCHEMA_OPTIONAL.payment_requests || []), "payment_id", "lesson_enrollment_id"];
+// §28b 신고 플랫폼·PUBG 계정 id(2026-09-25 닉네임 후속 · 오너 실행 대기) — 없으면 /결제신청 은 닉만 저장하고
+// 승인 뒤 채우기 버튼은 명부 플랫폼을 그대로 둔다(종전 동작). 실행·확인되면 REQUIRED 로 올린다.
+SCHEMA_OPTIONAL.payment_requests.push("pubg_platform", "pubg_account_id");
 
 // 선택 컬럼 존재 여부를 기동 시 1회 확인한다. 결과는 캐시해 매 요청 재조회하지 않는다.
 //   반환: { "payments.fee_amount": true, ... }
