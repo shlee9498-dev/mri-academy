@@ -779,16 +779,19 @@ order by 1, 2;
 - 경로에 이름·닉네임을 넣지 않는다(id 만).
 
 ### 3.3 파생본 생성 위치
-서버(`review-api.cjs`) 업로드 직후 · `sharp` 로 표시본·썸네일 생성 → 3파일 업로드 → `display_path`·`thumb_path` 저장. 생성 실패는 `display_path=null` 로 두고 응답의 `displayUrl` 은 원본 서명 URL 로 대체(재생성은 다음 조회 때 1회 시도). **`sharp` 는 네이티브 모듈이라 설치 전 승인 항목**(Railway Nixpacks/Node 20 에서 prebuilt 바이너리 사용 · 메모리 +30~60MB). 미승인 시 1차는 원본만(egress 가 §8.4 추정보다 3~4배).
+서버(`review-api.cjs`) 업로드 직후 · `sharp` 로 표시본·썸네일 생성 → 3파일 업로드 → `display_path`·`thumb_path` 저장. 생성 실패는 `display_path=null` 로 두고 응답의 `displayUrl` 은 원본 서명 URL 로 대체(재생성은 다음 조회 때 1회 시도). **`sharp` 는 네이티브 모듈이라 설치 전 승인 항목**(prebuilt 바이너리 사용 · 메모리 +30~60MB). 미승인 시 1차는 원본만(egress 가 §8.4 추정보다 3~4배).
+- **PR-2 구현(2026-09-25 · 승인 9/25)**: Railway 빌드 = Railpack · **Node 18.20.8**(`engines ">=18"` 해석 · 빌드 로그 실측) → **`sharp` 0.34.5**(0.35.x 는 Node ≥20.9). 0.34.5 에는 권고 2건이 걸려 있다 — GHSA-f88m-g3jw-g9cj(libvips · GIF·TIFF·VIPS 디코더) · GHSA-rgj7-g3m4-5g8c(libheif · HEIF·AVIF 디코더). 공식 우회책(`sharp.block`)을 **허용 목록**으로 건다: 입력 디코더 전부 막고 png·jpeg·webp 버퍼 셋만 연다(+ 업로드는 매직 바이트로 한 번 더 거른다) → 권고 대상 디코더에 닿는 길이 없다(로컬 실측: gif·tiff·avif·svg 입력 거부 · png·jpeg·webp 정상 · Node 18.20.8 동일). **Node 를 20 이상으로 올리면 0.35.x 로 올린다**(서버 전체 런타임 변경이라 별건 · 오너 판단).
+- 운영 설정: 선택 로드(모듈 로드가 실패해도 서버·봇은 뜬다 → 원본만 · 기동 로그 `⚠️ [review] sharp 없음`) · 디코드 캐시 끔 · 이미지당 libvips 스레드 2 · 동시 생성 2장(나머지 줄 섬) · 화소 5천만 상한(머리만 읽어 먼저 거른다 = 디코드 폭탄 차단) · EXIF 방향 반영(`rotate()`) · 썸네일은 표시본에서 만든다(원본을 두 번 디코드하지 않는다).
 
 ### 3.4 서명 URL
 - 발급: service_role `POST {SUPABASE_URL}/storage/v1/object/sign/lesson-reviews` body `{ "expiresIn": 600, "paths": [...] }`(배치) → 각 `signedURL` 에 `{SUPABASE_URL}/storage/v1` 를 앞에 붙인다. **만료 10분**(v2.5 §8.1). 응답 키 `displayUrl` `thumbUrl` `originalUrl`.
 - 발급 조건 = §4 `canRead`. URL 자체는 누구나 열 수 있으므로 10분을 넘기지 않고, 목록 응답에는 썸네일만 싣는다(상세에서 표시본·원본).
 - 업로드: `POST {SUPABASE_URL}/storage/v1/object/lesson-reviews/{path}` (`Content-Type` 실제 MIME · `x-upsert: false`). 삭제: `DELETE {SUPABASE_URL}/storage/v1/object/lesson-reviews` body `{ "prefixes": [path...] }`.
-- 헬퍼는 `server.js` 의 `sbSelect` 류와 같은 자리(`storageSign/storagePut/storageDelete`)에 두고 `review-api.cjs` 가 deps 로 받는다.
+- 헬퍼는 `server.js` 의 `sbSelect` 류와 같은 자리(`storageSign/storagePut/storageDelete`)에 두고 `review-api.cjs` 가 deps 로 받는다. → **구현(PR-1·PR-2)은 `review-api.cjs` 안**(`signPaths` · `putObject` · `getObject` · `removePaths`) — 복기 전용이고, 여러 트랙이 만지는 `server.js` 에 넣으면 충돌면만 넓어진다.
 
 ### 3.5 삭제·고아 정리
-- 이미지·페이즈·판·복기 삭제는 **서버가 먼저 Storage 3파일을 지우고** 행을 지운다(DB cascade 는 안전망). 실패한 객체는 로그 `[review] storage_orphan path=` 로 남긴다.
+- 이미지·페이즈·판·복기 삭제는 **서버가 먼저 Storage 3파일을 지우고** 행을 지운다(DB cascade 는 안전망). 실패한 객체는 로그 `[review] storage_orphan path=` 로 남긴다. → 구현: `[review] storage_orphan count=N http=…`(경로를 로그에 싣지 않는다 · 건수만 — 점검은 아래 SQL 이 한다).
+- 업로드 도중 끊긴 자리 행(`original_path` 가 `pending/` 로 시작 · 파일 없음 · 프로세스가 업로드 중에 내려간 경우)은 목록·상세·한도·재시도 판정에서 빠지고, §3.7 일일 작업이 하루 지난 것을 같은 모드로 센다(`pending=N`)/지운다.
 - 고아 점검(오너 · 월 1회): `select name from storage.objects o where o.bucket_id = 'lesson-reviews' and not exists (select 1 from public.review_images i where o.name in (i.original_path, i.display_path, i.thumb_path));` → 0행 기대. 있으면 위 DELETE API 로 정리.
 
 ### 3.6 한도 검사 위치 (v2.5 §8.3)
@@ -811,6 +814,8 @@ order by 1, 2;
 | 즉시 삭제 · 점검 | 지운 이미지 즉시 삭제(§3.5)와 **월 1회 점검 SQL**(§3.5 · `storage.objects` − `review_images`)은 그대로 — 이 작업은 그 둘을 대체하지 않는다 |
 | `updated_at` 기준 | 서버 관례대로 서버가 갱신한다. **이미지 업로드 · 그리기 저장 · 판·페이즈 변경도 `lesson_reviews.updated_at` 을 갱신**해야 「마지막 수정」이 맞다(PR-1·PR-2 구현 지침) |
 | 예고 배지 | 2차(알림과 함께 「보내지 않은 복기의 사진은 n일 뒤 정리돼요」). 1차는 예고 없이 드라이런만 |
+| **구현(PR-2 · 2026-09-25)** | `review-api.cjs` `draftSweep()` · `server.js` `cronTick` → `maybeRunDaily("reviewDraftSweep", "04:00")`(`ops_state` `cron:reviewDraftSweep` · 하루 1회 · 2회 실패면 오너 DM — 기존 크론과 같다). 크론은 `T2_CRON=1` 또는 `DIRECT_STATUS=1` 일 때만 돈다 — **운영은 둘 다 on**(#351 부팅 로그 `[cron] 활성 — T2:on · directStatus:on`) → **env 추가 없이 돈다.** 04:00 이후 기동이면 기동 직후 1회(캐치업 = 배포 스모크) · 모드 = `REVIEW_DRAFT_SWEEP` 이 정확히 `delete` 일 때만 삭제 · 미설정·`dryrun`·그 밖의 값 = 드라이런(기동 로그에 모드 · 모르는 값이면 ⚠️) · delete 는 복기마다 다시 확인(그 사이 고쳤거나 보냈으면 건너뜀) → 파일 삭제가 실패한 복기는 행을 남긴다(`failed` · 다음 날 다시) · 1회 200장은 복기 단위로 자른다(`capped=1`) · 로그 끝에 `capped=1` · `pending=N` 이 붙을 수 있다 |
+| 3차 메모 | 디스코드 이관의 보류 큐(`anchor_kind='pending'` draft · §8)가 90일을 넘길 수 있다 — 이관 PR 에서 이 작업의 대상에서 뺄지 정한다(지금은 draft 전부) |
 | 오너 미리보기 SQL | 아래 — 드라이런 로그와 같은 수를 낸다 |
 
 ```sql
@@ -927,6 +932,7 @@ if (!reviewCanRead(actor, r) || (r.hidden_at && !actor.isOwner)) return fail(res
 15. **`sessions[].reviewDue`**: 오늘(KST) 수업 ∧ 내 복기 없음. 3칸 양식(🎯/🔥/📝)은 서버 변경 없이 `body` 제목줄 — 앱이 제목줄로 나눠 보여 준다(v2.7 §15.7).
 16. **엑셀 파싱분은 `POST /reviews` 에 `source:'xlsx'` 를 보낸다** — 서버가 이관분(`source <> 'app'`)의 `visibility` 를 `private` 로 강제하는 근거(§8 · 오너 9/25).
 17. **PR-1 구현에서 정한 것(계약 = `docs/trainer-portal-api.md` §8)**: `unreadFeedback` 은 가드 어간 `fee` 에 걸려 서버 scrub 예외 추가 · **앱 가드 예외도 필요**(반장) · `POST /reviews` 는 상세, `PUT /reviews/:id` 는 요약을 돌려준다 · 페이즈 PUT 은 부분 갱신 · 판 20 · 판당 페이즈 30(서버 안전 한도) · 피드 태그 여러 개 = OR · 반응은 보낸 복기에만 · 보내기 멱등 · 트레이너가 쓴 이관 복기는 수강생이 범위만 바꾼다(내용·삭제 404) · 숨긴 복기가 잡은 수업에 새로 만들면 409 `anchor_taken` · 강의 앵커 id 를 주는 API 는 아직 없음(3차).
+18. **PR-2 구현에서 정한 것(계약 = `docs/trainer-portal-api.md` §8.8)**: 업로드 `Content-Type` 은 `image/*` 면 받고 실제 형식은 매직 바이트(png·jpeg·webp) · 화소 5천만 초과 413 `image_too_large`(서버 안전 한도) · 같은 자리 같은 파일(sha256)은 새로 안 만들고 `existing:true`(재시도 멱등 · `X-Image-Sha256` 은 무결성 확인용 선택 헤더) · `ord` 는 비었으면 그 자리, 차 있으면 맨 뒤 · 보낸 복기에도 사진 추가 가능 · **그리기 = 내가 쓴 복기의 사진만**(§4 `annotationCanWrite` 의 수강생 쪽을 `reviewCanEdit` 으로 좁힘 — 공유 열람자가 남의 사진에 레이어를 만드는 기능은 설계에 없다) · 레이어 `version` 은 마지막으로 받은 값(없으면 0) · 상세 `annotations[].shapes` = **도형 배열** + `v`(저장 `{v,shapes}` 을 풀어 내린다) · 도형 키는 종류별 정확히 · 도형 300 · 펜 점 1000 · 점 합계 8000(JSON 256kb 안) · 복기 라우트군 본문 파서 오류는 JSON(413 `review_too_long` · 400 `invalid_body`).
 
 ### 5.5 앵커 유실 · 숨김 응답 (v2.5 §14 2 · 오너 9/25 — 추가 키 없음)
 | 상태 | 응답 | 앱 처리 |
@@ -971,14 +977,14 @@ feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_
 | 3 | 「최종」 블록 0~10 · VA 운영 실행 **✅ 2026-09-25** · 이 세션 실DB 지문 대조 일치(§2.14) · 정본 SQL §29 + REQUIRED_SCHEMA 11표 동기 | 오너 → 이 세션 | Level 0 |
 | 3′ | **닉네임 확보 PR**(/수강생등록 · /결제신청 · 승인 카드 · 신청서 생년월일 제거 — 오너 9/25 · PR-1 보다 먼저) | 이 세션 | 공유 피드 작성자 표시 · §30a 스냅샷이 닉네임에 의존 |
 | 4 | **PR-1 — 구현 Draft PR(2026-09-25 · 계약 = `docs/trainer-portal-api.md` §8 · 로컬 PG16+PostgREST 통합 시험 126항목)** `review-api.cjs`(수강생 텍스트 API: reviews·games·phases·publish(+visibility)·visibility 변경·delete(=숨김 포함)·recipients·read·**feed·reactions**·`/sessions` 확장(+`reviewDue`)) + Storage 헬퍼 + `REQUIRED_SCHEMA` §6(11표) + `supabase_admin_panel.sql` §29 정본 편입 | 이 세션 | DDL 검증 뒤 배포 |
-| 5 | **PR-2** 이미지 업로드·파생본(`sharp` 승인됨)·서명 URL·삭제 + 그리기 레이어 PUT(수강생) + **§3.7 draft 정리 일일 작업(드라이런 기본 ON · `review_purge_log` · 목록 `imagePurgeAt`)** | 이 세션 | 배포일부터 드라이런 2주 → 오너가 로그를 본 뒤 전환 시점 결정 → `REVIEW_DRAFT_SWEEP=delete` |
+| 5 | **PR-2(2026-09-25 · 계약 §8.8 · 통합 시험 +87 = 213 · Node 18.20.8 동일)** 이미지 업로드·파생본(`sharp` 0.34.5 · §3.3)·서명 URL·삭제 + 그리기 레이어 PUT(수강생) + **§3.7 draft 정리 일일 작업(드라이런 기본 ON · `review_purge_log` · 목록 `imagePurgeAt`)** | 이 세션 | 배포일부터 드라이런 2주 → 오너가 로그를 본 뒤 전환 시점 결정 → `REVIEW_DRAFT_SWEEP=delete` · DDL 없음(§29 그대로) |
 | 6 | **PR-3** 트레이너 포털(목록·상세·comment/overall·읽음·`canReply`·`replyDueAt` 자리 · **feed·reactions(한 번 탭)·공유 열람(활성 트레이너 전원)** · task 는 2차지만 `due_invalid` 검사 함수는 여기서) + `docs/trainer-portal-api.md` §8 계약 | 이 세션 | |
 | 7 | 계약 문서(수강생 포털 부록 A 개정분 = §5.1·§5.4·§5.5)를 [MRIacademy → 다른 세션] 로 인계 | 이 세션 → 반장 | 앱 착수는 PR-2 배포 뒤(v2.5 §11) |
 | 2차 | PR-5 mark·task·트레이너 레이어·복제·순서 API · PR-6 알림(`discordDM` · publish→recipient · 답→수강생 · 정리 예고 배지) · PR-7 일기 호환 라우트(행 0 이라 이관 스크립트 없음) · 엑셀 서버 파싱은 필요해지면 그때 `exceljs` 승인 요청 | 이 세션 | |
 | 3차 | PR-8 디스코드 이관(§8) · PR-9 `review-topics` 집계 | 이 세션 | |
 
 - **1차 = Pro 전환 + DDL 1회 + Draft PR 3개 + 인계 문서 1개.** 각 PR 은 `npm run check` + 기동 로그 `[schema] OK` 확인 뒤 다음으로. **DDL 실행·검증 전에는 코드 착수 금지**(#331 순서 반복 금지).
-- **의존성**: `sharp` **승인(오너 9/25)** — PR-2 에서 설치(Railway 서버 전용 · 프론트 무관). `exceljs` **1차 제외** — 서버 재파싱 없음.
+- **의존성**: `sharp` **승인(오너 9/25)** — PR-2 에서 설치(Railway 서버 전용 · 프론트 무관) → **0.34.5 고정**(Node 18 · 권고 우회 §3.3). `exceljs` **1차 제외** — 서버 재파싱 없음.
 - **env 제안 1개(사전 보고)**: `REVIEW_DRAFT_SWEEP` — 용도 = §3.7 일일 정리 모드(미설정/`dryrun` = 로그만 · `delete` = 실제 삭제) · 어디에 = **Railway** 서비스 변수 · 설정 시점 = PR-2 배포 후 드라이런 2주 뒤 오너가 `delete` 로. 선택: `REVIEW_BUCKET`(기본 `lesson-reviews`) · `REVIEW_SIGN_TTL_SEC`(기본 600) — 미설정이면 기본값. Vercel 변경 없음. `SUPABASE_URL`·`SUPABASE_SERVICE_ROLE_KEY` 로 Storage 까지 접근한다(추가 키 없음).
 
 ## 8. 디스코드 이관 (3차 · 이 세션 설계 통합)

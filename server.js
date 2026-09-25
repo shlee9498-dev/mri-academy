@@ -7427,10 +7427,11 @@ require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete, 
 // 새 라우트군을 인라인하면 동시 작업 충돌면이 그만큼 넓어진다.
 const studentPortal = require("./student-portal.cjs")(app, { sbSelect, sbInsert, sbPatch, limit });
 
-// ── 수업 복기 API(§29 PR-1 · /api/student-portal/{reviews,games,phases,feed} + /sessions 확장) ──
+// ── 수업 복기 API(§29 PR-1·PR-2 · /api/student-portal/{reviews,games,phases,images,feed} + /sessions 확장) ──
 // student-portal 뒤 — 그 파일이 건 공유비밀 게이트·세션·불투명 id·scrub 을 같은 함수로 쓴다. 트레이너 쪽은 PR-3.
 // §29 표가 없으면 이 라우트군만 503(기존 포털 라우트는 그대로 · 기동 로그 [review]).
-require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch, sbUpsert, sbDelete, sbRpc, limit, portal: studentPortal });
+// 초안 사진 정리(§3.7)는 아래 cronTick 이 reviewApi.draftSweep 을 부른다(env REVIEW_DRAFT_SWEEP · 기본 드라이런).
+const reviewApi = require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch, sbUpsert, sbDelete, sbRpc, limit, portal: studentPortal });
 
 // ── 예약·슬롯 (S1-b · /api/student-portal/{availability,bookings} + /api/trainer-portal/*) ──
 // student-portal 뒤에 마운트해야 그 파일이 건 공유비밀 게이트(app.use(PREFIX))가 먼저 돈다.
@@ -8034,6 +8035,9 @@ async function cronTick() {
     await maybeRunDaily("directStatus", "05:10", runDirectStatus, "잔여 알림(DB 정본)");  // 기존 T2 게이트 재사용
     await maybeRunDaily("regxferPending", "05:20", runRegxferPendingAlert, "등록계 전환 대기 알림");
   }
+  // 복기 초안 사진 정리(§29 PR-2 · 설계 §3.7) — 크론 활성 시 항상. 모드는 함수가 env REVIEW_DRAFT_SWEEP 로 정한다
+  // (미설정 = 드라이런 = 지울 목록만 review_purge_log 에 · delete 전환은 2주 드라이런 뒤 오너).
+  await maybeRunDaily("reviewDraftSweep", "04:00", () => reviewApi.draftSweep(), "복기 초안 사진 정리");
   await maybeRunDaily("fbPending", "05:15", runFeedbackPending, "미승인 피드백");       // 별도 env 불요(크론 활성 시 항상)
   await maybeRunDaily("payreqUnreflected", "05:25", runPayreqUnreflected, "승인 큐 미반영 감시");   // BOT_PAYREQ=1 이면 항상 — 함수가 스스로 스킵
   // DIRECT_STATUS 게이트를 타지 않는다 — 게이트를 하나 더 두면 그 게이트가 꺼져서

@@ -1,5 +1,6 @@
-// 수업 복기 API 로컬 통합 시험(§29 PR-1 · CI 밖 · 수동 실행) — PostgreSQL + PostgREST + student-portal.cjs + review-api.cjs
+// 수업 복기 API 로컬 통합 시험(§29 PR-1·PR-2 · CI 밖 · 수동 실행) — PostgreSQL + PostgREST + student-portal.cjs + review-api.cjs
 //   server.js 의 sb* 헬퍼·limit() 원문을 그대로 뽑아 쓴다(복제 구현 아님). 픽스처는 전부 가짜 값(scripts/review-e2e.seed.sql).
+//   Storage 는 가짜(메모리) — 서명 · 올리기 · 내려받기 · 삭제 · 버킷 조회. 시험 사진은 sharp 로 만든 단색·합성 이미지.
 // 준비(한 번):
 //   1) 로컬 PostgreSQL 에 supabase_admin_panel.sql 을 적재한 DB(기본 revtest) — Supabase 전용 구문 오류는 무시해도 된다(§29 표·함수·트리거는 생긴다).
 //      역할: create role service_role nologin bypassrls; create role authenticator login noinherit password '…'; grant service_role to authenticator;
@@ -16,6 +17,7 @@ const os = require("os");
 const REPO = path.resolve(__dirname, "..");
 const PGRST = Number(process.env.E2E_PGRST_PORT || 3900), PROXY = Number(process.env.E2E_PROXY_PORT || 3901), APPP = Number(process.env.E2E_APP_PORT || 3902);
 const express = require(path.join(REPO, "node_modules/express"));
+const sharp = require(path.join(REPO, "node_modules/sharp"));
 
 // ── server.js 원문에서 헬퍼 추출 ──
 const src = fs.readFileSync(path.join(REPO, "server.js"), "utf8");
@@ -37,10 +39,13 @@ process.env.RAILWAY_PORTAL_SHARED_SECRET = "test-portal-secret";
 
 const deps = require(GEN);
 
-// ── 프록시: /rest/v1 → PostgREST · /storage/v1 → 가짜 Storage(서명·삭제·버킷) ──
-const storageLog = { deleted: [], signed: 0 };
+// ── 프록시: /rest/v1 → PostgREST · /storage/v1 → 가짜 Storage(서명·올리기·내려받기·삭제·버킷) ──
+const storageLog = { deleted: [], signed: 0, puts: 0 };
+const objects = new Map();                                  // 경로 → { buf, type }
+const storageFail = { put: 0, putMatch: null, del: 0 };     // 다음 n 번 실패시키기(putMatch = 경로에 이 글자가 있을 때만)
+const OBJ = "/storage/v1/object/lesson-reviews/";
 const proxy = express();
-proxy.use(express.raw({ type: "*/*", limit: "5mb" }));
+proxy.use(express.raw({ type: "*/*", limit: "20mb" }));
 proxy.use(async (req, res) => {
   if (req.path.startsWith("/storage/v1")) {
     if (req.method === "GET" && req.path === "/storage/v1/bucket/lesson-reviews") return res.json({ id: "lesson-reviews", public: false });
@@ -50,8 +55,27 @@ proxy.use(async (req, res) => {
       return res.json((b.paths || []).map((pp) => ({ path: pp, signedURL: `/object/sign/lesson-reviews/${pp}?token=t` })));
     }
     if (req.method === "DELETE" && req.path === "/storage/v1/object/lesson-reviews") {
-      storageLog.deleted.push(...(JSON.parse(req.body.toString() || "{}").prefixes || []));
+      if (storageFail.del > 0) { storageFail.del--; return res.status(500).json({ error: "fake" }); }
+      const list = JSON.parse(req.body.toString() || "{}").prefixes || [];
+      storageLog.deleted.push(...list);
+      for (const k of list) objects.delete(k);
       return res.json([]);
+    }
+    if (req.path.startsWith(OBJ)) {
+      const key = decodeURIComponent(req.path.slice(OBJ.length));
+      if (req.method === "POST") {
+        if (storageFail.put > 0 && (!storageFail.putMatch || key.includes(storageFail.putMatch))) { storageFail.put--; return res.status(500).json({ error: "fake" }); }
+        if (objects.has(key) && req.headers["x-upsert"] !== "true") return res.status(400).json({ statusCode: "409", error: "Duplicate" });
+        objects.set(key, { buf: Buffer.from(req.body), type: req.headers["content-type"] });
+        storageLog.puts++;
+        return res.json({ Key: `lesson-reviews/${key}` });
+      }
+      if (req.method === "GET") {
+        const o = objects.get(key);
+        if (!o) return res.status(404).json({ error: "not_found" });
+        res.set("content-type", o.type);
+        return res.send(o.buf);
+      }
     }
     return res.status(404).json({});
   }
@@ -68,7 +92,7 @@ proxy.use(async (req, res) => {
 const app = express();
 app.use(express.json({ limit: "256kb" }));
 const portal = require(path.join(REPO, "student-portal.cjs"))(app, { sbSelect: deps.sbSelect, sbInsert: deps.sbInsert, sbPatch: deps.sbPatch, limit: deps.limit });
-require(path.join(REPO, "review-api.cjs"))(app, { ...deps, portal });
+const api = require(path.join(REPO, "review-api.cjs"))(app, { ...deps, portal });
 
 const texts = [];
 async function call(method, pth, { sess, body, secret = "test-portal-secret" } = {}) {
@@ -81,7 +105,46 @@ async function call(method, pth, { sess, body, secret = "test-portal-secret" } =
   let json = null; try { json = JSON.parse(text); } catch {}
   return { status: r.status, json, text };
 }
+// 사진 올리기 — raw 바이너리 · 요청마다 다른 IP(업로드 30/분 창을 시험 순서와 떼어 놓는다)
+let upIp = 0;
+async function upload(sess, reviewId, buf, { phaseId, ord, type = "image/png", sha } = {}) {
+  const qs = new URLSearchParams();
+  if (phaseId !== undefined) qs.set("phaseId", phaseId);
+  if (ord !== undefined) qs.set("ord", String(ord));
+  const headers = { "x-portal-secret": "test-portal-secret", "x-client-ip": `10.9.${(++upIp) >> 8}.${upIp & 255}`, "x-portal-session": sess.sid };
+  if (type) headers["content-type"] = type;
+  if (sha) headers["x-image-sha256"] = sha;
+  const q = qs.toString();
+  const r = await fetch(`http://127.0.0.1:${APPP}/api/student-portal/reviews/${reviewId}/images${q ? "?" + q : ""}`, { method: "POST", headers, body: buf });
+  const text = await r.text();
+  texts.push(text);
+  let json = null; try { json = JSON.parse(text); } catch {}
+  return { status: r.status, json, text };
+}
+// 날 것 본문(깨진 JSON 등)
+async function rawCall(method, pth, sess, body, type = "application/json") {
+  const r = await fetch(`http://127.0.0.1:${APPP}/api/student-portal` + pth, {
+    method, body, headers: { "x-portal-secret": "test-portal-secret", "x-client-ip": "10.0.0." + (sess?.ip || 1), "x-portal-session": sess.sid, "content-type": type },
+  });
+  const text = await r.text();
+  texts.push(text);
+  let json = null; try { json = JSON.parse(text); } catch {}
+  return { status: r.status, json, text };
+}
 const S = (sub, ip) => ({ sid: portal.issueSession({ provider: "discord", pid: "p" + sub, sub, scope: "student" }, 3600), ip });
+const RID = (o) => portal.readOpaqueId("review", o);
+const IID = (o) => portal.readOpaqueId("rimage", o);
+const sha256 = (b) => crypto.createHash("sha256").update(b).digest("hex");
+// 시험 사진(가짜 · 합성) — 색이 다르면 바이트가 달라 sha256 도 다르다
+const solid = (w, h, bg, fmt = "png", meta) => { let x = sharp({ create: { width: w, height: h, channels: 3, background: bg } }).toFormat(fmt); if (meta) x = x.withMetadata(meta); return x.toBuffer(); };
+// PNG IHDR 의 가로·세로만 바꾼다(CRC 다시 계산) — 머리만 거대한 「디코드 폭탄」 모사
+function crc32(buf) { let c = ~0; for (const b of buf) { c ^= b; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); } return ~c >>> 0; }
+function bombPng(png, w, h) {
+  const out = Buffer.from(png);
+  out.writeUInt32BE(w, 16); out.writeUInt32BE(h, 20);
+  out.writeUInt32BE(crc32(out.subarray(12, 29)), 29);
+  return out;
+}
 const O = (kind, id) => portal.opaqueId(kind, id);
 const psql = (sql) => require("child_process").execFileSync("psql", ["-d", process.env.E2E_PSQL_DB || "revtest", "-Atc", sql],
   { env: process.env }).toString().trim();
@@ -322,10 +385,211 @@ const eq = (a, b, msg) => { assert.deepEqual(a, b, msg); passed++; };
   eq((await call("POST", `/games/${gc.id}/phases`, { sess: s1, body: {} })).json.error.code, "review_too_long", "phases cap 30");
   eq((await call("GET", `/reviews/${rvE.id}`, { sess: s1 })).json.review.games.map((g) => g.ord), Array.from({ length: 20 }, (_, i) => i + 1), "ord 1..20");
 
-  // 14) 실명 누출 검사 — 모든 응답 본문
+  // ════════ PR-2 ════════
+  // 15) 사진 — 올리기 · 파생본 · 형식 · 재시도 · 자리 · 한도 · 실패 정리
+  const sI = S(101, 21), sI2 = S(102, 22);                   // 쓰기 레이트리밋 창을 새로(같은 수강생 · 다른 IP)
+  const rvI = (await call("POST", "/reviews", { sess: sI, body: { anchorKind: "none" } })).json.review;
+  const rI = RID(rvI.id);
+  const gI = (await call("POST", `/reviews/${rvI.id}/games`, { sess: sI, body: { map: "에란겔" } })).json.game;
+  const pI = (await call("POST", `/games/${gI.id}/phases`, { sess: sI, body: { phaseFrom: 1 } })).json.phase;
+  const pI2 = (await call("POST", `/games/${gI.id}/phases`, { sess: sI, body: { phaseFrom: 2 } })).json.phase;
+  const png3000 = await solid(3000, 2000, "#f5c518");
+  const beforeTouch = psql(`select updated_at from lesson_reviews where id = ${rI}`);
+  let u = await upload(sI, rvI.id, png3000, { phaseId: pI.id });
+  eq([u.status, u.json.existing, u.json.image.width, u.json.image.height, u.json.image.ord, u.json.image.annotations], [200, false, 3000, 2000, 1, []], "upload png 3000x2000");
+  ok(!!(u.json.image.displayUrl && u.json.image.thumbUrl && u.json.image.originalUrl), "내 사진 URL 3개");
+  const im1 = u.json.image;
+  const base1 = `students/101/reviews/${rI}/${IID(im1.id)}`;
+  let [op, dp, tp, bytes, sh] = psql(`select original_path, display_path, thumb_path, bytes, sha256 from review_images where id = ${IID(im1.id)}`).split("|");
+  eq([op, dp, tp], [`${base1}.orig.png`, `${base1}.disp.webp`, `${base1}.thumb.webp`], "경로 §3.2(id 만)");
+  eq([Number(bytes), sh], [png3000.length, sha256(png3000)], "bytes · sha256");
+  let md = await sharp(objects.get(dp).buf).metadata(), mt = await sharp(objects.get(tp).buf).metadata();
+  eq([objects.get(op).type, objects.get(dp).type, md.format, md.width, md.height, mt.format, mt.width, mt.height],
+    ["image/png", "image/webp", "webp", 1600, 1067, "webp", 320, 213], "파생본 WebP 1600 · 320");
+  ok(psql(`select updated_at from lesson_reviews where id = ${rI}`) !== beforeTouch, "업로드 = 복기 updated_at 갱신(§3.7)");
+  // EXIF 방향 6 — 저장 가로·세로와 표시본이 돌아간 모양
+  u = await upload(sI, rvI.id, await solid(800, 600, "#223344", "jpeg", { orientation: 6 }), { phaseId: pI.id, type: "image/jpeg" });
+  eq([u.status, u.json.image.width, u.json.image.height, u.json.image.ord], [200, 600, 800, 2], "EXIF 6 → 600x800");
+  [op, dp] = psql(`select original_path, display_path from review_images where id = ${IID(u.json.image.id)}`).split("|");
+  md = await sharp(objects.get(dp).buf).metadata();
+  eq([op.endsWith(".orig.jpg"), objects.get(op).type, md.width, md.height], [true, "image/jpeg", 600, 800], "jpg 원본 · 표시본 회전 반영");
+  // Content-Type 이 거짓이어도 실제 형식(매직 바이트)으로 저장
+  const pngLie = await solid(640, 360, "#0a0a0c");
+  u = await upload(sI, rvI.id, pngLie, { phaseId: pI.id, type: "image/jpeg" });
+  op = psql(`select original_path from review_images where id = ${IID(u.json.image.id)}`);
+  eq([u.status, op.endsWith(".orig.png"), objects.get(op).type], [200, true, "image/png"], "Content-Type 무시 · 실제 png");
+  // 작은 webp 첨부(페이즈 밖) — 키우지 않는다 · ord 지정 · 차 있으면 맨 뒤
+  u = await upload(sI, rvI.id, await solid(200, 100, "#15151a", "webp"), { type: "image/webp", ord: 5 });
+  eq([u.status, u.json.image.ord, u.json.image.width], [200, 5, 200], "첨부 · ord 5");
+  [dp, tp] = psql(`select display_path, thumb_path from review_images where id = ${IID(u.json.image.id)}`).split("|");
+  md = await sharp(objects.get(dp).buf).metadata(); mt = await sharp(objects.get(tp).buf).metadata();
+  eq([md.width, md.height, mt.width, mt.height], [200, 100, 200, 100], "작은 사진은 키우지 않는다");
+  eq((await upload(sI, rvI.id, await solid(210, 100, "#1a1a20", "webp"), { type: "image/webp", ord: 5 })).json.image.ord, 6, "ord 5 가 차 있으면 맨 뒤(6)");
+  // 재시도 = 같은 자리 · 같은 파일 → 그 사진(existing) · 다른 자리면 새 사진
+  const cnt = () => psql(`select count(*) from review_images where review_id = ${rI}`);
+  const nBefore = cnt();
+  u = await upload(sI, rvI.id, png3000, { phaseId: pI.id, sha: sha256(png3000) });
+  eq([u.status, u.json.existing, u.json.image.id], [200, true, im1.id], "재시도 existing(sha 머리 일치)");
+  eq(cnt(), nBefore, "재시도는 새 행 없음");
+  eq((await upload(sI, rvI.id, png3000, { phaseId: pI2.id })).json.existing, false, "다른 페이즈 = 새 사진");
+  eq((await upload(sI, rvI.id, pngLie, { sha: "0".repeat(64) })).json.error.code, "invalid_body", "sha 머리 불일치");
+  // 형식 · 크기
+  eq((await upload(sI, rvI.id, await solid(20, 20, "#ffffff", "gif"), { type: "image/gif" })).json.error.code, "image_type", "gif 거부");
+  eq((await upload(sI, rvI.id, Buffer.from("hello world, not an image"), { type: "image/png" })).json.error.code, "image_type", "가짜 png");
+  eq((await upload(sI, rvI.id, png3000, { type: "text/plain" })).json.error.code, "image_type", "image/* 아님");
+  eq((await upload(sI, rvI.id, Buffer.alloc(0), { type: "image/png" })).json.error.code, "image_type", "빈 본문");
+  u = await upload(sI, rvI.id, Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(8 * 1024 * 1024 - 7)]), {});
+  eq([u.status, u.json.error.code], [413, "image_too_large"], "8MB 초과 413");
+  u = await upload(sI, rvI.id, bombPng(await solid(4, 4, "#ffffff"), 8000, 7000), {});
+  eq([u.status, u.json.error.code], [413, "image_too_large"], "5천만 화소 초과(머리만 큰 png) 413");
+  // 자리 · 권한
+  eq((await upload(sI, rvI.id, pngLie, { phaseId: "junk" })).json.error.code, "invalid_body", "phaseId 깨짐");
+  eq((await upload(sI, rvI.id, pngLie, { phaseId: p1.id })).status, 404, "다른 복기의 페이즈 404");
+  eq((await upload(sI, rvI.id, pngLie, { ord: 0 })).json.error.code, "invalid_body", "ord 0");
+  eq((await upload(sI2, rvI.id, pngLie, {})).status, 404, "남의 복기 404");
+  eq((await upload(sI, tr.id, pngLie, {})).status, 404, "트레이너가 쓴 이관 복기 404");
+  eq((await upload(sI, rvL.id, pngLie, {})).status, 404, "숨긴 복기 404");
+  eq((await upload(sI, rvN.id, await solid(52, 52, "#abcdef"), {})).status, 200, "보낸 내 복기에도 사진 추가");
+  // 한도 — 페이즈 4 · 복기 60 · 월 200장 / 1GB
+  eq((await upload(sI, rvI.id, await solid(50, 50, "#aa0000"), { phaseId: pI.id })).json.image.ord, 4, "페이즈 4번째");
+  eq((await upload(sI, rvI.id, await solid(50, 50, "#00aa00"), { phaseId: pI.id })).json.error.code, "review_limit_images", "페이즈 5번째 거부");
+  const live = Number(cnt());
+  psql(`insert into review_images (review_id, phase_id, ord, original_path, uploaded_by_role, bytes)
+        select ${rI}, null, 100 + g, 'fake/${rI}/' || g, 'student', 1 from generate_series(1, ${60 - live}) g`);
+  eq(cnt(), "60", "가짜 행으로 60장");
+  eq((await upload(sI, rvI.id, await solid(51, 51, "#0000aa"), {})).json.error.code, "review_limit_images", "복기 61번째 거부");
+  psql(`delete from review_images where original_path like 'fake/%'`);
+  const rvM = (await call("POST", "/reviews", { sess: sI2, body: { anchorKind: "none" } })).json.review;
+  psql(`insert into review_images (review_id, phase_id, ord, original_path, uploaded_by_role, bytes)
+        select r.id, null, g, 'fake/m/' || r.id || '/' || g, 'student', 1 from lesson_reviews r, generate_series(1, 8) g
+         where r.student_id = 102 and r.title like 'p%'`);
+  eq(psql(`select images from review_month_usage(102)`), "200", "102 의 이번 달 200장(가짜 행)");
+  eq((await upload(sI2, rvM.id, pngLie, {})).json.error.code, "review_limit_month", "월 200장 초과");
+  psql(`delete from review_images where original_path like 'fake/%'`);
+  psql(`insert into review_images (review_id, phase_id, ord, original_path, uploaded_by_role, bytes)
+        select id, null, 1, 'fake/gb', 'student', ${1024 ** 3 - 100} from lesson_reviews where student_id = 102 and title = 'p1'`);
+  eq((await upload(sI2, rvM.id, pngLie, {})).json.error.code, "review_limit_month", "월 1GB 초과");
+  psql(`delete from review_images where original_path like 'fake/%'`);
+  eq((await upload(sI2, rvM.id, pngLie, {})).status, 200, "정리 뒤 102 업로드 가능");
+  // Storage 실패 — 원본 실패 = 503 · 행·파일 안 남음 / 표시본만 실패 = 원본으로 대신 → 다음 상세 조회 때 다시 만든다
+  const n0 = cnt(), o0 = objects.size;
+  storageFail.put = 1; storageFail.putMatch = ".orig.";
+  u = await upload(sI, rvI.id, await solid(60, 60, "#123456"), {});
+  eq([u.status, u.json.error.code, cnt(), objects.size], [503, "portal_unavailable", n0, o0], "원본 실패 → 503 · 행·파일 없음");
+  storageFail.put = 1; storageFail.putMatch = ".disp.";
+  u = await upload(sI, rvI.id, await solid(61, 61, "#654321"), {});
+  const imD = u.json.image;
+  eq([u.status, imD.displayUrl === imD.originalUrl, !!imD.thumbUrl], [200, true, true], "표시본 실패 → 원본 URL 로 대신");
+  eq(psql(`select display_path is null from review_images where id = ${IID(imD.id)}`), "t", "display_path null");
+  storageFail.putMatch = null;
+  await call("GET", `/reviews/${rvI.id}`, { sess: sI });                                   // 뒤에서 1회 다시 만든다
+  await new Promise((r) => setTimeout(r, 500));
+  eq(psql(`select display_path like '%.disp.webp' from review_images where id = ${IID(imD.id)}`), "t", "다시 만들기 → display_path 채움");
+  const liI = (await call("GET", "/reviews", { sess: sI })).json.reviews.find((x) => x.id === rvI.id);
+  eq([liI.imageCount, typeof liI.imagePurgeAt], [Number(cnt()), "string"], "목록 imageCount · imagePurgeAt");
+
+  // 16) 그리기 레이어 — 버전 · 충돌 · 형식 · 본문 오류 JSON · 권한
+  const SH = [
+    { id: "s1", t: "arrow", from: [0.12, 0.4], to: [0.55, 0.31], color: "#FF3B3B", width: 3 },
+    { id: "s2", t: "text", x: 0.3, y: 0.7, text: "1선 다음땅", size: 0.03, color: "#FFFFFF" },
+  ];
+  const PEN = { id: "s3", t: "pen", pts: [[0.1, 0.1], [0.2, 0.25]], color: "#FFE100", width: 2 };
+  const annot = (img, body, sess = sI) => call("PUT", `/images/${img}/annotation`, { sess, body });
+  eq(await annot(im1.id, { version: 0, shapes: SH }).then((x) => [x.status, x.json]), [200, { version: 1 }], "새 레이어 → 1");
+  eq((await annot(im1.id, { version: 1, shapes: [...SH, PEN], v: 1 })).json, { version: 2 }, "→ 2");
+  eq((await annot(im1.id, { version: 1, shapes: [] })).json.error.code, "annotation_conflict", "옛 버전 409");
+  eq((await annot(im1.id, { version: 0, shapes: [] })).status, 409, "레이어가 있는데 0 → 409");
+  eq((await annot(imD.id, { version: 3, shapes: [] })).status, 409, "레이어가 없는데 3 → 409");
+  eq((await annot(im1.id, { version: 2, shapes: [{ ...SH[0], name: "x" }] })).json.error.code, "invalid_body", "도형 허용 키 밖");
+  eq((await annot(im1.id, { version: 2, shapes: SH, v: 2 })).json.error.code, "invalid_body", "v 2");
+  eq((await annot(im1.id, { version: 2, shapes: SH, studentId: 1 })).json.error.code, "invalid_body", "본문 추가 키");
+  eq((await annot(im1.id, { version: "2", shapes: SH })).json.error.code, "invalid_body", "version 문자열");
+  eq((await annot(im1.id, { version: 2, shapes: Array.from({ length: 301 }, (_, i) => ({ id: "n" + i, t: "number", x: 0.5, y: 0.5, n: 1, color: "#fff" })) })).json.error.code,
+    "review_too_long", "도형 301");
+  u = await rawCall("PUT", `/images/${im1.id}/annotation`, sI, JSON.stringify({ version: 2, shapes: [{ ...SH[1], text: "x".repeat(300000) }] }));
+  eq([u.status, u.json?.error?.code], [413, "review_too_long"], "본문 256kb 초과 → JSON 413");
+  u = await rawCall("PUT", `/images/${im1.id}/annotation`, sI, "{bad json");
+  eq([u.status, u.json?.error?.code], [400, "invalid_body"], "깨진 JSON → JSON 400");
+  r = await call("GET", `/reviews/${rvI.id}`, { sess: sI });
+  eq(r.json.review.games[0].phases[0].images[0].annotations,
+    [{ authorRole: "student", authorDisplayName: "Test_User1", v: 1, shapes: [...SH, PEN], version: 2, mine: true }], "상세 레이어 모양");
+  eq(JSON.parse(psql(`select shapes::text from review_annotations where image_id = ${IID(im1.id)}`)), { v: 1, shapes: [...SH, PEN] }, "DB = { v:1, shapes }");
+  // 공유 열람(보내기 · 수강생 전체) — 표시본·썸네일만 · 레이어 mine:false · 그리기·삭제 404 · 피드 썸네일
+  eq((await call("POST", `/reviews/${rvI.id}/publish`, { sess: sI, body: { visibility: "students", recipientTrainerId: O("staff", 1) } })).json.published, true, "rvI 보내기");
+  r = await call("GET", `/reviews/${rvI.id}`, { sess: sI2 });
+  const shImg = r.json.review.games[0].phases[0].images[0];
+  eq([!!shImg.displayUrl, !!shImg.thumbUrl, "originalUrl" in shImg, shImg.annotations[0].mine, shImg.annotations[0].authorDisplayName],
+    [true, true, false, false, "Test_User1"], "공유 열람 사진");
+  eq((await annot(im1.id, { version: 0, shapes: [] }, sI2)).status, 404, "공유 열람자 그리기 404");
+  eq((await call("DELETE", `/images/${im1.id}`, { sess: sI2 })).status, 404, "공유 열람자 삭제 404");
+  ok(!!(await call("GET", "/feed", { sess: sI2 })).json.items.find((x) => x.id === rvI.id)?.thumbUrl, "피드 썸네일");
+  // 트레이너가 쓴 이관 복기의 사진 · 업로드 도중 자리 행 — 404
+  const rTr = RID(tr.id);
+  psql(`insert into review_images (review_id, phase_id, ord, original_path, uploaded_by_role, bytes) values (${rTr}, null, 1, 'imports/e2e-trainer.png', 'trainer', 1)`);
+  const trImg = O("rimage", Number(psql(`select id from review_images where review_id = ${rTr}`)));
+  eq((await annot(trImg, { version: 0, shapes: [] })).status, 404, "트레이너 이관 복기 사진 그리기 404");
+  eq((await call("DELETE", `/images/${trImg}`, { sess: sI })).status, 404, "트레이너 이관 복기 사진 삭제 404");
+  psql(`insert into review_images (review_id, phase_id, ord, original_path, uploaded_by_role, bytes) values (${rI}, null, 90, 'pending/e2e-1', 'student', 1)`);
+  const pendImg = O("rimage", Number(psql(`select id from review_images where original_path = 'pending/e2e-1'`)));
+  eq((await call("DELETE", `/images/${pendImg}`, { sess: sI })).status, 404, "업로드 도중 자리 행 404");
+  ok(!(await call("GET", `/reviews/${rvI.id}`, { sess: sI })).json.review.attachments.some((x) => x.id === pendImg), "자리 행은 상세에 없음");
+
+  // 17) 사진 삭제 — 파일 3개 먼저 · 행 · 레이어 cascade
+  [op, dp, tp] = psql(`select original_path, display_path, thumb_path from review_images where id = ${IID(im1.id)}`).split("|");
+  eq((await call("DELETE", `/images/${im1.id}`, { sess: sI })).status, 204, "사진 삭제");
+  eq([objects.has(op), objects.has(dp), objects.has(tp)], [false, false, false], "Storage 3파일 삭제");
+  eq(psql(`select count(*) from review_images where id = ${IID(im1.id)}`) + psql(`select count(*) from review_annotations where image_id = ${IID(im1.id)}`), "00", "행 · 레이어 삭제");
+  eq((await call("DELETE", `/images/${im1.id}`, { sess: sI })).status, 404, "두 번째 삭제 404");
+
+  // 18) 초안 사진 정리(§3.7) — 드라이런(기본) · 알 수 없는 값 · 삭제(파일 실패 → 다음 날) · 글은 남김 · 상한 · 로그 형식
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...a) => { const line = a.join(" "); if (line.startsWith("[review] draft_sweep")) logs.push(line); origLog(...a); };
+  const rvS = (await call("POST", "/reviews", { sess: sI, body: { anchorKind: "none" } })).json.review;
+  const rS = RID(rvS.id);
+  const gS = (await call("POST", `/reviews/${rvS.id}/games`, { sess: sI, body: { map: "미라마" } })).json.game;
+  await call("POST", `/games/${gS.id}/phases`, { sess: sI, body: { lines: [{ text: "남아야 하는 글" }] } });
+  const sA = await solid(70, 70, "#a1a1a1"), sB = await solid(71, 71, "#b2b2b2");
+  await upload(sI, rvS.id, sA, {}); await upload(sI, rvS.id, sB, {});
+  const sPaths = psql(`select original_path||','||display_path||','||thumb_path from review_images where review_id = ${rS} order by id`).split("\n").flatMap((l) => l.split(","));
+  eq(sPaths.length, 6, "정리 대상 파일 6개");
+  psql(`update lesson_reviews set updated_at = now() - interval '91 days' where id in (${rS}, ${rI})`);    // rvI 는 보낸 복기 — 대상 아님
+  psql(`update review_images set created_at = now() - interval '2 days' where original_path = 'pending/e2e-1'`);
+  delete process.env.REVIEW_DRAFT_SWEEP;
+  let sw = await api.draftSweep();
+  eq([sw.mode, sw.reviews, sw.images, sw.bytes, sw.deleted, sw.failed, sw.capped, sw.pending], ["dryrun", 1, 2, sA.length + sB.length, 0, 0, false, 1], "드라이런(env 미설정)");
+  eq(psql(`select dry_run||'|'||images||'|'||bytes||'|'||(purged_at is null) from review_purge_log where review_id = ${rS}`), `true|2|${sA.length + sB.length}|true`, "purge_log 드라이런 1행");
+  ok(sPaths.every((k) => objects.has(k)), "드라이런은 파일을 안 지운다");
+  eq(psql(`select count(*) from review_images where review_id = ${rS} or original_path = 'pending/e2e-1'`), "3", "드라이런은 행을 안 지운다");
+  process.env.REVIEW_DRAFT_SWEEP = "yes";
+  eq((await api.draftSweep()).mode, "dryrun", "알 수 없는 값 = 드라이런");
+  storageFail.del = 1;
+  sw = await api.draftSweep({ mode: "delete" });
+  eq([sw.mode, sw.deleted, sw.failed, sw.pending], ["delete", 0, 2, 1], "파일 삭제 실패 → 그 복기 행은 남긴다(다음 날)");
+  eq(psql(`select count(*) from review_images where review_id = ${rS}`), "2", "실패 복기 행 그대로");
+  sw = await api.draftSweep({ mode: "delete" });
+  eq([sw.deleted, sw.failed, sw.pending], [2, 0, 0], "삭제 모드");
+  ok(sPaths.every((k) => !objects.has(k)), "Storage 파일 삭제");
+  eq(psql(`select count(*) from review_images where review_id = ${rS} or original_path = 'pending/e2e-1'`), "0", "사진 행 · 하루 지난 자리 행 삭제");
+  eq(psql(`select count(*) from lesson_reviews where id = ${rS}`) + psql(`select count(*) from review_phases p join review_games g on g.id = p.game_id where g.review_id = ${rS}`), "11", "글 · 판 · 페이즈는 남는다");
+  eq(psql(`select count(*) from review_purge_log where review_id = ${rS} and dry_run = false and purged_at is not null`), "1", "purge_log 삭제 1행");
+  ok(Number(cnt()) > 0, "보낸 복기는 90일 지나도 대상 아님");
+  psql(`insert into lesson_reviews (student_id, anchor_kind, author_role, status, title, updated_at)
+        select 105, 'none', 'student', 'draft', 'old' || g, now() - interval '100 days' from generate_series(1, 5) g`);
+  psql(`insert into review_images (review_id, phase_id, ord, original_path, uploaded_by_role, bytes)
+        select r.id, null, g, 'fake/cap/' || r.id || '/' || g, 'student', 10 from lesson_reviews r, generate_series(1, 60) g
+         where r.student_id = 105 and r.title like 'old%'`);
+  sw = await api.draftSweep({ mode: "dryrun" });
+  eq([sw.reviews, sw.images, sw.bytes, sw.capped], [3, 180, 1800, true], "1회 상한 200장 → 3건 180장 · capped");
+  console.log = origLog;
+  eq(logs.length, 5, "정리 로그 5줄");
+  ok(logs.every((l) => /^\[review\] draft_sweep mode=(dryrun|delete) cutoff=\d{4}-\d{2}-\d{2} reviews=\d+ images=\d+ bytes=\d+( deleted=\d+ failed=\d+)?( capped=1)?( pending=\d+)?$/.test(l)), "로그 형식(건수·용량만)");
+  ok(logs.every((l) => !l.includes("students/") && !l.includes("Test")), "로그에 경로·이름 없음");
+
+  // 최종) 실명 누출 검사 — 모든 응답 본문
   ok(!texts.some((t) => t.includes("TestStudent")), "응답 어디에도 실명 없음");
   ok(!texts.some((t) => t.includes("portal_forbidden_field")), "scrub 걸림 없음");
-  console.log(`OK ${passed} checks · responses ${texts.length} · storage signed ${storageLog.signed}`);
+  console.log(`OK ${passed} checks · responses ${texts.length} · storage signed ${storageLog.signed} · puts ${storageLog.puts}`);
   try { fs.unlinkSync(GEN); } catch {}
   process.exit(0);
 })().catch((e) => { console.error("FAIL", e?.message); console.error(e?.stack?.split("\n").slice(0, 4).join("\n")); process.exit(1); });

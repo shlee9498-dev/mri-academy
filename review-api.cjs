@@ -1,14 +1,15 @@
 // ============================================================
-// MRI ACADEMY · 수업 복기 API — 수강생 포털 1차(§29 PR-1 · 텍스트 · 공개 범위 · 공유 피드 · 반응)
-// 경로: `/api/student-portal/{reviews, games, phases, feed}` + `/sessions` 항목 확장
+// MRI ACADEMY · 수업 복기 API — 수강생 포털 1차(§29 PR-1 텍스트·공개 범위·공유 피드·반응 · PR-2 사진·그리기·초안 사진 정리)
+// 경로: `/api/student-portal/{reviews, games, phases, images, feed}` + `/sessions` 항목 확장
 // server.js 에서 require("./review-api.cjs")(app, deps) — student-portal.cjs **뒤**에 마운트한다
 // (그 파일이 건 공유비밀 게이트 · 세션 서명 · 불투명 id · scrub 을 같은 함수로 쓴다 · 복제 금지).
 //
-// 정본: 요구사항 = mri-student-app docs/lesson-review-design.md v2.7(§10·§15) · 판정·API = docs/lesson-review-server-design.md §4·§5
+// 정본: 요구사항 = mri-student-app docs/lesson-review-design.md v2.7(§2.4·§8·§10·§15) · 판정·API = docs/lesson-review-server-design.md §3·§4·§5
 //       · DDL = supabase_admin_panel.sql §29(2026-09-25 운영 실행 · 기동 점검 [schema] OK 11표) · 계약 = docs/trainer-portal-api.md §8
 // PR-1 범위: 복기·판·페이즈 CRUD · 보내기(+공개 범위) · 범위 변경(단건·일괄) · 삭제(draft)/숨김(published) · 받는 사람 후보
 //            · 읽음 · 공유 피드 · 반응 · /sessions 확장(hasReview · reviewStatus · unreadFeedback · reviewDue).
-//   이미지 업로드·파생본·그리기 레이어·draft 이미지 정리 = PR-2 · 트레이너 포털 = PR-3. (Storage 서명·삭제 헬퍼는 여기 둔다.)
+// PR-2 범위: 사진 업로드(raw 바이너리 · 파생본 sharp) · 사진 삭제 · 그리기 레이어(수강생) · 초안 사진 정리 일일 작업(§3.7 ·
+//            env REVIEW_DRAFT_SWEEP · 기본 드라이런 — server.js cronTick 이 draftSweep 을 부른다). 트레이너 포털 = PR-3.
 //
 // 원칙(어기면 설계 위반)
 //  1) 본인 = 세션 sub(students.id). 클라이언트는 studentId 를 보내지 않는다. 응답 id 는 전부 불투명(kind 분리).
@@ -29,18 +30,41 @@ const ANCHOR_KINDS = ["lesson", "course", "none", "pending"];
 const VIS_SETTABLE = ["private", "students"];                                      // group 은 1차 400 visibility_invalid(v2.7 34·40)
 const SOURCES_BY_STUDENT = ["app", "xlsx"];                                        // discord · journal_import 는 서버 이관 전용
 const LIMITS = { title: 60, body: 8000, lines: 200, line: 1000, tags: 3, header: 500, seqLabel: 20, mapRaw: 60,
-                 srcFileName: 200, games: 20, phases: 30, bulk: 200, list: 200 };
+                 srcFileName: 200, games: 20, phases: 30, bulk: 200, list: 200,
+                 phaseImages: 4, reviewImages: 60, monthImages: 200, monthBytes: 1024 ** 3,              // §3.6 · v2.7 §8.3
+                 shapes: 300, penPoints: 1000, points: 8000, shapeText: 200 };
 // games·phases 상한은 설계 밖 서버 안전 한도(엑셀 4개 실측 최대 3판 · 판당 11페이즈) — 넘치면 review_too_long.
+// 그리기 상한(shapes·points)도 서버 안전 한도 — 최대치 레이어가 JSON 256kb(server.js express.json) 안에 든다.
 const SHARE_WINDOW_DAYS = 90;        // 「수강생 전체」 C안(v2.7 §15.2) — done 이면 마지막 수업 90일 안
 const RECIPIENT_WINDOW_DAYS = 90;    // 받는 사람 후보 = 담당 ∪ 최근 90일 수업 트레이너(§4)
 const FEED_PAGE = 20;
 const FEED_ID_CAP = 2000;            // 태그·맵 필터 후보 id 상한(1차 규모 · 넘치면 최근 것부터)
-const PURGE_DAYS = 90;               // §3.7 — 목록 imagePurgeAt 표시용(정리 작업 자체는 PR-2)
+const PURGE_DAYS = 90;               // §3.7 — 마지막 수정 90일 지난 draft 의 사진 정리(목록 imagePurgeAt 과 같은 기준)
+const SWEEP_CAP = 200;               // §3.7 — 1회 상한 200장(넘치면 다음 날)
+const PENDING_STALE_MS = 86400_000;  // 업로드 도중 끊긴 자리 행(pending/…) — 하루 지나면 정리 대상
 const SIGN_TTL_SEC = 600;            // 서명 URL 10분(§3.4)
 const BUCKET = "lesson-reviews";
+const IMAGE_MAX_BYTES = 8 * 1024 * 1024;   // 버킷 file_size_limit 8388608 과 같다(§3.1) — 라우트 한정 raw 파서
+const IMAGE_MAX_PIXELS = 50_000_000;       // 서버 안전 한도(2560 리사이즈본의 7배 · 4K 캡처의 6배) — 넘으면 image_too_large
+const DERIV = { disp: { edge: 1600, quality: 80 }, thumb: { edge: 320, quality: 70 } };   // §3.2 · v2.7 §8.1
+const IMAGE_SLOTS = 2;                     // 파생본 동시 생성 상한(봇·API 가 한 프로세스라 CPU·메모리를 나눠 쓴다)
 
 const kstDate = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
 const nowIso = () => new Date().toISOString();
+
+// ── sharp(파생본 · §3.3) — 선택 로드: 네이티브 모듈이 없거나 깨져도 서버·봇은 뜬다(원본만 저장 · 표시 = 원본) ──
+// 입력 디코더는 png·jpeg·webp 버퍼 셋만 연다(나머지 전부 block). sharp 0.34.5 에 걸린 권고
+// (GHSA-f88m-g3jw-g9cj libvips — GIF·TIFF·VIPS 디코더 · GHSA-rgj7-g3m4-5g8c libheif — HEIF·AVIF 디코더)의
+// 공식 우회책(sharp.block)을 허용 목록 방식으로 건다. 0.35.x 는 Node ≥20.9 라 Railway(Node 18.20.8 · engines ">=18")에서
+// 못 쓴다 — Node 를 올리면 0.35 로 올리고 이 주석을 고친다. 업로드는 매직 바이트로 한 번 더 거른다(sniffImage).
+let sharp = null, sharpError = null;
+try {
+  sharp = require("sharp");
+  sharp.cache(false);                      // 디코드 캐시를 요청 사이에 들고 있지 않는다(메모리)
+  sharp.concurrency(2);                    // 이미지 1장당 libvips 스레드(호스트 코어 수를 믿지 않는다)
+  sharp.block({ operation: ["VipsForeignLoad"] });
+  sharp.unblock({ operation: ["VipsForeignLoadJpegBuffer", "VipsForeignLoadPngBuffer", "VipsForeignLoadWebpBuffer"] });
+} catch (e) { sharp = null; sharpError = String(e?.message || "load_failed").split("\n")[0].slice(0, 120); }
 
 // ── 순수 함수(테스트: scripts/review-api.test.cjs) ─────────────────────────────
 
@@ -191,6 +215,113 @@ function readCursor(secret, s) {
   } catch { return null; }
 }
 
+// ── 사진 · 그리기 · 정리(PR-2) 순수 함수 ──
+
+// 실제 형식 = 매직 바이트(§3.2 「확장자 = 실제 MIME」) — Content-Type 머리는 믿지 않는다. png · jpeg · webp 밖은 null
+function sniffImage(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+  if (buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { ext: "png", mime: "image/png" };
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { ext: "jpg", mime: "image/jpeg" };
+  if (buf.toString("latin1", 0, 4) === "RIFF" && buf.toString("latin1", 8, 12) === "WEBP") return { ext: "webp", mime: "image/webp" };
+  return null;
+}
+// 화면에 보이는 가로·세로 — EXIF 방향 5~8(90° 회전)이면 바꾼다(파생본은 rotate() 로 방향을 반영해 만든다)
+const orientedSize = (m) => (m && m.orientation >= 5
+  ? { width: m.height ?? null, height: m.width ?? null }
+  : { width: m?.width ?? null, height: m?.height ?? null });
+// §3.2 경로 — id 만(이름·닉네임 없음). 파생본 경로는 원본 경로에서 만든다(다시 만들기 · 이관분 대비)
+const imagePath = (sid, rid, iid, kind, ext) => `students/${sid}/reviews/${rid}/${iid}.${kind}.${ext}`;
+const derivPath = (orig, kind) => (/\.orig\.[a-z]+$/.test(orig || "") ? orig.replace(/\.orig\.[a-z]+$/, `.${kind}.webp`) : null);
+const isPendingPath = (p) => String(p || "").startsWith("pending/");      // 업로드 도중(자리만 잡은 행)
+// Storage URL 에 들어가는 경로는 이 모양만(숫자 id · 정해진 종류·확장자) — `..`·`/` 끼워 넣기로 다른 Storage·REST 경로를
+// service_role 로 부르는 일이 구조적으로 없게 한다(업로드·내려받기 URL 을 만들기 전에 검사).
+const STORAGE_PATH_RE = /^students\/\d{1,18}\/reviews\/\d{1,18}\/\d{1,18}\.(?:orig|disp|thumb)\.(?:png|jpg|webp)$/;
+const isStoragePath = (p) => typeof p === "string" && STORAGE_PATH_RE.test(p);
+
+// 그리기 레이어(v2.7 §2.4 · 앱 src/lib/review/types.ts Shape) — 도형 종류별 키가 정확히 이 목록이어야 한다.
+// 허용 키 밖은 400: 응답 가드(scrub)가 모르는 키로 상세 전체를 503 내지 않게, 저장 전에 막는다.
+const SHAPE_KEYS = {
+  pen: ["pts", "color", "width"],
+  arrow: ["from", "to", "color", "width"],
+  ellipse: ["cx", "cy", "rx", "ry", "color", "width"],
+  rect: ["x", "y", "w", "h", "color", "width"],
+  text: ["x", "y", "text", "size", "color"],
+  number: ["x", "y", "n", "color"],
+};
+function normalizeShapes(shapes) {
+  if (!Array.isArray(shapes)) return { error: "invalid_body" };
+  if (shapes.length > LIMITS.shapes) return { error: "review_too_long" };
+  const num = (v, lo, hi) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+  const pt = (v) => Array.isArray(v) && v.length === 2 && num(v[0], -1, 2) && num(v[1], -1, 2);   // 0~1 정규화(앱은 0~1 로 자른다 · 여유 둔다)
+  const ids = new Set();
+  let points = 0;
+  const out = [];
+  for (const s of shapes) {
+    if (!s || typeof s !== "object" || Array.isArray(s)) return { error: "invalid_body" };
+    const keys = SHAPE_KEYS[s.t];
+    if (!keys) return { error: "invalid_body" };
+    const allowed = ["id", "t", ...keys];
+    if (Object.keys(s).length !== allowed.length || !allowed.every((k) => k in s)) return { error: "invalid_body" };
+    if (typeof s.id !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(s.id) || ids.has(s.id)) return { error: "invalid_body" };
+    ids.add(s.id);
+    if (typeof s.color !== "string" || !/^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(s.color)) return { error: "invalid_body" };
+    if ("width" in s && !(num(s.width, 0, 32) && s.width > 0)) return { error: "invalid_body" };
+    const o = { id: s.id, t: s.t };
+    if (s.t === "pen") {
+      if (!Array.isArray(s.pts) || !s.pts.length) return { error: "invalid_body" };
+      if (s.pts.length > LIMITS.penPoints) return { error: "review_too_long" };
+      if (!s.pts.every(pt)) return { error: "invalid_body" };
+      points += s.pts.length;
+      o.pts = s.pts.map(([x, y]) => [x, y]);
+    } else if (s.t === "arrow") {
+      if (!pt(s.from) || !pt(s.to)) return { error: "invalid_body" };
+      o.from = [s.from[0], s.from[1]]; o.to = [s.to[0], s.to[1]];
+    } else if (s.t === "ellipse") {
+      if (!num(s.cx, -1, 2) || !num(s.cy, -1, 2) || !num(s.rx, 0, 2) || !num(s.ry, 0, 2)) return { error: "invalid_body" };
+      Object.assign(o, { cx: s.cx, cy: s.cy, rx: s.rx, ry: s.ry });
+    } else if (s.t === "rect") {
+      if (!num(s.x, -1, 2) || !num(s.y, -1, 2) || !num(s.w, -2, 2) || !num(s.h, -2, 2)) return { error: "invalid_body" };
+      Object.assign(o, { x: s.x, y: s.y, w: s.w, h: s.h });
+    } else if (s.t === "text") {
+      if (!num(s.x, -1, 2) || !num(s.y, -1, 2) || !(num(s.size, 0, 0.5) && s.size > 0) || typeof s.text !== "string" || !s.text.length)
+        return { error: "invalid_body" };
+      if (s.text.length > LIMITS.shapeText) return { error: "review_too_long" };
+      Object.assign(o, { x: s.x, y: s.y, text: s.text, size: s.size });
+    } else {
+      if (!num(s.x, -1, 2) || !num(s.y, -1, 2) || !Number.isInteger(s.n) || s.n < 1 || s.n > 999) return { error: "invalid_body" };
+      Object.assign(o, { x: s.x, y: s.y, n: s.n });
+    }
+    o.color = s.color;
+    if ("width" in s) o.width = s.width;
+    out.push(o);
+  }
+  if (points > LIMITS.points) return { error: "review_too_long" };
+  return { value: out };
+}
+
+// §3.7 모드 — 「delete」 한 글자도 다르지 않을 때만 실제 삭제. 미설정 · dryrun · 그 밖의 값 = 드라이런(안전 쪽)
+const sweepMode = (v) => (String(v ?? "").trim() === "delete" ? "delete" : "dryrun");
+// §3.7 한 회분 — (review_id, id) 순 행을 복기별로 묶는다. 상한+1 행을 받아 넘치면 마지막 복기(잘렸을 수 있다)는 다음 날로.
+function planSweep(rows, cap) {
+  const groups = [];
+  for (const r of rows || []) {
+    let g = groups[groups.length - 1];
+    if (!g || g.reviewId !== r.review_id) { g = { reviewId: r.review_id, images: [], bytes: 0 }; groups.push(g); }
+    g.images.push(r);
+    g.bytes += Number(r.bytes) || 0;
+  }
+  let capped = false;
+  if ((rows || []).length > cap) {
+    capped = true;
+    if (groups.length > 1) groups.pop();
+    else {                                                           // 한 복기가 상한보다 많다(복기당 60장 상한이라 이관분에서만)
+      groups[0].images = groups[0].images.slice(0, cap);
+      groups[0].bytes = groups[0].images.reduce((s, i) => s + (Number(i.bytes) || 0), 0);
+    }
+  }
+  return { groups, capped };
+}
+
 // PostgREST 오류 본문 → { code, message }
 function pgErr(e) {
   try { const j = JSON.parse(e?.body || "{}"); return { code: j.code || null, message: String(j.message || "") }; }
@@ -198,6 +329,8 @@ function pgErr(e) {
 }
 
 module.exports = function mountReviewApi(app, deps) {
+  // express 는 마운트 때만 읽는다 — CI 문법 단계(npm run check)는 node_modules 없이 이 파일의 _test 만 불러온다
+  const express = require("express");
   const { sbSelect, sbInsert, sbPatch, sbUpsert, sbDelete, sbRpc, limit, portal } = deps;
   const { opaqueId, readOpaqueId, fail, scrub, requireStudent, hooks } = portal;
   const P = "/api/student-portal";
@@ -207,6 +340,8 @@ module.exports = function mountReviewApi(app, deps) {
   const writeLimit = rateLimit("reviewWrite", 120, 60_000);
   const publishLimit = rateLimit("reviewPublish", 20, 60_000);
   const reactLimit = rateLimit("reviewReact", 60, 60_000);
+  const uploadLimit = rateLimit("reviewUpload", 30, 60_000);
+  const annotLimit = rateLimit("reviewAnnot", 60, 60_000);
   const NOT_FOUND = (res) => fail(res, 404, "review_not_found");
 
   const wrap = (fn) => (req, res) => fn(req, res).catch((e) => {
@@ -241,6 +376,17 @@ module.exports = function mountReviewApi(app, deps) {
     } catch { tagOrder = []; }
     console.log(`[review] 수강생 복기 API ${ready ? "활성" : "비활성 — §29 lesson_reviews 없음(503 portal_unavailable)"} · 태그 ${tagOrder.length}/12`);
     if (ready && tagOrder.length < 12) console.warn(`⚠️ review_tags seed ${tagOrder.length}/12`);
+    if (ready) {
+      // PR-2 — 파생본 도구 · 월 한도 RPC · 초안 사진 정리 모드(값 그대로가 아니라 해석한 모드만 찍는다)
+      if (sharp) console.log(`[review] 사진 파생본 sharp ${sharp.versions?.sharp} (libvips ${sharp.versions?.vips}) · 입력 png/jpeg/webp 만`);
+      else console.warn(`⚠️ [review] sharp 없음 — 파생본 없이 원본만 저장(표시 = 원본 · §3.3) · ${sharpError}`);
+      try { await sbRpc("review_month_usage", { p_student_id: 0 }); }
+      catch { console.warn("⚠️ [review] review_month_usage RPC 없음 — 사진 업로드가 503(§29 블록 7)"); }
+      const raw = process.env.REVIEW_DRAFT_SWEEP;
+      const known = raw === undefined || ["", "dryrun", "delete"].includes(String(raw).trim());
+      console.log(`[review] 초안 사진 정리 mode=${sweepMode(raw)} (매일 KST 04:00 · 마지막 수정 ${PURGE_DAYS}일 · 1회 ${SWEEP_CAP}장)`
+        + (known ? "" : " ⚠️ REVIEW_DRAFT_SWEEP 값이 dryrun/delete 가 아니라 dryrun 으로 본다"));
+    }
     try {
       const r = await fetch(`${process.env.SUPABASE_URL}/storage/v1/bucket/${BUCKET}`, { headers: storageHeaders() });
       if (!r.ok) console.warn(`⚠️ MISSING bucket ${BUCKET} (HTTP ${r.status})`);
@@ -269,18 +415,80 @@ module.exports = function mountReviewApi(app, deps) {
     } catch (e) { console.error("review_sign_error", e?.message); }
     return out;
   }
-  // 행을 지우기 전에 파일부터(§3.5) — 실패는 막지 않고 고아로 남긴다(월 1회 점검 SQL 이 잡는다).
-  async function removeImageFiles(images) {
-    const paths = [];
-    for (const i of images || []) for (const p of [i.original_path, i.display_path, i.thumb_path]) if (p) paths.push(p);
-    if (!paths.length) return;
+  // Storage 삭제(3파일 묶음 · 없는 경로는 조용히 건너뛴다) → 성공 여부. 로그는 부르는 쪽이 남긴다.
+  const pathsOf = (i) => [i.original_path, i.display_path, i.thumb_path].filter((p) => p && !isPendingPath(p));
+  async function removePaths(paths) {
+    const list = [...new Set((paths || []).filter(Boolean))];
+    if (!list.length) return { ok: true, count: 0 };
     try {
       const r = await fetch(`${process.env.SUPABASE_URL}/storage/v1/object/${BUCKET}`, {
         method: "DELETE", headers: storageHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ prefixes: paths }),
+        body: JSON.stringify({ prefixes: list }),
       });
-      if (!r.ok) console.error(`[review] storage_orphan count=${paths.length} http=${r.status}`);
-    } catch (e) { console.error(`[review] storage_orphan count=${paths.length}`, e?.message); }
+      return { ok: r.ok, count: list.length, http: r.status };
+    } catch (e) { return { ok: false, count: list.length, http: e?.message || "fetch_failed" }; }
+  }
+  // 행을 지우기 전에 파일부터(§3.5) — 실패는 막지 않고 고아로 남긴다(월 1회 점검 SQL 이 잡는다).
+  async function removeImageFiles(images) {
+    const r = await removePaths((images || []).flatMap(pathsOf));
+    if (!r.ok) console.error(`[review] storage_orphan count=${r.count} http=${r.http}`);
+    return r.ok;
+  }
+  // 업로드(§3.4 · x-upsert false = 같은 경로 덮어쓰기 금지 · 다시 만들기만 upsert) · 내려받기(파생본 다시 만들기용)
+  async function putObject(p, buf, mime, { upsert = false } = {}) {
+    if (!isStoragePath(p)) throw new Error("storage_path_invalid");
+    const r = await fetch(`${process.env.SUPABASE_URL}/storage/v1/object/${BUCKET}/${p}`, {
+      method: "POST", headers: storageHeaders({ "Content-Type": mime, "x-upsert": upsert ? "true" : "false" }), body: buf,
+    });
+    if (!r.ok) { const err = new Error(`storage_put_${r.status}`); err.status = r.status; throw err; }
+  }
+  async function getObject(p) {
+    if (!isStoragePath(p)) throw new Error("storage_path_invalid");
+    const r = await fetch(`${process.env.SUPABASE_URL}/storage/v1/object/${BUCKET}/${p}`, { headers: storageHeaders() });
+    if (!r.ok) { const err = new Error(`storage_get_${r.status}`); err.status = r.status; throw err; }
+    return Buffer.from(await r.arrayBuffer());
+  }
+
+  // ── 파생본(§3.3) — 표시본 WebP q80 긴 변 1600 · 썸네일 WebP q70 긴 변 320(작으면 키우지 않는다) ──
+  //   동시 IMAGE_SLOTS 개까지만(나머지는 줄 선다). 실패 = null(원본만 저장 · 다음 상세 조회 때 1회 다시 만든다).
+  let freeSlots = IMAGE_SLOTS;
+  const slotWaiters = [];
+  async function withImageSlot(fn) {
+    if (freeSlots > 0) freeSlots--;
+    else await new Promise((resolve) => slotWaiters.push(resolve));
+    try { return await fn(); }
+    finally { const next = slotWaiters.shift(); if (next) next(); else freeSlots++; }
+  }
+  async function makeDerivatives(buf) {
+    if (!sharp) return null;
+    return withImageSlot(async () => {
+      try {
+        const fit = (edge) => ({ width: edge, height: edge, fit: "inside", withoutEnlargement: true });
+        const disp = await sharp(buf, { failOn: "error", limitInputPixels: IMAGE_MAX_PIXELS }).rotate()
+          .resize(fit(DERIV.disp.edge)).webp({ quality: DERIV.disp.quality }).toBuffer();
+        const thumb = await sharp(disp, { failOn: "error" })
+          .resize(fit(DERIV.thumb.edge)).webp({ quality: DERIV.thumb.quality }).toBuffer();
+        return { disp, thumb };
+      } catch (e) { console.error("review_derive_failed", String(e?.message || "").split("\n")[0].slice(0, 80)); return null; }
+    });
+  }
+  // 파생본이 빠진 사진 — 상세 조회 때 뒤에서 1회 다시 만든다(프로세스당 사진 1회 · 응답은 기다리지 않는다 · §3.3)
+  const deriveRetried = new Set();
+  function retryDerivatives(images) {
+    if (!sharp) return;
+    for (const i of images) {
+      if ((i.display_path && i.thumb_path) || deriveRetried.has(i.id) || !isStoragePath(i.original_path)) continue;
+      deriveRetried.add(i.id);
+      (async () => {
+        const d = await makeDerivatives(await getObject(i.original_path));
+        if (!d) return;
+        const disp = derivPath(i.original_path, "disp"), thumb = derivPath(i.original_path, "thumb");
+        await putObject(disp, d.disp, "image/webp", { upsert: true });
+        await putObject(thumb, d.thumb, "image/webp", { upsert: true });
+        await sbPatch("review_images", `id=eq.${i.id}`, { display_path: disp, thumb_path: thumb });
+        console.log(`[review] derive_retry #${i.id} ok`);
+      })().catch((e) => console.error("review_derive_retry", i.id, e?.status || String(e?.message || "").slice(0, 60)));
+    }
   }
 
   // ── 읽기 헬퍼 ─────────────────────────────────────────────
@@ -291,6 +499,8 @@ module.exports = function mountReviewApi(app, deps) {
     if (!id) return null;
     return (await sbSelect("lesson_reviews", `select=${REVIEW_COLS}&id=eq.${id}&limit=1`))[0] || null;
   }
+  const IMAGE_COLS = "id,review_id,phase_id,ord,original_path,display_path,thumb_path,width,height";
+  const LIVE_IMAGE = "original_path=not.like.pending%2F*";           // 업로드 도중인 자리 행은 목록·상세·한도에서 뺀다
   async function staffNameMap(ids) {
     const l = inList(ids);
     if (!l) return {};
@@ -375,6 +585,14 @@ module.exports = function mountReviewApi(app, deps) {
     const gr = await editableGame(sub, p.game_id);
     return gr ? { p, ...gr } : null;
   }
+  // 사진 — 내가 쓴(편집 가능한) 복기의 사진만. 업로드 도중인 자리 행은 없는 것으로 본다.
+  async function editableImage(sub, iid) {
+    if (!iid) return null;
+    const i = (await sbSelect("review_images", `select=${IMAGE_COLS}&id=eq.${iid}&${LIVE_IMAGE}&limit=1`))[0];
+    if (!i) return null;
+    const r = await editableReview(sub, i.review_id);
+    return r ? { i, r } : null;
+  }
   const touch = (rid) => sbPatch("lesson_reviews", `id=eq.${rid}`, { updated_at: nowIso() });   // 판·페이즈 변경도 「마지막 수정」(§3.7)
 
   // ── 응답 모양 ─────────────────────────────────────────────
@@ -401,7 +619,7 @@ module.exports = function mountReviewApi(app, deps) {
     const l = inList(ids);
     const [games, images, fb, reacts, playedAt, names] = await Promise.all([
       sbSelect("review_games", `select=review_id&review_id=in.(${l})`),
-      sbSelect("review_images", `select=review_id&review_id=in.(${l})`),
+      sbSelect("review_images", `select=review_id&review_id=in.(${l})&${LIVE_IMAGE}`),
       feedbackState(sub, ids),
       sbSelect("review_reactions", `select=review_id,emoji,reactor_kind,reactor_id&review_id=in.(${l})`),
       playedAtMap(rows),
@@ -434,6 +652,41 @@ module.exports = function mountReviewApi(app, deps) {
     });
   }
 
+  // 사진 응답 모양(상세 · 업로드 응답 공통) — URL 은 서명 10분 · 원본 URL 은 내 복기에만(v2.7 §15.4).
+  //   표시본이 없으면(파생본 실패) 내 복기는 원본 URL 로 대신한다 · 공유 열람자는 null(원본을 주지 않는다).
+  //   그리기 레이어 = 작성자별 1개 { authorRole, authorDisplayName, v, shapes:[도형], version, mine }.
+  async function imageViews(sub, own, images) {
+    const out = new Map();
+    if (!images.length) return out;
+    const annots = await sbSelect("review_annotations",
+      `select=image_id,author_kind,author_id,shapes,version&image_id=in.(${inList(images.map((i) => i.id))})&order=id.asc`);
+    const [tnames, sdisp, urls] = await Promise.all([
+      staffNameMap(annots.filter((a) => a.author_kind === "trainer").map((a) => a.author_id)),
+      studentDisplayMap(annots.filter((a) => a.author_kind === "student").map((a) => a.author_id)),
+      signPaths(images.flatMap((i) => (own ? [i.original_path, i.display_path, i.thumb_path] : [i.display_path, i.thumb_path]))),
+    ]);
+    const annotBy = new Map();
+    for (const a of annots) {
+      const s = a.shapes && typeof a.shapes === "object" && !Array.isArray(a.shapes) ? a.shapes : {};
+      if (!annotBy.has(a.image_id)) annotBy.set(a.image_id, []);
+      annotBy.get(a.image_id).push({
+        authorRole: a.author_kind,
+        authorDisplayName: a.author_kind === "trainer" ? tnames[a.author_id] || "트레이너" : sdisp[a.author_id] || "수강생",
+        v: s.v ?? 1, shapes: Array.isArray(s.shapes) ? s.shapes : [], version: a.version,
+        mine: a.author_kind === "student" && Number(a.author_id) === Number(sub),
+      });
+    }
+    for (const i of images) out.set(i.id, {
+      id: opaqueId("rimage", i.id), ord: i.ord,
+      displayUrl: urls.get(i.display_path) || (own ? urls.get(i.original_path) || null : null),
+      thumbUrl: urls.get(i.thumb_path) || null,
+      ...(own ? { originalUrl: urls.get(i.original_path) || null } : {}),
+      width: i.width ?? null, height: i.height ?? null,
+      annotations: annotBy.get(i.id) || [],
+    });
+    return out;
+  }
+
   // 상세 — 본인(편집 가능 여부 포함) · 공유 열람자(읽기 전용 · 원본 URL·반응자·세션 id·받는 트레이너 없음)
   async function detail(sub, r) {
     const own = isOwn(sub, r);
@@ -442,43 +695,22 @@ module.exports = function mountReviewApi(app, deps) {
     const [phases, images, feedback, reacts, playedAt] = await Promise.all([
       gl ? sbSelect("review_phases",
         `select=id,game_id,ord,phase_from,phase_to,phase_to_end,header_raw,lines,tags,suggested_tags&game_id=in.(${gl})&order=ord.asc`) : [],
-      sbSelect("review_images", `select=id,phase_id,ord,original_path,display_path,thumb_path,width,height&review_id=eq.${r.id}&order=ord.asc`),
+      sbSelect("review_images", `select=${IMAGE_COLS}&review_id=eq.${r.id}&${LIVE_IMAGE}&order=ord.asc,id.asc`),
       sbSelect("review_feedback", `select=id,trainer_id,kind,phase_id,line_ord,verdict,body,due_at,created_at,updated_at&review_id=eq.${r.id}&order=created_at.asc`),
       sbSelect("review_reactions", `select=reactor_kind,reactor_id,emoji,created_at&review_id=eq.${r.id}&order=created_at.asc`),
       playedAtMap([r]),
     ]);
-    const annots = images.length
-      ? await sbSelect("review_annotations", `select=image_id,author_kind,author_id,shapes,version,updated_at&image_id=in.(${inList(images.map((i) => i.id))})`)
-      : [];
     const trainerIds = [r.recipient_trainer_id, r.author_staff_id, ...feedback.map((f) => f.trainer_id),
-      ...reacts.filter((x) => x.reactor_kind === "trainer").map((x) => x.reactor_id),
-      ...annots.filter((a) => a.author_kind === "trainer").map((a) => a.author_id)];
-    const studentIds = [r.student_id, ...reacts.filter((x) => x.reactor_kind === "student").map((x) => x.reactor_id),
-      ...annots.filter((a) => a.author_kind === "student").map((a) => a.author_id)];
-    const [tnames, sdisp] = await Promise.all([staffNameMap(trainerIds), studentDisplayMap(studentIds)]);
-    const urls = await signPaths(images.flatMap((i) => (own ? [i.original_path, i.display_path, i.thumb_path] : [i.display_path, i.thumb_path])));
+      ...reacts.filter((x) => x.reactor_kind === "trainer").map((x) => x.reactor_id)];
+    const studentIds = [r.student_id, ...reacts.filter((x) => x.reactor_kind === "student").map((x) => x.reactor_id)];
+    const [tnames, sdisp, views] = await Promise.all([staffNameMap(trainerIds), studentDisplayMap(studentIds), imageViews(sub, own, images)]);
+    retryDerivatives(images);
     const whoOf = (kind, id) => (kind === "trainer" ? tnames[id] || "트레이너" : sdisp[id] || "수강생");
-    const annotBy = new Map();
-    for (const a of annots) {
-      if (!annotBy.has(a.image_id)) annotBy.set(a.image_id, []);
-      annotBy.get(a.image_id).push({
-        authorRole: a.author_kind, authorDisplayName: whoOf(a.author_kind, a.author_id),
-        shapes: a.shapes, version: a.version, mine: a.author_kind === "student" && Number(a.author_id) === Number(sub),
-      });
-    }
-    const imageOut = (i) => ({
-      id: opaqueId("rimage", i.id), ord: i.ord,
-      displayUrl: urls.get(i.display_path) || (own ? urls.get(i.original_path) || null : null),
-      thumbUrl: urls.get(i.thumb_path) || null,
-      ...(own ? { originalUrl: urls.get(i.original_path) || null } : {}),
-      width: i.width ?? null, height: i.height ?? null,
-      annotations: annotBy.get(i.id) || [],
-    });
     const byPhase = new Map(), attachments = [];
     for (const i of images) {
-      if (i.phase_id == null) { attachments.push(imageOut(i)); continue; }
+      if (i.phase_id == null) { attachments.push(views.get(i.id)); continue; }
       if (!byPhase.has(i.phase_id)) byPhase.set(i.phase_id, []);
-      byPhase.get(i.phase_id).push(imageOut(i));
+      byPhase.get(i.phase_id).push(views.get(i.id));
     }
     const phasesByGame = new Map();
     for (const p of phases) {
@@ -959,6 +1191,154 @@ module.exports = function mountReviewApi(app, deps) {
     res.status(204).end();
   }));
 
+  // ── 사진(PR-2 · §3.2~3.6) ──
+  // POST /reviews/:id/images?phaseId=&ord= — raw 바이너리 1장/요청(multipart 아님 · §5.4 ①) · 라우트 한정 8MB 파서.
+  //   Content-Type 은 image/* 면 받고, 실제 형식은 매직 바이트로 정한다(png·jpeg·webp 밖 = image_type).
+  //   phaseId 없으면 첨부(페이즈 밖) · ord 는 비었으면 그 자리, 차 있으면 맨 뒤.
+  //   같은 자리에 같은 파일(sha256)이 이미 있으면 새로 만들지 않고 그 사진 + existing:true(응답을 못 받은 재시도).
+  const rawImage = express.raw({ type: (req) => /^image\//i.test(String(req.headers["content-type"] || "")), limit: IMAGE_MAX_BYTES });
+  const readImageBody = (req, res, next) => rawImage(req, res, (err) => {
+    if (!err) return next();
+    if (err.type === "entity.too.large") return fail(res, 413, "image_too_large");
+    return fail(res, 400, "invalid_body");
+  });
+  async function nextImageOrd(place) {
+    const top = (await sbSelect("review_images", `select=ord&${place}&order=ord.desc&limit=1`))[0];
+    return (top?.ord || 0) + 1;
+  }
+  app.post(`${P}/reviews/:id/images`, uploadLimit, requireStudent, needReady, readImageBody, wrap(async (req, res) => {
+    const sub = req.portal.sub;
+    const r = await editableReview(sub, readOpaqueId("review", req.params.id));
+    if (!r) return NOT_FOUND(res);
+    const q = req.query || {};
+    let phaseId = null;
+    if (q.phaseId !== undefined) {
+      phaseId = readOpaqueId("rphase", String(q.phaseId));
+      if (!phaseId) return fail(res, 400, "invalid_body");
+      const ph = (await sbSelect("review_phases", `select=id,review_games!inner(review_id)&id=eq.${phaseId}&limit=1`))[0];
+      if (!ph || Number(ph.review_games?.review_id) !== Number(r.id)) return NOT_FOUND(res);   // 다른 복기의 페이즈 = 없음
+    }
+    let wantOrd = null;
+    if (q.ord !== undefined) {
+      if (!/^[1-9]\d{0,2}$/.test(String(q.ord))) return fail(res, 400, "invalid_body");
+      wantOrd = Number(q.ord);
+    }
+    // 본문 = raw 파서가 읽은 Buffer(Content-Type 이 image/* 가 아니면 파서가 건너뛰어 {} 등). 배열·문자열 모양을
+    // 여기서 먼저 가른다(요청 값의 타입 혼동 방지) — 아래는 전부 Buffer 로만 쓴다.
+    const body = req.body;
+    if (Array.isArray(body) || typeof body !== "object" || !Buffer.isBuffer(body)) return fail(res, 400, "image_type");
+    const buf = body;
+    const kind = sniffImage(buf);
+    if (!kind) return fail(res, 400, "image_type");
+    const sha = crypto.createHash("sha256").update(buf).digest("hex");
+    const claimed = req.headers["x-image-sha256"];
+    if (claimed !== undefined && String(claimed).trim().toLowerCase() !== sha) return fail(res, 400, "invalid_body");
+    const place = `review_id=eq.${r.id}&phase_id=${phaseId ? `eq.${phaseId}` : "is.null"}`;
+    const dup = (await sbSelect("review_images", `select=${IMAGE_COLS}&${place}&sha256=eq.${sha}&${LIVE_IMAGE}&order=id.asc&limit=1`))[0];
+    if (dup) return send(res, { image: (await imageViews(sub, true, [dup])).get(dup.id), existing: true });
+    // 한도(§3.6) — 페이즈 4장 · 복기 60장 · 수강생 월 200장/1GB(KST 월 · RPC review_month_usage)
+    if (phaseId && (await sbSelect("review_images", `select=id&${place}&${LIVE_IMAGE}`)).length >= LIMITS.phaseImages)
+      return fail(res, 400, "review_limit_images");
+    if ((await sbSelect("review_images", `select=id&review_id=eq.${r.id}&${LIVE_IMAGE}`)).length >= LIMITS.reviewImages)
+      return fail(res, 400, "review_limit_images");
+    const use = (await sbRpc("review_month_usage", { p_student_id: sub }))[0] || {};
+    if (Number(use.images || 0) + 1 > LIMITS.monthImages || Number(use.bytes || 0) + buf.length > LIMITS.monthBytes)
+      return fail(res, 400, "review_limit_month");
+    // 화소 — 머리만 읽는다(디코드 폭탄 차단 · 방향 반영 가로·세로). sharp 가 없으면 건너뛴다(8MB 한도만).
+    let size = { width: null, height: null };
+    if (sharp) {
+      let meta;
+      try { meta = await sharp(buf).metadata(); } catch { return fail(res, 400, "image_type"); }
+      if (!meta.width || !meta.height) return fail(res, 400, "image_type");
+      if (meta.width * meta.height > IMAGE_MAX_PIXELS) return fail(res, 413, "image_too_large");
+      size = orientedSize(meta);
+    }
+    // 2단계(§3.2): 자리 행 insert(임시 경로 pending/…) → 파일 올리기 → 경로 patch. 실패하면 올린 파일·행을 지우고 503.
+    let row = null;
+    for (let attempt = 0; attempt < 3 && !row; attempt++) {
+      const ord = attempt === 0 && wantOrd ? wantOrd : await nextImageOrd(place);
+      try {
+        row = await sbInsert("review_images", {
+          review_id: r.id, phase_id: phaseId, ord, original_path: `pending/${crypto.randomUUID()}`,
+          uploaded_by_role: "student", bytes: buf.length, width: size.width, height: size.height,
+        });
+      } catch (e) { if (pgErr(e).code !== "23505") throw e; }                 // 자리(ord)가 겹쳤다 → 맨 뒤로 다시
+    }
+    if (!row) throw new Error("image_ord_retry_exhausted");
+    const imageId = Number(row.id);
+    const sid = Number(r.student_id), rid = Number(r.id);                  // 경로 = DB 숫자 id 만(세션·요청 값을 직접 넣지 않는다)
+    const paths = {
+      orig: imagePath(sid, rid, imageId, "orig", kind.ext),
+      disp: imagePath(sid, rid, imageId, "disp", "webp"),
+      thumb: imagePath(sid, rid, imageId, "thumb", "webp"),
+    };
+    const stored = [];
+    try {
+      const d = await makeDerivatives(buf);
+      await putObject(paths.orig, buf, kind.mime);
+      stored.push(paths.orig);
+      let disp = null, thumb = null;
+      if (d) {
+        const [a, b] = await Promise.allSettled([putObject(paths.disp, d.disp, "image/webp"), putObject(paths.thumb, d.thumb, "image/webp")]);
+        if (a.status === "fulfilled") { disp = paths.disp; stored.push(disp); }
+        if (b.status === "fulfilled") { thumb = paths.thumb; stored.push(thumb); }
+      }
+      row = (await sbPatch("review_images", `id=eq.${imageId}`, { original_path: paths.orig, display_path: disp, thumb_path: thumb, sha256: sha }))[0];
+      if (!row) throw new Error("image_row_gone");
+    } catch (e) {
+      const rm = await removePaths(stored);
+      if (!rm.ok) console.error(`[review] storage_orphan count=${rm.count} http=${rm.http}`);
+      await sbDelete("review_images", `id=eq.${imageId}`).catch(() => {});
+      throw e;
+    }
+    await touch(r.id);
+    console.log(`[review] image #${imageId} review #${r.id} ${kind.ext} bytes=${buf.length} deriv=${row.display_path && row.thumb_path ? "ok" : "none"}`);
+    send(res, { image: (await imageViews(sub, true, [row])).get(imageId), existing: false });
+  }));
+
+  // DELETE /images/:id — 파일 먼저(3파일 · §3.5) → 행(그림 레이어는 cascade)
+  app.delete(`${P}/images/:id`, writeLimit, requireStudent, needReady, wrap(async (req, res) => {
+    const ctx = await editableImage(req.portal.sub, readOpaqueId("rimage", req.params.id));
+    if (!ctx) return NOT_FOUND(res);
+    await removeImageFiles([ctx.i]);
+    await sbDelete("review_images", `id=eq.${ctx.i.id}`);
+    await touch(ctx.r.id);
+    console.log(`[review] image delete #${ctx.i.id} review #${ctx.r.id}`);
+    res.status(204).end();
+  }));
+
+  // PUT /images/:id/annotation { version, shapes, v? } — 내 그리기 레이어(사진 1장 × 나 = 1행)를 통째로 바꾼다(v2.7 §2.4)
+  //   version = 내가 마지막으로 받은 내 레이어 버전(레이어가 아직 없으면 0) · 다르면 409 annotation_conflict · 성공 = { version: 새 버전 }
+  //   그릴 수 있는 곳 = 내가 쓴 복기의 사진만 — 공유 열람 · 트레이너가 쓴 이관 복기 = 404(§4 annotationCanWrite 의 수강생 쪽)
+  app.put(`${P}/images/:id/annotation`, annotLimit, bodyOnly(["version", "shapes", "v"]), requireStudent, needReady, wrap(async (req, res) => {
+    const sub = req.portal.sub;
+    const ctx = await editableImage(sub, readOpaqueId("rimage", req.params.id));
+    if (!ctx) return NOT_FOUND(res);
+    const b = req.body || {};
+    if (!Number.isInteger(b.version) || b.version < 0 || (b.v !== undefined && b.v !== 1)) return fail(res, 400, "invalid_body");
+    const sh = normalizeShapes(b.shapes);
+    if (sh.error) return fail(res, 400, sh.error);
+    const layer = { v: 1, shapes: sh.value };
+    const cur = (await sbSelect("review_annotations",
+      `select=id,version&image_id=eq.${ctx.i.id}&author_kind=eq.student&author_id=eq.${sub}&limit=1`))[0];
+    let version;
+    if (!cur) {
+      if (b.version !== 0) return fail(res, 409, "annotation_conflict");
+      try {
+        await sbInsert("review_annotations", { image_id: ctx.i.id, author_kind: "student", author_id: sub, shapes: layer, version: 1, updated_at: nowIso() });
+      } catch (e) { if (pgErr(e).code === "23505") return fail(res, 409, "annotation_conflict"); throw e; }   // 다른 기기가 먼저 만들었다
+      version = 1;
+    } else {
+      if (b.version !== cur.version) return fail(res, 409, "annotation_conflict");
+      const rows = await sbPatch("review_annotations", `id=eq.${cur.id}&version=eq.${cur.version}`,
+        { shapes: layer, version: cur.version + 1, updated_at: nowIso() });
+      if (!rows.length) return fail(res, 409, "annotation_conflict");        // 그 사이 다른 기기가 저장했다
+      version = cur.version + 1;
+    }
+    await touch(ctx.r.id);
+    send(res, { version });
+  }));
+
   // ── 공유 피드 GET /feed?tag=&tag=&map=&days=30|90&cursor= (v2.7 §15.4) ──
   //   범위 = visibility students ∧ published ∧ 숨김 아님 ∧ 보는 사람이 「수강생 전체」 범위 안(아니면 빈 목록)
   //   태그 여러 개 = 하나라도 있는 복기(OR) · 맵과 같이 주면 둘 다 만족 · 정렬 = 보낸 시각 최신순 · 20건 커서
@@ -1061,12 +1441,68 @@ module.exports = function mountReviewApi(app, deps) {
     return out;
   };
 
-  probe().catch((e) => console.error("review_probe", e?.message));
-  return { ready: () => ready };
+  // 본문 파서 오류(server.js 의 express.json 256kb · JSON 깨짐) — 복기 라우트군은 기본 HTML 대신 계약 오류 코드로 답한다
+  app.use([`${P}/reviews`, `${P}/games`, `${P}/phases`, `${P}/images`], (err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (err?.type === "entity.too.large") return fail(res, 413, "review_too_long");
+    if (err?.type === "entity.parse.failed") return fail(res, 400, "invalid_body");
+    return next(err);
+  });
+
+  // ── §3.7 초안 사진 정리 — server.js cronTick(maybeRunDaily · 매일 KST 04:00)이 부른다 ──
+  //   대상 = status draft ∧ updated_at < 지금−90일 인 복기의 사진 전부. published 는 대상 아님 · 글(제목·본문·판·페이즈·줄·태그)은 남긴다.
+  //   dryrun(기본 · REVIEW_DRAFT_SWEEP 미설정/dryrun/그 밖의 값) = 지울 목록만 review_purge_log 에(복기 1건 = 1행 · purged_at null) · 아무것도 안 지운다
+  //   delete = 복기마다 다시 확인 → Storage 3파일 → 사진 행(그림 레이어 cascade) → review_purge_log(purged_at).
+  //            파일 삭제가 실패한 복기는 행을 남긴다(failed · 다음 날 다시). 1회 상한 200장(capped=1 → 나머지는 다음 날).
+  //   업로드 도중 끊긴 자리 행(pending/… · 하루 지난 것 · 파일 없음)도 같은 모드로 센다(pending=N) / 지운다.
+  //   로그 = 건수·용량만(id·경로·이름 없음) — 오너 미리보기 SQL(설계 §3.7)과 같은 수.
+  async function draftSweep({ mode = sweepMode(process.env.REVIEW_DRAFT_SWEEP), nowMs = Date.now() } = {}) {
+    await probed;                                                               // 기동 직후 크론 캐치업이 프로브보다 먼저 오지 않게
+    if (!ready) { console.log("[review] draft_sweep 건너뜀 — 복기 모듈 비활성"); return null; }
+    const cutoffIso = new Date(nowMs - PURGE_DAYS * 86400_000).toISOString();
+    const rows = await sbSelect("review_images",
+      "select=id,review_id,bytes,original_path,display_path,thumb_path,lesson_reviews!inner(status,updated_at)"
+      + `&lesson_reviews.status=eq.draft&lesson_reviews.updated_at=lt.${encodeURIComponent(cutoffIso)}`
+      + `&order=review_id.asc,id.asc&limit=${SWEEP_CAP + 1}`);
+    const { groups, capped } = planSweep(rows, SWEEP_CAP);
+    const pending = await sbSelect("review_images",
+      `select=id&original_path=like.pending%2F*&created_at=lt.${encodeURIComponent(new Date(nowMs - PENDING_STALE_MS).toISOString())}`
+      + `&limit=${SWEEP_CAP}`);
+    const sum = {
+      mode, cutoff: kstDate(nowMs - PURGE_DAYS * 86400_000), reviews: groups.length,
+      images: groups.reduce((s, g) => s + g.images.length, 0), bytes: groups.reduce((s, g) => s + g.bytes, 0),
+      deleted: 0, failed: 0, capped, pending: pending.length,
+    };
+    const logRows = [];
+    if (mode === "delete") {
+      for (const g of groups) {
+        const still = await sbSelect("lesson_reviews",
+          `select=id&id=eq.${g.reviewId}&status=eq.draft&updated_at=lt.${encodeURIComponent(cutoffIso)}&limit=1`);
+        if (!still.length) continue;                                            // 그 사이 고치거나 보냈다 → 대상 아님
+        const rm = await removePaths(g.images.flatMap(pathsOf));
+        if (!rm.ok) { sum.failed += g.images.length; continue; }
+        await sbDelete("review_images", `id=in.(${g.images.map((i) => i.id).join(",")})`);
+        sum.deleted += g.images.length;
+        logRows.push({ dry_run: false, review_id: g.reviewId, images: g.images.length, bytes: g.bytes, purged_at: nowIso() });
+      }
+      if (pending.length) await sbDelete("review_images", `id=in.(${pending.map((x) => x.id).join(",")})`);
+    } else {
+      for (const g of groups) logRows.push({ dry_run: true, review_id: g.reviewId, images: g.images.length, bytes: g.bytes, purged_at: null });
+    }
+    if (logRows.length) await sbInsert("review_purge_log", logRows);
+    console.log(`[review] draft_sweep mode=${mode} cutoff=${sum.cutoff} reviews=${sum.reviews} images=${sum.images} bytes=${sum.bytes}`
+      + (mode === "delete" ? ` deleted=${sum.deleted} failed=${sum.failed}` : "")
+      + (capped ? " capped=1" : "") + (pending.length ? ` pending=${pending.length}` : ""));
+    return sum;
+  }
+
+  const probed = probe().catch((e) => console.error("review_probe", e?.message));
+  return { ready: () => ready, draftSweep };
 };
 
 module.exports._test = {
   studentDisplay, normalizeLines, linesOut, normalizeTags, parsePhaseBody, checkPhaseRange, parseGameBody,
   reactionSummary, topTags, imagePurgeAt, unreadFrom, signCursor, readCursor, pgErr,
+  sniffImage, orientedSize, imagePath, derivPath, isPendingPath, isStoragePath, normalizeShapes, sweepMode, planSweep,
   REVIEW_EMOJIS, MAPS, LIMITS,
 };
