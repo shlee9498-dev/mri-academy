@@ -781,7 +781,8 @@ order by 1, 2;
 ### 3.3 파생본 생성 위치
 서버(`review-api.cjs`) 업로드 직후 · `sharp` 로 표시본·썸네일 생성 → 3파일 업로드 → `display_path`·`thumb_path` 저장. 생성 실패는 `display_path=null` 로 두고 응답의 `displayUrl` 은 원본 서명 URL 로 대체(재생성은 다음 조회 때 1회 시도). **`sharp` 는 네이티브 모듈이라 설치 전 승인 항목**(prebuilt 바이너리 사용 · 메모리 +30~60MB). 미승인 시 1차는 원본만(egress 가 §8.4 추정보다 3~4배).
 - **PR-2 구현(2026-09-25 · 승인 9/25)**: Railway 빌드 = Railpack · **Node 18.20.8**(`engines ">=18"` 해석 · 빌드 로그 실측) → **`sharp` 0.34.5**(0.35.x 는 Node ≥20.9). 0.34.5 에는 권고 2건이 걸려 있다 — GHSA-f88m-g3jw-g9cj(libvips · GIF·TIFF·VIPS 디코더) · GHSA-rgj7-g3m4-5g8c(libheif · HEIF·AVIF 디코더). 공식 우회책(`sharp.block`)을 **허용 목록**으로 건다: 입력 디코더 전부 막고 png·jpeg·webp 버퍼 셋만 연다(+ 업로드는 매직 바이트로 한 번 더 거른다) → 권고 대상 디코더에 닿는 길이 없다(로컬 실측: gif·tiff·avif·svg 입력 거부 · png·jpeg·webp 정상 · Node 18.20.8 동일). **Node 를 20 이상으로 올리면 0.35.x 로 올린다**(서버 전체 런타임 변경이라 별건 · 오너 판단).
-- 운영 설정: 선택 로드(모듈 로드가 실패해도 서버·봇은 뜬다 → 원본만 · 기동 로그 `⚠️ [review] sharp 없음`) · 디코드 캐시 끔 · 이미지당 libvips 스레드 2 · 동시 생성 2장(나머지 줄 섬) · 화소 5천만 상한(머리만 읽어 먼저 거른다 = 디코드 폭탄 차단) · EXIF 방향 반영(`rotate()`) · 썸네일은 표시본에서 만든다(원본을 두 번 디코드하지 않는다).
+- **판본 교체(2026-09-25 · 오너 판정 9/25 「Node 22 먼저 · sharp 0.35」)**: 런타임 Node 22(#355 · `engines "22.x"`) 배포 확인 뒤 **`sharp` 0.35.4 고정**. 권고 2건은 판본으로 닫혔다 — GHSA-f88m-g3jw-g9cj 는 0.35.0 · GHSA-rgj7-g3m4-5g8c 는 **0.35.4** 에서 (0.35.0~0.35.3 은 libheif 권고가 남아 있다 → 0.35.4 아래로 내리지 않는다 · `npm audit` sharp 0건). 입력 형식 제한(허용 목록 · 매직 바이트)은 권고와 별개로 **유지**(오너 지시). 로컬 실측(Node 22 · libvips 8.18.6): png·jpeg·webp 정상 · gif·tiff·avif·heif·svg 거부 · 제한을 끈 대조 실행에서는 전부 열림(= 막힌 이유가 허용 목록) · 통합 시험 213/213 · 로그가 0.34.5 실행과 같다(번호·크기만 다름). API 변화 없음(`block`/`unblock`·`rotate()`·`failOn`·`limitInputPixels`·`versions` 그대로). 미리 빌드된 linux-x64 는 glibc ≥2.28.
+- 운영 설정: 선택 로드(모듈 로드가 실패해도 서버·봇은 뜬다 → 원본만 · 기동 로그 `⚠️ [review] sharp 없음`) · 기동 로그에 실린 바이너리 표시(`linux-x64`) · wasm32 로 내려가면 쓰지 않는다(= `sharp 없음` → 원본만 · 0.35 부터 x64 네이티브는 CPU x86-64-v2 필요 · wasm32 결과 버퍼는 SharedArrayBuffer 라 Storage 전송 fetch 가 거부한다 — 로컬 실측) · 디코드 캐시 끔 · 이미지당 libvips 스레드 2 · 동시 생성 2장(나머지 줄 섬) · 화소 5천만 상한(머리만 읽어 먼저 거른다 = 디코드 폭탄 차단) · EXIF 방향 반영(`rotate()`) · 썸네일은 표시본에서 만든다(원본을 두 번 디코드하지 않는다).
 
 ### 3.4 서명 URL
 - 발급: service_role `POST {SUPABASE_URL}/storage/v1/object/sign/lesson-reviews` body `{ "expiresIn": 600, "paths": [...] }`(배치) → 각 `signedURL` 에 `{SUPABASE_URL}/storage/v1` 를 앞에 붙인다. **만료 10분**(v2.5 §8.1). 응답 키 `displayUrl` `thumbUrl` `originalUrl`.
@@ -977,14 +978,14 @@ feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_
 | 3 | 「최종」 블록 0~10 · VA 운영 실행 **✅ 2026-09-25** · 이 세션 실DB 지문 대조 일치(§2.14) · 정본 SQL §29 + REQUIRED_SCHEMA 11표 동기 | 오너 → 이 세션 | Level 0 |
 | 3′ | **닉네임 확보 PR**(/수강생등록 · /결제신청 · 승인 카드 · 신청서 생년월일 제거 — 오너 9/25 · PR-1 보다 먼저) | 이 세션 | 공유 피드 작성자 표시 · §30a 스냅샷이 닉네임에 의존 |
 | 4 | **PR-1 — 구현 Draft PR(2026-09-25 · 계약 = `docs/trainer-portal-api.md` §8 · 로컬 PG16+PostgREST 통합 시험 126항목)** `review-api.cjs`(수강생 텍스트 API: reviews·games·phases·publish(+visibility)·visibility 변경·delete(=숨김 포함)·recipients·read·**feed·reactions**·`/sessions` 확장(+`reviewDue`)) + Storage 헬퍼 + `REQUIRED_SCHEMA` §6(11표) + `supabase_admin_panel.sql` §29 정본 편입 | 이 세션 | DDL 검증 뒤 배포 |
-| 5 | **PR-2(2026-09-25 · 계약 §8.8 · 통합 시험 +87 = 213 · Node 18.20.8 동일)** 이미지 업로드·파생본(`sharp` 0.34.5 · §3.3)·서명 URL·삭제 + 그리기 레이어 PUT(수강생) + **§3.7 draft 정리 일일 작업(드라이런 기본 ON · `review_purge_log` · 목록 `imagePurgeAt`)** | 이 세션 | 배포일부터 드라이런 2주 → 오너가 로그를 본 뒤 전환 시점 결정 → `REVIEW_DRAFT_SWEEP=delete` · DDL 없음(§29 그대로) |
+| 5 | **PR-2(2026-09-25 · 계약 §8.8 · 통합 시험 +87 = 213 · Node 18.20.8 동일 → Node 22 + sharp 0.35.4 에서 다시 213)** 이미지 업로드·파생본(`sharp` 0.34.5 → **0.35.4** · §3.3)·서명 URL·삭제 + 그리기 레이어 PUT(수강생) + **§3.7 draft 정리 일일 작업(드라이런 기본 ON · `review_purge_log` · 목록 `imagePurgeAt`)** | 이 세션 | 배포일부터 드라이런 2주 → 오너가 로그를 본 뒤 전환 시점 결정 → `REVIEW_DRAFT_SWEEP=delete` · DDL 없음(§29 그대로) |
 | 6 | **PR-3** 트레이너 포털(목록·상세·comment/overall·읽음·`canReply`·`replyDueAt` 자리 · **feed·reactions(한 번 탭)·공유 열람(활성 트레이너 전원)** · task 는 2차지만 `due_invalid` 검사 함수는 여기서) + `docs/trainer-portal-api.md` §8 계약 | 이 세션 | |
 | 7 | 계약 문서(수강생 포털 부록 A 개정분 = §5.1·§5.4·§5.5)를 [MRIacademy → 다른 세션] 로 인계 | 이 세션 → 반장 | 앱 착수는 PR-2 배포 뒤(v2.5 §11) |
 | 2차 | PR-5 mark·task·트레이너 레이어·복제·순서 API · PR-6 알림(`discordDM` · publish→recipient · 답→수강생 · 정리 예고 배지) · PR-7 일기 호환 라우트(행 0 이라 이관 스크립트 없음) · 엑셀 서버 파싱은 필요해지면 그때 `exceljs` 승인 요청 | 이 세션 | |
 | 3차 | PR-8 디스코드 이관(§8) · PR-9 `review-topics` 집계 | 이 세션 | |
 
 - **1차 = Pro 전환 + DDL 1회 + Draft PR 3개 + 인계 문서 1개.** 각 PR 은 `npm run check` + 기동 로그 `[schema] OK` 확인 뒤 다음으로. **DDL 실행·검증 전에는 코드 착수 금지**(#331 순서 반복 금지).
-- **의존성**: `sharp` **승인(오너 9/25)** — PR-2 에서 설치(Railway 서버 전용 · 프론트 무관) → **0.34.5 고정**(Node 18 · 권고 우회 §3.3). `exceljs` **1차 제외** — 서버 재파싱 없음.
+- **의존성**: `sharp` **승인(오너 9/25)** — PR-2 에서 설치(Railway 서버 전용 · 프론트 무관) → **0.35.4 고정**(Node 22 · 권고 2건 판본으로 해소 · 입력 형식 제한은 유지 §3.3 · PR-2 첫 배포는 Node 18 + 0.34.5 + 허용 목록). `exceljs` **1차 제외** — 서버 재파싱 없음.
 - **env 제안 1개(사전 보고)**: `REVIEW_DRAFT_SWEEP` — 용도 = §3.7 일일 정리 모드(미설정/`dryrun` = 로그만 · `delete` = 실제 삭제) · 어디에 = **Railway** 서비스 변수 · 설정 시점 = PR-2 배포 후 드라이런 2주 뒤 오너가 `delete` 로. 선택: `REVIEW_BUCKET`(기본 `lesson-reviews`) · `REVIEW_SIGN_TTL_SEC`(기본 600) — 미설정이면 기본값. Vercel 변경 없음. `SUPABASE_URL`·`SUPABASE_SERVICE_ROLE_KEY` 로 Storage 까지 접근한다(추가 키 없음).
 
 ## 8. 디스코드 이관 (3차 · 이 세션 설계 통합)

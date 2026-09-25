@@ -53,13 +53,21 @@ const kstDate = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
 const nowIso = () => new Date().toISOString();
 
 // ── sharp(파생본 · §3.3) — 선택 로드: 네이티브 모듈이 없거나 깨져도 서버·봇은 뜬다(원본만 저장 · 표시 = 원본) ──
-// 입력 디코더는 png·jpeg·webp 버퍼 셋만 연다(나머지 전부 block). sharp 0.34.5 에 걸린 권고
-// (GHSA-f88m-g3jw-g9cj libvips — GIF·TIFF·VIPS 디코더 · GHSA-rgj7-g3m4-5g8c libheif — HEIF·AVIF 디코더)의
-// 공식 우회책(sharp.block)을 허용 목록 방식으로 건다. 0.35.x 는 Node ≥20.9 라 Railway(Node 18.20.8 · engines ">=18")에서
-// 못 쓴다 — Node 를 올리면 0.35 로 올리고 이 주석을 고친다. 업로드는 매직 바이트로 한 번 더 거른다(sniffImage).
-let sharp = null, sharpError = null;
+// 판본 0.35.4 고정(Node ≥20.9 · 운영 Node 22). 권고 2건은 판본으로 닫혔다 — GHSA-f88m-g3jw-g9cj(libvips GIF·TIFF·VIPS
+// 디코더)는 0.35.0 · GHSA-rgj7-g3m4-5g8c(libheif HEIF·AVIF 디코더)는 0.35.4 에서. 0.35.4 아래로 내리지 않는다.
+// 입력 형식 제한은 권고와 별개로 유지한다: 입력 디코더는 png·jpeg·webp 버퍼 셋만 연다(나머지 전부 block · 허용 목록).
+// 업로드는 매직 바이트로 한 번 더 거른다(sniffImage).
+// 실린 바이너리. 0.35 부터 x64 네이티브는 CPU x86-64-v2 를 요구하고, 못 쓰면 조용히 wasm32 로 내려간다 — wasm32 는 쓰지 않는다
+// (승인 범위 = 네이티브 · 결과 버퍼가 SharedArrayBuffer 라 Storage 로 보내는 fetch 가 거부한다(로컬 실측) · 느리다) → 원본만.
+const sharpBinding = () => {
+  const ids = Object.keys(require.cache).map((k) => /[\\/]@img[\\/]sharp-(?!libvips-)([a-z0-9-]+)[\\/]/.exec(k)?.[1]).filter(Boolean);
+  return ids.find((x) => x.endsWith("wasm32")) || ids[0] || "?";   // 네이티브를 거절한 뒤 wasm32 가 실렸으면 그쪽이 쓰인다
+};
+let sharp = null, sharpError = null, sharpBin = "?";
 try {
   sharp = require("sharp");
+  sharpBin = sharpBinding();
+  if (sharpBin.endsWith("wasm32")) throw new Error(`native binary unusable (${sharpBin} only · CPU x86-64-v2 · glibc ≥2.28)`);
   sharp.cache(false);                      // 디코드 캐시를 요청 사이에 들고 있지 않는다(메모리)
   sharp.concurrency(2);                    // 이미지 1장당 libvips 스레드(호스트 코어 수를 믿지 않는다)
   sharp.block({ operation: ["VipsForeignLoad"] });
@@ -378,7 +386,7 @@ module.exports = function mountReviewApi(app, deps) {
     if (ready && tagOrder.length < 12) console.warn(`⚠️ review_tags seed ${tagOrder.length}/12`);
     if (ready) {
       // PR-2 — 파생본 도구 · 월 한도 RPC · 초안 사진 정리 모드(값 그대로가 아니라 해석한 모드만 찍는다)
-      if (sharp) console.log(`[review] 사진 파생본 sharp ${sharp.versions?.sharp} (libvips ${sharp.versions?.vips}) · 입력 png/jpeg/webp 만`);
+      if (sharp) console.log(`[review] 사진 파생본 sharp ${sharp.versions?.sharp} (libvips ${sharp.versions?.vips} · ${sharpBin}) · 입력 png/jpeg/webp 만`);
       else console.warn(`⚠️ [review] sharp 없음 — 파생본 없이 원본만 저장(표시 = 원본 · §3.3) · ${sharpError}`);
       try { await sbRpc("review_month_usage", { p_student_id: 0 }); }
       catch { console.warn("⚠️ [review] review_month_usage RPC 없음 — 사진 업로드가 503(§29 블록 7)"); }
