@@ -907,6 +907,19 @@ module.exports = function mountReviewApi(app, deps) {
     return { list, defaultId };
   }
 
+  // 마지막으로 보낸 내 복기의 공개 범위(v2.7 34 · 계약 보강 B 2026-09-26) — 보내기에서 범위를 생략했을 때 서버가 쓰는 값과
+  // GET /reviews/recipients 의 defaultVisibility 가 늘 같도록 한 곳에 둔다(두 곳이 따로 세면 확인창 기본값과 실제 저장값이 어긋난다).
+  //   = 내가 쓴(author_role student) 보낸 복기 중 published_at 최신 1건 · 숨긴 복기도 센다(보낸 사실은 남는다) ·
+  //     엑셀 출처(보낼 때 private 강제)도 센다 · 트레이너가 쓴 이관 복기는 세지 않는다 · 설정할 수 없는 값(group)은 private ·
+  //     보낸 적이 없으면 null(= 첫 보내기는 범위를 꼭 골라야 한다 · 생략하면 400 visibility_required)
+  async function lastPublishedVisibility(sub, excludeId = null) {
+    const rows = await sbSelect("lesson_reviews",
+      `select=visibility&student_id=eq.${sub}&author_role=eq.student&status=eq.published`
+      + (excludeId ? `&id=neq.${excludeId}` : "") + "&order=published_at.desc&limit=1");
+    if (!rows.length) return null;
+    return VIS_SETTABLE.includes(rows[0].visibility) ? rows[0].visibility : "private";
+  }
+
   // 트리거·RPC·유니크 오류 → 계약 코드(없으면 null = 503)
   function mapDbError(e) {
     const { code, message } = pgErr(e);
@@ -935,14 +948,16 @@ module.exports = function mountReviewApi(app, deps) {
     send(res, { reviews: await summaries(sub, rows) });
   }));
 
-  // GET /reviews/recipients — 자유 기록 보내기용 후보
+  // GET /reviews/recipients — 자유 기록 보내기용 후보 + 보내기 확인창의 기본 범위
   app.get(`${P}/reviews/recipients`, readLimit, requireStudent, needReady, wrap(async (req, res) => {
-    const c = await recipientCandidates(req.portal.sub);
+    const sub = req.portal.sub;
+    const [c, defaultVisibility] = await Promise.all([recipientCandidates(sub), lastPublishedVisibility(sub)]);
     send(res, {
       recipients: c.list.map((x) => ({
         staffId: opaqueId("staff", x.id), displayName: x.name, isPrimary: x.id === c.defaultId, lastLessonOn: x.lastLessonOn,
       })),
       defaultStaffId: c.defaultId ? opaqueId("staff", c.defaultId) : null,
+      defaultVisibility,                  // private · students · null(보낸 적 없음) — 보내기에서 범위를 생략하면 이 값이 쓰인다
     });
   }));
 
@@ -1081,10 +1096,8 @@ module.exports = function mountReviewApi(app, deps) {
       }
       if (r.source !== "app") vis = "private";                                   // 이관분(엑셀 등)은 private 로 시작(요청값 무시 · §8)
       if (!vis) {
-        const lastPub = (await sbSelect("lesson_reviews",
-          `select=visibility&student_id=eq.${sub}&author_role=eq.student&status=eq.published&id=neq.${r.id}&order=published_at.desc&limit=1`))[0];
-        if (!lastPub) return fail(res, 400, "visibility_required");
-        vis = VIS_SETTABLE.includes(lastPub.visibility) ? lastPub.visibility : "private";
+        vis = await lastPublishedVisibility(sub, r.id);                        // = GET /reviews/recipients 의 defaultVisibility
+        if (!vis) return fail(res, 400, "visibility_required");
       }
       // 받는 트레이너 — 수업 = 그 수업 트레이너 · 강의 = 오너 · 자유 기록(또는 연결 끊김) = 요청값(후보 안)
       let recipient = null;
