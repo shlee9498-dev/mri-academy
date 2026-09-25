@@ -11,9 +11,12 @@
     "smoke": "bash scripts/smoke.sh",
     "verify:portal": "node scripts/portal-verify.mjs"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
+    "discord.js": "^14.16.3",
     "express": "^4.19.2",
-    "discord.js": "^14.16.3"
+    "sharp": "0.34.5"
   }
 }
