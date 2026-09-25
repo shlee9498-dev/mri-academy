@@ -15,9 +15,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # 운영(Railway)과 같은 Node 메이저 — 판본 정본은 package.json engines · .nvmrc(둘을 같이 고친다)
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
           cache: 'npm'
 
       # package.json의 check = node --check (server.js · admin-panel.js · config/fees.cjs)
