@@ -21,7 +21,6 @@
 // ============================================================
 "use strict";
 const crypto = require("crypto");
-const express = require("express");
 
 const REVIEW_EMOJIS = ["👍", "🔥", "💡", "🙌", "💪", "🎯"];                       // DDL review_reactions_emoji_check 와 같은 6개
 const MAPS = ["에란겔", "미라마", "태이고", "론도", "사녹", "비켄디", "데스턴", "파라모", "카라킨", "기타"];   // review_games.map check
@@ -326,6 +325,8 @@ function pgErr(e) {
 }
 
 module.exports = function mountReviewApi(app, deps) {
+  // express 는 마운트 때만 읽는다 — CI 문법 단계(npm run check)는 node_modules 없이 이 파일의 _test 만 불러온다
+  const express = require("express");
   const { sbSelect, sbInsert, sbPatch, sbUpsert, sbDelete, sbRpc, limit, portal } = deps;
   const { opaqueId, readOpaqueId, fail, scrub, requireStudent, hooks } = portal;
   const P = "/api/student-portal";
