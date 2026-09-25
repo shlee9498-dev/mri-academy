@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check admin-panel.js && node --check student-portal.cjs && node --check booking-api.cjs && node --check trainer-portal.cjs && node --check payreq-monitor.cjs && node --check config/fees.cjs && node --check scripts/feedback-audit.cjs && node --check pubg-name.cjs && node --check review-api.cjs && node --test scripts/feedback-audit.test.cjs scripts/pubg-name.test.cjs scripts/review-api.test.cjs",
+    "check": "node --check server.js && node --check admin-panel.js && node --check student-portal.cjs && node --check booking-api.cjs && node --check trainer-portal.cjs && node --check payreq-monitor.cjs && node --check config/fees.cjs && node --check scripts/feedback-audit.cjs && node --check pubg-name.cjs && node --check review-api.cjs && node --check killrace.cjs && node --test scripts/feedback-audit.test.cjs scripts/pubg-name.test.cjs scripts/review-api.test.cjs scripts/killrace.test.cjs",
     "audit:feedback": "node scripts/feedback-audit.cjs",
     "smoke": "bash scripts/smoke.sh",
     "verify:portal": "node scripts/portal-verify.mjs"
