@@ -104,10 +104,6 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
         <label>연락처<span class="req">*</span></label>
         <input name="phone" type="tel" required placeholder="010-0000-0000" inputmode="numeric">
       </div>
-      <div class="fld">
-        <label>생년월일<span class="opt">(선택)</span></label>
-        <input name="birth" type="text" placeholder="YYMMDD" inputmode="numeric">
-      </div>
     </div>
 
     <!-- 2. 신청 -->
@@ -326,7 +322,7 @@ form.addEventListener("submit", async (e) => {
   const focus = fd.getAll("focus");
   const payload = {
     name: fd.get("name"), gender: fd.get("gender"), discord: fd.get("discord"),
-    phone: fd.get("phone"), birth: fd.get("birth") || "",
+    phone: fd.get("phone"),
     applyType: fd.get("applyType"), source: fd.get("source"), trainer: fd.get("trainer") || "",
     platform: fd.get("platform"), nickname: fd.get("nickname"),
     tier: fd.get("tier") || "", playtime: fd.get("playtime"),

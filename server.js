@@ -23,6 +23,8 @@ const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, Bu
 // 결제 채널 수수료율 정본. 봇(/결제신청)과 패널(admin-panel.js)이 같은 파일을 본다 —
 // 율을 두 곳에 적으면 한쪽만 고쳐지고 그 차이가 원장에 남는다.
 const { PAY_CHANNELS, FEE_RATES, feeFor, netFor, hasRate } = require("./config/fees.cjs");
+// 배그 닉네임 입력 규칙(/수강생등록 · /결제신청 · /닉네임등록 공용 · 순수 함수 · 테스트 scripts/pubg-name.test.cjs)
+const { parseIgnInput, sameIgn, compareIgn, ignChoices, ignGuardFilter, platLabel } = require("./pubg-name.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -970,13 +972,15 @@ if (process.env.DISCORD_TOKEN) {
         { name: "레슨", value: "레슨" },
         { name: "직강", value: "직강" },
         { name: "강의", value: "강의" } ] },
-      { name: "디코닉", description: "디스코드 닉(선택)", type: 3, required: false },
-      { name: "인게임닉", description: "PUBG 인게임 닉(선택)", type: 3, required: false },
-      { name: "플랫폼", description: "PUBG 플랫폼(인게임닉 입력 시)", type: 3, required: false, choices: [
+      // 인게임닉 필수(오너 2026-09-25 · 닉네임 확보) — 모르면 자동완성의 「나중에 입력」 → 등록 뒤 담당에게 입력 요청 DM → /닉네임등록.
+      //   디스코드 규칙상 필수 옵션이 선택 옵션보다 앞에 와야 해서 디코닉을 플랫폼 뒤로 옮겼다.
+      { name: "인게임닉", description: "PUBG 인게임 닉 — 모르면 자동완성의 「나중에 입력」을 고르세요", type: 3, required: true, autocomplete: true },
+      { name: "플랫폼", description: "PUBG 플랫폼(인게임닉 입력 시 필수)", type: 3, required: false, choices: [
         { name: "카카오", value: "kakao" },
         { name: "스팀", value: "steam" } ] },
+      { name: "디코닉", description: "디스코드 닉(선택)", type: 3, required: false },
       { name: "유입경로", description: "유입경로(예: 유튜브 / 지인소개 / 디스코드)", type: 3, required: false },
-      // 접수 양식의 나머지(성별·생년월일·연락처·최고티어·플레이시간·교정희망)는 비고로 받는다.
+      // 접수 양식의 나머지(성별·연락처·최고티어·플레이시간·교정희망)는 비고로 받는다. 생년월일은 받지 않는다(오너 §28 판정 2026-09-25).
       { name: "비고", description: "그 외 접수 정보(최고티어·플레이시간·교정희망 등)", type: 3, required: false },
     ],
   };
@@ -1006,7 +1010,21 @@ if (process.env.DISCORD_TOKEN) {
     description: "[트레이너·오너] 수강생 계정 연결 현황 — 연결 수 · 미연결 목록(담당별)",
     options: [],
   };
-  const LINK_CMDS = [LINK_CMD, UNLINK_CMD, LINK_STATUS_CMD];
+  // /닉네임등록 — [트레이너·오너] 수강생 배그 닉네임 등록(오너 지시 2026-09-25 · 닉네임 확보).
+  //   /수강생등록 「나중에 입력」 뒤와 닉네임이 빈 기존 수강생을 채우는 경로. 권한은 연결 명령과 같은 staff 명부 기준이라
+  //   같은 묶음(LINK_CMDS)으로 같은 길드들에 등록한다. 트레이너 = 담당·최근 90일 수업 수강생의 빈 칸 채우기·플랫폼 정정 · 오너 = 교체까지.
+  const NICK_CMD = {
+    name: "닉네임등록",
+    description: "[트레이너·오너] 수강생 배그 닉네임 등록 — 명부에 비어 있는 닉네임을 채웁니다",
+    options: [
+      { name: "수강생", description: "수강생 — 자동완성에서 고르세요(닉네임 빈 수강생이 먼저)", type: 3, required: true, autocomplete: true },
+      { name: "닉네임", description: "배그 인게임 닉네임(영문·숫자·-·_)", type: 3, required: true },
+      { name: "플랫폼", description: "PUBG 플랫폼", type: 3, required: true, choices: [
+        { name: "스팀", value: "steam" },
+        { name: "카카오", value: "kakao" } ] },
+    ],
+  };
+  const LINK_CMDS = [LINK_CMD, UNLINK_CMD, LINK_STATUS_CMD, NICK_CMD];
   // /연결신청 — [수강생] 본인이 먼저 신청하고, 운영진은 승인 카드 버튼만 누른다(§24 · 오너 지시 2026-09-08).
   //   ⚠️ 자동 매칭이 아니다 — 이름 유사도는 후보 3명을 카드에 제시할 뿐이고, discord_id 를 쓰는 건
   //   사람이 버튼을 누른 순간뿐이다. 신청자가 남의 이름을 대도 승인자가 걸러 낸다.
@@ -1046,6 +1064,8 @@ if (process.env.DISCORD_TOKEN) {
         { name: "상담", value: "상담" },
         { name: "세트(강의+레슨 · 280,000/340,000/405,000)", value: "세트" },
         { name: "기타", value: "기타" } ] },
+      // §28 신고 닉네임(필수 · 오너 「§28 판정 그대로」 2026-09-25) — 승인 카드가 명부 닉과 대조한다. 명부가 비어 있으면 승인 뒤 오너 버튼으로만 채운다.
+      { name: "배그닉네임", description: "수강생 배그 인게임 닉네임(명부에 있으면 자동완성)", type: 3, required: true, autocomplete: true },
       { name: "판수", description: "판수 패키지면 총 판수(예: 33)", type: 4, required: false, min_value: 1, max_value: 200 },
       { name: "입금일", description: "입금일 YYYY-MM-DD(미입력=오늘)", type: 3, required: false },
       // 채널: 미입력이면 transfer(계좌이체) — 기존 신고가 전부 계좌이체였던 관행을 기본값으로 둔다.
@@ -1083,7 +1103,7 @@ if (process.env.DISCORD_TOKEN) {
       const payreqCmds = process.env.BOT_PAYREQ === "1" ? [PAYREQ_CMD] : [];
       await client.application.commands.set(
         [LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD, ...LINK_CMDS, ...payreqCmds], guildId);
-      console.log(`/수업등록·/판수정정·/등록계·/수강생등록·/연결승인·/연결해제·/연결현황${payreqCmds.length ? "·/결제신청" : ""} registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
+      console.log(`/수업등록·/판수정정·/등록계·/수강생등록·/연결승인·/연결해제·/연결현황·/닉네임등록${payreqCmds.length ? "·/결제신청" : ""} registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
     } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
   }
   // 계정 연결 3종 추가 등록 — 수강생이 있는 서버가 GUILD_ID·LESSON_GUILD_ID 둘 다 아닐 때만 쓴다
@@ -1097,7 +1117,7 @@ if (process.env.DISCORD_TOKEN) {
       if (!client.guilds.cache.has(g)) { console.warn(`⚠️ 봇이 LINK_GUILD_IDS(${g}) 길드에 없음 [${ctx}] → 초대 후 자동 등록됩니다.`); continue; }
       try {
         await client.application.commands.set(LINK_CMDS, g);
-        console.log(`/연결승인·/연결해제·/연결현황 registered to LINK_GUILD_IDS(${g}) [${ctx}]`);
+        console.log(`/연결승인·/연결해제·/연결현황·/닉네임등록 registered to LINK_GUILD_IDS(${g}) [${ctx}]`);
       } catch (e) { console.error("link_guild_register_failed", g, ctx, e?.message); }
     }
   }
@@ -2237,7 +2257,17 @@ if (process.env.DISCORD_TOKEN) {
       lines.push("", `⛔ **아직 \`/수업등록\`을 쓰면 안 돼** — 시트에 행이 없어서 똑같이 실패해.`);
       lines.push(`↳ 오너에게 알림을 보냈어. **등록 완료 안내를 받은 뒤에** 수업을 등록해줘.`);
     }
+    if (p.ignLater) lines.push("", "⏳ 배그 닉네임은 나중에 — 확인되면 `/닉네임등록` 으로 넣어줘(DM 으로도 남겨 둘게).");
     await itx.editReply(lines.join("\n"));
+
+    // 2-1) 「나중에 입력」 — 담당(= 등록한 트레이너 · TRAINER_MAP)에게 입력 요청 DM 1통(best-effort).
+    //      닉네임은 첫 수업 경쟁전 스냅샷(§30a · 첫 수업 7일 안에 들어오면 「+n일」로 적재)과 공유 피드 작성자 표시에 쓰인다.
+    if (p.ignLater) {
+      try {
+        await itx.user.send(`📝 배그 닉네임 입력 요청 — **${p.name}**${studentId ? `(명부 #${studentId})` : ""}\n`
+          + "등록할 때 닉네임을 비워 뒀어. 확인되면 `/닉네임등록` 으로 넣어줘 — 첫 수업 경쟁전 기록과 복기 공유 이름에 쓰여.");
+      } catch (e) { console.error("student_ign_later_dm", e?.message); }
+    }
 
     // 3) 오너 DM — 결제 등록이 오너 몫이라 신규 등록은 항상 알린다(시트 실패 시엔 조치 요청까지).
     if (process.env.MRI_OWNER_ID) {
@@ -2247,7 +2277,8 @@ if (process.env.DISCORD_TOKEN) {
           `🆕 신규 수강생 등록 — **${p.name}** (담당 ${p.trainer}, 등록자 <@${itx.user.id}>)`,
           `· 신청구분: ${p.applyKind}${p.inflow ? ` · 유입경로: ${p.inflow}` : ""}`,
           p.discordNick ? `· 디코닉: ${p.discordNick}` : null,
-          p.ign ? `· 인게임닉: ${p.ign}${p.platform ? ` (${p.platform === "kakao" ? "카카오" : "스팀"})` : ""}` : null,
+          p.ign ? `· 인게임닉: ${p.ign}${p.platform ? ` (${p.platform === "kakao" ? "카카오" : "스팀"})` : ""}`
+            : (p.ignLater ? "· 인게임닉: 나중에 입력(담당에게 입력 요청 DM · /닉네임등록)" : null),
           p.note ? `· 비고: ${p.note}` : null,
           studentId ? `· students.id = ${studentId}` : null,
           p.dupNames ? `· ⚠️ 동명 active 행 있음(트레이너가 확인 후 진행): ${p.dupNames}` : null,
@@ -2278,7 +2309,13 @@ if (process.env.DISCORD_TOKEN) {
 
     const name = (itx.options.getString("이름") || "").trim();
     if (!name) return itx.reply({ content: "이름을 입력해줘.", ephemeral: true });
-    const ign = (itx.options.getString("인게임닉") || "").trim() || null;
+    // 인게임닉 필수(오너 2026-09-25) — 「나중에 입력」이면 명부 닉은 비워 두고 등록 뒤 담당(=등록한 트레이너)에게 입력 요청 DM.
+    const ignIn = parseIgnInput(itx.options.getString("인게임닉"), { allowLater: true });
+    if (ignIn.error)
+      return itx.reply({ content: ignIn.error === "empty"
+        ? "인게임닉을 넣어줘 — 모르면 자동완성에서 「나중에 입력」을 골라줘."
+        : "배그 닉네임 형식이 아니야 — 영문·숫자·-·_ 로 된 인게임 닉을 넣어줘(공백·한글 없이). 모르면 「나중에 입력」을 골라줘.", ephemeral: true });
+    const ign = ignIn.ign;
     const platform = itx.options.getString("플랫폼") || null;
     if (ign && !platform)
       return itx.reply({ content: "인게임닉을 넣었으면 플랫폼(스팀/카카오)도 골라줘.", ephemeral: true });
@@ -2287,7 +2324,7 @@ if (process.env.DISCORD_TOKEN) {
       name, trainer,
       applyKind: itx.options.getString("신청구분"),
       discordNick: (itx.options.getString("디코닉") || "").trim() || null,
-      ign, platform: ign ? platform : null,
+      ign, platform: ign ? platform : null, ignLater: !!ignIn.later,
       inflow: (itx.options.getString("유입경로") || "").trim() || null,
       trainerId: null, note: null, dupNames: null,
     };
@@ -2415,6 +2452,115 @@ if (process.env.DISCORD_TOKEN) {
       console.error("link_autocomplete", e?.message);
       try { await itx.respond([]); } catch (_) {}
     }
+  });
+
+  // ── 배그 닉네임 자동완성 — /수강생등록 인게임닉 · /결제신청 배그닉네임 · /닉네임등록 수강생 (오너 2026-09-25 · 닉네임 확보) ──
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isAutocomplete()) return;
+    const cmd = itx.commandName;
+    if (cmd !== "수강생등록" && cmd !== "결제신청" && cmd !== "닉네임등록") return;
+    try {
+      const focused = itx.options.getFocused(true);
+      if (cmd === "수강생등록" && focused.name === "인게임닉")
+        return await itx.respond(TRAINER_MAP[itx.user.id] ? ignChoices(focused.value, { allowLater: true }) : []);
+      if (cmd === "결제신청" && focused.name === "배그닉네임") {
+        if (!TRAINER_MAP[itx.user.id]) return await itx.respond([]);
+        // 학생 칸에 쓴 이름의 명부 닉(이름·별칭 정확일치 · 동명이면 전부)을 후보로 — 승인 카드 대조와 같은 후보 규칙
+        const who = String(itx.options.getString("학생") || "").trim();
+        const roster = who && hasSupabase()
+          ? (await payreqCandidates(who)).map((r) => ({ ign: r.pubg_name, label: `명부 #${r.id} ${r.name}` }))
+          : [];
+        return await itx.respond(ignChoices(focused.value, { roster }));
+      }
+      if (cmd === "닉네임등록" && focused.name === "수강생") {
+        if (!hasSupabase()) return await itx.respond([]);
+        const actor = await linkActor(itx);
+        if (!actor.allowed) return await itx.respond([]);   // 권한 없으면 명단을 보여주지 않는다
+        const qv = String(focused.value || "").trim().replace(/[,.()*]/g, "").slice(0, 40);
+        let filter = "select=id,name,status,trainer_id,pubg_name&order=name.asc&limit=100";
+        if (!actor.isOwner) filter += `&trainer_id=eq.${actor.staffId}`;   // 트레이너는 담당 목록(최근 90일 수업 수강생은 이름을 직접 쳐도 된다)
+        if (qv) filter += `&name=ilike.*${encodeURIComponent(qv)}*`;
+        const [rows, staffById] = await Promise.all([sbSelect("students", filter), staffNameMap()]);
+        rows.sort((a, b) => (a.pubg_name ? 1 : 0) - (b.pubg_name ? 1 : 0));   // 닉 빈 수강생 먼저(정렬 안정 — 이름순 유지)
+        return await itx.respond(rows.slice(0, 25).map((st) => ({
+          name: `${linkChoiceName(st, staffById)} · ${st.pubg_name ? `닉 ${st.pubg_name}` : "닉 없음"}`.slice(0, 100),
+          value: String(st.id),
+        })));
+      }
+      return await itx.respond([]);
+    } catch (e) {
+      console.error("ign_autocomplete", e?.message);
+      try { await itx.respond([]); } catch (_) {}
+    }
+  });
+
+  // ── /닉네임등록 — [트레이너·오너] 수강생 배그 닉네임 등록 ──
+  //   트레이너 = 담당 또는 최근 90일 내가 수업한 수강생 — 빈 칸 채우기 · 같은 닉의 플랫폼·대소문자 정정 · 오너 = 전원 · 다른 닉 교체까지.
+  //   바뀐 값은 admin_audit(student.pubg_name).
+  async function nickScopeOk(actor, row) {
+    if (actor.isOwner) return true;
+    if (actor.staffId == null) return false;
+    if (row.trainer_id === actor.staffId) return true;
+    try {
+      const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+      return (await sbSelect("lesson_sessions",
+        `select=id&student_id=eq.${row.id}&trainer_id=eq.${actor.staffId}&played_at=gte.${since}&limit=1`)).length > 0;
+    } catch (e) { console.error("nick_scope", e?.message); return false; }
+  }
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "닉네임등록") return;
+    if (!hasSupabase()) return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+    const actor = await linkActor(itx);
+    if (!actor.allowed) return itx.reply({ content: LINK_DENY, ephemeral: true });
+    const ignIn = parseIgnInput(itx.options.getString("닉네임"));
+    if (ignIn.error)
+      return itx.reply({ content: "배그 닉네임 형식이 아니야 — 영문·숫자·-·_ 로 된 인게임 닉을 넣어줘(공백·한글 없이).", ephemeral: true });
+    const platform = itx.options.getString("플랫폼") === "kakao" ? "kakao" : "steam";
+    await itx.deferReply({ ephemeral: true });
+    // 자동완성 값 = 명부 id. 이름을 직접 쳤으면 정확일치 1명일 때만(동명은 목록에서 #번호로).
+    const raw = String(itx.options.getString("수강생") || "").trim();
+    const cols = "select=id,name,status,trainer_id,pubg_name,pubg_platform";
+    let rows = [];
+    try {
+      rows = /^\d{1,10}$/.test(raw)
+        ? await sbSelect("students", `${cols}&id=eq.${raw}&limit=1`)
+        : await sbSelect("students", `${cols}&name=eq.${encodeURIComponent(raw)}&order=id.asc`);
+    } catch (e) {
+      console.error("nick_lookup", e?.message);
+      return itx.editReply("명부를 못 읽었어. 잠시 뒤 다시 해줘.");
+    }
+    if (!rows.length) return itx.editReply(`명부에서 "${raw}"을(를) 못 찾았어 — 자동완성 목록에서 골라줘.`);
+    if (rows.length > 1) return itx.editReply(`"${raw}" 이름이 명부에 ${rows.length}명 있어 — 자동완성 목록에서 담당·#번호로 골라줘.`);
+    const row = rows[0];
+    if (!(await nickScopeOk(actor, row)))
+      return itx.editReply(`${row.name}(명부 #${row.id})은 내 담당이나 최근 90일 수업 수강생이 아니야 — 담당 트레이너나 오너가 넣어줘.`);
+    const cur = String(row.pubg_name ?? "").trim();
+    const sameNick = sameIgn(cur, ignIn.ign);
+    if (cur === ignIn.ign && row.pubg_platform === platform)
+      return itx.editReply(`이미 **${cur}** (${platLabel(platform)})로 등록돼 있어 ✅ 바꿀 게 없어.`);
+    // 트레이너 = 빈 칸 채우기 + 같은 닉의 플랫폼·대소문자 정정(명부 플랫폼 기본값이 steam 이라 정정이 필요하다) · 다른 닉으로 교체는 오너만.
+    if (cur && !sameNick && !actor.isOwner)
+      return itx.editReply(`이미 **${cur}** 로 등록돼 있어. 다른 닉으로 바꿔야 하면 오너에게 말해줘 — 트레이너는 빈 칸 채우기와 같은 닉의 플랫폼 정정만 할 수 있어.`);
+    const kind = !cur ? "등록" : (sameNick ? "정정" : "교체");
+    let patched = null;
+    try {
+      patched = await sbPatch("students", `id=eq.${row.id}&${ignGuardFilter(row.pubg_name ?? null)}`, { pubg_name: ignIn.ign, pubg_platform: platform });
+    } catch (e) {
+      console.error("nick_patch", e?.message);
+      return itx.editReply("명부 저장에 실패했어. 운영진에게 알려줘.");
+    }
+    if (!Array.isArray(patched) || !patched.length)
+      return itx.editReply("방금 다른 사람이 먼저 닉네임을 바꿨어 — 자동완성에서 다시 확인해줘.");
+    try {
+      await sbInsert("admin_audit", {
+        actor_id: itx.user.id, actor_name: actor.label || itx.user.globalName || itx.user.username,
+        action: "student.pubg_name", target: `student:${row.id}`,
+        detail: { from: cur || null, from_platform: row.pubg_platform || null, to: ignIn.ign, platform, via: "/닉네임등록" },
+      });
+    } catch (e) { console.error("nick_audit", e?.message); }
+    console.log(`[nick] student#${row.id} pubg_name ${kind} (${actor.isOwner ? "owner" : `staff#${actor.staffId}`})`);
+    return itx.editReply(`✅ ${row.name}(명부 #${row.id}) 배그 닉네임 ${kind} — **${ignIn.ign}** (${platLabel(platform)})`
+      + (cur ? `\n↳ 이전 값: ${cur} (${platLabel(row.pubg_platform)})` : ""));
   });
 
   client.on("interactionCreate", async (itx) => {
@@ -2893,6 +3039,11 @@ if (process.env.DISCORD_TOKEN) {
     const rawChannel = itx.options.getString("채널");
     const pay_channel = PAY_CHANNELS.includes(rawChannel) ? rawChannel : "transfer";
     if (!name) return itx.reply({ content: "학생 이름을 입력해줘.", ephemeral: true });
+    // §28 신고 닉네임 필수 — 형식만 본다(영문·숫자·-·_). 명부 대조는 승인 카드에서 · 빈칸 채움은 승인 뒤 오너 버튼으로만.
+    const ignIn = parseIgnInput(itx.options.getString("배그닉네임"));
+    if (ignIn.error)
+      return itx.reply({ content: "배그 닉네임을 넣어줘 — 영문·숫자·-·_ 로 된 인게임 닉(공백·한글 없이). 명부에 있으면 자동완성에 떠.", ephemeral: true });
+    const pubg_name = ignIn.ign;
     if (kind === "판수" && !games)
       return itx.reply({ content: "구분이 판수면 판수도 입력해줘(예: 33).", ephemeral: true });
     // 세트(v1.1): 금액이 상품을 결정하고 판수는 정가표에서 온다 — 서버 §18d payreq_apply 의 표와 같아야 한다.
@@ -2928,7 +3079,7 @@ if (process.env.DISCORD_TOKEN) {
     try {
       req = await sbInsert("payment_requests", {
         student_name: name, trainer_id, trainer_name: trainer, kind, amount, games,
-        paid_on, memo, pay_channel, requested_by: itx.user.id,
+        paid_on, memo, pay_channel, requested_by: itx.user.id, pubg_name,
       });
     } catch (e) {
       console.error("payreq_insert", e?.message);
@@ -2943,14 +3094,14 @@ if (process.env.DISCORD_TOKEN) {
           new ButtonBuilder().setCustomId(`payreq_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
         );
         await owner.send({
-          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}**\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}\n· 채널: ${channelLine(pay_channel, amount)}${memo ? `\n· 메모: ${memo}` : ""}${dupLine ? `\n${dupLine}` : ""}`,
+          content: `💰 **결제 신청 #${req.id}** (${trainer})\n· 학생: **${name}** · 닉 ${pubg_name}\n· 구분: ${kind}${games ? ` · ${games}판` : ""}\n· 금액: **${amount.toLocaleString("ko-KR")}원**\n· 입금일: ${paid_on}\n· 채널: ${channelLine(pay_channel, amount)}${memo ? `\n· 메모: ${memo}` : ""}${dupLine ? `\n${dupLine}` : ""}`,
           components: [row],
         });
         dmOk = true;
       } catch (e) { console.error("payreq_dm", e?.message); }
     }
     await itx.editReply(
-      `✅ 결제 신청 접수 **#${req.id}** — ${name} · ${kind}${games ? ` ${games}판` : ""} · ${amount.toLocaleString("ko-KR")}원 · ${CHANNEL_LABEL[pay_channel]} · 입금일 ${paid_on}\n`
+      `✅ 결제 신청 접수 **#${req.id}** — ${name}(${pubg_name}) · ${kind}${games ? ` ${games}판` : ""} · ${amount.toLocaleString("ko-KR")}원 · ${CHANNEL_LABEL[pay_channel]} · 입금일 ${paid_on}\n`
       + (dmOk ? "오너 승인 대기 중이야." : "⚠️ 오너 DM 발송 실패 — 신청은 저장됐어(pending). 오너에게 직접 알려줘.")
       + (dupLine ? `\n${dupLine} — 중복이면 오너에게 반려를 요청해줘.` : ""));
   });
@@ -2972,23 +3123,32 @@ if (process.env.DISCORD_TOKEN) {
     const n = encodeURIComponent(String(name || "").trim());
     if (!n) return [];
     let rows = [];
-    try { rows = await sbSelect("students", `select=id,name,status,trainer_id,discord_id&name=eq.${n}&order=id.asc`); }
+    try { rows = await sbSelect("students", `select=id,name,status,trainer_id,discord_id,pubg_name,pubg_platform&name=eq.${n}&order=id.asc`); }
     catch (e) { console.error("payreq_cand", e?.message); }
     try {
       const al = await sbSelect("student_aliases", `select=student_id&alias=eq.${n}`);
       const extra = [...new Set(al.map((a) => a.student_id))].filter((id) => !rows.some((r) => r.id === id));
       if (extra.length)
-        rows = rows.concat(await sbSelect("students", `select=id,name,status,trainer_id,discord_id&id=in.(${extra.join(",")})&order=id.asc`));
+        rows = rows.concat(await sbSelect("students", `select=id,name,status,trainer_id,discord_id,pubg_name,pubg_platform&id=in.(${extra.join(",")})&order=id.asc`));
     } catch (e) { console.error("payreq_cand_alias", e?.message); }   // 별칭 테이블 미생성이어도 이름 후보는 살린다
     return rows;
   }
   async function payreqStudentById(id) {
     if (!Number.isInteger(id) || id <= 0) return null;
-    try { return (await sbSelect("students", `select=id,name,status,trainer_id,discord_id&id=eq.${id}&limit=1`))[0] || null; }
+    try { return (await sbSelect("students", `select=id,name,status,trainer_id,discord_id,pubg_name,pubg_platform&id=eq.${id}&limit=1`))[0] || null; }
     catch (e) { console.error("payreq_student", e?.message); return null; }
   }
   // 후보 상세 — 담당(staff) · 상태 · 디코 연결(students.discord_id) · 최근 수업일(lesson_sessions) · 잔여 판수(§23 portal_remaining_games · 실패 시 ?)
-  async function payreqDescribe(rows) {
+  // §28 신고 닉 ↔ 명부 닉(승인 카드 한 줄) — ★ 일치 · 빈칸이면 승인 뒤 채우기 버튼 · 다르면 경고(명부는 바꾸지 않는다)
+  function payreqNickNote(reported, roster) {
+    switch (compareIgn(reported, roster)) {
+      case "match": return ` · 닉 ${roster} ★신고 닉 일치`;
+      case "fill":  return ` · 닉 없음(신고 닉 **${String(reported).trim()}** — 승인 뒤 「명부 닉네임 채우기」로 넣을 수 있어)`;
+      case "diff":  return ` · ⚠️ 닉 ${roster} ≠ 신고 닉 ${String(reported).trim()}`;
+      default:      return roster ? ` · 닉 ${roster}` : " · 닉 없음";
+    }
+  }
+  async function payreqDescribe(rows, q) {
     const staff = await staffNameMap();
     const out = [];
     for (const r of rows) {
@@ -2999,7 +3159,8 @@ if (process.env.DISCORD_TOKEN) {
       out.push({
         ...r, last, remain, trainer,
         line: `**${r.name}** · 명부 #${r.id} · 담당 ${trainer} · ${PAYREQ_STATUS_KO[r.status] || r.status}`
-          + ` · 디코 ${r.discord_id ? "연결됨" : "미연결"} · 최근 수업 ${last} · 잔여 ${remain}판`,
+          + ` · 디코 ${r.discord_id ? "연결됨" : "미연결"} · 최근 수업 ${last} · 잔여 ${remain}판`
+          + payreqNickNote(q?.pubg_name, r.pubg_name),
       });
     }
     return out;
@@ -3024,7 +3185,7 @@ if (process.env.DISCORD_TOKEN) {
         components: [payreqButtons(reqId, null)],
       });
     }
-    const det = await payreqDescribe(cands);
+    const det = await payreqDescribe(cands, q);
     if (det.length === 1) {
       return itx.update({
         content: base + PAYREQ_MARK + `\n${det[0].line}` + tail + `\n맞으면 「이 대상으로 승인」 — 승인과 함께 명부 #${det[0].id} 로 확정돼. 다른 사람이면 「대상 변경」.`,
@@ -3034,7 +3195,7 @@ if (process.env.DISCORD_TOKEN) {
     const menu = new StringSelectMenuBuilder().setCustomId(`payreq_sel:${reqId}`).setPlaceholder("대상 선택 필요 — 명부 행을 고르세요")
       .addOptions(det.slice(0, 25).map((d) => ({
         label: `${d.name} · #${d.id} · ${PAYREQ_STATUS_KO[d.status] || d.status}`.slice(0, 100),
-        description: `담당 ${d.trainer} · 디코 ${d.discord_id ? "연결" : "미연결"} · 최근 ${d.last} · 잔여 ${d.remain}판`.slice(0, 100),
+        description: `담당 ${d.trainer} · 닉 ${d.pubg_name || "없음"} · 최근 ${d.last} · 잔여 ${d.remain}판`.slice(0, 100),
         value: String(d.id),
       })));
     return itx.update({
@@ -3136,15 +3297,28 @@ if (process.env.DISCORD_TOKEN) {
         + ` | ${CHANNEL_LABEL[ch] || ch}`
         + (showFee ? ` | 수수료 ${won(feeFor(ch, q.amount))} | 순액 ${won(netFor(ch, q.amount))}` : "")
         + (q.memo ? ` | ${q.memo}` : "");
+      // §28 — 승인은 결제만 확정한다. 신고 닉 ↔ 명부 닉은 보여 주기만 하고, 명부가 비어 있을 때 채우기는
+      //   아래 「명부 닉네임 채우기」 버튼(오너가 누를 때만)으로 뗐다 — §28 설계의 「옵션」을 건별 선택으로 둔다.
+      const nk = compareIgn(q.pubg_name, target.pubg_name);
+      const nickNote = nk === "fill"
+        ? `\n🎮 명부 닉네임 비어 있음 — 신고 닉 **${String(q.pubg_name).trim()}** 로 채우려면 아래 버튼(선택 · 플랫폼은 명부값 ${platLabel(target.pubg_platform)} 그대로)`
+        : (nk === "diff"
+            ? `\n⚠️ 신고 닉 ${String(q.pubg_name).trim()} ≠ 명부 닉 ${target.pubg_name} — 명부는 그대로야(바꾸려면 오너가 /닉네임등록)`
+            : "");
+      const nickRows = nk === "fill"
+        ? [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`payreqnick:${reqId}`).setLabel("🎮 명부 닉네임 채우기").setStyle(ButtonStyle.Secondary))]
+        : [];
       await itx.update({
         content:
           `✅ **#${reqId} 승인** — ${q.student_name} · ${won(q.amount)}원 (${q.kind}${q.games ? ` ${q.games}판` : ""})`
           + ` · 명부 #${target.id} ${target.name}${target.name !== q.student_name ? `(신청명 ${q.student_name})` : ""}`
           + `\n· 채널: ${channelLine(ch, q.amount)}`
           + ledgerNote
+          + nickNote
           + `\n📋 결제_원장 기입 행(복붙):\n\`${ledger}\``
           + `\n⚠️ 기입 전 원장 ${Number(String(q.paid_on).slice(5, 7))}월 구간 중복키(입금일|이름|금액) 확인 · 판수 결제면 레슨로그 결제금액·판수도 갱신.`,
-        components: [],
+        components: nickRows,
       });
     } else {
       await itx.update({ content: `❌ **#${reqId} 반려** — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원`, components: [] });
@@ -3156,6 +3330,48 @@ if (process.env.DISCORD_TOKEN) {
         ? `✅ 결제 신청 #${reqId} 승인 — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원 (${q.kind}${q.games ? ` ${q.games}판` : ""})`
         : `❌ 결제 신청 #${reqId} 반려 — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원. 내용 확인 후 다시 신청해줘.`);
     } catch (e) { console.error("payreq_notify", e?.message); }
+  });
+
+  // §28 — 승인된 결제 신청의 신고 닉으로 명부 빈칸 채우기(오너 버튼 · 빈칸만 · 덮어쓰기 없음 · admin_audit 기록).
+  //   승인 핸들러와 뗀 이유: 결제 승인에 명부 쓰기를 묶지 않는다 — 오너가 카드에서 보고 누를 때만 쓴다.
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isButton()) return;
+    const m = String(itx.customId || "").match(/^payreqnick:(\d+)$/);
+    if (!m) return;
+    if (!isPayreqOwner(itx)) return itx.reply({ content: "오너 전용 버튼이야.", ephemeral: true });
+    const reqId = Number(m[1]);
+    const close = (line) => itx.update({ content: `${itx.message?.content || ""}\n${line}`.slice(0, 2000), components: [] });
+    let q = null, st = null;
+    try {
+      q = (await sbSelect("payment_requests", `select=id,status,student_id,pubg_name&id=eq.${reqId}&limit=1`))[0] || null;
+      if (q?.student_id)
+        st = (await sbSelect("students", `select=id,pubg_name,pubg_platform&id=eq.${q.student_id}&limit=1`))[0] || null;
+    } catch (e) {
+      console.error("payreq_nick_load", e?.message);
+      return itx.reply({ content: "DB 를 못 읽었어. 잠시 뒤 다시 눌러줘.", ephemeral: true });
+    }
+    if (!q || q.status !== "approved" || !st) return close("· 명부 닉네임 채우기 안 함 — 승인 상태·명부 연결을 확인하지 못했어");
+    const nk = compareIgn(q.pubg_name, st.pubg_name);
+    if (nk !== "fill")
+      return close(nk === "match" ? "· 명부 닉네임은 이미 신고 닉과 같아 ✅"
+        : (nk === "none" ? "· 신고 닉이 없어서 채울 값이 없어" : "· 명부 닉네임은 그 사이 다른 값으로 채워졌어 — 그대로 뒀어"));
+    const nick = String(q.pubg_name).trim();
+    let f = null;
+    try { f = await sbPatch("students", `id=eq.${st.id}&${ignGuardFilter(st.pubg_name ?? null)}`, { pubg_name: nick }); }
+    catch (e) {
+      console.error("payreq_nick_fill", e?.message);
+      return itx.reply({ content: "명부 저장에 실패했어. /닉네임등록 으로 넣어줘.", ephemeral: true });
+    }
+    if (!Array.isArray(f) || !f.length) return close("· 명부 닉네임은 그 사이 누가 먼저 채웠어 — 명부값 유지");
+    try {
+      await sbInsert("admin_audit", {
+        actor_id: itx.user.id, actor_name: itx.user.globalName || itx.user.username,
+        action: "student.pubg_name", target: `student:${st.id}`,
+        detail: { from: null, to: nick, platform: st.pubg_platform || null, via: `payreq#${reqId}` },
+      });
+    } catch (e) { console.error("payreq_nick_audit", e?.message); }
+    console.log(`[nick] student#${st.id} pubg_name 등록 (payreq#${reqId} · owner)`);
+    return close(`🎮 명부 닉네임 채움 ✅ **${nick}** — 플랫폼은 명부값 ${platLabel(st.pubg_platform)} 그대로(다르면 /닉네임등록)`);
   });
 
   // ── 승급 DM 액션 버튼 (트레이너 DM · 관제탑 8/18 지시 2) ───────────────────
@@ -4853,7 +5069,7 @@ app.post("/api/apply", async (req, res) => {
         { name: "플레이 시간", value: clip(b.playtime, 80), inline: true },
         { name: "집중 교정", value: clip(b.focus, 100), inline: false },
         { name: "추천 트레이너", value: clip(b.trainer, 30) || "—", inline: true },
-        { name: "성별/생년", value: `${clip(b.gender, 10)} / ${clip(b.birth, 10) || "—"}`, inline: true },
+        { name: "성별", value: clip(b.gender, 10) || "—", inline: true },   // 생년월일 칸 제거(오너 §28 판정 2026-09-25 — 받지 않는다)
         { name: "📞 연락처", value: clip(b.phone, 20), inline: true },
         { name: "💬 디스코드", value: clip(b.discord, 40), inline: true },
         { name: "🎟️ 할인코드", value: discountText, inline: true },
@@ -7258,6 +7474,24 @@ const REQUIRED_SCHEMA = {
   trainer_slots: ["id","trainer_id","slot_start","lesson_type","capacity","status","created_at"],
   slot_bookings: ["id","slot_id","student_id","games_held","duration_min","status",
                   "booked_at","cancelled_at","span_head_id"],
+  // §29 수업 복기 11표(2026-09-25 오너 운영 실행 · 실DB 지문 9항 = 정본 해시 일치 확인). 읽고 쓰는 코드는 PR-1(review-api.cjs)부터지만
+  // 3곳 동기(정본 SQL §29 · 이 목록 · 실DB) 규칙대로 먼저 올린다 — 부팅 [schema] OK 줄이 notify pgrst 뒤 PostgREST 가
+  // 새 표·컬럼을 보는지까지 확인해 준다. 컬럼 목록은 docs/lesson-review-server-design.md §6 과 글자 단위로 같다.
+  review_tags:          ["slug","label","ord","active"],
+  lesson_reviews:       ["id","student_id","anchor_kind","lesson_session_id","course_session_id","course_id","author_role",
+                         "author_staff_id","recipient_trainer_id","source","status","title","body","src_file_name",
+                         "src_guild","src_channel","src_msg","consent_public_at","created_at","updated_at","published_at","hidden_at",
+                         "visibility","visibility_changed_at"],
+  review_games:         ["id","review_id","ord","seq_label","map","map_raw"],
+  review_phases:        ["id","game_id","ord","phase_from","phase_to","phase_to_end","header_raw","lines","tags","suggested_tags"],
+  review_images:        ["id","review_id","phase_id","ord","original_path","display_path","thumb_path","width","height",
+                         "bytes","sha256","uploaded_by_role","created_at"],
+  review_annotations:   ["id","image_id","author_kind","author_id","shapes","version","updated_at"],
+  review_feedback:      ["id","review_id","trainer_id","kind","phase_id","line_ord","verdict","body","due_booking_id","due_at","created_at","updated_at"],
+  review_purge_log:     ["id","ran_at","dry_run","review_id","images","bytes","purged_at"],
+  review_reads:         ["review_id","reader_kind","reader_id","read_at"],
+  review_reactions:     ["review_id","phase_id","reactor_kind","reactor_id","emoji","created_at"],
+  feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
 };
 
 // ── 선택 컬럼 (warn 레벨) ────────────────────────────────────────────────────
@@ -7317,7 +7551,9 @@ const SCHEMA_OPTIONAL = {
 // (INSERT가 PGRST204로 터질 때까지 모른다). 나머지 컬럼과 같은 등급으로 등재한다.
 (process.env.BOT_PAYREQ === "1" ? REQUIRED_SCHEMA : SCHEMA_OPTIONAL).payment_requests =
   ["id","status","student_name","student_id","trainer_id","trainer_name","kind",
-   "amount","games","paid_on","memo","pay_channel","requested_by","decided_by","decided_at","created_at"];
+   "amount","games","paid_on","memo","pay_channel","requested_by","decided_by","decided_at","created_at",
+   // §28 신고 닉네임 — 운영에 이미 있음(2026-09-25 실측) · 정본·이 목록 누락분을 동기. /결제신청 이 쓰는 건 닉네임 확보 PR.
+   "pubg_name"];
 // §18b 역참조(2026-09-17 · 관제탑 지시 2·4) — 승인 큐 → 본표(payments·lesson_enrollments) 연결 컬럼.
 // 없어도 감시 크론(runPayreqUnreflected)이 memo 표식·자연키로 판정하므로 선택 등급이다(부팅 warn 만).
 // DDL 실행 후 채워지면 판정 1순위가 되고, #13·#15 같은 "금액이 다른 대응 행"도 연결로 해소된다.

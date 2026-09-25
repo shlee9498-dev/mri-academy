@@ -1804,3 +1804,357 @@ create unique index if not exists uq_slot_bookings_active
 --   실측 행 상태(2026-09-24): 59행 · published 0 · rejected 0 · 공지문(📢) 11 · review_msg null 59 · src_guild 1 · src_channel 11.
 --   이관 판정(지휘탑 통합 전 초안): 홍보용 테이블 유지 시 이 블록을 create table if not exists 로 승격 · 폐지 시 REQUIRED 항목과
 --   수집·공개 경로를 함께 제거. 어느 쪽이든 오너 결정 전에는 손대지 않는다.
+
+-- ============================================================
+-- §28  payment_requests.pubg_name — /결제신청 신고 닉네임 (2026-09-24 설계 · 오너 「§28 판정 그대로」 2026-09-25)
+--      ✅ 실행 확인 2026-09-25 (실DB 실측 06:5x UTC: text · nullable · 코멘트 일치 · 채워진 행 0/28 · 오너 실행분 — 실행 시각 미상).
+--      정본·REQUIRED_SCHEMA 에 빠져 있던 것을 이번에 올린다(3곳 동기). /결제신청 이 이 칸에 쓰기 시작하는 것은 닉네임 확보 PR.
+alter table public.payment_requests add column if not exists pubg_name text;
+comment on column public.payment_requests.pubg_name is '신고 시 트레이너가 입력한 배그 닉네임 — 승인 카드 대조용';
+-- 실행 후 필수:
+-- notify pgrst, 'reload schema';
+
+-- ============================================================
+-- §29  수업 복기(lesson reviews) — 정본 mri-student-app/docs/lesson-review-design.md v2.7(#25 · §14b 34~40)
+--      ✅ 실행 완료 2026-09-25 (오너 · 운영 SQL Editor 블록별 · 07:0x UTC 전후). VA = 11 · true · 0 · 0.
+--      실DB 지문(07:1x UTC) 9항 — 컬럼 101 · 제약 76 · 인덱스 33 · 트리거 2 · 함수 4 · RLS 11 · 태그 12 · 버킷 1 · 정책 0 —
+--      이 파일 본문을 로컬 PostgreSQL 16 에 돌린 결과와 해시 일치(collate "C" 정렬 · 트리거 정의 md5 도 PG17 = 16).
+--      실행 원문(블록 0 사전 조회 · V1~V9 · VA · R)은 docs/lesson-review-server-design.md §2 — 이 절은 그 본문 블록 1~10 이다.
+--      멱등: create … if not exists · create or replace · drop trigger if exists → create · 버킷 upsert. 기존 표 변경 0.
+-- ── 블록 1 · 최종 · 태그 사전 (v2.5 §6.2 채택 12개 · slug 고정 · label 은 사전 UPDATE 로만 바꾼다) ──
+create table if not exists public.review_tags (
+  slug   text primary key,
+  label  text not null,
+  ord    integer not null default 0,
+  active boolean not null default true
+);
+alter table public.review_tags enable row level security;
+insert into public.review_tags (slug, label, ord) values
+  ('vision',      '시야·정보',  1),
+  ('angle',       '포탑각',     2),
+  ('position',    '포지션',     3),
+  ('route',       '동선·진행',  4),
+  ('buildup',     '빌드업',     5),
+  ('farm_tempo',  '파밍·템포',  6),
+  ('smoke_throw', '연막·투척',  7),
+  ('vehicle',     '차량',       8),
+  ('fight',       '교전',       9),
+  ('zone',        '자기장',    10),
+  ('call',        '콜·소통',   11),
+  ('priority',    '우선순위',  12)
+on conflict (slug) do nothing;      -- 재실행이 label 손질을 덮어쓰지 않게 do nothing
+
+-- ── 블록 2 · 최종 · lesson_reviews (복기 1건 = 수업 1회 · 자유 기록 · 디스코드 채널 피드백 1건) ──
+create table if not exists public.lesson_reviews (
+  id                   bigint generated always as identity primary key,
+  student_id           bigint not null references public.students(id) on delete restrict,
+  anchor_kind          text   not null default 'pending'
+                       check (anchor_kind in ('pending','lesson','course','none')),   -- pending = draft 에서 아직 안 고름
+  lesson_session_id    bigint references public.lesson_sessions(id) on delete set null,
+  course_session_id    bigint references public.course_sessions(id) on delete set null,
+  course_id            bigint references public.courses(id)         on delete set null,
+  author_role          text   not null check (author_role in ('student','trainer')),
+  author_staff_id      bigint references public.staff(id),          -- trainer 작성분 필수
+  recipient_trainer_id bigint references public.staff(id),          -- 학생 작성분 publish 시 필수(§2.6)
+  source               text   not null default 'app' check (source in ('app','xlsx','discord','journal_import')),
+  status               text   not null default 'draft' check (status in ('draft','published')),
+  title                text   check (title is null or char_length(title) <= 60),
+  body                 text   check (body  is null or char_length(body)  <= 8000),
+  src_file_name        text,
+  src_guild            text,                                        -- 디스코드 이관 원문 좌표(text snowflake · feedback 와 동일)
+  src_channel          text,
+  src_msg              text,
+  consent_public_at    timestamptz,                                 -- 외부 공개 옵트인(3차 · 자리만)
+  created_at           timestamptz not null default now(),
+  updated_at           timestamptz not null default now(),
+  published_at         timestamptz,
+  hidden_at            timestamptz,                                 -- 수강생 숨김 = published 의 DELETE(트레이너 답도 함께 안 보임 · 되살리기·완전 삭제는 오너 SQL · v2.5)
+  visibility           text   not null default 'private'
+                       check (visibility in ('private','group','students')),   -- v2.7 34 공개 범위 · group 은 값만 허용(1차 앱 미사용 · 서버가 400 · §4) · 이관분은 private 고정 시작
+  visibility_changed_at timestamptz,                                 -- 범위를 바꾼 시각(서버 기록 · v2.7 34)
+  -- 종류에 맞지 않는 앵커는 금지. 종류에 맞는 앵커의 유실(on delete set null → id null)은 허용한다(연결 끊김 상태).
+  constraint chk_lr_anchor check (
+    (anchor_kind = 'lesson'  and course_session_id is null and course_id is null) or
+    (anchor_kind = 'course'  and lesson_session_id is null) or
+    (anchor_kind = 'none'    and lesson_session_id is null and course_session_id is null and course_id is null) or
+    (anchor_kind = 'pending' and status = 'draft'
+       and lesson_session_id is null and course_session_id is null and course_id is null)
+  ),
+  constraint chk_lr_course_pair check (anchor_kind <> 'course' or (course_session_id is null) = (course_id is null)),
+  constraint chk_lr_author check (author_role = 'student' or author_staff_id is not null),
+  constraint chk_lr_published check (
+    status = 'draft' or (
+      published_at is not null and anchor_kind <> 'pending'
+      and (author_role = 'trainer' or recipient_trainer_id is not null)
+    )
+  ),
+  constraint chk_lr_hidden check (hidden_at is null or status = 'published'),   -- draft 는 숨기지 않는다(지운다)
+  constraint uq_lr_src_msg unique (src_msg)                          -- 디스코드 재수집 멱등(feedback.src_msg 와 같은 규칙)
+);
+-- 「수업 연결이 있을 때만」 수강생 1명 × 수업 1회 = 1건 (자유 기록 · 트레이너 작성분은 제한 없음)
+create unique index if not exists uq_lr_student_lesson
+  on public.lesson_reviews (student_id, lesson_session_id)
+  where author_role = 'student' and lesson_session_id is not null;
+create unique index if not exists uq_lr_student_course
+  on public.lesson_reviews (student_id, course_session_id, course_id)
+  where author_role = 'student' and course_session_id is not null;
+create index if not exists idx_lr_student_updated  on public.lesson_reviews (student_id, updated_at desc);
+create index if not exists idx_lr_lesson_session   on public.lesson_reviews (lesson_session_id);
+create index if not exists idx_lr_course           on public.lesson_reviews (course_id, course_session_id);
+create index if not exists idx_lr_recipient        on public.lesson_reviews (recipient_trainer_id, status, published_at desc);
+create index if not exists idx_lr_pending_anchor   on public.lesson_reviews (source, created_at) where anchor_kind = 'pending';
+create index if not exists idx_lr_draft_sweep      on public.lesson_reviews (updated_at) where status = 'draft';   -- §3.7 일일 정리 대상 조회
+create index if not exists idx_lr_feed             on public.lesson_reviews (visibility, published_at desc) where status = 'published' and hidden_at is null;   -- v2.7 34 공유 피드
+alter table public.lesson_reviews enable row level security;
+
+-- ── 블록 3 · 최종 · review_games(판) · review_phases(페이즈) ──
+create table if not exists public.review_games (
+  id        bigint generated always as identity primary key,
+  review_id bigint  not null references public.lesson_reviews(id) on delete cascade,
+  ord       integer not null check (ord >= 1),
+  seq_label text,                                                    -- 헤더 숫자(참고)
+  map       text check (map is null or map in ('에란겔','미라마','태이고','론도','사녹','비켄디','데스턴','파라모','카라킨','기타')),
+  map_raw   text,
+  constraint uq_rg_ord unique (review_id, ord) deferrable initially deferred
+);
+alter table public.review_games enable row level security;
+
+create table if not exists public.review_phases (
+  id             bigint   generated always as identity primary key,
+  game_id        bigint   not null references public.review_games(id) on delete cascade,
+  ord            integer  not null check (ord >= 1),
+  phase_from     smallint not null default 1 check (phase_from between 0 and 9),      -- 0 = 시작 전
+  phase_to       smallint check (phase_to is null or (phase_to between 0 and 9 and phase_to >= phase_from)),
+  phase_to_end   boolean  not null default false,                                     -- 「~끝」「~점자」
+  header_raw     text,
+  lines          jsonb    not null default '[]'::jsonb check (jsonb_typeof(lines) = 'array'),   -- §2.3 [{ord,text,kind,suggested_kind}]
+  tags           text[]   not null default '{}' check (cardinality(tags) <= 3),                 -- 확정 slug · 페이즈당 3개
+  suggested_tags text[]   not null default '{}' check (cardinality(suggested_tags) <= 3),       -- 제안 · 화면·집계에 안 나감
+  constraint uq_rp_ord unique (game_id, ord) deferrable initially deferred
+);
+alter table public.review_phases enable row level security;
+-- 피드 필터(v2.7 36 · 이 세션 추가 · 선택): 맵 칩 · 태그 칩
+create index if not exists idx_rg_map      on public.review_games  (map);
+create index if not exists idx_rp_tags_gin on public.review_phases using gin (tags);
+
+-- ── 블록 4 · 최종 · review_images(이미지) · review_annotations(그림 레이어) ──
+create table if not exists public.review_images (
+  id               bigint  generated always as identity primary key,
+  review_id        bigint  not null references public.lesson_reviews(id) on delete cascade,
+  phase_id         bigint  references public.review_phases(id) on delete cascade,
+  ord              integer not null check (ord >= 1),
+  original_path    text    not null unique,                           -- §3.2 경로
+  display_path     text,                                              -- 파생본 생성 실패 시 null(서버가 재시도)
+  thumb_path       text,
+  width            integer, 
+  height           integer,
+  bytes            integer check (bytes is null or bytes >= 0),
+  sha256           text,                                              -- 같은 파일 재업로드 판별(복기 안)
+  uploaded_by_role text    not null check (uploaded_by_role in ('student','trainer')),
+  created_at       timestamptz not null default now(),
+  constraint uq_ri_ord unique nulls not distinct (review_id, phase_id, ord) deferrable initially deferred
+);
+create index if not exists idx_ri_review  on public.review_images (review_id, created_at);
+create index if not exists idx_ri_created on public.review_images (created_at);
+alter table public.review_images enable row level security;
+
+create table if not exists public.review_annotations (
+  id          bigint  generated always as identity primary key,
+  image_id    bigint  not null references public.review_images(id) on delete cascade,
+  author_kind text    not null check (author_kind in ('student','trainer')),
+  author_id   bigint  not null,                                       -- students.id 또는 staff.id (다형 · FK 없음 · 서버가 대조)
+  shapes      jsonb   not null default '{"v":1,"shapes":[]}'::jsonb check (jsonb_typeof(shapes) = 'object'),
+  version     integer not null default 1 check (version >= 1),
+  updated_at  timestamptz not null default now(),
+  constraint uq_ra_layer unique (image_id, author_kind, author_id)
+);
+alter table public.review_annotations enable row level security;
+
+-- ── 블록 5 · 최종 · review_feedback(트레이너 답) · review_reads(읽음) · review_purge_log(§3.7 정리 기록) ──
+create table if not exists public.review_feedback (
+  id             bigint generated always as identity primary key,
+  review_id      bigint not null references public.lesson_reviews(id) on delete cascade,
+  trainer_id     bigint not null references public.staff(id),
+  kind           text   not null check (kind in ('comment','mark','overall','task')),
+  phase_id       bigint references public.review_phases(id) on delete cascade,
+  line_ord       integer,
+  verdict        text   check (verdict is null or verdict in ('agree','revise')),
+  body           text   check (body is null or char_length(body) <= 4000),
+  due_booking_id bigint references public.slot_bookings(id) on delete set null,   -- 과제 기한 = 그 수강생의 booked 예약(v2.5 · 다음 수업은 아직 세션 행이 없다)
+  due_at         timestamptz,                                                   -- 그 슬롯 시작 시각 스냅샷 — 예약이 취소돼도 기한은 남는다
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now(),
+  constraint chk_rf_shape check (
+    (kind = 'comment' and phase_id is not null and body is not null and line_ord is null and verdict is null) or
+    (kind = 'mark'    and phase_id is not null and line_ord is not null and verdict is not null) or
+    (kind = 'overall' and phase_id is null and body is not null and line_ord is null and verdict is null) or
+    (kind = 'task'    and phase_id is null and body is not null and line_ord is null and verdict is null)
+  ),
+  constraint chk_rf_due check (kind = 'task' or (due_booking_id is null and due_at is null))   -- 기한은 task 에만
+);
+create index if not exists idx_rf_review on public.review_feedback (review_id, created_at);
+alter table public.review_feedback enable row level security;
+
+create table if not exists public.review_reads (
+  review_id   bigint not null references public.lesson_reviews(id) on delete cascade,
+  reader_kind text   not null check (reader_kind in ('student','trainer')),
+  reader_id   bigint not null,
+  read_at     timestamptz not null default now(),
+  primary key (review_id, reader_kind, reader_id)
+);
+alter table public.review_reads enable row level security;
+
+create table if not exists public.review_purge_log (
+  id         bigint  generated always as identity primary key,
+  ran_at     timestamptz not null default now(),
+  dry_run    boolean not null,
+  review_id  bigint  references public.lesson_reviews(id) on delete set null,
+  images     integer not null check (images >= 0),
+  bytes      bigint  not null check (bytes >= 0),
+  purged_at  timestamptz                                             -- delete 모드에서 실제로 지운 시각 · 드라이런은 null
+);
+create index if not exists idx_rpl_ran on public.review_purge_log (ran_at desc);
+alter table public.review_purge_log enable row level security;
+
+-- ── 블록 6 · 최종 · review_reactions (v2.7 37 · 복기 단위 · 사람당 이모지별 1개 = PK · phase_id 는 2차 자리) ──
+create table if not exists public.review_reactions (
+  review_id    bigint not null references public.lesson_reviews(id) on delete cascade,
+  phase_id     bigint references public.review_phases(id) on delete cascade,       -- 1차 null(복기 단위) · 2차 페이즈 단위 자리(PK 밖 · 그때 재설계)
+  reactor_kind text   not null check (reactor_kind in ('student','trainer')),
+  reactor_id   bigint not null,                                                    -- students.id 또는 staff.id (다형 · FK 없음 · 서버가 대조)
+  emoji        text   not null check (emoji in ('👍','🔥','💡','🙌','💪','🎯')),    -- v2.7 §15.5 고정 6개(긍정·공감만)
+  created_at   timestamptz not null default now(),
+  primary key (review_id, reactor_kind, reactor_id, emoji)                         -- 토글 멱등: insert on conflict do nothing / delete
+);
+alter table public.review_reactions enable row level security;
+
+-- ── 블록 7 · 최종 · 함수·트리거 (create or replace · drop trigger if exists → create 로 멱등) ──
+-- (1) 앵커 ↔ 학생 일치 (v2.5 §3.1 ②). 앵커가 없으면 통과. 유실(id null)도 통과.
+create or replace function public.trg_lr_anchor_fn() returns trigger
+language plpgsql as $$
+declare v_sid bigint;
+begin
+  if new.lesson_session_id is not null then
+    select student_id into v_sid from public.lesson_sessions where id = new.lesson_session_id;
+    if v_sid is null then raise exception 'anchor_not_found' using detail = 'lesson_session ' || new.lesson_session_id; end if;
+    if v_sid <> new.student_id then raise exception 'anchor_student_mismatch' using detail = 'lesson_session ' || new.lesson_session_id; end if;
+  end if;
+  if new.course_id is not null then
+    select student_id into v_sid from public.courses where id = new.course_id;
+    if v_sid is null then raise exception 'anchor_not_found' using detail = 'course ' || new.course_id; end if;
+    if v_sid <> new.student_id then raise exception 'anchor_student_mismatch' using detail = 'course ' || new.course_id; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_lr_anchor on public.lesson_reviews;
+create trigger trg_lr_anchor
+  before insert or update of student_id, lesson_session_id, course_session_id, course_id
+  on public.lesson_reviews for each row execute function public.trg_lr_anchor_fn();
+
+-- (2) 태그는 사전에 있는 active slug 만 · 중복 금지 (배열이라 FK 대신 트리거)
+create or replace function public.trg_rp_tags_fn() returns trigger
+language plpgsql as $$
+begin
+  if exists (select 1 from unnest(new.tags) t(slug)
+             where not exists (select 1 from public.review_tags r where r.slug = t.slug and r.active)) then
+    raise exception 'tag_unknown';
+  end if;
+  if (select count(distinct x) from unnest(new.tags) x) <> cardinality(new.tags) then
+    raise exception 'tag_duplicate';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_rp_tags on public.review_phases;
+create trigger trg_rp_tags before insert or update of tags on public.review_phases
+  for each row execute function public.trg_rp_tags_fn();
+
+-- (3) 순서 변경 — 한 트랜잭션(유니크는 deferred). p_kind: game(부모=review) · phase(부모=game) · image(부모=phase) · attachment(부모=review · phase null)
+--     p_ids 밖의 형제 행은 뒤에 이어 붙인다(동시 추가분 보존). 부모 밖 id 가 섞이면 거부.
+create or replace function public.review_set_order(p_kind text, p_parent_id bigint, p_ids bigint[])
+returns integer language plpgsql as $$
+declare i integer; n integer := coalesce(array_length(p_ids, 1), 0);
+begin
+  if p_kind = 'game' then
+    if exists (select 1 from unnest(p_ids) u(id) left join public.review_games g on g.id = u.id where g.review_id is distinct from p_parent_id) then raise exception 'order_ids_mismatch'; end if;
+    for i in 1..n loop update public.review_games set ord = i where id = p_ids[i]; end loop;
+    update public.review_games g set ord = s.rn + n
+      from (select id, row_number() over (order by ord) rn from public.review_games where review_id = p_parent_id and id <> all(p_ids)) s where g.id = s.id;
+  elsif p_kind = 'phase' then
+    if exists (select 1 from unnest(p_ids) u(id) left join public.review_phases p on p.id = u.id where p.game_id is distinct from p_parent_id) then raise exception 'order_ids_mismatch'; end if;
+    for i in 1..n loop update public.review_phases set ord = i where id = p_ids[i]; end loop;
+    update public.review_phases p set ord = s.rn + n
+      from (select id, row_number() over (order by ord) rn from public.review_phases where game_id = p_parent_id and id <> all(p_ids)) s where p.id = s.id;
+  elsif p_kind = 'image' then
+    if exists (select 1 from unnest(p_ids) u(id) left join public.review_images m on m.id = u.id where m.phase_id is distinct from p_parent_id) then raise exception 'order_ids_mismatch'; end if;
+    for i in 1..n loop update public.review_images set ord = i where id = p_ids[i]; end loop;
+    update public.review_images m set ord = s.rn + n
+      from (select id, row_number() over (order by ord) rn from public.review_images where phase_id = p_parent_id and id <> all(p_ids)) s where m.id = s.id;
+  elsif p_kind = 'attachment' then
+    if exists (select 1 from unnest(p_ids) u(id) left join public.review_images m on m.id = u.id where m.review_id is distinct from p_parent_id or m.phase_id is not null) then raise exception 'order_ids_mismatch'; end if;
+    for i in 1..n loop update public.review_images set ord = i where id = p_ids[i]; end loop;
+    update public.review_images m set ord = s.rn + n
+      from (select id, row_number() over (order by ord) rn from public.review_images where review_id = p_parent_id and phase_id is null and id <> all(p_ids)) s where m.id = s.id;
+  else
+    raise exception 'order_kind_invalid';
+  end if;
+  return n;
+end $$;
+
+-- (4) 월 사용량 — 수강생 월 한도(§8.3 · 200장 · 1GB) 검사용. KST 월 기준(봇 kstToday 와 같은 +9h 식).
+create or replace function public.review_month_usage(p_student_id bigint)
+returns table (images bigint, bytes bigint) language sql stable as $$
+  select count(*)::bigint, coalesce(sum(i.bytes), 0)::bigint
+    from public.review_images i join public.lesson_reviews r on r.id = i.review_id
+   where r.student_id = p_student_id
+     and i.uploaded_by_role = 'student'
+     and (i.created_at + interval '9 hours') >= date_trunc('month', now() + interval '9 hours');
+$$;
+
+-- ── 블록 8 · 최종 · feedback_channel_map (3차 디스코드 이관용 매핑표 · 채널 → 수강생 1회 확인 · 표만 먼저) ──
+-- 채널명은 저장하지 않는다(이름 = 수강생 별칭 · 개인정보). 확인은 봇 화면에서 실시간 채널명으로 하고 DB 에는 id 만 남긴다.
+create table if not exists public.feedback_channel_map (
+  src_guild             text   not null,
+  src_channel           text   not null,
+  student_id            bigint references public.students(id) on delete set null,   -- null = 보류(kind=student) 또는 해당 없음(notice·ignore)
+  kind                  text   not null default 'student' check (kind in ('student','notice','ignore')),
+  confirmed_by_staff_id bigint references public.staff(id),
+  confirmed_at          timestamptz,
+  note                  text,
+  created_at            timestamptz not null default now(),
+  primary key (src_guild, src_channel),
+  constraint chk_fcm_confirmed check (confirmed_at is null or confirmed_by_staff_id is not null)
+);
+create index if not exists idx_fcm_student on public.feedback_channel_map (student_id);
+alter table public.feedback_channel_map enable row level security;
+
+-- ── 블록 9 · 최종 · Storage 버킷 (비공개 · 8MB · png/jpeg/webp · 정책 없음 = service_role 만 · upsert 라 멱등) ──
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('lesson-reviews', 'lesson-reviews', false, 8388608, array['image/png','image/jpeg','image/webp'])
+on conflict (id) do update
+   set public = false, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+
+-- ── 블록 10 · 최종 · PostgREST 스키마 캐시 갱신 (모든 블록 뒤 마지막에 1회 · 결과 없음이 정상) ──
+notify pgrst, 'reload schema';
+
+-- D1(feedback 공지 11행 rejected) 은 3차 디스코드 이관 착수 때 따로 실행한다 — 설계 문서 §2.9(이 파일에 넣지 않는다 · 데이터 변경).
+-- M1 월 1회 앵커 점검(읽기 전용 · 매월 1일 · 기대 0행):
+--   -- ── 블록 M1 · 최종 · 월 1회 앵커 점검 (읽기 전용 · 오너 · 매월 1일 · 기대 0행) ──
+--   -- 트리거(블록 7)는 쓰기 시점만 막는다. 그 뒤 lesson_sessions.student_id 정정(#28 류 명부 이동) · 출석 수정 · 세션 삭제로 어긋난 행을 찾는다.
+--   select 'lesson_student_mismatch'    as kind, r.id as review_id, r.student_id, r.lesson_session_id as anchor_id
+--     from public.lesson_reviews r join public.lesson_sessions s on s.id = r.lesson_session_id
+--    where r.anchor_kind = 'lesson' and s.student_id <> r.student_id
+--   union all
+--   select 'course_student_mismatch',          r.id, r.student_id, r.course_id
+--     from public.lesson_reviews r join public.courses c on c.id = r.course_id
+--    where r.anchor_kind = 'course' and c.student_id <> r.student_id
+--   union all
+--   select 'course_session_not_attended',      r.id, r.student_id, r.course_session_id            -- 트리거 미포함 항목(§9 8) — 서버 검사 누락 탐지
+--     from public.lesson_reviews r
+--    where r.anchor_kind = 'course' and r.course_id is not null and r.course_session_id is not null
+--      and not exists (select 1 from public.course_attendance a where a.course_id = r.course_id and a.session_id = r.course_session_id)
+--   union all
+--   select 'anchor_lost',                      r.id, r.student_id, null                           -- 정보성: 앱이 「연결 끊김 · 다시 고르기」 로 보여 준다
+--     from public.lesson_reviews r
+--    where (r.anchor_kind = 'lesson' and r.lesson_session_id is null) or (r.anchor_kind = 'course' and r.course_id is null)
+--   order by 1, 2;
+--   -- 기대 0행. mismatch 두 종류는 조사 대상(명부 정정 이력 대조) · not_attended 는 서버 검사 누락 · anchor_lost 는 건수만 기록
