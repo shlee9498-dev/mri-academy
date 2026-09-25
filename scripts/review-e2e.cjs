@@ -303,6 +303,22 @@ const eq = (a, b, msg) => { assert.deepEqual(a, b, msg); passed++; };
   r = await call("GET", "/sessions", { sess: s2 });
   eq([r.json.sessions[0].reviewDue, r.json.sessions[0].hasReview], [true, false], "s2 오늘 수업 복기 카드");
 
+  // 6-2) /summary reviewDueToday (계약 보강 D · 오너 판정 2026-09-26)
+  const sumOf = async (sess) => (await call("GET", "/summary", { sess })).json;
+  const sum2 = await sumOf(s2);
+  eq(sum2.reviewDueToday, true, "s2 — 오늘 수업 있고 내 복기 없음");
+  const sum1 = await sumOf(s1);
+  eq(sum1.reviewDueToday, false, "s1 — 오늘 수업(1001)에 내 복기가 있다");
+  // 105 = 오늘 수업 0 · 끝난 예약 1 · 복기 0 → 등록 전이라도 카드가 뜬다
+  eq((await sumOf(s5)).reviewDueToday, true, "105 — 끝난 예약(등록 전) 만으로도 true");
+  // 103 = 아직 안 끝난 예약뿐 → false
+  eq((await sumOf(s3)).reviewDueToday, false, "103 — 예약이 아직 안 끝났으면 false");
+  // 오늘 복기를 하나 쓰면 105 의 카드는 사라진다(예약 축은 「오늘 쓴 복기 0」 조건)
+  const r105 = await call("POST", "/reviews", { sess: s5, body: { anchorKind: "none" } });
+  eq(r105.status, 200, "105 자유 복기 생성");
+  eq((await sumOf(s5)).reviewDueToday, false, "105 — 오늘 복기를 쓰면 카드 사라짐");
+  ok(Object.keys(sum1).includes("nextBooking") && Object.keys(sum1).includes("lesson"), "기존 /summary 키 유지");
+
   // 7) 공유 피드 · 공개 상세
   r = await call("GET", "/feed", { sess: s2 });
   eq(r.status, 200, "feed 200");

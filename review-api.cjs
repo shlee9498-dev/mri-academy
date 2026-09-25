@@ -1539,6 +1539,32 @@ module.exports = function mountReviewApi(app, deps) {
     return { items, nextCursor: rows.length > FEED_PAGE ? signCursor(process.env.SESSION_SECRET, last.published_at, last.id) : null };
   }
 
+  // ── /summary 확장(계약 보강 D · 2026-09-26 오너 판정) — 홈 「오늘 수업 복기」 카드 한 개 ──
+  //   reviewDueToday = ① 오늘(KST) 수업(lesson_sessions.played_at) 중 내 복기가 없는 게 있다
+  //                  ∨ ② 오늘 예약이 끝났는데 아직 /수업등록 전이고(호출부가 판정해서 넘긴다),
+  //                       오늘 내가 쓴 복기가 하나도 없다
+  //   ②가 sessions[] 가 아니라 여기 있는 이유: 등록 전 예약은 lesson_sessions 행이 없어 실을 칸이 없다.
+  //   ①·② 모두 숨긴 복기도 「있음」으로 센다 — 이미 쓴 사람을 다시 재촉하지 않는다(sessions[].reviewDue 와 같은 기준).
+  hooks.summaryExtras = async (sub, ctx) => {
+    if (!ready) return {};
+    const today = kstDate(Date.now());
+    const sess = await sbSelect("lesson_sessions", `select=id&student_id=eq.${sub}&played_at=eq.${today}`);
+    let due = false;
+    if (sess.length) {
+      const revs = await sbSelect("lesson_reviews",
+        `select=lesson_session_id&student_id=eq.${sub}&author_role=eq.student&lesson_session_id=in.(${inList(sess.map((x) => x.id))})`);
+      const has = new Set(revs.map((r) => r.lesson_session_id));
+      due = sess.some((x) => !has.has(x.id));
+    }
+    if (!due && ctx && ctx.endedBookingToday) {
+      const dayStart = new Date(`${today}T00:00:00+09:00`).toISOString();
+      const mine = await sbSelect("lesson_reviews",
+        `select=id&student_id=eq.${sub}&author_role=eq.student&created_at=gte.${encodeURIComponent(dayStart)}&limit=1`);
+      due = mine.length === 0;
+    }
+    return { reviewDueToday: due };
+  };
+
   // ── /sessions 확장(student-portal.cjs 가 부른다) — 수업마다 내 복기 유무·상태·안 읽은 답·오늘 복기 카드 ──
   //   reviewDue = 수업일(KST) = 오늘 ∧ 그 수업에 내가 쓴 복기 없음(숨긴 것도 「있음」 — 유니크라 새로 못 만든다)
   hooks.sessionExtras = async (sub, sessionRows) => {
