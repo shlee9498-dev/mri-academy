@@ -10,7 +10,7 @@
 >
 > **v2.5 정렬(2026-09-25 저녁 · 오너 지시 · v2.4 정렬 전달문 대체)**: v2.5 §14 는 §29 와의 차이 33건 중 대부분을 §29 쪽으로 맞췄고, 「경비 반영 필요」 6건 — ① 미발송 draft 이미지 정리 일일 작업 + `review_purge_log` + 목록 `imagePurgeAt`(§3.7) ② 앵커 유실 = `anchorKind` + null id, **추가 키 없음**(§5.5) ③ `hidden_at`: published 의 `DELETE` 는 숨김(§4 · §5.1) ④ `review_feedback` 과제 기한 `due_booking_id` + `due_at` · `due_invalid`(§2 · §5.2) ⑤ 권한 없음 = 404 하나 ⑥ 나머지 v2.5 채택분 — 을 이 판에 넣었다.
 > 오너 답(9/25): `sharp` **승인** · `exceljs` **1차 제외**(서버 재파싱 없음) · §28/§29 번호 = 이 세션 판단(§9 4 · STATE 대응표) · 트레이너 답 기한 = 값 없이 자리만 · 드라이런 → 실제 삭제 전환 = 2주 드라이런 로그를 오너가 본 뒤 결정.
-> 순서(오너): **Pro 전환(오너) → §29 DDL 전문 제안(이 문서) → 지휘탑 대조 → 오너 실행·검증 → 서버 코드 PR.** 그 전까지 DDL 실행·코드 착수 금지.
+> 순서(오너): **Pro 전환 ✅(9/25) → §29 DDL 블록 제안(§2 · 초안 · 이 판) → 시험 브랜치 실행·값 회신(§2.10) → 지휘탑 대조 → 「최종」 블록 → 오너 운영 실행·검증 → 서버 코드 PR.** 그 전까지 운영 DDL 실행·코드 착수 금지. SQL 블록 형식은 STATE 머리말 규칙(사전 조회·본문·검증 별도 블록 · 본문 멱등 · 「초안」/「최종」 제목).
 >
 > 원칙: DDL 은 오너가 SQL Editor 에서 단독 실행하고 마지막에 `notify pgrst`. 코드는 **DDL 실행·검증 뒤에** 배포한다(#331 순서 반복 금지).
 > 실행 시점에 스키마 3곳(`supabase_admin_panel.sql` §29 · `REQUIRED_SCHEMA` · 실DB)을 함께 맞춘다(§6).
@@ -23,7 +23,8 @@
 | 함수·트리거 | 앵커 일치 트리거 1 · 태그 검증 트리거 1 · 순서 변경 RPC 1 · 월 사용량 RPC 1 |
 | Storage | 비공개 버킷 `lesson-reviews` 1 (SQL 로 생성 · 8MB · png/jpeg/webp) |
 | § 번호 | **§29 = 수업 복기(확정 · 이 세션 판단)** · §28 = 닉네임 설계 `payment_requests.pubg_name`(판정 대기 · 미채택이면 결번 유지 — 번호를 당기지 않는다) · §27 = feedback 기록. STATE 에 대응표 1줄 |
-| 실행 순서 | 29a 태그 사전 → 29b 본체 9테이블(정리 기록 표 포함) → 29c 함수·트리거 → 29d 이관 표 → 29e `feedback` 공지 11행 `rejected` → 29f 버킷 → 29g 검증 → `notify pgrst` |
+| 상태 | **Pro 전환 ✅(오너 9/25)** · DDL 블록 제안 = 이 판(§2 · 전부 「초안」) · 로컬 PostgreSQL 16 사전 검증 통과(별도 세션 · 멱등 2회 · 되돌리기·재적용 · 동작 프로브 33/33 · §2.11) · **다음 = 시험 브랜치 실행(§2.10) → 지휘탑 대조 → 「최종」 → 오너 운영 실행** · 코드 착수는 그 뒤 |
+| 실행 순서 | **블록 0 사전 조회 → 본문 1~7**(태그 사전 · `lesson_reviews` · games·phases · images·annotations · feedback·reads·purge_log · 함수·트리거 · 매핑표) **→ V1~V7 → 8 버킷(+V8) → 9 notify → VA** · D1(`feedback` 공지 11행 `rejected`)은 3차 이관 때 따로(§2.9) |
 | env | **제안 1개**: `REVIEW_DRAFT_SWEEP`(Railway · 미설정/`dryrun` = 로그만 · `delete` = 실제 삭제 · §3.7). 선택 2개(`REVIEW_BUCKET` · `REVIEW_SIGN_TTL_SEC`)는 기본값 내장. Vercel 없음 |
 | 새 의존성 | `sharp`(표시본·썸네일) — **승인(오너 9/25)** · `exceljs` — **1차 제외**(서버 재파싱 없음 · 엑셀 가져오기는 서버 밖 · §5.1) |
 | 1차 규모 | DDL 1회(오너) + 서버 Draft PR **3개**(PR-1 텍스트 API · PR-2 이미지·그리기·draft 정리 작업 · PR-3 트레이너 API) + 계약 문서 1개(반장 인계) — §7 |
@@ -43,7 +44,7 @@
 | 7 | 앵커 행 삭제 | ⑤ 복기는 남기고 앵커만 비운다 | `lesson_journals` 는 cascade | 앵커 FK 3개 전부 **`on delete set null`** · CHECK 는 「종류에 맞지 않는 다른 앵커가 없을 것」만 검사해 유실(id null) 상태를 허용 → 앱은 「연결 끊김 · 다시 고르기」 |
 | 8 | 세션당 1건 | 부분 unique(연결 있을 때만) | — | 부분 유니크 인덱스 2개(레슨 · 강의) · `author_role='student'` 한정 |
 | 9 | 순서(`ord`) 유니크 | unique(review_id, ord) 등 | — | 재정렬 중 충돌을 피하려 **`deferrable initially deferred`** + 순서 변경은 RPC `review_set_order` 한 트랜잭션 |
-| 10 | `review_images` 유니크 | unique(phase_id, ord) | — | 본문 첨부(phase null)까지 잡으려 `unique nulls not distinct (review_id, phase_id, ord)` — **PG15+ 필요**(29a 사전 확인) |
+| 10 | `review_images` 유니크 | unique(phase_id, ord) | — | 본문 첨부(phase null)까지 잡으려 `unique nulls not distinct (review_id, phase_id, ord)` — **PG15+ 필요**(블록 1 사전 확인) |
 | 11 | `review_annotations.author_id` | students.id 또는 staff.id | — | 다형이라 FK 없음(문서화) · 서버가 행위자와 대조 |
 | 12 | `published` 조건 | recipient 필수(§2.6) | — | CHECK: published 면 `published_at` · `anchor_kind<>'pending'` · **학생 작성분만** recipient 필수(트레이너 작성·디스코드 이관분은 recipient 없음) |
 | 13 | `updated_at` | — | DB 에 `moddatetime` 없음 · 기존 관례 = 서버가 `updated_at: now` 를 넣는다(`student-portal.cjs` 일기 PUT) | 같은 관례 · 트리거 없음 |
@@ -59,33 +60,80 @@
 | 23 | draft 이미지 정리 | §8.5 ② 일일 작업(오너 채택) · `review_purge_log` · `imagePurgeAt`(§14 33) | — | **§3.7**(KST 04:00 · 90일 · 이미지만 · 드라이런 기본 ON 2주 → 오너가 로그 보고 `REVIEW_DRAFT_SWEEP=delete`) + 표 `review_purge_log` + 목록 `imagePurgeAt` |
 | 24 | 과제 기한 | `due_booking_id` + `due_at`(§2.5 · §14 32) | `slot_bookings` 실재(§23) | `review_feedback.due_session_id` **삭제** → `due_booking_id`(slot_bookings · set null) + `due_at`(슬롯 시작 스냅샷) · 검사 실패 400 `due_invalid`(§5.2) |
 
-## 2. DDL 전문 — §29 (⚠️ 미실행 · 오너가 SQL Editor 에서 단독 실행)
+## 2. DDL 제안 — §29 (블록 형식 · ⚠️ 미실행 · 시험 브랜치 → 지휘탑 대조 → 운영은 「최종」 블록만)
 
-### 2.1 실행 전 확인 (값을 보고 시작)
+> **형식(오너 9/25 · STATE 머리말 규칙)**: 사전 조회 · 본문 · 검증을 **각각 별도 코드블록**으로 낸다. 본문 블록은 **조건부(멱등)** 라 나눠 실행해도, 두 번 실행해도 결과가 같다. SQL Editor 는 블록을 끝까지 실행하고 **마지막 결과만** 보이므로 검증은 블록마다 **한 행짜리 select** 로 따로 둔다(「검증 보고 commit/rollback 선택」 방식 없음). 이 판의 블록은 전부 **「초안」** 이다 — 시험 브랜치 실행 → 지휘탑 대조 뒤 같은 본문을 **「최종」** 으로 다시 내고, 오너는 「최종」만 운영 DB 에 실행한다.
+> 본문 SQL 은 v2.5 정렬본(#344)과 같고, 이 판은 **블록 분할 · 검증 분리 · D1(데이터 변경) 분리 · 로컬 사전 검증**만 더했다. 반영 항목 ①~⑥(v2.5 §14)은 §0 표와 §9 에 대응한다.
+
+### 2.0 블록 목록
+
+| 블록 | 대상 | 한 줄 |
+|---|---|---|
+| **0** | 사전 조회 | 읽기 전용 · 이름 충돌(표·함수·트리거·제약·인덱스) 0 · FK 대상 6개 bigint · 버킷 0 · 무관한 `reviews`(사이트 후기) 확인 |
+| **1** | `review_tags` | 태그 사전 12(v2.5 §6.2) · seed `on conflict do nothing` |
+| **2** | `lesson_reviews` | 본체 · 앵커 4종·발행·숨김 check 5 · `uq_lr_src_msg` · 부분 유니크 2 · 인덱스 6 |
+| **3** | `review_games` · `review_phases` | 판·페이즈 · 순서 유니크 deferred 2 · 태그 배열(3개 상한) |
+| **4** | `review_images` · `review_annotations` | 이미지(`uq_ri_ord` nulls not distinct · 경로 유니크) · 그림 레이어(이미지×작성자 1행) |
+| **5** | `review_feedback` · `review_reads` · `review_purge_log` | 트레이너 답(kind 모양 · 기한은 task 만 · `due_booking_id`→`slot_bookings` set null) · 읽음 PK 3열 · §3.7 정리 기록 |
+| **6** | 함수 4 · 트리거 2 | 앵커↔학생 일치(`trg_lr_anchor`) · 태그 사전 검사(`trg_rp_tags`) · 순서 변경 RPC `review_set_order` · 월 사용량 `review_month_usage` |
+| **7** | `feedback_channel_map` | 3차 디스코드 이관 매핑표 — 표만 먼저(채널명 저장 안 함) |
+| **V1~V7** | 검증 | 블록별 한 행(V6 은 6행) · 기대값 명시 · 함수는 CR 제거 md5 |
+| **8** (+V8) | Storage 버킷 | `lesson-reviews` 비공개 · 8MB · png/jpeg/webp · upsert · 정책 0 |
+| **9** | `notify pgrst` | PostgREST 스키마 캐시 갱신(마지막 1회) |
+| **VA** | 전체 검증 | 테이블 10 · RLS 전부 · 앵커 불일치 거부 프로브(행을 남기지 않음) |
+| **R** | 되돌리기 | 자식→부모 drop · 버킷 비우고 삭제 · 1차 데이터 전에만 |
+| **D1** | `feedback` 공지 11행 `rejected` | **데이터 변경 · 3차 이관 착수 때 따로** — 이번 1차 실행 대상 아님 |
+
+### 2.1 블록 0 — 사전 조회 (초안 · 읽기 전용)
+
+기대값은 **2026-09-25 05:1x UTC 운영 실측**이다. 시험 브랜치에서는 `pg` 가 17.x 이고 나머지는 같아야 한다(시드 방식은 §2.10).
+
 
 ```sql
-select version();                                                   -- PostgreSQL 15 이상이어야 한다(29b 의 nulls not distinct)
-select to_regclass('public.lesson_reviews') as lr,
-       to_regclass('public.review_tags')    as rt,
-       to_regclass('public.feedback_channel_map') as fcm;           -- 기대: 셋 다 null(미생성)
-select count(*) as feedback_rows,
-       count(*) filter (where body like '📢 피드백 채널 이용 안내%') as notice_rows,
-       count(*) filter (where rejected) as rejected_rows
-  from public.feedback;                                             -- 기대: 59 · 11 · 0
-select count(*) from storage.buckets where id = 'lesson-reviews';   -- 기대: 0
+-- ── 블록 0 · 초안 · 사전 조회 (읽기 전용 · 한 행 · 기대값과 하나라도 다르면 멈추고 회신) ──
+select
+  (select version())                                                                    as pg,                 -- 기대: PostgreSQL 17.x (15 이상이면 됨 · nulls not distinct)
+  (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relkind = 'r'
+      and c.relname in ('review_tags','lesson_reviews','review_games','review_phases','review_images',
+                        'review_annotations','review_feedback','review_reads','review_purge_log','feedback_channel_map')) as tables_exist,    -- 기대 0
+  (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and proname in ('trg_lr_anchor_fn','trg_rp_tags_fn','review_set_order','review_month_usage'))               as funcs_exist,     -- 기대 0
+  (select count(*) from pg_trigger where not tgisinternal and tgname in ('trg_lr_anchor','trg_rp_tags'))          as triggers_exist,  -- 기대 0
+  (select count(*) from pg_constraint
+    where conname in ('chk_lr_anchor','chk_lr_course_pair','chk_lr_author','chk_lr_published','chk_lr_hidden','uq_lr_src_msg',
+                      'uq_rg_ord','uq_rp_ord','uq_ri_ord','uq_ra_layer','chk_rf_shape','chk_rf_due','chk_fcm_confirmed'))  as constraints_exist, -- 기대 0
+  (select count(*) from pg_indexes where schemaname = 'public'
+    and indexname in ('uq_lr_student_lesson','uq_lr_student_course','idx_lr_student_updated','idx_lr_lesson_session','idx_lr_course',
+                      'idx_lr_recipient','idx_lr_pending_anchor','idx_lr_draft_sweep','idx_ri_review','idx_ri_created',
+                      'idx_rf_review','idx_rpl_ran','idx_fcm_student'))                                                as indexes_exist,   -- 기대 0
+  (select string_agg(t || ':' || coalesce(c.data_type, '없음'), ' ' order by t)
+     from unnest(array['students','staff','lesson_sessions','courses','course_sessions','slot_bookings']) t
+     left join information_schema.columns c
+       on c.table_schema = 'public' and c.table_name = t and c.column_name = 'id')                                 as fk_targets,      -- 기대: 6개 전부 bigint
+  (select count(*) from information_schema.columns where table_schema = 'public'
+     and ((table_name = 'lesson_sessions' and column_name = 'student_id')
+       or (table_name = 'courses'         and column_name = 'student_id')))                                        as trigger_cols,    -- 기대 2 (블록 6 트리거가 읽는 컬럼)
+  (select count(*) from storage.buckets where id = 'lesson-reviews')                                              as bucket_exists,   -- 기대 0
+  (select to_regclass('public.reviews') is not null)                                                              as unrelated_reviews_table;   -- 기대 true · 사이트 후기 표 · §29 와 무관 · 손대지 않는다
 ```
 
-### 2.2 전문 (멱등 · 위에서 아래로 한 번에 실행 가능)
+### 2.2 본문 블록 1~7 (초안 · 각 블록 멱등 · 위에서 아래로 · 블록마다 따로 실행해도 된다)
+
 
 ```sql
 -- ============================================================
 -- §29  수업 복기(lesson reviews) — 정본 mri-student-app/docs/lesson-review-design.md v2.5(#22) + 디스코드 이관 설계
---      (2026-09-25 · 오너 지시 · ⚠️ 미실행 — 오너 판정 후 실행)
---      순서: 29a 태그 사전 → 29b 본체 → 29c 함수·트리거 → 29d 이관 표 → 29e feedback 공지 → 29f 버킷 → 29g 검증 → notify
---      원칙: RLS 전부 on · service_role 만(포털 API 경유 · auth.uid 없음) · lesson_sessions·students·courses 는 UPDATE 하지 않는다
+--      (2026-09-25 · 오너 지시 · ⚠️ 미실행 — 시험 브랜치 실행 → 지휘탑 대조 → 운영은 「최종」 블록만)
+--      블록: 0 사전 조회 → 1 태그 사전 → 2 lesson_reviews → 3 games·phases → 4 images·annotations
+--            → 5 feedback·reads·purge_log → 6 함수·트리거 → 7 이관 매핑표 → V1~V7 검증 → 8 버킷(+V8) → 9 notify
+--            데이터 블록 D1(feedback 공지 rejected)은 3차 이관 착수 때 따로 실행한다(이번 실행 대상 아님)
+--      원칙: 각 블록 멱등(두 번 실행해도 결과 동일 · 나눠 실행 가능 · 이미 있는 표는 손대지 않는다 → 블록 0 이 전부 0 인 상태에서 시작)
+--            RLS 전부 on · 정책 0 = service_role 만(포털 API 경유 · auth.uid 없음) · lesson_sessions·students·courses 는 UPDATE 하지 않는다
 -- ============================================================
 
--- ── 29a 태그 사전 (v2.5 §6.2 채택 12개 · slug 고정 · label 은 사전 UPDATE 로만 바꾼다) ──
+-- ── 블록 1 · 초안 · 태그 사전 (v2.5 §6.2 채택 12개 · slug 고정 · label 은 사전 UPDATE 로만 바꾼다) ──
 create table if not exists public.review_tags (
   slug   text primary key,
   label  text not null,
@@ -107,9 +155,10 @@ insert into public.review_tags (slug, label, ord) values
   ('call',        '콜·소통',   11),
   ('priority',    '우선순위',  12)
 on conflict (slug) do nothing;      -- 재실행이 label 손질을 덮어쓰지 않게 do nothing
+```
 
--- ── 29b 본체 ──
--- lesson_reviews — 복기 1건 = 수업 1회(또는 자유 기록 · 디스코드 채널 피드백 1건)
+```sql
+-- ── 블록 2 · 초안 · lesson_reviews (복기 1건 = 수업 1회 · 자유 기록 · 디스코드 채널 피드백 1건) ──
 create table if not exists public.lesson_reviews (
   id                   bigint generated always as identity primary key,
   student_id           bigint not null references public.students(id) on delete restrict,
@@ -167,8 +216,10 @@ create index if not exists idx_lr_recipient        on public.lesson_reviews (rec
 create index if not exists idx_lr_pending_anchor   on public.lesson_reviews (source, created_at) where anchor_kind = 'pending';
 create index if not exists idx_lr_draft_sweep      on public.lesson_reviews (updated_at) where status = 'draft';   -- §3.7 일일 정리 대상 조회
 alter table public.lesson_reviews enable row level security;
+```
 
--- review_games — 판
+```sql
+-- ── 블록 3 · 초안 · review_games(판) · review_phases(페이즈) ──
 create table if not exists public.review_games (
   id        bigint generated always as identity primary key,
   review_id bigint  not null references public.lesson_reviews(id) on delete cascade,
@@ -180,7 +231,6 @@ create table if not exists public.review_games (
 );
 alter table public.review_games enable row level security;
 
--- review_phases — 페이즈 (같은 번호 반복 허용 · 순서는 ord)
 create table if not exists public.review_phases (
   id             bigint   generated always as identity primary key,
   game_id        bigint   not null references public.review_games(id) on delete cascade,
@@ -195,8 +245,10 @@ create table if not exists public.review_phases (
   constraint uq_rp_ord unique (game_id, ord) deferrable initially deferred
 );
 alter table public.review_phases enable row level security;
+```
 
--- review_images — 이미지 (페이즈당 0장 이상 · phase_id null = 본문 첨부)
+```sql
+-- ── 블록 4 · 초안 · review_images(이미지) · review_annotations(그림 레이어) ──
 create table if not exists public.review_images (
   id               bigint  generated always as identity primary key,
   review_id        bigint  not null references public.lesson_reviews(id) on delete cascade,
@@ -217,7 +269,6 @@ create index if not exists idx_ri_review  on public.review_images (review_id, cr
 create index if not exists idx_ri_created on public.review_images (created_at);
 alter table public.review_images enable row level security;
 
--- review_annotations — 그림 레이어 (이미지 × 작성자 = 1행 · 좌표 0~1 정규화 · 낙관적 잠금 version)
 create table if not exists public.review_annotations (
   id          bigint  generated always as identity primary key,
   image_id    bigint  not null references public.review_images(id) on delete cascade,
@@ -229,8 +280,10 @@ create table if not exists public.review_annotations (
   constraint uq_ra_layer unique (image_id, author_kind, author_id)
 );
 alter table public.review_annotations enable row level security;
+```
 
--- review_feedback — 트레이너 답 조각 (kind 별 필수 필드)
+```sql
+-- ── 블록 5 · 초안 · review_feedback(트레이너 답) · review_reads(읽음) · review_purge_log(§3.7 정리 기록) ──
 create table if not exists public.review_feedback (
   id             bigint generated always as identity primary key,
   review_id      bigint not null references public.lesson_reviews(id) on delete cascade,
@@ -255,7 +308,15 @@ create table if not exists public.review_feedback (
 create index if not exists idx_rf_review on public.review_feedback (review_id, created_at);
 alter table public.review_feedback enable row level security;
 
--- review_purge_log — §3.7 draft 이미지 정리 기록 (드라이런 2주 동안 오너가 SQL 로 지울 목록을 본다 · 서버 로그에는 건수·바이트만)
+create table if not exists public.review_reads (
+  review_id   bigint not null references public.lesson_reviews(id) on delete cascade,
+  reader_kind text   not null check (reader_kind in ('student','trainer')),
+  reader_id   bigint not null,
+  read_at     timestamptz not null default now(),
+  primary key (review_id, reader_kind, reader_id)
+);
+alter table public.review_reads enable row level security;
+
 create table if not exists public.review_purge_log (
   id         bigint  generated always as identity primary key,
   ran_at     timestamptz not null default now(),
@@ -267,18 +328,10 @@ create table if not exists public.review_purge_log (
 );
 create index if not exists idx_rpl_ran on public.review_purge_log (ran_at desc);
 alter table public.review_purge_log enable row level security;
+```
 
--- review_reads — 읽음 (안 읽음 표시 · 새 피드백 배지)
-create table if not exists public.review_reads (
-  review_id   bigint not null references public.lesson_reviews(id) on delete cascade,
-  reader_kind text   not null check (reader_kind in ('student','trainer')),
-  reader_id   bigint not null,
-  read_at     timestamptz not null default now(),
-  primary key (review_id, reader_kind, reader_id)
-);
-alter table public.review_reads enable row level security;
-
--- ── 29c 함수·트리거 ──
+```sql
+-- ── 블록 6 · 초안 · 함수·트리거 (create or replace · drop trigger if exists → create 로 멱등) ──
 -- (1) 앵커 ↔ 학생 일치 (v2.5 §3.1 ②). 앵커가 없으면 통과. 유실(id null)도 통과.
 create or replace function public.trg_lr_anchor_fn() returns trigger
 language plpgsql as $$
@@ -359,8 +412,10 @@ returns table (images bigint, bytes bigint) language sql stable as $$
      and i.uploaded_by_role = 'student'
      and (i.created_at + interval '9 hours') >= date_trunc('month', now() + interval '9 hours');
 $$;
+```
 
--- ── 29d 디스코드 이관 표 (이 세션 이관 설계 · 채널 → 수강생 1회 확인 매핑) ──
+```sql
+-- ── 블록 7 · 초안 · feedback_channel_map (3차 디스코드 이관용 매핑표 · 채널 → 수강생 1회 확인 · 표만 먼저) ──
 -- 채널명은 저장하지 않는다(이름 = 수강생 별칭 · 개인정보). 확인은 봇 화면에서 실시간 채널명으로 하고 DB 에는 id 만 남긴다.
 create table if not exists public.feedback_channel_map (
   src_guild             text   not null,
@@ -376,73 +431,180 @@ create table if not exists public.feedback_channel_map (
 );
 create index if not exists idx_fcm_student on public.feedback_channel_map (student_id);
 alter table public.feedback_channel_map enable row level security;
+```
 
--- ── 29e feedback 공지 11행 — 데이터 변경(Level 0 · 오너) ──
--- 접두 「📢 피드백 채널 이용 안내」 = 채널마다 붙은 이용 안내 공지. 홍보 월·이관 어느 쪽에서도 수업 피드백이 아니다.
--- 행을 지우지 않고 rejected 만 세운다(재수집 멱등 unique(src_msg) 가 다시 넣지 못하게 행을 남긴다).
-update public.feedback set rejected = true
- where body like '📢 피드백 채널 이용 안내%' and rejected = false;   -- 기대: UPDATE 11
+### 2.3 검증 블록 V1~V7 (초안 · 블록 1~7 실행 뒤 · 값을 그대로 회신)
 
--- ── 29f Storage 버킷 (비공개 · 8MB · png/jpeg/webp · 정책 없음 = service_role 만) ──
+기대값은 **로컬 PostgreSQL 16.13 실측**(§2.11)이며 운영 17.6 과 같아야 한다. 다르면 그 블록만 멈추고 회신.
+
+
+```sql
+-- ── 검증 V1 · 초안 · 블록 1 (한 행) ──
+select (select count(*) from public.review_tags)                                        as total,    -- 기대 12
+       (select count(*) filter (where active) from public.review_tags)                  as active,   -- 기대 12
+       (select string_agg(slug, ',' order by ord) from public.review_tags)              as slugs,    -- 기대 vision,angle,position,route,buildup,farm_tempo,smoke_throw,vehicle,fight,zone,call,priority
+       (select relrowsecurity from pg_class where oid = 'public.review_tags'::regclass) as rls;      -- 기대 true
+```
+
+```sql
+-- ── 검증 V2 · 초안 · 블록 2 (한 행) ──
+select (select count(*) from information_schema.columns
+         where table_schema = 'public' and table_name = 'lesson_reviews')                            as cols,              -- 기대 22
+       (select string_agg(conname, ',' order by conname) from pg_constraint
+         where conrelid = 'public.lesson_reviews'::regclass
+           and (conname like 'chk_lr_%' or conname = 'uq_lr_src_msg'))                               as named_constraints, -- 기대 chk_lr_anchor,chk_lr_author,chk_lr_course_pair,chk_lr_hidden,chk_lr_published,uq_lr_src_msg
+       (select count(*) from pg_constraint
+         where conrelid = 'public.lesson_reviews'::regclass and contype = 'f')                       as fks,               -- 기대 6
+       (select string_agg(indexname, ',' order by indexname) from pg_indexes
+         where schemaname = 'public' and tablename = 'lesson_reviews')                               as indexes,           -- 기대 idx_lr_course,idx_lr_draft_sweep,idx_lr_lesson_session,idx_lr_pending_anchor,idx_lr_recipient,idx_lr_student_updated,lesson_reviews_pkey,uq_lr_src_msg,uq_lr_student_course,uq_lr_student_lesson
+       (select relrowsecurity from pg_class where oid = 'public.lesson_reviews'::regclass)           as rls;               -- 기대 true
+```
+
+```sql
+-- ── 검증 V3 · 초안 · 블록 3 (한 행) ──
+select (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'review_games')  as games_cols,   -- 기대 6
+       (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'review_phases') as phases_cols,  -- 기대 10
+       (select string_agg(conname || ':' || condeferrable::text || ':' || condeferred::text, ',' order by conname)
+          from pg_constraint where conname in ('uq_rg_ord','uq_rp_ord'))                                                  as deferred_uniques, -- 기대 uq_rg_ord:true:true,uq_rp_ord:true:true
+       (select count(*) from pg_constraint
+         where conrelid in ('public.review_games'::regclass,'public.review_phases'::regclass) and contype = 'f')          as fks,          -- 기대 2
+       (select bool_and(relrowsecurity) from pg_class
+         where oid in ('public.review_games'::regclass,'public.review_phases'::regclass))                                 as rls;          -- 기대 true
+```
+
+```sql
+-- ── 검증 V4 · 초안 · 블록 4 (한 행) ──
+select (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'review_images')      as images_cols,   -- 기대 13
+       (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'review_annotations') as ann_cols,      -- 기대 7
+       (select c.condeferrable::text || ':' || c.condeferred::text || ':' || i.indnullsnotdistinct::text
+          from pg_constraint c join pg_index i on i.indexrelid = c.conindid where c.conname = 'uq_ri_ord')                    as uq_ri_ord,     -- 기대 true:true:true (deferrable · deferred · nulls not distinct)
+       (select count(*) from pg_constraint where conrelid = 'public.review_images'::regclass and contype = 'u')               as images_uniques, -- 기대 2 (original_path · uq_ri_ord)
+       (select count(*) from pg_constraint where conname = 'uq_ra_layer')                                                    as uq_ra_layer,   -- 기대 1
+       (select string_agg(indexname, ',' order by indexname) from pg_indexes
+         where schemaname = 'public' and tablename = 'review_images' and indexname like 'idx_%')                              as images_idx,    -- 기대 idx_ri_created,idx_ri_review
+       (select bool_and(relrowsecurity) from pg_class
+         where oid in ('public.review_images'::regclass,'public.review_annotations'::regclass))                              as rls;           -- 기대 true
+```
+
+```sql
+-- ── 검증 V5 · 초안 · 블록 5 (한 행) ──
+select (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'review_feedback')  as feedback_cols, -- 기대 12
+       (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'review_reads')     as reads_cols,    -- 기대 4
+       (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'review_purge_log') as purge_cols,    -- 기대 7
+       (select string_agg(conname, ',' order by conname) from pg_constraint
+         where conrelid = 'public.review_feedback'::regclass and conname like 'chk_rf_%')                                   as rf_checks,     -- 기대 chk_rf_due,chk_rf_shape
+       (select count(*) from pg_constraint where conrelid = 'public.review_feedback'::regclass and contype = 'f')           as rf_fks,        -- 기대 4 (review_id · trainer_id · phase_id · due_booking_id)
+       (select string_agg(a.attname, ',' order by a.attnum) from pg_constraint c
+          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any (c.conkey)
+         where c.conrelid = 'public.review_reads'::regclass and c.contype = 'p')                                            as reads_pk,      -- 기대 review_id,reader_kind,reader_id
+       (select string_agg(indexname, ',' order by indexname) from pg_indexes
+         where schemaname = 'public' and tablename in ('review_feedback','review_purge_log') and indexname like 'idx_%')     as idx,           -- 기대 idx_rf_review,idx_rpl_ran
+       (select bool_and(relrowsecurity) from pg_class where oid in
+         ('public.review_feedback'::regclass,'public.review_reads'::regclass,'public.review_purge_log'::regclass))          as rls;           -- 기대 true
+```
+
+```sql
+-- ── 검증 V6 · 초안 · 블록 6 (6행 · 함수 4 = CR 제거 length·md5 · 트리거 2 = enabled·정의 md5) ──
+select 'fn'  as kind, p.proname as name, length(replace(p.prosrc, E'\r', ''))::text as a, md5(replace(p.prosrc, E'\r', '')) as b
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname in ('trg_lr_anchor_fn','trg_rp_tags_fn','review_set_order','review_month_usage')
+union all
+select 'trg', t.tgname, t.tgenabled::text, md5(pg_get_triggerdef(t.oid))
+  from pg_trigger t where not t.tgisinternal and t.tgname in ('trg_lr_anchor','trg_rp_tags')
+order by 1, 2;
+-- 기대 6행 (함수 4 = 본문 글자 그대로라 버전 무관 · 로컬 PostgreSQL 16.13 실측 · 트리거 정의 md5 는 16 기준이라 17 브랜치에서 재확인):
+--   fn  review_month_usage  319   c32dc6995af18620a8eef6eed56a7660
+--   fn  review_set_order    2313  4014412e66117899cbb993e58a9cb11f
+--   fn  trg_lr_anchor_fn    835   d451aaa4cd64559113597813d758c2f7
+--   fn  trg_rp_tags_fn      363   242e061e600c2ebcfd61a00d51199068
+--   trg trg_lr_anchor       O     283599e3b22724725a5e5c35a7628488
+--   trg trg_rp_tags         O     4816cc60f62013d5cc6aefd731b150d4
+```
+
+```sql
+-- ── 검증 V7 · 초안 · 블록 7 (한 행) ──
+select (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'feedback_channel_map') as cols, -- 기대 8
+       (select string_agg(a.attname, ',' order by a.attnum) from pg_constraint c
+          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any (c.conkey)
+         where c.conrelid = 'public.feedback_channel_map'::regclass and c.contype = 'p')                                       as pk,   -- 기대 src_guild,src_channel
+       (select count(*) from pg_constraint where conname = 'chk_fcm_confirmed')                                                as chk,  -- 기대 1
+       (select count(*) from pg_constraint where conrelid = 'public.feedback_channel_map'::regclass and contype = 'f')         as fks,  -- 기대 2
+       (select count(*) from pg_indexes where indexname = 'idx_fcm_student')                                                   as idx,  -- 기대 1
+       (select relrowsecurity from pg_class where oid = 'public.feedback_channel_map'::regclass)                              as rls;  -- 기대 true
+```
+
+### 2.4 블록 8 — Storage 버킷 (초안) + V8
+
+
+```sql
+-- ── 블록 8 · 초안 · Storage 버킷 (비공개 · 8MB · png/jpeg/webp · 정책 없음 = service_role 만 · upsert 라 멱등) ──
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('lesson-reviews', 'lesson-reviews', false, 8388608, array['image/png','image/jpeg','image/webp'])
 on conflict (id) do update
    set public = false, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+```
 
--- ── 29g 검증 (2.3 참조) ──
+```sql
+-- ── 검증 V8 · 초안 · 블록 8 (한 행) ──
+select id, public, file_size_limit, allowed_mime_types,
+       (select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects') as storage_object_policies
+  from storage.buckets where id = 'lesson-reviews';
+-- 기대: lesson-reviews · false · 8388608 · {image/png,image/jpeg,image/webp} · 0 (정책 없음 = service_role 만 · 실행 전 실측 0 유지)
+```
+
+### 2.5 REQUIRED_SCHEMA 추가 계획 (PR-1 · 코드)
+
+- `server.js` `REQUIRED_SCHEMA` 에 **테이블 10 · 컬럼 목록은 §6** (블록 2~7 과 글자 단위로 같다 — 이 판에서 로컬 DB 컬럼과 대조해 확인했다).
+- 추가 프로브 2(§6): `review_tags` active 12 미만 경고 · 버킷 `lesson-reviews` 없음/`public=true` 경고. 로그 줄 형식은 기존 `[schema] OK …` 와 같다.
+- `review-api.cjs` 는 기동 시 `lesson_reviews` 프로브 실패면 라우트를 503 `portal_unavailable` 로 degrade — DDL 이 늦어도 기존 라우트는 산다.
+- DDL 실행 전에는 코드 착수 금지(#331 순서 반복 금지) — 이 항목은 **운영 실행·검증값 회신 뒤** PR-1 에서 넣는다.
+
+### 2.6 블록 9 — notify (초안 · 마지막 1회)
+
+
+```sql
+-- ── 블록 9 · 초안 · PostgREST 스키마 캐시 갱신 (모든 블록 뒤 마지막에 1회 · 결과 없음이 정상) ──
 notify pgrst, 'reload schema';
 ```
 
-### 2.3 검증 쿼리와 기대값 (실행 직후 · 값을 그대로 회신)
+### 2.7 검증 VA — 전체 (초안 · 블록 1~9 뒤)
+
 
 ```sql
--- ① 테이블 10 · RLS 전부 on
-select c.relname, c.relrowsecurity
-  from pg_class c join pg_namespace n on n.oid = c.relnamespace
- where n.nspname = 'public' and c.relkind = 'r'
-   and c.relname in ('review_tags','lesson_reviews','review_games','review_phases','review_images',
-                     'review_annotations','review_feedback','review_reads','review_purge_log','feedback_channel_map')
- order by 1;                                                        -- 기대: 10행 · relrowsecurity 전부 true
--- ② 태그 사전
-select count(*) filter (where active) as active, count(*) as total from public.review_tags;   -- 기대: 12 · 12
--- ③ 제약·인덱스
-select conname from pg_constraint where conrelid = 'public.lesson_reviews'::regclass and contype in ('c','u') order by 1;
---   기대: chk_lr_anchor · chk_lr_author · chk_lr_course_pair · chk_lr_hidden · chk_lr_published · uq_lr_src_msg (+ 컬럼 check 들)
-select conname from pg_constraint where conrelid = 'public.review_feedback'::regclass and contype in ('c','f') order by 1;
---   기대: chk_rf_due · chk_rf_shape · FK 4개(review_id · trainer_id · phase_id · due_booking_id)
-select indexname from pg_indexes where schemaname = 'public' and tablename = 'lesson_reviews' order by 1;
---   기대: idx_lr_course · idx_lr_draft_sweep · idx_lr_lesson_session · idx_lr_pending_anchor · idx_lr_recipient · idx_lr_student_updated · lesson_reviews_pkey · uq_lr_src_msg · uq_lr_student_course · uq_lr_student_lesson
-select conname, condeferrable, condeferred from pg_constraint
- where conname in ('uq_rg_ord','uq_rp_ord','uq_ri_ord');            -- 기대: 3행 · true · true
--- ④ 함수·트리거
-select proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
- where n.nspname = 'public' and proname in ('trg_lr_anchor_fn','trg_rp_tags_fn','review_set_order','review_month_usage') order by 1;   -- 기대: 4행
-select tgname from pg_trigger where tgrelid in ('public.lesson_reviews'::regclass,'public.review_phases'::regclass) and not tgisinternal order by 1;   -- 기대: trg_lr_anchor · trg_rp_tags
--- ⑤ feedback 공지
-select count(*) filter (where rejected) as rejected, count(*) as total from public.feedback;   -- 기대: 11 · 59
--- ⑥ 버킷
-select id, public, file_size_limit, allowed_mime_types from storage.buckets where id = 'lesson-reviews';   -- 기대: 1행 · false · 8388608 · {image/png,image/jpeg,image/webp}
--- ⑦ 동작 프로브(행을 남기지 않는다) — 앵커 불일치가 거부되는지
+-- ── 검증 VA · 초안 · 전체 (블록 1~9 뒤 · 동작 프로브는 행을 남기지 않는다 · 오류 없이 끝나면 통과) ──
 do $$
-declare v_sid bigint; v_ls bigint;
+declare v_sid bigint; v_ls bigint; v_other bigint;
 begin
-  select id into v_ls from public.lesson_sessions order by id limit 1;
-  select student_id into v_sid from public.lesson_sessions where id = v_ls;
+  select id, student_id into v_ls, v_sid from public.lesson_sessions order by id limit 1;
+  select id into v_other from public.students where id <> v_sid order by id limit 1;
+  if v_ls is null or v_other is null then raise notice 'probe skipped: lesson_sessions 또는 students 부족'; return; end if;
   begin
     insert into public.lesson_reviews (student_id, anchor_kind, lesson_session_id, author_role)
-    values ((select id from public.students where id <> v_sid order by id limit 1), 'lesson', v_ls, 'student');
-    raise exception 'probe_failed: 불일치 insert 가 통과했다';
+    values (v_other, 'lesson', v_ls, 'student');
+    raise exception 'probe_failed: 앵커 불일치 insert 가 통과했다';
   exception when others then
-    if sqlerrm not like 'anchor_student_mismatch%' then raise; end if;   -- 기대 예외
+    if sqlerrm not like 'anchor_student_mismatch%' then raise; end if;   -- 기대 예외 · 행 없음
   end;
   raise notice 'probe ok: anchor_student_mismatch 거부 확인';
 end $$;
+select (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+         where n.nspname = 'public' and c.relkind = 'r'
+           and c.relname in ('review_tags','lesson_reviews','review_games','review_phases','review_images',
+                             'review_annotations','review_feedback','review_reads','review_purge_log','feedback_channel_map')) as tables,    -- 기대 10
+       (select bool_and(c.relrowsecurity) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+         where n.nspname = 'public' and c.relkind = 'r'
+           and c.relname in ('review_tags','lesson_reviews','review_games','review_phases','review_images',
+                             'review_annotations','review_feedback','review_reads','review_purge_log','feedback_channel_map')) as rls_all,   -- 기대 true
+       (select count(*) from public.lesson_reviews)                                                                            as reviews,   -- 기대 0 (프로브가 행을 남기지 않았다)
+       (select count(*) from pg_policies where schemaname = 'public' and tablename like 'review%' or tablename = 'lesson_reviews') as policies; -- 기대 0
 ```
 
-### 2.4 되돌리기 (롤백 없이 · 1차 데이터가 쌓이기 전에만)
+### 2.8 되돌리기 R (초안 · 롤백 없이 · 1차 데이터가 쌓이기 전에만)
+
 
 ```sql
--- 순서: 자식 → 부모. 복기 데이터가 있으면 함께 사라진다 — 실행 전 select count(*) from public.lesson_reviews 가 0 인지 본다.
+-- ── 되돌리기 R · 초안 (롤백 없이 · 1차 데이터가 쌓이기 전에만 · 자식 → 부모 순서) ──
+-- 실행 전: select count(*) from public.lesson_reviews 가 0 인지 본다 — 복기 데이터가 있으면 함께 사라진다.
 drop function if exists public.review_month_usage(bigint);
 drop function if exists public.review_set_order(text, bigint, bigint[]);
 drop table if exists public.review_purge_log, public.review_reads, public.review_feedback, public.review_annotations,
@@ -451,21 +613,80 @@ drop function if exists public.trg_lr_anchor_fn();
 drop function if exists public.trg_rp_tags_fn();
 drop table if exists public.feedback_channel_map;
 drop table if exists public.review_tags;
-update public.feedback set rejected = false where body like '📢 피드백 채널 이용 안내%';   -- 29e 되돌림(11)
-delete from storage.objects where bucket_id = 'lesson-reviews';                         -- 업로드가 있었다면 먼저 비운다
+delete from storage.objects where bucket_id = 'lesson-reviews';   -- 업로드가 있었다면 먼저 비운다
 delete from storage.buckets where id = 'lesson-reviews';
 notify pgrst, 'reload schema';
+-- D1 을 실행했다면 별도: update public.feedback set rejected = false where body like '📢 피드백 채널 이용 안내%';   -- 11
 ```
 
-### 2.5 실행 뒤 3곳 동기 — PR-1 에서 한 번에
-- `supabase_admin_panel.sql` 에 위 전문을 **§29** 로 넣고 머리말을 「✅ 실행 완료 (날짜 · 실측값)」 로 바꾼다.
+### 2.9 데이터 블록 D1 — feedback 공지 11행 (초안 · 3차 이관 착수 때 · 이번 실행 대상 아님)
+
+DDL 실행에 데이터 UPDATE 를 섞지 않으려고 분리했다(오너 형식: 수정 블록은 조건부 · 실행 단위를 작게). 3차 이관(§8) 착수 시 아래 세 블록을 순서대로.
+
+
+```sql
+-- ── 블록 D1 · 초안 · 3차 이관 착수 때 실행 (데이터 변경 · Level 0 · ⚠️ 이번 1차 실행 대상 아님) ──
+-- 사전 조회 (한 행) — 기대: 59 · 11 · 0 (2026-09-25 실측 · 그 사이 피드백이 늘면 첫 값만 달라진다)
+select count(*) as feedback_rows,
+       count(*) filter (where body like '📢 피드백 채널 이용 안내%') as notice_rows,
+       count(*) filter (where rejected)                          as rejected_rows
+  from public.feedback;
+```
+
+```sql
+-- 수정 (멱등 · 접두 「📢 피드백 채널 이용 안내」 = 채널마다 붙은 이용 안내 공지 · 홍보 월·이관 어느 쪽에서도 수업 피드백이 아니다)
+-- 행을 지우지 않고 rejected 만 세운다(재수집 멱등 unique(src_msg) 가 다시 넣지 못하게 행을 남긴다)
+update public.feedback set rejected = true
+ where body like '📢 피드백 채널 이용 안내%' and rejected = false;   -- 기대: UPDATE 11 (두 번째 실행은 0)
+```
+
+```sql
+-- 검증 (한 행) — 기대: rejected 11 · notice_not_rejected 0
+select count(*) filter (where rejected) as rejected,
+       count(*) filter (where body like '📢 피드백 채널 이용 안내%' and not rejected) as notice_not_rejected
+  from public.feedback;
+```
+
+### 2.10 시험 브랜치 실행 절차 · 준비 사항 (오너 9/25 형식)
+
+**실측(2026-09-25)**: 운영 프로젝트의 마이그레이션 이력은 **1건**(`20260819064454 payments_kind_check_expand_19h`)뿐이고 나머지 스키마는 전부 SQL Editor 로 적용돼 이력이 없다. Supabase 브랜치는 기본적으로 **이력을 재생해 만들고 데이터는 복제하지 않는다** → 그대로 만들면 브랜치에 `students`·`staff`·`lesson_sessions`·`courses`·`course_sessions`·`slot_bookings` 가 없어 블록 2·5·6·7 이 FK 대상 부재로 실패한다. 브랜치 목록 API 에는 `with_data` 플래그가 있다(운영 main = false).
+
+| # | 준비 | 누가 | 비고 |
+|---|---|---|---|
+| 1 | 브랜치 생성 시 **「데이터 포함(clone)」** 옵션이 대시보드에 있으면 그것으로 | 오너 | 있으면 시드 불필요 · 블록 0 기대값이 운영과 같다 · D1 까지 브랜치에서 예행 가능 |
+| 2 | 옵션이 없거나 데이터 미포함이면 **시드 = `supabase_admin_panel.sql` 정본 전체 1회 실행**(브랜치 SQL Editor) | 오너 또는 이 세션(MCP) | 로컬 실측: 정본 1회 실행은 오류 18건 — 정본 밖 표 3(`student_snapshots`·`gdcup_apps`·`gdcup_team_brand`) 참조 + 정본 안에서 **정의보다 참조가 앞선 표 2**(`lesson_enrollments` 903행 · `payment_requests` 598행) → **정본을 2회 실행하면 뒤쪽 2개는 해소**(멱등이라 안전) · **§29 FK 대상 6개는 1회로 전부 생성됨** · `feedback` 표는 정본에 없어 D1 은 브랜치에서 생략(3차 대상) |
+| 3 | 브랜치 `project_ref` 회신 | 오너 | 이 세션은 실행 전 `ref ≠ narqnruwjrymkjcarkjd` 를 확인하고 브랜치에만 실행한다 |
+| 4 | 블록 0 → 1~7 → V1~V7 → 8+V8 → 9 → VA 실행 · 값 표로 회신 | 이 세션(MCP `execute_sql`) · 오너 직접 실행도 같은 블록 | 운영 DB 에는 어떤 블록도 실행하지 않는다 |
+| 5 | 지휘탑 대조 → 이 문서 수정(문서만) → **「최종」 블록** 회신 | 지휘탑 → 이 세션 | 본문이 안 바뀌면 제목만 「최종」 |
+| 6 | 운영 실행(오너) → V1~V8·VA 값 회신 → 이 세션 실DB 실측 → PR-1 착수 | 오너 → 이 세션 | Level 0 |
+| 7 | 브랜치 삭제 | 오너(대시보드) | 결과 보고 뒤 |
+
+**env**: 이 DDL 로 새 env 는 없다. 코드 단계(PR-2)의 제안은 §7 그대로 — `REVIEW_DRAFT_SWEEP`(Railway · §3.7 모드 · 기본 dryrun) · 선택 `REVIEW_BUCKET`·`REVIEW_SIGN_TTL_SEC`(Railway · 기본값 있음) · Vercel 변경 없음.
+
+### 2.11 이 세션 사전 검증 (로컬 PostgreSQL 16.13 · 2026-09-25 05:2x UTC)
+
+컨테이너에 PostgreSQL 16 서버 바이너리가 있어 빈 DB 에 정본을 로드하고(위 18건 오류 · `storage.buckets`/`objects`·`feedback` 는 스텁) 블록을 그대로 돌렸다. 운영은 17.6 이라 **함수 본문 md5 는 같고**, 트리거 정의 md5 만 브랜치에서 재확인한다.
+
+| 항목 | 결과 |
+|---|---|
+| 블록 1~7 · 8 · 9 각각 **별도 세션**으로 실행 | 전부 성공 |
+| V1~V8 | 위 기대값과 일치(문서의 기대값이 이 실측값이다) |
+| 2회차 실행(멱등) | 오류 0 · `already exists, skipping` NOTICE 만 · V1~V8 **바이트 단위 동일** |
+| R(되돌리기) → 블록 0 | 표·함수·트리거·제약·인덱스·버킷 전부 0 |
+| 재적용 → V1~V8 | 1회차와 동일 |
+| D1 | 스텁 59행(공지 11) 에 UPDATE 11 → 재실행 UPDATE 0 → 검증 11·0 |
+| 동작 프로브 33건(트랜잭션 안 · rollback) | **33/33 통과** — 앵커 불일치·부재 거부 · course 쌍 · 학생×세션 유니크 · 트레이너 작성분 허용 · publish 조건 · draft 숨김 금지 · 세션 삭제 시 앵커 유실(kind 유지·id null) · `review_set_order` 뒤집기/부모 밖 id/빠진 형제 · 태그 미등록·중복·4개·비활성 · `uq_ri_ord` nulls not distinct · `review_month_usage` 학생분만 · 레이어 유니크 · `chk_rf_shape`/`chk_rf_due` · 읽음 PK · 매핑 check · 복기 삭제 캐스케이드 · purge_log set null |
+| 한계 | Storage 는 스텁(upsert 구문만) · notify 는 로컬 무의미 · 트리거 정의 md5 는 메이저 버전 차이 가능 · `slot_bookings` FK 는 구문만(예약 행 미생성) |
+
+### 2.12 실행 뒤 3곳 동기 — PR-1 에서 한 번에
+- `supabase_admin_panel.sql` 에 블록 1~9 본문을 **§29** 로 넣고 머리말을 「✅ 실행 완료 (날짜 · 실측값)」 로 바꾼다(D1 은 3차에 §29e 로).
 - `server.js` `REQUIRED_SCHEMA` 에 §6 항목을 넣는다(기동 자기점검).
-- 실DB 는 오너 실행분. 검증값(2.3)은 PR 본문 체크리스트로 대조한다.
+- 실DB 는 오너 실행분. 검증값(V1~V8 · VA)은 PR 본문 체크리스트로 대조한다.
 
 ## 3. Storage
 
 ### 3.1 버킷
-`lesson-reviews` · 비공개(`public=false`) · 파일 8MB · MIME png/jpeg/webp · **Storage 정책 없음** — 익명·인증 사용자 접근 경로가 없고 서버(service_role)만 읽고 쓴다. 생성은 29f(SQL Editor). 대시보드 생성과 같은 결과다.
+`lesson-reviews` · 비공개(`public=false`) · 파일 8MB · MIME png/jpeg/webp · **Storage 정책 없음** — 익명·인증 사용자 접근 경로가 없고 서버(service_role)만 읽고 쓴다. 생성은 블록 8(SQL Editor). 대시보드 생성과 같은 결과다.
 
 ### 3.2 경로 규칙
 `students/{student_id}/reviews/{review_id}/{image_id}.{orig|disp|thumb}.{ext}`
@@ -619,7 +840,7 @@ if (!reviewCanRead(actor, r) || (r.hidden_at && !actor.isOwner)) return fail(res
 
 ## 6. REQUIRED_SCHEMA 추가 계획 (기동 자기점검 · PR-1)
 
-`server.js` `REQUIRED_SCHEMA` 에 아래를 넣는다(컬럼 목록은 29b 와 글자 단위로 같다 — 하나라도 빠지면 미실행을 영영 못 잡는다).
+`server.js` `REQUIRED_SCHEMA` 에 아래를 넣는다(컬럼 목록은 블록 2~7 와 글자 단위로 같다 — 하나라도 빠지면 미실행을 영영 못 잡는다).
 ```js
 review_tags:          ["slug","label","ord","active"],
 lesson_reviews:       ["id","student_id","anchor_kind","lesson_session_id","course_session_id","course_id","author_role",
@@ -643,9 +864,9 @@ feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_
 | 순서 | 무엇 | 누가 | 비고 |
 |---|---|---|---|
 | 0 | 이 문서(v2.5 정렬본) Draft PR → 오너 판정 | 이 세션 | 코드 없음 |
-| 1 | **Supabase Pro 전환** | 오너 | 대시보드 · 완료 시점 회신 |
-| 2 | §29 DDL 전문 제안(= §2 · 이 판) → **지휘탑 대조** | 이 세션 → 지휘탑 | 대조 결과에 따라 문서만 수정 |
-| 3 | §29 DDL 실행 + 29g 검증값 회신 + 29f 버킷 | 오너 | Level 0 · 검증은 줄바꿈 무관 방식(함수 md5 는 CR 제거) |
+| 1 | **Supabase Pro 전환** | 오너 | **✅ 완료(오너 9/25)** |
+| 2 | §29 DDL 블록 제안(= §2 · 초안 · 이 판) → **시험 브랜치 실행 · 값 회신(§2.10)** → **지휘탑 대조** → 「최종」 블록 | 이 세션 → 지휘탑 | 브랜치 생성·삭제는 오너 · 대조 결과는 문서만 수정 |
+| 3 | 「최종」 블록 0~9 · VA 운영 실행 + V1~V8·VA 값 회신 | 오너 | Level 0 · 함수 md5 는 CR 제거 |
 | 4 | **PR-1** `review-api.cjs`(수강생 텍스트 API: reviews·games·phases·publish·delete(=숨김 포함)·recipients·read·`/sessions` 확장) + Storage 헬퍼 + `REQUIRED_SCHEMA` §6 + `supabase_admin_panel.sql` §29 정본 편입 | 이 세션 | DDL 검증 뒤 배포 |
 | 5 | **PR-2** 이미지 업로드·파생본(`sharp` 승인됨)·서명 URL·삭제 + 그리기 레이어 PUT(수강생) + **§3.7 draft 정리 일일 작업(드라이런 기본 ON · `review_purge_log` · 목록 `imagePurgeAt`)** | 이 세션 | 배포일부터 드라이런 2주 → 오너가 로그를 본 뒤 전환 시점 결정 → `REVIEW_DRAFT_SWEEP=delete` |
 | 6 | **PR-3** 트레이너 포털(목록·상세·comment/overall·읽음·`canReply`·`replyDueAt` 자리 · task 는 2차지만 `due_invalid` 검사 함수는 여기서) + `docs/trainer-portal-api.md` §8 계약 | 이 세션 | |
@@ -660,9 +881,9 @@ feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_
 ## 8. 디스코드 이관 (3차 · 이 세션 설계 통합)
 
 1. **채널 매핑 1회 확인**: 오너 명령 `/피드백채널연결`(운영 서버 · owner 전용) — 채널 자동완성 + 수강생 자동완성(`이름(닉네임) · 담당 · #id`) → `feedback_channel_map` upsert(`confirmed_by_staff_id`·`confirmed_at`). 이름 정확일치·별칭은 **후보 제안까지만**, 확정은 사람. 공지·잡담 채널은 `kind=notice|ignore`.
-2. **공지 3중 필터**(재수집 시): ① 접두 `📢 피드백 채널 이용 안내` ② 핀 고정 메시지 ③ 같은 본문 해시가 2개 이상 채널에 등장 → 제외. 59행 중 11행이 ①에 해당(29e 로 `rejected` 처리).
+2. **공지 3중 필터**(재수집 시): ① 접두 `📢 피드백 채널 이용 안내` ② 핀 고정 메시지 ③ 같은 본문 해시가 2개 이상 채널에 등장 → 제외. 59행 중 11행이 ①에 해당(D1 로 `rejected` 처리).
 3. **재수집**: `feedback.raw`(48행 · `src_msg` 있음) + 매핑된 채널의 히스토리 → `lesson_reviews(source='discord', author_role='trainer', author_staff_id = staff.name=feedback.trainer, body = 원문(raw), title = 수업일, src_guild/src_channel/src_msg)`. 앵커: `lesson_sessions(student_id, played_at = lesson_date, trainer_id)` 정확히 1건이면 `anchor_kind='lesson'` + published(`published_at` = 메시지 시각) · 아니면 `anchor_kind='pending'` draft 큐(`GET /reviews/pending-anchor`). `src_msg` unique 라 재실행 멱등. 첨부 이미지는 원본 바이트 그대로 Storage(§3.2 · `uploaded_by_role='trainer'`).
-4. 홍보용 `feedback` 테이블·「피드백 월」은 그대로. 이관은 **복사**이고 원본을 바꾸지 않는다(29e 의 rejected 만 예외).
+4. 홍보용 `feedback` 테이블·「피드백 월」은 그대로. 이관은 **복사**이고 원본을 바꾸지 않는다(D1 의 rejected 만 예외).
 5. 드라이런: 실제 insert 전에 매핑·앵커 판정 결과를 표(채널 id · 건수 · 앵커 확정/보류)로 회신 — 채널명은 적지 않는다.
 
 ## 9. 열린 질문 — 답(오너 9/25) · 남은 것
@@ -676,3 +897,4 @@ feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_
 | 5 | 트레이너 답 기한 · 페이즈별 필수 | **오너 결정 대기 · 값 없이 자리만** | 컬럼·제약 없음 · 트레이너 목록 `replyDueAt: null`(§5.2) · 정해지면 서버 상수 1개로 계산(DDL 없음) |
 | 6 | 드라이런 → 실제 삭제 전환 시점 | **2주 드라이런 로그를 오너가 본 뒤 결정** | §3.7 · env `REVIEW_DRAFT_SWEEP=delete` 는 그때 오너가(Level 0) |
 | 7 | 과제 기한 저장 | `due_booking_id` + `due_at`(v2.5 채택) | §2 DDL · §4 `feedbackDueValid` · §5.2 · `due_invalid` |
+| 8 | course 앵커의 (`course_id`, `course_session_id`) 쌍이 실제 출석(`course_attendance`)과 맞는지 | **트리거 미포함**(트리거는 `courses.student_id` 만 대조 · 이 세션 판단) · 서버가 생성·재지정 때 검사 · **지휘탑 대조 시 트리거 포함 여부 판정 요청** | §2 블록 6 · §4 |
