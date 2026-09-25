@@ -1,6 +1,7 @@
 # 수업 복기 서버 설계 — DDL 전문 · Storage · 권한 · API · 자기점검 · 구현 순서 (2026-09-25 · 오너 지시 · 설계만)
 
 > 상태: **제안 · 실행·코드 착수 금지.** 화면·데이터 요구사항의 정본은 `mri-student-app/docs/lesson-review-design.md` **v2.5**(PR #22 · 머지)이다.
+> **⏸ §29 DDL 확정 보류(오너 9/25 저녁)** — 1차 범위에 **「수강생끼리 공유」·「이모지 반응」** 이 추가된다(`lesson_reviews.visibility` private|group|students · 반응 테이블 등). 반장이 **v2.6** 으로 필드 목록을 내고 지휘탑이 모아 전달할 때까지 §2 는 **초안으로만** 두고 **「최종」 블록을 만들지 않는다**(시험 브랜치 실행도 v2.6 반영 뒤 1회). 이관 복기(디스코드 · 엑셀)는 **`visibility = 'private'`** 로 들어간다(§8 · §2.13).
 > 이 문서는 그 요구사항(§2·§3·§8·§10·§12)을 **실DB 기준 이름**으로 DDL·서버 판정·API 계약에 내린 것이고,
 > 이 세션이 앞서 회신한 디스코드 이관 설계(`feedback_channel_map` · 공지 필터 · `feedback` 59행 처리)를 같은 DDL 안에 넣는다.
 > v2.6 이 올라오면 그 기준으로 이 문서를 갱신한다.
@@ -23,7 +24,7 @@
 | 함수·트리거 | 앵커 일치 트리거 1 · 태그 검증 트리거 1 · 순서 변경 RPC 1 · 월 사용량 RPC 1 |
 | Storage | 비공개 버킷 `lesson-reviews` 1 (SQL 로 생성 · 8MB · png/jpeg/webp) |
 | § 번호 | **§29 = 수업 복기(확정 · 이 세션 판단)** · §28 = 닉네임 설계 `payment_requests.pubg_name`(판정 대기 · 미채택이면 결번 유지 — 번호를 당기지 않는다) · §27 = feedback 기록. STATE 에 대응표 1줄 |
-| 상태 | **Pro 전환 ✅(오너 9/25)** · DDL 블록 제안 = 이 판(§2 · 전부 「초안」) · 로컬 PostgreSQL 16 사전 검증 통과(별도 세션 · 멱등 2회 · 되돌리기·재적용 · 동작 프로브 33/33 · §2.11) · **다음 = 시험 브랜치 실행(§2.10) → 지휘탑 대조 → 「최종」 → 오너 운영 실행** · 코드 착수는 그 뒤 |
+| 상태 | **Pro 전환 ✅(오너 9/25)** · DDL 블록 제안 = §2(전부 「초안」 · 로컬 PostgreSQL 16 사전 검증 통과 §2.11) · **⏸ 확정 보류(오너 9/25 저녁): 공유·반응이 1차에 추가 → v2.6 필드 목록(반장 → 지휘탑) 대기 · 「최종」 블록 금지** · 그 뒤 §2 갱신 → 시험 브랜치 1회(§2.10) → 지휘탑 대조 → 「최종」 → 오너 운영 실행 · 코드 착수는 그 뒤 |
 | 실행 순서 | **블록 0 사전 조회 → 본문 1~7**(태그 사전 · `lesson_reviews` · games·phases · images·annotations · feedback·reads·purge_log · 함수·트리거 · 매핑표) **→ V1~V7 → 8 버킷(+V8) → 9 notify → VA** · D1(`feedback` 공지 11행 `rejected`)은 3차 이관 때 따로(§2.9) |
 | env | **제안 1개**: `REVIEW_DRAFT_SWEEP`(Railway · 미설정/`dryrun` = 로그만 · `delete` = 실제 삭제 · §3.7). 선택 2개(`REVIEW_BUCKET` · `REVIEW_SIGN_TTL_SEC`)는 기본값 내장. Vercel 없음 |
 | 새 의존성 | `sharp`(표시본·썸네일) — **승인(오너 9/25)** · `exceljs` — **1차 제외**(서버 재파싱 없음 · 엑셀 가져오기는 서버 밖 · §5.1) |
@@ -61,6 +62,8 @@
 | 24 | 과제 기한 | `due_booking_id` + `due_at`(§2.5 · §14 32) | `slot_bookings` 실재(§23) | `review_feedback.due_session_id` **삭제** → `due_booking_id`(slot_bookings · set null) + `due_at`(슬롯 시작 스냅샷) · 검사 실패 400 `due_invalid`(§5.2) |
 
 ## 2. DDL 제안 — §29 (블록 형식 · ⚠️ 미실행 · 시험 브랜치 → 지휘탑 대조 → 운영은 「최종」 블록만)
+
+> **⏸ 보류(오너 9/25 저녁)**: v2.6(공유·반응 필드) 반영 전까지 아래 블록은 전부 **초안**이며 「최종」으로 재발행하지 않는다. 예정 변경은 §2.13.
 
 > **형식(오너 9/25 · STATE 머리말 규칙)**: 사전 조회 · 본문 · 검증을 **각각 별도 코드블록**으로 낸다. 본문 블록은 **조건부(멱등)** 라 나눠 실행해도, 두 번 실행해도 결과가 같다. SQL Editor 는 블록을 끝까지 실행하고 **마지막 결과만** 보이므로 검증은 블록마다 **한 행짜리 select** 로 따로 둔다(「검증 보고 commit/rollback 선택」 방식 없음). 이 판의 블록은 전부 **「초안」** 이다 — 시험 브랜치 실행 → 지휘탑 대조 뒤 같은 본문을 **「최종」** 으로 다시 내고, 오너는 「최종」만 운영 DB 에 실행한다.
 > 본문 SQL 은 v2.5 정렬본(#344)과 같고, 이 판은 **블록 분할 · 검증 분리 · D1(데이터 변경) 분리 · 로컬 사전 검증**만 더했다. 반영 항목 ①~⑥(v2.5 §14)은 §0 표와 §9 에 대응한다.
@@ -683,6 +686,21 @@ select count(*) filter (where rejected) as rejected,
 - `server.js` `REQUIRED_SCHEMA` 에 §6 항목을 넣는다(기동 자기점검).
 - 실DB 는 오너 실행분. 검증값(V1~V8 · VA)은 PR 본문 체크리스트로 대조한다.
 
+### 2.13 v2.6 예정 — 공유 · 반응 (오너 9/25 저녁 · 필드 목록 대기 · **확정 아님 · DDL 미작성**)
+
+| 항목 | 오너 지시 | 이 문서에서 예상되는 영향(필드 목록이 오면 그때 쓴다) |
+|---|---|---|
+| 공유 | `lesson_reviews.visibility` = `private` \| `group` \| `students` | 블록 2 컬럼 1 + check · 기본값은 `private` 이 안전(이관분 요건과 같다) · §4 권한 판정에 「공유 열람」 분기 · §5.1 목록에 「공유 받은 복기」 · 목록 인덱스(`visibility, published_at`) |
+| 반응 | 이모지 반응 표 | 새 표 1(복기 × 수강생 × 이모지 유니크 · published 에만 · 숨김이면 함께 안 보임) · §6 REQUIRED_SCHEMA +1 · 레이트리밋 |
+| 이관 | 디스코드 · 엑셀 이관 복기는 **`visibility = 'private'`** | 서버가 `source <> 'app'`(`discord` · `xlsx` · `journal_import`)이면 요청값과 무관하게 `private` 로 강제 · §8 3 · 엑셀은 앱이 일반 API 로 만들므로 `source='xlsx'` 를 앱이 보내야 서버가 구분한다(반장 계약 §5.4 에 추가 예정) |
+| `group` 의 뜻 | A · B · C 그룹 | **DB 에 그룹 정보가 없다**(아래 실측) — v2.6 에서 그룹 출처를 정해야 `visibility='group'` 판정이 가능하다 |
+
+**그룹 정보 소재 실측(2026-09-25 · 읽기 전용 조회)**
+- A·B·C 그룹을 담는 DB 컬럼은 **`feedback.grp`(text) 하나**뿐이다. 값은 봇이 레슨 피드백 서버의 **채널명 `X그룹-별칭` 패턴**에서 파싱한다(`server.js` `parseFeedbackChannel` · 메시지마다 복사 저장). 현재 59행 전부 `C` · 채널 11 · 트레이너 1. 사이트 `feedback.html` 의 A/B/C 탭은 `GET /api/feedback?grp=` 로 이 컬럼을 거른다(표시용).
+- `students` · `lesson_enrollments` · `lesson_sessions` · `consults` · `staff` 에 그룹 컬럼 없음 · `students.note` 그룹 언급 0/92 · 컬럼 코멘트 0 · 그룹 표 없음(`gdcup_*.team_name` 은 카지노 팀명이라 무관).
+- 봇·SQL 의 「그룹」 다른 뜻 = 레슨 유형(관전형 · 참여형 · `lesson_kind`) — A/B/C 와 무관.
+- 따라서 **수강생별 그룹 소속은 지금 디스코드 채널 구조(피드백 서버 채널명)에만 있다.** `visibility='group'` 을 하려면 v2.6 에서 (a) `students` 에 그룹 컬럼(또는 `student_groups` 표 · 오너 관리) 신설 또는 (b) 디스코드 채널·역할에서 동기 중 하나를 정해야 한다 — 이 세션 판단 없이 **지휘탑 · 오너 결정 사항**으로 둔다.
+
 ## 3. Storage
 
 ### 3.1 버킷
@@ -882,7 +900,7 @@ feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_
 
 1. **채널 매핑 1회 확인**: 오너 명령 `/피드백채널연결`(운영 서버 · owner 전용) — 채널 자동완성 + 수강생 자동완성(`이름(닉네임) · 담당 · #id`) → `feedback_channel_map` upsert(`confirmed_by_staff_id`·`confirmed_at`). 이름 정확일치·별칭은 **후보 제안까지만**, 확정은 사람. 공지·잡담 채널은 `kind=notice|ignore`.
 2. **공지 3중 필터**(재수집 시): ① 접두 `📢 피드백 채널 이용 안내` ② 핀 고정 메시지 ③ 같은 본문 해시가 2개 이상 채널에 등장 → 제외. 59행 중 11행이 ①에 해당(D1 로 `rejected` 처리).
-3. **재수집**: `feedback.raw`(48행 · `src_msg` 있음) + 매핑된 채널의 히스토리 → `lesson_reviews(source='discord', author_role='trainer', author_staff_id = staff.name=feedback.trainer, body = 원문(raw), title = 수업일, src_guild/src_channel/src_msg)`. 앵커: `lesson_sessions(student_id, played_at = lesson_date, trainer_id)` 정확히 1건이면 `anchor_kind='lesson'` + published(`published_at` = 메시지 시각) · 아니면 `anchor_kind='pending'` draft 큐(`GET /reviews/pending-anchor`). `src_msg` unique 라 재실행 멱등. 첨부 이미지는 원본 바이트 그대로 Storage(§3.2 · `uploaded_by_role='trainer'`).
+3. **재수집**: `feedback.raw`(48행 · `src_msg` 있음) + 매핑된 채널의 히스토리 → `lesson_reviews(source='discord', author_role='trainer', author_staff_id = staff.name=feedback.trainer, body = 원문(raw), title = 수업일, src_guild/src_channel/src_msg, **visibility='private'**)`. **이관 복기(디스코드 · 엑셀)는 전부 `visibility='private'`(오너 9/25) — 서버가 `source <> 'app'` 이면 강제한다(§2.13).** 앵커: `lesson_sessions(student_id, played_at = lesson_date, trainer_id)` 정확히 1건이면 `anchor_kind='lesson'` + published(`published_at` = 메시지 시각) · 아니면 `anchor_kind='pending'` draft 큐(`GET /reviews/pending-anchor`). `src_msg` unique 라 재실행 멱등. 첨부 이미지는 원본 바이트 그대로 Storage(§3.2 · `uploaded_by_role='trainer'`).
 4. 홍보용 `feedback` 테이블·「피드백 월」은 그대로. 이관은 **복사**이고 원본을 바꾸지 않는다(D1 의 rejected 만 예외).
 5. 드라이런: 실제 insert 전에 매핑·앵커 판정 결과를 표(채널 id · 건수 · 앵커 확정/보류)로 회신 — 채널명은 적지 않는다.
 
@@ -898,3 +916,5 @@ feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_
 | 6 | 드라이런 → 실제 삭제 전환 시점 | **2주 드라이런 로그를 오너가 본 뒤 결정** | §3.7 · env `REVIEW_DRAFT_SWEEP=delete` 는 그때 오너가(Level 0) |
 | 7 | 과제 기한 저장 | `due_booking_id` + `due_at`(v2.5 채택) | §2 DDL · §4 `feedbackDueValid` · §5.2 · `due_invalid` |
 | 8 | course 앵커의 (`course_id`, `course_session_id`) 쌍이 실제 출석(`course_attendance`)과 맞는지 | **트리거 미포함**(트리거는 `courses.student_id` 만 대조 · 이 세션 판단) · 서버가 생성·재지정 때 검사 · **지휘탑 대조 시 트리거 포함 여부 판정 요청** | §2 블록 6 · §4 |
+| 9 | 공유 · 반응(1차 추가 · 오너 9/25 저녁) | **v2.6 필드 목록 대기**(반장 → 지휘탑) · 그 전 「최종」 금지 | §2.13 · 시험 브랜치는 반영 뒤 1회 |
+| 10 | `visibility='group'` 의 그룹 출처 | **DB 에 없음**(`feedback.grp` 는 채널명 파싱 사본) → 지휘탑 · 오너 결정 | §2.13 실측 |
