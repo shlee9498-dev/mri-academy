@@ -158,14 +158,60 @@ test("카드 문구: 정본 예 형식 + 이탈·조우·대체 판정·다름 �
   const base = { seq: 1, map: "Baltic_Main", createdAtMs: Date.parse("2026-09-26T12:14:00Z"), place: 3, kills: 3, damage: 720.4, dmgPts: 7,
     penalty: 10, deadSlots: [1, 2, 3, 4], base: 0, score: 0, encounter: [], used: "telemetry",
     members: [1, 2, 3, 4].map((slot) => ({ slot, deathType: "byplayer" })), verdict: [1, 2, 3, 4].map(() => ({ dead: true, why: "killed" })) };
-  assert.equal(T.formatCard(base), "1판 에란겔 21:14 · 3위 · 3킬 +3 · 딜 720 +7 · 감점 -10(1·2·3·4번) → 0");
+  assert.equal(T.formatCard(base),
+    "1판 에란겔 21:14 · 3위 · 3킬 +3 · 딜 720 +7 · 감점 -10(1·2·3·4번) → 0\n   사망: 1번 −4 · 2번 −3 · 3번 −2 · 4번 −1");
   const leave = T.formatCard({ ...base, leave: true, score: -10, place: 1 });
-  assert.match(leave, /^1판 에란겔 21:14 · 🍗1위 · 이탈 → -10 고정 \(원래 3킬 · 딜 720 · 감점 -10\(1·2·3·4번\) → 0\)$/);
+  assert.match(leave, /^1판 에란겔 21:14 · 🍗1위 · 이탈 → -10 고정 \(원래 3킬 · 딜 720 · 감점 -10\(1·2·3·4번\) → 0\)\n {3}사망: /);
   const marks = T.formatCard({ ...base, encounter: ["TeamB"], used: "deathType_fallback", penalty: 0, deadSlots: [], score: 10 });
   assert.match(marks, /감점 0 → 10 · 참가팀 조우\(TeamB\) · 판정: deathType\(대체\)$/);
   const diff = T.formatCard({ ...base, members: [{ slot: 1, deathType: "logout" }, { slot: 2, deathType: "alive" }], verdict: [{ dead: false, why: "after_logout" }, { dead: false, why: "bluechip" }] });
-  assert.match(diff, /deathType 과 다름: 1번 로그아웃 뒤 사망$/);
+  assert.match(diff, /deathType 과 다름: 1번 로그아웃 뒤 사망\n {3}사망: /);
   assert.equal(T.formatExcluded({ createdAtMs: base.createdAtMs, map: "Desert_Main", excluded: { reason: "3인(4번 빠짐)" } }), "제외 · 21:14 미라마 · 3인(4번 빠짐)");
+});
+
+test("카드 사망 줄: 이름(슬롯 −N) · 사망 없으면 줄 없음 · ign 없으면 슬롯만", () => {
+  const at = { seq: 3, map: "Baltic_Main", createdAtMs: Date.parse("2026-09-26T12:40:00Z") };
+  const members = [{ slot: 1, ign: "PA" }, { slot: 2, ign: "PB" }, { slot: 3, ign: "PC" }];
+  // 치킨인데 1번만 죽은 판 — 감점이 왜 붙었는지 카드로 보여야 한다
+  const chicken = T.formatCard({ ...at, ...T.scoreGame({ members: [{ kills: 4, damage: 600 }], place: 1, deadSlots: [1] }),
+    place: 1, members, deadSlots: [1] });
+  assert.match(chicken, /🍗1위/);
+  assert.equal(chicken.split("\n")[1], "   사망: PA(1번 −4)");
+  // 3인 전멸 = −9 · 세 명 모두 줄에 나온다
+  const wipe = T.formatCard({ ...at, ...T.scoreGame({ members: [{ kills: 1, damage: 100 }], place: 6, deadSlots: [1, 2, 3] }),
+    place: 6, members, deadSlots: [1, 2, 3] });
+  assert.equal(wipe.split("\n")[1], "   사망: PA(1번 −4) · PB(2번 −3) · PC(3번 −2)");
+  // 사망 0 = 줄 없음
+  const none = T.formatCard({ ...at, ...T.scoreGame({ members: [{ kills: 2, damage: 200 }], place: 1, deadSlots: [] }),
+    place: 1, members, deadSlots: [] });
+  assert.equal(none.includes("\n"), false);
+  assert.equal(T.deadLine({ deadSlots: [] }), "");
+});
+
+test("닉 변경: accountId 로 매칭하고 등록명이 다르면 카드에 표시", () => {
+  const teamN = T.normTeam({ team_name: "T", platform: "steam", members: [
+    { slot: 1, ign: "GmI_ESTP", accountId: "account.a" }, { slot: 2, ign: "PB", accountId: "account.b" },
+    { slot: 3, ign: "PC", accountId: "account.c" },
+  ] });
+  // 인게임닉이 바뀐 상태로 매치에 등장 — accountId 가 같으니 그대로 인정된다
+  const m = compact({ rosters: [{ rank: 1, players: [
+    { acc: "account.a", name: "GmI_heoppy" }, { acc: "account.b", name: "PB" }, { acc: "account.c", name: "PC" },
+  ] }] });
+  const cls = T.classify(m, teamN);
+  assert.equal(cls.kind, "ok");
+  assert.equal(cls.members[0].ign, "GmI_heoppy");
+  assert.equal(cls.members[0].regIgn, "GmI_ESTP");
+  assert.equal(cls.members[1].regIgn, undefined);   // 안 바뀐 선수는 안 남긴다
+  const card = T.formatCard({ seq: 1, map: "Baltic_Main", createdAtMs: Date.parse("2026-09-26T12:40:00Z"),
+    ...T.scoreGame({ members: [{ kills: 0, damage: 0 }], place: 1, deadSlots: [] }), place: 1, members: cls.members, deadSlots: [] });
+  assert.match(card, /닉 변경: GmI_ESTP → GmI_heoppy/);
+});
+
+test("deathType 판정: alive 만 감점 면제 · 나머지는 전부 사망", () => {
+  for (const dt of ["byplayer", "byzone", "suicide", "logout", ""]) {
+    assert.equal(T.deathTypeVerdict({ deathType: dt }).dead, true, dt || "(빈값)");
+  }
+  assert.equal(T.deathTypeVerdict({ deathType: "alive" }).dead, false);
 });
 
 test("DM 나누기: 1900자 안 · 줄 보존", () => {
