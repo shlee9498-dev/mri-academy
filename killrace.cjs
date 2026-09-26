@@ -59,8 +59,8 @@ const COMMANDS = [
     name: "킬내기집계",
     description: "[오너] 킬내기 집계 → 오너 DM(판 카드 · 총점·순위 · 제외 판 · 공개 발표 요약)",
     options: [
-      { name: "사망판정", description: "기본 텔레메트리(실패한 판만 deathType 대체)", type: 3, required: false,
-        choices: [{ name: "텔레메트리(기본)", value: "telemetry" }, { name: "deathType", value: "deathType" }] },
+      { name: "사망판정", description: "기본 deathType(참가 기록) · 텔레메트리는 선택", type: 3, required: false,
+        choices: [{ name: "deathType(기본)", value: "deathType" }, { name: "텔레메트리", value: "telemetry" }] },
       { name: "진단닉", description: "[실측] 이 닉의 최근 판 하나를 진단해 DM(저장 안 함)", type: 3, required: false },
       { name: "진단플랫폼", description: "[실측] 진단닉 플랫폼(기본 스팀)", type: 3, required: false, choices: PLATFORM_CHOICES },
       { name: "진단순번", description: "[실측] 최근 몇 번째 판(기본 1 = 가장 최근)", type: 4, required: false, min_value: 1, max_value: 20 },
@@ -149,10 +149,15 @@ function classify(m, team) {
   const rosterOf = (pid) => (m.rosters || []).findIndex((r) => (r.pids || []).includes(pid));
   const idx = new Set(present.map((x) => rosterOf(pidByAcc.get(x.accountId))));
   if (idx.size !== 1 || idx.has(-1)) return { kind: "excluded", code: "split", reason: `${size}명이 한 스쿼드가 아님` };
+  // 매칭은 accountId 로만 한다 — 닉 변경 사례가 있다(등록 GmI_ESTP ↔ 인게임 GmI_heoppy).
+  // ign 은 그 판의 실제 인게임닉이고, 등록명이 다르면 regIgn 으로 함께 남겨 카드에 표시한다.
   const members = team.members.map((x) => {
     const p = m.parts[pidByAcc.get(x.accountId)];
-    return { slot: x.slot, accountId: x.accountId, ign: p.name || x.ign, kills: Number(p.kills) || 0,
+    const cur = p.name || x.ign;
+    const mem = { slot: x.slot, accountId: x.accountId, ign: cur, kills: Number(p.kills) || 0,
       damage: Number(p.damageDealt) || 0, deathType: String(p.deathType || "") };
+    if (x.ign && cur && cur !== x.ign) mem.regIgn = x.ign;
+    return mem;
   });
   const place = Math.max(0, ...team.members.map((x) => Number(m.parts[pidByAcc.get(x.accountId)].winPlace) || 0));
   return { kind: "ok", members, place };
@@ -209,6 +214,18 @@ function verdictNote(g) {
   return diffs.length ? `deathType 과 다름: ${diffs.join(", ")}` : "";
 }
 
+// 「사망: 이름(슬롯 −N)」 — 치킨 판에서 누가 죽어 감점이 붙었는지 한눈에 보이게 한다(관제탑 2026-09-27).
+// 사망이 없으면 줄 자체를 내지 않는다. ign 이 없는 저장분은 슬롯만 적는다.
+function deadLine(g) {
+  const slots = g.deadSlots || [];
+  if (!slots.length) return "";
+  const bySlot = new Map((g.members || []).map((m) => [m.slot, m]));
+  return "   사망: " + slots.map((s) => {
+    const m = bySlot.get(s); const pen = SLOT_PENALTY[s - 1] || 0;
+    return m && m.ign ? `${m.ign}(${s}번 −${pen})` : `${s}번 −${pen}`;
+  }).join(" · ");
+}
+
 function formatCard(g) {
   const head = `${g.seq}판 ${mapKo(g.map)} ${kstHm(g.createdAtMs)}`;
   const place = g.place === 1 ? "🍗1위" : `${g.place || "?"}위`;
@@ -222,7 +239,10 @@ function formatCard(g) {
   if (g.used === "deathType_fallback") marks.push("판정: deathType(대체)");
   const note = verdictNote(g); if (note) marks.push(note);
   if (g.source === "stored") marks.push("저장분");
-  return `${head} · ${place} · ${body}${marks.length ? " · " + marks.join(" · ") : ""}`;
+  const nick = (g.members || []).filter((m) => m.regIgn && m.regIgn !== m.ign).map((m) => `${m.regIgn} → ${m.ign}`);
+  if (nick.length) marks.push(`닉 변경: ${nick.join(", ")}`);
+  const dead = deadLine(g);
+  return `${head} · ${place} · ${body}${marks.length ? " · " + marks.join(" · ") : ""}${dead ? "\n" + dead : ""}`;
 }
 const formatExcluded = (g) => `제외 · ${kstHm(g.createdAtMs)} ${mapKo(g.map)} · ${g.excluded.reason}`;
 
@@ -476,7 +496,7 @@ function createKillrace(deps) {
   }
 
   // ── /킬내기집계 ──
-  async function aggregate({ deathMode = "telemetry", progress = () => {} } = {}) {
+  async function aggregate({ deathMode = "deathType", progress = () => {} } = {}) {
     const t0 = now();
     const ev = await currentEvent();
     const teams = await loadTeams(ev.id);
@@ -637,7 +657,7 @@ function createKillrace(deps) {
       win_place: rec.excluded ? null : rec.place,
       deaths: rec.excluded ? null : {
         v: 1, used: rec.used, telemetryError: rec.telemetryError || null,
-        members: rec.members.map((x) => ({ slot: x.slot, accountId: x.accountId, ign: x.ign, kills: x.kills, damage: x.damage, deathType: x.deathType })),
+        members: rec.members.map((x) => ({ slot: x.slot, accountId: x.accountId, ign: x.ign, regIgn: x.regIgn || null, kills: x.kills, damage: x.damage, deathType: x.deathType })),
         verdict: rec.members.map((x, i) => ({ slot: x.slot, dead: rec.verdict[i].dead, why: rec.verdict[i].why })),
         telemetry: rec.telemetry || null,
       },
@@ -790,7 +810,7 @@ function createKillrace(deps) {
           let lastAt = 0;
           const progress = (text) => { const t = now(); if (t - lastAt < 2000) return; lastAt = t; itx.editReply({ content: `🕒 ${text}` }).catch(() => {}); };
           await itx.editReply({ content: "🕒 집계를 시작했어요 — 끝나면 DM으로 보내요. 판이 많으면 몇 분 걸릴 수 있어요." });
-          const res = await aggregate({ deathMode: itx.options.getString("사망판정") || "telemetry", progress });
+          const res = await aggregate({ deathMode: itx.options.getString("사망판정") || "deathType", progress });
           const parts = formatReport(res);
           let sent = 0;
           try { for (const part of parts) { await itx.user.send({ content: part }); sent++; } }
@@ -836,7 +856,7 @@ module.exports = {
   COMMANDS, createKillrace,
   _test: {
     SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
-    telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, formatExcluded, formatReport, formatPublic, formatChannelPost,
+    telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote,
   },
 };
