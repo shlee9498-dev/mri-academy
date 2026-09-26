@@ -1031,7 +1031,18 @@ if (process.env.DISCORD_TOKEN) {
         { name: "카카오", value: "kakao" } ] },
     ],
   };
-  const LINK_CMDS = [LINK_CMD, UNLINK_CMD, LINK_STATUS_CMD, NICK_CMD];
+  // /연결후보 — [트레이너·오너] 미연결 수강생 ↔ 서버 멤버 닉 유사도 후보표(오너 지시 2026-09-26).
+  //   ⚠️ **조회 전용이다.** 쓰기도 자동 확정도 없다 — 표만 보여 주고 연결은 사람이 /연결승인 으로 한다.
+  //   미리 연결해 둘 수 있는 사람을 찾는 용도라, 월요일 오픈처럼 한꺼번에 들어올 때 대기를 줄인다.
+  const LINK_CAND_CMD = {
+    name: "연결후보",
+    description: "[트레이너·오너] 미연결 수강생 ↔ 서버 멤버 닉 후보표 — 조회만, 연결은 안 함",
+    options: [
+      { name: "최소점수", description: "이름 일치도 하한(기본 0.45 · 높일수록 후보가 준다)",
+        type: 10, required: false, min_value: 0.3, max_value: 0.95 },
+    ],
+  };
+  const LINK_CMDS = [LINK_CMD, UNLINK_CMD, LINK_STATUS_CMD, NICK_CMD, LINK_CAND_CMD];
   // /연결신청 — [수강생] 본인이 먼저 신청하고, 운영진은 승인 카드 버튼만 누른다(§24 · 오너 지시 2026-09-08).
   //   ⚠️ 자동 매칭이 아니다 — 이름 유사도는 후보 3명을 카드에 제시할 뿐이고, discord_id 를 쓰는 건
   //   사람이 버튼을 누른 순간뿐이다. 신청자가 남의 이름을 대도 승인자가 걸러 낸다.
@@ -2815,6 +2826,83 @@ if (process.env.DISCORD_TOKEN) {
     }
   });
 
+  // ── /연결후보 : 서버 멤버 닉 ↔ 미연결 수강생 유사도 후보표 (조회 전용) ──
+  //   ⚠️ **쓰기 0 · 자동 확정 0.** 표만 내고 연결은 사람이 /연결승인 으로 한다.
+  //   멤버는 GUILD_ID(수강생·레슨생 역할이 있는 MRI ACADEMY 서버)에서 읽는다.
+  //   모집단은 linkCandidateSet() 으로 **한 번만** 읽고 채점은 메모리에서 돈다 —
+  //   멤버마다 DB 를 치면 수백 질의가 난다.
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isChatInputCommand() || itx.commandName !== "연결후보") return;
+    if (!hasSupabase())
+      return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
+    const actor = await linkActor(itx);
+    if (!actor.allowed) return itx.reply({ content: LINK_DENY, ephemeral: true });
+    const gid = process.env.GUILD_ID;
+    if (!gid) return itx.reply({ content: "GUILD_ID 가 없어서 서버 멤버를 읽을 수 없어.", ephemeral: true });
+
+    await itx.deferReply({ ephemeral: true });
+    try {
+      const min = itx.options.getNumber("최소점수") ?? LINKREQ_MIN_SCORE;
+      const [set, guild] = await Promise.all([linkCandidateSet(), client.guilds.fetch(gid)]);
+      if (!set.rows.length) return itx.editReply("미연결 수강생이 없어 — 후보를 낼 게 없네.");
+      await guild.members.fetch();
+
+      // 멤버 1명당 닉 3종(서버닉·글로벌명·유저명)을 채점하고 학생별 최고점만 남긴다.
+      const best = new Map();       // studentId → { c, member, matched }
+      const perMember = new Map();  // memberId  → Set(studentId)  — 한 멤버가 여러 학생과 걸리는지
+      guild.members.cache.forEach((m) => {
+        if (m.user.bot) return;
+        const names = [...new Set([m.displayName, m.user.globalName, m.user.username].filter(Boolean))];
+        for (const q of names) {
+          for (const c of linkCandidatesFrom(set, String(q), { min, max: 3 })) {
+            const prev = best.get(c.s.id);
+            if (!prev || c.score > prev.c.score) best.set(c.s.id, { c, member: m, matched: q });
+            let seen = perMember.get(m.id);
+            if (!seen) { seen = new Set(); perMember.set(m.id, seen); }
+            seen.add(c.s.id);
+          }
+        }
+      });
+      if (!best.size)
+        return itx.editReply(`후보가 하나도 안 나왔어 (최소점수 ${min}). 숫자를 낮춰서 다시 해볼래?`);
+
+      // 담당별로 묶는다. 한 멤버가 학생 2명 이상과 걸리면 「확인 필요」 — 자동 확정 금지의 핵심이다.
+      const byTrainer = {};
+      let warned = 0;
+      for (const { c, member, matched } of best.values()) {
+        const warn = (perMember.get(member.id) || new Set()).size > 1;
+        if (warn) warned += 1;
+        (byTrainer[c.trainer] ||= []).push(
+          `· **${c.s.name}** #${c.s.id}${c.s.status === "paused" ? "(보류)" : ""}`
+          + ` ← ${member.displayName} \`${member.id}\``
+          + ` · 일치 ${Math.round(c.score * 100)}%`
+          + (c.via ? ` · 별칭 「${c.via}」` : "")
+          + (matched !== member.displayName ? ` · 「${matched}」 로 매칭` : "")
+          + (warn ? " · ⚠️ **확인 필요**(이 멤버가 다른 수강생과도 걸림)" : ""));
+      }
+      const head = `🔎 **연결 후보** — 미연결 ${set.rows.length}명 중 **${best.size}명** 후보 있음`
+        + ` · 서버 멤버 ${guild.members.cache.size}명 · 최소점수 ${min}`
+        + (warned ? ` · ⚠️ 확인 필요 ${warned}건` : "") + "\n"
+        + "자동 연결이 아니야 — 확인하고 `/연결승인` 으로 직접 연결해줘.\n";
+      const blocks = Object.keys(byTrainer).sort().map((t) => `\n**[${t}]**\n` + byTrainer[t].join("\n"));
+
+      // 디스코드 2000자 한도 — 1900자 단위로 나눠 보낸다(연결현황과 같은 방식).
+      const parts = []; let buf = head;
+      for (const b of blocks) {
+        if (buf.length + b.length > 1900) { parts.push(buf); buf = ""; }
+        buf += b;
+      }
+      if (buf.trim()) parts.push(buf);
+      await itx.editReply(parts[0]);
+      for (const p of parts.slice(1)) await itx.followUp({ content: p, ephemeral: true });
+      console.log(`[linkcand] ${actor.label || "staff"} min=${min} members=${guild.members.cache.size} `
+        + `unlinked=${set.rows.length} hit=${best.size} warn=${warned}`);
+    } catch (e) {
+      console.error("link_cand_failed", e?.status || e?.message);
+      await itx.editReply("❌ 조회 중 오류가 났어. 잠시 후 다시 시도해줘.");
+    }
+  });
+
   // ── /연결신청 : 수강생 자가신청 → student_link_requests(pending) → 승인 카드 버튼 ──
   //   승인자 3명이 69명을 /연결승인 으로 일일이 치던 걸 「버튼 한 번」으로 줄인다.
   //   사람 승인은 그대로다 — 본인 확인 없이 신청이 곧 연결이 되면 남의 판수를 보게 된다.
@@ -2850,7 +2938,9 @@ if (process.env.DISCORD_TOKEN) {
 
   // 후보 = 미연결 수강생(수료 제외) + student_aliases. 별칭이 더 잘 맞으면 그 점수를 쓰고
   // 어느 별칭이 걸렸는지 카드에 적는다 — 승인자가 판단 근거를 봐야 한다.
-  async function linkReqCandidates(claimed) {
+  // 후보 모집단을 **한 번만** 읽는다. /연결후보 는 서버 멤버 수백 명을 돌려야 해서,
+  // 예전처럼 호출마다 3질의를 치면 질의가 수백~수천 번 난다(멤버 200명 × 닉 3종 = 600회).
+  async function linkCandidateSet() {
     const [rows, aliases, staffById] = await Promise.all([
       sbSelect("students",
         "select=id,name,status,trainer_id&discord_id=is.null&status=neq.done&order=name.asc&limit=500"),
@@ -2859,16 +2949,23 @@ if (process.env.DISCORD_TOKEN) {
     ]);
     const aliasBySid = {};
     for (const a of aliases) (aliasBySid[a.student_id] ||= []).push(a.alias);
-    return rows.map((s) => {
+    return { rows, aliasBySid, staffById };
+  }
+  // 순수 함수 — DB 를 치지 않는다. 같은 set 으로 여러 이름을 채점할 수 있다.
+  function linkCandidatesFrom(set, claimed, { min = LINKREQ_MIN_SCORE, max = LINKREQ_MAX_CANDS } = {}) {
+    return set.rows.map((s) => {
       let score = nameScore(claimed, s.name), via = null;
-      for (const al of aliasBySid[s.id] || []) {
+      for (const al of set.aliasBySid[s.id] || []) {
         const sc = nameScore(claimed, al);
         if (sc > score) { score = sc; via = al; }
       }
-      return { s, score, via, trainer: staffById[s.trainer_id] || "담당없음" };
-    }).filter((c) => c.score >= LINKREQ_MIN_SCORE)
+      return { s, score, via, trainer: set.staffById[s.trainer_id] || "담당없음" };
+    }).filter((c) => c.score >= min)
       .sort((a, b) => b.score - a.score || a.s.id - b.s.id)
-      .slice(0, LINKREQ_MAX_CANDS);
+      .slice(0, max);
+  }
+  async function linkReqCandidates(claimed) {
+    return linkCandidatesFrom(await linkCandidateSet(), claimed);
   }
 
   // 승인 카드 게시처: LINK_APPROVAL_CHANNEL_ID → 실패·미설정이면 오너 DM 폴백.
