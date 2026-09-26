@@ -8021,6 +8021,7 @@ async function runDirectStale() {
 const DIRECT_STATUS_ENABLED = process.env.DIRECT_STATUS === "1";
 // 미승인 피드백 리마인더 — 승인 워크플로(검수 채널 ✅)가 잊혀 공개 0건이 되는 구조 재발 방지.
 // 0건=침묵(스팸 방지), 1건 이상만 오너 DM. rejected(반려)는 대기 아님 — 제외.
+// ⚠️ 2026-09-26 부터 크론에 등록하지 않는다 — 호출 지점이 없다. 사유는 cronTick() 의 같은 날짜 주석.
 async function runFeedbackPending() {
   if (!process.env.SUPABASE_URL) return;
   const rows = await sbSelect("feedback",
@@ -8070,7 +8071,10 @@ async function cronTick() {
   // 복기 초안 사진 정리(§29 PR-2 · 설계 §3.7) — 크론 활성 시 항상. 모드는 함수가 env REVIEW_DRAFT_SWEEP 로 정한다
   // (미설정 = 드라이런 = 지울 목록만 review_purge_log 에 · delete 전환은 2주 드라이런 뒤 오너).
   await maybeRunDaily("reviewDraftSweep", "04:00", () => reviewApi.draftSweep(), "복기 초안 사진 정리");
-  await maybeRunDaily("fbPending", "05:15", runFeedbackPending, "미승인 피드백");       // 별도 env 불요(크론 활성 시 항상)
+  // "fbPending"(미승인 피드백 리마인더 · 05:15)는 2026-09-26 오너 판정으로 **등록하지 않는다.**
+  // 94일 동안 공개 0건 · 반려 0건 = 이 검수 흐름 자체가 쓰이지 않았다. 인증 후기(어플 트랙)가 대체한다.
+  // 적체 59건은 복기 3차 이관 D1(docs/lesson-review-server-design.md §2.9)에서 함께 처리한다 —
+  // 같은 표를 두 방향에서 만지지 않기 위해서다. 되살릴 때는 이 자리에 같은 한 줄을 다시 넣으면 된다.
   await maybeRunDaily("payreqUnreflected", "05:25", runPayreqUnreflected, "승인 큐 미반영 감시");   // BOT_PAYREQ=1 이면 항상 — 함수가 스스로 스킵
   // DIRECT_STATUS 게이트를 타지 않는다 — 게이트를 하나 더 두면 그 게이트가 꺼져서
   // 침묵하는 경우를 또 못 잡는다. 웹훅이 없으면 함수가 스스로 스킵한다.
