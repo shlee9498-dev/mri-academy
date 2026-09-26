@@ -3989,6 +3989,10 @@ if (process.env.DISCORD_TOKEN) {
             src_msg: msg.id, published: false,
           });
         } catch (e) { console.error("fb_insert", e?.message); return; } // 중복(src_msg unique) 등은 무시
+        // review_msg 는 리액션 검수의 유일한 열쇠다 — 핸들러가 `review_msg=eq.<누른 메시지 id>` 로 행을 찾는다.
+        // 그래서 카드를 보낸 **직후, 반응을 달기 전에** 저장한다. 반응 추가가 실패해도 행이 고아가 되지 않게.
+        // 2026-09-26 실측: 59건 전부 review_msg=NULL 이라 ✅/❌ 가 전면 무효였다(조회 0건 → 조용히 return).
+        let stage = "fetch_channel";
         try {
           const ch = await client.channels.fetch(FB_REVIEW_CH);
           const preview =
@@ -3996,10 +4000,19 @@ if (process.env.DISCORD_TOKEN) {
             `· 트레이너 **${trainer}**  · 그룹 **${meta.grp}**  · 학생 **${alias}**  · 날짜 ${lessonDate}\n` +
             "────────────\n" + cleaned.slice(0, 1500) + "\n────────────\n" +
             "✅ = 사이트 공개  ·  ❌ = 반려";
+          stage = "send";
           const pm = await ch.send(preview);
-          await pm.react("✅"); await pm.react("❌");
+          stage = "patch_review_msg";
           await sbPatch("feedback", `id=eq.${row.id}`, { review_msg: pm.id });
-        } catch (e) { console.error("fb_preview", e?.message); }
+          stage = "react";
+          // 여기서 실패해도 카드와 행은 이미 살아 있다 — 따로 잡아 단계만 남기고 넘어간다.
+          try { await pm.react("✅"); await pm.react("❌"); }
+          catch (e) { console.error(`fb_preview react 실패 ch=${FB_REVIEW_CH} msg=${pm.id} code=${e?.code}`, e?.message); }
+          console.log(`[fb] 검수 카드 게시 feedback_id=${row.id} msg=${pm.id}`);
+        } catch (e) {
+          // code = discord.js 오류 번호. 10003 Unknown Channel · 50001 Missing Access · 50013 Missing Permissions.
+          console.error(`fb_preview 실패 stage=${stage} ch=${FB_REVIEW_CH} feedback_id=${row.id} code=${e?.code}`, e?.message);
+        }
       } catch (e) { console.error("fb_msg", e?.message); }
     });
 
