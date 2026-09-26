@@ -264,6 +264,41 @@ module.exports = function mountStudentPortal(app, deps) {
 
   // ════════════════ POST /logout ════════════════
   // 서버가 세션 상태를 들고 있지 않다(무상태 서명). 앱이 쿠키를 버리는 것이 폐기다.
+  // ════════════════ POST /link-request ════════════════
+  // 연결 대기(403 account_link_pending) 화면에서 **이름만** 받아 연결 신청을 만든다.
+  // 지금까지는 수강생이 디스코드에서 /연결신청 을 직접 쳐야 했고, 그걸 모르면 거기서 막혔다.
+  // discord_id 는 **요청 본문에서 받지 않는다** — /exchange 와 같은 규격으로 x-discord-token 을
+  // /users/@me 에 재검증해 얻은 값만 쓴다. 카드 게시·승인·거절·DM 은 봇의 기존 흐름을 그대로 탄다.
+  app.post(`${PREFIX}/link-request`, rateLimit("portalLinkRequest", 5, 60_000), bodyOnly(["name"]),
+    wrap(async (req, res) => {
+      if (!deps.linkIntake) return fail(res, 503, "portal_unavailable");
+      const token = req.headers["x-discord-token"];
+      if (!token) return fail(res, 401, "session_expired");
+      const name = String((req.body || {}).name || "").trim();
+      if (name.length < 2 || name.length > 40) return fail(res, 400, "invalid_name");
+
+      let me;
+      try {
+        const r = await fetch("https://discord.com/api/users/@me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!r.ok) return fail(res, 401, "session_expired");   // 토큰 무효·만료
+        me = await r.json();
+      } catch { return fail(res, 503, "portal_unavailable"); }
+
+      const discordId = String(me?.id || "");
+      if (!discordId) return fail(res, 401, "session_expired");
+
+      const out = await deps.linkIntake({
+        discordId, discordTag: me?.username || null, claimedName: name,
+      });
+      if (out.ok) return send(res, { status: "pending", requestId: out.reqId, claimedName: out.claimed });
+      if (out.code === "already_linked") return send(res, { status: "already_linked" });
+      if (out.code === "already_pending") return send(res, { status: "pending", duplicate: true });
+      if (out.code === "name_too_short") return fail(res, 400, "invalid_name");
+      return fail(res, 503, "portal_unavailable");
+    }));
+
   app.post(`${PREFIX}/logout`, bodyOnly([]), wrap(async (_req, res) => res.status(204).end()));
 
   // ── 판수·트레이너 집계 (정본 4.1) ──────────────────────────────
