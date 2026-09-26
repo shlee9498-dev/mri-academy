@@ -42,7 +42,7 @@ test("판 인정: 4명 같은 로스터 = ok · 3인 · 한 스쿼드 아님 · 
   const ok = T.classify(compact({ rosters: [{ rank: 3, players: four() }, { rank: 1, players: [{ acc: "account.x" }] }] }), team);
   assert.equal(ok.kind, "ok"); assert.equal(ok.place, 3); assert.deepEqual(ok.members.map((x) => x.slot), [1, 2, 3, 4]);
   const three = T.classify(compact({ rosters: [{ rank: 2, players: four().filter((p) => p.acc !== "account.c").concat([{ acc: "account.rand" }]) }] }), team);
-  assert.deepEqual([three.kind, three.code, three.reason], ["excluded", "3인", "3인(3번 빠짐)"]);
+  assert.deepEqual([three.kind, three.code, three.reason], ["excluded", "인원", "3인(3번 빠짐)"]);
   const split = T.classify(compact({ rosters: [{ rank: 2, players: four().slice(0, 3) }, { rank: 5, players: four().slice(3) }] }), team);
   assert.deepEqual([split.kind, split.code], ["excluded", "split"]);
   assert.equal(T.classify(compact({ matchType: "competitive", rosters: [{ rank: 1, players: four() }] }), team).reason, "경쟁전");
@@ -50,6 +50,56 @@ test("판 인정: 4명 같은 로스터 = ok · 3인 · 한 스쿼드 아님 · 
   assert.equal(T.classify(compact({ mode: "duo", rosters: [{ rank: 1, players: four() }] }), team).reason, "스쿼드 아님(duo)");
   assert.equal(T.classify(compact({ mode: "squad-fpp", rosters: [{ rank: 1, players: four() }] }), team).kind, "ok");
   assert.equal(T.classify(compact({ rosters: [{ rank: 1, players: four().slice(0, 2) }] }), team).kind, "none");
+});
+
+// ── 3인 팀(2026-09-26 대회에서 필요해진 경로) ───────────────────────────────
+const team3 = T.normTeam({ team_name: "Trio", platform: "steam", members: [
+  { slot: 2, ign: "PB", accountId: "account.b" }, { slot: 1, ign: "PA", accountId: "account.a" },
+  { slot: 3, ign: "PC", accountId: "account.c" },
+] });
+const three = (over = {}) => ["account.a", "account.b", "account.c"].map((acc) => ({ acc, ...(over[acc] || {}) }));
+
+test("3인 팀 — 정규화 · 후보 기준 2명", () => {
+  assert.deepEqual(team3.members.map((x) => x.slot), [1, 2, 3]);
+  const lists = new Map([
+    ["account.a", ["m1", "m2"]], ["account.b", ["m1", "m2"]], ["account.c", ["m1", "m5"]],
+  ]);
+  // m1 = 3명 · m2 = 2명(인원−1) → 둘 다 후보 · m5 = 1명 → 제외
+  assert.deepEqual(T.teamCandidates(team3, lists), ["m1", "m2"]);
+});
+
+test("3인 팀 — 전원 같은 로스터 = ok · 2인 = 인원 제외 · 갈라지면 split", () => {
+  const ok = T.classify(compact({ rosters: [{ rank: 2, players: three() }, { rank: 1, players: [{ acc: "account.x" }] }] }), team3);
+  assert.equal(ok.kind, "ok"); assert.equal(ok.place, 2);
+  assert.deepEqual(ok.members.map((x) => x.slot), [1, 2, 3]);
+  const two = T.classify(compact({ rosters: [{ rank: 4, players: three().filter((p) => p.acc !== "account.c").concat([{ acc: "account.rand" }]) }] }), team3);
+  assert.deepEqual([two.kind, two.code, two.reason], ["excluded", "인원", "2인(3번 빠짐)"]);
+  const split = T.classify(compact({ rosters: [{ rank: 2, players: three().slice(0, 2) }, { rank: 5, players: three().slice(2) }] }), team3);
+  assert.deepEqual([split.kind, split.code, split.reason], ["excluded", "split", "3명이 한 스쿼드가 아님"]);
+  // 1명만 = 후보 아님
+  assert.equal(T.classify(compact({ rosters: [{ rank: 1, players: three().slice(0, 1) }] }), team3).kind, "none");
+});
+
+test("3인 팀 — 감점은 슬롯 합(4·3·2) · 전멸 −9 · 이탈은 여전히 −10", () => {
+  const g = { members: [{ kills: 3, damage: 500 }, { kills: 2, damage: 300 }, { kills: 1, damage: 200 }],
+    place: 2, deadSlots: [1, 2, 3] };
+  const r = T.scoreGame(g);
+  assert.equal(r.kills, 6);
+  assert.equal(r.dmgPts, 10);              // floor(1000/100)
+  assert.equal(r.chicken, 0);
+  assert.equal(r.penalty, 9);              // 4 + 3 + 2 — 4인 전멸 10 이 아니다
+  assert.equal(r.base, 6 + 10 + 0 - 9);    // 7
+  assert.equal(r.score, 7);
+  // 치킨이면 +8
+  assert.equal(T.scoreGame({ ...g, place: 1 }).base, 6 + 10 + 8 - 9);
+  // 이탈 판은 슬롯 수와 무관하게 고정
+  assert.equal(T.scoreGame({ ...g, leave: true }).score, T.LEAVE_SCORE);
+  assert.equal(T.LEAVE_SCORE, -10);
+});
+
+test("4인 회귀 — 전멸 감점은 그대로 10", () => {
+  const r = T.scoreGame({ members: [{ kills: 1, damage: 100 }], place: 3, deadSlots: [1, 2, 3, 4] });
+  assert.equal(r.penalty, 10);
 });
 
 test("사망 판정(텔레메트리): 사망 · 로그아웃 뒤 제외 · 재접속 뒤 사망 · 블루칩 · 킬로그 없음 · 같은 시각", () => {
