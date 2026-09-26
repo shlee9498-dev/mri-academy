@@ -8,7 +8,7 @@
 //
 // 판 인정: createdAt ∈ [window_start, window_end)(노래방룰 = 끝 시각 전에 시작한 판까지)
 //          + 등록 4명이 같은 matchId 의 같은 roster + gameMode squad·squad-fpp + matchType official(일반).
-//          3명만 뛴 판 = 불인정(「3인」) · 경쟁전·아케이드 등 = 「제외」.
+//          등록 인원이 다 안 뛴 판 = 불인정(「인원」) · 경쟁전·아케이드 등 = 「제외」.
 // 판 점수: Σ4인 kills + floor(Σ4인 damageDealt / 100) + (팀 winPlace 1 이면 치킨 +8) − Σ 사망 슬롯 감점
 //          (1번 4 · 2번 3 · 3번 2 · 4번 1 · 선수당 판 1회) — 치킨 +8 은 관제탑 2026-09-26 확정. 치킨 판도 사망 감점은 그대로
 //          (블루칩 부활 후 최종 생존만 면제 — 아래 사망 판정).
@@ -45,14 +45,14 @@ const PLATFORM_CHOICES = [{ name: "스팀", value: "steam" }, { name: "카카오
 const COMMANDS = [
   {
     name: "킬내기팀등록",
-    description: "[오너] 킬내기 팀 등록 — 4명 PUBG 계정 확인 뒤 저장(같은 팀명이면 덮어씀)",
+    description: "[오너] 킬내기 팀 등록 — 3~4명 PUBG 계정 확인 뒤 저장(같은 팀명이면 덮어씀)",
     options: [
       { name: "팀명", description: "팀 이름", type: 3, required: true, max_length: 30 },
-      { name: "플랫폼", description: "4명 모두 같은 플랫폼", type: 3, required: true, choices: PLATFORM_CHOICES },
+      { name: "플랫폼", description: "팀원 모두 같은 플랫폼", type: 3, required: true, choices: PLATFORM_CHOICES },
       { name: "슬롯1", description: "1번(최상위 티어) 인게임닉 · 사망 감점 4", type: 3, required: true },
       { name: "슬롯2", description: "2번 인게임닉 · 사망 감점 3", type: 3, required: true },
       { name: "슬롯3", description: "3번 인게임닉 · 사망 감점 2", type: 3, required: true },
-      { name: "슬롯4", description: "4번 인게임닉 · 사망 감점 1", type: 3, required: true },
+      { name: "슬롯4", description: "4번 인게임닉 · 사망 감점 1 · 3인 팀이면 비워 두세요", type: 3, required: false },
     ],
   },
   {
@@ -109,8 +109,10 @@ function normTeam(row) {
 // 팀 구성 서명 — 저장된 판을 다시 쓸지 판단(구성·슬롯 순서가 바뀌면 옛 판정은 버린다)
 const teamSig = (team) => `${team.platform}:${team.members.map((x) => `${x.slot}=${x.accountId}`).join(",")}`;
 
-// 팀별 후보 = 4명 중 3명 이상의 최근 매치 목록에 같이 있는 matchId · 목록 앞(최신)부터
+// 팀별 후보 = 등록 인원 중 (인원−1)명 이상의 최근 매치 목록에 같이 있는 matchId · 목록 앞(최신)부터.
+// 한 명 빠진 판도 후보로 잡아야 「인원」 제외 사유를 오너에게 보여 줄 수 있다(4인 팀이면 종전 3 과 같다).
 function teamCandidates(team, matchesByAcc) {
+  const minCount = Math.max(2, team.members.length - 1);
   const count = new Map(); const order = new Map();
   for (const mem of team.members) {
     (matchesByAcc.get(mem.accountId) || []).forEach((id, i) => {
@@ -118,7 +120,7 @@ function teamCandidates(team, matchesByAcc) {
       if (!order.has(id) || i < order.get(id)) order.set(id, i);
     });
   }
-  return [...count.entries()].filter(([, c]) => c >= 3).map(([id]) => id).sort((a, b) => order.get(a) - order.get(b));
+  return [...count.entries()].filter(([, c]) => c >= minCount).map(([id]) => id).sort((a, b) => order.get(a) - order.get(b));
 }
 
 function modeReason(m) {
@@ -127,21 +129,26 @@ function modeReason(m) {
   return null;
 }
 
-// 한 판을 한 팀 기준으로 판정 → none(후보 아님) · excluded(제외 + 이유) · ok(4인 기록)
+// 한 판을 한 팀 기준으로 판정 → none(후보 아님) · excluded(제외 + 이유) · ok(등록 인원 전원 기록)
+// 팀 크기는 3 또는 4 다(2026-09-26 3인 대회). 「전원이 같은 matchId·roster」가 인정 조건이고,
+// 한 명이라도 빠지면 code:"인원" 으로 제외한다 — 종전 4인 전용 하드코딩을 인원 기준으로 일반화했다.
 function classify(m, team) {
+  const size = team.members.length;
+  const minPresent = Math.max(2, size - 1);
   const pidByAcc = new Map();
   for (const [pid, p] of Object.entries(m.parts || {})) if (p && p.accountId) pidByAcc.set(p.accountId, pid);
   const present = team.members.filter((x) => pidByAcc.has(x.accountId));
-  if (present.length < 3) return { kind: "none" };
+  if (present.length < minPresent) return { kind: "none" };
   const why = modeReason(m);
   if (why) return { kind: "excluded", code: "mode", reason: why };
-  if (present.length === 3) {
-    const miss = team.members.find((x) => !pidByAcc.has(x.accountId));
-    return { kind: "excluded", code: "3인", reason: `3인(${miss.slot}번 빠짐)` };
+  if (present.length < size) {
+    const miss = team.members.filter((x) => !pidByAcc.has(x.accountId));
+    return { kind: "excluded", code: "인원",
+      reason: `${present.length}인(${miss.map((x) => `${x.slot}번`).join("·")} 빠짐)` };
   }
   const rosterOf = (pid) => (m.rosters || []).findIndex((r) => (r.pids || []).includes(pid));
   const idx = new Set(present.map((x) => rosterOf(pidByAcc.get(x.accountId))));
-  if (idx.size !== 1 || idx.has(-1)) return { kind: "excluded", code: "split", reason: "4명이 한 스쿼드가 아님" };
+  if (idx.size !== 1 || idx.has(-1)) return { kind: "excluded", code: "split", reason: `${size}명이 한 스쿼드가 아님` };
   const members = team.members.map((x) => {
     const p = m.parts[pidByAcc.get(x.accountId)];
     return { slot: x.slot, accountId: x.accountId, ign: p.name || x.ign, kills: Number(p.kills) || 0,
@@ -436,9 +443,13 @@ function createKillrace(deps) {
     const name = String(teamName || "").trim();
     if (!name || name.length > 30) throw userErr("팀명은 1~30자로 적어 주세요. ✏️");
     if (!PLATFORM_KO[platform]) throw userErr("플랫폼은 스팀·카카오 중에서 골라 주세요.");
+    // 슬롯4 만 선택이다. 뒤쪽 빈 칸을 걷어내 팀 크기(3 또는 4)를 정하고, 중간이 비면 거부한다.
     const names = igns.map((s) => String(s || "").trim());
-    if (names.some((s) => !s)) throw userErr("4명 닉네임을 모두 적어 주세요. ✏️");
-    if (new Set(names.map((s) => s.toLowerCase())).size !== 4) throw userErr("닉네임이 겹쳐요. 4명 모두 다른지 다시 한 번 볼까요? ✏️");
+    while (names.length && !names[names.length - 1]) names.pop();
+    if (names.length < 3) throw userErr("팀원은 3명 이상이어야 해요. 슬롯1~3 은 꼭 채워 주세요. ✏️");
+    if (names.some((s) => !s)) throw userErr("슬롯을 건너뛸 수 없어요 — 슬롯1 부터 순서대로 채워 주세요. ✏️");
+    const size = names.length;
+    if (new Set(names.map((s) => s.toLowerCase())).size !== size) throw userErr(`닉네임이 겹쳐요. ${size}명 모두 다른지 다시 한 번 볼까요? ✏️`);
     const ev = await currentEvent();
     const found = await lookupEach(platform, "playerNames", names);
     const byName = new Map(names.map((n) => [n, pickPlayer(found, n)]));
@@ -452,7 +463,7 @@ function createKillrace(deps) {
       throw userErr(`등록하지 않았어요 — 확인이 필요한 닉이 있어요.\n${lines.join("\n")}\n한 팀은 한 플랫폼만 돼요. 대소문자·특수문자까지 똑같은지 다시 한 번 볼까요? ✏️`);
     }
     const members = names.map((n, i) => ({ slot: i + 1, ign: byName.get(n).attributes.name, accountId: byName.get(n).id }));
-    if (new Set(members.map((m) => m.accountId)).size !== 4) throw userErr("같은 계정이 두 번 들어갔어요. 4명 모두 다른지 다시 한 번 볼까요? ✏️");
+    if (new Set(members.map((m) => m.accountId)).size !== size) throw userErr(`같은 계정이 두 번 들어갔어요. ${size}명 모두 다른지 다시 한 번 볼까요? ✏️`);
     const teams = await loadTeams(ev.id);
     for (const t of teams) {
       if (t.name === name) continue;
