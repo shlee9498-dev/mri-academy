@@ -344,24 +344,55 @@ module.exports = function mountBookingApi(app, deps) {
     });
   }));
 
-  // POST /bookings/:id/complete · /no-show — 예약을 닫는다(오너 판정 2026-09-04).
-  // ⚠️ 상태만 바꾼다. 판수는 봇 /수업등록 경로 하나뿐이고 여기서는 건드리지 않는다.
-  //    개인 선차감은 이미 잡혀 있어 done 이어도 추가 차감이 없고, no_show 는 선차감을
-  //    그대로 둬서 판수 소진으로 남는다(§23 portal_remaining_games 의 상태 목록 참조).
-  //    본인 슬롯 여부는 §23 resolve_booking 이 trainer_id 대조로 판정한다 — 아니면 403.
-  const resolveRoute = (suffix, status) =>
-    app.post(`${TRAINER}/bookings/:id/${suffix}`, rateLimit("trainerResolve", 60, 60_000),
-      bodyOnly([]), requireTrainer, wrap(async (req, res) => {
-        const bookingId = readOpaqueId("booking", req.params.id);
-        if (bookingId == null) return fail(res, 400, "invalid_body");
-        const out = await sbRpc("resolve_booking", {
-          p_trainer_id: req.staff.id, p_booking_id: bookingId, p_status: status,
-        });
-        if (out?.error) return rpcFail(res, out.error);
-        sendTrainer(res, { resolved: true, status: out.status });
-      }));
-  resolveRoute("complete", "done");
-  resolveRoute("no-show", "no_show");
+  // POST /bookings/:id/complete — 수업 기록의 정식 입구다(오너 지시 2026-09-28 「수업 기록 하나로」).
+  //   종전(2026-09-04 판정)에는 상태만 바꿨고 판수는 봇 /수업등록 하나뿐이었다. 그런데
+  //   portal_remaining_games 는 done 예약의 선차감을 **놓는다** — 그래서 「완료」만 누르고
+  //   /수업등록 을 안 하면 그 수업은 판수가 **0회** 빠졌다(선차감이 풀리고 세션 행은 없다).
+  //   종전 주석 「done 이어도 추가 차감이 없고」는 이 방향을 거꾸로 읽은 것이었다.
+  //   이제 §37 record_lesson_from_booking 이 lesson_sessions 행까지 남긴다 — 판수 소스는
+  //   여전히 lesson_sessions 한 곳이고, 그 행을 만드는 경로가 봇·앱 둘로 늘어난 것뿐이다.
+  //   두 번 빠지는 것은 함수가 막는다: 예약이 이미 닫혀 있거나 그날 기록이 있으면 넣지 않는다.
+  //   본인 슬롯 여부는 함수가 trainer_id 대조로 판정한다 — 아니면 403.
+  //
+  //   앱이 문구를 가르는 값 — outcome:
+  //     recorded        판수까지 기록했다
+  //     already_session 그날 기록이 이미 있어 예약만 닫았다 → 「이미 기록된 수업이에요」
+  //     already_closed  이미 닫힌 예약인데 판수 기록이 **없다** → /수업등록 을 안내해야 한다
+  //     closed_no_games 그룹·상담(예약에 판수가 없다) → 판수는 /수업등록 이 정본
+  app.post(`${TRAINER}/bookings/:id/complete`, rateLimit("trainerResolve", 60, 60_000),
+    bodyOnly([]), requireTrainer, wrap(async (req, res) => {
+      const bookingId = readOpaqueId("booking", req.params.id);
+      if (bookingId == null) return fail(res, 400, "invalid_body");
+      const out = await sbRpc("record_lesson_from_booking", {
+        p_trainer_id: req.staff.id, p_booking_id: bookingId,
+      });
+      if (out?.error) return rpcFail(res, out.error);
+      // §37 미실행 배포에서는 PostgREST 가 404 를 주고 sbRpc 가 throw 한다 — wrap 이 500 으로
+      // 감싼다. 조용히 「완료됨」으로 답하지 않는다(판수가 안 들어갔는데 눌린 것처럼 보인다).
+      const outcome = out?.recorded ? "recorded"
+        : out?.already === "session" ? "already_session"
+        : out?.already ? (out.hasSession ? "already_session" : "already_closed")
+        : "closed_no_games";
+      sendTrainer(res, {
+        resolved: true, status: "done", outcome,
+        games: Number(out?.games || 0),
+        playedAt: out?.playedAt || null,
+      });
+    }));
+
+  // POST /bookings/:id/no-show — 노쇼는 판수를 기록하지 않는다. 선차감을 그대로 붙들어
+  //   판수 소진으로 남긴다(오너 판정 2026-09-04 · §23 portal_remaining_games 상태 목록).
+  //   그래서 「완료」와 달리 종전 resolve_booking 을 계속 쓴다.
+  app.post(`${TRAINER}/bookings/:id/no-show`, rateLimit("trainerResolve", 60, 60_000),
+    bodyOnly([]), requireTrainer, wrap(async (req, res) => {
+      const bookingId = readOpaqueId("booking", req.params.id);
+      if (bookingId == null) return fail(res, 400, "invalid_body");
+      const out = await sbRpc("resolve_booking", {
+        p_trainer_id: req.staff.id, p_booking_id: bookingId, p_status: "no_show",
+      });
+      if (out?.error) return rpcFail(res, out.error);
+      sendTrainer(res, { resolved: true, status: out.status });
+    }));
 
   // DELETE /slots/:id — 예약자 전원 복원 + DM
   app.delete(`${TRAINER}/slots/:id`, requireTrainer, wrap(async (req, res) => {

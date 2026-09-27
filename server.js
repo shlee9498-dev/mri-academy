@@ -1266,24 +1266,45 @@ if (process.env.DISCORD_TOKEN) {
   // /수업등록 성공분을 DB lesson_sessions에도 기록(시트 병행·검증용).
   //   시트가 진실인 단계 — DB insert는 best-effort: 실패/이름 미매칭이어도 명령 성공(오너 DM만).
   async function dualWriteSessions(trainerName, students, memo, createdBy, sidOf) {
-    if (!hasSupabase()) return { skipped: true, miss: [], unattached: [] };
+    if (!hasSupabase()) return { skipped: true, miss: [], unattached: [], dup: [] };
     const played_at = kstToday();
     let trainer_id = null;
     try {
       const st = await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainerName)}&limit=1`);
       trainer_id = st[0] ? st[0].id : null;
     } catch (e) { console.error("dualwrite_staff_lookup", e?.message); }
-    const rows = [], miss = [], unattached = [];
+    const rows = [], miss = [], unattached = [], dup = [];
+    const picked = [];
     for (const s of students) {
       try {
         // 호출자가 확정한 명부 id(동명 선택 완료분)를 우선 쓴다. 없으면 이름 해석 — 동명이면 null → miss(오너 DM).
         const sid = sidOf && sidOf[s.name] != null ? sidOf[s.name] : await resolveStudentId(s.name);
         if (sid == null) { miss.push(s.name); continue; }
-        const enrId = await resolveEnrollmentId(sid, trainer_id);
-        if (enrId == null) unattached.push(s.name);
-        rows.push({ student_id: sid, trainer_id, played_at, games: s.games, memo: memo || null,
-                    created_by: createdBy, lesson_enrollment_id: enrId });
+        picked.push({ name: s.name, games: s.games, sid });
       } catch (e) { console.error("dualwrite_student_lookup", s.name, e?.message); miss.push(s.name); }
+    }
+    // 같은 날 같은 트레이너의 기록이 이미 있는 수강생은 건너뛴다(§37 「수업 기록 하나로」 · 오너 지시 2026-09-28).
+    //   앱 「완료」가 record_lesson_from_booking 으로 판수까지 남기므로, 그 뒤 /수업등록 을 하면
+    //   같은 판이 두 번 빠진다. 반대 방향(봇이 먼저)은 함수가 막는다 — 예약이 이미 done 이라 넣지 않는다.
+    //   한 사람이 한 날 두 타임을 뛰는 경우도 이 판정에 걸린다. 그때는 판수 정정이 필요하니
+    //   봇이 건너뛴 사실을 회신에 남기고(트레이너가 바로 본다) 오너 DM 으로도 올린다.
+    //   ⚠️ 조회가 실패하면 **건너뛰지 않는다** — 판수를 안 남기는 쪽이 더 나쁘다(미기록은 눈에 안 보인다).
+    //      이중은 사후 정정이 되고, 매일 밤 점검이 같은 조건으로 다시 잡는다.
+    const already = new Set();
+    if (picked.length && trainer_id != null) {
+      try {
+        const have = await sbSelect("lesson_sessions",
+          `select=student_id&trainer_id=eq.${trainer_id}&played_at=eq.${played_at}`
+          + `&student_id=in.(${picked.map((x) => x.sid).join(",")})`);
+        have.forEach((r) => already.add(Number(r.student_id)));
+      } catch (e) { console.error("dualwrite_dup_check", e?.message); }
+    }
+    for (const s of picked) {
+      if (already.has(Number(s.sid))) { dup.push(s.name); continue; }
+      const enrId = await resolveEnrollmentId(s.sid, trainer_id);
+      if (enrId == null) unattached.push(s.name);
+      rows.push({ student_id: s.sid, trainer_id, played_at, games: s.games, memo: memo || null,
+                  created_by: createdBy, lesson_enrollment_id: enrId });
     }
     if (rows.length) {
       try { await sbInsert("lesson_sessions", rows); }
@@ -1298,12 +1319,12 @@ if (process.env.DISCORD_TOKEN) {
           console.error("dualwrite_enr_column_missing", "lesson_enrollment_id 없이 재기록", rows.length);
           // degraded면 이 배치는 전건 미귀속이다. unattached에 id를 섞지 않는다(로그 필드는 이름 계열).
           // "전건"이라는 사실은 degraded 플래그가 나르고, 알림은 warnOnce가 하루 1회로 묶는다.
-          return { inserted: rows.length, miss, unattached, degraded: true };
-        } catch (e2) { console.error("dualwrite_insert_retry", e2?.message); return { error: true, miss, unattached }; }
+          return { inserted: rows.length, miss, unattached, dup, degraded: true };
+        } catch (e2) { console.error("dualwrite_insert_retry", e2?.message); return { error: true, miss, unattached, dup }; }
       }
     }
     await closeBookingsFor(trainer_id, rows.map((r) => r.student_id), played_at);
-    return { inserted: rows.length, miss, unattached };
+    return { inserted: rows.length, miss, unattached, dup };
   }
 
   // 예약 종료 연동(§23f · 오너 판정 2026-09-04). 수업을 등록하면 그 날 그 수강생의
@@ -1685,7 +1706,18 @@ if (process.env.DISCORD_TOKEN) {
         const sheetOk = sheetErr ? students : students.filter((s) => okNames.has(s.name));
         if (updated.length && !sheetOk.length)
           console.error("dualwrite_name_echo_mismatch", updated.map((u) => u.name).join(","));   // 시트 응답 이름이 입력과 불일치 — DB 미기록
-        const dw = sheetOk.length ? await dualWriteSessions(trainer, sheetOk, memo, itx.user.id, sidOf) : { inserted: 0, miss: [], unattached: [] };
+        const dw = sheetOk.length ? await dualWriteSessions(trainer, sheetOk, memo, itx.user.id, sidOf) : { inserted: 0, miss: [], unattached: [], dup: [] };
+        // 이미 기록된 수업(앱 「완료」가 먼저 남긴 판수)은 건너뛴 사실을 트레이너가 바로 봐야 한다 —
+        // 회신에 안 쓰면 「등록했다」고 읽고 넘어가 버린다(§37 · 오너 지시 2026-09-28).
+        if (dw && dw.dup && dw.dup.length) {
+          lines.push(`↳ 이미 기록된 수업이에요 — ${dw.dup.join(", ")} 은 앱에서 완료 처리돼 판수가 빠져 있어서 건너뛰었어`);
+          if (process.env.MRI_OWNER_ID) {
+            try {
+              const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+              await owner.send(`/수업등록 중복 건너뜀 — ${trainer}: ${dw.dup.join(", ")} (앱 「완료」로 이미 기록된 날) · 하루 두 타임이면 판수 정정 필요`);
+            } catch (e) { console.error("owner_dm_failed", e?.message); }
+          }
+        }
         if (dw && dw.miss && dw.miss.length && process.env.MRI_OWNER_ID) {
           const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
           // '시트 기록됨'을 단정하지 않음 — 시트 응답 기준 updated 건수만 명시(검증 불가한 성공 주장 제거).

@@ -2761,3 +2761,132 @@ select (select count(*) from pg_constraint
 --   alter table public.trainer_slots
 --     add constraint trainer_slots_trainer_id_slot_start_key unique (trainer_id, slot_start);
 -- ============================================================
+
+-- ============================================================
+-- §37  수업 기록 하나로 — 앱 「완료」가 판수까지 기록한다 (2026-09-28 · 오너 지시 「수업 기록 하나로」)
+-- ============================================================
+-- 무엇이 잘못돼 있었나 (2026-09-28 실측)
+--   §23 설계는 「판수 기록은 봇 /수업등록 하나뿐, 앱 「완료」는 상태만 바꾼다」였다.
+--   그런데 portal_remaining_games() 는 done 예약의 선차감을 **놓는다**. 그래서 트레이너가
+--   앱에서 「완료」만 누르고 /수업등록 을 하지 않으면 그 수업은 **판수가 0회 빠진다** —
+--   선차감이 풀리고 lesson_sessions 행은 없기 때문이다. booking-api.cjs 의 종전 주석
+--   「done 이어도 추가 차감이 없고」는 이 방향을 거꾸로 읽은 것이었다(추가 차감이 없는 게
+--   아니라 차감 자체가 사라진다).
+--   실측: 예약 1건(9/28 11:00 · 개인 60분 · 5판)이 수업 전에 done 이고 lesson_sessions 행이
+--   없어 선차감 5판이 이미 풀린 상태였다. 「등록 누락?」 배지(booking-api GET /slots
+--   regMissing)는 이 상태를 정확히 감지하고 있었지만 플래그일 뿐 차감을 되돌리지 않는다.
+--
+-- 오너 판정 2026-09-28 — 「앱 「완료」와 /수업등록이 같은 함수」
+--   2026-09-04 판정(「done 전이에 세션 행 존재 조건을 걸지 않는다 · 플래그만」)을 대체한다.
+--   이제 「완료」가 수업 기록의 정식 입구다. 판수 소스는 여전히 lesson_sessions 한 곳이고,
+--   그 행을 만드는 경로가 봇 하나에서 봇·앱 둘로 늘어난다.
+--
+-- 왜 새 함수인가 (더하기만 하는 DDL · CLAUDE.md A구간)
+--   resolve_booking() 은 손대지 않는다 — 「노쇼」가 계속 쓰고, 노쇼는 판수를 기록하지 않고
+--   선차감을 붙드는 게 정본이다. portal_remaining_games() 도 손대지 않는다 — 상태 목록이
+--   student-portal.cjs·trainer-portal.cjs 와 글자 그대로 같아야 하는 3곳 계약이고, 여기서
+--   고칠 필요가 없다(「완료」가 세션 행을 남기므로 done 에서 선차감을 놓는 게 이제 맞다).
+--   그래서 추가되는 것은 함수 하나뿐이다.
+--
+-- 이중 차감이 막히는 지점 (두 방향 다)
+--   ① 「완료」 → /수업등록 : 이 함수가 세션 행을 남기고 예약을 done 으로 닫는다. 그 뒤 봇은
+--      같은 (학생·트레이너·날짜) 세션 행을 보고 건너뛴다(server.js dualWriteSessions).
+--   ② /수업등록 → 「완료」 : 봇이 complete_bookings_for_session() 으로 예약을 done 으로
+--      닫아 놓았으므로 이 함수는 {"already":"done"} 을 돌려주고 아무것도 하지 않는다.
+--   ③ 예약 없이 한 수업 · 예약은 있고 봇으로만 기록한 수업 — 종전과 같다(1회).
+--
+-- 귀속(lesson_enrollment_id)은 server.js resolveEnrollmentId() 와 **같은 규칙**을 쓴다:
+--   carry_games <> 0 이면 null · 트레이너 일치 필수 · status in (active,paused) ·
+--   started_on 오름차순 → 잔여(games_total + bonus_games − Σ 귀속 판수) > 0 첫 등록 ·
+--   전 등록 소진이면 null. 한쪽만 고치면 봇 경로와 앱 경로의 귀속이 갈린다.
+--
+-- 반환(항상 jsonb 1건 · 실패도 예외가 아니라 코드로)
+--   {"recorded":true,"games":n,"playedAt":"YYYY-MM-DD","sessionId":n,"enrollmentId":n|null}
+--   {"already":"done"|"no_show"|"cancelled","hasSession":bool,"playedAt":"…"}
+--                                                 이미 닫힌 예약 — 아무것도 하지 않았다.
+--                                                 hasSession=false 면 판수 기록이 비어 있다는 뜻이다.
+--   {"already":"session","hasSession":true,…}     그날 기록이 이미 있어 상태만 done 으로
+--   {"closed":true,"games":0,"reason":"no_hold"}  그룹·상담(games_held = 0) — 판수는 봇이 정본
+--   {"error":"not_found"|"scope_denied"}
+create or replace function public.record_lesson_from_booking(
+  p_trainer_id bigint, p_booking_id bigint)
+returns jsonb
+language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_b     slot_bookings%rowtype;
+  v_owner bigint;
+  v_start timestamptz;
+  v_day   date;
+  v_has   boolean;
+  v_carry int;
+  v_enr   bigint;
+  v_sid   bigint;
+begin
+  select * into v_b from slot_bookings where id = p_booking_id for update;
+  if not found                    then return jsonb_build_object('error','not_found'); end if;
+  if v_b.span_head_id is not null  then return jsonb_build_object('error','not_found'); end if;
+
+  select trainer_id, slot_start into v_owner, v_start from trainer_slots where id = v_b.slot_id;
+  if v_owner is distinct from p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
+
+  -- 날짜 축은 server.js kstToday() · booking-api kstDate() 와 같은 식이라 경계가 어긋나지 않는다.
+  v_day := (v_start at time zone 'Asia/Seoul')::date;
+  v_has := exists (select 1 from lesson_sessions ls
+                    where ls.student_id = v_b.student_id
+                      and ls.trainer_id = p_trainer_id
+                      and ls.played_at  = v_day);
+
+  -- 이미 닫힌 예약은 손대지 않는다. done 이면 판수 기록이 이미 있거나(봇 경로) 앞선 「완료」가
+  -- 남겼다 — 어느 쪽이든 여기서 또 넣으면 두 번 빠진다.
+  --   ⚠️ done 인데 그날 기록이 **없는** 예약이 실재한다(실측 2026-09-28: 예약 1건. 사람이 콘솔에서
+  --   상태만 바꾼 흔적으로, head 는 done 인데 span tail 은 booked 로 남아 어느 코드 경로도
+  --   만들 수 없는 짝이었다). 이때 「이미 기록된 수업이에요」로 답하면 트레이너가 /수업등록 을
+  --   건너뛰어 판수가 0회 빠진다. 그래서 hasSession 을 같이 실어 화면이 문구를 가른다.
+  --   자동으로 판수를 넣지는 않는다 — done 의 이유가 「자정 넘겨 다른 날짜로 이미 등록」일 수도
+  --   있어, 그 경우 여기서 넣으면 두 번 빠진다.
+  if v_b.status not in ('booked','pending_review') then
+    return jsonb_build_object('already', v_b.status, 'hasSession', v_has, 'playedAt', v_day);
+  end if;
+
+  -- 같은 날 같은 트레이너의 수업 기록이 이미 있으면 판수를 또 넣지 않는다(상태만 닫는다).
+  if v_has then
+    update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+    return jsonb_build_object('already','session','hasSession',true,'playedAt',v_day);
+  end if;
+
+  -- 그룹(관전형·참여형)·상담은 예약에 판수가 없다(book_slot 이 games_held = 0 으로 넣는다).
+  -- 몇 판을 했는지 예약이 모르므로 상태만 닫고 판수는 봇 /수업등록 이 정본으로 남는다.
+  if coalesce(v_b.games_held, 0) <= 0 then
+    update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+    return jsonb_build_object('closed', true, 'games', 0, 'reason', 'no_hold');
+  end if;
+
+  select carry_games into v_carry from students where id = v_b.student_id;
+  if coalesce(v_carry, 0) = 0 then
+    select e.id into v_enr
+      from lesson_enrollments e
+     where e.student_id = v_b.student_id
+       and e.trainer_id = p_trainer_id
+       and e.status in ('active','paused')
+       and coalesce(e.games_total, 0) + coalesce(e.bonus_games, 0)
+           - coalesce((select sum(ls.games) from lesson_sessions ls
+                        where ls.lesson_enrollment_id = e.id), 0) > 0
+     order by e.started_on asc, e.id asc
+     limit 1;
+  end if;
+
+  insert into lesson_sessions
+    (student_id, trainer_id, played_at, games, created_by, lesson_enrollment_id)
+    values (v_b.student_id, p_trainer_id, v_day, v_b.games_held, 'portal', v_enr)
+    returning id into v_sid;
+
+  update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+
+  return jsonb_build_object('recorded', true, 'games', v_b.games_held, 'playedAt', v_day,
+                            'sessionId', v_sid, 'enrollmentId', v_enr);
+end;
+$$;
+
+-- 되돌리기(필요할 때만 — 함수를 지우면 앱 「완료」가 404 로 떨어진다. 코드를 먼저 되돌릴 것):
+--   drop function if exists public.record_lesson_from_booking(bigint, bigint);
+-- ============================================================
