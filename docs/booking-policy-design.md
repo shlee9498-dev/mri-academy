@@ -14,7 +14,7 @@
 | 4 | 트레이너 취소 → 전부 복원 | 이미 그렇다 | **변경 없음** ✅ |
 | 5 | 예약 마감 **3시간 전** | 마감 없음 — 시작 **직전까지** 예약된다 | `book_slot`(§25) |
 | 6 | 첫 예약 때 규칙 표시 + **동의 시각 저장** | 없음 | 새 컬럼 + 새 라우트 |
-| 7 | 차감분은 **「사용한 판수」로 집계** | 차감분이 잔여에서만 빠지고 「사용」에는 **안 들어간다** | 집계 3곳 |
+| 7 | 차감분은 **「사용한 판수」로 집계**(환불 계산에서 제외) | 차감분이 잔여에서만 빠지고 「사용」에는 **안 들어간다**. 환불 계산은 차감분을 **아예 못 본다** | 집계 3곳 + **§2.6 환불(결제 트랙)** |
 
 4번은 이미 맞다. 나머지 6개가 작업 대상이다.
 
@@ -129,7 +129,7 @@ end if;
 전부 내려준다. 마감만 걸면 앱에 보이는 칸을 눌렀는데 409 가 난다.
 `booking-api.cjs` 쪽에서 조회 하한도 `now() + 3h` 로 올린다 — **이건 DDL 아니고 코드다.**
 
-### 2.4 첫 예약 규칙 동의 (규칙 6)
+### 2.4 규칙 표시 · 동의 (규칙 6)
 
 ```sql
 alter table public.students add column if not exists booking_rules_agreed_at timestamptz;
@@ -137,7 +137,18 @@ alter table public.students add column if not exists booking_rules_agreed_at tim
 
 기존 선례와 같은 형태다(`staff.contact_consent_at` · §22e).
 
-흐름:
+**표시 지점은 둘이다**(오너 원문: 「결제 전 · 첫 예약 때 규칙 표시 + 동의 기록」).
+
+| 지점 | 무엇을 | 동의 시각을 남기나 |
+|---|---|---|
+| **결제 전** | 규칙을 **읽게** 한다 — 판수를 사기 전에 차감 규칙을 알아야 한다 | ❌ 앱 밖(상담·입금)이라 서버가 시점을 모른다. **고지만** |
+| **첫 예약 때** | 규칙 표시 + **동의** | ✅ `booking_rules_agreed_at` |
+
+결제는 앱 밖에서 일어나므로(상담·입금·`/결제신청`) 결제 전 고지는 **앱이 아니라 안내문·상담
+스크립트 쪽**이다. 서버가 할 수 있는 기록은 첫 예약 때 하나뿐이고, 그래서 동의 시각도 하나다.
+결제 전 고지문까지 서버가 남기게 하려면 결제 흐름에 손을 대야 하는데 그건 **결제 트랙 소관**이다.
+
+흐름(첫 예약 때):
 1. `GET /api/student-portal/summary` 에 `bookingRulesAgreedAt`(ISO 또는 null) 을 싣는다
 2. null 이면 앱이 첫 예약 직전에 규칙 화면을 띄운다
 3. 동의 → `POST /api/student-portal/booking-rules-agree` (본문 없음 · 10회/분)
@@ -158,6 +169,10 @@ alter table public.students add column if not exists booking_rules_agreed_at tim
 `booking_rules_version` 을 더하거나 이 칸을 null 로 되돌리는 걸로 처리한다(이번 범위 밖).
 
 ### 2.5 차감분을 「사용한 판수」로 (규칙 7)
+
+오너 원문의 괄호가 목적을 말한다 — **「환불 계산에서 제외」**. 차감분이 「사용」으로 잡혀야
+환불 때 안 돌려준다. 화면 숫자를 맞추는 건 부수 효과고, **진짜 이유는 환불이다.**
+그런데 화면을 고쳐도 환불은 안 고쳐진다 — §2.6 을 반드시 같이 읽을 것.
 
 지금 집계는 이렇다.
 
@@ -207,6 +222,56 @@ remaining = registered − played − held                       ← 총액은 �
 `trainer-portal.cjs` 는 트레이너 화면의 잔여 표시용이라 「사용/선차감」을 쪼갤 필요가 없다 —
 **합만 맞으면 된다.** 목록에 `cancelled` 만 더하면 끝이다.
 
+### 2.6 ⛔ 환불 계산은 차감분을 못 본다 — 결제 트랙 소관
+
+**규칙 7의 괄호(「환불 계산에서 제외」)는 §2.5 만으로는 성립하지 않는다.** 실측이다.
+
+환불은 `admin-panel.js` 에서 **등록(enrollment) 단위**로 계산한다.
+
+```js
+// admin-panel.js:417-422 — 진행 판수의 유일한 출처
+for (const s of sessions) {                       // sessions = lesson_sessions
+  if (s.lesson_enrollment_id != null)
+    playedByEnr[s.lesson_enrollment_id] += Number(s.games || 0);
+}
+// :497-506
+const played = playedByEnr[e.id] || 0;
+refund: refundAmount(e, played)                   // 환불액 = paid_amount × 유상잔여 ÷ 유상판수
+```
+
+`played` 의 출처는 **`lesson_sessions` 하나뿐**이다. 노쇼·지각 취소 차감은
+`slot_bookings.games_held` 에 있고 `lesson_sessions` 행을 만들지 않는다 →
+**환불 계산이 차감분을 아예 못 본다** → 잔여로 잡혀 **그대로 환불된다.**
+
+`student-portal.cjs` 의 집계를 고쳐도 이건 안 고쳐진다. 화면과 환불이 서로 다른 함수를 쓴다.
+
+#### 두 가지가 필요하다
+
+**① 귀속 규칙이 없다 (설계 공백)**
+환불은 등록별인데 `slot_bookings` 에는 **`lesson_enrollment_id` 가 없다**
+(컬럼: `id · slot_id · student_id · games_held · duration_min · status · booked_at ·
+cancelled_at · span_head_id`). 노쇼 5판이 **어느 등록에서 빠지는지** 정해져 있지 않다.
+`lesson_sessions` 가 그 칸을 갖고 있어서 세션은 귀속되지만 예약은 안 된다.
+
+→ 정하는 방법 둘:
+  - **A. 컬럼 추가** — `slot_bookings.lesson_enrollment_id`, 예약 시점의 활성 등록으로 채운다. 정확하지만 DDL 이 는다
+  - **B. 계산 시 FIFO** — 환불 계산에서 진행분과 같은 순서로 차감분을 배분한다. DDL 0, 다만 규칙이 `admin-panel.js` 안에만 산다
+
+**② 고칠 파일이 결제 트랙 소관이다**
+`admin-panel.js` = 정산 엔진 · 환불. `CLAUDE.md` 의 트랙 정의상 **결제 트랙 주도**다.
+MRIacademy 트랙은 **읽기만** 한다. 그래서 이 항목은 이 세션이 구현하지 않고 **결제 트랙에
+요청**해야 한다 — 요청 내용은 위 ①②와 아래 한 줄이다.
+
+> 예약 벌점(`slot_bookings.games_held` where `status in ('no_show','cancelled')`)을
+> 환불의 `played` 에 포함해 주세요. 귀속 규칙은 A(컬럼) / B(FIFO) 중 결제 트랙이 정합니다.
+
+#### 그동안은
+
+환불이 드문 일이라(현재 `PANEL_WRITE` 미설정 · 패널 읽기전용) **막는 요인은 아니다.**
+다만 **규칙을 켜는 순간부터 어긋난 상태로 쌓인다** — 노쇼 1건마다 5판씩 "환불 가능"으로
+남는다. 규칙 시행과 결제 트랙 요청은 **같이 나가야** 뒤늦게 소급 정정할 일이 안 생긴다.
+
+
 ## 3. DDL 범위 (Level 0 · 오너 실행)
 
 새 절 **§32** 하나로 묶는다. 전부 멱등.
@@ -254,14 +319,16 @@ remaining = registered − played − held                       ← 총액은 �
    2판 남은 사람이 노쇼하면 −3판이 된다.
    → **권고: 그대로 둔다.** 0에서 끊으면 조용히 면제가 되고, 음수는 재등록 때 `carry_games` 로 정산된다.
 3. **규칙 6 게이트 A/B**(§2.4). 권고 A, 단 앱 동의 화면과 동시 배포.
-4. **이미 잡혀 있는 예약에 새 규칙이 소급되나?**
+4. **벌점의 등록 귀속 — A(컬럼) / B(FIFO)** (§2.6 ①). 결제 트랙과 협의가 필요하고,
+   A 를 택하면 §32 DDL 에 컬럼이 하나 는다. **오너가 결제 트랙에 넘길지부터 판정해 주세요.**
+5. **이미 잡혀 있는 예약에 새 규칙이 소급되나?**
    → **권고: 소급 안 함.** 동의 없이 맺어진 예약에 차감을 거는 게 되고, 규칙 6의 취지와 어긋난다.
    실무적으로는 새 규칙 시행 시각 이전 `booked_at` 예약을 지각 취소 면제로 두면 된다
    (`cancel_booking` 에 `v_b.booked_at < <시행시각>` 한 줄). **시행 시각을 오너가 정해야 한다.**
 
 ## 6. 실행 순서
 
-1. 오너: §5 미해결 4건 판정
+1. 오너: §5 미해결 5건 판정 + **결제 트랙에 §2.6 요청 전달**(환불 `played` 에 벌점 포함)
 2. 이 세션: §32 DDL 전문 발행(「최종」 블록) + 서버 PR(코드 쪽 — `STATUS` · `/availability` 하한 ·
    집계 3곳 · `REQUIRED_SCHEMA` · 계약 문서)
 3. 오너: Supabase SQL Editor 에서 §32 실행 → `notify pgrst, 'reload schema';`
