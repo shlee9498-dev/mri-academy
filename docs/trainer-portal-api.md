@@ -136,6 +136,8 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 
 **POST /slots/:id/reopen** (60회/분 · body 없음 · 2026-09-24 신설) → `{ "reopened": true }`. 내가 `DELETE /slots/:id` 로 취소한 칸을 **빈 칸**으로 되살린다 — 행을 지우지 않고 `status` 만 `cancelled → open`. 취소 때 풀린 예약은 되살리지 않는다(예약자에게는 이미 취소 DM 이 나갔다) · 수강생이 다시 잡아야 하고 DM 은 없다. `cancelled` 가 아닌 칸(open·closed)은 409 `slot_not_cancelled`, 시작 시각이 지난 칸은 409 `slot_in_past`, 남의 칸은 403 `scope_denied`, 없는 id 는 404 `not_found`. 취소당했던 수강생 **본인**이 같은 칸을 다시 잡는 것도 정상이다 — 유니크가 취소되지 않은 예약 행에만 걸린다(§26 부분 유니크 인덱스 `uq_slot_bookings_active` · 2026-09-25 실행 확인). 같은 이유로 수강생이 스스로 취소한 뒤 같은 칸을 다시 잡는 것도 정상이다.
 
+🆕 **§36(2026-09-27) 이후** — 취소한 칸은 **새 칸 열기를 더 이상 막지 않는다**(`uq_trainer_slots_live` = `unique (trainer_id, slot_start) where status <> 'cancelled'`). 따라서 **종류·길이를 바꿔 열고 싶으면 「다시 열기」가 아니라 그냥 `POST /slots` 로 새로 열면 된다** — 「다시 열기」는 원래 종류·범위로만 살아나므로 참여형 취소 → 개인으로 열기 같은 변경에는 쓸 수 없다. 그래서 **「취소했던 시간과 겹쳐요 · 다시 열 수 있어요」 안내는 더 필요 없다**(그 상황 자체가 사라졌다) — 앱에서 빼 주세요. `POST /slots` 의 409 `slot_taken` 은 이제 **살아 있는 칸(open·closed)과 겹칠 때만** 온다. 되살리려는 시각에 이미 산 칸이 새로 열려 있으면 `POST /slots/:id/reopen` 도 409 `slot_taken` 을 돌려준다(신규 상황 · 기존 `slot_not_cancelled` 와 다르다).
+
 ### 5.x 예약·취소 시간 규칙 (§32 · 2026-09-27 오너 확정 · 최소 반영판)
 
 | 규칙 | 값 | 집행 위치 |

@@ -198,6 +198,9 @@ alter table public.students add column if not exists booking_rules_agreed_at tim
 
 ### 2.5 차감분을 「사용한 판수」로 (규칙 7)
 
+> ⚠️ **이 절이 제시한 집계식(`slot_bookings` 에서 벌점을 세는 방식)은 §2.7 이 대체한다.**
+> 규칙 7 의 *의도*는 그대로 유효하고 아래 설명도 읽을 값이 있지만, 구현 정본은 §2.7 이다.
+
 오너 원문의 괄호가 목적을 말한다 — **「환불 계산에서 제외」**. 차감분이 「사용」으로 잡혀야
 환불 때 안 돌려준다. 화면 숫자를 맞추는 건 부수 효과고, **진짜 이유는 환불이다.**
 그런데 화면을 고쳐도 환불은 안 고쳐진다 — §2.6 을 반드시 같이 읽을 것.
@@ -300,6 +303,93 @@ MRIacademy 트랙은 **읽기만** 한다. 그래서 이 항목은 이 세션이
 남는다. 규칙 시행과 결제 트랙 요청은 **같이 나가야** 뒤늦게 소급 정정할 일이 안 생긴다.
 
 
+### 2.7 차감 종류 정본 — `lesson_sessions.entry_kind` (2026-09-27 통합)
+
+> **이 절이 벌점·차감 종류의 유일한 정본이다.** `docs/games-ledger-api-design.md` §3 에 있던
+> 같은 설계를 여기로 합쳤다(오너 지시 2026-09-27: 「벌점 설계는 이 세션 하나로 · 판수 로직을
+> 두 벌로 만들지 않는다」). 메인 세션 공유 문서는 참고만 한다.
+
+#### 왜 §2.5 식을 버리는가
+
+두 설계가 갈려 있었다.
+
+| | 벌점을 어디서 세나 | 결과 |
+|---|---|---|
+| §2.5 (구) | `slot_bookings` 상태에서 센다 | 화면 숫자는 맞지만 **§2.6 환불 사각은 그대로** |
+| §2.7 (정본) | `lesson_sessions` 에 행으로 적는다 | 화면·정산·환불이 **한 축**을 본다 |
+
+환불의 `played` 출처가 `lesson_sessions` 하나뿐이라(§2.6 실측), 벌점을 `slot_bookings` 에
+두면 환불은 영영 못 본다. **행으로 적으면 §2.6 이 따로 고칠 것 없이 풀린다** — 그래서 정본은
+§2.7 이다. 잔여 총액이 안 바뀐다는 §2.5 의 결론은 여기서도 그대로다(`held` 에서 빠지고
+`played` 로 들어간다).
+
+#### 컬럼
+
+현행 `lesson_sessions` 에는 종류 구분이 없다(`id·student_id·trainer_id·played_at·games·
+memo·created_by·created_at·settled_period·settled_rate·lesson_enrollment_id`). `memo` 문자열로
+가르면 정산이 문자열 판정에 걸린다 — 컬럼을 둔다.
+
+```
+alter table public.lesson_sessions add column if not exists entry_kind text;
+  check (entry_kind is null or entry_kind in
+         ('lesson','no_show','late_cancel','adjust','waived'))
+-- null = 'lesson' (기존 238행 불변 · 백필 없이 코드가 coalesce 한다)
+```
+
+| entry_kind | 판수 | 정산 | 만드는 주체 |
+|---|---|---|---|
+| `lesson` | − 진행분 | 포함 | `/수업등록`(장기적으로는 「완료」 — 아래 참조) |
+| `no_show` | **− 5** | **포함 · 지급률 일반 수업과 동일** | 트레이너 표시 → 24h → 확정 |
+| `late_cancel` | **− 3** | **포함 · 지급률 동일** | 트레이너 기록으로 즉시 확정 |
+| `adjust` | ± | 포함 | `/판수정정` · 조정 승인 |
+| `waived` | **0** | **미반영** | 오너 면제 |
+
+**면제는 행을 지우지 않고 `waived` 로 바꾼다** — 판수도 정산도 0 이 되고 원장과 정산이 같은
+기록을 본다(오너 지시). 지운 행은 두 화면을 갈라놓는다.
+
+내역 API 는 이 컬럼을 그대로 종류로 내린다 — 「늦은 취소 −3 · 9/28 · 현태」.
+
+#### 노쇼 확정 절차 (오너 판정 그대로)
+
+```
+수업 시작 +10분 · 연락 없음
+  → 트레이너가 앱에서 노쇼 표시        (확정 전 · 판수·정산 미반영)
+  → 수강생 알림
+  → 24시간 내 이의 없음 → 확정        (여기서 처음 판수·정산에 들어간다)
+  → 이의 있음 → 오너 판정
+```
+
+`slot_bookings.status = 'no_show'` 만으로는 「표시됨(대기)」과 「확정됨」이 안 갈린다.
+
+```
+alter table public.slot_bookings add column if not exists no_show_marked_at  timestamptz;
+alter table public.slot_bookings add column if not exists no_show_settled_at timestamptz;
+```
+
+⚠️ **선차감(hold)과 차감(확정)은 다른 것이다.** 현행 `portal_remaining_games` 는
+`status in ('booked','pending_review','no_show')` 의 `games_held` 를 이미 뺀다. 표시 단계의
+`no_show` 는 「자리를 잡고 있던 선차감이 아직 안 풀린 상태」이지 「5판 차감」이 아니다.
+내역 API 는 그 줄을 `hold` 로 내리고, 확정 뒤에 `no_show` 로 바꾼다.
+
+#### 트레이너가 3시간 이내 취소하면
+
+**정산 없음.** 수강생 판수는 전액 복원(현행 `cancel_slot` 이 이미 그렇게 한다). 수강생 보상은
+오너 판정 사안이고 이번 범위 밖이다.
+
+#### ⛔ 같이 풀리는 것 — 개인 선차감 이중 차감
+
+현행 실측(2026-09-27): 홀드를 푸는 경로는 `resolve_booking(...,'done')` 하나뿐이고 호출처는
+`booking-api.cjs:344`(트레이너 앱 「완료」) 뿐이다. `/수업등록`(`server.js:1268
+dualWriteSessions`)은 `slot_bookings` 를 만지지 않는다. 따라서 **「완료」+등록 = 정확 /
+등록만 = 이중 차감 / 완료만 = 미차감**이고, `sweep_pending_review` 는 48시간 뒤 상태만 바꿔
+스스로 풀리지 않는다.
+
+「완료」가 홀드를 풀면서 `entry_kind` 행을 쓰는 **유일한 경로**가 되면 이 함정이 구조적으로
+사라진다 — 트레이너가 두 가지를 다 기억해야 하는 상태 자체가 없어진다. 그래서 오너 판정
+2026-09-27(「완료 → 자동 확정 · 다르면 조정안 → 오너 승인」)과 이 절은 같은 방향이고,
+그때까지의 임시 운영 규칙은 **둘 다 하기**다. 그룹·상담은 `games_held = 0` 이라 무관하다.
+
+
 ## 3. DDL 범위 (Level 0 · 오너 실행)
 
 새 절 **§32** 하나로 묶는다. 전부 멱등.
@@ -308,8 +398,12 @@ MRIacademy 트랙은 **읽기만** 한다. 그래서 이 항목은 이 세션이
 2. `create or replace function portal_remaining_games(...)` — 상태 목록에 `cancelled`
 3. `create or replace function book_slot(...)` — 마감 3시간 + (A안이면) `rules_not_agreed`
 4. `create or replace function cancel_booking(...)` — 창 3시간 + 지각 3판 + `gamesCharged`
-5. `create or replace function resolve_booking(...)` — 노쇼 5판 정액
-6. `notify pgrst, 'reload schema';`
+5. `create or replace function resolve_booking(...)` — 노쇼 확정 시 `lesson_sessions` 행
+   (`entry_kind='no_show'` · 5판) 생성 + 홀드 해제 (§2.7)
+6. `alter table lesson_sessions add column if not exists entry_kind text;` + check (§2.7)
+7. `alter table slot_bookings add column if not exists no_show_marked_at timestamptz;`
+8. `alter table slot_bookings add column if not exists no_show_settled_at timestamptz;`
+9. `notify pgrst, 'reload schema';`
 
 **제약(check) 변경 없음** — 새 상태를 안 만든 덕이다(§2.1 C안). 기동 점검의
 컬럼 존재 프로브로 못 잡는 종류의 변경이 이번엔 **없다**.

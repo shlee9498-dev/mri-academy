@@ -2701,3 +2701,63 @@ update public.payments
 --          같은 날 두 건이 서로 달라야 ②가 의미를 갖는다
 --        · 기존 213행을 소급 채울지(안 채우면 과거 중복은 계속 못 잡는다 · 판수 영향은 없다)
 -- ============================================================
+
+-- ============================================================
+-- §36  취소한 슬롯이 새 슬롯 열기를 막는 문제 — 부분 유니크로 교체
+--      (2026-09-27 · 오너 실사용 신고 · Level 0 · 오너 실행 대기)
+--
+-- 증상: 19:00~23:00 참여형(예약 0건)을 취소하고 같은 시간에 개인 2시간을 열려 하면
+--       409 slot_taken. 「다시 열기」는 원래 종류·범위로만 살아나 종류를 바꿀 수 없다.
+--
+-- 원인: 코드에 겹침 판정이 없다. booking-api.cjs:254-260 이 그냥 insert 하고
+--       제약 위반(duplicate key)을 409 slot_taken 으로 바꿔 돌려주는 구조다.
+--       제약 = trainer_slots_trainer_id_slot_start_key UNIQUE (trainer_id, slot_start)
+--       — 조건이 없어서 status='cancelled' 행까지 자리를 잡고 있다.
+--
+-- 방침: status <> 'cancelled' 만 유일하게 한다(= open·closed 는 여전히 못 겹침).
+--       'open' 만으로 좁히면 예약이 잡힌 closed 칸 위에 새 칸이 열려 이중 예약이 된다.
+--       취소 행은 지우지도 덮지도 않는다 — 이력으로 남고, 같은 시간에 여러 번 취소하면
+--       취소 행이 여러 개 쌓인다(의도).
+--
+-- ⚠️ 이 블록은 제약 변경이라 컬럼 존재 프로브로 검증되지 않는다(CLAUDE.md).
+--    PR 본문 체크리스트로만 관리한다.
+-- ⚠️ 코드는 이 DDL 실행·검증 뒤에 배포한다(오너 지시). reopen 이 새 칸과 겹칠 때
+--    500 이 아니라 409 를 주도록 고치는 변경이 딸려 있다.
+
+-- ── 36a · 스냅샷 (실행 전 · 읽기 전용) ──
+select (select count(*) from pg_constraint
+         where conrelid = 'public.trainer_slots'::regclass
+           and conname  = 'trainer_slots_trainer_id_slot_start_key')            as 구제약,   -- 기대 1
+       (select count(*) from pg_indexes
+         where schemaname = 'public' and indexname = 'uq_trainer_slots_live')   as 신인덱스, -- 기대 0
+       (select count(*) from public.trainer_slots where status = 'cancelled')   as 취소칸,
+       (select count(*) from public.trainer_slots where status <> 'cancelled')  as 산칸,
+       (select count(*) from (
+          select trainer_id, slot_start from public.trainer_slots
+           where status <> 'cancelled'
+           group by trainer_id, slot_start having count(*) > 1) d)              as 산칸중복;  -- 기대 0 — 1 이상이면 중단
+
+-- ── 36b · 최종 · 교체 (멱등) ──
+-- 순서 주의: 새 인덱스를 먼저 만들고 구 제약을 뺀다. 사이에 겹침이 들어올 틈을 없앤다.
+create unique index if not exists uq_trainer_slots_live
+  on public.trainer_slots (trainer_id, slot_start)
+  where status <> 'cancelled';
+
+alter table public.trainer_slots
+  drop constraint if exists trainer_slots_trainer_id_slot_start_key;
+
+-- ── 36c · 검증 ──
+select (select count(*) from pg_constraint
+         where conrelid = 'public.trainer_slots'::regclass
+           and conname  = 'trainer_slots_trainer_id_slot_start_key')            as 구제약,   -- 기대 0
+       (select count(*) from pg_indexes
+         where schemaname = 'public' and indexname = 'uq_trainer_slots_live')   as 신인덱스, -- 기대 1
+       (select indexdef from pg_indexes
+         where schemaname = 'public' and indexname = 'uq_trainer_slots_live')   as 정의,
+       (select count(*) from public.trainer_slots)                              as 전체칸;
+
+-- 되돌리기(필요할 때만 · 취소 칸과 겹치는 새 칸이 이미 생겼다면 실패한다):
+--   drop index if exists public.uq_trainer_slots_live;
+--   alter table public.trainer_slots
+--     add constraint trainer_slots_trainer_id_slot_start_key unique (trainer_id, slot_start);
+-- ============================================================
