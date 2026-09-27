@@ -126,11 +126,28 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 ```
 - 슬롯 `status` ∈ `open` · `closed` · `cancelled` — **셋 다 온다.** `closed` = 개인 예약으로 찬 칸, `cancelled` = 내가 `DELETE /slots/:id` 로 취소한 칸(행을 지우지 않고 상태만 바꾸며, 조회 창 안이면 목록에 남는다). 앱은 `cancelled` 를 취소선 등으로 구분해 그리고 예약 버튼을 막으면 된다.
 - `bookings` 에는 **`booked` · `pending_review` · `done` 만** 들어간다. `no_show` · `cancelled` 예약은 목록에 없다(선차감은 `no_show` 가 유지되지만 이 목록의 대상은 아니다). 개인 예약의 꼬리 칸(span 후속)도 빠지고 머리 칸 1건만 온다.
-- `needsReview` = `status === "pending_review"`(트레이너 홈 「확인 필요」 배지) · `registrationMissing` = `done` 인데 같은 날 `lesson_sessions` 행이 없음(「등록 누락?」 배지 · 감지만, 차단·자동정정 없음).
+- `needsReview` = `status === "pending_review"`(트레이너 홈 「확인 필요」 배지) · `registrationMissing` = `done` 인데 같은 날 `lesson_sessions` 행이 없음(「등록 누락?」 배지 · 감지만, 차단·자동정정 없음). 2026-09-28 이후 「완료」가 판수까지 남기므로 이 배지가 켜지는 경우는 **그룹·상담(예약에 판수가 없다)** 과 **봇으로도 앱으로도 기록하지 않은 수업** 둘뿐이다.
 - `durationMin` 은 개인 예약이면 60·90·120, 그룹 예약이면 **null**.
 - `bookedAt` = 예약이 들어온 시각(ISO · `slot_bookings.booked_at` · 항상 값 있음 · 2026-09-24 추가). 「새 예약」 카드의 최근순 정렬·N시간 이내 강조는 앱이 이 값으로 한다 — 서버는 슬롯만 `startAt` 오름차순으로 주고 슬롯 안의 예약 순서는 보장하지 않는다.
 
-**POST /bookings/:id/complete** · **POST /bookings/:id/no-show** (60회/분 · body 없음) → `{ "resolved": true, "status": "done" | "no_show" }`. 대상은 `booked`·`pending_review` 머리 행만 — 이미 끝난 예약·꼬리 칸·없는 id 는 404, 남의 슬롯은 403 `scope_denied`. 판수는 건드리지 않는다(봇 `/수업등록` 경로 하나뿐).
+**POST /bookings/:id/no-show** (60회/분 · body 없음) → `{ "resolved": true, "status": "no_show" }`. 대상은 `booked`·`pending_review` 머리 행만 — 이미 끝난 예약·꼬리 칸·없는 id 는 404, 남의 슬롯은 403 `scope_denied`. **노쇼는 판수를 기록하지 않는다** — 선차감을 그대로 붙들어 판수 소진으로 남긴다(오너 판정 2026-09-04).
+
+🆕 **POST /bookings/:id/complete** (60회/분 · body 없음 · **2026-09-28 계약 변경**) → `{ "resolved": true, "status": "done", "outcome": "…", "games": 5, "playedAt": "2026-09-28" }`
+
+종전에는 상태만 바꿨고 판수는 봇 `/수업등록` 하나뿐이었다. **그 설계에 구멍이 있었다** — 잔여 판수 식은 `done` 예약의 선차감을 놓으므로, 「완료」만 누르고 `/수업등록` 을 하지 않으면 그 수업은 판수가 **0회** 빠졌다(선차감이 풀리고 `lesson_sessions` 행은 없다). 이제 「완료」가 수업 기록의 정식 입구다(오너 지시 2026-09-28 「수업 기록 하나로」 · §37 `record_lesson_from_booking`). 판수 소스는 여전히 `lesson_sessions` 한 곳이고, 그 행을 만드는 경로가 봇·앱 둘로 늘어났다. 두 번 빠지는 것은 서버가 막는다 — 예약이 이미 닫혀 있거나 그날 같은 트레이너 기록이 있으면 넣지 않고, 반대로 봇이 먼저 등록한 날은 `/수업등록` 이 그 수강생을 건너뛴다.
+
+`outcome` 은 **앱 문구를 가르는 값**이다. 네 값뿐이고 늘어나면 계약을 먼저 고친다.
+
+| `outcome` | 무슨 일이 일어났나 | 앱 문구 |
+|---|---|---|
+| `recorded` | 예약을 닫고 **판수 `games` 판을 기록했다** | 「수업을 기록했어요 · {games}판」 |
+| `already_session` | 그날 기록이 이미 있어 **예약만 닫았다** | 「이미 기록된 수업이에요」 |
+| `already_closed` | 이미 닫힌 예약인데 **판수 기록이 없다** | 「이 예약은 닫혀 있는데 판수 기록이 없어요 · 봇 `/수업등록` 으로 남겨주세요」 |
+| `closed_no_games` | 그룹·상담이라 예약에 판수가 없다 | 「수업을 닫았어요 · 판수는 `/수업등록` 으로 남겨주세요」 |
+
+⚠️ **`already_closed` 를 「이미 기록된 수업이에요」로 묶지 마세요.** 판수가 실제로 비어 있는 상태라, 그렇게 보이면 트레이너가 `/수업등록` 을 건너뛰어 판수가 영영 안 빠진다(실측 2026-09-28: 그런 예약 1건이 있었다 — 사람이 콘솔에서 상태만 바꾼 흔적으로, 머리 행은 `done` 인데 꼬리 칸은 `booked` 로 남아 어느 코드 경로도 만들 수 없는 짝이었다).
+
+`games` 는 `recorded` 일 때만 1 이상이고 나머지는 0 이다. 개인 60·90·120분 = 5·8·10판이며 **예약이 잡은 판수 그대로** 기록한다. 오류 응답은 no-show 와 같다(404 `not_found` · 403 `scope_denied`).
 
 **DELETE /slots/:id** → `{ "cancelled": true, "notified": 2 }`. `booked` 예약자 전원 복원(선차감 0 · 예약 `cancelled`)·DM, 슬롯은 `cancelled`. 남의 슬롯은 403.
 
@@ -217,6 +234,9 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | | `bookings[].needsReview` `registrationMissing` | boolean | 아니오 | |
 | POST /bookings/:id/complete · no-show | `resolved` | boolean | 아니오 | true |
 | | `status` | string | 아니오 | `done` · `no_show` |
+| POST /bookings/:id/complete | `outcome` | string | 아니오 | `recorded` · `already_session` · `already_closed` · `closed_no_games` |
+| | `games` | integer | 아니오 | `recorded` 면 5·8·10 · 그 외 0 |
+| | `playedAt` | string(YYYY-MM-DD) | **가능** | 판수를 기록한 날(KST) · 함수가 못 판정하면 null |
 | DELETE /slots/:id | `cancelled` | boolean | 아니오 | true |
 | | `notified` | integer | 아니오 | DM 대상 수 |
 | POST /slots/:id/reopen | `reopened` | boolean | 아니오 | true(그 외는 오류 응답) |

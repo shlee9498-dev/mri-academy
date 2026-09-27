@@ -220,9 +220,14 @@ Claude Code 원격 컨테이너는 비활성이 지속되거나 세션 종료 �
 # 아키텍처 (큰 그림)
 3개 런타임이 분리돼 있고, 이 경계를 아는 게 핵심이다.
 
-1. **정적 프론트 (Vercel)** — `*.html` (index/apply/staff-panel/lesson-schedule/gmi-*/trainer-* 등).
+1. **정적 프론트 (GitHub Pages)** — `*.html` (index/apply/staff-panel/lesson-schedule/gmi-*/trainer-* 등).
    빌드 없이 그대로 서빙. 각 HTML은 상수 `API = "https://mri-academy-production.up.railway.app"`로
-   서버에 `fetch`한다. PR마다 Vercel 프리뷰가 자동 생성됨.
+   서버에 `fetch`한다.
+   ⚠️ **mriacademy.gg = GitHub Pages 다**(오너 정정 2026-09-27). 저장소 루트 `CNAME` 이 정본이고
+   Pages 워크플로 없이 `main` 을 그대로 서빙한다 — 머지되면 곧바로 라이브다. 같은 저장소에 붙어
+   있는 **Vercel 프로젝트는 무관한 사본**이며 공개 사이트가 아니다. 종전 표기("정적 프론트
+   (Vercel)")가 틀렸고, 그 오기 때문에 배포 확인을 Vercel 쪽에서 하다가 오진한 일이 있었다 —
+   **배포 확인은 Pages 와 mriacademy.gg 로 한다.**
 2. **API + 디스코드 봇 (Railway) = `server.js`** — 2,900줄 단일 Express 앱(모놀리식).
    `if (process.env.DISCORD_TOKEN) { … }` 블록 안에 discord.js 봇이 통째로 들어있고,
    그 밖은 전부 모듈 레벨 함수/라우트. 봇 슬래시 명령과 API가 한 파일에 공존한다.
@@ -295,8 +300,8 @@ dual-write(마이그레이션 중), 채널 잠금(`LESSON_CHANNEL_ID`)·`TRAINER
 계정당 페이싱 필수(`pubgGet`은 자체 스로틀 없음). 플랫폼(steam/kakao)은 shard·seasonId·accountId 전부 분리.
 
 ## 배포
-- main 머지 → Vercel(정적) + Railway(서버·봇) 자동 배포. 봇 슬래시 명령 변경은 **봇 재기동** 필요
-  (글로벌 명령 전파 최대 ~1시간).
+- main 머지 → GitHub Pages(정적 · mriacademy.gg) + Railway(서버·봇) 자동 배포. 봇 슬래시 명령
+  변경은 **봇 재기동** 필요(글로벌 명령 전파 최대 ~1시간). Vercel 은 배포 경로가 아니다(위 §아키텍처 1).
 - 마이그레이션이 필요한 기능은 **머지·배포만으로 동작 안 함** — 오너가 해당 DDL을 SQL Editor에서
   실행해야 실동작(PR 본문에 항상 명시).
 
