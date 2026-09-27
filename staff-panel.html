@@ -218,7 +218,7 @@ async function reload(){
         + '<div id="pane-gdpay" class="tabpane"><div id="gdpaywrap"></div></div>'
         + '<div id="pane-pay" class="tabpane"></div>'
         + '<div id="pane-salary" class="tabpane"></div>'
-        + '<div id="pane-tools" class="tabpane"><div id="toolswrap"></div><div id="statswrap"></div><div id="bpiwrap"></div><div id="opswrap"></div></div>'
+        + '<div id="pane-tools" class="tabpane"><div id="toolswrap"></div><div id="gcwrap"></div><div id="statswrap"></div><div id="bpiwrap"></div><div id="opswrap"></div></div>'
       : '<div id="pane-links" class="tabpane"><div id="opswrap"></div></div>');
   if(isOwner){ renderOwnerStudents(); renderOwnerPay(); renderOwnerSalary(); renderOwnerTools(); }
   else renderTrainer();
@@ -249,7 +249,7 @@ function setTab(k){
     if(k==="sched") loadSchedule();
     if(k==="gdcup") loadGdcup();
     if(k==="gdpay") loadGdPay();
-    if(k==="tools"){ loadStats(); loadDist(); }
+    if(k==="tools"){ loadGConsents(); loadStats(); loadDist(); }
   }
 }
 
@@ -477,6 +477,47 @@ async function downloadGdCsv(){
     document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }catch(e){ alert("CSV 내려받기 실패: "+e.message+"\n(오너 계정만 가능해요)"); }
+}
+
+// ── 🧾 보호자 동의서 (§33 · owner 전용) ─────────────────────────────
+// 서버가 전화번호를 뒷 4자리로 잘라 내려준다(/api/admin/guardian-consents) — 화면에서
+// 감추는 게 아니라 **애초에 안 받는다.** 전체 번호가 필요하면 오너가 SQL Editor 에서 본다.
+// 만 14세 미만인데 확인 전인 줄(needsVerify)을 위로 올린다 — 그게 먼저 처리할 일이다.
+let GCL=null;
+const GC_TIER={ under14:"만14 미만", age14_18:"만14~18", adult:"성인", unknown:"생년 미상" };
+function renderGConsents(){
+  const w=document.getElementById("gcwrap"); if(!w) return;
+  let body;
+  if(GCL===null){ body='<div class="muted">불러오는 중…</div>'; }
+  else if(GCL==="off"){ body='<div class="muted">표가 아직 없어요. §33 DDL 실행 뒤에 보여요.</div>'; }
+  else if(GCL==="err"){ body='<div class="muted">목록을 못 불러왔어요. 잠시 후 탭을 다시 열어 주세요.</div>'; }
+  else if(!GCL.length){ body='<div class="muted">접수된 동의서가 없어요.</div>'; }
+  else {
+    const rows=GCL.slice().sort((a,b)=>(b.needsVerify?1:0)-(a.needsVerify?1:0));
+    const need=rows.filter(r=>r.needsVerify).length;
+    body=(need?`<div style="margin-bottom:8px"><span class="badge warn">확인 전 ${need}건</span> <span class="muted" style="font-size:11px">← 만 14세 미만 · 보호자 확인 전화 대상</span></div>`:"")
+      + rows.map(r=>`<div class="srow">`
+        + `<b>${esc(r.student_name)}</b>${r.student_id?` <span class="muted">#${r.student_id}</span>`:` <span class="muted">(명부 미연결)</span>`}`
+        + ` · <span style="color:var(--gold)">${esc(GC_TIER[r.minor_tier]||r.minor_tier)}</span>`
+        + ` · 보호자 ${esc(r.guardian_name)}(${esc(r.guardian_relation)}) ${esc(r.guardian_phone||"—")}`
+        + (r.needsVerify?` · <span class="badge warn">확인 전</span>`:(r.verified_at?` · <span class="muted">확인 ${esc(String(r.verified_at).slice(0,10))}</span>`:""))
+        + (r.source!=="web"?` · <span class="muted">${esc(r.source)}</span>`:"")
+        + (r.withdrawn_at?` · <span class="muted">철회 ${esc(String(r.withdrawn_at).slice(0,10))}</span>`:"")
+        + (r.purged_at?` · <span class="muted">파기됨</span>`:"")
+        + `<div class="muted" style="font-size:11px">동의 ${esc(String(r.signed_at||"").slice(0,16).replace("T"," "))}`
+        + ` · 문안 ${esc(r.consent_version||"?")} · 보관 ${esc(r.retention_until||"?")} 까지`
+        + (r.agree_content?" · 콘텐츠 활용 동의":"")+`</div></div>`).join("");
+  }
+  w.innerHTML=`<section class="ops"><h2 class="ops-h">🧾 보호자 동의서</h2>
+    <div class="muted" style="font-size:11px;margin-bottom:9px">연락처는 뒷 4자리만 내려와요. 전체 번호는 Supabase 에서 봐주세요.</div>
+    <div>${body}</div></section>`;
+}
+async function loadGConsents(){
+  try{ GCL=(await api("/api/admin/guardian-consents?limit=200")).consents||[]; }
+  // unavailable = 서버가 표를 못 읽었다(§33 미실행 포함). 그 밖의 오류는 빈 목록으로
+  // 뭉개지 않는다 — 「없다」와 「못 불러왔다」는 다른 사실이다.
+  catch(e){ GCL = e.message==="unavailable" ? "off" : "err"; }
+  renderGConsents();
 }
 
 // ── 📊 전적 스냅샷 (Phase T1, owner 전용) — server 라우트는 읽기전용 게이트 밖이라 직접 호출 ──
