@@ -306,7 +306,8 @@ module.exports = function mountStudentPortal(app, deps) {
   // 음수는 그대로 둔다. 0 클램프 금지(정본 v0.2.2 B-4).
   async function lessonAggregate(studentId) {
     const [stu, enrolls, sessions, held] = await Promise.all([
-      sbSelect("students", `select=carry_games,trainer_id&id=eq.${studentId}`),
+      // pubg_name 도 여기서 같이 읽는다 — 종전에는 /summary 가 같은 행을 한 번 더 읽었다(왕복 1회 낭비).
+      sbSelect("students", `select=carry_games,trainer_id,pubg_name&id=eq.${studentId}`),
       sbSelect("lesson_enrollments", `select=games_total&student_id=eq.${studentId}&status=in.(active,done,paused)`),
       sbSelect("lesson_sessions", `select=games,trainer_id,created_at&student_id=eq.${studentId}`),
       heldGames(studentId),
@@ -322,6 +323,7 @@ module.exports = function mountStudentPortal(app, deps) {
     return {
       registered, played, remaining,
       assignedTrainerId: stu[0]?.trainer_id ?? null,
+      pubgName: stu[0]?.pubg_name || null,
       activeTrainerIds: [...new Set(sessions.map((r) => r.trainer_id).filter(Boolean))],
       asOf: asOf || new Date(0).toISOString(),
     };
@@ -345,25 +347,48 @@ module.exports = function mountStudentPortal(app, deps) {
     } catch { return 0; }
   }
 
+  // ── staff 캐시(2026-09-27 속도) ──────────────────────────────────
+  // staff 는 5행이고 거의 안 바뀌는데 종전에는 요청마다 이름·연락처로 **2번** 읽었다.
+  // sfo ↔ Supabase(서울) 왕복이 ~200ms 라 이 둘만으로 /summary 의 20%였다.
+  // 전체를 한 번 읽어 60초 캐시한다 — 트레이너가 새로 생겨도 최대 60초 뒤엔 보인다.
+  // 실패하면 캐시를 세우지 않고 빈 값으로 떨어진다(종전 degrade 와 같다).
+  const STAFF_TTL_MS = 60_000;
+  let staffCache = null;          // { at, byId: { [id]: { name, phone|null } } }
+  async function staffAll() {
+    if (staffCache && Date.now() - staffCache.at < STAFF_TTL_MS) return staffCache.byId;
+    const cols = staffContactReady ? "id,name,contact_phone,contact_consent_at" : "id,name";
+    try {
+      const rows = await sbSelect("staff", `select=${cols}`);
+      const byId = {};
+      for (const r of rows) {
+        byId[r.id] = {
+          name: r.name,
+          phone: (r.contact_consent_at && r.contact_phone) ? r.contact_phone : null,
+        };
+      }
+      staffCache = { at: Date.now(), byId };
+      return byId;
+    } catch (e) { console.error("staff_cache", e?.message); return staffCache?.byId || {}; }
+  }
+
   // staff id → 표시명. 응답에는 표시명만 나간다(실명 컬럼이 곧 표시명이라 그대로 쓴다).
   async function trainerNames(ids) {
     const uniq = [...new Set(ids.filter(Boolean))];
     if (!uniq.length) return {};
-    const rows = await sbSelect("staff", `select=id,name&id=in.(${uniq.join(",")})`);
-    return Object.fromEntries(rows.map((r) => [r.id, r.name]));
+    const byId = await staffAll();
+    const out = {};
+    for (const id of uniq) if (byId[id]) out[id] = byId[id].name;
+    return out;
   }
   // 공개 동의한 트레이너 연락처만. contact_consent_at 이 null 이면 키 자체를 넣지 않는다.
   async function trainerContacts(ids) {
     if (!staffContactReady) return {};
     const uniq = [...new Set(ids.filter(Boolean))];
     if (!uniq.length) return {};
-    try {
-      const rows = await sbSelect("staff",
-        `select=id,contact_phone,contact_consent_at&id=in.(${uniq.join(",")})`);
-      return Object.fromEntries(rows
-        .filter((r) => r.contact_consent_at && r.contact_phone)
-        .map((r) => [r.id, r.contact_phone]));
-    } catch { return {}; }
+    const byId = await staffAll();
+    const out = {};
+    for (const id of uniq) if (byId[id]?.phone) out[id] = byId[id].phone;
+    return out;
   }
 
   // 다가오는 예약 1건. §23 미실행이면 null(종전과 같은 응답 모양).
@@ -410,10 +435,22 @@ module.exports = function mountStudentPortal(app, deps) {
   // ════════════════ GET /summary ════════════════
   app.get(`${PREFIX}/summary`, requireStudent, wrap(async (req, res) => {
     const sid = req.portal.sub;
-    const agg = await lessonAggregate(sid);
-    const names = await trainerNames([agg.assignedTrainerId, ...agg.activeTrainerIds]);
+    // 종전에는 집계 → 이름 → 연락처 → 일기 → 끝난 예약 → 다음 예약 → 강의를 **하나씩**
+    // 기다렸다. sfo ↔ Supabase(서울) 왕복이 ~200ms 라 그 줄서기가 지연의 거의 전부였다
+    // (실측: /summary 중위 2,086ms · RPC 1회짜리 POST /bookings 는 285ms).
+    // 집계와 무관한 것들은 집계와 **동시에** 시작한다. 이름·연락처만 집계 결과(트레이너 id)가
+    // 필요해 뒤에 오고, 그 둘은 staff 캐시라 보통 왕복 0이다.
+    // ⚠️ 판수 계산식(lessonAggregate 내부)은 한 글자도 바꾸지 않았다 — 순서와 횟수만 바뀐다.
+    const [agg, pendingJournalCount, ended, nextBooking, courses] = await Promise.all([
+      lessonAggregate(sid),
+      pendingJournalsFor(sid),
+      endedBookingToday(sid),
+      nextBookingFor(sid),
+      coursesFor(sid),
+    ]);
+    const tids = [agg.assignedTrainerId, ...agg.activeTrainerIds];
+    const [names, contacts] = await Promise.all([trainerNames(tids), trainerContacts(tids)]);
 
-    const contacts = await trainerContacts([agg.assignedTrainerId, ...agg.activeTrainerIds]);
     const entry = (tid, role) => {
       const t = { displayName: names[tid], role };
       if (contacts[tid]) t.trainerContactPhone = contacts[tid];   // 동의분만
@@ -430,26 +467,11 @@ module.exports = function mountStudentPortal(app, deps) {
 
     const status = agg.remaining > 0 ? "ok" : agg.remaining === 0 ? "exhausted" : "over";
 
-    // 미작성 일기 수 — 일기 테이블이 없으면 0. 화면은 배지를 감춘다.
-    let pendingJournalCount = 0;
-    if (tableReady.lesson_journals) {
-      const [sess, journals] = await Promise.all([
-        sbSelect("lesson_sessions", `select=id&student_id=eq.${sid}`),
-        sbSelect("lesson_journals", `select=session_id&student_id=eq.${sid}`),
-      ]);
-      const written = new Set(journals.map((j) => j.session_id));
-      pendingJournalCount = sess.filter((s) => !written.has(s.id)).length;
-    }
-
-    // 본인 배그 닉네임 — 명부 표시 「이름(pubg_name)」 용(오너 요청 2026-09-25 · 트레이너 포털과 같은 키). 없으면 null.
-    let pubgName = null;
-    try { pubgName = (await sbSelect("students", `select=pubg_name&id=eq.${sid}&limit=1`))[0]?.pubg_name || null; }
-    catch (e) { console.error("summary_pubg_name", e?.message); }
-
     // 복기 모듈이 꺼져 있으면 키 자체가 없다(/sessions 확장과 같은 규칙 · 앱은 없음 = false).
+    // endedBookingToday 결과를 받아야 하므로 위 파동 뒤에 온다(유일한 순차 단계).
     let reviewExtras = {};
     if (hooks.summaryExtras) {
-      try { reviewExtras = (await hooks.summaryExtras(sid, { endedBookingToday: await endedBookingToday(sid) })) || {}; }
+      try { reviewExtras = (await hooks.summaryExtras(sid, { endedBookingToday: ended })) || {}; }
       catch (e) { console.error("summary_review_extras", e?.message); }
     }
 
@@ -462,15 +484,31 @@ module.exports = function mountStudentPortal(app, deps) {
       },
       trainers,
       asOf: agg.asOf,
-      nextBooking: await nextBookingFor(sid),
+      nextBooking,
       pendingJournalCount,
-      pubgName,
-      courses: await coursesFor(sid),
+      // 본인 배그 닉네임 — 명부 표시 「이름(pubg_name)」 용(오너 요청 2026-09-25 · 트레이너 포털과
+      // 같은 키). lessonAggregate 의 students 조회에서 같이 받는다(종전에는 같은 행을 또 읽었다).
+      pubgName: agg.pubgName,
+      courses,
       ...reviewExtras,
     });
   }));
 
   // 직강 요약 — 읽기 전용. 잔여 회차는 done 행만 센다(스키마 인덱스 주석과 동일 기준).
+  // 미작성 일기 수 — 일기 테이블이 없으면 0. 화면은 배지를 감춘다.
+  //   /summary 의 한 파동에 넣기 위해 헬퍼로 뽑았다(로직 불변).
+  async function pendingJournalsFor(studentId) {
+    if (!tableReady.lesson_journals) return 0;
+    try {
+      const [sess, journals] = await Promise.all([
+        sbSelect("lesson_sessions", `select=id&student_id=eq.${studentId}`),
+        sbSelect("lesson_journals", `select=session_id&student_id=eq.${studentId}`),
+      ]);
+      const written = new Set(journals.map((j) => j.session_id));
+      return sess.filter((x) => !written.has(x.id)).length;
+    } catch (e) { console.error("summary_pending_journals", e?.message); return 0; }
+  }
+
   async function coursesFor(studentId) {
     let rows;
     try {
@@ -479,32 +517,54 @@ module.exports = function mountStudentPortal(app, deps) {
         + `&order=started_on.desc`);
     } catch { return []; }
     if (!rows.length) return [];
+
+    // 종전에는 강의마다 출석 1회 + 다음 회차 1회를 **순차로** 돌았다(강의 2개 = 4~5왕복).
+    // in.() 로 묶어 강의 수와 무관하게 최대 2왕복으로 고정한다. 계산식은 그대로다.
+    const ids = rows.map((c) => c.id);
+    let att = [], attOk = false;
+    try {
+      att = await sbSelect("course_attendance",
+        `select=course_id,units,session_id,status&course_id=in.(${ids.join(",")})`);
+      attOk = true;
+    } catch (e) { console.error("courses_attendance", e?.message); }
+
+    // 예정 회차는 한 번에 받아 강의별로 가장 이른 것을 고른다(종전 limit=1 과 같은 결과).
+    const upcoming = [...new Set(att.filter((a) => a.status === "scheduled")
+                                   .map((a) => a.session_id).filter(Boolean))];
+    const sessById = {};
+    if (upcoming.length) {
+      try {
+        const ss = await sbSelect("course_sessions",
+          `select=id,held_on,start_time,end_time&id=in.(${upcoming.join(",")})`
+          + `&status=eq.scheduled&order=held_on.asc`);
+        for (const r of ss) sessById[r.id] = r;
+      } catch (e) { console.error("courses_sessions", e?.message); }
+    }
+
+    const byCourse = {};
+    for (const a of att) (byCourse[a.course_id] ||= []).push(a);
+
     const out = [];
     for (const c of rows) {
-      let completed = 0, nextSession = null;
+      const mine = byCourse[c.id] || [];
+      const completed = mine.filter((a) => a.status === "done")
+                            .reduce((n, r) => n + Number(r.units || 0), 0);
       // 출석 행이 아예 없는 것과 「정말 0회 진행」은 다르다 — 구 체계 강의는 진행 이력이
       // courses.memo 에만 있고 course_attendance 는 비어 있다(2026-09-27 실측: 18행 전부 0행).
       // 구분값 없이 completedUnits 0 을 내리면 앱이 「0/12 진행」으로 단정해 보여 준다.
-      let attendanceKnown = false;
-      try {
-        const att = await sbSelect("course_attendance",
-          `select=units,session_id,status&course_id=eq.${c.id}`);
-        attendanceKnown = att.length > 0;
-        completed = att.filter((a) => a.status === "done").reduce((a, r) => a + Number(r.units || 0), 0);
-        const upcoming = att.filter((a) => a.status === "scheduled").map((a) => a.session_id);
-        if (upcoming.length) {
-          const ss = await sbSelect("course_sessions",
-            `select=held_on,start_time,end_time&id=in.(${upcoming.join(",")})&status=eq.scheduled&order=held_on.asc&limit=1`);
-          if (ss[0]) {
-            nextSession = {
-              date: ss[0].held_on,
-              startTime: (ss[0].start_time || "").slice(0, 5),
-              endTime: (ss[0].end_time || "").slice(0, 5),
-              type: "direct",
-            };
-          }
-        }
-      } catch { /* 부재·권한 문제는 직강 카드만 비운다 */ }
+      const attendanceKnown = attOk && mine.length > 0;
+      let nextSession = null;
+      const next = mine.filter((a) => a.status === "scheduled")
+                       .map((a) => sessById[a.session_id]).filter(Boolean)
+                       .sort((x, y) => String(x.held_on).localeCompare(String(y.held_on)))[0];
+      if (next) {
+        nextSession = {
+          date: next.held_on,
+          startTime: (next.start_time || "").slice(0, 5),
+          endTime: (next.end_time || "").slice(0, 5),
+          type: "direct",
+        };
+      }
       const total = Number(c.units_total || 0);
       out.push({
         level: c.level, scheme: c.scheme || null,
@@ -517,6 +577,7 @@ module.exports = function mountStudentPortal(app, deps) {
     }
     return out;
   }
+
 
   // ── 정정쌍 순합 (정본 v0.2.3 C-6: 처리 주체는 Railway) ──────────
   // 정정 행은 음수 games로 들어온다. 이걸 원본에 합산해 하루치 순합만 내보낸다.
@@ -566,23 +627,36 @@ module.exports = function mountStudentPortal(app, deps) {
     if (!rows.length) return send(res, { sessions: [] });
 
     const ids = rows.map((r) => r.id);
-    const names = await trainerNames(rows.map((r) => r.trainer_id));
 
     // 제목·일기·피드백은 전부 선택 테이블. 없으면 각각 미정/false 로 degrade.
-    let titles = {}, journaled = new Set(), feedbacked = new Set();
-    if (tableReady.lesson_session_titles) {
-      const t = await sbSelect("lesson_session_titles", `select=session_id,title&session_id=in.(${ids.join(",")})`);
-      titles = Object.fromEntries(t.map((r) => [r.session_id, r.title]));
-    }
-    if (tableReady.lesson_journals) {
-      const j = await sbSelect("lesson_journals", `select=id,session_id&student_id=eq.${sid}&session_id=in.(${ids.join(",")})`);
-      journaled = new Set(j.map((r) => r.session_id));
+    // 이름·제목·일기는 서로 독립인데 종전에는 순차였다 — 한 파동으로 묶는다(피드백만
+    // 일기 id 에 의존해 그 안에서 순차로 남는다). 응답 모양·판정은 그대로다.
+    const titlesOf = async () => {
+      if (!tableReady.lesson_session_titles) return {};
+      const t = await sbSelect("lesson_session_titles",
+        `select=session_id,title&session_id=in.(${ids.join(",")})`);
+      return Object.fromEntries(t.map((r) => [r.session_id, r.title]));
+    };
+    const journalsOf = async () => {
+      if (!tableReady.lesson_journals) return { journaled: new Set(), feedbacked: new Set() };
+      const j = await sbSelect("lesson_journals",
+        `select=id,session_id&student_id=eq.${sid}&session_id=in.(${ids.join(",")})`);
+      const journaled = new Set(j.map((r) => r.session_id));
+      let feedbacked = new Set();
       if (tableReady.journal_feedback && j.length) {
-        const f = await sbSelect("journal_feedback", `select=journal_id&journal_id=in.(${j.map((r) => r.id).join(",")})`);
+        const f = await sbSelect("journal_feedback",
+          `select=journal_id&journal_id=in.(${j.map((r) => r.id).join(",")})`);
         const withFb = new Set(f.map((r) => r.journal_id));
         feedbacked = new Set(j.filter((r) => withFb.has(r.id)).map((r) => r.session_id));
       }
-    }
+      return { journaled, feedbacked };
+    };
+    const [names, titles, jf] = await Promise.all([
+      trainerNames(rows.map((r) => r.trainer_id)),
+      titlesOf(),
+      journalsOf(),
+    ]);
+    const { journaled, feedbacked } = jf;
 
     // 수업 복기 확장(§29 PR-1) — 실패해도 목록은 종전대로 내려간다.
     let extras = new Map();
