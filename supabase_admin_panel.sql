@@ -2405,3 +2405,147 @@ $$;
 --
 -- 실행 후 필수:
 -- notify pgrst, 'reload schema';
+
+-- ============================================================
+-- §33  보호자 동의서 guardian_consents (2026-09-27 · 관제탑 지시 + 오너 추가 지시 5건)
+--      ⏳ 오너 실행 대기. 「최종」 3단(33a 스냅샷 · 33b 생성 · 33c 검증).
+--
+--      미성년 수강생의 보호자 동의 기록. 설계·법적 효력 검토는 docs/guardian-consent-design.md.
+--      입력 화면은 consent.html(공개 · noindex · sitemap 미등재), 수신은 POST /api/guardian-consent.
+--
+--      ⚠️ 이 표는 **보호자 실명·연락처**를 담는다. RLS on · 정책 0 = service_role 만 통과.
+--         시드·예시 데이터를 이 파일에 넣지 않는다(PII 커밋 금지).
+--
+--      관제탑 원안에서 늘어난 칸(오너 추가 지시 2026-09-27)
+--        · consent_version  어떤 문구에 동의했는지. 버전은 문안으로 되돌릴 수 있어야 증빙이다
+--        · consent_text     동의 당시 문안 전문 스냅샷. **nullable** — 채택 여부가 아직 열려 있는데
+--                           칸을 안 만들면 나중에 DDL 을 또 실행해야 한다(Level 0 이라 매번 오너 손이 든다)
+--        · minor_tier       적용된 법적 근거 스냅샷. 개인정보 동의는 만 14세, 계약 동의(민법 제5조)는
+--                           만 19세 기준이라 축이 다르다. 생년월일로 재계산은 되지만, 생년월일이
+--                           나중에 정정되면 **당시 판정**이 남아 있어야 한다
+--        · verify_*         만 14세 미만 보호자 확인(권고 = 통보 + 오너 통화). sms 는 칸만 열어 둔다
+--        · retention_until  signed_at + 5년(전자상거래법 계약 기록). 파기 배치가 이 칸으로 고른다
+--        · purged_at        파기는 **행 삭제가 아니라 개인정보 칸 비우기**다. 사실·집계·student_id
+--                           연결은 남고 개인정보만 사라진다
+--        · withdrawn_at     철회해도 보관 기간은 그대로다. 즉시 지우면 「동의 없이 가르쳤다」에
+--                           반박할 근거가 사라진다
+--        · source           web / gform / manual. 구글폼 이관 행은 ip·user_agent 가 없어
+--                           **증빙 강도가 다르다** — 나중에 무엇을 낼 수 있는지 알려면 구별해야 한다
+--
+--      ⚠️ student_birth 는 **nullable 로 둔다**(설계 §5 의 not null 권고에서 바꿨다).
+--         이유: 구글폼 이관 행에 생년월일이 없으면 not null 이 insert 를 막아 **실제로 존재하는
+--         동의 기록을 아예 못 남긴다.** 종이·폼에 있는 동의를 DB 가 거부하는 게 더 나쁘다.
+--         대신 **웹 경로는 API 가 필수로 막는다**(없으면 400). 그래서 minor_tier 에 'unknown' 을 둔다
+--         — 생년월일을 모르는 이관 행만 여기 들어가고, 목록에서 눈에 띄게 표시한다.
+--
+--      ⚠️ student_id 에 **FK 를 걸지 않는다.** 동의서가 명부 등록보다 먼저 올 수 있어
+--         (상담 단계에서 받는다) FK 를 걸면 접수 자체가 막힌다. 연결은 오너가 사후에 채운다.
+-- ============================================================
+
+-- ── 33a) 스냅샷 (읽기 전용 · 실행 전) ─────────────────────────────────────────
+--   기대: exists=false · cols=0 (아직 없는 표)
+--   select to_regclass('public.guardian_consents') as exists_reg,
+--          (select count(*) from information_schema.columns
+--            where table_schema='public' and table_name='guardian_consents') as cols;
+
+-- ── 33b) 생성 (멱등) ──────────────────────────────────────────────────────────
+
+create table if not exists public.guardian_consents (
+  id                   bigint generated always as identity primary key,
+  -- 수강생
+  student_name         text not null,
+  student_birth        date,                       -- 위 ⚠️ 참조. 웹 경로는 API 가 필수로 막는다
+  student_discord      text,
+  student_id           bigint,                     -- FK 없음(위 ⚠️ 참조)
+  -- 보호자
+  guardian_name        text not null,
+  guardian_relation    text not null,
+  guardian_phone       text not null,
+  -- 동의 항목 (앞의 셋이 필수 — API 가 false 면 400)
+  agree_lesson         boolean not null,
+  agree_privacy        boolean not null,
+  agree_payment        boolean not null,
+  agree_content        boolean not null default false,
+  signed_name          text not null,
+  signed_at            timestamptz not null,
+  -- 문안
+  consent_version      text not null,
+  consent_text         text,
+  -- 적용된 법적 근거 스냅샷
+  minor_tier           text not null,
+  -- 만 14세 미만 보호자 확인
+  verify_method        text,
+  verified_by          text,
+  verified_at          timestamptz,
+  guardian_notified_at timestamptz,
+  -- 보관·파기
+  retention_until      date not null,
+  purged_at            timestamptz,
+  purge_note           text,
+  -- 철회
+  withdrawn_at         timestamptz,
+  withdrawn_reason     text,
+  -- 경로·증빙
+  source               text not null default 'web',
+  ip                   text,
+  user_agent           text,
+  created_at           timestamptz not null default now()
+);
+
+-- 제약은 따로 건다(멱등 · 이미 실행한 DB 에서도 값이 늘어나도록 drop 후 재생성).
+-- ⚠️ check 변경은 기동 자기점검의 컬럼 존재 프로브로 못 잡는다 — 33c 로만 확인된다.
+alter table public.guardian_consents drop constraint if exists chk_gc_relation;
+alter table public.guardian_consents add  constraint chk_gc_relation
+  check (guardian_relation in ('부','모','조부','조모','기타'));
+alter table public.guardian_consents drop constraint if exists chk_gc_minor_tier;
+alter table public.guardian_consents add  constraint chk_gc_minor_tier
+  check (minor_tier in ('under14','age14_18','adult','unknown'));
+alter table public.guardian_consents drop constraint if exists chk_gc_verify_method;
+alter table public.guardian_consents add  constraint chk_gc_verify_method
+  check (verify_method is null or verify_method in ('none','notify','call','sms'));
+alter table public.guardian_consents drop constraint if exists chk_gc_source;
+alter table public.guardian_consents add  constraint chk_gc_source
+  check (source in ('web','gform','manual'));
+
+-- 목록(최신순) · 명부 연결 · 파기 배치용
+create index if not exists idx_gc_created    on public.guardian_consents (created_at desc);
+create index if not exists idx_gc_student    on public.guardian_consents (student_id)
+  where student_id is not null;
+-- 파기 대상 = 보유기간 지났고 아직 안 비운 행
+create index if not exists idx_gc_retention  on public.guardian_consents (retention_until)
+  where purged_at is null;
+-- 만 14세 미만인데 확인 전 = 목록 상단에 올릴 줄
+create index if not exists idx_gc_unverified on public.guardian_consents (created_at desc)
+  where minor_tier = 'under14' and verified_at is null;
+
+alter table public.guardian_consents enable row level security;   -- 정책 0 = service_role 만
+
+-- ── 33c) 검증 ─────────────────────────────────────────────────────────────────
+--   ① 표·컬럼
+--   select to_regclass('public.guardian_consents') as exists_reg,
+--          (select count(*) from information_schema.columns
+--            where table_schema='public' and table_name='guardian_consents') as cols;
+--   기대: public.guardian_consents · 30
+--
+--   ② 제약 4개 (컬럼 프로브로는 절대 안 잡히는 부분)
+--   select conname from pg_constraint
+--    where conrelid = 'public.guardian_consents'::regclass and contype = 'c'
+--    order by conname;
+--   기대: chk_gc_minor_tier · chk_gc_relation · chk_gc_source · chk_gc_verify_method
+--
+--   ③ 인덱스 4개 + RLS
+--   select indexname from pg_indexes
+--    where schemaname='public' and tablename='guardian_consents' order by indexname;
+--   기대: guardian_consents_pkey · idx_gc_created · idx_gc_retention · idx_gc_student · idx_gc_unverified
+--   select relrowsecurity as rls_on,
+--          (select count(*) from pg_policies
+--            where schemaname='public' and tablename='guardian_consents') as policies
+--     from pg_class where oid = 'public.guardian_consents'::regclass;
+--   기대: true · 0
+--
+--   ④ 행 수 (새 표라 0)
+--   select count(*) as rows from public.guardian_consents;
+--   기대: 0
+--
+-- 실행 후 필수:
+-- notify pgrst, 'reload schema';
