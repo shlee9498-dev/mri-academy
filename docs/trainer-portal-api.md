@@ -23,7 +23,7 @@
 | 오류 형태 | 항상 `{ "error": { "code": "…" } }` · 메시지·상세 없음 |
 | id | 전부 서명된 불투명 문자열. DB id 를 보내면 400 |
 
-오류 코드: 400 `invalid_body` · 401 `session_expired` · 403 `scope_denied` / `not_staff` · 404 `not_found` / `slot_not_found` · 409 `slot_taken` / `slot_full` / `insufficient_games` / `cancel_window_passed` / `slot_not_cancelled` / `slot_in_past` · 422 `feedback_too_long` / `title_too_long` · 429 `rate_limited`(Retry-After 헤더) · 503 `portal_unavailable`.
+오류 코드: 400 `invalid_body` · 401 `session_expired` · 403 `scope_denied` / `not_staff` · 404 `not_found` / `slot_not_found` · 409 `slot_taken` / `slot_full` / `insufficient_games` / `cancel_window_passed` / `booking_closed` / `slot_not_cancelled` / `slot_in_past` · 422 `feedback_too_long` / `title_too_long` · 429 `rate_limited`(Retry-After 헤더) · 503 `portal_unavailable`.
 
 ### 1.1 403 두 코드의 경계 (2026-09-18 확정)
 | 코드 | 원인 | 나오는 곳 | 앱 처리 |
@@ -135,6 +135,36 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 **DELETE /slots/:id** → `{ "cancelled": true, "notified": 2 }`. `booked` 예약자 전원 복원(선차감 0 · 예약 `cancelled`)·DM, 슬롯은 `cancelled`. 남의 슬롯은 403.
 
 **POST /slots/:id/reopen** (60회/분 · body 없음 · 2026-09-24 신설) → `{ "reopened": true }`. 내가 `DELETE /slots/:id` 로 취소한 칸을 **빈 칸**으로 되살린다 — 행을 지우지 않고 `status` 만 `cancelled → open`. 취소 때 풀린 예약은 되살리지 않는다(예약자에게는 이미 취소 DM 이 나갔다) · 수강생이 다시 잡아야 하고 DM 은 없다. `cancelled` 가 아닌 칸(open·closed)은 409 `slot_not_cancelled`, 시작 시각이 지난 칸은 409 `slot_in_past`, 남의 칸은 403 `scope_denied`, 없는 id 는 404 `not_found`. 취소당했던 수강생 **본인**이 같은 칸을 다시 잡는 것도 정상이다 — 유니크가 취소되지 않은 예약 행에만 걸린다(§26 부분 유니크 인덱스 `uq_slot_bookings_active` · 2026-09-25 실행 확인). 같은 이유로 수강생이 스스로 취소한 뒤 같은 칸을 다시 잡는 것도 정상이다.
+
+### 5.x 예약·취소 시간 규칙 (§32 · 2026-09-27 오너 확정 · 최소 반영판)
+
+| 규칙 | 값 | 집행 위치 |
+|---|---|---|
+| 수강생 취소 → 전부 복원 | 수업 **3시간 전**까지 (종전 12시간) | §32 `cancel_booking` |
+| 3시간 이내 수강생 취소 | **거부** — 409 `cancel_window_passed` | §32 `cancel_booking` |
+| 예약 마감 | 수업 **3시간 전**까지 (종전 없음) | §32 `book_slot` |
+| 트레이너 슬롯 취소 | 전부 복원 (**무변경**) | §23d `cancel_slot` |
+
+**앱 문구 (`ui-copy` 톤)**
+
+| 코드 | 언제 | 문구 |
+|---|---|---|
+| `cancel_window_passed` | 3시간 이내 취소 시도 | 「수업 3시간 이내에는 앱에서 취소할 수 없어요. 담당 트레이너에게 말해 주세요」 |
+| `booking_closed` | 마감된 칸·지난 칸 예약 시도 | 「이 시간은 예약이 마감됐어요. 수업 3시간 전까지 예약할 수 있어요」 |
+
+⚠️ **`booking_closed` 는 신규 코드다.** `slot_taken`(누가 먼저 잡음)과 **문구를 갈라야 한다.**
+종전에 **지난 칸**이 `slot_taken` 을 돌려주던 것도 이제 `booking_closed` 로 온다.
+
+**`GET /availability` 동작 변화** — 앱 수정 불필요
+
+- 시작까지 **3시간 미만인 `open` 칸은 내려가지 않는다**(누르면 409 날 칸을 아예 뺀다).
+- **내가 예약한 칸은 3시간 이내여도 그대로 내려간다** — `bookingId` 도 함께 온다.
+  마감은 「새로 잡을 수 있나」에만 걸리는 조건이라 내 예약 표시·취소 경로와는 무관하다.
+- 응답 필드 추가·삭제 **없음**.
+
+**아직 자동이 아닌 것**: 지각 취소 3판 · 노쇼 5판 정액 차감은 이번 범위 밖이다
+(`docs/booking-policy-design.md` 설계대로 다음 순서). 그때 계약을 다시 낸다.
+현재 노쇼는 **선차감이 그대로 소진**된다 — 개인 60/90/120분 = 5·8·10판, 그룹·상담 = 0판.
 
 ## 6. 하지 않는 것
 - 판수 기록·정정: 봇 `/수업등록` `/판수정정` 만. 이 포털은 lesson_sessions·lesson_enrollments·students 를 UPDATE 하지 않는다.

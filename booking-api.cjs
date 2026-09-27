@@ -22,6 +22,10 @@ const DURATION_MIN = [60, 90, 120];
 const SLOT_MIN = 30;                 // 슬롯 단위. §23 trainer_slots 의 전개 간격과 같다.
 const MAX_DAYS = 60;                 // /availability 조회 상한
 const MAX_SLOTS_PER_OPEN = 48;       // 슬롯 열기 1회당 최대 칸 수(= 24시간)
+// 예약 마감 = 수업 3시간 전(오너 확정 2026-09-27). **집행은 §32 book_slot 이 한다** —
+// 여기 값은 /availability 가 「누르면 409 날 칸」을 애초에 안 내려주게 맞추는 용도다.
+// ⚠️ 두 곳이 갈라지면 화면과 서버가 어긋난다(보이는 칸을 눌렀는데 booking_closed).
+const BOOK_LEAD_MIN = 180;
 // 트레이너 슬롯 목록의 과거 조회 창. 종전 1일이었는데 그러면 pending_review(48시간 경과)가
 // **창 밖으로 떨어져 「확인 필요」가 영영 안 보였다** — #298 의 결함이다. 등록 누락 감지도
 // 지난 수업을 봐야 성립하므로 2주로 넓힌다.
@@ -97,6 +101,8 @@ module.exports = function mountBookingApi(app, deps) {
   // DB 함수가 돌려준 error 코드 → HTTP 상태. 목록에 없는 코드는 400 으로 떨어뜨린다.
   const STATUS = {
     slot_taken: 409, slot_full: 409, insufficient_games: 409, cancel_window_passed: 409,
+    // §32 예약 마감(수업 3시간 전). slot_taken(누가 먼저 잡음)과 **갈라야** 앱 문구가 달라진다.
+    booking_closed: 409,
     slot_not_found: 404, not_found: 404, scope_denied: 403, invalid_body: 400,
     // reopen(오너 요청 2026-09-24 a) — DB 함수가 아니라 서버 판정이지만 같은 표에 둔다(코드 목록 한 곳).
     slot_not_cancelled: 409, slot_in_past: 409,
@@ -152,7 +158,17 @@ module.exports = function mountBookingApi(app, deps) {
       if (b.student_id === sid) mine.set(b.slot_id, b.span_head_id ?? b.id);
     }
     // open 이거나 내가 예약한 칸만. 남의 개인 예약으로 닫힌 칸은 빠진다.
-    const visible = live.filter((s) => s.status === "open" || mine.has(s.id));
+    // + 예약 마감(수업 3시간 전)이 지난 **open** 칸은 뺀다 — 누르면 §32 book_slot 이
+    //   booking_closed(409)를 돌려주는 칸을 화면에 두면 안 된다.
+    // ⚠️ **내 예약 칸은 마감과 무관하게 남긴다.** 위 DB 조회 하한(slot_start >= now)을 올려서
+    //    자르면 3시간 안에 시작하는 내 예약이 목록에서 사라지고 취소 버튼도 없어진다
+    //    (오너 실측 보고 2026-09-05 — open 만 내려주다 같은 사고가 났다). 마감은
+    //    「새로 잡을 수 있나」에만 걸리는 조건이고, 「내 예약을 보여주나」와는 무관하다.
+    // 비교는 **숫자로** 한다 — PostgREST 는 timestamptz 를 `+00:00` 로, toISOString 은 `.000Z`
+    // 로 주므로 문자열 비교는 형식 차이에 걸린다(:377 과 같은 방식).
+    const bookCutoff = Date.now() + BOOK_LEAD_MIN * 60_000;
+    const visible = live.filter((s) =>
+      mine.has(s.id) || (s.status === "open" && Date.parse(s.slot_start) >= bookCutoff));
 
     send(res, {
       slots: visible.map((s) => ({
@@ -193,7 +209,9 @@ module.exports = function mountBookingApi(app, deps) {
       send(res, { bookingId: opaqueId("booking", out.bookingId), gamesHeld: out.gamesHeld });
     }));
 
-  // DELETE /bookings/:id — 12시간 창 판정은 §23 cancel_booking 안에서 한다.
+  // DELETE /bookings/:id — 취소 창(수업 3시간 전) 판정은 §32 cancel_booking 안에서 한다.
+  //   3시간 이내면 cancel_window_passed(409)로 거부된다 — 차감은 아직 자동이 아니고
+  //   트레이너가 처리한다(오너 확정 2026-09-27 · 자동 차감은 docs/booking-policy-design.md).
   app.delete(`${STUDENT}/bookings/:id`, requireStudent, wrap(async (req, res) => {
     const bookingId = readOpaqueId("booking", req.params.id);
     if (bookingId == null) return fail(res, 400, "invalid_body");
