@@ -106,6 +106,9 @@ module.exports = function mountBookingApi(app, deps) {
     slot_not_found: 404, not_found: 404, scope_denied: 403, invalid_body: 400,
     // reopen(오너 요청 2026-09-24 a) — DB 함수가 아니라 서버 판정이지만 같은 표에 둔다(코드 목록 한 곳).
     slot_not_cancelled: 409, slot_in_past: 409,
+    // 「완료」가 아무것도 하지 않은 경우(§37 · 2026-09-28). 성공으로 답하면 판수가 안 들어갔는데
+    // 들어간 것처럼 보인다 — 둘을 갈라 앱이 문구를 나눌 수 있게 한다.
+    already_recorded: 409, registration_missing: 409,
   };
   const rpcFail = (res, code) => fail(res, STATUS[code] || 400, code);
 
@@ -354,27 +357,34 @@ module.exports = function mountBookingApi(app, deps) {
   //   두 번 빠지는 것은 함수가 막는다: 예약이 이미 닫혀 있거나 그날 기록이 있으면 넣지 않는다.
   //   본인 슬롯 여부는 함수가 trainer_id 대조로 판정한다 — 아니면 403.
   //
-  //   앱이 문구를 가르는 값 — outcome:
-  //     recorded        판수까지 기록했다
-  //     already_session 그날 기록이 이미 있어 예약만 닫았다 → 「이미 기록된 수업이에요」
-  //     already_closed  이미 닫힌 예약인데 판수 기록이 **없다** → /수업등록 을 안내해야 한다
-  //     closed_no_games 그룹·상담(예약에 판수가 없다) → 판수는 /수업등록 이 정본
+  //   성공(200)은 **실제로 뭔가 한 경우만**이다 — outcome 으로 앱이 문구를 가른다:
+  //     recorded        판수까지 기록했다            → 「수업을 기록했어요 · N판」
+  //     closed_no_games 그룹·상담이라 상태만 닫았다   → 「판수는 /수업등록 으로 남겨주세요」
+  //
+  //   아무것도 하지 않은 경우는 **409 로 떨어뜨린다.** 앱이 아직 outcome 을 안 보기 때문에
+  //   resolved:true 로 답하면 판수가 안 들어갔는데 「완료됐다」로 보인다 — 그게 이 PR 이 막으려는
+  //   바로 그 사고다. 종전에도 이미 닫힌 예약은 404 였으니 오류로 답하는 쪽이 앱에 안전하다.
+  //     already_recorded     그날 기록이 이미 있다(두 번 빠지지 않게 막았다)
+  //     registration_missing 예약은 닫혀 있는데 판수 기록이 **없다** → /수업등록 이 필요하다
+  //   registration_missing 은 GET /slots 의 「등록 누락?」 배지와 같은 조건이다(이름을 맞췄다).
   app.post(`${TRAINER}/bookings/:id/complete`, rateLimit("trainerResolve", 60, 60_000),
     bodyOnly([]), requireTrainer, wrap(async (req, res) => {
       const bookingId = readOpaqueId("booking", req.params.id);
       if (bookingId == null) return fail(res, 400, "invalid_body");
+      // §37 미실행 배포에서는 PostgREST 가 404 를 주고 sbRpc 가 throw 한다 — wrap 이 500 으로
+      // 감싼다. 조용히 「완료됨」으로 답하지 않는다.
       const out = await sbRpc("record_lesson_from_booking", {
         p_trainer_id: req.staff.id, p_booking_id: bookingId,
       });
       if (out?.error) return rpcFail(res, out.error);
-      // §37 미실행 배포에서는 PostgREST 가 404 를 주고 sbRpc 가 throw 한다 — wrap 이 500 으로
-      // 감싼다. 조용히 「완료됨」으로 답하지 않는다(판수가 안 들어갔는데 눌린 것처럼 보인다).
-      const outcome = out?.recorded ? "recorded"
-        : out?.already === "session" ? "already_session"
-        : out?.already ? (out.hasSession ? "already_session" : "already_closed")
-        : "closed_no_games";
+      if (out?.already) {
+        // already:'session' 은 예약을 닫는 일까지 했지만 판수는 안 넣었다 — 성공으로 답하지 않는다.
+        return rpcFail(res, out.already === "session" || out.hasSession
+          ? "already_recorded" : "registration_missing");
+      }
       sendTrainer(res, {
-        resolved: true, status: "done", outcome,
+        resolved: true, status: "done",
+        outcome: out?.recorded ? "recorded" : "closed_no_games",
         games: Number(out?.games || 0),
         playedAt: out?.playedAt || null,
       });
