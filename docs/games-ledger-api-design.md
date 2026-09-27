@@ -106,60 +106,19 @@ API 가 네 번째 사본이 되면 안 된다 — **`portal_remaining_games` �
 지금의 「구분이 안 된다」보다 나쁘다. §1 의 내역만으로도 수강생은 줄마다 트레이너를 보고
 스스로 셀 수 있다.
 
-## 3. 차감 종류 구분 — 오너 판정(2026-09-27) 반영
+## 3. 차감 종류 구분 → **정본 이동**
 
-> 원장·정산 내역에 종류 구분: **수업 / 노쇼 / 늦은 취소 / 면제**
+> **이 절의 설계는 `docs/booking-policy-design.md` §2.7 로 옮겼다**(오너 지시 2026-09-27:
+> 「벌점 설계는 이 세션 하나로 · 판수 로직을 두 벌로 만들지 않는다」). 여기서 다시 적지 않는다 —
+> 두 벌이 되면 어긋난다.
 
-현행 `lesson_sessions` 에는 **구분 컬럼이 없다**(`id·student_id·trainer_id·played_at·
-games·memo·created_by·created_at·settled_period·settled_rate·lesson_enrollment_id`).
-`memo` 문자열로 가르면 정산이 문자열 판정에 걸린다 — **컬럼을 둔다.**
+옮긴 내용: `lesson_sessions.entry_kind`(`lesson`·`no_show`·`late_cancel`·`adjust`·`waived`) ·
+노쇼 확정 절차(+10분 표시 → 24시간 → 확정) · `no_show_marked_at`/`no_show_settled_at` ·
+선차감(hold)과 차감(확정)의 구분 · 트레이너 3시간 이내 취소.
 
-```
-alter table public.lesson_sessions add column if not exists entry_kind text;
-  check (entry_kind is null or entry_kind in
-         ('lesson','no_show','late_cancel','adjust','waived'))
--- null = 'lesson' (기존 238행 불변 · 백필 없이 코드가 coalesce 한다)
-```
-
-| entry_kind | 판수 | 정산 | 만드는 주체 |
-|---|---|---|---|
-| `lesson` | − 진행분 | 포함 | `/수업등록` |
-| `no_show` | **− 5** | **포함 · 지급률 일반 수업과 동일** | 트레이너 표시 → 24h → 확정 |
-| `late_cancel` | **− 3** | **포함 · 지급률 동일** | 트레이너 기록으로 즉시 확정 |
-| `adjust` | ± | 포함 | `/판수정정` |
-| `waived` | **0** | **미반영** | 오너 면제 |
-
-**면제는 행을 지우지 않고 `waived` 로 바꾼다** — 판수도 정산도 0 이 되고, 원장과 정산이
-**같은 기록**을 본다(오너 지시). 지운 행은 두 화면을 갈라놓는다.
-
-### 3.1 노쇼 확정 절차 (오너 판정 그대로)
-
-```
-수업 시작 +10분 · 연락 없음
-  → 트레이너가 앱에서 노쇼 표시        (확정 전 · 판수·정산 미반영)
-  → 수강생 알림
-  → 24시간 내 이의 없음 → 확정        (여기서 처음 판수·정산에 들어간다)
-  → 이의 있음 → 오너 판정
-```
-
-**확정 전에는 판수도 정산도 움직이지 않는다.** 그래서 `slot_bookings.status` 의
-`no_show` 만으로는 부족하다 — 「표시됨(대기)」과 「확정됨」이 갈려야 한다.
-
-```
-alter table public.slot_bookings add column if not exists no_show_marked_at  timestamptz;
-alter table public.slot_bookings add column if not exists no_show_settled_at timestamptz;
-```
-
-⚠️ 현행 `portal_remaining_games` 는 `status in ('booked','pending_review','no_show')` 의
-`games_held` 를 **이미 빼고 있다.** 즉 노쇼 표시만으로 선차감이 유지되는데, 확정 전
-미반영 원칙과 맞추려면 **선차감(hold)과 차감(확정)을 구분해 설명해야 한다** — 표시 단계의
-`no_show` 는 「자리를 잡고 있던 선차감이 아직 안 풀린 상태」이지 「5판 차감」이 아니다.
-내역 API 는 이 줄을 `hold` 로 내리고 확정 뒤에 `no_show` 로 바꾼다.
-
-### 3.2 트레이너가 3시간 이내 취소하면
-
-**정산 없음.** 수강생 판수는 전액 복원(현행 `cancel_slot` 이 이미 그렇게 한다).
-수강생 보상은 **추후 오너 판정** — 이번 설계 범위 밖.
+**이 문서가 계속 책임지는 것**은 그 종류를 *어떻게 내려주는가*다 — 내역 API 가 `entry_kind` 를
+줄의 종류로 그대로 내리고(「늦은 취소 −3 · 9/28 · 현태」), 확정 전 노쇼는 `hold` 로, 확정 뒤에는
+`no_show` 로 내린다(§1).
 
 ## 4. 30분(3판) 개인 예약
 

@@ -251,8 +251,11 @@ module.exports = function mountBookingApi(app, deps) {
           slot_start: new Date(t0 + i * SLOT_MIN * 60_000).toISOString(),
           lesson_type: lessonType, capacity: cap, status: "open",
         });
-      // unique(trainer_id, slot_start) — 이미 있는 칸이 하나라도 있으면 전체가 실패한다.
-      // 부분 생성으로 어중간한 상태를 만들지 않으려는 것이고, 응답으로 그 사실을 알린다.
+      // 겹침 판정은 코드에 없다 — DB 제약이 한다. §36 부터 uq_trainer_slots_live
+      //   unique (trainer_id, slot_start) where status <> 'cancelled'
+      // 이므로 **취소한 칸은 새 칸을 막지 않는다**(open·closed 는 여전히 못 겹침).
+      // 이미 있는 산 칸이 하나라도 있으면 전체가 실패한다 — 부분 생성으로 어중간한 상태를
+      // 만들지 않으려는 것이고, 응답으로 그 사실을 알린다.
       let created;
       try { created = await sbInsert("trainer_slots", rows); }
       catch (e) {
@@ -366,6 +369,8 @@ module.exports = function mountBookingApi(app, deps) {
   //   예약이 된다. 되살린 칸은 빈 칸이고 수강생이 다시 잡는다(DM 없음).
   //   지난 칸은 거부한다 — book_slot 도 slot_start <= now() 를 slot_taken 으로 거절하므로 열어도 못 잡는다.
   //   DB 함수 없이 PATCH 필터(id·trainer_id·status=cancelled)로 원자성을 얻는다 — 경합하면 한쪽만 0행을 받는다.
+  //   §36 이후: 취소 칸이 새 칸을 막지 않으므로, 되살리려는 시각에 산 칸이 이미 있으면 409 slot_taken.
+  //   종류·범위를 바꿔 열려면 「다시 열기」가 아니라 그냥 새로 열면 된다(그게 §36 의 목적이다).
   //   ⚠️ 알려진 한계: slot_bookings 의 unique(slot_id, student_id) 가 취소된 예약 행에도 걸려, 취소당했던
   //   수강생 본인이 같은 칸을 다시 잡으면 slot_taken 이다(수강생 취소 후 재예약과 같은 기존 제약 · DDL 로만 풀린다).
   app.post(`${TRAINER}/slots/:id/reopen`, rateLimit("trainerReopen", 60, 60_000), bodyOnly([]), requireTrainer,
@@ -377,8 +382,21 @@ module.exports = function mountBookingApi(app, deps) {
       if (Number(slot.trainer_id) !== Number(req.staff.id)) return rpcFail(res, "scope_denied");
       if (slot.status !== "cancelled") return rpcFail(res, "slot_not_cancelled");   // open·closed 둘 다
       if (Date.parse(slot.slot_start) <= Date.now()) return rpcFail(res, "slot_in_past");
-      const rows = await sbPatch("trainer_slots",
-        `id=eq.${slotId}&trainer_id=eq.${req.staff.id}&status=eq.cancelled`, { status: "open" });
+      // §36 이후 같은 시각에 산 칸(open·closed)이 새로 열려 있을 수 있다. 예전에는 무조건 유니크라
+      // 이 상황이 불가능했지만, 이제 취소 칸은 새 칸을 막지 않으므로 되살리려는 순간 겹친다.
+      // 먼저 보고(409), 읽기와 PATCH 사이 경합은 제약 위반을 잡아 같은 409 로 바꾼다.
+      const live = await sbSelect("trainer_slots",
+        `select=id&trainer_id=eq.${req.staff.id}&slot_start=eq.${encodeURIComponent(slot.slot_start)}`
+        + `&status=neq.cancelled&limit=1`);
+      if (live.length) return fail(res, 409, "slot_taken");
+      let rows;
+      try {
+        rows = await sbPatch("trainer_slots",
+          `id=eq.${slotId}&trainer_id=eq.${req.staff.id}&status=eq.cancelled`, { status: "open" });
+      } catch (e) {
+        if (String(e?.body || "").includes("duplicate key")) return fail(res, 409, "slot_taken");
+        throw e;
+      }
       if (!Array.isArray(rows) || !rows.length) return rpcFail(res, "slot_not_cancelled");   // 읽기와 PATCH 사이에 상태가 바뀜
       sendTrainer(res, { reopened: true });
     }));
