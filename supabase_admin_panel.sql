@@ -1429,6 +1429,8 @@ $$;
 
 -- ── 23c) 수강생 취소 ─────────────────────────────────────────────────────────
 -- 12시간 창이 지나면 아무것도 바꾸지 않고 cancel_window_passed 를 돌려준다.
+-- ⚠️ **정본은 §32 로 이동**했다(취소 창 3시간 · 2026-09-27). 아래 본문은 §23 만 단독 실행한
+--    DB 의 재현용이고, 파일 전체를 다시 돌리면 §32 가 이 정의를 덮어쓴다. 수정은 §32 에서만 한다.
 -- 늦은 취소를 앱에서 허용하면 개인 10판이 탭 한 번으로 소멸한다 — 그 판정은
 -- 트레이너 재량이고 조정 경로는 /판수정정 하나뿐이다(오너 지시).
 create or replace function public.cancel_booking(
@@ -1657,7 +1659,9 @@ alter table public.trainer_slots drop constraint if exists trainer_slots_lesson_
 alter table public.trainer_slots add  constraint trainer_slots_lesson_type_check
   check (lesson_type in ('personal','spectate','participate','consult'));
 
--- 25b) book_slot() 정본 — §23b 와 동일하되 그룹 경로의 잔여 판수 게이트에 consult 예외 1줄.
+-- 25b) book_slot() — §23b 와 동일하되 그룹 경로의 잔여 판수 게이트에 consult 예외 1줄.
+--      ⚠️ **정본은 §32 로 이동**했다(예약 마감 3시간 · 2026-09-27). 아래 검증값(3067 · 09ad7a2c…)은
+--         **구값**이다 — 현재 기대값은 §32c 에 있다. 수정은 §32 에서만 한다.
 --      상담은 그룹과 같은 경로(선차감 0 · 정원 count)를 탄다. 개인 경로(연속칸·선차감)는 무관.
 --      정원 1 은 서버가 슬롯 생성 시 강제한다(personal 과 같은 방식) — DB 는 capacity 만 본다.
 create or replace function public.book_slot(
@@ -2215,3 +2219,189 @@ create table if not exists public.event_matches (
 alter table public.event_defs    enable row level security;   -- 정책 0 = service_role 만
 alter table public.event_teams   enable row level security;
 alter table public.event_matches enable row level security;
+
+-- ============================================================
+-- §32  예약 규칙 최소 반영 — 취소 창 3시간 · 예약 마감 3시간 (2026-09-27 · 오너 확정)
+--      ⏳ 오너 실행 대기. 「최종」 3단(32a 스냅샷 · 32b 수정 · 32c 검증).
+--
+--      배경: 월요일 레슨생 공지에 새 취소 규칙이 들어간다. 공지와 동작이 어긋나면 분쟁이 된다.
+--      오너 지시(2026-09-27)는 **최소 변경**이다 — 자동 차감(지각 3판 · 노쇼 5판)은 이번에 넣지 않고
+--      `docs/booking-policy-design.md` 설계대로 다음 순서에 붙인다. 지금은 시간 기준만 옮긴다.
+--
+--      ⚠️ 왜 DDL 이어야 하는가: 3~12시간 구간 취소를 **허용**하는 건 완화다. 현행은 DB 함수가
+--         그 구간을 거부하고 있어서 서버 코드로는 풀 수 없다. 함수를 바꿔야 한다.
+--
+--      표 · 컬럼 · 제약 변경 **0건** → REQUIRED_SCHEMA 무변경 · 기동 자기점검의 컬럼 프로브 영향 0.
+--      그래서 미실행을 프로브로 잡을 수 없다 — **32c 검증 블록이 유일한 확인 수단**이다.
+--
+--      ⚠️ book_slot 정본이 §25b 에서 **여기로 이동**했다. 이후 수정은 §32 에서만 한다.
+--         (파일 전체를 다시 돌리면 §32 가 §25b 를 덮어쓴다 — 절 순서가 정본 순서다.)
+--         §25b 에 적힌 검증값(len 3067 · md5 09ad7a2c…)은 이제 **구값**이다. 32c 값을 쓴다.
+--      ⚠️ cancel_booking 정본도 §23c → 여기로 이동했다.
+--
+--      동작 변화 요약
+--        · 수강생 취소: 수업 3시간 전까지 전부 복원(종전 12시간). 3시간 이내는 **계속 거부**
+--          (cancel_window_passed) — 차감은 아직 자동이 아니고 트레이너가 처리한다
+--        · 예약: 수업 3시간 전까지만. 마감·지난 칸은 **booking_closed**(신규 코드)
+--          — 종전에 지난 칸이 slot_taken 을 돌려주던 것도 booking_closed 로 바뀐다
+--        · 트레이너 슬롯 취소(cancel_slot §23d): **무변경** — 계속 100% 복원
+-- ============================================================
+
+-- ── 32a) 스냅샷 (읽기 전용 · 실행 전 현재 지문 기록) ───────────────────────────
+--   기대: 2행 · cancel_booking 에 '12 hours' 있음(true) · book_slot 에 'booking_closed' 없음(false)
+--   select proname,
+--          length(replace(prosrc, E'\r', ''))              as src_len_lf,
+--          md5(replace(prosrc, E'\r', ''))                 as src_md5_lf,
+--          prosrc like '%12 hours%'                        as has_12h,
+--          prosrc like '%booking_closed%'                  as has_booking_closed
+--     from pg_proc
+--    where proname in ('cancel_booking','book_slot')
+--      and pronamespace = 'public'::regnamespace
+--    order by proname;
+
+-- ── 32b) 수정 (멱등 · create or replace) ──────────────────────────────────────
+
+create or replace function public.cancel_booking(
+  p_student_id bigint,
+  p_booking_id bigint
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_b     slot_bookings%rowtype;
+  v_start timestamptz;
+  v_ids   bigint[];
+begin
+  select * into v_b from slot_bookings where id = p_booking_id for update;
+  if not found                          then return jsonb_build_object('error','not_found'); end if;
+  if v_b.student_id <> p_student_id     then return jsonb_build_object('error','scope_denied'); end if;
+  if v_b.span_head_id is not null       then return jsonb_build_object('error','not_found'); end if;  -- 꼬리 행은 직접 취소 대상이 아니다
+  if v_b.status <> 'booked'             then return jsonb_build_object('error','not_found'); end if;
+
+  select slot_start into v_start from trainer_slots where id = v_b.slot_id;
+  if v_start - now() < interval '3 hours' then
+    return jsonb_build_object('error','cancel_window_passed');
+  end if;
+
+  select array_agg(slot_id) into v_ids from slot_bookings
+    where id = v_b.id or span_head_id = v_b.id;
+  update slot_bookings set status = 'cancelled', cancelled_at = now(), games_held = 0
+    where id = v_b.id or span_head_id = v_b.id;
+  -- 개인이 닫아둔 칸만 되연다. 그룹 슬롯은 애초에 open 이라 이 update 가 건드리지 않는다.
+  update trainer_slots set status = 'open' where id = any(v_ids) and status = 'closed';
+
+  return jsonb_build_object('cancelled', true, 'gamesRestored', v_b.games_held);
+end;
+$$;
+
+create or replace function public.book_slot(
+  p_student_id  bigint,
+  p_slot_id     bigint,
+  p_duration_min int default null
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_slot      trainer_slots%rowtype;
+  v_games     int;
+  v_need      int;
+  v_remaining int;
+  v_booked    int;
+  v_head      bigint;
+  v_ids       bigint[];
+begin
+  select * into v_slot from trainer_slots where id = p_slot_id for update;
+  if not found                     then return jsonb_build_object('error','slot_not_found'); end if;
+  if v_slot.status <> 'open'       then return jsonb_build_object('error','slot_taken');     end if;
+  -- 예약 마감 = 수업 3시간 전(오너 확정 2026-09-27). 지난 칸도 여기서 함께 걸린다.
+  -- slot_taken 과 코드를 가른다 — 앱 문구가 「누가 먼저 잡았다」와 「마감됐다」로 달라야 한다.
+  if v_slot.slot_start - now() < interval '3 hours' then
+    return jsonb_build_object('error','booking_closed');
+  end if;
+
+  v_remaining := portal_remaining_games(p_student_id);
+
+  if v_slot.lesson_type = 'personal' then
+    if p_duration_min is null then return jsonb_build_object('error','invalid_body'); end if;
+    v_games := case p_duration_min when 60 then 5 when 90 then 8 when 120 then 10 else null end;
+    if v_games is null then return jsonb_build_object('error','invalid_body'); end if;
+    if v_remaining < v_games then return jsonb_build_object('error','insufficient_games'); end if;
+    v_need := p_duration_min / 30;
+
+    select array_agg(id order by slot_start) into v_ids from (
+      select id, slot_start from trainer_slots
+       where trainer_id  = v_slot.trainer_id
+         and lesson_type = 'personal'
+         and status      = 'open'
+         and slot_start >= v_slot.slot_start
+         and slot_start <  v_slot.slot_start + make_interval(mins => p_duration_min)
+       order by slot_start
+       for update
+    ) s;
+    if v_ids is null or array_length(v_ids, 1) <> v_need then
+      return jsonb_build_object('error','slot_taken');
+    end if;
+
+    insert into slot_bookings (slot_id, student_id, games_held, duration_min, status)
+      values (v_slot.id, p_student_id, v_games, p_duration_min, 'booked')
+      returning id into v_head;
+    insert into slot_bookings (slot_id, student_id, games_held, status, span_head_id)
+      select x, p_student_id, 0, 'booked', v_head from unnest(v_ids) x where x <> v_slot.id;
+    update trainer_slots set status = 'closed' where id = any(v_ids);
+
+    return jsonb_build_object('bookingId', v_head, 'gamesHeld', v_games, 'slotsHeld', v_need);
+  end if;
+
+  -- 그룹(관전형·참여형) · 상담(consult): 선차감 없음.
+  if p_duration_min is not null then return jsonb_build_object('error','invalid_body'); end if;
+  -- 잔여 판수 게이트. **상담은 제외** — 판수를 쓰는 예약이 아니고 결제(상담료)는 앱 밖이라,
+  -- 잔여 0·음수인 신규·재등록 대기 수강생도 상담은 잡을 수 있어야 한다(오너 지시 2026-09-10).
+  if v_slot.lesson_type <> 'consult' and v_remaining < 1 then
+    return jsonb_build_object('error','insufficient_games');
+  end if;
+  select count(*) into v_booked from slot_bookings where slot_id = v_slot.id and status = 'booked';
+  if v_booked >= v_slot.capacity then return jsonb_build_object('error','slot_full'); end if;
+
+  insert into slot_bookings (slot_id, student_id, games_held, status)
+    values (v_slot.id, p_student_id, 0, 'booked')
+    returning id into v_head;
+  return jsonb_build_object('bookingId', v_head, 'gamesHeld', 0, 'slotsHeld', 1);
+
+exception
+  when unique_violation then return jsonb_build_object('error','slot_taken');
+end;
+$$;
+
+-- ── 32c) 검증 ─────────────────────────────────────────────────────────────────
+--   ① 함수 지문 (줄바꿈 무관 — 윈도우 붙여넣기는 CRLF 로 저장되므로 CR 을 뺀다)
+--   select proname,
+--          length(replace(prosrc, E'\r', '')) as src_len_lf,
+--          md5(replace(prosrc, E'\r', ''))    as src_md5_lf
+--     from pg_proc
+--    where proname in ('cancel_booking','book_slot')
+--      and pronamespace = 'public'::regnamespace
+--    order by proname;
+--   기대: book_slot      3212 · 2ce2963de73383ec5776ffd9b3f8a74a
+--         cancel_booking 1271 · 48d908adb7cb23e2157fda514434d2bd
+--
+--   ② 기준 시간이 실제로 3시간인지 (문자열 프로브 — 값이 코드에 박혀 있어 이게 확실하다)
+--   select proname,
+--          prosrc like '%interval ''3 hours''%'  as has_3h,
+--          prosrc like '%interval ''12 hours''%' as has_12h_left,
+--          prosrc like '%booking_closed%'        as has_booking_closed
+--     from pg_proc
+--    where proname in ('cancel_booking','book_slot')
+--      and pronamespace = 'public'::regnamespace
+--    order by proname;
+--   기대: book_slot      true · false · true
+--         cancel_booking true · false · false
+--
+--   ③ 동작 프로브 (쓰기 없음 — 없는 id 로 호출해 분기만 확인)
+--   select public.cancel_booking(-1, -1) as expect_not_found;      -- 기대: {"error":"not_found"}
+--   select public.book_slot(-1, -1, null) as expect_slot_not_found; -- 기대: {"error":"slot_not_found"}
+--
+--   ④ 표 · 제약이 안 바뀌었는지 (이번 블록은 함수만 바꾼다)
+--   select count(*) as slot_bookings_cols from information_schema.columns
+--    where table_schema='public' and table_name='slot_bookings';
+--   기대: 9
+--
+-- 실행 후 필수:
+-- notify pgrst, 'reload schema';
