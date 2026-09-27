@@ -228,6 +228,43 @@ echo
 echo "skills-dir:"
 ls -1 "$SKILLS_DIR"
 
+# ── Supabase MCP 조회 허용 목록을 프로젝트 루트 설정으로 복사 (2026-09-27) ──
+#   저장소의 .claude/settings.json 은 원격 세션에서 **디렉터리 범위** 설정이라
+#   프로젝트 루트(보통 이 저장소의 부모)에서는 로드되지 않는다. 그래서 매 세션
+#   Execute SQL 이 허용을 다시 묻는다. 여기서 루트로 복사해 두면 세션 시작 전에
+#   자리를 잡는다(멱등 · 이미 같으면 아무것도 안 한다).
+#   ${CLAUDE_PROJECT_DIR} 는 원격에서 저장소가 아닐 수 있어 훅 경로를 실경로로 박는다.
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_SETTINGS="$REPO_DIR/.claude/settings.json"
+ROOT_CLAUDE="$(dirname "$REPO_DIR")/.claude"
+if [ -f "$REPO_SETTINGS" ]; then
+  mkdir -p "$ROOT_CLAUDE"
+  if command -v python3 >/dev/null 2>&1; then
+    REPO_DIR="$REPO_DIR" python3 - "$REPO_SETTINGS" "$ROOT_CLAUDE/settings.json" <<'PYEOF'
+import io, json, os, sys
+src, dst = sys.argv[1], sys.argv[2]
+d = json.load(io.open(src, encoding='utf-8'))
+repo = os.environ['REPO_DIR']
+for grp in d.get('hooks', {}).values():
+    for m in grp:
+        for h in m.get('hooks', []):
+            if isinstance(h.get('command'), str):
+                h['command'] = h['command'].replace('${CLAUDE_PROJECT_DIR}', repo)
+out = json.dumps(d, ensure_ascii=False, indent=2) + "\n"
+old = io.open(dst, encoding='utf-8').read() if os.path.exists(dst) else None
+if old != out:
+    io.open(dst, 'w', encoding='utf-8').write(out)
+    print("  settings: " + dst + " 갱신")
+else:
+    print("  settings: " + dst + " 변경 없음")
+PYEOF
+  else
+    echo "  settings: python3 없음 — 건너뜀"
+  fi
+else
+  echo "  settings: $REPO_SETTINGS 없음 — 건너뜀"
+fi
+
 cat <<'EOF'
 
 ==> 완료.
