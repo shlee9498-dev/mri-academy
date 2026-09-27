@@ -222,6 +222,24 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | POST /slots/:id/reopen | `reopened` | boolean | 아니오 | true(그 외는 오류 응답) |
 | POST /logout | (본문 없음) | — | — | 204 |
 
+### 7.1 수강생 포털 직강 카드 — `GET /api/student-portal/summary` → `courses[]` (2026-09-27 추가)
+
+| 키 | 타입 | null 가능 | 값 |
+|---|---|---|---|
+| `scheme` | string | **예** | `"new"` · `"old"` — `courses.scheme` 그대로. 구 체계 강의를 구분해 안내 문구를 가르는 용도 |
+| `attendanceKnown` | boolean | 아니오 | **`false` 면 진행 회차가 미상이다** — 아래 |
+
+⚠️ **`attendanceKnown === false` 면 `completedUnits`·`remainingUnits` 를 표시하지 마세요.**
+구 체계 강의는 진행 이력이 `courses.memo` 에만 있고 `course_attendance` 는 비어 있습니다
+(2026-09-27 실측: 강의 18행 **전부 출석 0행**). 그 상태에서 `completedUnits: 0` 을 그대로 그리면
+「0/12 진행」으로 단정해 보여 실제와 어긋납니다. `attendanceKnown` 이 `false` 인 동안은
+**`unitsTotal` 만** 보여 주고(예: 「심화반 12회」), 진행·잔여 자리는 「진행 회차 확인 중」처럼 비워
+주세요. 이월 작업이 끝난 강의부터 `true` 로 바뀌며 그때 숫자가 실제값이 됩니다.
+
+기존 키(`level`·`startedOn`·`status`·`unitsTotal`·`completedUnits`·`remainingUnits`·`nextSession`)는
+변경·삭제 없습니다. 두 키 모두 수강생 `scrub` 통과 확인(정규화 `scheme`·`attendanceknown` — 금지
+어간 `net` 등에 걸리지 않음).
+
 ## 8. 수업 복기 API (§29 · PR-1·PR-2 = 수강생 포털 · PR-3 = 트레이너 포털 · 2026-09-25)
 
 > 오너 지시(9/25): 복기 계약은 이 문서에 둔다. **PR-1·PR-2 는 수강생 앱이 부르는 `/api/student-portal/*` 라우트**다. **트레이너 포털 복기 라우트는 PR-3 = §8.9**(`/api/trainer-portal/*`).

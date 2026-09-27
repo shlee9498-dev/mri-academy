@@ -475,15 +475,21 @@ module.exports = function mountStudentPortal(app, deps) {
     let rows;
     try {
       rows = await sbSelect("courses",
-        `select=id,level,started_on,status,units_total&student_id=eq.${studentId}&order=started_on.desc`);
+        `select=id,level,scheme,started_on,status,units_total&student_id=eq.${studentId}`
+        + `&order=started_on.desc`);
     } catch { return []; }
     if (!rows.length) return [];
     const out = [];
     for (const c of rows) {
       let completed = 0, nextSession = null;
+      // 출석 행이 아예 없는 것과 「정말 0회 진행」은 다르다 — 구 체계 강의는 진행 이력이
+      // courses.memo 에만 있고 course_attendance 는 비어 있다(2026-09-27 실측: 18행 전부 0행).
+      // 구분값 없이 completedUnits 0 을 내리면 앱이 「0/12 진행」으로 단정해 보여 준다.
+      let attendanceKnown = false;
       try {
         const att = await sbSelect("course_attendance",
           `select=units,session_id,status&course_id=eq.${c.id}`);
+        attendanceKnown = att.length > 0;
         completed = att.filter((a) => a.status === "done").reduce((a, r) => a + Number(r.units || 0), 0);
         const upcoming = att.filter((a) => a.status === "scheduled").map((a) => a.session_id);
         if (upcoming.length) {
@@ -501,9 +507,11 @@ module.exports = function mountStudentPortal(app, deps) {
       } catch { /* 부재·권한 문제는 직강 카드만 비운다 */ }
       const total = Number(c.units_total || 0);
       out.push({
-        level: c.level, startedOn: c.started_on, status: c.status,
+        level: c.level, scheme: c.scheme || null,
+        startedOn: c.started_on, status: c.status,
         unitsTotal: total, completedUnits: completed,
         remainingUnits: total - completed,
+        attendanceKnown,
         nextSession,
       });
     }
