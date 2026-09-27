@@ -1283,11 +1283,16 @@ if (process.env.DISCORD_TOKEN) {
         picked.push({ name: s.name, games: s.games, sid });
       } catch (e) { console.error("dualwrite_student_lookup", s.name, e?.message); miss.push(s.name); }
     }
-    // 같은 날 같은 트레이너의 기록이 이미 있는 수강생은 건너뛴다(§37 「수업 기록 하나로」 · 오너 지시 2026-09-28).
-    //   앱 「완료」가 record_lesson_from_booking 으로 판수까지 남기므로, 그 뒤 /수업등록 을 하면
-    //   같은 판이 두 번 빠진다. 반대 방향(봇이 먼저)은 함수가 막는다 — 예약이 이미 done 이라 넣지 않는다.
-    //   한 사람이 한 날 두 타임을 뛰는 경우도 이 판정에 걸린다. 그때는 판수 정정이 필요하니
-    //   봇이 건너뛴 사실을 회신에 남기고(트레이너가 바로 본다) 오너 DM 으로도 올린다.
+    // 앱 「완료」가 이미 판수를 남긴 수강생은 건너뛴다(§37 「수업 기록 하나로」 · 오너 지시 2026-09-28).
+    //   record_lesson_from_booking 이 예약 판수를 lesson_sessions 에 넣으므로, 그 뒤 /수업등록 을
+    //   하면 같은 판이 두 번 빠진다. 반대 방향(봇이 먼저)은 함수가 막는다 — 예약이 이미 done 이다.
+    //
+    //   ⚠️ **`created_by = 'portal'` 로 좁힌다.** 「그날 그 트레이너 기록이 있으면」 으로 넓게 잡으면
+    //   **하루 두 타임을 따로 등록하는 정상 운영을 막는다** — 실측 2026-09-28: 같은
+    //   (학생·트레이너·날짜)에 행이 2개 이상인 조합이 **24건 · 55행**(한 조합 최대 5행)이다.
+    //   넓게 잡았다면 그 등록이 조용히 누락됐다. 봇이 쓰는 created_by 는 디스코드 사용자 id 라
+    //   'portal' 과 절대 겹치지 않는다(실측 기존 값: 디코 id 2종 · seed · owner_sql · patch · owner-sql).
+    //
     //   ⚠️ 조회가 실패하면 **건너뛰지 않는다** — 판수를 안 남기는 쪽이 더 나쁘다(미기록은 눈에 안 보인다).
     //      이중은 사후 정정이 되고, 매일 밤 점검이 같은 조건으로 다시 잡는다.
     const already = new Set();
@@ -1295,7 +1300,7 @@ if (process.env.DISCORD_TOKEN) {
       try {
         const have = await sbSelect("lesson_sessions",
           `select=student_id&trainer_id=eq.${trainer_id}&played_at=eq.${played_at}`
-          + `&student_id=in.(${picked.map((x) => x.sid).join(",")})`);
+          + `&created_by=eq.portal&student_id=in.(${picked.map((x) => x.sid).join(",")})`);
         have.forEach((r) => already.add(Number(r.student_id)));
       } catch (e) { console.error("dualwrite_dup_check", e?.message); }
     }
@@ -1710,11 +1715,11 @@ if (process.env.DISCORD_TOKEN) {
         // 이미 기록된 수업(앱 「완료」가 먼저 남긴 판수)은 건너뛴 사실을 트레이너가 바로 봐야 한다 —
         // 회신에 안 쓰면 「등록했다」고 읽고 넘어가 버린다(§37 · 오너 지시 2026-09-28).
         if (dw && dw.dup && dw.dup.length) {
-          lines.push(`↳ 이미 기록된 수업이에요 — ${dw.dup.join(", ")} 은 앱에서 완료 처리돼 판수가 빠져 있어서 건너뛰었어`);
+          lines.push(`↳ 이미 기록된 수업이에요 — ${dw.dup.join(", ")} 은 앱 「완료」로 판수가 빠져 있어서 건너뛰었어`);
           if (process.env.MRI_OWNER_ID) {
             try {
               const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
-              await owner.send(`/수업등록 중복 건너뜀 — ${trainer}: ${dw.dup.join(", ")} (앱 「완료」로 이미 기록된 날) · 하루 두 타임이면 판수 정정 필요`);
+              await owner.send(`/수업등록 중복 건너뜀 — ${trainer}: ${dw.dup.join(", ")} (앱 「완료」가 이미 기록한 날) · 같은 날 두 타임을 뛴 거면 판수 정정 필요`);
             } catch (e) { console.error("owner_dm_failed", e?.message); }
           }
         }
