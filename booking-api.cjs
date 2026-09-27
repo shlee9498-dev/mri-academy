@@ -269,14 +269,19 @@ module.exports = function mountBookingApi(app, deps) {
   app.get(`${TRAINER}/slots`, requireTrainer, wrap(async (req, res) => {
     // 48시간 폴백을 읽기 직전에 돌린다 — 크론(T2_CRON 옵트인)에만 맡기면 미설정 배포에서
     // 「확인 필요」가 영영 안 뜬다. 멱등이고 대상이 없으면 0행이라 비용이 사실상 없다.
-    try { await sbRpc("sweep_pending_review", {}); }
-    catch (e) { console.error("booking_sweep", e?.message); }   // 실패해도 목록은 보여준다
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), MAX_DAYS);
     const from = new Date(Date.now() - TRAINER_LOOKBACK_DAYS * 86400_000).toISOString();
     const until = new Date(Date.now() + days * 86400_000).toISOString();
-    const slots = await sbSelect("trainer_slots",
-      `select=id,slot_start,lesson_type,capacity,status&trainer_id=eq.${req.staff.id}`
-      + `&slot_start=gte.${from}&slot_start=lt.${until}&order=slot_start.asc`);
+    // sweep 과 슬롯 읽기를 **동시에** 시작한다(2026-09-27 속도). sweep 은 slot_bookings 만
+    // 건드리고 trainer_slots 는 보지 않으므로 순서 의존이 없다. 예약(books)은 둘 다 끝난
+    // 뒤에 읽으므로 pending_review 전이가 반영된 상태를 본다 — 판정은 종전과 같다.
+    const [, slots] = await Promise.all([
+      sbRpc("sweep_pending_review", {})
+        .catch((e) => { console.error("booking_sweep", e?.message); }),   // 실패해도 목록은 보여준다
+      sbSelect("trainer_slots",
+        `select=id,slot_start,lesson_type,capacity,status&trainer_id=eq.${req.staff.id}`
+        + `&slot_start=gte.${from}&slot_start=lt.${until}&order=slot_start.asc`),
+    ]);
     if (!slots.length) return sendTrainer(res, { slots: [] });
 
     const ids = slots.map((s) => s.id);
@@ -294,8 +299,11 @@ module.exports = function mountBookingApi(app, deps) {
     // 날짜 축은 kstDate() = 봇 kstToday() 와 같은 식이라 경계가 어긋나지 않는다.
     const slotStart = Object.fromEntries(slots.map((s) => [s.id, s.slot_start]));
     const doneBooks = books.filter((b) => b.status === "done");
-    const regMissing = new Set();
-    if (doneBooks.length) {
+    // 등록 누락 감지와 이름 조회는 둘 다 books 에서만 파생돼 서로 독립이다 — 한 파동으로
+    // 묶는다(2026-09-27 속도). 판정식·플래그 의미는 그대로다.
+    const regMissingOf = async () => {
+      const out = new Set();
+      if (!doneBooks.length) return out;
       const dates = [...new Set(doneBooks.map((b) => kstDate(slotStart[b.slot_id])))];
       const dsids = [...new Set(doneBooks.map((b) => b.student_id))];
       try {
@@ -304,14 +312,16 @@ module.exports = function mountBookingApi(app, deps) {
           + `&student_id=in.(${dsids.join(",")})&played_at=in.(${dates.join(",")})`);
         const have = new Set(sess.map((r) => `${r.student_id}|${r.played_at}`));
         for (const b of doneBooks)
-          if (!have.has(`${b.student_id}|${kstDate(slotStart[b.slot_id])}`)) regMissing.add(b.id);
+          if (!have.has(`${b.student_id}|${kstDate(slotStart[b.slot_id])}`)) out.add(b.id);
       } catch (e) { console.error("booking_regcheck", e?.message); }   // 감지 실패는 플래그 생략으로
-    }
+      return out;
+    };
     // 트레이너 화면이므로 수강생 표시명은 내려준다(수강생 포털의 신원 차폐 규칙과 대상이 다르다).
-    const names = sids.length
+    const namesOf = async () => (sids.length
       ? Object.fromEntries((await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})`))
           .map((r) => [r.id, r]))
-      : {};
+      : {});
+    const [regMissing, names] = await Promise.all([regMissingOf(), namesOf()]);
     const by = {};
     for (const b of books) (by[b.slot_id] = by[b.slot_id] || []).push({
       id: opaqueId("booking", b.id),
