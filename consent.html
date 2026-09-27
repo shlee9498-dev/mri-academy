@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>보호자 동의서 · MRI ACADEMY</title>
+<!-- 검색 노출 금지. 무관한 사람이 열어 개인정보를 넣는 걸 막는다.
+     sitemap.xml·메뉴에도 넣지 않는다(관제탑 지시 2026-09-27 · docs/guardian-consent-design.md §11). -->
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="same-origin">
+<!-- 외부 의존은 Pretendard 하나뿐이다(관제탑 지시). 분석 스크립트도 넣지 않는다 —
+     보호자 개인정보를 받는 화면이라 제3자 스크립트를 태우지 않는다. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<style>
+:root{
+  --bg:#0a0a0c;--surface-1:#15151a;--surface-2:#1a1a20;
+  --ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;
+  --gold:#f5c518;--line:#27272a;--bad:#f87171;
+  /* 본문은 Pretendard(한글 정본). 헤딩·버튼은 OS UI 산세리프로 대비를 만든다 —
+     디자인 시스템 v1 의 Space Grotesk 는 CDN 을 하나 더 늘리고, 이 화면은 보호자
+     개인정보를 받으므로 제3자(구글 폰트)로 IP 가 나가지 않게 한다. 새 네트워크 의존 0. */
+  --body:'Pretendard Variable','Pretendard',system-ui,-apple-system,sans-serif;
+  --display:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.7;-webkit-text-size-adjust:100%}
+.wrap{max-width:640px;margin:0 auto;padding:36px 20px 72px}
+h1{font-family:var(--display);font-size:24px;font-weight:800;letter-spacing:-.02em}
+.lead{color:var(--ink-dim);font-size:14px;margin:10px 0 4px}
+.biz{color:var(--ink-faint);font-size:12px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+h2{font-family:var(--display);font-size:15px;color:var(--gold);font-weight:800;letter-spacing:-.01em;margin:32px 0 4px}
+.why{color:var(--ink-faint);font-size:12.5px;margin-bottom:14px}
+label{display:block;font-size:13.5px;color:var(--ink);font-weight:700;margin:16px 0 6px}
+.req::after{content:" *";color:var(--gold)}
+input,select{
+  width:100%;background:var(--surface-1);color:var(--ink);border:1px solid var(--line);
+  border-radius:9px;padding:12px 13px;font-family:inherit;font-size:15px;line-height:1.4;
+}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.hint{color:var(--ink-faint);font-size:12px;margin-top:6px}
+.age{margin-top:8px;font-size:12.5px;color:var(--ink-dim)}
+.agree{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:14px 15px;margin:10px 0}
+.agree label{display:flex;gap:11px;align-items:flex-start;margin:0;font-weight:600;font-size:14px;cursor:pointer}
+.agree input[type=checkbox]{width:19px;height:19px;flex:0 0 19px;margin-top:2px;accent-color:var(--gold)}
+.agree .why{margin:8px 0 0 30px}
+details{background:var(--surface-1);border:1px solid var(--line);border-radius:10px;padding:0 15px;margin:14px 0}
+summary{cursor:pointer;padding:13px 0;font-size:13.5px;font-weight:700;color:var(--ink)}
+details[open] summary{border-bottom:1px solid var(--line)}
+.terms{padding:12px 0 16px;font-size:12.5px;color:var(--ink-dim)}
+.terms p{margin-bottom:9px}
+.terms ul{padding-left:18px;margin-bottom:9px}
+button{
+  width:100%;margin-top:26px;padding:15px;border:0;border-radius:10px;
+  background:var(--gold);color:#1a1a00;font-family:var(--display);font-size:16px;font-weight:800;cursor:pointer;
+}
+button[disabled]{opacity:.55;cursor:default}
+.msg{margin-top:16px;padding:13px 15px;border-radius:9px;font-size:13.5px;display:none}
+.msg.bad{display:block;background:rgba(248,113,113,.1);border:1px solid var(--bad);color:#fecaca}
+.done{display:none;text-align:center;padding:44px 0}
+.done h2{font-family:var(--display);color:var(--gold);font-size:19px;margin-bottom:12px}
+.done p{color:var(--ink-dim);font-size:14px;margin-bottom:8px}
+a{color:var(--gold)}
+@media (max-width:420px){.wrap{padding:26px 16px 60px}h1{font-size:21px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <main id="formView">
+    <h1>보호자 동의서</h1>
+    <p class="lead">미성년 수강생은 보호자 동의를 받은 뒤 수업을 시작해요. 3분이면 끝나요.</p>
+    <p class="biz">
+      무리아카데미 · 사업자등록번호 761-10-02908 · 통신판매업신고 2026-화도수동-0325<br>
+      이 동의서는 무리아카데미가 직접 받습니다. 궁금한 점은 담당 트레이너에게 물어보세요.
+    </p>
+
+    <form id="f" novalidate>
+      <h2>수강생</h2>
+      <p class="why">생년월일은 보호자 동의가 필요한 나이인지 확인하려고 받아요.</p>
+
+      <label class="req" for="student_name">수강생 이름</label>
+      <input id="student_name" name="student_name" type="text" autocomplete="off" maxlength="40" required>
+
+      <label class="req" for="student_birth">수강생 생년월일</label>
+      <input id="student_birth" name="student_birth" type="date" required>
+      <p class="age" id="ageNote"></p>
+
+      <label for="student_discord">수강생 디스코드 아이디</label>
+      <input id="student_discord" name="student_discord" type="text" autocomplete="off" maxlength="60">
+      <p class="hint">모르면 비워 두셔도 돼요.</p>
+
+      <h2>보호자</h2>
+      <p class="why">연락처는 동의 확인과 수업 관련 안내에만 써요. 광고는 보내지 않아요.</p>
+
+      <label class="req" for="guardian_name">보호자 성명</label>
+      <input id="guardian_name" name="guardian_name" type="text" autocomplete="name" maxlength="40" required>
+
+      <label class="req" for="guardian_relation">수강생과의 관계</label>
+      <select id="guardian_relation" name="guardian_relation" required>
+        <option value="">고르세요</option>
+        <option value="부">부</option>
+        <option value="모">모</option>
+        <option value="조부">조부</option>
+        <option value="조모">조모</option>
+        <option value="기타">기타(법정대리인)</option>
+      </select>
+
+      <label class="req" for="guardian_phone">보호자 연락처</label>
+      <input id="guardian_phone" name="guardian_phone" type="tel" inputmode="tel"
+             autocomplete="tel" maxlength="20" placeholder="010-0000-0000" required>
+
+      <h2>동의 항목</h2>
+      <p class="why">앞의 세 개는 수업을 시작하려면 필요해요. 마지막 하나는 선택이에요.</p>
+
+      <div class="agree">
+        <label><input type="checkbox" id="agree_lesson" name="agree_lesson" required>
+          <span>수강생이 레슨을 받는 것에 동의합니다. <span class="req" aria-hidden="true"></span></span></label>
+        <p class="why">미성년자의 수강 계약은 보호자 동의로 성립합니다.</p>
+      </div>
+
+      <div class="agree">
+        <label><input type="checkbox" id="agree_privacy" name="agree_privacy" required>
+          <span>개인정보 수집·이용에 동의합니다.</span></label>
+        <p class="why">수집 항목·목적·보유기간은 아래 전문에 있습니다.
+          <a href="privacy.html" target="_blank" rel="noopener">개인정보처리방침</a></p>
+      </div>
+
+      <div class="agree">
+        <label><input type="checkbox" id="agree_payment" name="agree_payment" required>
+          <span>수강료·환불 조건을 확인했고 동의합니다.</span></label>
+        <p class="why"><a href="terms.html" target="_blank" rel="noopener">이용약관</a> 제6조(결제)·제7조(환불 규정)</p>
+      </div>
+
+      <div class="agree">
+        <label><input type="checkbox" id="agree_content" name="agree_content">
+          <span>수업 중 촬영된 화면·영상을 교육 자료로 쓰는 것에 동의합니다. (선택)</span></label>
+        <p class="why">동의하지 않아도 수업을 받는 데 아무 영향이 없어요.</p>
+      </div>
+
+      <details>
+        <summary>동의 전문 보기</summary>
+        <div class="terms">
+          <p><b>수집하는 항목</b></p>
+          <ul>
+            <li>수강생: 이름, 생년월일, 디스코드 아이디(선택)</li>
+            <li>보호자: 성명, 수강생과의 관계, 연락처</li>
+            <li>동의 증빙: 동의 시각, 접속 기록(IP·브라우저 정보)</li>
+          </ul>
+          <p><b>쓰는 목적</b> — 미성년 수강생의 보호자 동의 확인과 그 증빙 보관, 수업 관련 안내.</p>
+          <p><b>보유 기간</b> — 동의일부터 5년(전자상거래법상 계약 기록). 기간이 지나면
+            개인정보 항목을 파기합니다. 동의를 철회하셔도 「동의가 있었다」는 기록은
+            분쟁 대비로 위 기간 동안 남습니다.</p>
+          <p><b>제3자 제공</b> — 하지 않습니다. 법령에 근거가 있는 경우만 예외입니다.</p>
+          <p><b>동의 철회</b> — 담당 트레이너에게 말씀하시거나 디스코드로 알려주시면 처리합니다.
+            철회하면 그 이후의 수업 진행은 보호자와 다시 상의합니다.</p>
+          <p><b>만 14세 미만</b>인 경우 개인정보보호법에 따라 법정대리인 동의가 반드시 필요하고,
+            확인을 위해 보호자 연락처로 전화를 한 번 드립니다.</p>
+          <p><b>동의하지 않을 권리</b>가 있습니다. 다만 필수 항목에 동의하지 않으면
+            미성년 수강생의 수업을 시작할 수 없습니다.</p>
+        </div>
+      </details>
+
+      <h2>보호자 서명</h2>
+      <p class="why">위 내용을 확인한 보호자 본인이 성명을 적어 주세요.</p>
+      <label class="req" for="signed_name">보호자 성명(서명)</label>
+      <input id="signed_name" name="signed_name" type="text" autocomplete="off" maxlength="40" required>
+
+      <button type="submit" id="submitBtn">동의하고 제출하기</button>
+      <p class="msg" id="msg" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+
+  <section class="done" id="doneView" aria-live="polite">
+    <h2>동의서를 받았어요!</h2>
+    <p>보호자 확인이 끝나면 담당 트레이너가 연락드려요.</p>
+    <p id="callNote"></p>
+    <p style="margin-top:20px"><a href="/">무리아카데미 홈으로</a></p>
+  </section>
+
+</div>
+
+<script>
+const API = "https://mri-academy-production.up.railway.app";
+const CONSENT_VERSION = "web-2026-09-27.v1";
+
+const f = document.getElementById("f");
+const msg = document.getElementById("msg");
+const btn = document.getElementById("submitBtn");
+const birth = document.getElementById("student_birth");
+const ageNote = document.getElementById("ageNote");
+
+// 만 나이 — 생일이 지났는지까지 본다. 서버가 같은 계산을 다시 하고 그 값이 정본이다.
+function fullAge(iso) {
+  const b = new Date(iso + "T00:00:00");
+  if (Number.isNaN(b.getTime())) return null;
+  const t = new Date();
+  let a = t.getFullYear() - b.getFullYear();
+  const m = t.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && t.getDate() < b.getDate())) a -= 1;
+  return a;
+}
+function paintAge() {
+  const a = fullAge(birth.value);
+  if (a === null || a < 0 || a > 120) { ageNote.textContent = ""; return; }
+  if (a < 14) ageNote.textContent = "만 " + a + "세 — 확인을 위해 보호자 연락처로 전화를 한 번 드려요.";
+  else if (a < 19) ageNote.textContent = "만 " + a + "세 — 보호자 동의가 필요한 나이예요.";
+  else ageNote.textContent = "만 " + a + "세 — 성인이라 보호자 동의 없이도 수업을 받을 수 있어요. 그래도 접수는 해 둘게요.";
+}
+birth.addEventListener("change", paintAge);
+birth.addEventListener("input", paintAge);
+
+function fail(text) {
+  msg.textContent = text;
+  msg.className = "msg bad";
+  btn.disabled = false;
+  btn.textContent = "다시 제출하기";
+}
+
+// 제출 실패해도 입력값은 그대로 둔다(관제탑 지시) — form 을 reset 하지 않는다.
+f.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  msg.className = "msg";
+
+  const v = (id) => document.getElementById(id).value.trim();
+  const c = (id) => document.getElementById(id).checked;
+
+  if (!v("student_name") || !v("student_birth") || !v("guardian_name")
+      || !v("guardian_relation") || !v("guardian_phone") || !v("signed_name"))
+    return fail("빈 칸이 있어요. 별표(*)가 붙은 항목을 채워 주세요.");
+  const a = fullAge(v("student_birth"));
+  if (a === null || a < 0 || a > 120) return fail("생년월일을 다시 확인해 주세요.");
+  if (!/[0-9]{8,}/.test(v("guardian_phone").replace(/[^0-9]/g, "")))
+    return fail("연락처를 다시 확인해 주세요. 숫자 8자리 이상이 필요해요.");
+  if (!c("agree_lesson") || !c("agree_privacy") || !c("agree_payment"))
+    return fail("필수 동의 세 개에 모두 체크해 주세요.");
+
+  btn.disabled = true;
+  btn.textContent = "보내는 중…";
+
+  let r;
+  try {
+    r = await fetch(API + "/api/guardian-consent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        student_name: v("student_name"),
+        student_birth: v("student_birth"),
+        student_discord: v("student_discord") || null,
+        guardian_name: v("guardian_name"),
+        guardian_relation: v("guardian_relation"),
+        guardian_phone: v("guardian_phone"),
+        agree_lesson: c("agree_lesson"),
+        agree_privacy: c("agree_privacy"),
+        agree_payment: c("agree_payment"),
+        agree_content: c("agree_content"),
+        signed_name: v("signed_name"),
+        consent_version: CONSENT_VERSION,
+      }),
+    });
+  } catch (_) {
+    return fail("연결이 잠깐 끊겼어요. 입력한 내용은 그대로 있으니 잠시 후 다시 제출해 주세요.");
+  }
+
+  if (r.status === 429)
+    return fail("잠시 뒤에 다시 제출해 주세요. 요청이 너무 빠르게 들어왔어요.");
+  if (!r.ok)
+    return fail("제출이 안 됐어요. 입력한 내용은 그대로 있어요. 잠시 후 다시 해보시고, "
+      + "계속 안 되면 담당 트레이너에게 알려 주세요.");
+
+  document.getElementById("formView").style.display = "none";
+  const dv = document.getElementById("doneView");
+  dv.style.display = "block";
+  if (a !== null && a < 14)
+    document.getElementById("callNote").textContent =
+      "만 14세 미만이라 보호자 확인 전화를 한 번 드려요.";
+  window.scrollTo(0, 0);
+});
+</script>
+</body>
+</html>
