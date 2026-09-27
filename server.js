@@ -7581,6 +7581,128 @@ app.get("/api/admin/stats/report", async (req, res) => {
 // node --check는 문법만 보므로 이 부류를 못 잡는다 — 실기동으로만 드러난다.
 const schemaOptional = {};
 
+// ── 보호자 동의서 (§33 · 관제탑 지시 2026-09-27) ──────────────────────────────
+// 입력 화면은 consent.html(공개 · noindex). 설계·법적 근거는 docs/guardian-consent-design.md.
+// ⚠️ 이 두 라우트는 admin-panel 마운트(아래) **이전에** 등록한다 — /api/admin/* 읽기전용
+//    미들웨어를 타지 않게 하고, owner 검증은 핸들러에서 reqOwner 로 한다(stats 라우트와 같은 방식).
+const GC_REQUIRED = ["agree_lesson", "agree_privacy", "agree_payment"];
+// 분당 3회(관제탑 규격). 전역 rateLimited() 는 10회/분이라 따로 센다.
+const gcHits = new Map();
+function gcRateLimited(ip) {
+  const now = Date.now(), win = 60_000, max = 3;
+  const arr = (gcHits.get(ip) || []).filter((t) => now - t < win);
+  arr.push(now); gcHits.set(ip, arr);
+  if (gcHits.size > 3000) gcHits.clear();
+  return arr.length > max;
+}
+// 만 나이 — consent.html 이 화면에 같은 값을 띄우지만 **정본은 여기다**(클라이언트 값은 안 믿는다).
+function gcFullAge(birth, at) {
+  const b = new Date(String(birth) + "T00:00:00Z");
+  if (Number.isNaN(b.getTime())) return null;
+  let a = at.getUTCFullYear() - b.getUTCFullYear();
+  const m = at.getUTCMonth() - b.getUTCMonth();
+  if (m < 0 || (m === 0 && at.getUTCDate() < b.getUTCDate())) a -= 1;
+  return a;
+}
+// 적용된 법적 근거. 개인정보 동의는 만 14세, 계약 동의(민법 제5조)는 만 19세 기준이라 축이 다르다.
+function gcMinorTier(age) {
+  if (age === null) return "unknown";
+  if (age < 14) return "under14";
+  if (age < 19) return "age14_18";
+  return "adult";
+}
+app.post("/api/guardian-consent", async (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
+  if (gcRateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
+  if (!process.env.SUPABASE_URL) return res.status(503).json({ error: "db_disabled" });
+
+  const b = req.body || {};
+  const str = (v, n) => String(v ?? "").trim().slice(0, n);
+  const name = str(b.student_name, 40), gname = str(b.guardian_name, 40);
+  const rel = str(b.guardian_relation, 10), phone = str(b.guardian_phone, 20);
+  const signed = str(b.signed_name, 40), birth = str(b.student_birth, 10);
+
+  if (!name || !gname || !rel || !phone || !signed)
+    return res.status(400).json({ error: "missing_field" });
+  if (!["부", "모", "조부", "조모", "기타"].includes(rel))
+    return res.status(400).json({ error: "bad_relation" });
+  // 웹 경로는 생년월일을 필수로 막는다 — 어느 법 축이 걸리는지 모르면 증빙이 반쪽이다.
+  // (표는 nullable 이다. 구글폼 이관 행을 막지 않기 위한 것이고, 그 경로는 오너 SQL 이다 — §33 참조)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(birth)) return res.status(400).json({ error: "bad_birth" });
+  if (!/\d{8,}/.test(phone.replace(/\D/g, ""))) return res.status(400).json({ error: "bad_phone" });
+  for (const k of GC_REQUIRED) if (b[k] !== true) return res.status(400).json({ error: "consent_required" });
+
+  const now = new Date();
+  const age = gcFullAge(birth, now);
+  if (age === null || age < 0 || age > 120) return res.status(400).json({ error: "bad_birth" });
+  const tier = gcMinorTier(age);
+  // 보유기간 = 동의일 + 5년(전자상거래법 계약 기록). 파기 배치가 이 칸으로 고른다.
+  const ret = new Date(now); ret.setUTCFullYear(ret.getUTCFullYear() + 5);
+
+  let row;
+  try {
+    // sbInsert 는 배열이 아니라 **행 객체 하나**를 돌려준다(Prefer: return=representation → [0]).
+    row = await sbInsert("guardian_consents", {
+      student_name: name, student_birth: birth,
+      student_discord: str(b.student_discord, 60) || null,
+      guardian_name: gname, guardian_relation: rel, guardian_phone: phone,
+      agree_lesson: true, agree_privacy: true, agree_payment: true,
+      agree_content: b.agree_content === true,
+      signed_name: signed, signed_at: now.toISOString(),
+      consent_version: str(b.consent_version, 60) || "unknown",
+      minor_tier: tier,
+      // 만 14세 미만은 보호자 확인이 남아 있다는 뜻으로 표시만 해 둔다(설계 §9).
+      // 접수 자체를 막지 않는다 — 막으면 보호자가 폼을 다 쓰고 튕긴다.
+      verify_method: tier === "under14" ? "none" : null,
+      retention_until: ret.toISOString().slice(0, 10),
+      source: "web",
+      ip: String(ip || "").slice(0, 60),
+      user_agent: String(req.headers["user-agent"] || "").slice(0, 300),
+    });
+  } catch (e) {
+    // §33 미실행이면 여기로 떨어진다. 진단은 콘솔에만 — 보호자 화면에 섹션 번호를 노출하지 않는다.
+    console.error("guardian_consent_insert (§33 미실행 가능성)", e?.status || e?.message);
+    return res.status(503).json({ error: "db_disabled" });
+  }
+
+  // 알림 실패가 접수를 되돌리면 안 된다 — 행은 이미 커밋됐다.
+  ownerDM(`보호자 동의 접수 — 수강생 ${name} · 보호자 ${gname}(${rel})`
+    + (tier === "under14" ? " · ⚠️ 만 14세 미만 — 확인 전화 필요" : "")).catch(() => {});
+  console.log(`[gconsent] #${row?.id} tier=${tier} age=${age} src=web`);
+  return res.json({ ok: true });
+});
+
+// GET /api/admin/guardian-consents — 오너 전용. 전화번호는 뒷 4자리만 내려준다.
+// 전체 번호가 필요하면 오너가 SQL Editor 에서 본다 — 화면에 실번호를 띄우지 않는다.
+app.get("/api/admin/guardian-consents", async (req, res) => {
+  const u = reqOwner(req);
+  if (u === null) return res.status(403).json({ error: "staff_only" });
+  if (!u) return res.status(403).json({ error: "owner_only" });
+  if (!process.env.SUPABASE_URL) return res.json({ consents: [] });
+  const limitN = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 500);
+  try {
+    const rows = await sbSelect("guardian_consents",
+      "select=id,student_name,student_birth,student_id,guardian_name,guardian_relation,"
+      + "guardian_phone,agree_content,signed_name,signed_at,consent_version,minor_tier,"
+      + "verify_method,verified_by,verified_at,guardian_notified_at,retention_until,"
+      + "purged_at,withdrawn_at,source,created_at"
+      + `&order=created_at.desc&limit=${limitN}`);
+    return res.json({
+      consents: rows.map((r) => ({
+        ...r,
+        // 뒷 4자리만. 파기된 행은 번호가 비어 있어 null 이 된다.
+        guardian_phone: r.guardian_phone
+          ? "…" + String(r.guardian_phone).replace(/\D/g, "").slice(-4) : null,
+        // 만 14세 미만인데 확인 전 = 먼저 처리할 줄(설계 §9)
+        needsVerify: r.minor_tier === "under14" && !r.verified_at && !r.purged_at,
+      })),
+    });
+  } catch (e) {
+    console.error("guardian_consents_list", e?.status || e?.message);
+    return res.status(503).json({ error: "unavailable" });
+  }
+});
+
 // ── 운영진 정산·레슨로그 관리 패널 (Phase 0) ──
 // schemaOptional은 기동 시 probeOptionalSchema()가 채우는 같은 객체를 그대로 넘긴다.
 // 참조를 넘기므로 프로브가 끝나면 패널 쪽에서도 값이 보인다(매 요청 재조회 없음).
@@ -7777,6 +7899,15 @@ const REQUIRED_SCHEMA = {
   // 기동 프로브(tablesReady → 503 degrade)는 §22와 같은 이유로 그대로 둔다 —
   // 부팅 자기점검만 warn→error로 올려 미실행을 잡는다.
   trainer_slots: ["id","trainer_id","slot_start","lesson_type","capacity","status","created_at"],
+  // §33 보호자 동의서(2026-09-27) — 오너 실행 대기. 미실행이면 부팅에서 MISSING 으로 잡힌다.
+  //   ⚠️ check 제약 4개는 이 목록으로 못 잡는다(컬럼 존재 프로브) — §33c 로만 확인된다.
+  guardian_consents:["id","student_name","student_birth","student_discord","student_id",
+                     "guardian_name","guardian_relation","guardian_phone",
+                     "agree_lesson","agree_privacy","agree_payment","agree_content",
+                     "signed_name","signed_at","consent_version","consent_text","minor_tier",
+                     "verify_method","verified_by","verified_at","guardian_notified_at",
+                     "retention_until","purged_at","purge_note","withdrawn_at","withdrawn_reason",
+                     "source","ip","user_agent","created_at"],
   slot_bookings: ["id","slot_id","student_id","games_held","duration_min","status",
                   "booked_at","cancelled_at","span_head_id"],
   // §29 수업 복기 11표(2026-09-25 오너 운영 실행 · 실DB 지문 9항 = 정본 해시 일치 확인). 읽고 쓰는 코드는 PR-1(review-api.cjs)부터지만
