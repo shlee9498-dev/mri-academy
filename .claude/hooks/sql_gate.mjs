@@ -2,12 +2,18 @@
 /**
  * PreToolUse 게이트 — Supabase MCP의 SQL 실행을 검사한다.
  *
- * 판정
+ * 판정 (2026-09-27 오너 허락으로 개정)
  *   허용  SELECT / WITH(읽기 전용) / EXPLAIN / SHOW
- *   차단  DDL(CREATE·ALTER·DROP·TRUNCATE·GRANT·REVOKE·COMMENT·REINDEX·VACUUM)
+ *   허용  더하기만 하는 DDL · 오너 OK 받은 제약 변경 · 오너 OK 받은 데이터 정정(WHERE 있음)
+ *   차단  TRUNCATE · DROP TABLE/SCHEMA · GRANT · REVOKE
  *   차단  보호 테이블 DELETE (점수·판수·정산)
  *   차단  WHERE 없는 UPDATE / DELETE
- *   질문  그 밖의 쓰기(WHERE 있는 UPDATE·DELETE·INSERT 등)
+ *
+ * 왜 DDL 전면 차단을 풀었나
+ *   오너가 운영 방식을 바꿨다(CLAUDE.md 「세션 운영 방식」) — 더하기만 하는 DDL 은 세션이 바로,
+ *   기존 제약 변경과 데이터 정정은 **대화에서 「OK」를 받은 뒤** 세션이 실행한다.
+ *   승인 게이트가 이 훅에서 대화로 옮겨졌다. 그래서 훅은 이제 **어떤 승인으로도 정당화되지
+ *   않는 것만** 막는다 — 표를 통째로 비우거나 떨구는 것, 권한 변경, 조건 없는 일괄 수정.
  *
  * 설계 메모 — 왜 「첫 단어만」 보지 않는가
  *   1) 세미콜론으로 여러 문을 이어 붙이면 `select 1; drop table x;` 가 통과한다.
@@ -16,8 +22,8 @@
  *      → `WITH` 로 시작해도 본문에 쓰기 키워드가 있으면 읽기로 보지 않는다.
  *   3) 주석 안에 키워드를 숨길 수 있다. → 검사 전에 주석을 걷어낸다.
  *
- * 이 게이트는 **부수적 방어선**이다. DDL·데이터 변경의 정본 통제는 여전히
- * 「오너가 Supabase SQL Editor에서 직접」이다 (CLAUDE.md 영구 Level 0).
+ * 이 게이트는 **부수적 방어선**이다. 정본 통제는 CLAUDE.md 「세션 운영 방식」의 A/B/C 구간이고,
+ * 훅은 그 판단이 어긋났을 때 마지막으로 걸리는 그물이다.
  */
 
 const PROTECTED = [
@@ -29,7 +35,9 @@ const PROTECTED = [
   "course_sessions", "course_attendance", "student_snapshots",
 ];
 
-const DDL = /^(create|alter|drop|truncate|grant|revoke|comment|reindex|vacuum|cluster|refresh)\b/;
+// 어떤 승인으로도 세션이 할 일이 아닌 것
+const FATAL = /^(truncate|grant|revoke)\b/;
+const DROP_OBJ = /^drop\s+(table|schema|database|owned|role|user)\b/;
 const READ = /^(select|explain|show|table|values)\b/;
 const WRITES = /\b(insert|update|delete|merge|truncate|drop|alter|create|grant|revoke)\b/;
 
@@ -71,8 +79,8 @@ function split(sql) {
 function judge(stmt) {
   const s = stmt.toLowerCase();
 
-  if (DDL.test(s)) {
-    return { d: "deny", why: `DDL은 자동 실행하지 않는다(${s.split(/\s+/).slice(0, 2).join(" ")}…). 오너가 Supabase SQL Editor에서 직접 실행하고 마지막에 NOTIFY pgrst, 'reload schema'; 를 돌린다. 정본 DDL은 supabase_admin_panel.sql에 먼저 반영할 것.` };
+  if (FATAL.test(s) || DROP_OBJ.test(s)) {
+    return { d: "deny", why: `${s.split(/\s+/).slice(0, 2).join(" ")}… 는 세션이 실행하지 않는다. 표를 통째로 비우거나 떨구는 것과 권한 변경은 오너가 Supabase 콘솔에서 직접 한다(CLAUDE.md: 점수 리셋 자동화 금지 · 영구 Level 0).` };
   }
 
   // 읽기 — WITH는 본문에 쓰기 키워드가 없을 때만
@@ -92,11 +100,13 @@ function judge(stmt) {
     return { d: "deny", why: "WHERE 없는 UPDATE/DELETE는 전체 행에 적용된다. 조건을 명시할 것." };
   }
 
-  if (/^(insert|update|delete|merge)\b/.test(s)) {
-    return { d: "ask", why: "데이터 변경이다. 대상과 건수를 확인하고 승인할 것." };
+  // 여기까지 왔으면 더하기 DDL · 제약 변경 · 조건 있는 데이터 변경이다.
+  // 승인은 대화에서 받는다는 전제(CLAUDE.md A/B 구간)라 훅은 통과시킨다.
+  if (/^(insert|update|delete|merge|create|alter|comment|reindex|analyze|do|notify)\b/.test(s)) {
+    return { d: "allow" };
   }
 
-  return { d: "ask", why: "읽기로 확정할 수 없는 구문이다." };
+  return { d: "ask", why: "읽기로도 쓰기로도 확정할 수 없는 구문이다. 직접 확인할 것." };
 }
 
 function out(decision, reason) {
@@ -121,7 +131,7 @@ process.stdin.on("end", () => {
 
   // 마이그레이션 도구는 정의상 DDL이다.
   if (/apply_migration$/.test(tool)) {
-    out("deny", "apply_migration은 DDL이다. 이 저장소는 마이그레이션 도구를 쓰지 않는다 — supabase_admin_panel.sql에 반영하고 오너가 SQL Editor에서 실행한다.");
+    out("deny", "apply_migration은 쓰지 않는다. 이 저장소는 마이그레이션 도구가 없고 정본은 supabase_admin_panel.sql 이다 — 거기에 반영한 뒤 execute_sql로 실행한다.");
   }
 
   const sql = strip(String(ti.query ?? ti.sql ?? ""));
