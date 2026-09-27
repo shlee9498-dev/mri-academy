@@ -7953,8 +7953,11 @@ const SCHEMA_OPTIONAL = {
   // 아직 **읽는 코드가 없다**(대조는 SQL 쪽 묶음 쿼리, 패널은 세트 생성을 400으로 막을 뿐).
   // 없어도 코드가 정상 동작하는 컬럼을 REQUIRED에 올리면 부팅 error가 실동작과 무관하게
   // 뜬다 — 이 표의 분류 기준이 그것이다. 패널·봇이 묶음을 읽기 시작하는 PR에서 승격한다.
+  // voided_at·void_reason(§34 무효 결제 표시)도 여기 둔다 — 없으면 admin-panel 이
+  // p.voided_at = undefined 로 읽어 전부 유효로 취급하고 현행과 완전히 같이 동작한다.
+  // 명시 select 만 hasVoidColumn() 으로 가른다. 무효 행을 실제로 쓰기 시작하면 승격한다.
   payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id", "settled_period",
-             "deposit_ref"],
+             "deposit_ref", "voided_at", "void_reason"],
   lesson_sessions: ["lesson_enrollment_id"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.

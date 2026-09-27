@@ -76,6 +76,26 @@ module.exports = function mountAdminPanel(app, deps) {
   const payBase = (p) =>
     (hasFeeColumns() && p.net_amount != null) ? Number(p.net_amount) : Number(p.amount || 0);
 
+  // ── 무효 결제 (§34 · 오너 방향 2026-09-27) ──────────────
+  // 기록 중복·오기입을 「없던 일」로 만드는 표시다. **환불과 다르다** — 돈이 나간 게 아니라
+  // 처음부터 없던 입금이 기록된 경우다. 그래서 행 삭제·amount 0·음수 상계를 쓰지 않는다:
+  //   · 삭제하면 왜 줄었는지 못 찾는다(원장 대조가 끊긴다)
+  //   · amount 0 은 「0원 결제」와 구분이 안 된다(무료 상담 가드가 이미 0원을 의미로 쓴다)
+  //   · 음수 상계는 매출을 두 번 움직이고 통장 1건과 원장 2건이 어긋난다
+  //
+  // ⚠️ 무효 행은 **모든 집계에서 아예 없는 것으로** 취급한다 — 금액과 판수 **양쪽**에서
+  //    빠져야 판당 단가(금액/판수)가 유지된다. 금액만 빼면 단가가 내려가 지급률이 틀어진다.
+  //    (실측 근거: 이희훈 120,000/30판 → 무효 1건 제외 후 80,000/20판 = 4,000원 동일)
+  //
+  // 목록 조회는 **필터하지 않는다.** 무효 행이 화면에서 사라지면 「왜 매출이 줄었나」를
+  // 운영자가 추적할 수 없다. 목록은 표시하고, 집계만 뺀다.
+  //
+  // voided_at 컬럼이 없는 배포에서는 p.voided_at 이 undefined → 전부 유효로 읽혀
+  // 현행과 완전히 같이 동작한다(명시 select 만 hasVoidColumn 으로 가른다).
+  const hasVoidColumn = () => schemaOptional["payments.voided_at"] === true;
+  const isVoid = (p) => !!(p && p.voided_at);
+  const VOID_COLS = ",voided_at,void_reason";
+
   // ── 정산 귀속월 ────────────────────────────────────────
   // paid_at(사실 = 실제 입금일)과 정산 인식월을 분리한다.
   //
@@ -209,7 +229,7 @@ module.exports = function mountAdminPanel(app, deps) {
   function computeStudent(s, pays, sess, grads) {
     // 판수 결제만(게임 보유): 레슨·세트. 상담/영업(games 0)·전환·환불 제외.
     const lessonPays = pays
-      .filter((p) => ["lesson", "set"].includes(p.kind) && (p.games || 0) > 0)
+      .filter((p) => !isVoid(p) && ["lesson", "set"].includes(p.kind) && (p.games || 0) > 0)
       .sort((a, b) => String(a.paid_at).localeCompare(String(b.paid_at)));
     const amount = sum(lessonPays, payBase);   // 수수료 차감 후 순액 기준(컬럼 부재 시 amount 그대로)
     const games = sum(lessonPays, (p) => p.games);
@@ -293,7 +313,7 @@ module.exports = function mountAdminPanel(app, deps) {
   //   수수료 적용 대상: comp_note에 '6%' 또는 '순매출' 표기된 직원 (소영 등 기본급만은 제안 0).
   function computeStaffSalary(st, payments, period) {
     // 정산 귀속월 기준. settled_period가 없으면 paid_at 월 — 기존 행은 산출값 불변.
-    const monthPays = payments.filter((p) => settlePeriod(p) === period);
+    const monthPays = payments.filter((p) => !isVoid(p) && settlePeriod(p) === period);
     // 2026-08부터 kind='lesson'만 6% 대상. 그전 달은 전 kind 합산(현행 동결) — 위 LESSON_ONLY_START 주석 참조.
     const base = period >= LESSON_ONLY_START ? monthPays.filter((p) => p.kind === "lesson") : monthPays;
     const netRevenue = sum(base, (p) => floor100(payBase(p) / 1.1));           // 당월 순매출(VAT 제외·버림)
@@ -393,7 +413,7 @@ module.exports = function mountAdminPanel(app, deps) {
       const stuById = {}; for (const s of students) stuById[s.id] = s;
       const consultByTrainer = {};
       for (const p of payments) {
-        if (p.kind !== "consult" || !(p.amount > 0)) continue;
+        if (isVoid(p) || p.kind !== "consult" || !(p.amount > 0)) continue;
         const stu = stuById[p.student_id];
         if (stu && stu.trainer_id != null)
           consultByTrainer[stu.trainer_id] = (consultByTrainer[stu.trainer_id] || 0) + 1;
@@ -729,15 +749,21 @@ module.exports = function mountAdminPanel(app, deps) {
       // 당월 요약(건수·총액·미연결)은 필터·페이지와 무관하게 당월 전체 기준으로 센다.
       const monthStart = `${currentPeriod()}-01`;
       const month = await sbSelectRetry("paylist", "payments",
-        `select=id,amount,kind,lesson_enrollment_id,course_id&paid_at=gte.${monthStart}`);
+        `select=id,amount,kind,lesson_enrollment_id,course_id${hasVoidColumn() ? VOID_COLS : ""}`
+        + `&paid_at=gte.${monthStart}`);
+      // 요약은 **유효분만** 센다 — 무효 행이 건수·총액·미연결에 섞이면 화면 숫자가 매출과 갈린다.
+      // 무효 건수는 따로 실어 「몇 건이 무효 처리됐나」를 화면이 보여줄 수 있게 한다.
+      const monthLive = month.filter((p) => !isVoid(p));
       const summary = {
-        period: currentPeriod(), count: month.length,
-        total: sum(month, (p) => Number(p.amount) || 0),
-        unlinked: month.filter((p) => linkStateOf(p) === "unlinked").length,
+        period: currentPeriod(), count: monthLive.length,
+        total: sum(monthLive, (p) => Number(p.amount) || 0),
+        unlinked: monthLive.filter((p) => linkStateOf(p) === "unlinked").length,
+        voided: month.length - monthLive.length,
       };
       let rows = [];
       if (!ids || ids.length) {
         let q = "select=id,student_id,paid_at,amount,kind,games,pay_channel,lesson_enrollment_id,course_id,memo"
+          + (hasVoidColumn() ? VOID_COLS : "")
           + `&order=paid_at.desc,id.desc&limit=${lim}&offset=${off}`;
         const from = String(req.query.from || ""), to = String(req.query.to || "");
         if (/^\d{4}-\d{2}-\d{2}$/.test(from)) q += `&paid_at=gte.${from}`;
@@ -757,6 +783,8 @@ module.exports = function mountAdminPanel(app, deps) {
             pay_channel: p.pay_channel || "transfer",
             student: st.name || `#${p.student_id}`, student_id: p.student_id,
             trainer: staffName[st.trainer_id] || "—",
+            // 무효분은 목록에 남긴다(집계에서만 뺀다) — 화면이 취소선·뱃지로 구분한다.
+            voided_at: p.voided_at || null, void_reason: p.void_reason || null,
             link: linkStateOf(p), memo: p.memo || "",
           };
         }),
@@ -927,7 +955,7 @@ module.exports = function mountAdminPanel(app, deps) {
     try {
       const [students, payments, sessions, graduations] = await Promise.all([
         sbSelect("students", "select=*&order=trainer_id.asc,name.asc"),
-        sbSelect("payments", "select=student_id,amount,games,kind,paid_at"),
+        sbSelect("payments", `select=student_id,amount,games,kind,paid_at${hasVoidColumn() ? VOID_COLS : ""}`),
         sbSelect("lesson_sessions", "select=student_id,games,played_at,settled_period,settled_rate"),
         sbSelect("graduations", "select=trainer_id,tier,weight,via_lesson,achieved_at").catch(() => []),
       ]);
@@ -953,6 +981,7 @@ module.exports = function mountAdminPanel(app, deps) {
   function monthlyRevenue(payments) {
     const m = {};
     for (const p of payments) {
+      if (isVoid(p)) continue;                      // §34 무효분은 매출에 넣지 않는다
       const mo = (p.paid_at || "").slice(0, 7); if (!mo) continue;
       m[mo] = m[mo] || { month: mo, count: 0, amount: 0 };
       m[mo].count++; m[mo].amount += p.amount || 0;

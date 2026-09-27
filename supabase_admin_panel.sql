@@ -2560,3 +2560,144 @@ alter table public.guardian_consents enable row level security;   -- 정책 0 = 
 --
 -- 실행 후 필수:
 -- notify pgrst, 'reload schema';
+
+-- ============================================================
+-- §34  무효 결제 표시 payments.voided_at · void_reason (2026-09-27 · 오너 방향)
+--      ⏳ 오너 실행 대기. 「최종」 4단(34a 스냅샷 · 34b-1 스키마 · 34b-2 데이터 · 34c 검증).
+--
+--      배경: 수강생 문의로 5/14 결제가 두 번 기록된 것이 드러났다(명부 #14). 오너가 통장
+--      입금 1회를 확인해 판수는 등록 취소로 정정했으나(2026-09-27), 결제행은 그대로 남아
+--      **월 매출에 40,000원이 과대 계상**된 상태다. admin-panel 의 monthlyRevenue() 가
+--      필터 없이 amount 를 합산하기 때문이다.
+--
+--      ⚠️ 왜 삭제·0원·음수 상계를 쓰지 않는가 (오너 방향 2026-09-27)
+--        · 행 삭제 → 왜 줄었는지 못 찾는다. 원장 대조가 끊긴다
+--        · amount 0 → 「0원 결제」와 구분이 안 된다. 무료 상담 가드가 이미 0원을 의미로 쓴다
+--          (admin-panel 의 consultByTrainer 는 amount>0 으로 무료 상담을 가른다)
+--        · 음수 상계 → 매출이 두 번 움직이고 통장 1건 ↔ 원장 2건이 어긋난다.
+--          상계는 **환불**의 모양이고, 이 건은 돈이 나간 게 아니라 없던 입금이 기록된 것이다
+--
+--      그래서 「무효」 표시를 달고 **집계에서만** 뺀다. 목록에는 남는다.
+--
+--      ⚠️ 무효 행은 금액과 판수 **양쪽**에서 빠져야 한다. 금액만 빼면 판당 단가
+--         (금액/판수)가 내려가 지급률 계산이 틀어진다. 실측: 이희훈 120,000/30판 →
+--         무효 1건 제외 후 80,000/20판 = **4,000원 동일**.
+--
+--      일반 규칙: 같은 유형(기록 중복·오기입·통장에 없는 입금)은 전부 이 방식으로 처리한다.
+--      환불은 종전대로 kind='refund' 또는 음수 금액 행이고, 무효와 섞지 않는다.
+--
+--      코드 쪽(같은 PR): SCHEMA_OPTIONAL.payments 에 2컬럼 추가 · admin-panel 의 집계
+--      4곳(computeStudent·computeStaffSalary·consultByTrainer·monthlyRevenue) + 목록 요약
+--      에서 무효분 제외 · 목록 행에는 voided_at·void_reason 을 실어 화면이 구분하게 한다.
+--      컬럼이 없는 배포에서는 p.voided_at 이 undefined 라 전부 유효로 읽혀 현행과 동일하다.
+-- ============================================================
+
+-- ── 34a) 스냅샷 (읽기 전용 · 실행 전) ─────────────────────────────────────────
+--   select count(*) as cols from information_schema.columns
+--    where table_schema='public' and table_name='payments'
+--      and column_name in ('voided_at','void_reason');
+--   기대: 0
+--
+--   select sum(amount) as "2026-05_매출" from public.payments
+--    where to_char(paid_at,'YYYY-MM') = '2026-05';
+--   기대(실측 2026-09-27): 3960000
+
+-- ── 34b-1) 스키마 (멱등) ──────────────────────────────────────────────────────
+alter table public.payments add column if not exists voided_at   timestamptz;
+alter table public.payments add column if not exists void_reason text;
+
+-- 사유만 있고 무효 시각이 없는 반쪽 상태를 막는다. 반대(시각만)는 허용 —
+-- 사유를 나중에 채우는 운영이 가능해야 한다.
+alter table public.payments drop constraint if exists chk_payments_void;
+alter table public.payments add  constraint chk_payments_void
+  check (void_reason is null or voided_at is not null);
+
+-- 인덱스는 두지 않는다. payments 는 200행대이고 패널이 전건을 읽어 메모리에서 거른다 —
+-- 인덱스가 계획에 쓰일 여지가 없다. 행이 수만 건이 되면 그때 partial index 를 검토한다.
+
+-- ── 34b-2) 데이터 — #30 무효 표시 (스키마와 분리한다) ─────────────────────────
+-- 이 블록만 되돌리면 표시가 풀린다. 스키마는 남겨도 무해하다.
+update public.payments
+   set voided_at   = now(),
+       void_reason = '2026-09-27 오너 확인 — 5/14 입금 1회. 기록 중복. 환불 아님'
+ where id = 30 and student_id = 14 and voided_at is null;
+--   기대: UPDATE 1
+
+-- ── 34c) 검증 ─────────────────────────────────────────────────────────────────
+--   ① 컬럼·제약
+--   select (select count(*) from information_schema.columns
+--            where table_schema='public' and table_name='payments'
+--              and column_name in ('voided_at','void_reason')) as cols,
+--          (select count(*) from pg_constraint
+--            where conrelid='public.payments'::regclass and conname='chk_payments_void') as chk;
+--   기대: 2 · 1
+--
+--   ② #30 표시
+--   select id, voided_at is not null as 무효, void_reason from public.payments where id = 30;
+--   기대: 30 · true · '2026-09-27 오너 확인 — 5/14 입금 1회. 기록 중복. 환불 아님'
+--
+--   ③ 이희훈 판수 결제 집계 (코드와 같은 조건 — 무효 제외)
+--   select sum(amount) as 결제금액, sum(games) as 결제판수,
+--          round(sum(amount)::numeric / sum(games), 0) as 판당단가
+--     from public.payments
+--    where student_id = 14 and kind in ('lesson','set') and coalesce(games,0) > 0
+--      and voided_at is null;
+--   기대: 80000 · 20 · **4000**  ← 판당 단가가 유지되는지가 핵심이다
+--
+--   ④ 2026-05 월 매출
+--   select sum(amount) as 무효포함, sum(amount) filter (where voided_at is null) as 무효제외
+--     from public.payments where to_char(paid_at,'YYYY-MM') = '2026-05';
+--   기대: 3960000 · **3920000** (정확히 40,000 감소)
+--
+--   ⑤ 무효 행 전체 (이번 회차에는 1건뿐이어야 한다)
+--   select id, student_id, paid_at, amount, games, void_reason from public.payments
+--    where voided_at is not null order by id;
+--   기대: 30 한 행
+--
+-- 실행 후 필수:
+-- notify pgrst, 'reload schema';
+--
+-- ⚠️ 코드는 이 검증이 끝난 뒤 배포한다. 순서를 바꿔도 깨지지는 않는다(컬럼 부재 시
+--    전부 유효로 읽힘) — 다만 무효 표시가 매출에 반영되지 않은 채 배포된 것으로
+--    오인될 수 있으니 순서를 지킨다. 배포 뒤 재기동이 필요하다(기동 시 1회 프로브).
+--
+-- 되돌리기
+--   update public.payments set voided_at = null, void_reason = null where id = 30;
+--   -- 스키마까지 되돌리려면(행이 0일 때만 안전):
+--   -- alter table public.payments drop constraint if exists chk_payments_void;
+--   -- alter table public.payments drop column if exists void_reason;
+--   -- alter table public.payments drop column if exists voided_at;
+
+-- ============================================================
+-- §35  (제안 · 실행 금지) 중복 결제 기록 차단 — deposit_ref 시행일 + 부분 유니크
+--      ⛔ 오너 확정 전 실행하지 않는다. 확정되면 「최종」 3단으로 다시 발행한다.
+--
+--      ⚠️ 먼저 정정: 「패널 입력 단계에서 확인시킨다」는 앞선 제안은 **경로를 잘못 짚었다.**
+--         결제 행의 실제 입력 경로는 패널이 아니라 **오너의 SQL Editor 직접 실행**이다
+--         (POST /api/admin/payments 는 PANEL_WRITE 미설정으로 423 이고, 실제 행들의
+--          created_by·memo 가 전부 owner_sql 이다). 패널에 검증을 넣어도 아무도 지나지 않는
+--         길을 지킨다. 그래서 막는 자리는 **DB 제약**이어야 한다.
+--
+--      정상인데 같은 날·같은 금액인 사례가 실재한다(전수 실측 2026-09-27) —
+--        · 명부 #58: 4/10 10판 40,000 두 건. memo 「10판 1회차」/「10판 2회차」
+--        · 명부 #93: 8/25 10판 45,000 두 건. memo 「담당 준구(병행수강)」/「담당 현태(병행수강)」
+--      따라서 (student_id, paid_at, amount) 단순 유니크는 **걸면 안 된다** — 위 둘을 막는다.
+--      구분 가능한 축은 통장 참조뿐이고, 그게 deposit_ref(§19f · 현재 전 행 null)다.
+--
+--      제안 2단
+--        ① 시행일 check — 시행일 이후의 lesson 결제는 deposit_ref 를 반드시 채운다.
+--           과거 행은 건드리지 않는다(SALARY_START·LESSON_ONLY_START 와 같은 방식).
+--           alter table public.payments add constraint chk_payments_deposit_ref
+--             check (kind <> 'lesson' or paid_at < '<시행일>' or deposit_ref is not null);
+--        ② 부분 유니크 — 같은 통장 참조로 같은 학생·날짜·금액을 두 번 넣지 못한다.
+--           create unique index if not exists uq_payments_dup
+--             on public.payments (student_id, paid_at, amount, deposit_ref)
+--            where deposit_ref is not null and kind = 'lesson' and voided_at is null;
+--           (voided_at is null 조건: 무효 처리한 뒤 같은 값을 다시 넣는 정정이 막히면 안 된다)
+--
+--      오너 판정 필요
+--        · 시행일을 언제로 그을지
+--        · 통장 참조를 무엇으로 적을지(입금자명+시각 / 통장 거래번호 / 토스 결제키) —
+--          같은 날 두 건이 서로 달라야 ②가 의미를 갖는다
+--        · 기존 213행을 소급 채울지(안 채우면 과거 중복은 계속 못 잡는다 · 판수 영향은 없다)
+-- ============================================================
