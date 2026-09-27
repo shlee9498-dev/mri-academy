@@ -877,6 +877,9 @@ function computeViolations(guild) {
 }
 
 let botClient = null;   // Phase T1 — 스냅샷 완료 시 오너 DM용 모듈 레벨 ref
+// 연결 신청 접수 — 봇 블록이 채운다(discordDM 과 같은 패턴). 앱의 연결 대기 화면이
+// student-portal.cjs 의 POST /link-request 로 들어와 이 함수를 쓴다. 봇이 없으면 null.
+let linkReqIntake = null;
 if (process.env.DISCORD_TOKEN) {
   const client = new Client({
     intents: [
@@ -2912,6 +2915,45 @@ if (process.env.DISCORD_TOKEN) {
     return false;
   }
 
+  // 연결 신청 접수 — /연결신청(디스코드)과 앱의 연결 대기 화면이 **같은 함수**를 쓴다.
+  // 두 입구가 갈라지면 한쪽만 고쳐져 어긋나므로 한 벌로 둔다(2026-09-26 오너 지시).
+  // discord_id 는 호출자가 이미 확인한 값만 받는다 — 앱 쪽은 student-portal.cjs 가
+  // x-discord-token 을 /users/@me 로 재검증해 넘긴다(요청 본문으로 받지 않는다).
+  linkReqIntake = async ({ discordId, discordTag, claimedName }) => {
+    if (!hasSupabase()) return { ok: false, code: "unavailable" };
+    const claimed = String(claimedName || "").trim().slice(0, 40);
+    if (claimed.length < 2) return { ok: false, code: "name_too_short" };
+
+    // 이미 연결된 계정이면 신청 자체가 불필요 — 앱에서 바로 로그인된다.
+    const mine = await sbSelect("students",
+      `select=id,name&discord_id=eq.${encodeURIComponent(discordId)}&limit=1`);
+    if (mine.length) return { ok: false, code: "already_linked", studentName: mine[0].name };
+
+    let req;
+    try {
+      req = await sbInsert("student_link_requests", {
+        discord_id: String(discordId), discord_tag: discordTag || null, claimed_name: claimed,
+      });
+    } catch (e) {
+      // §24 pending 부분 유니크(idx_linkreq_pending_one) 위반 = 이미 대기 중인 신청이 있다.
+      if (e?.status === 409 || /23505|idx_linkreq_pending_one/.test(String(e?.body || "")))
+        return { ok: false, code: "already_pending" };
+      // §24 DDL 미실행이면 여기로 떨어진다. 진단은 **콘솔에만** — 수강생 화면에 섹션 번호를 노출하지 않는다.
+      console.error("linkreq_insert (§24 DDL 미실행 가능성)", e?.message);
+      return { ok: false, code: "insert_failed" };
+    }
+
+    // 후보 산출이 실패해도 신청은 유효하다 — 후보 0건 카드로 넘기고 승인자가 수동 지정한다.
+    const cands = await linkReqCandidates(claimed)
+      .catch((e) => { console.error("linkreq_candidates", e?.message); return []; });
+    // 카드에 <@id> 멘션과 이름을 싣기 위해 유저를 한 번 조회한다. 실패해도 id 만으로 게시한다.
+    let user = { id: String(discordId), username: discordTag || null };
+    try { user = await client.users.fetch(String(discordId)); } catch (_) {}
+    const posted = await postLinkReqCard(req, user, cands);
+    console.log(`[linkreq] intake #${req.id} src=${discordTag ? "app" : "discord"} cands=${cands.length} posted=${posted}`);
+    return { ok: true, reqId: req.id, claimed, posted };
+  };
+
   client.on("interactionCreate", async (itx) => {
     if (!itx.isChatInputCommand() || itx.commandName !== "연결신청") return;
     if (!hasSupabase())
@@ -2923,42 +2965,27 @@ if (process.env.DISCORD_TOKEN) {
 
     await itx.deferReply({ ephemeral: true });
     try {
-      // 이미 연결된 계정이면 신청 자체가 불필요 — 앱에서 바로 로그인된다.
-      const mine = await sbSelect("students",
-        `select=id,name&discord_id=eq.${encodeURIComponent(itx.user.id)}&limit=1`);
-      if (mine.length)
-        return itx.editReply(`이미 연결돼 있어요! 🎉 **${mine[0].name}** 님으로 되어 있어요.\n`
-          + "앱에서 바로 로그인하면 잔여 판수와 수업 기록이 보여요 🔓");
-
-      let req;
-      try {
-        req = await sbInsert("student_link_requests", {
-          discord_id: String(itx.user.id),
-          discord_tag: itx.user.username || null,
-          claimed_name: claimed,
-        });
-      } catch (e) {
-        // §24 pending 부분 유니크(idx_linkreq_pending_one) 위반 = 이미 대기 중인 신청이 있다.
-        if (e?.status === 409 || /23505|idx_linkreq_pending_one/.test(String(e?.body || "")))
+      const out = await linkReqIntake({
+        discordId: itx.user.id, discordTag: itx.user.username || null, claimedName: claimed,
+      });
+      if (!out.ok) {
+        if (out.code === "already_linked")
+          return itx.editReply(`이미 연결돼 있어요! 🎉 **${out.studentName}** 님으로 되어 있어요.\n`
+            + "앱에서 바로 로그인하면 잔여 판수와 수업 기록이 보여요 🔓");
+        if (out.code === "already_pending")
           return itx.editReply("이미 신청이 접수돼 있어요! 운영진이 확인하면 DM으로 알려드릴게요 💬\n"
             + "조금만 기다려 주세요.");
-        // §24 DDL 미실행이면 여기로 떨어진다. 그 진단은 **콘솔에만** 남긴다 —
-        // 수강생 화면에 내부 섹션 번호를 노출하지 않는다.
-        console.error("linkreq_insert (§24 DDL 미실행 가능성)", e?.message);
+        if (out.code === "name_too_short")
+          return itx.editReply("등록할 때 쓴 이름을 적어주세요 — 2자 이상이면 돼요 ✏️");
         return itx.editReply("신청이 저장되지 않았어요. 잠시 후 다시 해볼까요?\n"
           + "계속 안 되면 담당 트레이너에게 편하게 물어보세요 💬");
       }
-
-      // 후보 산출이 실패해도 신청은 유효하다 — 후보 0건 카드로 넘기고 승인자가 수동 지정한다.
-      const cands = await linkReqCandidates(claimed)
-        .catch((e) => { console.error("linkreq_candidates", e?.message); return []; });
-      const posted = await postLinkReqCard(req, itx.user, cands);
       await itx.editReply(
-        `거의 다 왔어요! 🎉 연결 신청을 받았어요 (#${req.id} · 적어주신 이름 「${claimed}」)\n`
+        `거의 다 왔어요! 🎉 연결 신청을 받았어요 (#${out.reqId} · 적어주신 이름 「${out.claimed}」)\n`
         + "운영진이 확인하면 DM으로 알려드릴게요 💬\n"
         + "확인이 끝나면 앱에서 다시 로그인하면 바로 보여요.\n"
         // 카드 게시 실패는 우리 쪽 사정이다 — 수강생에게 경고로 던지지 않고 창구만 열어 둔다.
-        + (posted ? "" : "\n확인이 조금 늦어질 수 있어요. 급하면 담당 트레이너에게 편하게 물어보세요."));
+        + (out.posted ? "" : "\n확인이 조금 늦어질 수 있어요. 급하면 담당 트레이너에게 편하게 물어보세요."));
     } catch (e) {
       console.error("linkreq_failed", e?.status || e?.message);
       await itx.editReply("잠깐 문제가 생겼어요. 잠시 후 다시 해볼까요?");
@@ -7466,7 +7493,11 @@ require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete, 
 // 앱(mri-student-app)이 x-portal-secret 공유비밀로만 호출한다. 라우트를 server.js에 직접
 // 넣지 않고 별도 파일에 둔 이유: 이 파일은 여러 트랙 코드가 공존해서(CLAUDE.md 경계 규칙)
 // 새 라우트군을 인라인하면 동시 작업 충돌면이 그만큼 넓어진다.
-const studentPortal = require("./student-portal.cjs")(app, { sbSelect, sbInsert, sbPatch, limit });
+const studentPortal = require("./student-portal.cjs")(app, {
+  sbSelect, sbInsert, sbPatch, limit,
+  // 연결 대기 화면의 POST /link-request 가 쓴다. 봇이 꺼져 있으면 null → 503.
+  linkIntake: (a) => (linkReqIntake ? linkReqIntake(a) : Promise.resolve({ ok: false, code: "unavailable" })),
+});
 
 // ── 수업 복기 API(§29 PR-1·PR-2 · /api/student-portal/{reviews,games,phases,images,feed} + /sessions 확장) ──
 // student-portal 뒤 — 그 파일이 건 공유비밀 게이트·세션·불투명 id·scrub 을 같은 함수로 쓴다. 트레이너 쪽은 아래 mountTrainer(PR-3).
