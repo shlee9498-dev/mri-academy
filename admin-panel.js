@@ -365,7 +365,9 @@ module.exports = function mountAdminPanel(app, deps) {
 
   // 트레이너 1명(월 정산): 담당 수강생 신엔진 지급예정 합 + 상담 건당 1만 − 기지급. (영업수수료 폐지)
   function computeTrainer(st, students, payouts, consultAgg) {
-    const mine = students.filter((x) => x.trainer_id === st.id);
+    // 수강생 수 표시용. prospect(상담만 받고 판수를 산 적 없는 사람 · §39)는 빼야
+    // 「담당 N명」이 실제 레슨생 수와 맞는다. 지급액 합산은 아래에서 students 전체를 본다.
+    const mine = students.filter((x) => x.trainer_id === st.id && x.status !== "prospect");
     // 담당이 아니라 **진행**으로 합산한다 — 남의 담당 학생을 대신 본 회차가 여기 들어온다.
     // 그래서 모집단이 mine이 아니라 students 전체다(mine은 표시용 인원수로만 남는다).
     const lessonAccrued = sum(students, (x) => (x.payable_by_trainer || {})[st.id] || 0);
@@ -678,7 +680,8 @@ module.exports = function mountAdminPanel(app, deps) {
         x.pubg_name   = sRow.pubg_name || null;
         // 미결제 대기 — 뷰 값이 있으면 그대로 쓰고, 없으면(degrade) 같은 규칙을 코드로 낸다.
         // 뷰 유무로 배지가 사라지면 "결제가 들어왔다"로 오독된다.
-        x.is_prospect = prospectByStu[x.student_id]
+        // §39 이후에는 상태값이 정본이다 — 뷰(파생 계산)보다 먼저 본다.
+        x.is_prospect = x.status === "prospect" ? true : prospectByStu[x.student_id]
           ?? (!(enrByStu[x.student_id] || []).length && !(sessByStu[x.student_id] || []).length);
       }
 
