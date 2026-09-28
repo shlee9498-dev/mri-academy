@@ -46,7 +46,12 @@ module.exports = function mountAdminPanel(app, deps) {
   }
 
   // ── 유틸 ──────────────────────────────────────────────
-  const floor100 = (n) => Math.floor(n / 100) * 100;   // 지급예정: 100원 단위 버림 (시트 검증)
+  // 지급예정: 100원 단위 버림 (시트 검증)
+  // ⚠️ 버리기 전에 1e-6 자리에서 반올림한다 — 안 하면 **이진 부동소수점 오차로 100원이 깎인다.**
+  //    실측(2026-09): 90,000/21판 단가로 6판 × 0.70 은 정확히 18,000 인데 JS 는
+  //    17999.999999999996 을 내고 그대로 버리면 17,900 이 된다. 같은 사고가 8판에서도 났다(2명 · 200원).
+  //    1e-6 은 원 단위보다 여섯 자리 아래라 실제 금액을 움직이지 않는다.
+  const floor100 = (n) => Math.floor(Math.round(Number(n) * 1e6) / 1e6 / 100) * 100;
   const round100 = (n) => Math.round(n / 100) * 100;   // 수수료 제안값 등
   const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) || 0), 0);
   const WITHHOLDING = 0.033;                  // 원천징수 3.3% (프리랜서 사업소득)
@@ -226,7 +231,11 @@ module.exports = function mountAdminPanel(app, deps) {
   // FIFO: 이월 진행판수(carry) 다음 위치부터의 신규 진행분을 1차 결제판수 경계로 base/+5%p 분할.
   const CUTOVER = "2026-07-20";
   // grads = 담당 트레이너의 graduations 행 배열. 세션마다 played_at 시점 요율을 뽑는다.
+  // grads = 승급 행 배열(구 호출부 호환) 또는 { [trainer_id]: 행배열 } 맵.
+  // 세션담당 귀속 이후에는 **세션마다 다른 트레이너**의 승급표가 필요해서 맵을 받는다.
   function computeStudent(s, pays, sess, grads) {
+    const gradMap = Array.isArray(grads) ? null : (grads || {});
+    const gradsOf = (tid) => (gradMap ? (gradMap[tid] || []) : (grads || []));
     // 판수 결제만(게임 보유): 레슨·세트. 상담/영업(games 0)·전환·환불 제외.
     const lessonPays = pays
       .filter((p) => !isVoid(p) && ["lesson", "set"].includes(p.kind) && (p.games || 0) > 0)
@@ -256,23 +265,59 @@ module.exports = function mountAdminPanel(app, deps) {
     //   floor100은 세션마다가 아니라 마지막에 한 번만(반복 버림으로 인한 과소지급 방지).
     let pos = carry;
     let accrual = 0, baseNew = 0, bonusNew = 0;
+    // 세션마다 **진행한 트레이너**로 귀속한다(오너 판정 2026-09-28). 종전에는 학생의
+    // students.trainer_id로 귀속해서, 남의 담당 학생을 대신 봐준 회차가 진행자에게 안 갔다.
+    // 실측(9월 미정산): 어긋난 세션 4건 · 순 8판 — 학생담당 327/78 vs 세션담당 319/86.
+    // 세션에 trainer_id가 없으면(구 시드 행) 학생 담당으로 떨어뜨린다 — 판수를 잃지 않는다.
+    const accByTrainer = {};                                      // tid → 원시 지급예정
+    const gamesByTrainer = {};                                    // tid → 미정산 판수
     for (const x of newSess) {
       const g = Number(x.games || 0);
-      if (g <= 0) continue;
+      if (g === 0) continue;
+      // 판수 정정(음수 행) — 「그 판수는 진행하지 않았다」는 되돌림이다. 지급에서도 빼야 한다.
+      // 종전에는 g <= 0 을 통째로 continue 해서 판수만 줄고 **지급액은 그대로**였다.
+      // 실측(2026-09): 미정산 음수 −6판 1건 때문에 현태 지급이 6판만큼(15,300원) 부풀어
+      // 있었다(판수 319 인데 지급은 325판 기준). 되돌린 판수가 base 구간인지 재결제
+      // 구간인지는 알 수 없으므로 그 시점 base 요율로 뺀다(70% 단일 구간에서는 어차피 같다).
+      // pos(FIFO 위치)는 전진시키지 않는다 — 종전 의도를 그대로 둔다.
+      if (g < 0) {
+        if (!x.settled_period) {
+          const tid = x.trainer_id != null ? x.trainer_id : s.trainer_id;
+          const r = isFlatRate(x.played_at) ? RATE_FLAT : trainerBaseRateAt(gradsOf(tid), x.played_at);
+          accrual += g * unit * r;                                // g<0 → 차감
+          if (tid != null) {
+            accByTrainer[tid] = (accByTrainer[tid] || 0) + g * unit * r;
+            gamesByTrainer[tid] = (gamesByTrainer[tid] || 0) + g;
+          }
+        }
+        continue;
+      }
       const baseG = Math.max(0, Math.min(firstGames - pos, g));   // 이 세션 중 base 구간
       const bonusG = g - baseG;
       baseNew += baseG; bonusNew += bonusG;
       if (!x.settled_period) {                                    // 미정산분만 지급예정에 반영
-        const r = trainerBaseRateAt(grads, x.played_at);
-        accrual += baseG * unit * r + bonusG * unit * (r + REPEAT_BONUS);
+        const tid = x.trainer_id != null ? x.trainer_id : s.trainer_id;
+        const flat = isFlatRate(x.played_at);
+        // 요율은 **진행한 트레이너**의 승급 기준이다 — 경계 이전 회차에만 쓰인다.
+        const r = flat ? RATE_FLAT : trainerBaseRateAt(gradsOf(tid), x.played_at);
+        const rRepeat = flat ? RATE_FLAT : r + REPEAT_BONUS;
+        accrual += baseG * unit * r + bonusG * unit * rRepeat;
+        if (tid != null) {
+          accByTrainer[tid] = (accByTrainer[tid] || 0) + baseG * unit * r + bonusG * unit * rRepeat;
+          gamesByTrainer[tid] = (gamesByTrainer[tid] || 0) + g;
+        }
       }
       pos += g;
     }
-    const payable = floor100(accrual);                            // 100원 버림
+    // floor100은 (학생 × 진행 트레이너)마다 한 번 — 학생 단위 버림의 직접 확장이다.
+    // 합계에 한 번만 걸면 트레이너 지급액이 학생별 버림의 합과 어긋난다(9월 실측 차 458원).
+    const payableByTrainer = {};
+    for (const tid of Object.keys(accByTrainer)) payableByTrainer[tid] = floor100(accByTrainer[tid]);
+    const payable = sum(Object.values(payableByTrainer), (v) => v);
     // 표시용 대표 요율 — 미정산 세션이 있으면 그중 가장 이른 시점 기준.
     const rateAsOf = unsettled.length ? unsettled[0].played_at : null;
-    const baseRate = trainerBaseRateAt(grads, rateAsOf);
-    const bonusRate = round2(baseRate + REPEAT_BONUS);
+    const baseRate = isFlatRate(rateAsOf) ? RATE_FLAT : trainerBaseRateAt(gradsOf(s.trainer_id), rateAsOf);
+    const bonusRate = isFlatRate(rateAsOf) ? RATE_FLAT : round2(baseRate + REPEAT_BONUS);
 
     const totalPlayed = carry + newPlayed;
     return {
@@ -287,23 +332,55 @@ module.exports = function mountAdminPanel(app, deps) {
       suggested_rate: baseRate, cycles: 0,                    // 구 필드 호환(제안/회차 개념 폐지)
       settled_games: settledGames,                            // 이미 정산 도장이 찍힌 진행판수
       unsettled_games: newPlayed - settledGames,              // 이번 회차 지급 대상 판수
-      payable,                                                // 미정산 진행분만의 지급예정
+      payable,                                                // 미정산 진행분만의 지급예정(전 트레이너 합)
+      // 진행 트레이너별 쪼갬 — computeTrainer가 이것만 본다. 한 학생을 두 트레이너가
+      // 나눠 본 달에는 키가 2개다(9월 실측 2명).
+      payable_by_trainer: payableByTrainer,
+      unsettled_games_by_trainer: gamesByTrainer,
     };
   }
 
+  // ── 상담 가산 집계 — **실제 진행자**(payments.handler_id) 귀속 · 당월분만 (오너 판정 2026-09-28) ──
+  // 종전에는 수강생의 trainer_id로 귀속하고 월 필터도 없었다. 그래서
+  //   · 오너가 진행한 상담까지 그 학생의 담당 트레이너에게 붙었고(9월 실측 4건 중 3건)
+  //   · 전기간 건수를 세서 과거 상담이 매달 다시 가산됐다(현태 12건 · 준구 5건).
+  // handler_id가 비어 있으면 **아무에게도 붙이지 않는다** — 학생 담당으로 되돌리면
+  // 지금 고치는 그 버그가 그대로 재현된다. 비어 있는 행은 호출부가 로그로 드러낸다.
+  //
+  // amount>0 가드: 무료 상담(클랜상담·인계무료·서비스면제·기존고객)은 가산 대상이 아니다.
+  // 추적 목적으로 원장에 0원 행을 남기기 시작하면, 이 가드가 없는 순간 과지급된다.
+  function aggregateConsults(payments, period) {
+    const byTrainer = {};
+    const noHandler = [];
+    for (const p of payments || []) {
+      if (isVoid(p) || p.kind !== "consult" || !(p.amount > 0)) continue;
+      if (settlePeriod(p) !== period) continue;                 // 당월 귀속분만
+      if (p.handler_id == null) { noHandler.push(p.id); continue; }
+      const a = byTrainer[p.handler_id] || (byTrainer[p.handler_id] = { count: 0, pay: 0 });
+      a.count += 1;
+      a.pay += consultTrainerPay(p);
+    }
+    return { byTrainer, noHandler };
+  }
+
   // 트레이너 1명(월 정산): 담당 수강생 신엔진 지급예정 합 + 상담 건당 1만 − 기지급. (영업수수료 폐지)
-  function computeTrainer(st, students, payouts, consultCount) {
+  function computeTrainer(st, students, payouts, consultAgg) {
     const mine = students.filter((x) => x.trainer_id === st.id);
-    const lessonAccrued = sum(mine, (x) => x.payable);
-    const consults = (consultCount && consultCount[st.id]) || 0;
-    const consultPay = consults * 10000;                      // 상담 건당 +10,000
+    // 담당이 아니라 **진행**으로 합산한다 — 남의 담당 학생을 대신 본 회차가 여기 들어온다.
+    // 그래서 모집단이 mine이 아니라 students 전체다(mine은 표시용 인원수로만 남는다).
+    const lessonAccrued = sum(students, (x) => (x.payable_by_trainer || {})[st.id] || 0);
+    const lessonGames = sum(students, (x) => (x.unsettled_games_by_trainer || {})[st.id] || 0);
+    const agg = (consultAgg && consultAgg[st.id]) || { count: 0, pay: 0 };
+    const consults = agg.count;
+    const consultPay = agg.pay;                               // 건당 10,000 · 레벨 테스트 시행 후 15,000
     const paidOut = sum(payouts.filter((p) => p.staff_id === st.id), (p) => p.gross);
     const total = lessonAccrued + consultPay;                 // 영업수수료 폐지(미집계)
     const gross = Math.max(0, total - paidOut);               // 지급할 금액(세전)
     const wh = Math.round(gross * WITHHOLDING);               // 원천 3.3% · 원단위 반올림
     return {
       staff_id: st.id, name: st.name, role: st.role,
-      lesson_accrued: lessonAccrued, consult_count: consults, consult_pay: consultPay,
+      lesson_accrued: lessonAccrued, lesson_games: lessonGames,
+      consult_count: consults, consult_pay: consultPay,
       paid_out: paidOut, gross, withholding: wh, net: gross - wh, student_count: mine.length,
     };
   }
@@ -345,6 +422,29 @@ module.exports = function mountAdminPanel(app, deps) {
   const BASE_RATE = 0.65;
   const RATE_CAP = 0.70;                                    // base율 상한 (재결제 +5%p는 이 밖)
   const REPEAT_BONUS = 0.05;
+
+  // ── 지급률 70% 단일 (2026-09-20 오너 결정 · 10/2 정산부터 · 9월 수업분 포함) ──
+  // 래칫(0.65 + floor(Σweight/5)×0.01)과 재결제 +5%p를 **둘 다** 0.70 하나로 대체한다.
+  // 「70% 단일」이므로 재결제 구간도 0.75가 아니라 0.70이다 — 오너가 정본으로 지정한
+  // 확정표(세션담당 · 70%)가 전 판수에 0.70을 곱한 값이라, +5%p를 남기면 그 표와 어긋난다.
+  //
+  // ⚠️ 시행 경계를 두는 이유: 경계가 없으면 이미 지급이 끝난 7·8월분도 도장이 풀리는 순간
+  //    0.70으로 재계산돼 "그때 무엇을 근거로 얼마를 보냈는지"를 재현할 수 없다.
+  //    SALARY_START·LESSON_ONLY_START와 같은 방식으로 시행월을 그어 과거를 건드리지 않는다.
+  //    played_at 기준이다(결제일이 아니라 수업일) — 오너 지시 「9월 수업분 포함」.
+  const RATE_FLAT_FROM = "2026-09-01";
+  const RATE_FLAT = 0.70;
+  const isFlatRate = (playedAt) => String(playedAt || "") >= RATE_FLAT_FROM;
+
+  // ── 상담 1건이 트레이너에게 주는 금액 ────────────────────
+  // 2026-10-01 신청분부터 상담이 「레벨 테스트」 20,000으로 바뀌고 트레이너 15,000 · 아카데미 5,000이다
+  // (오너 확정 · 종전 상담 가산 건당 10,000을 대체). 경계는 paid_at 이고, 그 이전 건은 10,000 그대로다.
+  // 오너가 진행한 건은 handler_id가 오너라서 트레이너 합산에 애초에 들어오지 않는다 — 20,000 전액이 아카데미다.
+  const LEVELTEST_START = "2026-10-01";
+  const CONSULT_PAY_OLD = 10000;
+  const CONSULT_PAY_LEVELTEST = 15000;
+  const consultTrainerPay = (p) =>
+    String(p.paid_at || "") >= LEVELTEST_START ? CONSULT_PAY_LEVELTEST : CONSULT_PAY_OLD;
   const gradWeightSum = (grads) => sum(grads.filter((g) => g.via_lesson !== false), (g) => g.weight || 0);
   const round2 = (n) => Math.round(n * 100) / 100;
   const rateFromWeight = (w) => round2(Math.min(BASE_RATE + Math.floor(w / 5) * 0.01, RATE_CAP));
@@ -354,6 +454,13 @@ module.exports = function mountAdminPanel(app, deps) {
       ? (grads || []).filter((g) => !g.achieved_at || String(g.achieved_at) <= String(asOf))
       : (grads || [])));
   const trainerBaseRate = (grads) => trainerBaseRateAt(grads, null);
+
+  // 시험용 노출(scripts/settlement.test.cjs) — **순수 계산 함수만** 내보낸다.
+  // 지급액이 바뀌는 코드라 실DB 없이 고정할 수 있어야 한다. 라우트·권한은 내보내지 않는다.
+  module.exports._engine = {
+    computeStudent, computeTrainer, computeStaffSalary, aggregateConsults,
+    trainerBaseRateAt, floor100, RATE_FLAT, RATE_FLAT_FROM, LEVELTEST_START,
+  };
 
   // ── 대시보드: 정산 전체 현황 ───────────────────────────
   app.get("/api/admin/overview", async (req, res) => {
@@ -406,19 +513,22 @@ module.exports = function mountAdminPanel(app, deps) {
       // 트레이너별 승급 지급율(graduations 기반) — 없으면 0.65
       const gradByTrainer = groupBy(graduations, "trainer_id");
       const rateOf = (tid) => trainerBaseRate(gradByTrainer[tid] || []);
-      // 상담(consult) 건수 → 담당 트레이너별 (수강생의 trainer_id로 귀속)
+      // ── 상담 가산 — **실제 진행자**(payments.handler_id) 귀속 · 당월분만 (오너 판정 2026-09-28) ──
+      // 종전에는 수강생의 trainer_id로 귀속하고 월 필터도 없었다. 그래서
+      //   · 오너가 진행한 상담까지 그 학생의 담당 트레이너에게 붙었고(9월 실측 4건 중 3건)
+      //   · 전기간 건수를 세서 과거 상담이 매달 다시 가산됐다(현태 12건 · 준구 5건).
+      // handler_id가 비어 있으면 **아무에게도 붙이지 않는다** — 학생 담당으로 되돌리면
+      // 지금 고치는 그 버그가 그대로 재현된다. 비어 있는 행은 로그로 드러내 채우게 한다.
+      //
       // amount>0 가드: 무료 상담(클랜상담·인계무료·서비스면제·기존고객)은 가산 대상이 아니다.
-      // 추적 목적으로 원장에 0원 행을 남기기 시작하면, 이 가드가 없는 순간 건당 10,000이 과지급된다
-      // (엔진은 금액이 아니라 건수를 센다). 0원 행이 생기기 전에 선반영해 둔다.
+      // 추적 목적으로 원장에 0원 행을 남기기 시작하면, 이 가드가 없는 순간 과지급된다.
       const stuById = {}; for (const s of students) stuById[s.id] = s;
-      const consultByTrainer = {};
-      for (const p of payments) {
-        if (isVoid(p) || p.kind !== "consult" || !(p.amount > 0)) continue;
-        const stu = stuById[p.student_id];
-        if (stu && stu.trainer_id != null)
-          consultByTrainer[stu.trainer_id] = (consultByTrainer[stu.trainer_id] || 0) + 1;
-      }
-      let computed = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || [], gradByTrainer[s.trainer_id] || []));
+      const { byTrainer: consultByTrainer, noHandler: consultNoHandler } =
+        aggregateConsults(payments, period || currentPeriod());
+      if (consultNoHandler.length)
+        console.warn(`[settle] 상담 진행자(handler_id) 미기록 ${consultNoHandler.length}건 — 가산 제외 · payments id: ${consultNoHandler.join(",")}`);
+      // 승급표는 **트레이너별 맵**으로 넘긴다 — 세션담당 귀속에서 세션마다 진행자가 다를 수 있다.
+      let computed = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || [], gradByTrainer));
 
       // ── 등록(enrollment) 기준 스코프 (C2) ─────────────────────────────
       // 화면이 담당을 구분하지 못해 준구가 이미 등록된 판수를 중복 신청할 뻔한 사고(정희준)의 수정.
@@ -961,7 +1071,7 @@ module.exports = function mountAdminPanel(app, deps) {
       ]);
       const payByStu = groupBy(payments, "student_id"), sessByStu = groupBy(sessions, "student_id");
       const gradByTrainer = groupBy(graduations, "trainer_id");
-      const rows = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || [], gradByTrainer[s.trainer_id] || []));
+      const rows = students.map((s) => computeStudent(s, payByStu[s.id] || [], sessByStu[s.id] || [], gradByTrainer));
       const head = ["수강생", "디코닉", "담당트레이너ID", "결제금액", "결제판수", "1차판수", "이월판수", "신규진행", "남은판수", "지급율", "재결제분(+5%p)", "지급예정(7/20이후)"];
       const body = rows.map((r) => [
         r.name, r.discord_nick || "", r.trainer_id || "", r.paid_amount, r.paid_games,
