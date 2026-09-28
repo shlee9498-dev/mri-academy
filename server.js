@@ -2481,11 +2481,13 @@ if (process.env.DISCORD_TOKEN) {
   // /수강생등록 2단계 — 동명 확인(있으면 버튼) → 등록. PUBG 「그래도 저장」 버튼에서도 여기로 이어진다.
   async function studentAfterLookup(itx, p) {
     const name = p.name;
-    // 동명 active 행 — 차단이 아니라 경고 후 확인. 병행수강 2행이 정상인 케이스가 있다(이희훈·장익교).
+    // 동명 행 — 차단이 아니라 경고 후 확인. 병행수강 2행이 정상인 케이스가 있다.
+    // prospect(§39)도 본다: 상담만 받고 등재된 사람이 레슨을 시작하면 **그 행을 active 로
+    // 올려야지 새 행을 만들면 안 된다.** 10/1 레벨 테스트 신규가 전부 이 경로로 들어온다.
     let dups = [];
     try {
       dups = await sbSelect("students",
-        `select=id,trainer_id,status&name=eq.${encodeURIComponent(name)}&status=eq.active${NOT_MERGED}&order=id.asc`);
+        `select=id,trainer_id,status&name=eq.${encodeURIComponent(name)}&status=in.(active,prospect)${NOT_MERGED}&order=id.asc`);
     } catch (e) { console.error("student_dup_check", e?.message); }
 
     if (!dups.length) return runStudentRegister(itx, p);
@@ -7494,7 +7496,8 @@ async function runStatsSnapshot() {
         // 그러나 **승급 후보·승급 DM은 진행 중인 학생만**이다(관제탑 8/18 지시 2).
         // 박성민(#25)이 status='done'인데 후보로 떠서 나온 지시다. 두 축이 다른 목록이라
         // 같은 필터를 쓰면 어느 한쪽이 반드시 틀린다.
-        const liveStu = s.status !== "done" && s.status !== "paused";
+        // prospect(§39)도 뺀다 — 상담만 받고 판수를 산 적이 없어 「진행 중」이 아니다.
+        const liveStu = s.status !== "done" && s.status !== "paused" && s.status !== "prospect";
         if (masterPlus && !registered) { if (liveStu) statsRun.candidates.push(row); else statsRun.candidatesExcluded++; }
         // 승급 감지 (직전 스냅샷 대비 신규 크로싱). 이전 스냅샷 없으면 스킵(최초=베이스라인).
         const prevIdx = prevIdxOf[s.id];
@@ -8351,6 +8354,79 @@ async function runDirectStatus() {
 // 조용해지는 구조다. 2026-04-09 이후 4개월 유실이 그렇게 지나갔다(수업_로그 공백).
 // 이 크론은 그 실패 모드를 정면으로 본다. 시트·DDL 변경 없이 기존 응답 필드만 쓴다.
 const DIRECT_STALE_DAYS = 7;   // 직강은 주 단위 운영 — 3일은 오탐, 14일은 늦다
+// ── 예약은 닫혔는데 수업 기록이 없는 건 (2026-09-28 오너 지시) ──
+// §37 record_lesson_from_booking 은 이미 done 인 예약에 **아무것도 하지 않는다** — done 의 이유가
+// 「자정 넘겨 다른 날짜로 이미 등록」일 수도 있어 자동으로 판수를 넣으면 두 번 빠지기 때문이다.
+// 그 결과 「예약 done · 그날 기록 없음」 짝은 아무 코드도 못 고치는 상태로 남고 판수가 0회 빠진다.
+// 실측(2026-09-28): 1건 — head 는 done 인데 span tail 은 booked 로 남아, 사람이 콘솔에서 상태만
+// 바꾼 흔적이었다. 하루가 지나면 기억이 흐려져 영영 안 빠지므로 매일 오너에게 올린다.
+//
+// 판정식은 §37 의 v_has 와 **같다**(학생 · 진행 트레이너 · KST 날짜). 다르면 화면과 알림이 갈린다.
+// 고치는 건 사람이 한다 — /수업등록 으로 판수를 넣거나, 수업을 안 했으면 예약을 취소로 되돌린다.
+const BOOKING_ORPHAN_DAYS = Number(process.env.BOOKING_ORPHAN_DAYS || 14);
+async function runBookingOrphans() {
+  if (!process.env.SUPABASE_URL) { console.log("[cron] booking_orphan: SUPABASE_URL 미설정 — 스킵"); return; }
+  const { date } = kstNow();
+  const since = new Date(Date.parse(date) - BOOKING_ORPHAN_DAYS * 86400000).toISOString().slice(0, 10);
+  // 임베드(slot:trainer_slots!inner) 대신 2질의로 나눈다 — 임베드 문법이 어긋나면 sbSelect 가
+  // 400 을 내고 이 감시가 **조용히 아무것도 안 하는** 상태가 된다. 감시가 침묵하는 실패는 못 잡는다.
+  let rows = [];
+  try {
+    // 홀드가 있던 예약만 본다 — games_held = 0 인 그룹·상담 예약은 애초에 판수를 안 잡는다.
+    rows = await sbSelect("slot_bookings",
+      "select=id,student_id,games_held,status,slot_id"
+      + "&status=in.(done,no_show)&games_held=gt.0&span_head_id=is.null&order=id.desc&limit=500");
+  } catch (e) { console.error("booking_orphan_fetch", e?.message); return; }   // 조회 실패는 침묵(오탐 방지)
+  if (!rows.length) { console.log("[cron] booking_orphan: 대상 예약 없음"); return; }
+
+  const slotIds = [...new Set(rows.map((b) => b.slot_id).filter((v) => v != null))];
+  let slots = [];
+  try {
+    slots = await sbSelect("trainer_slots",
+      `select=id,trainer_id,slot_start&id=in.(${slotIds.join(",")})&limit=1000`);
+  } catch (e) { console.error("booking_orphan_slots", e?.message); return; }
+  const slotById = {}; for (const x of slots) slotById[x.id] = x;
+
+  // 기간 필터는 여기서 건다(슬롯 시각을 받은 뒤라야 KST 날짜가 나온다).
+  const recent = rows.map((b) => {
+    const sl = slotById[b.slot_id];
+    return { ...b, trainer_id: sl?.trainer_id ?? null, d: kstDateOf(sl?.slot_start) };
+  }).filter((b) => b.d && b.d >= since && b.trainer_id != null);
+  if (!recent.length) { console.log("[cron] booking_orphan: 기간 내 대상 없음"); return; }
+
+  const days = [...new Set(recent.map((b) => b.d))];
+  let sess = [];
+  try {
+    sess = await sbSelect("lesson_sessions",
+      `select=student_id,trainer_id,played_at&played_at=in.(${days.join(",")})&limit=1000`);
+  } catch (e) { console.error("booking_orphan_sess", e?.message); return; }
+  const has = new Set(sess.map((x) => `${x.student_id}|${x.trainer_id}|${x.played_at}`));
+
+  const orphans = recent.filter((b) => !has.has(`${b.student_id}|${b.trainer_id}|${b.d}`));
+  const key = orphans.map((b) => b.id).join(",");
+  const st = (await opsStateGet("booking:orphan")) || {};
+  if (!orphans.length) {
+    if (st.key) await opsStateSet("booking:orphan", {});      // 해소되면 기준 비움(다음 발생 시 다시 알림)
+    console.log("[cron] booking_orphan: 없음");
+    return;
+  }
+  if (st.key === key && st.date === date) return;             // 같은 목록을 하루에 두 번 보내지 않는다
+  await opsStateSet("booking:orphan", { key, date });
+  const lines = orphans.slice(0, 10).map((b) =>
+    `· 예약 #${b.id} · ${b.d} · ${b.games_held}판 · 명부 #${b.student_id} · ${b.status}`);
+  await ownerDM(`🧾 예약은 닫혔는데 수업 기록이 없습니다 — ${orphans.length}건\n`
+    + lines.join("\n") + (orphans.length > 10 ? `\n· 외 ${orphans.length - 10}건` : "")
+    + `\n\n판수가 0회 빠진 상태입니다. 수업을 했으면 /수업등록 으로 판수를 넣고,`
+    + ` 안 했으면 예약을 취소로 되돌려 선차감을 복원해주세요.`
+    + ` 앱 「완료」로는 고쳐지지 않습니다 — 이미 닫힌 예약이라 그 버튼이 아무것도 하지 않습니다.`);
+}
+// 슬롯 시각(UTC timestamptz) → KST 날짜. §37 v_has · booking-api kstDate() 와 같은 축이어야 한다.
+function kstDateOf(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? new Date(t + 9 * 3600000).toISOString().slice(0, 10) : null;
+}
+
 async function runDirectStale() {
   const webhook = process.env.SHEET_WEBHOOK_URL;
   if (!webhook) { console.log("[cron] direct_stale: SHEET_WEBHOOK_URL 미설정 — 스킵"); return; }
@@ -8441,6 +8517,8 @@ async function cronTick() {
   // DIRECT_STATUS 게이트를 타지 않는다 — 게이트를 하나 더 두면 그 게이트가 꺼져서
   // 침묵하는 경우를 또 못 잡는다. 웹훅이 없으면 함수가 스스로 스킵한다.
   await maybeRunDaily("directStale", "05:20", runDirectStale, "직강 기록 정체");
+  // 예약 done 인데 그날 기록 없음 — 아무 코드도 못 고치는 짝이라 사람에게 올린다(오너 지시 2026-09-28).
+  await maybeRunDaily("bookingOrphan", "05:30", runBookingOrphans, "예약 닫힘·기록 없음");
 }
 if (T2_ENABLED || DIRECT_STATUS_ENABLED) {
   setInterval(() => { cronTick().catch((e) => console.error("cron_tick", e?.message)); }, 10 * 60 * 1000);   // 10분 틱

@@ -2928,3 +2928,32 @@ create index if not exists idx_students_merged_into
 --   alter table students drop constraint if exists chk_students_merged_self;
 --   alter table students drop column if exists merged_into;
 -- ============================================================
+
+-- ============================================================
+-- §39  상담만 받은 사람 students.status = 'prospect' (2026-09-28 · 오너 OK)
+--
+-- 왜 필요한가: 결제행은 학생 없이 만들 수 없다(payments.student_id NOT NULL + FK).
+--   그래서 상담만 받고 판수를 산 적 없는 사람의 결제가 원장 밖에 남는다(실측 1건 20,000).
+--   **10/1 부터 레벨 테스트 신규가 전부 이 경우**라 임시방편으로 둘 수 없다.
+--
+-- 왜 기존 값으로 안 되나:
+--   active  → 로스터·잔여·수강생 수에 레슨생과 섞여 들어간다
+--   paused  → 「수강하다 멈춘 사람」이라 뜻이 다르다(재개 대상 목록이 오염된다)
+--   done    → 수료다(§38 과 같은 논거 — 수료 목록이 틀어진다)
+--
+-- 집계 규칙(오너 확정): 로스터·잔여·수강생 수에서 **제외** · 매출·상담 가산에는 **포함**.
+--   코드에서 지키는 곳 — trainer-portal 로스터(이미 status in (active,paused)로 제외됨) ·
+--   admin-panel student_count · server.js 승급 후보(liveStu) · 잔여 독촉(이미 active 한정).
+--   첫 레슨 등록이 생기면 active 로 올린다(전환은 사람이 한다 — 자동 승격은 넣지 않았다).
+--
+-- ⚠️ 제약 교체라 B 구간이다. 값을 **더하기만** 하므로 기존 행은 하나도 영향받지 않는다
+--    (실측 교체 직전: active 73 · done 19 · paused 2 · 합 94).
+alter table students drop constraint if exists students_status_check;
+alter table students add constraint students_status_check
+  check (status = any (array['active'::text, 'done'::text, 'paused'::text, 'prospect'::text]));
+
+-- 되돌리기(prospect 행이 하나도 없을 때만 — 있으면 먼저 active/done 으로 옮길 것):
+--   alter table students drop constraint if exists students_status_check;
+--   alter table students add constraint students_status_check
+--     check (status = any (array['active'::text, 'done'::text, 'paused'::text]));
+-- ============================================================
