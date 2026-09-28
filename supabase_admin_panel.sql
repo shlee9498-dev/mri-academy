@@ -2890,3 +2890,41 @@ $$;
 -- 되돌리기(필요할 때만 — 함수를 지우면 앱 「완료」가 404 로 떨어진다. 코드를 먼저 되돌릴 것):
 --   drop function if exists public.record_lesson_from_booking(bigint, bigint);
 -- ============================================================
+
+-- ============================================================
+-- §38  명부 합치기 표시 students.merged_into (2026-09-28 · 오너 지시 「박성민 합치기 #104 → #25」)
+--
+-- 왜 새 칸인가: 합친 뒤 남는 빈 행을 status 로 가릴 수 없다.
+--   students.status 는 active · done · paused 뿐이고 done 은 **수료**다(실측 18행).
+--   합친 행을 done 으로 두면 수료생 목록이 틀리고, 반대로 이름 조회에서 done 을 빼면
+--   수료생 18명이 재등록·판수정정 후보에서 사라진다. 두 상태는 성격이 달라 한 칸에 못 겹친다.
+--
+-- 왜 삭제가 아닌가: 합친 행이 사라지면 「왜 #104 가 없어졌나」를 추적할 수 없고,
+--   payment_requests 처럼 과거 카드가 그 id 를 가리키고 있어 FK 가 끊긴다.
+--   행은 남기고 **어디로 갔는지**를 적는다 — 무효 결제(§34)가 행을 지우지 않는 것과 같은 논거다.
+--
+-- 이름·별칭으로 사람을 찾는 모든 경로가 `merged_into is null` 로 걸러야 한다
+--   (server.js NOT_MERGED — 동명이인 선택 메뉴 · /연결승인 · /닉네임등록 · /결제신청 후보 · /승급).
+--   거르지 않으면 합친 행이 동명이인 후보에 계속 떠서 합치기의 목적이 사라진다.
+alter table students add column if not exists merged_into bigint references students(id);
+
+comment on column students.merged_into is
+  '합쳐진 행 — 이 명부 번호는 다른 번호로 합쳐졌다. 이름·별칭 조회에서 제외한다. 수료(status=done)와 다르다.';
+
+-- 자기 자신을 가리키면 이름 조회에서 영영 사라진다(무한 합치기). 제약으로 막는다.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_students_merged_self') then
+    alter table students add constraint chk_students_merged_self
+      check (merged_into is null or merged_into <> id);
+  end if;
+end $$;
+
+create index if not exists idx_students_merged_into
+  on students (merged_into) where merged_into is not null;
+
+-- 되돌리기(필요할 때만 — 코드의 NOT_MERGED 를 먼저 되돌릴 것):
+--   drop index if exists idx_students_merged_into;
+--   alter table students drop constraint if exists chk_students_merged_self;
+--   alter table students drop column if exists merged_into;
+-- ============================================================

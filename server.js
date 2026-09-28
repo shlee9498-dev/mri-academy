@@ -139,6 +139,14 @@ function getUser(req) {
   } catch { return null; }
 }
 
+// 합쳐진 명부 행 제외 — 이름·별칭으로 사람을 찾는 모든 경로에 붙인다 (§38 students.merged_into).
+// 합치기(#104→#25 유형)로 비운 행은 이름이 그대로 남아 있어 동명이인 후보에 계속 뜬다. 그러면
+// 합치기의 목적 자체가 사라진다 — 트레이너가 다시 빈 행을 골라 판수를 넣을 수 있다.
+// status='done'(수료)으로는 못 가린다: 수료 18명은 재등록·판수정정의 정답이 될 수 있어
+// 이름 조회에서 빼면 안 되고, 반대로 합친 행을 done 으로만 두면 수료 목록이 틀린다.
+// 칸이 없는 배포(§38 미실행)에서는 PostgREST가 400을 내므로, 각 호출부는 기존 degrade 경로를 유지한다.
+const NOT_MERGED = "&merged_into=is.null";
+
 // ── Supabase REST (PostgREST) ──
 function sbHeaders(extra = {}) {
   const k = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -1400,13 +1408,13 @@ if (process.env.DISCORD_TOKEN) {
   const STUDENT_PICK_COLS = "select=id,name,status,trainer_id,pubg_name";
   async function resolveStudentCandidates(name) {
     const n = encodeURIComponent(name);
-    let rows = await sbSelect("students", `${STUDENT_PICK_COLS}&name=eq.${n}&order=id.asc`);
+    let rows = await sbSelect("students", `${STUDENT_PICK_COLS}&name=eq.${n}${NOT_MERGED}&order=id.asc`);
     if (!rows.length) {
       // 별칭 조회 — 원장/시트 표기가 students.name과 다른 경우. 테이블 미생성(DDL 미실행) 시에도 null로 안전하게 떨어진다.
       let ids = [];
       try { ids = [...new Set((await sbSelect("student_aliases", `select=student_id&alias=eq.${n}`)).map((a) => Number(a.student_id)).filter(Number.isFinite))]; }
       catch (e) { console.error("resolve_alias", name, e?.message); }
-      rows = ids.length ? await sbSelect("students", `${STUDENT_PICK_COLS}&id=in.(${ids.join(",")})&order=id.asc`) : [];
+      rows = ids.length ? await sbSelect("students", `${STUDENT_PICK_COLS}&id=in.(${ids.join(",")})${NOT_MERGED}&order=id.asc`) : [];
     }
     if (rows.length > 1)
       console.warn(`[resolve] 동명 ${rows.length}행 — "${name}" (id: ${rows.map((r) => r.id).join(",")}) · 선택 필요`);
@@ -2477,7 +2485,7 @@ if (process.env.DISCORD_TOKEN) {
     let dups = [];
     try {
       dups = await sbSelect("students",
-        `select=id,trainer_id,status&name=eq.${encodeURIComponent(name)}&status=eq.active&order=id.asc`);
+        `select=id,trainer_id,status&name=eq.${encodeURIComponent(name)}&status=eq.active${NOT_MERGED}&order=id.asc`);
     } catch (e) { console.error("student_dup_check", e?.message); }
 
     if (!dups.length) return runStudentRegister(itx, p);
@@ -2562,7 +2570,7 @@ if (process.env.DISCORD_TOKEN) {
       return rows[0] ? { row: rows[0] } : { error: "not_found" };
     }
     const rows = await sbSelect("students",
-      `${cols}&name=eq.${encodeURIComponent(v)}&discord_id=${linked ? "not.is.null" : "is.null"}&order=id.asc`);
+      `${cols}&name=eq.${encodeURIComponent(v)}&discord_id=${linked ? "not.is.null" : "is.null"}${NOT_MERGED}&order=id.asc`);
     if (rows.length === 1) return { row: rows[0] };
     return { error: rows.length ? "ambiguous" : "not_found" };
   }
@@ -2577,7 +2585,7 @@ if (process.env.DISCORD_TOKEN) {
       const linked = itx.commandName === "연결해제";
       // PostgREST 예약문자(, . ( ) *)는 검색어에서 뺀다 — 필터 문법이 깨지는 걸 막는다.
       const q = String(focused.value || "").trim().replace(/[,.()*]/g, "").slice(0, 40);
-      let filter = `select=id,name,status,trainer_id&discord_id=${linked ? "not.is.null" : "is.null"}&order=status.asc,name.asc&limit=100`;
+      let filter = `select=id,name,status,trainer_id&discord_id=${linked ? "not.is.null" : "is.null"}${NOT_MERGED}&order=status.asc,name.asc&limit=100`;
       if (q) filter += `&name=ilike.*${encodeURIComponent(q)}*`;
       const [rows, staffById] = await Promise.all([sbSelect("students", filter), staffNameMap()]);
       await itx.respond(rows.slice(0, 25).map((s) => ({ name: linkChoiceName(s, staffById), value: String(s.id) })));
@@ -2610,7 +2618,7 @@ if (process.env.DISCORD_TOKEN) {
         const actor = await linkActor(itx);
         if (!actor.allowed) return await itx.respond([]);   // 권한 없으면 명단을 보여주지 않는다
         const qv = String(focused.value || "").trim().replace(/[,.()*]/g, "").slice(0, 40);
-        let filter = "select=id,name,status,trainer_id,pubg_name&order=name.asc&limit=100";
+        let filter = `select=id,name,status,trainer_id,pubg_name${NOT_MERGED}&order=name.asc&limit=100`;
         if (!actor.isOwner) filter += `&trainer_id=eq.${actor.staffId}`;   // 트레이너는 담당 목록(최근 90일 수업 수강생은 이름을 직접 쳐도 된다)
         if (qv) filter += `&name=ilike.*${encodeURIComponent(qv)}*`;
         const [rows, staffById] = await Promise.all([sbSelect("students", filter), staffNameMap()]);
@@ -2659,7 +2667,7 @@ if (process.env.DISCORD_TOKEN) {
     try {
       rows = /^\d{1,10}$/.test(raw)
         ? await sbSelect("students", `${cols}&id=eq.${raw}&limit=1`)
-        : await sbSelect("students", `${cols}&name=eq.${encodeURIComponent(raw)}&order=id.asc`);
+        : await sbSelect("students", `${cols}&name=eq.${encodeURIComponent(raw)}${NOT_MERGED}&order=id.asc`);
     } catch (e) {
       console.error("nick_lookup", e?.message);
       return itx.editReply("명부를 못 읽었어. 잠시 뒤 다시 해줘.");
@@ -2841,7 +2849,7 @@ if (process.env.DISCORD_TOKEN) {
       // §24 대기 신청도 같이 보여준다 — 안 B(테이블)를 고른 이유가 「미처리 목록을 볼 수 있다」였다.
       // 조회 실패는 현황 전체를 막지 않는다(카드가 유실돼도 여기서 잔량이 보이는 게 이 줄의 목적).
       const [rows, staffById, pending] = await Promise.all([
-        sbSelect("students", "select=id,name,status,trainer_id,discord_id&order=name.asc"),
+        sbSelect("students", `select=id,name,status,trainer_id,discord_id${NOT_MERGED}&order=name.asc`),
         staffNameMap(),
         sbSelect("student_link_requests",
           "select=id,claimed_name,discord_id,created_at&status=eq.pending&order=created_at.asc&limit=20")
@@ -2980,7 +2988,7 @@ if (process.env.DISCORD_TOKEN) {
   async function linkCandidateSet() {
     const [rows, aliases, staffById] = await Promise.all([
       sbSelect("students",
-        "select=id,name,status,trainer_id&discord_id=is.null&status=neq.done&order=name.asc&limit=500"),
+        `select=id,name,status,trainer_id&discord_id=is.null&status=neq.done${NOT_MERGED}&order=name.asc&limit=500`),
       sbSelect("student_aliases", "select=student_id,alias&limit=500").catch(() => []),
       staffNameMap(),
     ]);
@@ -3412,13 +3420,13 @@ if (process.env.DISCORD_TOKEN) {
     const n = encodeURIComponent(String(name || "").trim());
     if (!n) return [];
     let rows = [];
-    try { rows = await sbSelect("students", `select=id,name,status,trainer_id,discord_id,pubg_name,pubg_platform&name=eq.${n}&order=id.asc`); }
+    try { rows = await sbSelect("students", `select=id,name,status,trainer_id,discord_id,pubg_name,pubg_platform&name=eq.${n}${NOT_MERGED}&order=id.asc`); }
     catch (e) { console.error("payreq_cand", e?.message); }
     try {
       const al = await sbSelect("student_aliases", `select=student_id&alias=eq.${n}`);
       const extra = [...new Set(al.map((a) => a.student_id))].filter((id) => !rows.some((r) => r.id === id));
       if (extra.length)
-        rows = rows.concat(await sbSelect("students", `select=id,name,status,trainer_id,discord_id,pubg_name,pubg_platform&id=in.(${extra.join(",")})&order=id.asc`));
+        rows = rows.concat(await sbSelect("students", `select=id,name,status,trainer_id,discord_id,pubg_name,pubg_platform&id=in.(${extra.join(",")})${NOT_MERGED}&order=id.asc`));
     } catch (e) { console.error("payreq_cand_alias", e?.message); }   // 별칭 테이블 미생성이어도 이름 후보는 살린다
     return rows;
   }
@@ -3810,7 +3818,7 @@ if (process.env.DISCORD_TOKEN) {
       // 학생 매핑(선택 — 없으면 이름만 기록)
       let student_id = null;
       try {
-        const su = await sbSelect("students", `select=id&name=eq.${encodeURIComponent(studentName)}&limit=1`);
+        const su = await sbSelect("students", `select=id&name=eq.${encodeURIComponent(studentName)}${NOT_MERGED}&limit=1`);
         student_id = su[0] ? su[0].id : null;
       } catch (e) { console.error("sung_student_lookup", e?.message); }
       const weight = tier === "서바이버" ? 3 : 1;   // 서버가 tier→weight 강제
@@ -7962,7 +7970,9 @@ const REQUIRED_SCHEMA = {
                      "best_rank_point","avg_damage","avg_kills","kda","rounds_played","raw","created_at"],
   students:         ["id","name","discord_nick","trainer_id","status","note","carry_games",
                      "payout_rate_set","pubg_platform","pubg_name","pubg_account_id",
-                     "discord_id","discord_src"],
+                     // §38 승급(2026-09-28) — 이 세션이 DDL을 실행하고 실DB에서 칸·제약·인덱스를 확인했다.
+                     // NOT_MERGED 가 이름 조회 전 경로에 붙어 있어, 칸이 없으면 동명이인 선택이 통째로 400이 된다.
+                     "discord_id","discord_src","merged_into"],
   // §22a~c 승격(2026-09-04) — 오너가 DDL을 실행하고 실DB에서 3테이블 존재를 확인했다.
   // student-portal.cjs가 제목·일기·피드백을 여기서 읽고 쓴다(포털 가동 중).
   // 런타임 프로브(tableReady)는 그대로 둔다 — 부재 시 degrade는 유지하고,
