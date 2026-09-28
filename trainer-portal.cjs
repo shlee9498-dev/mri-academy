@@ -219,14 +219,19 @@ module.exports = function mountTrainerPortal(app, deps) {
     if (!scope.size) return sendTrainer(res, { students: [] });
     const ids = idList(scope);
 
+    // trainer_id 를 셋 다 싣는다 — remainingMine(계약 §9.2)을 **같은 벌크 조회에서** 뽑으려는
+    // 것이고, 학생당 RPC(§41)를 돌리지 않는다는 이 라우트의 원칙을 지키기 위해서다.
+    // ⚠️ 식은 §41 portal_remaining_for_trainer() 와 같아야 한다 — 한쪽만 고치면 트레이너
+    //    화면의 숫자와 예약 판정이 갈린다.
     const [enrolls, sessions, held] = await Promise.all([
       sbSelect("lesson_enrollments",
-        `select=student_id,games_total&student_id=in.(${ids})&status=in.(${ENROLL_STATUSES.join(",")})`),
+        `select=student_id,games_total,trainer_id&student_id=in.(${ids})&status=in.(${ENROLL_STATUSES.join(",")})`),
       sbSelect("lesson_sessions",
         `select=student_id,games,played_at,trainer_id&student_id=in.(${ids})`),
       bookingReady
         ? sbSelect("slot_bookings",
-            `select=student_id,games_held&student_id=in.(${ids})&status=in.(${HELD_STATUSES.join(",")})`)
+            `select=student_id,games_held,trainer_slots!inner(trainer_id)`
+            + `&student_id=in.(${ids})&status=in.(${HELD_STATUSES.join(",")})`)
             .catch(() => [])
         : Promise.resolve([]),
     ]);
@@ -244,6 +249,11 @@ module.exports = function mountTrainerPortal(app, deps) {
       if (!last[r.student_id] || r.played_at > last[r.student_id]) last[r.student_id] = r.played_at;
       if (r.trainer_id === req.staff.id) byMe[r.student_id] = (byMe[r.student_id] || 0) + Number(r.games || 0);
     }
+    // ── 내 판수만(계약 §9.2 remainingMine) ──
+    // §41 portal_remaining_for_trainer() 를 같은 축으로 벌크 계산한 것이다. 셋 다 내 몫만 센다.
+    // carry_games 는 담당(isPrimary)일 때만 내 몫이다 — §41 이 students.trainer_id 로 보는 것과 같다.
+    const regMine = sum(enrolls.filter((r) => r.trainer_id === req.staff.id), "games_total");
+    const heldMine = sum(held.filter((r) => r.trainer_slots?.trainer_id === req.staff.id), "games_held");
 
     const students = [...scope.values()]
       .sort((a, b) => (a.isPrimary === b.isPrimary ? String(a.name).localeCompare(String(b.name), "ko") : a.isPrimary ? -1 : 1))
@@ -261,7 +271,11 @@ module.exports = function mountTrainerPortal(app, deps) {
           playedGames: pl,
           playedWithMe: byMe[s.id] || 0,    // 내가 진행한 판수(병행수강 가시화)
           heldGames: hd,                    // 예약 선차감(개인 1:1 대기분)
-          remainingGames: reg - pl - hd,    // 음수 그대로(0 클램프 금지 · 정본 B-4)
+          remainingGames: reg - pl - hd,    // 음수 그대로(0 클램프 금지 · 정본 B-4) — **합계**다
+          // 내 판수만(§41 · 계약 §9.2). 예약 판정이 보는 숫자가 이것이다 — 합계로 보면
+          // 「32판 남았다」고 안내해 놓고 예약이 거부된다(두 트레이너 병행 실측 9명).
+          remainingMine: (s.isPrimary ? Number(s.carry_games || 0) : 0)
+            + (regMine[s.id] || 0) - (byMe[s.id] || 0) - (heldMine[s.id] || 0),
           lastLessonOn: last[s.id] || null,
         };
       });

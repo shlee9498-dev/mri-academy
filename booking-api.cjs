@@ -30,6 +30,10 @@ const MAX_SLOTS_PER_OPEN = 48;       // 슬롯 열기 1회당 최대 칸 수(= 2
 // 여기 값은 /availability 가 「누르면 409 날 칸」을 애초에 안 내려주게 맞추는 용도다.
 // ⚠️ 두 곳이 갈라지면 화면과 서버가 어긋난다(보이는 칸을 눌렀는데 booking_closed).
 const BOOK_LEAD_MIN = 180;
+// 「완료」가 받는 판수 범위(§42 · 계약 §9.1). 1판 미만은 기록할 것이 없고, 50판은 하루 수업의
+// 현실 상한이다 — 오타(7 대신 70)가 정산까지 흘러가지 않게 막는 게 목적이다.
+const GAMES_MIN = 1, GAMES_MAX = 50;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // 트레이너 슬롯 목록의 과거 조회 창. 종전 1일이었는데 그러면 pending_review(48시간 경과)가
 // **창 밖으로 떨어져 「확인 필요」가 영영 안 보였다** — #298 의 결함이다. 등록 누락 감지도
 // 지난 수업을 봐야 성립하므로 2주로 넓힌다.
@@ -184,6 +188,9 @@ module.exports = function mountBookingApi(app, deps) {
         slotMinutes: SLOT_MIN,
         lessonType: s.lesson_type,
         trainerDisplayName: nameOf[s.trainer_id] || "미배정",
+        // /summary 의 remainingByTrainer[].trainerId 와 **같은 값**이다(같은 불투명 id).
+        // 앱은 이 값으로 「이 칸을 예약할 판수가 있나」를 찾는다 — 이름으로 맞추면 동명이인에서 섞인다.
+        trainerId: opaqueId("trainer", s.trainer_id),
         // 담당이거나 최근 90일에 수업한 트레이너면 true. 예약 자체는 false 여도 허용된다(안내용).
         isMyTrainer: myTrainers.has(s.trainer_id),
         // 이 칸이 실제로 차지하는 길이. 개인은 항상 30(긴 수업은 칸 여러 개), 그룹·레벨
@@ -400,14 +407,31 @@ module.exports = function mountBookingApi(app, deps) {
   //     already_recorded     그날 기록이 이미 있다(두 번 빠지지 않게 막았다)
   //     registration_missing 예약은 닫혀 있는데 판수 기록이 **없다** → /수업등록 이 필요하다
   //   registration_missing 은 GET /slots 의 「등록 누락?」 배지와 같은 조건이다(이름을 맞췄다).
+  //
+  //   ⚠️ 10/1 부터 body 가 생긴다(§42 · 계약 §9.1) — { games?, playedAt? }.
+  //     games    실제 진행 판수. **그룹·상담은 이게 유일한 입구다** — `/수업등록` 이 잠기면
+  //              예약이 판수를 모르는 그룹 수업은 여기 말고 들어올 데가 없다.
+  //              개인은 생략하면 종전대로 선차감분(5·8·10)이다.
+  //     playedAt 실제 수업 날짜. 자정을 넘겨 진행한 경우다. 슬롯 날짜 ±1일까지.
+  //   잔여가 모자라도 **막지 않는다** — 수업은 이미 끝났고 기록이 먼저다. 막으면 판수가
+  //   영영 안 빠진다. 대신 remainingWasShort 로 알리고 화면이 기록 **성공 뒤에** 안내한다.
   app.post(`${TRAINER}/bookings/:id/complete`, rateLimit("trainerResolve", 60, 60_000),
-    bodyOnly([]), requireTrainer, wrap(async (req, res) => {
+    bodyOnly(["games", "playedAt"]), requireTrainer, wrap(async (req, res) => {
       const bookingId = readOpaqueId("booking", req.params.id);
       if (bookingId == null) return fail(res, 400, "invalid_body");
+      const games = req.body?.games, playedAt = req.body?.playedAt;
+      if (games !== undefined
+        && (!Number.isInteger(games) || games < GAMES_MIN || games > GAMES_MAX))
+        return fail(res, 400, "invalid_body");
+      // 날짜 **형식**만 여기서 본다. 슬롯 날짜 ±1일 판정은 §42 함수가 한다 — 슬롯 시각을
+      // 아는 쪽이 거기라서, 여기서 또 재면 두 곳이 갈라진다.
+      if (playedAt !== undefined && !(typeof playedAt === "string" && DATE_RE.test(playedAt)))
+        return fail(res, 400, "invalid_body");
       // §37 미실행 배포에서는 PostgREST 가 404 를 주고 sbRpc 가 throw 한다 — wrap 이 500 으로
       // 감싼다. 조용히 「완료됨」으로 답하지 않는다.
       const out = await sbRpc("record_lesson_from_booking", {
         p_trainer_id: req.staff.id, p_booking_id: bookingId,
+        p_games: games ?? null, p_played_at: playedAt ?? null,
       });
       if (out?.error) return rpcFail(res, out.error);
       if (out?.already) {
@@ -420,6 +444,9 @@ module.exports = function mountBookingApi(app, deps) {
         outcome: out?.recorded ? "recorded" : "closed_no_games",
         games: Number(out?.games || 0),
         playedAt: out?.playedAt || null,
+        // 기록 뒤 **그 트레이너 기준** 잔여(§41). 음수일 수 있다 — 막지 않았다는 뜻이다.
+        remainingAfter: out?.remainingAfter ?? null,
+        remainingWasShort: out?.remainingWasShort === true,
       });
     }));
 

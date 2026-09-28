@@ -24,7 +24,7 @@ const crypto = require("crypto");
 const OPTIONAL_TABLES = ["lesson_session_titles", "lesson_journals", "journal_feedback"];
 
 module.exports = function mountStudentPortal(app, deps) {
-  const { sbSelect, sbInsert, sbPatch, limit } = deps;
+  const { sbSelect, sbInsert, sbPatch, sbRpc, limit } = deps;
   const PREFIX = "/api/student-portal";
 
   const ready = () =>
@@ -305,12 +305,13 @@ module.exports = function mountStudentPortal(app, deps) {
   // 잔여 = carry_games + Σ lesson_enrollments.games_total − Σ lesson_sessions.games
   // 음수는 그대로 둔다. 0 클램프 금지(정본 v0.2.2 B-4).
   async function lessonAggregate(studentId) {
-    const [stu, enrolls, sessions, held] = await Promise.all([
+    const [stu, enrolls, sessions, held, byTrainer] = await Promise.all([
       // pubg_name 도 여기서 같이 읽는다 — 종전에는 /summary 가 같은 행을 한 번 더 읽었다(왕복 1회 낭비).
       sbSelect("students", `select=carry_games,trainer_id,pubg_name&id=eq.${studentId}`),
       sbSelect("lesson_enrollments", `select=games_total&student_id=eq.${studentId}&status=in.(active,done,paused)`),
       sbSelect("lesson_sessions", `select=games,trainer_id,created_at&student_id=eq.${studentId}`),
       heldGames(studentId),
+      remainingByTrainer(studentId),
     ]);
     const carry = Number(stu[0]?.carry_games || 0);
     const registered = carry + enrolls.reduce((a, r) => a + Number(r.games_total || 0), 0);
@@ -320,13 +321,33 @@ module.exports = function mountStudentPortal(app, deps) {
     //    "화면엔 5판 남았는데 예약은 insufficient_games" 같은 어긋남이 난다.
     const remaining = registered - played - held;
     const asOf = sessions.reduce((mx, r) => (r.created_at > mx ? r.created_at : mx), "");
+    // 쪼갠 합이 총합과 달라지면 위 두 식 중 하나가 혼자 움직인 것이다 — 조용히 넘기지 않는다.
+    // 화면은 총합을 그대로 쓰므로 표시가 깨지지는 않고, 로그만 남는다.
+    const split = byTrainer.reduce((a, r) => a + r.remaining, 0);
+    if (byTrainer.length && split !== remaining)
+      console.error("remaining_split_mismatch", studentId, remaining, split);
     return {
-      registered, played, remaining,
+      registered, played, remaining, byTrainer,
       assignedTrainerId: stu[0]?.trainer_id ?? null,
       pubgName: stu[0]?.pubg_name || null,
       activeTrainerIds: [...new Set(sessions.map((r) => r.trainer_id).filter(Boolean))],
       asOf: asOf || new Date(0).toISOString(),
     };
+  }
+
+  // 트레이너별 잔여(§41 · 계약 §9.2). 두 트레이너를 함께 쓰는 수강생(실측 9명)은 합계만
+  // 보여주면 「32판 남았는데 왜 예약이 안 돼요」가 된다 — 예약 판정이 그 칸 트레이너의
+  // 잔여를 보기 때문이다.
+  // ⚠️ 식을 여기 다시 쓰지 않는다. 잔여 공식은 이미 SQL 과 JS 두 벌인데 세 벌째를 만들면
+  //    갈라질 자리가 하나 더 는다. §41 함수 하나만 본다 — Promise.all 안이라 왕복은 안 는다.
+  // §41 미실행 배포에서는 PostgREST 가 404 를 준다 → 빈 배열(앱은 합계만 쓴다).
+  async function remainingByTrainer(studentId) {
+    try {
+      const out = await sbRpc("portal_remaining_by_trainer", { p_student_id: studentId });
+      return Array.isArray(out)
+        ? out.map((r) => ({ trainerId: Number(r.trainerId), remaining: Number(r.remaining) }))
+        : [];
+    } catch { return []; }
   }
 
   // 예약 선차감 합계(개인만). 살아 있는 상태 = booked · pending_review · no_show.
@@ -448,7 +469,9 @@ module.exports = function mountStudentPortal(app, deps) {
       nextBookingFor(sid),
       coursesFor(sid),
     ]);
-    const tids = [agg.assignedTrainerId, ...agg.activeTrainerIds];
+    // 잔여가 남아 있는 트레이너도 이름이 필요하다 — 담당도 아니고 최근 수업도 없는데
+    // 판수만 남은 경우(등록만 하고 아직 수업 전)가 실제로 있다. 빠지면 그 줄이 「?」가 된다.
+    const tids = [agg.assignedTrainerId, ...agg.activeTrainerIds, ...agg.byTrainer.map((r) => r.trainerId)];
     const [names, contacts] = await Promise.all([trainerNames(tids), trainerContacts(tids)]);
 
     const entry = (tid, role) => {
@@ -483,6 +506,16 @@ module.exports = function mountStudentPortal(app, deps) {
         status,
       },
       trainers,
+      // 트레이너별 잔여(§41 · 계약 §9.2). lesson.remainingGames 는 **그대로 합계다** —
+      // 기존 화면은 고치지 않아도 된다. 잔여 0 인 트레이너는 빠지고, 음수는 그대로 온다.
+      // 예약 화면은 이 배열을 보여야 한다 — 합계만 보여주면 「32판 남았는데 왜 안 돼요」가 된다.
+      // trainerId 는 /availability 슬롯의 trainerId 와 **같은 값**이다(같은 불투명 id) —
+      // 앱은 이름이 아니라 이 값으로 「이 칸의 트레이너 잔여」를 찾는다. 동명이인이 있어도 안 섞인다.
+      remainingByTrainer: agg.byTrainer.map((r) => ({
+        trainerId: opaqueId("trainer", r.trainerId),
+        trainerName: names[r.trainerId] || "미배정",
+        remaining: r.remaining,
+      })),
       asOf: agg.asOf,
       nextBooking,
       pendingJournalCount,

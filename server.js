@@ -7801,7 +7801,9 @@ require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete, 
 // 넣지 않고 별도 파일에 둔 이유: 이 파일은 여러 트랙 코드가 공존해서(CLAUDE.md 경계 규칙)
 // 새 라우트군을 인라인하면 동시 작업 충돌면이 그만큼 넓어진다.
 const studentPortal = require("./student-portal.cjs")(app, {
-  sbSelect, sbInsert, sbPatch, limit,
+  // sbRpc 는 §41 portal_remaining_by_trainer(트레이너별 잔여) 하나에 쓴다 — 잔여 공식을
+  // JS 에 또 베끼지 않으려고 함수를 그대로 부른다.
+  sbSelect, sbInsert, sbPatch, sbRpc, limit,
   // 연결 대기 화면의 POST /link-request 가 쓴다. 봇이 꺼져 있으면 null → 503.
   linkIntake: (a) => (linkReqIntake ? linkReqIntake(a) : Promise.resolve({ ok: false, code: "unavailable" })),
 });

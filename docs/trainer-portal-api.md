@@ -511,7 +511,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | 필드 | 뜻 |
 |---|---|
 | `remainingAfter` | 기록 후 **그 트레이너 기준** 남은 판수(9.2). 음수일 수 있다 |
-| `remainingWasShort` | 기록 전 잔여보다 `games` 가 컸으면 `true` |
+| `remainingWasShort` | `remainingAfter < 0` 과 같다 — 이 수업을 덮을 판수가 없었다는 뜻 |
 
 ⚠️ **잔여가 모자라도 막지 않는다.** 수업은 이미 끝났고 기록이 먼저다 — 막으면 판수가 영영 안 빠진다.
 실제로 잔여 음수인 수강생이 지금도 있다(실측 3명). 대신 `remainingWasShort` 로 알리니
@@ -523,20 +523,28 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 
 지금 잔여는 **학생 한 덩어리**다. 두 트레이너를 함께 쓰는 수강생(실측 9명)은 누구 판수인지 구분되지 않는다.
 
-**GET /api/student-portal/summary** — `remaining` 은 **그대로 두고**(합계) 배열을 **추가**한다.
+**GET /api/student-portal/summary** — `lesson.remainingGames` 는 **그대로 두고**(합계)
+최상위에 배열을 **추가**한다.
 
 ```json
-{ "remaining": 32,
+{ "lesson": { "registeredGames": 60, "playedGames": 28, "remainingGames": 32, "status": "ok" },
   "remainingByTrainer": [
-    { "trainerId": "5", "trainerName": "현태", "remaining": 21 },
-    { "trainerId": "2", "trainerName": "준구", "remaining": 11 }
+    { "trainerId": "dHJhaW5lcjo1.xxxxxxxxxxxxxxxx", "trainerName": "현태", "remaining": 21 },
+    { "trainerId": "dHJhaW5lcjoy.yyyyyyyyyyyyyyyy", "trainerName": "준구", "remaining": 11 }
   ] }
 ```
 
-- `remaining` = 배열의 합. **기존 화면은 고치지 않아도 된다.**
+- `lesson.remainingGames` = 배열의 합. **기존 화면은 고치지 않아도 된다.**
 - 배열은 잔여가 **0이 아닌** 트레이너만. 전부 0이면 빈 배열.
-- 정렬: 잔여 내림차순 → `trainerName` 오름차순.
+- 정렬: 잔여 내림차순 → `trainerId` 오름차순.
 - 음수도 그대로 내려간다(초과 사용).
+- `trainerId` 는 **불투명 id** 다(다른 id 들과 같은 방식). **`/availability` 슬롯의
+  `trainerId` 와 글자까지 같은 값**이라 앱이 그대로 맞춰 쓰면 된다 —
+  ⚠️ **이름으로 맞추지 말 것.** 동명이인에서 섞인다.
+- §41 미실행 배포에서는 **빈 배열**이 온다(앱은 합계만 쓰면 된다).
+
+**GET /availability** — 슬롯에 `trainerId` 가 추가된다(위와 같은 값). 종전
+`trainerDisplayName`·`isMyTrainer` 는 그대로다.
 
 **예약 판정이 바뀐다** — `POST /bookings` 의 잔여 검사가 **그 슬롯 트레이너의 잔여**를 본다.
 합계가 충분해도 그 트레이너 판수가 모자라면 409 `insufficient_games` 다.
@@ -545,11 +553,19 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 |---|---|
 | `insufficient_games` | 「{트레이너} 판수가 모자라요 · 남은 판수 {N}판」 |
 
+응답 본문은 부록 A 그대로 `{"error":{"code":"insufficient_games"}}` 뿐이다 — 숫자는 안 실린다.
+앱은 **`remainingByTrainer` 에서 그 칸의 `trainerId` 를 찾아** 문구를 만든다.
+
 ⚠️ **앱은 예약 화면에서 트레이너별 잔여를 보여줘야 한다.** 합계만 보여주면
 「32판 남았는데 왜 안 돼요」가 된다.
 
 **트레이너 포털** — `GET /students` 의 각 수강생에 `remainingMine` 을 더한다(내 판수만).
-기존 `remaining`(합계)은 그대로 둔다.
+기존 `remainingGames`(합계)은 그대로 둔다.
+
+⚠️ **켜는 순간 4명이 예약을 못 하게 된다**(실측 2026-09-28). 총합은 양수인데 한 트레이너에서
+음수인 수강생이다 — 판수는 A 에게 샀는데 수업은 B 와 한 이력이 쌓인 결과다.
+**이관·정정 없이 켜면 그 4명이 10/1 아침에 막힌다.** 오너 판정 대상이고,
+막을지 통과시킬지는 §9.2 를 켜는 것과 별개로 결정한다.
 
 ## 9.3 그룹 한 덩어리 · 레벨 테스트 칸 ✅ **구현 완료 (2026-09-28)**
 
