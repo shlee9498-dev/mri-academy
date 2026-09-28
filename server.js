@@ -7623,6 +7623,41 @@ const schemaOptional = {};
 // ⚠️ 이 두 라우트는 admin-panel 마운트(아래) **이전에** 등록한다 — /api/admin/* 읽기전용
 //    미들웨어를 타지 않게 하고, owner 검증은 핸들러에서 reqOwner 로 한다(stats 라우트와 같은 방식).
 const GC_REQUIRED = ["agree_lesson", "agree_privacy", "agree_payment"];
+
+// §33 동의 전문 스냅샷 — 오너 판정 1(`consent_text` 저장). 2026-09-28 추가.
+//   ⚠️ 왜 뒤늦게 들어왔나: §33 API 를 넣을 때 이 칸을 채우지 않아, 첫 실제 제출(9/28 08:46 · 행 1)이
+//   consent_text 없이 저장됐다. 표에도 REQUIRED_SCHEMA 에도 칸은 있었는데 insert 에만 빠져 있었다.
+//
+//   **서버가 정본을 들고 있다.** 클라이언트가 보낸 문장을 그대로 저장하면 증빙이 아니라 주장이 된다 —
+//   보호자가 무엇을 봤는지는 우리가 그때 무엇을 보여줬는지로 정해진다.
+//   아래 문안은 consent.html 의 동의 항목 4개와 「동의 전문 보기」를 글자 그대로 옮긴 것이다.
+//   ⚠️ **consent.html 을 고치면 버전을 올리고 이 상수도 같이 고친다.** 둘이 갈라지면 스냅샷이 거짓이 된다.
+//   버전이 안 맞으면 null 로 두고 로그를 남긴다 — 틀린 문장을 남기느니 비워 두는 편이 낫다.
+const GC_CONSENT_VERSION = "web-2026-09-27.v1";
+const GC_CONSENT_TEXT = [
+  "[동의 항목]",
+  "1. 수강생이 레슨을 받는 것에 동의합니다. (필수)",
+  "   미성년자의 수강 계약은 보호자 동의로 성립합니다.",
+  "2. 개인정보 수집·이용에 동의합니다. (필수)",
+  "3. 수강료·환불 조건을 확인했고 동의합니다. (필수)",
+  "4. 수업 중 촬영된 화면·영상을 교육 자료로 쓰는 것에 동의합니다. (선택)",
+  "   동의하지 않아도 수업을 받는 데 아무 영향이 없습니다.",
+  "",
+  "[동의 전문]",
+  "수집하는 항목",
+  " - 수강생: 이름, 생년월일, 디스코드 아이디(선택)",
+  " - 보호자: 성명, 수강생과의 관계, 연락처",
+  " - 동의 증빙: 동의 시각, 접속 기록(IP·브라우저 정보)",
+  "쓰는 목적 — 미성년 수강생의 보호자 동의 확인과 그 증빙 보관, 수업 관련 안내.",
+  "보유 기간 — 동의일부터 5년(전자상거래법상 계약 기록). 기간이 지나면 개인정보 항목을 파기합니다.",
+  "  동의를 철회하셔도 「동의가 있었다」는 기록은 분쟁 대비로 위 기간 동안 남습니다.",
+  "제3자 제공 — 하지 않습니다. 법령에 근거가 있는 경우만 예외입니다.",
+  "동의 철회 — 담당 트레이너에게 말씀하시거나 디스코드로 알려주시면 처리합니다.",
+  "  철회하면 그 이후의 수업 진행은 보호자와 다시 상의합니다.",
+  "만 14세 미만인 경우 개인정보보호법에 따라 법정대리인 동의가 반드시 필요하고,",
+  "  확인을 위해 보호자 연락처로 전화를 한 번 드립니다.",
+  "동의하지 않을 권리가 있습니다. 다만 필수 항목에 동의하지 않으면 미성년 수강생의 수업을 시작할 수 없습니다.",
+].join("\n");
 // 분당 3회(관제탑 규격). 전역 rateLimited() 는 10회/분이라 따로 센다.
 const gcHits = new Map();
 function gcRateLimited(ip) {
@@ -7687,6 +7722,8 @@ app.post("/api/guardian-consent", async (req, res) => {
       agree_content: b.agree_content === true,
       signed_name: signed, signed_at: now.toISOString(),
       consent_version: str(b.consent_version, 60) || "unknown",
+      // 버전이 서버 정본과 같을 때만 스냅샷을 남긴다(위 GC_CONSENT_TEXT 주석 참조).
+      consent_text: str(b.consent_version, 60) === GC_CONSENT_VERSION ? GC_CONSENT_TEXT : null,
       minor_tier: tier,
       // 만 14세 미만은 보호자 확인이 남아 있다는 뜻으로 표시만 해 둔다(설계 §9).
       // 접수 자체를 막지 않는다 — 막으면 보호자가 폼을 다 쓰고 튕긴다.
@@ -7705,7 +7742,10 @@ app.post("/api/guardian-consent", async (req, res) => {
   // 알림 실패가 접수를 되돌리면 안 된다 — 행은 이미 커밋됐다.
   ownerDM(`보호자 동의 접수 — 수강생 ${name} · 보호자 ${gname}(${rel})`
     + (tier === "under14" ? " · ⚠️ 만 14세 미만 — 확인 전화 필요" : "")).catch(() => {});
-  console.log(`[gconsent] #${row?.id} tier=${tier} age=${age} src=web`);
+  // 버전 불일치는 조용히 넘기지 않는다 — consent_text 가 빈 행이 또 쌓인다.
+  if (str(b.consent_version, 60) !== GC_CONSENT_VERSION)
+    console.error("gconsent_version_mismatch", str(b.consent_version, 60) || "(없음)", "서버", GC_CONSENT_VERSION);
+  console.log(`[gconsent] #${row?.id} tier=${tier} age=${age} src=web text=${str(b.consent_version, 60) === GC_CONSENT_VERSION ? "저장" : "없음"}`);
   return res.json({ ok: true });
 });
 
