@@ -301,6 +301,138 @@ module.exports = function mountStudentPortal(app, deps) {
 
   app.post(`${PREFIX}/logout`, bodyOnly([]), wrap(async (_req, res) => res.status(204).end()));
 
+  // ════════════════ 입금 신청 (10/1 전환 ⑤ · 계약 §9.5) ════════════════
+  // 수강생이 계좌로 보내고 「입금했어요」를 누르면 payment_requests(pending) 한 행이 생기고
+  // 오너에게 **기존 승인 카드가 그대로** 간다(버튼 customId 가 /결제신청 과 같다).
+  // 승인 뒤 본표 편입은 §18d payreq_apply 트리거가 두 입구를 구분하지 않고 똑같이 한다.
+  //
+  // ⚠️ 가격은 여기에 적지 않는다. `config/payments.js` 가 정본이고 **결제 트랙 소관**이라
+  //    읽기만 한다. 숫자를 여기 베끼면 인상할 때 화면마다 다른 값이 보인다(그 파일이 있는 이유).
+  //    ESM 이라 동적 import 로 한 번만 읽어 캐시한다(server.js 는 CJS).
+  //
+  // 앱에서 팔 수 있는 상품만 연다 — 승인 시 **본표 편입이 자동인 것**(판수·상담)뿐이다.
+  // 강의·세트·직강은 §18d 에서 수동이라 자동 입구를 열면 승인 뒤 아무 일도 안 일어난 것처럼 보인다.
+  const PORTAL_PRODUCTS = [
+    { key: "lesson10",      kind: "판수", games: 10 },
+    { key: "lesson21",      kind: "판수", games: 21 },
+    { key: "lesson33",      kind: "판수", games: 33 },
+    { key: "consultCourse", kind: "상담", games: null },   // 레벨 테스트
+  ];
+  let priceBook = null;
+  async function products() {
+    if (priceBook) return priceBook;
+    try {
+      const m = await import("./config/payments.js");
+      priceBook = PORTAL_PRODUCTS
+        .filter((p) => Number.isInteger(m.PRICES?.[p.key]))
+        .map((p) => ({ ...p, label: m.PRODUCT_LABELS?.[p.key] || p.key, amount: m.PRICES[p.key] }));
+    } catch (e) { console.error("payinfo_prices", e?.message); priceBook = []; }
+    return priceBook;
+  }
+
+  // 계좌는 **env 로만** 온다. 코드·저장소에 계좌번호를 두지 않는다(저장소 규칙).
+  // 미설정이면 bank 키 자체가 없다 — 앱은 계좌 안내를 감추고 신청은 그대로 받는다.
+  //
+  // ⚠️ 키 이름이 `label`·`won` 인 이유 — 위 scrub() 가 `name`(정확일치)과 `amount`·`price`(어간)를
+  //    막는다. 정산 금액이 수강생 앱에 새지 않게 두는 방벽이라 예외를 늘리지 않고 **안 걸리는
+  //    이름을 쓴다**(예외를 늘리면 앱 가드도 같이 고쳐야 하고 방벽이 그만큼 얇아진다).
+  //    `amount`·`price` 로 되돌리지 말 것 — 전 응답이 500 으로 떨어진다.
+  function bankInfo() {
+    const label = process.env.PAY_BANK_NAME, account = process.env.PAY_BANK_ACCOUNT,
+          holder = process.env.PAY_BANK_HOLDER;
+    return (label && account && holder) ? { label, account, holder } : null;
+  }
+
+  const kstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+
+  // GET /pay-info — 계좌 · 상품 목록. 신청 전에 화면이 읽는다.
+  app.get(`${PREFIX}/pay-info`, requireStudent, wrap(async (req, res) => {
+    const [list, stu] = await Promise.all([
+      products(),
+      sbSelect("students", `select=name&id=eq.${req.portal.sub}`),
+    ]);
+    const bank = bankInfo();
+    send(res, {
+      ...(bank ? { bank } : {}),
+      products: list.map((p) => ({ key: p.key, label: p.label, won: p.amount, games: p.games })),
+      // 입금자명 기본값 — 명부 이름. 다른 이름으로 보냈으면 화면에서 고쳐 보낸다.
+      depositorHint: stu[0]?.name || null,
+    });
+  }));
+
+  // POST /payment-requests — { productKey, depositorName }
+  app.post(`${PREFIX}/payment-requests`, rateLimit("portalPayreq", 10, 60_000),
+    bodyOnly(["productKey", "depositorName"]), requireStudent, wrap(async (req, res) => {
+      const list = await products();
+      const p = list.find((x) => x.key === req.body?.productKey);
+      if (!p) return fail(res, 400, "invalid_body");
+      const depositor = String(req.body?.depositorName || "").trim().slice(0, 20);
+      if (depositor.length < 2) return fail(res, 400, "invalid_body");
+
+      // 대기 중 신청이 있으면 또 받지 않는다 — 한 번 보내고 두 번 누르면 카드가 두 장 간다.
+      const pending = await sbSelect("payment_requests",
+        `select=id&student_id=eq.${req.portal.sub}&status=eq.pending&limit=1`);
+      if (pending.length) return fail(res, 409, "request_pending");
+
+      const stu = (await sbSelect("students",
+        `select=name,trainer_id,discord_id&id=eq.${req.portal.sub}`))[0];
+      if (!stu) return fail(res, 403, "account_link_pending");
+      let trainerName = "미배정";
+      if (stu.trainer_id) {
+        const t = await sbSelect("staff", `select=name&id=eq.${stu.trainer_id}`);
+        if (t[0]?.name) trainerName = t[0].name;
+      }
+
+      let row;
+      try {
+        row = await sbInsert("payment_requests", {
+          student_id: req.portal.sub, student_name: stu.name,
+          trainer_id: stu.trainer_id ?? null, trainer_name: trainerName,
+          kind: p.kind, amount: p.amount, games: p.games,
+          paid_on: kstToday(),
+          // 입금자명은 memo 로 간다 — 전용 칸을 만들지 않는다(§18 표를 그대로 쓴다).
+          memo: `앱 입금 신청 · 입금자 ${depositor}`,
+          // 승인 카드가 신청자를 불러올 수 있게 디코 id 를 넣는다. 연결 전이면 표시용 문자열.
+          requested_by: stu.discord_id || `student:${req.portal.sub}`,
+        });
+      } catch (e) {
+        console.error("portal_payreq_insert", e?.message);
+        return fail(res, 503, "portal_unavailable");
+      }
+
+      // 카드가 못 가도 신청 행은 남긴다 — 막으면 이미 보낸 돈이 어디에도 안 남는다.
+      const notified = await deps.payreqCard?.(row).catch(() => false);
+      send(res, {
+        requestId: opaqueId("payreq", row.id),
+        status: "pending",
+        won: p.amount,
+        ownerNotified: notified === true,
+      });
+    }));
+
+  // GET /payment-requests — 내 신청 내역(최근 20건). 「승인 기다리는 중」 화면이 쓴다.
+  app.get(`${PREFIX}/payment-requests`, requireStudent, wrap(async (req, res) => {
+    const [rows, list] = await Promise.all([
+      sbSelect("payment_requests",
+        `select=id,status,kind,amount,games,paid_on,created_at&student_id=eq.${req.portal.sub}`
+        + `&order=id.desc&limit=20`),
+      products(),
+    ]);
+    const labelOf = (kind, games) =>
+      list.find((p) => p.kind === kind && p.games === games)?.label || kind;
+    send(res, {
+      requests: rows.map((r) => ({
+        requestId: opaqueId("payreq", r.id),
+        status: r.status,                 // pending · approved · rejected · void
+        label: labelOf(r.kind, r.games),
+        won: Number(r.amount),
+        games: r.games ?? null,
+        paidOn: r.paid_on,
+        requestedAt: r.created_at,
+      })),
+    });
+  }));
+
   // ── 판수·트레이너 집계 (정본 4.1) ──────────────────────────────
   // 잔여 = carry_games + Σ lesson_enrollments.games_total − Σ lesson_sessions.games
   // 음수는 그대로 둔다. 0 클램프 금지(정본 v0.2.2 B-4).

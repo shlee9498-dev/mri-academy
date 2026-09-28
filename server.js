@@ -888,6 +888,10 @@ let botClient = null;   // Phase T1 — 스냅샷 완료 시 오너 DM용 모듈
 // 연결 신청 접수 — 봇 블록이 채운다(discordDM 과 같은 패턴). 앱의 연결 대기 화면이
 // student-portal.cjs 의 POST /link-request 로 들어와 이 함수를 쓴다. 봇이 없으면 null.
 let linkReqIntake = null;
+// 앱 입금 신청 → 오너 DM 승인 카드(10/1 전환 ⑤ · 계약 §9.5). 같은 패턴으로 봇 블록이 채운다.
+// 버튼 customId 는 /결제신청 과 **같은 payreq_ok·payreq_no** 라 승인·반려 처리기가 그대로 받는다 —
+// 앱에서 온 신청도 오너 눈에는 같은 카드고, 승인 뒤 본표 편입도 §18d 트리거가 똑같이 한다.
+let payreqPortalCard = null;
 if (process.env.DISCORD_TOKEN) {
   const client = new Client({
     intents: [
@@ -3058,6 +3062,31 @@ if (process.env.DISCORD_TOKEN) {
     }
     return false;
   }
+
+  // 앱 입금 신청 승인 카드 — /결제신청 의 payreqSubmit 과 **버튼이 같다**(payreq_ok·payreq_no).
+  //   카드 본문만 다르다: 앱 신청은 PUBG 실존 조회·채널 선택이 없고 대신 입금자명이 있다.
+  //   payreqSubmit 을 고쳐 쓰지 않는 이유 — 돌고 있는 봇 경로를 건드리지 않으려는 것이다.
+  //   승인 뒤 본표 편입은 §18d payreq_apply 트리거가 두 입구를 구분하지 않고 똑같이 한다.
+  payreqPortalCard = async (req) => {
+    if (!process.env.MRI_OWNER_ID) return false;
+    try {
+      const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`payreq_ok:${req.id}`).setLabel("✅ 승인").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`payreq_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
+      );
+      await owner.send({
+        content: `💰 **입금 신청 #${req.id}** (앱)\n· 학생: **${req.student_name}**`
+          + `\n· 상품: ${req.kind}${req.games ? ` · ${req.games}판` : ""}`
+          + `\n· 금액: **${Number(req.amount).toLocaleString("ko-KR")}원**`
+          + `\n· 입금일: ${req.paid_on}`
+          + `${req.memo ? `\n· 메모: ${req.memo}` : ""}`
+          + `\n· 통장에 들어왔는지 먼저 확인하고 승인해줘`,
+        components: [row],
+      });
+      return true;
+    } catch (e) { console.error("payreq_portal_dm", e?.message); return false; }
+  };
 
   // 연결 신청 접수 — /연결신청(디스코드)과 앱의 연결 대기 화면이 **같은 함수**를 쓴다.
   // 두 입구가 갈라지면 한쪽만 고쳐져 어긋나므로 한 벌로 둔다(2026-09-26 오너 지시).
@@ -7806,6 +7835,9 @@ const studentPortal = require("./student-portal.cjs")(app, {
   sbSelect, sbInsert, sbPatch, sbRpc, limit,
   // 연결 대기 화면의 POST /link-request 가 쓴다. 봇이 꺼져 있으면 null → 503.
   linkIntake: (a) => (linkReqIntake ? linkReqIntake(a) : Promise.resolve({ ok: false, code: "unavailable" })),
+  // 입금 신청 승인 카드(계약 §9.5). 봇이 꺼져 있으면 카드만 못 가고 신청 행은 남는다 —
+  // 신청을 막지 않는 쪽이 맞다. 응답의 ownerNotified 로 앱이 안내를 가른다.
+  payreqCard: (r) => (payreqPortalCard ? payreqPortalCard(r) : Promise.resolve(false)),
 });
 
 // ── 수업 복기 API(§29 PR-1·PR-2 · /api/student-portal/{reviews,games,phases,images,feed} + /sessions 확장) ──
@@ -8078,11 +8110,12 @@ const SCHEMA_OPTIONAL = {
   // 승격 경로는 §18 payment_requests·§19b lesson_enrollments와 같다.
 };
 
-// PR-3a: 결제 승인 큐(§18) — BOT_PAYREQ=1이면 필수(DDL 미실행을 기동 점검이 잡아야 한다),
-// 플래그 꺼진 배포에선 선택(기능 휴면인데 error·오너 DM 오탐을 내지 않는다).
+// PR-3a: 결제 승인 큐(§18) — 종전에는 BOT_PAYREQ=1 일 때만 필수였다(봇 기능이 휴면인 배포에서
+// 오탐을 내지 않으려고). **2026-09-28 부터 무조건 필수다** — 앱 입금 신청(계약 §9.5)이 이 표에
+// 쓰기 때문에 BOT_PAYREQ 와 무관하게 부재 = 진짜 장애가 됐다. 실DB 확인: 30행(승인 26 · 대기 1).
 // pay_channel은 /결제신청이 매 신고에 실어 보내므로 여기 없으면 컬럼 미실행을 못 잡는다
 // (INSERT가 PGRST204로 터질 때까지 모른다). 나머지 컬럼과 같은 등급으로 등재한다.
-(process.env.BOT_PAYREQ === "1" ? REQUIRED_SCHEMA : SCHEMA_OPTIONAL).payment_requests =
+REQUIRED_SCHEMA.payment_requests =
   ["id","status","student_name","student_id","trainer_id","trainer_name","kind",
    "amount","games","paid_on","memo","pay_channel","requested_by","decided_by","decided_at","created_at",
    // §28 신고 닉네임 — 운영에 이미 있음(2026-09-25 실측) · 정본·이 목록 누락분을 동기. /결제신청 이 쓰는 건 닉네임 확보 PR.

@@ -651,49 +651,70 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 ⚠️ `skipped` 는 그 날짜에 **살아 있는 칸이 이미 있어서** 건너뛴 것이다(§36 유니크).
 앱은 「3주차는 이미 칸이 있어 건너뛰었어요」로 알려 주면 된다.
 
-## 9.5 입금 신청
+## 9.5 입금 신청 ✅ **구현 완료 (2026-09-28)**
 
-**GET /api/student-portal/pay-info** (60회/분) → 계좌·상품 목록
+수강생이 계좌로 보내고 「입금했어요」를 누르면 `payment_requests` 에 `pending` 한 행이 생기고
+오너에게 **기존 승인 카드가 그대로** 간다(버튼이 `/결제신청` 과 같다). 승인 뒤 본표 편입도
+§18d 트리거가 두 입구를 구분하지 않고 똑같이 한다.
+
+### ⚠️ 금액 키가 `won` 인 이유
+
+수강생 응답은 `scrub()` 를 지나는데 **`amount` · `price` 어간과 `name` 은 던진다**(정산 금액이
+수강생 앱에 새지 않게 두는 방벽). 예외를 늘리면 앱 가드도 같이 고쳐야 하고 방벽이 얇아지므로
+**안 걸리는 이름을 쓴다** — 금액은 `won`, 은행명은 `bank.label` 이다.
+`amount` 로 되돌리면 그 응답 전체가 500 이 된다.
+
+**GET /api/student-portal/pay-info** → 계좌 · 상품 목록
 
 ```json
-{ "bank": { "name": "…", "account": "…", "holder": "…" },
+{ "bank": { "label": "국민은행", "account": "…", "holder": "…" },
   "products": [
-    { "code": "lesson_10", "label": "10판", "amount": 45000, "games": 10 },
-    { "code": "lesson_21", "label": "21판", "amount": 90000, "games": 21 },
-    { "code": "lesson_33", "label": "33판", "amount": 140000, "games": 33 },
-    { "code": "leveltest", "label": "레벨 테스트", "amount": 20000, "games": 0 }
-  ] }
+    { "key": "lesson10",      "label": "10판 패키지",            "won": 45000,  "games": 10 },
+    { "key": "lesson21",      "label": "21판 패키지",            "won": 90000,  "games": 21 },
+    { "key": "lesson33",      "label": "33판 패키지",            "won": 140000, "games": 33 },
+    { "key": "consultCourse", "label": "강의 상담 / 레벨테스트", "won": 20000,  "games": null }
+  ],
+  "depositorHint": "홍길동" }
 ```
 
 - 계좌는 **env** 에서 온다(`PAY_BANK_NAME` · `PAY_BANK_ACCOUNT` · `PAY_BANK_HOLDER`).
-  env 미설정이면 `bank: null` — 앱은 계좌 영역을 숨기고 「계좌는 트레이너에게 물어봐 주세요」.
+  셋 중 하나라도 없으면 **`bank` 키 자체가 없다**(`null` 이 아니다) — 앱은 계좌 영역을 숨기고
+  「계좌는 트레이너에게 물어봐 주세요」. 신청 자체는 그대로 받는다.
 - `products` 는 서버가 정본이다. **앱에 금액을 박지 말 것** — 가격이 바뀌면 앱만 틀린다.
-- 세트 상품은 10/1 레벨 테스트 적용 때 함께 들어온다.
+  값은 `config/payments.js`(결제 트랙 소관) 에서 읽는다. 라벨도 그 파일 것을 그대로 쓴다.
+- 목록에 **판수 3종과 레벨 테스트만** 있다. 승인 시 본표 편입이 **자동인 상품**뿐이다 —
+  강의·세트·직강은 §18d 에서 수동이라 자동 입구를 열면 승인 뒤 아무 일도 안 일어난 것처럼 보인다.
+- `depositorHint` = 명부 이름. 다른 이름으로 보냈으면 화면에서 고쳐 보낸다.
 
 **POST /api/student-portal/payment-requests** (10회/분)
 
 ```json
-{ "trainerId": "5", "productCode": "lesson_21", "depositor": "홍길동", "paidOn": "2026-10-02" }
+{ "productKey": "lesson21", "depositorName": "홍길동" }
 ```
 
-→ `{ "requestId": "…", "status": "pending" }`
+→ `{ "requestId": "…", "status": "pending", "won": 90000, "ownerNotified": true }`
 
-- 기존 `payment_requests` 에 `pending` 으로 들어간다 — **승인 카드·자동 편입은 재사용**한다.
-- `depositor`(입금자명)는 `memo` 에 넣는다(전용 칸이 없다).
-- `paidOn` 생략하면 오늘(KST). 미래 날짜는 400 `invalid_body`.
+- `productKey` 는 위 목록의 `key` 그대로. 목록 밖 값은 400 `invalid_body`.
+- `depositorName` 2~20자. 짧으면 400 `invalid_body`.
+- **금액·판수·트레이너는 앱이 보내지 않는다** — 서버가 상품과 명부에서 정한다.
+  금액을 받으면 화면에서 고쳐 보낼 수 있다.
+- 입금일은 **오늘(KST) 고정**이다. 지난 날짜 입금은 트레이너 `/결제신청` 으로 간다.
+- `depositorName` 은 `memo` 에 들어간다(전용 칸이 없다).
 - 같은 수강생의 `pending` 이 이미 있으면 409 `request_pending`
   — 「이미 확인 중인 입금 신청이 있어요」.
-- 승인되면 결제·등록이 만들어지고 수강생에게 DM 이 간다(9.6).
+- `ownerNotified: false` 면 **신청은 저장됐고 카드만 못 갔다**(봇이 꺼졌거나 DM 실패).
+  앱은 「접수됐어요 · 확인이 늦으면 트레이너에게 알려 주세요」로 가른다. 신청을 막지 않는 이유는
+  막으면 이미 보낸 돈이 어디에도 안 남기 때문이다.
 
-**GET /api/student-portal/payment-requests** (60회/분) → 내 신청 목록(최근 10건)
+**GET /api/student-portal/payment-requests** → 내 신청 목록(최근 20건 · 최신순)
 
 ```json
-{ "requests": [ { "id": "…", "status": "pending", "amount": 90000,
-                  "label": "21판", "trainerName": "현태", "paidOn": "2026-10-02",
-                  "decidedAt": null } ] }
+{ "requests": [ { "requestId": "…", "status": "pending", "won": 90000,
+                  "label": "21판 패키지", "games": 21,
+                  "paidOn": "2026-10-02", "requestedAt": "2026-10-02T01:10:00Z" } ] }
 ```
 
-`status` ∈ `pending` · `approved` · `void`.
+`status` ∈ `pending` · `approved` · `rejected` · `void`.
 
 ## 9.6 최소 알림 DM
 
