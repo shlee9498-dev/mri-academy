@@ -1,0 +1,2085 @@
+{
+ "note": "2026-09 정산 실DB 스냅(2026-09-28). 개인정보 없음 — 명부 번호·트레이너 id 만. 미정산 세션 보유 학생 28명 + 그 학생의 전 결제/세션 + 9월 상담.",
+ "period": "2026-09",
+ "graduations": [
+  {
+   "trainer_id": 2,
+   "weight": 1,
+   "via_lesson": true,
+   "achieved_at": "2026-07-01"
+  },
+  {
+   "trainer_id": 5,
+   "weight": 1,
+   "via_lesson": true,
+   "achieved_at": "2026-07-01"
+  },
+  {
+   "trainer_id": 5,
+   "weight": 1,
+   "via_lesson": true,
+   "achieved_at": "2026-07-01"
+  },
+  {
+   "trainer_id": 5,
+   "weight": 3,
+   "via_lesson": true,
+   "achieved_at": "2026-07-20"
+  },
+  {
+   "trainer_id": 5,
+   "weight": 1,
+   "via_lesson": true,
+   "achieved_at": "2026-07-22"
+  }
+ ],
+ "staff": [
+  {
+   "id": 1,
+   "role": "staff",
+   "base_salary": 100000,
+   "comp_note": "고정"
+  },
+  {
+   "id": 2,
+   "role": "trainer",
+   "base_salary": 0,
+   "comp_note": null
+  },
+  {
+   "id": 3,
+   "role": "staff",
+   "base_salary": 500000,
+   "comp_note": "순매출 6% + 기본급"
+  },
+  {
+   "id": 4,
+   "role": "owner",
+   "base_salary": 0,
+   "comp_note": null
+  },
+  {
+   "id": 5,
+   "role": "trainer",
+   "base_salary": 0,
+   "comp_note": null
+  }
+ ],
+ "students": [
+  {
+   "id": 3,
+   "trainer_id": 2
+  },
+  {
+   "id": 4,
+   "trainer_id": 5
+  },
+  {
+   "id": 8,
+   "trainer_id": 2
+  },
+  {
+   "id": 9,
+   "trainer_id": 5
+  },
+  {
+   "id": 12,
+   "trainer_id": 2
+  },
+  {
+   "id": 13,
+   "trainer_id": 5
+  },
+  {
+   "id": 17,
+   "trainer_id": 5
+  },
+  {
+   "id": 28,
+   "trainer_id": 5
+  },
+  {
+   "id": 37,
+   "trainer_id": 5
+  },
+  {
+   "id": 43,
+   "trainer_id": 5
+  },
+  {
+   "id": 48,
+   "trainer_id": 5
+  },
+  {
+   "id": 57,
+   "trainer_id": 5
+  },
+  {
+   "id": 58,
+   "trainer_id": 5
+  },
+  {
+   "id": 60,
+   "trainer_id": 2
+  },
+  {
+   "id": 63,
+   "trainer_id": 5
+  },
+  {
+   "id": 65,
+   "trainer_id": 5
+  },
+  {
+   "id": 66,
+   "trainer_id": 5
+  },
+  {
+   "id": 72,
+   "trainer_id": 5
+  },
+  {
+   "id": 73,
+   "trainer_id": 2
+  },
+  {
+   "id": 74,
+   "trainer_id": 2
+  },
+  {
+   "id": 83,
+   "trainer_id": 5
+  },
+  {
+   "id": 95,
+   "trainer_id": 5
+  },
+  {
+   "id": 96,
+   "trainer_id": 2
+  },
+  {
+   "id": 97,
+   "trainer_id": 5
+  },
+  {
+   "id": 98,
+   "trainer_id": 5
+  },
+  {
+   "id": 99,
+   "trainer_id": 5
+  },
+  {
+   "id": 101,
+   "trainer_id": 5
+  },
+  {
+   "id": 103,
+   "trainer_id": 5
+  }
+ ],
+ "payments": [
+  {
+   "id": 6,
+   "student_id": 3,
+   "paid_at": "2026-03-28",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 5,
+   "student_id": 3,
+   "paid_at": "2026-04-02",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 4,
+   "student_id": 3,
+   "paid_at": "2026-05-02",
+   "amount": 80000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 3,
+   "student_id": 3,
+   "paid_at": "2026-07-09",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 139,
+   "student_id": 3,
+   "paid_at": "2026-08-05",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 159,
+   "student_id": 3,
+   "paid_at": "2026-08-18",
+   "amount": 40000,
+   "net_amount": 40000,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 212,
+   "student_id": 3,
+   "paid_at": "2026-09-15",
+   "amount": 90000,
+   "net_amount": 90000,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 8,
+   "student_id": 4,
+   "paid_at": "2026-05-17",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 7,
+   "student_id": 4,
+   "paid_at": "2026-05-22",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 102,
+   "student_id": 4,
+   "paid_at": "2026-07-19",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 20,
+   "student_id": 8,
+   "paid_at": "2026-03-19",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 19,
+   "student_id": 8,
+   "paid_at": "2026-04-04",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 32,
+   "student_id": 8,
+   "paid_at": "2026-04-13",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 31,
+   "student_id": 8,
+   "paid_at": "2026-04-23",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 18,
+   "student_id": 8,
+   "paid_at": "2026-06-24",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 104,
+   "student_id": 8,
+   "paid_at": "2026-07-19",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 22,
+   "student_id": 9,
+   "paid_at": "2026-05-07",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 21,
+   "student_id": 9,
+   "paid_at": "2026-07-15",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 26,
+   "student_id": 12,
+   "paid_at": "2026-07-18",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 160,
+   "student_id": 12,
+   "paid_at": "2026-08-18",
+   "amount": 80000,
+   "net_amount": 80000,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 209,
+   "student_id": 12,
+   "paid_at": "2026-09-11",
+   "amount": 90000,
+   "net_amount": 90000,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 42,
+   "student_id": 13,
+   "paid_at": "2026-04-26",
+   "amount": 80000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 28,
+   "student_id": 13,
+   "paid_at": "2026-05-15",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 41,
+   "student_id": 13,
+   "paid_at": "2026-05-19",
+   "amount": 80000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 27,
+   "student_id": 13,
+   "paid_at": "2026-05-29",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 36,
+   "student_id": 17,
+   "paid_at": "2026-06-20",
+   "amount": 80000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 35,
+   "student_id": 17,
+   "paid_at": "2026-07-11",
+   "amount": 80000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 132,
+   "student_id": 17,
+   "paid_at": "2026-08-01",
+   "amount": 360000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 99
+  },
+  {
+   "id": 54,
+   "student_id": 28,
+   "paid_at": "2026-07-17",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 66,
+   "student_id": 37,
+   "paid_at": "2026-06-04",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 111,
+   "student_id": 37,
+   "paid_at": "2026-07-25",
+   "amount": 130000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 126,
+   "student_id": 37,
+   "paid_at": "2026-07-29",
+   "amount": -10000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 0,
+   "settled_period": "2026-08"
+  },
+  {
+   "id": 177,
+   "student_id": 37,
+   "paid_at": "2026-08-23",
+   "amount": 270000,
+   "net_amount": null,
+   "kind": "course",
+   "games": 0
+  },
+  {
+   "id": 165,
+   "student_id": 43,
+   "paid_at": "2026-04-03",
+   "amount": 360000,
+   "net_amount": null,
+   "kind": "course",
+   "games": 0
+  },
+  {
+   "id": 77,
+   "student_id": 43,
+   "paid_at": "2026-04-10",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 164,
+   "student_id": 43,
+   "paid_at": "2026-04-10",
+   "amount": -120000,
+   "net_amount": null,
+   "kind": "course",
+   "games": 0
+  },
+  {
+   "id": 76,
+   "student_id": 43,
+   "paid_at": "2026-05-10",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 75,
+   "student_id": 43,
+   "paid_at": "2026-06-10",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 112,
+   "student_id": 43,
+   "paid_at": "2026-07-27",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 84,
+   "student_id": 48,
+   "paid_at": "2026-07-16",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 97,
+   "student_id": 57,
+   "paid_at": "2026-06-01",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 96,
+   "student_id": 57,
+   "paid_at": "2026-06-08",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 95,
+   "student_id": 57,
+   "paid_at": "2026-07-17",
+   "amount": 240000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 66
+  },
+  {
+   "id": 137,
+   "student_id": 57,
+   "paid_at": "2026-08-02",
+   "amount": 416000,
+   "net_amount": null,
+   "kind": "course",
+   "games": 0
+  },
+  {
+   "id": 100,
+   "student_id": 58,
+   "paid_at": "2026-04-10",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 101,
+   "student_id": 58,
+   "paid_at": "2026-04-10",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 99,
+   "student_id": 58,
+   "paid_at": "2026-05-01",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 98,
+   "student_id": 58,
+   "paid_at": "2026-06-03",
+   "amount": 80000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 119,
+   "student_id": 58,
+   "paid_at": "2026-07-29",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 107,
+   "student_id": 60,
+   "paid_at": "2026-07-13",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 161,
+   "student_id": 60,
+   "paid_at": "2026-08-18",
+   "amount": 120000,
+   "net_amount": 120000,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 110,
+   "student_id": 63,
+   "paid_at": "2026-07-23",
+   "amount": 80000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 127,
+   "student_id": 63,
+   "paid_at": "2026-08-05",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 128,
+   "student_id": 63,
+   "paid_at": "2026-08-05",
+   "amount": 80000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 211,
+   "student_id": 63,
+   "paid_at": "2026-09-15",
+   "amount": 90000,
+   "net_amount": 90000,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 217,
+   "student_id": 63,
+   "paid_at": "2026-09-24",
+   "amount": 280000,
+   "net_amount": 280000,
+   "kind": "lesson",
+   "games": 66
+  },
+  {
+   "id": 218,
+   "student_id": 63,
+   "paid_at": "2026-09-28",
+   "amount": 140000,
+   "net_amount": 140000,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 114,
+   "student_id": 65,
+   "paid_at": "2026-07-25",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 113,
+   "student_id": 65,
+   "paid_at": "2026-07-29",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 194,
+   "student_id": 65,
+   "paid_at": "2026-08-29",
+   "amount": 90000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 117,
+   "student_id": 66,
+   "paid_at": "2026-07-26",
+   "amount": 15000,
+   "net_amount": null,
+   "kind": "consult",
+   "games": 0
+  },
+  {
+   "id": 115,
+   "student_id": 66,
+   "paid_at": "2026-07-28",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 148,
+   "student_id": 72,
+   "paid_at": "2026-07-28",
+   "amount": 20000,
+   "net_amount": null,
+   "kind": "consult",
+   "games": 0,
+   "settled_period": "2026-08"
+  },
+  {
+   "id": 147,
+   "student_id": 72,
+   "paid_at": "2026-08-01",
+   "amount": 80000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 149,
+   "student_id": 73,
+   "paid_at": "2026-07-31",
+   "amount": 15000,
+   "net_amount": null,
+   "kind": "consult",
+   "games": 0,
+   "settled_period": "2026-08"
+  },
+  {
+   "id": 140,
+   "student_id": 73,
+   "paid_at": "2026-08-01",
+   "amount": 80000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 189,
+   "student_id": 73,
+   "paid_at": "2026-08-25",
+   "amount": 45000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 158,
+   "student_id": 74,
+   "paid_at": "2026-08-03",
+   "amount": 20000,
+   "net_amount": null,
+   "kind": "consult",
+   "games": 0
+  },
+  {
+   "id": 141,
+   "student_id": 74,
+   "paid_at": "2026-08-04",
+   "amount": 160000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 43
+  },
+  {
+   "id": 154,
+   "student_id": 83,
+   "paid_at": "2026-08-01",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 192,
+   "student_id": 83,
+   "paid_at": "2026-08-29",
+   "amount": 40000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 193,
+   "student_id": 83,
+   "paid_at": "2026-08-29",
+   "amount": 5000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 0
+  },
+  {
+   "id": 182,
+   "student_id": 95,
+   "paid_at": "2026-08-20",
+   "amount": 20000,
+   "net_amount": null,
+   "kind": "consult",
+   "games": 0,
+   "handler_id": 5
+  },
+  {
+   "id": 183,
+   "student_id": 95,
+   "paid_at": "2026-08-21",
+   "amount": 90000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 215,
+   "student_id": 95,
+   "paid_at": "2026-09-25",
+   "amount": 90000,
+   "net_amount": 90000,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 180,
+   "student_id": 96,
+   "paid_at": "2026-08-20",
+   "amount": 15000,
+   "net_amount": null,
+   "kind": "consult",
+   "games": 0
+  },
+  {
+   "id": 184,
+   "student_id": 96,
+   "paid_at": "2026-08-21",
+   "amount": 45000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 10
+  },
+  {
+   "id": 185,
+   "student_id": 96,
+   "paid_at": "2026-08-24",
+   "amount": 90000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 208,
+   "student_id": 96,
+   "paid_at": "2026-09-10",
+   "amount": 90000,
+   "net_amount": 90000,
+   "kind": "lesson",
+   "games": 21
+  },
+  {
+   "id": 190,
+   "student_id": 97,
+   "paid_at": "2026-08-26",
+   "amount": 120000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 191,
+   "student_id": 97,
+   "paid_at": "2026-08-26",
+   "amount": 20000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 0
+  },
+  {
+   "id": 195,
+   "student_id": 98,
+   "paid_at": "2026-08-28",
+   "amount": 15000,
+   "net_amount": null,
+   "kind": "consult",
+   "games": 0
+  },
+  {
+   "id": 196,
+   "student_id": 98,
+   "paid_at": "2026-08-29",
+   "amount": 280000,
+   "net_amount": null,
+   "kind": "lesson",
+   "games": 66
+  },
+  {
+   "id": 216,
+   "student_id": 98,
+   "paid_at": "2026-09-26",
+   "amount": 420000,
+   "net_amount": 420000,
+   "kind": "lesson",
+   "games": 99
+  },
+  {
+   "id": 198,
+   "student_id": 99,
+   "paid_at": "2026-08-31",
+   "amount": 15000,
+   "net_amount": null,
+   "kind": "consult",
+   "games": 0
+  },
+  {
+   "id": 207,
+   "student_id": 99,
+   "paid_at": "2026-09-01",
+   "amount": 140000,
+   "net_amount": 140000,
+   "kind": "lesson",
+   "games": 33
+  },
+  {
+   "id": 203,
+   "student_id": 101,
+   "paid_at": "2026-09-09",
+   "amount": 280000,
+   "net_amount": 280000,
+   "kind": "lesson",
+   "games": 66
+  },
+  {
+   "id": 204,
+   "student_id": 101,
+   "paid_at": "2026-09-09",
+   "amount": 80000,
+   "net_amount": 80000,
+   "kind": "etc",
+   "games": 0
+  },
+  {
+   "id": 202,
+   "student_id": 100,
+   "paid_at": "2026-09-16",
+   "amount": 15000,
+   "net_amount": 15000,
+   "kind": "consult",
+   "games": 0
+  },
+  {
+   "id": 206,
+   "student_id": 102,
+   "paid_at": "2026-09-02",
+   "amount": 15000,
+   "net_amount": 15000,
+   "kind": "consult",
+   "games": 0,
+   "handler_id": 5
+  },
+  {
+   "id": 220,
+   "student_id": 107,
+   "paid_at": "2026-09-24",
+   "amount": 20000,
+   "net_amount": 20000,
+   "kind": "consult",
+   "games": 0,
+   "handler_id": 4
+  },
+  {
+   "id": 221,
+   "student_id": 103,
+   "paid_at": "2026-09-17",
+   "amount": 15000,
+   "net_amount": 15000,
+   "kind": "consult",
+   "games": 0,
+   "handler_id": 4
+  },
+  {
+   "id": 214,
+   "student_id": 103,
+   "paid_at": "2026-09-20",
+   "amount": 90000,
+   "net_amount": 90000,
+   "kind": "lesson",
+   "games": 21
+  }
+ ],
+ "sessions": [
+  {
+   "student_id": 3,
+   "trainer_id": 2,
+   "games": 41,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 3,
+   "trainer_id": 2,
+   "games": 10,
+   "played_at": "2026-07-30",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 3,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-16",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 3,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-18",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 3,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 3,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-09-10"
+  },
+  {
+   "student_id": 4,
+   "trainer_id": 5,
+   "games": 19,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 4,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-23",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 4,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-30",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 4,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-30",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 4,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-08-29",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 4,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-07"
+  },
+  {
+   "student_id": 4,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-12"
+  },
+  {
+   "student_id": 4,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-23"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 2,
+   "games": 90,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 5,
+   "games": 43,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 2,
+   "games": 4,
+   "played_at": "2026-07-21",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 2,
+   "games": -5,
+   "played_at": "2026-07-21",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-23",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-24",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-31",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 2,
+   "games": 10,
+   "played_at": "2026-08-23",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-08-31",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 5,
+   "games": 4,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-07"
+  },
+  {
+   "student_id": 8,
+   "trainer_id": 5,
+   "games": 4,
+   "played_at": "2026-09-26"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 5,
+   "games": 38,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 2,
+   "games": 38,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-23",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 2,
+   "games": 15,
+   "played_at": "2026-07-29",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-30",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 2,
+   "games": 15,
+   "played_at": "2026-07-30",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-07-30",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-08-01",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 5,
+   "games": -38,
+   "played_at": "2026-08-23",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 2,
+   "games": -32,
+   "played_at": "2026-08-23",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 5,
+   "games": 7,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 5,
+   "games": -6,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 9,
+   "trainer_id": 5,
+   "games": 7,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 12,
+   "trainer_id": 2,
+   "games": 8,
+   "played_at": "2026-07-21",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 12,
+   "trainer_id": 2,
+   "games": 8,
+   "played_at": "2026-07-21",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 12,
+   "trainer_id": 2,
+   "games": 10,
+   "played_at": "2026-07-29",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 12,
+   "trainer_id": 2,
+   "games": 1,
+   "played_at": "2026-08-16",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 12,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-16",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 12,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-22",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 12,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-22",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 12,
+   "trainer_id": 2,
+   "games": 4,
+   "played_at": "2026-08-25",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 12,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-09-10"
+  },
+  {
+   "student_id": 13,
+   "trainer_id": 5,
+   "games": 49,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 13,
+   "trainer_id": 2,
+   "games": 40,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 13,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-08-31",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 13,
+   "trainer_id": 5,
+   "games": 9,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 17,
+   "trainer_id": 5,
+   "games": 42,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 17,
+   "trainer_id": 5,
+   "games": 10,
+   "played_at": "2026-07-21",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 17,
+   "trainer_id": 5,
+   "games": 10,
+   "played_at": "2026-08-01",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 17,
+   "trainer_id": 5,
+   "games": 10,
+   "played_at": "2026-08-02",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 17,
+   "trainer_id": 5,
+   "games": 30,
+   "played_at": "2026-08-29",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 17,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-08-29",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 17,
+   "trainer_id": 5,
+   "games": 4,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 17,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-07"
+  },
+  {
+   "student_id": 17,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-23"
+  },
+  {
+   "student_id": 17,
+   "trainer_id": 5,
+   "games": 6,
+   "played_at": "2026-09-26"
+  },
+  {
+   "student_id": 17,
+   "trainer_id": 5,
+   "games": 6,
+   "played_at": "2026-09-27"
+  },
+  {
+   "student_id": 28,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 28,
+   "trainer_id": 5,
+   "games": 4,
+   "played_at": "2026-07-24",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 28,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-22"
+  },
+  {
+   "student_id": 37,
+   "trainer_id": 5,
+   "games": 18,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 37,
+   "trainer_id": 5,
+   "games": 10,
+   "played_at": "2026-07-21",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 37,
+   "trainer_id": 5,
+   "games": 7,
+   "played_at": "2026-07-24",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 37,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-08-01",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 37,
+   "trainer_id": 5,
+   "games": 6,
+   "played_at": "2026-08-02",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 37,
+   "trainer_id": 5,
+   "games": 4,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 37,
+   "trainer_id": 5,
+   "games": 14,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 43,
+   "trainer_id": 5,
+   "games": 81,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 43,
+   "trainer_id": 5,
+   "games": 4,
+   "played_at": "2026-07-24",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 43,
+   "trainer_id": 5,
+   "games": 4,
+   "played_at": "2026-07-24",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 43,
+   "trainer_id": 5,
+   "games": 1,
+   "played_at": "2026-08-02",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 43,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 43,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-17"
+  },
+  {
+   "student_id": 43,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-27"
+  },
+  {
+   "student_id": 48,
+   "trainer_id": 5,
+   "games": 10,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 48,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-31",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 48,
+   "trainer_id": 5,
+   "games": 18,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 48,
+   "trainer_id": 5,
+   "games": 2,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 57,
+   "trainer_id": 5,
+   "games": 48,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 57,
+   "trainer_id": 5,
+   "games": 6,
+   "played_at": "2026-07-21",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 57,
+   "trainer_id": 5,
+   "games": 4,
+   "played_at": "2026-07-21",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 57,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-30",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 57,
+   "trainer_id": 5,
+   "games": 20,
+   "played_at": "2026-08-21",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 57,
+   "trainer_id": 5,
+   "games": -15,
+   "played_at": "2026-08-21",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 57,
+   "trainer_id": 5,
+   "games": 15,
+   "played_at": "2026-08-21",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 57,
+   "trainer_id": 5,
+   "games": 6,
+   "played_at": "2026-09-27"
+  },
+  {
+   "student_id": 58,
+   "trainer_id": 5,
+   "games": 67,
+   "played_at": "2026-07-19"
+  },
+  {
+   "student_id": 58,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-23",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 58,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-08-01",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 58,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-07"
+  },
+  {
+   "student_id": 58,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-17"
+  },
+  {
+   "student_id": 60,
+   "trainer_id": 2,
+   "games": 1,
+   "played_at": "2026-08-16",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 60,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-16",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 60,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-22",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 60,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-22",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 60,
+   "trainer_id": 2,
+   "games": 4,
+   "played_at": "2026-08-25",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 60,
+   "trainer_id": 2,
+   "games": 15,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 60,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-09-10"
+  },
+  {
+   "student_id": 63,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-24",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 63,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-24",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 63,
+   "trainer_id": 5,
+   "games": 6,
+   "played_at": "2026-07-30",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 63,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-30",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 63,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-07-31",
+   "settled_period": "2026-07"
+  },
+  {
+   "student_id": 63,
+   "trainer_id": 5,
+   "games": 7,
+   "played_at": "2026-08-31",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 63,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-07"
+  },
+  {
+   "student_id": 63,
+   "trainer_id": 2,
+   "games": 21,
+   "played_at": "2026-09-10"
+  },
+  {
+   "student_id": 63,
+   "trainer_id": 5,
+   "games": 6,
+   "played_at": "2026-09-14"
+  },
+  {
+   "student_id": 63,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-22"
+  },
+  {
+   "student_id": 63,
+   "trainer_id": 5,
+   "games": 7,
+   "played_at": "2026-09-25"
+  },
+  {
+   "student_id": 65,
+   "trainer_id": 5,
+   "games": 16,
+   "played_at": "2026-08-02",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 65,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-08-30",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 65,
+   "trainer_id": 5,
+   "games": 8,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 65,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-23"
+  },
+  {
+   "student_id": 66,
+   "trainer_id": 5,
+   "games": 8,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 66,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-27"
+  },
+  {
+   "student_id": 72,
+   "trainer_id": 5,
+   "games": 21,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 73,
+   "trainer_id": 2,
+   "games": 1,
+   "played_at": "2026-08-16",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 73,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-16",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 73,
+   "trainer_id": 2,
+   "games": 10,
+   "played_at": "2026-08-16",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 73,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-22",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 73,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 73,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-09-10"
+  },
+  {
+   "student_id": 74,
+   "trainer_id": 2,
+   "games": 10,
+   "played_at": "2026-08-16",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 74,
+   "trainer_id": 2,
+   "games": 10,
+   "played_at": "2026-08-20",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 74,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-22",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 74,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-27",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 74,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 74,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-09-07"
+  },
+  {
+   "student_id": 83,
+   "trainer_id": 5,
+   "games": 15,
+   "played_at": "2026-08-29",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 83,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-08-30",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 83,
+   "trainer_id": 5,
+   "games": 4,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 95,
+   "trainer_id": 5,
+   "games": 18,
+   "played_at": "2026-08-31",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 95,
+   "trainer_id": 5,
+   "games": 6,
+   "played_at": "2026-09-26"
+  },
+  {
+   "student_id": 96,
+   "trainer_id": 2,
+   "games": 9,
+   "played_at": "2026-08-21",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 96,
+   "trainer_id": 2,
+   "games": 1,
+   "played_at": "2026-08-24",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 96,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-24",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 96,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-08-28",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 96,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-09-02"
+  },
+  {
+   "student_id": 96,
+   "trainer_id": 2,
+   "games": 5,
+   "played_at": "2026-09-10"
+  },
+  {
+   "student_id": 97,
+   "trainer_id": 5,
+   "games": 13,
+   "played_at": "2026-08-31",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 97,
+   "trainer_id": 5,
+   "games": 8,
+   "played_at": "2026-09-04"
+  },
+  {
+   "student_id": 97,
+   "trainer_id": 5,
+   "games": 4,
+   "played_at": "2026-09-17"
+  },
+  {
+   "student_id": 97,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-25"
+  },
+  {
+   "student_id": 98,
+   "trainer_id": 5,
+   "games": 10,
+   "played_at": "2026-08-31",
+   "settled_period": "2026-08"
+  },
+  {
+   "student_id": 98,
+   "trainer_id": 5,
+   "games": 10,
+   "played_at": "2026-09-04"
+  },
+  {
+   "student_id": 98,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-07"
+  },
+  {
+   "student_id": 98,
+   "trainer_id": 5,
+   "games": 6,
+   "played_at": "2026-09-14"
+  },
+  {
+   "student_id": 98,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-22"
+  },
+  {
+   "student_id": 98,
+   "trainer_id": 5,
+   "games": 7,
+   "played_at": "2026-09-25"
+  },
+  {
+   "student_id": 98,
+   "trainer_id": 5,
+   "games": 8,
+   "played_at": "2026-09-26"
+  },
+  {
+   "student_id": 99,
+   "trainer_id": 5,
+   "games": 3,
+   "played_at": "2026-09-06"
+  },
+  {
+   "student_id": 99,
+   "trainer_id": 5,
+   "games": 8,
+   "played_at": "2026-09-13"
+  },
+  {
+   "student_id": 99,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-22"
+  },
+  {
+   "student_id": 101,
+   "trainer_id": 5,
+   "games": 5,
+   "played_at": "2026-09-22"
+  },
+  {
+   "student_id": 101,
+   "trainer_id": 5,
+   "games": 7,
+   "played_at": "2026-09-25"
+  },
+  {
+   "student_id": 103,
+   "trainer_id": 5,
+   "games": 8,
+   "played_at": "2026-09-27"
+  }
+ ]
+}
