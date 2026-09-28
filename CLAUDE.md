@@ -44,6 +44,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - 구체 범위: `server.js`의 `GDCUP_*` 상수(`GDCUP_SEASONS`·`GDCUP_WEIGHT_S3`·`GDCUP_BPI_SCALE`·`TIERS` 등)와
     `/api/gdcup-*` 라우트 전체, `gdcup_apps`·`gdcup_scores`·`gdcup_solos`·`gdcup_team_brand`·`gdcup_payouts`·`gdcup_attendance` 테이블,
     `GDCUP_*` 환경변수, `track:casino` 라벨이 붙은 이슈.
+    **킬내기도 GmI 소관이다**(2026-09-27 확정) — `/킬내기팀등록`·`/킬내기집계`·`/킬내기이탈` 슬래시 명령(오너 전용),
+    `killrace.cjs` 모듈 전체, `event_defs`·`event_teams`·`event_matches` 테이블.
+    1회(대승배 · 9/26)는 카지노 휴면 중이라 MRIacademy 세션이 관제탑 승인을 경유해 대행 구현했다.
     **등록계도 GmI 소관이다**(2026-08-22 확정) — `/등록계`·`/등록계현황` 슬래시 명령, `clan_registry`·`registry_history` 테이블,
     본계정 명의·PWS 출전 자격 판정. G드컵과 같은 형태로 **코드는 `server.js`에 있고 소관은 GmI**다.
   - **카지노 트랙 휴면 중에는 코드 소재 저장소 담당 세션이 관제탑 승인을 경유해 대행한다.**
@@ -150,8 +153,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - **mri-academy** — 정적 프론트 + API/디스코드 봇(server.js) + 정산 패널. G드컵 판정·정산의 서버 정본
   - **gmi-clancup** — G드컵 공개 페이지·운영 화면(GitHub Pages). 표·스케일을 복제하지 않고
     `GET /api/gdcup-meta`로 받아 쓴다
-  - **gmi-casino-bot** — 카지노·킬내기·아레나(Python/discord.py + FastAPI, Railway).
+  - **gmi-casino-bot** — 카지노·아레나(Python/discord.py + FastAPI, Railway).
     코인 경제 상한은 env와 코드 기본값을 **양쪽 다** 안전값으로 유지(env 단일 방어선 금지)
+    ⚠️ **킬내기 집계 봇은 여기가 아니라 mri-academy 다**(2026-09-27 실측 · 1회 대회로 확정).
+    구현은 `killrace.cjs` + `server.js` 의 호출 한 줄이고, 소관은 GmI 다 — G드컵·등록계와 같은 형태로
+    **코드 소재와 트랙이 어긋나는 세 번째 사례**다. 종전 표기("gmi-casino-bot — …킬내기…")는 폐기.
 - Gemini: Google Sheets 내부 편집만. repo 접근 없음
 - ChatGPT: repo 밖 작업(글·아이디어·검색). repo 코드 관여 금지
 - Codex: 위 세 repo 전부 접근 금지. 별도 실험 저장소·일회성 스크립트만
