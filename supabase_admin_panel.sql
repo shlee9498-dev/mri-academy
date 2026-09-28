@@ -2957,3 +2957,141 @@ alter table students add constraint students_status_check
 --   alter table students add constraint students_status_check
 --     check (status = any (array['active'::text, 'done'::text, 'paused'::text]));
 -- ============================================================
+
+-- ============================================================
+-- §40  그룹 한 덩어리 슬롯 — trainer_slots.duration_min + open_trainer_slots()
+--      (2026-09-28 · 10/1 전환 ③ · 계약 docs/trainer-portal-api.md §9.3)
+--
+-- 왜 필요한가: 지금 슬롯은 30분 한 칸이 단위고, 90분 개인은 칸 3개를 span 으로 묶는다.
+--   그룹·레벨 테스트는 **한 덩어리 1행**이어야 한다 — 참여자가 칸마다 들어오면
+--   정원을 셀 수 없다(칸마다 capacity 를 따로 세게 된다).
+--   레벨 테스트는 새 lesson_type 을 만들지 않고 기존 'consult' + duration_min 90 으로 간다
+--   (제약 교체를 피한다 — §25a 가 이미 consult 를 허용값에 넣어 뒀다).
+--
+-- ⚠️ 겹침 판정이 바뀐다. uq_trainer_slots_live 는 (trainer_id, slot_start) 만 본다 —
+--    11:00 90분 그룹과 11:30 30분 개인은 **둘 다 통과한다.** 길이가 생기면 유니크로는
+--    못 막는다. btree_gist(exclude 제약)는 확장 설치가 필요해 쓰지 않고,
+--    트레이너 단위 advisory 잠금 + 범위 겹침 조회를 함수 안에 둔다.
+--    유니크 인덱스는 그대로 둔다 — 마지막 방어선이다.
+--
+-- 실측(실행 직전 2026-09-28): trainer_slots 188행(취소 아님 142 · 그룹 22 · consult 0) ·
+--   산 예약 4건 · 겹치는 쌍 0 · duration_min 없음 · btree_gist 미설치.
+--
+-- A 구간(더하기만): 새 칸 · 새 제약 · 새 함수. 기존 행·기존 제약은 건드리지 않는다.
+--   default 30 으로 추가하므로 기존 188행은 전부 30분으로 읽힌다(PG11+ 는 테이블 재작성 없음).
+
+alter table public.trainer_slots
+  add column if not exists duration_min int not null default 30;
+
+comment on column public.trainer_slots.duration_min is
+  '이 칸이 차지하는 길이(분). 개인은 항상 30 — 긴 수업은 칸 여러 개를 span 으로 묶는다. 그룹·상담은 한 덩어리라 60·90·120 이 올 수 있다.';
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_trainer_slots_duration') then
+    alter table public.trainer_slots add constraint chk_trainer_slots_duration
+      check (duration_min in (30, 60, 90, 120));
+  end if;
+end $$;
+
+-- ── 40a) 슬롯 열기 ───────────────────────────────────────────────────────────
+-- p_span_min = 여는 전체 길이(분).
+--   personal → 30분 칸 p_span_min/30 개 (종전 startAt~endAt 동작과 같다)
+--   그룹·상담 → 한 덩어리 1행 (duration_min = p_span_min)
+-- 반환: { created, firstId, durationMin } 또는 { error }
+create or replace function public.open_trainer_slots(
+  p_trainer_id  bigint,
+  p_start       timestamptz,
+  p_span_min    int,
+  p_lesson_type text,
+  p_capacity    int default 1
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_one   boolean;
+  v_n     int;
+  v_cap   int;
+  v_first bigint;
+begin
+  if p_trainer_id is null or p_start is null or p_span_min is null then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+  if p_lesson_type not in ('personal','spectate','participate','consult') then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+  if p_span_min < 30 or p_span_min % 30 <> 0 then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+  -- 30분 격자에 맞아야 개인 연속칸 계산(book_slot)이 성립한다.
+  if (extract(epoch from p_start)::bigint % 1800) <> 0 then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+
+  v_one := p_lesson_type <> 'personal';
+  if v_one then
+    if p_span_min not in (30,60,90,120) then return jsonb_build_object('error','invalid_body'); end if;
+  else
+    if p_span_min > 1440 then return jsonb_build_object('error','invalid_body'); end if;  -- 1회 24시간
+  end if;
+
+  -- 개인·상담은 정원이 구조적으로 1이다(§25 · 오너 지시 2026-09-10).
+  v_cap := case when p_lesson_type in ('personal','consult') then 1 else coalesce(p_capacity, 1) end;
+  if v_cap < 1 or v_cap > 8 then return jsonb_build_object('error','invalid_body'); end if;
+
+  -- 트레이너 단위 직렬화. 겹침 조회와 insert 사이에 다른 요청이 끼면 90분 그룹과
+  -- 30분 개인이 같은 시간에 둘 다 생긴다(유니크는 slot_start 만 본다).
+  perform pg_advisory_xact_lock(p_trainer_id);
+
+  if exists (
+    select 1 from trainer_slots
+     where trainer_id = p_trainer_id
+       and status <> 'cancelled'
+       and tstzrange(slot_start, slot_start + make_interval(mins => duration_min), '[)')
+           && tstzrange(p_start,  p_start  + make_interval(mins => p_span_min),  '[)')
+  ) then
+    return jsonb_build_object('error','slot_taken');
+  end if;
+
+  if v_one then
+    insert into trainer_slots (trainer_id, slot_start, lesson_type, capacity, status, duration_min)
+      values (p_trainer_id, p_start, p_lesson_type, v_cap, 'open', p_span_min)
+      returning id into v_first;
+    return jsonb_build_object('created', 1, 'firstId', v_first, 'durationMin', p_span_min);
+  end if;
+
+  v_n := p_span_min / 30;
+  with ins as (
+    insert into trainer_slots (trainer_id, slot_start, lesson_type, capacity, status, duration_min)
+    select p_trainer_id, p_start + make_interval(mins => 30 * (g - 1)),
+           p_lesson_type, v_cap, 'open', 30
+      from generate_series(1, v_n) as g
+    returning id
+  )
+  select min(id) into v_first from ins;
+  return jsonb_build_object('created', v_n, 'firstId', v_first, 'durationMin', 30);
+
+exception
+  when unique_violation then return jsonb_build_object('error','slot_taken');
+end;
+$$;
+
+-- ── 40b) 검증 ────────────────────────────────────────────────────────────────
+--   select count(*) filter (where duration_min = 30) as d30, count(*) as all_rows from trainer_slots;
+--     기대: d30 = all_rows (기존 행은 전부 30)
+--   select conname from pg_constraint where conname = 'chk_trainer_slots_duration';
+--     기대: 1행
+--   select proname, length(replace(prosrc, E'\r','')) as len, md5(replace(prosrc, E'\r','')) as md5
+--     from pg_proc where proname = 'open_trainer_slots' and pronamespace = 'public'::regnamespace;
+--     기대: 2548 · d997d844a09effc91af76569775da717
+--   notify pgrst, 'reload schema';
+--
+--   ✅ 실행 완료 2026-09-28 (세션 실행 · A 구간). 실행 후 실측: trainer_slots 188행 그대로 ·
+--      duration_min=30 이 188 · null 0 · 컬럼 7→8 · chk 1건 · 산 예약 4건 그대로 · 함수 지문 위와 일치.
+--      드라이런(전부 롤백)으로 6가지 확인 — 90분 그룹 1행 / 겹치는 30분 개인 slot_taken /
+--      끝난 직후 개인 60분 2칸 통과 / consult 90분 정원 강제 1 / 격자 어긋남 invalid_body / 45분 invalid_body.
+--
+-- 되돌리기(코드의 open_trainer_slots 호출을 먼저 되돌릴 것):
+--   drop function if exists public.open_trainer_slots(bigint, timestamptz, int, text, int);
+--   alter table public.trainer_slots drop constraint if exists chk_trainer_slots_duration;
+--   alter table public.trainer_slots drop column if exists duration_min;
+-- ============================================================

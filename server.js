@@ -7988,7 +7988,9 @@ const REQUIRED_SCHEMA = {
   // 여기서 읽고 쓰고, 봇 /수업등록이 complete_bookings_for_session으로 닫는다.
   // 기동 프로브(tablesReady → 503 degrade)는 §22와 같은 이유로 그대로 둔다 —
   // 부팅 자기점검만 warn→error로 올려 미실행을 잡는다.
-  trainer_slots: ["id","trainer_id","slot_start","lesson_type","capacity","status","created_at"],
+  // duration_min 승격(2026-09-28 · §40) — 그룹 한 덩어리 슬롯의 길이. 부재하면 예약 화면이
+  // 90분 그룹을 30분으로 그리고 open_trainer_slots 의 겹침 판정도 틀어진다.
+  trainer_slots: ["id","trainer_id","slot_start","lesson_type","capacity","status","created_at","duration_min"],
   // §33 보호자 동의서(2026-09-27) — 오너 실행 대기. 미실행이면 부팅에서 MISSING 으로 잡힌다.
   //   ⚠️ check 제약 4개는 이 목록으로 못 잡는다(컬럼 존재 프로브) — §33c 로만 확인된다.
   guardian_consents:["id","student_name","student_birth","student_discord","student_id",

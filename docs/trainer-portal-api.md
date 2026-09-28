@@ -551,7 +551,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 **트레이너 포털** — `GET /students` 의 각 수강생에 `remainingMine` 을 더한다(내 판수만).
 기존 `remaining`(합계)은 그대로 둔다.
 
-## 9.3 그룹 한 덩어리 · 레벨 테스트 칸
+## 9.3 그룹 한 덩어리 · 레벨 테스트 칸 ✅ **구현 완료 (2026-09-28)**
 
 지금 슬롯은 **30분 한 칸**이 단위고, 90분 개인은 칸 3개를 span 으로 묶는다.
 그룹·레벨 테스트는 **한 덩어리 1행**이어야 한다 — 참여자가 칸마다 들어오면 정원을 셀 수 없다.
@@ -570,7 +570,12 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 - 레벨 테스트 = `lessonType: "consult"` · `durationMin: 90` · `capacity: 1`.
 
 **응답**: `{ "created": 1, "firstId": "…", "durationMin": 90 }`
-(개인은 종전대로 `created` 가 칸 수)
+개인은 종전대로 `created` 가 칸 수이고 `durationMin` 은 30 이다(칸 하나의 길이).
+`firstId` 는 만들어진 칸 중 **가장 빠른 칸**의 id 다.
+
+**겹치면 409 `slot_taken`.** 길이가 생기면서 판정이 코드에서 DB 함수(`open_trainer_slots`)로
+옮겨졌다 — 11:00 90분 그룹과 11:30 30분 개인은 `slot_start` 가 달라 유니크 인덱스를 둘 다
+통과한다. 이제 트레이너 단위 잠금 안에서 **범위 겹침**을 본다.
 
 **GET /slots · GET /availability** — 슬롯에 `durationMin` · `capacity` · `takenCount` 가 온다.
 
@@ -579,8 +584,15 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
   "capacity": 3, "takenCount": 2, "seatsLeft": 1, "status": "open" }
 ```
 
-- `seatsLeft` = `capacity - takenCount`(취소 제외). 0이면 앱이 예약 버튼을 막는다.
+- `seatsLeft` = `capacity - takenCount`. 0이면 앱이 예약 버튼을 막는다.
+- `takenCount` 는 **산 예약(`booked`)만** 센다 — 취소는 물론 끝난 수업(`done`·`pending_review`)도
+  빼지 않으면 지난 그룹 칸의 자리가 영영 안 열린다.
 - 개인 칸은 `capacity: 1` · `seatsLeft` 0 또는 1.
+- ⚠️ `/availability` 에는 **`bookedCount` 가 같은 값으로 남아 있다.** 이미 배포된 앱이 쓰고
+  있어 지우지 않았다 — 새 화면은 `takenCount` 를 쓴다.
+- `durationMin` 은 칸이 실제로 차지하는 길이고, 기존 `slotMinutes`(항상 30)는 **격자 단위**라
+  뜻이 다르다. **화면 높이는 `durationMin` 으로 그린다** — `slotMinutes` 로 그리면 90분 그룹이
+  30분처럼 보인다.
 
 **예약** — 그룹은 `durationMin` 을 보내지 않는다(슬롯이 길이를 안다).
 정원이 찼으면 409 `slot_full`.
