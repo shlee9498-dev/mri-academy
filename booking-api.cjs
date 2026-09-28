@@ -20,6 +20,10 @@
 // (게이트와 표시가 갈리면 "화면엔 5판인데 예약은 거부"가 난다).
 const DURATION_MIN = [60, 90, 120];
 const SLOT_MIN = 30;                 // 슬롯 단위. §23 trainer_slots 의 전개 간격과 같다.
+// 슬롯 한 덩어리의 길이(§40 · 계약 §9.3). 그룹·레벨 테스트는 **1행이 이 길이를 통째로** 차지한다 —
+// 참여자가 30분 칸마다 들어오면 정원을 셀 수 없기 때문이다. 개인은 종전대로 30분 칸 여러 개다.
+// 값은 §40 chk_trainer_slots_duration 과 같아야 한다(둘이 갈라지면 400 대신 23514 가 뜬다).
+const SPAN_MIN = [30, 60, 90, 120];
 const MAX_DAYS = 60;                 // /availability 조회 상한
 const MAX_SLOTS_PER_OPEN = 48;       // 슬롯 열기 1회당 최대 칸 수(= 24시간)
 // 예약 마감 = 수업 3시간 전(오너 확정 2026-09-27). **집행은 §32 book_slot 이 한다** —
@@ -36,7 +40,7 @@ const MY_TRAINER_WINDOW_DAYS = 90;
 const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
 
 module.exports = function mountBookingApi(app, deps) {
-  const { sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal, trainer } = deps;
+  const { sbSelect, sbPatch, sbRpc, limit, discordDM, portal, trainer } = deps;
   const { readSession, opaqueId, readOpaqueId, fail, scrub } = portal;
   // 트레이너 판정(포털 세션 또는 사이트 JWT → staff 명부)과 응답 가드(scrubTrainer)는 trainer-portal.cjs 한 곳이 정본이다.
   const { requireTrainer: requireTrainerBase, sendTrainer } = trainer;
@@ -139,7 +143,7 @@ module.exports = function mountBookingApi(app, deps) {
       sbSelect("lesson_sessions", `select=trainer_id&student_id=eq.${sid}&played_at=gte.${since}`),
       sbSelect("trainer_slots",
         // 트레이너 필터 없음 — 전원. closed 도 받아서 아래에서 "내 예약" 만 남긴다. cancelled 는 제외.
-        `select=id,trainer_id,slot_start,lesson_type,capacity,status&status=in.(open,closed)`
+        `select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min&status=in.(open,closed)`
         + `&slot_start=gte.${nowIso}&slot_start=lt.${until}&order=slot_start.asc`),
     ]);
     const myTrainers = new Set([stu[0]?.trainer_id, ...sess.map((r) => r.trainer_id)].filter(Boolean));
@@ -182,8 +186,16 @@ module.exports = function mountBookingApi(app, deps) {
         trainerDisplayName: nameOf[s.trainer_id] || "미배정",
         // 담당이거나 최근 90일에 수업한 트레이너면 true. 예약 자체는 false 여도 허용된다(안내용).
         isMyTrainer: myTrainers.has(s.trainer_id),
+        // 이 칸이 실제로 차지하는 길이. 개인은 항상 30(긴 수업은 칸 여러 개), 그룹·레벨
+        // 테스트는 60·90·120 이 온다. slotMinutes 는 격자 단위라 뜻이 다르다 — 화면 높이는
+        // durationMin 으로 그려야 90분 그룹이 30분처럼 보이지 않는다.
+        durationMin: s.duration_min ?? SLOT_MIN,
         capacity: s.capacity,
         status: s.status,                     // "open" | "closed" — closed 는 내 개인 예약 칸뿐
+        // takenCount·seatsLeft 가 정본이다(계약 §9.3). bookedCount 는 같은 값의 옛 이름 —
+        // 이미 배포된 앱이 쓰고 있어 남겨 둔다.
+        takenCount: cnt[s.id] || 0,
+        seatsLeft: Math.max(0, s.capacity - (cnt[s.id] || 0)),
         bookedCount: cnt[s.id] || 0,
         bookedByMe: mine.has(s.id),
         // 내 예약일 때만. DELETE /bookings/:id 에 그대로 넘기면 된다.
@@ -228,44 +240,57 @@ module.exports = function mountBookingApi(app, deps) {
 
   // ══════════════ 트레이너 ══════════════
 
-  // POST /slots — { startAt, endAt, lessonType, capacity? } → 30분 칸으로 전개
+  // POST /slots — { startAt, endAt?, durationMin?, lessonType, capacity? }
+  //   개인  : 30분 칸 여러 개로 전개한다(종전 그대로). 길이는 endAt 또는 durationMin 으로 준다.
+  //   그룹·레벨 테스트 : **한 덩어리 1행**. durationMin 이 그 행의 길이가 된다(§40 · 계약 §9.3).
+  //   레벨 테스트 = lessonType "consult" + durationMin 90. 새 lesson_type 을 만들지 않는다.
+  //
+  // ⚠️ 겹침 판정이 코드에서 DB 함수로 옮겨졌다. 길이가 생기면 유니크 인덱스로는 못 막는다 —
+  //    11:00 90분 그룹과 11:30 30분 개인은 slot_start 가 달라 uq_trainer_slots_live 를 둘 다
+  //    통과한다. §40 open_trainer_slots 가 트레이너 단위 advisory 잠금 안에서 범위 겹침을 본다.
   app.post(`${TRAINER}/slots`, rateLimit("trainerSlots", 20, 60_000),
-    bodyOnly(["startAt", "endAt", "lessonType", "capacity"]), requireTrainer, wrap(async (req, res) => {
+    bodyOnly(["startAt", "endAt", "durationMin", "lessonType", "capacity"]), requireTrainer,
+    wrap(async (req, res) => {
       const { startAt, endAt, lessonType } = req.body || {};
+      const durationMin = req.body?.durationMin;
       const capacity = req.body?.capacity ?? 1;
       if (!["personal", "spectate", "participate", "consult"].includes(lessonType))
         return fail(res, 400, "invalid_body");
       if (!Number.isInteger(capacity) || capacity < 1 || capacity > 8)
         return fail(res, 400, "invalid_body");
-      const t0 = Date.parse(startAt), t1 = Date.parse(endAt);
-      if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 <= t0) return fail(res, 400, "invalid_body");
-      if (t0 % (SLOT_MIN * 60_000) !== 0 || t1 % (SLOT_MIN * 60_000) !== 0)
-        return fail(res, 400, "invalid_body");      // 30분 격자에 맞아야 연속칸 계산이 성립한다
-      const n = (t1 - t0) / (SLOT_MIN * 60_000);
-      if (n > MAX_SLOTS_PER_OPEN) return fail(res, 400, "invalid_body");
-      // 개인·상담은 정원이 구조적으로 1이다 — 클라이언트가 뭘 보내든 무시한다.
-      // (상담은 §25 · 오너 지시 2026-09-10. 30분 = 슬롯 1칸이라 길이 옵션도 없다.)
-      const cap = (lessonType === "personal" || lessonType === "consult") ? 1 : capacity;
+      // 둘 중 하나만. 함께 오면 어느 쪽이 이겼는지 호출자가 알 수 없다 — 조용히 고르지 않는다.
+      if (endAt !== undefined && durationMin !== undefined) return fail(res, 400, "invalid_body");
+      const t0 = Date.parse(startAt);
+      if (!Number.isFinite(t0)) return fail(res, 400, "invalid_body");
 
-      const rows = [];
-      for (let i = 0; i < n; i++)
-        rows.push({
-          trainer_id: req.staff.id,
-          slot_start: new Date(t0 + i * SLOT_MIN * 60_000).toISOString(),
-          lesson_type: lessonType, capacity: cap, status: "open",
-        });
-      // 겹침 판정은 코드에 없다 — DB 제약이 한다. §36 부터 uq_trainer_slots_live
-      //   unique (trainer_id, slot_start) where status <> 'cancelled'
-      // 이므로 **취소한 칸은 새 칸을 막지 않는다**(open·closed 는 여전히 못 겹침).
-      // 이미 있는 산 칸이 하나라도 있으면 전체가 실패한다 — 부분 생성으로 어중간한 상태를
-      // 만들지 않으려는 것이고, 응답으로 그 사실을 알린다.
-      let created;
-      try { created = await sbInsert("trainer_slots", rows); }
-      catch (e) {
-        if (String(e?.body || "").includes("duplicate key")) return fail(res, 409, "slot_taken");
-        throw e;
+      let span;
+      if (durationMin !== undefined) {
+        if (!SPAN_MIN.includes(durationMin)) return fail(res, 400, "invalid_body");
+        span = durationMin;
+      } else {
+        const t1 = Date.parse(endAt);
+        if (!Number.isFinite(t1) || t1 <= t0) return fail(res, 400, "invalid_body");
+        span = (t1 - t0) / 60_000;
+        if (span % SLOT_MIN !== 0) return fail(res, 400, "invalid_body");
+        // 그룹·상담은 한 덩어리라 길이 목록 밖 값을 받을 수 없다. 개인은 하루치까지 연다.
+        if (lessonType !== "personal" && !SPAN_MIN.includes(span)) return fail(res, 400, "invalid_body");
       }
-      sendTrainer(res, { created: rows.length, firstId: opaqueId("slot", created?.id ?? 0) });
+      if (t0 % (SLOT_MIN * 60_000) !== 0) return fail(res, 400, "invalid_body");  // 30분 격자
+      if (lessonType === "personal" && span / SLOT_MIN > MAX_SLOTS_PER_OPEN)
+        return fail(res, 400, "invalid_body");
+
+      // 정원 강제(개인·상담 = 1)와 겹침 판정은 전부 함수 안이다 — 여기서 세고 여기서 넣으면
+      // 두 요청이 같이 통과한다(파일 머리 "동시성" 주석과 같은 이유).
+      const out = await sbRpc("open_trainer_slots", {
+        p_trainer_id: req.staff.id, p_start: new Date(t0).toISOString(),
+        p_span_min: span, p_lesson_type: lessonType, p_capacity: capacity,
+      });
+      if (out?.error) return rpcFail(res, out.error);
+      sendTrainer(res, {
+        created: out.created,
+        firstId: opaqueId("slot", out.firstId ?? 0),
+        durationMin: out.durationMin,
+      });
     }));
 
   // GET /slots — 내 슬롯 + 예약 현황(다가오는 것부터)
@@ -282,7 +307,7 @@ module.exports = function mountBookingApi(app, deps) {
       sbRpc("sweep_pending_review", {})
         .catch((e) => { console.error("booking_sweep", e?.message); }),   // 실패해도 목록은 보여준다
       sbSelect("trainer_slots",
-        `select=id,slot_start,lesson_type,capacity,status&trainer_id=eq.${req.staff.id}`
+        `select=id,slot_start,lesson_type,capacity,status,duration_min&trainer_id=eq.${req.staff.id}`
         + `&slot_start=gte.${from}&slot_start=lt.${until}&order=slot_start.asc`),
     ]);
     if (!slots.length) return sendTrainer(res, { slots: [] });
@@ -337,11 +362,19 @@ module.exports = function mountBookingApi(app, deps) {
       registrationMissing: regMissing.has(b.id),    // 「등록 누락?」 배지 — done 인데 세션 행 없음
     });
 
+    // 남은 자리는 **산 예약만** 센다. by[] 에는 done·pending_review 도 들어 있어 그대로 세면
+    // 끝난 그룹 수업의 자리가 영영 안 열린다(book_slot 의 정원 검사도 status='booked' 만 본다).
+    const taken = {};
+    for (const b of books) if (b.status === "booked") taken[b.slot_id] = (taken[b.slot_id] || 0) + 1;
+
     sendTrainer(res, {
       slots: slots.map((s) => ({
         id: opaqueId("slot", s.id),
         startAt: s.slot_start, slotMinutes: SLOT_MIN,
+        durationMin: s.duration_min ?? SLOT_MIN,   // 이 칸이 차지하는 길이(그룹은 60·90·120)
         lessonType: s.lesson_type, capacity: s.capacity, status: s.status,
+        takenCount: taken[s.id] || 0,
+        seatsLeft: Math.max(0, s.capacity - (taken[s.id] || 0)),
         bookings: by[s.id] || [],
       })),
     });
