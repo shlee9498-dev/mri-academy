@@ -377,10 +377,11 @@ module.exports = function mountStudentPortal(app, deps) {
       const stu = (await sbSelect("students",
         `select=name,trainer_id,discord_id&id=eq.${req.portal.sub}`))[0];
       if (!stu) return fail(res, 403, "account_link_pending");
-      let trainerName = "미배정";
+      let trainerName = "미배정", trainerDiscord = null;
       if (stu.trainer_id) {
-        const t = await sbSelect("staff", `select=name&id=eq.${stu.trainer_id}`);
+        const t = await sbSelect("staff", `select=name,discord_id&id=eq.${stu.trainer_id}`);
         if (t[0]?.name) trainerName = t[0].name;
+        trainerDiscord = t[0]?.discord_id || null;
       }
 
       let row;
@@ -392,8 +393,10 @@ module.exports = function mountStudentPortal(app, deps) {
           paid_on: kstToday(),
           // 입금자명은 memo 로 간다 — 전용 칸을 만들지 않는다(§18 표를 그대로 쓴다).
           memo: `앱 입금 신청 · 입금자 ${depositor}`,
-          // 승인 카드가 신청자를 불러올 수 있게 디코 id 를 넣는다. 연결 전이면 표시용 문자열.
-          requested_by: stu.discord_id || `student:${req.portal.sub}`,
+          // "app:<명부 id>" = 앱에서 수강생이 낸 신청이라는 표시다. server.js 승인 처리가 이걸 보고
+          // 결과 통보를 **수강생에게 요체로** 보낸다 — 트레이너용 반말 통보가 수강생에게 가지 않게.
+          // (이 칸은 원래 신청 트레이너의 디코 id 다. 그 경로는 그대로다.)
+          requested_by: `app:${req.portal.sub}`,
         });
       } catch (e) {
         console.error("portal_payreq_insert", e?.message);
@@ -402,6 +405,11 @@ module.exports = function mountStudentPortal(app, deps) {
 
       // 카드가 못 가도 신청 행은 남긴다 — 막으면 이미 보낸 돈이 어디에도 안 남는다.
       const notified = await deps.payreqCard?.(row).catch(() => false);
+      // 담당 트레이너에게도 한 통(계약 §9.6). 운영진 대상이라 반말, 돈 문구라 이모지 없이.
+      // 승인은 오너가 하고 트레이너는 알고만 있으면 된다 — 실패해도 신청은 끝난 것이다.
+      deps.discordDM?.(trainerDiscord,
+        `입금 신청이 들어왔어 — ${stu.name} ${p.label} ${p.amount.toLocaleString("ko-KR")}원, 오너가 통장 확인 중이야`)
+        ?.catch?.(() => {});
       send(res, {
         requestId: opaqueId("payreq", row.id),
         status: "pending",

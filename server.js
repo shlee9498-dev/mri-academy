@@ -3680,6 +3680,30 @@ if (process.env.DISCORD_TOKEN) {
     } else {
       await itx.update({ content: `❌ **#${reqId} 반려** — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원`, components: [] });
     }
+    // 앱 입금 신청(계약 §9.5·§9.6)은 신청자가 **수강생**이다 — requested_by = "app:<명부 id>".
+    //   아래 트레이너용 반말 통보를 그대로 보내면 수강생이 「결제 신청 #N 승인」 반말을 받는다.
+    //   수강생에게는 ui-copy 요체로, 돈 문구라 이모지 없이 보낸다(§2).
+    if (String(q.requested_by || "").startsWith("app:")) {
+      try {
+        const sid = approve ? target.id : Number(q.student_id);
+        const stu = sid ? (await sbSelect("students", `select=discord_id&id=eq.${sid}&limit=1`))[0] : null;
+        let msg;
+        if (!approve) {
+          msg = "입금 확인이 안 됐어요. 입금자명과 금액을 한 번만 봐 주세요. 막히면 담당 트레이너에게 말해 주세요.";
+        } else if (q.kind === "상담") {
+          msg = "레벨 테스트 입금을 확인했어요.";
+        } else {
+          // 판수가 실제로 들어갔을 때만 그렇게 말한다(본표 연결 확인분). 아니면 사실만.
+          const reflected = await sbSelect("payment_requests", `select=payment_id&id=eq.${reqId}&limit=1`)
+            .then((r) => !!r[0]?.payment_id).catch(() => false);
+          msg = reflected && q.games
+            ? `입금을 확인했어요. ${q.games}판이 추가됐어요!`
+            : "입금을 확인했어요. 판수 반영까지 조금 걸릴 수 있어요.";
+        }
+        await discordDM(stu?.discord_id, msg);
+      } catch (e) { console.error("payreq_notify_student", e?.message); }
+      return;
+    }
     // 신청 트레이너에게 결과 통보(best-effort — 실패해도 처리 자체는 완료)
     try {
       const requester = await client.users.fetch(q.requested_by);
@@ -7866,6 +7890,8 @@ const studentPortal = require("./student-portal.cjs")(app, {
   // 입금 신청 승인 카드(계약 §9.5). 봇이 꺼져 있으면 카드만 못 가고 신청 행은 남는다 —
   // 신청을 막지 않는 쪽이 맞다. 응답의 ownerNotified 로 앱이 안내를 가른다.
   payreqCard: (r) => (payreqPortalCard ? payreqPortalCard(r) : Promise.resolve(false)),
+  // 입금 신청 시 담당 트레이너 알림(계약 §9.6). 봇이 없으면 false 로 조용히 끝난다.
+  discordDM,
 });
 
 // ── 수업 복기 API(§29 PR-1·PR-2 · /api/student-portal/{reviews,games,phases,images,feed} + /sessions 확장) ──
