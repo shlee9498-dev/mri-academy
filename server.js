@@ -1283,8 +1283,17 @@ if (process.env.DISCORD_TOKEN) {
   // ⚠️ §42(「완료」가 판수를 받는다)가 **운영에 올라간 뒤에만** 이 잠금이 의미가 있다. 그 전에
   //    잠그면 그룹 판수를 넣을 곳이 사라진다 — 그래서 둘은 같은 PR 로만 나간다. 잠금을 며칠
   //    미뤄야 하면 이 날짜만 바꾸면 된다(오너 지시: 준비 안 된 항목은 디스코드로 며칠 더 둔다).
+  //
+  // 두 단계다(오너 지시 2026-09-29 「반장 그룹 판수 입력 운영 확인 후에만 · 안 되면 개인만 잠금」).
+  //   LESSON_LOCK_FROM     개인 1:1 레슨만 잠근다. 개인은 예약이 판수(5·8·10)를 알고 있어서
+  //                        「완료」 한 번이면 기록이 끝난다 — 앱 화면이 늦어도 막히지 않는다.
+  //   LESSON_LOCK_ALL_FROM 그룹 · 강의 · 진단상담 · /판수정정 까지 전부 잠근다. 그룹은 「완료」에
+  //                        판수 입력칸이 있어야 기록되므로 **반장 화면이 운영에 뜬 걸 확인한 뒤**
+  //                        날짜를 넣는다. null 이면 이 단계는 꺼져 있다.
   const LESSON_LOCK_FROM = "2026-10-01";
+  const LESSON_LOCK_ALL_FROM = null;
   const lessonLocked = () => kstToday() >= LESSON_LOCK_FROM;
+  const lessonLockedAll = () => !!LESSON_LOCK_ALL_FROM && kstToday() >= LESSON_LOCK_ALL_FROM;
   const isMriOwner = (itx) => !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
   // /수업등록 성공분을 DB lesson_sessions에도 기록(시트 병행·검증용).
   //   시트가 진실인 단계 — DB insert는 best-effort: 실패/이름 미매칭이어도 명령 성공(오너 DM만).
@@ -1494,14 +1503,6 @@ if (process.env.DISCORD_TOKEN) {
     if (lessonCh && itx.channelId !== lessonCh)
       return itx.reply({ content: "이 명령은 #수업등록 채널에서만 사용 가능합니다.", ephemeral: true });
 
-    // 10/1 전환 잠금 — 트레이너는 안내만, 오너는 통과(예외 처리용 · 계약 §9.7).
-    // 채널 검사 뒤에 둔다: 엉뚱한 채널에서 누른 사람에게는 종전 안내가 그대로 간다.
-    if (lessonLocked() && !isMriOwner(itx))
-      return itx.reply({
-        content: "10/1부터 수업 기록은 앱에서 해줘. 예약 카드에서 「완료」를 누르고 판수를 넣으면 끝이야. 예약 없이 한 수업은 오너에게 말해줘.",
-        ephemeral: true,
-      });
-
     // 권한 + 트레이너명: 디코 유저ID→트레이너명 매핑으로만 결정(파라미터로 안 받음 → 남의 탭 방지)
     const trainer = TRAINER_MAP[itx.user.id];
     if (!trainer)
@@ -1516,6 +1517,23 @@ if (process.env.DISCORD_TOKEN) {
     const hours = itx.options.getNumber("시간");
     const gamesInput = itx.options.getInteger("판수"); // 그룹 다중판 입력용(null=미지정)
     const memo = (itx.options.getString("메모") || "").trim();
+
+    // 10/1 전환 잠금 — 트레이너는 안내만, 오너는 통과(예외 처리용 · 계약 §9.7).
+    // 옵션을 읽은 **뒤**에 둔다: 개인만 잠그는 단계에서는 수업 종류를 알아야 한다.
+    // 유형을 안 고르면 개인이다(명령 정의의 기본값과 같다).
+    const isPersonalLesson = guboon === "레슨" && (!lessonType || lessonType === "개인");
+    if (!isMriOwner(itx)) {
+      if (lessonLockedAll())
+        return itx.reply({
+          content: "10/1부터 수업 기록은 앱에서 해줘. 예약 카드에서 「완료」를 누르고 판수를 넣으면 끝이야. 예약 없이 한 수업은 오너에게 말해줘.",
+          ephemeral: true,
+        });
+      if (isPersonalLesson && lessonLocked())
+        return itx.reply({
+          content: "10/1부터 개인 수업 기록은 앱에서 해줘. 예약 카드에서 「완료」를 누르면 판수까지 들어가. 그룹 수업은 당분간 여기서 그대로 하면 돼.",
+          ephemeral: true,
+        });
+    }
 
     // 학생 파싱: 쉼표(반각/전각)·공백 구분, 트림, 중복·빈값 제거
     const names = [...new Set((itx.options.getString("학생") || "")
@@ -1795,7 +1813,9 @@ if (process.env.DISCORD_TOKEN) {
       return itx.reply({ content: "등록된 트레이너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
     // 10/1 전환 잠금 — 판수를 고치는 입구는 오너 하나로 모은다(계약 §9.7). 앱에는 아직 정정
     // 화면이 없어서, 트레이너가 잘못 넣은 판수는 오너에게 보내는 게 유일한 길이다.
-    if (lessonLocked() && !isOwner)
+    // **전부 잠그는 단계에서만** 잠근다 — 개인만 잠근 동안은 그룹을 여전히 /수업등록 으로 넣으니
+    // 그 정정도 트레이너가 할 수 있어야 한다(오너 지시 2026-09-29 「안 되면 개인만 잠금」).
+    if (lessonLockedAll() && !isOwner)
       return itx.reply({
         content: "10/1부터 판수 정정은 오너가 해. 학생 이름과 고칠 판수, 이유를 오너에게 보내줘.",
         ephemeral: true,
