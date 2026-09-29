@@ -1275,6 +1275,17 @@ if (process.env.DISCORD_TOKEN) {
   // Phase 1.4 — KST 자정 기준 날짜(새벽 수업이 전날로 안 넘어가게). Railway TZ 무관.
   const kstToday = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
   const hasSupabase = () => !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+  // ── 10/1 전환 잠금(오너 지시 2026-09-28 · 계약 §9.7) ──
+  // 이 날짜(KST)부터 /수업등록 · /판수정정 은 트레이너에게 **안내만** 한다. 수업 기록의 입구는
+  // 앱 「완료」 하나다(§42 — 그룹 판수도 거기서 넣는다). 오너는 예외 처리용으로 계속 쓴다.
+  //
+  // ⚠️ §42(「완료」가 판수를 받는다)가 **운영에 올라간 뒤에만** 이 잠금이 의미가 있다. 그 전에
+  //    잠그면 그룹 판수를 넣을 곳이 사라진다 — 그래서 둘은 같은 PR 로만 나간다. 잠금을 며칠
+  //    미뤄야 하면 이 날짜만 바꾸면 된다(오너 지시: 준비 안 된 항목은 디스코드로 며칠 더 둔다).
+  const LESSON_LOCK_FROM = "2026-10-01";
+  const lessonLocked = () => kstToday() >= LESSON_LOCK_FROM;
+  const isMriOwner = (itx) => !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
   // /수업등록 성공분을 DB lesson_sessions에도 기록(시트 병행·검증용).
   //   시트가 진실인 단계 — DB insert는 best-effort: 실패/이름 미매칭이어도 명령 성공(오너 DM만).
   async function dualWriteSessions(trainerName, students, memo, createdBy, sidOf) {
@@ -1482,6 +1493,14 @@ if (process.env.DISCORD_TOKEN) {
     const lessonCh = process.env.LESSON_CHANNEL_ID;
     if (lessonCh && itx.channelId !== lessonCh)
       return itx.reply({ content: "이 명령은 #수업등록 채널에서만 사용 가능합니다.", ephemeral: true });
+
+    // 10/1 전환 잠금 — 트레이너는 안내만, 오너는 통과(예외 처리용 · 계약 §9.7).
+    // 채널 검사 뒤에 둔다: 엉뚱한 채널에서 누른 사람에게는 종전 안내가 그대로 간다.
+    if (lessonLocked() && !isMriOwner(itx))
+      return itx.reply({
+        content: "10/1부터 수업 기록은 앱에서 해줘. 예약 카드에서 「완료」를 누르고 판수를 넣으면 끝이야. 예약 없이 한 수업은 오너에게 말해줘.",
+        ephemeral: true,
+      });
 
     // 권한 + 트레이너명: 디코 유저ID→트레이너명 매핑으로만 결정(파라미터로 안 받음 → 남의 탭 방지)
     const trainer = TRAINER_MAP[itx.user.id];
@@ -1774,6 +1793,13 @@ if (process.env.DISCORD_TOKEN) {
     const trainer = TRAINER_MAP[itx.user.id];
     if (!trainer && !isOwner)
       return itx.reply({ content: "등록된 트레이너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
+    // 10/1 전환 잠금 — 판수를 고치는 입구는 오너 하나로 모은다(계약 §9.7). 앱에는 아직 정정
+    // 화면이 없어서, 트레이너가 잘못 넣은 판수는 오너에게 보내는 게 유일한 길이다.
+    if (lessonLocked() && !isOwner)
+      return itx.reply({
+        content: "10/1부터 판수 정정은 오너가 해. 학생 이름과 고칠 판수, 이유를 오너에게 보내줘.",
+        ephemeral: true,
+      });
     if (!process.env.SUPABASE_URL)
       return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
 
@@ -3076,7 +3102,9 @@ if (process.env.DISCORD_TOKEN) {
         new ButtonBuilder().setCustomId(`payreq_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
       );
       await owner.send({
-        content: `💰 **입금 신청 #${req.id}** (앱)\n· 학생: **${req.student_name}**`
+        // 돈 문구라 이모지를 뺀다(ui-copy §2 — 💰 는 돈을 가볍게 만든다). /결제신청 카드의 💰 는
+        // 전수 교체 금지라 그대로 둔다 — 두 카드 머리가 다른 게 오히려 입구 구분이 된다.
+        content: `**입금 신청 #${req.id}** (앱)\n· 학생: **${req.student_name}**`
           + `\n· 상품: ${req.kind}${req.games ? ` · ${req.games}판` : ""}`
           + `\n· 금액: **${Number(req.amount).toLocaleString("ko-KR")}원**`
           + `\n· 입금일: ${req.paid_on}`

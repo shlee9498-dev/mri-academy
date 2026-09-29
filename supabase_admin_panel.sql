@@ -3198,8 +3198,13 @@ $$;
 --   games_held = 0 이라 상태만 닫고 판수는 봇에 맡겼다. 그 봇이 사라진다.
 --
 -- 바뀌는 것 두 가지
---   ① p_games — 실제 진행 판수. 그룹·상담은 이게 유일한 입구고, 개인은 「1시간 잡았는데
---      40분만 했다」를 담는다. 생략하면 개인은 종전대로 선차감분, 그룹은 종전대로 상태만 닫는다.
+--   ① p_games — 실제 진행 판수. 수업 종류마다 다르다.
+--      · 개인        선택. 생략하면 종전대로 선차감분(5·8·10). 「1시간 잡았는데 40분만 했다」를 담는다.
+--      · 그룹        **필수.** 없으면 games_required 로 돌려보내고 **예약을 닫지 않는다.**
+--                    10/1 뒤에는 이게 그룹 판수의 유일한 입구라, 판수 없이 닫아 버리면
+--                    다시 들어올 길이 없다(앱은 registration_missing · /수업등록 은 잠김).
+--      · 상담(레벨 테스트) **받지 않는다.** 판수를 쓰는 수업이 아니다 — 판수가 없는 신규
+--                    (prospect)가 레벨 테스트를 받는데 여기서 세션이 생기면 잔여가 음수로 꽂힌다.
 --   ② p_played_at — 실제 수업 날짜. 자정을 넘겨 진행한 경우다. 슬롯 날짜 ±1일까지만 받는다 —
 --      그보다 멀면 엉뚱한 날에 판수가 꽂힌다.
 --
@@ -3213,8 +3218,10 @@ $$;
 --
 -- 반환에 더해지는 것
 --   {"recorded":true, …, "remainingAfter":n, "remainingWasShort":bool}
---   {"error":"invalid_body"}   p_games 범위 밖 · p_played_at 이 슬롯 날짜 ±1일 밖
---   그 밖은 §37 그대로다(already · closed · not_found · scope_denied).
+--   {"error":"invalid_body"}    p_games 범위 밖 · p_played_at 이 슬롯 날짜 ±1일 밖 · 상담에 p_games
+--   {"error":"games_required"}  그룹인데 p_games 가 없다 — 예약은 booked 그대로다
+--   {"closed":true,…}           이제 **상담만** 이리 온다(그룹은 위 오류로 간다)
+--   그 밖은 §37 그대로다(already · not_found · scope_denied).
 
 drop function if exists public.record_lesson_from_booking(bigint, bigint);
 
@@ -3228,6 +3235,7 @@ declare
   v_b     slot_bookings%rowtype;
   v_owner bigint;
   v_start timestamptz;
+  v_type  text;
   v_day   date;
   v_slot  date;
   v_has   boolean;
@@ -3245,8 +3253,14 @@ begin
   if not found                    then return jsonb_build_object('error','not_found'); end if;
   if v_b.span_head_id is not null  then return jsonb_build_object('error','not_found'); end if;
 
-  select trainer_id, slot_start into v_owner, v_start from trainer_slots where id = v_b.slot_id;
+  select trainer_id, slot_start, lesson_type into v_owner, v_start, v_type
+    from trainer_slots where id = v_b.slot_id;
   if v_owner is distinct from p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
+  -- 상담(레벨 테스트)은 판수를 쓰는 수업이 아니다. 여기서 세션이 생기면 판수가 없는 신규가
+  -- 잔여 음수로 꽂힌다 — 조용히 무시하지 않고 돌려보낸다(앱이 입력칸을 안 띄우게).
+  if v_type = 'consult' and p_games is not null then
+    return jsonb_build_object('error','invalid_body');
+  end if;
 
   -- 날짜 축은 server.js kstToday() · booking-api kstDate() 와 같은 식이라 경계가 어긋나지 않는다.
   v_slot := (v_start at time zone 'Asia/Seoul')::date;
@@ -3273,9 +3287,14 @@ begin
   -- 기록할 판수: 트레이너가 넣었으면 그 값, 아니면 예약이 잡은 선차감분.
   v_games := coalesce(p_games, coalesce(v_b.games_held, 0));
 
-  -- 그룹·상담인데 판수를 안 넣었으면 종전처럼 상태만 닫는다. 10/1 뒤에는 이 분기로 빠지면
-  -- 그 수업의 판수가 영영 안 빠진다 — 화면이 「판수를 넣어 주세요」로 되돌려야 한다.
   if v_games <= 0 then
+    -- 그룹인데 판수가 없다 → **닫지 않고** 돌려보낸다. 여기서 닫으면 10/1 뒤에는 이 수업의
+    -- 판수를 넣을 길이 없다(다시 누르면 already → registration_missing · /수업등록 은 잠김).
+    -- 예약이 booked 로 남아 있으니 트레이너가 판수를 넣고 한 번 더 누르면 된다.
+    if v_type in ('spectate','participate') then
+      return jsonb_build_object('error','games_required');
+    end if;
+    -- 상담(레벨 테스트)은 판수가 없는 게 정상이다 — 상태만 닫는다.
     update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
     return jsonb_build_object('closed', true, 'games', 0, 'reason', 'no_hold');
   end if;
