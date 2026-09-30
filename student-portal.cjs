@@ -20,6 +20,8 @@
 const crypto = require("crypto");
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 2026-09-30) — 판정은 순수 함수 모듈 한 벌(server.js 오너 카드와 공유).
 const payreqIntake = require("./payreq-intake.cjs");
+// 직강 회차 요약 — 트레이너 앱 /students(계약 §9.12)와 같은 함수(2026-09-30 · 두 벌 금지).
+const courseProgress = require("./course-progress.cjs");
 
 // 신규 DDL(정본 4.2) 미실행 상태에서도 읽기 경로는 동작해야 한다 — 제목은 "미정",
 // 일기·피드백은 없음으로 degrade한다. 쓰기(PUT journal)만 503으로 막는다.
@@ -756,73 +758,12 @@ module.exports = function mountStudentPortal(app, deps) {
     } catch (e) { console.error("summary_pending_journals", e?.message); return 0; }
   }
 
+  // 식은 course-progress.cjs 한 벌이다(트레이너 앱 §9.12 와 공유 · 2026-09-30 옮김 · 계산 불변).
+  //   출석 행이 아예 없는 것과 「정말 0회 진행」은 다르다 — attendanceKnown 으로 가른다.
+  //   수강생 앱은 상태 필터 없이 전부(종전 그대로).
   async function coursesFor(studentId) {
-    let rows;
-    try {
-      rows = await sbSelect("courses",
-        `select=id,level,scheme,started_on,status,units_total&student_id=eq.${studentId}`
-        + `&order=started_on.desc`);
-    } catch { return []; }
-    if (!rows.length) return [];
-
-    // 종전에는 강의마다 출석 1회 + 다음 회차 1회를 **순차로** 돌았다(강의 2개 = 4~5왕복).
-    // in.() 로 묶어 강의 수와 무관하게 최대 2왕복으로 고정한다. 계산식은 그대로다.
-    const ids = rows.map((c) => c.id);
-    let att = [], attOk = false;
-    try {
-      att = await sbSelect("course_attendance",
-        `select=course_id,units,session_id,status&course_id=in.(${ids.join(",")})`);
-      attOk = true;
-    } catch (e) { console.error("courses_attendance", e?.message); }
-
-    // 예정 회차는 한 번에 받아 강의별로 가장 이른 것을 고른다(종전 limit=1 과 같은 결과).
-    const upcoming = [...new Set(att.filter((a) => a.status === "scheduled")
-                                   .map((a) => a.session_id).filter(Boolean))];
-    const sessById = {};
-    if (upcoming.length) {
-      try {
-        const ss = await sbSelect("course_sessions",
-          `select=id,held_on,start_time,end_time&id=in.(${upcoming.join(",")})`
-          + `&status=eq.scheduled&order=held_on.asc`);
-        for (const r of ss) sessById[r.id] = r;
-      } catch (e) { console.error("courses_sessions", e?.message); }
-    }
-
-    const byCourse = {};
-    for (const a of att) (byCourse[a.course_id] ||= []).push(a);
-
-    const out = [];
-    for (const c of rows) {
-      const mine = byCourse[c.id] || [];
-      const completed = mine.filter((a) => a.status === "done")
-                            .reduce((n, r) => n + Number(r.units || 0), 0);
-      // 출석 행이 아예 없는 것과 「정말 0회 진행」은 다르다 — 구 체계 강의는 진행 이력이
-      // courses.memo 에만 있고 course_attendance 는 비어 있다(2026-09-27 실측: 18행 전부 0행).
-      // 구분값 없이 completedUnits 0 을 내리면 앱이 「0/12 진행」으로 단정해 보여 준다.
-      const attendanceKnown = attOk && mine.length > 0;
-      let nextSession = null;
-      const next = mine.filter((a) => a.status === "scheduled")
-                       .map((a) => sessById[a.session_id]).filter(Boolean)
-                       .sort((x, y) => String(x.held_on).localeCompare(String(y.held_on)))[0];
-      if (next) {
-        nextSession = {
-          date: next.held_on,
-          startTime: (next.start_time || "").slice(0, 5),
-          endTime: (next.end_time || "").slice(0, 5),
-          type: "direct",
-        };
-      }
-      const total = Number(c.units_total || 0);
-      out.push({
-        level: c.level, scheme: c.scheme || null,
-        startedOn: c.started_on, status: c.status,
-        unitsTotal: total, completedUnits: completed,
-        remainingUnits: total - completed,
-        attendanceKnown,
-        nextSession,
-      });
-    }
-    return out;
+    const m = await courseProgress.loadCourseProgress(sbSelect, { studentIds: [studentId] });
+    return m.get(Number(studentId)) || [];
   }
 
 

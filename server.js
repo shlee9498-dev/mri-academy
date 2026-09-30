@@ -8095,8 +8095,9 @@ const reviewApi = require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch
 // ── 트레이너 전용 포털 API (S1-c · /api/trainer-portal/{exchange,students,journals,sessions}) ──
 // student-portal 과 같은 x-portal-secret 게이트·세션 서명을 쓴다(오너 결정 2026-09-15). booking-api 의
 // /slots·/bookings 라우트도 이 모듈이 건 게이트 뒤에 서므로 **booking-api 보다 먼저** 마운트한다.
+// sbRpc = 원장 대시보드(§9.13)가 「완료 확인 필요」를 최신으로 하려고 sweep_pending_review 를 부른다(트레이너 칸 목록과 같다).
 const trainerPortal = require("./trainer-portal.cjs")(app, {
-  sbSelect, sbInsert, sbUpsert, limit, getUser, portal: studentPortal,
+  sbSelect, sbInsert, sbUpsert, sbRpc, limit, getUser, portal: studentPortal,
 });
 
 // ── 수업 복기 트레이너 라우트(§29 PR-3 · /api/trainer-portal/{reviews,feedback,feed}) ──
