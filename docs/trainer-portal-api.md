@@ -703,81 +703,115 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 ⚠️ `skipped` 는 그 날짜에 **살아 있는 칸이 이미 있어서** 건너뛴 것이다(§36 유니크).
 앱은 「3주차는 이미 칸이 있어 건너뛰었어요」로 알려 주면 된다.
 
-## 9.5 입금 신청 ✅ **운영 (2026-09-30 · #409)** · 계좌 안내(`bank`)는 오너가 env 를 넣은 뒤부터
+## 9.5 입금 신청 ✅ **운영 (2026-09-30 · #409)** · 수량 · 현금영수증 · 카드(그로블) 묶음 **2026-09-30 오너 OK · §49**
 
-수강생이 계좌로 보내고 「입금했어요」를 누르면 `payment_requests` 에 `pending` 한 행이 생기고
-오너에게 **기존 승인 카드가 그대로** 간다(버튼이 `/결제신청` 과 같다). 승인 뒤 본표 편입도
-§18d 트리거가 두 입구를 구분하지 않고 똑같이 한다.
+수강생이 계좌로 보내고(또는 그로블 카드로 결제하고) 「입금했어요」·「카드로 결제했어요」를 누르면 `payment_requests` 에
+`pending` 한 행이 생기고 오너에게 **승인 카드**가 간다(버튼이 `/결제신청` 과 같다). 승인 뒤 본표 편입도
+§18d 트리거가 두 입구를 구분하지 않고 똑같이 한다. 판정 코드는 `payreq-intake.cjs` 한 벌이다.
 
-### ⚠️ 금액 키가 `won` 인 이유
+### ⚠️ 키 이름이 이런 이유
 
-수강생 응답은 `scrub()` 를 지나는데 **`amount` · `price` 어간과 `name` 은 던진다**(정산 금액이
-수강생 앱에 새지 않게 두는 방벽). 예외를 늘리면 앱 가드도 같이 고쳐야 하고 방벽이 얇아지므로
-**안 걸리는 이름을 쓴다** — 금액은 `won`, 은행명은 `bank.label` 이다.
-`amount` 로 되돌리면 그 응답 전체가 500 이 된다.
+수강생 응답은 `scrub()` 를 지나는데 **`amount` · `price` · `payment` · `fee` · `net` · `phone` 어간과 `name` 은 던진다**
+(정산 금액 · 연락처가 수강생 앱에 새지 않게 두는 방벽). 예외를 늘리면 앱 가드도 같이 고쳐야 하고 방벽이 얇아지므로
+**안 걸리는 이름을 쓴다** — 금액 `won`, 은행명 `bank.label`, 현금영수증 `cashReceipt.purpose` · `last4` · `issued`.
+`amount` 로 되돌리면 그 응답 전체가 500 이 된다. 현금영수증 번호 키에 `phone` 을 쓰지 않는 것도 같은 이유다(반장 요청).
 
-**GET /api/student-portal/pay-info** → 계좌 · 상품 목록
+**GET /api/student-portal/pay-info** → 계좌 · 상품 · 수량 한도 · 현금영수증 권함 금액 · 카드 링크
 
 ```json
 { "bank": { "label": "국민은행", "account": "…", "holder": "…" },
   "products": [
-    { "key": "lesson10",      "label": "10판 패키지",            "won": 45000,  "games": 10 },
-    { "key": "lesson21",      "label": "21판 패키지",            "won": 90000,  "games": 21 },
-    { "key": "lesson33",      "label": "33판 패키지",            "won": 140000, "games": 33 }
+    { "key": "lesson10", "label": "10판 패키지", "won": 45000,  "games": 10 },
+    { "key": "lesson21", "label": "21판 패키지", "won": 90000,  "games": 21 },
+    { "key": "lesson33", "label": "33판 패키지", "won": 140000, "games": 33 }
   ],
+  "quantityMax": 5,
+  "cashReceipt": { "recommendFromWon": 100000 },
+  "card": { "links": { "lesson33": "https://…" } },
   "depositorHint": "홍길동",
   "assignedTrainer": { "trainerId": "…", "trainerName": "준구" } }
 ```
 
-- `assignedTrainer` = 담당 트레이너(없거나 비활성이면 `null`). 입금 신청에서 **「담당 트레이너」를 고르면 이 `trainerId` 를 싣는다**
-  (반장 요청 9/30). `trainerId` 를 빼면 서버가 **가장 많이 모자란 트레이너**로 넣으므로(없으면 담당), 담당을 골랐는데 빼면 어긋난다.
-- 계좌는 **env** 에서 온다(`PAY_BANK_NAME` · `PAY_BANK_ACCOUNT` · `PAY_BANK_HOLDER`).
-  셋 중 하나라도 없으면 **`bank` 키 자체가 없다**(`null` 이 아니다) — 앱은 계좌 영역을 숨기고
-  「계좌는 트레이너에게 물어봐 주세요」. 신청 자체는 그대로 받는다.
-- `products` 는 서버가 정본이다. **앱에 금액을 박지 말 것** — 가격이 바뀌면 앱만 틀린다.
-  값은 `config/payments.js`(결제 트랙 소관) 에서 읽는다. 라벨도 그 파일 것을 그대로 쓴다.
-- 목록에 **판수 3종만** 있다. 승인 시 본표 편입이 **자동인 상품**뿐이다 —
-  강의·세트·직강은 §18d 에서 수동이라 자동 입구를 열면 승인 뒤 아무 일도 안 일어난 것처럼 보인다.
-- **레벨 테스트는 뺐다**(오너 2026-09-30) — 수강생 앱은 기존 수강생 전용이고, 레벨 테스트 신규는 사이트 · 디스코드로 받는다.
-  `productKey: "consultCourse"` 는 이제 400 `invalid_body` 다. 앱에 레벨 테스트 결제 항목을 따로 두지 말 것.
-- 계좌 env 가 들어갔는지는 서버 기동 로그 `[pay-info] 계좌 안내 켜짐` 으로 본다(값은 로그에 안 남는다).
+- `products[].won` · `games` 는 **1개(단가)** 값이다. 합계는 서버가 신청 때 단가 × 수량으로 정한다.
+  값은 `config/payments.js`(결제 트랙 소관)에서 읽는다. **앱에 금액을 박지 말 것.** 목록은 **판수 3종**뿐이다
+  (승인 시 본표 편입이 자동인 상품만 · 레벨 테스트는 뺐다 — 오너 2026-09-30, 신규는 사이트 · 디스코드).
+- `quantityMax` — 수량 선택 상한(지금 5).
+- `cashReceipt.recommendFromWon` — **계좌이체 합계**가 이 금액 이상이면 현금영수증 번호 입력을 권한다(필수 아님).
+- `card` — 그로블 결제 링크. **링크가 있는 상품만** 실린다. 하나도 없으면 **`card` 키 자체가 없다** → 앱은 카드 선택지를 숨긴다.
+  링크는 env `GROBLE_LINK_LESSON10` · `21` · `33`(오너가 그로블 상품을 만들어 넣는다 · 공용 3개). 가격은 계좌이체와 같다(카드 할증 없음).
+- `bank` — env `PAY_BANK_NAME` · `PAY_BANK_ACCOUNT` · `PAY_BANK_HOLDER`. 셋 중 하나라도 없으면 **`bank` 키 자체가 없다**
+  — 앱은 계좌 영역을 숨기고 「계좌는 트레이너에게 물어봐 주세요」. 기동 로그 `[pay-info] 계좌 안내` · `[pay-info] 카드 링크` 로 켜짐을 본다(값은 로그에 안 남는다).
+- `assignedTrainer` = 담당 트레이너(없거나 비활성이면 `null`). 「담당 트레이너」를 고르면 이 `trainerId` 를 싣는다.
 - `depositorHint` = 명부 이름. 다른 이름으로 보냈으면 화면에서 고쳐 보낸다.
 
 **POST /api/student-portal/payment-requests** (10회/분)
 
-```json
-{ "productKey": "lesson21", "depositorName": "홍길동", "trainerId": "…(선택)" }
+```jsonc
+// 계좌이체
+{ "productKey": "lesson33", "quantity": 3, "method": "transfer", "depositorName": "홍길동",
+  "cashReceipt": { "purpose": "deduction", "number": "010-1234-5678" },   // 선택
+  "trainerId": "…(선택)" }
+// 카드(그로블)
+{ "productKey": "lesson33", "quantity": 1, "method": "card", "orderNo": "G20261001-0001", "trainerId": "…(선택)" }
 ```
 
-→ `{ "requestId": "…", "status": "pending", "won": 90000, "ownerNotified": true }`
+→ `{ "requestId": "…", "status": "pending", "quantity": 3, "games": 99, "won": 420000, "method": "transfer", "ownerNotified": true }`
+(`games` · `won` 은 **합계**)
 
-- `productKey` 는 위 목록의 `key` 그대로. 목록 밖 값은 400 `invalid_body`.
-- `depositorName` 2~20자. 짧으면 400 `invalid_body`.
-- `trainerId` **선택**(2026-09-30 오너 OK) — 이 입금이 **어느 트레이너 판수로 들어갈지**. 값은
-  `/summary` `remainingByTrainer[].trainerId` · `/availability` 슬롯 `trainerId` 와 **같은 불투명 id** 다.
-  읽을 수 없는 값 · 활성 트레이너(오너 포함)가 아닌 id 는 400 `invalid_body`.
-  **안 보내면 서버가 정한다** — ① 판수가 모자란 트레이너(여럿이면 가장 많이 모자란 쪽) ② 없으면 담당.
-  승인되면 그 트레이너로 등록이 생기고, 입금 신청 DM 도 그 트레이너에게 간다.
-  부족 안내(§9.8)에서 누른 입금 신청이면 그 항목의 `trainerId` 를 그대로 실어 보내면 된다.
-- **금액·판수는 앱이 보내지 않는다** — 서버가 상품에서 정한다.
-  금액을 받으면 화면에서 고쳐 보낼 수 있다.
+| 키 | 필수 | 규칙 |
+|---|---|---|
+| `productKey` | ✅ | `/pay-info` `products[].key`. 목록 밖이면 400 `invalid_body` |
+| `quantity` | — | 1~5 정수. 없으면 1. 밖이면 400 `invalid_body` |
+| `method` | — | `"transfer"`(기본) \| `"card"` |
+| `depositorName` | 계좌이체 ✅ | 2~20자(넘치면 자른다). 카드는 안 쓴다 |
+| `orderNo` | 카드 ✅ | 그로블 주문번호 그대로 · 4~40자 · 영문 · 숫자 · `-` · `_`. 그 상품 카드 링크가 꺼져 있으면 400 `invalid_body` |
+| `cashReceipt` | — | **계좌이체만.** `{ purpose, number }` — `deduction`(소득공제) = 휴대폰 010 11자리 · `proof`(지출증빙) = 사업자번호 10자리. 하이픈 · 띄어쓰기는 서버가 지운다. 형식이 틀리면 400 `cash_receipt_format` · 카드에 실으면 400 `invalid_body` |
+| `trainerId` | — | 이 입금이 **어느 트레이너 판수로** 들어갈지(§9.8). 안 보내면 서버가 정한다 — ① 판수가 모자란 트레이너(여럿이면 가장 많이 모자란 쪽) ② 없으면 담당 |
+| `confirmDuplicate` | — | `true` = 아래 409 `recent_duplicate` 를 확인한 뒤 「그래도 보내기」 |
+
+- **금액 · 판수는 앱이 보내지 않는다** — 보내면 400 `invalid_body`(`bodyOnly`). 서버가 단가 × 수량으로 정한다.
 - 입금일은 **오늘(KST) 고정**이다. 지난 날짜 입금은 트레이너 `/결제신청` 으로 간다.
-- `depositorName` 은 `memo` 에 들어간다(전용 칸이 없다).
-- 같은 수강생의 `pending` 이 이미 있으면 409 `request_pending`
-  — 「이미 확인 중인 입금 신청이 있어요」.
-- `ownerNotified: false` 면 **신청은 저장됐고 카드만 못 갔다**(봇이 꺼졌거나 DM 실패).
-  앱은 「접수됐어요 · 확인이 늦으면 트레이너에게 알려 주세요」로 가른다. 신청을 막지 않는 이유는
-  막으면 이미 보낸 돈이 어디에도 안 남기 때문이다.
+- **대기 중 신청이 있어도 새 신청을 받는다**(오너 2026-09-30 — 종전 409 `request_pending` 폐지).
+- 409 `recent_duplicate` `{ requestId, requestedAt }` — **같은 상품 · 같은 금액(= 같은 수량)**이 10분 안에 또 왔다(대기 · 승인).
+  「방금 같은 신청이 있어요」로 확인받고 `confirmDuplicate: true` 로 다시 보낸다. 수량이 다르면 같은 신청이 아니다.
+- 409 `order_used` — 같은 그로블 주문번호가 이미 신청돼 있다(대기 · 승인). 반려된 번호는 다시 쓸 수 있다(§49 부분 유니크).
+- `ownerNotified: false` 면 **신청은 저장됐고 카드만 못 갔다**(봇이 꺼졌거나 DM 실패). 앱은 「접수됐어요 · 확인이 늦으면 트레이너에게 알려 주세요」.
 
 **GET /api/student-portal/payment-requests** → 내 신청 목록(최근 20건 · 최신순)
 
 ```json
-{ "requests": [ { "requestId": "…", "status": "pending", "won": 90000,
-                  "label": "21판 패키지", "games": 21,
+{ "requests": [ { "requestId": "…", "status": "pending", "label": "33판 패키지", "quantity": 3,
+                  "won": 420000, "games": 99, "method": "transfer",
+                  "cashReceipt": { "purpose": "deduction", "last4": "5678", "issued": false },
                   "paidOn": "2026-10-02", "requestedAt": "2026-10-02T01:10:00Z" } ] }
 ```
 
-`status` ∈ `pending` · `approved` · `rejected` · `void`.
+- `status` ∈ `pending` · `approved` · `rejected` · `void`. `won` · `games` 는 합계 · `label` 은 단가 상품 이름 · 수량은 `quantity`.
+- `method` ∈ `transfer` · `card` · `other`(옛 봇 신청의 숨고 · 기타).
+- `cashReceipt` — 번호를 넣은 계좌이체만. `issued: true` 면 「발급됨」. 번호를 안 넣었거나 카드면 `null`.
+
+### 현금영수증 번호 — 저장 · 보는 사람 (오너 지시 2026-09-30 · 반장 질문)
+
+| | |
+|---|---|
+| 저장 | 서버 DB `payment_requests.cash_receipt_number` **한 곳뿐**(RLS on · 정책 0 = service_role 만). 앱 · 브라우저에 원문을 두지 않는다 |
+| 원문을 보는 사람 | **오너만** — 디스코드 승인 카드 · 미발급 알림 |
+| 수강생 앱 | 뒤 4자리(`last4`) · 용도 · 발급 여부만 |
+| 트레이너 | 싣지 않는다(입금 신청 DM 에 번호 없음) |
+| 서버 로그 | 싣지 않는다(신청 번호만) |
+| 고치기 | 신청 뒤에는 앱에서 못 고친다 — 틀렸으면 트레이너 · 오너에게 |
+| 보관 | 거래일로부터 5년(개인정보처리방침 2026-09-30 개정) |
+
+**오너 쪽**: 카드에 「현금영수증: 소득공제 010-…」 또는(10만원 이상 · 번호 없음) 「번호 없음 · 자진발급 필요」와
+「현금영수증 발급함」 버튼이 붙는다. 누르면 발급일이 찍힌다. 승인된 계좌이체가 **입금일로부터 4일** 지나도 미발급이면
+오너에게 한 번 알린다(오너 판정 — 7일에서 당김 · 봇 `/결제신청` 계좌이체 10만원 이상도 포함). 카드 결제는 대상이 아니다.
+
+### 카드 결제(그로블)
+
+- 앱: 「카드로 결제」 → `card.links[productKey]` 로 이동 → 결제 → 「카드로 결제했어요」 + 주문번호 → `method: "card"`.
+- 승인 때 §18d 가 `pay_channel='groble'` 로 본표에 넣고 수수료 4.84% 를 기록한다(기존). **수수료는 아카데미가 부담**하고
+  트레이너 지급은 계좌이체와 같은 금액(총액 기준)으로 한다(오너 판정 2026-09-30 — 정산 엔진 반영은 결제 트랙 요청).
+- 할부는 기록하지 않는다(판수는 승인 때 전부). 그로블 웹훅 · 주문 조회 · 부분 취소는 그로블 상담 답이 오면 필요한 부분만 고친다.
 
 ## 9.6 최소 알림 DM
 
