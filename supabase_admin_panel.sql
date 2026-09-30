@@ -3739,8 +3739,116 @@ $$;
 --      45b seed 7줄(hold) — 그때 음수였던 짝 전부: 수강생 #4 · #48 · #83 · #14(현태) / #9 · #60 · #101(준구).
 --      이 7짝은 배포돼도 DM 이 가지 않는다 — 오너가 표를 보고 푼 짝만 보낸다.
 --      오너 OK(9/30 「7짝 보류는 풀어도 된다 — 다음 점검에 DM 발송」) → 코드 배포 뒤 세션이 7짝 전부 푼다(45b 풀기 · student_id 조건 없이 열린 hold 전부).
+--      ✅ 11:2x KST 풀기 실행(7줄 · 풀기 직전 부족 목록과 7짝 값 일치 · 새 부족 0) → 11:33 점검에서 발송: 알림 7 · 수강생 DM 3 · 트레이너 DM 7
+--         (디스코드 미연결 수강생 4명은 트레이너 DM 만 — 오너 지시 그대로).
 --
 -- 되돌리기(코드의 호출을 먼저 되돌릴 것 — games-short.cjs 가 부른다):
 --   drop function if exists public.portal_short_pools();
 --   drop table if exists public.games_short_notices;      -- 알림 기록까지 지운다(B 구간 · 오너 OK)
+-- ============================================================
+
+-- ============================================================
+-- §46  판수 조정 요청 — 트레이너 요청 → 오너 디스코드 승인 → 반영 (2026-09-30 · 오너 최우선 · 계약 §9.10)
+--
+-- 오너 지시(9/30): 「판수 조정 요청: ±판수 · 종류(정정 · 보상 · 늦은 취소 3판 · 노쇼 5판) · 사유
+--   → 오너 디스코드 승인 카드 → 승인 시 반영 · 반려 시 트레이너 DM」. 10/1 잠금 뒤 /판수정정 을 대신한다.
+--
+-- games_adjust_requests — 요청 한 건 = 한 줄. 트레이너는 판수를 직접 고치지 않는다 — 승인 전에는 판수가 안 움직인다.
+--   remaining_delta = **남은 판수 기준**(+ 돌려줌 · − 뺌). 승인 때 lesson_sessions.games = −remaining_delta 로 한 줄 넣는다
+--   (/판수정정 과 같은 방식 — 진행 판수 기준 행 · 등록 귀속 없음).
+--   late_cancel = −3 · no_show = −5 고정(약관) · compensation = 양수만 · correction = ±.
+--   같은 내용(수강생 · 트레이너 · 종류 · 판수 · 날짜)의 대기 요청은 하나뿐(부분 유니크 — 두 번 누름 방지).
+-- decide_games_adjustment() — 승인 · 반려를 **한 트랜잭션**으로. 요청 줄을 잠그고 pending 일 때만 바꾼다 →
+--   카드 버튼을 두 번 눌러도 판수는 한 번만 들어간다. 반환 remainingAfter = 그 트레이너 기준 잔여(§41).
+--
+-- A 구간(새 표 · 새 함수 · 더하기만). 코드가 부르기 전까지는 아무 동작도 바꾸지 않는다.
+create table if not exists public.games_adjust_requests (
+  id                 bigint generated always as identity primary key,
+  student_id         bigint not null references public.students(id) on delete cascade,
+  trainer_id         bigint not null references public.staff(id),          -- 요청한 트레이너 = 판수가 움직일 트레이너 풀
+  kind               text   not null,
+  remaining_delta    int    not null,                                       -- 남은 판수 기준 ±
+  reason             text   not null,
+  played_at          date   not null,                                       -- 어느 날짜 판수로 넣을지(정정은 고칠 수업의 날짜)
+  target_session_id  bigint references public.lesson_sessions(id) on delete set null,   -- 정정 대상 수업(선택)
+  status             text   not null default 'pending',
+  owner_notified     boolean,                                               -- 승인 카드가 실제로 갔는가
+  created_at         timestamptz not null default now(),
+  decided_at         timestamptz,
+  decided_by         text,                                                  -- 'owner'(디스코드 카드) · 'owner_sql'
+  applied_session_id bigint references public.lesson_sessions(id) on delete set null,  -- 승인 때 넣은 판수 행
+  constraint gar_kind_chk   check (kind in ('correction','compensation','late_cancel','no_show')),
+  constraint gar_status_chk check (status in ('pending','approved','rejected','cancelled')),
+  constraint gar_delta_chk  check (remaining_delta <> 0 and remaining_delta between -50 and 50),
+  constraint gar_reason_chk check (char_length(reason) between 2 and 200),
+  constraint gar_kind_delta_chk check (
+       (kind = 'late_cancel'  and remaining_delta = -3)
+    or (kind = 'no_show'      and remaining_delta = -5)
+    or (kind = 'compensation' and remaining_delta > 0)
+    or  kind = 'correction')
+);
+create index if not exists ix_gar_trainer on public.games_adjust_requests (trainer_id, created_at desc);
+create unique index if not exists uq_gar_pending on public.games_adjust_requests
+  (student_id, trainer_id, kind, remaining_delta, played_at) where status = 'pending';
+alter table public.games_adjust_requests enable row level security;
+
+create or replace function public.decide_games_adjustment(p_request_id bigint, p_approve boolean, p_decided_by text)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_r   games_adjust_requests%rowtype;
+  v_sid bigint;
+  v_lbl text;
+begin
+  select * into v_r from games_adjust_requests where id = p_request_id for update;
+  if not found then
+    return jsonb_build_object('error', 'not_found');
+  end if;
+  if v_r.status <> 'pending' then
+    return jsonb_build_object('error', 'already_decided', 'status', v_r.status);
+  end if;
+
+  if p_approve then
+    v_lbl := case v_r.kind when 'correction' then '정정' when 'compensation' then '보상'
+                           when 'late_cancel' then '늦은 취소' else '노쇼' end;
+    insert into lesson_sessions (student_id, trainer_id, played_at, games, memo, created_by)
+    values (v_r.student_id, v_r.trainer_id, v_r.played_at, -v_r.remaining_delta,
+            '조정(' || v_lbl || '): ' || v_r.reason || ' (요청 #' || v_r.id || ')',
+            'adjreq:' || v_r.id)
+    returning id into v_sid;
+    update games_adjust_requests
+       set status = 'approved', decided_at = now(), decided_by = p_decided_by, applied_session_id = v_sid
+     where id = v_r.id;
+  else
+    update games_adjust_requests
+       set status = 'rejected', decided_at = now(), decided_by = p_decided_by
+     where id = v_r.id;
+  end if;
+
+  return jsonb_build_object(
+    'ok', true,
+    'status', case when p_approve then 'approved' else 'rejected' end,
+    'requestId', v_r.id, 'studentId', v_r.student_id, 'trainerId', v_r.trainer_id,
+    'kind', v_r.kind, 'remainingDelta', v_r.remaining_delta, 'playedAt', v_r.played_at,
+    'sessionId', v_sid,
+    'remainingAfter', portal_remaining_for_trainer(v_r.student_id, v_r.trainer_id));
+end;
+$$;
+
+-- ── 46b) 검증 ────────────────────────────────────────────────────────────────
+--   select proname, length(replace(prosrc, E'\r','')) as len, md5(replace(prosrc, E'\r','')) as md5
+--     from pg_proc where proname = 'decide_games_adjustment' and pronamespace = 'public'::regnamespace;
+--   select count(*) from public.games_adjust_requests;     -- = 0 (도입 직후)
+--   notify pgrst, 'reload schema';
+--
+--   ✅ 실행 완료 2026-09-30 11:3x KST (세션 실행 · A 구간). 실행 전 표 없음 · 함수 0개 → 후 표 1(14칸 · RLS 켜짐 ·
+--      인덱스 pkey + ix_gar_trainer + uq_gar_pending) · 함수 decide_games_adjustment 1588 · feb50a91448c1f9c9d9ff59dc1f5b950
+--      (정본 본문과 md5 일치). 판수 데이터 불변(수업 240행 · 판수 합 2867 실행 전후 같음) · 요청 0행.
+--      드라이런 9항목 통과 후 전부 되돌림(노쇼 승인 · 두 번 승인 · 보상 반려 · 대기 중복 · 종류별 판수 제약 4 · 없는 요청 · 정정 +3).
+--      ⚠️ 권한 좁히기(anon 실행 회수)는 오너 몫이다 — §44c 와 같은 목록에 이 함수도 넣는다.
+--
+-- 되돌리기(코드의 호출을 먼저 되돌릴 것 — trainer-lessons.cjs · server.js 승인 카드가 부른다):
+--   drop function if exists public.decide_games_adjustment(bigint, boolean, text);
+--   drop table if exists public.games_adjust_requests;    -- 요청 기록까지 지운다(B 구간 · 오너 OK)
+--   ⚠️ 승인으로 들어간 판수 행(lesson_sessions created_by 'adjreq:…')은 표를 지워도 남는다 — 판수 데이터라 따로 판단한다.
 -- ============================================================
