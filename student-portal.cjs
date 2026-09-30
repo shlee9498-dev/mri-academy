@@ -263,6 +263,9 @@ module.exports = function mountStudentPortal(app, deps) {
     if (rows.length !== 1) {
       return fail(res, 403, "account_link_pending");
     }
+    // 신청 창구 prospect(디스코드 로그인으로 명부에 올라온 신청자)는 등록(active) 뒤에 연다 — 오너 결정 2026-09-30 · 계약 §9.20.9.
+    //   앱 화면 문구는 「레벨 테스트가 끝나면 열려요」(앱 쪽). 등록되면 같은 디스코드로 바로 들어온다(연결 신청 없음).
+    if (rows[0].status === "prospect") return fail(res, 403, "application_pending");
 
     // 유휴 8h / 절대 24h 는 앱 쿠키가 관리한다. 서버 세션은 절대수명만 건다.
     const sid = issueSession(

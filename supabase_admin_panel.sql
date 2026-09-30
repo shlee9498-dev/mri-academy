@@ -4544,3 +4544,111 @@ notify pgrst, 'reload schema';
 --      같은 날 동의 1행 기록(오너 지시 — 학생 · 9/30 · 카톡 · apply + event · 이름 가림 · 재료 = 앱 복기 2건).
 --      학생 이름은 이 파일에 적지 않는다(개인정보 커밋 금지) — 행은 DB 에만 있다.
 -- ============================================================
+
+-- ============================================================
+-- §54 · §55  신청 창구 — event_codes · intake_applications · intake_cards (2026-09-30 · 오너 결정 8건 · 더하기만 = A 구간)
+--
+-- 설계 docs/intake-design.md · 계약 docs/trainer-portal-api.md §9.20. 신청 페이지 start.html 이 ?code= 로 이벤트를 붙이고,
+--   디스코드 로그인(guilds.join)으로 받은 id 로 명부 prospect + 신청 행을 만든다(intake-api.cjs).
+-- 오너 결정(9/30): 14세 미만은 저장하지 않는다(age check 14~99) · 배그 닉 · 플랫폼 필수 · 14~17세는 보호자 동의 확인 뒤에만 등록
+--   (guardian_verified_*) · 24시간 안 맡으면 재알림(reminded_at) · 레벨 테스트비 = 오너 카드 [입금 확인](deposit_*).
+-- 칩 값(tier · slots)은 DB 가 검사하지 않는다 — 명세 칩 이름이 바뀌어도 제약 교체(B 구간) 없이 코드만 고친다.
+-- 이벤트 할인 결제의 기록 칸(정가 · 할인액)은 결제 트랙이 정한다(설계 §4.3) — 이 블록에는 없다.
+-- ============================================================
+create table if not exists public.event_codes (
+  code            text primary key check (code ~ '^[A-Z0-9]{3,20}$'),
+  title           text not null check (char_length(title) between 1 and 60),
+  video_url       text,
+  discount_pct    integer not null default 0 check (discount_pct between 0 and 50),
+  target          text not null default 'first_payment' check (target in ('first_payment')),
+  starts_on       date not null,
+  ends_on         date not null,
+  pay_within_days integer not null default 7 check (pay_within_days between 1 and 60),
+  active          boolean not null default true,
+  memo            text,
+  created_by      text,
+  created_at      timestamptz not null default now(),
+  constraint chk_event_codes_window check (ends_on >= starts_on)
+);
+alter table public.event_codes enable row level security;
+comment on table public.event_codes is
+  '이벤트 코드 — §54. 한 줄 = 이벤트 하나. 신청 페이지 ?code= 로 붙는다. 레벨 테스트비는 할인하지 않는다(서버 규칙).';
+
+create table if not exists public.intake_applications (
+  id                   bigint generated always as identity primary key,
+  status               text not null default 'new'
+                       check (status in ('new','claimed','booked','paid','tested','enrolled','closed')),
+  student_id           bigint not null references public.students(id),
+  discord_id           text not null,
+  display_name         text,
+  guild_join           text check (guild_join is null or guild_join in ('joined','already','failed')),
+  real_name            text not null check (char_length(real_name) between 1 and 20),
+  age                  integer not null check (age between 14 and 99),
+  tier                 text,
+  tier_checked         text,
+  pubg_name            text not null,
+  pubg_platform        text not null check (pubg_platform in ('steam','kakao')),
+  pubg_account_id      text,
+  concern              text check (concern is null or char_length(concern) <= 200),
+  preferred_trainer_id bigint references public.staff(id),
+  slots                text[] not null default '{}',
+  slots_note           text check (slots_note is null or char_length(slots_note) <= 100),
+  event_code           text references public.event_codes(code),
+  utm                  jsonb,
+  privacy_version      text not null,
+  privacy_agreed_at    timestamptz not null,
+  assigned_trainer_id  bigint references public.staff(id),
+  claimed_at           timestamptz,
+  reminded_at          timestamptz,
+  booking_id           bigint references public.slot_bookings(id) on delete set null,
+  deposit_request_id   bigint references public.payment_requests(id) on delete set null,
+  deposit_confirmed_at timestamptz,
+  tested_at            timestamptz,
+  guardian_verified_at timestamptz,
+  guardian_verified_by text,
+  enrolled_at          timestamptz,
+  closed_reason        text check (closed_reason is null or closed_reason in ('duplicate','spam','no_reply','declined','no_show','other')),
+  closed_note          text,
+  created_at           timestamptz not null default now(),
+  updated_at           timestamptz not null default now()
+);
+create unique index if not exists uq_intake_open_per_discord on public.intake_applications (discord_id)
+  where status not in ('enrolled','closed');
+create index if not exists idx_intake_status  on public.intake_applications (status, created_at);
+create index if not exists idx_intake_code    on public.intake_applications (event_code) where event_code is not null;
+create index if not exists idx_intake_student on public.intake_applications (student_id);
+alter table public.intake_applications enable row level security;
+comment on table public.intake_applications is
+  '신청 창구 — §55. 신청 1건 = 1행. 실명 · 나이는 오너 전용(트레이너 응답에 내리지 않는다). 14세 미만은 저장하지 않는다.';
+
+create table if not exists public.intake_cards (
+  application_id     bigint not null references public.intake_applications(id) on delete cascade,
+  recipient_staff_id bigint not null references public.staff(id),
+  channel_id         text not null,
+  message_id         text not null,
+  created_at         timestamptz not null default now(),
+  primary key (application_id, recipient_staff_id)
+);
+alter table public.intake_cards enable row level security;
+comment on table public.intake_cards is
+  '신청 카드 위치 — §55. 누가 맡으면 다른 카드를 고치려고 둔다.';
+
+notify pgrst, 'reload schema';
+
+-- ── 54b · 55b) 검증 ─────────────────────────────────────────────────────────
+--   select table_name, count(*) from information_schema.columns where table_schema = 'public'
+--    and table_name in ('event_codes','intake_applications','intake_cards') group by 1;      -- 기대 12 · 35 · 5
+--   select conrelid::regclass, count(*) from pg_constraint
+--    where conrelid in ('public.event_codes'::regclass,'public.intake_applications'::regclass,'public.intake_cards'::regclass)
+--    group by 1;                                                                                -- 기대 7 · 15 · 3
+--   select relname, relrowsecurity from pg_class where relname in ('event_codes','intake_applications','intake_cards');  -- 기대 셋 다 true
+--
+-- 되돌리기: 코드(intake-api.cjs 마운트 · REQUIRED_SCHEMA 3줄)를 먼저 되돌린 뒤
+--   drop table if exists public.intake_cards, public.intake_applications, public.event_codes;   ← 지우는 DDL = B 구간(오너 OK)
+--   ⚠️ 신청이 들어온 뒤라면 명부 prospect 행(students · discord_src='intake')은 표를 지워도 남는다 — 따로 판단한다.
+--
+--   ✅ 실행 완료 2026-09-30 21:5x KST (세션 실행 · A 구간).
+--      실행 전: 세 표 없음 · public 표 75개 · 명부 95행(prospect 1).
+--      실행 후: event_codes 12칸 · 제약 7 · 인덱스 1 / intake_applications 35칸 · 제약 15 · 인덱스 5 / intake_cards 5칸 · 제약 3 ·
+--               인덱스 1 · RLS 셋 다 on · public 표 78개 · 명부 95행(prospect 1) 그대로.
+-- ============================================================
