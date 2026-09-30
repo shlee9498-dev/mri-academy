@@ -362,12 +362,18 @@ module.exports = function mountStudentPortal(app, deps) {
 
   // POST /payment-requests — { productKey, depositorName }
   app.post(`${PREFIX}/payment-requests`, rateLimit("portalPayreq", 10, 60_000),
-    bodyOnly(["productKey", "depositorName"]), requireStudent, wrap(async (req, res) => {
+    bodyOnly(["productKey", "depositorName", "trainerId"]), requireStudent, wrap(async (req, res) => {
       const list = await products();
       const p = list.find((x) => x.key === req.body?.productKey);
       if (!p) return fail(res, 400, "invalid_body");
       const depositor = String(req.body?.depositorName || "").trim().slice(0, 20);
       if (depositor.length < 2) return fail(res, 400, "invalid_body");
+      // 앱이 고른 트레이너(선택 · /summary remainingByTrainer · /availability 의 trainerId 와 같은 불투명 id)
+      let pickedTrainer = null;
+      if (req.body?.trainerId !== undefined && req.body?.trainerId !== null) {
+        pickedTrainer = readOpaqueId("trainer", req.body.trainerId);
+        if (!pickedTrainer) return fail(res, 400, "invalid_body");
+      }
 
       // 대기 중 신청이 있으면 또 받지 않는다 — 한 번 보내고 두 번 누르면 카드가 두 장 간다.
       const pending = await sbSelect("payment_requests",
@@ -377,9 +383,22 @@ module.exports = function mountStudentPortal(app, deps) {
       const stu = (await sbSelect("students",
         `select=name,trainer_id,discord_id&id=eq.${req.portal.sub}`))[0];
       if (!stu) return fail(res, 403, "account_link_pending");
+      // 어느 트레이너 판수로 들어갈지(계약 §9.5 · 오너 OK 2026-09-30) — 승인되면 이 트레이너로 등록이 생긴다(payreq_apply).
+      //   ① 앱이 고른 trainerId(활성 트레이너 · 오너만) ② 없으면 판수가 모자란 트레이너(여럿이면 가장 많이 모자란 쪽)
+      //   ③ 그것도 없으면 담당. 종전엔 늘 담당이라, 담당과 모자란 트레이너가 다르면 승인돼도 부족이 안 풀렸다.
+      let targetTrainer = null;
+      if (pickedTrainer) {
+        const t = (await sbSelect("staff", `select=id,role,active&id=eq.${pickedTrainer}&limit=1`))[0];
+        if (!t || t.active === false || !["trainer", "owner"].includes(t.role)) return fail(res, 400, "invalid_body");
+        targetTrainer = t.id;
+      } else {
+        const short = (await remainingByTrainer(req.portal.sub)).filter((r) => r.remaining < 0)
+          .sort((a, b) => a.remaining - b.remaining || a.trainerId - b.trainerId)[0];
+        targetTrainer = short?.trainerId ?? stu.trainer_id ?? null;
+      }
       let trainerName = "미배정", trainerDiscord = null;
-      if (stu.trainer_id) {
-        const t = await sbSelect("staff", `select=name,discord_id&id=eq.${stu.trainer_id}`);
+      if (targetTrainer) {
+        const t = await sbSelect("staff", `select=name,discord_id&id=eq.${targetTrainer}`);
         if (t[0]?.name) trainerName = t[0].name;
         trainerDiscord = t[0]?.discord_id || null;
       }
@@ -388,7 +407,7 @@ module.exports = function mountStudentPortal(app, deps) {
       try {
         row = await sbInsert("payment_requests", {
           student_id: req.portal.sub, student_name: stu.name,
-          trainer_id: stu.trainer_id ?? null, trainer_name: trainerName,
+          trainer_id: targetTrainer ?? null, trainer_name: trainerName,
           kind: p.kind, amount: p.amount, games: p.games,
           paid_on: kstToday(),
           // 입금자명은 memo 로 간다 — 전용 칸을 만들지 않는다(§18 표를 그대로 쓴다).

@@ -45,6 +45,8 @@ const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().
 
 module.exports = function mountBookingApi(app, deps) {
   const { sbSelect, sbRpc, limit, discordDM, portal, trainer } = deps;
+  // 판수가 움직인 뒤 부르는 훅(§45 판수 부족 알림 · server.js 가 준다) — 없으면 부르지 않는다(10분 점검이 대신 잡는다)
+  const onGamesChanged = typeof deps.onGamesChanged === "function" ? deps.onGamesChanged : null;
   const { readSession, opaqueId, readOpaqueId, fail, scrub } = portal;
   // 트레이너 판정(포털 세션 또는 사이트 JWT → staff 명부)과 응답 가드(scrubTrainer)는 trainer-portal.cjs 한 곳이 정본이다.
   const { requireTrainer: requireTrainerBase, sendTrainer } = trainer;
@@ -234,6 +236,7 @@ module.exports = function mountBookingApi(app, deps) {
       if (out?.error) return rpcFail(res, out.error);
 
       notifyBooking(slotId, req.portal.sub, "booked", out.gamesHeld).catch(() => {});
+      if (out.gamesHeld > 0) onGamesChanged?.([req.portal.sub]);     // §45 — 선차감으로 트레이너별 잔여가 음수가 됐는지
       send(res, { bookingId: opaqueId("booking", out.bookingId), gamesHeld: out.gamesHeld });
     }));
 
@@ -403,6 +406,7 @@ module.exports = function mountBookingApi(app, deps) {
       } catch { /* §41 미실행 */ }
 
       notifyAssigned(slotId, studentId, out.gamesHeld, req.staff.name).catch(() => {});
+      if (Number(out.gamesHeld) > 0) onGamesChanged?.([studentId]);  // §45 — 대신 넣은 선차감도 같다
       sendTrainer(res, {
         bookingId: opaqueId("booking", out.bookingId),
         gamesHeld: Number(out.gamesHeld || 0),
@@ -553,6 +557,11 @@ module.exports = function mountBookingApi(app, deps) {
         return rpcFail(res, out.already === "session" || out.hasSession
           ? "already_recorded" : "registration_missing");
       }
+      // §45 판수 부족 알림 — 기록으로 그 트레이너 잔여가 음수가 됐는지 본다. 응답은 기다리지 않는다.
+      if (out?.recorded && onGamesChanged)
+        sbSelect("slot_bookings", `select=student_id&id=eq.${bookingId}&limit=1`)
+          .then((r) => { if (r[0]?.student_id) onGamesChanged([r[0].student_id]); })
+          .catch((e) => console.error("short_hook", e?.message));
       sendTrainer(res, {
         resolved: true, status: "done",
         outcome: out?.recorded ? "recorded" : "closed_no_games",
