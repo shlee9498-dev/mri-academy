@@ -725,9 +725,12 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
     { "key": "lesson21",      "label": "21판 패키지",            "won": 90000,  "games": 21 },
     { "key": "lesson33",      "label": "33판 패키지",            "won": 140000, "games": 33 }
   ],
-  "depositorHint": "홍길동" }
+  "depositorHint": "홍길동",
+  "assignedTrainer": { "trainerId": "…", "trainerName": "준구" } }
 ```
 
+- `assignedTrainer` = 담당 트레이너(없거나 비활성이면 `null`). 입금 신청에서 **「담당 트레이너」를 고르면 이 `trainerId` 를 싣는다**
+  (반장 요청 9/30). `trainerId` 를 빼면 서버가 **가장 많이 모자란 트레이너**로 넣으므로(없으면 담당), 담당을 골랐는데 빼면 어긋난다.
 - 계좌는 **env** 에서 온다(`PAY_BANK_NAME` · `PAY_BANK_ACCOUNT` · `PAY_BANK_HOLDER`).
   셋 중 하나라도 없으면 **`bank` 키 자체가 없다**(`null` 이 아니다) — 앱은 계좌 영역을 숨기고
   「계좌는 트레이너에게 물어봐 주세요」. 신청 자체는 그대로 받는다.

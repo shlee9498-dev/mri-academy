@@ -1313,6 +1313,8 @@ if (process.env.DISCORD_TOKEN) {
   //      진단상담은 잠근다 — 앱 「완료」(레벨 테스트)가 consults 기록을 남기게 됐다(consult-record.cjs · 오너 OK 9/30).
   //      예약 없이 한 레벨 테스트는 오너에게 말한다(안내 문구).
   //
+  // 안내 문구의 버튼 이름은 트레이너 앱 실제 이름이다(반장 확인 9/30): 끝난 칸 「완료 · 기록하기」 · 안 끝난 칸 「수업 완료」 ·
+  //   「수업 기록하기」 · 「레벨 테스트 마침」 · 「판수 조정 요청」. 앱 이름이 바뀌면 여기도 바꾼다.
   // ⏸ **둘 다 보류(오너 지시 2026-09-30 「10/1 0시 잠금 보류」).** 앱에 「수업 기록하기(예약 없이)」와
   //    「판수 조정 요청(오너 승인 카드)」이 아직 없어서, 잠그면 디스코드로 약속한 수업 기록과 판수 정정이
   //    전부 오너에게 몰린다. 그 두 기능이 트레이너 앱 운영에 나간 날 **레슨 · /판수정정 을 함께** 켠다
@@ -1498,7 +1500,7 @@ if (process.env.DISCORD_TOKEN) {
     if (!isMriOwner(itx)) {
       if (guboon === "레슨" && lessonLockedAll())            // 강의는 그대로(위 LESSON_LOCK_ALL_FROM 주석)
         return itx.reply({
-          content: "10/1부터 수업 기록은 앱에서 해줘. 예약이 있으면 예약 카드의 「완료」, 예약 없이 한 수업은 「수업 기록하기」로 남기면 돼.",
+          content: "수업 기록은 이제 앱에서 해줘. 예약이 있으면 예약 카드의 「완료 · 기록하기」, 예약 없이 한 수업은 「수업 기록하기」로 남기면 돼.",
           ephemeral: true,
         });
       if (guboon === "진단상담" && lessonLockedAll())
@@ -1508,7 +1510,7 @@ if (process.env.DISCORD_TOKEN) {
         });
       if (isPersonalLesson && lessonLocked())
         return itx.reply({
-          content: "10/1부터 개인 수업 기록은 앱에서 해줘. 예약 카드에서 「완료」를 누르면 판수까지 들어가. 그룹 수업은 당분간 여기서 그대로 하면 돼.",
+          content: "개인 수업 기록은 이제 앱에서 해줘. 예약 카드에서 「완료 · 기록하기」를 누르면 판수까지 들어가. 그룹 수업은 당분간 여기서 그대로 하면 돼.",
           ephemeral: true,
         });
     }
@@ -1745,11 +1747,11 @@ if (process.env.DISCORD_TOKEN) {
         // 이미 기록된 수업(앱 「완료」가 먼저 남긴 판수)은 건너뛴 사실을 트레이너가 바로 봐야 한다 —
         // 회신에 안 쓰면 「등록했다」고 읽고 넘어가 버린다(§37 · 오너 지시 2026-09-28).
         if (dw && dw.dup && dw.dup.length) {
-          lines.push(`↳ 이미 기록된 수업이에요 — ${dw.dup.join(", ")} 은 앱 「완료」로 판수가 빠져 있어서 건너뛰었어`);
+          lines.push(`↳ 이미 기록된 수업이야 — ${dw.dup.join(", ")} 은 앱에 먼저 기록돼 있어서 건너뛰었어`);
           if (process.env.MRI_OWNER_ID) {
             try {
               const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
-              await owner.send(`/수업등록 중복 건너뜀 — ${trainer}: ${dw.dup.join(", ")} (앱 「완료」가 이미 기록한 날) · 같은 날 두 타임을 뛴 거면 판수 정정 필요`);
+              await owner.send(`/수업등록 중복 건너뜀 — ${trainer}: ${dw.dup.join(", ")} (앱에 먼저 기록된 날) · 같은 날 두 타임을 뛴 거면 판수 정정 필요`);
             } catch (e) { console.error("owner_dm_failed", e?.message); }
           }
         }
