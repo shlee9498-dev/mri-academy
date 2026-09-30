@@ -1018,3 +1018,109 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 
 - 판수는 DB 가 정한다(§47 `book_slot`). JS 표(`lesson-lengths.cjs`)와 DB 식이 같은지는 단위 시험이 매 커밋 대조한다.
 - 봇 `/수업등록` 「시간」 칸도 2시간 30분 · 3시간을 고를 수 있다. 사이트 차감 안내에도 두 길이를 더했다.
+
+## 9.12 오너 범위 · 직강 회차 — `GET /api/trainer-portal/students` ✅ **서버 구현 (2026-09-30 · 오너 지시 · 결제 묶음 다음 1순위)**
+
+오너(staff `role='owner'`)가 트레이너 앱에 로그인하면 지금은 담당 7명(직강생)만 보인다.
+**오너 계정이면 전체 수강생**을 내리고, 모든 계정에 **직강 회차**를 붙인다(직강생에게 「0판」 대신 회차).
+
+### 모든 계정 — `students[].courses` 추가
+
+```json
+"courses": [ { "level": "심화반", "scheme": "new", "status": "active",
+               "unitsTotal": 12, "completedUnits": 3, "remainingUnits": 9, "attendanceKnown": true,
+               "nextSession": { "date": "2026-10-04", "startTime": "14:00", "endTime": "17:00", "type": "direct" } } ]
+```
+
+- 강의(`courses`)가 `active` · `paused` 인 것만. 없으면 **빈 배열**.
+- 뜻은 수강생 앱 §7.1 과 같다. **`attendanceKnown === false` 면 `completedUnits` · `remainingUnits` 를 그리지 말 것** —
+  구 체계 강의는 출석 행이 없어(실측 강의 18개 · 출석 행 전체 5개) 0 이 「0회 진행」이 아니라 「미상」이다.
+  그때는 `unitsTotal` 만(예: 「심화반 12회」).
+- 표시 권장: `courses` 가 있고 `registeredGames` 가 0 이면 판수 대신 회차를 보인다. 둘 다 있으면 둘 다.
+- `nextSession` 은 예정 회차가 없으면 `null`. 계산은 수강생 앱 §7.1 과 **같은 함수**(`course-progress.cjs`)다.
+- `inMyScope`(boolean · **모든 계정**) — 기록 · 예약 · 일기 · 복기를 할 수 있는 범위(담당 ∪ 최근 90일)에 드는가.
+  트레이너 계정은 늘 `true`. 오너 계정의 `false` 행은 **보기만** — 쓰기 버튼을 감출 것(눌러도 403 `scope_denied`).
+  오너 범위를 넓힌 것은 **이 목록뿐**이다. 쓰기 범위는 그대로다(남의 수강생을 보는 것과 대신 기록하는 것은 다른 권한).
+
+### 오너 계정만 — 범위 · 추가 키
+
+- 최상위 `scope`: 오너 `"all"` · 트레이너 `"mine"`(지금과 같은 범위).
+- 최상위 `trainers`: `[{ "trainerKey": "…", "trainerName": "준구" }]` — 활성 트레이너 + 오너. **필터 칩**용.
+- 범위(오너): 상태 `active` · `paused` 전원(합친 명부 · `prospect` 제외) ∪ 최근 90일 수업이 있는 수강생 ∪ 진행 중 강의 수강생.
+  실측 약 80명 — 페이지 없이 한 번에 내린다. 정렬은 이름순. 트레이너 필터는 **앱이** `assignedTrainer.trainerKey` 로 거른다
+  (`null` = 「담당 없음」 칩).
+- 행마다 추가(오너만):
+
+| 키 | 타입 | null | 뜻 |
+|---|---|---|---|
+| `assignedTrainer` | `{ trainerKey, trainerName }` | **가능** | 담당(`students.trainer_id`). 없으면 null |
+| `remainingByTrainer` | `[{ trainerKey, trainerName, remaining }]` | 아니오 | 트레이너별 잔여 — 수강생 앱 `/summary` 의 같은 이름 배열과 **같은 식 · 같은 순서**(§41b). 잔여 0 인 트레이너 · 트레이너 없는 등록은 빠지고, 음수는 그대로, 잔여 내림차순. 빈 배열 가능 |
+| `appLinked` | boolean | 아니오 | 수강생 앱에 연결됐는가(디스코드 연결 · 실측 활성 75명 중 18명) |
+
+- 기존 키는 뜻이 같다. `isPrimary` = 오너 담당 여부 · `remainingMine` = 오너 몫. `registeredGames` 등 합계는 트레이너 없는 등록도 센다(종전 그대로).
+- ⚠️ 키 이름 `trainerKey` — 트레이너 응답 가드가 `trainerId` 를 **정확 일치로** 막는다(내부 id 누출 방벽). 값은 수강생 앱
+  `remainingByTrainer[].trainerId` 와 **같은 불투명 id** 다(같은 트레이너면 같은 문자열).
+
+## 9.13 원장 대시보드 최소판 — `GET /api/trainer-portal/owner/dashboard` ✅ **서버 구현 (2026-09-30 · 오너 전용)**
+
+#385 설계(`docs/owner-dashboard-alerts-design.md`)의 **최소판**이다 — 오늘 · 이번 주 전체 수업 · 처리 대기 · 트레이너별 표 · 색.
+금액 · 정산 카드는 없다(그래서 트레이너 포털에 둔다 · 금액이 붙는 전체판은 #385 대로 별도 게이트).
+
+- 인증: 트레이너 앱 세션 그대로. **`role='owner'` 가 아니면 403 `owner_only`**.
+- 질의: `?date=YYYY-MM-DD`(선택 · 기본 오늘 KST) — 그 날이 든 **월~일**이 「이번 주」다.
+
+```jsonc
+{
+  "asOf": "2026-10-01T02:00:00Z",
+  "today": "2026-10-01",
+  "week": { "from": "2026-09-28", "to": "2026-10-04" },
+  "cards": [
+    { "key": "pending",      "label": "처리 대기",     "value": 2,  "color": "red" },
+    { "key": "lessonsToday", "label": "오늘 수업",      "value": 5,  "color": null },
+    { "key": "lessonsWeek",  "label": "이번 주 수업",   "value": 18, "color": null },
+    { "key": "openSlots72h", "label": "72시간 열린 칸", "value": 40, "color": "green" }
+  ],
+  "lessons": [                                   // 이번 주 전체 · 날짜 · 시각순(오늘 것은 앱이 date 로 거른다)
+    { "key": "…", "kind": "booking", "date": "2026-10-01", "startAt": "2026-10-01T02:00:00Z", "durationMin": 60,
+      "lessonType": "personal", "trainerKey": "…", "trainerName": "현태",
+      "students": [ { "id": "…", "displayName": "…", "pubgName": null } ], "status": "booked" },
+    { "key": "…", "kind": "record", "date": "2026-09-30", "startAt": null, "durationMin": null,
+      "lessonType": null, "trainerKey": "…", "trainerName": "준구",
+      "students": [ … ], "games": 5, "source": "bot" },
+    { "key": "…", "kind": "course", "date": "2026-10-04", "startAt": "2026-10-04T05:00:00Z", "durationMin": 180,
+      "label": "…", "trainerKey": "…", "trainerName": "무리", "students": [ … ], "status": "scheduled" }
+  ],
+  "pending": [
+    { "kind": "payment_request",    "label": "입금 신청",     "count": 2, "oldestAt": "…", "color": "red" },
+    { "kind": "adjustment_request", "label": "판수 조정 요청", "count": 0, "oldestAt": null, "color": "green" },
+    { "kind": "link_request",       "label": "연결 신청",     "count": 0, "oldestAt": null, "color": "green" },
+    { "kind": "booking_review",     "label": "완료 확인 필요", "count": 0, "oldestAt": null, "color": "green" }
+  ],
+  "trainers": [
+    { "trainerKey": "…", "trainerName": "현태", "lessonsToday": 3, "lessonsWeek": 12, "gamesWeek": 55,
+      "openSlots72h": 20, "openSlots7d": 36, "assignedActive": 39, "needsReview": 0, "color": "yellow" }
+  ],
+  "thresholds": { "pendingRedHours": 6, "slotsRedWindowHours": 72, "slotsYellowWindowDays": 7 }
+}
+```
+
+- `lessons[].kind`
+  - `booking` = 예약(개인은 머리 예약 1건 = 수업 1개 · 그룹은 칸 1개 = 수업 1개 · 취소 제외).
+    `status` ∈ `booked` · `pending_review` · `done` · `no_show`(그룹은 가장 앞선 단계).
+  - `record` = **예약 없이 기록한 수업**(봇 `/수업등록` · 앱 「수업 기록하기」). 같은 날 · 같은 트레이너 · 같은 수강생의
+    `done` 예약이 있으면 그 예약과 같은 수업이라 빼고 센다. 그룹은 한 번에 넣은 행을 한 수업으로 묶는다. `games` = 1인 판수.
+    `source` ∈ `app` · `bot` · `manual`(오너 SQL · 이관). 판수 조정(`adjreq`) · 봇 `/판수정정` 행(양수 포함) · 0 이하 행은 수업이 아니라 뺀다.
+  - 레벨 테스트 예약도 `booking` 이다(`lessonType: "consult"`). 취소된 예약 · 칸 · 회차는 없다.
+  - `key` 는 목록 안에서 유일한 불투명 문자열(React key 용). `booking` 의 `key` 는 트레이너 칸 목록의 예약 id 와 같은 값이다(머리 예약).
+  - `course` = 직강 회차(`course_sessions`). `status` ∈ `scheduled` · `done` · `cancelled`.
+- `pending[].color` — 🔴 `red` = 가장 오래된 건이 **6시간 초과** · 🟡 `yellow` = 있음 · 🟢 `green` = 없음(#385 §1.2).
+  `booking_review` 는 수업 단위로 센다(그룹은 칸 하나 = 1건) · `oldestAt` = 수업이 끝난 시각. 부를 때마다 48시간 경과 예약을 먼저 옮긴다(트레이너 칸 목록과 같다).
+- 열린 칸 = 지금부터 창 안 · `open` · 자리가 남은 칸(그룹은 예약 수 < 정원) · **레벨 테스트 칸 제외**. `?date` 와 무관하게 지금 기준이다(처리 대기도 같다).
+- `?date` 형식이 틀리면 400 `invalid_body`. `trainers[]` 순서 = 트레이너 이름순 · 오너 마지막(`/students` 의 `trainers` 와 같다).
+  `booking_review` = 끝났는데 「완료」를 안 누른 예약(`pending_review`).
+- `trainers[]` — 활성 트레이너 + 오너. `gamesWeek` = 이번 주 기록 판수 합(조정 제외). `assignedActive` = 담당 활성 수강생 수.
+  `color`: 🔴 72시간 열린 칸 0 · 🟡 7일 열린 칸 < 담당 활성 수 또는 `needsReview` > 0 · 🟢 나머지.
+  **오너 행은 열린 칸 기준을 쓰지 않는다**(직강만 해서 칸을 열지 않는다 — 늘 🔴 이 되면 소음이다).
+- `color` 값은 `red` · `yellow` · `green` · `null`(색 없는 카드). 기준값은 `thresholds` 로 같이 내린다
+  (#385 전체판에서 `ops_settings` 표로 옮긴다 — 앱 배포 없이 바꾸려고).
+- 수강생 색(#385 §1.1 · 잔여 · 활동 기준)은 **이번 최소판에 없다** — 오너 판정 1건(「첫 구매 판수」 정의) 뒤 전체판에서.

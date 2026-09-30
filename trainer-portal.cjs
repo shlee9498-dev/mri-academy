@@ -42,6 +42,23 @@ const OPTIONAL_TABLES = ["lesson_journals", "journal_feedback", "lesson_session_
 // KST 날짜. server.js kstToday() · booking-api kstDate() 와 같은 식.
 const kstDate = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
 
+// 직강 회차(계약 §9.12)는 수강생 앱 §7.1 과 같은 함수 · 원장 대시보드(§9.13) 판정은 ops-status 한 벌(#385 ⓞ).
+const courseProgress = require("./course-progress.cjs");
+const ops = require("./ops-status.cjs");
+
+// 전 기간을 읽는 조회는 쪼개 읽는다 — PostgREST 는 max-rows(Supabase 기본 1,000)에서 **조용히** 자른다.
+// 오너 범위(전체 수강생)의 수업 행이 지금 249행이고 월 ~100행씩 는다. 잘리면 잔여가 틀린 채로 보인다.
+// 1,000행 미만이 오면 끝으로 본다(한도가 1,000 미만으로 바뀌면 이 값도 같이 내린다).
+const PAGE_ROWS = 1000;
+async function selectAll(sbSelect, table, query) {
+  const out = [];
+  for (let offset = 0; ; offset += PAGE_ROWS) {
+    const rows = await sbSelect(table, `${query}&order=id.asc&limit=${PAGE_ROWS}&offset=${offset}`);
+    out.push(...rows);
+    if (rows.length < PAGE_ROWS) return out;
+  }
+}
+
 // ── 응답 금지 필드 가드(트레이너용) ──
 // 수강생 scrub() 과 **대상이 다르다**: 저쪽은 "수강생 앱에 신원을 흘리지 않는다"라 student·name 어간을
 // 막지만, 트레이너 화면은 누구인지 보는 것이 목적이다. 대신 여기서는 연락처·계좌·금액·memo 를 막는다.
@@ -71,7 +88,7 @@ function scrubTrainer(value, path = "$") {
 }
 
 module.exports = function mountTrainerPortal(app, deps) {
-  const { sbSelect, sbInsert, sbUpsert, limit, getUser, portal } = deps;
+  const { sbSelect, sbInsert, sbUpsert, sbRpc, limit, getUser, portal } = deps;
   const { readSession, issueSession, opaqueId, readOpaqueId, fail, sharedSecretGate } = portal;
   const TRAINER = "/api/trainer-portal";
 
@@ -170,6 +187,41 @@ module.exports = function mountTrainerPortal(app, deps) {
   }
   const idList = (map) => [...map.keys()].join(",");
 
+  // ── 오너 범위(계약 §9.12): active · paused 전원(합친 행 · prospect 제외) ∪ 최근 90일 수업 ∪ 진행 중 강의 ──
+  // **목록(GET /students)에만** 쓴다. 일기 · 예약 · 기록 · 복기의 범위는 그대로 scopedStudents(담당 ∪ 90일)다 —
+  // 남의 수강생을 보는 것과 그 수강생 수업을 대신 기록하는 것은 다른 권한이라, 행마다 inMyScope 로 앱에 알린다.
+  // 반환: scopedStudents 와 같은 모양 + trainer_id · discord_id(appLinked 판정용 · 값은 응답에 싣지 않는다) · inMyScope
+  async function ownerScope(staffId) {
+    const since = kstDate(Date.now() - SCOPE_WINDOW_DAYS * 86400_000);
+    const cols = "select=id,name,status,carry_games,pubg_name,trainer_id,discord_id";
+    const [mine, base, recent, courses] = await Promise.all([
+      scopedStudents(staffId),
+      sbSelect("students", `${cols}&status=in.(active,paused)&merged_into=is.null`),
+      selectAll(sbSelect, "lesson_sessions", `select=student_id&played_at=gte.${since}`),
+      sbSelect("courses", "select=student_id&status=in.(active,paused)"),
+    ]);
+    const map = new Map(base.map((s) => [s.id, s]));
+    const extra = [...new Set([...recent, ...courses].map((r) => r.student_id))].filter((id) => id && !map.has(id));
+    if (extra.length) {
+      for (const s of await sbSelect("students", `${cols}&id=in.(${extra.join(",")})&merged_into=is.null`)) map.set(s.id, s);
+    }
+    for (const s of map.values()) {
+      s.isPrimary = mine.get(s.id)?.isPrimary === true;     // 담당 = 오너 본인 담당(active · paused) — 트레이너와 같은 뜻
+      s.inMyScope = mine.has(s.id);
+    }
+    return map;
+  }
+
+  // staff 명부 전체(5행 규모) — 이름 표 · 필터 칩(활성 트레이너 + 오너)용. 연락처 칸은 읽지 않는다.
+  async function staffBook() {
+    const rows = await sbSelect("staff", "select=id,name,role,active");
+    const names = Object.fromEntries(rows.map((r) => [r.id, r.name]));
+    const coaches = rows.filter((r) => r.active !== false && (r.role === "trainer" || r.role === "owner"))
+      .sort((a, b) => (a.role === "owner") - (b.role === "owner") || String(a.name).localeCompare(String(b.name), "ko"));
+    return { names, coaches };
+  }
+  const trainerRef = (names, tid) => ({ trainerKey: opaqueId("trainer", tid), trainerName: names[tid] || "미배정" });
+
   // ════════════════ POST /exchange ════════════════
   // Discord access token → /users/@me 재검증 → staff.discord_id 정확일치·active → scope trainer 세션.
   // 토큰은 이 호출에서만 쓰이고 저장·로그하지 않는다. 명부에 없거나 비활성이면 403 not_staff(게이트의
@@ -214,26 +266,38 @@ module.exports = function mountTrainerPortal(app, deps) {
 
   // ════════════════ GET /students ════════════════
   // 범위 내 수강생 1인 1행. 판수 4종은 벌크 4쿼리로 계산한다(학생당 RPC 를 돌리지 않는다).
+  // 오너 계정(staff.role='owner')은 전체 수강생 · 필터 칩 · 트레이너별 잔여 · 연결 여부를 더 받는다(계약 §9.12).
+  // 모든 계정에 직강 회차(courses)와 inMyScope 를 붙인다.
   app.get(`${TRAINER}/students`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
-    const scope = await scopedStudents(req.staff.id);
-    if (!scope.size) return sendTrainer(res, { students: [] });
+    const owner = req.staff.role === "owner";
+    const [scope, book] = await Promise.all([
+      owner ? ownerScope(req.staff.id) : scopedStudents(req.staff.id),
+      owner ? staffBook() : Promise.resolve(null),
+    ]);
+    const head = owner
+      ? { scope: "all", trainers: book.coaches.map((t) => trainerRef(book.names, t.id)) }
+      : { scope: "mine" };
+    if (!scope.size) return sendTrainer(res, { ...head, students: [] });
     const ids = idList(scope);
 
     // trainer_id 를 셋 다 싣는다 — remainingMine(계약 §9.2)을 **같은 벌크 조회에서** 뽑으려는
     // 것이고, 학생당 RPC(§41)를 돌리지 않는다는 이 라우트의 원칙을 지키기 위해서다.
     // ⚠️ 식은 §41 portal_remaining_for_trainer() 와 같아야 한다 — 한쪽만 고치면 트레이너
     //    화면의 숫자와 예약 판정이 갈린다.
-    const [enrolls, sessions, held] = await Promise.all([
-      sbSelect("lesson_enrollments",
+    // 전 기간 조회라 쪼개 읽는다(selectAll) — 오너 범위는 전체 수업 행을 읽는다.
+    const [enrolls, sessions, held, courseMap] = await Promise.all([
+      selectAll(sbSelect, "lesson_enrollments",
         `select=student_id,games_total,trainer_id&student_id=in.(${ids})&status=in.(${ENROLL_STATUSES.join(",")})`),
-      sbSelect("lesson_sessions",
+      selectAll(sbSelect, "lesson_sessions",
         `select=student_id,games,played_at,trainer_id&student_id=in.(${ids})`),
       bookingReady
-        ? sbSelect("slot_bookings",
+        ? selectAll(sbSelect, "slot_bookings",
             `select=student_id,games_held,trainer_slots!inner(trainer_id)`
             + `&student_id=in.(${ids})&status=in.(${HELD_STATUSES.join(",")})`)
             .catch(() => [])
         : Promise.resolve([]),
+      // 직강 회차 — 진행 중 강의만(active · paused). 수강생 앱 §7.1 과 같은 함수다.
+      courseProgress.loadCourseProgress(sbSelect, { studentIds: [...scope.keys()], statuses: ["active", "paused"] }),
     ]);
     const sum = (rows, key) => {
       const m = {};
@@ -255,12 +319,40 @@ module.exports = function mountTrainerPortal(app, deps) {
     const regMine = sum(enrolls.filter((r) => r.trainer_id === req.staff.id), "games_total");
     const heldMine = sum(held.filter((r) => r.trainer_slots?.trainer_id === req.staff.id), "games_held");
 
+    // ── 트레이너별 잔여(오너만 · 계약 §9.12) ──
+    // §41b portal_remaining_by_trainer() 를 같은 벌크 행으로 푼 것이다 — 트레이너 집합은 등록 · 수업 · 선차감이 있는
+    // 트레이너와 (이월이 있으면) 담당. 트레이너 없는 행 · 잔여 0 은 빠지고 잔여 내림차순 · 같으면 id 순(수강생 앱과 같은 순서).
+    const perTrainer = new Map();
+    if (owner) {
+      const bump = (sid, tid, n) => {
+        if (tid == null) return;
+        if (!perTrainer.has(sid)) perTrainer.set(sid, new Map());
+        const m = perTrainer.get(sid);
+        m.set(tid, (m.get(tid) || 0) + n);
+      };
+      for (const r of enrolls) bump(r.student_id, r.trainer_id, Number(r.games_total || 0));
+      for (const r of sessions) bump(r.student_id, r.trainer_id, -Number(r.games || 0));
+      for (const r of held) bump(r.student_id, r.trainer_slots?.trainer_id, -Number(r.games_held || 0));
+      for (const s of scope.values()) if (Number(s.carry_games || 0) !== 0) bump(s.id, s.trainer_id, Number(s.carry_games));
+    }
+    const byTrainerOf = (sid) => [...(perTrainer.get(sid) || new Map())]
+      .filter(([, rem]) => rem !== 0)
+      .sort((a, b) => b[1] - a[1] || a[0] - b[0])
+      .map(([tid, rem]) => ({ ...trainerRef(book.names, tid), remaining: rem }));
+
+    const byName = (a, b) => String(a.name).localeCompare(String(b.name), "ko");
     const students = [...scope.values()]
-      .sort((a, b) => (a.isPrimary === b.isPrimary ? String(a.name).localeCompare(String(b.name), "ko") : a.isPrimary ? -1 : 1))
+      // 트레이너: 담당 먼저 · 이름순(종전 그대로) · 오너: 이름순(전체라 담당 구분이 필터 칩으로 간다)
+      .sort(owner ? byName : (a, b) => (a.isPrimary === b.isPrimary ? byName(a, b) : a.isPrimary ? -1 : 1))
       .map((s) => {
         const reg = Number(s.carry_games || 0) + (registered[s.id] || 0);
         const pl = played[s.id] || 0;
         const hd = heldBy[s.id] || 0;
+        const ownerOnly = owner ? {
+          assignedTrainer: s.trainer_id == null ? null : trainerRef(book.names, s.trainer_id),
+          remainingByTrainer: byTrainerOf(s.id),
+          appLinked: !!s.discord_id,        // 수강생 앱 연결 여부만 — id 값은 싣지 않는다(가드가 discord 어간을 막는다)
+        } : {};
         return {
           id: opaqueId("student", s.id),
           displayName: s.name,
@@ -277,9 +369,144 @@ module.exports = function mountTrainerPortal(app, deps) {
           remainingMine: (s.isPrimary ? Number(s.carry_games || 0) : 0)
             + (regMine[s.id] || 0) - (byMe[s.id] || 0) - (heldMine[s.id] || 0),
           lastLessonOn: last[s.id] || null,
+          // 직강 회차(§9.12) — attendanceKnown=false 면 completedUnits · remainingUnits 를 그리지 말 것(구 체계 = 미상)
+          courses: courseMap.get(s.id) || [],
+          // 기록 · 예약 · 일기 · 복기를 할 수 있는 범위(담당 ∪ 최근 90일)에 드는가. 트레이너 계정은 늘 true ·
+          // 오너 계정의 false 행은 **보기만** — 앱은 쓰기 버튼을 감춘다(누르면 403 scope_denied).
+          inMyScope: owner ? s.inMyScope : true,
+          ...ownerOnly,
         };
       });
-    sendTrainer(res, { students });
+    sendTrainer(res, { ...head, students });
+  }));
+
+  // ════════════════ GET /owner/dashboard ════════════════
+  // 원장 대시보드 최소판(계약 §9.13 · #385 설계의 최소판) — 오늘 · 이번 주 전체 수업 · 처리 대기 · 트레이너별 표 · 색.
+  // **금액 · 정산은 없다**(그래서 트레이너 포털 · scrubTrainer 뒤에 둔다 — 금액 키가 섞이면 가드가 throw 한다).
+  // 판정은 ops-status.cjs 한 벌이다(다음 단계 특이사항 알림 크론도 같은 함수를 부른다 · #385 ⓞ).
+  app.get(`${TRAINER}/owner/dashboard`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
+    if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
+    const q = req.query.date;
+    if (q !== undefined && !ops.isRealDate(q)) return fail(res, 400, "invalid_body");
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const today = q || ops.kstDate(nowMs);
+    const week = ops.weekOf(today);
+    const weekStart = ops.kstStartIso(week.from);
+    const weekEnd = ops.kstStartIso(ops.addDays(week.to, 1));
+    const slotsUntil = new Date(nowMs + ops.THRESHOLDS.slotsYellowWindowDays * 86400_000).toISOString();
+
+    // ① 한 파동 — 「완료 확인 필요」가 최신이 되게 sweep 도 같이 돌린다(트레이너 칸 목록과 같다 · 실패해도 계속).
+    //    예약은 sweep 이 끝난 ② 에서 읽는다.
+    const [book, weekSlots, openSlots, sessions, courseSessions, assignedRows, payreqs, adjreqs, linkreqs] = await Promise.all([
+      staffBook(),
+      // 칸은 30분 단위라 한 주에 수백 행이 된다 — 쪼개 읽는다(두 트레이너가 하루 12시간씩 열면 주 670행대)
+      selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min"
+        + `&status=neq.cancelled&slot_start=gte.${weekStart}&slot_start=lt.${weekEnd}`),
+      // 열린 칸 = 지금부터 7일 · status open · 상담(레벨 테스트) 칸 제외(수업 칸 공급을 본다)
+      selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,capacity"
+        + `&status=eq.open&lesson_type=neq.consult&slot_start=gte.${nowIso}&slot_start=lt.${slotsUntil}`),
+      // memo 는 /판수정정 행을 거르는 데만 쓴다 — 응답에 싣지 않는다(가드가 memo 어간을 막는다)
+      selectAll(sbSelect, "lesson_sessions", "select=id,student_id,trainer_id,played_at,games,created_by,created_at,memo"
+        + `&played_at=gte.${week.from}&played_at=lte.${week.to}`),
+      sbSelect("course_sessions", "select=id,held_on,start_time,duration_min,label,status"
+        + `&held_on=gte.${week.from}&held_on=lte.${week.to}`),
+      sbSelect("students", "select=trainer_id&status=eq.active&merged_into=is.null&trainer_id=not.is.null"),
+      sbSelect("payment_requests", "select=created_at&status=eq.pending"),
+      sbSelect("games_adjust_requests", "select=created_at&status=eq.pending"),
+      sbSelect("student_link_requests", "select=created_at&status=eq.pending"),
+      sbRpc ? sbRpc("sweep_pending_review", {}).catch((e) => console.error("dashboard_sweep", e?.message)) : null,
+    ]);
+
+    // ② 예약(이번 주 칸) · 완료 확인 필요 · 그룹 열린 칸의 남은 자리 · 직강 출석
+    //    이번 주 예약은 칸 id 목록 대신 칸 시각으로 묶어 읽는다(칸이 수백 개면 in.() 주소가 길어진다).
+    const groupOpen = openSlots.filter((s) => Number(s.capacity || 1) > 1).map((s) => s.id);
+    const csIds = courseSessions.map((c) => c.id);
+    const [bookings, reviewRows, groupTaken, attendance] = await Promise.all([
+      weekSlots.length
+        ? selectAll(sbSelect, "slot_bookings", "select=id,slot_id,student_id,status,span_head_id,duration_min,trainer_slots!inner(slot_start)"
+            + `&status=neq.cancelled&trainer_slots.slot_start=gte.${weekStart}&trainer_slots.slot_start=lt.${weekEnd}`)
+        : [],
+      sbSelect("slot_bookings", "select=id,slot_id,duration_min,trainer_slots!inner(trainer_id,slot_start,duration_min,lesson_type)"
+        + "&status=eq.pending_review&span_head_id=is.null"),
+      groupOpen.length ? sbSelect("slot_bookings", `select=slot_id&status=eq.booked&slot_id=in.(${groupOpen.join(",")})`) : [],
+      csIds.length ? sbSelect("course_attendance", `select=session_id,course_id&session_id=in.(${csIds.join(",")})`) : [],
+    ]);
+    const cids = [...new Set(attendance.map((a) => a.course_id))];
+    const courses = cids.length
+      ? await sbSelect("courses", `select=id,student_id,trainer_id,level&id=in.(${cids.join(",")})`)
+      : [];
+
+    const lessons = ops.buildLessons({ slots: weekSlots, bookings, sessions, courseSessions, attendance, courses });
+
+    // 그룹 칸은 자리가 남아야 열린 칸이다(개인 칸은 예약되면 closed 가 되므로 open = 빈 칸).
+    const taken = {};
+    for (const b of groupTaken) taken[b.slot_id] = (taken[b.slot_id] || 0) + 1;
+    const freeSlots = openSlots.filter((s) => Number(s.capacity || 1) <= 1 || (taken[s.id] || 0) < Number(s.capacity));
+
+    // 완료 확인 필요 — 그룹은 칸 하나가 수업 하나라 칸으로 묶어 센다. 기다린 시각 = 수업이 끝난 시각.
+    const reviewByLesson = new Map();
+    for (const b of reviewRows) {
+      const s = b.trainer_slots;
+      const k = s.lesson_type === "personal" ? `b${b.id}` : `s${b.slot_id}`;
+      const mins = Number((s.lesson_type === "personal" ? b.duration_min : s.duration_min) || 30);
+      if (!reviewByLesson.has(k)) reviewByLesson.set(k, { trainerId: s.trainer_id, endedAt: new Date(Date.parse(s.slot_start) + mins * 60_000).toISOString() });
+    }
+    const review = {};
+    for (const r of reviewByLesson.values()) review[r.trainerId] = (review[r.trainerId] || 0) + 1;
+    const assigned = {};
+    for (const r of assignedRows) assigned[r.trainer_id] = (assigned[r.trainer_id] || 0) + 1;
+
+    const pending = ops.buildPending({
+      payment_request: payreqs.map((r) => r.created_at),
+      adjustment_request: adjreqs.map((r) => r.created_at),
+      link_request: linkreqs.map((r) => r.created_at),
+      booking_review: [...reviewByLesson.values()].map((r) => r.endedAt),
+    }, nowMs);
+    const rows = ops.buildTrainerRows({
+      trainers: book.coaches, lessons, sessions, openSlots: freeSlots, assigned, review, today, nowMs,
+    });
+
+    // 수업에 나오는 수강생 이름 — 한 번에(오너 화면이라 전원 볼 수 있다 · 합친 행도 이름은 보인다)
+    const sids = [...new Set(lessons.flatMap((l) => l.studentIds))];
+    const stu = {};
+    if (sids.length) for (const s of await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})`)) stu[s.id] = s;
+    const KEY_KIND = { booking: "booking", record: "session", course: "course_session" };
+    const apiLesson = (l) => {
+      const base = {
+        key: opaqueId(KEY_KIND[l.kind], l.ref), kind: l.kind, date: l.date, startAt: l.startAt, durationMin: l.durationMin,
+        trainerKey: l.trainerId == null ? null : opaqueId("trainer", l.trainerId),
+        trainerName: l.trainerId == null ? null : (book.names[l.trainerId] || "미배정"),
+        students: l.studentIds.map((id) => ({
+          id: opaqueId("student", id), displayName: stu[id]?.name || "?", pubgName: stu[id]?.pubg_name || null,
+        })),
+      };
+      if (l.kind === "booking") return { ...base, lessonType: l.lessonType, status: l.status };
+      if (l.kind === "record") return { ...base, lessonType: null, games: l.games, source: l.source };
+      return { ...base, label: l.label, status: l.status };
+    };
+
+    sendTrainer(res, {
+      asOf: nowIso,
+      today,
+      week,
+      cards: [
+        { key: "pending", label: "처리 대기", value: pending.reduce((n, p) => n + p.count, 0), color: ops.worst(pending.map((p) => p.color)) },
+        { key: "lessonsToday", label: "오늘 수업", value: lessons.filter((l) => l.date === today).length, color: null },
+        { key: "lessonsWeek", label: "이번 주 수업", value: lessons.length, color: null },
+        { key: "openSlots72h", label: "72시간 열린 칸", value: rows.reduce((n, r) => n + r.openSlots72h, 0),
+          color: ops.worst(rows.map((r) => r.slotColor)) },
+      ],
+      lessons: lessons.map(apiLesson),
+      pending,
+      trainers: rows.map((r) => ({
+        ...trainerRef(book.names, r.id),
+        lessonsToday: r.lessonsToday, lessonsWeek: r.lessonsWeek, gamesWeek: r.gamesWeek,
+        openSlots72h: r.openSlots72h, openSlots7d: r.openSlots7d,
+        assignedActive: r.assignedActive, needsReview: r.needsReview, color: r.color,
+      })),
+      thresholds: ops.THRESHOLDS,
+    });
   }));
 
   // ════════════════ GET /journals?days=30 ════════════════
