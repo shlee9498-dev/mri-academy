@@ -288,6 +288,63 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 - 9/30 실측: 값이 나오는 수강생 13명(RP 변화 −17 ~ +628) — 나머지는 null(두 칸)이 정상이다.
 - 수강생 `scrub` 통과(정규화 `growth` · `rpdelta30` · `tiernow` · `games30` · `asof`).
 
+### 7.3 판수 요약 보강 — `GET /api/student-portal/summary` → `lesson` (2026-09-30 · 오너 확정 · 반장 요청 11 · 12)
+
+기존 키는 뜻 그대로다. 아래 셋이 더 붙는다.
+
+```json
+"lesson": { "registeredGames": 54, "playedGames": 50, "remainingGames": 4, "status": "ok",
+            "lessonGames": 45, "adjustedGames": 5,
+            "currentPacks": [ { "trainerId": "…", "trainerName": "현태", "size": 33, "remaining": 1, "total": 4 } ] }
+```
+
+| 키 | 타입 | null | 뜻 |
+|---|---|---|---|
+| `registeredGames` | integer | 아니오 | **누적 등록**(이월 포함 · 등록 상태 active · done · paused) — 「누적 등록」에 그대로 쓴다 |
+| `playedGames` | integer | 아니오 | 수업 + 판수 조정 순합(종전 뜻 그대로 · 노쇼 · 늦은 취소 포함) |
+| `lessonGames` | integer | 아니오 | **누적 수업** — 수업 행만(판수 조정 · 되돌림 행 제외). 「누적 수업」은 이걸 쓴다 |
+| `adjustedGames` | integer | 아니오 | 조정 순합(`+` = 더 뺌: 노쇼 · 늦은 취소 · 정정 · `−` = 돌려줌: 보상 · 정정). `lessonGames + adjustedGames = playedGames` |
+| `currentPacks` | array | 아니오 | 트레이너별 **지금 쓰는 묶음**. 빈 배열 가능 |
+
+`currentPacks[]` — 「지금 쓰는 33판 묶음 중 1판 남았어요」 + 막대에 쓴다.
+
+| 키 | 뜻 |
+|---|---|
+| `size` | 지금 쓰는 묶음 크기(산 판수 · 10 · 21 · 33 …). 이월은 맨 앞 묶음 하나로 친다 |
+| `remaining` | 그 묶음에 남은 판수. 다 쓰고 넘친 경우 0 이하 |
+| `total` | 그 트레이너 기준 전체 잔여(= `remainingByTrainer[].remaining`) — 뒤에 안 쓴 묶음이 있으면 `remaining` 보다 크다 |
+
+- 먼저 산 묶음부터 쓴다. 쓴 판수 = 수업 + 조정 + 예약 선차감(잔여와 같은 축).
+- 순서 = `remainingByTrainer` 와 같다(잔여 내림차순). 트레이너가 한 명이면 한 줄뿐이다 — 막대는 `[0]` 을 쓴다.
+- 등록 · 이월이 없는 트레이너는 빠진다.
+
+### 7.4 판수 내역 — `GET /api/student-portal/games-ledger` (2026-09-30 · 반장 요청 13 · 설계 `docs/games-ledger-api-design.md`)
+
+잔여 판수의 **모든 증감을 한 줄씩**. 수강생이 스스로 검산하는 화면이다.
+
+```jsonc
+{
+  "remaining": 4,            // = /summary lesson.remainingGames
+  "mismatch": false,         // 마지막 balance ≠ remaining 이면 true(서버 로그 · 화면은 그대로 그린다)
+  "rows": [
+    { "at": "2026-07-20", "kind": "carry",  "games": 12, "balance": 12, "trainerId": "…", "trainerName": "현태", "label": "이월",      "voided": false },
+    { "at": "2026-08-02", "kind": "enroll", "games": 21, "balance": 33, "trainerId": "…", "trainerName": "현태", "label": "21판 등록", "voided": false },
+    { "at": "2026-08-05", "kind": "lesson", "games": -5, "balance": 28, "trainerId": "…", "trainerName": "현태", "label": "수업",      "voided": false },
+    { "at": "2026-09-30", "kind": "adjust", "games": -5, "balance": 23, "trainerId": "…", "trainerName": "현태", "label": "노쇼",      "voided": false },
+    { "at": "2026-10-02", "kind": "hold",   "games": -5, "balance": 18, "trainerId": "…", "trainerName": "현태", "label": "예약 10/2 20:00", "voided": false }
+  ]
+}
+```
+
+- `kind` ∈ `carry`(이월) · `enroll`(등록) · `lesson`(수업) · `adjust`(판수 조정) · `hold`(예약 선차감)
+- `games` 부호 — `+` 늘어남(등록 · 이월 · 보상 · 돌려받은 정정) · `−` 줄어듦(수업 · 노쇼 · 늦은 취소 · 선차감).
+- 날짜순 · 같은 날은 이월 → 등록 → 수업 → 조정 → 예약. `balance` = 누계.
+- `adjust` 의 `label` ∈ `정정` · `늦은 취소` · `노쇼` · `보상` · `기타`. 24시간 안에 되돌린 조정은 **두 줄 다 빠진다**(합 0).
+- 취소된 등록은 지우지 않는다 — `games: 0` · `voided: true`.
+- `/sessions`(수업 목록)에서는 **판수 조정 행이 빠진다**(9/30 부터) — 수업이 아니라서다. 조정은 이 내역에서만 보인다.
+  미작성 일기 수(`pendingJournalCount`)도 조정 행을 세지 않는다.
+- 트레이너 앱은 같은 모양을 `GET /api/trainer-portal/students/:id/games-ledger` 로 받는다(§9.15 · 키만 `trainerKey`).
+
 ## 8. 수업 복기 API (§29 · PR-1·PR-2 = 수강생 포털 · PR-3 = 트레이너 포털 · 2026-09-25)
 
 > 오너 지시(9/25): 복기 계약은 이 문서에 둔다. **PR-1·PR-2 는 수강생 앱이 부르는 `/api/student-portal/*` 라우트**다. **트레이너 포털 복기 라우트는 PR-3 = §8.9**(`/api/trainer-portal/*`).
@@ -955,6 +1012,8 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 
 ## 9.10 판수 조정 요청 ✅ **운영 (2026-09-30 · 서버 #414 · 트레이너 앱 #32 d5c6feb)** · 오너 디스코드 승인 카드 → 승인 때만 반영
 
+> ⚠️ **2026-09-30 오너 확정으로 흐름이 바뀐다 → §9.18**(±10판 이하 바로 반영 · 기타 칩 · 24시간 되돌리기 · 잠긴 달). 아래는 승인 요청(11판 이상) 경로로 그대로 남는다.
+
 트레이너는 판수를 **직접 고치지 않는다.** 요청을 올리면 오너에게 승인 카드가 가고, **오너가 승인한 때만** 판수가 움직인다.
 반려되면 요청한 트레이너에게 DM 이 간다. 10/1 잠금 뒤 봇 `/판수정정` 을 대신한다.
 
@@ -1147,3 +1206,159 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 - `color` 값은 `red` · `yellow` · `green` · `null`(색 없는 카드). 기준값은 `thresholds` 로 같이 내린다
   (#385 전체판에서 `ops_settings` 표로 옮긴다 — 앱 배포 없이 바꾸려고).
 - 수강생 색(#385 §1.1 · 잔여 · 활동 기준)은 **이번 최소판에 없다** — 오너 판정 1건(「첫 구매 판수」 정의) 뒤 전체판에서.
+
+## 9.14 수강생 목록 개편 — `GET /students` 추가 키 (2026-09-30 · 오너 확정 · 반장 요청 1~6)
+
+**모든 계정**(트레이너 · 오너) 행에 아래가 붙는다. 기존 키는 뜻 그대로다.
+
+| 키 | 타입 | null | 뜻 |
+|---|---|---|---|
+| `listState` | `"active"` · `"hold"` · `"done"` | 아니오 | 목록 탭 — 진행 중 · 보류 · 종료. **서버가 매번 판정**(저장하지 않는다) |
+| `holdSince` | date | **가능** | 보류가 시작된 날. `hold` 일 때만 |
+| `endedOn` | date | **가능** | 「종료」를 누른 날(§9.17). `done` 일 때만 |
+| `level` | `"advanced"` · `"intermediate"` · `"beginner"` | **가능** | 심화 · 중급 · 초급. `null` = 미분류 |
+| `levelSource` | `"course"` · `"set"` | **가능** | `course` = 직강 반 레벨(자동 · 못 바꾼다) · `set` = 트레이너 · 원장 · 레벨 테스트가 정함 · `null` = 미분류 |
+| `nextBooking` | `{ startAt }` | **가능** | 다음 예약(잡힌 예약 · 지금 이후 · 가장 빠른 것). 트레이너 = 나와의 예약 · 오너 = 누구와든 |
+| `currentPack` | `{ size, remaining, total }` | **가능** | 지금 쓰는 묶음 — **내 판수 기준**(§9.2 `remainingMine` 과 같은 축). 줄에 「`remaining`/`size`」(예 「1/33」) |
+| `appLinked` | boolean | 아니오 | 수강생 앱 연결 여부(종전 오너만 → **모든 계정**) |
+| `assignedTrainer` | `{ trainerKey, trainerName }` | **가능** | 담당 트레이너(종전 오너만 → **모든 계정**) |
+
+- 최상위 `trainers`(`[{ trainerKey, trainerName }]` · 활성 트레이너 + 원장)도 **모든 계정**에 내린다.
+- **색 점** = 트레이너 색이다. 서버는 색 값을 주지 않는다 — 앱이 `trainers[]` 순서로 색을 정하고 행은
+  `assignedTrainer.trainerKey` 로 칠한다(`null` = 담당 없음 색). 수강생 개별 색은 없다.
+- 레벨 묶음 순서는 앱이 정렬한다: `advanced` → `intermediate` → `beginner` → `null`(미분류).
+- 오너 행만 `packsByTrainer: [{ trainerKey, trainerName, size, remaining, total }]` — 트레이너별 지금 묶음.
+  집합 · 순서는 `remainingByTrainer` 와 같다. 트레이너 칩을 고르면 그 트레이너 줄을, 「전체」면 `[0]` 을 쓴다.
+  오너 행의 `currentPack` 은 **원장 본인 몫**이다(`remainingMine` 과 같은 뜻).
+
+### `listState` 판정 (오너 확정 9/30)
+
+| 값 | 조건 |
+|---|---|
+| `done` 종료 | 트레이너가 「종료」를 눌렀고(§9.17) **그 뒤에** 새 수업 · 새 등록 · 잡힌 예약이 없다. 생기면 자동으로 풀린다 |
+| `hold` 보류 | 잡힌 예약이 없고, 기준일 **다음 날부터 14일이 지났다**(기준일 + 15일째부터). 기준일 = 마지막 수업일(판수 조정 행 제외) → 없으면 가장 최근 등록 시작일 → 없으면 명부 등록일 |
+| `active` 진행 중 | 나머지. 예약이나 수업이 생기면 보류에서 자동으로 돌아온다 |
+
+- 트레이너 계정 = **나와의** 기록 기준(마지막 수업 · 예약 · 등록 · 종료 모두 나). 병행수강생은 다른 트레이너와 수업해도
+  내 목록에선 보류일 수 있다 — 나와의 흐름이 멈췄다는 뜻이다.
+- 오너 계정 = 누구와든 기준. 진행 중 직강(active · paused)이 있으면 늘 `active`. `done` 은 관계있는 트레이너(등록 · 수업 · 담당)
+  **전원**이 종료했을 때.
+- **`status` 와 다르다.** `status`(active · paused · done)는 **명부 상태**다 — 오너 · 봇(`/수료처리`)이 바꾸는 수강 등록 자체의 상태.
+  `listState` 는 트레이너 앱 탭 — 수업 흐름을 매번 계산한 값이다. 둘은 따로 논다(명부 done 인데 최근 90일 수업이 있어
+  목록에 뜨면 `listState` 는 그 수업 기준이다). 「쉬는 중」 수동 버튼은 없다(오너 확정 — 보류는 자동).
+
+### `currentPack` (지금 쓰는 묶음 · 반장 요청 4 — **내 판수 기준**으로 정했다)
+
+- 묶음 = 등록 한 건(산 판수 10 · 21 · 33 …). 이월(`carry_games`)은 맨 앞 묶음 하나(담당 트레이너 몫).
+- **먼저 산 묶음부터** 쓴다. 쓴 판수 = 수업 + 조정 + 예약 선차감 — `remainingMine` 과 같은 축이라 `total` = `remainingMine`.
+- 예: 21판 두 묶음을 사고 25판 썼다 → `{ size: 21, remaining: 17, total: 17 }` · 33판 묶음에서 32판 썼다 → 「1/33」.
+- 다 쓰고 넘쳤으면 마지막 묶음 기준이다(`remaining` = `total` ≤ 0). 내 등록 · 이월이 없으면 `null`.
+- 합계 기준이 아닌 이유: 예약 판정이 트레이너별 잔여를 본다(§9.2). 합계로 「1/33」을 보이면 병행수강생에서 예약 결과와 어긋난다.
+
+## 9.15 수강생 상세 — `GET /students/:id` · `GET /students/:id/games-ledger` (2026-09-30 · 반장 요청 7)
+
+범위: 트레이너 = 담당 ∪ 최근 90일(밖이면 403 `scope_denied`) · 오너 = 전체(합친 명부 제외 · 없으면 404 `not_found`).
+
+```jsonc
+{
+  "student": { /* §9.14 의 한 행과 같은 모양 */ },
+  "games": {
+    "registeredGames": 54, "lessonGames": 40, "adjustedGames": 5, "playedGames": 45,
+    "heldGames": 5, "remainingGames": 4,
+    "byTrainer": [
+      { "trainerKey": "…", "trainerName": "현태", "registered": 54, "lessonGames": 40, "adjustedGames": 5,
+        "held": 5, "remaining": 4, "currentPack": { "size": 21, "remaining": 4, "total": 4 } }
+    ]
+  },
+  "canEnd": false
+}
+```
+
+- `registeredGames` = **누적 등록**(이월 포함) · `lessonGames` = **누적 수업**(조정 제외) · `adjustedGames` = 조정 순합 ·
+  `playedGames` = 둘의 합(종전 뜻) · `remainingGames` = 합계 잔여(종전 `/students` 와 같다).
+- `byTrainer` — 등록 · 수업 · 선차감 · 이월 중 하나라도 있는 트레이너 전원(잔여 0 포함). 잔여 내림차순.
+  `remaining` 은 §41 트레이너별 잔여와 같은 식이다.
+- `canEnd` — 내 판수(`remainingMine`)가 0 이하라 「종료」(§9.17)를 누를 수 있는가.
+- **판수 내역**: `GET /students/:id/games-ledger` → 수강생 앱 §7.4 와 같은 모양(트레이너 키는 `trainerKey`). 되돌린 조정도
+  **보인다**(트레이너 화면은 검산용이라 두 줄 다 남긴다 · 수강생 화면만 뺀다).
+
+## 9.16 레벨 — `PUT /students/:id/level` · 레벨 테스트 「완료」 (2026-09-30 · 오너 확정 · 반장 요청 8)
+
+```json
+PUT /api/trainer-portal/students/:id/level   { "level": "intermediate" }   → { "level": "intermediate", "levelSource": "set" }
+```
+
+- `level` ∈ `"advanced"` · `"intermediate"` · `"beginner"` · `null`(미분류로 되돌림). 그 밖은 400 `invalid_body`.
+- 누가: **트레이너 = 내 범위(담당 ∪ 최근 90일) 수강생 · 원장(오너) = 전체**. 범위 밖 403 `scope_denied`.
+- **직강생**(진행 중 강의 active · paused)은 409 `level_from_course` — 반 레벨(심화반 → advanced …)이 자동으로 따라간다.
+- 레벨 테스트 「완료」 — `POST /bookings/:id/complete` body 에 `level`(선택 · 같은 값 집합)을 실을 수 있다.
+  **레벨 테스트 예약에만** — 다른 예약에 실으면 400 `invalid_body`. 응답에 `levelApplied`(boolean · 직강생이면 false).
+- 바뀐 기록은 `admin_audit` 에 남는다(누가 · 언제 · 전 → 후).
+
+## 9.17 종료 · 주간 보류 DM (2026-09-30 · 오너 확정)
+
+- `POST /students/:id/end` → `{ "listState": "done", "endedOn": "2026-10-01" }`
+  - **내 판수(`remainingMine`)가 0 이하일 때만.** 남아 있으면 409 `games_left` `{ "remaining": 3 }`.
+  - 범위 = 내 범위(담당 ∪ 최근 90일). 원장 계정도 **원장 본인 몫** 기준이다.
+- `DELETE /students/:id/end` → 종료 취소(잘못 눌렀을 때) → `{ "listState": "…" }`(다시 판정한 값).
+- 새 수업 · 새 등록 · 잡힌 예약이 생기면 **자동으로 풀린다**(누를 필요 없음 · §9.14 판정).
+- **주간 DM** — 매주 월요일 10:00 KST. 트레이너(원장 포함)마다 **지난 7일 안에 보류로 넘어간 내 수강생**을 한 번에 보낸다.
+  없으면 보내지 않는다. 앱은 할 일 없음.
+
+## 9.18 판수 직접 조정 — §9.10 흐름 변경 (2026-09-30 · 오너 확정 · 판수 계산 변경 OK · 반장 요청 9 · 10)
+
+**트레이너가 자기 수강생 · 자기 판수를 바로 조정한다.** 한 번에 **±10판 이하 = 바로 반영**, 넘으면 종전처럼 오너 승인 카드.
+
+**POST /adjustments** — body 는 §9.10 그대로 + `kind` 에 `other`(기타)가 더해진다. `reason`(2~200자) 필수는 그대로.
+
+| `kind` | 칩 | `remainingDelta` |
+|---|---|---|
+| `correction` | 정정 | ±1~50 |
+| `late_cancel` | 늦은 취소 | 보내지 않음 → −3 |
+| `no_show` | 노쇼 | 보내지 않음 → −5 |
+| `compensation` | 보상 | +1~50 |
+| `other` | 기타 | ±1~50 |
+
+- 트레이너: `|remainingDelta|` ≤ 10 → **바로 반영**(`status: "applied"`) · 11 이상 → 오너 승인 요청(`status: "pending"` · 종전 카드).
+- 원장(오너) 계정: 늘 바로 반영(±50까지 · 자기 자신에게 승인 카드를 보내지 않는다).
+- **늘리는(+) 조정**은 바로 반영돼도 오너에게 알림 DM(승인 불필요 · 특이사항).
+- **정산이 끝난 달**(잠긴 달)의 날짜면 409 `period_locked` `{ "period": "2026-09" }` — 그 달은 원장만 조정한다.
+  수업 기록하기(§9.9)도 같다.
+- `booking_exists` · `request_pending` · `scope_denied` 는 §9.10 그대로.
+
+**응답** — 바로 반영
+
+```json
+{ "requestId": "…", "status": "applied", "kind": "no_show", "remainingDelta": -5, "playedAt": "2026-10-01",
+  "remainingBefore": 12, "remainingAfter": 7, "revertibleUntil": "2026-10-02T03:10:00Z", "ownerNotified": false }
+```
+
+- `remainingBefore` · `remainingAfter` = 그 트레이너 기준 잔여(§41). `ownerNotified` = + 조정 알림이 갔는가(− 조정은 false).
+- 승인 요청(`pending`)의 응답은 §9.10 그대로다.
+
+**GET /adjustments** — 트레이너 = 내 조정 최근 30건 · 원장 = **전 트레이너** 최근 50건(+ `trainer: { trainerKey, trainerName }`).
+행마다 §9.10 키 + 아래:
+
+| 키 | 뜻 |
+|---|---|
+| `status` | `pending` · `applied`(바로 반영) · `approved`(오너 승인으로 반영) · `rejected` · `cancelled` · `reverted` |
+| `mode` | `direct`(바로) · `approval`(승인 요청) |
+| `remainingBefore` · `remainingAfter` | 반영 전 → 후(그 트레이너 기준 · 반영 전이면 null) |
+| `revertibleUntil` | 되돌릴 수 있는 마감(ISO) · 못 되돌리면 null |
+| `revertedAt` | 되돌린 시각 · 없으면 null |
+
+**POST /adjustments/:id/revert** → `{ "status": "reverted", "remainingAfter": 12 }`
+
+- **원장 승인 대상이 아니다.** 내가 **바로 반영한** 조정만 · 반영 뒤 **24시간 안**만.
+- 오너가 승인한 조정(11판 이상)은 되돌리기 없음 — 409 `not_revertible`(새 조정으로 바로잡는다).
+- 24시간 지남 409 `revert_window_passed` · 이미 되돌림 409 `already_reverted` · 잠긴 달 409 `period_locked`.
+  원장 계정은 24시간 제한이 없다.
+- 되돌리기는 판수 행을 **지우지 않고 반대 행을 넣는다** — 그 행에 달린 기록이 사라지지 않게. 수강생 판수 내역에서는
+  둘 다 빠진다(§7.4).
+- `DELETE /adjustments/:id`(대기 요청 취소)는 §9.10 그대로 — 대기(`pending`) 요청만.
+
+**기록 · 표시**
+- 조정 1건 = 요청 한 줄에 누가 · 언제 · 종류 · 사유 · 전 → 후 · 되돌림까지 남는다.
+- 수강생 앱: `/summary` 잔여가 바로 바뀌고 판수 내역(§7.4)에 「조정」 줄로 바로 보인다.
+- 예약 → 「완료」 차감은 그대로다. 단 **같은 날 판정에서 조정 행을 뺀다**(DDL §50) — 오늘 날짜로 조정한 뒤 오늘 예약
+  「완료」를 누르면 종전에는 「이미 기록됨」으로 판수 없이 닫혔다(봇 · 앱 수업 기록하기는 이미 조정 행을 빼고 있었다).
