@@ -18,6 +18,8 @@
 // ============================================================
 
 const crypto = require("crypto");
+// 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 2026-09-30) — 판정은 순수 함수 모듈 한 벌(server.js 오너 카드와 공유).
+const payreqIntake = require("./payreq-intake.cjs");
 
 // 신규 DDL(정본 4.2) 미실행 상태에서도 읽기 경로는 동작해야 한다 — 제목은 "미정",
 // 일기·피드백은 없음으로 degrade한다. 쓰기(PUT journal)만 503으로 막는다.
@@ -33,6 +35,8 @@ module.exports = function mountStudentPortal(app, deps) {
 
   // ── 오류 응답: 항상 { error: { code } } 한 형태. 메시지·상세 없음(부록 A) ──
   const fail = (res, status, code) => res.status(status).json({ error: { code } });
+  // 부가 정보는 error 안에 싣는다(trainer-lessons.cjs 와 같은 모양) — 예: 409 recent_duplicate { requestId, requestedAt }
+  const failWith = (res, status, code, extra) => res.status(status).json({ error: { code, ...extra } });
   // 429 도 같은 형태(rate_limited). 공용 limit() 기본 본문 { error: "too_many_requests" } 는 부록 A 가
   // 아니라 앱이 임시 매핑하고 있었다(앱 #11). Retry-After 헤더는 limit() 이 그대로 싣는다.
   const rateLimit = (name, max, windowMs) =>
@@ -310,26 +314,9 @@ module.exports = function mountStudentPortal(app, deps) {
   //    읽기만 한다. 숫자를 여기 베끼면 인상할 때 화면마다 다른 값이 보인다(그 파일이 있는 이유).
   //    ESM 이라 동적 import 로 한 번만 읽어 캐시한다(server.js 는 CJS).
   //
-  // 앱에서 팔 수 있는 상품만 연다 — 승인 시 **본표 편입이 자동인 것**(판수)뿐이다.
-  // 강의·세트·직강은 §18d 에서 수동이라 자동 입구를 열면 승인 뒤 아무 일도 안 일어난 것처럼 보인다.
-  // 레벨 테스트(consultCourse)는 뺐다(오너 2026-09-30) — 수강생 앱은 기존 수강생 전용이고,
-  // 레벨 테스트 신규는 사이트 · 디스코드로 받는다. 목록 밖 키라 POST /payment-requests 도 400 이다.
-  const PORTAL_PRODUCTS = [
-    { key: "lesson10",      kind: "판수", games: 10 },
-    { key: "lesson21",      kind: "판수", games: 21 },
-    { key: "lesson33",      kind: "판수", games: 33 },
-  ];
-  let priceBook = null;
-  async function products() {
-    if (priceBook) return priceBook;
-    try {
-      const m = await import("./config/payments.js");
-      priceBook = PORTAL_PRODUCTS
-        .filter((p) => Number.isInteger(m.PRICES?.[p.key]))
-        .map((p) => ({ ...p, label: m.PRODUCT_LABELS?.[p.key] || p.key, amount: m.PRICES[p.key] }));
-    } catch (e) { console.error("payinfo_prices", e?.message); priceBook = []; }
-    return priceBook;
-  }
+  // 앱에서 팔 수 있는 상품(판수 3종)과 가격 읽기는 payreq-intake.cjs 한 벌이다 — server.js 오너 카드도 같은 목록을 본다.
+  //   레벨 테스트(consultCourse)는 뺐다(오너 2026-09-30). 목록 밖 키라 POST /payment-requests 도 400 이다.
+  const products = () => payreqIntake.loadProducts();
 
   // 계좌는 **env 로만** 온다. 코드·저장소에 계좌번호를 두지 않는다(저장소 규칙).
   // 미설정이면 bank 키 자체가 없다 — 앱은 계좌 안내를 감추고 신청은 그대로 받는다.
@@ -349,6 +336,16 @@ module.exports = function mountStudentPortal(app, deps) {
     const missing = ["PAY_BANK_NAME", "PAY_BANK_ACCOUNT", "PAY_BANK_HOLDER"].filter((k) => !process.env[k]);
     console.log(`[pay-info] 계좌 안내 ${missing.length ? `꺼짐 — 없는 env: ${missing.join(", ")}` : "켜짐(env 3개 확인)"}`);
   }
+  // 카드(그로블) 링크 — env 로만 온다(오너가 넣는다 · 계약 §9.5). 링크가 있는 상품만 카드를 받는다.
+  //   기동 로그에는 **env 이름과 개수만** 남긴다. https:// 가 아닌 값은 켜지 않고 이름만 알린다.
+  const cardLinks = () => payreqIntake.cardLinksFromEnv(process.env).links;
+  {
+    const { links, missing, bad } = payreqIntake.cardLinksFromEnv(process.env);
+    const n = Object.keys(links).length;
+    console.log(`[pay-info] 카드 링크 ${n ? `켜짐(${n}개)` : "꺼짐"}`
+      + (missing.length && n ? ` · 없는 env: ${missing.join(", ")}` : "")
+      + (bad.length ? ` · 형식 틀림(https:// 아님): ${bad.join(", ")}` : ""));
+  }
 
   const kstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
 
@@ -367,23 +364,31 @@ module.exports = function mountStudentPortal(app, deps) {
       const t = (await sbSelect("staff", `select=id,name,active&id=eq.${tid}&limit=1`))[0];
       if (t && t.active !== false) assignedTrainer = { trainerId: opaqueId("trainer", t.id), trainerName: t.name || "담당 트레이너" };
     }
+    const links = cardLinks();
+    const cardFor = Object.fromEntries(list.filter((p) => links[p.key]).map((p) => [p.key, links[p.key]]));
     send(res, {
       ...(bank ? { bank } : {}),
+      // won · games 는 1개(단가) 값이다. 합계는 서버가 신청 때 단가 × 수량으로 정한다.
       products: list.map((p) => ({ key: p.key, label: p.label, won: p.amount, games: p.games })),
+      quantityMax: payreqIntake.QUANTITY_MAX,
+      // 계좌이체 합계가 이 금액 이상이면 앱이 현금영수증 번호 입력을 권한다(필수 아님).
+      cashReceipt: { recommendFromWon: payreqIntake.CR_RECOMMEND_FROM_WON },
+      // 카드 링크가 하나도 없으면 card 키 자체가 없다 — 앱은 카드 선택지를 숨긴다.
+      ...(Object.keys(cardFor).length ? { card: { links: cardFor } } : {}),
       // 입금자명 기본값 — 명부 이름. 다른 이름으로 보냈으면 화면에서 고쳐 보낸다.
       depositorHint: stu[0]?.name || null,
       assignedTrainer,
     });
   }));
 
-  // POST /payment-requests — { productKey, depositorName }
+  // POST /payment-requests — { productKey, quantity?, method?, depositorName | orderNo, cashReceipt?, trainerId?, confirmDuplicate? }
+  //   계약 §9.5(2026-09-30 묶음) — 판정은 payreq-intake.cjs 한 벌. 금액 · 판수는 본문에 없다(bodyOnly 가 400).
   app.post(`${PREFIX}/payment-requests`, rateLimit("portalPayreq", 10, 60_000),
-    bodyOnly(["productKey", "depositorName", "trainerId"]), requireStudent, wrap(async (req, res) => {
+    bodyOnly([...payreqIntake.PAYREQ_KEYS]), requireStudent, wrap(async (req, res) => {
       const list = await products();
-      const p = list.find((x) => x.key === req.body?.productKey);
-      if (!p) return fail(res, 400, "invalid_body");
-      const depositor = String(req.body?.depositorName || "").trim().slice(0, 20);
-      if (depositor.length < 2) return fail(res, 400, "invalid_body");
+      const parsed = payreqIntake.parsePayreqBody(req.body, { products: list, links: cardLinks() });
+      if (!parsed.ok) return fail(res, 400, parsed.code);
+      const p = parsed.product;
       // 앱이 고른 트레이너(선택 · /summary remainingByTrainer · /availability 의 trainerId 와 같은 불투명 id)
       let pickedTrainer = null;
       if (req.body?.trainerId !== undefined && req.body?.trainerId !== null) {
@@ -391,10 +396,23 @@ module.exports = function mountStudentPortal(app, deps) {
         if (!pickedTrainer) return fail(res, 400, "invalid_body");
       }
 
-      // 대기 중 신청이 있으면 또 받지 않는다 — 한 번 보내고 두 번 누르면 카드가 두 장 간다.
-      const pending = await sbSelect("payment_requests",
-        `select=id&student_id=eq.${req.portal.sub}&status=eq.pending&limit=1`);
-      if (pending.length) return fail(res, 409, "request_pending");
+      // 대기 중 신청이 있어도 새 신청은 받는다(오너 지시 2026-09-30 · 종전 409 request_pending 폐지).
+      // 막는 건 **방금 같은 신청** 하나 — 같은 상품 · 같은 금액이 10분 안에 또 오면 앱이 한 번 확인받는다.
+      if (!parsed.confirmDuplicate) {
+        const since = new Date(Date.now() - payreqIntake.RECENT_DUP_MS).toISOString();
+        const recent = await sbSelect("payment_requests",
+          `select=id,status,kind,games,amount,created_at&student_id=eq.${req.portal.sub}`
+          + `&created_at=gte.${encodeURIComponent(since)}&status=in.(pending,approved)&order=id.desc&limit=10`);
+        const dup = payreqIntake.recentDuplicate(recent, { kind: p.kind, games: parsed.games, won: parsed.won });
+        if (dup) return failWith(res, 409, "recent_duplicate",
+          { requestId: opaqueId("payreq", dup.id), requestedAt: dup.created_at });
+      }
+      // 같은 그로블 주문번호 두 번 금지(대기 · 승인). 반려된 번호는 다시 쓸 수 있다. DB 부분 유니크(§49)가 경합도 막는다.
+      if (parsed.method === "card") {
+        const used = await sbSelect("payment_requests",
+          `select=id&pay_channel=eq.groble&deposit_ref=eq.${encodeURIComponent(parsed.orderNo)}&status=in.(pending,approved)&limit=1`);
+        if (used.length) return fail(res, 409, "order_used");
+      }
 
       const stu = (await sbSelect("students",
         `select=name,trainer_id,discord_id&id=eq.${req.portal.sub}`))[0];
@@ -419,22 +437,31 @@ module.exports = function mountStudentPortal(app, deps) {
         trainerDiscord = t[0]?.discord_id || null;
       }
 
+      const isCard = parsed.method === "card";
       let row;
       try {
         row = await sbInsert("payment_requests", {
           student_id: req.portal.sub, student_name: stu.name,
           trainer_id: targetTrainer ?? null, trainer_name: trainerName,
-          kind: p.kind, amount: p.amount, games: p.games,
+          kind: p.kind, amount: parsed.won, games: parsed.games, quantity: parsed.quantity,
           paid_on: kstToday(),
-          // 입금자명은 memo 로 간다 — 전용 칸을 만들지 않는다(§18 표를 그대로 쓴다).
-          memo: `앱 입금 신청 · 입금자 ${depositor}`,
+          // 채널을 적는다 — 승인 때 §18d 가 이 값으로 수수료(그로블 4.84%)를 기록한다. 종전 앱 신청은 null(= 계좌이체).
+          pay_channel: isCard ? "groble" : "transfer",
+          deposit_ref: isCard ? parsed.orderNo : null,
+          // 입금자명은 memo 로 간다 — 전용 칸을 만들지 않는다(§18 표를 그대로 쓴다). 카드는 주문번호가 deposit_ref 에 있다.
+          memo: isCard ? "앱 카드 결제 신청" : `앱 입금 신청 · 입금자 ${parsed.depositor}`,
+          // 현금영수증 번호 원문은 이 칸 한 곳에만 둔다(계약 §9.5 — 오너 카드만 원문 · 나머지 뒤 4자리).
+          cash_receipt_purpose: parsed.cashReceipt?.purpose ?? null,
+          cash_receipt_number: parsed.cashReceipt?.number ?? null,
           // "app:<명부 id>" = 앱에서 수강생이 낸 신청이라는 표시다. server.js 승인 처리가 이걸 보고
           // 결과 통보를 **수강생에게 요체로** 보낸다 — 트레이너용 반말 통보가 수강생에게 가지 않게.
           // (이 칸은 원래 신청 트레이너의 디코 id 다. 그 경로는 그대로다.)
           requested_by: `app:${req.portal.sub}`,
         });
       } catch (e) {
-        console.error("portal_payreq_insert", e?.message);
+        let code = null; try { code = JSON.parse(e?.body || "{}").code; } catch { /* 본문 없음 */ }
+        if (code === "23505" && isCard) return fail(res, 409, "order_used");      // 사전 조회와 경합 — 부분 유니크가 잡았다
+        console.error("portal_payreq_insert", e?.message);                          // 번호 원문은 본문에 없다(오류 메시지뿐)
         return fail(res, 503, "portal_unavailable");
       }
 
@@ -442,37 +469,49 @@ module.exports = function mountStudentPortal(app, deps) {
       const notified = await deps.payreqCard?.(row).catch(() => false);
       // 담당 트레이너에게도 한 통(계약 §9.6). 운영진 대상이라 반말, 돈 문구라 이모지 없이.
       // 승인은 오너가 하고 트레이너는 알고만 있으면 된다 — 실패해도 신청은 끝난 것이다.
-      deps.discordDM?.(trainerDiscord,
-        `입금 신청이 들어왔어 — ${stu.name} ${p.label} ${p.amount.toLocaleString("ko-KR")}원, 오너가 통장 확인 중이야`)
+      // ⚠️ 현금영수증 번호는 트레이너 DM 에 싣지 않는다(계약 §9.5).
+      const what = parsed.quantity > 1 ? `${p.label} × ${parsed.quantity}(${parsed.games}판)` : p.label;
+      deps.discordDM?.(trainerDiscord, isCard
+        ? `카드 결제 신청이 들어왔어 — ${stu.name} ${what} ${parsed.won.toLocaleString("ko-KR")}원, 오너가 그로블 주문 확인 중이야`
+        : `입금 신청이 들어왔어 — ${stu.name} ${what} ${parsed.won.toLocaleString("ko-KR")}원, 오너가 통장 확인 중이야`)
         ?.catch?.(() => {});
       send(res, {
         requestId: opaqueId("payreq", row.id),
         status: "pending",
-        won: p.amount,
+        quantity: parsed.quantity,
+        games: parsed.games,
+        won: parsed.won,
+        method: parsed.method,
         ownerNotified: notified === true,
       });
     }));
 
   // GET /payment-requests — 내 신청 내역(최근 20건). 「승인 기다리는 중」 화면이 쓴다.
+  //   현금영수증은 뒤 4자리 · 발급 여부만 내린다(원문은 오너 카드만 — 계약 §9.5).
   app.get(`${PREFIX}/payment-requests`, requireStudent, wrap(async (req, res) => {
     const [rows, list] = await Promise.all([
       sbSelect("payment_requests",
-        `select=id,status,kind,amount,games,paid_on,created_at&student_id=eq.${req.portal.sub}`
-        + `&order=id.desc&limit=20`),
+        "select=id,status,kind,amount,games,quantity,pay_channel,paid_on,created_at,"
+        + "cash_receipt_purpose,cash_receipt_number,cash_receipt_issued_at"   // 번호는 뒤 4자리를 만들 때만 읽는다
+        + `&student_id=eq.${req.portal.sub}&order=id.desc&limit=20`),
       products(),
     ]);
-    const labelOf = (kind, games) =>
-      list.find((p) => p.kind === kind && p.games === games)?.label || kind;
     send(res, {
-      requests: rows.map((r) => ({
-        requestId: opaqueId("payreq", r.id),
-        status: r.status,                 // pending · approved · rejected · void
-        label: labelOf(r.kind, r.games),
-        won: Number(r.amount),
-        games: r.games ?? null,
-        paidOn: r.paid_on,
-        requestedAt: r.created_at,
-      })),
+      requests: rows.map((r) => {
+        const u = payreqIntake.unitOf(r, list);
+        return {
+          requestId: opaqueId("payreq", r.id),
+          status: r.status,                 // pending · approved · rejected · void
+          label: u.label,                   // 단가 상품 이름(예: 33판 패키지) — 수량은 quantity
+          quantity: u.quantity,
+          won: Number(r.amount),            // 합계
+          games: r.games ?? null,           // 합계
+          method: payreqIntake.methodOf(r), // transfer · card · other(옛 봇 신청의 숨고 · 기타)
+          cashReceipt: payreqIntake.receiptForStudent(r),
+          paidOn: r.paid_on,
+          requestedAt: r.created_at,
+        };
+      }),
     });
   }));
 

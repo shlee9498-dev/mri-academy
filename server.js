@@ -27,6 +27,9 @@ const { PAY_CHANNELS, FEE_RATES, feeFor, netFor, hasRate } = require("./config/f
 const { parseIgnInput, sameIgn, compareIgn, ignChoices, ignGuardFilter, platLabel, ignLookupLine } = require("./pubg-name.cjs");
 // GmI 킬내기 집계(대승배 · 관제탑 2026-09-25 · GmI 소관 대행 · 1회성) — 명령 정의·판정·집계·DM (테스트 scripts/killrace.test.cjs)
 const killrace = require("./killrace.cjs");
+// 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
+//   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
+const payreqIntake = require("./payreq-intake.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -911,6 +914,12 @@ let payreqPortalCard = null;
 // 앱 판수 조정 요청 → 오너 DM 승인 카드(계약 §9.10 · §46). 같은 패턴으로 봇 블록이 채운다 — 봇이 없으면 null
 // (요청은 그래도 저장되고 ownerNotified:false 로 답한다). 버튼 = adjreq_ok · adjreq_no.
 let adjreqPortalCard = null;
+// 현금영수증 「발급함」 버튼(계약 §9.5 · 오너 OK 2026-09-30) — 오너 승인 카드 · 4일 미발급 알림이 같은 버튼을 단다.
+//   누르면 payment_requests.cash_receipt_issued_at 이 찍힌다(payreq_cr 처리기 · 두 번 눌러도 한 번).
+function payreqReceiptRow(id) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`payreq_cr:${id}`).setLabel("현금영수증 발급함").setStyle(ButtonStyle.Secondary));
+}
 if (process.env.DISCORD_TOKEN) {
   const client = new Client({
     intents: [
@@ -1182,6 +1191,8 @@ if (process.env.DISCORD_TOKEN) {
   client.once("ready", async () => {
     console.log("bot ready:", client.user.tag);
     botClient = client;   // Phase T1 오너 DM용
+    // 기동 틱은 로그인 전에 돌아 카드 다시 띄우기가 실패할 수 있다 — 준비 직후 한 번 더(ops_state 'payreq:resend').
+    setTimeout(() => runPayreqResend().catch((e) => console.error("payreq_resend_ready", e?.message)), 5000);
 
     refresh(client);
     setInterval(() => refresh(client), 5 * 60 * 1000);
@@ -3099,24 +3110,34 @@ if (process.env.DISCORD_TOKEN) {
   //   카드 본문만 다르다: 앱 신청은 PUBG 실존 조회·채널 선택이 없고 대신 입금자명이 있다.
   //   payreqSubmit 을 고쳐 쓰지 않는 이유 — 돌고 있는 봇 경로를 건드리지 않으려는 것이다.
   //   승인 뒤 본표 편입은 §18d payreq_apply 트리거가 두 입구를 구분하지 않고 똑같이 한다.
-  payreqPortalCard = async (req) => {
+  //   2026-09-30 묶음(계약 §9.5 · 오너 OK): 수량(「33판 × 3 = 99판」) · 카드(그로블 주문번호 · 수수료 줄) ·
+  //   현금영수증(번호 **원문은 이 카드에만** · 10만원 이상인데 번호가 없으면 「자진발급 필요」) + 「현금영수증 발급함」 버튼.
+  //   opts.note — 다시 띄운 카드 표시(runPayreqResend · 예: 「정정 뒤 다시 보냄」).
+  payreqPortalCard = async (req, opts = {}) => {
     if (!process.env.MRI_OWNER_ID) return false;
     try {
       const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
-      const row = new ActionRowBuilder().addComponents(
+      const units = await payreqIntake.loadProducts();
+      const card = payreqIntake.methodOf(req) === "card";
+      const rows = [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`payreq_ok:${req.id}`).setLabel("✅ 승인").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`payreq_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
-      );
+      )];
+      const cr = payreqIntake.receiptOwnerLine(req);
+      if (cr && !req.cash_receipt_issued_at) rows.push(payreqReceiptRow(req.id));
       await owner.send({
         // 돈 문구라 이모지를 뺀다(ui-copy §2 — 💰 는 돈을 가볍게 만든다). /결제신청 카드의 💰 는
         // 전수 교체 금지라 그대로 둔다 — 두 카드 머리가 다른 게 오히려 입구 구분이 된다.
-        content: `**입금 신청 #${req.id}** (앱)\n· 학생: **${req.student_name}**`
-          + `\n· 상품: ${req.kind}${req.games ? ` · ${req.games}판` : ""}`
-          + `\n· 금액: **${Number(req.amount).toLocaleString("ko-KR")}원**`
-          + `\n· 입금일: ${req.paid_on}`
-          + `${req.memo ? `\n· 메모: ${req.memo}` : ""}`
-          + `\n· 통장에 들어왔는지 먼저 확인하고 승인해줘`,
-        components: [row],
+        content: `**${card ? "카드 결제 신청" : "입금 신청"} #${req.id}** (앱${opts.note ? ` · ${opts.note}` : ""})`
+          + `\n· 학생: **${req.student_name}**`
+          + `\n· 상품: ${payreqIntake.productText(req, units)} · **${won(req.amount)}원**`
+          + `\n· ${card ? "결제일" : "입금일"}: ${req.paid_on}`
+          + (card
+              ? `\n· 그로블 주문번호: ${req.deposit_ref || "-"}\n· 채널: ${channelLine("groble", req.amount)}`
+              : `\n· 채널: 계좌이체${req.memo ? `\n· 메모: ${req.memo}` : ""}`)
+          + (cr ? `\n· ${cr}` : "")
+          + (card ? "\n· 그로블 판매 내역에서 주문번호와 금액을 확인하고 승인해줘" : "\n· 통장에 들어왔는지 먼저 확인하고 승인해줘"),
+        components: rows,
       });
       return true;
     } catch (e) { console.error("payreq_portal_dm", e?.message); return false; }
@@ -3480,7 +3501,23 @@ if (process.env.DISCORD_TOKEN) {
         `select=id,status&student_name=eq.${encodeURIComponent(name)}&amount=eq.${amount}&paid_on=eq.${paid_on}`
         + "&status=in.(pending,approved)&order=id.desc&limit=1"))[0] || null;
     } catch (e) { console.error("payreq_dupcheck", e?.message); }
-    const dupLine = dup ? `⚠️ 중복 의심 — 같은 학생·금액·입금일 신청 #${dup.id}(${dup.status === "approved" ? "승인됨" : "대기"})이 이미 있어` : "";
+    // 앱 입금 신청 대기 경고(오너 지시 2026-09-30 · #31) — 수강생이 앱으로 이미 올린 입금을 트레이너가 봇으로 또 넣지 않게.
+    //   이름 → 명부 후보(승인 카드와 같은 정확일치 · 별칭)의 **앱 신청 대기**를 찾는다. 접수는 받고 양쪽에 띄운다(차단 아님 · 위 중복 경고와 같은 방식).
+    //   운영진 응답이라 반말(CLAUDE.md — 운영진 대상 봇 메시지는 반말 유지).
+    let appPending = [];
+    try {
+      const ids = (await payreqCandidates(name)).map((s) => s.id);
+      if (ids.length)
+        appPending = await sbSelect("payment_requests",
+          `select=id,amount,games&student_id=in.(${ids.join(",")})&status=eq.pending&requested_by=like.app:*&order=id.desc&limit=3`);
+    } catch (e) { console.error("payreq_appcheck", e?.message); }
+    const appLine = appPending.length
+      ? `⚠️ 이 수강생은 앱 입금 신청이 대기 중이야(${appPending.map((r) => `#${r.id}${r.games ? ` ${r.games}판` : ""} ${won(r.amount)}원`).join(", ")})`
+      : "";
+    const dupLine = [
+      dup ? `⚠️ 중복 의심 — 같은 학생·금액·입금일 신청 #${dup.id}(${dup.status === "approved" ? "승인됨" : "대기"})이 이미 있어` : "",
+      appLine,
+    ].filter(Boolean).join("\n");
     // PUBG 실존 조회(입력 1건당 1회 · 실패는 접수를 막지 않는다) — 찾으면 정식 닉·계정 id 를 신청에 싣는다(§28b 컬럼이 있을 때).
     const c = { name, trainer, trainer_id, kind, amount, games, paid_on, memo, pay_channel, dupLine,
                 pubg_name, platform: payPlat, accountId: null, ignLine: "" };
@@ -3764,16 +3801,22 @@ if (process.env.DISCORD_TOKEN) {
         ? [new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`payreqnick:${reqId}`).setLabel("🎮 명부 닉네임 채우기").setStyle(ButtonStyle.Secondary))]
         : [];
+      // 현금영수증(계약 §9.5) — 승인 카드에도 번호 원문 · 자진발급 여부를 다시 띄우고, 아직이면 「발급함」 버튼을 단다.
+      const crLine = payreqIntake.receiptOwnerLine(q);
+      const crRows = crLine && !q.cash_receipt_issued_at ? [payreqReceiptRow(reqId)] : [];
+      const units = await payreqIntake.loadProducts();
       await itx.update({
         content:
-          `✅ **#${reqId} 승인** — ${q.student_name} · ${won(q.amount)}원 (${q.kind}${q.games ? ` ${q.games}판` : ""})`
+          `✅ **#${reqId} 승인** — ${q.student_name} · ${won(q.amount)}원 (${q.kind}${q.games ? ` ${payreqIntake.productText(q, units)}` : ""})`
           + ` · 명부 #${target.id} ${target.name}${target.name !== q.student_name ? `(신청명 ${q.student_name})` : ""}`
           + `\n· 채널: ${channelLine(ch, q.amount)}`
+          + (q.deposit_ref && ch === "groble" ? `\n· 그로블 주문번호: ${q.deposit_ref}` : "")
+          + (crLine ? `\n· ${crLine}` : "")
           + ledgerNote
           + nickNote
           + `\n📋 결제_원장 기입 행(복붙):\n\`${ledger}\``
           + `\n⚠️ 기입 전 원장 ${Number(String(q.paid_on).slice(5, 7))}월 구간 중복키(입금일|이름|금액) 확인 · 판수 결제면 레슨로그 결제금액·판수도 갱신.`,
-        components: nickRows,
+        components: [...nickRows, ...crRows],
       });
     } else {
       await itx.update({ content: `❌ **#${reqId} 반려** — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원`, components: [] });
@@ -3809,6 +3852,33 @@ if (process.env.DISCORD_TOKEN) {
         ? `✅ 결제 신청 #${reqId} 승인 — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원 (${q.kind}${q.games ? ` ${q.games}판` : ""})`
         : `❌ 결제 신청 #${reqId} 반려 — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원. 내용 확인 후 다시 신청해줘.`);
     } catch (e) { console.error("payreq_notify", e?.message); }
+  });
+
+  // 현금영수증 「발급함」(계약 §9.5 · 오너 OK 2026-09-30) — 오너가 홈택스에서 발급(또는 자진발급)한 뒤 누른다.
+  //   발급일만 적는다(cash_receipt_issued_at · _by). 조건부 PATCH 라 두 번 눌러도 한 번만 찍힌다.
+  //   카드에서는 이 버튼 줄만 빼고 승인 · 반려 버튼은 그대로 둔다(승인 전에 먼저 발급할 수도 있다).
+  //   ⚠️ 번호 원문은 로그에 남기지 않는다 — 신청 번호만.
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isButton()) return;
+    const m = String(itx.customId || "").match(/^payreq_cr:(\d+)$/);
+    if (!m) return;
+    if (!isPayreqOwner(itx)) return itx.reply({ content: "오너 전용 버튼이야.", ephemeral: true });
+    const reqId = Number(m[1]);
+    let rows = null;
+    try {
+      rows = await sbPatch("payment_requests", `id=eq.${reqId}&cash_receipt_issued_at=is.null`,
+        { cash_receipt_issued_at: new Date().toISOString(), cash_receipt_issued_by: itx.user.id });
+    } catch (e) {
+      console.error("payreq_cr", reqId, e?.message);
+      return itx.reply({ content: `#${reqId} 발급 기록을 못 남겼어. 잠시 뒤 다시 눌러줘.`, ephemeral: true });
+    }
+    if (!Array.isArray(rows) || !rows.length)
+      return itx.reply({ content: `#${reqId} 는 이미 발급 기록이 있어.`, ephemeral: true });
+    const stamp = new Date(Date.now() + 9 * 3600000).toISOString().slice(5, 16).replace("T", " ").replace("-", "/");
+    const keep = (itx.message?.components || []).filter((r) =>
+      !(r.components || []).some((c) => String(c.customId || "").startsWith("payreq_cr:")));
+    console.log(`[payreq] cash receipt issued #${reqId}`);
+    return itx.update({ content: `${itx.message?.content || ""}\n· 현금영수증 발급함 ${stamp}`, components: keep });
   });
 
   // §28 — 승인된 결제 신청의 신고 닉으로 명부 빈칸 채우기(오너 버튼 · 빈칸만 · 덮어쓰기 없음 · admin_audit 기록).
@@ -8350,7 +8420,10 @@ REQUIRED_SCHEMA.payment_requests =
    //   · #351 배포 부팅(08:59 UTC) (optional) OK 두 줄 확인 → 선택에서 필수로 승격(/결제신청 이 매 신고에 싣는다).
    "pubg_platform", "pubg_account_id",
    // §48 정정 대기(2026-09-30 · 세션 실행 · A) — 승인 버튼이 매번 읽는다. 없으면 정정 대기가 조용히 꺼진다.
-   "hold_note"];
+   "hold_note",
+   // §49 입금 신청 묶음(2026-09-30 · 오너 OK · 세션 실행 · A) — 앱 신청이 매번 쓴다(없으면 PGRST204 로 신청 전부 503).
+   "quantity", "deposit_ref", "cash_receipt_purpose", "cash_receipt_number",
+   "cash_receipt_issued_at", "cash_receipt_issued_by", "cash_receipt_alerted_at"];
 // §18b 역참조(2026-09-17 · 관제탑 지시 2·4) — 승인 큐 → 본표(payments·lesson_enrollments) 연결 컬럼.
 // 없어도 감시 크론(runPayreqUnreflected)이 memo 표식·자연키로 판정하므로 선택 등급이다(부팅 warn 만).
 // DDL 실행 후 채워지면 판정 1순위가 되고, #13·#15 같은 "금액이 다른 대응 행"도 연결로 해소된다.
@@ -8733,6 +8806,59 @@ async function runFeedbackPending() {
   const oldestDays = Math.max(1, Math.round((Date.now() - new Date(rows[0].created_at)) / 86400000));
   await ownerDM(`📝 미승인 피드백 ${rows.length}건 (최장 대기 ${oldestDays}일)\n검수 채널에서 ✅(공개) / ❌(반려)로 처리해주세요 — ✅ 즉시 사이트 노출.`);
 }
+// ── 오너 승인 카드 다시 띄우기(오너 지시 2026-09-30 · #31 정정 뒤) ──
+//   세션(또는 오너 SQL)이 ops_state 'payreq:resend' 에 { ids: [신청 번호…] } 를 넣으면, 다음 틱 · 봇 준비 직후에
+//   **대기 중인 앱 신청**의 카드를 새로 보낸다. 보냈거나(성공) 보낼 수 없는(이미 처리 · 정정 대기 · 봇 입구 신청) 번호는 목록에서 뺀다.
+//   카드 발송이 실패한 번호는 남겨 다음 틱에 다시 한다 — 봇이 로그인 전이면 첫 틱은 실패한다.
+async function runPayreqResend() {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY || !payreqPortalCard) return;   // 모듈 층 — hasSupabase 는 봇 블록 안이다
+  const st = await opsStateGet("payreq:resend");
+  const ids = [...new Set((st?.ids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return;
+  const sent = [], dropped = [], left = [];
+  for (const id of ids) {
+    const row = (await sbSelect("payment_requests", `select=*&id=eq.${id}&limit=1`).catch(() => []))[0];
+    if (!row || row.status !== "pending" || row.hold_note || !String(row.requested_by || "").startsWith("app:")) { dropped.push(id); continue; }
+    if (await payreqPortalCard(row, { note: st?.note || "다시 보냄" })) sent.push(id); else left.push(id);
+  }
+  await opsStateSet("payreq:resend", { ids: left, note: st?.note || null, sent, dropped, at: new Date().toISOString() });
+  console.log(`[payreq] 카드 다시 띄우기 — 보냄 ${sent.length ? `#${sent.join(", #")}` : "0"} · 뺌 ${dropped.length} · 남음 ${left.length}`);
+}
+
+// ── 현금영수증 4일 미발급 알림(계약 §9.5 · 오너 판정 2026-09-30 · 7일→4일) ──
+//   승인된 계좌이체 중 번호를 받았거나 10만원 이상인데 입금일로부터 4일이 지나도 「발급함」이 안 눌린 건을 오너에게 한 번 알린다.
+//   봇 /결제신청 계좌이체도 포함(오너 판정). 신청마다 한 통 + 「현금영수증 발급함」 버튼 · 보낸 뒤 cash_receipt_alerted_at 을 찍어 다시 안 보낸다.
+//   ⚠️ 번호 원문은 오너 DM 에만 — 로그에는 신청 번호만 남긴다.
+async function runCashReceiptOverdue() {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY || !botClient || !process.env.MRI_OWNER_ID) return;
+  const { date } = kstNow();
+  const cutoff = payreqIntake.addDays(date, -payreqIntake.CR_OVERDUE_DAYS);
+  const rows = await sbSelect("payment_requests",
+    "select=id,status,student_name,kind,amount,games,quantity,paid_on,pay_channel,created_at,"
+    + "cash_receipt_purpose,cash_receipt_number,cash_receipt_issued_at,cash_receipt_alerted_at"
+    + `&status=eq.approved&cash_receipt_issued_at=is.null&cash_receipt_alerted_at=is.null&paid_on=lte.${cutoff}`
+    + `&created_at=gte.${payreqIntake.CR_ALERT_FROM}T00:00:00%2B09:00&order=id.asc&limit=50`);
+  const due = payreqIntake.overdueReceipts(rows, date);
+  if (!due.length) { console.log("[cron] cashReceiptOverdue: 0건 — 침묵"); return; }
+  const units = await payreqIntake.loadProducts();
+  const owner = await botClient.users.fetch(process.env.MRI_OWNER_ID);
+  let sent = 0;
+  for (const r of due) {
+    const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${r.paid_on}T00:00:00Z`)) / 86400000);
+    try {
+      await owner.send({
+        content: `**현금영수증 미발급 #${r.id}** — ${r.student_name} · ${payreqIntake.productText(r, units)} · ${Number(r.amount).toLocaleString("ko-KR")}원`
+          + `\n· 입금일 ${r.paid_on}(${days}일 지남)\n· ${payreqIntake.receiptOwnerLine(r)}`
+          + "\n· 발급했으면 아래 버튼을 눌러줘",
+        components: [payreqReceiptRow(r.id)],
+      });
+      await sbPatch("payment_requests", `id=eq.${r.id}&cash_receipt_alerted_at=is.null`, { cash_receipt_alerted_at: new Date().toISOString() });
+      sent++;
+    } catch (e) { console.error("cash_receipt_alert", r.id, e?.message); }
+  }
+  console.log(`[cron] cashReceiptOverdue: ${due.length}건 중 ${sent}건 발송 (ids ${due.map((r) => r.id).join(",")})`);
+}
+
 // 승인 큐 미반영 감시(관제탑 2026-09-17 지시 4 · 8/19 지시 3 재발행) — approved 인데 본표(payments)에
 // 대응 행이 없는 신청을 매일 오너 DM 으로 알린다. 승인 핸들러(payreq_ok)는 설계상(PR-3a) payments 를
 // 만들지 않아 편입은 시드 SQL(Level 0)이 하는데, 그 사이가 알림 없이 3주(17건) 쌓인 것이 이 크론의 이유다.
@@ -8786,6 +8912,10 @@ async function cronTick() {
   await maybeRunDaily("bookingOrphan", "05:30", runBookingOrphans, "예약 닫힘·기록 없음");
   // 트레이너별 판수 부족 알림(§45) — 매 틱. 입금 승인 · 오너 SQL 처럼 코드가 직후 점검을 못 거는 변화도 여기서 잡는다.
   await gamesShort.run({ label: "tick" }).catch((e) => console.error("short_tick", e?.message));
+  // 현금영수증 4일 미발급(계약 §9.5 · 오너 판정 9/30) — 낮에 한 번. 신청마다 한 통 · 한 번만.
+  await maybeRunDaily("cashReceiptOverdue", "09:05", runCashReceiptOverdue, "현금영수증 4일 미발급");
+  // 오너 승인 카드 다시 띄우기(ops_state 'payreq:resend') — 매 틱. 목록이 비어 있으면 읽기 한 번으로 끝난다.
+  await runPayreqResend().catch((e) => console.error("payreq_resend", e?.message));
 }
 if (T2_ENABLED || DIRECT_STATUS_ENABLED) {
   setInterval(() => { cronTick().catch((e) => console.error("cron_tick", e?.message)); }, 10 * 60 * 1000);   // 10분 틱

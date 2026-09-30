@@ -4116,3 +4116,75 @@ notify pgrst, 'reload schema';
 -- 되돌리기: 코드(server.js PAYREQ_HOLD_MARK 가드 · REQUIRED_SCHEMA)를 먼저 되돌린 뒤
 --   alter table public.payment_requests drop column if exists hold_note;   ← 지우는 DDL = B 구간(오너 OK)
 -- ============================================================
+
+-- ============================================================
+-- §49  입금 신청 묶음 — 수량 · 현금영수증 · 카드(그로블) (2026-09-30 · 오너 OK · 더하기만 = A 구간)
+--
+-- 오너 판정(9/30): 수량 1~5(서버가 단가 × 수량) · 현금영수증 번호(소득공제 010 11자리 / 지출증빙 사업자 10자리 · 선택) ·
+--   카드(그로블 · 링크 env 가 있을 때만 · 주문번호 필수 · 같은 주문번호 두 번 금지) · 현금영수증 4일 미발급 오너 알림.
+--   계약 docs/trainer-portal-api.md §9.5 · 판정 코드 payreq-intake.cjs.
+--
+-- ⚠️ cash_receipt_number = 개인정보(휴대폰 번호 · 사업자번호). **원문은 이 칸 한 곳에만** 두고 오너 디스코드 카드에만 보인다.
+--    수강생 앱 응답 · 트레이너 쪽 · 로그에는 뒤 4자리만. 표는 RLS on · 정책 0(service_role 만) 그대로다.
+--    보관 5년(개인정보처리방침 2026-09-30 추가 문구).
+--
+-- 기존 행은 전부 null 로 남는다(quantity null = 1개 · 옛 행 수량은 코드가 판수 · 금액의 정수배로 푼다 — #31 정정분).
+-- ============================================================
+alter table public.payment_requests add column if not exists quantity smallint;
+alter table public.payment_requests add column if not exists deposit_ref text;
+alter table public.payment_requests add column if not exists cash_receipt_purpose text;
+alter table public.payment_requests add column if not exists cash_receipt_number text;
+alter table public.payment_requests add column if not exists cash_receipt_issued_at timestamptz;
+alter table public.payment_requests add column if not exists cash_receipt_issued_by text;
+alter table public.payment_requests add column if not exists cash_receipt_alerted_at timestamptz;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_payreq_quantity') then
+    alter table public.payment_requests add constraint chk_payreq_quantity
+      check (quantity is null or quantity >= 1);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_payreq_cr_purpose') then
+    alter table public.payment_requests add constraint chk_payreq_cr_purpose
+      check (cash_receipt_purpose is null or cash_receipt_purpose in ('deduction', 'proof'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_payreq_cr_number') then
+    alter table public.payment_requests add constraint chk_payreq_cr_number
+      check (cash_receipt_number is null or cash_receipt_number ~ '^(010[0-9]{8}|[0-9]{10})$');
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_payreq_cr_pair') then
+    alter table public.payment_requests add constraint chk_payreq_cr_pair
+      check ((cash_receipt_purpose is null) = (cash_receipt_number is null));
+  end if;
+end $$;
+
+-- 같은 그로블 주문번호 두 번 금지(대기 · 승인) — 반려 · 무효가 되면 인덱스에서 빠져 다시 쓸 수 있다.
+create unique index if not exists uq_payreq_groble_order
+  on public.payment_requests (deposit_ref)
+  where pay_channel = 'groble' and deposit_ref is not null and status in ('pending', 'approved');
+
+comment on column public.payment_requests.quantity is '수량(§49). null = 1개(옛 행). amount · games 는 합계다.';
+comment on column public.payment_requests.deposit_ref is '입금 식별(§49). 카드(그로블)는 주문번호 — 대기 · 승인 중 유일.';
+comment on column public.payment_requests.cash_receipt_purpose is '현금영수증 용도(§49) deduction=소득공제 · proof=지출증빙.';
+comment on column public.payment_requests.cash_receipt_number is '현금영수증 번호 원문(§49 · 개인정보). 오너 카드에만 보인다 — 앱 · 트레이너 · 로그는 뒤 4자리.';
+comment on column public.payment_requests.cash_receipt_issued_at is '오너가 「현금영수증 발급함」을 누른 시각(§49).';
+comment on column public.payment_requests.cash_receipt_alerted_at is '4일 미발급 오너 알림을 보낸 시각(§49) — 한 번만 보낸다.';
+
+notify pgrst, 'reload schema';
+
+-- ── 49b) 검증 ────────────────────────────────────────────────────────────────
+--   select column_name, data_type from information_schema.columns
+--    where table_schema = 'public' and table_name = 'payment_requests'
+--      and column_name in ('quantity','deposit_ref','cash_receipt_purpose','cash_receipt_number',
+--                          'cash_receipt_issued_at','cash_receipt_issued_by','cash_receipt_alerted_at');   -- 기대 7행
+--   select conname, pg_get_constraintdef(oid) from pg_constraint
+--    where conrelid = 'public.payment_requests'::regclass and conname like 'chk_payreq_%';            -- 기대 4행
+--   select indexdef from pg_indexes where indexname = 'uq_payreq_groble_order';                       -- 기대 1행
+--
+--   ✅ 실행 완료 2026-09-30 13시대 KST (세션 실행 · A 구간 · 오너 OK 「입금 신청 묶음 OK」).
+--      실행 전: 22칸 · 새 칸 0 · 제약 0 · 인덱스 0 · 행 32(승인 26 · 무효 3 · 반려 1 · 대기 2)
+--      실행 후: **29칸**(새 7칸 전부 null) · chk_payreq_* 4개 · uq_payreq_groble_order 1개 · 행 32 그대로 · RLS on · #31 그대로.
+--
+-- 되돌리기(코드를 먼저 되돌릴 것 — payreq-intake.cjs · student-portal.cjs · server.js REQUIRED_SCHEMA):
+--   drop index if exists uq_payreq_groble_order; 제약 4개 drop; 칸 7개 drop   ← 지우는 DDL = B 구간(오너 OK)
+-- ============================================================
