@@ -1367,6 +1367,7 @@ if (process.env.DISCORD_TOKEN) {
       }
     }
     await closeBookingsFor(trainer_id, rows.map((r) => r.student_id), played_at);
+    gamesShort.check(rows.map((r) => r.student_id));        // 판수 부족 알림(§45) — 예약이 닫힌 뒤의 잔여로 본다 · 기다리지 않는다
     return { inserted: rows.length, miss, unattached, dup };
   }
 
@@ -1952,6 +1953,7 @@ if (process.env.DISCORD_TOKEN) {
         created_by: itx.user.id,
       };
       const ins = await sbInsert("lesson_sessions", row);
+      gamesShort.check([sid]);                              // 판수 부족 알림(§45) — 정정으로 음수가 되면 바로 · 기다리지 않는다
       const after = before + delta;
 
       try {
@@ -7940,8 +7942,19 @@ const trainerPortal = require("./trainer-portal.cjs")(app, {
 // trainer-portal 뒤 — 그 파일이 건 게이트 뒤에 서고, 트레이너 판정·범위(담당 ∪ 최근 90일)·응답 가드를 같은 함수로 쓴다.
 reviewApi.mountTrainer(trainerPortal);
 
+// ── 트레이너별 판수 부족 알림(§45 · 2026-09-30 오너 판정 B — 재결제 안내) ──
+// 트레이너별 잔여가 0 미만이 되면 수강생·그 트레이너에게 DM 1회 · 다시 0 이상이 될 때까지 재발송 없음 · 풀리면 조용히 닫는다.
+// cronTick(10분)이 전체를 보고, 판수가 움직인 자리(「완료」 · /수업등록 · /판수정정 · 예약) 직후에 그 수강생만 다시 본다.
+// STUDENT_APP_URL = 수강생 DM 끝의 앱 링크(학생 앱은 다른 저장소라 오너가 준 주소를 적는다 · 비어 있으면 링크 줄 없이).
+// notifyAssigned = 담당 트레이너에게도 보낼지 — 오너 판정 2026-09-30 「판수가 모자란 그 트레이너에게만」 → 끈다.
+const STUDENT_APP_URL = "https://app.mriacademy.gg";   // 오너 확인 2026-09-30
+const gamesShort = require("./games-short.cjs")({
+  sbSelect, sbInsert, sbPatch, sbRpc, discordDM, appUrl: STUDENT_APP_URL, notifyAssigned: false,
+});
+
 require("./booking-api.cjs")(app, {
   sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,
+  onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 「완료」 · 예약(선차감) 직후
 });
 
 // [재발 방지] 기동 시 시트 웹훅 연결 식별 — 어느 Apps Script 배포(=어느 스프레드시트)에 붙는지 즉시 확인.
@@ -8137,6 +8150,8 @@ const REQUIRED_SCHEMA = {
   // §44 보낸 복기의 연결 수업 변경 기록(2026-09-30) — relink_review_lesson() 이 쓰고 상세 anchorChanges 가 읽는다.
   review_anchor_changes: ["id","review_id","changed_by","from_session_id","to_session_id","from_played_at","to_played_at",
                           "from_trainer_id","to_trainer_id","had_feedback","created_at"],
+  // §45 트레이너별 판수 부족 알림 상태(2026-09-30) — games-short.cjs 가 읽고 쓴다. 부족 목록은 함수 portal_short_pools().
+  games_short_notices:  ["id","student_id","trainer_id","remaining","opened_at","hold","notified_at","student_dm","trainer_dm","cleared_at"],
   feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
 };
 
@@ -8640,6 +8655,8 @@ async function cronTick() {
   await maybeRunDaily("directStale", "05:20", runDirectStale, "직강 기록 정체");
   // 예약 done 인데 그날 기록 없음 — 아무 코드도 못 고치는 짝이라 사람에게 올린다(오너 지시 2026-09-28).
   await maybeRunDaily("bookingOrphan", "05:30", runBookingOrphans, "예약 닫힘·기록 없음");
+  // 트레이너별 판수 부족 알림(§45) — 매 틱. 입금 승인 · 오너 SQL 처럼 코드가 직후 점검을 못 거는 변화도 여기서 잡는다.
+  await gamesShort.run({ label: "tick" }).catch((e) => console.error("short_tick", e?.message));
 }
 if (T2_ENABLED || DIRECT_STATUS_ENABLED) {
   setInterval(() => { cronTick().catch((e) => console.error("cron_tick", e?.message)); }, 10 * 60 * 1000);   // 10분 틱

@@ -3675,3 +3675,72 @@ $$;
 --   drop function if exists public.relink_review_lesson(bigint, bigint, bigint, text);
 --   drop table if exists public.review_anchor_changes;   -- 기록까지 지운다(B 구간 · 오너 OK)
 -- ============================================================
+
+-- ============================================================
+-- §45  트레이너별 판수 부족 알림 — 상태 표 + 부족 목록 함수 (2026-09-30 · 오너 판정 B 재결제 안내)
+--
+-- 오너 지시(9/30): 트레이너별 잔여가 0 미만이 되는 순간 수강생 · 그 트레이너에게 DM 1회.
+--   같은 수강생 · 트레이너는 다시 0 이상이 될 때까지 재발송 없음 · 입금 승인 등으로 풀리면 알림 없이 닫는다.
+--   옮기거나 정리하지 않는다(판수 데이터는 그대로 · 이 절은 알림 상태만 둔다).
+--
+-- games_short_notices — 열린 줄(cleared_at null) = 지금 음수인 짝(수강생 × 판수가 모자란 트레이너).
+--   짝당 열린 줄은 하나뿐이다(부분 유니크) → 두 점검이 겹쳐도 줄이 하나라 DM 도 한 번이다.
+--   hold = 알리지 않는 줄. 도입 때 이미 음수였던 짝을 hold 로 넣어 둔다(45b) — 배포가 한꺼번에 DM 을
+--   보내지 않게. 오너가 표를 보고 푼 줄(hold=false)만 다음 점검에 보낸다.
+-- portal_short_pools() — portal_remaining_by_trainer(§41)의 음수만 뽑는다. 활성 · 휴강 수강생만,
+--   합쳐진 명부(merged_into)는 뺀다. 쓰는 곳 = games-short.cjs(10분 점검 · 판수가 움직인 자리 직후).
+--
+-- A 구간(새 표 · 새 함수 · 더하기만). 코드가 부르기 전까지는 아무 동작도 바꾸지 않는다.
+create table if not exists public.games_short_notices (
+  id           bigint generated always as identity primary key,
+  student_id   bigint not null references public.students(id) on delete cascade,
+  trainer_id   bigint not null references public.staff(id),     -- 판수가 모자란 트레이너(그 트레이너 판수 풀)
+  remaining    int    not null,                                   -- 줄을 연 때의 잔여(음수) — DM 의 N 은 보낼 때의 값
+  opened_at    timestamptz not null default now(),
+  hold         boolean not null default false,                    -- true = 알리지 않음(도입 때 이미 음수 · 오너가 풀면 보낸다)
+  notified_at  timestamptz,                                       -- 보낸(보내려고 잡은) 시각 · null = 아직
+  student_dm   boolean,                                           -- 수강생 DM 이 실제로 갔는가(디스코드 미연결이면 false)
+  trainer_dm   boolean,
+  cleared_at   timestamptz                                        -- 다시 0 이상이 된 시각(알림 없음)
+);
+create unique index if not exists uq_gsn_open on public.games_short_notices (student_id, trainer_id) where cleared_at is null;
+alter table public.games_short_notices enable row level security;
+
+create or replace function public.portal_short_pools()
+returns table (student_id bigint, trainer_id bigint, remaining int)
+language sql stable security definer set search_path = public as $$
+  select s.id, (e->>'trainerId')::bigint, (e->>'remaining')::int
+    from students s
+    cross join lateral jsonb_array_elements(portal_remaining_by_trainer(s.id)) e
+   where s.status in ('active','paused')
+     and s.merged_into is null
+     and (e->>'remaining')::int < 0;
+$$;
+
+-- ── 45b) 도입 seed — 지금 이미 음수인 짝은 hold 로 넣는다(배포 직전에 한 번 더 · 멱등) ─────────────
+--   insert into public.games_short_notices (student_id, trainer_id, remaining, hold)
+--   select p.student_id, p.trainer_id, p.remaining, true
+--     from public.portal_short_pools() p
+--    where not exists (select 1 from public.games_short_notices n
+--                       where n.student_id = p.student_id and n.trainer_id = p.trainer_id and n.cleared_at is null);
+--   오너가 보내라고 한 짝만 풀기(B 구간 · 오너 OK 뒤):
+--   update public.games_short_notices set hold = false
+--    where cleared_at is null and hold and student_id in (<수강생 id>);
+--
+-- ── 45c) 검증 ────────────────────────────────────────────────────────────────
+--   select proname, length(replace(prosrc, E'\r','')) as len, md5(replace(prosrc, E'\r','')) as md5
+--     from pg_proc where proname = 'portal_short_pools' and pronamespace = 'public'::regnamespace;
+--   select count(*) from public.portal_short_pools();     -- = 지금 음수인 짝 수
+--   notify pgrst, 'reload schema';
+--
+--   ✅ 실행 완료 2026-09-30 (세션 실행 · A 구간). 실행 전 표 없음 · 함수 0개 → 후 표 1(10칸 · RLS 켜짐 ·
+--      인덱스 pkey + uq_gsn_open) · 함수 portal_short_pools 276 · 178b72ccbf9fc822e9c550d35fbe1c39 (정본 본문과 md5 일치).
+--      판수 데이터 불변(수업 240행 · 잔여 총합 902 실행 전후 같음).
+--      45b seed 7줄(hold) — 그때 음수였던 짝 전부: 수강생 #4 · #48 · #83 · #14(현태) / #9 · #60 · #101(준구).
+--      이 7짝은 배포돼도 DM 이 가지 않는다 — 오너가 표를 보고 푼 짝만 보낸다.
+--      오너 OK(9/30 「7짝 보류는 풀어도 된다 — 다음 점검에 DM 발송」) → 코드 배포 뒤 세션이 7짝 전부 푼다(45b 풀기 · student_id 조건 없이 열린 hold 전부).
+--
+-- 되돌리기(코드의 호출을 먼저 되돌릴 것 — games-short.cjs 가 부른다):
+--   drop function if exists public.portal_short_pools();
+--   drop table if exists public.games_short_notices;      -- 알림 기록까지 지운다(B 구간 · 오너 OK)
+-- ============================================================
