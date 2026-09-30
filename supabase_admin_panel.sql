@@ -4089,3 +4089,30 @@ comment on column public.trainer_slots.duration_min is
 -- 되돌리기(코드의 150 · 180 을 먼저 되돌릴 것 — lesson-lengths.cjs):
 --   §42b book_slot · §40a open_trainer_slots 를 다시 실행 · 제약은 180 칸이 없을 때만 (30,60,90,120) 으로.
 -- ============================================================
+
+-- ============================================================
+-- §48  입금 신청 정정 대기 — payment_requests.hold_note (2026-09-30 · 오너 지시 · 더하기만 = A 구간)
+--
+-- 오너 지시(9/30 「입금 신청 #31 정정」): 앱이 한 상품만 받던 때라 33판 × 3(420,000원)이 140,000 · 33판으로
+--   올라왔다. 오너가 통장 · 트레이너를 확인해 주면 세션이 금액 · 판수 · 트레이너만 고치고 오너가 승인한다.
+--   **고치기 전에는 승인 카드에 「정정 대기」가 떠야 한다.**
+--
+-- 동작(server.js payreq 버튼): hold_note 가 있으면 ✅ · 대상 선택 · 「이 대상으로 승인」이 전부 멈추고
+--   카드에 「정정 대기 — 사유」를 띄운다. 반려는 된다. 정정 때 hold_note 를 비우면 다음 ✅ 가 고친 값으로 열린다.
+--   판정은 카드 글이 아니라 **DB 행**이 한다 — 예전 확인 단계 카드에 남은 승인 버튼도 막힌다.
+-- ============================================================
+alter table public.payment_requests add column if not exists hold_note text;
+
+comment on column public.payment_requests.hold_note is
+  '정정 대기 사유(§48). 값이 있으면 오너 승인 카드가 승인 단계로 가지 않는다(반려는 됨). 정정이 끝나면 비운다.';
+
+notify pgrst, 'reload schema';
+
+-- ── 48b) 검증 ────────────────────────────────────────────────────────────────
+--   select column_name, data_type, is_nullable, column_default from information_schema.columns
+--    where table_schema = 'public' and table_name = 'payment_requests' and column_name = 'hold_note';
+--     기대: hold_note · text · YES · null
+--
+-- 되돌리기: 코드(server.js PAYREQ_HOLD_MARK 가드 · REQUIRED_SCHEMA)를 먼저 되돌린 뒤
+--   alter table public.payment_requests drop column if exists hold_note;   ← 지우는 DDL = B 구간(오너 OK)
+-- ============================================================

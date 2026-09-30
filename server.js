@@ -1315,12 +1315,14 @@ if (process.env.DISCORD_TOKEN) {
   //
   // 안내 문구의 버튼 이름은 트레이너 앱 실제 이름이다(반장 확인 9/30): 끝난 칸 「완료 · 기록하기」 · 안 끝난 칸 「수업 완료」 ·
   //   「수업 기록하기」 · 「레벨 테스트 마침」 · 「판수 조정 요청」. 앱 이름이 바뀌면 여기도 바꾼다.
-  // ⏸ **둘 다 보류(오너 지시 2026-09-30 「10/1 0시 잠금 보류」).** 앱에 「수업 기록하기(예약 없이)」와
-  //    「판수 조정 요청(오너 승인 카드)」이 아직 없어서, 잠그면 디스코드로 약속한 수업 기록과 판수 정정이
-  //    전부 오너에게 몰린다. 그 두 기능이 트레이너 앱 운영에 나간 날 **레슨 · /판수정정 을 함께** 켠다
-  //    (두 상수에 그날 날짜를 넣는다). 개인만 먼저 잠그지 않는다.
-  const LESSON_LOCK_FROM = null;
-  const LESSON_LOCK_ALL_FROM = null;
+  // ✅ **10/1 0시(KST)부터 켜짐**(반장 운영 확인 2026-09-30 13:xx — 트레이너 앱 #32 · d5c6feb 에
+  //    「수업 기록하기(예약 없이)」·「판수 조정 요청」이 올라갔다). 레슨 · 진단상담 · /판수정정 을 함께 잠근다.
+  //    오늘(9/30)이 아니라 10/1 인 이유 — 9월 밀린 수업을 오늘 /수업등록 「날짜」 칸으로 넣는 중이다(오너 지시 9/30).
+  //    오늘 잠그면 앱 「수업 기록하기」는 7일 전(9/23)까지만 받아서 그보다 앞선 9월 수업을 넣을 곳이 없어진다.
+  //    ⚠️ 10/1 부터는 봇 「날짜」 칸도 9/24 까지만 받는다(parseLessonDate — 월초 1주는 지난달 끝 7일) — 오너도 같다.
+  //       그보다 앞선 수업은 앱 「판수 조정 요청」(31일 전까지 · 오너 승인 카드)이 남은 길이다.
+  const LESSON_LOCK_FROM = "2026-10-01";
+  const LESSON_LOCK_ALL_FROM = "2026-10-01";
   const lessonLocked = () => !!LESSON_LOCK_FROM && kstToday() >= LESSON_LOCK_FROM;
   const lessonLockedAll = () => !!LESSON_LOCK_ALL_FROM && kstToday() >= LESSON_LOCK_ALL_FROM;
   const isMriOwner = (itx) => !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
@@ -3542,8 +3544,18 @@ if (process.env.DISCORD_TOKEN) {
   //     · 승인(status=approved + student_id)은 payreq_go 에서만 일어난다. 반려는 어느 단계에서든 payreq_no.
   //   상태는 DB 가 들고 있어 재기동을 넘긴다 — customId 에는 신청 id 와 명부 id 만 싣는다. 판수·금액 데이터는 손대지 않는다.
   const PAYREQ_MARK = "\n\n📇 **명부 연결 대상**";
+  // 정정 대기(§48 · 오너 지시 2026-09-30 · #31) — payment_requests.hold_note 가 있으면 ✅ 가 승인 단계로 가지 않는다.
+  //   반려는 그대로 된다. 정정은 세션이 금액 · 판수 · 트레이너만 고치고 hold_note 를 비운다 → 다시 ✅ 하면 고친 값으로 열린다.
+  const PAYREQ_HOLD_MARK = "\n\n**정정 대기**";
   const PAYREQ_STATUS_KO = { active: "활성", paused: "보류", done: "수료" };
-  const payreqBaseText = (msg) => String(msg?.content || "").split(PAYREQ_MARK)[0];
+  const payreqBaseText = (msg) => String(msg?.content || "").split(PAYREQ_MARK)[0].split(PAYREQ_HOLD_MARK)[0];
+  // 승인하면 본표에 들어갈 값 — 카드 본문은 신청 때 찍힌 글이라 정정 뒤에는 옛 값이 남는다.
+  //   승인 단계는 늘 DB 행을 다시 읽어 이 한 줄로 보여 준다(§18d 트리거가 쓰는 값이 바로 이것이다).
+  const payreqApplyLine = (q, base) => {
+    const cur = `${won(q.amount)}원`;
+    const stale = base && !base.includes(cur);                 // 카드 본문 금액과 다르면 정정된 것이다
+    return `\n· ${stale ? "정정된 값으로 승인돼" : "승인하면"}: ${q.kind}${q.games ? ` ${q.games}판` : ""} · ${cur} · 담당 ${q.trainer_name || "미배정"}`;
+  };
   const isPayreqOwner = (itx) => !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
 
   // 이름 정확일치 후보 — 상태 무관하게 전부(수료·보류 행이 정답인 재등록 케이스가 있다). 유사도 매칭 없음.
@@ -3607,16 +3619,17 @@ if (process.env.DISCORD_TOKEN) {
   async function payreqShowTargets(itx, reqId, q, cands, note) {
     const base = payreqBaseText(itx.message);
     const tail = note ? `\n${note}` : "";
+    const apply = payreqApplyLine(q, base);
     if (!cands.length) {
       return itx.update({
-        content: base + PAYREQ_MARK + `\n승인 보류 — 명부에서 "${q.student_name}"을 못 찾았어(오타·동명·미등록). \`/수강생등록\` 뒤 다시 ✅, 또는 「대상 변경」에 이름·명부 번호를 넣어줘.` + tail,
+        content: base + PAYREQ_MARK + apply + `\n승인 보류 — 명부에서 "${q.student_name}"을 못 찾았어(오타·동명·미등록). \`/수강생등록\` 뒤 다시 ✅, 또는 「대상 변경」에 이름·명부 번호를 넣어줘.` + tail,
         components: [payreqButtons(reqId, null)],
       });
     }
     const det = await payreqDescribe(cands, q);
     if (det.length === 1) {
       return itx.update({
-        content: base + PAYREQ_MARK + `\n${det[0].line}` + tail + `\n맞으면 「이 대상으로 승인」 — 승인과 함께 명부 #${det[0].id} 로 확정돼. 다른 사람이면 「대상 변경」.`,
+        content: base + PAYREQ_MARK + apply + `\n${det[0].line}` + tail + `\n맞으면 「이 대상으로 승인」 — 승인과 함께 명부 #${det[0].id} 로 확정돼. 다른 사람이면 「대상 변경」.`,
         components: [payreqButtons(reqId, det[0].id)],
       });
     }
@@ -3627,7 +3640,7 @@ if (process.env.DISCORD_TOKEN) {
         value: String(d.id),
       })));
     return itx.update({
-      content: base + PAYREQ_MARK + `\n⚠️ **대상 선택 필요** — "${q.student_name}" 에 명부 ${det.length}행이 걸려 자동으로 잇지 않아.\n`
+      content: base + PAYREQ_MARK + apply + `\n⚠️ **대상 선택 필요** — "${q.student_name}" 에 명부 ${det.length}행이 걸려 자동으로 잇지 않아.\n`
         + det.map((d) => `· ${d.line}`).join("\n") + tail,
       components: [new ActionRowBuilder().addComponents(menu), payreqButtons(reqId, null)],
     });
@@ -3664,6 +3677,19 @@ if (process.env.DISCORD_TOKEN) {
 
     const q = await payreqLoadPending(itx, reqId);
     if (!q) return;
+
+    // 정정 대기(§48) — 승인 쪽 버튼(✅ · 대상 선택 · 이 대상으로 승인)은 전부 여기서 멈춘다. 반려(no)만 지나간다.
+    //   예전 확인 단계 카드에 남은 「이 대상으로 승인」(go)도 막힌다 — 카드가 아니라 DB 행이 판정한다.
+    if (q.hold_note && action !== "no") {
+      return itx.update({
+        content: payreqBaseText(itx.message) + PAYREQ_HOLD_MARK + ` — ${String(q.hold_note).slice(0, 300)}`
+          + "\n정정이 끝나면 ✅ 를 다시 눌러줘. 고친 값으로 승인 단계가 열려. 반려는 지금도 돼.",
+        components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`payreq_ok:${reqId}`).setLabel("✅ 승인").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`payreq_no:${reqId}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
+        )],
+      });
+    }
 
     if (action === "ok") return payreqShowTargets(itx, reqId, q, await payreqCandidates(q.student_name), null);   // ✅ = 확인 단계(승인 아님)
     if (action === "sel") {
@@ -8322,7 +8348,9 @@ REQUIRED_SCHEMA.payment_requests =
    "pubg_name",
    // §28b 신고 플랫폼·PUBG 계정 id — 2026-09-25 오너 실행 · 실DB 실측(21칸 · text · nullable · 기본값 없음)
    //   · #351 배포 부팅(08:59 UTC) (optional) OK 두 줄 확인 → 선택에서 필수로 승격(/결제신청 이 매 신고에 싣는다).
-   "pubg_platform", "pubg_account_id"];
+   "pubg_platform", "pubg_account_id",
+   // §48 정정 대기(2026-09-30 · 세션 실행 · A) — 승인 버튼이 매번 읽는다. 없으면 정정 대기가 조용히 꺼진다.
+   "hold_note"];
 // §18b 역참조(2026-09-17 · 관제탑 지시 2·4) — 승인 큐 → 본표(payments·lesson_enrollments) 연결 컬럼.
 // 없어도 감시 크론(runPayreqUnreflected)이 memo 표식·자연키로 판정하므로 선택 등급이다(부팅 warn 만).
 // DDL 실행 후 채워지면 판정 1순위가 되고, #13·#15 같은 "금액이 다른 대응 행"도 연결로 해소된다.
