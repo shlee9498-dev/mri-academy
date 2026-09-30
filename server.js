@@ -3088,7 +3088,7 @@ if (process.env.DISCORD_TOKEN) {
   async function linkCandidateSet() {
     const [rows, aliases, staffById] = await Promise.all([
       sbSelect("students",
-        `select=id,name,status,trainer_id&discord_id=is.null&status=neq.done${NOT_MERGED}&order=name.asc&limit=500`),
+        `select=id,name,status,trainer_id,pubg_name&discord_id=is.null&status=neq.done${NOT_MERGED}&order=name.asc&limit=500`),
       sbSelect("student_aliases", "select=student_id,alias&limit=500").catch(() => []),
       staffNameMap(),
     ]);
@@ -3117,6 +3117,17 @@ if (process.env.DISCORD_TOKEN) {
   // ⚠️ 카드에 **수강생 실명**이 뜬다. 반드시 운영진만 보이는 비공개 채널이어야 한다 —
   //    수강생이 볼 수 있는 채널에 걸면 명부가 통째로 새어 나간다.
   // 상태는 DB 행이 들고 있어 재기동을 넘긴다(payreq 패턴) — customId 에는 id 만 싣는다.
+  // 경고(2026-10-01 · 성을 뺀 두 글자 신청이 다른 수강생으로 승인된 사고) — 입력한 이름이 명부와 똑같지 않거나
+  //   같은 점수 후보가 둘 이상이면 카드 위에 적는다. 디스코드 이름 · 배그 닉을 나란히 보고 누르게 한다.
+  function linkReqWarnings(claimed, cands) {
+    const out = [];
+    if (!cands.length) return out;
+    const top = cands[0];
+    if (top.score < 1) out.push(`⚠️ 입력한 이름 「${claimed}」 이 명부 이름 「${top.s.name}」 과 똑같지 않아요 — 성까지 맞는지 확인하고 눌러주세요`);
+    const tied = cands.filter((c) => c.score === top.score).length;
+    if (tied > 1) out.push(`⚠️ 같은 점수 후보가 ${tied}명이에요 — 디스코드 이름 · 배그 닉으로 누구인지 확인하세요`);
+    return out;
+  }
   async function postLinkReqCard(req, user, cands) {
     const btns = cands.map((c) =>
       new ButtonBuilder().setCustomId(`linkreq_ok:${req.id}:${c.s.id}`)
@@ -3126,11 +3137,12 @@ if (process.env.DISCORD_TOKEN) {
     const payload = {
       content:
         `🔗 **계정 연결 신청 #${req.id}**\n`
-        + `· 신청자: <@${user.id}>\n`
+        + `· 신청자: <@${user.id}> · 디스코드 이름 \`${user.username || req.discord_tag || "?"}\`\n`
         + `· 입력한 이름: **${req.claimed_name}**\n`
+        + linkReqWarnings(req.claimed_name, cands).map((w) => `${w}\n`).join("")
         + (cands.length
           ? "· 후보 (이름 유사도 · 미연결만):\n" + cands.map((c, i) =>
-              `  ${i + 1}. **${c.s.name}** #${c.s.id} · ${c.trainer}`
+              `  ${i + 1}. **${c.s.name}** #${c.s.id} · 배그 ${c.s.pubg_name || "없음"} · ${c.trainer}`
               + (c.s.status === "paused" ? " (보류)" : "")
               + ` · 일치 ${Math.round(c.score * 100)}%`
               + (c.via ? ` · 별칭 「${c.via}」 로 매칭` : "")).join("\n")
