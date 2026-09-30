@@ -3104,9 +3104,10 @@ $$;
 -- ============================================================
 -- §41  트레이너별 잔여 판수 (2026-09-28 · 10/1 전환 ② · 계약 §9.2)
 --
--- ⚠️ **오너 「OK」 전에는 실행하지 않는다.** 예약 판정이 바뀐다(B 구간).
---    함수 자체는 읽기만 하지만, 이걸 켜면 「합계는 충분한데 그 트레이너 판수가 모자라
---    예약이 거부되는」 수강생이 생긴다 — 실측 9명이 두 트레이너를 함께 쓴다.
+-- ✅ 오너 OK(2026-09-30) · 세션 실행 완료 — 아래 41c 끝의 실행 기록 참조.
+--    함수 자체는 읽기만 한다. 예약 판정이 바뀌는 건 §42b(book_slot 교체)이고, 그건
+--    **아직 실행하지 않았다**(오너 지시 — 반장 앱의 트레이너별 표시가 운영에 나간 직후 켠다).
+--    켜면 「합계는 충분한데 그 트레이너 판수가 모자라 예약이 거부되는」 수강생이 생긴다.
 --
 -- 왜 필요한가: 지금 잔여는 학생 한 덩어리다. 두 트레이너를 함께 쓰는 수강생은
 --   누구 판수인지 구분되지 않아, 준구에게 산 판수로 현태 수업을 예약할 수 있다.
@@ -3187,7 +3188,12 @@ $$;
 --    where jsonb_array_length(portal_remaining_by_trainer(s.id)) > 1;
 --   notify pgrst, 'reload schema';
 --
--- 되돌리기(코드의 호출을 먼저 되돌릴 것 — 예약 판정이 이 함수를 본다):
+--   ✅ 실행 완료 2026-09-30 10:1x KST (오너 OK 뒤 세션 실행 · §42 와 같은 배포 묶음 #409).
+--      실행 전 두 함수 없음 → 후 2개 · 지문 portal_remaining_for_trainer 792 · da77c3f163a5a7f8ec72dfc81b5b2f91 /
+--      portal_remaining_by_trainer 906 · 6b8412634f9f6208c2134d1ac74f9c83 (정본 본문과 md5 일치).
+--      ① 전수 95명 — 쪼갠 합 = 총합 902 · 불일치 0 ② 두 트레이너를 함께 쓰는 수강생 7명(9/28 실측 9명에서 줄었다).
+--
+-- 되돌리기(코드의 호출을 먼저 되돌릴 것 — /summary 와 「완료」 응답이 이 함수를 부른다):
 --   drop function if exists public.portal_remaining_by_trainer(bigint);
 --   drop function if exists public.portal_remaining_for_trainer(bigint, bigint);
 -- ============================================================
@@ -3195,7 +3201,8 @@ $$;
 -- ============================================================
 -- §42  「완료」가 판수를 받는다 — 그룹 판수 입력 · 시간 달라짐 (2026-09-28 · 10/1 전환 ① · 계약 §9.1)
 --
--- ⚠️ **오너 「OK」 전에는 실행하지 않는다.** 판수 기록 규칙이 바뀐다(B 구간).
+-- ✅ 오너 OK(2026-09-30) · 세션 실행 완료(B 구간 · 판수 기록 규칙 변경) — 42c 끝의 실행 기록 참조.
+--    **42b 는 제외**했다(트레이너별 예약 판정 · 반장 앱 표시가 운영에 나간 직후 오너 지시로 켠다).
 -- ⚠️ **§41 을 먼저 실행한다** — 이 함수가 portal_remaining_for_trainer() 를 쓴다.
 --
 -- 왜 필요한가: 10/1 에 `/수업등록` 을 잠그면 **그룹 판수를 넣을 곳이 사라진다.**
@@ -3438,6 +3445,15 @@ $$;
 --                      'portal_remaining_by_trainer')
 --      and pronamespace = 'public'::regnamespace order by proname;
 --   notify pgrst, 'reload schema';
+--
+--   ✅ 42a(record_lesson_from_booking) 실행 완료 2026-09-30 10:1x KST (오너 OK 뒤 세션 실행 · drop + create 한 요청).
+--      실행 전 2인자판 3254 · 7bbf8722d436d3898e233f27b56aceb0(= 정본 §37 · 아래 되돌리기 경로 유효)
+--      → 후 **1행** `p_trainer_id bigint, p_booking_id bigint, p_games integer, p_played_at date`
+--      · 4102 · b0c3f56bf44881f0d7251ce00986077e (정본 본문과 md5 일치).
+--      데이터 불변 — 실행 전후 lesson_sessions 240행 · 2,867판 · slot_bookings 10건(booked 4 · cancelled 6)
+--      · trainer_slots 188 · 잔여 총합 902 같음. notify pgrst 뒤 머지·배포(6f08dba · 부팅 [schema] 전부 OK).
+--   ⏸ 42b(book_slot) **미실행** — 지금 book_slot 은 §32 판 그대로(2926 · a25d0c964fe108be00039b3d0ec313fa ·
+--      ② 문자열 프로브 uses_by_trainer = false). 켤 때 위 ②·③ 으로 다시 확인한다.
 --
 -- 되돌리기(§37 2인자판으로 · 코드를 먼저 되돌릴 것):
 --   drop function if exists public.record_lesson_from_booking(bigint, bigint, int, date);
