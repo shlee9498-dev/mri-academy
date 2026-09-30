@@ -255,6 +255,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 |---|---|---|---|
 | `scheme` | string | **예** | `"new"` · `"old"` — `courses.scheme` 그대로. 구 체계 강의를 구분해 안내 문구를 가르는 용도 |
 | `attendanceKnown` | boolean | 아니오 | **`false` 면 진행 회차가 미상이다** — 아래 |
+| `ownerConfirmedUnits` | number | 아니오 | **2026-10-01 추가(§58)** — `completedUnits` 중 **출석 기록 없이 오너가 「다 들음」으로 확인한 회차**(날짜 없음). 없으면 `0`. 이 값이 있으면 출석 행이 없어도 `attendanceKnown=true` 다(오너가 확인한 숫자). 표시 권장: 「24/24 · 7회 오너 확인」처럼 따로 한 줄 |
 
 ⚠️ **`attendanceKnown === false` 면 `completedUnits`·`remainingUnits` 를 표시하지 마세요.**
 구 체계 강의는 진행 이력이 `courses.memo` 에만 있고 `course_attendance` 는 비어 있습니다
@@ -1173,7 +1174,8 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
                "nextSession": { "date": "2026-10-04", "startTime": "14:00", "endTime": "17:00", "type": "direct" } } ]
 ```
 
-- 강의(`courses`)가 `active` · `paused` 인 것만. 없으면 **빈 배열**.
+- 강의(`courses`)가 `active` · `paused` 인 것만. 없으면 **빈 배열**. 끝난 강의(`done`)는 트레이너 앱 목록에서 빠진다.
+- `ownerConfirmedUnits`(number · 2026-10-01 §58) — 수강생 앱 §7.1 과 같은 키 · 같은 뜻(출석 기록 없이 오너가 확인한 회차 · 없으면 0).
 - 뜻은 수강생 앱 §7.1 과 같다. **`attendanceKnown === false` 면 `completedUnits` · `remainingUnits` 를 그리지 말 것** —
   구 체계 강의는 출석 행이 없어(실측 강의 18개 · 출석 행 전체 5개) 0 이 「0회 진행」이 아니라 「미상」이다.
   그때는 `unitsTotal` 만(예: 「심화반 12회」).

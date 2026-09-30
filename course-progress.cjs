@@ -13,6 +13,9 @@
 //   · 출석 행이 하나도 없는 강의는 attendanceKnown=false — 구 체계 강의는 진행 이력이 courses.memo 에만
 //     있고 course_attendance 가 비어 있다(2026-09-27 실측). 0 을 「0회 진행」으로 단정하지 않게 한다.
 //   · 출석 조회가 실패해도 강의 목록은 내린다(attendanceKnown=false). 예정 회차 조회 실패는 nextSession=null.
+//   · 오너 확인 완료 회차(courses.confirmed_units · §58 · 2026-10-01) — 기록 없이 끝난 몫을 날짜 없이 더한다.
+//     진행 회차 = 출석 done + 이 값 · 이 값이 있으면 출석 행이 없어도 attendanceKnown=true(오너가 확인한 숫자다).
+//     server.js remainFromDB(잔여 알림)도 같은 식이다.
 // 값(이름 · 메모)은 읽지도 로그에 남기지도 않는다 — 코드와 건수만.
 // ============================================================
 "use strict";
@@ -23,9 +26,10 @@ function summarizeCourses(courses, attendance, sessionsById, attOk) {
   const out = new Map();
   for (const c of courses) {
     const mine = byCourse[c.id] || [];
+    const confirmed = Number(c.confirmed_units || 0);                    // §58 오너 확인 완료(날짜 없음)
     const completed = mine.filter((a) => a.status === "done")
-                          .reduce((n, r) => n + Number(r.units || 0), 0);
-    const attendanceKnown = !!attOk && mine.length > 0;
+                          .reduce((n, r) => n + Number(r.units || 0), 0) + confirmed;
+    const attendanceKnown = !!attOk && (mine.length > 0 || confirmed > 0);
     let nextSession = null;
     const next = mine.filter((a) => a.status === "scheduled")
                      .map((a) => sessionsById[a.session_id]).filter(Boolean)
@@ -45,6 +49,7 @@ function summarizeCourses(courses, attendance, sessionsById, attOk) {
       startedOn: c.started_on, status: c.status,
       unitsTotal: total, completedUnits: completed,
       remainingUnits: total - completed,
+      ownerConfirmedUnits: confirmed,                                   // completedUnits 중 날짜 없이 오너가 확인한 몫
       attendanceKnown,
       nextSession,
     });
@@ -60,7 +65,7 @@ async function loadCourseProgress(sbSelect, { studentIds, statuses } = {}) {
   let courses;
   try {
     courses = await sbSelect("courses",
-      `select=id,student_id,level,scheme,started_on,status,units_total&student_id=in.(${ids.join(",")})`
+      `select=id,student_id,level,scheme,started_on,status,units_total,confirmed_units&student_id=in.(${ids.join(",")})`
       + (statuses?.length ? `&status=in.(${statuses.join(",")})` : "")
       + `&order=started_on.desc`);
   } catch { return new Map(); }

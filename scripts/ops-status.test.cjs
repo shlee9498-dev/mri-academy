@@ -167,9 +167,27 @@ test("직강 회차 요약 — 출석 행 없으면 미상 · done 합 · 가장
                  73: { id: 73, held_on: "2025-01-17", start_time: "14:00:00", end_time: "17:00:00" } };
   const m = summarizeCourses(courses, att, sess, true);
   assert.deepEqual(m.get(16), [{ level: "심화반", scheme: "new", startedOn: "2025-01-01", status: "active", unitsTotal: 12,
-    completedUnits: 2.5, remainingUnits: 9.5, attendanceKnown: true,
+    completedUnits: 2.5, remainingUnits: 9.5, ownerConfirmedUnits: 0, attendanceKnown: true,
     nextSession: { date: "2025-01-10", startTime: "14:00", endTime: "17:00", type: "direct" } }]);
   assert.deepEqual(m.get(12)[0].attendanceKnown, false);
   assert.deepEqual([m.get(12)[0].completedUnits, m.get(12)[0].nextSession], [0, null]);
   assert.equal(summarizeCourses(courses, att, sess, false).get(16)[0].attendanceKnown, false);   // 출석 조회 실패 = 미상
+});
+
+test("직강 회차 요약 — 오너 확인 완료 회차(§58 · 날짜 없음)는 진행분에 더하고 출석 행이 없어도 확인된 숫자다", () => {
+  const courses = [
+    // 옛 기록 17회(한 줄 이월) + 기록 없이 끝난 7회 → 24/24 종료
+    { id: 10, student_id: 14, level: "심화반", scheme: "old", started_on: "2025-07-26", status: "done", units_total: "24.00", confirmed_units: "7.00" },
+    // 출석 행 없이 전부 오너 확인(구 체계 백필 강의가 끝난 경우)
+    { id: 5, student_id: 90, level: "중급반", scheme: "old", started_on: "2026-04-21", status: "done", units_total: "36.00", confirmed_units: "36.00" },
+    // 확인 완료 칸이 없거나 0 이면 종전과 같다
+    { id: 3, student_id: 39, level: "초급반", scheme: "old", started_on: "2026-04-15", status: "active", units_total: "12.00" },
+  ];
+  const att = [{ course_id: 10, units: "17.00", session_id: 1, status: "done" }];
+  const m = summarizeCourses(courses, att, {}, true);
+  const a = m.get(14)[0], b = m.get(90)[0], c = m.get(39)[0];
+  assert.deepEqual([a.completedUnits, a.remainingUnits, a.ownerConfirmedUnits, a.attendanceKnown, a.status], [24, 0, 7, true, "done"]);
+  assert.deepEqual([b.completedUnits, b.remainingUnits, b.ownerConfirmedUnits, b.attendanceKnown], [36, 0, 36, true]);
+  assert.deepEqual([c.completedUnits, c.remainingUnits, c.ownerConfirmedUnits, c.attendanceKnown], [0, 12, 0, false]);
+  assert.equal(summarizeCourses(courses, att, {}, false).get(90)[0].attendanceKnown, false);   // 출석 조회 실패면 여전히 미상
 });
