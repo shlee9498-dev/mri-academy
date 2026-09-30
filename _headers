@@ -1,0 +1,19 @@
+# Cloudflare Pages 응답 헤더 — scripts/build-site.cjs 가 dist/ 로 복사한다(GitHub Pages 는 이 파일을 쓰지 않는다).
+# 문법: 경로 줄 다음에 들여쓴 「이름: 값」 줄. * 는 이어지는 아무 글자(/privacy.html · /privacy 둘 다 잡으려고 쓴다).
+
+/*
+  X-Content-Type-Options: nosniff
+
+# 운영 화면은 검색에서 뺀다(페이지 안 noindex 메타와 같은 뜻 · 헤더로 한 번 더)
+/staff-panel*
+  X-Robots-Tag: noindex, nofollow
+/student-progress*
+  X-Robots-Tag: noindex, nofollow
+/lesson-feedback-admin*
+  X-Robots-Tag: noindex, nofollow
+/gdcup-admin*
+  X-Robots-Tag: noindex, nofollow
+/gdcup-score*
+  X-Robots-Tag: noindex, nofollow
+/staff-guide*
+  X-Robots-Tag: noindex, nofollow

@@ -22,7 +22,8 @@ exclude:
   - scripts
   # 스키마 · 시드 SQL
   - "*.sql"
-  # 패키지 · 도구 파일
+  # 패키지 · 도구 파일 · Cloudflare Pages 허용 목록(파일 이름만 있지만 사이트 파일이 아니다)
+  - site-files.txt
   - package.json
   - package-lock.json
   - skills-lock.json

@@ -1,0 +1,73 @@
+# Cloudflare Pages 허용 목록 — 사이트(mriacademy.gg)에 올리는 파일은 **이 목록에 적은 것뿐**이다.
+#   scripts/build-site.cjs 가 이 목록만 dist/ 로 복사한다. 목록에 없는 파일은 올라가지 않는다(새 파일은 기본 비공개).
+#   새 페이지 · 이미지를 사이트에 내려면 여기에 한 줄 더하고, sitemap.xml 에도 등록한다(CLAUDE.md 규칙).
+#   scripts/site-files.test.cjs 가 막는 것: 목록의 파일이 없음 · 운영 문서(md) · SQL · 서버 코드(cjs · server.js) · 설정이 섞임 ·
+#   목록의 페이지가 부르는 로컬 파일이 목록에 없음.
+#   GitHub Pages(_config.yml 제외 목록)는 이전이 끝날 때까지 그대로 돈다 — 두 목록이 가리키는 공개 파일은 같다.
+
+# ── 공개 사이트 ──
+index.html
+404.html
+apply.html
+privacy.html
+terms.html
+consent.html
+payment-success.html
+payment-fail.html
+community.html
+feedback.html
+success.html
+gmi-progress.html
+gmi-stats.html
+lesson-schedule.html
+lesson-feedback.html
+lesson-feedback-graph-demo.html
+graphics-guide.html
+sound-guide.html
+trainer-apply.html
+trainer-recruit.html
+
+# ── 운영 화면(로그인 · 키로 막힌 화면 · _headers 가 검색 제외) ──
+staff-panel.html
+student-progress.html
+lesson-feedback-admin.html
+
+# ── G드컵 · 킬내기(카지노 트랙 소관 · 파일 내용은 그 트랙이 고친다 · 여기서는 올리기만) ──
+briefing.html
+gdcup-add.html
+gdcup-admin.html
+gdcup-history.html
+gdcup-s2.html
+gdcup-s3.html
+gdcup-score.html
+kill-mvp.html
+live-board.html
+live.html
+overlay.html
+results.html
+roster.html
+scoreboard.html
+staff-guide.html
+team-brand.html
+toto.html
+
+# ── 이미지 · 아이콘 · manifest ──
+apple-touch-icon.png
+favicon-32.png
+icon-192.png
+icon-512.png
+og-banner.png
+dkdk-after.png
+dkdk-before.png
+g5-advanced.png
+g5-eq.png
+file_00000000820872098aacb0a58103a70e.png
+img/trainers/ht-band.jpg
+img/trainers/jg-band.jpg
+img/trainers/mr-band.jpg
+site.webmanifest
+panel.webmanifest
+
+# ── 검색 ──
+sitemap.xml
+robots.txt
