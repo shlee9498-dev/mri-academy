@@ -3444,3 +3444,73 @@ $$;
 --   그 다음 §37 의 create or replace 블록을 그대로 실행한다.
 --   book_slot 은 §32 의 블록을 그대로 실행하면 돌아간다.
 -- ============================================================
+
+-- ============================================================
+-- §43  취소 칸 되살리기(reopen)가 길이 다른 칸과 겹치는 구멍 (2026-09-29)
+--
+-- 무엇이 새나: §40 에서 칸에 길이(duration_min)가 생겼는데 reopen 은 **같은 시작 시각**만 본다
+--   (booking-api reopen 의 사전 조회 + 유니크 인덱스 uq_trainer_slots_live). 11:30 개인 칸을
+--   되살릴 때 11:00 에 시작하는 90분 그룹 칸이 이미 살아 있어도 둘 다 열린다 — 같은 시간에
+--   두 수업이 잡힐 수 있는 상태다. 90분 그룹 칸을 되살릴 때 11:30 개인 칸이 살아 있어도 같다.
+--
+-- 고친 방법: 되살리기를 DB 함수로 옮기고 open_trainer_slots(§40)와 **같은 advisory 잠금**
+--   (트레이너 id)을 잡는다. 두 경로가 서로를 기다리므로, 겹침 조회와 상태 변경 사이에
+--   다른 칸이 끼어들 수 없다. 겹침 판정도 §40 과 같은 범위식이다.
+--   실측(2026-09-29): 이 DB 에서 advisory 잠금을 쓰는 함수는 open_trainer_slots 하나뿐이라
+--   키가 다른 용도와 부딪치지 않는다.
+--
+-- A 구간(새 함수 · 더하기만). 코드가 부르기 전까지는 아무 동작도 바꾸지 않는다.
+--
+-- 반환: {"reopened":true} 또는 {"error":"not_found"|"scope_denied"|"slot_not_cancelled"|
+--        "slot_in_past"|"slot_taken"} — booking-api STATUS 표에 전부 있는 코드다.
+create or replace function public.reopen_trainer_slot(p_trainer_id bigint, p_slot_id bigint)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_s trainer_slots%rowtype;
+begin
+  -- §40 open_trainer_slots 와 같은 키 — 칸 열기와 되살리기가 한 줄로 선다.
+  perform pg_advisory_xact_lock(p_trainer_id);
+
+  select * into v_s from trainer_slots where id = p_slot_id for update;
+  if not found then return jsonb_build_object('error','not_found'); end if;
+  if v_s.trainer_id is distinct from p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
+  if v_s.status <> 'cancelled' then return jsonb_build_object('error','slot_not_cancelled'); end if;
+  -- 지난 칸은 되살려도 book_slot 이 못 잡는다(3시간 마감) — 막는 게 맞다.
+  if v_s.slot_start <= now() then return jsonb_build_object('error','slot_in_past'); end if;
+
+  if exists (
+    select 1 from trainer_slots
+     where trainer_id = p_trainer_id
+       and id <> v_s.id
+       and status <> 'cancelled'
+       and tstzrange(slot_start, slot_start + make_interval(mins => duration_min), '[)')
+           && tstzrange(v_s.slot_start, v_s.slot_start + make_interval(mins => v_s.duration_min), '[)')
+  ) then
+    return jsonb_build_object('error','slot_taken');
+  end if;
+
+  update trainer_slots set status = 'open' where id = v_s.id;
+  return jsonb_build_object('reopened', true);
+
+exception
+  when unique_violation then return jsonb_build_object('error','slot_taken');
+end;
+$$;
+
+-- ── 43b) 검증 ────────────────────────────────────────────────────────────────
+--   select proname, length(replace(prosrc, E'\r','')) as len, md5(replace(prosrc, E'\r','')) as md5
+--     from pg_proc where proname = 'reopen_trainer_slot' and pronamespace = 'public'::regnamespace;
+--     기대: 1269 · 415b0aadb3d983dea0d3347e33de7e3a
+--   notify pgrst, 'reload schema';
+--
+--   ✅ 실행 완료 2026-09-29 (세션 실행 · A 구간). 실행 전 함수 0개 → 후 1개 · 지문 위와 일치
+--      (정본 파일 본문과 실DB prosrc 의 md5 가 같다) · trainer_slots 188행 그대로.
+--      드라이런(pg_temp 사본 · 전부 롤백) 7가지 — 취소된 11:30 개인 ← 살아 있는 11:00 90분 그룹
+--      slot_taken / 취소된 90분 그룹 ← 살아 있는 11:30 개인 slot_taken / 겹침 없음 reopened /
+--      남의 칸 scope_denied / 취소 아닌 칸 slot_not_cancelled / 지난 칸 slot_in_past /
+--      맞닿은 칸(12:30 ← 11:00~12:30) reopened.
+--
+-- 되돌리기(코드의 호출을 먼저 되돌릴 것 — booking-api reopen 이 이 함수를 부른다):
+--   drop function if exists public.reopen_trainer_slot(bigint, bigint);
+-- ============================================================

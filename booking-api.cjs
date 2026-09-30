@@ -44,7 +44,7 @@ const MY_TRAINER_WINDOW_DAYS = 90;
 const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
 
 module.exports = function mountBookingApi(app, deps) {
-  const { sbSelect, sbPatch, sbRpc, limit, discordDM, portal, trainer } = deps;
+  const { sbSelect, sbRpc, limit, discordDM, portal, trainer } = deps;
   const { readSession, opaqueId, readOpaqueId, fail, scrub } = portal;
   // 트레이너 판정(포털 세션 또는 사이트 JWT → staff 명부)과 응답 가드(scrubTrainer)는 trainer-portal.cjs 한 곳이 정본이다.
   const { requireTrainer: requireTrainerBase, sendTrainer } = trainer;
@@ -593,36 +593,21 @@ module.exports = function mountBookingApi(app, deps) {
   //   이미 cancelled 로 닫혔고 예약자에게 취소 DM 이 나갔으므로, 되살리면 「취소됐다더니 다시 잡혀 있는」
   //   예약이 된다. 되살린 칸은 빈 칸이고 수강생이 다시 잡는다(DM 없음).
   //   지난 칸은 거부한다 — book_slot 도 slot_start <= now() 를 slot_taken 으로 거절하므로 열어도 못 잡는다.
-  //   DB 함수 없이 PATCH 필터(id·trainer_id·status=cancelled)로 원자성을 얻는다 — 경합하면 한쪽만 0행을 받는다.
-  //   §36 이후: 취소 칸이 새 칸을 막지 않으므로, 되살리려는 시각에 산 칸이 이미 있으면 409 slot_taken.
+  //   §36 이후: 취소 칸이 새 칸을 막지 않으므로, 되살리려는 시간에 산 칸이 이미 있으면 409 slot_taken.
   //   종류·범위를 바꿔 열려면 「다시 열기」가 아니라 그냥 새로 열면 된다(그게 §36 의 목적이다).
+  //
+  //   ⚠️ 판정 전부를 §43 reopen_trainer_slot 으로 옮겼다(2026-09-29). 종전에는 **같은 시작 시각**만
+  //      봤는데 §40 으로 칸에 길이가 생기면서 구멍이 났다 — 11:30 개인 칸을 되살릴 때 11:00 에
+  //      시작하는 90분 그룹 칸이 살아 있어도 둘 다 열렸다. 함수가 §40 open_trainer_slots 와 같은
+  //      트레이너 잠금 안에서 **범위 겹침**을 보므로, 칸 열기와 되살리기가 서로 끼어들지 못한다.
   //   ⚠️ 알려진 한계: slot_bookings 의 unique(slot_id, student_id) 가 취소된 예약 행에도 걸려, 취소당했던
   //   수강생 본인이 같은 칸을 다시 잡으면 slot_taken 이다(수강생 취소 후 재예약과 같은 기존 제약 · DDL 로만 풀린다).
   app.post(`${TRAINER}/slots/:id/reopen`, rateLimit("trainerReopen", 60, 60_000), bodyOnly([]), requireTrainer,
     wrap(async (req, res) => {
       const slotId = readOpaqueId("slot", req.params.id);
       if (slotId == null) return fail(res, 400, "invalid_body");
-      const [slot] = await sbSelect("trainer_slots", `select=id,trainer_id,status,slot_start&id=eq.${slotId}`);
-      if (!slot) return rpcFail(res, "not_found");
-      if (Number(slot.trainer_id) !== Number(req.staff.id)) return rpcFail(res, "scope_denied");
-      if (slot.status !== "cancelled") return rpcFail(res, "slot_not_cancelled");   // open·closed 둘 다
-      if (Date.parse(slot.slot_start) <= Date.now()) return rpcFail(res, "slot_in_past");
-      // §36 이후 같은 시각에 산 칸(open·closed)이 새로 열려 있을 수 있다. 예전에는 무조건 유니크라
-      // 이 상황이 불가능했지만, 이제 취소 칸은 새 칸을 막지 않으므로 되살리려는 순간 겹친다.
-      // 먼저 보고(409), 읽기와 PATCH 사이 경합은 제약 위반을 잡아 같은 409 로 바꾼다.
-      const live = await sbSelect("trainer_slots",
-        `select=id&trainer_id=eq.${req.staff.id}&slot_start=eq.${encodeURIComponent(slot.slot_start)}`
-        + `&status=neq.cancelled&limit=1`);
-      if (live.length) return fail(res, 409, "slot_taken");
-      let rows;
-      try {
-        rows = await sbPatch("trainer_slots",
-          `id=eq.${slotId}&trainer_id=eq.${req.staff.id}&status=eq.cancelled`, { status: "open" });
-      } catch (e) {
-        if (String(e?.body || "").includes("duplicate key")) return fail(res, 409, "slot_taken");
-        throw e;
-      }
-      if (!Array.isArray(rows) || !rows.length) return rpcFail(res, "slot_not_cancelled");   // 읽기와 PATCH 사이에 상태가 바뀜
+      const out = await sbRpc("reopen_trainer_slot", { p_trainer_id: req.staff.id, p_slot_id: slotId });
+      if (out?.error) return rpcFail(res, out.error);   // not_found · scope_denied · slot_not_cancelled · slot_in_past · slot_taken
       sendTrainer(res, { reopened: true });
     }));
 
