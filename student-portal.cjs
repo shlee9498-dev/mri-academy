@@ -310,13 +310,14 @@ module.exports = function mountStudentPortal(app, deps) {
   //    읽기만 한다. 숫자를 여기 베끼면 인상할 때 화면마다 다른 값이 보인다(그 파일이 있는 이유).
   //    ESM 이라 동적 import 로 한 번만 읽어 캐시한다(server.js 는 CJS).
   //
-  // 앱에서 팔 수 있는 상품만 연다 — 승인 시 **본표 편입이 자동인 것**(판수·상담)뿐이다.
+  // 앱에서 팔 수 있는 상품만 연다 — 승인 시 **본표 편입이 자동인 것**(판수)뿐이다.
   // 강의·세트·직강은 §18d 에서 수동이라 자동 입구를 열면 승인 뒤 아무 일도 안 일어난 것처럼 보인다.
+  // 레벨 테스트(consultCourse)는 뺐다(오너 2026-09-30) — 수강생 앱은 기존 수강생 전용이고,
+  // 레벨 테스트 신규는 사이트 · 디스코드로 받는다. 목록 밖 키라 POST /payment-requests 도 400 이다.
   const PORTAL_PRODUCTS = [
     { key: "lesson10",      kind: "판수", games: 10 },
     { key: "lesson21",      kind: "판수", games: 21 },
     { key: "lesson33",      kind: "판수", games: 33 },
-    { key: "consultCourse", kind: "상담", games: null },   // 레벨 테스트
   ];
   let priceBook = null;
   async function products() {
@@ -341,6 +342,12 @@ module.exports = function mountStudentPortal(app, deps) {
     const label = process.env.PAY_BANK_NAME, account = process.env.PAY_BANK_ACCOUNT,
           holder = process.env.PAY_BANK_HOLDER;
     return (label && account && holder) ? { label, account, holder } : null;
+  }
+  // 기동 때 한 번 — 계좌 안내가 켜졌는지 **env 이름만** 남긴다(값은 절대 로그에 안 남긴다).
+  // 오너가 env 를 넣으면 Railway 가 재배포하고, 이 줄로 pay-info 에 bank 가 내려가는지 확인한다(오너 지시 9/30).
+  {
+    const missing = ["PAY_BANK_NAME", "PAY_BANK_ACCOUNT", "PAY_BANK_HOLDER"].filter((k) => !process.env[k]);
+    console.log(`[pay-info] 계좌 안내 ${missing.length ? `꺼짐 — 없는 env: ${missing.join(", ")}` : "켜짐(env 3개 확인)"}`);
   }
 
   const kstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);

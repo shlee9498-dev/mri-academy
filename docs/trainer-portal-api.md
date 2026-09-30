@@ -723,8 +723,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
   "products": [
     { "key": "lesson10",      "label": "10판 패키지",            "won": 45000,  "games": 10 },
     { "key": "lesson21",      "label": "21판 패키지",            "won": 90000,  "games": 21 },
-    { "key": "lesson33",      "label": "33판 패키지",            "won": 140000, "games": 33 },
-    { "key": "consultCourse", "label": "강의 상담 / 레벨테스트", "won": 20000,  "games": null }
+    { "key": "lesson33",      "label": "33판 패키지",            "won": 140000, "games": 33 }
   ],
   "depositorHint": "홍길동" }
 ```
@@ -734,8 +733,11 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
   「계좌는 트레이너에게 물어봐 주세요」. 신청 자체는 그대로 받는다.
 - `products` 는 서버가 정본이다. **앱에 금액을 박지 말 것** — 가격이 바뀌면 앱만 틀린다.
   값은 `config/payments.js`(결제 트랙 소관) 에서 읽는다. 라벨도 그 파일 것을 그대로 쓴다.
-- 목록에 **판수 3종과 레벨 테스트만** 있다. 승인 시 본표 편입이 **자동인 상품**뿐이다 —
+- 목록에 **판수 3종만** 있다. 승인 시 본표 편입이 **자동인 상품**뿐이다 —
   강의·세트·직강은 §18d 에서 수동이라 자동 입구를 열면 승인 뒤 아무 일도 안 일어난 것처럼 보인다.
+- **레벨 테스트는 뺐다**(오너 2026-09-30) — 수강생 앱은 기존 수강생 전용이고, 레벨 테스트 신규는 사이트 · 디스코드로 받는다.
+  `productKey: "consultCourse"` 는 이제 400 `invalid_body` 다. 앱에 레벨 테스트 결제 항목을 따로 두지 말 것.
+- 계좌 env 가 들어갔는지는 서버 기동 로그 `[pay-info] 계좌 안내 켜짐` 으로 본다(값은 로그에 안 남는다).
 - `depositorHint` = 명부 이름. 다른 이름으로 보냈으면 화면에서 고쳐 보낸다.
 
 **POST /api/student-portal/payment-requests** (10회/분)

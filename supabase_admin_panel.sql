@@ -3644,7 +3644,7 @@ $$;
 -- ── 44c) 권한 좁히기 — 오너 실행(권한 변경 = Level 0 · 세션은 실행하지 않는다) ──────────────
 --   이 함수도 기존 security definer 함수들(book_slot · cancel_booking · open_trainer_slots ·
 --   record_lesson_from_booking · reopen_trainer_slot 등)과 같이 기본 권한(PUBLIC 실행)으로 생긴다.
---   서버만 부르므로 좁혀도 동작은 같다. 좁히려면 오너가 SQL Editor 에서:
+--   서버만 부르므로 좁혀도 동작은 같다. ⚠️ 2026-09-30 §46c 가 이 함수까지 17개를 한 번에 대체한다(그쪽을 쓴다). 좁히려면 오너가 SQL Editor 에서:
 --     revoke execute on function public.relink_review_lesson(bigint, bigint, bigint, text) from public, anon, authenticated;
 --     grant execute on function public.relink_review_lesson(bigint, bigint, bigint, text) to service_role;
 
@@ -3800,6 +3800,11 @@ declare
   v_sid bigint;
   v_lbl text;
 begin
+  -- 공개 키(anon · authenticated)로는 부르지 못한다 — 판수를 넣는 함수다(오너 허락 2026-09-30).
+  -- 권한 회수(46c)와 별개로 함수 안에서도 거른다. 서버(service_role) · SQL 직접 실행(클레임 없음)만 통과한다.
+  if coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb->>'role', '') in ('anon', 'authenticated') then
+    return jsonb_build_object('error', 'forbidden');
+  end if;
   select * into v_r from games_adjust_requests where id = p_request_id for update;
   if not found then
     return jsonb_build_object('error', 'not_found');
@@ -3845,7 +3850,35 @@ $$;
 --      인덱스 pkey + ix_gar_trainer + uq_gar_pending) · 함수 decide_games_adjustment 1588 · feb50a91448c1f9c9d9ff59dc1f5b950
 --      (정본 본문과 md5 일치). 판수 데이터 불변(수업 240행 · 판수 합 2867 실행 전후 같음) · 요청 0행.
 --      드라이런 9항목 통과 후 전부 되돌림(노쇼 승인 · 두 번 승인 · 보상 반려 · 대기 중복 · 종류별 판수 제약 4 · 없는 요청 · 정정 +3).
---      ⚠️ 권한 좁히기(anon 실행 회수)는 오너 몫이다 — §44c 와 같은 목록에 이 함수도 넣는다.
+--   ✅ 가드 추가 2026-09-30 12:0x KST (오너 허락 「함수 안 anon 거절 가드도 허락」) — 1588 → **1928 · 59d3e5a1030f1d85829164bc26174d73**
+--      (정본 본문과 md5 일치). 드라이런 6/6 후 되돌림: anon · authenticated 클레임 → forbidden · 요청 그대로 pending · 판수 행 0 /
+--      service_role 클레임 → 승인 통과 / 클레임 없음(SQL 직접) → 통과. 요청 0행 · 판수 데이터 불변.
+--      권한 회수(anon · authenticated 실행 막기)는 46c — 오너 실행(권한 변경 = 세션 훅이 막는다).
+--
+-- ── 46c) 공개 실행 함수 권한 회수 — 오너 실행(권한 변경 = Level 0 · 세션 훅이 막는다) · 44c 를 대체 ──────
+--   오너 허락 2026-09-30 「anon · authenticated 로 실행 가능한 공개 함수 전부 execute 권한 회수」.
+--   대상 = public 의 SECURITY DEFINER 함수 중 anon · authenticated 가 실행할 수 있던 17개(실측 2026-09-30).
+--     제외: rls_auto_enable()(이벤트 트리거 ensure_rls — RPC 로 못 부른다 · 회수해도 얻는 게 없다) ·
+--           트리거 함수 5개(직접 호출 불가) · 호출자 권한 함수 2개(review_month_usage · review_set_order — RLS 가 막는다).
+--   호출자 = 전부 서버(Railway · service_role). 지난 24시간 /rest/v1 호출 중 서버(node) 밖은 0건(앱 직접 호출 없음).
+--   ⚠️ 이 함수들은 권한이 기본값(PUBLIC 실행)이라 service_role 도 PUBLIC 으로만 실행하고 있었다 —
+--      **service_role 에 먼저 명시 허락**하고 회수한다. 순서가 바뀌면 서버의 예약 · 완료 · 잔여 조회가 전부 멈춘다.
+--   begin;
+--   grant execute on function
+--     public.book_slot(bigint,bigint,integer), public.cancel_booking(bigint,bigint), public.cancel_slot(bigint,bigint),
+--     public.complete_bookings_for_session(bigint,bigint[],date), public.decide_games_adjustment(bigint,boolean,text),
+--     public.open_trainer_slots(bigint,timestamp with time zone,integer,text,integer),
+--     public.payreq_apply(bigint), public.payreq_void(bigint),
+--     public.portal_remaining_by_trainer(bigint), public.portal_remaining_for_trainer(bigint,bigint),
+--     public.portal_remaining_games(bigint), public.portal_short_pools(),
+--     public.record_lesson_from_booking(bigint,bigint,integer,date), public.relink_review_lesson(bigint,bigint,bigint,text),
+--     public.reopen_trainer_slot(bigint,bigint), public.resolve_booking(bigint,bigint,text), public.sweep_pending_review()
+--   to service_role;
+--   revoke execute on function <위 17개 그대로> from public, anon, authenticated;
+--   commit;
+--   notify pgrst, 'reload schema';
+--   검증: has_function_privilege('anon' | 'authenticated', 함수, 'EXECUTE') = false · ('service_role', …) = true — 17개 전부.
+--   되돌리기: grant execute on function <위 17개> to public;
 --
 -- 되돌리기(코드의 호출을 먼저 되돌릴 것 — trainer-lessons.cjs · server.js 승인 카드가 부른다):
 --   drop function if exists public.decide_games_adjustment(bigint, boolean, text);
