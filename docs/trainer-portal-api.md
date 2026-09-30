@@ -342,7 +342,8 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 - `adjust` 의 `label` ∈ `정정` · `늦은 취소` · `노쇼` · `보상` · `기타`. 24시간 안에 되돌린 조정은 **두 줄 다 빠진다**(합 0).
 - 취소된 등록은 지우지 않는다 — `games: 0` · `voided: true`.
 - `/sessions`(수업 목록)에서는 **판수 조정 행이 빠진다**(9/30 부터) — 수업이 아니라서다. 조정은 이 내역에서만 보인다.
-  미작성 일기 수(`pendingJournalCount`)도 조정 행을 세지 않는다.
+  미작성 일기 수(`pendingJournalCount`) · 홈 「오늘 수업 복기」(`reviewDueToday`)도 조정 행을 수업으로 세지 않는다.
+  봇 `/판수정정` 으로 들어간 옛 정정 행은 종전대로 그날 수업에 접혀 보인다(2026-09-04 판정 그대로 · 내역에는 `정정` 줄로 따로 나온다).
 - 트레이너 앱은 같은 모양을 `GET /api/trainer-portal/students/:id/games-ledger` 로 받는다(§9.15 · 키만 `trainerKey`).
 
 ## 8. 수업 복기 API (§29 · PR-1·PR-2 = 수강생 포털 · PR-3 = 트레이너 포털 · 2026-09-25)

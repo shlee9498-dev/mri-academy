@@ -50,6 +50,8 @@ module.exports = function mountBookingApi(app, deps) {
   const onGamesChanged = typeof deps.onGamesChanged === "function" ? deps.onGamesChanged : null;
   // 레벨 테스트(상담 예약) 「완료」 뒤 부르는 훅 — 상담 기록(consults) 자동 생성(server.js 가 준다 · 오너 OK 2026-09-30)
   const onConsultDone = typeof deps.onConsultDone === "function" ? deps.onConsultDone : null;
+  // 레벨 테스트 「완료」의 레벨(§9.16) — 명부 레벨 칸을 쓴다(server.js 가 준다 · 없으면 levelApplied:false)
+  const setLevel = typeof deps.setLevel === "function" ? deps.setLevel : null;
   const { readSession, opaqueId, readOpaqueId, fail, scrub } = portal;
   // 트레이너 판정(포털 세션 또는 사이트 JWT → staff 명부)과 응답 가드(scrubTrainer)는 trainer-portal.cjs 한 곳이 정본이다.
   const { requireTrainer: requireTrainerBase, sendTrainer } = trainer;
@@ -542,10 +544,20 @@ module.exports = function mountBookingApi(app, deps) {
   //   잔여가 모자라도 **막지 않는다** — 수업은 이미 끝났고 기록이 먼저다. 막으면 판수가
   //   영영 안 빠진다. 대신 remainingWasShort 로 알리고 화면이 기록 **성공 뒤에** 안내한다.
   app.post(`${TRAINER}/bookings/:id/complete`, rateLimit("trainerResolve", 60, 60_000),
-    bodyOnly(["games", "playedAt"]), requireTrainer, wrap(async (req, res) => {
+    bodyOnly(["games", "playedAt", "level"]), requireTrainer, wrap(async (req, res) => {
       const bookingId = readOpaqueId("booking", req.params.id);
       if (bookingId == null) return fail(res, 400, "invalid_body");
       const games = req.body?.games, playedAt = req.body?.playedAt;
+      // 레벨(§9.16 · 선택) — 레벨 테스트 예약에만 받는다. 값 · 예약 종류를 기록 전에 본다(기록 뒤에 거절하면 반쯤 된다).
+      const level = req.body?.level;
+      let levelStudentId = null;
+      if (level !== undefined) {
+        if (!(level === null || ["advanced", "intermediate", "beginner"].includes(level))) return fail(res, 400, "invalid_body");
+        const bk = (await sbSelect("slot_bookings",
+          `select=student_id,trainer_slots!inner(lesson_type)&id=eq.${bookingId}&limit=1`))[0];
+        if (!bk || bk.trainer_slots?.lesson_type !== "consult") return fail(res, 400, "invalid_body");
+        levelStudentId = bk.student_id;
+      }
       if (games !== undefined
         && (!Number.isInteger(games) || games < GAMES_MIN || games > GAMES_MAX))
         return fail(res, 400, "invalid_body");
@@ -568,6 +580,12 @@ module.exports = function mountBookingApi(app, deps) {
       // 레벨 테스트(상담)는 판수 없이 닫힌다(closed · no_hold). 상담 기록은 서버가 남긴다 — 응답은 기다리지 않는다.
       // 판정(정말 상담 예약인지 · 이미 기록했는지)은 훅 쪽이 예약을 다시 읽어서 한다.
       if (out?.closed && out?.reason === "no_hold" && onConsultDone) onConsultDone(bookingId, req.staff);
+      // 레벨 테스트에서 정한 레벨 — 직강생이면 반 레벨이 따라가므로 쓰지 않는다(levelApplied:false).
+      let levelApplied;
+      if (levelStudentId != null && out?.closed) {
+        try { levelApplied = setLevel ? !!(await setLevel(levelStudentId, level, req.staff)) : false; }
+        catch (e) { console.error("leveltest_level", e?.status || e?.message); levelApplied = false; }
+      }
       // §45 판수 부족 알림 — 기록으로 그 트레이너 잔여가 음수가 됐는지 본다. 응답은 기다리지 않는다.
       if (out?.recorded && onGamesChanged)
         sbSelect("slot_bookings", `select=student_id&id=eq.${bookingId}&limit=1`)
@@ -581,6 +599,7 @@ module.exports = function mountBookingApi(app, deps) {
         // 기록 뒤 **그 트레이너 기준** 잔여(§41). 음수일 수 있다 — 막지 않았다는 뜻이다.
         remainingAfter: out?.remainingAfter ?? null,
         remainingWasShort: out?.remainingWasShort === true,
+        ...(levelApplied === undefined ? {} : { levelApplied }),
       });
     }));
 

@@ -28,6 +28,8 @@
 // ============================================================
 "use strict";
 const crypto = require("crypto");
+// 수업 기록 행 판정 한 벌(판수 조정 · 봇 정정 · 0 이하 행은 수업이 아니다) — 원장 화면 · 공개 지표와 같다.
+const { isLessonRow } = require("./ops-status.cjs");
 
 const REVIEW_EMOJIS = ["👍", "🔥", "💡", "🙌", "💪", "🎯"];                       // DDL review_reactions_emoji_check 와 같은 6개
 const MAPS = ["에란겔", "미라마", "태이고", "론도", "사녹", "비켄디", "데스턴", "파라모", "카라킨", "기타"];   // review_games.map check
@@ -1626,7 +1628,9 @@ module.exports = function mountReviewApi(app, deps) {
   hooks.summaryExtras = async (sub, ctx) => {
     if (!ready) return {};
     const today = kstDate(Date.now());
-    const sess = await sbSelect("lesson_sessions", `select=id&student_id=eq.${sub}&played_at=eq.${today}`);
+    // 판수 조정 행(노쇼 · 늦은 취소 · 보상 …)은 수업이 아니다 — 9/30 부터 트레이너가 바로 넣어서 같은 날 행이 흔해진다.
+    const sess = (await sbSelect("lesson_sessions",
+      `select=id,games,created_by,memo&student_id=eq.${sub}&played_at=eq.${today}`)).filter(isLessonRow);
     let due = false;
     if (sess.length) {
       const revs = await sbSelect("lesson_reviews",

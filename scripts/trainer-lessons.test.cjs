@@ -83,6 +83,36 @@ test("수업 출처 — 앱 · 봇 · 조정", () => {
   assert.equal(T.sourceOf({ created_by: null }), "bot");
 });
 
-test("종류 이름표 — 오너 카드 · 반려 DM 과 같은 말", () => {
-  assert.deepEqual(T.ADJ_LABEL, { correction: "정정", compensation: "보상", late_cancel: "늦은 취소", no_show: "노쇼" });
+test("종류 이름표 — 오너 카드 · 반려 DM 과 같은 말 · 기타 칩(9/30)", () => {
+  assert.deepEqual(T.ADJ_LABEL, { correction: "정정", compensation: "보상", late_cancel: "늦은 취소", no_show: "노쇼", other: "기타" });
+});
+
+test("조정 — 기타는 정정처럼 ±1~50 · 판수를 보내야 한다 · 고칠 수업은 못 짚는다", () => {
+  assert.equal(T.parseAdjustBody(adj({ kind: "other", remainingDelta: -2 }), TODAY).value.remainingDelta, -2);
+  assert.equal(T.parseAdjustBody(adj({ kind: "other", remainingDelta: 4 }), TODAY).ok, true);
+  assert.equal(T.parseAdjustBody(adj({ kind: "other" }), TODAY).ok, false);
+  assert.equal(T.parseAdjustBody(adj({ kind: "other", remainingDelta: 51 }), TODAY).ok, false);
+  assert.equal(T.parseAdjustBody(adj({ kind: "other", remainingDelta: 2, sessionId: "ls1" }), TODAY).ok, false);
+});
+
+test("바로 반영 — 트레이너는 ±10판 이하 · 11판부터 승인 카드 · 원장은 늘 바로(§9.18)", () => {
+  assert.equal(T.ADJ_DIRECT_MAX, 10);
+  assert.equal(T.isDirect("trainer", -5), true);
+  assert.equal(T.isDirect("trainer", 10), true);
+  assert.equal(T.isDirect("trainer", -10), true);
+  assert.equal(T.isDirect("trainer", 11), false);
+  assert.equal(T.isDirect("trainer", -11), false);
+  assert.equal(T.isDirect("owner", 50), true);
+});
+
+test("조정 상태 · 되돌리기 마감 — 바로 반영만 24시간 · 승인 · 되돌림 · 대기는 없음", () => {
+  const at = "2026-10-01T03:00:00Z", now = Date.parse("2026-10-01T10:00:00Z");
+  assert.equal(T.adjStatusOf({ status: "approved", decided_by: "direct" }), "applied");
+  assert.equal(T.adjStatusOf({ status: "approved", decided_by: "owner" }), "approved");
+  assert.equal(T.adjStatusOf({ status: "reverted", decided_by: "direct" }), "reverted");
+  assert.equal(T.adjStatusOf({ status: "pending" }), "pending");
+  assert.equal(T.revertibleUntil({ status: "approved", decided_by: "direct", decided_at: at }, now), "2026-10-02T03:00:00.000Z");
+  assert.equal(T.revertibleUntil({ status: "approved", decided_by: "direct", decided_at: at }, Date.parse("2026-10-02T03:00:00Z")), null);
+  assert.equal(T.revertibleUntil({ status: "approved", decided_by: "owner", decided_at: at }, now), null);
+  assert.equal(T.revertibleUntil({ status: "reverted", decided_by: "direct", decided_at: at }, now), null);
 });

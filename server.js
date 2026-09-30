@@ -32,6 +32,8 @@ const killrace = require("./killrace.cjs");
 const payreqIntake = require("./payreq-intake.cjs");
 // 공개 API 응답에서 수강생 식별정보를 걷어내는 순수 함수(커뮤니티 작성자 ID · 공개 코칭 기록 본문 치환 · 9/30 개인정보 점검)
 const publicRows = require("./public-rows.cjs");
+// 수업 기록 행 판정 한 벌(판수 조정 · 봇 정정 · 0 이하 행은 수업이 아니다) — 원장 화면 · 공개 지표 · 예약 고아 감시가 같이 쓴다.
+const { isLessonRow } = require("./ops-status.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -3217,7 +3219,7 @@ if (process.env.DISCORD_TOKEN) {
         sbSelect("students", `select=name&id=eq.${out.studentId}&limit=1`),
         sbSelect("staff", `select=discord_id&id=eq.${out.trainerId}&limit=1`),
       ]);
-      const label = { correction: "정정", compensation: "보상", late_cancel: "늦은 취소", no_show: "노쇼" }[out.kind] || "조정";
+      const label = { correction: "정정", compensation: "보상", late_cancel: "늦은 취소", no_show: "노쇼", other: "기타" }[out.kind] || "조정";
       dmOk = await discordDM(tr[0]?.discord_id,
         `판수 조정 반려 — ${st[0]?.name || "수강생"} ${label} ${adjDeltaText(out.remainingDelta)} · 궁금하면 오너에게 물어봐`);
     } catch (e) { console.error("adjreq_reject_dm", e?.message); }
@@ -8121,8 +8123,9 @@ const reviewApi = require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch
 // student-portal 과 같은 x-portal-secret 게이트·세션 서명을 쓴다(오너 결정 2026-09-15). booking-api 의
 // /slots·/bookings 라우트도 이 모듈이 건 게이트 뒤에 서므로 **booking-api 보다 먼저** 마운트한다.
 // sbRpc = 원장 대시보드(§9.13)가 「완료 확인 필요」를 최신으로 하려고 sweep_pending_review 를 부른다(트레이너 칸 목록과 같다).
+// sbPatch · sbDelete = 명부 레벨 칸 · 종료 취소(계약 §9.16 · §9.17 · 2026-09-30).
 const trainerPortal = require("./trainer-portal.cjs")(app, {
-  sbSelect, sbInsert, sbUpsert, sbRpc, limit, getUser, portal: studentPortal,
+  sbSelect, sbInsert, sbUpsert, sbPatch, sbDelete, sbRpc, limit, getUser, portal: studentPortal,
 });
 
 // ── 수업 복기 트레이너 라우트(§29 PR-3 · /api/trainer-portal/{reviews,feedback,feed}) ──
@@ -8167,15 +8170,39 @@ require("./booking-api.cjs")(app, {
   sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,
   onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 「완료」 · 예약(선차감) 직후
   onConsultDone: onLevelTestDone,                                  // 레벨 테스트 「완료」 → 상담 기록
+  // 레벨 테스트 「완료」의 레벨(계약 §9.16) — 명부 레벨 칸 · 직강생이면 false(반 레벨이 따라간다)
+  setLevel: async (studentId, level, staff) => (await trainerPortal.setLevel(studentId, level, staff)).ok,
 });
 
 // ── 트레이너 앱 「수업 기록하기(예약 없이)」·「판수 조정 요청」(계약 §9.9 · §9.10 · 오너 최우선 2026-09-30) ──
 // 수업 기록은 봇 /수업등록 과 같은 함수(lessonRecorder)로 쓴다. 조정은 요청만 남기고 오너 카드 승인(§46)이 판수를 움직인다.
 // 이 두 화면이 운영에 나간 날 /수업등록 레슨 · /판수정정 잠금을 켠다(계약 §9.7 · LESSON_LOCK_*).
+// 9/30 오너 확정(계약 §9.18): ±10판 이하는 트레이너가 바로 반영 · 넘으면 종전 승인 카드 · + 조정은 오너에게 알림만.
 require("./trainer-lessons.cjs")(app, {
   sbSelect, sbInsert, sbPatch, sbRpc, limit, recorder: lessonRecorder, trainer: trainerPortal, portal: studentPortal,
   adjreqCard: (a) => (adjreqPortalCard ? adjreqPortalCard(a) : Promise.resolve(false)),
+  // + 조정 바로 반영 · 그 되돌림 — 오너 DM(승인 버튼 없음). 보냈는지를 돌려준다(owner_notified).
+  ownerAlert: (a) => discordDM(process.env.MRI_OWNER_ID, adjustAlertText(a)),
+  onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 바로 반영 · 되돌림 직후
 });
+// 오너 알림 본문 — 승인 카드(adjreqPortalCard)와 같은 줄 모양. 운영진 DM 이라 반말이다.
+function adjustAlertText(a) {
+  const n = Math.abs(Number(a.remainingDelta));
+  if (a.type === "revert") {
+    return `**판수 조정 #${a.id} 되돌림** (앱)\n· 수강생: **${a.studentName}** (#${a.studentId})`
+      + `\n· 트레이너: ${a.trainerName}`
+      + `\n· 되돌린 조정: ${a.kindLabel} +${n}판 (${a.playedAt})`
+      + (a.remainingAfter == null ? "" : `\n· ${a.trainerName} 기준 지금 ${a.remainingAfter}판`);
+  }
+  return `**판수 조정 #${a.id}** (앱 · 바로 반영)\n· 수강생: **${a.studentName}** (#${a.studentId})`
+    + `\n· 트레이너: ${a.trainerName}`
+    + `\n· 종류: ${a.kindLabel} · 남은 판수 **+${n}판**`
+    + `\n· 날짜: ${a.playedAt}`
+    + `\n· 사유: ${a.reason}`
+    + (a.remainingBefore == null || a.remainingAfter == null ? ""
+      : `\n· ${a.trainerName} 기준 ${a.remainingBefore}판 → ${a.remainingAfter}판`)
+    + "\n승인은 필요 없어. 트레이너가 24시간 안에 되돌릴 수 있어";
+}
 
 // ── 공개 지표 — 최근 30일 실측(GET /api/public-metrics · 로그인 없음 · 숫자와 트레이너 표시명만 · 오너 지시 2026-09-30) ──
 // 매일 00:05 KST 에 어제까지 30일을 다시 세어 ops_state 에 두고 그날 하루 고정한다(cronTick). 정의는 docs/public-metrics.md.
@@ -8327,7 +8354,10 @@ const REQUIRED_SCHEMA = {
                      "payout_rate_set","pubg_platform","pubg_name","pubg_account_id",
                      // §38 승급(2026-09-28) — 이 세션이 DDL을 실행하고 실DB에서 칸·제약·인덱스를 확인했다.
                      // NOT_MERGED 가 이름 조회 전 경로에 붙어 있어, 칸이 없으면 동명이인 선택이 통째로 400이 된다.
-                     "discord_id","discord_src","merged_into"],
+                     "discord_id","discord_src","merged_into",
+                     // §50a 명부 레벨(2026-09-30) — 이 세션이 DDL을 실행하고 실DB에서 칸 · 제약을 확인했다.
+                     // created_at 은 원래 있던 칸 — 보류 기준일(수업 · 등록이 없을 때)로 트레이너 앱 목록이 읽기 시작했다.
+                     "level","level_set_at","level_set_by","created_at"],
   // §22a~c 승격(2026-09-04) — 오너가 DDL을 실행하고 실DB에서 3테이블 존재를 확인했다.
   // student-portal.cjs가 제목·일기·피드백을 여기서 읽고 쓴다(포털 가동 중).
   // 런타임 프로브(tableReady)는 그대로 둔다 — 부재 시 degrade는 유지하고,
@@ -8378,7 +8408,13 @@ const REQUIRED_SCHEMA = {
   games_short_notices:  ["id","student_id","trainer_id","remaining","opened_at","hold","notified_at","student_dm","trainer_dm","cleared_at"],
   // §46 판수 조정 요청(2026-09-30) — trainer-lessons.cjs 가 쓰고, 승인 · 반려는 함수 decide_games_adjustment() 가 한다.
   games_adjust_requests: ["id","student_id","trainer_id","kind","remaining_delta","reason","played_at","target_session_id",
-                          "status","owner_notified","created_at","decided_at","decided_by","applied_session_id"],
+                          "status","owner_notified","created_at","decided_at","decided_by","applied_session_id",
+                          // §50a 바로 반영 · 되돌리기(2026-09-30) — revert_games_adjustment() 가 채운다
+                          "remaining_before","remaining_after","reverted_at","reverted_by","revert_session_id"],
+  // §50a 트레이너별 「종료」(2026-09-30) — trainer-portal.cjs 가 쓰고 목록 판정(games-view listState)이 읽는다.
+  student_trainer_endings: ["student_id","trainer_id","ended_at","ended_by"],
+  // 정산 잠긴 달(결제 트랙 표 · 읽기만) — 판수 조정 · 수업 기록하기가 그 달이면 원장만 통과시킨다(§9.18).
+  period_locks:         ["period","released_at"],
   feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
 };
 
@@ -8766,9 +8802,10 @@ async function runBookingOrphans() {
   let sess = [];
   try {
     sess = await sbSelect("lesson_sessions",
-      `select=student_id,trainer_id,played_at&played_at=in.(${days.join(",")})&limit=1000`);
+      `select=student_id,trainer_id,played_at,games,created_by,memo&played_at=in.(${days.join(",")})&limit=1000`);
   } catch (e) { console.error("booking_orphan_sess", e?.message); return; }
-  const has = new Set(sess.map((x) => `${x.student_id}|${x.trainer_id}|${x.played_at}`));
+  // 판수 조정 행은 수업 기록이 아니다 — 같은 날 조정만 있으면 여전히 고아다(§50b 「완료」 같은 날 판정과 같은 기준).
+  const has = new Set(sess.filter(isLessonRow).map((x) => `${x.student_id}|${x.trainer_id}|${x.played_at}`));
 
   const orphans = recent.filter((b) => !has.has(`${b.student_id}|${b.trainer_id}|${b.d}`));
   const key = orphans.map((b) => b.id).join(",");
@@ -8948,6 +8985,33 @@ async function cronTick() {
   await maybeRunDaily("publicMetrics", "00:05", () => publicMetrics.run(), "공개 지표 계산");
   // 오너 승인 카드 다시 띄우기(ops_state 'payreq:resend') — 매 틱. 목록이 비어 있으면 읽기 한 번으로 끝난다.
   await runPayreqResend().catch((e) => console.error("payreq_resend", e?.message));
+  // 주간 보류 DM(계약 §9.17 · 오너 확정 9/30) — 월요일 10:00 KST 에 한 번. 날짜 키라 월요일마다 새로 돈다.
+  if (new Date(Date.now() + 9 * 3600 * 1000).getUTCDay() === 1)
+    await maybeRunDaily("holdDigest", "10:00", runHoldDigest, "주간 보류 DM");
+}
+
+// ── 주간 보류 DM — 트레이너(원장 포함)마다 지난 7일 안에 보류로 넘어간 내 수강생을 한 통에(없으면 안 보낸다) ──
+//   판정은 트레이너 앱 목록과 같은 함수(trainer-portal holdDigestFor · games-view listState)다. 테스트 계정은 뺀다.
+//   이름은 DM 본문에만 — 로그에는 건수만 남긴다.
+async function runHoldDigest() {
+  const staff = (await sbSelect("staff", "select=id,name,role,active,discord_id&discord_id=not.is.null"))
+    .filter((t) => t.active !== false && (t.role === "trainer" || t.role === "owner"));
+  let sent = 0, none = 0, failed = 0;
+  for (const t of staff) {
+    let rows = [];
+    try { rows = await trainerPortal.holdDigestFor(t); }
+    catch (e) { failed++; console.error("hold_digest", t.id, e?.message); continue; }
+    if (!rows.length) { none++; continue; }
+    if (await discordDM(t.discord_id, holdDigestText(rows))) sent++; else failed++;
+  }
+  console.log(`[holdDigest] 보냄 ${sent} · 대상 없음 ${none} · 실패 ${failed}`);
+  if (failed && !sent) throw new Error(`hold_digest_failed:${failed}`);   // 전부 실패면 maybeRunDaily 가 한 번 더 · 두 번째면 오너 DM
+}
+function holdDigestText(rows) {
+  const last = (ymd) => (ymd ? `마지막 수업 ${Number(ymd.slice(5, 7))}/${Number(ymd.slice(8, 10))}` : "아직 수업 없음");
+  return `이번 주 보류로 넘어간 수강생 ${rows.length}명이야\n`
+    + rows.map((r) => `· ${r.name} (${last(r.lastLessonOn)})`).join("\n")
+    + "\n14일 넘게 수업도 예약도 없어서 앱 목록 「보류」 탭으로 옮겼어. 수업이나 예약이 생기면 「진행 중」으로 알아서 돌아와";
 }
 if (T2_ENABLED || DIRECT_STATUS_ENABLED) {
   setInterval(() => { cronTick().catch((e) => console.error("cron_tick", e?.message)); }, 10 * 60 * 1000);   // 10분 틱
