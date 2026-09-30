@@ -1558,3 +1558,88 @@ PATCH /api/trainer-portal/bookings/:id
 - 수강생(옮기기 · 길이): 바뀐 시각 · 길이 · 선차감(바뀌면 「5판 → 8판」) · 보상(늦은 변경이면 「+1판」) · [괜찮아요] [안 돼요].
 - 수강생(닫기로 취소): 종전 트레이너 취소 DM + 늦은 취소면 「보상 1판을 넣었어요」.
 - 트레이너: 수강생이 [안 돼요]를 누르면 「{이름} 바뀐 시간 거절 — 예약 취소 · N판 복원」. [괜찮아요]는 DM 없이 `change.answer` 로만.
+
+## 9.20 신청 창구 — 신청 목록 · 맡기 · 레벨 테스트 넣기 · 등록 (2026-09-30 · 오너 방향 확정 · **계약 · 서버 구현 전**)
+
+> 설계 정본 `docs/intake-design.md`(2026-09-30). 신청 페이지 `start.html` 과 필드 이름은 클로드디자인 명세를 따른다.
+> **오너 결정 대기**(설계 §11)가 걸린 곳은 줄마다 표시했다. 구현하면서 바뀌면 이 절을 고친다.
+> 키 이름은 트레이너 가드 규칙을 지킨다 — `name` · `realName` · `studentId` 와 `discord` · `fee` · `payment` · `amount` 어간은 쓰지 않는다.
+
+### 9.20.1 상태
+
+`new`(아무도 안 맡음) → `claimed`(맡음) → `booked`(레벨 테스트 칸 잡음 · 입금 대기) → `paid`(입금 확인 · 일정 확정)
+→ `tested`(마침) → `enrolled`(등록 · 수강생 목록으로 넘어감). 어느 단계든 `closed`(닫음).
+
+### 9.20.2 `GET /api/trainer-portal/applications?view=`
+
+- `view` 없음 = 맡을 수 있는 것 + 내가 맡은 것.
+  - 맡을 수 있는 것 = `new` 중 원하는 트레이너가 나이거나 「누구든」
+  - 내가 맡은 것 = `enrolled` · `closed` 는 7일까지만
+- `view=all` = **원장 전용**(전 트레이너 · 전 상태). 트레이너가 보내면 403 `owner_only`.
+- 응답
+```json
+{ "applications": [
+  { "id": "…", "status": "booked", "createdAt": "2026-10-06T10:00:00Z",
+    "displayName": "디스코드 표시 이름", "tier": "gold", "tierChecked": "platinum", "pubgName": "InGameNick",
+    "concern": "고민 한 줄", "slots": ["weekday_evening"], "slotsNote": null,
+    "preferredTrainer": { "trainerKey": "…", "trainerName": "트레이너A" },
+    "assignedTrainer":  { "trainerKey": "…", "trainerName": "트레이너A" },
+    "event": { "code": "ORDER10", "title": "오더 강의 쇼츠" },
+    "levelTest": { "bookingId": "…", "startAt": "2026-10-08T11:00:00Z", "durationMin": 90, "deposit": "waiting" },
+    "ownerView": { "applicantName": "실명", "age": 17, "minor": true, "sameNameCount": 1 } } ] }
+```
+- `displayName` 은 디스코드 표시 이름이다. **실명 · 나이는 신청 단계에서 원장 전용**(명세)이라 `ownerView` 에만 있다. 트레이너 응답에는 `ownerView` 키 자체가 없다.
+- 등록(`enrolled`)되면 다른 수강생과 같이 §9.14 목록 · 상세에서 이름이 보인다(지금 규칙).
+- `levelTest` 는 칸을 잡은 뒤에만 온다(없으면 `null`). `deposit` ∈ `waiting` · `confirmed`.
+- `tierChecked` = 배그 닉으로 조회한 티어(없으면 `null`). `tier` 는 본인이 고른 값이다.
+- `preferredTrainer` 가 `null` 이면 「누구든」.
+
+### 9.20.3 `POST /api/trainer-portal/applications/:id/claim` — 맡기
+
+- 먼저 누른 사람이 맡는다. 디스코드 카드 [맡기]와 같은 판정이다.
+- 200 `{ "status": "claimed", "assignedTrainer": { … } }`
+- 409 `taken` `{ "assignedTrainer": { "trainerName": "…" } }` · 409 `closed` · 404 `not_found`
+
+### 9.20.4 `POST /api/trainer-portal/applications/:id/assign` — 레벨 테스트 칸에 넣기
+
+- 본문 `{ "slotId": "…" }` — 내 레벨 테스트 칸(`lessonType: "consult"` · `open`).
+- **아무도 안 맡은 신청이면 이 호출로 내가 맡는다.**
+- 200 `{ "status": "booked", "levelTest": { … } }`. 신청자에게 레벨 테스트 안내 DM(시각 · 레벨 테스트비 · 입금 계좌 · 취소 규칙)이 나간다.
+- 오류:
+  - 409 `taken`(다른 트레이너가 맡음) · 409 `slot_taken`
+  - 400 `not_consult_slot` · 403 `not_my_slot`
+  - 409 `already_booked`(이미 칸이 있음 — 옮기기는 §9.19) · 409 `closed`
+- 옮기기 · 취소는 §9.19 일정 직접 변경을 그대로 쓴다. §9.19 가 나오기 전에는 지금의 예약 취소를 쓴다.
+
+### 9.20.5 마침 — 기존 `POST /bookings/:id/complete` `{ "level": … }` (§9.16)
+
+- 신청자 예약이면 신청이 `tested` 로 바뀐다. 응답 모양은 그대로다.
+- 입금 확인 전이어도 막지 않는다. `deposit` 은 목록에 그대로 보인다(오너가 뒤에 확인).
+
+### 9.20.6 `POST /api/trainer-portal/applications/:id/enroll` — 등록
+
+- 본문 `{ "level": "beginner" | "intermediate" | "advanced" }` — 마침 때 골랐으면 생략할 수 있다. 안 골랐으면 필수.
+- 명부 prospect → active · 담당 = 맡은 트레이너.
+- 200 `{ "status": "enrolled", "student": { "id": "…" } }` — `student.id` 는 §9.14 · §9.15 의 수강생 id 다.
+- 신청자에게 등록 DM(앱 안내)이 나간다. 수강생 앱은 같은 디스코드로 바로 로그인된다(연결 신청 없음).
+- 오류:
+  - 409 `not_tested`(마침 전) · 403 `not_assignee` · 409 `closed`
+  - 409 `owner_check_needed` — 오너 확인이 필요한 신청이다. 이유는 트레이너에게 내리지 않는다(나이는 원장 전용 · 설계 §11-4).
+
+### 9.20.7 `POST /api/trainer-portal/applications/:id/close` — 닫기
+
+- 본문 `{ "reason": "duplicate" | "spam" | "no_reply" | "declined" | "no_show" | "other", "note": "…"? }`
+- 맡은 트레이너 · 원장만. 200 `{ "status": "closed" }`.
+- 잡힌 레벨 테스트가 있으면 취소하고 신청자에게 DM 한다.
+
+### 9.20.8 칸 목록 · 일정 조회의 신청자 이름
+
+- prospect 예약의 `studentDisplayName` 에는 **신청의 디스코드 표시 이름**이 온다(실명 아님).
+- 적용 범위는 `GET /slots` · §9.19 조회 둘 다.
+
+### 9.20.9 수강생 앱
+
+- `POST /api/student-portal/exchange`: 명부가 prospect 면 403 `application_pending`(설계 §11-6 · 오너 판정 대기).
+  - 앱은 「신청 접수 · 레벨 테스트 뒤에 열려요」 화면을 띄운다.
+  - 등록되면 같은 디스코드로 바로 들어온다.
+- 「판수 채우기」 이벤트 할인은 결제 트랙 합의 뒤 별도 계약(설계 §7.3).
