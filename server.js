@@ -1367,21 +1367,26 @@ if (process.env.DISCORD_TOKEN) {
   //                        「완료」 한 번이면 기록이 끝난다 — 앱 화면이 늦어도 막히지 않는다.
   //   LESSON_LOCK_ALL_FROM 레슨 전부(그룹 포함) · /판수정정 을 잠근다. null 이면 이 단계는 꺼져 있다.
   //   ⚠️ 강의(직강)는 이 단계에서도 **잠그지 않는다** — 직강 출석 기록이 앱으로 오기 전까지 봇이 유일한 입구다(오너 9/30).
-  //      진단상담은 잠근다 — 앱 「완료」(레벨 테스트)가 consults 기록을 남기게 됐다(consult-record.cjs · 오너 OK 9/30).
-  //      예약 없이 한 레벨 테스트는 오너에게 말한다(안내 문구).
+  //   CONSULT_LOCK_FROM    진단상담(레벨 테스트 기록)만 따로 잠근다. null 이면 열려 있다.
+  //      ⚠️ 10/1 오너 지시(어플 전달)로 **풀어 둔다** — 신규 상담자는 명부 · 앱에 없어서 트레이너가 앱 레벨 테스트 칸에
+  //      넣을 수 없다. 신청 창구(start.html · 10/8 제출 열림)로 들어온 신청자만 앱 칸에 넣을 수 있으니, 그 전에 잠그면
+  //      레벨 테스트 기록 · 상담 가산이 끊긴다(오더10 기간과 겹침). 레슨 · /판수정정 잠금은 그대로다.
+  //      다시 잠그는 날: 신청 창구 PR-3(맡은 신청자를 칸에 넣기 · 「마침」 → 상담 기록)이 운영에서 확인된 날 — 이 날짜만 넣는다.
   //
   // 안내 문구의 버튼 이름은 트레이너 앱 실제 이름이다(반장 확인 9/30): 끝난 칸 「완료 · 기록하기」 · 안 끝난 칸 「수업 완료」 ·
   //   「수업 기록하기」 · 「레벨 테스트 마침」 · 「판수 조정 요청」. 앱 이름이 바뀌면 여기도 바꾼다.
   // ✅ **10/1 0시(KST)부터 켜짐**(반장 운영 확인 2026-09-30 13:xx — 트레이너 앱 #32 · d5c6feb 에
-  //    「수업 기록하기(예약 없이)」·「판수 조정 요청」이 올라갔다). 레슨 · 진단상담 · /판수정정 을 함께 잠근다.
+  //    「수업 기록하기(예약 없이)」·「판수 조정 요청」이 올라갔다). 레슨 · /판수정정 을 함께 잠근다(진단상담은 위 CONSULT_LOCK_FROM).
   //    오늘(9/30)이 아니라 10/1 인 이유 — 9월 밀린 수업을 오늘 /수업등록 「날짜」 칸으로 넣는 중이다(오너 지시 9/30).
   //    오늘 잠그면 앱 「수업 기록하기」는 7일 전(9/23)까지만 받아서 그보다 앞선 9월 수업을 넣을 곳이 없어진다.
   //    ⚠️ 10/1 부터는 봇 「날짜」 칸도 9/24 까지만 받는다(parseLessonDate — 월초 1주는 지난달 끝 7일) — 오너도 같다.
   //       그보다 앞선 수업은 앱 「판수 조정 요청」(31일 전까지 · 오너 승인 카드)이 남은 길이다.
   const LESSON_LOCK_FROM = "2026-10-01";
   const LESSON_LOCK_ALL_FROM = "2026-10-01";
+  const CONSULT_LOCK_FROM = null;            // 10/1 풀어 둠(위 주석) · 다시 잠글 때 날짜("YYYY-MM-DD")만 넣는다
   const lessonLocked = () => !!LESSON_LOCK_FROM && kstToday() >= LESSON_LOCK_FROM;
   const lessonLockedAll = () => !!LESSON_LOCK_ALL_FROM && kstToday() >= LESSON_LOCK_ALL_FROM;
+  const consultLocked = () => !!CONSULT_LOCK_FROM && kstToday() >= CONSULT_LOCK_FROM;
   const isMriOwner = (itx) => !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
   // /수업등록 성공분을 DB lesson_sessions에도 기록(시트 병행·검증용).
   //   시트가 진실인 단계 — DB insert는 best-effort: 실패/이름 미매칭이어도 명령 성공(오너 DM만).
@@ -1562,7 +1567,7 @@ if (process.env.DISCORD_TOKEN) {
           content: "수업 기록은 이제 앱에서 해줘. 예약이 있으면 예약 카드의 「완료 · 기록하기」, 예약 없이 한 수업은 「수업 기록하기」로 남기면 돼.",
           ephemeral: true,
         });
-      if (guboon === "진단상담" && lessonLockedAll())
+      if (guboon === "진단상담" && consultLocked())
         return itx.reply({
           content: "레벨 테스트 기록은 앱에서 해줘. 예약 카드에서 「레벨 테스트 마침」을 누르면 상담 기록까지 남아. 예약 없이 한 테스트는 오너에게 말해줘.",
           ephemeral: true,
