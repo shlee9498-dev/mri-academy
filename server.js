@@ -177,6 +177,15 @@ async function sbInsert(table, row) {
   if (!r.ok) await sbThrow("insert", table, r);
   return (await r.json())[0];
 }
+// 여러 행을 한 요청으로 넣고 **전부** 돌려받는다(sbInsert 는 첫 행만 돌려준다 — 호출자가 많아 모양을 안 바꾼다).
+// 한 요청이라 같이 들어가거나 같이 안 들어간다. 쓰는 곳: lesson-record.cjs(그룹 수업 기록).
+async function sbInsertMany(table, rows) {
+  const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}`, {
+    method: "POST", headers: sbHeaders({ Prefer: "return=representation" }), body: JSON.stringify(rows),
+  });
+  if (!r.ok) await sbThrow("insert", table, r);
+  return r.json();
+}
 async function sbPatch(table, idFilter, patch) {
   const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?${idFilter}`, {
     method: "PATCH", headers: sbHeaders({ Prefer: "return=representation" }), body: JSON.stringify(patch),
@@ -210,6 +219,12 @@ async function sbDelete(table, filter) {
   });
   if (!r.ok) await sbThrow("delete", table, r);
 }
+
+// 수업 기록 한 벌(2026-09-30 · 오너 지시 「/수업등록 과 같은 함수」) — 봇 /수업등록 과 트레이너 앱 「수업 기록하기」(계약 §9.9)가
+// 같은 함수로 판수를 남긴다. 부족 점검 훅은 아래 gamesShort(§45)를 부른다 — 부르는 때는 요청 처리 중이라 이미 만들어져 있다.
+const lessonRecorder = require("./lesson-record.cjs")({
+  sbSelect, sbInsertMany, sbRpc, onGamesChanged: (ids) => gamesShort.check(ids),
+});
 
 // ═══════════════════ 피드백 월 (트레이너 피드백 → 사이트) ═══════════════════
 // 봇이 트레이너 피드백 서버의 메시지를 수집 → Claude로 정제(오탈자·민감 마스킹)
@@ -892,6 +907,9 @@ let linkReqIntake = null;
 // 버튼 customId 는 /결제신청 과 **같은 payreq_ok·payreq_no** 라 승인·반려 처리기가 그대로 받는다 —
 // 앱에서 온 신청도 오너 눈에는 같은 카드고, 승인 뒤 본표 편입도 §18d 트리거가 똑같이 한다.
 let payreqPortalCard = null;
+// 앱 판수 조정 요청 → 오너 DM 승인 카드(계약 §9.10 · §46). 같은 패턴으로 봇 블록이 채운다 — 봇이 없으면 null
+// (요청은 그래도 저장되고 ownerNotified:false 로 답한다). 버튼 = adjreq_ok · adjreq_no.
+let adjreqPortalCard = null;
 if (process.env.DISCORD_TOKEN) {
   const client = new Client({
     intents: [
@@ -1311,7 +1329,7 @@ if (process.env.DISCORD_TOKEN) {
       const st = await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainerName)}&limit=1`);
       trainer_id = st[0] ? st[0].id : null;
     } catch (e) { console.error("dualwrite_staff_lookup", e?.message); }
-    const rows = [], miss = [], unattached = [], dup = [];
+    const miss = [], unattached = [], dup = [];
     const picked = [];
     for (const s of students) {
       try {
@@ -1324,6 +1342,7 @@ if (process.env.DISCORD_TOKEN) {
     // 앱 「완료」가 이미 판수를 남긴 수강생은 건너뛴다(§37 「수업 기록 하나로」 · 오너 지시 2026-09-28).
     //   record_lesson_from_booking 이 예약 판수를 lesson_sessions 에 넣으므로, 그 뒤 /수업등록 을
     //   하면 같은 판이 두 번 빠진다. 반대 방향(봇이 먼저)은 함수가 막는다 — 예약이 이미 done 이다.
+    //   앱 「수업 기록하기」(§9.9)도 created_by 'portal' 로 남기므로 같은 판정에 걸린다.
     //
     //   ⚠️ **`created_by = 'portal'` 로 좁힌다.** 「그날 그 트레이너 기록이 있으면」 으로 넓게 잡으면
     //   **하루 두 타임을 따로 등록하는 정상 운영을 막는다** — 실측 2026-09-28: 같은
@@ -1333,95 +1352,28 @@ if (process.env.DISCORD_TOKEN) {
     //
     //   ⚠️ 조회가 실패하면 **건너뛰지 않는다** — 판수를 안 남기는 쪽이 더 나쁘다(미기록은 눈에 안 보인다).
     //      이중은 사후 정정이 되고, 매일 밤 점검이 같은 조건으로 다시 잡는다.
-    const already = new Set();
+    let already = new Set();
     if (picked.length && trainer_id != null) {
-      try {
-        const have = await sbSelect("lesson_sessions",
-          `select=student_id&trainer_id=eq.${trainer_id}&played_at=eq.${played_at}`
-          + `&created_by=eq.portal&student_id=in.(${picked.map((x) => x.sid).join(",")})`);
-        have.forEach((r) => already.add(Number(r.student_id)));
-      } catch (e) { console.error("dualwrite_dup_check", e?.message); }
+      try { already = await lessonRecorder.appRecordedOn(trainer_id, picked.map((x) => x.sid), played_at); }
+      catch (e) { console.error("dualwrite_dup_check", e?.message); }
     }
+    const entries = [];
     for (const s of picked) {
       if (already.has(Number(s.sid))) { dup.push(s.name); continue; }
-      const enrId = await resolveEnrollmentId(s.sid, trainer_id);
-      if (enrId == null) unattached.push(s.name);
-      rows.push({ student_id: s.sid, trainer_id, played_at, games: s.games, memo: memo || null,
-                  created_by: createdBy, lesson_enrollment_id: enrId });
+      entries.push({ sid: s.sid, games: s.games });
     }
-    if (rows.length) {
-      try { await sbInsert("lesson_sessions", rows); }
-      catch (e) {
-        // lesson_enrollment_id는 SCHEMA_OPTIONAL이다 — 컬럼이 없는 배포에서는 PGRST204로
-        // **INSERT 전체가 죽고 판수가 통째로 유실**된다. 귀속은 부가가치이고 판수 기록이
-        // 본체이므로, 실패하면 컬럼을 뺀 축소 재요청으로 한 번 흡수한다(admin-panel.js:350과 같은 처리).
-        // 조용히 넘기지 않고 별도 코드로 남긴다 — 이게 안 보이면 미귀속이 영영 쌓인다.
-        console.error("dualwrite_insert", e?.message);
-        try {
-          await sbInsert("lesson_sessions", rows.map(({ lesson_enrollment_id, ...r }) => r));
-          console.error("dualwrite_enr_column_missing", "lesson_enrollment_id 없이 재기록", rows.length);
-          // degraded면 이 배치는 전건 미귀속이다. unattached에 id를 섞지 않는다(로그 필드는 이름 계열).
-          // "전건"이라는 사실은 degraded 플래그가 나르고, 알림은 warnOnce가 하루 1회로 묶는다.
-          return { inserted: rows.length, miss, unattached, dup, degraded: true };
-        } catch (e2) { console.error("dualwrite_insert_retry", e2?.message); return { error: true, miss, unattached, dup }; }
-      }
-    }
-    await closeBookingsFor(trainer_id, rows.map((r) => r.student_id), played_at);
-    gamesShort.check(rows.map((r) => r.student_id));        // 판수 부족 알림(§45) — 예약이 닫힌 뒤의 잔여로 본다 · 기다리지 않는다
-    return { inserted: rows.length, miss, unattached, dup };
+    // 기록 본체(등록 귀속 → 기록 → 같은 날 예약 닫기 → 부족 점검)는 lesson-record.cjs 한 벌이다 —
+    // 앱 「수업 기록하기」(계약 §9.9)가 같은 함수를 쓴다(오너 지시 2026-09-30 「/수업등록 과 같은 함수」).
+    const out = await lessonRecorder.writeLessonRows({ trainerId: trainer_id, entries, playedAt: played_at, memo, createdBy });
+    // 미귀속은 이름으로 돌려준다(로그 필드는 이름 계열 · 기존 회신 모양 그대로).
+    const nameOf = new Map(picked.map((x) => [Number(x.sid), x.name]));
+    for (const sid of out.unattachedSids) unattached.push(nameOf.get(Number(sid)));
+    if (out.error) return { error: true, miss, unattached, dup };
+    // degraded면 이 배치는 전건 미귀속이다. "전건"이라는 사실은 degraded 플래그가 나르고, 알림은 warnOnce가 하루 1회로 묶는다.
+    if (out.degraded) return { inserted: out.inserted.length, miss, unattached, dup, degraded: true };
+    return { inserted: out.inserted.length, miss, unattached, dup };
   }
-
-  // 예약 종료 연동(§23f · 오너 판정 2026-09-04). 수업을 등록하면 그 날 그 수강생의
-  // 예약을 done 으로 닫는다 — 트레이너가 포털에서 따로 누르지 않아도 되게.
-  //   · 맞는 예약이 없으면 아무것도 안 한다(예약 없이 진행한 수업도 정상).
-  //   · 판수는 여기서 건드리지 않는다. 이미 lesson_sessions 에 들어갔고, done 전이는
-  //     그 자리를 비켜주는 것뿐이다(선차감을 계속 붙들면 같은 판이 두 번 빠진다).
-  //   · 베스트에포트다. 실패해도 판수 기록을 되돌리지 않는다 — 예약 상태가 늦게 닫히면
-  //     48시간 뒤 pending_review 로 올라가 트레이너 홈에 보인다(§23g).
-  async function closeBookingsFor(trainerId, studentIds, playedAt) {
-    if (!trainerId || !studentIds.length) return;
-    try {
-      const out = await sbRpc("complete_bookings_for_session", {
-        p_trainer_id: trainerId, p_student_ids: [...new Set(studentIds)], p_played_at: playedAt,
-      });
-      if (out?.closed) console.log("[booking] /수업등록 연동 — 예약", out.closed, "건 done 전이");
-    } catch (e) {
-      // §23 미실행 배포에서는 함수가 없어 매번 여기로 온다 — 소음이라 코드만 남긴다.
-      console.error("close_bookings", e?.message);
-    }
-  }
-  // 세션 → 등록 귀속(§19). **산술적으로 유일할 때만** 붙이고 모호하면 null로 남긴다.
-  //   조건: 그 학생의 status in (active,paused) 등록이 정확히 1건 **AND** carry_games = 0.
-  //
-  //   왜 이 조건뿐인가 — 등록이 여러 건이면 FIFO로 갈라야 하는데, FIFO 경계는 과거 세션의
-  //   귀속이 끝나야 계산된다. 미귀속 백로그가 남아 있는 동안은 등록별 잔여 자체를 못 구하므로
-  //   지금 시점의 자동 분배는 추측이 된다(2026-08-19 실측: 미귀속 실판수 73행 중 44행이 이 구간).
-  //   carry_games > 0이면 개시잔액이 먼저 소비되므로 이 판수가 이월 소비인지 등록 소비인지 갈린다.
-  //
-  //   모호하면 null = 종전 동작 그대로다(회귀 없음). 남은 구간은 백필 SQL로 오너가 처리한다.
-  // §7-2 FIFO 승격(관제탑 8/25 · 부분 초과 ⓐ 채택): 트레이너 일치 필수 → started_on 오름차순
-  // → 잔여>0 첫 등록에 귀속(잔여 부족해도 통째 — straddle (b) 판례 동형, FK 1개라 쪼개기 불가).
-  // 전 등록 소진·트레이너 미해석·carry_games 잔존은 null → 미귀속 + 오너 알림(unattached 경로).
-  // 초과 배정(잔여 ≤ 0 등록에 붙이기)은 자동 경로에서 하지 않는다 — 백필 위임 판정 전용.
-  async function resolveEnrollmentId(studentId, trainerId) {
-    try {
-      const st = await sbSelect("students", `select=carry_games&id=eq.${studentId}&limit=1`);
-      if (Number(st[0]?.carry_games || 0) !== 0) return null;
-      if (trainerId == null) return null;              // 트레이너 일치가 규칙 1 — 미해석이면 귀속 금지
-      const es = await sbSelect("lesson_enrollments",
-        `select=id,games_total,bonus_games&student_id=eq.${studentId}&trainer_id=eq.${trainerId}`
-        + `&status=in.(active,paused)&order=started_on.asc,id.asc`);
-      for (const e of es) {
-        let used = 0;
-        try {
-          const ss = await sbSelect("lesson_sessions", `select=games&lesson_enrollment_id=eq.${e.id}`);
-          used = ss.reduce((a, r) => a + Number(r.games || 0), 0);
-        } catch (err) { console.error("dualwrite_enr_used", e.id, err?.message); return null; }
-        if (Number(e.games_total || 0) + Number(e.bonus_games || 0) - used > 0) return e.id;
-      }
-      return null;                                     // 전 등록 소진 — 규칙 4
-    } catch (e) { console.error("dualwrite_enr_lookup", studentId, e?.message); return null; }
-  }
+  // 예약 닫기(closeBookingsFor) · 등록 귀속(resolveEnrollmentId)은 lesson-record.cjs 로 옮겼다(2026-09-30 · 본문 그대로).
   // 이름 → student_id 해석. 순서: ① students.name 정확일치 ② student_aliases ③ 미해석(null).
   //  유사도·편집거리 매칭은 넣지 않는다 — 1글자 차이인 별개 인물이 실재하고
   //  (김재성↔김현성 · 주성준↔지성준), 오탐이 곧 오귀속이며 오귀속은 정산 오류다.
@@ -3143,6 +3095,74 @@ if (process.env.DISCORD_TOKEN) {
       return true;
     } catch (e) { console.error("payreq_portal_dm", e?.message); return false; }
   };
+
+  // 앱 판수 조정 요청 승인 카드(계약 §9.10 · §46 · 오너 지시 2026-09-30).
+  //   트레이너는 판수를 직접 고치지 않는다 — 이 카드의 승인만 판수를 움직인다. 승인 · 반려는 §46
+  //   decide_games_adjustment 한 번(요청 줄을 잠그고 pending 일 때만) — 두 번 눌러도 한 번만 들어간다.
+  //   반려 = 요청한 트레이너 DM(오너 지시). 승인 = 판수 기록 + 부족 점검(§45) · 트레이너 DM 없음(앱 목록에 뜬다).
+  const adjDeltaText = (d) => `${Number(d) > 0 ? "+" : "−"}${Math.abs(Number(d))}판`;
+  adjreqPortalCard = async (a) => {
+    if (!process.env.MRI_OWNER_ID) return false;
+    try {
+      const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`adjreq_ok:${a.id}`).setLabel("✅ 승인").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`adjreq_no:${a.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
+      );
+      const after = a.remainingNow == null ? null : Number(a.remainingNow) + Number(a.remainingDelta);
+      await owner.send({
+        content: `**판수 조정 요청 #${a.id}** (앱)\n· 수강생: **${a.studentName}** (#${a.studentId})`
+          + `\n· 트레이너: ${a.trainerName}`
+          + `\n· 종류: ${a.kindLabel} · 남은 판수 **${adjDeltaText(a.remainingDelta)}**`
+          + `\n· 날짜: ${a.playedAt}${a.hasTarget ? " (고칠 수업 날짜)" : ""}`
+          + `\n· 사유: ${a.reason}`
+          + (a.remainingNow == null ? ""
+            : `\n· ${a.trainerName} 기준 지금 ${a.remainingNow}판 → 승인하면 ${after}판`),
+        components: [row],
+      });
+      return true;
+    } catch (e) { console.error("adjreq_card_dm", e?.message); return false; }
+  };
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isButton()) return;
+    const m = String(itx.customId || "").match(/^adjreq_(ok|no):(\d+)$/);
+    if (!m) return;
+    if (!isMriOwner(itx)) return itx.reply({ content: "오너 전용 버튼이야.", ephemeral: true });
+    const approve = m[1] === "ok", reqId = Number(m[2]);
+    const base = String(itx.message?.content || `판수 조정 요청 #${reqId}`);
+    try { await itx.deferUpdate(); } catch (e) { console.error("adjreq_defer", e?.message); return; }
+    let out = null;
+    try { out = await sbRpc("decide_games_adjustment", { p_request_id: reqId, p_approve: approve, p_decided_by: "owner" }); }
+    catch (e) {
+      console.error("adjreq_decide", e?.status || e?.message);
+      return itx.followUp({ content: `#${reqId} 처리 중 오류가 났어. 판수는 안 바뀌었어 — 다시 눌러줘`, ephemeral: true }).catch(() => {});
+    }
+    if (out?.error === "already_decided")
+      return itx.editReply({ content: `${base}\n→ 이미 처리된 요청이야(${out.status})`, components: [] }).catch(() => {});
+    if (out?.error)
+      return itx.editReply({ content: `${base}\n→ 요청을 찾지 못했어(${out.error})`, components: [] }).catch(() => {});
+
+    if (approve) {
+      gamesShort.check([out.studentId]);                  // 판수 부족 알림(§45) — 승인으로 음수가 되면 바로
+      return itx.editReply({
+        content: `${base}\n→ **승인** · 기록 #${out.sessionId} · 지금 ${out.remainingAfter}판`, components: [],
+      }).catch(() => {});
+    }
+    // 반려 — 요청한 트레이너에게 DM(오너 지시). 실패해도 반려는 끝났다 — 카드에 적는다.
+    let dmOk = false;
+    try {
+      const [st, tr] = await Promise.all([
+        sbSelect("students", `select=name&id=eq.${out.studentId}&limit=1`),
+        sbSelect("staff", `select=discord_id&id=eq.${out.trainerId}&limit=1`),
+      ]);
+      const label = { correction: "정정", compensation: "보상", late_cancel: "늦은 취소", no_show: "노쇼" }[out.kind] || "조정";
+      dmOk = await discordDM(tr[0]?.discord_id,
+        `판수 조정 반려 — ${st[0]?.name || "수강생"} ${label} ${adjDeltaText(out.remainingDelta)} · 궁금하면 오너에게 물어봐`);
+    } catch (e) { console.error("adjreq_reject_dm", e?.message); }
+    return itx.editReply({
+      content: `${base}\n→ **반려** · ${dmOk ? "트레이너에게 알렸어" : "트레이너 DM 실패 — 직접 알려줘"}`, components: [],
+    }).catch(() => {});
+  });
 
   // 연결 신청 접수 — /연결신청(디스코드)과 앱의 연결 대기 화면이 **같은 함수**를 쓴다.
   // 두 입구가 갈라지면 한쪽만 고쳐져 어긋나므로 한 벌로 둔다(2026-09-26 오너 지시).
@@ -7957,6 +7977,14 @@ require("./booking-api.cjs")(app, {
   onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 「완료」 · 예약(선차감) 직후
 });
 
+// ── 트레이너 앱 「수업 기록하기(예약 없이)」·「판수 조정 요청」(계약 §9.9 · §9.10 · 오너 최우선 2026-09-30) ──
+// 수업 기록은 봇 /수업등록 과 같은 함수(lessonRecorder)로 쓴다. 조정은 요청만 남기고 오너 카드 승인(§46)이 판수를 움직인다.
+// 이 두 화면이 운영에 나간 날 /수업등록 레슨 · /판수정정 잠금을 켠다(계약 §9.7 · LESSON_LOCK_*).
+require("./trainer-lessons.cjs")(app, {
+  sbSelect, sbInsert, sbPatch, sbRpc, limit, recorder: lessonRecorder, trainer: trainerPortal, portal: studentPortal,
+  adjreqCard: (a) => (adjreqPortalCard ? adjreqPortalCard(a) : Promise.resolve(false)),
+});
+
 // [재발 방지] 기동 시 시트 웹훅 연결 식별 — 어느 Apps Script 배포(=어느 스프레드시트)에 붙는지 즉시 확인.
 //   봇은 SHEET_ID가 아니라 SHEET_WEBHOOK_URL(Apps Script /exec)로 씀 → 배포ID가 정본/구 시트 식별키.
 //   (2026-07 사고: Apps Script 재배포/재바인딩 후 webhook URL 미갱신 → 봇이 구 시트에 계속 기록)
@@ -8152,6 +8180,9 @@ const REQUIRED_SCHEMA = {
                           "from_trainer_id","to_trainer_id","had_feedback","created_at"],
   // §45 트레이너별 판수 부족 알림 상태(2026-09-30) — games-short.cjs 가 읽고 쓴다. 부족 목록은 함수 portal_short_pools().
   games_short_notices:  ["id","student_id","trainer_id","remaining","opened_at","hold","notified_at","student_dm","trainer_dm","cleared_at"],
+  // §46 판수 조정 요청(2026-09-30) — trainer-lessons.cjs 가 쓰고, 승인 · 반려는 함수 decide_games_adjustment() 가 한다.
+  games_adjust_requests: ["id","student_id","trainer_id","kind","remaining_delta","reason","played_at","target_session_id",
+                          "status","owner_notified","created_at","decided_at","decided_by","applied_session_id"],
   feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
 };
 
