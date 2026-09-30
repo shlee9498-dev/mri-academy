@@ -56,6 +56,17 @@ test("첫 요청이 계산해 저장 · 두 번째는 다시 세지 않는다 ·
   assert.equal(st.selects, n);                                        // 메모리 캐시
 });
 
+test("GET /api/site-metrics — 명세 §8 모양 · 같은 계산본(다시 세지 않는다)", async () => {
+  const n = st.selects;
+  const r = await fetch(`${base}/api/site-metrics`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), {
+    asOf: st.state.public_metrics.value.asOf, students30: 1, games30: 5, rebook30: 100,
+    byTrainer: [{ id: "jungu", name: "트레이너A", students30: 1, games30: 5, rebook30: 100 }],
+  });
+  assert.equal(st.selects, n);
+});
+
 test("크론 run() 은 다시 세어 저장한다", async () => {
   const n = st.selects;
   const v = await pm.run();

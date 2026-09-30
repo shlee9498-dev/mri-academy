@@ -45,6 +45,8 @@ const kstDate = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
 // 직강 회차(계약 §9.12)는 수강생 앱 §7.1 과 같은 함수 · 원장 대시보드(§9.13) 판정은 ops-status 한 벌(#385 ⓞ).
 const courseProgress = require("./course-progress.cjs");
 const ops = require("./ops-status.cjs");
+// 테스트 계정 표(공개 지표와 같은 한 벌) — 명부 행에 isTest 로 싣는다(반장 요청 9/30 · 표시명 「테스트」 판정 대체).
+const { isTestStudent } = require("./test-accounts.cjs");
 
 // 전 기간을 읽는 조회는 쪼개 읽는다 — PostgREST 는 max-rows(Supabase 기본 1,000)에서 **조용히** 자른다.
 // 오너 범위(전체 수강생)의 수업 행이 지금 249행이고 월 ~100행씩 는다. 잘리면 잔여가 틀린 채로 보인다.
@@ -374,6 +376,7 @@ module.exports = function mountTrainerPortal(app, deps) {
           // 기록 · 예약 · 일기 · 복기를 할 수 있는 범위(담당 ∪ 최근 90일)에 드는가. 트레이너 계정은 늘 true ·
           // 오너 계정의 false 행은 **보기만** — 앱은 쓰기 버튼을 감춘다(누르면 403 scope_denied).
           inMyScope: owner ? s.inMyScope : true,
+          isTest: isTestStudent(s.id),      // 테스트 계정(test-accounts.cjs) — 앱은 이 값으로 가린다 · 표시명으로 판정하지 않는다
           ...ownerOnly,
         };
       });

@@ -18,13 +18,16 @@
 // ============================================================
 "use strict";
 const { isLessonRow, kstDate, addDays } = require("./ops-status.cjs");
+const { TEST_STUDENT_IDS } = require("./test-accounts.cjs");
 
 const WINDOW_DAYS = 30;
 const STATE_KEY = "public_metrics";
-// 테스트 계정 — students 에 표시 칸이 없어 id 로 둔다(실측 2026-09-30: #106 「앱 테스트용」 1명).
-// 새 테스트 계정을 만들면 여기에 id 를 더한다.
-const TEST_STUDENT_IDS = new Set([106]);
+// 테스트 계정 표는 test-accounts.cjs 한 벌(트레이너 앱 명부 isTest 와 같은 표).
 const PAGE_ROWS = 1000;
+// 트레이너 공개 키 — 사이트 트레이너 카드 · 상세(trainer-<키>.html)가 이 값으로 자기 숫자를 찾는다.
+// 사이트에 이미 쓰던 키(data-k)와 같다. 표에 없는 트레이너는 t<staff id>.
+const TRAINER_KEYS = { 5: "hyuntae", 2: "jungu", 4: "muri" };
+const trainerKeyOf = (id) => TRAINER_KEYS[id] || `t${id}`;
 
 // 창 = 어제까지 30일(오늘은 하루가 안 끝났다).
 function windowOf(today) {
@@ -80,6 +83,7 @@ function computeMetrics({ sessions, payments, students, enrollTrainer, staff }, 
     ...sum(lessonRows),
     repurchase: { ...repurchaseOf(all), basis: "all_time" },
     trainers: coaches.map((c) => ({
+      id: trainerKeyOf(c.id),
       name: c.name,
       ...sum(lessonRows.filter((r) => r.trainer_id === c.id)),
       repurchase: repurchaseOf(byTrainer.get(c.id) || new Map()),
@@ -89,12 +93,31 @@ function computeMetrics({ sessions, payments, students, enrollTrainer, staff }, 
 
 // 공개 응답 가드 — 숫자 · 날짜 · 트레이너 표시명 말고는 싣지 않는다. 키가 늘면 여기서 먼저 막힌다.
 const PUBLIC_KEYS = new Set(["asOf", "window", "from", "to", "days", "students", "lessons", "studentLessons", "games",
-  "repurchase", "payers", "repeaters", "ratePct", "basis", "trainers", "name"]);
+  "repurchase", "payers", "repeaters", "ratePct", "basis", "trainers", "id", "name",
+  "students30", "games30", "rebook30", "byTrainer"]);
+
+// 명세 §8 모양(GET /api/site-metrics) — 사이트는 수강생 수 · 판수 · 재결제율만 쓴다(「회」는 안 쓴다 · 오너 9/30).
+//   rebook30 = 재결제율 %(권장안 · 오너 OK — **전 기간** 기준 · 내림 · 결제 수강생 0 이면 null). 이름은 명세 그대로 둔다.
+function siteShape(v) {
+  return {
+    asOf: v.asOf,
+    students30: v.students,
+    games30: v.games,
+    rebook30: v.repurchase?.ratePct ?? null,
+    byTrainer: (v.trainers || []).map((t) => ({
+      id: t.id, name: t.name, students30: t.students, games30: t.games, rebook30: t.repurchase?.ratePct ?? null,
+    })),
+  };
+}
 function assertPublic(value, path = "$") {
   if (Array.isArray(value)) { value.forEach((v, i) => assertPublic(v, `${path}[${i}]`)); return value; }
   if (value && typeof value === "object") {
     for (const k of Object.keys(value)) {
       if (!PUBLIC_KEYS.has(k)) { console.error("public_metrics_forbidden_key", `${path}.${k}`); throw new Error("public_metrics_forbidden_key"); }
+      // id 는 트레이너 공개 키(영문 소문자 슬러그)만 — 숫자 id(수강생 · staff 내부 번호)가 이 이름으로 새지 않게
+      if (k === "id" && !(typeof value[k] === "string" && /^[a-z][a-z0-9]*$/.test(value[k]))) {
+        console.error("public_metrics_forbidden_key", `${path}.${k}`); throw new Error("public_metrics_forbidden_key");
+      }
       assertPublic(value[k], `${path}.${k}`);
     }
   }
@@ -161,18 +184,22 @@ module.exports = function mountPublicMetrics(app, deps) {
     }
   }
 
-  app.get("/api/public-metrics", limit("publicMetrics", 60, 60_000), async (_req, res) => {
+  const serve = (shape) => async (_req, res) => {
     if (!ready()) return res.status(503).json({ error: { code: "not_ready" } });
     try {
       const value = await current();
       res.set("Cache-Control", "public, max-age=300");
-      res.json(value);
+      res.json(assertPublic(shape(value)));
     } catch (e) {
       console.error("public_metrics", e?.message);
       res.status(503).json({ error: { code: "not_ready" } });
     }
-  });
+  };
+  // 전체 모양(정의 · 창 · 1인 기준 수업까지) — 문서 · 원장 확인용
+  app.get("/api/public-metrics", limit("publicMetrics", 60, 60_000), serve((v) => v));
+  // 사이트용(명세 §8) — 같은 계산본을 이름만 바꿔 내린다
+  app.get("/api/site-metrics", limit("publicMetrics", 60, 60_000), serve(siteShape));
 
   return { run, current };
 };
-module.exports._test = { computeMetrics, windowOf, assertPublic, TEST_STUDENT_IDS, WINDOW_DAYS };
+module.exports._test = { computeMetrics, windowOf, assertPublic, siteShape, TEST_STUDENT_IDS, WINDOW_DAYS };
