@@ -16,6 +16,8 @@
 //            env REVIEW_DRAFT_SWEEP · 기본 드라이런 — server.js cronTick 이 draftSweep 을 부른다).
 // PR-3 범위: 트레이너 목록(담당·수신분 · 안 읽음 · 답 대기) · 상세(canReply) · 답(comment·overall · mark·task 는 2차)
 //            · 공유 피드(활성 트레이너 전원 · 이름 + pubg_name) · 반응(트레이너).
+// §57(디스코드 이관 · 2026-10-01): 목록 · 상세의 source · publicAt · 공개 대기 끝(flipPublicDue · cronTick) · 범위를 고르면 대기 해제
+//            · 「답 기다려요」 제외 · 이관 사진 저장(importImage — feedback-import.cjs 가 부른다 · 업로드와 같은 storeImage).
 //
 // 원칙(어기면 설계 위반)
 //  1) 본인 = 세션 sub(students.id). 클라이언트는 studentId 를 보내지 않는다. 응답 id 는 전부 불투명(kind 분리).
@@ -412,6 +414,18 @@ function planSweep(rows, cap) {
   return { groups, capped };
 }
 
+// ── 디스코드 이관(§57 · 어플 9/30) 순수 함수 ──
+
+// 범위 바꾸기 patch(단건 · 일괄 공통). 공개 대기(public_at)가 걸린 이관 복기는 지금과 같은 값을 골라도 「고른 것」으로 친다 —
+// 대기를 비워 7일 뒤 자동 공개가 그 선택을 덮지 않게 한다(「나와 트레이너만」을 누르면 그대로 남는다). 바꿀 게 없으면 null.
+function visibilityPatch(r, v, at) {
+  if (!r) return null;
+  if (r.visibility === v && !r.public_at) return null;
+  return { visibility: v, visibility_changed_at: at, public_at: null };
+}
+// 트레이너 목록 「답 기다려요」 = 내가 받는 트레이너 ∧ 내 답 없음. 디스코드에서 옮겨온 복기는 넣지 않는다(어플 9/30).
+const awaitingReplyOf = (r, isRecipient, answered) => !!isRecipient && !answered && r?.source !== "discord";
+
 // PostgREST 오류 본문 → { code, message }
 function pgErr(e) {
   try { const j = JSON.parse(e?.body || "{}"); return { code: j.code || null, message: String(j.message || "") }; }
@@ -585,7 +599,8 @@ module.exports = function mountReviewApi(app, deps) {
 
   // ── 읽기 헬퍼 ─────────────────────────────────────────────
   const REVIEW_COLS = "id,student_id,anchor_kind,lesson_session_id,course_session_id,course_id,author_role,author_staff_id,"
-    + "recipient_trainer_id,source,status,title,body,src_file_name,created_at,updated_at,published_at,hidden_at,visibility,visibility_changed_at";
+    + "recipient_trainer_id,source,status,title,body,src_file_name,created_at,updated_at,published_at,hidden_at,visibility,visibility_changed_at,"
+    + "public_at";                                                   // §57 공개 대기(디스코드 이관분 · 그 밖은 null)
   const inList = (ids) => [...new Set(ids.filter((x) => x != null))].join(",");
   async function loadReview(id) {
     if (!id) return null;
@@ -755,6 +770,8 @@ module.exports = function mountReviewApi(app, deps) {
         publishedAt: r.published_at ?? null,
         imagePurgeAt: imagePurgeAt(r, (ic.get(r.id) || 0) > 0),
         visibility: r.visibility,
+        source: r.source,                                         // §57 discord = 「디스코드에서 옮겨온 기록」 표시
+        publicAt: r.public_at ?? null,                            // §57 이 시각에 「수강생 모두」로 바뀐다(그 전에 고르면 null)
         reactionCounts: reactionSummary(rx.get(r.id), "student", sub).counts,
       };
     });
@@ -860,6 +877,7 @@ module.exports = function mountReviewApi(app, deps) {
       recipientDisplayName: own && r.recipient_trainer_id ? tnames[r.recipient_trainer_id] || null : null,
       visibility: r.visibility,
       visibilityChangedAt: own ? r.visibility_changed_at ?? null : null,
+      publicAt: own ? r.public_at ?? null : null,                     // §57 공개 대기(이관분) — 본인 · 범위 트레이너에게만
       srcFileName: own ? r.src_file_name ?? null : null,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -979,8 +997,11 @@ module.exports = function mountReviewApi(app, deps) {
     const d = Number(req.query.days);
     const days = Number.isInteger(d) && d >= 1 && d <= 365 ? d : 90;
     const since = new Date(Date.now() - days * 86400_000).toISOString();
+    // 디스코드에서 옮겨온 복기(§57)는 창과 상관없이 늘 싣는다 — 예전 기록이 앱에 다 있어야 한다(어플 9/30).
+    //   수정 시각 = 원래 글 시각이라 90일 창으로는 4~6월 글이 빠진다.
     const rows = await sbSelect("lesson_reviews",
-      `select=${REVIEW_COLS}&student_id=eq.${sub}&hidden_at=is.null&updated_at=gte.${encodeURIComponent(since)}`
+      `select=${REVIEW_COLS}&student_id=eq.${sub}&hidden_at=is.null`
+      + `&or=${encodeURIComponent(`(updated_at.gte."${since}",source.eq.discord)`)}`
       + `&order=updated_at.desc&limit=${LIMITS.list}`);
     send(res, { reviews: await summaries(sub, rows) });
   }));
@@ -1008,13 +1029,15 @@ module.exports = function mountReviewApi(app, deps) {
     const decoded = ids.map((s) => ({ s, id: readOpaqueId("review", s) }));
     const valid = decoded.filter((x) => x.id);
     const rows = valid.length
-      ? await sbSelect("lesson_reviews", `select=id,student_id,hidden_at,visibility&id=in.(${inList(valid.map((x) => x.id))})`)
+      ? await sbSelect("lesson_reviews", `select=id,student_id,hidden_at,visibility,public_at&id=in.(${inList(valid.map((x) => x.id))})`)
       : [];
     const mine = new Map(rows.filter((r) => isOwn(sub, r) && !r.hidden_at).map((r) => [r.id, r]));
-    const change = [...mine.values()].filter((r) => r.visibility !== visibility).map((r) => r.id);
+    const at = nowIso();
+    // 같은 값이어도 공개 대기(§57)가 걸린 복기는 고른 것으로 남긴다(visibilityPatch) — patch 모양은 전부 같다
+    const change = [...mine.values()].filter((r) => visibilityPatch(r, visibility, at)).map((r) => r.id);
     if (change.length)
       await sbPatch("lesson_reviews", `id=in.(${change.join(",")})&student_id=eq.${sub}&hidden_at=is.null`,
-        { visibility, visibility_changed_at: nowIso() });
+        { visibility, visibility_changed_at: at, public_at: null });
     send(res, { updated: change.length, skipped: decoded.filter((x) => !x.id || !mine.has(x.id)).map((x) => x.s) });
   }));
 
@@ -1213,11 +1236,12 @@ module.exports = function mountReviewApi(app, deps) {
     if (!VIS_SETTABLE.includes(v)) return fail(res, 400, "visibility_invalid");
     const r = await loadReview(readOpaqueId("review", req.params.id));
     if (!r || !isOwn(sub, r) || r.hidden_at) return NOT_FOUND(res);
-    if (r.visibility === v) return send(res, { visibility: v, visibilityChangedAt: r.visibility_changed_at ?? null });
     const now = nowIso();
-    const rows = await sbPatch("lesson_reviews", `id=eq.${r.id}&student_id=eq.${sub}&hidden_at=is.null`, { visibility: v, visibility_changed_at: now });
+    const patch = visibilityPatch(r, v, now);                  // 공개 대기(§57) 중이면 같은 값이어도 고른 것으로 남긴다
+    if (!patch) return send(res, { visibility: v, visibilityChangedAt: r.visibility_changed_at ?? null, publicAt: null });
+    const rows = await sbPatch("lesson_reviews", `id=eq.${r.id}&student_id=eq.${sub}&hidden_at=is.null`, patch);
     if (!rows.length) return NOT_FOUND(res);
-    send(res, { visibility: v, visibilityChangedAt: now });
+    send(res, { visibility: v, visibilityChangedAt: now, publicAt: null });
   }));
 
   // POST /reviews/:id/read — 읽음(본인 복기만 기록 · 공유 열람은 기록하지 않는다)
@@ -1444,14 +1468,23 @@ module.exports = function mountReviewApi(app, deps) {
       if (meta.width * meta.height > IMAGE_MAX_PIXELS) return fail(res, 413, "image_too_large");
       size = orientedSize(meta);
     }
-    // 2단계(§3.2): 자리 행 insert(임시 경로 pending/…) → 파일 올리기 → 경로 patch. 실패하면 올린 파일·행을 지우고 503.
+    const row = await storeImage({ r, phaseId, buf, kind, sha, size, role: "student", wantOrd });
+    await touch(r.id);
+    console.log(`[review] image #${row.id} review #${r.id} ${kind.ext} bytes=${buf.length} deriv=${row.display_path && row.thumb_path ? "ok" : "none"}`);
+    send(res, { image: (await imageViews({ kind: "student", id: sub }, true, [row])).get(Number(row.id)), existing: false });
+  }));
+
+  // 사진 한 장 저장(§3.2 2단계) — 자리 행 insert(임시 경로 pending/…) → 원본 · 파생본 올리기 → 경로 patch.
+  //   실패하면 올린 파일 · 행을 지우고 던진다(라우트는 503). 업로드 라우트와 디스코드 이관(importImage · §57)이 같이 쓴다.
+  async function storeImage({ r, phaseId = null, buf, kind, sha, size, role, wantOrd = null }) {
+    const place = `review_id=eq.${r.id}&phase_id=${phaseId ? `eq.${phaseId}` : "is.null"}`;
     let row = null;
     for (let attempt = 0; attempt < 3 && !row; attempt++) {
       const ord = attempt === 0 && wantOrd ? wantOrd : await nextImageOrd(place);
       try {
         row = await sbInsert("review_images", {
           review_id: r.id, phase_id: phaseId, ord, original_path: `pending/${crypto.randomUUID()}`,
-          uploaded_by_role: "student", bytes: buf.length, width: size.width, height: size.height,
+          uploaded_by_role: role, bytes: buf.length, width: size.width, height: size.height,
         });
       } catch (e) { if (pgErr(e).code !== "23505") throw e; }                 // 자리(ord)가 겹쳤다 → 맨 뒤로 다시
     }
@@ -1482,10 +1515,36 @@ module.exports = function mountReviewApi(app, deps) {
       await sbDelete("review_images", `id=eq.${imageId}`).catch(() => {});
       throw e;
     }
-    await touch(r.id);
-    console.log(`[review] image #${imageId} review #${r.id} ${kind.ext} bytes=${buf.length} deriv=${row.display_path && row.thumb_path ? "ok" : "none"}`);
-    send(res, { image: (await imageViews({ kind: "student", id: sub }, true, [row])).get(imageId), existing: false });
-  }));
+    return row;
+  }
+
+  // 디스코드 이관(§57 · feedback-import.cjs) — 사진 한 장을 그 복기의 첨부로(페이즈 없음). 같은 파일(sha256)이 이미 있으면
+  //   새로 올리지 않는다(재실행 멱등). 형식(png · jpeg · webp) · 8MB · 화소 한도는 업로드와 같다. 월 · 복기 장수 한도는 보지 않는다
+  //   (원문을 그대로 옮긴다). 수정 시각(updated_at)을 바꾸지 않는다 — 옮긴 복기는 원래 글 시각을 지킨다.
+  //   → { id, existing } 또는 { skipped: "type" | "size" | "pixels" }
+  async function importImage({ reviewId, buf, role }) {
+    await probed;
+    if (!ready) throw new Error("review_not_ready");
+    if (role !== "student" && role !== "trainer") throw new Error("import_role_invalid");
+    const r = await loadReview(reviewId);
+    if (!r) throw new Error("review_missing");
+    if (!Buffer.isBuffer(buf) || !buf.length || buf.length > IMAGE_MAX_BYTES) return { skipped: "size" };
+    const kind = sniffImage(buf);
+    if (!kind) return { skipped: "type" };
+    const sha = crypto.createHash("sha256").update(buf).digest("hex");
+    const dup = (await sbSelect("review_images", `select=id&review_id=eq.${r.id}&sha256=eq.${sha}&${LIVE_IMAGE}&order=id.asc&limit=1`))[0];
+    if (dup) return { id: Number(dup.id), existing: true };
+    let size = { width: null, height: null };
+    if (sharp) {
+      let meta;
+      try { meta = await sharp(buf).metadata(); } catch { return { skipped: "type" }; }
+      if (!meta.width || !meta.height) return { skipped: "type" };
+      if (meta.width * meta.height > IMAGE_MAX_PIXELS) return { skipped: "pixels" };
+      size = orientedSize(meta);
+    }
+    const row = await storeImage({ r, buf, kind, sha, size, role });
+    return { id: Number(row.id), existing: false };
+  }
 
   // DELETE /images/:id — 파일 먼저(3파일 · §3.5) → 행(그림 레이어는 cascade)
   app.delete(`${P}/images/:id`, writeLimit, requireStudent, needReady, wrap(async (req, res) => {
@@ -1797,11 +1856,13 @@ module.exports = function mountReviewApi(app, deps) {
           imageCount: ic.get(r.id) || 0,
           hasFeedback: (fc.get(r.id) || 0) > 0,
           unread: trainerUnread(readAt.get(r.id), r.updated_at),
-          awaitingReply: isRecipient && !answered.has(r.id),
+          awaitingReply: awaitingReplyOf(r, isRecipient, answered.has(r.id)),   // 디스코드에서 옮겨온 복기는 넣지 않는다(§57)
           replyDueAt: null,                                       // 답 기한 — 오너 결정 대기 · 값 없이 자리만(설계 §5.2)
           updatedAt: r.updated_at,
           publishedAt: r.published_at ?? null,
           visibility: r.visibility,
+          source: r.source,                                       // §57 discord = 「디스코드에서 옮겨온 기록」
+          publicAt: r.public_at ?? null,                          // §57 공개 대기(이 시각에 「수강생 모두」)
           reactionCounts: rs.counts,
           myReactions: rs.mine,
         };
@@ -1929,8 +1990,22 @@ module.exports = function mountReviewApi(app, deps) {
     });
   }
 
+  // 공개 대기 끝(§57 · 어플 9/30) — 디스코드에서 옮긴 복기는 7일 동안 「나와 트레이너만」으로 두었다가, 그 사이 수강생이 범위를
+  //   고르지 않았으면(public_at 이 남아 있으면) 「수강생 모두」로 바꾼다. 고르면 범위 라우트가 public_at 을 비운다(visibilityPatch).
+  //   수정 시각은 건드리지 않는다(목록 순서 = 원래 글 시각). cronTick(10분)이 부른다. → 바꾼 건수
+  async function flipPublicDue({ nowMs = Date.now() } = {}) {
+    await probed;
+    if (!ready) return null;
+    const at = new Date(nowMs).toISOString();
+    const rows = await sbPatch("lesson_reviews",
+      `public_at=lte.${encodeURIComponent(at)}&status=eq.published&hidden_at=is.null&visibility=eq.private&select=id`,
+      { visibility: "students", visibility_changed_at: at, public_at: null });
+    if (rows.length) console.log(`[review] public_flip ${rows.length}`);
+    return rows.length;
+  }
+
   const probed = probe().catch((e) => console.error("review_probe", e?.message));
-  return { ready: () => ready, draftSweep, mountTrainer };
+  return { ready: () => ready, draftSweep, mountTrainer, flipPublicDue, importImage };
 };
 
 module.exports._test = {
@@ -1938,5 +2013,6 @@ module.exports._test = {
   reactionSummary, topTags, imagePurgeAt, unreadFrom, signCursor, readCursor, pgErr,
   trainerUnread, parseFeedbackBody, dueCheck, anchorChangeAllowed, monthDay, relinkDmText,
   sniffImage, orientedSize, imagePath, derivPath, isPendingPath, isStoragePath, normalizeShapes, sweepMode, planSweep,
+  visibilityPatch, awaitingReplyOf,
   REVIEW_EMOJIS, MAPS, LIMITS,
 };

@@ -4677,3 +4677,49 @@ notify pgrst, 'reload schema';
 --      실행 전: intake_applications 35칸 · 제약 15 · 인덱스 5 · 0행 · dm_failed_at 없음.
 --      실행 후: 36칸 · dm_failed_at timestamptz null 허용 · 주석 있음 · 제약 15 · 인덱스 5 · 0행 그대로.
 -- ============================================================
+
+-- ============================================================
+-- §57  디스코드 피드백 이관 — 공개 대기 · 트레이너 답 원문 좌표 (2026-10-01 · 어플 9/30 「1순위」 · 더하기만 = A 구간)
+--   ① lesson_reviews.public_at — 옮긴 복기는 7일 동안 「나와 트레이너만」으로 두고, 그 사이 수강생이 범위를 고르지 않으면
+--      「수강생 모두」가 된다(오너 9/28 디스코드 필독사항 공지). 서버(review-api.cjs flipPublicDue · 10분 틱)가 이 시각이 지난 행의
+--      visibility 를 students 로 바꾸고 비운다. 수강생이 범위를 고르면(같은 값이어도) 비운다 — 그 선택이 이긴다. 앱 복기는 늘 null.
+--   ② review_feedback.src_msg — 디스코드에서 옮긴 트레이너 답의 원문 글 id. 유니크(재실행 멱등 · lesson_reviews.src_msg 와 같은 규칙).
+--   새 칸 둘 · null 허용 · 기본값 없음 — 기존 행은 그대로다(부분 인덱스 · 유니크 제약은 null 을 막지 않는다).
+--   쓰는 코드: feedback-import.cjs(이관 · 세션 요청 뒤에만 돈다) · review-api.cjs(목록 · 상세 publicAt · 범위 · 공개 대기 끝).
+-- ============================================================
+alter table public.lesson_reviews add column if not exists public_at timestamptz;
+comment on column public.lesson_reviews.public_at is
+  '공개 대기(디스코드 이관 · §57) — 이 시각이 지나면 서버가 visibility 를 students 로 바꾸고 비운다. 수강생이 범위를 고르면 비운다. 앱 복기는 null.';
+create index if not exists idx_lr_public_at on public.lesson_reviews (public_at) where public_at is not null;
+
+alter table public.review_feedback add column if not exists src_msg text;
+comment on column public.review_feedback.src_msg is
+  '디스코드에서 옮긴 트레이너 답의 원문 글 id(§57) — 재실행 멱등. 앱에서 쓴 답은 null.';
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'uq_rf_src_msg') then
+    alter table public.review_feedback add constraint uq_rf_src_msg unique (src_msg);
+  end if;
+end $$;
+
+notify pgrst, 'reload schema';
+
+-- ── 57b) 검증 ──────────────────────────────────────────────────────────────
+--   select table_name, count(*) from information_schema.columns
+--    where table_schema = 'public' and table_name in ('lesson_reviews','review_feedback') group by 1;   -- 기대 25 · 13
+--   select indexname from pg_indexes where schemaname = 'public' and indexname = 'idx_lr_public_at';      -- 1행
+--   select conname from pg_constraint where conname = 'uq_rf_src_msg';                                    -- 1행
+--   select count(*) filter (where public_at is not null), count(*) from public.lesson_reviews;           -- 이관 전 0 · 그대로
+--
+-- 되돌리기: 코드(feedback-import.cjs 마운트 · review-api.cjs public_at · REQUIRED_SCHEMA 두 칸)를 먼저 되돌린 뒤
+--   alter table public.review_feedback drop constraint if exists uq_rf_src_msg;
+--   alter table public.review_feedback drop column if exists src_msg;
+--   drop index if exists public.idx_lr_public_at;
+--   alter table public.lesson_reviews drop column if exists public_at;          ← 지우는 DDL = B 구간(오너 OK)
+--   ⚠️ 이관 뒤라면 public_at 을 지우는 순간 대기 중인 복기가 「나와 트레이너만」으로 굳는다 — 먼저 판단한다.
+--
+--   ✅ 실행 완료 2026-10-01 02:5x KST (세션 실행 · A 구간 · 이 블록 그대로 · 블록 md5 7db9a8e0c5a6ab32c45b9e55b5d1a6aa).
+--      실행 전: lesson_reviews 24칸 · 제약 20 · 인덱스 11 · 9행 / review_feedback 12칸 · 제약 10 · 0행 · 새 칸 · 인덱스 · 제약 없음.
+--      실행 후: lesson_reviews 25칸(public_at timestamptz null 허용 · 기본값 없음) · 제약 20 · 인덱스 12 · 9행(public_at 0) /
+--               review_feedback 13칸(src_msg text null 허용) · 제약 11(uq_rf_src_msg UNIQUE (src_msg)) · 0행 · 칸 주석 2.
+-- ============================================================

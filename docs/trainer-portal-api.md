@@ -614,6 +614,27 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 
 **앱 쪽(반장)**: 보낸 복기 상세에 「연결 수업 바꾸기」 → 수업 고르기(`GET /sessions` 중 `hasReview=false` 인 내 수업) → 위 `PUT`. 답이 있는 복기(`hasFeedback`)면 확인창에서 「트레이너에게 알림이 가요」를 먼저 보여 준다. 409 `anchor_taken` = 그 수업엔 이미 복기가 있다.
 
+### 8.11 디스코드에서 옮겨온 복기 (2026-10-01 · 어플 9/30 「1순위」 · §57 · 서버 반영)
+
+**반장 계약 한 줄**: 목록 · 상세에 `source`(`discord` = 「디스코드에서 옮겨온 기록」) · `publicAt`(공개 대기 끝 시각 · 없으면 null) — 옮긴 복기는 7일 동안 「나와 트레이너만」이다가 그 시각에 서버가 「수강생 모두」로 바꾼다 · 그 사이 수강생이 범위를 고르면(「나와 트레이너만」 그대로여도) `publicAt` 이 null 이 되고 그 선택이 남는다 · 트레이너 「답 기다려요」에는 안 뜬다 · 수강생 목록은 기간(`days`)과 상관없이 옮긴 복기를 늘 싣는다 · 트레이너 메모(「수강생 메모」)는 아래 모양으로 다음 PR.
+
+| 항목 | 규칙 |
+|---|---|
+| 무엇이 옮겨지나 | 트레이너 서버(현태 · 준구 · 무리 강의)의 수강생 피드백 채널 글. 수강생 글 = 수강생 복기 · 트레이너 글 = 그 복기의 답(`feedback[]` · `kind=overall`) · 앞선 수강생 글이 없는 트레이너 글 = 트레이너가 쓴 복기(`authorRole=trainer`) · 사진 = `attachments[]`(트레이너 답 사진은 `uploadedByRole=trainer`) · 영상 · 파일은 옮기지 않는다 |
+| 시각 | `createdAt` · `publishedAt` · `updatedAt` · 답의 `createdAt` = **디스코드에 쓴 원래 시각**(목록이 원래 순서대로 섞인다) |
+| 제목 · 연결 | `title` = 「9/14 수업」(강의 채널은 「9/14 강의」) · 그 날짜에 그 트레이너 수업 기록이 정확히 1건이면 `anchorKind=lesson`(`playedAt` 있음) · 아니면 `none`(자유 기록 모양 · 보낸 복기라 연결은 못 바꾼다 — §8.10 종전 규칙) |
+| 목록 추가 키(§8.3 · 수강생 · 트레이너 둘 다) | `source` string · 아니오 · `app` · `xlsx` · `discord` · `journal_import` / `publicAt` string(ISO) · **가능** · 공개 대기 중이면 그 끝 시각 · 아니면 null |
+| 상세 추가 키(§8.4) | `publicAt` — 본인 · 전체 필드를 보는 트레이너에게만(공유 열람자는 null) · `source` 는 종전부터 있다 |
+| 공개 대기 | `visibility=private` + `publicAt` 있음 = 「나와 트레이너만 · {publicAt} 에 수강생 모두에게 보여요」. 그 시각이 지나면 서버(10분 틱)가 `visibility=students` · `publicAt=null` 로 바꾼다 |
+| 수강생이 고르면 | `PUT /reviews/:id/visibility`(단건) · `PUT /reviews/visibility`(일괄)에 **지금과 같은 `private` 을 보내도** 대기가 풀린다(`publicAt=null` · 「나와 트레이너만」 고정). 단건 응답에 `publicAt: null` 이 붙는다 · 일괄은 대기가 풀린 것도 `updated` 로 센다 |
+| 트레이너 목록 | 옮긴 복기는 `awaitingReply=false`(답 기다려요 아님) · 옮길 때 수강생 · 받는 트레이너가 **읽은 것으로** 넣는다(안 읽음 · 새 답 표시가 한꺼번에 뜨지 않게) — 옮긴 뒤에 새로 단 답은 종전처럼 안 읽음이 된다 |
+| 수강생 목록 창 | `GET /reviews?days=` 는 종전대로 수정 시각 기준이지만 **`source=discord` 는 창과 상관없이 늘 싣는다**(4~6월 글도 앱에 있어야 한다 · 어플 9/30) |
+| 앱 표시(제안 · 문구는 앱 몫) | `source=discord` 카드에 작은 표시 「디스코드에서 옮겨온 기록」 · 대기 중이면 상세 상단에 「{M/D}에 수강생 모두에게 보여요」 + 칩 「나와 트레이너만」(누르면 위 `PUT` · private) |
+
+**트레이너 메모(「수강생 메모」 · 다음 PR · 모양 먼저)** — 트레이너 개인 노트 채널(현태)의 글은 수강생 복기로 옮기지 않고 트레이너 앱 메모로 옮긴다(트레이너 · 원장만 · 수강생 앱에는 없다). 채널 읽기 권한을 오너가 봇에 준 뒤 옮긴다.
+
+`GET /api/trainer-portal/students/:id/notes` → `{ "notes": [{ "id", "body", "writtenAt", "source", "authorDisplayName" }] }` — `id` 불투명 · `source` = `discord` · `app` · 최신순 · 그 수강생을 볼 수 있는 트레이너(§9.14 범위) · 원장만(아니면 404) · 키 이름에 `memo` 를 쓰지 않는다(응답 가드 어간) · 쓰기(`POST`)는 그다음.
+
 ---
 
 # 9. 10/1 전환 계약 (2026-09-28 · 반장 선행 인계)

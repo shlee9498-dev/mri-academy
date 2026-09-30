@@ -278,3 +278,22 @@ test("연결 수업 변경 DM — 월/일 · 끊긴 연결 · 받는 트레이�
   assert.equal(T.relinkDmText({ studentName: null, fromPlayedAt: null, toPlayedAt: "2026-09-22", newRecipientName: "트레이너B" }),
     "📝 연결 수업이 바뀌었어요 — 수강생 복기 연결 끊긴 수업 → 9/22\n이제 트레이너B 트레이너가 받아요");
 });
+
+test("§57 범위 바꾸기 — 공개 대기 중이면 같은 값도 고른 것으로(대기 해제) · 대기 없고 같으면 그대로", () => {
+  const at = "2026-10-01T03:00:00.000Z";
+  const waiting = { visibility: "private", public_at: "2026-10-08T03:00:00.000Z" };
+  assert.deepEqual(T.visibilityPatch(waiting, "private", at), { visibility: "private", visibility_changed_at: at, public_at: null });
+  assert.deepEqual(T.visibilityPatch(waiting, "students", at), { visibility: "students", visibility_changed_at: at, public_at: null });
+  assert.equal(T.visibilityPatch({ visibility: "private", public_at: null }, "private", at), null);
+  assert.deepEqual(T.visibilityPatch({ visibility: "students", public_at: null }, "private", at),
+    { visibility: "private", visibility_changed_at: at, public_at: null });
+  assert.equal(T.visibilityPatch(null, "private", at), null);
+});
+
+test("§57 답 기다려요 — 받는 트레이너 · 답 없음 · 디스코드에서 옮겨온 복기는 빠진다", () => {
+  assert.equal(T.awaitingReplyOf({ source: "app" }, true, false), true);
+  assert.equal(T.awaitingReplyOf({ source: "xlsx" }, true, false), true);
+  assert.equal(T.awaitingReplyOf({ source: "discord" }, true, false), false);
+  assert.equal(T.awaitingReplyOf({ source: "app" }, true, true), false);
+  assert.equal(T.awaitingReplyOf({ source: "app" }, false, false), false);
+});
