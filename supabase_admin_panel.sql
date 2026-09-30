@@ -2928,6 +2928,22 @@ end $$;
 create index if not exists idx_students_merged_into
   on students (merged_into) where merged_into is not null;
 
+-- 합치기 절차(2026-10-01 · #74 → #101 에서 정리 · #104 → #25 와 같은 방식) — 표시 칸만 채우면 합친 게 아니다.
+--   #74 는 「합쳤다」고 알려졌지만 merged_into 도 행 이동도 없었다. 그 사이 새 수업이 옛 번호로 들어가 트레이너 잔여가 음수가 됐다.
+--   ① 옛 번호의 행을 **전부** 찾는다 — 표 이름을 외워 두지 말고 student_id 칸이 있는 모든 표를 훑는다:
+--        select table_name from information_schema.columns
+--         where table_schema = 'public' and column_name = 'student_id';   -- 표마다 count(*) where student_id = <옛>
+--   ② 새 번호로 옮긴다 — 등록과 그 등록을 쓴 수업은 **함께**(트레이너별 잔여 = 등록 − 수업이 같이 움직여야 한다).
+--      예약 · 판수 조정 · 복기 · 상담도 옮긴다. 닫힌 판수 부족 알림(games_short_notices)은 그 번호의 기록이라 둔다.
+--   ③ 잠긴 달(period_locks)의 결제는 옮기지 못한다(trg_payments_lock_guard) — 옛 번호에 두고 그 결제의 결제 신청도 같이 둔다.
+--      정산 엔진은 학생별 결제 평균 단가를 쓰므로, 결제가 남으면 옮긴 **미정산** 수업의 단가가 새 번호 평균으로 바뀐다.
+--      실행 전에 달라지는 지급액을 오너에게 적어 보낸다(정산 도장이 찍힌 수업은 재계산 대상이 아니라 영향 없음).
+--   ④ 옛 번호: merged_into = <새> · status = 'done'(선례 #104) · note 에 무엇을 남겼는지. **행은 지우지 않는다.**
+--   ⑤ 옛 이름이 새 번호 이름과 다르면 student_aliases 에 (새 번호, 옛 이름, kind 'name') — 이름 조회가 합친 행을 거르므로
+--      별칭이 없으면 봇 /수업등록 에서 옛 이름이 아예 안 풀린다.
+--   ⑥ 확인 — 옛 번호에 남은 행이 ③ 의 잠긴 결제뿐인지 · 트레이너별 잔여 · portal_remaining_games(새) ·
+--      전체 수업 행 수와 판수 합 불변(옮기기만 했으니 같아야 한다).
+--
 -- 되돌리기(필요할 때만 — 코드의 NOT_MERGED 를 먼저 되돌릴 것):
 --   drop index if exists idx_students_merged_into;
 --   alter table students drop constraint if exists chk_students_merged_self;

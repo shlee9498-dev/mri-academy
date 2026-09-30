@@ -1190,7 +1190,8 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 ### 오너 계정만 — 범위 · 추가 키
 
 - 최상위 `scope`: 오너 `"all"` · 트레이너 `"mine"`(지금과 같은 범위).
-- 최상위 `trainers`: `[{ "trainerKey": "…", "trainerName": "준구" }]` — 활성 트레이너 + 오너. **필터 칩**용.
+- 최상위 `trainers`: `[{ "trainerKey": "…", "trainerName": "준구", "colorKey": "ink" }]` — 활성 트레이너 + 오너. **필터 칩**용.
+  `colorKey` 는 아래 §9.14 「색 점」 참조(2026-10-01 추가).
 - 범위(오너): 상태 `active` · `paused` 전원(합친 명부 · `prospect` 제외) ∪ 최근 90일 수업이 있는 수강생 ∪ 진행 중 강의 수강생.
   실측 약 80명 — 페이지 없이 한 번에 내린다. 정렬은 이름순. 트레이너 필터는 **앱이** `assignedTrainer.trainerKey` 로 거른다
   (`null` = 「담당 없음」 칩).
@@ -1242,7 +1243,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
     { "kind": "booking_review",     "label": "완료 확인 필요", "count": 0, "oldestAt": null, "color": "green" }
   ],
   "trainers": [
-    { "trainerKey": "…", "trainerName": "현태", "lessonsToday": 3, "lessonsWeek": 12, "gamesWeek": 55,
+    { "trainerKey": "…", "trainerName": "현태", "colorKey": "gold", "lessonsToday": 3, "lessonsWeek": 12, "gamesWeek": 55,
       "openSlots72h": 20, "openSlots7d": 36, "assignedActive": 39, "needsReview": 0, "color": "yellow" }
   ],
   "thresholds": { "pendingRedHours": 6, "slotsRedWindowHours": 72, "slotsYellowWindowDays": 7 }
@@ -1264,6 +1265,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 - `?date` 형식이 틀리면 400 `invalid_body`. `trainers[]` 순서 = 트레이너 이름순 · 오너 마지막(`/students` 의 `trainers` 와 같다).
   `booking_review` = 끝났는데 「완료」를 안 누른 예약(`pending_review`).
 - `trainers[]` — 활성 트레이너 + 오너. `gamesWeek` = 이번 주 기록 판수 합(조정 제외). `assignedActive` = 담당 활성 수강생 수.
+  `colorKey` = 트레이너 고정 색 키(§9.14 「색 점」 · `/students` 의 `trainers[]` 와 같은 값). 상태색 `color` 와 다른 칸이다.
   `color`: 🔴 72시간 열린 칸 0 · 🟡 7일 열린 칸 < 담당 활성 수 또는 `needsReview` > 0 · 🟢 나머지.
   **오너 행은 열린 칸 기준을 쓰지 않는다**(직강만 해서 칸을 열지 않는다 — 늘 🔴 이 되면 소음이다).
 - `color` 값은 `red` · `yellow` · `green` · `null`(색 없는 카드). 기준값은 `thresholds` 로 같이 내린다
@@ -1286,9 +1288,12 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `appLinked` | boolean | 아니오 | 수강생 앱 연결 여부(종전 오너만 → **모든 계정**) |
 | `assignedTrainer` | `{ trainerKey, trainerName }` | **가능** | 담당 트레이너(종전 오너만 → **모든 계정**) |
 
-- 최상위 `trainers`(`[{ trainerKey, trainerName }]` · 활성 트레이너 + 원장)도 **모든 계정**에 내린다.
-- **색 점** = 트레이너 색이다. 서버는 색 값을 주지 않는다 — 앱이 `trainers[]` 순서로 색을 정하고 행은
-  `assignedTrainer.trainerKey` 로 칠한다(`null` = 담당 없음 색). 수강생 개별 색은 없다.
+- 최상위 `trainers`(`[{ trainerKey, trainerName, colorKey }]` · 활성 트레이너 + 원장)도 **모든 계정**에 내린다.
+- **색 점** = 트레이너 색이다. 서버는 **색 키**만 준다 — `colorKey` ∈ `"gold"` · `"ink"` · `"grey"` · `null`
+  (2026-10-01 · 오너 지시 「트레이너 번호에 고정」 · 현태 `gold` · 준구 `ink` · 원장 `grey`). 실제 색값은 앱이 정한다.
+  행은 `assignedTrainer.trainerKey` 로 `trainers[]` 에서 키를 찾아 칠한다(`null` = 담당 없음 색). 수강생 개별 색은 없다.
+  **목록 순서로 칠하지 않는다** — 트레이너가 늘면 색이 한 칸씩 밀린다. `colorKey: null` = 아직 키가 없는 트레이너(앱 기본색).
+  `/owner/dashboard` 의 `trainers[]` 도 같은 키를 싣는다.
 - 레벨 묶음 순서는 앱이 정렬한다: `advanced` → `intermediate` → `beginner` → `null`(미분류).
 - 오너 행만 `packsByTrainer: [{ trainerKey, trainerName, size, remaining, total }]` — 트레이너별 지금 묶음.
   집합 · 순서는 `remainingByTrainer` 와 같다. 트레이너 칩을 고르면 그 트레이너 줄을, 「전체」면 `[0]` 을 쓴다.
@@ -1546,7 +1551,7 @@ PATCH /api/trainer-portal/bookings/:id
 - 응답
 ```json
 { "from": "2026-09-28", "to": "2026-10-04",
-  "trainers": [ { "trainerKey": "…", "trainerName": "트레이너A" } ],
+  "trainers": [ { "trainerKey": "…", "trainerName": "트레이너A", "colorKey": "ink" } ],
   "slots": [
     { "id": "…", "trainerKey": "…", "startAt": "2026-10-02T11:00:00Z", "durationMin": 30, "lessonType": "personal",
       "capacity": 1, "status": "closed", "seriesId": null, "takenCount": 1, "seatsLeft": 0,

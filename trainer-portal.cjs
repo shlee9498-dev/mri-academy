@@ -230,6 +230,12 @@ module.exports = function mountTrainerPortal(app, deps) {
     return { names, coaches };
   }
   const trainerRef = (names, tid) => ({ trainerKey: opaqueId("trainer", tid), trainerName: names[tid] || "미배정" });
+  // 트레이너 고정 색 키(오너 지시 2026-10-01 · 계약 §9.12 · §9.13) — 명부 번호에 고정한다.
+  // 목록 순서(이름순 · 원장 마지막)로 칠하면 트레이너가 늘 때 색이 한 칸씩 밀린다.
+  // 값은 이름표일 뿐이고 실제 색은 앱이 정한다. 표에 없는 트레이너는 null(앱 기본색).
+  const TRAINER_COLOR_KEYS = Object.freeze({ 5: "gold", 2: "ink", 4: "grey" });   // 현태 · 준구 · 원장
+  const colorKeyOf = (tid) => TRAINER_COLOR_KEYS[tid] || null;
+  const trainerChip = (names, tid) => ({ ...trainerRef(names, tid), colorKey: colorKeyOf(tid) });
 
   // ════════════════ POST /exchange ════════════════
   // Discord access token → /users/@me 재검증 → staff.discord_id 정확일치·active → scope trainer 세션.
@@ -458,7 +464,7 @@ module.exports = function mountTrainerPortal(app, deps) {
     const head = { scope: owner ? "all" : "mine" };
     if (!scope.size) {
       const book = await staffBook();
-      return sendTrainer(res, { ...head, trainers: book.coaches.map((t) => trainerRef(book.names, t.id)), students: [] });
+      return sendTrainer(res, { ...head, trainers: book.coaches.map((t) => trainerChip(book.names, t.id)), students: [] });
     }
     const { book, rows } = await buildRows(req.staff, owner, scope);
     const byName = (a, b) => String(a.s.name).localeCompare(String(b.s.name), "ko");
@@ -466,7 +472,7 @@ module.exports = function mountTrainerPortal(app, deps) {
       // 트레이너: 담당 먼저 · 이름순(종전 그대로) · 오너: 이름순(전체라 담당 구분이 필터 칩으로 간다)
       .sort(owner ? byName : (a, b) => (a.s.isPrimary === b.s.isPrimary ? byName(a, b) : a.s.isPrimary ? -1 : 1))
       .map((r) => rowOut(r, owner, book));
-    sendTrainer(res, { ...head, trainers: book.coaches.map((t) => trainerRef(book.names, t.id)), students });
+    sendTrainer(res, { ...head, trainers: book.coaches.map((t) => trainerChip(book.names, t.id)), students });
   }));
 
   // 상세 · 레벨 · 종료 · 내역이 쓰는 한 명 범위 — 트레이너 = 담당 ∪ 90일(밖 403) · 오너 = 전체(합친 명부 제외 · 없으면 404)
@@ -734,7 +740,7 @@ module.exports = function mountTrainerPortal(app, deps) {
       lessons: lessons.map(apiLesson),
       pending,
       trainers: rows.map((r) => ({
-        ...trainerRef(book.names, r.id),
+        ...trainerChip(book.names, r.id),
         lessonsToday: r.lessonsToday, lessonsWeek: r.lessonsWeek, gamesWeek: r.gamesWeek,
         openSlots72h: r.openSlots72h, openSlots7d: r.openSlots7d,
         assignedActive: r.assignedActive, needsReview: r.needsReview, color: r.color,
