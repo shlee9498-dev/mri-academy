@@ -475,10 +475,23 @@ module.exports = function mountBookingApi(app, deps) {
       return out;
     };
     // 트레이너 화면이므로 수강생 표시명은 내려준다(수강생 포털의 신원 차폐 규칙과 대상이 다르다).
-    const namesOf = async () => (sids.length
-      ? Object.fromEntries((await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})`))
-          .map((r) => [r.id, r]))
-      : {});
+    // 단 신청자(prospect · 레벨 테스트 칸)는 실명이 원장 전용이다(계약 §9.20.8 · §55) — 신청의 디스코드 표시 이름으로 바꾼다.
+    //   신청을 못 읽으면 실명으로 돌아가지 않고 「신청자」로 둔다(닫힌 쪽으로 실패).
+    const namesOf = async () => {
+      if (!sids.length) return {};
+      const rows = await sbSelect("students", `select=id,name,pubg_name,status&id=in.(${sids.join(",")})`);
+      const pros = rows.filter((r) => r.status === "prospect").map((r) => r.id);
+      if (pros.length) {
+        const disp = new Map();
+        try {
+          const apps = await sbSelect("intake_applications",
+            `select=student_id,display_name&student_id=in.(${pros.join(",")})&order=id.desc`);
+          for (const a of apps) if (!disp.has(a.student_id)) disp.set(a.student_id, a.display_name);
+        } catch (e) { console.error("booking_prospect_names", e?.message); }
+        for (const r of rows) if (r.status === "prospect") r.name = disp.get(r.id) || "신청자";
+      }
+      return Object.fromEntries(rows.map((r) => [r.id, r]));
+    };
     const [regMissing, names] = await Promise.all([regMissingOf(), namesOf()]);
     const by = {};
     for (const b of books) (by[b.slot_id] = by[b.slot_id] || []).push({

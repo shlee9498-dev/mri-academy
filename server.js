@@ -3257,28 +3257,11 @@ if (process.env.DISCORD_TOKEN) {
     }).catch(() => {});
   });
 
-  // ── 신청 창구 카드 · DM(docs/intake-design.md §3 · §6 · PR-2 · 오너 결정 5 · 7) ──
-  //   카드 그리기 · 상태 전이 · DM 문구는 intake-cards.cjs(시험 scripts/intake-cards.test.cjs). 여기는 디스코드 배선만.
-  //   [맡기] = 활성 트레이너 · 원장(먼저 누른 한 명) · [배정] [입금 확인] [닫기] = 오너 전용 · [답장] = 오너 · 맡은 트레이너.
-  intakeFlow = require("./intake-cards.cjs").mountIntakeFlow({
-    sbSelect, sbInsert, sbPatch, sbUpsert, ownerDiscordId: process.env.MRI_OWNER_ID,
-    send: async (discordId, payload) => {
-      if (!discordId) return null;
-      try {
-        const u = await client.users.fetch(String(discordId));
-        const m = await u.send(payload);
-        return { channelId: m.channelId, messageId: m.id };
-      } catch (e) { console.error("intake_send", e?.code || "", e?.message); return null; }
-    },
-    edit: async (channelId, messageId, payload) => {
-      try {
-        const ch = await client.channels.fetch(String(channelId));
-        await ch.messages.edit(String(messageId), payload);
-        return true;
-      } catch (e) { console.error("intake_edit", e?.code || "", e?.message); return false; }
-    },
-  });
-  const INTAKE_OWNER_ONLY = ["asg", "asgsel", "dep", "close", "closesel"];
+  // ── 신청 창구 카드 · DM(docs/intake-design.md §3 · §6 · PR-2 · PR-3 · 오너 결정 4 · 5 · 7) ──
+  //   카드 그리기 · 상태 전이 · DM 문구는 intake-cards.cjs(시험 scripts/intake-cards.test.cjs). 흐름(intakeFlow)은 모듈 레벨에서
+  //   만든다(봇 없이도 트레이너 앱 라우트가 상태를 바꾼다) — 여기는 버튼 · 중계 배선만.
+  //   [맡기] = 활성 트레이너 · 원장(먼저 누른 한 명) · [배정] [입금 확인] [보호자 동의 확인함] [닫기] = 오너 전용 · [답장] = 오너 · 맡은 트레이너.
+  const INTAKE_OWNER_ONLY = ["asg", "asgsel", "dep", "gv", "close", "closesel"];
   const intakeReplyText = {
     claim: (o) => (o.ok ? "맡았어 — 트레이너 앱에서 레벨 테스트 시간을 넣어줘. 넣으면 신청자에게 안내 DM 이 가"
       : o.code === "taken" ? (o.mine ? "이미 네가 맡은 신청이야" : `이미 ${o.by || "다른 트레이너"}가 맡았어`)
@@ -3295,15 +3278,19 @@ if (process.env.DISCORD_TOKEN) {
       : o.code === "request_closed" ? `결제 요청 #${o.reqId} 이 ${o.reqStatus} 상태라 여기서 못 이어가 — 요청을 먼저 봐줘`
       : o.code === "no_price" ? "레벨 테스트비 정가를 못 읽었어(config/payments.js) — 결제 트랙에 확인해줘"
       : o.code === "busy" ? "처리 중이야 — 잠깐 뒤에 카드를 봐줘" : "신청 · 명부 · 담당 연결을 못 찾았어"),
-    closesel: (o) => (o.ok ? `닫았어${o.paid ? " — 입금 확인된 신청이라 환불은 따로 처리해줘" : ""}`
-      : o.code === "booking_active" ? `레벨 테스트 칸(${o.when})이 아직 살아 있어 — 트레이너 앱에서 칸을 먼저 취소하고 닫아줘`
+    closesel: (o) => (o.ok ? `닫았어${o.cancelled ? ` · 레벨 테스트 칸도 취소 · 신청자 DM ${o.dmSent ? "보냄" : "안 닿음 — 직접 알려줘"}` : ""}`
+        + (o.paid ? " — 입금 확인된 신청이라 환불은 따로 처리해줘" : "")
+      : o.code === "cancel_window_passed" ? `레벨 테스트(${o.when})가 3시간 안이라 칸을 취소할 수 없어 — 끝나면 트레이너 앱에서 「완료」나 노쇼로 닫아줘`
+      : o.code === "cancel_failed" ? "레벨 테스트 칸 취소가 안 됐어 — 카드 상태를 보고 다시 해줘"
       : o.code === "not_open" ? `이미 끝난 신청이야(${o.status || "?"})` : "신청을 못 찾았어"),
+    gv: (o) => (o.ok ? "보호자 동의 확인으로 적었어 — 이제 트레이너가 앱에서 등록할 수 있어"
+      : o.code === "already" ? "이미 확인된 신청이야" : o.code === "not_minor" ? "미성년 신청이 아니야" : "신청을 못 찾았어"),
     replym: (o) => (o.ok ? "보냈어" : o.code === "dm_failed" ? "신청자에게 DM 이 안 닿았어 — 디스코드에서 직접 찾아서 연락해줘"
       : o.code === "not_assignee" ? "맡은 트레이너 · 오너만 답장할 수 있어" : o.code === "empty" ? "보낼 말이 비어 있어" : "신청을 못 찾았어"),
   };
   client.on("interactionCreate", async (itx) => {
     if (!(itx.isButton() || itx.isStringSelectMenu() || itx.isModalSubmit())) return;
-    const m = String(itx.customId || "").match(/^intake_(claim|asg|asgsel|dep|close|closesel|reply|replym):(\d+)$/);
+    const m = String(itx.customId || "").match(/^intake_(claim|asg|asgsel|dep|gv|close|closesel|reply|replym):(\d+)$/);
     if (!m) return;
     const action = m[1], appId = Number(m[2]);
     if (!hasSupabase()) return itx.reply({ content: "DB 연동 준비 전이야.", ephemeral: true });
@@ -3333,6 +3320,7 @@ if (process.env.DISCORD_TOKEN) {
       if (action === "claim") out = await intakeFlow.claim({ appId, actorDiscordId: itx.user.id });
       else if (action === "asgsel") out = await intakeFlow.assign({ appId, trainerId: Number(itx.values?.[0]) });
       else if (action === "dep") out = await intakeFlow.confirmDeposit({ appId, actorDiscordId: itx.user.id });
+      else if (action === "gv") out = await intakeFlow.guardianVerify({ appId, actorDiscordId: itx.user.id });
       else if (action === "closesel") out = await intakeFlow.close({ appId, reason: String(itx.values?.[0] || "") });
       else if (action === "replym") out = await intakeFlow.reply({ appId, actorDiscordId: itx.user.id, text: itx.fields.getTextInputValue("t") });
       const text = `#${appId} ${intakeReplyText[action](out)}`;
@@ -8282,6 +8270,36 @@ const gamesShort = require("./games-short.cjs")({
   sbSelect, sbInsert, sbPatch, sbRpc, discordDM, appUrl: STUDENT_APP_URL, notifyAssigned: false,
 });
 
+// ── 신청 창구 흐름(intake-cards.cjs · PR-2 · PR-3) — 카드 버튼 · 제출 훅 · cronTick 재알림 · 트레이너 앱 라우트가 같이 쓴다 ──
+//   보내기 · 고치기는 봇(botClient)이 로그인한 뒤에만 된다. 봇이 없거나 아직이면 null · false — 상태 전이는 그대로 돈다.
+//   계좌 = 수강생 앱 입금 안내와 같은 env 3개(PAY_BANK_*) · 하나라도 없으면 DM ② 를 보내지 않는다(빈 계좌 금지).
+intakeFlow = require("./intake-cards.cjs").mountIntakeFlow({
+  sbSelect, sbInsert, sbPatch, sbUpsert, sbRpc, ownerDiscordId: process.env.MRI_OWNER_ID,
+  bank: () => ({ name: process.env.PAY_BANK_NAME, account: process.env.PAY_BANK_ACCOUNT, holder: process.env.PAY_BANK_HOLDER }),
+  appUrl: STUDENT_APP_URL,
+  send: async (discordId, payload) => {
+    if (!botClient || !discordId) return null;
+    try {
+      const u = await botClient.users.fetch(String(discordId));
+      const m = await u.send(payload);
+      return { channelId: m.channelId, messageId: m.id };
+    } catch (e) { console.error("intake_send", e?.code || "", e?.message); return null; }
+  },
+  edit: async (channelId, messageId, payload) => {
+    if (!botClient) return false;
+    try {
+      const ch = await botClient.channels.fetch(String(channelId));
+      await ch.messages.edit(String(messageId), payload);
+      return true;
+    } catch (e) { console.error("intake_edit", e?.code || "", e?.message); return false; }
+  },
+});
+
+// ── 신청 창구 트레이너 앱 라우트(계약 §9.20 · PR-3 · /api/trainer-portal/applications*) ──
+// trainer-portal 뒤 — 그 파일이 건 공유비밀 게이트 · 트레이너 판정 · 응답 가드를 같은 함수로 쓴다.
+// 상태 전이는 위 흐름(intakeFlow) 한 벌이라 앱에서 누른 것도 디스코드 카드에 그대로 보인다.
+require("./intake-trainer.cjs")(app, { sbSelect, limit, trainer: trainerPortal, portal: studentPortal, flow: () => intakeFlow });
+
 // ── 레벨 테스트 「완료」 → 상담 기록 자동 생성(오너 OK 2026-09-30 · consult-record.cjs) ──
 // 봇 /수업등록 진단상담과 같은 consults 기록 + 상담 가산용 결제 진행자(payments.handler_id · 비어 있을 때 · 한 건일 때만).
 // 결제를 못 찾거나(0건 · 여러 건) 진행자를 못 채우면 오너에게 한 줄 — 가산이 빠진 채 지나가지 않게.
@@ -8293,6 +8311,8 @@ const LEVELTEST_WARN = {
   handler_patch_failed: "결제에 진행자를 못 적었어(정산 잠긴 달일 수 있어) — 확인해줘",
 };
 function onLevelTestDone(bookingId, staff) {
+  // 신청 창구 예약이면 신청을 「마침」으로(계약 §9.20.5 · 입금 전이어도) — 상담 기록과 따로 돈다
+  if (intakeFlow) intakeFlow.markTested(bookingId).catch((e) => console.error("intake_tested", bookingId, e?.status || "", e?.message));
   consultRecorder.recordLevelTestDone({ bookingId, trainerId: staff.id, trainerName: staff.name })
     .then((r) => {
       if (r?.skipped) return;
@@ -8565,7 +8585,9 @@ const REQUIRED_SCHEMA = {
                          "slots","slots_note","event_code","utm","privacy_version","privacy_agreed_at",
                          "assigned_trainer_id","booking_id","deposit_confirmed_at","created_at",
                          // PR-2 카드(2026-10-01) — 맡기 · 재알림 · 입금 확인 · 닫기 · §56 DM 안 닿음
-                         "claimed_at","reminded_at","deposit_request_id","closed_reason","closed_note","updated_at","dm_failed_at"],
+                         "claimed_at","reminded_at","deposit_request_id","closed_reason","closed_note","updated_at","dm_failed_at",
+                         // PR-3 흐름(2026-10-01) — 마침 · 보호자 동의 확인 · 등록(§55 에 이미 있던 칸 · 자기점검에 올린다)
+                         "tested_at","guardian_verified_at","guardian_verified_by","enrolled_at"],
   intake_cards:         ["application_id","recipient_staff_id","channel_id","message_id"],
   feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
 };
@@ -9137,7 +9159,8 @@ async function cronTick() {
   await maybeRunDaily("publicMetrics", "00:05", () => publicMetrics.run(), "공개 지표 계산");
   // 신청 창구(PR-2) — 제출 열림 · 닫힘이 바뀌면 한 줄(시행일 0시 확인용) · 24시간째 아무도 안 맡은 신청은 오너에게 한 번 더(오너 결정 7).
   intakeApi.logOpen();
-  if (intakeFlow) await intakeFlow.remind().catch((e) => console.error("intake_remind", e?.status || "", e?.message));
+  //   봇이 로그인한 뒤에만 — 재알림은 한 번뿐이라(reminded_at) 봇이 없을 때 돌면 보내지도 못하고 기회만 쓴다.
+  if (intakeFlow && botClient) await intakeFlow.remind().catch((e) => console.error("intake_remind", e?.status || "", e?.message));
   // 오너 승인 카드 다시 띄우기(ops_state 'payreq:resend') — 매 틱. 목록이 비어 있으면 읽기 한 번으로 끝난다.
   await runPayreqResend().catch((e) => console.error("payreq_resend", e?.message));
   // 주간 보류 DM(계약 §9.17 · 오너 확정 9/30) — 월요일 10:00 KST 에 한 번. 날짜 키라 월요일마다 새로 돈다.

@@ -335,7 +335,7 @@ function mountIntakeFlow(deps) {
       const by = app.assigned_trainer_id != null
         ? (await sbSelect("staff", `select=name&id=eq.${app.assigned_trainer_id}&limit=1`))[0]?.name || null : null;
       return { ok: false, code: app.status === "closed" ? "closed" : "taken", by, mine: app.assigned_trainer_id === actor.id,
-        assignedTrainerId: app.assigned_trainer_id };
+        assignedTrainerId: app.assigned_trainer_id, status: app.status };
     }
     await refresh(appId);
     log(`[intake] 신청 #${Number(appId)} 맡음`);
@@ -352,16 +352,17 @@ function mountIntakeFlow(deps) {
     let app = await loadApp(appId);
     if (!app) return { ok: false, code: "not_found" };
     if (app.status === "closed") return { ok: false, code: "closed" };
+    // 남이 맡은 신청이면 상태와 무관하게 taken 이 먼저다(칸이 있든 없든 내 일이 아니다)
+    if (app.assigned_trainer_id != null && app.assigned_trainer_id !== actor.id) {
+      const by = (await sbSelect("staff", `select=name&id=eq.${app.assigned_trainer_id}&limit=1`))[0]?.name || null;
+      return { ok: false, code: "taken", by, assignedTrainerId: app.assigned_trainer_id };
+    }
     let rebook = null;
     if (app.status === "booked") {
       const old = await bookingOf(app.booking_id);
       if (old && old.status === "booked") return { ok: false, code: "already_booked" };
       rebook = app.booking_id;                                  // 칸이 사라진 booked — 다시 넣는다
     } else if (app.status !== "new" && app.status !== "claimed") return { ok: false, code: "already_booked" };
-    if (app.assigned_trainer_id != null && app.assigned_trainer_id !== actor.id) {
-      const by = (await sbSelect("staff", `select=name&id=eq.${app.assigned_trainer_id}&limit=1`))[0]?.name || null;
-      return { ok: false, code: "taken", by, assignedTrainerId: app.assigned_trainer_id };
-    }
     const slot = (await sbSelect("trainer_slots", `select=id,trainer_id,slot_start,lesson_type,status,duration_min&id=eq.${Number(slotId)}&limit=1`))[0];
     if (!slot) return { ok: false, code: "slot_not_found" };
     if (slot.trainer_id !== actor.id) return { ok: false, code: "not_my_slot" };
