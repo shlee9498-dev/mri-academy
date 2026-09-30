@@ -475,10 +475,29 @@ module.exports = function mountBookingApi(app, deps) {
       return out;
     };
     // 트레이너 화면이므로 수강생 표시명은 내려준다(수강생 포털의 신원 차폐 규칙과 대상이 다르다).
-    const namesOf = async () => (sids.length
-      ? Object.fromEntries((await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})`))
-          .map((r) => [r.id, r]))
-      : {});
+    // 단 신청 창구로 들어온 신청자(prospect)는 실명이 원장 전용이다(계약 §9.20.8 · §55) — 신청의 디스코드 표시 이름으로 바꾼다.
+    //   신청이 없는 prospect(운영진이 명부에 직접 넣은 사람)는 명부 이름 그대로다.
+    //   신청을 못 읽으면 실명으로 돌아가지 않고 prospect 전부 「신청자」로 둔다(닫힌 쪽으로 실패).
+    const namesOf = async () => {
+      if (!sids.length) return {};
+      const rows = await sbSelect("students", `select=id,name,pubg_name,status&id=in.(${sids.join(",")})`);
+      const pros = rows.filter((r) => r.status === "prospect").map((r) => r.id);
+      if (pros.length) {
+        let disp = null;                                   // student_id → 가장 최근 신청의 표시 이름 · null = 못 읽음
+        try {
+          const apps = await sbSelect("intake_applications",
+            `select=student_id,display_name&student_id=in.(${pros.join(",")})&order=id.desc`);
+          disp = new Map();
+          for (const a of apps) if (!disp.has(a.student_id)) disp.set(a.student_id, a.display_name);
+        } catch (e) { console.error("booking_prospect_names", e?.message); }
+        for (const r of rows) {
+          if (r.status !== "prospect") continue;
+          if (!disp) r.name = "신청자";
+          else if (disp.has(r.id)) r.name = disp.get(r.id) || "신청자";
+        }
+      }
+      return Object.fromEntries(rows.map((r) => [r.id, r]));
+    };
     const [regMissing, names] = await Promise.all([regMissingOf(), namesOf()]);
     const by = {};
     for (const b of books) (by[b.slot_id] = by[b.slot_id] || []).push({

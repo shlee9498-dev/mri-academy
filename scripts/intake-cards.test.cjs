@@ -7,7 +7,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const cards = require("../intake-cards.cjs");
-const { renderCard, recipientsFor, fmtWhen, dmReceived, dmScheduled, dmConfirmed, mountIntakeFlow } = cards;
+const { renderCard, recipientsFor, fmtWhen, dmReceived, dmScheduled, dmConfirmed, dmEnrolled, dmCancelled, mountIntakeFlow } = cards;
 
 // ── 가짜 PostgREST ── eq · neq · in · lt · is.null · not.is.null · select 투영 · 임베드 trainer_slots(slot_id)
 function splitTop(s) {
@@ -103,6 +103,32 @@ async function sbUpsert(table, row, onConflict) {
   return { ...row };
 }
 
+// §23 book_slot · §32 cancel_booking 흉내 — 상담 칸 정원 1 · 3시간 마감 · 취소 창 3시간
+let rpcCalls;
+async function sbRpc(fn, args) {
+  rpcCalls.push([fn, args]);
+  if (fn === "book_slot") {
+    const slot = db.trainer_slots.find((x) => x.id === args.p_slot_id);
+    if (!slot) return { error: "slot_not_found" };
+    if (slot.status !== "open") return { error: "slot_taken" };
+    if (Date.parse(slot.slot_start) - clock < 3 * HOUR) return { error: "booking_closed" };
+    if (db.slot_bookings.some((b) => b.slot_id === slot.id && b.status === "booked")) return { error: "slot_full" };
+    const bk = { id: nextId++, slot_id: slot.id, student_id: args.p_student_id, status: "booked" };
+    db.slot_bookings.push(bk);
+    return { bookingId: bk.id, gamesHeld: 0 };
+  }
+  if (fn === "cancel_booking") {
+    const bk = db.slot_bookings.find((b) => b.id === args.p_booking_id);
+    if (!bk || bk.status !== "booked") return { error: "not_found" };
+    if (bk.student_id !== args.p_student_id) return { error: "scope_denied" };
+    const slot = db.trainer_slots.find((x) => x.id === bk.slot_id);
+    if (Date.parse(slot.slot_start) - clock < 3 * HOUR) return { error: "cancel_window_passed" };
+    bk.status = "cancelled";
+    return { cancelled: true, gamesRestored: 0 };
+  }
+  throw new Error(`fake: 모르는 rpc ${fn}`);
+}
+
 // ── 가짜 디스코드 ──
 let sent, edits, blocked, msgSeq;
 async function send(discordId, payload) {
@@ -125,7 +151,7 @@ const HOUR = 3600_000;
 let clock;
 const KST10 = Date.parse("2026-10-08T01:00:00Z");       // 10/8 10:00 KST
 function fresh() {
-  nextId = 500; msgSeq = 1; sent = []; edits = []; blocked = new Set(); trigger = { fail: null };
+  nextId = 500; msgSeq = 1; sent = []; edits = []; blocked = new Set(); trigger = { fail: null }; rpcCalls = [];
   clock = KST10;
   db = {
     staff: [
@@ -136,8 +162,8 @@ function fresh() {
       { id: 6, name: "쉬는트레이너", role: "trainer", active: false, discord_id: "900000000000000006" },
     ],
     students: [
-      { id: 71, name: "가짜신청", status: "prospect", merged_into: null },
-      { id: 72, name: "가짜신청", status: "done", merged_into: null },      // 명부 동명 1명
+      { id: 71, name: "가짜신청", status: "prospect", merged_into: null, level: null, trainer_id: null },
+      { id: 72, name: "가짜신청", status: "done", merged_into: null, level: null, trainer_id: null },      // 명부 동명 1명
     ],
     event_codes: [{ code: "TEST10", title: "가짜 이벤트" }],
     intake_applications: [],
@@ -161,6 +187,12 @@ function addApp(over = {}) {
   db.intake_applications.push(row);
   return row;
 }
+function addSlot(over = {}) {
+  const slot = { id: nextId++, trainer_id: 2, slot_start: new Date(clock + 2 * 86400_000).toISOString(), lesson_type: "consult",
+    status: "open", duration_min: 90, ...over };
+  db.trainer_slots.push(slot);
+  return slot;
+}
 function addBooking(startsAtIso, status = "booked") {
   const slot = { id: nextId++, slot_start: startsAtIso };
   db.trainer_slots.push(slot);
@@ -168,8 +200,9 @@ function addBooking(startsAtIso, status = "booked") {
   db.slot_bookings.push(bk);
   return bk;
 }
-const flow = () => mountIntakeFlow({ sbSelect, sbInsert, sbPatch, sbUpsert, send, edit, ownerDiscordId: OWNER,
-  levelTestWon: async () => 20000, now: () => clock, log: () => {}, logError: () => {} });
+const BANK = { name: "가짜은행", account: "000-00-000000", holder: "가짜예금주" };
+const flow = () => mountIntakeFlow({ sbSelect, sbInsert, sbPatch, sbUpsert, sbRpc, send, edit, ownerDiscordId: OWNER,
+  bank: () => BANK, appUrl: "https://app.example.test", levelTestWon: async () => 20000, now: () => clock, log: () => {}, logError: () => {} });
 const appRow = (id) => db.intake_applications.find((a) => a.id === id);
 const ctxBase = { staffName: (id) => ({ 2: "트레이너A", 4: "원장A", 5: "트레이너B" }[id] || null),
   staffRole: (id) => ({ 2: "trainer", 4: "owner", 5: "trainer" }[id] || null), eventTitle: "가짜 이벤트", sameNameCount: 1, price: 20000 };
@@ -219,13 +252,18 @@ test("카드 — 오너는 실명 · 나이 · 미성년 · 동명 · 멘션 · 
   const a = addApp();
   const owner = renderCard(a, { ...ctxBase, view: "owner", me: 4 });
   assert.match(owner.content, /\*\*레벨 테스트 신청 #\d+\*\* · 새 신청/);
-  assert.match(owner.content, /이름 가짜신청 · 16세 · 미성년\(등록 전에 보호자 동의 확인\) · ⚠️ 명부에 같은 이름 1명/);
+  assert.match(owner.content, /이름 가짜신청 · 16세 · 미성년\(등록 전에 보호자 동의 확인 · 확인했으면 「보호자 동의 확인함」\) · ⚠️ 명부에 같은 이름 1명/);
   assert.ok(owner.content.includes(`<@${APPLICANT}>`));
   assert.match(owner.content, /배그 Fake\\_Nick \(스팀\) · 본인 티어 골드 · 조회 플래티넘/);
   assert.match(owner.content, /시간대: 평일 저녁, 주말 밤/);
   assert.match(owner.content, /이벤트 TEST10 \(가짜 이벤트\)/);
-  assert.deepEqual(buttonsOf(owner), [`intake_claim:${a.id}`, `intake_asg:${a.id}`, `intake_close:${a.id}`]);
+  assert.deepEqual(buttonsOf(owner), [`intake_claim:${a.id}`, `intake_asg:${a.id}`, `intake_gv:${a.id}`, `intake_close:${a.id}`]);
   assert.deepEqual(owner.allowedMentions, { parse: [] });
+  const adult = renderCard({ ...a, age: 20 }, { ...ctxBase, view: "owner", me: 4 });
+  assert.deepEqual(buttonsOf(adult), [`intake_claim:${a.id}`, `intake_asg:${a.id}`, `intake_close:${a.id}`], "성인은 보호자 버튼이 없다");
+  const verified = renderCard({ ...a, guardian_verified_at: "2026-10-08T03:00:00Z" }, { ...ctxBase, view: "owner", me: 4 });
+  assert.match(verified.content, /미성년 · 보호자 동의 확인 10\. 8\. \(목\) 12:00/);
+  assert.ok(!buttonsOf(verified).includes(`intake_gv:${a.id}`));
 
   const tr = renderCard(a, { ...ctxBase, view: "trainer", me: 2 });
   assert.ok(!tr.content.includes("가짜신청"), "트레이너 카드에 실명이 없다");
@@ -296,7 +334,7 @@ test("맡기 — 먼저 누른 한 명 · 늦게 누른 사람은 taken · 다�
   assert.deepEqual({ ok: late.ok, code: late.code, by: late.by }, { ok: false, code: "taken", by: "트레이너B" });
   assert.equal(lastEditOf(cardOf(2)).content, `**레벨 테스트 신청 #${a.id}** — 트레이너B 트레이너가 맡았어`);
   assert.match(lastEditOf(cardOf(5)).content, /내가 맡은 신청이야/);
-  assert.deepEqual(buttonsOf(lastEditOf(cardOf(4))), [`intake_asg:${a.id}`, `intake_close:${a.id}`]);
+  assert.deepEqual(buttonsOf(lastEditOf(cardOf(4))), [`intake_asg:${a.id}`, `intake_gv:${a.id}`, `intake_close:${a.id}`]);
   assert.equal((await f.claim({ appId: a.id, actorDiscordId: "900000000000000077" })).code, "not_staff");
 });
 
@@ -385,24 +423,49 @@ test("입금 확인 — 칸이 취소됐으면 막고, DM ③ 이 안 닿으면 
   assert.ok(appRow(a.id).dm_failed_at);
 });
 
-test("닫기 — 이유 6종만 · 앞으로 남은 칸이 있으면 막는다 · 닫으면 트레이너 카드가 접힌다", async () => {
+test("닫기 — 이유 6종만 · 앞으로 남은 칸은 취소하고 취소 DM · 3시간 안이면 막는다 · 닫으면 트레이너 카드가 접힌다", async () => {
   fresh();
   const f = flow();
   const a = addApp();
   await f.onSubmitted({ ...a });
   assert.equal((await f.close({ appId: a.id, reason: "nope" })).code, "bad_reason");
-  const future = addBooking(new Date(clock + 2 * 86400_000).toISOString());
-  Object.assign(appRow(a.id), { status: "booked", assigned_trainer_id: 2, booking_id: future.id });
-  assert.equal((await f.close({ appId: a.id, reason: "declined" })).code, "booking_active");
-  const past = addBooking(new Date(clock - HOUR).toISOString());
-  Object.assign(appRow(a.id), { booking_id: past.id, status: "paid", deposit_confirmed_at: new Date(clock - 2 * HOUR).toISOString() });
-  const out = await f.close({ appId: a.id, reason: "no_show" });
-  assert.deepEqual(out, { ok: true, paid: true });
+  const soon = addSlot({ slot_start: new Date(clock + 2 * HOUR).toISOString() });
+  const soonBk = { id: nextId++, slot_id: soon.id, student_id: 71, status: "booked" };
+  db.slot_bookings.push(soonBk);
+  Object.assign(appRow(a.id), { status: "booked", assigned_trainer_id: 2, booking_id: soonBk.id });
+  assert.equal((await f.close({ appId: a.id, reason: "declined" })).code, "cancel_window_passed", "3시간 안 칸은 취소 창이 지났다");
+  assert.equal(appRow(a.id).status, "booked");
+
+  const later = addSlot();
+  const laterBk = { id: nextId++, slot_id: later.id, student_id: 71, status: "booked" };
+  db.slot_bookings.push(laterBk);
+  Object.assign(appRow(a.id), { booking_id: laterBk.id, status: "paid", deposit_confirmed_at: new Date(clock - HOUR).toISOString() });
+  const out = await f.close({ appId: a.id, reason: "declined", note: "  본인 요청  " });
+  assert.deepEqual(out, { ok: true, paid: true, cancelled: true, dmSent: true });
+  assert.equal(laterBk.status, "cancelled");
   assert.equal(appRow(a.id).status, "closed");
-  assert.equal(appRow(a.id).closed_reason, "no_show");
+  assert.equal(appRow(a.id).closed_note, "본인 요청");
+  assert.equal(sentTo(APPLICANT).at(-1).payload.content, dmCancelled({ name: "가짜신청", startsAt: later.slot_start, paid: true }));
+  assert.match(sentTo(APPLICANT).at(-1).payload.content, /운영진이 따로 연락드릴게요/);
   const other = db.intake_cards.find((c) => c.recipient_staff_id === 5).message_id;
   assert.equal(lastEditOf(other).content, `**레벨 테스트 신청 #${a.id}** — 닫힌 신청이야`);
   assert.equal((await f.close({ appId: a.id, reason: "other" })).code, "not_open");
+
+  // 지난 칸(노쇼)은 취소하지 않고 닫는다
+  const b = addApp({ discord_id: "900000000000000096" });
+  const past = addBooking(new Date(clock - HOUR).toISOString());
+  Object.assign(appRow(b.id), { status: "booked", assigned_trainer_id: 2, booking_id: past.id });
+  assert.deepEqual(await f.close({ appId: b.id, reason: "no_show" }), { ok: true, paid: false, cancelled: false, dmSent: null });
+});
+
+test("트레이너 앱 닫기 — 맡은 트레이너 · 원장만", async () => {
+  fresh();
+  const f = flow();
+  const a = addApp({ status: "claimed", assigned_trainer_id: 2 });
+  assert.equal((await f.close({ appId: a.id, reason: "spam", actorStaffId: 5 })).code, "not_assignee");
+  assert.equal((await f.close({ appId: a.id, reason: "spam", actorStaffId: 2 })).ok, true);
+  const b = addApp({ discord_id: "900000000000000095", status: "claimed", assigned_trainer_id: 2 });
+  assert.equal((await f.close({ appId: b.id, reason: "duplicate", actorStaffId: 4 })).ok, true, "원장은 남의 신청도 닫는다");
 });
 
 test("24시간 재알림 — 한 번만 · 밤에는 미룬다 · 새 오너 카드 · 옛 카드는 접는다", async () => {
@@ -458,4 +521,118 @@ test("답장 — 오너 · 맡은 트레이너만 · 봇이 이름을 붙여 보
   blocked.add(APPLICANT);
   assert.equal((await f.reply({ appId: a.id, actorDiscordId: T_B, text: "또" })).code, "dm_failed");
   assert.ok(appRow(a.id).dm_failed_at);
+});
+
+test("DM 초안 — 등록 · 칸 취소(표에 없는 알림 · 세션 초안)", () => {
+  assert.equal(dmEnrolled({ name: "가짜신청", trainer: "트레이너A", appUrl: "https://app.example.test" }),
+    "가짜신청님, MRI ACADEMY 수강 등록이 끝났어요 🎉\n"
+    + "신청할 때 쓴 디스코드로 앱에 로그인하면 판수 채우기랑 수업 예약을 바로 할 수 있어요!\n"
+    + "https://app.example.test\n"
+    + "궁금한 건 트레이너A 트레이너에게 편하게 물어보세요~");
+  assert.equal(dmCancelled({ name: "가짜신청", startsAt: "2026-10-09T11:00:00Z", paid: false }),
+    "가짜신청님, 10. 9. (금) 20:00 레벨 테스트 일정이 취소됐어요\n"
+    + "다시 신청하고 싶으시면 mriacademy.gg 에서 언제든 신청해 주세요");
+  assert.ok(!/[!🎉🙏😊]/.test(dmCancelled({ name: "a", startsAt: "2026-10-09T11:00:00Z", paid: true })), "취소 문구는 느낌표 · 이모지 없이");
+});
+
+test("레벨 테스트 칸 넣기 — 새 신청이면 내가 맡고 · book_slot · booked · DM ② · 오너 한 줄 · 카드", async () => {
+  fresh();
+  const f = flow();
+  const a = addApp();
+  await f.onSubmitted({ ...a });
+  const slot = addSlot();
+  const out = await f.book({ appId: a.id, actorStaffId: 2, slotId: slot.id });
+  assert.equal(out.ok, true);
+  assert.equal(out.dmSent, true);
+  assert.equal(out.durationMin, 90);
+  const row = appRow(a.id);
+  assert.deepEqual([row.status, row.assigned_trainer_id, row.booking_id], ["booked", 2, out.bookingId]);
+  assert.deepEqual(rpcCalls.find(([fn]) => fn === "book_slot")[1], { p_student_id: 71, p_slot_id: slot.id, p_duration_min: null });
+  assert.equal(sentTo(APPLICANT).at(-1).payload.content,
+    dmScheduled({ name: "가짜신청", trainer: "트레이너A", startsAt: slot.slot_start, price: 20000, bank: BANK, eventCode: "TEST10" }));
+  assert.match(sentTo(OWNER).at(-1).payload.content, new RegExp(`신청 #${a.id} 레벨 테스트 잡힘 — .* · 트레이너A · 입금이 들어오면`));
+  const ownerCard = db.intake_cards.find((c) => c.recipient_staff_id === 4).message_id;
+  assert.ok(buttonsOf(lastEditOf(ownerCard)).includes(`intake_dep:${a.id}`), "오너 카드에 [입금 확인]");
+  assert.equal(lastEditOf(db.intake_cards.find((c) => c.recipient_staff_id === 5).message_id).content,
+    `**레벨 테스트 신청 #${a.id}** — 트레이너A 트레이너가 맡았어`);
+});
+
+test("레벨 테스트 칸 넣기 — 남의 칸 · 상담 아님 · 남이 맡음 · 이미 칸 · 마감 · 계좌 없으면 DM 안 감", async () => {
+  fresh();
+  const f = flow();
+  const a = addApp();
+  assert.equal((await f.book({ appId: a.id, actorStaffId: 2, slotId: addSlot({ trainer_id: 5 }).id })).code, "not_my_slot");
+  assert.equal((await f.book({ appId: a.id, actorStaffId: 2, slotId: addSlot({ lesson_type: "personal" }).id })).code, "not_consult_slot");
+  assert.equal((await f.book({ appId: a.id, actorStaffId: 2, slotId: addSlot({ slot_start: new Date(clock + HOUR).toISOString() }).id })).code,
+    "booking_closed");
+  assert.equal(appRow(a.id).status, "claimed", "마감으로 못 넣어도 맡기는 남는다");
+  assert.equal((await f.book({ appId: a.id, actorStaffId: 5, slotId: addSlot({ trainer_id: 5 }).id })).code, "taken");
+  assert.equal((await f.book({ appId: a.id, actorStaffId: 2, slotId: addSlot().id })).ok, true);
+  assert.equal((await f.book({ appId: a.id, actorStaffId: 2, slotId: addSlot().id })).code, "already_booked");
+  // 칸이 취소된 booked 신청은 다시 넣는다
+  db.slot_bookings.find((b) => b.id === appRow(a.id).booking_id).status = "cancelled";
+  const again = await f.book({ appId: a.id, actorStaffId: 2, slotId: addSlot().id });
+  assert.equal(again.ok, true);
+  assert.equal(appRow(a.id).booking_id, again.bookingId);
+
+  const noBank = mountIntakeFlow({ sbSelect, sbInsert, sbPatch, sbUpsert, sbRpc, send, edit, ownerDiscordId: OWNER,
+    bank: () => ({ name: "x", account: "", holder: "y" }), levelTestWon: async () => 20000, now: () => clock, log: () => {}, logError: () => {} });
+  const b = addApp({ discord_id: "900000000000000094" });
+  const before = sent.length;
+  const out = await noBank.book({ appId: b.id, actorStaffId: 2, slotId: addSlot().id });
+  assert.equal(out.ok, true);
+  assert.equal(out.dmSent, false);
+  assert.ok(!sent.slice(before).some((m) => m.to === "900000000000000094"), "빈 계좌로 DM 을 보내지 않는다");
+  assert.ok(appRow(b.id).dm_failed_at);
+});
+
+test("마침 → tested · 입금 전 마침이면 [입금 확인] 이 남고 확정 DM 은 안 간다", async () => {
+  fresh();
+  const f = flow();
+  const a = addApp({ age: 20 });
+  await f.onSubmitted({ ...a });
+  const slot = addSlot();
+  const { bookingId } = await f.book({ appId: a.id, actorStaffId: 2, slotId: slot.id });
+  assert.equal(await f.markTested(bookingId), 1);
+  assert.equal(appRow(a.id).status, "tested");
+  assert.equal(await f.markTested(bookingId), 0, "두 번째는 바꿀 게 없다");
+  const ownerCard = db.intake_cards.find((c) => c.recipient_staff_id === 4).message_id;
+  assert.ok(buttonsOf(lastEditOf(ownerCard)).includes(`intake_dep:${a.id}`), "마친 뒤에도 입금 전이면 [입금 확인]");
+  db.slot_bookings.find((b) => b.id === bookingId).status = "done";
+  const dmBefore = sentTo(APPLICANT).length;
+  const out = await f.confirmDeposit({ appId: a.id, actorDiscordId: OWNER });
+  assert.equal(out.ok, true);
+  assert.equal(out.afterTest, true);
+  assert.equal(out.dmOk, null);
+  assert.equal(sentTo(APPLICANT).length, dmBefore, "마친 뒤 입금은 확정 DM 을 보내지 않는다");
+  assert.equal(appRow(a.id).status, "tested", "상태는 tested 그대로 · 입금만 적는다");
+  assert.ok(appRow(a.id).deposit_confirmed_at);
+  assert.equal(db.payment_requests.length, 1);
+  assert.equal((await f.confirmDeposit({ appId: a.id, actorDiscordId: OWNER })).code, "already");
+});
+
+test("등록 — 마침 전 막음 · 미성년은 보호자 확인 뒤 · active · 담당 · 레벨 · 등록 DM", async () => {
+  fresh();
+  const f = flow();
+  const a = addApp({ status: "booked", assigned_trainer_id: 2 });
+  assert.equal((await f.enroll({ appId: a.id, actorStaffId: 2, level: "beginner" })).code, "not_tested");
+  appRow(a.id).status = "tested";
+  assert.equal((await f.enroll({ appId: a.id, actorStaffId: 5, level: "beginner" })).code, "not_assignee");
+  assert.equal((await f.enroll({ appId: a.id, actorStaffId: 2, level: "beginner" })).code, "owner_check_needed");
+  assert.equal((await f.guardianVerify({ appId: a.id, actorDiscordId: OWNER })).ok, true);
+  assert.equal(appRow(a.id).guardian_verified_by, "staff:4");
+  assert.equal((await f.guardianVerify({ appId: a.id, actorDiscordId: OWNER })).code, "already");
+  assert.equal((await f.enroll({ appId: a.id, actorStaffId: 2 })).code, "level_required", "마침 때 레벨을 안 골랐으면 필수");
+  const out = await f.enroll({ appId: a.id, actorStaffId: 2, level: "beginner" });
+  assert.deepEqual(out, { ok: true, studentId: 71, dmSent: true });
+  const stu = db.students.find((x) => x.id === 71);
+  assert.deepEqual([stu.status, stu.trainer_id, stu.level, stu.level_set_by], ["active", 2, "beginner", "staff:2"]);
+  assert.equal(appRow(a.id).status, "enrolled");
+  assert.equal(sentTo(APPLICANT).at(-1).payload.content, dmEnrolled({ name: "가짜신청", trainer: "트레이너A", appUrl: "https://app.example.test" }));
+  assert.equal((await f.enroll({ appId: a.id, actorStaffId: 2, level: "beginner" })).code, "already_enrolled");
+  // 레벨을 마침 때 골랐으면(명부 level) 생략할 수 있다 · 원장은 남의 신청도 등록한다
+  db.students.push({ id: 73, name: "가짜둘", status: "prospect", merged_into: null, level: "advanced", trainer_id: null });
+  const b = addApp({ discord_id: "900000000000000093", student_id: 73, real_name: "가짜둘", age: 25, status: "tested", assigned_trainer_id: 5 });
+  assert.equal((await f.enroll({ appId: b.id, actorStaffId: 4 })).ok, true);
+  assert.deepEqual([db.students.find((x) => x.id === 73).status, db.students.find((x) => x.id === 73).trainer_id], ["active", 5]);
 });

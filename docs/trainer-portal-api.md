@@ -1559,11 +1559,14 @@ PATCH /api/trainer-portal/bookings/:id
 - 수강생(닫기로 취소): 종전 트레이너 취소 DM + 늦은 취소면 「보상 1판을 넣었어요」.
 - 트레이너: 수강생이 [안 돼요]를 누르면 「{이름} 바뀐 시간 거절 — 예약 취소 · N판 복원」. [괜찮아요]는 DM 없이 `change.answer` 로만.
 
-## 9.20 신청 창구 — 신청 목록 · 맡기 · 레벨 테스트 넣기 · 등록 (2026-09-30 · 오너 방향 확정 · **계약 · 서버 구현 전**)
+## 9.20 신청 창구 — 신청 목록 · 맡기 · 레벨 테스트 넣기 · 등록 (2026-09-30 · 오너 방향 확정 · **서버 반영 2026-10-01 PR-3**)
 
 > 설계 정본 `docs/intake-design.md`(2026-09-30). 신청 페이지 `start.html` 과 필드 이름은 클로드디자인 명세를 따른다.
 > **오너 결정 8건 확정(9/30 · 설계 §11).** 서버는 PR-1(공개 API · 로그인 · 앱 로그인 막기)부터 들어갔고, 이 절의 트레이너 라우트는 PR-3 이다.
 > 구현하면서 바뀌면 이 절을 먼저 고치고 알린다.
+> **PR-3 반영(10/1)**: 아래 라우트 5개 · 마침 → `tested` · 칸 목록 신청자 이름. 구현하며 더한 것 — 응답 `dmSent` · `levelTestCancelled` · `tierLabel` · `ownerView.guardianVerified`,
+> 오류 `scope_denied` · `booking_closed` · `level_required` · `already_enrolled` · `cancel_window_passed`. 각 절에 적었다.
+> 다섯 라우트 모두 **트레이너 · 원장만**이다 — 명부에 있어도 사무 계정은 403 `not_staff`.
 > 키 이름은 트레이너 가드 규칙을 지킨다 — `name` · `realName` · `studentId` 와 `discord` · `fee` · `payment` · `amount` 어간은 쓰지 않는다.
 
 ### 9.20.1 상태
@@ -1594,22 +1597,29 @@ PATCH /api/trainer-portal/bookings/:id
 - `levelTest` 는 칸을 잡은 뒤에만 온다(없으면 `null`). `deposit` ∈ `waiting` · `confirmed`.
 - `tierChecked` = 배그 닉으로 조회한 티어(없으면 `null`). `tier` 는 본인이 고른 값이다.
 - `preferredTrainer` 가 `null` 이면 「누구든」.
+- `tierLabel` = `tier` 의 한글 이름(신청 페이지와 같은 표 · 모르는 값이면 `null`).
+- `ownerView.guardianVerified` = 보호자 동의 확인을 눌렀는지(14~17세 등록 조건 · §9.20.6).
 
 ### 9.20.3 `POST /api/trainer-portal/applications/:id/claim` — 맡기
 
 - 먼저 누른 사람이 맡는다. 디스코드 카드 [맡기]와 같은 판정이다.
 - 200 `{ "status": "claimed", "assignedTrainer": { … } }`
-- 409 `taken` `{ "assignedTrainer": { "trainerName": "…" } }` · 409 `closed` · 404 `not_found`
+  - 이미 **내가** 맡은 신청을 다시 누르면(재시도 · 두 번 탭) 200 이고 `status` 는 지금 상태다(`claimed` · `booked` …).
+- 409 `taken` `{ "assignedTrainer": { "trainerKey": "…", "trainerName": "…" } }` · 409 `closed` · 404 `not_found`
+- 403 `scope_denied` — 다른 트레이너를 원한 새 신청(목록 「맡을 수 있는 것」에 안 보이는 것). 원장은 해당 없음.
 
 ### 9.20.4 `POST /api/trainer-portal/applications/:id/assign` — 레벨 테스트 칸에 넣기
 
 - 본문 `{ "slotId": "…" }` — 내 레벨 테스트 칸(`lessonType: "consult"` · `open`).
 - **아무도 안 맡은 신청이면 이 호출로 내가 맡는다.**
-- 200 `{ "status": "booked", "levelTest": { … } }`. 신청자에게 레벨 테스트 안내 DM(시각 · 레벨 테스트비 · 입금 계좌 · 취소 규칙)이 나간다.
+- 200 `{ "status": "booked", "dmSent": true, "levelTest": { … } }`. 신청자에게 레벨 테스트 안내 DM(시각 · 레벨 테스트비 · 입금 계좌 · 취소 규칙)이 나간다.
+  - `dmSent` = 안내 DM 이 닿았는지. `false` 면 원장 카드에 「DM 안 닿음」이 뜬다(앱은 「DM 이 안 닿았어요 · 원장에게 알려졌어요」 정도).
 - 오류:
-  - 409 `taken`(다른 트레이너가 맡음) · 409 `slot_taken`
-  - 400 `not_consult_slot` · 403 `not_my_slot`
+  - 409 `taken`(다른 트레이너가 맡음 · 칸이 있어도 이것이 먼저) · 409 `slot_taken`
+  - 409 `booking_closed` — 시작 3시간 안 칸(수강생 예약과 같은 마감)
+  - 400 `not_consult_slot` · 403 `not_my_slot` · 404 `slot_not_found` · 400 `invalid_body`(`slotId` 없음 · 모양 틀림)
   - 409 `already_booked`(이미 칸이 있음 — 옮기기는 §9.19) · 409 `closed`
+  - 403 `scope_denied` — §9.20.3 과 같다
 - 옮기기 · 취소는 §9.19 일정 직접 변경을 그대로 쓴다. §9.19 가 나오기 전에는 지금의 예약 취소를 쓴다.
 
 ### 9.20.5 마침 — 기존 `POST /bookings/:id/complete` `{ "level": … }` (§9.16)
@@ -1621,23 +1631,31 @@ PATCH /api/trainer-portal/bookings/:id
 
 - 본문 `{ "level": "beginner" | "intermediate" | "advanced" }` — 마침 때 골랐으면 생략할 수 있다. 안 골랐으면 필수.
 - 명부 prospect → active · 담당 = 맡은 트레이너.
-- 200 `{ "status": "enrolled", "student": { "id": "…" } }` — `student.id` 는 §9.14 · §9.15 의 수강생 id 다.
+- 200 `{ "status": "enrolled", "student": { "id": "…" }, "dmSent": true }` — `student.id` 는 §9.14 · §9.15 의 수강생 id 다.
 - 신청자에게 등록 DM(앱 안내)이 나간다. 수강생 앱은 같은 디스코드로 바로 로그인된다(연결 신청 없음).
 - 오류:
-  - 409 `not_tested`(마침 전) · 403 `not_assignee` · 409 `closed`
+  - 409 `not_tested`(마침 전) · 403 `not_assignee` · 409 `closed` · 409 `already_enrolled`
+  - 400 `level_required` — 마침 때 레벨을 안 골랐는데 본문에도 없음 · 400 `invalid_body` — `level` 값이 셋 밖
   - 409 `owner_check_needed` — 오너 확인이 필요한 신청이다(14~17세는 보호자 동의 확인 뒤에만 등록 · 오너 결정 4).
     이유는 트레이너에게 내리지 않는다(나이는 원장 전용). 앱은 「오너 확인 뒤에 등록돼요」 정도로 띄운다.
 
 ### 9.20.7 `POST /api/trainer-portal/applications/:id/close` — 닫기
 
 - 본문 `{ "reason": "duplicate" | "spam" | "no_reply" | "declined" | "no_show" | "other", "note": "…"? }`
-- 맡은 트레이너 · 원장만. 200 `{ "status": "closed" }`.
-- 잡힌 레벨 테스트가 있으면 취소하고 신청자에게 DM 한다.
+- 맡은 트레이너 · 원장만. 200 `{ "status": "closed", "levelTestCancelled": true, "dmSent": true }`.
+- 잡힌 레벨 테스트가 **앞으로 남아 있으면** 취소하고 신청자에게 DM 한다(`levelTestCancelled: true`).
+  칸이 없었으면 `levelTestCancelled: false` · `dmSent: null`(보낼 DM 이 없음).
+- 오류:
+  - 403 `not_assignee` · 409 `closed`(이미 닫힘) · 409 `already_enrolled`(등록된 신청은 닫지 않는다)
+  - 409 `cancel_window_passed` — 레벨 테스트가 3시간 안이라 칸을 못 치운다. 「완료」나 노쇼로 닫는다.
+  - 400 `invalid_body` — `reason` 이 여섯 밖 · `note` 200자 초과
 
 ### 9.20.8 칸 목록 · 일정 조회의 신청자 이름
 
 - prospect 예약의 `studentDisplayName` 에는 **신청의 디스코드 표시 이름**이 온다(실명 아님).
-- 적용 범위는 `GET /slots` · §9.19 조회 둘 다.
+- 적용 범위는 `GET /slots` · §9.19 조회 둘 다. `GET /slots` 는 PR-3 에서 반영했다(§9.19 는 그 구현 때 같은 함수로).
+- 신청이 없는 prospect(운영진이 명부에 직접 넣은 사람)는 명부 이름 그대로다.
+- 신청을 못 읽으면 실명으로 돌아가지 않고 prospect 는 전부 「신청자」가 온다(닫힌 쪽으로 실패).
 
 ### 9.20.9 수강생 앱
 
