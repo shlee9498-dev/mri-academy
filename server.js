@@ -30,6 +30,8 @@ const killrace = require("./killrace.cjs");
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
 //   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
 const payreqIntake = require("./payreq-intake.cjs");
+// 공개 API 응답에서 수강생 식별정보를 걷어내는 순수 함수(커뮤니티 작성자 ID · 공개 코칭 기록 본문 치환 · 9/30 개인정보 점검)
+const publicRows = require("./public-rows.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -357,9 +359,17 @@ app.get("/api/auth/me", (req, res) => {
 });
 
 // ── 후기 ──
-app.get("/api/reviews", async (_req, res) => {
+// 공개 목록(후기 · 레슨 동향 · 답글)에는 작성자 디스코드 ID 를 싣지 않는다(9/30 개인정보 점검). 전에는 select=* 라
+// 화면에 안 보이는 discord_id 가 JSON 에 그대로 실렸다. 수정 · 삭제 버튼은 own(본인 글이거나 운영진)으로 알려 준다.
+const COMMUNITY_COLS = {
+  reviews: "id,discord_id,discord_name,trainer,rating,content,created_at",
+  progress_logs: "id,discord_id,discord_name,title,content,created_at",
+  replies: "id,parent_type,parent_id,discord_id,discord_name,is_staff,content,created_at",
+};
+app.get("/api/reviews", async (req, res) => {
   if (!reviewsReady()) return res.status(503).json({ error: "disabled" });
-  try { res.json(await sbSelect("reviews", "select=*&hidden=eq.false&order=created_at.desc&limit=200")); }
+  res.vary("Authorization");
+  try { res.json(publicRows.communityRows(await sbSelect("reviews", `select=${COMMUNITY_COLS.reviews}&hidden=eq.false&order=created_at.desc&limit=200`), getUser(req))); }
   catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
 });
 app.post("/api/reviews", async (req, res) => {
@@ -380,14 +390,15 @@ app.post("/api/reviews", async (req, res) => {
       trainer: String(b.trainer || "").slice(0, 30) || null,
       rating, content: content.slice(0, 2000),
     });
-    res.json(row);
+    res.json(publicRows.communityRow(row, u));
   } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
 });
 
 // ── 레슨 동향 ──
-app.get("/api/progress", async (_req, res) => {
+app.get("/api/progress", async (req, res) => {
   if (!reviewsReady()) return res.status(503).json({ error: "disabled" });
-  try { res.json(await sbSelect("progress_logs", "select=*&hidden=eq.false&order=created_at.desc&limit=200")); }
+  res.vary("Authorization");
+  try { res.json(publicRows.communityRows(await sbSelect("progress_logs", `select=${COMMUNITY_COLS.progress_logs}&hidden=eq.false&order=created_at.desc&limit=200`), getUser(req))); }
   catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
 });
 app.post("/api/progress", async (req, res) => {
@@ -406,7 +417,7 @@ app.post("/api/progress", async (req, res) => {
       discord_id: u.id, discord_name: u.name,
       title: String(b.title || "").slice(0, 80) || null, content: content.slice(0, 4000),
     });
-    res.json(row);
+    res.json(publicRows.communityRow(row, u));
   } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
 });
 
@@ -415,7 +426,8 @@ app.get("/api/replies", async (req, res) => {
   if (!reviewsReady()) return res.status(503).json({ error: "disabled" });
   const pt = req.query.parent_type, pid = parseInt(req.query.parent_id);
   if (!["review", "progress"].includes(pt) || !pid) return res.status(400).json({ error: "bad_params" });
-  try { res.json(await sbSelect("replies", `select=*&parent_type=eq.${pt}&parent_id=eq.${pid}&hidden=eq.false&order=created_at.asc`)); }
+  res.vary("Authorization");
+  try { res.json(publicRows.communityRows(await sbSelect("replies", `select=${COMMUNITY_COLS.replies}&parent_type=eq.${pt}&parent_id=eq.${pid}&hidden=eq.false&order=created_at.asc`), getUser(req))); }
   catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
 });
 app.post("/api/replies", async (req, res) => {
@@ -436,7 +448,7 @@ app.post("/api/replies", async (req, res) => {
       parent_type: pt, parent_id: pid, discord_id: u.id, discord_name: u.name,
       is_staff: u.isStaff, content: content.slice(0, 1000),
     });
-    res.json(row);
+    res.json(publicRows.communityRow(row, u));
   } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
 });
 
@@ -465,7 +477,7 @@ app.patch("/api/reviews/:id", async (req, res) => {
     const patch = { content: content.slice(0, 2000), rating: Math.min(5, Math.max(1, parseInt(b.rating) || 5)) };
     if (b.trainer !== undefined) patch.trainer = String(b.trainer || "").slice(0, 30) || null;
     const rows = await sbPatch("reviews", `id=eq.${id}`, patch);
-    res.json(rows[0] || { ok: true });
+    res.json(rows[0] ? publicRows.communityRow(rows[0], u) : { ok: true });
   } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
 });
 app.patch("/api/progress/:id", async (req, res) => {
@@ -480,7 +492,7 @@ app.patch("/api/progress/:id", async (req, res) => {
     const patch = { content: content.slice(0, 4000) };
     if (b.title !== undefined) patch.title = String(b.title || "").slice(0, 80) || null;
     const rows = await sbPatch("progress_logs", `id=eq.${id}`, patch);
-    res.json(rows[0] || { ok: true });
+    res.json(rows[0] ? publicRows.communityRow(rows[0], u) : { ok: true });
   } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
 });
 app.patch("/api/replies/:id", async (req, res) => {
@@ -493,7 +505,7 @@ app.patch("/api/replies/:id", async (req, res) => {
     if (own === "not_found") return res.status(404).json({ error: "not_found" });
     if (own === "forbidden") return res.status(403).json({ error: "forbidden" });
     const rows = await sbPatch("replies", `id=eq.${id}`, { content: content.slice(0, 1000) });
-    res.json(rows[0] || { ok: true });
+    res.json(rows[0] ? publicRows.communityRow(rows[0], u) : { ok: true });
   } catch (e) { console.error(e); res.status(502).json({ error: "db" }); }
 });
 
@@ -4737,7 +4749,11 @@ app.get("/api/_seasondbg", async (req, res) => {
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-app.get("/api/student-progress", async (_req, res) => {
+// 계정별 시작 → 수료 전적(배그 닉 원문 · 티어 · RP). 운영진 전용 — 9/30 개인정보 점검 전에는 로그인 없이 열려 있었다.
+//   공개 화면(student-progress.html)은 집계(/api/progress-stats)만 쓴다.
+app.get("/api/student-progress", async (req, res) => {
+  const u = getUser(req);
+  if (!u || !u.isStaff) return res.status(403).json({ error: "staff_only" });
   if (!reviewsReady()) return res.json({ ready: false, items: [] });
   try {
     const pairs = (await progressPairs()).filter((p) => p.base && p.after);
@@ -7413,7 +7429,7 @@ app.post("/api/gdcup-solo-tier", async (req, res) => {
 
 // ══ 공개 read API 2종 — gmi-progress·lesson-feedback 동적 전환용 (PII 정책: 2026-07-29 오너 승인) ══
 // ① progress: 부분 마스킹 인게임닉("세**") ② feedback: 완전 익명("레슨생 A") + 본문 내
-//   students.name·discord_nick 사전 치환 ③ 트레이너 활동명 공개 ④ 익명화 전제 본문 전문.
+//   이름·디스코드 닉·배그 닉·별칭 사전 치환(사전을 못 읽으면 비움 · 9/30) ③ 트레이너 활동명 공개 ④ 익명화 전제 본문 전문.
 // 서버측 마스킹만 신뢰(클라 0), 5분 캐시. 실패 시 프론트는 정적 폴백("기록 불러오는 중").
 const PUB_CACHE = { prog: null, progAt: 0, feed: null, feedAt: 0 };
 const PUB_TTL = 5 * 60 * 1000;
@@ -7481,14 +7497,17 @@ app.get("/api/feedback-public", async (_req, res) => {
     const rows = await sbSelect("feedback",
       "published=eq.true&select=trainer,student_alias,lesson_date,body,created_at" +
       "&order=lesson_date.desc,created_at.desc&limit=50");
-    // 본문 필터 사전: students.name·discord_nick 전체 (등장 시 "레슨생"으로 치환)
-    let dict = [];
+    // 본문 필터 사전: 이름 · 디스코드 닉 · 배그 닉 · 별칭 전체(2자 이상 · 등장 시 "레슨생"으로 치환)
+    //   사전을 못 읽으면 본문을 내리지 않는다(9/30 개인정보 점검 — 전에는 빈 사전으로 원문이 그대로 나갔다).
+    let dict;
     try {
-      const st = await sbSelect("students", "select=name,discord_nick");
-      (st || []).forEach((s) => { [s.name, s.discord_nick].forEach((w) => { const t = String(w || "").trim(); if (t.length >= 2) dict.push(t); }); });
-      dict.sort((a, b) => b.length - a.length);        // 긴 이름 우선(부분 겹침 방지)
-    } catch (e) { console.error("feedback_public_dict", e?.message); }
-    const scrub = (txt) => { let s = String(txt || ""); dict.forEach((w) => { s = s.split(w).join("레슨생"); }); return s; };
+      const [st, al] = await Promise.all([
+        sbSelect("students", "select=name,discord_nick,pubg_name"),
+        sbSelect("student_aliases", "select=alias"),
+      ]);
+      dict = publicRows.scrubWords(st, al);
+    } catch (e) { console.error("feedback_public_dict", e?.message); return res.json({ updatedAt: null, items: [] }); }
+    const scrub = (txt) => publicRows.scrubText(txt, dict);
     // 응답 내 안정 별칭: student_alias 첫 등장 순서로 "레슨생 A·B·…"
     const seen = new Map();
     const items = (rows || []).map((r) => {
@@ -7547,8 +7566,11 @@ GDCUP_PAGES.forEach((n) => {
 });
 
 const PORT = process.env.PORT || 3000;
-// ── 공개 피드백 월 (published=true 만 노출) ──
+// ── 피드백 월 원본(published=true) — 운영진 전용(9/30 개인정보 점검) ──
+//   가명(닉 첫 글자) · 날짜 · 그룹 · 본문을 치환 없이 내린다. 공개 화면은 /api/feedback-public(레슨생 A · 본문 치환)만 쓴다.
 app.get("/api/feedback", async (req, res) => {
+  const u = getUser(req);
+  if (!u || !u.isStaff) return res.status(403).json({ error: "staff_only" });
   try {
     if (!process.env.SUPABASE_URL) return res.json({ items: [] });
     const grp = (req.query.grp || "").toString().toUpperCase();

@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
 <title>수강생 성장 기록 · MRI ACADEMY</title>
 <link rel="canonical" href="https://mriacademy.gg/student-progress.html">
 <style>
@@ -17,10 +18,7 @@ body{
   background:var(--bg);color:var(--ink);
   font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;
   line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh;
-  background-image:radial-gradient(900px 500px at 50% -10%,rgba(245,197,24,.06),transparent 70%),
-    linear-gradient(rgba(245,197,24,.022) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(245,197,24,.022) 1px,transparent 1px);
-  background-size:auto,37px 37px,37px 37px;
+  background-image:radial-gradient(900px 500px at 50% -10%,rgba(245,197,24,.06),transparent 70%);
 }
 .wrap{max-width:880px;margin:0 auto;padding:48px 20px 80px}
 .kick{color:var(--gold);font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
@@ -30,17 +28,6 @@ h1{font-size:30px;font-weight:800;margin:6px 0 8px;letter-spacing:-.02em}
 .agg .box{flex:1;min-width:150px;background:var(--bg-card);border:1px solid var(--line);border-radius:14px;padding:20px}
 .agg .big{font-size:34px;font-weight:800;color:var(--gold);line-height:1.1}
 .agg .lab{color:var(--ink-dim);font-size:13px;margin-top:4px}
-.list{display:flex;flex-direction:column;gap:10px}
-.card{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
-  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.who{font-weight:700}
-.plat{font-size:11px;color:var(--ink-faint);border:1px solid var(--line);border-radius:999px;padding:2px 8px;margin-left:8px}
-.flow{display:flex;align-items:center;gap:10px;font-size:14px}
-.b4{color:var(--ink-dim)}
-.arr{color:var(--ink-faint)}
-.af{color:var(--ink);font-weight:700}
-.up{color:var(--green);font-size:12px;font-weight:700;border:1px solid rgba(16,185,129,.35);border-radius:999px;padding:2px 8px}
-.flat{color:var(--ink-faint);font-size:12px}
 .state{background:var(--bg-card);border:1px dashed var(--line);border-radius:14px;padding:40px 20px;text-align:center;color:var(--ink-dim)}
 .note{color:var(--ink-faint);font-size:12px;margin-top:26px;line-height:1.7}
 .back{display:inline-block;margin-top:26px;color:var(--gold);text-decoration:none;font-size:14px}
@@ -51,7 +38,7 @@ h1{font-size:30px;font-weight:800;margin:6px 0 8px;letter-spacing:-.02em}
 <div class="wrap">
   <div class="kick">Proven Growth · 실측</div>
   <h1>수강생 성장 기록</h1>
-  <p class="sub">수강 시작 시점과 수료 시점의 실제 시즌 전적을 비교합니다. 모든 수치는 PUBG 공식 API에서 자동 집계되며, 가공하지 않습니다.</p>
+  <p class="sub">수강 시작과 수료 때의 시즌 전적을 PUBG 공식 API로 비교해요. 개인별 기록은 공개하지 않고 전체 숫자만 보여요.</p>
 
   <div class="agg" id="agg" style="display:none">
     <div class="box"><div class="big" id="aTotal">—</div><div class="lab">추적 중인 수강생</div></div>
@@ -59,13 +46,12 @@ h1{font-size:30px;font-weight:800;margin:6px 0 8px;letter-spacing:-.02em}
     <div class="box"><div class="big" id="aUp">—</div><div class="lab">티어 상승 인원</div></div>
   </div>
 
-  <div id="list" class="list"></div>
   <div id="state" class="state">불러오는 중…</div>
 
   <p class="note">
-    · 수치는 디스코드 <b>/전적등록</b>(수강 시작) → <b>수료 처리</b>(수강 종료) 시점에 자동 스냅샷됩니다.<br>
-    · "티어 상승"은 시작 시점 대비 최종 티어가 올라간 경우를 뜻합니다(서바이버 = Master 위 최상위, RP 3,700+).<br>
-    · 향상은 코칭·개인 연습·시즌 환경 등이 함께 작용한 결과로, 코칭의 단독 효과만을 보장하지 않습니다.
+    · 수치는 디스코드 <b>/전적등록</b>(수강 시작)과 <b>수료 처리</b>(수강 종료) 때 자동으로 기록돼요.<br>
+    · 「티어 상승」은 시작 때보다 마지막 티어가 올라간 경우예요(서바이버는 Master 위 최상위, RP 3,700 이상).<br>
+    · 실력 향상은 코칭과 개인 연습, 시즌 환경이 함께 만든 결과예요. 코칭만의 효과를 보장하지는 않아요.
   </p>
   <a class="back" href="/">← MRI ACADEMY 홈</a>
 </div>
@@ -73,45 +59,22 @@ h1{font-size:30px;font-weight:800;margin:6px 0 8px;letter-spacing:-.02em}
 <script>
 const API_BASE="https://mri-academy-production.up.railway.app";
 const $=(id)=>document.getElementById(id);
-const PLAT={steam:"스팀",kakao:"카카오"};
+// 개인별 전적 카드(배그 닉 원문 · 티어 · RP)는 걷어냈다(9/30 개인정보 점검 · 오너 OK).
+// /api/student-progress 는 운영진 전용이 됐고, 이 화면은 집계(/api/progress-stats)만 보여 준다.
 async function load(){
   try{
-    const [sR,pR]=await Promise.all([
-      fetch(API_BASE+"/api/progress-stats"),
-      fetch(API_BASE+"/api/student-progress"),
-    ]);
-    const stats=await sR.json(), prog=await pR.json();
-    const items=(prog&&prog.items)||[];
-    if(!prog.ready){ $("state").textContent="성장 기록 시스템 준비 중입니다."; return; }
-    if(items.length===0){ $("state").textContent="아직 수료 데이터가 쌓이는 중입니다. 곧 첫 성장 기록이 표시됩니다."; return; }
-
-    if(stats&&stats.ready){
-      $("aTotal").textContent=stats.totalTracked+"명";
-      $("aPct").textContent=(stats.tierUpPct==null?"—":stats.tierUpPct+"%");
-      $("aUp").textContent=stats.tierUpCount+"명";
-      $("agg").style.display="flex";
-    }
-    const html=items.map(it=>{
-      const rp=(b)=> (b!=null? ` <span style="color:var(--ink-faint);font-size:12px">(${b} RP)</span>`:"");
-      const tag= it.tierUp
-        ? '<span class="up">▲ 티어 상승</span>'
-        : '<span class="flat">유지</span>';
-      return `<div class="card">
-        <div><span class="who">${esc(it.player)}</span><span class="plat">${PLAT[it.platform]||it.platform}</span></div>
-        <div class="flow">
-          <span class="b4">${esc(it.before)}${rp(it.beforeRP)}</span>
-          <span class="arr">→</span>
-          <span class="af">${esc(it.after)}${rp(it.afterRP)}</span>
-          ${tag}
-        </div></div>`;
-    }).join("");
-    $("list").innerHTML=html;
+    const stats=await (await fetch(API_BASE+"/api/progress-stats")).json();
+    if(!stats||!stats.ready){ $("state").textContent="성장 기록을 모으고 있어요. 조금만 기다려 주세요"; return; }
+    if(!stats.totalTracked){ $("state").textContent="아직 수료 기록이 쌓이는 중이에요. 곧 첫 숫자가 보여요"; return; }
+    $("aTotal").textContent=stats.totalTracked+"명";
+    $("aPct").textContent=(stats.tierUpPct==null?"—":stats.tierUpPct+"%");
+    $("aUp").textContent=stats.tierUpCount+"명";
+    $("agg").style.display="flex";
     $("state").style.display="none";
   }catch(e){
-    $("state").textContent="기록을 불러오지 못했습니다. 잠시 후 새로고침해 주세요.";
+    $("state").textContent="기록을 불러오지 못했어요. 잠시 후 새로고침해 볼까요?";
   }
 }
-function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 load();
 </script>
 </body>
