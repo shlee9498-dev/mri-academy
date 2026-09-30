@@ -4497,3 +4497,50 @@ notify pgrst, 'reload schema';
 --               25시간 지난 조정 트레이너 revert_window_passed · 원장(null) 통과. 실행 뒤 요청 0행 · 조정 행 0 · 판수 불변.
 --      권한: 새 함수 revert_games_adjustment 도 함수 안 공개 키 가드가 있다. 실행 권한 회수는 §46c 목록에 더해 오너가 실행한다.
 -- ============================================================
+
+-- ============================================================
+-- §53  외부 공개 동의 — publication_consents (2026-09-30 · 오너 지시 · 더하기만 = A 구간)
+--
+-- 오너 지시(9/30 「후기 재료」): 수강생 후기 · 사례를 신청 · 이벤트 페이지에 쓰기 전에 동의 기록을 남긴다 —
+--   학생 · 날짜 · 받은 경로 · 범위(어느 페이지 · 이름 가림) · 철회하면 즉시 내림.
+--   lesson_reviews.consent_public_at(앱 안 옵트인 · 3차 자리)과 별개다 — 이 표는 앱 밖(카톡 등)에서 받은 동의다.
+-- 철회: withdrawn_at 을 찍고, 그 수강생 재료를 모든 공개 위치에서 즉시 내린다. 행은 지우지 않는다
+--   (언제 동의하고 언제 철회했는지가 기록이다).
+-- scope 값: apply(신청 페이지) · event(이벤트 페이지) · site(사이트 본문) · sns(유튜브 · SNS). 값을 늘리면 제약 교체 = B 구간.
+-- ============================================================
+create table if not exists public.publication_consents (
+  id              bigint generated always as identity primary key,
+  student_id      bigint not null references public.students(id) on delete restrict,
+  consented_on    date   not null,                                   -- 동의한 날(KST)
+  channel         text   not null check (channel in ('kakao','discord','app','in_person','other')),
+  scope           text[] not null check (cardinality(scope) >= 1 and scope <@ array['apply','event','site','sns']::text[]),
+  name_masked     boolean not null default true,                     -- 이름 가림
+  materials       text,                                              -- 쓰는 재료(예: 앱 복기 본문 · 사진 · 판수 기록 — 금액 제외)
+  confirmed_by    text   not null,                                   -- 동의를 확인한 사람(역할 · 예: owner)
+  withdrawn_at    timestamptz,                                       -- 철회 시각 — 값이 생기면 즉시 내린다
+  withdrawn_note  text,
+  memo            text,
+  created_at      timestamptz not null default now()
+);
+create index if not exists idx_pubc_student_active on public.publication_consents (student_id) where withdrawn_at is null;
+alter table public.publication_consents enable row level security;   -- service_role 만 통과
+comment on table public.publication_consents is
+  '외부 공개 동의(후기 · 사례) — §53. 철회되면 withdrawn_at 을 찍고 모든 공개 위치에서 즉시 내린다. 행은 지우지 않는다. lesson_reviews.consent_public_at(앱 안 옵트인)과 별개.';
+
+notify pgrst, 'reload schema';
+
+-- ── 53b) 검증 ────────────────────────────────────────────────────────────────
+--   select column_name, data_type, is_nullable from information_schema.columns
+--    where table_schema = 'public' and table_name = 'publication_consents' order by ordinal_position;   -- 기대 12칸
+--   select conname, pg_get_constraintdef(oid) from pg_constraint
+--    where conrelid = 'public.publication_consents'::regclass;                                          -- 기대 4개(pkey · fkey · channel · scope)
+--   select relrowsecurity from pg_class where oid = 'public.publication_consents'::regclass;            -- 기대 true
+--
+-- 되돌리기: 코드(server.js REQUIRED_SCHEMA 한 줄)를 먼저 되돌린 뒤
+--   drop table if exists public.publication_consents;   ← 지우는 DDL = B 구간(오너 OK) · 동의 기록이 사라지니 먼저 옮겨 둘 것
+--
+--   ✅ 실행 완료 2026-09-30 21:05 KST (세션 실행 · A 구간).
+--      실행 전: 표 없음 · public 표 74개. 실행 후: 12칸 · 제약 4개 · RLS on · 인덱스 2개 · public 표 75개.
+--      같은 날 동의 1행 기록(오너 지시 — 학생 · 9/30 · 카톡 · apply + event · 이름 가림 · 재료 = 앱 복기 2건).
+--      학생 이름은 이 파일에 적지 않는다(개인정보 커밋 금지) — 행은 DB 에만 있다.
+-- ============================================================

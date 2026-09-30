@@ -8415,6 +8415,9 @@ const REQUIRED_SCHEMA = {
   student_trainer_endings: ["student_id","trainer_id","ended_at","ended_by"],
   // 정산 잠긴 달(결제 트랙 표 · 읽기만) — 판수 조정 · 수업 기록하기가 그 달이면 원장만 통과시킨다(§9.18).
   period_locks:         ["period","released_at"],
+  // §53 외부 공개 동의(2026-09-30) — 후기 · 사례를 공개 페이지에 쓰기 전 기록. 지금은 코드가 읽지 않지만
+  // 신청 창구(docs/intake-design.md)가 후기 카드를 낼 때 철회 여부를 이 표로 본다 — 미실행을 부팅에서 잡는다.
+  publication_consents: ["id","student_id","consented_on","channel","scope","name_masked","confirmed_by","withdrawn_at"],
   feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
 };
 
