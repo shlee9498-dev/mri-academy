@@ -318,6 +318,31 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 - 순서 = `remainingByTrainer` 와 같다(잔여 내림차순). 트레이너가 한 명이면 한 줄뿐이다 — 막대는 `[0]` 을 쓴다.
 - 등록 · 이월이 없는 트레이너는 빠진다.
 
+#### `lesson.byTrainer` — 트레이너별 누적 · 묶음 막대 (2026-09-30 · 어플 요청 · 수강생 앱 개편)
+
+```json
+"byTrainer": [
+  { "trainerId": "…", "trainerName": "트레이너A",
+    "registeredGames": 64, "lessonGames": 26, "adjustedGames": 5, "heldGames": 0, "remainingGames": 33,
+    "currentPack": { "games": 43, "used": 10 } } ]
+```
+
+| 키 | 뜻 |
+|---|---|
+| `registeredGames` | 그 트레이너 **누적 등록**(이월은 담당 트레이너 몫 · 등록 상태 active · done · paused) |
+| `lessonGames` | 그 트레이너 **누적 수업**(판수 조정 · 되돌림 행 제외) |
+| `adjustedGames` | 그 트레이너 조정 순합(`+` 더 뺌 · `−` 돌려줌) |
+| `heldGames` | 그 트레이너 예약 선차감 |
+| `remainingGames` | 그 트레이너 잔여 = 등록 − 수업 − 조정 − 선차감 = `remainingByTrainer[].remaining`(0 이어도 여기에는 온다) |
+| `currentPack` | **홈 막대** `{ games, used }` — 먼저 산 묶음부터 쓴다고 보고 **다 쓴 묶음은 뺀** 묶음 합(`games`)과 그 안에서 쓴 판수(`used`). `games − used = remainingGames`. 등록 · 이월이 없으면 `null` |
+
+- 한 줄 = 이 수강생과 등록 · 이월 · 수업 · 조정 · 선차감 중 하나라도 있는 트레이너. 순서는 잔여 내림차순(같으면 서버 순서 그대로).
+- `trainerId` 는 `remainingByTrainer` · `currentPacks` · 판수 내역 필터와 **같은 값**이다.
+- 막대 예: 21판(다 씀) + 33판(10판 씀) + 10판(안 씀) → `games` 43 · `used` 10 · 잔여 33.
+  다 써서 잔여가 0 이하면 `games` = 마지막 묶음 크기 · `used` = `games` − 잔여(= `games` 이상 · 막대가 꽉 차거나 넘친다).
+- 합계는 종전 키 그대로다 — `registeredGames`(누적 등록) · `lessonGames`(누적 수업) · `adjustedGames` · `remainingGames`.
+- 판수 계산식은 바뀌지 않는다(같은 행을 트레이너별로 나눠 보여 줄 뿐).
+
 ### 7.4 판수 내역 — `GET /api/student-portal/games-ledger` (2026-09-30 · 반장 요청 13 · 설계 `docs/games-ledger-api-design.md`)
 
 잔여 판수의 **모든 증감을 한 줄씩**. 수강생이 스스로 검산하는 화면이다.
@@ -345,6 +370,20 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
   미작성 일기 수(`pendingJournalCount`) · 홈 「오늘 수업 복기」(`reviewDueToday`)도 조정 행을 수업으로 세지 않는다.
   봇 `/판수정정` 으로 들어간 옛 정정 행은 종전대로 그날 수업에 접혀 보인다(2026-09-04 판정 그대로 · 내역에는 `정정` 줄로 따로 나온다).
 - 트레이너 앱은 같은 모양을 `GET /api/trainer-portal/students/:id/games-ledger` 로 받는다(§9.15 · 키만 `trainerKey`).
+
+**트레이너 필터 · 칩 (2026-09-30 · 어플 요청)**
+
+```
+GET /api/student-portal/games-ledger?trainerId=…
+```
+- `trainerId` = `/summary` 의 `trainerId`(같은 불투명 값). 주면 **그 트레이너 줄만** 오고 `balance` · `remaining` 도 그 트레이너 기준이다
+  (= `lesson.byTrainer[].remainingGames`). 서명이 틀린 값은 400 `invalid_body`.
+- 이월 줄은 담당 트레이너 몫이라 필터를 걸면 그 트레이너가 담당일 때만 나온다. 트레이너가 비어 있는 줄은 필터에서 빠진다.
+- 응답에 `trainers[]` `{ trainerId, trainerName }` 이 늘 온다 — 필터 칩용 · 필터와 상관없이 이 수강생 내역에 나오는 트레이너 전부 ·
+  순서는 `lesson.byTrainer` 와 같다.
+- 조정 줄의 사유는 `label` 칩 이름이다(정정 · 늦은 취소 · 노쇼 · 보상 · 기타). **트레이너가 쓴 한 줄 사유 원문은 싣지 않는다** —
+  트레이너는 수강생이 본다고 생각하지 않고 쓴 글이라서다(보여 줄지는 오너 판단).
+- 금액 · 결제 정보는 없다(종전 그대로). 경로는 `/games-ledger` 다 — `/games/:id` 는 수업 복기 경로라 쓰지 않는다.
 
 ## 8. 수업 복기 API (§29 · PR-1·PR-2 = 수강생 포털 · PR-3 = 트레이너 포털 · 2026-09-25)
 

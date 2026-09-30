@@ -405,6 +405,14 @@ test("수강생 요약 — 누적 수업 · 조정 순합 · 트레이너별 지
   assert.deepEqual([l.registeredGames, l.playedGames, l.lessonGames, l.adjustedGames, l.remainingGames], [31, 11, 8, 3, 15]);
   assert.deepEqual(l.currentPacks.map((p) => [p.trainerName, p.size, p.remaining, p.total]), [["트레이너B", 21, 8, 8], ["원장", 10, 7, 7]]);
   assert.deepEqual(l.currentPacks.map((p) => p.trainerId), r.json.remainingByTrainer.map((x) => x.trainerId));
+  // 트레이너별 누적 · 홈 막대(§7.3 byTrainer) — B: 21 등록 · 수업 5 · 조정 +3 · 선차감 5 → 잔여 8 · 막대 21 중 13
+  assert.deepEqual(l.byTrainer, [
+    { trainerId: T(5), trainerName: "트레이너B", registeredGames: 21, lessonGames: 5, adjustedGames: 3, heldGames: 5,
+      remainingGames: 8, currentPack: { games: 21, used: 13 } },
+    { trainerId: T(4), trainerName: "원장", registeredGames: 10, lessonGames: 3, adjustedGames: 0, heldGames: 0,
+      remainingGames: 7, currentPack: { games: 10, used: 3 } },
+  ]);
+  assert.equal(l.byTrainer.reduce((a, t) => a + t.remainingGames, 0), l.remainingGames);   // 쪼갠 합 = 합계
 });
 
 test("수강생 판수 내역 · 수업 목록 — 되돌린 조정은 두 줄 다 빠진다 · 조정은 수업 목록 · 미작성 일기에서 빠진다", async () => {
@@ -429,6 +437,17 @@ test("수강생 판수 내역 · 수업 목록 — 되돌린 조정은 두 줄 �
   assert.equal(r.json.rows[0].trainerId, portal.opaqueId("trainer", 5));
   const body = JSON.stringify(r.json);
   for (const leak of ["adjreq", "memo", "조정("]) assert.equal(body.includes(leak), false, leak);
+  // 트레이너 필터 · 칩(§7.4) — B 줄만 · 누계도 B 기준 · 칩은 늘 전체(잔여 같으면 id 순)
+  const fb = await callStudent(11, `/games-ledger?trainerId=${encodeURIComponent(T(5))}`);
+  assert.equal(fb.status, 200);
+  assert.deepEqual(fb.json.rows.map((x) => [x.kind, x.games, x.balance]), [
+    ["enroll", 21, 21], ["lesson", -5, 16], ["adjust", 1, 17], ["adjust", -5, 12], ["hold", -5, 7],
+  ]);
+  assert.equal(fb.json.rows.every((x) => x.trainerId === T(5)), true);
+  assert.equal(fb.json.remaining, 7);
+  assert.deepEqual(fb.json.trainers, [{ trainerId: T(4), trainerName: "원장" }, { trainerId: T(5), trainerName: "트레이너B" }]);
+  assert.deepEqual(r.json.trainers, fb.json.trainers);                          // 필터와 상관없이 같은 칩
+  assert.deepEqual((await callStudent(11, "/games-ledger?trainerId=bogus")).status, 400);
   const ss = await callStudent(11, "/sessions");
   assert.equal(ss.status, 200);
   assert.deepEqual(ss.json.sessions.map((x) => x.games), [3, 5]);             // 조정 행 · 되돌림 행 없음 · 같은 날 보상이 수업을 깎지 않는다
