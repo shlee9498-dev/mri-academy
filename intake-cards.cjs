@@ -5,7 +5,8 @@
 //
 //   오너 카드   : 실명 · 나이(미성년) · 명부 동명 · 서버 입장 결과 · 진행 + [맡기] [배정] [입금 확인] [닫기]
 //   트레이너 카드: 실명 · 나이 없이(오너 전용 · §55 주석) + [맡기]. 누가 맡으면 다른 트레이너 카드는 한 줄로 접힌다.
-//   신청자 DM  : ① 접수 · ② 레벨 테스트 안내(PR-3 이 부른다) · ③ 입금 확인 — 문구는 어플 전달 원문(2026-09-30) 그대로.
+//   신청자 DM  : ① 접수 · ② 레벨 테스트 안내(PR-3 레벨 테스트 칸) · ③ 입금 확인 — 문구는 어플 전달 원문(2026-09-30) 그대로.
+//                등록 · 칸 취소 DM 은 표에 없어 설계 §3 규칙(ui-copy + 문구 규칙)으로 세션이 쓴 초안이다 — 어플이 바꾸면 여기만 고친다.
 //   DM 중계    : 신청자가 봇 DM 에 답하면 오너 · 맡은 트레이너에게 넘기고, [답장] 으로 봇이 대신 보낸다
 //                (DM ① · ② 가 「이 DM 으로 물어보세요」라고 하는데 봇은 DM 을 받지 않았다 — 받은 말이 사라지지 않게).
 //
@@ -75,6 +76,22 @@ function dmConfirmed({ name, startsAt, trainer }) {
     + "수업 3시간 전까지는 취소하면 전액 환불돼요. 그 뒤로는 환불이 어려워요 🙏";
 }
 
+// 등록 DM — 표에 없는 알림(설계 §3 · §6.2) · 세션 초안(2026-10-01). 등록 뒤에는 중계가 멈추므로 「이 DM」 대신 트레이너를 창구로 둔다.
+function dmEnrolled({ name, trainer, appUrl }) {
+  return `${name}님, MRI ACADEMY 수강 등록이 끝났어요 🎉\n`
+    + "신청할 때 쓴 디스코드로 앱에 로그인하면 판수 채우기랑 수업 예약을 바로 할 수 있어요!\n"
+    + (appUrl ? `${appUrl}\n` : "")
+    + `궁금한 건 ${trainer} 트레이너에게 편하게 물어보세요~`;
+}
+// 칸 취소 DM — 신청을 닫으면서 잡혀 있던 레벨 테스트를 취소했을 때. 취소 문구라 이모지 · 느낌표를 뺀다(ui-copy §2) · 세션 초안.
+function dmCancelled({ name, startsAt, paid }) {
+  const when = fmtWhen(startsAt);
+  if (!when) return null;
+  return `${name}님, ${when} 레벨 테스트 일정이 취소됐어요\n`
+    + (paid ? "입금하신 레벨 테스트비는 운영진이 따로 연락드릴게요\n" : "")
+    + "다시 신청하고 싶으시면 mriacademy.gg 에서 언제든 신청해 주세요";
+}
+
 // ── 버튼 · 선택 메뉴(API 모양) ──
 const BTN = { primary: 1, secondary: 2, success: 3, danger: 4 };
 const button = (custom_id, label, style) => ({ type: 2, custom_id, label, style: BTN[style] });
@@ -135,7 +152,9 @@ function renderCard(app, ctx) {
   const who = md(app.display_name || "이름 없음");
   lines.push(`· 디스코드 ${ctx.view === "owner" || mine ? `<@${app.discord_id}> (${who})` : who}`);
   if (ctx.view === "owner") {
-    const minor = Number(app.age) < 18 ? " · 미성년(등록 전에 보호자 동의 확인)" : "";
+    const minor = Number(app.age) >= 18 ? ""
+      : app.guardian_verified_at ? ` · 미성년 · 보호자 동의 확인 ${fmtWhen(app.guardian_verified_at)}`
+      : " · 미성년(등록 전에 보호자 동의 확인 · 확인했으면 「보호자 동의 확인함」)";
     const same = ctx.sameNameCount > 0 ? ` · ⚠️ 명부에 같은 이름 ${ctx.sameNameCount}명` : "";
     lines.push(`· 이름 ${md(app.real_name)} · ${app.age}세${minor}${same}`);
   }
@@ -156,7 +175,8 @@ function renderCard(app, ctx) {
     if (ctx.booking?.status === "booked" && when) lines.push(`· 레벨 테스트 ${when}`);
     else if (ctx.booking) lines.push(`· 레벨 테스트 칸 ${ctx.booking.status}${when ? ` (${when})` : ""}`);
   }
-  if (app.status === "booked") lines.push(`· 입금 대기${Number.isInteger(ctx.price) ? ` (${won(ctx.price)}원)` : ""}`);
+  const unpaid = (app.status === "booked" || app.status === "tested") && !app.deposit_confirmed_at;
+  if (unpaid) lines.push(`· 입금 대기${Number.isInteger(ctx.price) ? ` (${won(ctx.price)}원)` : ""}`);
   if (app.deposit_confirmed_at) lines.push(`· 입금 확인 ${fmtWhen(app.deposit_confirmed_at)}`);
   if (app.status === "closed") {
     lines.push(`· 닫음 — ${CLOSE_REASONS[app.closed_reason] || "사유 없음"}${app.closed_note ? ` (${md(app.closed_note)})` : ""}`
@@ -181,9 +201,10 @@ function renderCard(app, ctx) {
     const b = [];
     if (app.status === "new") b.push(button(`intake_claim:${id}`, "내가 맡기", "secondary"), button(`intake_asg:${id}`, "배정", "primary"));
     if (app.status === "claimed") b.push(button(`intake_asg:${id}`, "다른 트레이너로 배정", "primary"));
-    if (app.status === "booked") {
+    if (unpaid) {
       b.push(button(`intake_dep:${id}`, Number.isInteger(ctx.price) ? `입금 확인 ${won(ctx.price)}원` : "입금 확인", "success"));
     }
+    if (Number(app.age) < 18 && !app.guardian_verified_at) b.push(button(`intake_gv:${id}`, "보호자 동의 확인함", "secondary"));
     b.push(button(`intake_close:${id}`, "닫기", "danger"));
     components.push(row(...b));
   }
@@ -191,12 +212,15 @@ function renderCard(app, ctx) {
 }
 
 // ── 흐름(DB · 디스코드) ──
-//   deps: { sbSelect, sbInsert, sbPatch, sbUpsert,
-//           send(discordId, payload) → { channelId, messageId } | null   (DM 보내기 · 실패는 null)
+//   deps: { sbSelect, sbInsert, sbPatch, sbUpsert, sbRpc,
+//           send(discordId, payload) → { channelId, messageId } | null   (DM 보내기 · 봇이 없거나 실패면 null)
 //           edit(channelId, messageId, payload) → boolean               (카드 고치기)
-//           ownerDiscordId, levelTestWon?, now?, log?, logError? }
+//           ownerDiscordId, bank() → { name, account, holder }, appUrl, levelTestWon?, now?, log?, logError? }
+//   봇이 없어도 상태 전이는 돈다(트레이너 앱 라우트 · PR-3) — 카드 · DM 만 빠진다.
 function mountIntakeFlow(deps) {
   const { sbSelect, sbInsert, sbPatch, sbUpsert, send, edit } = deps;
+  const sbRpc = deps.sbRpc || (async () => { throw new Error("sbRpc_missing"); });
+  const bankOf = deps.bank || (() => null);
   const now = deps.now || (() => Date.now());
   const log = deps.log || ((m) => console.log(m));
   const logError = deps.logError || ((tag, e) => console.error(tag, e?.status || "", String(e?.message || e || "").slice(0, 160)));
@@ -213,10 +237,19 @@ function mountIntakeFlow(deps) {
     const s = rows[0];
     return s && s.active !== false && (s.role === "trainer" || s.role === "owner") ? s : null;
   }
+  // 누른 사람 — 디스코드 카드는 디스코드 id, 트레이너 앱은 staff id 로 온다. 활성 트레이너 · 원장만.
+  async function actorOf({ actorDiscordId, actorStaffId }) {
+    if (actorStaffId != null) {
+      const s = (await sbSelect("staff", `select=id,name,role,active,discord_id&id=eq.${Number(actorStaffId)}&limit=1`))[0];
+      return s && s.active !== false && (s.role === "trainer" || s.role === "owner") ? s : null;
+    }
+    return actorDiscordId ? staffByDiscord(actorDiscordId) : null;
+  }
+  const ownerRow = async () => ownerOf(await staffAll(), deps.ownerDiscordId);
   async function bookingOf(bookingId) {
     if (!bookingId) return null;
     const bk = (await sbSelect("slot_bookings", `select=status,trainer_slots(slot_start)&id=eq.${Number(bookingId)}&limit=1`))[0];
-    return bk ? { status: bk.status, startsAt: bk.trainer_slots?.slot_start || null } : null;
+    return bk ? { id: Number(bookingId), status: bk.status, startsAt: bk.trainer_slots?.slot_start || null } : null;
   }
   // DM 이 닿았는지 — 안 닿으면 시각을 적고(카드 「DM 안 닿음」), 닿으면 비운다
   async function markDm(appId, ok) {
@@ -289,8 +322,8 @@ function mountIntakeFlow(deps) {
   }
 
   // [맡기] — 먼저 누른 한 명(조건부 갱신: 새 신청 · 맡은 사람 없음). 오너 카드의 「내가 맡기」도 같은 길이다.
-  async function claim({ appId, actorDiscordId }) {
-    const actor = await staffByDiscord(actorDiscordId);
+  async function claim({ appId, actorDiscordId, actorStaffId }) {
+    const actor = await actorOf({ actorDiscordId, actorStaffId });
     if (!actor) return { ok: false, code: "not_staff" };
     const t = iso();
     const rows = await sbPatch("intake_applications", `id=eq.${Number(appId)}&status=eq.new&assigned_trainer_id=is.null`,
@@ -301,11 +334,138 @@ function mountIntakeFlow(deps) {
       await refresh(app.id);
       const by = app.assigned_trainer_id != null
         ? (await sbSelect("staff", `select=name&id=eq.${app.assigned_trainer_id}&limit=1`))[0]?.name || null : null;
-      return { ok: false, code: app.status === "closed" ? "closed" : "taken", by, mine: app.assigned_trainer_id === actor.id };
+      return { ok: false, code: app.status === "closed" ? "closed" : "taken", by, mine: app.assigned_trainer_id === actor.id,
+        assignedTrainerId: app.assigned_trainer_id };
     }
     await refresh(appId);
     log(`[intake] 신청 #${Number(appId)} 맡음`);
     return { ok: true, actor: { id: actor.id, name: actor.name } };
+  }
+
+  // 레벨 테스트 칸에 넣기(계약 §9.20.4 · 트레이너 앱) — 내 상담 칸 · open. 아무도 안 맡았으면 이 호출로 내가 맡는다.
+  //   예약은 수강생 본인 예약과 같은 book_slot(§23 · 상담은 판수 게이트 없음 · 3시간 마감)을 탄다.
+  //   맡기 → 예약 → 신청 booked 를 조건부로 잇고, 마지막 갱신이 지면(동시에 누가 넣음) 방금 잡은 칸을 되돌린다.
+  //   칸이 취소된 booked 신청(§9.19 · 앱 취소)은 다시 넣을 수 있다.
+  async function book({ appId, actorStaffId, slotId }) {
+    const actor = await actorOf({ actorStaffId });
+    if (!actor) return { ok: false, code: "not_staff" };
+    let app = await loadApp(appId);
+    if (!app) return { ok: false, code: "not_found" };
+    if (app.status === "closed") return { ok: false, code: "closed" };
+    let rebook = null;
+    if (app.status === "booked") {
+      const old = await bookingOf(app.booking_id);
+      if (old && old.status === "booked") return { ok: false, code: "already_booked" };
+      rebook = app.booking_id;                                  // 칸이 사라진 booked — 다시 넣는다
+    } else if (app.status !== "new" && app.status !== "claimed") return { ok: false, code: "already_booked" };
+    if (app.assigned_trainer_id != null && app.assigned_trainer_id !== actor.id) {
+      const by = (await sbSelect("staff", `select=name&id=eq.${app.assigned_trainer_id}&limit=1`))[0]?.name || null;
+      return { ok: false, code: "taken", by, assignedTrainerId: app.assigned_trainer_id };
+    }
+    const slot = (await sbSelect("trainer_slots", `select=id,trainer_id,slot_start,lesson_type,status,duration_min&id=eq.${Number(slotId)}&limit=1`))[0];
+    if (!slot) return { ok: false, code: "slot_not_found" };
+    if (slot.trainer_id !== actor.id) return { ok: false, code: "not_my_slot" };
+    if (slot.lesson_type !== "consult") return { ok: false, code: "not_consult_slot" };
+    if (slot.status !== "open") return { ok: false, code: "slot_taken" };
+    if (app.status === "new") {
+      const c = await claim({ appId: app.id, actorStaffId: actor.id });
+      if (!c.ok) return c;
+      app = await loadApp(app.id);
+    }
+    const out = await sbRpc("book_slot", { p_student_id: app.student_id, p_slot_id: slot.id, p_duration_min: null });
+    if (out?.error) {
+      const code = out.error === "slot_full" ? "slot_taken" : out.error;
+      return { ok: false, code };
+    }
+    const bookingId = Number(out.bookingId);
+    const at = iso();
+    const cond = rebook
+      ? `id=eq.${app.id}&status=eq.booked&booking_id=eq.${rebook}&assigned_trainer_id=eq.${actor.id}`
+      : `id=eq.${app.id}&status=eq.claimed&assigned_trainer_id=eq.${actor.id}&booking_id=is.null`;
+    const rows = await sbPatch("intake_applications", cond, { status: "booked", booking_id: bookingId, updated_at: at });
+    if (!rows.length) {
+      // 사이에 누가 넣었거나 닫혔다 — 방금 잡은 칸을 되돌린다(칸은 3시간 전이 넘어 있어 취소 창 안이다)
+      await sbRpc("cancel_booking", { p_student_id: app.student_id, p_booking_id: bookingId })
+        .catch((e) => logError("intake_book_undo", e));
+      const now2 = await loadApp(app.id);
+      return { ok: false, code: now2?.status === "closed" ? "closed" : now2?.assigned_trainer_id !== actor.id ? "taken" : "already_booked" };
+    }
+    app = rows[0];
+    // DM ② — 계좌 · 정가가 없으면 보내지 않고(빈 계좌 금지) 카드에 「DM 안 닿음」
+    const price = await priceOf();
+    const text = dmScheduled({ name: app.real_name, trainer: actor.name, startsAt: slot.slot_start, price,
+      bank: bankOf(), eventCode: app.event_code });
+    const dmOk = !!(text && (await send(app.discord_id, { content: text })));
+    await markDm(app.id, dmOk);
+    if (!text) logError("intake_dm2_skip", new Error("계좌 env · 정가 없음"));
+    // 오너에게 한 줄 — 카드 고치기는 알림이 안 가서 입금을 기다리는 줄을 따로 보낸다
+    const owner = await ownerRow();
+    if (owner && owner.id !== actor.id) {
+      await send(owner.discord_id, { content: `신청 #${app.id} 레벨 테스트 잡힘 — ${fmtWhen(slot.slot_start)} · ${actor.name} · 입금이 들어오면 카드에서 「입금 확인」` });
+    }
+    await refresh(app.id);
+    log(`[intake] 신청 #${app.id} 레벨 테스트 칸 · 예약 #${bookingId} · 안내 DM ${dmOk ? "보냄" : "안 닿음"}`);
+    return { ok: true, bookingId, startsAt: slot.slot_start, durationMin: slot.duration_min ?? null, dmSent: dmOk };
+  }
+
+  // 마침(계약 §9.20.5) — 트레이너가 레벨 테스트 예약을 「완료」하면 신청이 tested 로(입금 전이어도 막지 않는다)
+  async function markTested(bookingId) {
+    const at = iso();
+    const rows = await sbPatch("intake_applications", `booking_id=eq.${Number(bookingId)}&status=in.(booked,paid)`,
+      { status: "tested", tested_at: at, updated_at: at });
+    for (const r of rows) {
+      await refresh(r.id);
+      log(`[intake] 신청 #${r.id} 레벨 테스트 마침`);
+    }
+    return rows.length;
+  }
+
+  // 보호자 동의 확인(오너 결정 4) — 오너가 보호자 동의서(staff-panel 목록)를 보고 카드에서 누른다. 14~17세 등록의 조건.
+  async function guardianVerify({ appId, actorDiscordId }) {
+    const app = await loadApp(appId);
+    if (!app) return { ok: false, code: "not_found" };
+    if (Number(app.age) >= 18) return { ok: false, code: "not_minor" };
+    const owner = await actorOf({ actorDiscordId });
+    const rows = await sbPatch("intake_applications", `id=eq.${app.id}&guardian_verified_at=is.null`,
+      { guardian_verified_at: iso(), guardian_verified_by: owner ? `staff:${owner.id}` : "owner", updated_at: iso() });
+    if (!rows.length) return { ok: false, code: "already" };
+    await refresh(app.id);
+    log(`[intake] 신청 #${app.id} 보호자 동의 확인`);
+    return { ok: true };
+  }
+
+  // 등록(계약 §9.20.6) — 맡은 트레이너 · 원장. 명부 prospect(또는 돌아온 수료생) → active · 담당 = 맡은 트레이너.
+  //   14~17세는 보호자 동의 확인(guardianVerify) 뒤에만 — 아니면 owner_check_needed(이유는 트레이너에게 내리지 않는다).
+  async function enroll({ appId, actorStaffId, level }) {
+    const actor = await actorOf({ actorStaffId });
+    if (!actor) return { ok: false, code: "not_staff" };
+    const app = await loadApp(appId);
+    if (!app) return { ok: false, code: "not_found" };
+    if (app.status === "closed") return { ok: false, code: "closed" };
+    if (app.status === "enrolled") return { ok: false, code: "already_enrolled" };
+    if (app.status !== "tested") return { ok: false, code: "not_tested" };
+    if (actor.role !== "owner" && app.assigned_trainer_id !== actor.id) return { ok: false, code: "not_assignee" };
+    if (Number(app.age) < 18 && !app.guardian_verified_at) return { ok: false, code: "owner_check_needed" };
+    const stu = (await sbSelect("students", `select=id,status,level&id=eq.${Number(app.student_id)}&limit=1`))[0];
+    if (!stu) return { ok: false, code: "not_found" };
+    if (level == null && !stu.level) return { ok: false, code: "level_required" };
+    const at = iso();
+    const patch = { status: "active", trainer_id: app.assigned_trainer_id };
+    if (level != null) Object.assign(patch, { level, level_set_at: at, level_set_by: `staff:${actor.id}` });
+    if (stu.status !== "active") {
+      const moved = await sbPatch("students", `id=eq.${stu.id}&status=in.(prospect,done)`, patch);
+      if (!moved.length) return { ok: false, code: "student_state", studentStatus: stu.status };
+    } else if (level != null) {
+      await sbPatch("students", `id=eq.${stu.id}`, { level, level_set_at: at, level_set_by: `staff:${actor.id}` });
+    }
+    const rows = await sbPatch("intake_applications", `id=eq.${app.id}&status=eq.tested`, { status: "enrolled", enrolled_at: at, updated_at: at });
+    if (!rows.length) return { ok: false, code: "not_tested" };
+    const trainer = (await sbSelect("staff", `select=name&id=eq.${Number(app.assigned_trainer_id)}&limit=1`))[0]?.name || actor.name;
+    const dmOk = !!(await send(app.discord_id, { content: dmEnrolled({ name: app.real_name, trainer, appUrl: deps.appUrl }) }));
+    await markDm(app.id, dmOk);
+    await refresh(app.id);
+    log(`[intake] 신청 #${app.id} 등록 · 명부 #${stu.id} · 등록 DM ${dmOk ? "보냄" : "안 닿음"}`);
+    return { ok: true, studentId: stu.id, dmSent: dmOk };
   }
 
   // [배정] 선택지 — 활성 트레이너 · 원장(디스코드 있는 사람)
@@ -354,11 +514,12 @@ function mountIntakeFlow(deps) {
     try {
       let app = await loadApp(key);
       if (!app) return { ok: false, code: "not_found" };
-      if (app.status !== "booked") {
-        return { ok: false, code: ["paid", "tested", "enrolled"].includes(app.status) ? "already" : "not_booked", status: app.status };
-      }
+      // 받는 때: 칸이 잡힌 뒤(booked) · 또는 입금 전에 레벨 테스트를 마친 뒤(tested · 계약 §9.20.5 「입금 전이어도 막지 않는다」)
+      if (app.deposit_confirmed_at || app.status === "paid" || app.status === "enrolled") return { ok: false, code: "already", status: app.status };
+      if (app.status !== "booked" && app.status !== "tested") return { ok: false, code: "not_booked", status: app.status };
+      const afterTest = app.status === "tested";
       const booking = await bookingOf(app.booking_id);
-      if (!booking || booking.status !== "booked") return { ok: false, code: "booking_gone", bookingStatus: booking?.status || null };
+      if (!booking || (!afterTest && booking.status !== "booked")) return { ok: false, code: "booking_gone", bookingStatus: booking?.status || null };
       const price = await priceOf();
       if (!Number.isInteger(price) || price <= 0) return { ok: false, code: "no_price" };
       const [stu] = await sbSelect("students", `select=id,name&id=eq.${Number(app.student_id)}&limit=1`);
@@ -394,40 +555,65 @@ function mountIntakeFlow(deps) {
         }
       }
       const at = iso();
-      const rows = await sbPatch("intake_applications", `id=eq.${app.id}&status=eq.booked`,
-        { status: "paid", deposit_confirmed_at: at, updated_at: at });
+      const rows = afterTest
+        ? await sbPatch("intake_applications", `id=eq.${app.id}&status=eq.tested&deposit_confirmed_at=is.null`,
+          { deposit_confirmed_at: at, updated_at: at })
+        : await sbPatch("intake_applications", `id=eq.${app.id}&status=eq.booked`,
+          { status: "paid", deposit_confirmed_at: at, updated_at: at });
       app = rows[0] || (await loadApp(app.id));
       const [linked] = await sbSelect("payment_requests", `select=payment_id&id=eq.${reqId}&limit=1`);
 
-      // DM ③ · 트레이너 한 줄
-      const text = dmConfirmed({ name: app.real_name, startsAt: booking.startsAt, trainer: tr.name });
-      const dmOk = !!(text && (await send(app.discord_id, { content: text })));
-      await markDm(app.id, dmOk);
-      if (tr.discord_id && tr.discord_id !== String(deps.ownerDiscordId || "")) {
-        await send(tr.discord_id, { content: `신청 #${app.id} 입금 확인됐어 — ${fmtWhen(booking.startsAt)} 레벨 테스트 확정이야` });
+      // DM ③ · 트레이너 한 줄 — 레벨 테스트를 이미 마친 뒤의 입금이면 「확정」 안내가 맞지 않아 보내지 않는다
+      let dmOk = null;
+      if (!afterTest) {
+        const text = dmConfirmed({ name: app.real_name, startsAt: booking.startsAt, trainer: tr.name });
+        dmOk = !!(text && (await send(app.discord_id, { content: text })));
+        await markDm(app.id, dmOk);
+        if (tr.discord_id && tr.discord_id !== String(deps.ownerDiscordId || "")) {
+          await send(tr.discord_id, { content: `신청 #${app.id} 입금 확인됐어 — ${fmtWhen(booking.startsAt)} 레벨 테스트 확정이야` });
+        }
       }
       await refresh(app.id);
-      log(`[intake] 신청 #${app.id} 입금 확인 · 요청 #${reqId} · 본표 ${linked?.payment_id ? "반영" : "미확인"} · 확정 DM ${dmOk ? "보냄" : "안 닿음"}`);
-      return { ok: true, reqId, paymentId: linked?.payment_id || null, dmOk, price };
+      log(`[intake] 신청 #${app.id} 입금 확인 · 요청 #${reqId} · 본표 ${linked?.payment_id ? "반영" : "미확인"} · 확정 DM `
+        + (dmOk === null ? "없음(마친 뒤)" : dmOk ? "보냄" : "안 닿음"));
+      return { ok: true, reqId, paymentId: linked?.payment_id || null, dmOk, afterTest, price };
     } finally { busy.delete(key); }
   }
 
-  // [닫기] — 열린 신청만. 레벨 테스트 칸이 아직 앞에 살아 있으면 칸부터 취소하게 막는다(칸을 남긴 채 닫지 않는다).
-  async function close({ appId, reason }) {
+  // 닫기(카드 [닫기] · 계약 §9.20.7) — 열린 신청만. 앞으로 남은 레벨 테스트 칸이 있으면 **취소하고** 신청자에게 알린다
+  //   (수강생 취소와 같은 cancel_booking · 3시간 안이면 cancel_window_passed — 그때는 「완료」나 노쇼로 닫는다).
+  //   actorStaffId 가 오면(트레이너 앱) 맡은 트레이너 · 원장만. 디스코드 카드는 오너 전용이라 부르는 쪽이 이미 걸렀다.
+  async function close({ appId, reason, note, actorStaffId }) {
     if (!Object.prototype.hasOwnProperty.call(CLOSE_REASONS, reason)) return { ok: false, code: "bad_reason" };
     const app = await loadApp(appId);
     if (!app) return { ok: false, code: "not_found" };
+    if (actorStaffId != null) {
+      const actor = await actorOf({ actorStaffId });
+      if (!actor) return { ok: false, code: "not_staff" };
+      if (actor.role !== "owner" && app.assigned_trainer_id !== actor.id) return { ok: false, code: "not_assignee" };
+    }
     if (!OPEN.includes(app.status)) return { ok: false, code: "not_open", status: app.status };
+    let cancelled = null;
     if (app.booking_id) {
       const bk = await bookingOf(app.booking_id);
-      if (bk && bk.status === "booked" && Date.parse(bk.startsAt) > now()) return { ok: false, code: "booking_active", when: fmtWhen(bk.startsAt) };
+      if (bk && bk.status === "booked" && Date.parse(bk.startsAt) > now()) {
+        const out = await sbRpc("cancel_booking", { p_student_id: app.student_id, p_booking_id: app.booking_id });
+        if (out?.error) return { ok: false, code: out.error === "cancel_window_passed" ? "cancel_window_passed" : "cancel_failed", when: fmtWhen(bk.startsAt) };
+        cancelled = bk;
+      }
     }
     const rows = await sbPatch("intake_applications", `id=eq.${app.id}&status=in.(${OPEN.join(",")})`,
-      { status: "closed", closed_reason: reason, updated_at: iso() });
+      { status: "closed", closed_reason: reason, closed_note: note ? String(note).trim().slice(0, 200) || null : null, updated_at: iso() });
     if (!rows.length) return { ok: false, code: "not_open", status: (await loadApp(app.id))?.status || null };
+    let dmOk = null;
+    if (cancelled) {
+      const text = dmCancelled({ name: app.real_name, startsAt: cancelled.startsAt, paid: !!app.deposit_confirmed_at });
+      dmOk = !!(text && (await send(app.discord_id, { content: text })));
+      await markDm(app.id, dmOk);
+    }
     await refresh(app.id);
-    log(`[intake] 신청 #${app.id} 닫음 (${reason})`);
-    return { ok: true, paid: !!app.deposit_confirmed_at };
+    log(`[intake] 신청 #${app.id} 닫음 (${reason})${cancelled ? ` · 칸 취소 · 취소 DM ${dmOk ? "보냄" : "안 닿음"}` : ""}`);
+    return { ok: true, paid: !!app.deposit_confirmed_at, cancelled: !!cancelled, dmSent: dmOk };
   }
 
   // 24시간째 아무도 안 맡은 새 신청 → 오너에게 카드를 한 번 더(오너 결정 7). 밤(23시~9시 KST)에는 보내지 않고 아침 틱에 보낸다.
@@ -508,10 +694,11 @@ function mountIntakeFlow(deps) {
     return { ok, code: ok ? null : "dm_failed" };
   }
 
-  return { onSubmitted, refresh, claim, trainerOptions, assign, confirmDeposit, close, remind, relayIn, reply, markDm };
+  return { onSubmitted, refresh, claim, trainerOptions, assign, confirmDeposit, close, remind, relayIn, reply, markDm,
+    book, markTested, guardianVerify, enroll };
 }
 
 module.exports = {
-  mountIntakeFlow, renderCard, recipientsFor, fmtWhen, dmReceived, dmScheduled, dmConfirmed,
+  mountIntakeFlow, renderCard, recipientsFor, fmtWhen, dmReceived, dmScheduled, dmConfirmed, dmEnrolled, dmCancelled,
   closeReasonRow, selectRow, CLOSE_REASONS, STATUS_KO,
 };
