@@ -356,14 +356,23 @@ module.exports = function mountStudentPortal(app, deps) {
   app.get(`${PREFIX}/pay-info`, requireStudent, wrap(async (req, res) => {
     const [list, stu] = await Promise.all([
       products(),
-      sbSelect("students", `select=name&id=eq.${req.portal.sub}`),
+      sbSelect("students", `select=name,trainer_id&id=eq.${req.portal.sub}`),
     ]);
     const bank = bankInfo();
+    // 담당 트레이너(계약 §9.5 · 반장 요청 9/30) — 입금 신청에서 「담당 트레이너」를 고르면 이 trainerId 를 싣는다.
+    //   trainerId 를 빼면 서버는 **가장 많이 모자란 트레이너**로 넣는다(없으면 담당) — 담당을 골랐는데 빼면 어긋난다.
+    let assignedTrainer = null;
+    const tid = stu[0]?.trainer_id;
+    if (tid) {
+      const t = (await sbSelect("staff", `select=id,name,active&id=eq.${tid}&limit=1`))[0];
+      if (t && t.active !== false) assignedTrainer = { trainerId: opaqueId("trainer", t.id), trainerName: t.name || "담당 트레이너" };
+    }
     send(res, {
       ...(bank ? { bank } : {}),
       products: list.map((p) => ({ key: p.key, label: p.label, won: p.amount, games: p.games })),
       // 입금자명 기본값 — 명부 이름. 다른 이름으로 보냈으면 화면에서 고쳐 보낸다.
       depositorHint: stu[0]?.name || null,
+      assignedTrainer,
     });
   }));
 
