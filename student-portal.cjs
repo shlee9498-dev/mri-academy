@@ -24,6 +24,8 @@ const payreqIntake = require("./payreq-intake.cjs");
 const courseProgress = require("./course-progress.cjs");
 // 「내 성장」(개편 2단계 명세 §3 · §8) — 최근 30일 RP 변화. 같은 시즌 · 같은 계정끼리만 뺀다.
 const growthCalc = require("./growth.cjs");
+// 판수 조정 행 판별 · 지금 쓰는 묶음 · 판수 내역 — 트레이너 앱 §9.14~9.15 와 같은 함수(계약 §7.3 · §7.4 · 두 벌 금지).
+const gv = require("./games-view.cjs");
 
 // 신규 DDL(정본 4.2) 미실행 상태에서도 읽기 경로는 동작해야 한다 — 제목은 "미정",
 // 일기·피드백은 없음으로 degrade한다. 쓰기(PUT journal)만 503으로 막는다.
@@ -523,17 +525,20 @@ module.exports = function mountStudentPortal(app, deps) {
   // 잔여 = carry_games + Σ lesson_enrollments.games_total − Σ lesson_sessions.games
   // 음수는 그대로 둔다. 0 클램프 금지(정본 v0.2.2 B-4).
   async function lessonAggregate(studentId) {
-    const [stu, enrolls, sessions, held, byTrainer] = await Promise.all([
+    const [stu, enrolls, sessions, heldRows, byTrainer] = await Promise.all([
       // pubg_name 도 여기서 같이 읽는다 — 종전에는 /summary 가 같은 행을 한 번 더 읽었다(왕복 1회 낭비).
       sbSelect("students", `select=carry_games,trainer_id,pubg_name&id=eq.${studentId}`),
-      sbSelect("lesson_enrollments", `select=games_total&student_id=eq.${studentId}&status=in.(active,done,paused)`),
-      sbSelect("lesson_sessions", `select=games,trainer_id,created_at&student_id=eq.${studentId}`),
-      heldGames(studentId),
+      // id · trainer_id · started_on 은 「지금 쓰는 묶음」(계약 §7.3)에만 쓴다 — 잔여 식은 games_total 만 본다.
+      sbSelect("lesson_enrollments", `select=id,games_total,trainer_id,started_on&student_id=eq.${studentId}&status=in.(active,done,paused)`),
+      // created_by · memo 는 판수 조정 행을 가르는 데만 쓴다(lessonGames · adjustedGames) — 응답에 싣지 않는다.
+      sbSelect("lesson_sessions", `select=games,trainer_id,created_at,created_by,memo&student_id=eq.${studentId}`),
+      heldByTrainer(studentId),
       remainingByTrainer(studentId),
     ]);
     const carry = Number(stu[0]?.carry_games || 0);
     const registered = carry + enrolls.reduce((a, r) => a + Number(r.games_total || 0), 0);
     const played = sessions.reduce((a, r) => a + Number(r.games || 0), 0);
+    const held = heldRows.reduce((a, r) => a + r.games, 0);
     // 선차감(예약 대기분)을 빼야 화면과 예약 게이트가 같은 숫자를 본다.
     // ⚠️ 여기와 §23 portal_remaining_games() 는 **같이 움직여야 한다.** 한쪽만 고치면
     //    "화면엔 5판 남았는데 예약은 insufficient_games" 같은 어긋남이 난다.
@@ -544,9 +549,29 @@ module.exports = function mountStudentPortal(app, deps) {
     const split = byTrainer.reduce((a, r) => a + r.remaining, 0);
     if (byTrainer.length && split !== remaining)
       console.error("remaining_split_mismatch", studentId, remaining, split);
+    // 누적 수업 · 조정 순합(계약 §7.3) — playedGames 를 둘로 쪼갤 뿐 합은 그대로다(lessonGames + adjustedGames = played).
+    const adjusted = sessions.filter(gv.isAdjustRow).reduce((a, r) => a + Number(r.games || 0), 0);
+    // 지금 쓰는 묶음(계약 §7.3) — §41 과 같은 축으로 트레이너마다 따로. 이월은 담당 트레이너 몫일 때만 친다.
+    //   순서는 remainingByTrainer 그대로(잔여 0 인 트레이너는 거기서 이미 빠진다). 등록 · 이월이 없으면 null → 뺀다.
+    const assignedTrainerId = stu[0]?.trainer_id ?? null;
+    const sumBy = (rows, tid, key) => rows.filter((r) => r.trainer_id === tid).reduce((a, r) => a + Number(r[key] || 0), 0);
+    const packs = [];
+    for (const t of byTrainer) {
+      const pack = gv.currentPack({
+        carry: assignedTrainerId === t.trainerId ? carry : 0,
+        packs: enrolls.filter((e) => e.trainer_id === t.trainerId)
+          .map((e) => ({ size: Number(e.games_total || 0), startedOn: e.started_on, id: e.id })),
+        used: sumBy(sessions, t.trainerId, "games"),
+        held: heldRows.filter((h) => h.trainerId === t.trainerId).reduce((a, h) => a + h.games, 0),
+      });
+      if (!pack) continue;
+      if (pack.total !== t.remaining) console.error("current_pack_mismatch", studentId, t.trainerId, t.remaining, pack.total);
+      packs.push({ trainerId: t.trainerId, ...pack });
+    }
     return {
       registered, played, remaining, byTrainer,
-      assignedTrainerId: stu[0]?.trainer_id ?? null,
+      lessonGames: played - adjusted, adjustedGames: adjusted, packs,
+      assignedTrainerId,
       pubgName: stu[0]?.pubg_name || null,
       activeTrainerIds: [...new Set(sessions.map((r) => r.trainer_id).filter(Boolean))],
       asOf: asOf || new Date(0).toISOString(),
@@ -577,13 +602,15 @@ module.exports = function mountStudentPortal(app, deps) {
   //    종전의 48시간 시간창은 폐기했다 — 이제 상태가 의미를 나른다(§23g sweep_pending_review).
   // §23 미실행 배포에서는 테이블이 없어 0 으로 떨어진다(예약 기능 자체가 휴면).
   const HELD_STATUSES = ["booked", "pending_review", "no_show"];
-  async function heldGames(studentId) {
-    if (!bookingReady) return 0;
+  // 행마다 트레이너를 같이 받는다 — 합계(잔여)는 종전과 같고, 트레이너별 묶음(§7.3)이 쪼개 쓴다.
+  //   칸은 left join(`!inner` 아님)이라 칸을 못 찾는 예약도 합계에서 빠지지 않는다(종전 합과 같은 행 집합).
+  async function heldByTrainer(studentId) {
+    if (!bookingReady) return [];
     try {
       const rows = await sbSelect("slot_bookings",
-        `select=games_held&student_id=eq.${studentId}&status=in.(${HELD_STATUSES.join(",")})`);
-      return rows.reduce((a, r) => a + Number(r.games_held || 0), 0);
-    } catch { return 0; }
+        `select=games_held,trainer_slots(trainer_id)&student_id=eq.${studentId}&status=in.(${HELD_STATUSES.join(",")})`);
+      return rows.map((r) => ({ games: Number(r.games_held || 0), trainerId: r.trainer_slots?.trainer_id ?? null }));
+    } catch { return []; }
   }
 
   // ── staff 캐시(2026-09-27 속도) ──────────────────────────────────
@@ -724,6 +751,15 @@ module.exports = function mountStudentPortal(app, deps) {
         playedGames: agg.played,
         remainingGames: agg.remaining,
         status,
+        // 계약 §7.3(2026-09-30) — 「누적 수업」은 lessonGames(판수 조정 행 제외). 합은 playedGames 그대로다.
+        lessonGames: agg.lessonGames,
+        adjustedGames: agg.adjustedGames,
+        // 트레이너별 지금 쓰는 묶음 — 순서 · trainerId 는 아래 remainingByTrainer 와 같다. total = 그 트레이너 잔여.
+        currentPacks: agg.packs.map((p) => ({
+          trainerId: opaqueId("trainer", p.trainerId),
+          trainerName: names[p.trainerId] || "미배정",
+          size: p.size, remaining: p.remaining, total: p.total,
+        })),
       },
       trainers,
       // 트레이너별 잔여(§41 · 계약 §9.2). lesson.remainingGames 는 **그대로 합계다** —
@@ -756,11 +792,12 @@ module.exports = function mountStudentPortal(app, deps) {
     if (!tableReady.lesson_journals) return 0;
     try {
       const [sess, journals] = await Promise.all([
-        sbSelect("lesson_sessions", `select=id&student_id=eq.${studentId}`),
+        sbSelect("lesson_sessions", `select=id,created_by&student_id=eq.${studentId}`),
         sbSelect("lesson_journals", `select=session_id&student_id=eq.${studentId}`),
       ]);
       const written = new Set(journals.map((j) => j.session_id));
-      return sess.filter((x) => !written.has(x.id)).length;
+      // 판수 조정 행은 수업이 아니라 일기를 쓸 자리가 없다(/sessions 에서도 빠진다 · 계약 §7.4).
+      return sess.filter((x) => !isAdjReqRow(x) && !written.has(x.id)).length;
     } catch (e) { console.error("summary_pending_journals", e?.message); return 0; }
   }
 
@@ -790,6 +827,8 @@ module.exports = function mountStudentPortal(app, deps) {
   //     제목·일기가 원본 세션에 계속 붙는다.
   //   · 음수가 있고 순합 <= 0 → 접을 대상이 없다. 이력에서 빼고 로그만 남긴다.
   //     이 경우 목록 합이 잔여와 그만큼 어긋난다 — 의도된 선택이다(오너 판정).
+  // 판수 조정 요청 행 — 승인 · 바로 반영(created_by 'adjreq:<id>')과 그 되돌림('adjreq:<id>:rev')
+  const isAdjReqRow = (r) => String(r?.created_by || "").startsWith("adjreq:");
   function foldCorrections(rows) {
     const norm = rows.map((r) => ({ ...r, games: Number(r.games || 0) }));
     const byDay = new Map();                       // "학생일자" → 같은 날 행들
@@ -816,8 +855,11 @@ module.exports = function mountStudentPortal(app, deps) {
   app.get(`${PREFIX}/sessions`, requireStudent, wrap(async (req, res) => {
     const sid = req.portal.sub;
     const raw = await sbSelect("lesson_sessions",
-      `select=id,played_at,games,trainer_id,memo&student_id=eq.${sid}&order=played_at.desc`);
-    const rows = foldCorrections(raw);
+      `select=id,played_at,games,trainer_id,memo,created_by&student_id=eq.${sid}&order=played_at.desc`);
+    // 판수 조정(노쇼 · 늦은 취소 · 보상 · 되돌림 · 계약 §7.4)은 수업이 아니다 — 판수 내역(/games-ledger)에서만 보인다.
+    //   접기 전에 뺀다. 안 빼면 같은 날 보상(−3)이 그날 수업 판수를 깎아 보이게 한다.
+    //   봇 /판수정정(memo '정정:')은 종전대로 그날 수업에 접힌다(2026-09-04 오너 판정 · 아래 foldCorrections).
+    const rows = foldCorrections(raw.filter((r) => !isAdjReqRow(r)));
     if (!rows.length) return send(res, { sessions: [] });
 
     const ids = rows.map((r) => r.id);
@@ -871,6 +913,45 @@ module.exports = function mountStudentPortal(app, deps) {
         ...(extras.get(r.id) || {}),
       })),
     });
+  }));
+
+  // ════════════════ GET /games-ledger — 판수 내역(계약 §7.4 · 트레이너 앱 §9.15 와 같은 함수) ════════════════
+  // 잔여의 모든 증감을 한 줄씩 — 이월 · 등록 · 수업 · 판수 조정 · 예약 선차감. 24시간 안에 되돌린 조정은 두 줄 다 뺀다.
+  //   remaining 은 §23 portal_remaining_games()(예약 게이트가 보는 값)로 싣고, 줄 누계와 다르면 mismatch 로 알린다.
+  //   RPC 가 없으면(§23 미실행) 줄 누계를 그대로 쓴다 — /summary 의 JS 식과 같은 축이다.
+  app.get(`${PREFIX}/games-ledger`, requireStudent, wrap(async (req, res) => {
+    const sid = req.portal.sub;
+    const [stu, enrolls, sessions, holds, total] = await Promise.all([
+      sbSelect("students", `select=carry_games,trainer_id&id=eq.${sid}&limit=1`),
+      // 취소 · 환불된 등록도 읽는다 — 지우지 않고 0판 · voided 로 보인다
+      sbSelect("lesson_enrollments", `select=id,games_total,started_on,trainer_id,status&student_id=eq.${sid}&order=id.asc`),
+      // created_by · memo 는 조정 행 판별 · 라벨에만 쓴다 — 응답에 싣지 않는다(가드가 memo · createdBy 를 막는다)
+      sbSelect("lesson_sessions", `select=id,played_at,games,trainer_id,created_by,memo&student_id=eq.${sid}&order=id.asc`),
+      bookingReady
+        ? sbSelect("slot_bookings", `select=id,games_held,status,trainer_slots(trainer_id,slot_start)&student_id=eq.${sid}`
+            + `&status=in.(${HELD_STATUSES.join(",")})`).catch(() => [])
+        : Promise.resolve([]),
+      sbRpc("portal_remaining_games", { p_student_id: sid }).catch(() => null),
+    ]);
+    const adjIds = [...new Set(sessions.map((r) => gv.adjreqRef(r)?.id).filter(Boolean))];
+    const kinds = adjIds.length
+      ? new Map((await sbSelect("games_adjust_requests", `select=id,kind&id=in.(${adjIds.join(",")})`)).map((r) => [r.id, r.kind]))
+      : new Map();
+    const carry = Number(stu[0]?.carry_games || 0);
+    const holdRows = holds.map((h) => ({ id: h.id, games_held: h.games_held, status: h.status,
+      slot_start: h.trainer_slots?.slot_start, trainer_id: h.trainer_slots?.trainer_id ?? null }));
+    const names = await trainerNames([stu[0]?.trainer_id, ...enrolls.map((e) => e.trainer_id),
+      ...sessions.map((r) => r.trainer_id), ...holdRows.map((h) => h.trainer_id)]);
+    const out = gv.ledgerRows({
+      carry: carry ? { games: carry, on: gv.CARRY_ON, trainerId: stu[0]?.trainer_id ?? null } : null,
+      enrolls, sessions, holds: holdRows, adjKinds: kinds, hideReverted: true, kstClock: gv.kstClock,
+      // trainerId 는 /summary remainingByTrainer · /availability 와 같은 불투명 id
+      trainerRef: (tid) => (tid == null ? { trainerId: null, trainerName: "미배정" }
+        : { trainerId: opaqueId("trainer", tid), trainerName: names[tid] || "미배정" }),
+    });
+    const rem = total == null ? out.remaining : Number(total);
+    if (rem !== out.remaining) console.error("student_ledger_mismatch", sid, rem, out.remaining);
+    send(res, { remaining: rem, mismatch: rem !== out.remaining, rows: out.rows });
   }));
 
   // 세션 소유 확인 — 불투명 id 복호 후 본인 것인지 DB로 재확인한다.

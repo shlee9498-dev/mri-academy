@@ -4188,3 +4188,312 @@ notify pgrst, 'reload schema';
 -- 되돌리기(코드를 먼저 되돌릴 것 — payreq-intake.cjs · student-portal.cjs · server.js REQUIRED_SCHEMA):
 --   drop index if exists uq_payreq_groble_order; 제약 4개 drop; 칸 7개 drop   ← 지우는 DDL = B 구간(오너 OK)
 -- ============================================================
+
+-- ============================================================
+-- §50  트레이너 앱 수강생 · 판수 묶음 — 레벨 · 종료 · 판수 직접 조정 (2026-09-30 · 오너 확정 · 계약 §9.14~9.18 · §7.3 · §7.4)
+--
+-- 오너 확정(9/30 · 어플 전달 · 「판수 계산 변경 OK」): ① 수강생 레벨(심화 · 중급 · 초급 · 미분류 · 직강생은 반 레벨 자동)
+--   ② 자동 보류(저장하지 않고 매번 판정 · 코드) · 「종료」는 트레이너가 누름(그 트레이너 판수 0 이하일 때만)
+--   ③ 판수 직접 조정 — ±10판 이하 바로 반영 · 넘으면 종전 승인 카드 · 사유 칩 기타 추가 · 24시간 되돌리기 · 전 → 후 기록.
+-- 보류 판정 · 지금 묶음 · 판수 내역은 코드(games-view.cjs)다 — 이 절은 저장이 필요한 것만 담는다.
+--
+-- 50a) 더하기만(A 구간 · 세션 실행): students.level 칸 3 + 제약 1 · student_trainer_endings 표 · 조정 기록 칸 5 · 되돌리기 함수
+-- 50b) 바꾸기(오너 확정 묶음 · §47 선례처럼 기능 확정이 곧 OK · 표 0행): 제약 3개 넓히기(기타 · 되돌림) · 함수 2개 교체
+--      ① decide_games_adjustment — 기타 라벨 · 반영 전 → 후 잔여 기록(로직 동일)
+--      ② record_lesson_from_booking — 같은 날 판정에서 조정 행 · 0 이하 행 제외(앱 recordedOn 과 같은 기준)
+-- ============================================================
+
+-- ── 50a) 더하기 ──────────────────────────────────────────────────────────────
+-- 수강생 레벨(계약 §9.16). null = 미분류. 직강생은 반 레벨이 자동이라 이 칸을 읽지 않는다(코드가 가른다).
+alter table public.students add column if not exists level        text;
+alter table public.students add column if not exists level_set_at timestamptz;
+alter table public.students add column if not exists level_set_by text;        -- 'staff:<id>'(트레이너 · 원장 · 레벨 테스트 「완료」)
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_students_level') then
+    alter table public.students add constraint chk_students_level
+      check (level is null or level in ('advanced', 'intermediate', 'beginner'));
+  end if;
+end $$;
+
+-- 트레이너가 누른 「종료」(계약 §9.17) — 수강생 × 트레이너 한 줄. 취소는 줄을 지운다(앱 DELETE /students/:id/end).
+-- 종료 뒤 새 수업 · 등록 · 예약이 생기면 코드가 「종료 아님」으로 판정한다(줄은 그대로 둔다).
+create table if not exists public.student_trainer_endings (
+  student_id bigint      not null references public.students(id) on delete cascade,
+  trainer_id bigint      not null references public.staff(id),
+  ended_at   timestamptz not null default now(),
+  ended_by   text,
+  primary key (student_id, trainer_id)
+);
+alter table public.student_trainer_endings enable row level security;
+
+-- 조정 기록 「전 → 후」 · 되돌림(계약 §9.18)
+alter table public.games_adjust_requests add column if not exists remaining_before  int;
+alter table public.games_adjust_requests add column if not exists remaining_after   int;
+alter table public.games_adjust_requests add column if not exists reverted_at       timestamptz;
+alter table public.games_adjust_requests add column if not exists reverted_by       text;
+alter table public.games_adjust_requests add column if not exists revert_session_id bigint
+  references public.lesson_sessions(id) on delete set null;
+
+-- 되돌리기 — 트레이너가 **바로 반영한**(decided_by 'direct') 조정을 24시간 안에. 판수 행을 지우지 않고 반대 행을 넣는다
+--   (지우면 그 행에 달린 수업 일기 · 제목이 cascade 로 같이 지워진다). 반대 행 created_by = 'adjreq:<id>:rev' —
+--   조정 행을 거르는 모든 곳('adjreq:' 접두)이 그대로 걸러낸다. p_trainer_id null = 원장(24시간 제한 없음).
+--   잠긴 달 판정은 코드가 한다(원장만 통과 · period_locks).
+create or replace function public.revert_games_adjustment(p_request_id bigint, p_trainer_id bigint, p_by text)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_r      games_adjust_requests%rowtype;
+  v_games  int;
+  v_sid    bigint;
+  v_before int;
+begin
+  -- 공개 키(anon · authenticated)로는 부르지 못한다 — decide_games_adjustment 와 같은 가드.
+  if coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb->>'role', '') in ('anon', 'authenticated') then
+    return jsonb_build_object('error', 'forbidden');
+  end if;
+  select * into v_r from games_adjust_requests where id = p_request_id for update;
+  if not found or (p_trainer_id is not null and v_r.trainer_id <> p_trainer_id) then
+    return jsonb_build_object('error', 'not_found');
+  end if;
+  if v_r.status = 'reverted' then
+    return jsonb_build_object('error', 'already_reverted');
+  end if;
+  if v_r.status <> 'approved' or v_r.decided_by is distinct from 'direct' or v_r.applied_session_id is null then
+    return jsonb_build_object('error', 'not_revertible', 'status', v_r.status);
+  end if;
+  if p_trainer_id is not null and v_r.decided_at < now() - interval '24 hours' then
+    return jsonb_build_object('error', 'revert_window_passed');
+  end if;
+  select games into v_games from lesson_sessions where id = v_r.applied_session_id;
+  if v_games is null then
+    return jsonb_build_object('error', 'not_revertible', 'status', v_r.status);
+  end if;
+  v_before := portal_remaining_for_trainer(v_r.student_id, v_r.trainer_id);
+  insert into lesson_sessions (student_id, trainer_id, played_at, games, memo, created_by)
+  values (v_r.student_id, v_r.trainer_id, v_r.played_at, -v_games,
+          '되돌림: 조정 요청 #' || v_r.id, 'adjreq:' || v_r.id || ':rev')
+  returning id into v_sid;
+  update games_adjust_requests
+     set status = 'reverted', reverted_at = now(), reverted_by = p_by, revert_session_id = v_sid
+   where id = v_r.id;
+  return jsonb_build_object(
+    'ok', true, 'requestId', v_r.id, 'studentId', v_r.student_id, 'trainerId', v_r.trainer_id,
+    'kind', v_r.kind, 'remainingDelta', v_r.remaining_delta, 'playedAt', v_r.played_at,
+    'sessionId', v_sid, 'remainingBefore', v_before,
+    'remainingAfter', portal_remaining_for_trainer(v_r.student_id, v_r.trainer_id));
+end;
+$$;
+
+-- ── 50b) 넓히기 · 교체(한 트랜잭션) ─────────────────────────────────────────────
+begin;
+alter table public.games_adjust_requests drop constraint if exists gar_kind_chk;
+alter table public.games_adjust_requests add constraint gar_kind_chk
+  check (kind in ('correction', 'compensation', 'late_cancel', 'no_show', 'other'));
+alter table public.games_adjust_requests drop constraint if exists gar_kind_delta_chk;
+alter table public.games_adjust_requests add constraint gar_kind_delta_chk check (
+       (kind = 'late_cancel'  and remaining_delta = -3)
+    or (kind = 'no_show'      and remaining_delta = -5)
+    or (kind = 'compensation' and remaining_delta > 0)
+    or  kind in ('correction', 'other'));
+alter table public.games_adjust_requests drop constraint if exists gar_status_chk;
+alter table public.games_adjust_requests add constraint gar_status_chk
+  check (status in ('pending', 'approved', 'rejected', 'cancelled', 'reverted'));
+
+create or replace function public.decide_games_adjustment(p_request_id bigint, p_approve boolean, p_decided_by text)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_r      games_adjust_requests%rowtype;
+  v_sid    bigint;
+  v_lbl    text;
+  v_before int;
+  v_after  int;
+begin
+  -- 공개 키(anon · authenticated)로는 부르지 못한다 — 판수를 넣는 함수다(오너 허락 2026-09-30).
+  -- 권한 회수(46c)와 별개로 함수 안에서도 거른다. 서버(service_role) · SQL 직접 실행(클레임 없음)만 통과한다.
+  if coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb->>'role', '') in ('anon', 'authenticated') then
+    return jsonb_build_object('error', 'forbidden');
+  end if;
+  select * into v_r from games_adjust_requests where id = p_request_id for update;
+  if not found then
+    return jsonb_build_object('error', 'not_found');
+  end if;
+  if v_r.status <> 'pending' then
+    return jsonb_build_object('error', 'already_decided', 'status', v_r.status);
+  end if;
+
+  if p_approve then
+    v_lbl := case v_r.kind when 'correction' then '정정' when 'compensation' then '보상'
+                           when 'late_cancel' then '늦은 취소' when 'other' then '기타' else '노쇼' end;
+    v_before := portal_remaining_for_trainer(v_r.student_id, v_r.trainer_id);   -- 반영 전(§50 · 조정 기록 「전 → 후」)
+    insert into lesson_sessions (student_id, trainer_id, played_at, games, memo, created_by)
+    values (v_r.student_id, v_r.trainer_id, v_r.played_at, -v_r.remaining_delta,
+            '조정(' || v_lbl || '): ' || v_r.reason || ' (요청 #' || v_r.id || ')',
+            'adjreq:' || v_r.id)
+    returning id into v_sid;
+    v_after := portal_remaining_for_trainer(v_r.student_id, v_r.trainer_id);
+    update games_adjust_requests
+       set status = 'approved', decided_at = now(), decided_by = p_decided_by, applied_session_id = v_sid,
+           remaining_before = v_before, remaining_after = v_after
+     where id = v_r.id;
+  else
+    update games_adjust_requests
+       set status = 'rejected', decided_at = now(), decided_by = p_decided_by
+     where id = v_r.id;
+  end if;
+
+  return jsonb_build_object(
+    'ok', true,
+    'status', case when p_approve then 'approved' else 'rejected' end,
+    'requestId', v_r.id, 'studentId', v_r.student_id, 'trainerId', v_r.trainer_id,
+    'kind', v_r.kind, 'remainingDelta', v_r.remaining_delta, 'playedAt', v_r.played_at,
+    'sessionId', v_sid, 'remainingBefore', v_before,
+    'remainingAfter', coalesce(v_after, portal_remaining_for_trainer(v_r.student_id, v_r.trainer_id)));
+end;
+$$;
+
+create or replace function public.record_lesson_from_booking(
+  p_trainer_id bigint, p_booking_id bigint,
+  p_games      int  default null,
+  p_played_at  date default null)
+returns jsonb
+language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_b     slot_bookings%rowtype;
+  v_owner bigint;
+  v_start timestamptz;
+  v_type  text;
+  v_day   date;
+  v_slot  date;
+  v_has   boolean;
+  v_carry int;
+  v_enr   bigint;
+  v_sid   bigint;
+  v_games int;
+  v_after int;
+begin
+  if p_games is not null and (p_games < 1 or p_games > 50) then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+
+  select * into v_b from slot_bookings where id = p_booking_id for update;
+  if not found                    then return jsonb_build_object('error','not_found'); end if;
+  if v_b.span_head_id is not null  then return jsonb_build_object('error','not_found'); end if;
+
+  select trainer_id, slot_start, lesson_type into v_owner, v_start, v_type
+    from trainer_slots where id = v_b.slot_id;
+  if v_owner is distinct from p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
+  -- 상담(레벨 테스트)은 판수를 쓰는 수업이 아니다. 여기서 세션이 생기면 판수가 없는 신규가
+  -- 잔여 음수로 꽂힌다 — 조용히 무시하지 않고 돌려보낸다(앱이 입력칸을 안 띄우게).
+  if v_type = 'consult' and p_games is not null then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+
+  -- 날짜 축은 server.js kstToday() · booking-api kstDate() 와 같은 식이라 경계가 어긋나지 않는다.
+  v_slot := (v_start at time zone 'Asia/Seoul')::date;
+  v_day  := coalesce(p_played_at, v_slot);
+  -- 자정을 넘겨 진행한 경우만 허용한다. 그보다 먼 날짜는 오타로 본다.
+  if abs(v_day - v_slot) > 1 then return jsonb_build_object('error','invalid_body'); end if;
+
+  -- 판수 조정 행(created_by 'adjreq:…' · §46 · §50)과 0 이하 행은 수업이 아니라 뺀다 — 앱 「수업 기록하기」의
+  -- recordedOn(lesson-record.cjs)과 같은 기준(§50 · 2026-09-30). 종전에는 오늘 날짜로 조정한 뒤 오늘 예약을
+  -- 「완료」하면 이 판정이 조정 행을 수업으로 보고 판수 없이 닫았다(수업 판수가 0회 빠진다).
+  v_has := exists (select 1 from lesson_sessions ls
+                    where ls.student_id = v_b.student_id
+                      and ls.trainer_id = p_trainer_id
+                      and ls.played_at  = v_day
+                      and ls.games > 0
+                      and coalesce(ls.created_by, '') not like 'adjreq:%');
+
+  -- 이미 닫힌 예약은 손대지 않는다(§37 과 같다 — hasSession 으로 화면이 문구를 가른다).
+  if v_b.status not in ('booked','pending_review') then
+    return jsonb_build_object('already', v_b.status, 'hasSession', v_has, 'playedAt', v_day);
+  end if;
+
+  -- 같은 날 같은 트레이너의 기록이 이미 있으면 판수를 또 넣지 않는다(상태만 닫는다).
+  if v_has then
+    update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+    return jsonb_build_object('already','session','hasSession',true,'playedAt',v_day);
+  end if;
+
+  -- 기록할 판수: 트레이너가 넣었으면 그 값, 아니면 예약이 잡은 선차감분.
+  v_games := coalesce(p_games, coalesce(v_b.games_held, 0));
+
+  if v_games <= 0 then
+    -- 그룹인데 판수가 없다 → **닫지 않고** 돌려보낸다. 여기서 닫으면 10/1 뒤에는 이 수업의
+    -- 판수를 넣을 길이 없다(다시 누르면 already → registration_missing · /수업등록 은 잠김).
+    -- 예약이 booked 로 남아 있으니 트레이너가 판수를 넣고 한 번 더 누르면 된다.
+    if v_type in ('spectate','participate') then
+      return jsonb_build_object('error','games_required');
+    end if;
+    -- 상담(레벨 테스트)은 판수가 없는 게 정상이다 — 상태만 닫는다.
+    update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+    return jsonb_build_object('closed', true, 'games', 0, 'reason', 'no_hold');
+  end if;
+
+  select carry_games into v_carry from students where id = v_b.student_id;
+  if coalesce(v_carry, 0) = 0 then
+    select e.id into v_enr
+      from lesson_enrollments e
+     where e.student_id = v_b.student_id
+       and e.trainer_id = p_trainer_id
+       and e.status in ('active','paused')
+       and coalesce(e.games_total, 0) + coalesce(e.bonus_games, 0)
+           - coalesce((select sum(ls.games) from lesson_sessions ls
+                        where ls.lesson_enrollment_id = e.id), 0) > 0
+     order by e.started_on asc, e.id asc
+     limit 1;
+  end if;
+
+  insert into lesson_sessions
+    (student_id, trainer_id, played_at, games, created_by, lesson_enrollment_id)
+    values (v_b.student_id, p_trainer_id, v_day, v_games, 'portal', v_enr)
+    returning id into v_sid;
+
+  update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+
+  -- 선차감이 풀리고 세션이 들어간 **뒤**의 잔여다(§41 · 그 트레이너 기준).
+  v_after := portal_remaining_for_trainer(v_b.student_id, p_trainer_id);
+
+  return jsonb_build_object('recorded', true, 'games', v_games, 'playedAt', v_day,
+                            'sessionId', v_sid, 'enrollmentId', v_enr,
+                            'remainingAfter', v_after,
+                            -- 음수 = 이 수업을 덮을 판수가 없었다. 막지는 않았고 알리기만 한다.
+                            'remainingWasShort', v_after < 0);
+end;
+$$;
+commit;
+
+notify pgrst, 'reload schema';
+
+-- ── 50c) 검증 ────────────────────────────────────────────────────────────────
+--   select column_name from information_schema.columns where table_schema = 'public'
+--      and ((table_name = 'students' and column_name like 'level%')
+--        or (table_name = 'games_adjust_requests' and column_name in
+--            ('remaining_before','remaining_after','reverted_at','reverted_by','revert_session_id')));   -- 기대 8행
+--   select to_regclass('public.student_trainer_endings');                                             -- 기대 실재
+--   select conname, pg_get_constraintdef(oid) from pg_constraint
+--    where conname in ('chk_students_level','gar_kind_chk','gar_kind_delta_chk','gar_status_chk');     -- 기대 4행 · 기타 · 되돌림 포함
+--   select proname, length(replace(prosrc, E'\r','')), md5(replace(prosrc, E'\r','')) from pg_proc
+--    where pronamespace = 'public'::regnamespace
+--      and proname in ('decide_games_adjustment','record_lesson_from_booking','revert_games_adjustment');
+--
+-- 되돌리기(코드를 먼저 되돌릴 것 — trainer-lessons.cjs · trainer-portal.cjs · student-portal.cjs · booking-api.cjs · server.js):
+--   ① 함수 두 개는 §46 · §42 정본 본문을 다시 실행(지문 1928 · 59d3e5a1 / 4102 · b0c3f56b)
+--   ② 제약 3개를 §46 정의로 되돌림 — 기타 · 되돌림 행이 있으면 먼저 정리해야 한다(데이터 변경 = B 구간)
+--   ③ drop function revert_games_adjustment · drop table student_trainer_endings · 칸 drop   ← 지우는 DDL = B 구간(오너 OK)
+--   ⚠️ 되돌림 행(lesson_sessions created_by 'adjreq:<id>:rev')은 판수 데이터라 표를 지워도 남는다 — 따로 판단한다.
+--
+--   ✅ 실행 완료 2026-09-30 16:5x KST (세션 실행 · 50a = A 구간 · 50b = 오너 확정 묶음 「판수 계산 변경 OK」 · §47 선례).
+--      실행 전: students 15칸 · games_adjust_requests 14칸 · 0행 · 종료 표 없음 · 수업 249행 · 판수 합 2922 · 명부 95행 ·
+--               decide_games_adjustment 1928 · 59d3e5a1 / record_lesson_from_booking 4102 · b0c3f56b(둘 다 정본과 일치)
+--      실행 후: students 18칸(level 3칸 · 전부 null) · games_adjust_requests 19칸 · 0행 · student_trainer_endings(RLS on) ·
+--               제약 chk_students_level · gar_kind_chk(+other) · gar_kind_delta_chk(+other) · gar_status_chk(+reverted) ·
+--               decide_games_adjustment **2293 · 9cbd9adac744ece962299e06309b0ba9** · record_lesson_from_booking **4442 · 12d768a9fe5c2149bfedaeffd2e71670** ·
+--               revert_games_adjustment **2102 · 34deaec40971165874842c602b8d3537** (셋 다 정본 본문과 md5 일치) · 수업 249행 · 2922 그대로.
+--      드라이런 8항목(테스트 계정 · 예외로 전부 되돌림): 기타 +3 바로 반영(전 0 → 후 3) · 다른 트레이너 되돌리기 not_found ·
+--               본인 되돌리기(반대 행 adjreq:<id>:rev · 3 → 0) · 두 번 already_reverted · 요청 줄 전 → 후 · 되돌림 기록 ·
+--               25시간 지난 조정 트레이너 revert_window_passed · 원장(null) 통과. 실행 뒤 요청 0행 · 조정 행 0 · 판수 불변.
+--      권한: 새 함수 revert_games_adjustment 도 함수 안 공개 키 가드가 있다. 실행 권한 회수는 §46c 목록에 더해 오너가 실행한다.
+-- ============================================================

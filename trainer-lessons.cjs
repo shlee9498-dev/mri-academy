@@ -7,10 +7,14 @@
 //   POST   /api/trainer-portal/adjustments             — 판수 조정 요청 → 오너 디스코드 승인 카드
 //   GET    /api/trainer-portal/adjustments             — 내 요청 최근 30건
 //   DELETE /api/trainer-portal/adjustments/:id         — 대기 중인 내 요청 취소
+//   POST   /api/trainer-portal/adjustments/:id/revert  — 바로 반영한 내 조정 24시간 안 되돌리기(§9.18 · 승인 불필요)
+//
+// 2026-09-30 오너 확정(§9.18 · 판수 계산 변경 OK): ±10판 이하는 **바로 반영**(요청 줄을 남기고 같은 함수로 곧바로 승인),
+// 넘으면 종전 승인 카드. 원장 계정은 늘 바로. + 조정은 오너 알림. 정산 끝난 달(period_locks)은 원장만.
 //
 // 오너 조건(9/30): 이 두 화면이 운영에 나간 날 /수업등록 레슨 · /판수정정 잠금을 함께 켠다(계약 §9.7).
-// 트레이너는 판수를 직접 고치지 않는다 — 조정은 요청만 남고, 승인(§46 decide_games_adjustment)은 server.js 의
-// 오너 카드 버튼이 한다. 게이트 · 트레이너 판정 · 범위 · 응답 가드는 trainer-portal.cjs 것을 그대로 쓴다(복제 금지).
+// 11판 이상 조정은 요청만 남고, 승인(§46 decide_games_adjustment)은 server.js 의 오너 카드 버튼이 한다.
+// 게이트 · 트레이너 판정 · 범위 · 응답 가드는 trainer-portal.cjs 것을 그대로 쓴다(복제 금지).
 // 값(이름 · 사유 · 메모)은 로그에 남기지 않는다 — 코드 · 건수 · id 만.
 // ============================================================
 "use strict";
@@ -27,8 +31,10 @@ const LESSON_BACK_DAYS = 7;                              // 수업 기록은 7�
 const ADJ_BACK_DAYS = 31;
 const MEMO_MAX = 200;
 // 종류별 남은 판수 증감(계약 §9.10). null = 트레이너가 보낸다 · 숫자 = 고정(약관)
-const ADJ_FIXED = { correction: null, compensation: null, late_cancel: -3, no_show: -5 };
-const ADJ_LABEL = { correction: "정정", compensation: "보상", late_cancel: "늦은 취소", no_show: "노쇼" };
+const ADJ_FIXED = { correction: null, compensation: null, late_cancel: -3, no_show: -5, other: null };
+const ADJ_LABEL = { correction: "정정", compensation: "보상", late_cancel: "늦은 취소", no_show: "노쇼", other: "기타" };
+const ADJ_DIRECT_MAX = 10;                               // 트레이너 바로 반영 한도(±10판 · 오너 확정 9/30 · §9.18)
+const ADJ_REVERT_MS = 24 * 3600_000;                      // 바로 반영 뒤 되돌리기 창(§9.18 · 함수 §50 과 같은 값)
 
 // ── 순수 함수(테스트: scripts/trainer-lessons.test.cjs) ─────────────────────────
 
@@ -49,7 +55,7 @@ function parseLessonBody(b, today) {
 }
 
 // POST /adjustments 본문 판정. 반환 { ok:true, value } | { ok:false }.
-//   remainingDelta: correction ±1~50 · compensation +1~50 · late_cancel/no_show 는 안 보내거나 고정값과 같을 때만.
+//   remainingDelta: correction · other(기타) ±1~50 · compensation +1~50 · late_cancel/no_show 는 안 보내거나 고정값과 같을 때만.
 //   sessionId 는 correction 만 · 그때 playedAt 은 같이 오면 안 된다(날짜는 그 수업의 것).
 function parseAdjustBody(b, today) {
   if (!b || typeof b !== "object") return { ok: false };
@@ -83,6 +89,20 @@ function parseAdjustBody(b, today) {
   return { ok: true, value: { kind, studentId: b.studentId, remainingDelta: delta, reason, playedAt, sessionId: hasSession ? b.sessionId : null } };
 }
 
+// 바로 반영인가(§9.18) — 원장 계정은 늘 · 트레이너는 |±| 10 이하만. 넘으면 오너 승인 카드.
+const isDirect = (role, delta) => role === "owner" || Math.abs(Number(delta)) <= ADJ_DIRECT_MAX;
+// 요청 줄 → API 상태(§9.18). DB 는 바로 반영도 approved 로 남기고 decided_by 'direct' 로 가른다.
+function adjStatusOf(r) {
+  if (r.status === "approved") return r.decided_by === "direct" ? "applied" : "approved";
+  return r.status;
+}
+// 되돌릴 수 있는 마감(ISO) — 바로 반영 · 되돌림 전 · 24시간 안만. 원장은 창이 없지만 응답은 같은 값을 준다(앱 표시용).
+function revertibleUntil(r, nowMs = Date.now()) {
+  if (r.status !== "approved" || r.decided_by !== "direct" || !r.decided_at) return null;
+  const until = Date.parse(r.decided_at) + ADJ_REVERT_MS;
+  return until > nowMs ? new Date(until).toISOString() : null;
+}
+
 // 수업 기록의 출처 — 앱(예약 「완료」 · 수업 기록하기) · 봇(/수업등록) · 조정(요청 승인 · /판수정정)
 function sourceOf(row) {
   const by = String(row?.created_by || "");
@@ -97,6 +117,10 @@ module.exports = function mountTrainerLessons(app, deps) {
   const { opaqueId, readOpaqueId, fail } = portal;
   // 승인 카드(봇 블록이 채운다 · 봇이 없으면 false) — 요청은 그래도 저장한다(ownerNotified:false)
   const adjreqCard = typeof deps.adjreqCard === "function" ? deps.adjreqCard : async () => false;
+  // + 조정 바로 반영 알림 · 되돌림 알림(§9.18 · 오너 DM · 봇이 없으면 false)
+  const ownerAlert = typeof deps.ownerAlert === "function" ? deps.ownerAlert : async () => false;
+  // 판수 부족 점검(§45) — 바로 반영 · 되돌림 직후. 응답은 기다리지 않는다.
+  const onGamesChanged = typeof deps.onGamesChanged === "function" ? deps.onGamesChanged : () => {};
 
   const rateLimit = (name, max, windowMs) => limit(name, max, windowMs, (res) => fail(res, 429, "rate_limited"));
   // 409 에 싣는 추가 필드는 error 안에 둔다(계약 §9.9 · §9.10).
@@ -117,6 +141,19 @@ module.exports = function mountTrainerLessons(app, deps) {
     try { const v = await sbRpc("portal_remaining_for_trainer", { p_student_id: sid, p_trainer_id: tid }); return v == null ? null : Number(v); }
     catch { return null; }
   };
+  // 정산이 끝난 달(period_locks · 풀리지 않은 줄)인가 — 그 달 판수는 원장만 움직인다(§9.18 · 오너 확정 9/30).
+  //   읽지 못하면 막지 않는다(판수 기록이 본체다 · 잠금은 정산 쪽 결제 트리거도 따로 지킨다).
+  const lockCache = { at: 0, set: new Set() };
+  async function periodLocked(ymd) {
+    if (Date.now() - lockCache.at > 60_000) {
+      try {
+        const rows = await sbSelect("period_locks", "select=period&released_at=is.null");
+        lockCache.set = new Set(rows.map((r) => r.period)); lockCache.at = Date.now();
+      } catch (e) { console.error("period_locks_read", e?.status || e?.message); return null; }
+    }
+    const period = String(ymd).slice(0, 7);
+    return lockCache.set.has(period) ? period : null;
+  }
 
   // ════════════════ POST /lessons — 수업 기록하기(예약 없이) · 계약 §9.9 ════════════════
   app.post(`${TRAINER}/lessons`, rateLimit("trainerLessons", 30, 60_000),
@@ -130,6 +167,11 @@ module.exports = function mountTrainerLessons(app, deps) {
 
       const scope = await scopedStudents(req.staff.id);
       if (sids.some((id) => !scope.has(id))) return fail(res, 403, "scope_denied");
+      // 정산 끝난 달이면 원장만(§9.18)
+      if (req.staff.role !== "owner") {
+        const locked = await periodLocked(playedAt);
+        if (locked) return failWith(res, 409, "period_locked", { period: locked });
+      }
 
       // 그 날짜에 내 수업 기록이 이미 있으면 묻는다(아무것도 안 쓰고). 하루 두 타임이면 sameDayOk 로 다시 온다.
       if (!sameDayOk) {
@@ -219,6 +261,13 @@ module.exports = function mountTrainerLessons(app, deps) {
         if (bk[0]) return failWith(res, 409, "booking_exists", { bookingStatus: bk[0].status });
       }
 
+      // 정산 끝난 달이면 원장만(§9.18) — 요청도 받지 않는다(승인 카드로 넘겨도 그 달은 원장이 따로 본다).
+      const owner = req.staff.role === "owner";
+      if (!owner) {
+        const locked = await periodLocked(playedAt);
+        if (locked) return failWith(res, 409, "period_locked", { period: locked });
+      }
+
       let row;
       try {
         row = await sbInsert("games_adjust_requests", {
@@ -230,14 +279,51 @@ module.exports = function mountTrainerLessons(app, deps) {
         if (code === "23505") return fail(res, 409, "request_pending");
         throw e;
       }
+      const studentName = scope.get(sid)?.name || `#${sid}`;
 
-      // 승인 카드 — 실패해도 요청은 남는다(ownerNotified:false). 카드에는 지금 그 트레이너 기준 잔여를 싣는다.
+      // ── 바로 반영(§9.18) — 같은 승인 함수를 decided_by 'direct' 로 곧바로 부른다(요청 줄 = 기록) ──
+      if (isDirect(req.staff.role, remainingDelta)) {
+        let out = null;
+        try { out = await sbRpc("decide_games_adjustment", { p_request_id: row.id, p_approve: true, p_decided_by: "direct" }); }
+        catch (e) { console.error("adjust_direct", e?.status || e?.message); }
+        if (!out?.ok) {
+          // 반영이 안 됐다 — 요청을 닫아 두 번 들어가지 않게 하고 다시 누르게 한다(판수는 그대로다).
+          try {
+            await sbPatch("games_adjust_requests", `id=eq.${row.id}&status=eq.pending`,
+              { status: "cancelled", decided_at: new Date().toISOString() });
+          } catch (e) { console.error("adjust_direct_cancel", e?.status || "fail"); }
+          return fail(res, 503, "portal_unavailable");
+        }
+        onGamesChanged([sid]);
+        // + 조정(남은 판수를 늘림)은 오너에게 알린다 — 승인 불필요 · 특이사항(원장 본인 조정은 알리지 않는다)
+        let ownerNotified = false;
+        if (remainingDelta > 0 && !owner) {
+          try {
+            ownerNotified = !!(await ownerAlert({
+              type: "direct", id: row.id, kindLabel: ADJ_LABEL[kind], remainingDelta, reason, playedAt,
+              studentId: sid, studentName, trainerName: req.staff.name,
+              remainingBefore: out.remainingBefore, remainingAfter: out.remainingAfter,
+            }));
+          } catch (e) { console.error("adjust_owner_alert", e?.message); }
+          try { await sbPatch("games_adjust_requests", `id=eq.${row.id}`, { owner_notified: ownerNotified }); }
+          catch (e) { console.error("adjust_notified_patch", e?.status || "fail"); }
+        }
+        return sendTrainer(res, {
+          requestId: opaqueId("adjreq", row.id), status: "applied",
+          kind, remainingDelta, playedAt,
+          remainingBefore: out.remainingBefore ?? null, remainingAfter: out.remainingAfter ?? null,
+          revertibleUntil: new Date(Date.now() + ADJ_REVERT_MS).toISOString(),
+          ownerNotified,
+        });
+      }
+
+      // ── 승인 요청(11판 이상 · §9.10) — 카드. 실패해도 요청은 남는다(ownerNotified:false). ──
       const remainingNow = await remainingFor(sid, req.staff.id);
       let ownerNotified = false;
       try {
         ownerNotified = !!(await adjreqCard({
           id: row.id, kind, kindLabel: ADJ_LABEL[kind], remainingDelta, reason, playedAt,
-          studentId: sid, studentName: scope.get(sid)?.name || `#${sid}`,
+          studentId: sid, studentName,
           trainerName: req.staff.name, remainingNow, hasTarget: targetSession != null,
         }));
       } catch (e) { console.error("adjreq_card", e?.message); }
@@ -250,23 +336,72 @@ module.exports = function mountTrainerLessons(app, deps) {
       });
     }));
 
-  // ════════════════ GET /adjustments — 내 요청 최근 30건 ════════════════
+  // ════════════════ GET /adjustments — 최근 조정(§9.10 · §9.18) ════════════════
+  //   트레이너 = 내 조정 30건 · 원장 = 전 트레이너 50건(+ trainer). 전 → 후 · 되돌리기 마감을 같이 싣는다.
   app.get(`${TRAINER}/adjustments`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
+    const owner = req.staff.role === "owner";
+    const cols = "select=id,student_id,trainer_id,kind,remaining_delta,reason,played_at,status,created_at,decided_at,decided_by";
     const rows = await sbSelect("games_adjust_requests",
-      `select=id,student_id,kind,remaining_delta,reason,played_at,status,created_at,decided_at`
-      + `&trainer_id=eq.${req.staff.id}&order=created_at.desc,id.desc&limit=30`);
+      owner
+        ? `${cols},remaining_before,remaining_after,reverted_at&order=created_at.desc,id.desc&limit=50`
+        : `${cols},remaining_before,remaining_after,reverted_at&trainer_id=eq.${req.staff.id}&order=created_at.desc,id.desc&limit=30`)
+      .catch(() => sbSelect("games_adjust_requests",       // §50 미실행 배포 — 새 칸 없이
+        owner ? `${cols}&order=created_at.desc,id.desc&limit=50`
+              : `${cols}&trainer_id=eq.${req.staff.id}&order=created_at.desc,id.desc&limit=30`));
     const ids = [...new Set(rows.map((r) => r.student_id))];
     const names = {};
     if (ids.length) (await sbSelect("students", `select=id,name&id=in.(${ids.join(",")})`)).forEach((s) => { names[s.id] = s.name; });
+    const staffNames = {};
+    if (owner) (await sbSelect("staff", "select=id,name")).forEach((s) => { staffNames[s.id] = s.name; });
     sendTrainer(res, {
       requests: rows.map((r) => ({
         requestId: opaqueId("adjreq", r.id),
         student: { id: opaqueId("student", r.student_id), displayName: names[r.student_id] || null },
+        ...(owner ? { trainer: { trainerKey: opaqueId("trainer", r.trainer_id), trainerName: staffNames[r.trainer_id] || "미배정" } } : {}),
         kind: r.kind, remainingDelta: Number(r.remaining_delta), reason: r.reason,
-        playedAt: r.played_at, status: r.status, createdAt: r.created_at, decidedAt: r.decided_at || null,
+        playedAt: r.played_at, status: adjStatusOf(r),
+        mode: r.decided_by === "direct" ? "direct" : "approval",
+        remainingBefore: r.remaining_before ?? null, remainingAfter: r.remaining_after ?? null,
+        revertibleUntil: revertibleUntil(r), revertedAt: r.reverted_at || null,
+        createdAt: r.created_at, decidedAt: r.decided_at || null,
       })),
     });
   }));
+
+  // ════════════════ POST /adjustments/:id/revert — 되돌리기(§9.18 · 원장 승인 불필요) ════════════════
+  //   내가 바로 반영한 조정 · 24시간 안 · 잠긴 달 아님. 원장은 누구 것이든 · 창 없음. 반대 행을 넣는다(§50 함수).
+  app.post(`${TRAINER}/adjustments/:id/revert`, rateLimit("trainerAdjust", 20, 60_000), bodyOnly([]), requireTrainer,
+    wrap(async (req, res) => {
+      const id = readOpaqueId("adjreq", req.params.id);
+      if (id == null) return fail(res, 400, "invalid_body");
+      const owner = req.staff.role === "owner";
+      const cur = (await sbSelect("games_adjust_requests",
+        `select=id,student_id,trainer_id,played_at,status,decided_by,remaining_delta,kind,owner_notified&id=eq.${id}`
+        + (owner ? "" : `&trainer_id=eq.${req.staff.id}`) + "&limit=1"))[0];
+      if (!cur) return fail(res, 404, "not_found");
+      if (!owner) {
+        const locked = await periodLocked(cur.played_at);
+        if (locked) return failWith(res, 409, "period_locked", { period: locked });
+      }
+      const out = await sbRpc("revert_games_adjustment",
+        { p_request_id: id, p_trainer_id: owner ? null : req.staff.id, p_by: `staff:${req.staff.id}` });
+      if (out?.error) {
+        const known = ["not_found", "already_reverted", "not_revertible", "revert_window_passed"];
+        const code = known.includes(out.error) ? out.error : "not_revertible";
+        return fail(res, code === "not_found" ? 404 : 409, code);
+      }
+      onGamesChanged([cur.student_id]);
+      // + 조정이 오너에게 알려졌었다면 되돌림도 알린다(같은 건이 두 번 궁금하지 않게)
+      if (cur.owner_notified && Number(cur.remaining_delta) > 0 && !owner) {
+        try {
+          const nm = (await sbSelect("students", `select=name&id=eq.${cur.student_id}&limit=1`))[0]?.name || `#${cur.student_id}`;
+          await ownerAlert({ type: "revert", id, kindLabel: ADJ_LABEL[cur.kind], remainingDelta: Number(cur.remaining_delta),
+            playedAt: cur.played_at, studentId: cur.student_id, studentName: nm, trainerName: req.staff.name,
+            remainingAfter: out.remainingAfter });
+        } catch (e) { console.error("adjust_revert_alert", e?.message); }
+      }
+      sendTrainer(res, { status: "reverted", remainingAfter: out.remainingAfter ?? null });
+    }));
 
   // ════════════════ DELETE /adjustments/:id — 대기 중인 내 요청 취소 ════════════════
   app.delete(`${TRAINER}/adjustments/:id`, rateLimit("trainerAdjust", 20, 60_000), requireTrainer, wrap(async (req, res) => {
@@ -282,4 +417,5 @@ module.exports = function mountTrainerLessons(app, deps) {
   }));
 };
 
-module.exports._test = { parseLessonBody, parseAdjustBody, sourceOf, addDays, isRealDate, ADJ_LABEL };
+module.exports._test = { parseLessonBody, parseAdjustBody, sourceOf, addDays, isRealDate, ADJ_LABEL,
+  isDirect, adjStatusOf, revertibleUntil, ADJ_DIRECT_MAX };
