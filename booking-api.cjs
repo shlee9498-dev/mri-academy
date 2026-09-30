@@ -30,6 +30,10 @@ const MAX_SLOTS_PER_OPEN = 48;       // 슬롯 열기 1회당 최대 칸 수(= 2
 // 여기 값은 /availability 가 「누르면 409 날 칸」을 애초에 안 내려주게 맞추는 용도다.
 // ⚠️ 두 곳이 갈라지면 화면과 서버가 어긋난다(보이는 칸을 눌렀는데 booking_closed).
 const BOOK_LEAD_MIN = 180;
+// 「완료」가 받는 판수 범위(§42 · 계약 §9.1). 1판 미만은 기록할 것이 없고, 50판은 하루 수업의
+// 현실 상한이다 — 오타(7 대신 70)가 정산까지 흘러가지 않게 막는 게 목적이다.
+const GAMES_MIN = 1, GAMES_MAX = 50;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // 트레이너 슬롯 목록의 과거 조회 창. 종전 1일이었는데 그러면 pending_review(48시간 경과)가
 // **창 밖으로 떨어져 「확인 필요」가 영영 안 보였다** — #298 의 결함이다. 등록 누락 감지도
 // 지난 수업을 봐야 성립하므로 2주로 넓힌다.
@@ -40,10 +44,13 @@ const MY_TRAINER_WINDOW_DAYS = 90;
 const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
 
 module.exports = function mountBookingApi(app, deps) {
-  const { sbSelect, sbPatch, sbRpc, limit, discordDM, portal, trainer } = deps;
+  const { sbSelect, sbRpc, limit, discordDM, portal, trainer } = deps;
   const { readSession, opaqueId, readOpaqueId, fail, scrub } = portal;
   // 트레이너 판정(포털 세션 또는 사이트 JWT → staff 명부)과 응답 가드(scrubTrainer)는 trainer-portal.cjs 한 곳이 정본이다.
   const { requireTrainer: requireTrainerBase, sendTrainer } = trainer;
+  // 「대신 넣기」의 범위 판정(계약 §9.4 · 범위 규칙 §3)도 trainer-portal 의 것을 그대로 쓴다 —
+  // 담당 + 최근 90일 진행 수강생. 여기서 따로 세면 로스터에 보이는 사람과 넣을 수 있는 사람이 갈린다.
+  const { scopedStudents } = trainer;
   // 429 도 부록 A 한 형태(rate_limited). 키·창은 server.js limit() 그대로.
   const rateLimit = (name, max, windowMs) =>
     limit(name, max, windowMs, (res) => fail(res, 429, "rate_limited"));
@@ -113,6 +120,9 @@ module.exports = function mountBookingApi(app, deps) {
     // 「완료」가 아무것도 하지 않은 경우(§37 · 2026-09-28). 성공으로 답하면 판수가 안 들어갔는데
     // 들어간 것처럼 보인다 — 둘을 갈라 앱이 문구를 나눌 수 있게 한다.
     already_recorded: 409, registration_missing: 409,
+    // 그룹 「완료」에 판수가 없다(§42). 예약은 닫히지 않았다 — 앱이 판수 입력칸을 띄우고 다시 보낸다.
+    // invalid_body 와 코드를 가른다: 이건 「고쳐서 다시」가 정답인 상태라 화면이 할 일이 다르다.
+    games_required: 400,
   };
   const rpcFail = (res, code) => fail(res, STATUS[code] || 400, code);
 
@@ -184,6 +194,9 @@ module.exports = function mountBookingApi(app, deps) {
         slotMinutes: SLOT_MIN,
         lessonType: s.lesson_type,
         trainerDisplayName: nameOf[s.trainer_id] || "미배정",
+        // /summary 의 remainingByTrainer[].trainerId 와 **같은 값**이다(같은 불투명 id).
+        // 앱은 이 값으로 「이 칸을 예약할 판수가 있나」를 찾는다 — 이름으로 맞추면 동명이인에서 섞인다.
+        trainerId: opaqueId("trainer", s.trainer_id),
         // 담당이거나 최근 90일에 수업한 트레이너면 true. 예약 자체는 false 여도 허용된다(안내용).
         isMyTrainer: myTrainers.has(s.trainer_id),
         // 이 칸이 실제로 차지하는 길이. 개인은 항상 30(긴 수업은 칸 여러 개), 그룹·레벨
@@ -248,12 +261,19 @@ module.exports = function mountBookingApi(app, deps) {
   // ⚠️ 겹침 판정이 코드에서 DB 함수로 옮겨졌다. 길이가 생기면 유니크 인덱스로는 못 막는다 —
   //    11:00 90분 그룹과 11:30 30분 개인은 slot_start 가 달라 uq_trainer_slots_live 를 둘 다
   //    통과한다. §40 open_trainer_slots 가 트레이너 단위 advisory 잠금 안에서 범위 겹침을 본다.
+  //
+  // 매주 반복(계약 §9.4) — repeat: { weeks: 2~12 } 또는 { until: "YYYY-MM-DD" (최대 +12주) }.
+  //   같은 요일·같은 시각으로 주마다 open_trainer_slots 를 **한 번씩** 부른다. 주마다 따로라서
+  //   겹치는 주만 건너뛰고 나머지는 만든다(계약: 「겹치는 주는 건너뛰고 응답에 알린다」).
+  //   한 트랜잭션으로 묶지 않은 게 의도다 — 한 주가 겹쳤다고 12주 전체를 실패시키면 트레이너가
+  //   겹치는 주를 찾아 빼고 다시 보내야 한다. 예약은 복제하지 않는다 — 칸만 만든다.
   app.post(`${TRAINER}/slots`, rateLimit("trainerSlots", 20, 60_000),
-    bodyOnly(["startAt", "endAt", "durationMin", "lessonType", "capacity"]), requireTrainer,
+    bodyOnly(["startAt", "endAt", "durationMin", "lessonType", "capacity", "repeat"]), requireTrainer,
     wrap(async (req, res) => {
       const { startAt, endAt, lessonType } = req.body || {};
       const durationMin = req.body?.durationMin;
       const capacity = req.body?.capacity ?? 1;
+      const repeat = req.body?.repeat;
       if (!["personal", "spectate", "participate", "consult"].includes(lessonType))
         return fail(res, 400, "invalid_body");
       if (!Number.isInteger(capacity) || capacity < 1 || capacity > 8)
@@ -279,17 +299,114 @@ module.exports = function mountBookingApi(app, deps) {
       if (lessonType === "personal" && span / SLOT_MIN > MAX_SLOTS_PER_OPEN)
         return fail(res, 400, "invalid_body");
 
+      const weeks = repeatWeeks(repeat, t0);
+      if (weeks === null) return fail(res, 400, "invalid_body");
+
       // 정원 강제(개인·상담 = 1)와 겹침 판정은 전부 함수 안이다 — 여기서 세고 여기서 넣으면
       // 두 요청이 같이 통과한다(파일 머리 "동시성" 주석과 같은 이유).
-      const out = await sbRpc("open_trainer_slots", {
-        p_trainer_id: req.staff.id, p_start: new Date(t0).toISOString(),
+      const open = (startMs) => sbRpc("open_trainer_slots", {
+        p_trainer_id: req.staff.id, p_start: new Date(startMs).toISOString(),
         p_span_min: span, p_lesson_type: lessonType, p_capacity: capacity,
       });
-      if (out?.error) return rpcFail(res, out.error);
+
+      if (weeks === 1) {
+        const out = await open(t0);
+        if (out?.error) return rpcFail(res, out.error);
+        return sendTrainer(res, {
+          created: out.created,
+          firstId: opaqueId("slot", out.firstId ?? 0),
+          durationMin: out.durationMin,
+        });
+      }
+
+      // 반복 — 차례대로 한 주씩. 겹친 주(slot_taken)만 건너뛰고, 그 밖의 오류는 거기서 멈춘다
+      // (첫 주의 invalid_body 같은 건 뒤 주도 똑같이 실패하므로 계속 돌릴 이유가 없다).
+      let created = 0, firstId = null, dMin = null;
+      const skipped = [];
+      for (let w = 0; w < weeks; w++) {
+        const startMs = t0 + w * 7 * 86400_000;
+        const out = await open(startMs);
+        if (out?.error === "slot_taken") { skipped.push(kstDate(new Date(startMs).toISOString())); continue; }
+        if (out?.error) {
+          if (!created) return rpcFail(res, out.error);
+          break;
+        }
+        created += out.created;
+        firstId = firstId ?? out.firstId;
+        dMin = out.durationMin;
+      }
+      // 전부 겹쳐 하나도 못 만들었으면 성공이 아니다 — 단건과 같은 409 로 답한다.
+      if (!created) return fail(res, 409, "slot_taken");
       sendTrainer(res, {
-        created: out.created,
-        firstId: opaqueId("slot", out.firstId ?? 0),
-        durationMin: out.durationMin,
+        created, skipped,
+        firstId: opaqueId("slot", firstId ?? 0),
+        durationMin: dMin,
+      });
+    }));
+
+  // repeat 해석 — 없으면 1주(반복 없음). 형식이 틀리면 null(→ 400).
+  //   { weeks: 2~12 } · { until: "YYYY-MM-DD" } 중 하나만. **어느 쪽이든 2~12회**다.
+  //   until 은 그 날짜까지 포함(시작일 + 7k ≤ until)이라 시작일 +7일 ~ +77일(11주 뒤)을 받는다.
+  //   +84일을 받으면 13회가 돼 weeks 상한(12)과 갈린다 — 두 형식의 상한을 맞춘다.
+  function repeatWeeks(repeat, t0) {
+    if (repeat === undefined || repeat === null) return 1;
+    if (typeof repeat !== "object" || Array.isArray(repeat)) return null;
+    const keys = Object.keys(repeat);
+    if (keys.length !== 1) return null;                       // 둘 다 오거나 엉뚱한 키
+    if (keys[0] === "weeks") {
+      const w = repeat.weeks;
+      return Number.isInteger(w) && w >= 2 && w <= 12 ? w : null;
+    }
+    if (keys[0] === "until") {
+      const u = repeat.until;
+      if (!(typeof u === "string" && DATE_RE.test(u))) return null;
+      const startDay = kstDate(new Date(t0).toISOString());
+      const days = Math.round((Date.parse(`${u}T00:00:00Z`) - Date.parse(`${startDay}T00:00:00Z`)) / 86400_000);
+      if (!(days >= 7 && days <= 77)) return null;            // 2회 이상 · 12회 이하
+      return Math.floor(days / 7) + 1;
+    }
+    return null;
+  }
+
+  // POST /slots/:id/bookings — { studentId, durationMin? } 트레이너가 수강생 대신 예약을 넣는다(계약 §9.4).
+  //   수강생 본인 예약과 **같은 함수**(book_slot)를 탄다 — 선차감 · 3시간 마감 · 정원 · 잔여 게이트가
+  //   전부 같다. 트레이너가 넣었다고 규칙이 느슨해지면 앱에서 막힌 예약을 트레이너 경로로 우회하게 된다.
+  //   잔여 부족은 **여기서는 막는다**(「완료」와 반대) — 아직 안 한 수업이라 막아도 기록이 사라지지 않는다.
+  //   범위: 내 칸 + 내 수강생(로스터와 같은 scopedStudents — 담당 + 최근 90일 진행).
+  //   ⚠️ 레벨 테스트 신규(prospect)는 로스터 범위 밖이라 여기로 못 넣는다 — 본인이 앱에서 잡는다.
+  app.post(`${TRAINER}/slots/:id/bookings`, rateLimit("trainerAssign", 20, 60_000),
+    bodyOnly(["studentId", "durationMin"]), requireTrainer, wrap(async (req, res) => {
+      const slotId = readOpaqueId("slot", req.params.id);
+      const studentId = readOpaqueId("student", req.body?.studentId);
+      if (slotId == null || studentId == null) return fail(res, 400, "invalid_body");
+      const d = req.body?.durationMin;
+      if (d !== undefined && !DURATION_MIN.includes(d)) return fail(res, 400, "invalid_body");
+
+      const [slot] = await sbSelect("trainer_slots", `select=id,trainer_id&id=eq.${slotId}`);
+      if (!slot) return fail(res, 404, "slot_not_found");
+      if (slot.trainer_id !== req.staff.id) return fail(res, 403, "scope_denied");
+      const scope = await scopedStudents(req.staff.id);
+      if (!scope.has(studentId)) return fail(res, 403, "scope_denied");
+
+      // 개인은 durationMin 이 있어야 한다(선차감 판수가 길이로 정해진다). 그룹·상담에 오면 book_slot 이
+      // invalid_body 로 돌려보낸다 — 판정을 여기서 한 번 더 하지 않는다.
+      const out = await sbRpc("book_slot", {
+        p_student_id: studentId, p_slot_id: slotId, p_duration_min: d ?? null,
+      });
+      if (out?.error) return rpcFail(res, out.error);
+
+      // 넣은 뒤 **내 판수 기준** 잔여(§41). §41 미실행 배포면 null — 예약 자체는 끝났다.
+      let remainingAfter = null;
+      try {
+        const r = await sbRpc("portal_remaining_for_trainer", { p_student_id: studentId, p_trainer_id: req.staff.id });
+        remainingAfter = Number.isFinite(Number(r)) ? Number(r) : null;
+      } catch { /* §41 미실행 */ }
+
+      notifyAssigned(slotId, studentId, out.gamesHeld, req.staff.name).catch(() => {});
+      sendTrainer(res, {
+        bookingId: opaqueId("booking", out.bookingId),
+        gamesHeld: Number(out.gamesHeld || 0),
+        remainingAfter,
       });
     }));
 
@@ -392,22 +509,43 @@ module.exports = function mountBookingApi(app, deps) {
   //
   //   성공(200)은 **실제로 뭔가 한 경우만**이다 — outcome 으로 앱이 문구를 가른다:
   //     recorded        판수까지 기록했다            → 「수업을 기록했어요 · N판」
-  //     closed_no_games 그룹·상담이라 상태만 닫았다   → 「판수는 /수업등록 으로 남겨주세요」
+  //     closed_no_games 상담(레벨 테스트)이라 상태만 닫았다 → 「레벨 테스트를 마쳤어요」
+  //                     (§42 부터 **상담만** 이리 온다 — 그룹은 판수 없이 오면 games_required)
   //
   //   아무것도 하지 않은 경우는 **409 로 떨어뜨린다.** 앱이 아직 outcome 을 안 보기 때문에
   //   resolved:true 로 답하면 판수가 안 들어갔는데 「완료됐다」로 보인다 — 그게 이 PR 이 막으려는
   //   바로 그 사고다. 종전에도 이미 닫힌 예약은 404 였으니 오류로 답하는 쪽이 앱에 안전하다.
   //     already_recorded     그날 기록이 이미 있다(두 번 빠지지 않게 막았다)
-  //     registration_missing 예약은 닫혀 있는데 판수 기록이 **없다** → /수업등록 이 필요하다
+  //     registration_missing 예약은 닫혀 있는데 판수 기록이 **없다** → 10/1 부터는 오너가 넣는다
+  //                          (/수업등록 은 잠긴다 · 계약 §9.7)
   //   registration_missing 은 GET /slots 의 「등록 누락?」 배지와 같은 조건이다(이름을 맞췄다).
+  //
+  //   ⚠️ 10/1 부터 body 가 생긴다(§42 · 계약 §9.1) — { games?, playedAt? }.
+  //     games    실제 진행 판수. 수업 종류마다 다르다.
+  //              · 그룹 **필수** — `/수업등록` 이 잠기면 여기 말고 들어올 데가 없다. 없으면
+  //                400 games_required 이고 **예약은 닫히지 않는다**(판수 넣고 다시 누르면 된다).
+  //              · 개인 선택 — 생략하면 종전대로 선차감분(5·8·10).
+  //              · 상담(레벨 테스트) **받지 않는다** — 보내면 400. 판수를 쓰는 수업이 아니다.
+  //     playedAt 실제 수업 날짜. 자정을 넘겨 진행한 경우다. 슬롯 날짜 ±1일까지.
+  //   잔여가 모자라도 **막지 않는다** — 수업은 이미 끝났고 기록이 먼저다. 막으면 판수가
+  //   영영 안 빠진다. 대신 remainingWasShort 로 알리고 화면이 기록 **성공 뒤에** 안내한다.
   app.post(`${TRAINER}/bookings/:id/complete`, rateLimit("trainerResolve", 60, 60_000),
-    bodyOnly([]), requireTrainer, wrap(async (req, res) => {
+    bodyOnly(["games", "playedAt"]), requireTrainer, wrap(async (req, res) => {
       const bookingId = readOpaqueId("booking", req.params.id);
       if (bookingId == null) return fail(res, 400, "invalid_body");
+      const games = req.body?.games, playedAt = req.body?.playedAt;
+      if (games !== undefined
+        && (!Number.isInteger(games) || games < GAMES_MIN || games > GAMES_MAX))
+        return fail(res, 400, "invalid_body");
+      // 날짜 **형식**만 여기서 본다. 슬롯 날짜 ±1일 판정은 §42 함수가 한다 — 슬롯 시각을
+      // 아는 쪽이 거기라서, 여기서 또 재면 두 곳이 갈라진다.
+      if (playedAt !== undefined && !(typeof playedAt === "string" && DATE_RE.test(playedAt)))
+        return fail(res, 400, "invalid_body");
       // §37 미실행 배포에서는 PostgREST 가 404 를 주고 sbRpc 가 throw 한다 — wrap 이 500 으로
       // 감싼다. 조용히 「완료됨」으로 답하지 않는다.
       const out = await sbRpc("record_lesson_from_booking", {
         p_trainer_id: req.staff.id, p_booking_id: bookingId,
+        p_games: games ?? null, p_played_at: playedAt ?? null,
       });
       if (out?.error) return rpcFail(res, out.error);
       if (out?.already) {
@@ -420,6 +558,9 @@ module.exports = function mountBookingApi(app, deps) {
         outcome: out?.recorded ? "recorded" : "closed_no_games",
         games: Number(out?.games || 0),
         playedAt: out?.playedAt || null,
+        // 기록 뒤 **그 트레이너 기준** 잔여(§41). 음수일 수 있다 — 막지 않았다는 뜻이다.
+        remainingAfter: out?.remainingAfter ?? null,
+        remainingWasShort: out?.remainingWasShort === true,
       });
     }));
 
@@ -452,36 +593,21 @@ module.exports = function mountBookingApi(app, deps) {
   //   이미 cancelled 로 닫혔고 예약자에게 취소 DM 이 나갔으므로, 되살리면 「취소됐다더니 다시 잡혀 있는」
   //   예약이 된다. 되살린 칸은 빈 칸이고 수강생이 다시 잡는다(DM 없음).
   //   지난 칸은 거부한다 — book_slot 도 slot_start <= now() 를 slot_taken 으로 거절하므로 열어도 못 잡는다.
-  //   DB 함수 없이 PATCH 필터(id·trainer_id·status=cancelled)로 원자성을 얻는다 — 경합하면 한쪽만 0행을 받는다.
-  //   §36 이후: 취소 칸이 새 칸을 막지 않으므로, 되살리려는 시각에 산 칸이 이미 있으면 409 slot_taken.
+  //   §36 이후: 취소 칸이 새 칸을 막지 않으므로, 되살리려는 시간에 산 칸이 이미 있으면 409 slot_taken.
   //   종류·범위를 바꿔 열려면 「다시 열기」가 아니라 그냥 새로 열면 된다(그게 §36 의 목적이다).
+  //
+  //   ⚠️ 판정 전부를 §43 reopen_trainer_slot 으로 옮겼다(2026-09-29). 종전에는 **같은 시작 시각**만
+  //      봤는데 §40 으로 칸에 길이가 생기면서 구멍이 났다 — 11:30 개인 칸을 되살릴 때 11:00 에
+  //      시작하는 90분 그룹 칸이 살아 있어도 둘 다 열렸다. 함수가 §40 open_trainer_slots 와 같은
+  //      트레이너 잠금 안에서 **범위 겹침**을 보므로, 칸 열기와 되살리기가 서로 끼어들지 못한다.
   //   ⚠️ 알려진 한계: slot_bookings 의 unique(slot_id, student_id) 가 취소된 예약 행에도 걸려, 취소당했던
   //   수강생 본인이 같은 칸을 다시 잡으면 slot_taken 이다(수강생 취소 후 재예약과 같은 기존 제약 · DDL 로만 풀린다).
   app.post(`${TRAINER}/slots/:id/reopen`, rateLimit("trainerReopen", 60, 60_000), bodyOnly([]), requireTrainer,
     wrap(async (req, res) => {
       const slotId = readOpaqueId("slot", req.params.id);
       if (slotId == null) return fail(res, 400, "invalid_body");
-      const [slot] = await sbSelect("trainer_slots", `select=id,trainer_id,status,slot_start&id=eq.${slotId}`);
-      if (!slot) return rpcFail(res, "not_found");
-      if (Number(slot.trainer_id) !== Number(req.staff.id)) return rpcFail(res, "scope_denied");
-      if (slot.status !== "cancelled") return rpcFail(res, "slot_not_cancelled");   // open·closed 둘 다
-      if (Date.parse(slot.slot_start) <= Date.now()) return rpcFail(res, "slot_in_past");
-      // §36 이후 같은 시각에 산 칸(open·closed)이 새로 열려 있을 수 있다. 예전에는 무조건 유니크라
-      // 이 상황이 불가능했지만, 이제 취소 칸은 새 칸을 막지 않으므로 되살리려는 순간 겹친다.
-      // 먼저 보고(409), 읽기와 PATCH 사이 경합은 제약 위반을 잡아 같은 409 로 바꾼다.
-      const live = await sbSelect("trainer_slots",
-        `select=id&trainer_id=eq.${req.staff.id}&slot_start=eq.${encodeURIComponent(slot.slot_start)}`
-        + `&status=neq.cancelled&limit=1`);
-      if (live.length) return fail(res, 409, "slot_taken");
-      let rows;
-      try {
-        rows = await sbPatch("trainer_slots",
-          `id=eq.${slotId}&trainer_id=eq.${req.staff.id}&status=eq.cancelled`, { status: "open" });
-      } catch (e) {
-        if (String(e?.body || "").includes("duplicate key")) return fail(res, 409, "slot_taken");
-        throw e;
-      }
-      if (!Array.isArray(rows) || !rows.length) return rpcFail(res, "slot_not_cancelled");   // 읽기와 PATCH 사이에 상태가 바뀜
+      const out = await sbRpc("reopen_trainer_slot", { p_trainer_id: req.staff.id, p_slot_id: slotId });
+      if (out?.error) return rpcFail(res, out.error);   // not_found · scope_denied · slot_not_cancelled · slot_in_past · slot_taken
       sendTrainer(res, { reopened: true });
     }));
 
@@ -523,6 +649,19 @@ module.exports = function mountBookingApi(app, deps) {
     if (p.owner)
       await discordDM(p.owner.discord_id,
         `📅 담당 수강생 예약 — ${when} · ${type} · ${p.stu?.name || "?"} → 진행 ${p.tr?.name || "?"}`);
+  }
+
+  // 트레이너가 대신 넣은 예약 — 수강생에게 한 통(계약 §9.6 「배정됨」). 본인이 누른 예약이 아니라
+  // 누가 잡았는지를 첫 문장에 쓴다. 차감 문장은 notifyBooking 과 같은 문장이다(ui-copy §2 돈 문구 절제).
+  async function notifyAssigned(slotId, studentId, gamesHeld, trainerName) {
+    const p = await slotAndPeople(slotId, studentId);
+    if (!p) return;
+    const when = fmt(p.slot.slot_start), type = TYPE_LABEL[p.slot.lesson_type] || p.slot.lesson_type;
+    const held = p.slot.lesson_type === "consult" ? "판수 차감은 없어요. 상담료는 별도예요."
+      : gamesHeld > 0 ? `${gamesHeld}판이 먼저 차감되고, 수업 기록이 등록되면 맞춰져요.`
+      : "판수는 수업 후에 차감돼요.";
+    await discordDM(p.stu?.discord_id,
+      `${trainerName || p.tr?.name || "담당"} 트레이너가 예약을 잡아 줬어요 📅 ${when} ${type}\n${held}`);
   }
 
   async function notifyCancelByStudent(bookingId, studentId, restored) {

@@ -141,9 +141,14 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | 응답 | `outcome` / 코드 | 무슨 일이 일어났나 | 앱 문구 |
 |---|---|---|---|
 | 200 | `recorded` | 예약을 닫고 **판수 `games` 판을 기록했다** | 「수업을 기록했어요 · {games}판」 |
-| 200 | `closed_no_games` | 그룹·상담이라 예약에 판수가 없다 | 「수업을 닫았어요 · 판수는 `/수업등록` 으로 남겨주세요」 |
+| 200 | `closed_no_games` | 상담(레벨 테스트)이라 판수가 없다 — §42 부터 **상담만** 여기로 온다 | 「레벨 테스트를 마쳤어요」 |
+| 400 | `games_required` | **그룹인데 판수가 없다.** 예약은 **닫히지 않았다** (§42) | 판수 입력칸을 띄우고 다시 보낸다 |
 | 409 | `already_recorded` | 그날 기록이 이미 있다(두 번 빠지지 않게 막았다) | 「이미 기록된 수업이에요」 |
-| 409 | `registration_missing` | 예약은 닫혀 있는데 **판수 기록이 없다** | 「이 예약은 닫혀 있는데 판수 기록이 없어요 · 봇 `/수업등록` 으로 남겨주세요」 |
+| 409 | `registration_missing` | 예약은 닫혀 있는데 **판수 기록이 없다** | 「이 예약은 닫혀 있는데 판수 기록이 없어요 · 오너에게 알려 주세요」 |
+
+⚠️ **10/1 부터 이 표의 문구가 바뀐다**(계약 §9.7 잠금). 종전 문구는 「`/수업등록` 으로 남겨주세요」였는데,
+그 명령은 10/1 부터 트레이너에게 잠긴다 — 그대로 두면 막다른 안내가 된다. 판수 기록이 빈 예약은
+이제 **오너**가 넣는다.
 
 ⚠️ **`registration_missing` 을 「이미 기록된 수업이에요」로 묶지 마세요.** 판수가 실제로 비어 있는 상태라, 그렇게 보이면 트레이너가 `/수업등록` 을 건너뛰어 판수가 영영 안 빠진다(실측 2026-09-28: 그런 예약 1건이 있었다 — 사람이 콘솔에서 상태만 바꾼 흔적으로, 머리 행은 `done` 인데 꼬리 칸은 `booked` 로 남아 어느 코드 경로도 만들 수 없는 짝이었다). 이름은 `GET /slots` 의 「등록 누락?」 배지(`registrationMissing`)와 **같은 조건**이라 맞췄다.
 
@@ -291,7 +296,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `GET /reviews/recipients` | | `{ recipients:[{ staffId, displayName, isPrimary, lastLessonOn }], defaultStaffId, defaultVisibility }` — 담당 ∪ 최근 90일 수업 트레이너(비활성 제외) · 최근 수업순 · 기본 = 최근 수업 트레이너 → 없으면 담당 · 둘 다 없으면 빈 배열 + null. **`defaultVisibility`**(2026-09-26 계약 보강 B) = 내가 마지막으로 보낸 복기의 범위 `private` · `students` · 보낸 적 없으면 **null**. 보내기에서 범위를 생략했을 때 서버가 쓰는 값과 **같은 함수**로 센다 — 숨긴 복기 · 엑셀 출처(보낼 때 private 강제)도 센다 · 트레이너가 쓴 이관 복기는 세지 않는다 · `group` 은 `private`. 확인창은 이 값을 미리 골라 두고, null 이면 범위를 꼭 고르게 한다(생략하면 400 `visibility_required`) |
 | `POST /reviews` | `{ anchorKind, sessionId?, courseId?, courseSessionId?, source? }` | `{ review: 상세 §8.4, existing }` — `anchorKind` = `lesson`(sessionId) · `course`(courseId+courseSessionId) · `none` · `pending`. 수업·강의 연결이 있고 내 복기가 이미 있으면 새로 만들지 않고 그 복기 + `existing:true` · 그 복기를 숨겼으면 409 `anchor_taken` · 남의 수업·강의 400 `anchor_student_mismatch` · `source` = `app`(기본) · `xlsx`(앱이 엑셀을 파싱해 만들 때) |
 | `GET /reviews/:id` | | `{ review: 상세 §8.4 }` — 내 복기 · 또는 공유 복기(`visibility=students` · 보냄 · 숨김 아님 · 내가 「수강생 전체」 범위 안). 내 복기면 읽음 기록 |
-| `PUT /reviews/:id` | `{ title?, body?, srcFileName?, anchorKind?, sessionId?, courseId?, courseSessionId? }` | `{ review: 요약 §8.3 }` — 내가 쓴 복기만(보낸 뒤에도 수정 가능 → `updatedAt > publishedAt` = 「수정됨」). 제목 60 · 본문 8000 · 파일명 200자 넘으면 400 `review_too_long`. 앵커는 `anchorKind` 와 같이만 · draft 또는 연결 끊김일 때만(아니면 409 `review_not_draft`) · 보낸 복기를 `pending` 으로는 400 `anchor_required` · 이미 복기가 있는 수업이면 409 `anchor_taken` |
+| `PUT /reviews/:id` | `{ title?, body?, srcFileName?, anchorKind?, sessionId?, courseId?, courseSessionId? }` | `{ review: 요약 §8.3 }` — 내가 쓴 복기만(보낸 뒤에도 수정 가능 → `updatedAt > publishedAt` = 「수정됨」). 제목 60 · 본문 8000 · 파일명 200자 넘으면 400 `review_too_long`. 앵커는 `anchorKind` 와 같이만 · draft 또는 연결 끊김일 때 · **보낸 수업 복기는 다른 내 수업(`anchorKind:"lesson"`)으로만**(§8.10 · 2026-09-30) — 그 밖은 409 `review_not_draft` · 보낸 복기를 `pending` 으로는 400 `anchor_required` · 이미 복기가 있는 수업이면 409 `anchor_taken` |
 | `DELETE /reviews/:id` | | 204 — draft = 삭제(사진 파일 먼저) · 보낸 복기 = **숨김**(목록·상세·피드·트레이너 어디에도 안 나옴 · 되살리기·완전 삭제는 오너 SQL) |
 | `POST /reviews/:id/publish` | `{ recipientTrainerId?, visibility? }` | `{ published:true, recipientDisplayName, visibility }` — `pending` 400 `anchor_required`. **범위**: 요청값(`private`·`students` · `group` 은 400 `visibility_invalid`) → 없으면 내가 마지막으로 보낸 복기의 값(= `GET /reviews/recipients` 의 `defaultVisibility`) → 그것도 없으면(첫 보내기) 400 `visibility_required` · 엑셀 출처(`source ≠ app`)는 요청값과 무관하게 `private`. **받는 트레이너**: 수업 = 그 수업 트레이너 · 강의 = 오너 · 자유 기록(또는 연결 끊김) = `recipientTrainerId` 필수(없으면 400 `recipient_required` · 후보 밖 400 `recipient_invalid`). 이미 보낸 복기면 현재 상태를 돌려준다(멱등) |
 | `PUT /reviews/:id/visibility` | `{ visibility }` | `{ visibility, visibilityChangedAt }` — 내 복기(트레이너가 쓴 이관 복기 포함) · 숨김 아님 · 보낸 뒤에도 · 좁히면 즉시 남에게 404 |
@@ -363,6 +368,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `recipientDisplayName` · `visibilityChangedAt` · `srcFileName` | string | **가능** | **내 복기에만** 값(공유 열람은 늘 null) |
 | `createdAt` | string(ISO) | 아니오 | |
 | `readOnly` | boolean | 아니오 | true = 공유 열람 · 트레이너가 쓴 복기 → 편집 라우트는 404 |
+| `anchorChanges[]` | array | 아니오 | 보낸 뒤 연결 수업을 바꾼 기록(§8.10) `{ fromPlayedAt, toPlayedAt, changedAt }` · 오래된 순 · 최근 20건 · `fromPlayedAt` 은 null 가능(연결 끊긴 복기를 다시 이은 경우) · **내 복기에만**(공유 열람 · draft 는 빈 배열) |
 | `games[]` | array | 아니오 | `{ id, ord, seqLabel, map, mapRaw, phases:[{ id, ord, phaseFrom, phaseTo, phaseToEnd, headerRaw, lines:[{ ord, text, kind, suggestedKind }], tags, suggestedTags, images:[이미지] }] }` · ord 순 |
 | `attachments[]` | array | 아니오 | 페이즈에 붙지 않은 사진(이미지 모양 같음) |
 | 이미지 | object | — | `{ id, ord, displayUrl, thumbUrl, originalUrl?, width, height, annotations:[{ authorRole, authorDisplayName, v, shapes, version, mine }] }` · URL 은 **서명 10분**(캐시하지 말고 상세를 다시 부를 때 새 URL) · `originalUrl` 은 **내 복기에만** · **null 가능(PR-2 확정)**: `displayUrl` — 공유 열람인데 표시본이 아직 없을 때(내 복기면 원본 URL 로 대신) · `thumbUrl` — 썸네일이 아직 없을 때(앱은 `displayUrl` 을 쓴다) · `width`·`height` — 서버가 크기를 못 읽었을 때 · `shapes` = **도형 배열**(§8.8) · `v` = 형식 버전(1) · `mine` = 내 레이어 |
@@ -466,7 +472,29 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 
 **시험** — 통합 82항목 추가(합 295 · 로컬 PostgreSQL 16 + PostgREST 12 + trainer-portal · 트레이너 3명: 담당·받는 사람 / 오너 / 담당 없는 활성 트레이너 + 비활성 1명): 게이트·세션(`not_staff` · 수강생 세션 `scope_denied`) · 목록 범위(수신 ∪ 범위 · 초안·숨김 제외 · 오너 · 빈 목록) · 안 읽음 → 상세 열람 = 읽음 · 답 대기(반응으로는 안 풀림 · 답 → 풀림 · 답을 지우면 다시) · 공개 열람자(원본 URL·받는 사람·세션 id 없음 · 반응자 보임 · 답 404) · 숨김은 오너도 404 · 답 검증(comment phaseId 필수 · 다른 복기 페이즈 · 원시 id · overall 에 phaseId · mark·task = 2차 · 4000자 · 빈 본문 · 추가 키 · 깨진 JSON) · 고치기·지우기 권한 · 수강생 쪽(새 답 = 안 읽음 · 상세에 `mine` 없음) · 트레이너 피드(이름 + pubg_name · 커서) · 수강생 피드는 그대로(pubg 만 · `authorPubgName` 없음) · scrubTrainer 503 없음 · **수강생 응답 실명 0**(트레이너 응답은 따로 모은다). 단위 3개 추가(합 44): 트레이너 안 읽음 · 답 본문 모양 · 과제 기한 검사(2차용).
 
+상세의 `anchorChanges[]`(§8.10)는 전체 필드를 보는 트레이너(받는 트레이너 · 범위 · 오너)에게만 값이 있다 — 공개 열람자는 빈 배열.
+
 **트레이너 앱 인계(1차)**: 목록 「답 기다려요」 묶음 = `awaitingReply` · 줄마다 👍 한 번 탭 = `POST …/reactions/👍`(`myReactions` 에 있으면 `DELETE`) · 상세 답 입력은 `canReply` 일 때만(아니면 「답은 받는 트레이너가 해요」) · 페이즈 코멘트 = `comment` + `phaseId` · 총평 = `overall` · 「공개」 탭 = `GET /feed` · 이름 옆 배그 닉 = `*PubgName`(null 이면 이름만).
+
+### 8.10 보낸 복기의 연결 수업 바꾸기 (2026-09-30 · 오너 지시 · §44)
+
+**반장 계약 한 줄**: `PUT /api/student-portal/reviews/:id { anchorKind:"lesson", sessionId }` — 보낸 복기도 된다 · 내 수업만(남의 수업 400 `anchor_student_mismatch` · 이미 복기가 있는 수업 409 `anchor_taken`) · 받는 트레이너는 새 수업 트레이너로 자동 변경 · 답이 달린 뒤면 서버가 답한 트레이너에게 DM · 상세에 `anchorChanges[]` · 응답 = 요약(§8.3 · 새 `playedAt`).
+
+| 항목 | 규칙 |
+|---|---|
+| 누가 | 복기를 쓴 수강생 본인(내가 쓴 · 숨기지 않은 복기 — 아니면 404 `review_not_found`) |
+| 무엇을 | 보낸 **수업** 복기(`anchorKind=lesson`)의 수업만 **다른 내 수업**으로. 수업 → 자유 기록 · 강의로는 안 된다(409 `review_not_draft`) · 강의 복기 · 자유 기록은 보낸 뒤 연결을 못 바꾼다(종전 그대로 · 연결 끊김만 다시 잇기) |
+| 트레이너 답 전 | 자유롭게 바꾼다 · 알림 없음 |
+| 트레이너 답 뒤 | 바꿀 수 있다 · 서버가 **답한 트레이너마다** 디스코드 DM 「📝 연결 수업이 바뀌었어요 — {이름} 복기 {전 날짜} → {후 날짜}」 · 받는 트레이너가 바뀌었으면 「이제 {트레이너} 트레이너가 받아요」 한 줄 더 · DM 실패는 변경을 되돌리지 않는다 |
+| 받는 트레이너 | 새 수업의 트레이너로 바뀐다(보내기 규칙과 같다) — 새 트레이너 목록에 「답 기다려요」로 뜨고, 전 트레이너는 범위(§3) 안이면 계속 읽을 수 있다(답은 못 한다) |
+| 그대로인 것 | 트레이너 답 · 판 · 페이즈 · 사진 · 그리기 · 반응 · 공개 범위 · 보낸 시각 |
+| 바뀌는 것 | 연결 수업(`sessionId` · `playedAt`) · 받는 트레이너 · `updatedAt`(트레이너 목록에 「안 읽음」으로 다시 뜬다) |
+| 변경 기록 | 한 번 바꿀 때마다 `review_anchor_changes` 에 한 줄(전·후 수업 · 날짜 · 받는 트레이너 · 답 유무 · 시각). 바꾸기와 기록은 DB 함수 하나(`relink_review_lesson`)라 **같이 되거나 같이 안 된다**. 오너가 SQL 로 고친 것도 같은 표에 남는다(`changed_by = owner`) |
+| 상세 표시 | `anchorChanges[]` = `{ fromPlayedAt, toPlayedAt, changedAt }`(§8.4) — 작성자 본인 · 전체 필드를 보는 트레이너에게만 |
+| 같은 수업을 다시 보내면 | 아무것도 안 바뀐다(기록 · DM 없음 · 응답은 현재 요약) |
+| draft | 종전 그대로(무엇으로든 바꾼다 · 기록 · DM 없음) |
+
+**앱 쪽(반장)**: 보낸 복기 상세에 「연결 수업 바꾸기」 → 수업 고르기(`GET /sessions` 중 `hasReview=false` 인 내 수업) → 위 `PUT`. 답이 있는 복기(`hasFeedback`)면 확인창에서 「트레이너에게 알림이 가요」를 먼저 보여 준다. 409 `anchor_taken` = 그 수업엔 이미 복기가 있다.
 
 ---
 
@@ -490,13 +518,18 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 
 | 필드 | 필수 | 뜻 |
 |---|---|---|
-| `games` | 그룹·상담 **필수** · 개인 선택 | 실제 진행 판수. 1~50 정수 |
+| `games` | 그룹 **필수** · 개인 선택 · 상담 **보내지 않음** | 실제 진행 판수. 1~50 정수 |
 | `playedAt` | 선택 | 실제 수업 날짜(`YYYY-MM-DD`). 생략하면 슬롯 날짜(KST) |
 
 - **개인**에서 `games` 를 생략하면 **예약이 잡은 판수 그대로**(60·90·120분 = 5·8·10판) — 종전과 같다.
 - **개인**에서 `games` 를 보내면 그 값으로 기록한다. 「1시간 잡았는데 40분만 했다」 같은 경우다.
-- **그룹·상담**은 예약에 판수가 없어(`games_held = 0`) `games` 가 없으면 종전처럼 상태만 닫는다.
-  판수를 넣으면 그 판수로 기록한다 — 이게 10/1 이후 그룹 판수의 **유일한 입구**다.
+- **그룹**은 `games` 가 **필수**다. 이게 10/1 이후 그룹 판수의 **유일한 입구**다.
+  없으면 400 `games_required` 이고 **예약은 닫히지 않는다** — 판수 입력칸을 띄우고 다시 보내면 된다.
+  ⚠️ 판수 없이 닫아 버리면 다시 들어올 길이 없어서 이렇게 막았다(다시 누르면 `registration_missing` ·
+  `/수업등록` 은 잠김). **앱은 그룹 「완료」를 누를 때 판수를 먼저 묻는 게 좋다.**
+- **상담(레벨 테스트)**은 `games` 를 **보내지 않는다** — 보내면 400 `invalid_body`.
+  판수를 쓰는 수업이 아니다. 판수가 없는 신규가 레벨 테스트를 받는데 여기서 기록이 생기면
+  잔여가 음수로 꽂힌다. `games` 없이 보내면 상태만 닫고 `closed_no_games` 로 답한다.
 - `playedAt` 은 슬롯 날짜 **±1일**만 받는다. 자정을 넘겨 진행한 경우를 위한 것이고,
   그보다 먼 날짜는 400 `invalid_body` — 엉뚱한 날에 판수가 꽂히는 사고를 막는다.
 
@@ -511,7 +544,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | 필드 | 뜻 |
 |---|---|
 | `remainingAfter` | 기록 후 **그 트레이너 기준** 남은 판수(9.2). 음수일 수 있다 |
-| `remainingWasShort` | 기록 전 잔여보다 `games` 가 컸으면 `true` |
+| `remainingWasShort` | `remainingAfter < 0` 과 같다 — 이 수업을 덮을 판수가 없었다는 뜻 |
 
 ⚠️ **잔여가 모자라도 막지 않는다.** 수업은 이미 끝났고 기록이 먼저다 — 막으면 판수가 영영 안 빠진다.
 실제로 잔여 음수인 수강생이 지금도 있다(실측 3명). 대신 `remainingWasShort` 로 알리니
@@ -523,20 +556,28 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 
 지금 잔여는 **학생 한 덩어리**다. 두 트레이너를 함께 쓰는 수강생(실측 9명)은 누구 판수인지 구분되지 않는다.
 
-**GET /api/student-portal/summary** — `remaining` 은 **그대로 두고**(합계) 배열을 **추가**한다.
+**GET /api/student-portal/summary** — `lesson.remainingGames` 는 **그대로 두고**(합계)
+최상위에 배열을 **추가**한다.
 
 ```json
-{ "remaining": 32,
+{ "lesson": { "registeredGames": 60, "playedGames": 28, "remainingGames": 32, "status": "ok" },
   "remainingByTrainer": [
-    { "trainerId": "5", "trainerName": "현태", "remaining": 21 },
-    { "trainerId": "2", "trainerName": "준구", "remaining": 11 }
+    { "trainerId": "dHJhaW5lcjo1.xxxxxxxxxxxxxxxx", "trainerName": "현태", "remaining": 21 },
+    { "trainerId": "dHJhaW5lcjoy.yyyyyyyyyyyyyyyy", "trainerName": "준구", "remaining": 11 }
   ] }
 ```
 
-- `remaining` = 배열의 합. **기존 화면은 고치지 않아도 된다.**
+- `lesson.remainingGames` = 배열의 합. **기존 화면은 고치지 않아도 된다.**
 - 배열은 잔여가 **0이 아닌** 트레이너만. 전부 0이면 빈 배열.
-- 정렬: 잔여 내림차순 → `trainerName` 오름차순.
+- 정렬: 잔여 내림차순 → `trainerId` 오름차순.
 - 음수도 그대로 내려간다(초과 사용).
+- `trainerId` 는 **불투명 id** 다(다른 id 들과 같은 방식). **`/availability` 슬롯의
+  `trainerId` 와 글자까지 같은 값**이라 앱이 그대로 맞춰 쓰면 된다 —
+  ⚠️ **이름으로 맞추지 말 것.** 동명이인에서 섞인다.
+- §41 미실행 배포에서는 **빈 배열**이 온다(앱은 합계만 쓰면 된다).
+
+**GET /availability** — 슬롯에 `trainerId` 가 추가된다(위와 같은 값). 종전
+`trainerDisplayName`·`isMyTrainer` 는 그대로다.
 
 **예약 판정이 바뀐다** — `POST /bookings` 의 잔여 검사가 **그 슬롯 트레이너의 잔여**를 본다.
 합계가 충분해도 그 트레이너 판수가 모자라면 409 `insufficient_games` 다.
@@ -545,11 +586,19 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 |---|---|
 | `insufficient_games` | 「{트레이너} 판수가 모자라요 · 남은 판수 {N}판」 |
 
+응답 본문은 부록 A 그대로 `{"error":{"code":"insufficient_games"}}` 뿐이다 — 숫자는 안 실린다.
+앱은 **`remainingByTrainer` 에서 그 칸의 `trainerId` 를 찾아** 문구를 만든다.
+
 ⚠️ **앱은 예약 화면에서 트레이너별 잔여를 보여줘야 한다.** 합계만 보여주면
 「32판 남았는데 왜 안 돼요」가 된다.
 
 **트레이너 포털** — `GET /students` 의 각 수강생에 `remainingMine` 을 더한다(내 판수만).
-기존 `remaining`(합계)은 그대로 둔다.
+기존 `remainingGames`(합계)은 그대로 둔다.
+
+⚠️ **켜는 순간 4명이 예약을 못 하게 된다**(실측 2026-09-28). 총합은 양수인데 한 트레이너에서
+음수인 수강생이다 — 판수는 A 에게 샀는데 수업은 B 와 한 이력이 쌓인 결과다.
+**이관·정정 없이 켜면 그 4명이 10/1 아침에 막힌다.** 오너 판정 대상이고,
+막을지 통과시킬지는 §9.2 를 켜는 것과 별개로 결정한다.
 
 ## 9.3 그룹 한 덩어리 · 레벨 테스트 칸 ✅ **구현 완료 (2026-09-28)**
 
@@ -604,12 +653,18 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 **그룹은 선차감이 없다** — 예약 때 0판, 「완료」에서 트레이너가 판수를 넣을 때 빠진다(9.1).
 그래서 그룹은 잔여가 모자라도 예약된다. 이게 개인과 다른 점이고, 앱 안내도 달라야 한다.
 
-## 9.4 트레이너 대신 넣기 · 매주 반복 **[OK 대기]**
+## 9.4 트레이너 대신 넣기 · 매주 반복 **[OK 대기 · 코드 완료 #409]**
 
-**POST /slots/:id/bookings** (트레이너 포털 · 20회/분) body `{ "studentId": "…" }`
+**POST /slots/:id/bookings** (트레이너 포털 · 20회/분) body `{ "studentId": "…", "durationMin": 60 }`
 → `{ "bookingId": "…", "gamesHeld": 5, "remainingAfter": 16 }`
 
-- **담당 수강생만**(범위 규칙 §3). 남의 수강생은 403 `scope_denied`.
+- `studentId` 는 `GET /students` 의 `id` 그대로(불투명 id).
+- `durationMin` 은 **개인 칸만 필수**(60 · 90 · 120) — 선차감 판수가 길이로 정해진다(5 · 8 · 10판).
+  그룹·상담에 보내면 400 `invalid_body`. *(계약 초안에 없던 칸이다 — 구현하며 추가했다.)*
+- **내 칸 + 내 수강생만**(범위 규칙 §3 · 로스터와 같은 범위). 남의 칸·남의 수강생은 403 `scope_denied`.
+  ⚠️ 레벨 테스트 신규(prospect)는 로스터 밖이라 여기로 못 넣는다 — 본인이 앱에서 잡는다.
+- 수강생 본인 예약과 **같은 함수**(`book_slot`)를 탄다 — 선차감 · 3시간 마감 · 정원 · 잔여 게이트가 전부 같다.
+- `remainingAfter` 는 **내 판수 기준**(§41). §41 미실행 배포면 `null`.
 - 개인 칸은 **선차감**(수강생 본인 예약과 같다) · 그룹은 0판.
 - 잔여 부족이면 409 `insufficient_games` — **여기서는 막는다**(9.1 과 다르다.
   아직 하지 않은 수업이라 막아도 기록이 사라지지 않는다).
@@ -625,8 +680,10 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
   "repeat": { "weeks": 8 } }
 ```
 
-- `repeat.weeks` ∈ 2~12, 또는 `repeat.until` (`YYYY-MM-DD` · 최대 +12주).
-  둘 다 보내면 400 `invalid_body`.
+- `repeat.weeks` ∈ 2~12, 또는 `repeat.until` (`YYYY-MM-DD`). **어느 쪽이든 2~12회**다.
+  `until` 은 그 날짜까지 포함이라 시작일 **+7일 ~ +77일**(11주 뒤)만 받는다 — +84일이면 13회가 돼
+  `weeks` 상한과 갈리므로 막았다. 둘 다 보내면 400 `invalid_body`.
+- 한 주씩 따로 만든다. **겹친 주만 건너뛰고** 나머지는 만든다. 전부 겹치면 409 `slot_taken`.
 - **같은 요일·같은 시각**으로 복제한다. 겹치는 주는 **건너뛰고** 응답에 알린다.
 - **예약은 복제하지 않는다** — 칸만 만든다. 고정 수강생 반복 배정은 10/1 이후다.
 
@@ -635,64 +692,108 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 ⚠️ `skipped` 는 그 날짜에 **살아 있는 칸이 이미 있어서** 건너뛴 것이다(§36 유니크).
 앱은 「3주차는 이미 칸이 있어 건너뛰었어요」로 알려 주면 된다.
 
-## 9.5 입금 신청
+## 9.5 입금 신청 ✅ **구현 완료 (2026-09-28)**
 
-**GET /api/student-portal/pay-info** (60회/분) → 계좌·상품 목록
+수강생이 계좌로 보내고 「입금했어요」를 누르면 `payment_requests` 에 `pending` 한 행이 생기고
+오너에게 **기존 승인 카드가 그대로** 간다(버튼이 `/결제신청` 과 같다). 승인 뒤 본표 편입도
+§18d 트리거가 두 입구를 구분하지 않고 똑같이 한다.
+
+### ⚠️ 금액 키가 `won` 인 이유
+
+수강생 응답은 `scrub()` 를 지나는데 **`amount` · `price` 어간과 `name` 은 던진다**(정산 금액이
+수강생 앱에 새지 않게 두는 방벽). 예외를 늘리면 앱 가드도 같이 고쳐야 하고 방벽이 얇아지므로
+**안 걸리는 이름을 쓴다** — 금액은 `won`, 은행명은 `bank.label` 이다.
+`amount` 로 되돌리면 그 응답 전체가 500 이 된다.
+
+**GET /api/student-portal/pay-info** → 계좌 · 상품 목록
 
 ```json
-{ "bank": { "name": "…", "account": "…", "holder": "…" },
+{ "bank": { "label": "국민은행", "account": "…", "holder": "…" },
   "products": [
-    { "code": "lesson_10", "label": "10판", "amount": 45000, "games": 10 },
-    { "code": "lesson_21", "label": "21판", "amount": 90000, "games": 21 },
-    { "code": "lesson_33", "label": "33판", "amount": 140000, "games": 33 },
-    { "code": "leveltest", "label": "레벨 테스트", "amount": 20000, "games": 0 }
-  ] }
+    { "key": "lesson10",      "label": "10판 패키지",            "won": 45000,  "games": 10 },
+    { "key": "lesson21",      "label": "21판 패키지",            "won": 90000,  "games": 21 },
+    { "key": "lesson33",      "label": "33판 패키지",            "won": 140000, "games": 33 },
+    { "key": "consultCourse", "label": "강의 상담 / 레벨테스트", "won": 20000,  "games": null }
+  ],
+  "depositorHint": "홍길동" }
 ```
 
 - 계좌는 **env** 에서 온다(`PAY_BANK_NAME` · `PAY_BANK_ACCOUNT` · `PAY_BANK_HOLDER`).
-  env 미설정이면 `bank: null` — 앱은 계좌 영역을 숨기고 「계좌는 트레이너에게 물어봐 주세요」.
+  셋 중 하나라도 없으면 **`bank` 키 자체가 없다**(`null` 이 아니다) — 앱은 계좌 영역을 숨기고
+  「계좌는 트레이너에게 물어봐 주세요」. 신청 자체는 그대로 받는다.
 - `products` 는 서버가 정본이다. **앱에 금액을 박지 말 것** — 가격이 바뀌면 앱만 틀린다.
-- 세트 상품은 10/1 레벨 테스트 적용 때 함께 들어온다.
+  값은 `config/payments.js`(결제 트랙 소관) 에서 읽는다. 라벨도 그 파일 것을 그대로 쓴다.
+- 목록에 **판수 3종과 레벨 테스트만** 있다. 승인 시 본표 편입이 **자동인 상품**뿐이다 —
+  강의·세트·직강은 §18d 에서 수동이라 자동 입구를 열면 승인 뒤 아무 일도 안 일어난 것처럼 보인다.
+- `depositorHint` = 명부 이름. 다른 이름으로 보냈으면 화면에서 고쳐 보낸다.
 
 **POST /api/student-portal/payment-requests** (10회/분)
 
 ```json
-{ "trainerId": "5", "productCode": "lesson_21", "depositor": "홍길동", "paidOn": "2026-10-02" }
+{ "productKey": "lesson21", "depositorName": "홍길동" }
 ```
 
-→ `{ "requestId": "…", "status": "pending" }`
+→ `{ "requestId": "…", "status": "pending", "won": 90000, "ownerNotified": true }`
 
-- 기존 `payment_requests` 에 `pending` 으로 들어간다 — **승인 카드·자동 편입은 재사용**한다.
-- `depositor`(입금자명)는 `memo` 에 넣는다(전용 칸이 없다).
-- `paidOn` 생략하면 오늘(KST). 미래 날짜는 400 `invalid_body`.
+- `productKey` 는 위 목록의 `key` 그대로. 목록 밖 값은 400 `invalid_body`.
+- `depositorName` 2~20자. 짧으면 400 `invalid_body`.
+- **금액·판수·트레이너는 앱이 보내지 않는다** — 서버가 상품과 명부에서 정한다.
+  금액을 받으면 화면에서 고쳐 보낼 수 있다.
+- 입금일은 **오늘(KST) 고정**이다. 지난 날짜 입금은 트레이너 `/결제신청` 으로 간다.
+- `depositorName` 은 `memo` 에 들어간다(전용 칸이 없다).
 - 같은 수강생의 `pending` 이 이미 있으면 409 `request_pending`
   — 「이미 확인 중인 입금 신청이 있어요」.
-- 승인되면 결제·등록이 만들어지고 수강생에게 DM 이 간다(9.6).
+- `ownerNotified: false` 면 **신청은 저장됐고 카드만 못 갔다**(봇이 꺼졌거나 DM 실패).
+  앱은 「접수됐어요 · 확인이 늦으면 트레이너에게 알려 주세요」로 가른다. 신청을 막지 않는 이유는
+  막으면 이미 보낸 돈이 어디에도 안 남기 때문이다.
 
-**GET /api/student-portal/payment-requests** (60회/분) → 내 신청 목록(최근 10건)
+**GET /api/student-portal/payment-requests** → 내 신청 목록(최근 20건 · 최신순)
 
 ```json
-{ "requests": [ { "id": "…", "status": "pending", "amount": 90000,
-                  "label": "21판", "trainerName": "현태", "paidOn": "2026-10-02",
-                  "decidedAt": null } ] }
+{ "requests": [ { "requestId": "…", "status": "pending", "won": 90000,
+                  "label": "21판 패키지", "games": 21,
+                  "paidOn": "2026-10-02", "requestedAt": "2026-10-02T01:10:00Z" } ] }
 ```
 
-`status` ∈ `pending` · `approved` · `void`.
+`status` ∈ `pending` · `approved` · `rejected` · `void`.
 
 ## 9.6 최소 알림 DM
 
 서버가 보낸다. 앱은 할 일이 없고, **무엇이 언제 가는지**만 알아 두면 된다.
 
-| 받는 사람 | 언제 |
-|---|---|
-| 트레이너 | 새 예약 · 수강생 취소 · 입금 신청 |
-| 수강생 | 트레이너가 배정함 · 트레이너가 취소함 · 입금 승인됨 |
+| 받는 사람 | 언제 | 상태 |
+|---|---|---|
+| 트레이너 | 새 예약 | ✅ 종전부터 |
+| 트레이너 | 수강생 취소 | ✅ 종전부터 |
+| 트레이너 | 입금 신청 | ✅ 2026-09-29 (#409) |
+| 수강생 | 트레이너가 취소함 | ✅ 종전부터 |
+| 수강생 | 입금 승인됨 · 반려됨 | ✅ 2026-09-29 (#409) |
+| 수강생 | 트레이너가 배정함 | ✅ 2026-09-29 (#409 · §9.4 와 함께 · OK 대기) |
+| 트레이너 | 답한 복기의 연결 수업이 바뀜 | ✅ 2026-09-30 (§8.10 · 답한 트레이너마다 한 통) |
 
 디스코드 연결이 없는 수강생은 DM 이 가지 않는다 — 앱 안 표시로 대체한다(10/1 이후).
 
-## 9.7 10/1 잠금
+**앱 입금 신청의 결과 통보는 수강생에게 간다.** 앱 신청은 `payment_requests.requested_by` 가
+`app:<명부 id>` 이고, 승인 처리가 이걸 보고 트레이너용 반말 통보 대신 **수강생 요체 DM** 을 보낸다.
+판수가 실제로 들어갔을 때(본표 연결 확인)만 「{N}판이 추가됐어요!」라고 하고, 아니면 사실만 말한다.
 
-- `/수업등록` · `/판수정정` — 트레이너가 쓰면 **안내만** 뜬다(「앱의 완료를 써 주세요」).
-  **오너는 계속 쓸 수 있다**(예외 처리용).
+## 9.7 10/1 잠금 ✅ **구현 완료 (2026-09-29 · #409 · §42 와 함께 나간다)**
+
+- **두 단계로 잠근다**(오너 지시 2026-09-29 「반장 그룹 판수 입력 운영 확인 후에만 · 안 되면 개인만 잠금」).
+  날짜로 켜진다 — 배포 시각과 무관하다. **오너는 어느 단계에서든 계속 쓴다**(예외 처리용 · `MRI_OWNER_ID`).
+
+  | 단계 | 날짜 상수(`server.js`) | 잠기는 것 | 그대로 쓰는 것 |
+  |---|---|---|---|
+  | ① 개인만 | `LESSON_LOCK_FROM = "2026-10-01"` | `/수업등록` 개인 1:1 레슨 | 그룹 · 강의 · 진단상담 · `/판수정정` |
+  | ② 전부 | `LESSON_LOCK_ALL_FROM`(지금 `null` = 꺼짐) | `/수업등록` 전부 · `/판수정정` | — |
+
+  ②는 **반장 앱의 그룹 「완료」 판수 입력칸이 운영에 뜬 걸 확인한 뒤** 날짜를 넣는다(코드 한 줄).
+  그 전까지 그룹 판수는 `/수업등록` 으로 들어온다. 개인은 예약이 판수(5·8·10)를 알아서
+  「완료」 한 번이면 끝나므로 앱 화면이 늦어도 막히지 않는다.
+
+  - ① 단계 `/수업등록`(개인) → 「10/1부터 개인 수업 기록은 앱에서 해줘. 예약 카드에서 「완료」를 누르면 판수까지 들어가. 그룹 수업은 당분간 여기서 그대로 하면 돼.」
+  - ② 단계 `/수업등록` → 「10/1부터 수업 기록은 앱에서 해줘. 예약 카드에서 「완료」를 누르고 판수를 넣으면 끝이야. 예약 없이 한 수업은 오너에게 말해줘.」
+  - ② 단계 `/판수정정` → 「10/1부터 판수 정정은 오너가 해. 학생 이름과 고칠 판수, 이유를 오너에게 보내줘.」
+  - ⚠️ **§42 없이 잠금만 나가면 안 된다** — 그래서 같은 PR 이다. 미루려면 날짜만 바꾼다.
 - 피드백 채널 — 이관 완료 후 쓰기 잠금(권한 변경은 오너).
 - `/연결신청` — **유지**한다(앱과 같은 흐름).

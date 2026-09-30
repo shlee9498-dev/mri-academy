@@ -24,7 +24,7 @@ const crypto = require("crypto");
 const OPTIONAL_TABLES = ["lesson_session_titles", "lesson_journals", "journal_feedback"];
 
 module.exports = function mountStudentPortal(app, deps) {
-  const { sbSelect, sbInsert, sbPatch, limit } = deps;
+  const { sbSelect, sbInsert, sbPatch, sbRpc, limit } = deps;
   const PREFIX = "/api/student-portal";
 
   const ready = () =>
@@ -301,16 +301,157 @@ module.exports = function mountStudentPortal(app, deps) {
 
   app.post(`${PREFIX}/logout`, bodyOnly([]), wrap(async (_req, res) => res.status(204).end()));
 
+  // ════════════════ 입금 신청 (10/1 전환 ⑤ · 계약 §9.5) ════════════════
+  // 수강생이 계좌로 보내고 「입금했어요」를 누르면 payment_requests(pending) 한 행이 생기고
+  // 오너에게 **기존 승인 카드가 그대로** 간다(버튼 customId 가 /결제신청 과 같다).
+  // 승인 뒤 본표 편입은 §18d payreq_apply 트리거가 두 입구를 구분하지 않고 똑같이 한다.
+  //
+  // ⚠️ 가격은 여기에 적지 않는다. `config/payments.js` 가 정본이고 **결제 트랙 소관**이라
+  //    읽기만 한다. 숫자를 여기 베끼면 인상할 때 화면마다 다른 값이 보인다(그 파일이 있는 이유).
+  //    ESM 이라 동적 import 로 한 번만 읽어 캐시한다(server.js 는 CJS).
+  //
+  // 앱에서 팔 수 있는 상품만 연다 — 승인 시 **본표 편입이 자동인 것**(판수·상담)뿐이다.
+  // 강의·세트·직강은 §18d 에서 수동이라 자동 입구를 열면 승인 뒤 아무 일도 안 일어난 것처럼 보인다.
+  const PORTAL_PRODUCTS = [
+    { key: "lesson10",      kind: "판수", games: 10 },
+    { key: "lesson21",      kind: "판수", games: 21 },
+    { key: "lesson33",      kind: "판수", games: 33 },
+    { key: "consultCourse", kind: "상담", games: null },   // 레벨 테스트
+  ];
+  let priceBook = null;
+  async function products() {
+    if (priceBook) return priceBook;
+    try {
+      const m = await import("./config/payments.js");
+      priceBook = PORTAL_PRODUCTS
+        .filter((p) => Number.isInteger(m.PRICES?.[p.key]))
+        .map((p) => ({ ...p, label: m.PRODUCT_LABELS?.[p.key] || p.key, amount: m.PRICES[p.key] }));
+    } catch (e) { console.error("payinfo_prices", e?.message); priceBook = []; }
+    return priceBook;
+  }
+
+  // 계좌는 **env 로만** 온다. 코드·저장소에 계좌번호를 두지 않는다(저장소 규칙).
+  // 미설정이면 bank 키 자체가 없다 — 앱은 계좌 안내를 감추고 신청은 그대로 받는다.
+  //
+  // ⚠️ 키 이름이 `label`·`won` 인 이유 — 위 scrub() 가 `name`(정확일치)과 `amount`·`price`(어간)를
+  //    막는다. 정산 금액이 수강생 앱에 새지 않게 두는 방벽이라 예외를 늘리지 않고 **안 걸리는
+  //    이름을 쓴다**(예외를 늘리면 앱 가드도 같이 고쳐야 하고 방벽이 그만큼 얇아진다).
+  //    `amount`·`price` 로 되돌리지 말 것 — 전 응답이 500 으로 떨어진다.
+  function bankInfo() {
+    const label = process.env.PAY_BANK_NAME, account = process.env.PAY_BANK_ACCOUNT,
+          holder = process.env.PAY_BANK_HOLDER;
+    return (label && account && holder) ? { label, account, holder } : null;
+  }
+
+  const kstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+
+  // GET /pay-info — 계좌 · 상품 목록. 신청 전에 화면이 읽는다.
+  app.get(`${PREFIX}/pay-info`, requireStudent, wrap(async (req, res) => {
+    const [list, stu] = await Promise.all([
+      products(),
+      sbSelect("students", `select=name&id=eq.${req.portal.sub}`),
+    ]);
+    const bank = bankInfo();
+    send(res, {
+      ...(bank ? { bank } : {}),
+      products: list.map((p) => ({ key: p.key, label: p.label, won: p.amount, games: p.games })),
+      // 입금자명 기본값 — 명부 이름. 다른 이름으로 보냈으면 화면에서 고쳐 보낸다.
+      depositorHint: stu[0]?.name || null,
+    });
+  }));
+
+  // POST /payment-requests — { productKey, depositorName }
+  app.post(`${PREFIX}/payment-requests`, rateLimit("portalPayreq", 10, 60_000),
+    bodyOnly(["productKey", "depositorName"]), requireStudent, wrap(async (req, res) => {
+      const list = await products();
+      const p = list.find((x) => x.key === req.body?.productKey);
+      if (!p) return fail(res, 400, "invalid_body");
+      const depositor = String(req.body?.depositorName || "").trim().slice(0, 20);
+      if (depositor.length < 2) return fail(res, 400, "invalid_body");
+
+      // 대기 중 신청이 있으면 또 받지 않는다 — 한 번 보내고 두 번 누르면 카드가 두 장 간다.
+      const pending = await sbSelect("payment_requests",
+        `select=id&student_id=eq.${req.portal.sub}&status=eq.pending&limit=1`);
+      if (pending.length) return fail(res, 409, "request_pending");
+
+      const stu = (await sbSelect("students",
+        `select=name,trainer_id,discord_id&id=eq.${req.portal.sub}`))[0];
+      if (!stu) return fail(res, 403, "account_link_pending");
+      let trainerName = "미배정", trainerDiscord = null;
+      if (stu.trainer_id) {
+        const t = await sbSelect("staff", `select=name,discord_id&id=eq.${stu.trainer_id}`);
+        if (t[0]?.name) trainerName = t[0].name;
+        trainerDiscord = t[0]?.discord_id || null;
+      }
+
+      let row;
+      try {
+        row = await sbInsert("payment_requests", {
+          student_id: req.portal.sub, student_name: stu.name,
+          trainer_id: stu.trainer_id ?? null, trainer_name: trainerName,
+          kind: p.kind, amount: p.amount, games: p.games,
+          paid_on: kstToday(),
+          // 입금자명은 memo 로 간다 — 전용 칸을 만들지 않는다(§18 표를 그대로 쓴다).
+          memo: `앱 입금 신청 · 입금자 ${depositor}`,
+          // "app:<명부 id>" = 앱에서 수강생이 낸 신청이라는 표시다. server.js 승인 처리가 이걸 보고
+          // 결과 통보를 **수강생에게 요체로** 보낸다 — 트레이너용 반말 통보가 수강생에게 가지 않게.
+          // (이 칸은 원래 신청 트레이너의 디코 id 다. 그 경로는 그대로다.)
+          requested_by: `app:${req.portal.sub}`,
+        });
+      } catch (e) {
+        console.error("portal_payreq_insert", e?.message);
+        return fail(res, 503, "portal_unavailable");
+      }
+
+      // 카드가 못 가도 신청 행은 남긴다 — 막으면 이미 보낸 돈이 어디에도 안 남는다.
+      const notified = await deps.payreqCard?.(row).catch(() => false);
+      // 담당 트레이너에게도 한 통(계약 §9.6). 운영진 대상이라 반말, 돈 문구라 이모지 없이.
+      // 승인은 오너가 하고 트레이너는 알고만 있으면 된다 — 실패해도 신청은 끝난 것이다.
+      deps.discordDM?.(trainerDiscord,
+        `입금 신청이 들어왔어 — ${stu.name} ${p.label} ${p.amount.toLocaleString("ko-KR")}원, 오너가 통장 확인 중이야`)
+        ?.catch?.(() => {});
+      send(res, {
+        requestId: opaqueId("payreq", row.id),
+        status: "pending",
+        won: p.amount,
+        ownerNotified: notified === true,
+      });
+    }));
+
+  // GET /payment-requests — 내 신청 내역(최근 20건). 「승인 기다리는 중」 화면이 쓴다.
+  app.get(`${PREFIX}/payment-requests`, requireStudent, wrap(async (req, res) => {
+    const [rows, list] = await Promise.all([
+      sbSelect("payment_requests",
+        `select=id,status,kind,amount,games,paid_on,created_at&student_id=eq.${req.portal.sub}`
+        + `&order=id.desc&limit=20`),
+      products(),
+    ]);
+    const labelOf = (kind, games) =>
+      list.find((p) => p.kind === kind && p.games === games)?.label || kind;
+    send(res, {
+      requests: rows.map((r) => ({
+        requestId: opaqueId("payreq", r.id),
+        status: r.status,                 // pending · approved · rejected · void
+        label: labelOf(r.kind, r.games),
+        won: Number(r.amount),
+        games: r.games ?? null,
+        paidOn: r.paid_on,
+        requestedAt: r.created_at,
+      })),
+    });
+  }));
+
   // ── 판수·트레이너 집계 (정본 4.1) ──────────────────────────────
   // 잔여 = carry_games + Σ lesson_enrollments.games_total − Σ lesson_sessions.games
   // 음수는 그대로 둔다. 0 클램프 금지(정본 v0.2.2 B-4).
   async function lessonAggregate(studentId) {
-    const [stu, enrolls, sessions, held] = await Promise.all([
+    const [stu, enrolls, sessions, held, byTrainer] = await Promise.all([
       // pubg_name 도 여기서 같이 읽는다 — 종전에는 /summary 가 같은 행을 한 번 더 읽었다(왕복 1회 낭비).
       sbSelect("students", `select=carry_games,trainer_id,pubg_name&id=eq.${studentId}`),
       sbSelect("lesson_enrollments", `select=games_total&student_id=eq.${studentId}&status=in.(active,done,paused)`),
       sbSelect("lesson_sessions", `select=games,trainer_id,created_at&student_id=eq.${studentId}`),
       heldGames(studentId),
+      remainingByTrainer(studentId),
     ]);
     const carry = Number(stu[0]?.carry_games || 0);
     const registered = carry + enrolls.reduce((a, r) => a + Number(r.games_total || 0), 0);
@@ -320,13 +461,33 @@ module.exports = function mountStudentPortal(app, deps) {
     //    "화면엔 5판 남았는데 예약은 insufficient_games" 같은 어긋남이 난다.
     const remaining = registered - played - held;
     const asOf = sessions.reduce((mx, r) => (r.created_at > mx ? r.created_at : mx), "");
+    // 쪼갠 합이 총합과 달라지면 위 두 식 중 하나가 혼자 움직인 것이다 — 조용히 넘기지 않는다.
+    // 화면은 총합을 그대로 쓰므로 표시가 깨지지는 않고, 로그만 남는다.
+    const split = byTrainer.reduce((a, r) => a + r.remaining, 0);
+    if (byTrainer.length && split !== remaining)
+      console.error("remaining_split_mismatch", studentId, remaining, split);
     return {
-      registered, played, remaining,
+      registered, played, remaining, byTrainer,
       assignedTrainerId: stu[0]?.trainer_id ?? null,
       pubgName: stu[0]?.pubg_name || null,
       activeTrainerIds: [...new Set(sessions.map((r) => r.trainer_id).filter(Boolean))],
       asOf: asOf || new Date(0).toISOString(),
     };
+  }
+
+  // 트레이너별 잔여(§41 · 계약 §9.2). 두 트레이너를 함께 쓰는 수강생(실측 9명)은 합계만
+  // 보여주면 「32판 남았는데 왜 예약이 안 돼요」가 된다 — 예약 판정이 그 칸 트레이너의
+  // 잔여를 보기 때문이다.
+  // ⚠️ 식을 여기 다시 쓰지 않는다. 잔여 공식은 이미 SQL 과 JS 두 벌인데 세 벌째를 만들면
+  //    갈라질 자리가 하나 더 는다. §41 함수 하나만 본다 — Promise.all 안이라 왕복은 안 는다.
+  // §41 미실행 배포에서는 PostgREST 가 404 를 준다 → 빈 배열(앱은 합계만 쓴다).
+  async function remainingByTrainer(studentId) {
+    try {
+      const out = await sbRpc("portal_remaining_by_trainer", { p_student_id: studentId });
+      return Array.isArray(out)
+        ? out.map((r) => ({ trainerId: Number(r.trainerId), remaining: Number(r.remaining) }))
+        : [];
+    } catch { return []; }
   }
 
   // 예약 선차감 합계(개인만). 살아 있는 상태 = booked · pending_review · no_show.
@@ -448,7 +609,9 @@ module.exports = function mountStudentPortal(app, deps) {
       nextBookingFor(sid),
       coursesFor(sid),
     ]);
-    const tids = [agg.assignedTrainerId, ...agg.activeTrainerIds];
+    // 잔여가 남아 있는 트레이너도 이름이 필요하다 — 담당도 아니고 최근 수업도 없는데
+    // 판수만 남은 경우(등록만 하고 아직 수업 전)가 실제로 있다. 빠지면 그 줄이 「?」가 된다.
+    const tids = [agg.assignedTrainerId, ...agg.activeTrainerIds, ...agg.byTrainer.map((r) => r.trainerId)];
     const [names, contacts] = await Promise.all([trainerNames(tids), trainerContacts(tids)]);
 
     const entry = (tid, role) => {
@@ -483,6 +646,16 @@ module.exports = function mountStudentPortal(app, deps) {
         status,
       },
       trainers,
+      // 트레이너별 잔여(§41 · 계약 §9.2). lesson.remainingGames 는 **그대로 합계다** —
+      // 기존 화면은 고치지 않아도 된다. 잔여 0 인 트레이너는 빠지고, 음수는 그대로 온다.
+      // 예약 화면은 이 배열을 보여야 한다 — 합계만 보여주면 「32판 남았는데 왜 안 돼요」가 된다.
+      // trainerId 는 /availability 슬롯의 trainerId 와 **같은 값**이다(같은 불투명 id) —
+      // 앱은 이름이 아니라 이 값으로 「이 칸의 트레이너 잔여」를 찾는다. 동명이인이 있어도 안 섞인다.
+      remainingByTrainer: agg.byTrainer.map((r) => ({
+        trainerId: opaqueId("trainer", r.trainerId),
+        trainerName: names[r.trainerId] || "미배정",
+        remaining: r.remaining,
+      })),
       asOf: agg.asOf,
       nextBooking,
       pendingJournalCount,

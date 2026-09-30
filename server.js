@@ -888,6 +888,10 @@ let botClient = null;   // Phase T1 — 스냅샷 완료 시 오너 DM용 모듈
 // 연결 신청 접수 — 봇 블록이 채운다(discordDM 과 같은 패턴). 앱의 연결 대기 화면이
 // student-portal.cjs 의 POST /link-request 로 들어와 이 함수를 쓴다. 봇이 없으면 null.
 let linkReqIntake = null;
+// 앱 입금 신청 → 오너 DM 승인 카드(10/1 전환 ⑤ · 계약 §9.5). 같은 패턴으로 봇 블록이 채운다.
+// 버튼 customId 는 /결제신청 과 **같은 payreq_ok·payreq_no** 라 승인·반려 처리기가 그대로 받는다 —
+// 앱에서 온 신청도 오너 눈에는 같은 카드고, 승인 뒤 본표 편입도 §18d 트리거가 똑같이 한다.
+let payreqPortalCard = null;
 if (process.env.DISCORD_TOKEN) {
   const client = new Client({
     intents: [
@@ -1271,6 +1275,26 @@ if (process.env.DISCORD_TOKEN) {
   // Phase 1.4 — KST 자정 기준 날짜(새벽 수업이 전날로 안 넘어가게). Railway TZ 무관.
   const kstToday = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
   const hasSupabase = () => !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+  // ── 10/1 전환 잠금(오너 지시 2026-09-28 · 계약 §9.7) ──
+  // 이 날짜(KST)부터 /수업등록 · /판수정정 은 트레이너에게 **안내만** 한다. 수업 기록의 입구는
+  // 앱 「완료」 하나다(§42 — 그룹 판수도 거기서 넣는다). 오너는 예외 처리용으로 계속 쓴다.
+  //
+  // ⚠️ §42(「완료」가 판수를 받는다)가 **운영에 올라간 뒤에만** 이 잠금이 의미가 있다. 그 전에
+  //    잠그면 그룹 판수를 넣을 곳이 사라진다 — 그래서 둘은 같은 PR 로만 나간다. 잠금을 며칠
+  //    미뤄야 하면 이 날짜만 바꾸면 된다(오너 지시: 준비 안 된 항목은 디스코드로 며칠 더 둔다).
+  //
+  // 두 단계다(오너 지시 2026-09-29 「반장 그룹 판수 입력 운영 확인 후에만 · 안 되면 개인만 잠금」).
+  //   LESSON_LOCK_FROM     개인 1:1 레슨만 잠근다. 개인은 예약이 판수(5·8·10)를 알고 있어서
+  //                        「완료」 한 번이면 기록이 끝난다 — 앱 화면이 늦어도 막히지 않는다.
+  //   LESSON_LOCK_ALL_FROM 그룹 · 강의 · 진단상담 · /판수정정 까지 전부 잠근다. 그룹은 「완료」에
+  //                        판수 입력칸이 있어야 기록되므로 **반장 화면이 운영에 뜬 걸 확인한 뒤**
+  //                        날짜를 넣는다. null 이면 이 단계는 꺼져 있다.
+  const LESSON_LOCK_FROM = "2026-10-01";
+  const LESSON_LOCK_ALL_FROM = null;
+  const lessonLocked = () => kstToday() >= LESSON_LOCK_FROM;
+  const lessonLockedAll = () => !!LESSON_LOCK_ALL_FROM && kstToday() >= LESSON_LOCK_ALL_FROM;
+  const isMriOwner = (itx) => !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
   // /수업등록 성공분을 DB lesson_sessions에도 기록(시트 병행·검증용).
   //   시트가 진실인 단계 — DB insert는 best-effort: 실패/이름 미매칭이어도 명령 성공(오너 DM만).
   async function dualWriteSessions(trainerName, students, memo, createdBy, sidOf) {
@@ -1493,6 +1517,23 @@ if (process.env.DISCORD_TOKEN) {
     const hours = itx.options.getNumber("시간");
     const gamesInput = itx.options.getInteger("판수"); // 그룹 다중판 입력용(null=미지정)
     const memo = (itx.options.getString("메모") || "").trim();
+
+    // 10/1 전환 잠금 — 트레이너는 안내만, 오너는 통과(예외 처리용 · 계약 §9.7).
+    // 옵션을 읽은 **뒤**에 둔다: 개인만 잠그는 단계에서는 수업 종류를 알아야 한다.
+    // 유형을 안 고르면 개인이다(명령 정의의 기본값과 같다).
+    const isPersonalLesson = guboon === "레슨" && (!lessonType || lessonType === "개인");
+    if (!isMriOwner(itx)) {
+      if (lessonLockedAll())
+        return itx.reply({
+          content: "10/1부터 수업 기록은 앱에서 해줘. 예약 카드에서 「완료」를 누르고 판수를 넣으면 끝이야. 예약 없이 한 수업은 오너에게 말해줘.",
+          ephemeral: true,
+        });
+      if (isPersonalLesson && lessonLocked())
+        return itx.reply({
+          content: "10/1부터 개인 수업 기록은 앱에서 해줘. 예약 카드에서 「완료」를 누르면 판수까지 들어가. 그룹 수업은 당분간 여기서 그대로 하면 돼.",
+          ephemeral: true,
+        });
+    }
 
     // 학생 파싱: 쉼표(반각/전각)·공백 구분, 트림, 중복·빈값 제거
     const names = [...new Set((itx.options.getString("학생") || "")
@@ -1770,6 +1811,15 @@ if (process.env.DISCORD_TOKEN) {
     const trainer = TRAINER_MAP[itx.user.id];
     if (!trainer && !isOwner)
       return itx.reply({ content: "등록된 트레이너만 사용할 수 있어(유저ID 매핑 없음). 운영진에게 문의해줘.", ephemeral: true });
+    // 10/1 전환 잠금 — 판수를 고치는 입구는 오너 하나로 모은다(계약 §9.7). 앱에는 아직 정정
+    // 화면이 없어서, 트레이너가 잘못 넣은 판수는 오너에게 보내는 게 유일한 길이다.
+    // **전부 잠그는 단계에서만** 잠근다 — 개인만 잠근 동안은 그룹을 여전히 /수업등록 으로 넣으니
+    // 그 정정도 트레이너가 할 수 있어야 한다(오너 지시 2026-09-29 「안 되면 개인만 잠금」).
+    if (lessonLockedAll() && !isOwner)
+      return itx.reply({
+        content: "10/1부터 판수 정정은 오너가 해. 학생 이름과 고칠 판수, 이유를 오너에게 보내줘.",
+        ephemeral: true,
+      });
     if (!process.env.SUPABASE_URL)
       return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
 
@@ -3059,6 +3109,33 @@ if (process.env.DISCORD_TOKEN) {
     return false;
   }
 
+  // 앱 입금 신청 승인 카드 — /결제신청 의 payreqSubmit 과 **버튼이 같다**(payreq_ok·payreq_no).
+  //   카드 본문만 다르다: 앱 신청은 PUBG 실존 조회·채널 선택이 없고 대신 입금자명이 있다.
+  //   payreqSubmit 을 고쳐 쓰지 않는 이유 — 돌고 있는 봇 경로를 건드리지 않으려는 것이다.
+  //   승인 뒤 본표 편입은 §18d payreq_apply 트리거가 두 입구를 구분하지 않고 똑같이 한다.
+  payreqPortalCard = async (req) => {
+    if (!process.env.MRI_OWNER_ID) return false;
+    try {
+      const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`payreq_ok:${req.id}`).setLabel("✅ 승인").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`payreq_no:${req.id}`).setLabel("❌ 반려").setStyle(ButtonStyle.Danger),
+      );
+      await owner.send({
+        // 돈 문구라 이모지를 뺀다(ui-copy §2 — 💰 는 돈을 가볍게 만든다). /결제신청 카드의 💰 는
+        // 전수 교체 금지라 그대로 둔다 — 두 카드 머리가 다른 게 오히려 입구 구분이 된다.
+        content: `**입금 신청 #${req.id}** (앱)\n· 학생: **${req.student_name}**`
+          + `\n· 상품: ${req.kind}${req.games ? ` · ${req.games}판` : ""}`
+          + `\n· 금액: **${Number(req.amount).toLocaleString("ko-KR")}원**`
+          + `\n· 입금일: ${req.paid_on}`
+          + `${req.memo ? `\n· 메모: ${req.memo}` : ""}`
+          + `\n· 통장에 들어왔는지 먼저 확인하고 승인해줘`,
+        components: [row],
+      });
+      return true;
+    } catch (e) { console.error("payreq_portal_dm", e?.message); return false; }
+  };
+
   // 연결 신청 접수 — /연결신청(디스코드)과 앱의 연결 대기 화면이 **같은 함수**를 쓴다.
   // 두 입구가 갈라지면 한쪽만 고쳐져 어긋나므로 한 벌로 둔다(2026-09-26 오너 지시).
   // discord_id 는 호출자가 이미 확인한 값만 받는다 — 앱 쪽은 student-portal.cjs 가
@@ -3622,6 +3699,30 @@ if (process.env.DISCORD_TOKEN) {
       });
     } else {
       await itx.update({ content: `❌ **#${reqId} 반려** — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원`, components: [] });
+    }
+    // 앱 입금 신청(계약 §9.5·§9.6)은 신청자가 **수강생**이다 — requested_by = "app:<명부 id>".
+    //   아래 트레이너용 반말 통보를 그대로 보내면 수강생이 「결제 신청 #N 승인」 반말을 받는다.
+    //   수강생에게는 ui-copy 요체로, 돈 문구라 이모지 없이 보낸다(§2).
+    if (String(q.requested_by || "").startsWith("app:")) {
+      try {
+        const sid = approve ? target.id : Number(q.student_id);
+        const stu = sid ? (await sbSelect("students", `select=discord_id&id=eq.${sid}&limit=1`))[0] : null;
+        let msg;
+        if (!approve) {
+          msg = "입금 확인이 안 됐어요. 입금자명과 금액을 한 번만 봐 주세요. 막히면 담당 트레이너에게 말해 주세요.";
+        } else if (q.kind === "상담") {
+          msg = "레벨 테스트 입금을 확인했어요.";
+        } else {
+          // 판수가 실제로 들어갔을 때만 그렇게 말한다(본표 연결 확인분). 아니면 사실만.
+          const reflected = await sbSelect("payment_requests", `select=payment_id&id=eq.${reqId}&limit=1`)
+            .then((r) => !!r[0]?.payment_id).catch(() => false);
+          msg = reflected && q.games
+            ? `입금을 확인했어요. ${q.games}판이 추가됐어요!`
+            : "입금을 확인했어요. 판수 반영까지 조금 걸릴 수 있어요.";
+        }
+        await discordDM(stu?.discord_id, msg);
+      } catch (e) { console.error("payreq_notify_student", e?.message); }
+      return;
     }
     // 신청 트레이너에게 결과 통보(best-effort — 실패해도 처리 자체는 완료)
     try {
@@ -7801,16 +7902,24 @@ require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete, 
 // 넣지 않고 별도 파일에 둔 이유: 이 파일은 여러 트랙 코드가 공존해서(CLAUDE.md 경계 규칙)
 // 새 라우트군을 인라인하면 동시 작업 충돌면이 그만큼 넓어진다.
 const studentPortal = require("./student-portal.cjs")(app, {
-  sbSelect, sbInsert, sbPatch, limit,
+  // sbRpc 는 §41 portal_remaining_by_trainer(트레이너별 잔여) 하나에 쓴다 — 잔여 공식을
+  // JS 에 또 베끼지 않으려고 함수를 그대로 부른다.
+  sbSelect, sbInsert, sbPatch, sbRpc, limit,
   // 연결 대기 화면의 POST /link-request 가 쓴다. 봇이 꺼져 있으면 null → 503.
   linkIntake: (a) => (linkReqIntake ? linkReqIntake(a) : Promise.resolve({ ok: false, code: "unavailable" })),
+  // 입금 신청 승인 카드(계약 §9.5). 봇이 꺼져 있으면 카드만 못 가고 신청 행은 남는다 —
+  // 신청을 막지 않는 쪽이 맞다. 응답의 ownerNotified 로 앱이 안내를 가른다.
+  payreqCard: (r) => (payreqPortalCard ? payreqPortalCard(r) : Promise.resolve(false)),
+  // 입금 신청 시 담당 트레이너 알림(계약 §9.6). 봇이 없으면 false 로 조용히 끝난다.
+  discordDM,
 });
 
 // ── 수업 복기 API(§29 PR-1·PR-2 · /api/student-portal/{reviews,games,phases,images,feed} + /sessions 확장) ──
 // student-portal 뒤 — 그 파일이 건 공유비밀 게이트·세션·불투명 id·scrub 을 같은 함수로 쓴다. 트레이너 쪽은 아래 mountTrainer(PR-3).
 // §29 표가 없으면 이 라우트군만 503(기존 포털 라우트는 그대로 · 기동 로그 [review]).
 // 초안 사진 정리(§3.7)는 아래 cronTick 이 reviewApi.draftSweep 을 부른다(env REVIEW_DRAFT_SWEEP · 기본 드라이런).
-const reviewApi = require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch, sbUpsert, sbDelete, sbRpc, limit, portal: studentPortal });
+// discordDM = 보낸 복기의 연결 수업이 바뀌면 답한 트레이너에게 알린다(§44 · 2026-09-30).
+const reviewApi = require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch, sbUpsert, sbDelete, sbRpc, limit, discordDM, portal: studentPortal });
 
 // ── 예약·슬롯 (S1-b · /api/student-portal/{availability,bookings} + /api/trainer-portal/*) ──
 // student-portal 뒤에 마운트해야 그 파일이 건 공유비밀 게이트(app.use(PREFIX))가 먼저 돈다.
@@ -8019,6 +8128,9 @@ const REQUIRED_SCHEMA = {
   review_purge_log:     ["id","ran_at","dry_run","review_id","images","bytes","purged_at"],
   review_reads:         ["review_id","reader_kind","reader_id","read_at"],
   review_reactions:     ["review_id","phase_id","reactor_kind","reactor_id","emoji","created_at"],
+  // §44 보낸 복기의 연결 수업 변경 기록(2026-09-30) — relink_review_lesson() 이 쓰고 상세 anchorChanges 가 읽는다.
+  review_anchor_changes: ["id","review_id","changed_by","from_session_id","to_session_id","from_played_at","to_played_at",
+                          "from_trainer_id","to_trainer_id","had_feedback","created_at"],
   feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
 };
 
@@ -8076,11 +8188,12 @@ const SCHEMA_OPTIONAL = {
   // 승격 경로는 §18 payment_requests·§19b lesson_enrollments와 같다.
 };
 
-// PR-3a: 결제 승인 큐(§18) — BOT_PAYREQ=1이면 필수(DDL 미실행을 기동 점검이 잡아야 한다),
-// 플래그 꺼진 배포에선 선택(기능 휴면인데 error·오너 DM 오탐을 내지 않는다).
+// PR-3a: 결제 승인 큐(§18) — 종전에는 BOT_PAYREQ=1 일 때만 필수였다(봇 기능이 휴면인 배포에서
+// 오탐을 내지 않으려고). **2026-09-28 부터 무조건 필수다** — 앱 입금 신청(계약 §9.5)이 이 표에
+// 쓰기 때문에 BOT_PAYREQ 와 무관하게 부재 = 진짜 장애가 됐다. 실DB 확인: 30행(승인 26 · 대기 1).
 // pay_channel은 /결제신청이 매 신고에 실어 보내므로 여기 없으면 컬럼 미실행을 못 잡는다
 // (INSERT가 PGRST204로 터질 때까지 모른다). 나머지 컬럼과 같은 등급으로 등재한다.
-(process.env.BOT_PAYREQ === "1" ? REQUIRED_SCHEMA : SCHEMA_OPTIONAL).payment_requests =
+REQUIRED_SCHEMA.payment_requests =
   ["id","status","student_name","student_id","trainer_id","trainer_name","kind",
    "amount","games","paid_on","memo","pay_channel","requested_by","decided_by","decided_at","created_at",
    // §28 신고 닉네임 — 운영에 이미 있음(2026-09-25 실측) · 정본·이 목록 누락분을 동기. /결제신청 이 쓰는 건 닉네임 확보 PR.

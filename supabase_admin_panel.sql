@@ -2704,7 +2704,12 @@ update public.payments
 
 -- ============================================================
 -- §36  취소한 슬롯이 새 슬롯 열기를 막는 문제 — 부분 유니크로 교체
---      (2026-09-27 · 오너 실사용 신고 · Level 0 · 오너 실행 대기)
+--      (2026-09-27 · 오너 실사용 신고 · Level 0)
+--      ✅ 실행 확인 2026-09-29(실DB 실측): uq_trainer_slots_live 1건(정의 = 아래 36b 그대로) ·
+--         구제약 trainer_slots_trainer_id_slot_start_key 0건 · 취소 칸 46개 · 같은 시각 산 칸 쌍 0.
+--         딸린 코드(reopen 이 겹치면 500 대신 409)는 #380 으로 운영 중이다.
+--      ⚠️ §40(칸 길이) 이후 남은 구멍: reopen 은 **같은 시작 시각**만 본다 — 11:30 칸을 되살릴 때
+--         11:00 에 시작하는 90분 그룹 칸과 겹쳐도 못 잡는다. 범위 겹침으로 고치는 중(#409).
 --
 -- 증상: 19:00~23:00 참여형(예약 0건)을 취소하고 같은 시간에 개인 2시간을 열려 하면
 --       409 slot_taken. 「다시 열기」는 원래 종류·범위로만 살아나 종류를 바꿀 수 없다.
@@ -3094,4 +3099,558 @@ $$;
 --   drop function if exists public.open_trainer_slots(bigint, timestamptz, int, text, int);
 --   alter table public.trainer_slots drop constraint if exists chk_trainer_slots_duration;
 --   alter table public.trainer_slots drop column if exists duration_min;
+-- ============================================================
+
+-- ============================================================
+-- §41  트레이너별 잔여 판수 (2026-09-28 · 10/1 전환 ② · 계약 §9.2)
+--
+-- ⚠️ **오너 「OK」 전에는 실행하지 않는다.** 예약 판정이 바뀐다(B 구간).
+--    함수 자체는 읽기만 하지만, 이걸 켜면 「합계는 충분한데 그 트레이너 판수가 모자라
+--    예약이 거부되는」 수강생이 생긴다 — 실측 9명이 두 트레이너를 함께 쓴다.
+--
+-- 왜 필요한가: 지금 잔여는 학생 한 덩어리다. 두 트레이너를 함께 쓰는 수강생은
+--   누구 판수인지 구분되지 않아, 준구에게 산 판수로 현태 수업을 예약할 수 있다.
+--
+-- 쪼개는 규칙 — portal_remaining_games() 를 트레이너 축으로 나눈 것뿐이다.
+--   + lesson_enrollments.games_total   (status in active·done·paused · trainer_id = T)
+--   - lesson_sessions.games            (trainer_id = T)
+--   - slot_bookings.games_held         (그 칸의 trainer_id = T · status in booked·pending_review·no_show)
+--   + students.carry_games             (담당 트레이너 students.trainer_id 몫으로 본다)
+--
+--   ⚠️ games_total 에 **bonus_games 를 더하지 않는다.** games_total 이 보너스를 이미 포함하고
+--      bonus_games 는 그중 무상분을 표시하는 부분집합이다(실측: 등록 124 = games_total 7 ·
+--      bonus 7 · paid_amount 0 인 전액 무상 등록). 더하면 두 번 센다.
+--      기존 portal_remaining_games() 도 games_total 만 쓴다 — 같은 식을 유지한다.
+--
+--   ⚠️ carry_games 의 몫은 담당 트레이너다. 실측 0행이라 지금은 아무 영향이 없지만,
+--      아무 데도 안 붙이면 합계가 어긋난다. students.trainer_id 가 null 인 8명(활성 7)도
+--      전부 carry 0 이라 손실이 없다.
+--
+-- 전수 대조(실행 전 2026-09-28): 95명 전원 — 트레이너별 합 = portal_remaining_games 총합.
+--   불일치 0 · 총 912판. 즉 이 함수는 **기존 잔여를 나눌 뿐 총합을 바꾸지 않는다.**
+
+-- ── 41a) 한 트레이너 기준 잔여 (예약 판정·「완료」 응답이 쓴다) ──────────────
+create or replace function public.portal_remaining_for_trainer(
+  p_student_id bigint, p_trainer_id bigint)
+returns int
+language sql stable security definer set search_path = public as $$
+  select coalesce((select carry_games from students
+                    where id = p_student_id and trainer_id = p_trainer_id), 0)
+       + coalesce((select sum(games_total) from lesson_enrollments
+                    where student_id = p_student_id and trainer_id = p_trainer_id
+                      and status in ('active','done','paused')), 0)
+       - coalesce((select sum(games) from lesson_sessions
+                    where student_id = p_student_id and trainer_id = p_trainer_id), 0)
+       - coalesce((select sum(b.games_held) from slot_bookings b
+                     join trainer_slots ts on ts.id = b.slot_id
+                    where b.student_id = p_student_id and ts.trainer_id = p_trainer_id
+                      and b.status in ('booked','pending_review','no_show')), 0);
+$$;
+
+-- ── 41b) 트레이너별 잔여 목록 (/summary 가 쓴다) ────────────────────────────
+-- 반환: [{"trainerId":5,"remaining":21}, …] — 잔여 0 인 트레이너는 빼고, 잔여 내림차순.
+-- 트레이너 이름은 서버가 붙인다(staff 조회는 이미 그쪽에 있다).
+create or replace function public.portal_remaining_by_trainer(p_student_id bigint)
+returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('trainerId', t.trainer_id, 'remaining', r.remaining)
+                            order by r.remaining desc, t.trainer_id asc), '[]'::jsonb)
+    from (
+      select trainer_id from lesson_enrollments
+       where student_id = p_student_id and status in ('active','done','paused')
+      union
+      select trainer_id from lesson_sessions where student_id = p_student_id
+      union
+      select ts.trainer_id from slot_bookings b join trainer_slots ts on ts.id = b.slot_id
+       where b.student_id = p_student_id
+         and b.status in ('booked','pending_review','no_show')
+      union
+      select trainer_id from students
+       where id = p_student_id and coalesce(carry_games, 0) <> 0
+    ) t
+    cross join lateral (select portal_remaining_for_trainer(p_student_id, t.trainer_id) as remaining) r
+   where t.trainer_id is not null and r.remaining <> 0;
+$$;
+
+-- ── 41c) 검증 ────────────────────────────────────────────────────────────────
+--   ① 쪼갠 합 = 총합 (전수 · 0행이어야 한다)
+--   select s.id, portal_remaining_games(s.id) as total,
+--          coalesce((select sum((e->>'remaining')::int)
+--                      from jsonb_array_elements(portal_remaining_by_trainer(s.id)) e), 0) as split
+--     from students s
+--    where portal_remaining_games(s.id)
+--          <> coalesce((select sum((e->>'remaining')::int)
+--                         from jsonb_array_elements(portal_remaining_by_trainer(s.id)) e), 0);
+--   ② 두 트레이너를 함께 쓰는 수강생 (실측 9명)
+--   select s.id, portal_remaining_by_trainer(s.id)
+--     from students s
+--    where jsonb_array_length(portal_remaining_by_trainer(s.id)) > 1;
+--   notify pgrst, 'reload schema';
+--
+-- 되돌리기(코드의 호출을 먼저 되돌릴 것 — 예약 판정이 이 함수를 본다):
+--   drop function if exists public.portal_remaining_by_trainer(bigint);
+--   drop function if exists public.portal_remaining_for_trainer(bigint, bigint);
+-- ============================================================
+
+-- ============================================================
+-- §42  「완료」가 판수를 받는다 — 그룹 판수 입력 · 시간 달라짐 (2026-09-28 · 10/1 전환 ① · 계약 §9.1)
+--
+-- ⚠️ **오너 「OK」 전에는 실행하지 않는다.** 판수 기록 규칙이 바뀐다(B 구간).
+-- ⚠️ **§41 을 먼저 실행한다** — 이 함수가 portal_remaining_for_trainer() 를 쓴다.
+--
+-- 왜 필요한가: 10/1 에 `/수업등록` 을 잠그면 **그룹 판수를 넣을 곳이 사라진다.**
+--   §37 은 예약이 아는 판수(개인 선차감 5·8·10)만 기록하고, 그룹·상담은
+--   games_held = 0 이라 상태만 닫고 판수는 봇에 맡겼다. 그 봇이 사라진다.
+--
+-- 바뀌는 것 두 가지
+--   ① p_games — 실제 진행 판수. 수업 종류마다 다르다.
+--      · 개인        선택. 생략하면 종전대로 선차감분(5·8·10). 「1시간 잡았는데 40분만 했다」를 담는다.
+--      · 그룹        **필수.** 없으면 games_required 로 돌려보내고 **예약을 닫지 않는다.**
+--                    10/1 뒤에는 이게 그룹 판수의 유일한 입구라, 판수 없이 닫아 버리면
+--                    다시 들어올 길이 없다(앱은 registration_missing · /수업등록 은 잠김).
+--      · 상담(레벨 테스트) **받지 않는다.** 판수를 쓰는 수업이 아니다 — 판수가 없는 신규
+--                    (prospect)가 레벨 테스트를 받는데 여기서 세션이 생기면 잔여가 음수로 꽂힌다.
+--   ② p_played_at — 실제 수업 날짜. 자정을 넘겨 진행한 경우다. 슬롯 날짜 ±1일까지만 받는다 —
+--      그보다 멀면 엉뚱한 날에 판수가 꽂힌다.
+--
+-- ⚠️ **잔여가 모자라도 막지 않는다.** 수업은 이미 끝났고 기록이 먼저다. 막으면 판수가
+--    영영 안 빠지고, 지금도 잔여 음수인 수강생이 실재한다(9/28 실측 3명).
+--    대신 remainingWasShort 를 실어 화면이 「결제를 안내해 주세요」를 기록 **성공 뒤에** 띄운다.
+--
+-- ⚠️ **인자 추가는 새 함수가 아니라 교체다.** create or replace 만 하면 2인자판이 남아
+--    PostgREST 가 두 후보를 보게 된다. 그래서 drop 을 먼저 하고, **같은 요청 안에서** 만든다
+--    (한 트랜잭션이라 함수가 비는 순간이 없다).
+--
+-- 반환에 더해지는 것
+--   {"recorded":true, …, "remainingAfter":n, "remainingWasShort":bool}
+--   {"error":"invalid_body"}    p_games 범위 밖 · p_played_at 이 슬롯 날짜 ±1일 밖 · 상담에 p_games
+--   {"error":"games_required"}  그룹인데 p_games 가 없다 — 예약은 booked 그대로다
+--   {"closed":true,…}           이제 **상담만** 이리 온다(그룹은 위 오류로 간다)
+--   그 밖은 §37 그대로다(already · not_found · scope_denied).
+
+drop function if exists public.record_lesson_from_booking(bigint, bigint);
+
+create or replace function public.record_lesson_from_booking(
+  p_trainer_id bigint, p_booking_id bigint,
+  p_games      int  default null,
+  p_played_at  date default null)
+returns jsonb
+language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_b     slot_bookings%rowtype;
+  v_owner bigint;
+  v_start timestamptz;
+  v_type  text;
+  v_day   date;
+  v_slot  date;
+  v_has   boolean;
+  v_carry int;
+  v_enr   bigint;
+  v_sid   bigint;
+  v_games int;
+  v_after int;
+begin
+  if p_games is not null and (p_games < 1 or p_games > 50) then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+
+  select * into v_b from slot_bookings where id = p_booking_id for update;
+  if not found                    then return jsonb_build_object('error','not_found'); end if;
+  if v_b.span_head_id is not null  then return jsonb_build_object('error','not_found'); end if;
+
+  select trainer_id, slot_start, lesson_type into v_owner, v_start, v_type
+    from trainer_slots where id = v_b.slot_id;
+  if v_owner is distinct from p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
+  -- 상담(레벨 테스트)은 판수를 쓰는 수업이 아니다. 여기서 세션이 생기면 판수가 없는 신규가
+  -- 잔여 음수로 꽂힌다 — 조용히 무시하지 않고 돌려보낸다(앱이 입력칸을 안 띄우게).
+  if v_type = 'consult' and p_games is not null then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+
+  -- 날짜 축은 server.js kstToday() · booking-api kstDate() 와 같은 식이라 경계가 어긋나지 않는다.
+  v_slot := (v_start at time zone 'Asia/Seoul')::date;
+  v_day  := coalesce(p_played_at, v_slot);
+  -- 자정을 넘겨 진행한 경우만 허용한다. 그보다 먼 날짜는 오타로 본다.
+  if abs(v_day - v_slot) > 1 then return jsonb_build_object('error','invalid_body'); end if;
+
+  v_has := exists (select 1 from lesson_sessions ls
+                    where ls.student_id = v_b.student_id
+                      and ls.trainer_id = p_trainer_id
+                      and ls.played_at  = v_day);
+
+  -- 이미 닫힌 예약은 손대지 않는다(§37 과 같다 — hasSession 으로 화면이 문구를 가른다).
+  if v_b.status not in ('booked','pending_review') then
+    return jsonb_build_object('already', v_b.status, 'hasSession', v_has, 'playedAt', v_day);
+  end if;
+
+  -- 같은 날 같은 트레이너의 기록이 이미 있으면 판수를 또 넣지 않는다(상태만 닫는다).
+  if v_has then
+    update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+    return jsonb_build_object('already','session','hasSession',true,'playedAt',v_day);
+  end if;
+
+  -- 기록할 판수: 트레이너가 넣었으면 그 값, 아니면 예약이 잡은 선차감분.
+  v_games := coalesce(p_games, coalesce(v_b.games_held, 0));
+
+  if v_games <= 0 then
+    -- 그룹인데 판수가 없다 → **닫지 않고** 돌려보낸다. 여기서 닫으면 10/1 뒤에는 이 수업의
+    -- 판수를 넣을 길이 없다(다시 누르면 already → registration_missing · /수업등록 은 잠김).
+    -- 예약이 booked 로 남아 있으니 트레이너가 판수를 넣고 한 번 더 누르면 된다.
+    if v_type in ('spectate','participate') then
+      return jsonb_build_object('error','games_required');
+    end if;
+    -- 상담(레벨 테스트)은 판수가 없는 게 정상이다 — 상태만 닫는다.
+    update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+    return jsonb_build_object('closed', true, 'games', 0, 'reason', 'no_hold');
+  end if;
+
+  select carry_games into v_carry from students where id = v_b.student_id;
+  if coalesce(v_carry, 0) = 0 then
+    select e.id into v_enr
+      from lesson_enrollments e
+     where e.student_id = v_b.student_id
+       and e.trainer_id = p_trainer_id
+       and e.status in ('active','paused')
+       and coalesce(e.games_total, 0) + coalesce(e.bonus_games, 0)
+           - coalesce((select sum(ls.games) from lesson_sessions ls
+                        where ls.lesson_enrollment_id = e.id), 0) > 0
+     order by e.started_on asc, e.id asc
+     limit 1;
+  end if;
+
+  insert into lesson_sessions
+    (student_id, trainer_id, played_at, games, created_by, lesson_enrollment_id)
+    values (v_b.student_id, p_trainer_id, v_day, v_games, 'portal', v_enr)
+    returning id into v_sid;
+
+  update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+
+  -- 선차감이 풀리고 세션이 들어간 **뒤**의 잔여다(§41 · 그 트레이너 기준).
+  v_after := portal_remaining_for_trainer(v_b.student_id, p_trainer_id);
+
+  return jsonb_build_object('recorded', true, 'games', v_games, 'playedAt', v_day,
+                            'sessionId', v_sid, 'enrollmentId', v_enr,
+                            'remainingAfter', v_after,
+                            -- 음수 = 이 수업을 덮을 판수가 없었다. 막지는 않았고 알리기만 한다.
+                            'remainingWasShort', v_after < 0);
+end;
+$$;
+
+-- ── 42b) 예약 판정이 트레이너별 잔여를 본다 (계약 §9.2 · §41 과 한 묶음) ─────
+-- 바뀌는 줄은 하나다: portal_remaining_games → portal_remaining_for_trainer.
+-- 합계가 충분해도 그 트레이너 판수가 모자라면 insufficient_games 다.
+-- 나머지 본문은 §32 book_slot 그대로 — 지문이 갈리지 않게 한 글자도 건드리지 않았다.
+create or replace function public.book_slot(
+  p_student_id  bigint,
+  p_slot_id     bigint,
+  p_duration_min int default null
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_slot      trainer_slots%rowtype;
+  v_games     int;
+  v_need      int;
+  v_remaining int;
+  v_booked    int;
+  v_head      bigint;
+  v_ids       bigint[];
+begin
+  select * into v_slot from trainer_slots where id = p_slot_id for update;
+  if not found                     then return jsonb_build_object('error','slot_not_found'); end if;
+  if v_slot.status <> 'open'       then return jsonb_build_object('error','slot_taken');     end if;
+  -- 예약 마감 = 수업 3시간 전(오너 확정 2026-09-27). 지난 칸도 여기서 함께 걸린다.
+  -- slot_taken 과 코드를 가른다 — 앱 문구가 「누가 먼저 잡았다」와 「마감됐다」로 달라야 한다.
+  if v_slot.slot_start - now() < interval '3 hours' then
+    return jsonb_build_object('error','booking_closed');
+  end if;
+
+  -- ⬇ §41 — **그 칸 트레이너의** 잔여를 본다. 합계로 보면 준구에게 산 판수로 현태 수업을
+  --    예약할 수 있다(실측 9명이 두 트레이너를 함께 쓴다).
+  v_remaining := portal_remaining_for_trainer(p_student_id, v_slot.trainer_id);
+
+  if v_slot.lesson_type = 'personal' then
+    if p_duration_min is null then return jsonb_build_object('error','invalid_body'); end if;
+    v_games := case p_duration_min when 60 then 5 when 90 then 8 when 120 then 10 else null end;
+    if v_games is null then return jsonb_build_object('error','invalid_body'); end if;
+    if v_remaining < v_games then return jsonb_build_object('error','insufficient_games'); end if;
+    v_need := p_duration_min / 30;
+
+    select array_agg(id order by slot_start) into v_ids from (
+      select id, slot_start from trainer_slots
+       where trainer_id  = v_slot.trainer_id
+         and lesson_type = 'personal'
+         and status      = 'open'
+         and slot_start >= v_slot.slot_start
+         and slot_start <  v_slot.slot_start + make_interval(mins => p_duration_min)
+       order by slot_start
+       for update
+    ) s;
+    if v_ids is null or array_length(v_ids, 1) <> v_need then
+      return jsonb_build_object('error','slot_taken');
+    end if;
+
+    insert into slot_bookings (slot_id, student_id, games_held, duration_min, status)
+      values (v_slot.id, p_student_id, v_games, p_duration_min, 'booked')
+      returning id into v_head;
+    insert into slot_bookings (slot_id, student_id, games_held, status, span_head_id)
+      select x, p_student_id, 0, 'booked', v_head from unnest(v_ids) x where x <> v_slot.id;
+    update trainer_slots set status = 'closed' where id = any(v_ids);
+
+    return jsonb_build_object('bookingId', v_head, 'gamesHeld', v_games, 'slotsHeld', v_need);
+  end if;
+
+  -- 그룹(관전형·참여형) · 상담(consult): 선차감 없음.
+  if p_duration_min is not null then return jsonb_build_object('error','invalid_body'); end if;
+  -- 잔여 판수 게이트. **상담은 제외** — 판수를 쓰는 예약이 아니고 결제(상담료)는 앱 밖이라,
+  -- 잔여 0·음수인 신규·재등록 대기 수강생도 상담은 잡을 수 있어야 한다(오너 지시 2026-09-10).
+  if v_slot.lesson_type <> 'consult' and v_remaining < 1 then
+    return jsonb_build_object('error','insufficient_games');
+  end if;
+  select count(*) into v_booked from slot_bookings where slot_id = v_slot.id and status = 'booked';
+  if v_booked >= v_slot.capacity then return jsonb_build_object('error','slot_full'); end if;
+
+  insert into slot_bookings (slot_id, student_id, games_held, status)
+    values (v_slot.id, p_student_id, 0, 'booked')
+    returning id into v_head;
+  return jsonb_build_object('bookingId', v_head, 'gamesHeld', 0, 'slotsHeld', 1);
+
+exception
+  when unique_violation then return jsonb_build_object('error','slot_taken');
+end;
+$$;
+
+-- ── 42c) 검증 ────────────────────────────────────────────────────────────────
+--   ① 인자 교체 확인 — 2인자판이 남아 있으면 PostgREST 가 헷갈린다(1행이어야 한다)
+--   select pg_get_function_identity_arguments(oid) from pg_proc
+--    where proname = 'record_lesson_from_booking' and pronamespace = 'public'::regnamespace;
+--   기대: p_trainer_id bigint, p_booking_id bigint, p_games integer, p_played_at date  (1행)
+--
+--   ② book_slot 이 트레이너별 잔여를 보는지 (문자열 프로브)
+--   select prosrc like '%portal_remaining_for_trainer%' as uses_by_trainer,
+--          prosrc like '%interval ''3 hours''%'         as has_3h
+--     from pg_proc where proname = 'book_slot' and pronamespace = 'public'::regnamespace;
+--   기대: 둘 다 true
+--
+--   ③ 함수 지문
+--   select proname, length(replace(prosrc, E'\r','')) as len, md5(replace(prosrc, E'\r','')) as md5
+--     from pg_proc
+--    where proname in ('record_lesson_from_booking','book_slot','portal_remaining_for_trainer',
+--                      'portal_remaining_by_trainer')
+--      and pronamespace = 'public'::regnamespace order by proname;
+--   notify pgrst, 'reload schema';
+--
+-- 되돌리기(§37 2인자판으로 · 코드를 먼저 되돌릴 것):
+--   drop function if exists public.record_lesson_from_booking(bigint, bigint, int, date);
+--   그 다음 §37 의 create or replace 블록을 그대로 실행한다.
+--   book_slot 은 §32 의 블록을 그대로 실행하면 돌아간다.
+-- ============================================================
+
+-- ============================================================
+-- §43  취소 칸 되살리기(reopen)가 길이 다른 칸과 겹치는 구멍 (2026-09-29)
+--
+-- 무엇이 새나: §40 에서 칸에 길이(duration_min)가 생겼는데 reopen 은 **같은 시작 시각**만 본다
+--   (booking-api reopen 의 사전 조회 + 유니크 인덱스 uq_trainer_slots_live). 11:30 개인 칸을
+--   되살릴 때 11:00 에 시작하는 90분 그룹 칸이 이미 살아 있어도 둘 다 열린다 — 같은 시간에
+--   두 수업이 잡힐 수 있는 상태다. 90분 그룹 칸을 되살릴 때 11:30 개인 칸이 살아 있어도 같다.
+--
+-- 고친 방법: 되살리기를 DB 함수로 옮기고 open_trainer_slots(§40)와 **같은 advisory 잠금**
+--   (트레이너 id)을 잡는다. 두 경로가 서로를 기다리므로, 겹침 조회와 상태 변경 사이에
+--   다른 칸이 끼어들 수 없다. 겹침 판정도 §40 과 같은 범위식이다.
+--   실측(2026-09-29): 이 DB 에서 advisory 잠금을 쓰는 함수는 open_trainer_slots 하나뿐이라
+--   키가 다른 용도와 부딪치지 않는다.
+--
+-- A 구간(새 함수 · 더하기만). 코드가 부르기 전까지는 아무 동작도 바꾸지 않는다.
+--
+-- 반환: {"reopened":true} 또는 {"error":"not_found"|"scope_denied"|"slot_not_cancelled"|
+--        "slot_in_past"|"slot_taken"} — booking-api STATUS 표에 전부 있는 코드다.
+create or replace function public.reopen_trainer_slot(p_trainer_id bigint, p_slot_id bigint)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_s trainer_slots%rowtype;
+begin
+  -- §40 open_trainer_slots 와 같은 키 — 칸 열기와 되살리기가 한 줄로 선다.
+  perform pg_advisory_xact_lock(p_trainer_id);
+
+  select * into v_s from trainer_slots where id = p_slot_id for update;
+  if not found then return jsonb_build_object('error','not_found'); end if;
+  if v_s.trainer_id is distinct from p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
+  if v_s.status <> 'cancelled' then return jsonb_build_object('error','slot_not_cancelled'); end if;
+  -- 지난 칸은 되살려도 book_slot 이 못 잡는다(3시간 마감) — 막는 게 맞다.
+  if v_s.slot_start <= now() then return jsonb_build_object('error','slot_in_past'); end if;
+
+  if exists (
+    select 1 from trainer_slots
+     where trainer_id = p_trainer_id
+       and id <> v_s.id
+       and status <> 'cancelled'
+       and tstzrange(slot_start, slot_start + make_interval(mins => duration_min), '[)')
+           && tstzrange(v_s.slot_start, v_s.slot_start + make_interval(mins => v_s.duration_min), '[)')
+  ) then
+    return jsonb_build_object('error','slot_taken');
+  end if;
+
+  update trainer_slots set status = 'open' where id = v_s.id;
+  return jsonb_build_object('reopened', true);
+
+exception
+  when unique_violation then return jsonb_build_object('error','slot_taken');
+end;
+$$;
+
+-- ── 43b) 검증 ────────────────────────────────────────────────────────────────
+--   select proname, length(replace(prosrc, E'\r','')) as len, md5(replace(prosrc, E'\r','')) as md5
+--     from pg_proc where proname = 'reopen_trainer_slot' and pronamespace = 'public'::regnamespace;
+--     기대: 1269 · 415b0aadb3d983dea0d3347e33de7e3a
+--   notify pgrst, 'reload schema';
+--
+--   ✅ 실행 완료 2026-09-29 (세션 실행 · A 구간). 실행 전 함수 0개 → 후 1개 · 지문 위와 일치
+--      (정본 파일 본문과 실DB prosrc 의 md5 가 같다) · trainer_slots 188행 그대로.
+--      드라이런(pg_temp 사본 · 전부 롤백) 7가지 — 취소된 11:30 개인 ← 살아 있는 11:00 90분 그룹
+--      slot_taken / 취소된 90분 그룹 ← 살아 있는 11:30 개인 slot_taken / 겹침 없음 reopened /
+--      남의 칸 scope_denied / 취소 아닌 칸 slot_not_cancelled / 지난 칸 slot_in_past /
+--      맞닿은 칸(12:30 ← 11:00~12:30) reopened.
+--
+-- 되돌리기(코드의 호출을 먼저 되돌릴 것 — booking-api reopen 이 이 함수를 부른다):
+--   drop function if exists public.reopen_trainer_slot(bigint, bigint);
+-- ============================================================
+
+-- ============================================================
+-- §44  보낸 복기의 연결 수업 바꾸기 — 변경 기록 표 + relink_review_lesson() (2026-09-30)
+--
+-- 오너 지시(9/30): 보낸 복기도 작성자가 연결 수업을 바꿀 수 있게 한다.
+--   트레이너 답 전 = 자유롭게 · 답 뒤 = 바꿀 수 있지만 답한 트레이너에게 「연결 수업이 바뀌었어요」 알림
+--   + 변경 기록(전 → 후) · 본인 수업으로만(다른 사람 수업 불가 — trg_lr_anchor 가 DB 에서도 막는다).
+--   알림(DM)은 서버(review-api.cjs)가 이 함수의 반환값(feedback_trainer_ids)을 보고 보낸다.
+--
+-- 왜 함수인가: 연결을 바꾸는 것과 기록을 남기는 것이 **같이 되거나 같이 안 돼야** 한다. REST 두 번
+--   (바꾸기 → 기록)이면 사이에서 실패할 때 기록 없는 변경이 생긴다. 오너가 SQL 로 고칠 때도 이 함수를
+--   부르면(p_changed_by = 'owner') 같은 표에 남는다.
+--
+-- 받는 트레이너 = 새 수업의 트레이너(보내기 규칙과 같다 — 수업 복기는 그 수업 트레이너가 받는다).
+--   트레이너 답 · 사진 · 그리기 · 반응 · 공개 범위는 그대로다. 연결 · 받는 트레이너 · updated_at 만 바뀐다
+--   (updated_at 이 바뀌어 트레이너 목록에 「안 읽음」으로 다시 뜬다).
+--
+-- 권한: 기존 security definer 함수들과 같은 기본 권한으로 생긴다. 좁히는 것(revoke · grant)은 권한 변경이라
+--   오너 실행이다 — 아래 44c(세션 실행분에는 들어 있지 않다).
+--
+-- A 구간(새 표 · 새 함수 · 더하기만). 코드가 부르기 전까지는 아무 동작도 바꾸지 않는다.
+--
+-- 반환: {"relinked":true, from_session_id, to_session_id, from_played_at, to_played_at,
+--        from_trainer_id, to_trainer_id, feedback_trainer_ids:[…]} · {"unchanged":true}
+--       · {"error":"invalid_body"|"review_not_found"|"not_published"|"not_lesson"|
+--                  "anchor_not_found"|"anchor_student_mismatch"|"anchor_taken"}
+create table if not exists public.review_anchor_changes (
+  id               bigint generated always as identity primary key,
+  review_id        bigint not null references public.lesson_reviews(id) on delete cascade,
+  changed_by       text   not null check (changed_by in ('student','owner')),
+  from_session_id  bigint references public.lesson_sessions(id) on delete set null,
+  to_session_id    bigint references public.lesson_sessions(id) on delete set null,
+  from_played_at   date,                    -- 그때 값 — 수업 행이 지워져도 무엇에서 무엇으로 바뀌었는지 읽힌다
+  to_played_at     date,
+  from_trainer_id  bigint,                  -- 바꾸기 전 받는 트레이너(staff.id · 스냅샷이라 FK 없음)
+  to_trainer_id    bigint,                  -- 바꾼 뒤 받는 트레이너
+  had_feedback     boolean not null,        -- 트레이너 답이 달린 뒤에 바꿨는가(= 알림 대상이었는가)
+  created_at       timestamptz not null default now()
+);
+create index if not exists idx_rac_review on public.review_anchor_changes (review_id, created_at);
+alter table public.review_anchor_changes enable row level security;
+
+create or replace function public.relink_review_lesson(
+  p_review_id bigint, p_student_id bigint, p_session_id bigint, p_changed_by text default 'student')
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_r    lesson_reviews%rowtype;
+  v_to   lesson_sessions%rowtype;
+  v_from date;
+  v_rcpt bigint;
+  v_fb   jsonb;
+begin
+  if p_changed_by is null or p_changed_by not in ('student','owner') then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+
+  -- 복기 행을 잠근다 — 같은 복기를 동시에 두 번 옮겨도 기록이 한 줄씩 순서대로 남는다.
+  select * into v_r from lesson_reviews where id = p_review_id for update;
+  if not found or v_r.student_id is distinct from p_student_id
+     or v_r.author_role <> 'student' or v_r.hidden_at is not null then
+    return jsonb_build_object('error','review_not_found');
+  end if;
+  if v_r.status <> 'published' then return jsonb_build_object('error','not_published'); end if;
+  if v_r.anchor_kind <> 'lesson' then return jsonb_build_object('error','not_lesson'); end if;
+
+  select * into v_to from lesson_sessions where id = p_session_id;
+  if not found then return jsonb_build_object('error','anchor_not_found'); end if;
+  if v_to.student_id is distinct from p_student_id then
+    return jsonb_build_object('error','anchor_student_mismatch');
+  end if;
+  if v_r.lesson_session_id is not distinct from p_session_id then
+    return jsonb_build_object('unchanged', true);
+  end if;
+  -- 수강생 1명 × 수업 1회 = 복기 1건(uq_lr_student_lesson) — 먼저 보고 계약 코드로 돌려준다
+  if exists (select 1 from lesson_reviews
+              where student_id = p_student_id and author_role = 'student'
+                and lesson_session_id = p_session_id and id <> p_review_id) then
+    return jsonb_build_object('error','anchor_taken');
+  end if;
+
+  select played_at into v_from from lesson_sessions where id = v_r.lesson_session_id;
+  select coalesce(jsonb_agg(distinct trainer_id), '[]'::jsonb) into v_fb
+    from review_feedback where review_id = p_review_id;
+  v_rcpt := coalesce(v_to.trainer_id, v_r.recipient_trainer_id);
+
+  update lesson_reviews
+     set lesson_session_id = p_session_id, recipient_trainer_id = v_rcpt, updated_at = now()
+   where id = p_review_id;
+
+  insert into review_anchor_changes (review_id, changed_by, from_session_id, to_session_id,
+                                     from_played_at, to_played_at, from_trainer_id, to_trainer_id, had_feedback)
+  values (p_review_id, p_changed_by, v_r.lesson_session_id, p_session_id,
+          v_from, v_to.played_at, v_r.recipient_trainer_id, v_rcpt, jsonb_array_length(v_fb) > 0);
+
+  return jsonb_build_object('relinked', true,
+    'from_session_id', v_r.lesson_session_id, 'to_session_id', p_session_id,
+    'from_played_at', v_from, 'to_played_at', v_to.played_at,
+    'from_trainer_id', v_r.recipient_trainer_id, 'to_trainer_id', v_rcpt,
+    'feedback_trainer_ids', v_fb);
+
+exception
+  when unique_violation then return jsonb_build_object('error','anchor_taken');
+end;
+$$;
+
+-- ── 44c) 권한 좁히기 — 오너 실행(권한 변경 = Level 0 · 세션은 실행하지 않는다) ──────────────
+--   이 함수도 기존 security definer 함수들(book_slot · cancel_booking · open_trainer_slots ·
+--   record_lesson_from_booking · reopen_trainer_slot 등)과 같이 기본 권한(PUBLIC 실행)으로 생긴다.
+--   서버만 부르므로 좁혀도 동작은 같다. 좁히려면 오너가 SQL Editor 에서:
+--     revoke execute on function public.relink_review_lesson(bigint, bigint, bigint, text) from public, anon, authenticated;
+--     grant execute on function public.relink_review_lesson(bigint, bigint, bigint, text) to service_role;
+
+-- ── 44b) 검증 ────────────────────────────────────────────────────────────────
+--   select proname, length(replace(prosrc, E'\r','')) as len, md5(replace(prosrc, E'\r','')) as md5,
+--          array_to_string(proacl, ',') as acl
+--     from pg_proc where proname = 'relink_review_lesson' and pronamespace = 'public'::regnamespace;
+--   select column_name from information_schema.columns
+--    where table_schema = 'public' and table_name = 'review_anchor_changes' order by ordinal_position;
+--     기대: 함수 2731 · 83e2d33aa1b9929095f6e9ff1253ae24 · 표 11칸 · RLS 켜짐 · 인덱스 2(pkey · idx_rac_review)
+--   notify pgrst, 'reload schema';
+--
+--   ✅ 실행 완료 2026-09-30 (세션 실행 · A 구간 · 44c 권한 좁히기는 제외 = 오너 몫). 실행 전 표 없음 · 함수 0개
+--      → 후 표 1(0행) · 함수 1 · 지문 위와 일치(정본 파일 본문과 실DB prosrc 의 md5 가 같다) ·
+--      lesson_reviews 7행 그대로(연결 · 받는 사람 · 수정 시각 지문 실행 전후 같음).
+--      드라이런(실제 함수 · 가짜 수업 3 · 가짜 복기 5 · 가짜 답 1 → 전부 롤백 · 끝나고 기록 0행 확인) 15가지 —
+--      changed_by 오류 invalid_body / 남의 복기 review_not_found / draft not_published / 자유 기록 not_lesson /
+--      없는 수업 anchor_not_found / 남의 수업 anchor_student_mismatch / 같은 수업 unchanged /
+--      다른 복기가 잡은 수업 anchor_taken / 옮김(같은 트레이너 · 답 없음 · 오너) = 연결·받는 사람·기록 1줄 /
+--      옮김(답 뒤 · 트레이너 바뀜) = 받는 사람 교체 · had_feedback · feedback_trainer_ids [답한 트레이너] · 기록 2줄 /
+--      숨긴 복기 review_not_found / 숨긴 복기가 잡은 수업 anchor_taken / 트레이너가 쓴 복기 review_not_found /
+--      연결 끊긴 보낸 복기 = from null 로 기록 / 판 3 · 사진 17 그대로.
+--
+-- 오너가 SQL 로 고칠 때(정정 · B 구간 · 오너 OK 뒤):
+--   select public.relink_review_lesson(<복기 id>, <수강생 id>, <새 수업 id>, 'owner');
+--
+-- 되돌리기(코드의 호출을 먼저 되돌릴 것 — review-api PUT /reviews/:id 가 이 함수를 부른다):
+--   drop function if exists public.relink_review_lesson(bigint, bigint, bigint, text);
+--   drop table if exists public.review_anchor_changes;   -- 기록까지 지운다(B 구간 · 오너 OK)
 -- ============================================================
