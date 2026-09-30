@@ -43,7 +43,8 @@ const portal = require("../student-portal.cjs")(app, deps);
 let base, server;
 test.before(async () => { server = app.listen(0); await new Promise((r) => server.once("listening", r)); base = `http://127.0.0.1:${server.address().port}/api/student-portal`; });
 test.after(() => server.close());
-const sid = portal.issueSession({ provider: "discord", pid: "p7", sub: 7, scope: "student" }, 3600);
+// pid = 명부 연결(가짜 students 의 discord_id) — 세션마다 지금 연결과 같은지 본다(2026-10-01)
+const sid = portal.issueSession({ provider: "discord", pid: "stu-d", sub: 7, scope: "student" }, 3600);
 const call = async (method, path, body) => {
   const r = await fetch(base + path, { method, headers: { "x-portal-secret": "test-portal-secret", "x-portal-session": sid, "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body) });

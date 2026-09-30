@@ -222,14 +222,41 @@ module.exports = function mountStudentPortal(app, deps) {
   // 등록 전 예약은 lesson_sessions 행이 없어서 sessions[] 안에 실을 칸이 없다(그래서 최상위 키).
   const hooks = { sessionExtras: null, summaryExtras: null };
 
+  // ── 연결 확인(2026-10-01 · 잘못 붙은 연결 정정 사고) ──
+  // 세션은 무상태 서명(24h)이라 명부에서 디스코드 연결을 떼거나 다른 수강생으로 옮겨도 이미 나간 세션이 그대로 산다.
+  // 그래서 수강생 세션은 요청마다 「세션의 디스코드(pid) = 지금 명부 연결(students.discord_id)」인지 본다.
+  // 다르면 401 session_expired → 앱이 다시 로그인하고, exchange 가 지금 연결대로 새 세션을 낸다.
+  // 명부 조회는 수강생마다 30초 기억한다(요청마다 DB 를 치지 않게). 연결을 바꾸면 30초 안에 반영된다.
+  const LINK_TTL_MS = 30_000;
+  const linkSeen = new Map();                          // sub → { discordId|null, at }
+  async function linkMatches(s) {
+    const sub = Number(s.sub);
+    const hit = linkSeen.get(sub);
+    let cur;
+    if (hit && Date.now() - hit.at < LINK_TTL_MS) cur = hit.discordId;
+    else {
+      const row = (await sbSelect("students", `select=discord_id&id=eq.${sub}&limit=1`))[0];
+      cur = row?.discord_id ? String(row.discord_id) : null;
+      if (linkSeen.size > 5000) linkSeen.clear();
+      linkSeen.set(sub, { discordId: cur, at: Date.now() });
+    }
+    return cur !== null && cur === String(s.pid);
+  }
+
   // ── 세션 요구 ────────────────────────────────────────────────
   function session(req) { return readSession(req.headers["x-portal-session"]); }
   function requireStudent(req, res, next) {
     const s = session(req);
     if (!s) return fail(res, 401, "session_expired");
     if (s.scope !== "student" || !s.sub) return fail(res, 403, "account_link_pending");
-    req.portal = s;
-    next();
+    linkMatches(s).then((ok) => {
+      if (!ok) return fail(res, 401, "session_expired");
+      req.portal = s;
+      next();
+    }).catch((e) => {
+      console.error("portal_link_check", e?.message);
+      fail(res, 503, "portal_unavailable");
+    });
   }
 
   // 핸들러 공통 예외 처리 — 스택·PGRST 본문을 응답에 싣지 않는다.
@@ -272,6 +299,7 @@ module.exports = function mountStudentPortal(app, deps) {
       { provider: "discord", pid: discordId, sub: rows[0].id, scope: "student" },
       60 * 60 * 24,
     );
+    linkSeen.set(Number(rows[0].id), { discordId, at: Date.now() });   // 방금 확인한 연결 — 첫 요청이 다시 읽지 않게
     send(res, { sid });
   }));
 
@@ -1103,5 +1131,5 @@ module.exports = function mountStudentPortal(app, deps) {
   // 복제하면 SESSION_SECRET 파생 규칙이 갈라져 한쪽 토큰이 다른 쪽에서 안 풀린다.
   // trainer-portal.cjs 는 여기에 더해 세션 발급(issueSession)과 공유비밀 게이트를 그대로 쓴다.
   // review-api.cjs(§29)는 requireStudent(세션 판정 한 벌) · hooks(/sessions 확장 자리)까지 받는다.
-  return { readSession, issueSession, opaqueId, readOpaqueId, fail, scrub, sharedSecretGate, requireStudent, hooks };
+  return { readSession, issueSession, opaqueId, readOpaqueId, fail, scrub, sharedSecretGate, requireStudent, linkMatches, hooks };
 };
