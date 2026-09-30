@@ -580,3 +580,15 @@ test("대시보드 — 카드 · 이번 주 수업 · 처리 대기 · 트레이
   const body = JSON.stringify(d);
   for (const leak of ["memo", "정정", "created_by", "student_name", "1234567890", "adjreq"]) assert.equal(body.includes(leak), false, leak);
 });
+
+test("트레이너 — 합친 명부(§38)는 담당이어도 · 최근 90일 수업이 있어도 범위 밖(2026-10-01)", async () => {
+  db = { ...rosterDb(), students: [...STUDENTS, stu(19, "차", "active", 2, { merged_into: 10 })] };
+  // 트레이너B(5)는 합친 #15 에 5일 전 수업이 있다(세션 6) — 목록 · 한 명 상세 둘 다 빠진다
+  const r5 = await call(5, "/students");
+  assert.equal(r5.status, 200);
+  assert.ok(!r5.json.students.some((s) => s.displayName === "바"), "합친 행은 최근 수업이 있어도 목록에 없다");
+  assert.equal((await call(5, `/students/${S(15)}`)).status, 403);
+  // 트레이너A(2)는 합친 #19 가 담당 · active 여도 목록에 없다
+  const r2 = await call(2, "/students");
+  assert.deepEqual(r2.json.students.map((s) => s.displayName), ["가"]);
+});
