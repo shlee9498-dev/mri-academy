@@ -13,6 +13,29 @@
 // ============================================================
 "use strict";
 
+// 수업 날짜 입력 해석(봇 /수업등록 「날짜」 칸 · 오너 지시 2026-09-30 「밀린 9월 수업은 실제 날짜로」).
+//   "9/12" · "9.12" · "9-12" · "9월 12일" · "2026-09-12" → "2026-09-12". 비우면 오늘.
+//   연도 없이 쓴 날짜가 오늘보다 뒤면 작년으로 본다(1월에 12/30 을 넣는 경우).
+//   범위 = 「이번 달 1일」과 「7일 전」 중 더 이른 날부터 오늘까지 · 미래 불가. 정산이 끝난 지난달로
+//   판수가 꽂히지 않게 한다(월초 1주만 지난달 끝자락을 받는다). 더 지난 수업은 오너에게(판수 조정 요청).
+function parseLessonDate(input, today) {
+  const s = String(input ?? "").trim();
+  if (!s) return { ok: true, date: today };
+  const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
+  const iso = (y, m, d) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const real = (v) => { const t = Date.parse(`${v}T00:00:00Z`); return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v; };
+  let date;
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) date = iso(+m[1], +m[2], +m[3]);
+  else if ((m = s.match(/^(\d{1,2})\s*(?:[\/.\-]|월)\s*(\d{1,2})\s*일?$/))) {
+    date = iso(+today.slice(0, 4), +m[1], +m[2]);
+    if (real(date) && date > today) date = iso(+today.slice(0, 4) - 1, +m[1], +m[2]);
+  } else return { ok: false };
+  const floor = [`${today.slice(0, 8)}01`, addDays(today, -7)].sort()[0];
+  if (!real(date) || date > today || date < floor) return { ok: false, floor };
+  return { ok: true, date };
+}
+
 module.exports = function createLessonRecorder(deps) {
   const { sbSelect, sbInsertMany, sbRpc } = deps;
   const onGamesChanged = typeof deps.onGamesChanged === "function" ? deps.onGamesChanged : null;
@@ -136,3 +159,5 @@ module.exports = function createLessonRecorder(deps) {
 
   return { resolveEnrollmentId, closeBookingsFor, appRecordedOn, recordedOn, writeLessonRows };
 };
+
+module.exports.parseLessonDate = parseLessonDate;

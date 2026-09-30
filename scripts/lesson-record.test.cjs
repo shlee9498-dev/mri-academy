@@ -96,3 +96,20 @@ test("중복 판정 — 봇은 앱 기록(portal)만 · 앱은 수업 기록 전
   assert.match(b.log.lastSessionQuery, /games=gt\.0/);
   assert.match(b.log.lastSessionQuery, /trainer_id=eq\.2/);
 });
+
+test("수업 날짜 칸 — 여러 적는 법 · 비우면 오늘 · 이번 달(월초 1주는 지난달 끝)만", () => {
+  const P = createRecorder.parseLessonDate;
+  const T = "2026-09-30";
+  assert.deepEqual(P("", T), { ok: true, date: T });
+  assert.deepEqual(P(null, T), { ok: true, date: T });
+  for (const x of ["9/12", "9.12", "9-12", "9월 12일", "2026-09-12", " 9 / 12 "]) assert.equal(P(x, T).date, "2026-09-12", x);
+  assert.equal(P("9/1", T).ok, true);
+  assert.equal(P("8/31", T).ok, false);                                // 정산 끝난 지난달
+  assert.equal(P("8/31", T).floor, "2026-09-01");
+  assert.equal(P("10/1", T).ok, false);                                // 미래
+  assert.equal(P("2/30", T).ok, false);                                // 없는 날
+  assert.equal(P("아무거나", T).ok, false);
+  assert.equal(P("9/26", "2026-10-03").ok, true);                      // 월초 1주는 지난달 끝자락
+  assert.equal(P("9/25", "2026-10-03").ok, false);
+  assert.equal(P("12/30", "2027-01-02").date, "2026-12-30");           // 연도 없으면 작년으로 넘어간다
+});
