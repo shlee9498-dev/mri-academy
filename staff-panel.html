@@ -805,7 +805,7 @@ function renderTrainer(){
 }
 
 // 내 등록분 칩 — 병행수강이면 학생이 두 트레이너 화면에 뜨되 각자 자기 등록만 본다.
-// 중복 신청 사고(정희준: 준구가 이미 등록된 판수를 다시 신청할 뻔함)를 화면에서 막는 지점이다.
+// 중복 신청 사고(다른 트레이너가 이미 등록된 판수를 다시 신청할 뻔한 건)를 화면에서 막는 지점이다.
 // units_total은 numeric(6,2)라 "8.00"으로 내려온다. Number를 거쳐 8 / 8.5로 보여준다.
 const unitTxt = v => v==null ? "?" : String(Number(v));
 function enrChips(s){
@@ -837,7 +837,7 @@ function stuCard(s){
   const paraBadge = s.parallel ? `<span class="badge">병행수강</span>` : "";
   // 강의는 판수·지급 축이 아니라서 '남은 N판'과 나란히 두면 오독된다. 뱃지로 축을 먼저 알린다.
   const lecBadge = (s.courses||[]).length ? `<span class="badge">강의</span>` : "";
-  // 내 등록이 없는데 화면에 떴다 = 세션만 진행한 경우다(주현성 사고의 반대편).
+  // 내 등록이 없는데 화면에 떴다 = 세션만 진행한 경우다(등록 담당과 수업 트레이너가 갈린 사고의 반대편).
   // 트레이너가 "내가 등록시킨 학생이 아니다"를 알 수 있어야 한다(오너 지시 2).
   const foreign = (s.enrollments||[]).length ? "" : `<span class="badge warn">타 트레이너 등록</span>`;
   return `<div class="stu">
@@ -876,7 +876,7 @@ function addSession(id){
 // ── 미결제 배지 (관제탑 8/19 판정 2) ──────────────────────────────────
 // is_prospect = 등록도 세션도 없는 학생. 상담만 받고 결제 전인 팔로우업 대상이다.
 // 로스터 3경로(등록·세션·students.trainer_id) 중 세 번째로만 걸려 들어오므로,
-// 배지가 없으면 화면에서 "왜 여기 있는지 모를 학생"이 된다 — 하홍진 72·박지훈 76이 그 형태다.
+// 배지가 없으면 화면에서 "왜 여기 있는지 모를 학생"이 된다 — 실제로 두 명이 그 형태였다.
 function prospectBadge(s){
   if(!s.is_prospect) return "";
   return `<span class="badge warn" title="등록·세션 기록이 없습니다 — 상담 후 결제 대기">미결제</span>`;
@@ -1026,7 +1026,7 @@ function renderOwnerPay(){
 }
 
 // 결제 내역 (owner · 읽기 전용 — 관제탑 8/25). memo는 셀에 노출하지 않고 행 hover(title)로만 —
-// 내부 판정 이력이 들어 있다. 미연결 배지 = 결제만 있고 등록·계약 연결이 없는 상태(박유현형 사고 감지).
+// 내부 판정 이력이 들어 있다. 미연결 배지 = 결제만 있고 등록·계약 연결이 없는 상태(결제만 남은 사고 감지).
 const PAYKIND_KO={lesson:"레슨",course:"직강",consult:"상담",set:"세트",refund:"환불",sales:"영업",etc:"기타",lesson_consult:"레슨상담",lecture_consult:"강의상담",adjust:"조정"};
 const PAYCH_KO={transfer:"계좌이체",groble:"그로블",soomgo:"숨고",etc:"기타"};
 let PL={off:0,lim:50};
@@ -1109,7 +1109,7 @@ function renderOwnerTools(){
 
 // ── C2: 담당별 섹션 (오너) ───────────────────────────────────────────
 // 학생이 아니라 **등록**이 담당을 정한다. 병행수강 학생은 각 담당 섹션에 자기 등록분으로 함께 뜬다.
-// (준구가 정희준의 이미 등록된 판수를 중복 신청할 뻔한 사고 — 화면이 담당을 안 나눠서 생겼다.)
+// (다른 트레이너가 이미 등록된 판수를 중복 신청할 뻔한 사고 — 화면이 담당을 안 나눠서 생겼다.)
 let TR_FILTER = "all";
 const inSec = (s,tid)=> tid===null ? !(s.trainer_ids||[]).length : (s.trainer_ids||[]).includes(tid);
 
@@ -1176,7 +1176,7 @@ function leftCell(s){
   if(n <= 2)  return `<span class="badge warn">${n}판</span>`;
   return `<span class="badge remain">${n}판</span>`;
 }
-// 동명이인 가드(오너 지시 3) — students에 이름 유니크 제약이 없고 주현성(60)·김현성(61)이
+// 동명이인 가드(오너 지시 3) — students에 이름 유니크 제약이 없고 이름이 거의 같은 두 수강생이
 // 실제로 공존한다. 모든 수강생 표시에 id를 병기해 화면에서 구분되게 한다.
 function nameWithId(s){ return `${esc(s.name)}<span class="sid">#${s.student_id}</span>`; }
 // 섹션 담당(tid)이 주어지면 그 담당의 등록분만 칩으로 보여준다 — 병행수강이 섹션마다 다르게 표시된다.
@@ -1233,7 +1233,7 @@ function studentOpts(){
 //   ① 대상은 status='active' 행만  ② 차단하지 않고 경고 후 명시적 확인
 //   ③ 선택지 [그래도 등록]/[취소]  ④ 목록 표기 `#id(담당)`
 // 문안은 봇의 내용을 그대로 옮기되 어미만 이 화면의 존댓말에 맞췄다.
-// 병행수강 2행이 정상인 케이스가 실재한다(정희준·장익교 — 8/13 오너 판정) — 그래서 막지 않는다.
+// 병행수강 2행이 정상인 케이스가 실재한다(두 명 · 8/13 오너 판정) — 그래서 막지 않는다.
 // 클라이언트 검사다: overview에 이미 실려 온 목록과 대조하므로 추가 API 호출이 없다.
 // 서버측 강제(별칭·resolveStudentId 연계)는 admin-panel.js 소관 — 봇 v2 재배선에서 처리.
 let DUP_OK = false;
