@@ -958,6 +958,14 @@ let adjreqPortalCard = null;
 // 신청 창구 카드 · DM(docs/intake-design.md §6 · PR-2) — 봇 블록이 intake-cards.cjs 로 채운다. 봇이 없으면 null
 // (신청은 그래도 저장된다 — 카드 · 접수 DM 만 안 간다). 제출 훅 · cronTick 재알림 · PR-3 트레이너 라우트가 이것을 부른다.
 let intakeFlow = null;
+// 디스코드 피드백 이관 드라이런(10/1 어플 · 1순위) — 봇이 준비되면 위 ready 에서 한 번 돈다. 결과 = ops_state 'feedback_import:scan'.
+//   token 을 바꾸면 다음 기동에 다시 돈다. LESSON_GUILD_ID(GmI 클랜)는 읽지 않는다.
+const FEEDBACK_SCAN_TOKEN = "2026-10-01a";
+const feedbackScan = require("./feedback-scan.cjs").createFeedbackScan({
+  getClient: () => botClient,
+  opsStateGet: (k) => opsStateGet(k), opsStateSet: (k, v) => opsStateSet(k, v),
+  skipGuildIds: [process.env.LESSON_GUILD_ID].filter(Boolean),
+});
 // 현금영수증 「발급함」 버튼(계약 §9.5 · 오너 OK 2026-09-30) — 오너 승인 카드 · 4일 미발급 알림이 같은 버튼을 단다.
 //   누르면 payment_requests.cash_receipt_issued_at 이 찍힌다(payreq_cr 처리기 · 두 번 눌러도 한 번).
 function payreqReceiptRow(id) {
@@ -1237,6 +1245,9 @@ if (process.env.DISCORD_TOKEN) {
   client.once("ready", async () => {
     console.log("bot ready:", client.user.tag);
     botClient = client;   // Phase T1 오너 DM용
+    // 디스코드 피드백 이관 드라이런(feedback-scan.cjs · 읽기 전용 · 10/1) — 기동 1분 30초 뒤 한 번(같은 token 은 다시 안 돈다)
+    if (hasSupabase()) setTimeout(() => feedbackScan.maybeRun(FEEDBACK_SCAN_TOKEN)
+      .catch((e) => console.error("fbimport_scan", e?.message)), 90_000);
     // 기동 틱은 로그인 전에 돌아 카드 다시 띄우기가 실패할 수 있다 — 준비 직후 한 번 더(ops_state 'payreq:resend').
     setTimeout(() => runPayreqResend().catch((e) => console.error("payreq_resend_ready", e?.message)), 5000);
 
