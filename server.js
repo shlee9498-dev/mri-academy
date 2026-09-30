@@ -367,6 +367,7 @@ app.get("/api/auth/callback", async (req, res) => {
     if (apply) {
       // gj = 서버 입장 결과(joined · already · failed) — 신청 행 guild_join 으로 가서 카드에 「DM 안 닿음」을 띄운다
       const gj = await joinMainGuild(me.id, tok.access_token);
+      console.log(`[intake] 신청 로그인 · 서버 입장 ${gj}`);   // joined = 새로 들어옴 · already = 이미 있음 · failed = 봇 권한(초대 코드 만들기) 확인
       const jwt = signJWT({ sub: me.id, name, gj });
       return res.redirect(`${safeReturn(apply.ret)}#token=${jwt}&nonce=${encodeURIComponent(apply.nonce)}`);
     }
@@ -954,6 +955,9 @@ let payreqPortalCard = null;
 // 앱 판수 조정 요청 → 오너 DM 승인 카드(계약 §9.10 · §46). 같은 패턴으로 봇 블록이 채운다 — 봇이 없으면 null
 // (요청은 그래도 저장되고 ownerNotified:false 로 답한다). 버튼 = adjreq_ok · adjreq_no.
 let adjreqPortalCard = null;
+// 신청 창구 카드 · DM(docs/intake-design.md §6 · PR-2) — 봇 블록이 intake-cards.cjs 로 채운다. 봇이 없으면 null
+// (신청은 그래도 저장된다 — 카드 · 접수 DM 만 안 간다). 제출 훅 · cronTick 재알림 · PR-3 트레이너 라우트가 이것을 부른다.
+let intakeFlow = null;
 // 현금영수증 「발급함」 버튼(계약 §9.5 · 오너 OK 2026-09-30) — 오너 승인 카드 · 4일 미발급 알림이 같은 버튼을 단다.
 //   누르면 payment_requests.cash_receipt_issued_at 이 찍힌다(payreq_cr 처리기 · 두 번 눌러도 한 번).
 function payreqReceiptRow(id) {
@@ -966,6 +970,8 @@ if (process.env.DISCORD_TOKEN) {
       GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers,
       GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent,
       GatewayIntentBits.GuildMessageReactions,
+      // 신청 창구 DM 중계(PR-2) — DM ① · ② 가 「이 DM 으로 물어보세요」라고 한다. 받는 쪽은 열린 신청이 있는 사람만(intake-cards relayIn).
+      GatewayIntentBits.DirectMessages,
     ],
     partials: [Partials.Message, Partials.Channel, Partials.Reaction],
   });
@@ -3249,6 +3255,103 @@ if (process.env.DISCORD_TOKEN) {
     return itx.editReply({
       content: `${base}\n→ **반려** · ${dmOk ? "트레이너에게 알렸어" : "트레이너 DM 실패 — 직접 알려줘"}`, components: [],
     }).catch(() => {});
+  });
+
+  // ── 신청 창구 카드 · DM(docs/intake-design.md §3 · §6 · PR-2 · 오너 결정 5 · 7) ──
+  //   카드 그리기 · 상태 전이 · DM 문구는 intake-cards.cjs(시험 scripts/intake-cards.test.cjs). 여기는 디스코드 배선만.
+  //   [맡기] = 활성 트레이너 · 원장(먼저 누른 한 명) · [배정] [입금 확인] [닫기] = 오너 전용 · [답장] = 오너 · 맡은 트레이너.
+  intakeFlow = require("./intake-cards.cjs").mountIntakeFlow({
+    sbSelect, sbInsert, sbPatch, sbUpsert, ownerDiscordId: process.env.MRI_OWNER_ID,
+    send: async (discordId, payload) => {
+      if (!discordId) return null;
+      try {
+        const u = await client.users.fetch(String(discordId));
+        const m = await u.send(payload);
+        return { channelId: m.channelId, messageId: m.id };
+      } catch (e) { console.error("intake_send", e?.code || "", e?.message); return null; }
+    },
+    edit: async (channelId, messageId, payload) => {
+      try {
+        const ch = await client.channels.fetch(String(channelId));
+        await ch.messages.edit(String(messageId), payload);
+        return true;
+      } catch (e) { console.error("intake_edit", e?.code || "", e?.message); return false; }
+    },
+  });
+  const INTAKE_OWNER_ONLY = ["asg", "asgsel", "dep", "close", "closesel"];
+  const intakeReplyText = {
+    claim: (o) => (o.ok ? "맡았어 — 트레이너 앱에서 레벨 테스트 시간을 넣어줘. 넣으면 신청자에게 안내 DM 이 가"
+      : o.code === "taken" ? (o.mine ? "이미 네가 맡은 신청이야" : `이미 ${o.by || "다른 트레이너"}가 맡았어`)
+      : o.code === "closed" ? "닫힌 신청이야" : o.code === "not_staff" ? "활성 트레이너만 맡을 수 있어" : "신청을 못 찾았어"),
+    asgsel: (o) => (o.ok ? (o.same ? `이미 ${o.trainer.name}가 맡고 있어` : `${o.trainer.name}에게 배정했어 — 카드를 보냈어`)
+      : o.code === "locked" ? `지금 상태(${o.status || "?"})에서는 배정을 바꿀 수 없어 — 레벨 테스트 칸이 잡힌 뒤에는 트레이너 앱에서 칸부터 옮겨줘`
+      : o.code === "bad_trainer" ? "그 트레이너는 지금 고를 수 없어" : "신청을 못 찾았어"),
+    dep: (o) => (o.ok ? `입금 확인 끝 — 결제 요청 #${o.reqId}${o.paymentId ? ` · 본표 payments #${o.paymentId}` : " · 본표 반영은 일일 미반영 알림이 다시 봐"}`
+        + (o.dmOk ? " · 신청자에게 확정 DM 보냄" : " · ⚠️ 신청자 DM 이 안 닿았어 — 직접 연락해줘")
+      : o.code === "already" ? "이미 입금 확인된 신청이야"
+      : o.code === "not_booked" ? `레벨 테스트 시간이 아직 안 잡혔어(${o.status}) — 트레이너가 앱에서 칸을 넣은 뒤에 눌러줘`
+      : o.code === "booking_gone" ? `레벨 테스트 칸이 살아 있지 않아(${o.bookingStatus || "없음"}) — 칸부터 다시 잡아줘`
+      : o.code === "approve_failed" ? `결제 요청 #${o.reqId} 승인이 DB 에서 막혔어${o.why ? ` — ${o.why}` : ""}\n요청은 pending 그대로야. 원인을 고친 뒤 다시 누르면 같은 요청으로 다시 해`
+      : o.code === "request_closed" ? `결제 요청 #${o.reqId} 이 ${o.reqStatus} 상태라 여기서 못 이어가 — 요청을 먼저 봐줘`
+      : o.code === "no_price" ? "레벨 테스트비 정가를 못 읽었어(config/payments.js) — 결제 트랙에 확인해줘"
+      : o.code === "busy" ? "처리 중이야 — 잠깐 뒤에 카드를 봐줘" : "신청 · 명부 · 담당 연결을 못 찾았어"),
+    closesel: (o) => (o.ok ? `닫았어${o.paid ? " — 입금 확인된 신청이라 환불은 따로 처리해줘" : ""}`
+      : o.code === "booking_active" ? `레벨 테스트 칸(${o.when})이 아직 살아 있어 — 트레이너 앱에서 칸을 먼저 취소하고 닫아줘`
+      : o.code === "not_open" ? `이미 끝난 신청이야(${o.status || "?"})` : "신청을 못 찾았어"),
+    replym: (o) => (o.ok ? "보냈어" : o.code === "dm_failed" ? "신청자에게 DM 이 안 닿았어 — 디스코드에서 직접 찾아서 연락해줘"
+      : o.code === "not_assignee" ? "맡은 트레이너 · 오너만 답장할 수 있어" : o.code === "empty" ? "보낼 말이 비어 있어" : "신청을 못 찾았어"),
+  };
+  client.on("interactionCreate", async (itx) => {
+    if (!(itx.isButton() || itx.isStringSelectMenu() || itx.isModalSubmit())) return;
+    const m = String(itx.customId || "").match(/^intake_(claim|asg|asgsel|dep|close|closesel|reply|replym):(\d+)$/);
+    if (!m) return;
+    const action = m[1], appId = Number(m[2]);
+    if (!hasSupabase()) return itx.reply({ content: "DB 연동 준비 전이야.", ephemeral: true });
+    if (INTAKE_OWNER_ONLY.includes(action) && !isMriOwner(itx)) return itx.reply({ content: "오너 전용 버튼이야.", ephemeral: true });
+    try {
+      // 모달 · 선택 메뉴는 첫 응답이어야 해서 DB 를 보기 전에 연다
+      if (action === "reply") {
+        const modal = new ModalBuilder().setCustomId(`intake_replym:${appId}`).setTitle(`신청 #${appId} 에 답장`);
+        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("t")
+          .setLabel("신청자에게 보낼 말(봇 DM 으로 가요)").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1500)));
+        return await itx.showModal(modal);
+      }
+      if (action === "close") {
+        return await itx.reply({ content: `신청 #${appId} 을 닫을 이유를 골라줘`,
+          components: [require("./intake-cards.cjs").closeReasonRow(appId)], ephemeral: true });
+      }
+      if (action === "asg") {
+        await itx.deferReply({ ephemeral: true });
+        const opts = await intakeFlow.trainerOptions();
+        if (!opts.length) return await itx.editReply("고를 수 있는 트레이너가 없어(활성 · 디스코드 연결).");
+        return await itx.editReply({ content: `신청 #${appId} 을 맡길 사람을 골라줘`,
+          components: [require("./intake-cards.cjs").selectRow(`intake_asgsel:${appId}`, "맡길 트레이너", opts)] });
+      }
+      const inPlace = action === "asgsel" || action === "closesel";     // 개인 안내(선택 메뉴)를 그 자리에서 결과로 바꾼다
+      if (inPlace) await itx.deferUpdate(); else await itx.deferReply({ ephemeral: true });
+      let out;
+      if (action === "claim") out = await intakeFlow.claim({ appId, actorDiscordId: itx.user.id });
+      else if (action === "asgsel") out = await intakeFlow.assign({ appId, trainerId: Number(itx.values?.[0]) });
+      else if (action === "dep") out = await intakeFlow.confirmDeposit({ appId, actorDiscordId: itx.user.id });
+      else if (action === "closesel") out = await intakeFlow.close({ appId, reason: String(itx.values?.[0] || "") });
+      else if (action === "replym") out = await intakeFlow.reply({ appId, actorDiscordId: itx.user.id, text: itx.fields.getTextInputValue("t") });
+      const text = `#${appId} ${intakeReplyText[action](out)}`;
+      return await itx.editReply(inPlace ? { content: text, components: [] } : text);
+    } catch (e) {
+      console.error("intake_itx", action, e?.status || "", e?.message);
+      const msg = `#${appId} 처리 중 오류가 났어 — 카드 상태를 보고 다시 눌러줘`;
+      if (itx.deferred || itx.replied) return itx.editReply({ content: msg, components: [] }).catch(() => {});
+      return itx.reply({ content: msg, ephemeral: true }).catch(() => {});
+    }
+  });
+  // 신청자 → 봇 DM 중계(열린 신청이 있는 사람만 · 본문은 로그에 남기지 않는다)
+  client.on("messageCreate", async (msg) => {
+    if (msg.author?.bot || msg.guild || !intakeFlow || !hasSupabase()) return;
+    try {
+      const out = await intakeFlow.relayIn({ authorId: msg.author.id, text: msg.content || "",
+        attachments: [...(msg.attachments?.values?.() || [])].map((a) => a.url) });
+      if (out.relayed) console.log(`[intake] 신청 #${out.appId} DM 중계 → ${out.n}명`);
+    } catch (e) { console.error("intake_relay", e?.status || "", e?.message); }
   });
 
   // 연결 신청 접수 — /연결신청(디스코드)과 앱의 연결 대기 화면이 **같은 함수**를 쓴다.
@@ -8137,12 +8240,15 @@ const studentPortal = require("./student-portal.cjs")(app, {
 // start.html 이 부른다(공유비밀 게이트 밖 · 로그인은 /api/auth/login?intent=apply 토큰). 불투명 id 는 포털과 같은 함수.
 // 카드 · DM 은 intakeApi.hooks.onSubmitted 에 붙인다(PR-2). findPlayer · pubgRankedByAccount = 배그 닉 · 티어 조회(실패해도 신청은 받는다).
 // INTAKE_ACCEPT_FROM = 제출을 받기 시작하는 날(KST). 개인정보처리방침 개정(나이 · 고민 · 가능 시간대 · 이벤트 코드 · 서버 자동 입장)이
-//   시행되는 날로 둔다(7일 전 고지). 그 전에는 POST 가 503 intake_closed — 페이지 PR 에서 날짜를 넣는다.
-const INTAKE_ACCEPT_FROM = null;
+//   시행되는 날로 둔다(7일 전 고지). 그 전에는 POST 가 503 intake_closed.
+//   2026-10-08 = #439(10/1 고지 · 10/8 시행). 날짜만 보고 열리므로 그날 재배포가 필요 없다 — 열리면 로그 「[intake] 제출 열림」.
+const INTAKE_ACCEPT_FROM = "2026-10-08";
 const intakeApi = require("./intake-api.cjs")(app, {
   sbSelect, sbInsert, sbDelete, limit, verifyJWT, portal: studentPortal, parseIgnInput,
   findPlayer, pubgRankedByAccount, acceptFrom: INTAKE_ACCEPT_FROM,
 });
+// 제출 뒤 카드 · 접수 DM(PR-2) — 봇이 없으면 아무것도 안 한다(신청은 저장됐다).
+intakeApi.hooks.onSubmitted = (row) => (intakeFlow ? intakeFlow.onSubmitted(row) : null);
 
 // ── 수업 복기 API(§29 PR-1·PR-2 · /api/student-portal/{reviews,games,phases,images,feed} + /sessions 확장) ──
 // student-portal 뒤 — 그 파일이 건 공유비밀 게이트·세션·불투명 id·scrub 을 같은 함수로 쓴다. 트레이너 쪽은 아래 mountTrainer(PR-3).
@@ -8457,7 +8563,9 @@ const REQUIRED_SCHEMA = {
   intake_applications:  ["id","status","student_id","discord_id","display_name","guild_join","real_name","age","tier",
                          "tier_checked","pubg_name","pubg_platform","pubg_account_id","concern","preferred_trainer_id",
                          "slots","slots_note","event_code","utm","privacy_version","privacy_agreed_at",
-                         "assigned_trainer_id","booking_id","deposit_confirmed_at","created_at"],
+                         "assigned_trainer_id","booking_id","deposit_confirmed_at","created_at",
+                         // PR-2 카드(2026-10-01) — 맡기 · 재알림 · 입금 확인 · 닫기 · §56 DM 안 닿음
+                         "claimed_at","reminded_at","deposit_request_id","closed_reason","closed_note","updated_at","dm_failed_at"],
   intake_cards:         ["application_id","recipient_staff_id","channel_id","message_id"],
   feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
 };
@@ -9027,6 +9135,9 @@ async function cronTick() {
   await maybeRunDaily("cashReceiptOverdue", "09:05", runCashReceiptOverdue, "현금영수증 4일 미발급");
   // 공개 지표(최근 30일 실측) — 자정 직후 한 번. 기동이 늦어도 그날 첫 틱이 채운다(docs/public-metrics.md).
   await maybeRunDaily("publicMetrics", "00:05", () => publicMetrics.run(), "공개 지표 계산");
+  // 신청 창구(PR-2) — 제출 열림 · 닫힘이 바뀌면 한 줄(시행일 0시 확인용) · 24시간째 아무도 안 맡은 신청은 오너에게 한 번 더(오너 결정 7).
+  intakeApi.logOpen();
+  if (intakeFlow) await intakeFlow.remind().catch((e) => console.error("intake_remind", e?.status || "", e?.message));
   // 오너 승인 카드 다시 띄우기(ops_state 'payreq:resend') — 매 틱. 목록이 비어 있으면 읽기 한 번으로 끝난다.
   await runPayreqResend().catch((e) => console.error("payreq_resend", e?.message));
   // 주간 보류 DM(계약 §9.17 · 오너 확정 9/30) — 월요일 10:00 KST 에 한 번. 날짜 키라 월요일마다 새로 돈다.

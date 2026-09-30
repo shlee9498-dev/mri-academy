@@ -4652,3 +4652,28 @@ notify pgrst, 'reload schema';
 --      실행 후: event_codes 12칸 · 제약 7 · 인덱스 1 / intake_applications 35칸 · 제약 15 · 인덱스 5 / intake_cards 5칸 · 제약 3 ·
 --               인덱스 1 · RLS 셋 다 on · public 표 78개 · 명부 95행(prospect 1) 그대로.
 -- ============================================================
+
+-- ============================================================
+-- §56  신청 창구 — 신청자 DM 이 안 닿은 시각 (2026-10-01 · PR-2 카드 · 더하기만 = A 구간)
+--   카드(intake-cards.cjs)가 「⚠️ 신청자에게 DM 이 안 닿음」을 띄우는 근거. 접수 · 확정 · 답장 DM 이 실패하면 시각을 적고,
+--   다음 DM 이 닿으면 비운다. 새 칸 하나 · null 허용 · 기본값 없음 — 기존 행은 그대로다.
+-- ============================================================
+alter table public.intake_applications add column if not exists dm_failed_at timestamptz;
+comment on column public.intake_applications.dm_failed_at is
+  '신청자 DM(접수 · 레벨 테스트 안내 · 확정 · 답장)이 마지막으로 안 닿은 시각. 다음 DM 이 닿으면 비운다 — §56.';
+
+notify pgrst, 'reload schema';
+
+-- ── 56b) 검증 ──────────────────────────────────────────────────────────────
+--   select count(*) from information_schema.columns
+--    where table_schema = 'public' and table_name = 'intake_applications';                    -- 기대 36
+--   select data_type, is_nullable from information_schema.columns
+--    where table_schema = 'public' and table_name = 'intake_applications' and column_name = 'dm_failed_at';  -- timestamp with time zone · YES
+--
+-- 되돌리기: 코드(REQUIRED_SCHEMA 의 dm_failed_at · intake-cards.cjs markDm)를 먼저 되돌린 뒤
+--   alter table public.intake_applications drop column if exists dm_failed_at;   ← 지우는 DDL = B 구간(오너 OK)
+--
+--   ✅ 실행 완료 2026-10-01 00:1x KST (세션 실행 · A 구간 · 이 블록 그대로).
+--      실행 전: intake_applications 35칸 · 제약 15 · 인덱스 5 · 0행 · dm_failed_at 없음.
+--      실행 후: 36칸 · dm_failed_at timestamptz null 허용 · 주석 있음 · 제약 15 · 인덱스 5 · 0행 그대로.
+-- ============================================================
