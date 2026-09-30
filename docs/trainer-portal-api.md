@@ -296,7 +296,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `GET /reviews/recipients` | | `{ recipients:[{ staffId, displayName, isPrimary, lastLessonOn }], defaultStaffId, defaultVisibility }` — 담당 ∪ 최근 90일 수업 트레이너(비활성 제외) · 최근 수업순 · 기본 = 최근 수업 트레이너 → 없으면 담당 · 둘 다 없으면 빈 배열 + null. **`defaultVisibility`**(2026-09-26 계약 보강 B) = 내가 마지막으로 보낸 복기의 범위 `private` · `students` · 보낸 적 없으면 **null**. 보내기에서 범위를 생략했을 때 서버가 쓰는 값과 **같은 함수**로 센다 — 숨긴 복기 · 엑셀 출처(보낼 때 private 강제)도 센다 · 트레이너가 쓴 이관 복기는 세지 않는다 · `group` 은 `private`. 확인창은 이 값을 미리 골라 두고, null 이면 범위를 꼭 고르게 한다(생략하면 400 `visibility_required`) |
 | `POST /reviews` | `{ anchorKind, sessionId?, courseId?, courseSessionId?, source? }` | `{ review: 상세 §8.4, existing }` — `anchorKind` = `lesson`(sessionId) · `course`(courseId+courseSessionId) · `none` · `pending`. 수업·강의 연결이 있고 내 복기가 이미 있으면 새로 만들지 않고 그 복기 + `existing:true` · 그 복기를 숨겼으면 409 `anchor_taken` · 남의 수업·강의 400 `anchor_student_mismatch` · `source` = `app`(기본) · `xlsx`(앱이 엑셀을 파싱해 만들 때) |
 | `GET /reviews/:id` | | `{ review: 상세 §8.4 }` — 내 복기 · 또는 공유 복기(`visibility=students` · 보냄 · 숨김 아님 · 내가 「수강생 전체」 범위 안). 내 복기면 읽음 기록 |
-| `PUT /reviews/:id` | `{ title?, body?, srcFileName?, anchorKind?, sessionId?, courseId?, courseSessionId? }` | `{ review: 요약 §8.3 }` — 내가 쓴 복기만(보낸 뒤에도 수정 가능 → `updatedAt > publishedAt` = 「수정됨」). 제목 60 · 본문 8000 · 파일명 200자 넘으면 400 `review_too_long`. 앵커는 `anchorKind` 와 같이만 · draft 또는 연결 끊김일 때만(아니면 409 `review_not_draft`) · 보낸 복기를 `pending` 으로는 400 `anchor_required` · 이미 복기가 있는 수업이면 409 `anchor_taken` |
+| `PUT /reviews/:id` | `{ title?, body?, srcFileName?, anchorKind?, sessionId?, courseId?, courseSessionId? }` | `{ review: 요약 §8.3 }` — 내가 쓴 복기만(보낸 뒤에도 수정 가능 → `updatedAt > publishedAt` = 「수정됨」). 제목 60 · 본문 8000 · 파일명 200자 넘으면 400 `review_too_long`. 앵커는 `anchorKind` 와 같이만 · draft 또는 연결 끊김일 때 · **보낸 수업 복기는 다른 내 수업(`anchorKind:"lesson"`)으로만**(§8.10 · 2026-09-30) — 그 밖은 409 `review_not_draft` · 보낸 복기를 `pending` 으로는 400 `anchor_required` · 이미 복기가 있는 수업이면 409 `anchor_taken` |
 | `DELETE /reviews/:id` | | 204 — draft = 삭제(사진 파일 먼저) · 보낸 복기 = **숨김**(목록·상세·피드·트레이너 어디에도 안 나옴 · 되살리기·완전 삭제는 오너 SQL) |
 | `POST /reviews/:id/publish` | `{ recipientTrainerId?, visibility? }` | `{ published:true, recipientDisplayName, visibility }` — `pending` 400 `anchor_required`. **범위**: 요청값(`private`·`students` · `group` 은 400 `visibility_invalid`) → 없으면 내가 마지막으로 보낸 복기의 값(= `GET /reviews/recipients` 의 `defaultVisibility`) → 그것도 없으면(첫 보내기) 400 `visibility_required` · 엑셀 출처(`source ≠ app`)는 요청값과 무관하게 `private`. **받는 트레이너**: 수업 = 그 수업 트레이너 · 강의 = 오너 · 자유 기록(또는 연결 끊김) = `recipientTrainerId` 필수(없으면 400 `recipient_required` · 후보 밖 400 `recipient_invalid`). 이미 보낸 복기면 현재 상태를 돌려준다(멱등) |
 | `PUT /reviews/:id/visibility` | `{ visibility }` | `{ visibility, visibilityChangedAt }` — 내 복기(트레이너가 쓴 이관 복기 포함) · 숨김 아님 · 보낸 뒤에도 · 좁히면 즉시 남에게 404 |
@@ -368,6 +368,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `recipientDisplayName` · `visibilityChangedAt` · `srcFileName` | string | **가능** | **내 복기에만** 값(공유 열람은 늘 null) |
 | `createdAt` | string(ISO) | 아니오 | |
 | `readOnly` | boolean | 아니오 | true = 공유 열람 · 트레이너가 쓴 복기 → 편집 라우트는 404 |
+| `anchorChanges[]` | array | 아니오 | 보낸 뒤 연결 수업을 바꾼 기록(§8.10) `{ fromPlayedAt, toPlayedAt, changedAt }` · 오래된 순 · 최근 20건 · `fromPlayedAt` 은 null 가능(연결 끊긴 복기를 다시 이은 경우) · **내 복기에만**(공유 열람 · draft 는 빈 배열) |
 | `games[]` | array | 아니오 | `{ id, ord, seqLabel, map, mapRaw, phases:[{ id, ord, phaseFrom, phaseTo, phaseToEnd, headerRaw, lines:[{ ord, text, kind, suggestedKind }], tags, suggestedTags, images:[이미지] }] }` · ord 순 |
 | `attachments[]` | array | 아니오 | 페이즈에 붙지 않은 사진(이미지 모양 같음) |
 | 이미지 | object | — | `{ id, ord, displayUrl, thumbUrl, originalUrl?, width, height, annotations:[{ authorRole, authorDisplayName, v, shapes, version, mine }] }` · URL 은 **서명 10분**(캐시하지 말고 상세를 다시 부를 때 새 URL) · `originalUrl` 은 **내 복기에만** · **null 가능(PR-2 확정)**: `displayUrl` — 공유 열람인데 표시본이 아직 없을 때(내 복기면 원본 URL 로 대신) · `thumbUrl` — 썸네일이 아직 없을 때(앱은 `displayUrl` 을 쓴다) · `width`·`height` — 서버가 크기를 못 읽었을 때 · `shapes` = **도형 배열**(§8.8) · `v` = 형식 버전(1) · `mine` = 내 레이어 |
@@ -471,7 +472,29 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 
 **시험** — 통합 82항목 추가(합 295 · 로컬 PostgreSQL 16 + PostgREST 12 + trainer-portal · 트레이너 3명: 담당·받는 사람 / 오너 / 담당 없는 활성 트레이너 + 비활성 1명): 게이트·세션(`not_staff` · 수강생 세션 `scope_denied`) · 목록 범위(수신 ∪ 범위 · 초안·숨김 제외 · 오너 · 빈 목록) · 안 읽음 → 상세 열람 = 읽음 · 답 대기(반응으로는 안 풀림 · 답 → 풀림 · 답을 지우면 다시) · 공개 열람자(원본 URL·받는 사람·세션 id 없음 · 반응자 보임 · 답 404) · 숨김은 오너도 404 · 답 검증(comment phaseId 필수 · 다른 복기 페이즈 · 원시 id · overall 에 phaseId · mark·task = 2차 · 4000자 · 빈 본문 · 추가 키 · 깨진 JSON) · 고치기·지우기 권한 · 수강생 쪽(새 답 = 안 읽음 · 상세에 `mine` 없음) · 트레이너 피드(이름 + pubg_name · 커서) · 수강생 피드는 그대로(pubg 만 · `authorPubgName` 없음) · scrubTrainer 503 없음 · **수강생 응답 실명 0**(트레이너 응답은 따로 모은다). 단위 3개 추가(합 44): 트레이너 안 읽음 · 답 본문 모양 · 과제 기한 검사(2차용).
 
+상세의 `anchorChanges[]`(§8.10)는 전체 필드를 보는 트레이너(받는 트레이너 · 범위 · 오너)에게만 값이 있다 — 공개 열람자는 빈 배열.
+
 **트레이너 앱 인계(1차)**: 목록 「답 기다려요」 묶음 = `awaitingReply` · 줄마다 👍 한 번 탭 = `POST …/reactions/👍`(`myReactions` 에 있으면 `DELETE`) · 상세 답 입력은 `canReply` 일 때만(아니면 「답은 받는 트레이너가 해요」) · 페이즈 코멘트 = `comment` + `phaseId` · 총평 = `overall` · 「공개」 탭 = `GET /feed` · 이름 옆 배그 닉 = `*PubgName`(null 이면 이름만).
+
+### 8.10 보낸 복기의 연결 수업 바꾸기 (2026-09-30 · 오너 지시 · §44)
+
+**반장 계약 한 줄**: `PUT /api/student-portal/reviews/:id { anchorKind:"lesson", sessionId }` — 보낸 복기도 된다 · 내 수업만(남의 수업 400 `anchor_student_mismatch` · 이미 복기가 있는 수업 409 `anchor_taken`) · 받는 트레이너는 새 수업 트레이너로 자동 변경 · 답이 달린 뒤면 서버가 답한 트레이너에게 DM · 상세에 `anchorChanges[]` · 응답 = 요약(§8.3 · 새 `playedAt`).
+
+| 항목 | 규칙 |
+|---|---|
+| 누가 | 복기를 쓴 수강생 본인(내가 쓴 · 숨기지 않은 복기 — 아니면 404 `review_not_found`) |
+| 무엇을 | 보낸 **수업** 복기(`anchorKind=lesson`)의 수업만 **다른 내 수업**으로. 수업 → 자유 기록 · 강의로는 안 된다(409 `review_not_draft`) · 강의 복기 · 자유 기록은 보낸 뒤 연결을 못 바꾼다(종전 그대로 · 연결 끊김만 다시 잇기) |
+| 트레이너 답 전 | 자유롭게 바꾼다 · 알림 없음 |
+| 트레이너 답 뒤 | 바꿀 수 있다 · 서버가 **답한 트레이너마다** 디스코드 DM 「📝 연결 수업이 바뀌었어요 — {이름} 복기 {전 날짜} → {후 날짜}」 · 받는 트레이너가 바뀌었으면 「이제 {트레이너} 트레이너가 받아요」 한 줄 더 · DM 실패는 변경을 되돌리지 않는다 |
+| 받는 트레이너 | 새 수업의 트레이너로 바뀐다(보내기 규칙과 같다) — 새 트레이너 목록에 「답 기다려요」로 뜨고, 전 트레이너는 범위(§3) 안이면 계속 읽을 수 있다(답은 못 한다) |
+| 그대로인 것 | 트레이너 답 · 판 · 페이즈 · 사진 · 그리기 · 반응 · 공개 범위 · 보낸 시각 |
+| 바뀌는 것 | 연결 수업(`sessionId` · `playedAt`) · 받는 트레이너 · `updatedAt`(트레이너 목록에 「안 읽음」으로 다시 뜬다) |
+| 변경 기록 | 한 번 바꿀 때마다 `review_anchor_changes` 에 한 줄(전·후 수업 · 날짜 · 받는 트레이너 · 답 유무 · 시각). 바꾸기와 기록은 DB 함수 하나(`relink_review_lesson`)라 **같이 되거나 같이 안 된다**. 오너가 SQL 로 고친 것도 같은 표에 남는다(`changed_by = owner`) |
+| 상세 표시 | `anchorChanges[]` = `{ fromPlayedAt, toPlayedAt, changedAt }`(§8.4) — 작성자 본인 · 전체 필드를 보는 트레이너에게만 |
+| 같은 수업을 다시 보내면 | 아무것도 안 바뀐다(기록 · DM 없음 · 응답은 현재 요약) |
+| draft | 종전 그대로(무엇으로든 바꾼다 · 기록 · DM 없음) |
+
+**앱 쪽(반장)**: 보낸 복기 상세에 「연결 수업 바꾸기」 → 수업 고르기(`GET /sessions` 중 `hasReview=false` 인 내 수업) → 위 `PUT`. 답이 있는 복기(`hasFeedback`)면 확인창에서 「트레이너에게 알림이 가요」를 먼저 보여 준다. 409 `anchor_taken` = 그 수업엔 이미 복기가 있다.
 
 ---
 
@@ -746,6 +769,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | 수강생 | 트레이너가 취소함 | ✅ 종전부터 |
 | 수강생 | 입금 승인됨 · 반려됨 | ✅ 2026-09-29 (#409) |
 | 수강생 | 트레이너가 배정함 | ✅ 2026-09-29 (#409 · §9.4 와 함께 · OK 대기) |
+| 트레이너 | 답한 복기의 연결 수업이 바뀜 | ✅ 2026-09-30 (§8.10 · 답한 트레이너마다 한 통) |
 
 디스코드 연결이 없는 수강생은 DM 이 가지 않는다 — 앱 안 표시로 대체한다(10/1 이후).
 

@@ -249,3 +249,32 @@ test("과제 기한 검사 — 그 수강생의 예약 · 내 슬롯 · booked �
   assert.equal(T.dueCheck({ ...base, slot: { ...slot, id: 6 } }), null);                   // 예약과 슬롯이 안 맞음
   assert.equal(T.dueCheck({ ...base, booking: null }), null);
 });
+
+test("앵커 바꾸기 허용 — draft 는 무엇이든 · 연결 끊김은 다시 잇기 · 보낸 수업 복기는 수업으로만(§44)", () => {
+  const A = T.anchorChangeAllowed;
+  const pub = { status: "published", anchor_kind: "lesson", lesson_session_id: 31, course_session_id: null };
+  assert.equal(A({ status: "draft", anchor_kind: "lesson", lesson_session_id: 31 }, "none"), true);
+  assert.equal(A({ status: "draft", anchor_kind: "pending" }, "course"), true);
+  assert.equal(A(pub, "lesson"), true);                                                     // 보낸 수업 복기 → 다른 내 수업
+  assert.equal(A(pub, "none"), false);                                                      // 수업을 떼어 자유 기록으로는 안 된다
+  assert.equal(A(pub, "course"), false);
+  assert.equal(A(pub, "pending"), false);
+  assert.equal(A({ ...pub, lesson_session_id: null }, "none"), true);                       // 연결 끊김은 종전대로
+  const course = { status: "published", anchor_kind: "course", lesson_session_id: null, course_session_id: 7 };
+  assert.equal(A(course, "course"), false);                                                 // 강의 복기는 그대로 잠김
+  assert.equal(A(course, "lesson"), false);
+  assert.equal(A({ ...course, course_session_id: null }, "lesson"), true);
+  assert.equal(A({ status: "published", anchor_kind: "none" }, "lesson"), false);           // 자유 기록은 보낸 뒤 연결 불가(종전)
+  assert.equal(A(null, "lesson"), false);
+});
+
+test("연결 수업 변경 DM — 월/일 · 끊긴 연결 · 받는 트레이너 변경 줄", () => {
+  assert.equal(T.monthDay("2026-09-05"), "9/5");
+  assert.equal(T.monthDay("2026-10-01T00:00:00Z"), "10/1");
+  assert.equal(T.monthDay(null), null);
+  assert.equal(T.monthDay("9월"), null);
+  assert.equal(T.relinkDmText({ studentName: "가나다", fromPlayedAt: "2026-09-25", toPlayedAt: "2026-09-22" }),
+    "📝 연결 수업이 바뀌었어요 — 가나다 복기 9/25 → 9/22");
+  assert.equal(T.relinkDmText({ studentName: null, fromPlayedAt: null, toPlayedAt: "2026-09-22", newRecipientName: "트레이너B" }),
+    "📝 연결 수업이 바뀌었어요 — 수강생 복기 연결 끊긴 수업 → 9/22\n이제 트레이너B 트레이너가 받아요");
+});

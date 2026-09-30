@@ -3514,3 +3514,143 @@ $$;
 -- 되돌리기(코드의 호출을 먼저 되돌릴 것 — booking-api reopen 이 이 함수를 부른다):
 --   drop function if exists public.reopen_trainer_slot(bigint, bigint);
 -- ============================================================
+
+-- ============================================================
+-- §44  보낸 복기의 연결 수업 바꾸기 — 변경 기록 표 + relink_review_lesson() (2026-09-30)
+--
+-- 오너 지시(9/30): 보낸 복기도 작성자가 연결 수업을 바꿀 수 있게 한다.
+--   트레이너 답 전 = 자유롭게 · 답 뒤 = 바꿀 수 있지만 답한 트레이너에게 「연결 수업이 바뀌었어요」 알림
+--   + 변경 기록(전 → 후) · 본인 수업으로만(다른 사람 수업 불가 — trg_lr_anchor 가 DB 에서도 막는다).
+--   알림(DM)은 서버(review-api.cjs)가 이 함수의 반환값(feedback_trainer_ids)을 보고 보낸다.
+--
+-- 왜 함수인가: 연결을 바꾸는 것과 기록을 남기는 것이 **같이 되거나 같이 안 돼야** 한다. REST 두 번
+--   (바꾸기 → 기록)이면 사이에서 실패할 때 기록 없는 변경이 생긴다. 오너가 SQL 로 고칠 때도 이 함수를
+--   부르면(p_changed_by = 'owner') 같은 표에 남는다.
+--
+-- 받는 트레이너 = 새 수업의 트레이너(보내기 규칙과 같다 — 수업 복기는 그 수업 트레이너가 받는다).
+--   트레이너 답 · 사진 · 그리기 · 반응 · 공개 범위는 그대로다. 연결 · 받는 트레이너 · updated_at 만 바뀐다
+--   (updated_at 이 바뀌어 트레이너 목록에 「안 읽음」으로 다시 뜬다).
+--
+-- 권한: 기존 security definer 함수들과 같은 기본 권한으로 생긴다. 좁히는 것(revoke · grant)은 권한 변경이라
+--   오너 실행이다 — 아래 44c(세션 실행분에는 들어 있지 않다).
+--
+-- A 구간(새 표 · 새 함수 · 더하기만). 코드가 부르기 전까지는 아무 동작도 바꾸지 않는다.
+--
+-- 반환: {"relinked":true, from_session_id, to_session_id, from_played_at, to_played_at,
+--        from_trainer_id, to_trainer_id, feedback_trainer_ids:[…]} · {"unchanged":true}
+--       · {"error":"invalid_body"|"review_not_found"|"not_published"|"not_lesson"|
+--                  "anchor_not_found"|"anchor_student_mismatch"|"anchor_taken"}
+create table if not exists public.review_anchor_changes (
+  id               bigint generated always as identity primary key,
+  review_id        bigint not null references public.lesson_reviews(id) on delete cascade,
+  changed_by       text   not null check (changed_by in ('student','owner')),
+  from_session_id  bigint references public.lesson_sessions(id) on delete set null,
+  to_session_id    bigint references public.lesson_sessions(id) on delete set null,
+  from_played_at   date,                    -- 그때 값 — 수업 행이 지워져도 무엇에서 무엇으로 바뀌었는지 읽힌다
+  to_played_at     date,
+  from_trainer_id  bigint,                  -- 바꾸기 전 받는 트레이너(staff.id · 스냅샷이라 FK 없음)
+  to_trainer_id    bigint,                  -- 바꾼 뒤 받는 트레이너
+  had_feedback     boolean not null,        -- 트레이너 답이 달린 뒤에 바꿨는가(= 알림 대상이었는가)
+  created_at       timestamptz not null default now()
+);
+create index if not exists idx_rac_review on public.review_anchor_changes (review_id, created_at);
+alter table public.review_anchor_changes enable row level security;
+
+create or replace function public.relink_review_lesson(
+  p_review_id bigint, p_student_id bigint, p_session_id bigint, p_changed_by text default 'student')
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_r    lesson_reviews%rowtype;
+  v_to   lesson_sessions%rowtype;
+  v_from date;
+  v_rcpt bigint;
+  v_fb   jsonb;
+begin
+  if p_changed_by is null or p_changed_by not in ('student','owner') then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+
+  -- 복기 행을 잠근다 — 같은 복기를 동시에 두 번 옮겨도 기록이 한 줄씩 순서대로 남는다.
+  select * into v_r from lesson_reviews where id = p_review_id for update;
+  if not found or v_r.student_id is distinct from p_student_id
+     or v_r.author_role <> 'student' or v_r.hidden_at is not null then
+    return jsonb_build_object('error','review_not_found');
+  end if;
+  if v_r.status <> 'published' then return jsonb_build_object('error','not_published'); end if;
+  if v_r.anchor_kind <> 'lesson' then return jsonb_build_object('error','not_lesson'); end if;
+
+  select * into v_to from lesson_sessions where id = p_session_id;
+  if not found then return jsonb_build_object('error','anchor_not_found'); end if;
+  if v_to.student_id is distinct from p_student_id then
+    return jsonb_build_object('error','anchor_student_mismatch');
+  end if;
+  if v_r.lesson_session_id is not distinct from p_session_id then
+    return jsonb_build_object('unchanged', true);
+  end if;
+  -- 수강생 1명 × 수업 1회 = 복기 1건(uq_lr_student_lesson) — 먼저 보고 계약 코드로 돌려준다
+  if exists (select 1 from lesson_reviews
+              where student_id = p_student_id and author_role = 'student'
+                and lesson_session_id = p_session_id and id <> p_review_id) then
+    return jsonb_build_object('error','anchor_taken');
+  end if;
+
+  select played_at into v_from from lesson_sessions where id = v_r.lesson_session_id;
+  select coalesce(jsonb_agg(distinct trainer_id), '[]'::jsonb) into v_fb
+    from review_feedback where review_id = p_review_id;
+  v_rcpt := coalesce(v_to.trainer_id, v_r.recipient_trainer_id);
+
+  update lesson_reviews
+     set lesson_session_id = p_session_id, recipient_trainer_id = v_rcpt, updated_at = now()
+   where id = p_review_id;
+
+  insert into review_anchor_changes (review_id, changed_by, from_session_id, to_session_id,
+                                     from_played_at, to_played_at, from_trainer_id, to_trainer_id, had_feedback)
+  values (p_review_id, p_changed_by, v_r.lesson_session_id, p_session_id,
+          v_from, v_to.played_at, v_r.recipient_trainer_id, v_rcpt, jsonb_array_length(v_fb) > 0);
+
+  return jsonb_build_object('relinked', true,
+    'from_session_id', v_r.lesson_session_id, 'to_session_id', p_session_id,
+    'from_played_at', v_from, 'to_played_at', v_to.played_at,
+    'from_trainer_id', v_r.recipient_trainer_id, 'to_trainer_id', v_rcpt,
+    'feedback_trainer_ids', v_fb);
+
+exception
+  when unique_violation then return jsonb_build_object('error','anchor_taken');
+end;
+$$;
+
+-- ── 44c) 권한 좁히기 — 오너 실행(권한 변경 = Level 0 · 세션은 실행하지 않는다) ──────────────
+--   이 함수도 기존 security definer 함수들(book_slot · cancel_booking · open_trainer_slots ·
+--   record_lesson_from_booking · reopen_trainer_slot 등)과 같이 기본 권한(PUBLIC 실행)으로 생긴다.
+--   서버만 부르므로 좁혀도 동작은 같다. 좁히려면 오너가 SQL Editor 에서:
+--     revoke execute on function public.relink_review_lesson(bigint, bigint, bigint, text) from public, anon, authenticated;
+--     grant execute on function public.relink_review_lesson(bigint, bigint, bigint, text) to service_role;
+
+-- ── 44b) 검증 ────────────────────────────────────────────────────────────────
+--   select proname, length(replace(prosrc, E'\r','')) as len, md5(replace(prosrc, E'\r','')) as md5,
+--          array_to_string(proacl, ',') as acl
+--     from pg_proc where proname = 'relink_review_lesson' and pronamespace = 'public'::regnamespace;
+--   select column_name from information_schema.columns
+--    where table_schema = 'public' and table_name = 'review_anchor_changes' order by ordinal_position;
+--     기대: 함수 2731 · 83e2d33aa1b9929095f6e9ff1253ae24 · 표 11칸 · RLS 켜짐 · 인덱스 2(pkey · idx_rac_review)
+--   notify pgrst, 'reload schema';
+--
+--   ✅ 실행 완료 2026-09-30 (세션 실행 · A 구간 · 44c 권한 좁히기는 제외 = 오너 몫). 실행 전 표 없음 · 함수 0개
+--      → 후 표 1(0행) · 함수 1 · 지문 위와 일치(정본 파일 본문과 실DB prosrc 의 md5 가 같다) ·
+--      lesson_reviews 7행 그대로(연결 · 받는 사람 · 수정 시각 지문 실행 전후 같음).
+--      드라이런(실제 함수 · 가짜 수업 3 · 가짜 복기 5 · 가짜 답 1 → 전부 롤백 · 끝나고 기록 0행 확인) 15가지 —
+--      changed_by 오류 invalid_body / 남의 복기 review_not_found / draft not_published / 자유 기록 not_lesson /
+--      없는 수업 anchor_not_found / 남의 수업 anchor_student_mismatch / 같은 수업 unchanged /
+--      다른 복기가 잡은 수업 anchor_taken / 옮김(같은 트레이너 · 답 없음 · 오너) = 연결·받는 사람·기록 1줄 /
+--      옮김(답 뒤 · 트레이너 바뀜) = 받는 사람 교체 · had_feedback · feedback_trainer_ids [답한 트레이너] · 기록 2줄 /
+--      숨긴 복기 review_not_found / 숨긴 복기가 잡은 수업 anchor_taken / 트레이너가 쓴 복기 review_not_found /
+--      연결 끊긴 보낸 복기 = from null 로 기록 / 판 3 · 사진 17 그대로.
+--
+-- 오너가 SQL 로 고칠 때(정정 · B 구간 · 오너 OK 뒤):
+--   select public.relink_review_lesson(<복기 id>, <수강생 id>, <새 수업 id>, 'owner');
+--
+-- 되돌리기(코드의 호출을 먼저 되돌릴 것 — review-api PUT /reviews/:id 가 이 함수를 부른다):
+--   drop function if exists public.relink_review_lesson(bigint, bigint, bigint, text);
+--   drop table if exists public.review_anchor_changes;   -- 기록까지 지운다(B 구간 · 오너 OK)
+-- ============================================================

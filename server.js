@@ -7918,7 +7918,8 @@ const studentPortal = require("./student-portal.cjs")(app, {
 // student-portal 뒤 — 그 파일이 건 공유비밀 게이트·세션·불투명 id·scrub 을 같은 함수로 쓴다. 트레이너 쪽은 아래 mountTrainer(PR-3).
 // §29 표가 없으면 이 라우트군만 503(기존 포털 라우트는 그대로 · 기동 로그 [review]).
 // 초안 사진 정리(§3.7)는 아래 cronTick 이 reviewApi.draftSweep 을 부른다(env REVIEW_DRAFT_SWEEP · 기본 드라이런).
-const reviewApi = require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch, sbUpsert, sbDelete, sbRpc, limit, portal: studentPortal });
+// discordDM = 보낸 복기의 연결 수업이 바뀌면 답한 트레이너에게 알린다(§44 · 2026-09-30).
+const reviewApi = require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch, sbUpsert, sbDelete, sbRpc, limit, discordDM, portal: studentPortal });
 
 // ── 예약·슬롯 (S1-b · /api/student-portal/{availability,bookings} + /api/trainer-portal/*) ──
 // student-portal 뒤에 마운트해야 그 파일이 건 공유비밀 게이트(app.use(PREFIX))가 먼저 돈다.
@@ -8127,6 +8128,9 @@ const REQUIRED_SCHEMA = {
   review_purge_log:     ["id","ran_at","dry_run","review_id","images","bytes","purged_at"],
   review_reads:         ["review_id","reader_kind","reader_id","read_at"],
   review_reactions:     ["review_id","phase_id","reactor_kind","reactor_id","emoji","created_at"],
+  // §44 보낸 복기의 연결 수업 변경 기록(2026-09-30) — relink_review_lesson() 이 쓰고 상세 anchorChanges 가 읽는다.
+  review_anchor_changes: ["id","review_id","changed_by","from_session_id","to_session_id","from_played_at","to_played_at",
+                          "from_trainer_id","to_trainer_id","had_feedback","created_at"],
   feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
 };
 

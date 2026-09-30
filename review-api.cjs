@@ -219,6 +219,29 @@ function trainerUnread(readAt, updatedAt) {
   return new Date(readAt).getTime() < new Date(updatedAt).getTime();
 }
 
+// 앵커를 바꿀 수 있는가(PUT /reviews/:id) — draft 는 무엇이든 · 연결이 끊긴 보낸 복기는 다시 잇기 ·
+//   보낸 수업 복기는 **다른 내 수업으로만**(2026-09-30 오너 지시 · 답 전 자유 · 답 뒤 = 답한 트레이너 알림 + 변경 기록 · §44)
+function anchorChangeAllowed(r, kind) {
+  if (!r) return false;
+  if (r.status === "draft") return true;
+  const lost = (r.anchor_kind === "lesson" && !r.lesson_session_id) || (r.anchor_kind === "course" && !r.course_session_id);
+  return lost || (r.anchor_kind === "lesson" && kind === "lesson");
+}
+
+// 「9/25」 — YYYY-MM-DD 를 월/일로(DM 용) · 형식이 아니면 null
+function monthDay(d) {
+  const m = /^\d{4}-(\d{2})-(\d{2})/.exec(String(d ?? ""));
+  return m ? `${Number(m[1])}/${Number(m[2])}` : null;
+}
+
+// 연결 수업이 바뀐 복기 — 답한 트레이너에게 가는 DM(문구 = 오너 지시 「연결 수업이 바뀌었어요」)
+//   받는 트레이너가 바뀌었고 이 DM 을 받는 사람이 새 받는 사람이 아니면 한 줄 더(누가 이어 받는지)
+function relinkDmText({ studentName, fromPlayedAt, toPlayedAt, newRecipientName }) {
+  const from = monthDay(fromPlayedAt) || "연결 끊긴 수업", to = monthDay(toPlayedAt) || "새 수업";
+  return `📝 연결 수업이 바뀌었어요 — ${studentName || "수강생"} 복기 ${from} → ${to}`
+    + (newRecipientName ? `\n이제 ${newRecipientName} 트레이너가 받아요` : "");
+}
+
 // 트레이너 답 본문(설계 §5.2 · DDL chk_rf_shape · chk_rf_due 와 같은 모양을 저장 전에 본다) — 켠 종류만 받는다(1차 comment·overall)
 //   comment = phaseId + body · overall = body(페이즈 없음) · mark = phaseId + lineOrd + verdict(body 선택) · task = body + dueBookingId
 //   id 는 불투명 문자열 그대로 돌려준다(풀이·소속 검사는 라우트) · body 는 앞뒤 공백을 걷고 빈 값은 없는 것으로 본다
@@ -397,6 +420,7 @@ module.exports = function mountReviewApi(app, deps) {
   // express 는 마운트 때만 읽는다 — CI 문법 단계(npm run check)는 node_modules 없이 이 파일의 _test 만 불러온다
   const express = require("express");
   const { sbSelect, sbInsert, sbPatch, sbUpsert, sbDelete, sbRpc, limit, portal } = deps;
+  const discordDM = typeof deps.discordDM === "function" ? deps.discordDM : null;   // 연결 수업 변경 알림(§44) · 없으면 DM 만 건너뛴다
   const { opaqueId, readOpaqueId, fail, scrub, requireStudent, hooks } = portal;
   const P = "/api/student-portal";
   const send = (res, obj) => res.json(scrub(obj));
@@ -596,6 +620,15 @@ module.exports = function mountReviewApi(app, deps) {
     const lm = new Map(ls.map((r) => [r.id, r.played_at])), cm = new Map(cs.map((r) => [r.id, r.held_on]));
     return (r) => (r.lesson_session_id ? lm.get(r.lesson_session_id) ?? null : r.course_session_id ? cm.get(r.course_session_id) ?? null : null);
   }
+  // 연결 수업 변경 기록(§44 · 최근 20건 · 오래된 순) — 날짜만(세션 id · 트레이너 id 는 싣지 않는다).
+  //   표가 없으면(§44 미실행) 빈 배열 — 상세 전체를 503 으로 만들지 않는다.
+  async function anchorChangesOf(rid) {
+    try {
+      const rows = await sbSelect("review_anchor_changes",
+        `select=from_played_at,to_played_at,created_at&review_id=eq.${rid}&order=created_at.desc,id.desc&limit=20`);
+      return rows.reverse().map((c) => ({ fromPlayedAt: c.from_played_at ?? null, toPlayedAt: c.to_played_at ?? null, changedAt: c.created_at }));
+    } catch (e) { console.error("review_anchor_changes_read", pgErr(e).code || e?.status || ""); return []; }
+  }
   // 안 읽은 답 — 수강생 본인 기준(reader_kind student)
   async function feedbackState(sub, reviewIds) {
     const l = inList(reviewIds);
@@ -782,13 +815,14 @@ module.exports = function mountReviewApi(app, deps) {
     const own = trainerView ? !!acc?.full : isOwn(viewer.id, r);
     const games = await sbSelect("review_games", `select=id,ord,seq_label,map,map_raw&review_id=eq.${r.id}&order=ord.asc`);
     const gl = inList(games.map((g) => g.id));
-    const [phases, images, feedback, reacts, playedAt] = await Promise.all([
+    const [phases, images, feedback, reacts, playedAt, anchorChanges] = await Promise.all([
       gl ? sbSelect("review_phases",
         `select=id,game_id,ord,phase_from,phase_to,phase_to_end,header_raw,lines,tags,suggested_tags&game_id=in.(${gl})&order=ord.asc`) : [],
       sbSelect("review_images", `select=${IMAGE_COLS}&review_id=eq.${r.id}&${LIVE_IMAGE}&order=ord.asc,id.asc`),
       sbSelect("review_feedback", `select=id,trainer_id,kind,phase_id,line_ord,verdict,body,due_at,created_at,updated_at&review_id=eq.${r.id}&order=created_at.asc`),
       sbSelect("review_reactions", `select=reactor_kind,reactor_id,emoji,created_at&review_id=eq.${r.id}&order=created_at.asc`),
       playedAtMap([r]),
+      own && r.status === "published" ? anchorChangesOf(r.id) : [],   // 공유 열람자에게는 빈 배열(세션 id 를 안 싣는 것과 같은 선)
     ]);
     const trainerIds = [r.recipient_trainer_id, r.author_staff_id, ...feedback.map((f) => f.trainer_id),
       ...reacts.filter((x) => x.reactor_kind === "trainer").map((x) => x.reactor_id)];
@@ -830,6 +864,7 @@ module.exports = function mountReviewApi(app, deps) {
       publishedAt: r.published_at ?? null,
       imagePurgeAt: own ? imagePurgeAt(r, images.length > 0) : null,
       readOnly: trainerView ? true : !canEdit(viewer.id, r),
+      anchorChanges,
       games: games.map((g) => gameOut(g, phasesByGame.get(g.id) || [])),
       attachments,
       feedback: feedback.map((f) => feedbackOut(f, tnames[f.trainer_id], trainerView ? viewer.id : undefined)),
@@ -1023,7 +1058,35 @@ module.exports = function mountReviewApi(app, deps) {
     send(res, { review: out });
   }));
 
-  // PUT /reviews/:id — 제목 · 본문 · 파일명 · 앵커(draft 또는 연결 끊김일 때만)
+  // 연결 수업 바꾸기 함수(§44 relink_review_lesson)의 오류 → 계약 코드. 없는 코드는 503(함수가 계약 밖 값을 돌려줬다).
+  const RELINK_ERR = {
+    review_not_found: [404, "review_not_found"], not_published: [409, "review_not_draft"], not_lesson: [409, "review_not_draft"],
+    anchor_not_found: [400, "invalid_body"], anchor_student_mismatch: [400, "anchor_student_mismatch"],
+    anchor_taken: [409, "anchor_taken"], invalid_body: [400, "invalid_body"],
+  };
+  // 답이 달린 복기의 연결 수업이 바뀜 → 답한 트레이너마다 DM 한 통(베스트에포트 · 실패해도 변경은 그대로 · 로그는 건수만)
+  async function notifyRelink(studentId, out) {
+    const ids = [...new Set((out.feedback_trainer_ids || []).map(Number).filter(Boolean))];
+    if (!discordDM || !ids.length) return;
+    const newRid = Number(out.to_trainer_id) || null;
+    const changed = newRid !== null && Number(out.from_trainer_id) !== newRid;
+    const [staff, stu] = await Promise.all([
+      sbSelect("staff", `select=id,name,discord_id&id=in.(${inList([...ids, newRid])})`),
+      sbSelect("students", `select=name&id=eq.${studentId}&limit=1`),
+    ]);
+    const byId = new Map(staff.map((s) => [Number(s.id), s]));
+    let sent = 0;
+    for (const id of ids) {
+      const msg = relinkDmText({
+        studentName: stu[0]?.name, fromPlayedAt: out.from_played_at, toPlayedAt: out.to_played_at,
+        newRecipientName: changed && id !== newRid ? byId.get(newRid)?.name || null : null,
+      });
+      if (await discordDM(byId.get(id)?.discord_id, msg)) sent++;
+    }
+    console.log(`[review] relink_dm sent=${sent}/${ids.length}`);
+  }
+
+  // PUT /reviews/:id — 제목 · 본문 · 파일명 · 앵커(draft · 연결 끊김 · 보낸 수업 복기는 다른 내 수업으로)
   app.put(`${P}/reviews/:id`, writeLimit,
     bodyOnly(["title", "body", "srcFileName", "anchorKind", "sessionId", "courseId", "courseSessionId"]),
     requireStudent, needReady, wrap(async (req, res) => {
@@ -1038,23 +1101,38 @@ module.exports = function mountReviewApi(app, deps) {
         if (typeof b[key] === "string" && b[key].length > max) return fail(res, 400, "review_too_long");
         patch[col] = b[key];
       }
+      let relink = null;                                                         // 보낸 수업 복기 → 다른 내 수업(§44)
       if (b.anchorKind !== undefined) {
-        const lost = (r.anchor_kind === "lesson" && !r.lesson_session_id) || (r.anchor_kind === "course" && !r.course_session_id);
-        if (r.status !== "draft" && !lost) return fail(res, 409, "review_not_draft");
+        if (!anchorChangeAllowed(r, b.anchorKind)) return fail(res, 409, "review_not_draft");
         const a = await resolveAnchor(sub, b);
         if (a.error) return fail(res, a.error[0], a.error[1]);
         if (r.status === "published" && a.value.anchor_kind === "pending") return fail(res, 400, "anchor_required");
         const ex = await existingFor(sub, a.value);
         if (ex && ex.id !== r.id) return fail(res, 409, "anchor_taken");
-        Object.assign(patch, a.value);
+        if (r.status === "published" && r.anchor_kind === "lesson" && a.value.anchor_kind === "lesson") relink = a.value.lesson_session_id;
+        else Object.assign(patch, a.value);
       } else if (b.sessionId !== undefined || b.courseId !== undefined || b.courseSessionId !== undefined) {
         return fail(res, 400, "invalid_body");                                  // 앵커 id 는 anchorKind 와 같이만
+      }
+      // 보낸 복기의 연결 수업은 DB 함수 한 번으로 바꾼다 — 연결 · 받는 트레이너(= 새 수업 트레이너) · 변경 기록이 같이 되거나
+      // 같이 안 된다(§44). 같은 수업이면 아무것도 안 한다(unchanged). 제목·본문 같은 나머지 칸은 그 뒤에 따로 고친다.
+      let moved = null;
+      if (relink) {
+        const out = await sbRpc("relink_review_lesson",
+          { p_review_id: r.id, p_student_id: sub, p_session_id: relink, p_changed_by: "student" });
+        if (out?.error) { const m = RELINK_ERR[out.error] || [503, "portal_unavailable"]; return fail(res, m[0], m[1]); }
+        if (out?.relinked) moved = out;
       }
       let row = r;
       if (Object.keys(patch).length) {
         patch.updated_at = nowIso();
         try { row = (await sbPatch("lesson_reviews", `id=eq.${r.id}&student_id=eq.${sub}`, patch))[0] || r; }
         catch (e) { return failDb(res, e); }
+      } else if (moved) row = (await loadReview(r.id)) || r;
+      if (moved) {
+        const n = (moved.feedback_trainer_ids || []).length;
+        console.log(`[review] relink #${r.id} feedback_trainers=${n} recipient_changed=${Number(moved.from_trainer_id) !== Number(moved.to_trainer_id)}`);
+        if (n) notifyRelink(sub, moved).catch((e) => console.error("review_relink_dm", e?.message));
       }
       send(res, { review: (await summaries(sub, [row]))[0] });
     }));
@@ -1854,7 +1932,7 @@ module.exports = function mountReviewApi(app, deps) {
 module.exports._test = {
   studentDisplay, normalizeLines, linesOut, normalizeTags, parsePhaseBody, checkPhaseRange, parseGameBody,
   reactionSummary, topTags, imagePurgeAt, unreadFrom, signCursor, readCursor, pgErr,
-  trainerUnread, parseFeedbackBody, dueCheck,
+  trainerUnread, parseFeedbackBody, dueCheck, anchorChangeAllowed, monthDay, relinkDmText,
   sniffImage, orientedSize, imagePath, derivPath, isPendingPath, isStoragePath, normalizeShapes, sweepMode, planSweep,
   REVIEW_EMOJIS, MAPS, LIMITS,
 };
