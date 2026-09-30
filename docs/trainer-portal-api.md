@@ -1363,3 +1363,159 @@ PUT /api/trainer-portal/students/:id/level   { "level": "intermediate" }   → {
 - 수강생 앱: `/summary` 잔여가 바로 바뀌고 판수 내역(§7.4)에 「조정」 줄로 바로 보인다.
 - 예약 → 「완료」 차감은 그대로다. 단 **같은 날 판정에서 조정 행을 뺀다**(DDL §50) — 오늘 날짜로 조정한 뒤 오늘 예약
   「완료」를 누르면 종전에는 「이미 기록됨」으로 판수 없이 닫혔다(봇 · 앱 수업 기록하기는 이미 조정 행을 빼고 있었다).
+
+## 9.19 일정 직접 변경 — 옮기기 · 길이 · 칸 수정 · 닫기 · 반복 · 조회 (2026-09-30 · 오너 확정 · **계약 · 서버 구현 전**)
+
+> 판수 계산 · 예약 규칙이 바뀌는 부분(선차감 재계산 · 늦은 변경 +1판 · 거절 = 취소)은 **오너 OK 뒤 운영**한다.
+> 서버 DDL 은 §52(새 칸 `trainer_slots.series_id` · 새 표 `booking_changes` · 함수)다 — §51 은 역할군 봇 몫.
+> 9/30 실측: 앞으로 잡힌 칸 76개(전부 빈 칸) · 앞으로 잡힌 예약 0건 · 반복으로 만든 칸 0건 → 옛 데이터 이관이 없다.
+
+### 공통 규칙
+
+| 규칙 | 내용 |
+|---|---|
+| 누가 | 트레이너 = **내 칸 · 내 칸에 걸린 예약만** 바꾼다. 원장도 바꾸기는 자기 칸만 · 보기는 전체(§9.19.6 `all=1`) |
+| 시작한 수업 | 시작 시각이 지난 예약 · 칸은 못 바꾼다 → 409 `lesson_started`. 끝난 수업의 판수 · 날짜는 「완료」의 `games` · `playedAt` 으로 고친다 |
+| 3시간 — 새 시각 | 예약이 걸린 수업을 **지금부터 3시간 안의 시각으로** 옮기지 못한다 → 409 `too_soon`. 수강생이 알림을 보고 답할 시간이다(예약 마감과 같은 3시간). 길이만 바꾸거나 예약 없는 빈 칸을 옮길 때는 걸지 않는다 |
+| 3시간 — 늦은 변경 보상 | **원래 시작까지 3시간 안**에 트레이너가 예약을 옮기거나(시작 시각이 바뀜) 칸을 닫아 취소하면 그 수강생에게 **+1판**(보상 · 그 트레이너 판수로 · 판수 내역에 「보상」 줄). 길이만 바꾸면 보상 없음 · 레벨 테스트 예약은 보상 없음(판수를 쓰는 예약이 아니다). 수강생이 [안 돼요]를 눌러도 보상은 남는다. 오너가 인정하는 사유면 판수 조정(§9.18)으로 되돌린다 |
+| 겹침 | 옮길 자리 · 늘릴 자리에 내 다른 칸이 있으면 409 `slot_taken` — 단 **예약 없는 개인 빈 칸은 예약이 흡수**한다. 칸이 없는 시간이면 서버가 칸을 만든다(30분 격자) |
+| 판수 | 개인은 길이표대로 선차감을 다시 잡는다(60 5 · 90 8 · 120 10 · 150 13 · 180 15). 늘릴 때 그 트레이너 잔여가 모자라면 409 `insufficient_games { need, remaining }`. 그룹 · 레벨 테스트는 선차감 0 그대로 |
+| 수강생 확인 | 예약이 바뀌면 수강생 DM **[괜찮아요] [안 돼요]**. 안 돼요 = 그 예약 취소 · 판수 전부 복원 · 벌점 없음 · 트레이너에게 DM. **답이 없으면 바뀐 대로 간다.** 수업이 시작되면 버튼은 더 안 먹는다 |
+| 알림 시점 | 수강생 DM 과 늦은 변경 보상은 **바꾼 뒤 20초 지나서 한 번** 나간다. 그 사이 원래대로 돌아오면(§9.19.5 되돌리기) 알림 · 보상 없이 끝난다. 20초 안에 여러 번 바꾸면 처음 → 마지막 한 통이다 |
+| DM 을 못 받는 수강생 | 디스코드 연결이 없으면 DM 이 안 간다 → 응답 `studentNotice: "no_link"`(트레이너가 직접 알린다). 수강생 앱에도 같은 확인 카드를 띄울 수 있다(§9.19.7) |
+
+### 9.19.1 개인 예약 옮기기 · 길이 바꾸기 — `PATCH /bookings/:id`
+
+```json
+PATCH /api/trainer-portal/bookings/:id
+{ "startAt": "2026-10-02T11:00:00Z", "durationMin": 90, "freeOld": "open" }
+```
+
+- `:id` = 예약 id(`GET /slots` · `GET /schedule` 의 `bookings[].id` — 머리 예약). **옮겨도 예약 id 는 그대로다.**
+- `startAt`(30분 격자) · `durationMin`(60 · 90 · 120 · 150 · 180) 중 하나 이상. 둘 다 없으면 400 `invalid_body`.
+  지금과 같은 값이면 바꾸지 않고 `{ "changed": false }`.
+- `freeOld` — 예약이 빠져서 비는 옛 칸: `"open"`(기본 · 다시 열려 다른 수강생이 잡을 수 있다) · `"close"`(닫는다).
+- 개인 예약만. 그룹 · 레벨 테스트 예약은 칸째 옮긴다(§9.19.2 가) → 409 `not_personal`.
+
+응답
+```json
+{ "changed": true,
+  "booking": { "id": "…", "startAt": "2026-10-02T11:00:00Z", "durationMin": 90, "gamesHeld": 8 },
+  "gamesHeldBefore": 5, "late": false, "studentNotice": "pending", "changeId": "…" }
+```
+- `late` = 늦은 변경(원래 시작 3시간 안 · 시작 시각이 바뀜) → 20초 뒤 +1판.
+- `studentNotice` ∈ `pending`(20초 뒤 DM) · `no_link`(DM 을 못 보낸다).
+- 오류: 400 `invalid_body` · 404 `not_found` · 403 `scope_denied` · 409 `lesson_started` · `too_soon` · `slot_taken` ·
+  `insufficient_games { need, remaining }` · `not_personal`
+
+### 9.19.2 칸 바꾸기 — `PATCH /slots/:id`
+
+칸 종류에 따라 body 가 둘로 갈린다.
+
+**(가) 그룹 · 레벨 테스트 칸(한 덩어리 칸)**
+```json
+{ "startAt": "2026-10-02T11:00:00Z", "durationMin": 120, "capacity": 4, "scope": "this" }
+```
+- 셋 중 하나 이상. **걸린 예약은 칸과 같이 옮겨진다** — 예약자마다 확인 DM · 늦은 변경이면 예약자마다 +1판.
+- `capacity` 1~8 · 지금 예약 수보다 작으면 409 `capacity_below_booked { booked }`. 레벨 테스트 칸은 1 고정(다른 값 400).
+- 예약 없는 빈 칸은 3시간 안으로도 옮길 수 있다(`too_soon` 없음).
+
+**(나) 개인 빈 칸 범위 — 「열어둔 칸 범위 수정」**
+```json
+{ "startAt": "2026-10-02T10:00:00Z", "endAt": "2026-10-02T14:00:00Z", "scope": "this" }
+```
+- `:id` = 이어진 **개인 빈 칸 덩어리** 안의 아무 칸. 서버가 그 덩어리(같은 트레이너 · 30분씩 이어진 `open` 개인 칸)를 찾아
+  새 범위로 맞춘다 — 범위 밖으로 나간 칸은 닫고 모자란 칸은 연다.
+- 예약된 칸은 덩어리에 들지 않는다. 범위를 예약된 칸 쪽으로 넓히면 409 `slot_taken`(예약은 §9.19.1 로 옮긴다).
+- 개인 칸에 `durationMin` · `capacity` 를 보내면 400. 한 번에 최대 24시간(종전 열기와 같다).
+
+응답(가 · 나 같은 모양)
+```json
+{ "slots": [ /* 바뀐 칸 — §9.19.6 slots[] 한 줄 모양 */ ],
+  "moved": [ { "bookingId": "…", "late": false, "studentNotice": "pending", "changeId": "…" } ],
+  "series": { "updated": 0, "skipped": [] } }
+```
+- 오류: 400 `invalid_body` · 404 `not_found` · 403 `scope_denied` · 409 `lesson_started` · `too_soon` · `slot_taken` ·
+  `capacity_below_booked`
+
+### 9.19.3 닫기 — `DELETE /slots/:id` (넓힘) · `POST /slots/close` (새)
+
+- `DELETE /slots/:id?scope=this|future` — 종전 그대로(걸린 예약 취소 · 판수 전부 복원 · 수강생 DM) +
+  **늦은 취소면 예약자마다 +1판** + `scope=future` 면 반복의 뒤 회차까지 닫는다.
+  예약이 걸린 개인 칸 하나를 닫으면 그 예약 전체가 취소되고 나머지 칸은 다시 열린다(종전 그대로).
+- `POST /slots/close` — 여러 칸 · 하루를 한 번에.
+  ```json
+  { "slotIds": ["…", "…"] }     또는     { "date": "2026-10-02" }
+  ```
+  - 둘 중 하나만. `slotIds` 최대 96개(내 칸만 · 하나라도 남의 칸이면 403 · 아무것도 안 닫는다).
+  - `date` = **「이날 전부 닫기」** — 그날(KST) 시작하는 내 살아 있는 칸 전부. 이미 시작한 칸은 빼고 닫는다.
+- 응답(둘 다)
+  ```json
+  { "closed": 6, "cancelledBookings": [ { "bookingId": "…", "gamesRestored": 5, "late": false, "studentNotice": "sent" } ],
+    "series": { "closed": 0 } }
+  ```
+  - `studentNotice` ∈ `sent` · `no_link`. 취소 알림은 20초를 기다리지 않고 바로 간다(닫기에는 되돌리기가 없다 — 아래).
+- **닫기는 되돌리기가 없다.** 빈 칸은 `POST /slots/:id/reopen` 으로 다시 열 수 있지만 취소된 예약은 살아나지 않는다(수강생이 다시 잡는다).
+  예약이 걸린 칸을 닫을 때는 앱이 먼저 한 번 확인을 받는다.
+
+### 9.19.4 반복 시리즈 — 「이번 주만 / 앞으로 전부」
+
+- `POST /slots` 의 `repeat` 로 만든 칸은 같은 `seriesId` 를 갖는다(응답 · `GET /slots` · `GET /schedule` 에 실린다 · 반복이 아니면 `null`).
+- 바꾸기(§9.19.2) · 닫기(§9.19.3 DELETE)에 `scope`:
+  - `"this"`(기본) — 이 회차만. **이 회차만 바꾸면 그 회차는 반복에서 빠진다**(`seriesId: null`) — 뒤에 「앞으로 전부」를 바꿔도 따라가지 않는다.
+  - `"future"` — 이 회차와 그 뒤 회차 전부. 시각은 **같은 만큼 민다**(이 회차에서 +1시간이면 뒤 회차도 각자 +1시간) ·
+    길이 · 정원은 같은 값으로 · 개인 빈 칸 범위는 같은 모양으로.
+  - 뒤 회차 중 겹쳐서 못 바꾸는 회차는 건너뛰고 `series.skipped[]`(KST 날짜)에 싣는다 — 만들 때(§9.4)와 같은 규칙.
+    지금 회차가 막히면 409 로 아무것도 안 바뀐다.
+  - 뒤 회차에 걸린 예약도 같이 옮겨지고 예약자마다 확인 DM(늦은 변경이면 +1판).
+- 예약(§9.19.1)에는 `scope` 가 없다 — 예약은 늘 한 건씩이다.
+
+### 9.19.5 되돌리기(5초)
+
+- 앱이 바꾸기 직후 5초 동안 「되돌리기」를 띄우고, 누르면 **같은 요청을 원래 값으로** 한 번 더 보낸다. 서버는 일반 변경으로 처리한다
+  (옮기기면 원래 `startAt` · `durationMin` · 칸 수정이면 원래 범위 · 값).
+- 20초 안에 원래 상태로 돌아오면 수강생 DM · 보상이 둘 다 나가지 않는다. 그 뒤의 되돌리기는 새 변경이라 DM 이 한 번 더 간다.
+- 반복 「앞으로 전부」 되돌리기도 같은 요청(`scope: "future"` · 원래 값)이다. 건너뛴 회차(`skipped`)는 애초에 안 바뀌었으니 그대로다.
+
+### 9.19.6 일정 조회 — `GET /schedule?from=&to=[&all=1]`
+
+- `from` · `to` = KST 날짜(둘 다 포함) · 최대 42일. 없으면 이번 주 월 ~ 일. 주 이동은 앱이 from · to 를 7일씩 민다.
+- `all=1` = **원장 전용** — 전 트레이너 칸. 트레이너가 보내면 403 `owner_only`. 없으면 내 칸만.
+- 응답
+```json
+{ "from": "2026-09-28", "to": "2026-10-04",
+  "trainers": [ { "trainerKey": "…", "trainerName": "트레이너A" } ],
+  "slots": [
+    { "id": "…", "trainerKey": "…", "startAt": "2026-10-02T11:00:00Z", "durationMin": 30, "lessonType": "personal",
+      "capacity": 1, "status": "closed", "seriesId": null, "takenCount": 1, "seatsLeft": 0,
+      "bookings": [
+        { "id": "…", "studentKey": "…", "studentDisplayName": "…", "studentPubgName": "…", "durationMin": 90, "gamesHeld": 8,
+          "status": "booked", "change": { "at": "2026-09-30T09:00:00Z", "answer": "pending" } } ] } ],
+  "personalLengths": [ … ], "groupLengths": [ … ] }
+```
+- `slots[]` 는 `GET /slots` 와 같은 줄 모양(개인은 30분 칸 한 줄씩 · 예약은 머리 칸에만) + `trainerKey` · `seriesId` ·
+  예약의 `studentKey`(수강생 카드로 가는 id · `GET /students/:id` 에 그대로) · `gamesHeld` · `change`. `status` 는 `open` · `closed` · `cancelled` 전부 온다.
+- `change` = 그 예약의 마지막 변경 — `answer` ∈ `pending`(답 없음 · 바뀐 대로 감) · `ok`. 바꾼 적 없으면 `null`.
+  수강생이 [안 돼요]를 누른 예약은 취소돼 `bookings[]` 에서 빠진다.
+- `GET /slots?days=` 는 그대로 둔다(종전 화면용).
+
+### 9.19.7 수강생 앱 — 확인 카드(선택 · DM 과 같은 확인)
+
+- `GET /api/student-portal/summary` 에 `pendingChanges`(배열 · 없으면 빈 배열):
+  ```json
+  "pendingChanges": [ { "changeId": "…", "bookingId": "…", "trainerName": "트레이너A",
+      "before": { "startAt": "…", "durationMin": 60, "gamesHeld": 5 },
+      "after":  { "startAt": "…", "durationMin": 90, "gamesHeld": 8 }, "bonusGames": 0 } ]
+  ```
+  - 알림이 나간(바꾼 뒤 20초) · 답하지 않은 · 아직 시작 전인 변경만. 같은 예약을 또 바꾸면 마지막 것만 온다.
+    `bonusGames` = 늦은 변경 보상(0 · 1 · 이미 넣었다).
+- `POST /api/student-portal/bookings/:id/change-response` `{ "changeId": "…", "answer": "ok" | "decline" }`
+  - `ok` → `{ "answer": "ok" }` · `decline` → `{ "answer": "decline", "cancelled": true, "gamesRestored": 8 }`
+  - 409 `change_superseded`(그 뒤 또 바뀜 — 카드를 새로 받는다) · `lesson_started` · `already_answered` · 404 `not_found`
+- DM 버튼과 앱 카드는 같은 변경을 가리킨다 — 먼저 누른 쪽이 이긴다.
+
+### 9.19.8 알림 모양(서버가 보낸다 · 앱 할 일 없음)
+
+- 수강생(옮기기 · 길이): 바뀐 시각 · 길이 · 선차감(바뀌면 「5판 → 8판」) · 보상(늦은 변경이면 「+1판」) · [괜찮아요] [안 돼요].
+- 수강생(닫기로 취소): 종전 트레이너 취소 DM + 늦은 취소면 「보상 1판을 넣었어요」.
+- 트레이너: 수강생이 [안 돼요]를 누르면 「{이름} 바뀐 시간 거절 — 예약 취소 · N판 복원」. [괜찮아요]는 DM 없이 `change.answer` 로만.
