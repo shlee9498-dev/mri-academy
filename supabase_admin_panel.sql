@@ -3452,8 +3452,13 @@ $$;
 --      · 4102 · b0c3f56bf44881f0d7251ce00986077e (정본 본문과 md5 일치).
 --      데이터 불변 — 실행 전후 lesson_sessions 240행 · 2,867판 · slot_bookings 10건(booked 4 · cancelled 6)
 --      · trainer_slots 188 · 잔여 총합 902 같음. notify pgrst 뒤 머지·배포(6f08dba · 부팅 [schema] 전부 OK).
---   ⏸ 42b(book_slot) **미실행** — 지금 book_slot 은 §32 판 그대로(2926 · a25d0c964fe108be00039b3d0ec313fa ·
---      ② 문자열 프로브 uses_by_trainer = false). 켤 때 위 ②·③ 으로 다시 확인한다.
+--   ✅ 42b(book_slot) 실행 완료 2026-09-30 11:0x KST (오너 지시 「반장 트레이너별 표시가 운영에 나간 직후」 ·
+--      반장 수강생 앱 #68·#69 운영 반영 확인 뒤 세션 실행). 실행 전 운영본 2926 · a25d0c964fe108be00039b3d0ec313fa
+--      (§32 주석 제거판 · 로직은 §32 와 같다 · 원문은 pg_get_functiondef 로 떠 두었다) → 후 3337 ·
+--      ab41e9e7ea0b493e4cf362114e4b7f0e (정본 본문과 md5 일치) · ② uses_by_trainer = true · has_3h = true.
+--      실함수 롤백 검증 4/4 — #101(준구 −10 · 합계 +44) 준구 개인 60분 insufficient_games / 현태 개인 60분
+--      예약됨(5판 · 칸 2) / 준구 그룹 insufficient_games · #9(준구 −8) 준구 그룹 insufficient_games.
+--      데이터 불변(예약 booked 4 · cancelled 6 · 칸 188 · 잔여 총합 902).
 --
 -- 되돌리기(§37 2인자판으로 · 코드를 먼저 되돌릴 것):
 --   drop function if exists public.record_lesson_from_booking(bigint, bigint, int, date);
