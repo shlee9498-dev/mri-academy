@@ -14,3 +14,6 @@ node_modules/
 
 # 실측·검증 스크립트의 로컬 출력(feedback-audit 등) — ID 가 들어가므로 커밋 금지
 tmp/
+
+# Cloudflare Pages 빌드 결과(scripts/build-site.cjs) — 허용 목록에서 만든다 · 커밋하지 않는다
+dist/
