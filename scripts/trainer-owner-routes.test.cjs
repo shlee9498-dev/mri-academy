@@ -232,8 +232,10 @@ test("오너 — 전체 수강생(prospect · 합친 행 제외) · 필터 칩 �
   const r = await call(4, "/students");
   assert.equal(r.status, 200);
   assert.equal(r.json.scope, "all");
-  assert.deepEqual(r.json.trainers, [
-    { trainerKey: T(2), trainerName: "트레이너A" }, { trainerKey: T(5), trainerName: "트레이너B" }, { trainerKey: T(4), trainerName: "원장" },
+  assert.deepEqual(r.json.trainers, [                                  // 색 키는 명부 번호에 고정(목록 순서와 무관)
+    { trainerKey: T(2), trainerName: "트레이너A", colorKey: "ink" },
+    { trainerKey: T(5), trainerName: "트레이너B", colorKey: "gold" },
+    { trainerKey: T(4), trainerName: "원장", colorKey: "grey" },
   ]);
   const rows = r.json.students;
   assert.deepEqual(rows.map((s) => s.displayName), ["가", "나", "다", "라", "사", "아", "자"]);   // 이름순 · 마(prospect) · 바(합침) 없음
@@ -580,6 +582,7 @@ test("대시보드 — 카드 · 이번 주 수업 · 처리 대기 · 트레이
     ["원장", 0, 2, 10, 1, 1, 0, 0, "green"],          // 오너는 열린 칸 판정 없음
   ]);
   assert.equal(d.trainers[0].trainerKey, T(2));
+  assert.deepEqual(d.trainers.map((t) => t.colorKey), ["ink", "gold", "grey"]);   // /students 칩과 같은 키
   assert.deepEqual(d.thresholds, { pendingRedHours: 6, slotsRedWindowHours: 72, slotsYellowWindowDays: 7 });
   const body = JSON.stringify(d);
   for (const leak of ["memo", "정정", "created_by", "student_name", "1234567890", "adjreq"]) assert.equal(body.includes(leak), false, leak);
