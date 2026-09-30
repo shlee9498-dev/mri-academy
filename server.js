@@ -222,6 +222,7 @@ async function sbDelete(table, filter) {
 
 // 수업 기록 한 벌(2026-09-30 · 오너 지시 「/수업등록 과 같은 함수」) — 봇 /수업등록 과 트레이너 앱 「수업 기록하기」(계약 §9.9)가
 // 같은 함수로 판수를 남긴다. 부족 점검 훅은 아래 gamesShort(§45)를 부른다 — 부르는 때는 요청 처리 중이라 이미 만들어져 있다.
+const { parseLessonDate } = require("./lesson-record.cjs");   // /수업등록 「날짜」 칸 해석
 const lessonRecorder = require("./lesson-record.cjs")({
   sbSelect, sbInsertMany, sbRpc, onGamesChanged: (ids) => gamesShort.check(ids),
 });
@@ -958,6 +959,8 @@ if (process.env.DISCORD_TOKEN) {
         choices: Object.keys(LESSON_HOURS_TO_GAMES).map(Number).sort((a, b) => a - b)
           .map((h) => ({ name: `${LESSON_HOURS_LABEL(h)} (${LESSON_HOURS_TO_GAMES[h]}판)`, value: h })) },
       { name: "메모", description: "메모(선택)", type: 3, required: false },
+      // 밀린 수업을 실제 날짜로 넣는 칸(오너 지시 2026-09-30). 비우면 오늘. 이번 달(월초 1주는 지난달 끝 포함)만 받는다.
+      { name: "날짜", description: "수업한 날(예: 9/12) — 지난 수업을 늦게 넣을 때만 · 비우면 오늘", type: 3, required: false },
     ],
   };
   // Phase 1.4 — /승급 (오너 DM 전용): graduations 등록 → 지급율 래칫 자동 반영.
@@ -1321,9 +1324,9 @@ if (process.env.DISCORD_TOKEN) {
   const isMriOwner = (itx) => !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
   // /수업등록 성공분을 DB lesson_sessions에도 기록(시트 병행·검증용).
   //   시트가 진실인 단계 — DB insert는 best-effort: 실패/이름 미매칭이어도 명령 성공(오너 DM만).
-  async function dualWriteSessions(trainerName, students, memo, createdBy, sidOf) {
+  async function dualWriteSessions(trainerName, students, memo, createdBy, sidOf, playedAt = null) {
     if (!hasSupabase()) return { skipped: true, miss: [], unattached: [], dup: [] };
-    const played_at = kstToday();
+    const played_at = playedAt || kstToday();     // 「날짜」 칸(밀린 수업) — 비면 오늘
     let trainer_id = null;
     try {
       const st = await sbSelect("staff", `select=id&name=eq.${encodeURIComponent(trainerName)}&limit=1`);
@@ -1476,6 +1479,17 @@ if (process.env.DISCORD_TOKEN) {
     const hours = itx.options.getNumber("시간");
     const gamesInput = itx.options.getInteger("판수"); // 그룹 다중판 입력용(null=미지정)
     const memo = (itx.options.getString("메모") || "").trim();
+    // 수업 날짜(오너 지시 2026-09-30 「밀린 9월 수업은 실제 날짜로」) — 비우면 오늘. 레슨에만 쓴다.
+    const dateInput = itx.options.getString("날짜");
+    if (dateInput && guboon !== "레슨")
+      return itx.reply({ content: "날짜 칸은 레슨 기록에만 쓸 수 있어. 비우고 다시 보내줘.", ephemeral: true });
+    const lessonDate = parseLessonDate(dateInput, kstToday());
+    if (!lessonDate.ok)
+      return itx.reply({
+        content: `날짜는 9/12 처럼 넣어줘. ${lessonDate.floor ? `${Number(lessonDate.floor.slice(5, 7))}/${Number(lessonDate.floor.slice(8))}부터 오늘까지만 돼.` : ""}`
+          + " 더 지난 수업은 오너에게 말해줘.",
+        ephemeral: true,
+      });
 
     // 10/1 전환 잠금 — 트레이너는 안내만, 오너는 통과(예외 처리용 · 계약 §9.7).
     // 옵션을 읽은 **뒤**에 둔다: 개인만 잠그는 단계에서는 수업 종류를 알아야 한다.
@@ -1551,7 +1565,7 @@ if (process.env.DISCORD_TOKEN) {
     // 어디에도 쓰지 않는다 — 어느 행에 붙느냐가 곧 판수·정산이다.
     // 1행 = 확정 · 0행 = 미해석(null · 기존처럼 오너 DM 경로) · 2행 이상 = 선택 대기.
     const ctx = { trainer, trainerStaffId, guboon, lessonKind, kindDefaulted, memo, names, students, webhook,
-                  sidOf: {}, ambiguous: [] };
+                  playedAt: lessonDate.date, sidOf: {}, ambiguous: [] };
     for (const name of names) {
       let r = { sid: null, cands: [] };
       try { r = await resolveStudentCandidates(name); } catch (e) { console.error("lesson_resolve", e?.message); }
@@ -1602,6 +1616,8 @@ if (process.env.DISCORD_TOKEN) {
   // 등록 본체 — 명부가 전부 확정된 뒤에만 들어온다(슬래시 직접 · 동명 선택 완료, 두 경로 공용).
   async function runLessonRegister(itx, ctx) {
     const { trainer, trainerStaffId, guboon, lessonKind, kindDefaulted, memo, names, students, webhook, sidOf, ambiguous } = ctx;
+    const playedAt = ctx.playedAt || kstToday();
+    const dateNote = playedAt !== kstToday() ? ` · ${Number(playedAt.slice(5, 7))}/${Number(playedAt.slice(8))} 수업` : "";
     const pickedNames = new Set(ambiguous.map((a) => a.name));
 
     // 과거 미연결 상담로그 소급 연결(모든 구분 공통) — 동명으로 고른 이름은 제외한다.
@@ -1660,6 +1676,7 @@ if (process.env.DISCORD_TOKEN) {
             lessonType: lessonKind,
             students,
             memo,
+            playedAt,                                     // 수업 날짜(9/30~) — 시트가 안 쓰면 무시된다
           }),
         });
         data = await r.json().catch(() => ({}));
@@ -1671,10 +1688,10 @@ if (process.env.DISCORD_TOKEN) {
       const notFound = Array.isArray(data.notFound) ? data.notFound : [];
       const noneRecorded = !sheetErr && updated.length === 0;   // 시트 응답이 ok여도 실기록 0건이면 성공으로 표기 금지
       const lines = [sheetErr && !sheetOff
-        ? `⚠️ 수업 등록 — ${trainer} · ${lessonKind} · **시트 미기록**(${sheetErr})`
+        ? `⚠️ 수업 등록 — ${trainer} · ${lessonKind}${dateNote} · **시트 미기록**(${sheetErr})`
         : noneRecorded
-        ? `⚠️ 수업 등록 — ${trainer} · ${lessonKind} · **시트 기록 0건**(아래 확인)`
-        : `✅ 수업 등록 — ${trainer} · ${lessonKind}`];
+        ? `⚠️ 수업 등록 — ${trainer} · ${lessonKind}${dateNote} · **시트 기록 0건**(아래 확인)`
+        : `✅ 수업 등록 — ${trainer} · ${lessonKind}${dateNote}`];
       // 폴백으로 개인이 된 건은 반드시 알린다 — 그룹인데 안 골랐으면 지금 정정해야 한다.
       if (kindDefaulted)
         lines.push(`↳ '유형' 미선택이라 **개인 1:1**로 처리했어. 그룹이었으면 \`/판수정정\`으로 고쳐줘.`);
@@ -1724,7 +1741,7 @@ if (process.env.DISCORD_TOKEN) {
         const sheetOk = sheetErr ? students : students.filter((s) => okNames.has(s.name));
         if (updated.length && !sheetOk.length)
           console.error("dualwrite_name_echo_mismatch", updated.map((u) => u.name).join(","));   // 시트 응답 이름이 입력과 불일치 — DB 미기록
-        const dw = sheetOk.length ? await dualWriteSessions(trainer, sheetOk, memo, itx.user.id, sidOf) : { inserted: 0, miss: [], unattached: [], dup: [] };
+        const dw = sheetOk.length ? await dualWriteSessions(trainer, sheetOk, memo, itx.user.id, sidOf, playedAt) : { inserted: 0, miss: [], unattached: [], dup: [] };
         // 이미 기록된 수업(앱 「완료」가 먼저 남긴 판수)은 건너뛴 사실을 트레이너가 바로 봐야 한다 —
         // 회신에 안 쓰면 「등록했다」고 읽고 넘어가 버린다(§37 · 오너 지시 2026-09-28).
         if (dw && dw.dup && dw.dup.length) {
