@@ -966,6 +966,16 @@ const feedbackScan = require("./feedback-scan.cjs").createFeedbackScan({
   opsStateGet: (k) => opsStateGet(k), opsStateSet: (k, v) => opsStateSet(k, v),
   skipGuildIds: [process.env.LESSON_GUILD_ID].filter(Boolean),
 });
+// 디스코드 피드백 → 수업 복기 이관 실행(feedback-import.cjs · §57) — 세션이 오너 확인 뒤 ops_state 'feedback_import:request' 를 쓰면
+//   봇이 1분 안에 한 번 돈다(dry = 계획만 · write = 더하기만). 결과 = ops_state 'feedback_import:result'.
+//   사진은 복기 API 와 같은 저장(reviewApi.importImage · 아래에서 만든다 — 부를 때는 이미 있다).
+const feedbackImport = require("./feedback-import.cjs").createFeedbackImport({
+  getClient: () => botClient,
+  sb: { select: sbSelect, insert: sbInsert, patch: sbPatch, upsert: sbUpsert },
+  opsStateGet: (k) => opsStateGet(k), opsStateSet: (k, v) => opsStateSet(k, v),
+  importImage: (a) => reviewApi.importImage(a),
+  isLessonRow,
+});
 // 현금영수증 「발급함」 버튼(계약 §9.5 · 오너 OK 2026-09-30) — 오너 승인 카드 · 4일 미발급 알림이 같은 버튼을 단다.
 //   누르면 payment_requests.cash_receipt_issued_at 이 찍힌다(payreq_cr 처리기 · 두 번 눌러도 한 번).
 function payreqReceiptRow(id) {
@@ -1248,6 +1258,9 @@ if (process.env.DISCORD_TOKEN) {
     // 디스코드 피드백 이관 드라이런(feedback-scan.cjs · 읽기 전용 · 10/1) — 기동 1분 30초 뒤 한 번(같은 token 은 다시 안 돈다)
     if (hasSupabase()) setTimeout(() => feedbackScan.maybeRun(FEEDBACK_SCAN_TOKEN)
       .catch((e) => console.error("fbimport_scan", e?.message)), 90_000);
+    // 이관 실행 요청 확인(§57) — 1분마다 ops_state 한 번 읽는다. 새 요청이 없으면 그걸로 끝난다.
+    if (hasSupabase()) setInterval(() => feedbackImport.poll()
+      .catch((e) => console.error("fbimport_poll", e?.status || "", e?.message)), 60_000);
     // 기동 틱은 로그인 전에 돌아 카드 다시 띄우기가 실패할 수 있다 — 준비 직후 한 번 더(ops_state 'payreq:resend').
     setTimeout(() => runPayreqResend().catch((e) => console.error("payreq_resend_ready", e?.message)), 5000);
 
@@ -8579,13 +8592,15 @@ const REQUIRED_SCHEMA = {
   lesson_reviews:       ["id","student_id","anchor_kind","lesson_session_id","course_session_id","course_id","author_role",
                          "author_staff_id","recipient_trainer_id","source","status","title","body","src_file_name",
                          "src_guild","src_channel","src_msg","consent_public_at","created_at","updated_at","published_at","hidden_at",
-                         "visibility","visibility_changed_at"],
+                         "visibility","visibility_changed_at",
+                         "public_at"],                      // §57 공개 대기(디스코드 이관 · 2026-10-01)
   review_games:         ["id","review_id","ord","seq_label","map","map_raw"],
   review_phases:        ["id","game_id","ord","phase_from","phase_to","phase_to_end","header_raw","lines","tags","suggested_tags"],
   review_images:        ["id","review_id","phase_id","ord","original_path","display_path","thumb_path","width","height",
                          "bytes","sha256","uploaded_by_role","created_at"],
   review_annotations:   ["id","image_id","author_kind","author_id","shapes","version","updated_at"],
-  review_feedback:      ["id","review_id","trainer_id","kind","phase_id","line_ord","verdict","body","due_booking_id","due_at","created_at","updated_at"],
+  review_feedback:      ["id","review_id","trainer_id","kind","phase_id","line_ord","verdict","body","due_booking_id","due_at","created_at","updated_at",
+                         "src_msg"],                        // §57 디스코드에서 옮긴 트레이너 답의 원문 좌표(재실행 멱등)
   review_purge_log:     ["id","ran_at","dry_run","review_id","images","bytes","purged_at"],
   review_reads:         ["review_id","reader_kind","reader_id","read_at"],
   review_reactions:     ["review_id","phase_id","reactor_kind","reactor_id","emoji","created_at"],
@@ -9169,6 +9184,8 @@ async function cronTick() {
   // 복기 초안 사진 정리(§29 PR-2 · 설계 §3.7) — 크론 활성 시 항상. 모드는 함수가 env REVIEW_DRAFT_SWEEP 로 정한다
   // (미설정 = 드라이런 = 지울 목록만 review_purge_log 에 · delete 전환은 2주 드라이런 뒤 오너).
   await maybeRunDaily("reviewDraftSweep", "04:00", () => reviewApi.draftSweep(), "복기 초안 사진 정리");
+  // 디스코드에서 옮긴 복기의 공개 대기 끝(§57 · 어플 9/30) — 매 틱. 7일 동안 범위를 안 고른 것만 「수강생 모두」로.
+  await reviewApi.flipPublicDue().catch((e) => console.error("review_public_flip", e?.status || "", e?.message));
   // "fbPending"(미승인 피드백 리마인더 · 05:15)는 2026-09-26 오너 판정으로 **등록하지 않는다.**
   // 94일 동안 공개 0건 · 반려 0건 = 이 검수 흐름 자체가 쓰이지 않았다. 인증 후기(어플 트랙)가 대체한다.
   // 적체 59건은 복기 3차 이관 D1(docs/lesson-review-server-design.md §2.9)에서 함께 처리한다 —
