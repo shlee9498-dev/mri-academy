@@ -198,6 +198,7 @@ function fresh() {
       { id: 31, name: "가짜실명나", status: "prospect", trainer_id: null, pubg_name: "NickB", merged_into: null, level: null },
       { id: 32, name: "가짜실명다", status: "prospect", trainer_id: null, pubg_name: "NickC", merged_into: null, level: null },
       { id: 33, name: "가짜실명라", status: "done", trainer_id: 2, pubg_name: "NickD", merged_into: null, level: "advanced" },
+      { id: 34, name: "명부직접", status: "prospect", trainer_id: null, pubg_name: null, merged_into: null, level: null },   // 신청 없는 prospect
     ],
     event_codes: [{ code: "TEST10", title: "가짜 이벤트" }],
     intake_applications: [
@@ -218,10 +219,13 @@ function fresh() {
       { id: 702, trainer_id: 5, slot_start: iso(now + 2 * DAY), lesson_type: "consult", capacity: 1, status: "open", duration_min: 90 },
       { id: 703, trainer_id: 2, slot_start: iso(now + HOUR), lesson_type: "consult", capacity: 1, status: "open", duration_min: 60 },
       { id: 704, trainer_id: 2, slot_start: iso(now + 3 * DAY), lesson_type: "personal", capacity: 1, status: "closed", duration_min: 30 },
+      { id: 705, trainer_id: 2, slot_start: iso(now + 4 * DAY), lesson_type: "consult", capacity: 1, status: "closed", duration_min: 60 },
     ],
     slot_bookings: [
       // 일반 수강생 예약(이름은 명부 그대로 보여야 한다)
       { id: 800, slot_id: 704, student_id: 10, status: "booked", duration_min: 30, span_head_id: null, games_held: 3, booked_at: iso(now - DAY) },
+      // 운영진이 명부에 직접 넣은 prospect 의 상담 예약(신청 없음 → 명부 이름 그대로)
+      { id: 801, slot_id: 705, student_id: 34, status: "booked", duration_min: 60, span_head_id: null, games_held: 0, booked_at: iso(now - DAY) },
     ],
     lesson_sessions: [],
   };
@@ -318,7 +322,7 @@ test("레벨 테스트 넣기 — 내 상담 칸만 · 3시간 마감 · 안내 
 });
 
 // ════════ 칸 목록의 신청자 이름(§9.20.8) ════════
-test("칸 목록 — 신청자 예약은 디스코드 표시 이름 · 일반 수강생은 명부 이름 · 신청을 못 읽으면 「신청자」", async () => {
+test("칸 목록 — 신청자 예약은 디스코드 표시 이름 · 일반 수강생 · 신청 없는 prospect 는 명부 이름 · 신청을 못 읽으면 prospect 전부 「신청자」", async () => {
   fresh();
   await call(2, `/applications/${A(102)}/claim`, "POST");
   await call(2, `/applications/${A(102)}/assign`, "POST", { slotId: S(700) });
@@ -326,12 +330,12 @@ test("칸 목록 — 신청자 예약은 디스코드 표시 이름 · 일반 �
   assert.equal(r.status, 200);
   const books = r.json.slots.flatMap((s) => s.bookings);
   const names = books.map((b) => b.studentDisplayName).sort();
-  assert.deepEqual(names, ["가짜실명가", "디코B"]);                // 704 = 일반 수강생(명부) · 700 = 신청자
+  assert.deepEqual(names, ["가짜실명가", "디코B", "명부직접"]);    // 704 = 일반 수강생 · 700 = 신청자 · 705 = 신청 없는 prospect
   assert.ok(!JSON.stringify(r.json).includes("가짜실명나"));
   failTable = "intake_applications";
   const r2 = await call(2, "/slots");
   assert.equal(r2.status, 200);
-  assert.deepEqual(r2.json.slots.flatMap((s) => s.bookings).map((b) => b.studentDisplayName).sort(), ["가짜실명가", "신청자"]);
+  assert.deepEqual(r2.json.slots.flatMap((s) => s.bookings).map((b) => b.studentDisplayName).sort(), ["가짜실명가", "신청자", "신청자"]);
 });
 
 // ════════ POST /enroll ════════
