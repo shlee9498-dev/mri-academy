@@ -175,11 +175,13 @@ module.exports = function mountTrainerPortal(app, deps) {
   // 이력이 있어 담당 단일값으로 막으면 실제 운영을 못 담는다(booking-api isMyTrainer 와 같은 판단).
   // 반환: Map<studentId, {id, name, status, carry_games, pubg_name, isPrimary}>
   //   pubg_name = 배그 닉네임(오너 요청 2026-09-25 · 명부 표시 「이름(pubg_name)」). 비어 있으면 null 로 내려간다.
+  //   합친 명부(§38 merged_into)는 뺀다 — 이 범위가 수업 기록하기 · 수강생 넣기 · 판수 조정 · 목록의 대상이라,
+  //   합친 옛 번호가 남으면 거기에 판수가 쌓인다(2026-10-01 어플 · §38 이름 조회 12경로에서 빠져 있던 자리).
   async function scopedStudents(staffId) {
     const since = kstDate(Date.now() - SCOPE_WINDOW_DAYS * 86400_000);
     const [own, recent] = await Promise.all([
       sbSelect("students",
-        `select=id,name,status,carry_games,pubg_name&trainer_id=eq.${staffId}&status=in.(active,paused)&order=name.asc`),
+        `select=id,name,status,carry_games,pubg_name&trainer_id=eq.${staffId}&status=in.(active,paused)&merged_into=is.null&order=name.asc`),
       sbSelect("lesson_sessions",
         `select=student_id&trainer_id=eq.${staffId}&played_at=gte.${since}`),
     ]);
@@ -187,7 +189,7 @@ module.exports = function mountTrainerPortal(app, deps) {
     for (const s of own) map.set(s.id, { ...s, isPrimary: true });
     const extra = [...new Set(recent.map((r) => r.student_id))].filter((id) => id && !map.has(id));
     if (extra.length) {
-      const rows = await sbSelect("students", `select=id,name,status,carry_games,pubg_name&id=in.(${extra.join(",")})`);
+      const rows = await sbSelect("students", `select=id,name,status,carry_games,pubg_name&id=in.(${extra.join(",")})&merged_into=is.null`);
       for (const s of rows) map.set(s.id, { ...s, isPrimary: false });
     }
     return map;
