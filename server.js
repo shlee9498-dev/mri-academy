@@ -8499,7 +8499,8 @@ const REQUIRED_SCHEMA = {
   // trainer_id 승격(2026-08-16) — §17e DDL 실행을 실DB에서 확인(courses 2행 전부 trainer_id=4).
   courses:          ["id","student_id","level","scheme","session_minutes","unit_price","units_total",
                      "started_on","ended_on","status","source","verified_at","verified_by","memo","created_by",
-                     "trainer_id"],
+                     "trainer_id",
+                     "confirmed_units","confirmed_at","confirmed_by"],   // §58 오너 확인 완료 회차(날짜 없음 · 2026-10-01)
   // 2026-09-24 실DB 실측(14컬럼)으로 4컬럼 승격: trainer(NOT NULL) · rejected(NOT NULL · 크론 fbPending·✅/❌ 핸들러가 씀)
   // · raw(이관 재수집 원문) · created_at. 이 테이블은 create table 정본이 저장소에 없다 — supabase_admin_panel.sql §27(기록용) 참조.
   feedback:         ["id","trainer","grp","body","raw","lesson_date","published","rejected","review_msg","src_channel",
@@ -8817,7 +8818,7 @@ async function runSelfCheck() { /* Phase B */ }
 //
 // 산식은 v_panel_roster · staff-panel과 **같아야 한다**:
 //   레슨 잔여판수 = students.carry_games + Σ lesson_enrollments.games_total − Σ lesson_sessions.games
-//   강의 잔여회차 = courses.units_total − Σ course_attendance.units
+//   강의 잔여회차 = courses.units_total − Σ course_attendance.units − courses.confirmed_units(§58 오너 확인 완료)
 // 두 축은 단위가 다르다(판 vs 회차) — 합치거나 환산하지 않는다(오너 확정).
 const DIRECT_LOW = 2;                       // 알림 임계(종전과 동일)
 const ENR_DEAD = ["refunded", "void", "cancelled"];   // 잔여에서 빼는 등록 상태
@@ -8826,7 +8827,7 @@ async function remainFromDB() {
     sbSelect("students", "select=id,name,status,carry_games"),
     sbSelect("lesson_enrollments", "select=student_id,games_total,status").catch(() => []),
     sbSelect("lesson_sessions", "select=student_id,games"),
-    sbSelect("courses", "select=id,student_id,units_total,status").catch(() => []),
+    sbSelect("courses", "select=id,student_id,units_total,status,confirmed_units").catch(() => []),
     sbSelect("course_attendance", "select=course_id,units,status").catch(() => []),
   ]);
   const stuById = {}; students.forEach((s) => { stuById[s.id] = s; });
@@ -8865,7 +8866,8 @@ async function remainFromDB() {
       }
       continue;
     }
-    const total = Number(c.units_total || 0), used = usedByCourse[c.id] || 0;
+    // 오너 확인 완료 회차(§58 · 날짜 없음)도 진행분이다 — course-progress.cjs 와 같은 식
+    const total = Number(c.units_total || 0), used = (usedByCourse[c.id] || 0) + Number(c.confirmed_units || 0);
     lectures.push({ id: stu.id, name: stu.name, course_id: c.id, remain: total - used, total, used });
   }
   return { lessons, lectures, lecFiltered, attendRows: attend.length };

@@ -4723,3 +4723,43 @@ notify pgrst, 'reload schema';
 --      실행 후: lesson_reviews 25칸(public_at timestamptz null 허용 · 기본값 없음) · 제약 20 · 인덱스 12 · 9행(public_at 0) /
 --               review_feedback 13칸(src_msg text null 허용) · 제약 11(uq_rf_src_msg UNIQUE (src_msg)) · 0행 · 칸 주석 2.
 -- ============================================================
+
+-- ============================================================
+-- §58  직강 — 오너 확인 완료 회차(날짜 없음) (2026-10-01 · 어플 전달 · 오너 OK · 더하기만 = A 구간)
+--   출석(course_attendance)은 날짜 있는 회차(course_sessions.held_on NOT NULL)에만 붙는다. 기록 없이 끝난 회차 —
+--   「다 들었고 끝났다」고 오너가 확인한 몫 — 은 날짜를 지어내지 않고 강의 행에 수로만 남긴다.
+--   진행 회차 = Σ 출석 done units + confirmed_units (course-progress.cjs · server.js remainFromDB 가 같은 식).
+--   새 칸 셋 · 기본값 0 / null — 기존 행은 그대로다(값이 0 이라 지금 화면 숫자가 바뀌지 않는다).
+-- ============================================================
+alter table public.courses add column if not exists confirmed_units numeric(6,2) not null default 0;
+alter table public.courses add column if not exists confirmed_at timestamptz;
+alter table public.courses add column if not exists confirmed_by text;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_courses_confirmed_units') then
+    alter table public.courses add constraint chk_courses_confirmed_units check (confirmed_units >= 0);
+  end if;
+end $$;
+comment on column public.courses.confirmed_units is
+  '오너 확인 완료 회차(날짜 없음 · §58) — 출석 기록 없이 끝난 몫. 진행 회차 = Σ 출석 done + 이 값.';
+comment on column public.courses.confirmed_at is '오너 확인 완료를 적은 시각(§58)';
+comment on column public.courses.confirmed_by is '오너 확인 완료를 적은 사람 · 경로(§58)';
+
+notify pgrst, 'reload schema';
+
+-- ── 58b) 검증 ──────────────────────────────────────────────────────────────
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'courses';   -- 기대 21
+--   select count(*) filter (where confirmed_units <> 0), count(*) from public.courses;                          -- 기대 0 · 그대로
+--   select conname from pg_constraint where conname = 'chk_courses_confirmed_units';                            -- 1행
+--
+-- 되돌리기: 코드(course-progress.cjs · remainFromDB · REQUIRED_SCHEMA 세 칸)를 먼저 되돌린 뒤
+--   alter table public.courses drop constraint if exists chk_courses_confirmed_units;
+--   alter table public.courses drop column if exists confirmed_by, drop column if exists confirmed_at,
+--     drop column if exists confirmed_units;                                 ← 지우는 DDL = B 구간(오너 OK)
+--   ⚠️ 확인 완료를 적은 뒤라면 그 강의가 다시 「남은 N회」로 돌아간다 — 먼저 판단한다.
+--
+--   ✅ 실행 완료 2026-10-01 02:4x KST (세션 실행 · A 구간 · 이 블록 그대로 · 블록 md5 df826ea738f5ea95b31241d8685704ef).
+--      실행 전: courses 18칸 · 제약 10 · 18행(계약 합 280) · 출석 5행 · confirmed 칸 없음.
+--      실행 후: courses 21칸(confirmed_units numeric not null 0 · confirmed_at · confirmed_by) · 제약 11
+--               (chk_courses_confirmed_units) · 18행 전부 0 · 계약 합 280 · 출석 5행 그대로 · 칸 주석 3.
+-- ============================================================

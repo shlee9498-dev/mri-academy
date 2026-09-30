@@ -215,9 +215,9 @@ const rosterDb = () => ({
   trainer_slots: [{ id: 900, trainer_id: 5, slot_start: hoursFromNow(24), lesson_type: "personal", capacity: 1, status: "closed", duration_min: 30 }],
   slot_bookings: [{ id: 901, slot_id: 900, student_id: 11, games_held: 5, status: "booked", span_head_id: null, duration_min: 60 }],
   courses: [
-    { id: 1, student_id: 16, level: "심화반", scheme: "new", started_on: "2026-09-01", status: "active", units_total: 12, trainer_id: 4, memo: "x" },
-    { id: 2, student_id: 12, level: "중급반", scheme: "old", started_on: "2026-05-01", status: "paused", units_total: 8, trainer_id: 4, memo: "x" },
-    { id: 3, student_id: 10, level: "초급반", scheme: "old", started_on: "2026-01-01", status: "done", units_total: 8, trainer_id: 4, memo: "x" },
+    { id: 1, student_id: 16, level: "심화반", scheme: "new", started_on: "2026-09-01", status: "active", units_total: 12, confirmed_units: 0, trainer_id: 4, memo: "x" },
+    { id: 2, student_id: 12, level: "중급반", scheme: "old", started_on: "2026-05-01", status: "paused", units_total: 8, confirmed_units: 0, trainer_id: 4, memo: "x" },
+    { id: 3, student_id: 10, level: "초급반", scheme: "old", started_on: "2026-01-01", status: "done", units_total: 8, confirmed_units: 0, trainer_id: 4, memo: "x" },
   ],
   course_attendance: [
     { id: 1, course_id: 1, session_id: 70, units: 1, status: "done" },
@@ -259,7 +259,7 @@ test("오너 — 전체 수강생(prospect · 합친 행 제외) · 필터 칩 �
   // 직강 회차 — 진행 중 강의만(가의 done 강의는 빠진다) · 출석 행 없으면 미상
   assert.deepEqual(by["가"].courses, []);
   assert.deepEqual(by["사"].courses, [{ level: "심화반", scheme: "new", startedOn: "2026-09-01", status: "active", unitsTotal: 12,
-    completedUnits: 2, remainingUnits: 10, attendanceKnown: true,
+    completedUnits: 2, remainingUnits: 10, ownerConfirmedUnits: 0, attendanceKnown: true,
     nextSession: { date: "2026-10-04", startTime: "14:00", endTime: "17:00", type: "direct" } }]);
   assert.equal(by["다"].courses[0].attendanceKnown, false);
   // §9.14 — 목록 탭 · 레벨 · 다음 예약 · 지금 묶음(원장 몫) · 트레이너별 묶음(오너만)
