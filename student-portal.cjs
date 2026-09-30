@@ -568,8 +568,37 @@ module.exports = function mountStudentPortal(app, deps) {
       if (pack.total !== t.remaining) console.error("current_pack_mismatch", studentId, t.trainerId, t.remaining, pack.total);
       packs.push({ trainerId: t.trainerId, ...pack });
     }
+    // 트레이너별 누적 · 홈 막대(§7.3 lesson.byTrainer · 어플 요청 9/30) — 이력이 있는 트레이너 전부(잔여 0 포함).
+    //   같은 행을 트레이너별로 나눌 뿐이다 — 잔여 식은 §41 과 같고, §41 목록에 있는 트레이너는 값을 대조해 로그만 남긴다.
+    const perT = new Map();
+    const T = (tid) => {
+      if (!perT.has(tid)) perT.set(tid, { carry: 0, reg: 0, lesson: 0, adj: 0, held: 0, packs: [] });
+      return perT.get(tid);
+    };
+    if (carry !== 0 && assignedTrainerId != null) T(assignedTrainerId).carry = carry;
+    for (const e of enrolls) {
+      if (e.trainer_id == null) continue;
+      const t = T(e.trainer_id);
+      t.reg += Number(e.games_total || 0);
+      t.packs.push({ size: Number(e.games_total || 0), startedOn: e.started_on, id: e.id });
+    }
+    for (const r of sessions) {
+      if (r.trainer_id == null) continue;
+      const t = T(r.trainer_id);
+      if (gv.isAdjustRow(r)) t.adj += Number(r.games || 0); else t.lesson += Number(r.games || 0);
+    }
+    for (const h of heldRows) if (h.trainerId != null) T(h.trainerId).held += h.games;
+    const rpcRemaining = new Map(byTrainer.map((r) => [r.trainerId, r.remaining]));
+    const trainerStats = [...perT].map(([tid, t]) => {
+      const registeredGames = t.carry + t.reg;
+      const remainingGames = registeredGames - t.lesson - t.adj - t.held;
+      if (rpcRemaining.has(tid) && rpcRemaining.get(tid) !== remainingGames)
+        console.error("trainer_stats_mismatch", studentId, tid, rpcRemaining.get(tid), remainingGames);
+      return { trainerId: tid, registeredGames, lessonGames: t.lesson, adjustedGames: t.adj, heldGames: t.held, remainingGames,
+               currentPack: gv.packBar({ carry: t.carry, packs: t.packs, used: t.lesson + t.adj, held: t.held }) };
+    }).sort((a, b) => b.remainingGames - a.remainingGames || a.trainerId - b.trainerId);
     return {
-      registered, played, remaining, byTrainer,
+      registered, played, remaining, byTrainer, trainerStats,
       lessonGames: played - adjusted, adjustedGames: adjusted, packs,
       assignedTrainerId,
       pubgName: stu[0]?.pubg_name || null,
@@ -718,7 +747,8 @@ module.exports = function mountStudentPortal(app, deps) {
     ]);
     // 잔여가 남아 있는 트레이너도 이름이 필요하다 — 담당도 아니고 최근 수업도 없는데
     // 판수만 남은 경우(등록만 하고 아직 수업 전)가 실제로 있다. 빠지면 그 줄이 「?」가 된다.
-    const tids = [agg.assignedTrainerId, ...agg.activeTrainerIds, ...agg.byTrainer.map((r) => r.trainerId)];
+    const tids = [agg.assignedTrainerId, ...agg.activeTrainerIds, ...agg.byTrainer.map((r) => r.trainerId),
+      ...agg.trainerStats.map((r) => r.trainerId)];
     const [names, contacts] = await Promise.all([trainerNames(tids), trainerContacts(tids)]);
 
     const entry = (tid, role) => {
@@ -759,6 +789,10 @@ module.exports = function mountStudentPortal(app, deps) {
           trainerId: opaqueId("trainer", p.trainerId),
           trainerName: names[p.trainerId] || "미배정",
           size: p.size, remaining: p.remaining, total: p.total,
+        })),
+        // 트레이너별 누적 등록 · 누적 수업 · 잔여 · 홈 막대 { games, used }(§7.3 · 어플 요청) — 잔여 0 인 트레이너도 온다.
+        byTrainer: agg.trainerStats.map(({ trainerId, ...rest }) => ({
+          trainerId: opaqueId("trainer", trainerId), trainerName: names[trainerId] || "미배정", ...rest,
         })),
       },
       trainers,
@@ -919,8 +953,15 @@ module.exports = function mountStudentPortal(app, deps) {
   // 잔여의 모든 증감을 한 줄씩 — 이월 · 등록 · 수업 · 판수 조정 · 예약 선차감. 24시간 안에 되돌린 조정은 두 줄 다 뺀다.
   //   remaining 은 §23 portal_remaining_games()(예약 게이트가 보는 값)로 싣고, 줄 누계와 다르면 mismatch 로 알린다.
   //   RPC 가 없으면(§23 미실행) 줄 누계를 그대로 쓴다 — /summary 의 JS 식과 같은 축이다.
+  //   ?trainerId=(불투명 · /summary 와 같은 값) — 그 트레이너 줄만 · 누계 · remaining 도 그 트레이너 기준(§7.4 필터 · 어플 요청 9/30).
+  //   trainers[] 는 필터와 상관없이 늘 전체(칩) — 순서는 /summary lesson.byTrainer 와 같은 키(잔여 내림차순 · id 순).
   app.get(`${PREFIX}/games-ledger`, requireStudent, wrap(async (req, res) => {
     const sid = req.portal.sub;
+    let tf = null;
+    if (req.query.trainerId !== undefined) {
+      tf = readOpaqueId("trainer", req.query.trainerId);
+      if (tf == null) return fail(res, 400, "invalid_body");
+    }
     const [stu, enrolls, sessions, holds, total] = await Promise.all([
       sbSelect("students", `select=carry_games,trainer_id&id=eq.${sid}&limit=1`),
       // 취소 · 환불된 등록도 읽는다 — 지우지 않고 0판 · voided 로 보인다
@@ -931,7 +972,9 @@ module.exports = function mountStudentPortal(app, deps) {
         ? sbSelect("slot_bookings", `select=id,games_held,status,trainer_slots(trainer_id,slot_start)&student_id=eq.${sid}`
             + `&status=in.(${HELD_STATUSES.join(",")})`).catch(() => [])
         : Promise.resolve([]),
-      sbRpc("portal_remaining_games", { p_student_id: sid }).catch(() => null),
+      (tf == null
+        ? sbRpc("portal_remaining_games", { p_student_id: sid })
+        : sbRpc("portal_remaining_for_trainer", { p_student_id: sid, p_trainer_id: tf })).catch(() => null),
     ]);
     const adjIds = [...new Set(sessions.map((r) => gv.adjreqRef(r)?.id).filter(Boolean))];
     const kinds = adjIds.length
@@ -942,16 +985,29 @@ module.exports = function mountStudentPortal(app, deps) {
       slot_start: h.trainer_slots?.slot_start, trainer_id: h.trainer_slots?.trainer_id ?? null }));
     const names = await trainerNames([stu[0]?.trainer_id, ...enrolls.map((e) => e.trainer_id),
       ...sessions.map((r) => r.trainer_id), ...holdRows.map((h) => h.trainer_id)]);
+    // 칩 — 이 수강생 내역에 나오는 트레이너 전부(이월은 담당 몫). 잔여 내림차순 · 같으면 id 순.
+    const assigned = stu[0]?.trainer_id ?? null;
+    const remOf = new Map();
+    const add = (tid, g) => { if (tid != null) remOf.set(tid, (remOf.get(tid) || 0) + g); };
+    if (carry) add(assigned, carry);
+    for (const e of enrolls) add(e.trainer_id, ["active", "done", "paused"].includes(e.status) ? Number(e.games_total || 0) : 0);
+    for (const r of sessions) add(r.trainer_id, -Number(r.games || 0));
+    for (const h of holdRows) add(h.trainer_id, -Number(h.games_held || 0));
+    const trainers = [...remOf].sort((a, b) => b[1] - a[1] || a[0] - b[0])
+      .map(([tid]) => ({ trainerId: opaqueId("trainer", tid), trainerName: names[tid] || "미배정" }));
+    // 필터 — 그 트레이너 줄만. 트레이너가 비어 있는 줄(담당 없는 이월 등)은 필터에서 빠진다.
+    const mine = (tid) => tf == null || tid === tf;
     const out = gv.ledgerRows({
-      carry: carry ? { games: carry, on: gv.CARRY_ON, trainerId: stu[0]?.trainer_id ?? null } : null,
-      enrolls, sessions, holds: holdRows, adjKinds: kinds, hideReverted: true, kstClock: gv.kstClock,
+      carry: carry && mine(assigned) ? { games: carry, on: gv.CARRY_ON, trainerId: assigned } : null,
+      enrolls: enrolls.filter((e) => mine(e.trainer_id)), sessions: sessions.filter((r) => mine(r.trainer_id)),
+      holds: holdRows.filter((h) => mine(h.trainer_id)), adjKinds: kinds, hideReverted: true, kstClock: gv.kstClock,
       // trainerId 는 /summary remainingByTrainer · /availability 와 같은 불투명 id
       trainerRef: (tid) => (tid == null ? { trainerId: null, trainerName: "미배정" }
         : { trainerId: opaqueId("trainer", tid), trainerName: names[tid] || "미배정" }),
     });
     const rem = total == null ? out.remaining : Number(total);
-    if (rem !== out.remaining) console.error("student_ledger_mismatch", sid, rem, out.remaining);
-    send(res, { remaining: rem, mismatch: rem !== out.remaining, rows: out.rows });
+    if (rem !== out.remaining) console.error("student_ledger_mismatch", sid, tf, rem, out.remaining);
+    send(res, { remaining: rem, mismatch: rem !== out.remaining, trainers, rows: out.rows });
   }));
 
   // 세션 소유 확인 — 불투명 id 복호 후 본인 것인지 DB로 재확인한다.

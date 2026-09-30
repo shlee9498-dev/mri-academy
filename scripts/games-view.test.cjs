@@ -56,6 +56,24 @@ test("지금 묶음 — 먼저 산 것부터 · total 은 잔여와 같다 · �
   }
 });
 
+test("홈 막대 — 다 쓴 묶음은 빼고 합 · games − used = 잔여 · 다 쓰면 마지막 묶음 · 이월 · 빚", () => {
+  const P = (size, startedOn, id) => ({ size, startedOn, id });
+  // 21(다 씀) + 33(10 씀) + 10(안 씀) — 어플 요청 예
+  assert.deepEqual(gv.packBar({ packs: [P(21, "2026-08-01", 1), P(33, "2026-09-01", 2), P(10, "2026-09-20", 3)], used: 31 }),
+    { games: 43, used: 10 });
+  assert.deepEqual(gv.packBar({ packs: [P(21, "a", 1), P(33, "b", 2)], used: 21 }), { games: 33, used: 0 });    // 첫 묶음을 딱 다 씀
+  assert.deepEqual(gv.packBar({ packs: [P(10, "a", 1), P(21, "b", 2)], used: 31 }), { games: 21, used: 21 });   // 잔여 0 = 꽉 참
+  assert.deepEqual(gv.packBar({ packs: [P(10, "a", 1), P(21, "b", 2)], used: 35 }), { games: 21, used: 25 });   // 넘침
+  assert.deepEqual(gv.packBar({ carry: 12, packs: [P(21, "a", 1)], used: 5, held: 5 }), { games: 33, used: 10 });
+  assert.deepEqual(gv.packBar({ carry: -4, packs: [P(10, "a", 1)], used: 3 }), { games: 10, used: 7 });         // 빚 4 를 먼저 쓴 것으로
+  assert.equal(gv.packBar({ packs: [], used: 5 }), null);
+  // 잔여는 currentPack.total(§41 식)과 같다
+  for (const c of [{ carry: 7, packs: [P(21, "a", 1), P(33, "b", 2)], used: 40, held: 5 }, { carry: 0, packs: [P(10, "a", 1)], used: 2, held: 0 }]) {
+    const b = gv.packBar(c);
+    assert.equal(b.games - b.used, gv.currentPack(c).total);
+  }
+});
+
 test("판수 내역 — 부호 · 순서 · 누계 = 잔여 · 조정 라벨 · 취소 등록 · 되돌린 조정은 수강생 화면에서 뺀다", () => {
   const input = {
     carry: { games: 12, on: "2026-07-20", trainerId: 5 },

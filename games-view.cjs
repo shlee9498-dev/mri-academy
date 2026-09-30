@@ -93,6 +93,30 @@ function currentPack({ carry = 0, packs = [], used = 0, held = 0 }) {
   return null;   // 도달하지 않는다
 }
 
+// ── 홈 막대(§7.3 lesson.byTrainer[].currentPack · 어플 요청 9/30) — { games, used } ──
+//   먼저 산 묶음부터 쓴다고 보고 **다 쓴 묶음은 뺀** 묶음 합(games)과 그 안에서 쓴 판수(used). games − used = 잔여.
+//   다 써서 잔여 ≤ 0 이면 games = 마지막 묶음 크기 · used = games − 잔여(막대가 꽉 차거나 넘친다). 묶음이 없으면 null.
+//   묶음 목록 · 쓴 판수의 축은 currentPack 과 같다(이월 > 0 은 맨 앞 묶음 · 이월 < 0 은 먼저 쓴 것).
+function packBar({ carry = 0, packs = [], used = 0, held = 0 }) {
+  const list = [];
+  let consumed = Number(used || 0) + Number(held || 0);
+  if (carry > 0) list.push(Number(carry));
+  else if (carry < 0) consumed += -Number(carry);
+  const sorted = [...packs].sort((a, b) =>
+    String(a.startedOn || "").localeCompare(String(b.startedOn || "")) || Number(a.id || 0) - Number(b.id || 0));
+  for (const p of sorted) if (Number(p.size) > 0) list.push(Number(p.size));
+  if (!list.length) return null;
+  const remaining = list.reduce((a, n) => a + n, 0) - consumed;
+  if (remaining <= 0) { const last = list[list.length - 1]; return { games: last, used: last - remaining }; }
+  let left = consumed, games = 0;
+  for (const n of list) {
+    if (left >= n) { left -= n; continue; }       // 다 쓴 묶음 — 뺀다
+    games += n;
+    left = 0;                                       // 쓴 판수는 지금 묶음에서 끝난다 — 뒤 묶음은 통째로 남아 있다
+  }
+  return { games, used: games - remaining };
+}
+
 // ── 판수 내역(§7.4 · §9.15) ──
 //   carry { games, on, trainerId }|null · enrolls [{ id, games_total, started_on, trainer_id, status }]
 //   sessions [{ id, played_at, games, trainer_id, created_by, memo }] · holds [{ id, games_held, slot_start, trainer_id, status }]
@@ -149,5 +173,5 @@ function newlyHeld(rows, today) {
 
 module.exports = {
   HOLD_DAYS, LEVELS, COURSE_LEVEL, ADJ_LABEL, CARRY_ON,
-  addDays, maxDate, kstClock, isAdjustRow, adjreqRef, effectiveLevel, listState, currentPack, ledgerRows, newlyHeld,
+  addDays, maxDate, kstClock, isAdjustRow, adjreqRef, effectiveLevel, listState, currentPack, packBar, ledgerRows, newlyHeld,
 };
