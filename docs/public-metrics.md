@@ -33,7 +33,7 @@
   "students": 31, "lessons": 51, "studentLessons": 81, "games": 555,
   "repurchase": { "payers": 78, "repeaters": 40, "ratePct": 51, "basis": "all_time" },
   "trainers": [                                        // 활성 트레이너 + 원장 · 이름순
-    { "name": "준구", "students": 8, "lessons": 14, "studentLessons": 14, "games": 131,
+    { "name": "준구", "students": 8, "lessons": 14, "studentLessons": 19, "games": 131,
       "repurchase": { "payers": 37, "repeaters": 16, "ratePct": 43 } }
   ]
 }
