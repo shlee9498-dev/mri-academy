@@ -25,7 +25,8 @@ const SLOTS = Object.freeze({
 });
 const MIN_AGE = 14, MAX_AGE = 99;
 // 개인정보 안내 판 — 페이지가 보여 준 판과 같아야 받는다. privacy.html 을 고치면 이 날짜를 같이 올린다(설계 §8).
-const PRIVACY_VERSION = "2026-10-07";
+//   2026-10-08 = 신청 페이지 항목을 넣은 개정의 시행일(#439 · 10/1 고지 · 10/8 시행).
+const PRIVACY_VERSION = "2026-10-08";
 const BODY_KEYS = Object.freeze(["name", "age", "tier", "concern", "trainer", "slots", "slotsNote", "ev",
   "pubgName", "platform", "pubgConfirm", "privacyAgreed", "privacyVersion", "utm"]);
 const UTM_KEYS = Object.freeze(["source", "medium", "content", "campaign"]);
@@ -148,13 +149,36 @@ function pgCode(e) {
   try { return JSON.parse(e?.body || "{}").code || null; } catch { return null; }
 }
 
+// 레벨 테스트비 — config/payments.js(결제 트랙 정본 · 읽기만)의 consultCourse. 못 읽으면 null(추측하지 않는다).
+//   선택지 응답과 카드 [입금 확인](intake-cards.cjs)이 같은 값을 쓴다.
+let priceCache;
+async function levelTestWon() {
+  if (priceCache !== undefined) return priceCache;
+  try {
+    const m = await import("./config/payments.js");
+    priceCache = Number.isInteger(m.PRICES?.consultCourse) ? m.PRICES.consultCourse : null;
+  } catch (e) { console.error("intake_price", e?.message); priceCache = null; }
+  return priceCache;
+}
+
 function mountIntake(app, deps) {
   const { sbSelect, sbInsert, sbDelete, limit, verifyJWT, portal, parseIgnInput } = deps;
   // 제출을 받기 시작하는 날(KST) — 개인정보처리방침 개정 시행일과 같게 둔다(설계 §8 · 7일 전 고지 규칙).
   //   null 이면 닫혀 있다(503 intake_closed). 읽기 라우트(이벤트 · 선택지 · 내 상태)는 열어 둔다 — 수집이 없다.
   const acceptFrom = deps.acceptFrom || null;
   const accepting = () => !!acceptFrom && kstToday() >= acceptFrom;
-  const hooks = { onSubmitted: null };           // PR-2 — 카드(오너 · 트레이너) · 접수 DM
+  const hooks = { onSubmitted: null };           // PR-2 — 카드(오너 · 트레이너) · 접수 DM(server.js 가 intake-cards.cjs 를 붙인다)
+  // 열림 · 닫힘이 바뀔 때만 한 줄(기동 1회 + cronTick 10분마다 부른다) — 시행일 0시에 열린 것을 로그로 확인한다
+  let lastOpen = null;
+  function logOpen() {
+    const on = accepting();
+    if (on === lastOpen) return on;
+    lastOpen = on;
+    console.log(on ? `[intake] 제출 열림 — ${acceptFrom} 부터 받는 중 (KST ${kstToday()})`
+      : `[intake] 제출 닫힘 — ${acceptFrom ? `${acceptFrom} 0시(KST)부터 받는다` : "여는 날 없음"}`);
+    return on;
+  }
+  logOpen();
   const enc = encodeURIComponent;
   const fail = (res, status, code) => res.status(status).json({ error: { code } });
   const rateLimit = (name, max, windowMs) => limit(name, max, windowMs, (res) => fail(res, 429, "rate_limited"));
@@ -186,17 +210,6 @@ function mountIntake(app, deps) {
     daily.set(id, { day, n: n + 1 });
     if (daily.size > 5000) daily.clear();
     return true;
-  }
-
-  // 레벨 테스트비 — config/payments.js(결제 트랙 정본 · 읽기만)의 consultCourse. 못 읽으면 null(추측하지 않는다).
-  let priceCache;
-  async function levelTestWon() {
-    if (priceCache !== undefined) return priceCache;
-    try {
-      const m = await import("./config/payments.js");
-      priceCache = Number.isInteger(m.PRICES?.consultCourse) ? m.PRICES.consultCourse : null;
-    } catch (e) { console.error("intake_price", e?.message); priceCache = null; }
-    return priceCache;
   }
 
   // 배그 닉 조회 — 계정 id · 정식 닉 · 이번 시즌 티어. 조회 실패는 신청을 막지 않는다. 없는 닉(404)만 알려 준다.
@@ -345,7 +358,7 @@ function mountIntake(app, deps) {
       eventApplied: !!eventCode, pubgChecked: pubg.status === "found" });
   }));
 
-  return { hooks };
+  return { hooks, logOpen };
 }
 
 module.exports = mountIntake;
@@ -360,3 +373,5 @@ module.exports.NONCE_RE = NONCE_RE;
 module.exports.makeApplyState = makeApplyState;
 module.exports.readApplyState = readApplyState;
 module.exports.joinGuild = joinGuild;
+module.exports.levelTestWon = levelTestWon;
+module.exports.OPEN = OPEN;
