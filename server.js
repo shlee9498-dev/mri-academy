@@ -1287,12 +1287,18 @@ if (process.env.DISCORD_TOKEN) {
   // 두 단계다(오너 지시 2026-09-29 「반장 그룹 판수 입력 운영 확인 후에만 · 안 되면 개인만 잠금」).
   //   LESSON_LOCK_FROM     개인 1:1 레슨만 잠근다. 개인은 예약이 판수(5·8·10)를 알고 있어서
   //                        「완료」 한 번이면 기록이 끝난다 — 앱 화면이 늦어도 막히지 않는다.
-  //   LESSON_LOCK_ALL_FROM 그룹 · 강의 · 진단상담 · /판수정정 까지 전부 잠근다. 그룹은 「완료」에
-  //                        판수 입력칸이 있어야 기록되므로 **반장 화면이 운영에 뜬 걸 확인한 뒤**
-  //                        날짜를 넣는다. null 이면 이 단계는 꺼져 있다.
-  const LESSON_LOCK_FROM = "2026-10-01";
+  //   LESSON_LOCK_ALL_FROM 레슨 전부(그룹 포함) · /판수정정 을 잠근다. null 이면 이 단계는 꺼져 있다.
+  //   ⚠️ 진단상담 · 강의(직강)는 이 단계에서도 **잠그지 않는다.** 둘 다 consults 로그를 남기는 곳이
+  //      /수업등록 뿐이다 — 앱 「완료」(상담)는 예약만 닫고 consults 행을 만들지 않는다. 잠그면
+  //      상담 가산 정산 입력이 끊긴다. 앱에 그 경로가 생기면 진단상담은 잠금에 넣는다(오너 9/30).
+  //
+  // ⏸ **둘 다 보류(오너 지시 2026-09-30 「10/1 0시 잠금 보류」).** 앱에 「수업 기록하기(예약 없이)」와
+  //    「판수 조정 요청(오너 승인 카드)」이 아직 없어서, 잠그면 디스코드로 약속한 수업 기록과 판수 정정이
+  //    전부 오너에게 몰린다. 그 두 기능이 트레이너 앱 운영에 나간 날 **레슨 · /판수정정 을 함께** 켠다
+  //    (두 상수에 그날 날짜를 넣는다). 개인만 먼저 잠그지 않는다.
+  const LESSON_LOCK_FROM = null;
   const LESSON_LOCK_ALL_FROM = null;
-  const lessonLocked = () => kstToday() >= LESSON_LOCK_FROM;
+  const lessonLocked = () => !!LESSON_LOCK_FROM && kstToday() >= LESSON_LOCK_FROM;
   const lessonLockedAll = () => !!LESSON_LOCK_ALL_FROM && kstToday() >= LESSON_LOCK_ALL_FROM;
   const isMriOwner = (itx) => !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
   // /수업등록 성공분을 DB lesson_sessions에도 기록(시트 병행·검증용).
@@ -1523,7 +1529,7 @@ if (process.env.DISCORD_TOKEN) {
     // 유형을 안 고르면 개인이다(명령 정의의 기본값과 같다).
     const isPersonalLesson = guboon === "레슨" && (!lessonType || lessonType === "개인");
     if (!isMriOwner(itx)) {
-      if (lessonLockedAll())
+      if (guboon === "레슨" && lessonLockedAll())            // 진단상담 · 강의는 그대로(위 LESSON_LOCK_ALL_FROM 주석)
         return itx.reply({
           content: "10/1부터 수업 기록은 앱에서 해줘. 예약 카드에서 「완료」를 누르고 판수를 넣으면 끝이야. 예약 없이 한 수업은 오너에게 말해줘.",
           ephemeral: true,
