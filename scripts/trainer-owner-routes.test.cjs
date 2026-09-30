@@ -198,6 +198,7 @@ test("오너 — 전체 수강생(prospect · 합친 행 제외) · 필터 칩 �
   assert.deepEqual(by["가"].assignedTrainer, { trainerKey: T(2), trainerName: "트레이너A" });
   assert.equal(by["사"].assignedTrainer, null);
   assert.deepEqual(rows.map((s) => s.appLinked), [true, false, false, false, false, false, false]);
+  assert.equal(rows.every((s) => s.isTest === false), true);                  // 테스트 계정 표(test-accounts.cjs)에 없는 행
   // §41b: 트레이너 없는 등록(아) · 잔여 0(라의 A) 은 빠지고 잔여 내림차순
   assert.deepEqual(by["가"].remainingByTrainer, [{ trainerKey: T(2), trainerName: "트레이너A", remaining: 5 }]);
   assert.deepEqual(by["나"].remainingByTrainer, [
@@ -231,6 +232,7 @@ test("트레이너 — 범위 그대로(담당 ∪ 90일) · scope mine · inMyS
   assert.deepEqual([s.inMyScope, s.isPrimary, s.remainingMine, s.remainingGames, s.pubgName], [true, true, 5, 5, "nick10"]);
   assert.deepEqual(s.courses, []);
   for (const k of ["assignedTrainer", "remainingByTrainer", "appLinked"]) assert.equal(k in s, false, k);
+  assert.equal(s.isTest, false);                                              // isTest 는 모든 계정에 온다
 });
 
 // ════════ GET /owner/dashboard ════════ — 주는 2025-01-06(월)~12(일) 고정 · 열린 칸 · 대기 시각은 지금 기준

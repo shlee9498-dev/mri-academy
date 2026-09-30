@@ -267,6 +267,27 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 변경·삭제 없습니다. 두 키 모두 수강생 `scrub` 통과 확인(정규화 `scheme`·`attendanceknown` — 금지
 어간 `net` 등에 걸리지 않음).
 
+### 7.2 「내 성장」 — `GET /api/student-portal/summary` → `growth` ✅ **서버 구현 (2026-09-30 · 개편 2단계 명세 §3 · §8)**
+
+홈 KpiTrio 세 번째 칸. 최상위 키 `growth` 하나(기존 키 변경 없음).
+
+```json
+"growth": { "rpDelta30": 110, "tierNow": "Diamond 1", "games30": 22, "asOf": "2026-09-29T20:00:08Z" }
+```
+
+| 키 | 타입 | null | 뜻 |
+|---|---|---|---|
+| `growth` | object | **가능** | 못 내면 **null** — 앱은 세 칸 대신 **두 칸만**(빈 칸 · 「연결 준비 중」 금지 · 명세 §3) |
+| `rpDelta30` | integer | 아니오 | 최근 30일 RP 변화(끝 − 첫 · 음수 그대로) |
+| `tierNow` | string | 아니오 | 가장 최근 티어 — `"Diamond 1"` · `"Master 1"` · `"서바이버"`(best RP 3,700 이상) · `"Unranked"` |
+| `games30` | integer | 아니오 | 같은 기간 경쟁전 판수(끝 − 첫 · 0 이상). 명세 기준 3판 미만이면 「아직 몰라요」 |
+| `asOf` | ISO | 아니오 | 가장 최근 스냅샷 시각(매일 05:00 KST 전적 스냅샷) |
+
+- 원천 = `student_snapshots`(수강생과 연결된 전적 스냅샷). **같은 시즌 · 같은 계정끼리만** 뺀다 — 시즌이 바뀌면 RP 가
+  초기화된다(9/30 실측: 42 → 43 전환이 창 안에 있다). 그 시즌 스냅샷이 두 장이 안 되거나 경쟁전 기록이 없으면 null.
+- 9/30 실측: 값이 나오는 수강생 13명(RP 변화 −17 ~ +628) — 나머지는 null(두 칸)이 정상이다.
+- 수강생 `scrub` 통과(정규화 `growth` · `rpdelta30` · `tiernow` · `games30` · `asof`).
+
 ## 8. 수업 복기 API (§29 · PR-1·PR-2 = 수강생 포털 · PR-3 = 트레이너 포털 · 2026-09-25)
 
 > 오너 지시(9/25): 복기 계약은 이 문서에 둔다. **PR-1·PR-2 는 수강생 앱이 부르는 `/api/student-portal/*` 라우트**다. **트레이너 포털 복기 라우트는 PR-3 = §8.9**(`/api/trainer-portal/*`).
@@ -1038,6 +1059,8 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
   그때는 `unitsTotal` 만(예: 「심화반 12회」).
 - 표시 권장: `courses` 가 있고 `registeredGames` 가 0 이면 판수 대신 회차를 보인다. 둘 다 있으면 둘 다.
 - `nextSession` 은 예정 회차가 없으면 `null`. 계산은 수강생 앱 §7.1 과 **같은 함수**(`course-progress.cjs`)다.
+- `isTest`(boolean · **모든 계정** · 2026-09-30 반장 요청) — 테스트 계정(`test-accounts.cjs` 표 · 공개 지표도 이 표로 뺀다).
+  앱은 표시명(「테스트」로 시작) 대신 이 값으로 가린다.
 - `inMyScope`(boolean · **모든 계정**) — 기록 · 예약 · 일기 · 복기를 할 수 있는 범위(담당 ∪ 최근 90일)에 드는가.
   트레이너 계정은 늘 `true`. 오너 계정의 `false` 행은 **보기만** — 쓰기 버튼을 감출 것(눌러도 403 `scope_denied`).
   오너 범위를 넓힌 것은 **이 목록뿐**이다. 쓰기 범위는 그대로다(남의 수강생을 보는 것과 대신 기록하는 것은 다른 권한).

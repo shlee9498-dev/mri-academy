@@ -74,7 +74,21 @@ test("재결제 — 레슨 · 세트(판수 있음)만 · 무효 · 환불 수�
 
 test("공개 응답 가드 — 허용 키 말고는 throw(수강생 이름 · id · 금액이 섞이면 막는다)", () => {
   assert.doesNotThrow(() => assertPublic({ asOf: "x", window: { from: "a", to: "b", days: 30 }, trainers: [{ name: "A", repurchase: { payers: 1 } }] }));
-  for (const bad of [{ studentId: 1 }, { trainers: [{ name: "A", id: 2 }] }, { amount: 1 }, { students: 3, names: ["x"] }]) {
+  assert.doesNotThrow(() => assertPublic({ trainers: [{ name: "A", id: "hyuntae" }] }));                 // 트레이너 공개 키는 된다
+  for (const bad of [{ studentId: 1 }, { trainers: [{ name: "A", id: 2 }] }, { byTrainer: [{ id: "T-5" }] }, { amount: 1 }, { students: 3, names: ["x"] }]) {
     assert.throws(() => assertPublic(bad), /public_metrics_forbidden_key/);
   }
+});
+
+test("사이트 모양(명세 §8 · /api/site-metrics) — students30 · games30 · rebook30 · byTrainer · 「회」 없음 · 트레이너 키", () => {
+  const { siteShape } = require("../public-metrics.cjs")._test;
+  const sessions = [ss(1, 10, 2, "2026-09-10", 5), ss(2, 11, 5, "2026-09-11", 8)];
+  const m = computeMetrics({ sessions, payments: [], students, enrollTrainer: new Map(), staff }, W);
+  const site = siteShape({ asOf: "x", ...m });
+  assert.deepEqual(Object.keys(site), ["asOf", "students30", "games30", "rebook30", "byTrainer"]);
+  assert.deepEqual([site.students30, site.games30, site.rebook30], [2, 13, null]);          // 결제 없음 → null
+  assert.deepEqual(site.byTrainer.map((t) => [t.id, t.name, t.students30, t.games30]),
+    [["muri", "원장", 0, 0], ["jungu", "트레이너A", 1, 5], ["hyuntae", "트레이너B", 1, 8]]);
+  assert.equal(JSON.stringify(site).includes("lessons"), false);                              // 사이트에는 「회」를 안 싣는다
+  assert.doesNotThrow(() => assertPublic(site));
 });

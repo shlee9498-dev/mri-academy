@@ -22,6 +22,8 @@ const crypto = require("crypto");
 const payreqIntake = require("./payreq-intake.cjs");
 // 직강 회차 요약 — 트레이너 앱 /students(계약 §9.12)와 같은 함수(2026-09-30 · 두 벌 금지).
 const courseProgress = require("./course-progress.cjs");
+// 「내 성장」(개편 2단계 명세 §3 · §8) — 최근 30일 RP 변화. 같은 시즌 · 같은 계정끼리만 뺀다.
+const growthCalc = require("./growth.cjs");
 
 // 신규 DDL(정본 4.2) 미실행 상태에서도 읽기 경로는 동작해야 한다 — 제목은 "미정",
 // 일기·피드백은 없음으로 degrade한다. 쓰기(PUT journal)만 503으로 막는다.
@@ -678,12 +680,14 @@ module.exports = function mountStudentPortal(app, deps) {
     // 집계와 무관한 것들은 집계와 **동시에** 시작한다. 이름·연락처만 집계 결과(트레이너 id)가
     // 필요해 뒤에 오고, 그 둘은 staff 캐시라 보통 왕복 0이다.
     // ⚠️ 판수 계산식(lessonAggregate 내부)은 한 글자도 바꾸지 않았다 — 순서와 횟수만 바뀐다.
-    const [agg, pendingJournalCount, ended, nextBooking, courses] = await Promise.all([
+    const [agg, pendingJournalCount, ended, nextBooking, courses, growth] = await Promise.all([
       lessonAggregate(sid),
       pendingJournalsFor(sid),
       endedBookingToday(sid),
       nextBookingFor(sid),
       coursesFor(sid),
+      // 실패해도 요약은 내린다 — 「내 성장」 칸만 빠진다(null = 앱은 두 칸)
+      growthCalc.loadGrowth(sbSelect, sid).catch((e) => { console.error("summary_growth", e?.message); return null; }),
     ]);
     // 잔여가 남아 있는 트레이너도 이름이 필요하다 — 담당도 아니고 최근 수업도 없는데
     // 판수만 남은 경우(등록만 하고 아직 수업 전)가 실제로 있다. 빠지면 그 줄이 「?」가 된다.
@@ -739,6 +743,8 @@ module.exports = function mountStudentPortal(app, deps) {
       // 같은 키). lessonAggregate 의 students 조회에서 같이 받는다(종전에는 같은 행을 또 읽었다).
       pubgName: agg.pubgName,
       courses,
+      // 「내 성장」 { rpDelta30, tierNow, games30, asOf } — 같은 시즌 스냅샷 두 장이 안 되면 null(앱은 두 칸만 · 명세 §3)
+      growth,
       ...reviewExtras,
     });
   }));
