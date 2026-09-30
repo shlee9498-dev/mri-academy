@@ -534,12 +534,12 @@ app.delete("/api/replies/:id", async (req, res) => {
 });
 
 
-// ── 레슨 차감표 (단일 정본 · 2026-09-03 오너 확정) ──────────────────────────
+// ── 레슨 차감표 (단일 정본 · 2026-09-03 오너 확정 · 2026-09-30 최대 3시간) ─────────────────────
 // 개인 1:1만 시간→판수로 환산한다. 그룹은 시간과 무관하게 진행 판수를 직접 입력한다.
-// 30분(3판)은 폐기됐다. ⚠️ 표를 바꾸려면 이 상수 하나만 고친다 — 봇 옵션·검증·챗봇 안내가 전부 여기서 파생한다.
+// 30분(3판)은 폐기됐다. ⚠️ 표는 lesson-lengths.cjs 한 벌이다 — 봇 옵션 · 검증 · 챗봇 안내 · 예약 API 가 전부 거기서 파생한다.
 // (종전에는 Math.round(hours*5) 계수와 챗봇 프롬프트 문자열이 따로 있어 이원화돼 있었다.)
-const LESSON_HOURS_TO_GAMES = { 1: 5, 1.5: 8, 2: 10 };
-const LESSON_HOURS_LABEL = (h) => (h === 1.5 ? "1시간30분" : `${h}시간`);
+// 2026-09-30 오너: 2시간 30분 13판 · 3시간 15판 추가(DB book_slot 의 case 도 §47 로 함께 바꿨다).
+const { HOURS_TO_GAMES: LESSON_HOURS_TO_GAMES, hoursLabel: LESSON_HOURS_LABEL } = require("./lesson-lengths.cjs");
 const LESSON_HOURS_TEXT = Object.keys(LESSON_HOURS_TO_GAMES)
   .map(Number).sort((a, b) => a - b)
   .map((h) => `${LESSON_HOURS_LABEL(h)} ${LESSON_HOURS_TO_GAMES[h]}판`).join(" · ");
@@ -955,7 +955,7 @@ if (process.env.DISCORD_TOKEN) {
       // 차감표에 있는 값만 고르게 한다(30분 폐기 · 최대 2시간). 자유 입력이던 시절엔 오타 한 번에 대량 차감이 났다.
       // choices로 클라이언트를 막고, 서버에서도 LESSON_HOURS_TO_GAMES 조회로 한 번 더 막는다.
       { name: "시간", description: "개인 1:1 수업 시간(그룹은 판수 칸 사용)", type: 10, required: false,
-        min_value: 1, max_value: 2,
+        min_value: 1, max_value: 3,
         choices: Object.keys(LESSON_HOURS_TO_GAMES).map(Number).sort((a, b) => a - b)
           .map((h) => ({ name: `${LESSON_HOURS_LABEL(h)} (${LESSON_HOURS_TO_GAMES[h]}판)`, value: h })) },
       { name: "메모", description: "메모(선택)", type: 3, required: false },
