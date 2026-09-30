@@ -36,6 +36,11 @@ jobs:
       - name: 의존성 설치 (스모크용)
         run: npm ci --no-audit --no-fund
 
+      # express 로 실제 라우트를 띄우는 시험(가짜 DB · 입금 신청 계약 §9.5)은 의존성이 있어야 돈다 —
+      # 그래서 위 check(설치 전)가 아니라 설치 뒤에 둔다. 로컬: npm run check && npm run test:deps
+      - name: 라우트 시험 (의존성 필요)
+        run: npm run test:deps
+
       # 시크릿을 주지 않는다 — 외부 연동이 전부 opt-in이라 env 0개로 떠야 정상이다.
       # 시크릿이 필요해지는 순간 그 자체가 설계 회귀 신호다.
       - name: 부팅 스모크
