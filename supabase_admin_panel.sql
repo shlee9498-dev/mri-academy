@@ -3885,3 +3885,207 @@ $$;
 --   drop table if exists public.games_adjust_requests;    -- 요청 기록까지 지운다(B 구간 · 오너 OK)
 --   ⚠️ 승인으로 들어간 판수 행(lesson_sessions created_by 'adjreq:…')은 표를 지워도 남는다 — 판수 데이터라 따로 판단한다.
 -- ============================================================
+
+-- ============================================================
+-- §47  개인 레슨 최대 3시간 — 차감표 150 · 180분 추가 (2026-09-30 · 오너 OK · 판수 계산 변경 = B 구간)
+--
+-- 오너 지시(9/30): 개인 길이 60 · 90 · 120 에 150 · 180 추가. 선차감 · 기록 판수 = 2시간 30분 13판 · 3시간 15판
+--   (1시간 5 · 1시간 30분 8 · 2시간 10 그대로). 그룹 · 레벨 테스트 한 덩어리 칸 최대 180분.
+--   적용: 예약 · 대신 넣기 · 매주 반복 · 완료 · 시간 달라짐 · 수업 기록하기 · 차감표. 예약 마감 3시간 전 · 취소 규칙 그대로.
+--
+-- 바꾸는 것 셋(전부 **넓히기만** — 있던 길이 · 판수는 그대로다):
+--   ① book_slot — 길이→판수 case 에 150→13 · 180→15. 나머지 본문은 §42b 그대로(운영 3337 · ab41e9e7 에서 출발).
+--      개인 예약은 30분 칸 p_duration_min/30 개를 묶으므로 칸 쪽 변경은 없다.
+--   ② open_trainer_slots — 한 덩어리 칸(그룹 · 레벨 테스트) 길이 목록에 150 · 180. 본문은 §40a 그대로.
+--      ⚠️ 운영본(2548 · d997d844)은 §40a 정본(2560 · d63b4c24)에서 줄 끝 주석 「-- 1회 24시간」 12자만 빠져 있었다(로직 같음).
+--      이번에 정본 그대로 실행해 지문을 다시 맞춘다.
+--   ③ chk_trainer_slots_duration — 칸 길이 제약을 (30,60,90,120) → (30,60,90,120,150,180). 제약 교체라 B 구간(오너 OK).
+-- JS 사본: lesson-lengths.cjs(PERSONAL_LENGTHS · GROUP_LENGTHS) — 이 절과 같이 움직인다.
+
+create or replace function public.book_slot(
+  p_student_id  bigint,
+  p_slot_id     bigint,
+  p_duration_min int default null
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_slot      trainer_slots%rowtype;
+  v_games     int;
+  v_need      int;
+  v_remaining int;
+  v_booked    int;
+  v_head      bigint;
+  v_ids       bigint[];
+begin
+  select * into v_slot from trainer_slots where id = p_slot_id for update;
+  if not found                     then return jsonb_build_object('error','slot_not_found'); end if;
+  if v_slot.status <> 'open'       then return jsonb_build_object('error','slot_taken');     end if;
+  -- 예약 마감 = 수업 3시간 전(오너 확정 2026-09-27). 지난 칸도 여기서 함께 걸린다.
+  -- slot_taken 과 코드를 가른다 — 앱 문구가 「누가 먼저 잡았다」와 「마감됐다」로 달라야 한다.
+  if v_slot.slot_start - now() < interval '3 hours' then
+    return jsonb_build_object('error','booking_closed');
+  end if;
+
+  -- ⬇ §41 — **그 칸 트레이너의** 잔여를 본다. 합계로 보면 준구에게 산 판수로 현태 수업을
+  --    예약할 수 있다(실측 9명이 두 트레이너를 함께 쓴다).
+  v_remaining := portal_remaining_for_trainer(p_student_id, v_slot.trainer_id);
+
+  if v_slot.lesson_type = 'personal' then
+    if p_duration_min is null then return jsonb_build_object('error','invalid_body'); end if;
+    -- 차감표(§47 · 오너 2026-09-30 최대 3시간) — lesson-lengths.cjs PERSONAL_LENGTHS 와 글자 그대로 같은 값이어야 한다.
+    v_games := case p_duration_min when 60 then 5 when 90 then 8 when 120 then 10
+                                   when 150 then 13 when 180 then 15 else null end;
+    if v_games is null then return jsonb_build_object('error','invalid_body'); end if;
+    if v_remaining < v_games then return jsonb_build_object('error','insufficient_games'); end if;
+    v_need := p_duration_min / 30;
+
+    select array_agg(id order by slot_start) into v_ids from (
+      select id, slot_start from trainer_slots
+       where trainer_id  = v_slot.trainer_id
+         and lesson_type = 'personal'
+         and status      = 'open'
+         and slot_start >= v_slot.slot_start
+         and slot_start <  v_slot.slot_start + make_interval(mins => p_duration_min)
+       order by slot_start
+       for update
+    ) s;
+    if v_ids is null or array_length(v_ids, 1) <> v_need then
+      return jsonb_build_object('error','slot_taken');
+    end if;
+
+    insert into slot_bookings (slot_id, student_id, games_held, duration_min, status)
+      values (v_slot.id, p_student_id, v_games, p_duration_min, 'booked')
+      returning id into v_head;
+    insert into slot_bookings (slot_id, student_id, games_held, status, span_head_id)
+      select x, p_student_id, 0, 'booked', v_head from unnest(v_ids) x where x <> v_slot.id;
+    update trainer_slots set status = 'closed' where id = any(v_ids);
+
+    return jsonb_build_object('bookingId', v_head, 'gamesHeld', v_games, 'slotsHeld', v_need);
+  end if;
+
+  -- 그룹(관전형·참여형) · 상담(consult): 선차감 없음.
+  if p_duration_min is not null then return jsonb_build_object('error','invalid_body'); end if;
+  -- 잔여 판수 게이트. **상담은 제외** — 판수를 쓰는 예약이 아니고 결제(상담료)는 앱 밖이라,
+  -- 잔여 0·음수인 신규·재등록 대기 수강생도 상담은 잡을 수 있어야 한다(오너 지시 2026-09-10).
+  if v_slot.lesson_type <> 'consult' and v_remaining < 1 then
+    return jsonb_build_object('error','insufficient_games');
+  end if;
+  select count(*) into v_booked from slot_bookings where slot_id = v_slot.id and status = 'booked';
+  if v_booked >= v_slot.capacity then return jsonb_build_object('error','slot_full'); end if;
+
+  insert into slot_bookings (slot_id, student_id, games_held, status)
+    values (v_slot.id, p_student_id, 0, 'booked')
+    returning id into v_head;
+  return jsonb_build_object('bookingId', v_head, 'gamesHeld', 0, 'slotsHeld', 1);
+
+exception
+  when unique_violation then return jsonb_build_object('error','slot_taken');
+end;
+$$;
+
+create or replace function public.open_trainer_slots(
+  p_trainer_id  bigint,
+  p_start       timestamptz,
+  p_span_min    int,
+  p_lesson_type text,
+  p_capacity    int default 1
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_one   boolean;
+  v_n     int;
+  v_cap   int;
+  v_first bigint;
+begin
+  if p_trainer_id is null or p_start is null or p_span_min is null then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+  if p_lesson_type not in ('personal','spectate','participate','consult') then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+  if p_span_min < 30 or p_span_min % 30 <> 0 then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+  -- 30분 격자에 맞아야 개인 연속칸 계산(book_slot)이 성립한다.
+  if (extract(epoch from p_start)::bigint % 1800) <> 0 then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+
+  v_one := p_lesson_type <> 'personal';
+  if v_one then
+    if p_span_min not in (30,60,90,120,150,180) then return jsonb_build_object('error','invalid_body'); end if;
+  else
+    if p_span_min > 1440 then return jsonb_build_object('error','invalid_body'); end if;  -- 1회 24시간
+  end if;
+
+  -- 개인·상담은 정원이 구조적으로 1이다(§25 · 오너 지시 2026-09-10).
+  v_cap := case when p_lesson_type in ('personal','consult') then 1 else coalesce(p_capacity, 1) end;
+  if v_cap < 1 or v_cap > 8 then return jsonb_build_object('error','invalid_body'); end if;
+
+  -- 트레이너 단위 직렬화. 겹침 조회와 insert 사이에 다른 요청이 끼면 90분 그룹과
+  -- 30분 개인이 같은 시간에 둘 다 생긴다(유니크는 slot_start 만 본다).
+  perform pg_advisory_xact_lock(p_trainer_id);
+
+  if exists (
+    select 1 from trainer_slots
+     where trainer_id = p_trainer_id
+       and status <> 'cancelled'
+       and tstzrange(slot_start, slot_start + make_interval(mins => duration_min), '[)')
+           && tstzrange(p_start,  p_start  + make_interval(mins => p_span_min),  '[)')
+  ) then
+    return jsonb_build_object('error','slot_taken');
+  end if;
+
+  if v_one then
+    insert into trainer_slots (trainer_id, slot_start, lesson_type, capacity, status, duration_min)
+      values (p_trainer_id, p_start, p_lesson_type, v_cap, 'open', p_span_min)
+      returning id into v_first;
+    return jsonb_build_object('created', 1, 'firstId', v_first, 'durationMin', p_span_min);
+  end if;
+
+  v_n := p_span_min / 30;
+  with ins as (
+    insert into trainer_slots (trainer_id, slot_start, lesson_type, capacity, status, duration_min)
+    select p_trainer_id, p_start + make_interval(mins => 30 * (g - 1)),
+           p_lesson_type, v_cap, 'open', 30
+      from generate_series(1, v_n) as g
+    returning id
+  )
+  select min(id) into v_first from ins;
+  return jsonb_build_object('created', v_n, 'firstId', v_first, 'durationMin', 30);
+
+exception
+  when unique_violation then return jsonb_build_object('error','slot_taken');
+end;
+$$;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_trainer_slots_duration'
+                   and pg_get_constraintdef(oid) like '%180%') then
+    alter table public.trainer_slots drop constraint if exists chk_trainer_slots_duration;
+    alter table public.trainer_slots add constraint chk_trainer_slots_duration
+      check (duration_min in (30, 60, 90, 120, 150, 180));
+  end if;
+end $$;
+
+comment on column public.trainer_slots.duration_min is
+  '이 칸이 차지하는 길이(분). 개인은 항상 30 — 긴 수업은 칸 여러 개를 span 으로 묶는다. 그룹·상담은 한 덩어리라 60~180(30분 단위)이 올 수 있다.';
+
+-- ── 47b) 검증 ────────────────────────────────────────────────────────────────
+--   select proname, length(replace(prosrc, E'\r','')) as len, md5(replace(prosrc, E'\r','')) as md5
+--     from pg_proc where pronamespace = 'public'::regnamespace and proname in ('book_slot','open_trainer_slots');
+--   select pg_get_constraintdef(oid) from pg_constraint where conname = 'chk_trainer_slots_duration';
+--     기대: CHECK ((duration_min = ANY (ARRAY[30, 60, 90, 120, 150, 180])))
+--   notify pgrst, 'reload schema';
+--
+--   ✅ 실행 완료 2026-09-30 12:1x KST (세션 실행 · B 구간 · 오너 OK 「판수 계산 변경 · 오너 OK」).
+--      실행 전: book_slot 3337 · ab41e9e7 / open_trainer_slots 2548 · d997d844 / 제약 (30,60,90,120) / 칸 30분 188 · 예약 10 · 선차감 0
+--      실행 후: book_slot **3504 · d15c1bc6c54fa601278a8abf178b4a99** / open_trainer_slots **2568 · 3614cad512ca784415a1170a0e9ea14c**
+--               (둘 다 정본 본문과 md5 일치) / 제약 (30,60,90,120,150,180) / 칸 · 예약 · 선차감 그대로 / service_role 실행 권한 유지.
+--      드라이런 8항목 통과 후 되돌림: 개인 180 = 15판 · 6칸 / 150 = 13판(잔여 모자라면 insufficient_games) / 30 · 210 거절 /
+--      참여형 180 · 레벨 테스트 150 한 덩어리 열기 / 관전형 210 거절 / 기존 60 = 5판.
+--
+-- 되돌리기(코드의 150 · 180 을 먼저 되돌릴 것 — lesson-lengths.cjs):
+--   §42b book_slot · §40a open_trainer_slots 를 다시 실행 · 제약은 180 칸이 없을 때만 (30,60,90,120) 으로.
+-- ============================================================

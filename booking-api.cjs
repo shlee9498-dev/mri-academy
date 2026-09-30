@@ -15,15 +15,16 @@
 //     선차감은 slot_bookings.games_held 로만 표현하고, 실제 판수는 봇 /수업등록이 넣는다.
 // ============================================================
 
-// 차감표 — server.js 의 LESSON_HOURS_TO_GAMES 와 §23 book_slot() 의 case 식과 같은 값이다.
-// 세 곳이 같이 움직여야 한다. 여기서는 길이 유효성 검사에만 쓰고, 판수 산출은 DB 가 한다
-// (게이트와 표시가 갈리면 "화면엔 5판인데 예약은 거부"가 난다).
-const DURATION_MIN = [60, 90, 120];
+// 차감표 — lesson-lengths.cjs 한 벌(JS) + §47 book_slot() 의 case 식(DB) · 두 곳이 같이 움직여야 한다.
+// 여기서는 길이 유효성 검사와 앱에 내려주는 길이표에만 쓰고, 판수 산출은 DB 가 한다
+// (게이트와 표시가 갈리면 "화면엔 5판인데 예약은 거부"가 난다). 2026-09-30 오너: 150 · 180분(13 · 15판) 추가.
+const { PERSONAL_LENGTHS, PERSONAL_DURATIONS, GROUP_LENGTHS } = require("./lesson-lengths.cjs");
+const DURATION_MIN = PERSONAL_DURATIONS;
 const SLOT_MIN = 30;                 // 슬롯 단위. §23 trainer_slots 의 전개 간격과 같다.
 // 슬롯 한 덩어리의 길이(§40 · 계약 §9.3). 그룹·레벨 테스트는 **1행이 이 길이를 통째로** 차지한다 —
 // 참여자가 30분 칸마다 들어오면 정원을 셀 수 없기 때문이다. 개인은 종전대로 30분 칸 여러 개다.
-// 값은 §40 chk_trainer_slots_duration 과 같아야 한다(둘이 갈라지면 400 대신 23514 가 뜬다).
-const SPAN_MIN = [30, 60, 90, 120];
+// 값은 §47 chk_trainer_slots_duration · open_trainer_slots 와 같아야 한다(둘이 갈라지면 400 대신 23514 가 뜬다).
+const SPAN_MIN = GROUP_LENGTHS;
 const MAX_DAYS = 60;                 // /availability 조회 상한
 const MAX_SLOTS_PER_OPEN = 48;       // 슬롯 열기 1회당 최대 칸 수(= 24시간)
 // 예약 마감 = 수업 3시간 전(오너 확정 2026-09-27). **집행은 §32 book_slot 이 한다** —
@@ -220,6 +221,8 @@ module.exports = function mountBookingApi(app, deps) {
       })),
       // 개인은 이 중에서 고른다. 그룹은 길이 선택이 없다.
       personalDurations: DURATION_MIN,
+      // 길이별 판수(계약 §9.11) — 앱은 5 · 8 · 10 표를 들고 있지 말고 이 값을 그대로 쓴다.
+      personalLengths: PERSONAL_LENGTHS,
     });
   }));
 
@@ -433,7 +436,9 @@ module.exports = function mountBookingApi(app, deps) {
         `select=id,slot_start,lesson_type,capacity,status,duration_min&trainer_id=eq.${req.staff.id}`
         + `&slot_start=gte.${from}&slot_start=lt.${until}&order=slot_start.asc`),
     ]);
-    if (!slots.length) return sendTrainer(res, { slots: [] });
+    // 길이표(계약 §9.11) — 대신 넣기 · 「시간 달라짐」 · 수업 기록하기 · 칸 열기가 같은 표를 쓴다.
+    const lengths = { personalLengths: PERSONAL_LENGTHS, groupLengths: GROUP_LENGTHS };
+    if (!slots.length) return sendTrainer(res, { slots: [], ...lengths });
 
     const ids = slots.map((s) => s.id);
     // booked 만 보면 「확인 필요」(pending_review)가 목록에서 사라진다. done 도 가져온다 —
@@ -494,12 +499,13 @@ module.exports = function mountBookingApi(app, deps) {
       slots: slots.map((s) => ({
         id: opaqueId("slot", s.id),
         startAt: s.slot_start, slotMinutes: SLOT_MIN,
-        durationMin: s.duration_min ?? SLOT_MIN,   // 이 칸이 차지하는 길이(그룹은 60·90·120)
+        durationMin: s.duration_min ?? SLOT_MIN,   // 이 칸이 차지하는 길이(그룹 · 레벨 테스트는 30~180)
         lessonType: s.lesson_type, capacity: s.capacity, status: s.status,
         takenCount: taken[s.id] || 0,
         seatsLeft: Math.max(0, s.capacity - (taken[s.id] || 0)),
         bookings: by[s.id] || [],
       })),
+      ...lengths,
     });
   }));
 
