@@ -1,11 +1,11 @@
-# 신청 창구 설계 — 신청 페이지부터 앱까지 (v1 · 2026-09-30 · 설계)
+# 신청 창구 설계 — 신청 페이지부터 앱까지 (v2 · 2026-09-30 · 오너 결정 8건 반영 · PR-1 구현)
 
 > **오너 방향(9/30 · 어플 전달)**: 디엠 · 음성 상담 · 레슨문의로 흩어진 신청을 한 창구로 모은다.
 > 영상 · 쇼츠마다 **이벤트 코드만 바꿔** 쓰는 정식 창구.
 >
 > - 화면 · 문구의 정본은 **클로드디자인 명세**(`명세_신청페이지.md` 3~5절)다. 이 문서는 서버 · 데이터 · 계약만 다룬다.
 > - 트레이너 앱 · 수강생 앱 계약은 `docs/trainer-portal-api.md` §9.20 이다(반장 전달).
-> - 구현은 §10 순서로 하고, §11 결정 대기가 풀린 것부터 들어간다.
+> - 구현은 §10 순서로 한다. 오너 결정 8건은 §11(9/30 · 전부 확정).
 > - 이번 쇼츠 이벤트 「오더10」(10/1~10/4)은 **이 창구를 기다리지 않는다**. 봇 `/결제신청` 에 할인가를 넣고 메모에 「오더10」을 적는다(9/30 회신). 창구는 그다음 이벤트부터 쓴다.
 
 ## 0. 한 줄 흐름
@@ -27,11 +27,11 @@ start.html?code=ORDER10 ─ [디스코드로 신청하기](OAuth) ─ 입력 ─
 | `?code=` | apply.html 안의 `DISCOUNT_CODES` 표 + `server.js:5569` 미러(할인 코드 자동 입력만) | DB 표 `event_codes` 하나(§4.1) |
 | 명부 `prospect` | §39 · 지금 1명(디스코드 연결 0) · 로스터 · 잔여 · 수강생 수에서 빠진다 · 「전환은 사람이 한다」(settlement §8) | 신청할 때 만든다. 「등록」 버튼이 사람의 전환이다 |
 | 디스코드 로그인 | `/api/auth/login?return=` · scope `identify` · 30일 JWT `{sub, name}` · `state` = 돌아갈 주소(nonce 없음) | 그대로 쓰고 nonce 를 더한다(§5.2) |
-| 수강생 앱 로그인 `/exchange` | `discord_id` 로 찾고 **상태를 보지 않는다** → 디스코드가 붙은 prospect 는 지금도 로그인된다(해당 0명) | prospect 는 「신청 접수」로 답한다(§11-6) |
+| 수강생 앱 로그인 `/exchange` | `discord_id` 로 찾고 **상태를 보지 않는다** → 디스코드가 붙은 prospect 는 지금도 로그인된다(해당 0명) | prospect 는 403 `application_pending`(§11-6 · PR-1 반영) |
 | 레벨 테스트 칸 | `trainer_slots.lesson_type='consult'` · 90분 · 예약은 `slot_bookings`(`student_id` 필수). 트레이너 대신 넣기는 내 수강생(active · paused) + 90일 안에 가르친 사람만 → **prospect 는 못 넣는다** | 내가 맡은 신청자는 넣는다(§5.3) |
 | 「완료」 | consult 예약이면 `level` 을 받고 `consults` 기록을 자동으로 만든다(`consult-record.cjs`). ±45일 상담 결제 1건이면 자동 연결 | 그대로 쓴다. 신청 상태만 `tested` 로 |
-| 레벨 테스트비 | 20,000(`PRICES.consultCourse` 「강의 상담 / 레벨테스트」). 기록 = `/결제신청` 구분 상담 → §18d → `payments.kind='consult'` | 오너 카드 [입금 확인] 한 번(§11-5) |
-| 보호자 동의 | `consent.html` · §33 `guardian_consents` · 생년월일로 판정. 등록을 막는 코드는 없다 | 14~17세 안내 + 등록 전 확인(§11-4) |
+| 레벨 테스트비 | 20,000(`PRICES.consultCourse` 「강의 상담 / 레벨테스트」). 기록 = `/결제신청` 구분 상담 → §18d → `payments.kind='consult'` | 오너 카드 [입금 확인] 한 번(§11-5 · PR-2) |
+| 보호자 동의 | `consent.html` · §33 `guardian_consents` · 생년월일로 판정. 등록을 막는 코드는 없다 | 14~17세 안내 + 보호자 동의 확인 뒤에만 등록(§11-4 · PR-3) |
 | 방문 집계 | Umami(사이트 22쪽) · 사용자 이벤트는 `apply_submit` 하나 | `start_view` · `start_submit` 에 코드를 싣는다 |
 | 레슨문의 봇 | **이 저장소에 없다**(코드 · env 0건). index.html 「Discord 상담문의로」 2곳(945 · 953)이 초대 링크로 간다 | 그 2곳을 새 페이지로. 디스코드 안의 안내문 · 고정 메시지는 오너가 링크로 바꾼다 |
 | 초대 링크 | `szFa7teEJs` 가 9곳(apply · trainer-apply · index 4곳 · payment-fail · lesson-schedule · server.js 챗봇 안내) | 만료 없는 새 초대를 한 곳으로 모은다(§6.3) |
@@ -76,109 +76,39 @@ new ──claim/assign──▶ claimed ──assign──▶ booked ──입�
 
 - DM 문구는 명세 4절 표를 그대로 쓴다. 표에 없는 알림(카드 · 트레이너 한 줄 · 등록 DM)은 운영진 대상이면 반말을 유지하고, 신청자 대상이면 ui-copy + CLAUDE.md 문구 규칙을 따른다.
 - **DM 은 신청자가 MRI 디스코드 서버에 있어야 닿는다.** 서버에 없으면 봇 DM 이 실패한다.
-  - 방법 두 가지: 로그인할 때 서버에 자동으로 넣는다(`guilds.join` · §11-2). 아니면 제출 뒤 화면에 초대 링크를 띄운다.
+  - 방법 두 가지: 로그인할 때 서버에 자동으로 넣는다(`guilds.join` · §11-2 · PR-1 반영). 입장이 실패하면 제출 뒤 화면에 초대 링크를 띄운다.
   - DM 이 실패하면 카드에 「DM 안 닿음」을 띄운다.
 - 입금 전에도 칸은 잡혀 있다. 트레이너 앱에는 「입금 대기」가 보인다. 입금이 없을 때 취소하는 기준은 레벨 테스트 취소 규칙(`docs/leveltest-pricing-change.md` D-4)을 따른다.
 - 칸 옮기기 · 취소는 **§9.19 일정 직접 변경을 그대로 쓴다**(신청자 DM 포함 · 구현되면).
 
-## 4. 데이터 — DDL 목록(초안 · 구현 PR 에서 세션 실행)
+## 4. 데이터 — §54 · §55 (**실행 완료 9/30 · 정본 `supabase_admin_panel.sql` §54 · §55**)
 
-### 4.1 §54 `event_codes` — 이벤트 한 줄 = 코드 한 줄
+DDL 원문은 정본 파일 하나에만 둔다(문서에 베끼면 갈라진다). 표 세 개와 칸의 뜻만 적는다.
 
-```sql
-create table if not exists public.event_codes (
-  code            text primary key check (code ~ '^[A-Z0-9]{3,20}$'),   -- 주소 ?code= 는 대소문자 무시(서버가 대문자로)
-  title           text not null,                                        -- 배너 · 카드에 보일 이름
-  video_url       text,
-  discount_pct    integer not null default 0 check (discount_pct between 0 and 50),
-  target          text not null default 'first_payment' check (target in ('first_payment')),   -- v1 = 첫 결제 1회
-  starts_on       date not null,                                        -- 신청 받는 첫날(KST)
-  ends_on         date not null,                                        -- 신청 받는 마지막 날(KST · 포함)
-  pay_within_days integer not null default 7 check (pay_within_days between 1 and 60),       -- 레벨 테스트 뒤 결제 기한
-  active          boolean not null default true,                        -- 끄면 기간 안이어도 닫힌다
-  memo            text,
-  created_by      text,
-  created_at      timestamptz not null default now(),
-  constraint chk_event_codes_window check (ends_on >= starts_on)
-);
-alter table public.event_codes enable row level security;
-```
+| 표 | 무엇 | 요점 |
+|---|---|---|
+| `event_codes` | 이벤트 한 줄 = 코드 한 줄 | `code`(대문자 · 영숫자 3~20) · `title` · `video_url` · `discount_pct`(0~50) · `target`(v1 `first_payment`) · `starts_on`~`ends_on`(신청 받는 기간 · KST · 포함) · `pay_within_days`(레벨 테스트 뒤 결제 기한) · `active` |
+| `intake_applications` | 신청 1건 = 1행 | 상태 `new → claimed → booked → paid → tested → enrolled` · `closed` / 한 사람 열린 신청 1건(부분 유니크) |
+| `intake_cards` | 카드 위치 | 누가 맡으면 다른 사람 카드를 고친다(PR-2) |
 
-- 레벨 테스트비는 **할인 대상이 아니다**(오너 규칙). 칸으로 두지 않고 서버가 늘 뺀다.
-- 오너가 이벤트를 여는 법: 봇 `/이벤트코드`(오너 전용 · DM) 한 줄, 또는 SQL insert 한 줄.
-- apply.html 의 `DISCOUNT_CODES` 는 새 페이지가 나오면 이 표로 옮긴다. 옛 코드는 전부 기한이 지났다.
-- `GET /api/events/:code` 는 이렇게 답한다:
-  - 기간 안이고 `active` 이면 `{ code, title, until: ends_on, discount: discount_pct, active: true, payWithinDays }`
-  - 기간 밖이거나 꺼져 있으면 `active: false`
-  - 없는 코드는 404 `not_found`
+`intake_applications` 칸 묶음:
+- **신청자**: `student_id`(명부 prospect 또는 돌아온 수료생) · `discord_id`(로그인 토큰 · 입력 칸 아님) · `display_name`(디스코드 표시 이름) · `guild_join`(서버 입장 결과 `joined` · `already` · `failed`)
+- **오너 전용**: `real_name` · `age`(14~99 — 14세 미만은 저장하지 않는다)
+- **폼**: `tier`(본인) · `tier_checked`(닉 조회) · `pubg_name` · `pubg_platform`(**필수** · 오너 결정 3) · `pubg_account_id` · `concern` · `preferred_trainer_id`(null = 누구든) · `slots` · `slots_note` · `event_code`(제출 때 유효했던 코드만) · `utm` · `privacy_version` · `privacy_agreed_at`
+- **진행**: `assigned_trainer_id` · `claimed_at` · `reminded_at`(24시간 재알림 · 오너 결정 7) · `booking_id` · `deposit_request_id` · `deposit_confirmed_at`(오너 결정 5) · `tested_at` · `guardian_verified_at` · `guardian_verified_by`(14~17세 등록 조건 · 오너 결정 4) · `enrolled_at` · `closed_reason` · `closed_note`
 
-### 4.2 §55 `intake_applications` · `intake_cards`
-
-```sql
-create table if not exists public.intake_applications (
-  id                   bigint generated always as identity primary key,
-  status               text not null default 'new'
-                       check (status in ('new','claimed','booked','paid','tested','enrolled','closed')),
-  student_id           bigint not null references public.students(id),   -- 신청 때 만든 prospect(또는 돌아온 수료생) 행
-  discord_id           text not null,                                      -- 로그인 토큰의 sub(입력 칸 아님)
-  display_name         text,                                               -- 디스코드 표시 이름(트레이너에게 보이는 「이름」)
-  real_name            text not null check (char_length(real_name) between 1 and 20),   -- 실명 · 오너 전용
-  age                  integer not null check (age between 14 and 99),     -- 만 나이 · 오너 전용 · 14 미만은 저장하지 않는다
-  tier                 text,                                               -- 본인이 고른 티어(칩)
-  tier_checked         text,                                               -- 배그 닉으로 조회한 티어(조회 실패 · 닉 없음이면 null)
-  pubg_name            text,
-  pubg_platform        text check (pubg_platform is null or pubg_platform in ('steam','kakao')),
-  concern              text check (concern is null or char_length(concern) <= 200),       -- 고민 한 줄
-  preferred_trainer_id bigint references public.staff(id),                  -- null = 누구든
-  slots                text[] not null default '{}',                        -- 가능한 시간대 칩(값은 명세 칩과 맞춘다)
-  slots_note           text check (slots_note is null or char_length(slots_note) <= 100),
-  event_code           text references public.event_codes(code),            -- 제출 때 유효했던 코드만
-  utm                  jsonb,
-  privacy_version      text not null,                                      -- 동의한 개인정보 안내 판
-  privacy_agreed_at    timestamptz not null,
-  assigned_trainer_id  bigint references public.staff(id),
-  claimed_at           timestamptz,
-  booking_id           bigint references public.slot_bookings(id) on delete set null,
-  deposit_request_id   bigint references public.payment_requests(id) on delete set null,   -- 레벨 테스트비 신청 행
-  deposit_confirmed_at timestamptz,
-  tested_at            timestamptz,
-  enrolled_at          timestamptz,
-  closed_reason        text check (closed_reason is null or closed_reason in ('duplicate','spam','no_reply','declined','no_show','other')),
-  closed_note          text,
-  created_at           timestamptz not null default now(),
-  updated_at           timestamptz not null default now()
-);
-create unique index if not exists uq_intake_open_per_discord on public.intake_applications (discord_id)
-  where status not in ('enrolled','closed');                                 -- 한 사람 열린 신청 1건
-create index if not exists idx_intake_status on public.intake_applications (status, created_at);
-create index if not exists idx_intake_code   on public.intake_applications (event_code) where event_code is not null;
-alter table public.intake_applications enable row level security;
-
--- 카드 위치 — 누가 맡으면 다른 사람 카드를 「○○ 트레이너가 맡았어요」로 고친다
-create table if not exists public.intake_cards (
-  application_id     bigint not null references public.intake_applications(id) on delete cascade,
-  recipient_staff_id bigint not null references public.staff(id),
-  channel_id         text not null,
-  message_id         text not null,
-  created_at         timestamptz not null default now(),
-  primary key (application_id, recipient_staff_id)
-);
-alter table public.intake_cards enable row level security;
-```
-
-- **명부 행**:
-  - `students` 에 쓰는 칸은 이미 있는 것뿐이다 — `name` · `status='prospect'` · `discord_id` · `discord_src='intake'` · `pubg_name` · `pubg_platform` · `note`.
-  - `discord_src` 에는 CHECK 가 없다(9/30 실측). `discord_id` 부분 유니크(`idx_students_discord`)가 한 사람 한 행을 지켜 준다.
-- **돌아온 사람**: 디스코드 id 가 이미 명부에 있을 때
-  - active · paused → 409 `already_student`(앱으로 안내)
-  - prospect 이고 열린 신청이 있음 → 409 `application_open`(상태 화면)
-  - done · 닫힌 신청 → 그 행에 새 신청을 붙인다. 등록하면 done → active
-- `REQUIRED_SCHEMA` 에 두 표를 더한다(구현 PR). `event_codes` · `intake_applications` · `intake_cards` 3곳 동기 규칙 그대로.
+- 칩 값(`tier` · `slots`)은 DB 가 검사하지 않는다 — 명세 칩 이름이 바뀌어도 제약 교체(B 구간) 없이 `intake-api.cjs` 만 고친다.
+- **명부 행**: 새 사람이면 `students` 에 `status='prospect'` · `discord_id` · `discord_src='intake'` · 배그 닉 · 플랫폼 · 계정 id 로 만든다.
+  `discord_src` 에는 CHECK 가 없다(9/30 실측). `discord_id` 부분 유니크가 한 사람 한 행을 지킨다.
+- **돌아온 사람**: 디스코드 id 가 이미 명부에 있으면 — active · paused → 409 `already_student` · 열린 신청 → 409 `application_open` ·
+  done · 닫힌 신청의 prospect → **그 행에 새 신청을 붙이고 명부는 고치지 않는다**(등록할 때 active 로).
+- `REQUIRED_SCHEMA` 에 세 표가 들어갔다(3곳 동기).
 
 ### 4.3 결제 트랙 협의 목록 (DDL 아님 · 결제 트랙이 주도)
 
-- 이벤트 할인 결제의 기록 칸 — `payment_requests` · `payments` 에 코드 · 정가 · 할인액을 어디에 둘지.
-- 할인 부담(트레이너 지급 기준) — 오너 판정 대기(9/30 「오더10」 회신에서 올린 것과 같은 질문).
+- **할인 부담 = 아카데미**(오너 결정 8 · 9/30). 트레이너 지급은 **정가 기준** — 카드 수수료와 같은 원칙(수수료도 아카데미 부담 · 지급은 총액 기준 · 9/30 판정).
+- 그러려면 할인 결제에 **정가 · 할인액 · 코드**가 남아야 한다. 어디에 둘지(`payments` · `payment_requests` 칸)와 엔진 반영은 결제 트랙이 정한다 — 합의 문안은 오너에게 전달(9/30).
+- 레벨 테스트비 [입금 확인](오너 결정 5)은 새 칸이 없다 — 기존 `/결제신청` 구분 상담과 같은 흐름이라 결제 트랙에는 한 줄 확인만 한다.
 
 ## 5. API
 
@@ -186,38 +116,45 @@ alter table public.intake_cards enable row level security;
 
 | 메서드 · 경로 | 인증 | 요청 → 응답 |
 |---|---|---|
-| `GET /api/events/:code` | 없음 | §4.1 |
-| `GET /api/applications/options` | 없음 | `{ trainers: [{ id, name }], tiers: […], slots: […], levelTestWon: 20000, privacyVersion, minAge: 14 }`. 트레이너 = 활성 트레이너, id 는 불투명. 레벨 테스트비는 `config/payments.js` 에서 읽는다 |
-| `GET /api/applications/me` | Bearer | `{ state: "none" \| "open" \| "student", application?: { status, trainerName, levelTestAt, depositConfirmed } }` |
+| `GET /api/events/:code` | 없음 | `{ code, title, until, discount, active, payWithinDays }` · 기간 밖 · 꺼짐이면 `active: false` · 없는 코드 404 `not_found` |
+| `GET /api/applications/options` | 없음 | `{ trainers: [{ id, name }], tiers: […], slots: […], levelTestWon: 20000, privacyVersion, minAge: 14, accepting }`. `accepting` = 제출을 받는 중인지(아래 🔒). 트레이너 = 활성 트레이너, id 는 불투명. 레벨 테스트비는 `config/payments.js` 에서 읽는다 |
+| `GET /api/applications/me` | Bearer | `{ state: "none" \| "open" \| "student", application?: { id, status, trainerName, levelTestAt, depositConfirmed } }` |
 | `POST /api/applications` | Bearer | 아래 |
 
-`POST /api/applications` 본문(명세 이름 그대로 + 두 칸):
+`POST /api/applications` 본문(명세 이름 그대로 + 배그 칸 + 개인정보 동의):
 
 ```json
 { "name": "실명", "age": 17, "tier": "gold", "concern": "고민 한 줄", "trainer": "<options 의 id>" ,
   "slots": ["weekday_evening"], "slotsNote": null, "ev": "ORDER10",
-  "pubgName": "InGameNick", "platform": "steam",
-  "privacyAgreed": true, "privacyVersion": "2026-10-01" }
+  "pubgName": "InGameNick", "platform": "steam", "pubgConfirm": false,
+  "privacyAgreed": true, "privacyVersion": "<options 의 privacyVersion>" }
 ```
 
 - `trainer` 가 null 이거나 없으면 「누구든」이다. `ev` 가 없거나 기간 밖이어도 신청은 받는다 — 코드만 비운다.
-- `pubgName` · `platform` 은 §11-3 결정 대기다(권장 필수 — 티어 자동 조회 · 명부 · `/결제신청` 닉 대조에 쓴다).
+- `pubgName` · `platform` **필수**(오너 결정 3). 서버가 PUBG 에서 닉을 찾아 계정 id · 이번 시즌 티어(`tier_checked`)를 붙인다.
+  없는 닉(PUBG 404)이면 400 `pubg_not_found` 로 한 번 되묻는다 → 페이지가 `pubgConfirm: true` 로 다시 보내면 계정 id 없이 받는다
+  (봇 「그래도 저장」과 같다). PUBG 조회 장애는 신청을 막지 않는다.
 - **본문에 없는 키가 오면 400** `invalid_body`(`bodyOnly` 규칙). `discordId` 도 여기 들어간다 — 로그인 토큰에서 꺼낸다.
-- 응답 201 `{ applicationId, status: "new" }`.
+- 응답 201 `{ applicationId, status: "new", eventApplied, pubgChecked }`.
 - 오류:
   - 400 `under_14` — **아무것도 저장하지 않는다**
-  - 400 `invalid_body` · 401 `login_required`
+  - 400 `pubg_not_found` · `pubg_name_invalid`(영문 · 숫자 · `-` · `_` 2~24자) · `privacy_required`(동의 없음 · 판이 다름)
+  - 400 `invalid_body` · 401 `login_required` · 503 `intake_unavailable` · 503 `intake_closed`(🔒 아직 안 받음)
   - 409 `already_student` · 409 `application_open`
-  - 429 `rate_limited`(IP 10/분 · 디스코드 3/일)
+  - 429 `rate_limited`(IP 5/분 · 디스코드 계정당 3/일)
 - 받지 않는 것: 전화 · 성별 · 생년월일 · 입금자명.
+- 🔒 **제출은 아직 닫혀 있다.** `server.js` 의 `INTAKE_ACCEPT_FROM`(받기 시작하는 날 · KST)이 null 이면 POST 는 503 `intake_closed`.
+  개인정보처리방침 개정 시행일을 페이지 PR 에서 넣는다(§8). 읽기 라우트(이벤트 · 선택지 · 내 상태)는 열려 있다 — 수집이 없다.
 
 ### 5.2 로그인(OAuth)
 
-- 지금 `/api/auth/login?return=https://mriacademy.gg/start.html?code=…` 를 그대로 쓴다. 돌아온 `#token` 은 페이지가 들고 `Authorization: Bearer` 로 보낸다.
-- **nonce 추가(구현 PR · 필수)**:
-  - 흐름: 페이지가 난수를 sessionStorage 에 두고 `return` 에 싣는다 → 콜백이 `#token=…&nonce=…` 로 돌려준다 → 페이지가 같은지 본다.
-  - 막는 것: 남의 디스코드로 로그인된 채 신청하는 로그인 CSRF.
-- `guilds.join`(§11-2) — scope 에 더하면 로그인하면서 MRI 서버에 들어온다. 봇이 서버에 있고 초대 권한이 있어야 한다.
+- 페이지가 난수 nonce(영문 · 숫자 · `-` · `_` 16~64자)를 sessionStorage 에 두고 이렇게 보낸다:
+  `/api/auth/login?intent=apply&nonce=<nonce>&return=<start.html 주소 · ?code= 포함>`
+- 디스코드 동의 화면에 「서버 참여」가 함께 뜬다(scope `identify guilds.join` · 오너 결정 2). 로그인이 끝나면 서버가 MRI 서버(`GUILD_ID`)에 넣는다.
+- 콜백은 `<return>#token=<JWT>&nonce=<nonce>` 로 돌려준다. **페이지는 nonce 가 저장한 값과 같을 때만 토큰을 쓴다**(로그인 CSRF 방지).
+- 토큰에 `gj`(서버 입장 결과 `joined` · `already` · `failed`)가 실려 신청 행 `guild_join` 으로 간다. 실패여도 로그인 · 신청은 된다.
+- 종전 로그인(`intent` 없음)은 그대로다.
+- 운영 전제: 봇이 MRI 서버에 있고 「초대 코드 만들기」 권한이 있어야 한다(없으면 `failed` — 오너 확인 1줄).
 
 ### 5.3 트레이너 앱 — 계약 §9.20
 
@@ -230,7 +167,8 @@ alter table public.intake_cards enable row level security;
 
 ### 5.5 수강생 앱
 
-- `/exchange`: prospect 면 403 `application_pending`(§11-6 · 앱은 「신청 접수 · 레벨 테스트 뒤에 열려요」). 등록되면 같은 디스코드로 바로 로그인된다.
+- `/exchange`: 명부가 prospect 면 403 `application_pending`(**PR-1 반영** · 오너 결정 6). 앱 화면 문구 「레벨 테스트가 끝나면 열려요」.
+  등록(active)되면 같은 디스코드로 바로 로그인된다.
 - 「판수 채우기」 이벤트 할인은 §7.3 이 풀린 뒤 별도 계약.
 
 ## 6. 디스코드
@@ -295,9 +233,14 @@ alter table public.intake_cards enable row level security;
 - **14~17세**:
   - 페이지에 보호자 동의 안내와 `consent.html` 링크를 둔다.
   - 오너 카드에 「미성년」을 띄운다.
-  - 등록 전 확인(§11-4)을 막을 때는 트레이너에게 이유를 알리지 않고 409 `owner_check_needed` 로 답한다. 나이는 오너 전용이다.
+  - **보호자 동의 확인 뒤에만 등록**(오너 결정 4) — 오너가 동의서를 보고 카드에서 확인하면 `guardian_verified_at` 이 찍힌다.
+    그 전 등록은 트레이너에게 이유를 알리지 않고 409 `owner_check_needed` 로 답한다(나이는 오너 전용).
 - **최소 수집**: 전화 · 성별 · 생년월일은 받지 않는다. 디스코드 id 는 로그인 토큰 값만 쓴다.
 - **개인정보 안내**: 판(`privacy_version`)과 동의 시각을 저장한다. 페이지에 `privacy.html` 링크를 둔다(지금 apply.html 에는 없다).
+- ⚠️ **개인정보처리방침을 먼저 고쳐야 한다.** 지금 「신청 · 상담」 항목은 이름 · 성별 · 연락처 · 디스코드 계정 · 생년월일(선택) ·
+  게임 닉 · 티어다. 새 폼은 **나이 · 고민 · 가능한 시간대 · 이벤트 코드 · 디스코드 서버 자동 입장**이 더해지고 성별 · 연락처는 빠진다.
+  방침은 「시행 7일 전 고지」 규칙이라 **고지일 + 7일부터 start.html 을 공개**한다. 고친 방침의 시행일을
+  `intake-api.cjs` 의 `PRIVACY_VERSION` 에 같이 올린다(페이지 PR).
 - **트레이너 응답**: 실명 · 나이 · 디스코드 id 를 내리지 않는다. 키 이름도 가드 규칙(`name` · `discord` · `fee` · `payment` 금지)을 지킨다.
 - **닫힌 신청 · prospect 행은 지우지 않는다.** 보관 기간은 개인정보 방침에 맞춰 오너가 정한다.
 - **후기 카드**(신청 · 이벤트 페이지):
@@ -313,24 +256,31 @@ alter table public.intake_cards enable row level security;
   - sitemap 에 등록한다
   - Umami 이벤트 `start_view` · `start_submit` 을 보낸다(`{code}`)
   - 계좌를 박지 않는다
-- 오류 코드와 문구는 명세 표에 맞춘다: `under_14` · `already_student` · `application_open` · `login_required` · `rate_limited` · `invalid_body` · 네트워크.
+- 오류 코드와 문구는 명세 표에 맞춘다: `under_14` · `pubg_not_found`(「그대로 보내기」 → `pubgConfirm`) · `pubg_name_invalid` ·
+  `privacy_required` · `already_student` · `application_open` · `login_required` · `rate_limited` · `invalid_body` · `intake_unavailable` · 네트워크.
 
 ## 10. 구현 순서 (PR)
 
-1. **지금** — 이 문서 + 계약 §9.20 + §53 정본 · `REQUIRED_SCHEMA`(머지).
-2. **초대 링크** — 오너가 새 초대 코드를 주면 `discord.html` + 9곳 교체(작은 PR · A).
-3. **서버** — §54 · §55 DDL(세션 실행) → 공개 API · OAuth nonce · 카드 · DM · 트레이너 라우트(§9.20) · 오너 집계 · 일정 조회의 prospect 이름 가드.
-4. **페이지** — `start.html`(명세 · 시안 수령 후) + sitemap + index 「상담문의」 2곳 교체.
-5. **할인 결제** — 결제 트랙 합의 + 할인 부담 판정 + 오너 「OK」(B).
-6. **옛 apply.html 정리** — 토스 심사 결과 뒤, 결제 트랙과 함께.
+오너 순서(9/30): §54 · §55 → start.html · `/api/events` · `/api/applications` → 카드 · DM → 트레이너 앱.
 
-## 11. 결정 대기 (오너)
+1. ✅ **설계** — 이 문서 + 계약 §9.20 + §53(#437).
+2. ✅ **PR-1 서버 뼈대** — §54 · §55 DDL(세션 실행 9/30) · `GET /api/events/:code` · `GET /api/applications/options` · `GET /api/applications/me` ·
+   `POST /api/applications` · 로그인 `intent=apply`(nonce · guilds.join) · 수강생 앱 prospect 막기 · `REQUIRED_SCHEMA` · 시험 17건 · 부팅 스모크.
+   제출은 🔒 닫힌 채 배포한다(`INTAKE_ACCEPT_FROM` = null) — 방침 시행일에 연다.
+3. **PR-2 카드 · DM** — 오너 · 트레이너 카드([맡기] · 오너 [배정] · [입금 확인] · [닫기]) · 24시간 재알림 · 신청자 DM 3종(명세 4절 표 원문 수령 필요).
+4. **PR-3 트레이너 라우트**(§9.20) — 목록 · 맡기 · 레벨 테스트 넣기 · 등록(보호자 확인 · 레벨) · 닫기 · 칸 목록의 prospect 이름 가드.
+5. **PR-4 페이지** — `start.html`(시안) + sitemap + index 「상담문의」 2곳 + 개인정보처리방침 개정(7일 전 고지 → 시행일부터 공개).
+6. **초대 링크** — 오너가 새 초대 코드를 주면 `mriacademy.gg/discord` 한 곳 + 9곳 교체(작은 PR).
+7. **할인 결제** — 결제 트랙 합의(정가 · 할인액 · 코드 기록 · 트레이너 정가 기준) + 오너 「OK」(B).
+8. **옛 apply.html 정리** — 창구가 안정되면 start.html 로 넘긴다(오너 결정 1) · 토스 심사 결과를 보고 결제 트랙과 함께.
 
-1. **주소 `start.html`**(명세 제안). apply.html 은 그대로 둔다 — 권장.
-2. **`guilds.join`** — 로그인하면서 MRI 디스코드 서버에 자동으로 들어온다. 없으면 서버에 안 들어온 신청자에게 DM 이 안 닿는다 — 권장.
-3. **폼에 배그 닉네임 · 플랫폼 필수** — 티어 자동 조회 · 명부 · `/결제신청` 닉 대조에 쓴다. 명세 필드에 없어 명세와 맞춰야 한다 — 권장.
-4. **14~17세는 보호자 동의서가 연결돼야 등록** — 권장.
-5. **레벨 테스트비 입금 확인 = 오너 카드 [입금 확인] 한 번** — 상담 결제가 자동으로 기록된다. 결제 데이터 입구라 **결제 트랙 확인**이 필요하다. 그 전에는 지금처럼 `/결제신청` 구분 상담으로 받는다.
-6. **prospect 는 수강생 앱 로그인을 막고** 「신청 접수」로 답한다 — 권장. 지금 해당 0명이라 막아도 영향이 없다.
-7. **24시간 안에 아무도 안 맡으면** 오너에게 다시 알리고, 오너가 [배정]한다.
-8. **할인 부담**(트레이너 지급 기준) — 기존 대기.
+## 11. 오너 결정 (2026-09-30 · 8건 전부)
+
+1. **주소**: `start.html` 신설 · apply.html 은 당분간 유지 → 창구가 안정되면 start.html 로 넘긴다.
+2. **`guilds.join` OK** — 신청하며 디스코드 서버 자동 입장(디스코드 동의 화면에 뜨는 범위).
+3. **배그 닉 · 플랫폼 필수 OK.**
+4. **14~17세는 보호자 동의서 확인 뒤에만 등록 OK** · 14세 미만 접수 안 함.
+5. **레벨 테스트비 = 오너 카드 [입금 확인] 한 번 OK**(결제 트랙에 한 줄 확인).
+6. **prospect 는 수강생 앱 로그인 막기 OK** — 등록(active) 뒤부터. 막힌 화면 문구 「레벨 테스트가 끝나면 열려요」.
+7. **24시간 안 아무도 안 맡으면 재알림 + 오너 카드 [배정] OK.**
+8. **이벤트 할인 부담 = 아카데미.** 트레이너 지급은 정가 기준(카드 수수료와 같은 원칙) — 결제 트랙 합의 문안을 오너에게.

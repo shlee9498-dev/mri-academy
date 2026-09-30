@@ -320,13 +320,28 @@ const safeReturn = (u) => {
   try { const url = new URL(u); return ALLOWED.includes(url.origin) ? u : ALLOWED[0]; }
   catch { return ALLOWED[0]; }
 };
+// 신청 창구 로그인(docs/intake-design.md §5.2 · 오너 결정 2026-09-30) — intent=apply 면
+//   ① scope 에 guilds.join 을 더해 로그인하면서 MRI 디스코드 서버(GUILD_ID)에 넣는다 — 서버에 없으면 봇 DM 이 안 닿는다
+//   ② state 에 돌아갈 주소와 페이지가 만든 nonce 를 싣고, 콜백이 #token 옆에 nonce 를 돌려준다(페이지가 대조 · 로그인 CSRF 방지)
+//   종전 로그인(state = 돌아갈 주소 그대로)은 바뀌지 않는다.
+//   state 모양 · 서버 입장 호출은 intake-api.cjs 에 있다(시험 scripts/intake-api.test.cjs).
+const { APPLY_STATE, NONCE_RE, makeApplyState, readApplyState, joinGuild } = require("./intake-api.cjs");
+const joinMainGuild = (userId, accessToken) =>
+  joinGuild(userId, accessToken, { guildId: process.env.GUILD_ID, botToken: process.env.DISCORD_TOKEN });
 // 로그인 시작 → 디스코드 동의화면으로
 app.get("/api/auth/login", (req, res) => {
   if (!reviewsReady()) return res.status(503).send("reviews disabled");
   const ret = safeReturn(req.query.return || ALLOWED[0]);
+  let scope = "identify", state = ret;
+  if (req.query.intent === "apply") {
+    const nonce = String(req.query.nonce || "");
+    if (!NONCE_RE.test(nonce)) return res.status(400).send("bad nonce");
+    scope = "identify guilds.join";
+    state = makeApplyState(ret, nonce);
+  }
   const url = "https://discord.com/api/oauth2/authorize?" + new URLSearchParams({
     client_id: process.env.DISCORD_CLIENT_ID, redirect_uri: OAUTH_REDIRECT,
-    response_type: "code", scope: "identify", state: ret,
+    response_type: "code", scope, state,
   });
   res.redirect(url);
 });
@@ -335,6 +350,8 @@ app.get("/api/auth/callback", async (req, res) => {
   try {
     const { code, state } = req.query;
     if (!code) return res.status(400).send("no code");
+    const apply = readApplyState(state);
+    if (typeof state === "string" && state.startsWith(APPLY_STATE) && !apply) return res.status(400).send("bad state");
     const tok = await fetch("https://discord.com/api/oauth2/token", {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -347,6 +364,12 @@ app.get("/api/auth/callback", async (req, res) => {
       headers: { Authorization: `Bearer ${tok.access_token}` },
     }).then((r) => r.json());
     const name = me.global_name || me.username || "익명";
+    if (apply) {
+      // gj = 서버 입장 결과(joined · already · failed) — 신청 행 guild_join 으로 가서 카드에 「DM 안 닿음」을 띄운다
+      const gj = await joinMainGuild(me.id, tok.access_token);
+      const jwt = signJWT({ sub: me.id, name, gj });
+      return res.redirect(`${safeReturn(apply.ret)}#token=${jwt}&nonce=${encodeURIComponent(apply.nonce)}`);
+    }
     const jwt = signJWT({ sub: me.id, name });
     res.redirect(`${safeReturn(state)}#token=${jwt}`);
   } catch (e) {
@@ -8110,6 +8133,17 @@ const studentPortal = require("./student-portal.cjs")(app, {
   discordDM,
 });
 
+// ── 신청 창구 공개 API(docs/intake-design.md · §54 · §55) — /api/events/:code · /api/applications{,/options,/me} ──
+// start.html 이 부른다(공유비밀 게이트 밖 · 로그인은 /api/auth/login?intent=apply 토큰). 불투명 id 는 포털과 같은 함수.
+// 카드 · DM 은 intakeApi.hooks.onSubmitted 에 붙인다(PR-2). findPlayer · pubgRankedByAccount = 배그 닉 · 티어 조회(실패해도 신청은 받는다).
+// INTAKE_ACCEPT_FROM = 제출을 받기 시작하는 날(KST). 개인정보처리방침 개정(나이 · 고민 · 가능 시간대 · 이벤트 코드 · 서버 자동 입장)이
+//   시행되는 날로 둔다(7일 전 고지). 그 전에는 POST 가 503 intake_closed — 페이지 PR 에서 날짜를 넣는다.
+const INTAKE_ACCEPT_FROM = null;
+const intakeApi = require("./intake-api.cjs")(app, {
+  sbSelect, sbInsert, sbDelete, limit, verifyJWT, portal: studentPortal, parseIgnInput,
+  findPlayer, pubgRankedByAccount, acceptFrom: INTAKE_ACCEPT_FROM,
+});
+
 // ── 수업 복기 API(§29 PR-1·PR-2 · /api/student-portal/{reviews,games,phases,images,feed} + /sessions 확장) ──
 // student-portal 뒤 — 그 파일이 건 공유비밀 게이트·세션·불투명 id·scrub 을 같은 함수로 쓴다. 트레이너 쪽은 아래 mountTrainer(PR-3).
 // §29 표가 없으면 이 라우트군만 503(기존 포털 라우트는 그대로 · 기동 로그 [review]).
@@ -8418,6 +8452,13 @@ const REQUIRED_SCHEMA = {
   // §53 외부 공개 동의(2026-09-30) — 후기 · 사례를 공개 페이지에 쓰기 전 기록. 지금은 코드가 읽지 않지만
   // 신청 창구(docs/intake-design.md)가 후기 카드를 낼 때 철회 여부를 이 표로 본다 — 미실행을 부팅에서 잡는다.
   publication_consents: ["id","student_id","consented_on","channel","scope","name_masked","confirmed_by","withdrawn_at"],
+  // §54 · §55 신청 창구(2026-09-30) — intake-api.cjs 가 읽고 쓴다. 카드 위치(intake_cards)는 PR-2 카드가 쓴다.
+  event_codes:          ["code","title","discount_pct","starts_on","ends_on","pay_within_days","active"],
+  intake_applications:  ["id","status","student_id","discord_id","display_name","guild_join","real_name","age","tier",
+                         "tier_checked","pubg_name","pubg_platform","pubg_account_id","concern","preferred_trainer_id",
+                         "slots","slots_note","event_code","utm","privacy_version","privacy_agreed_at",
+                         "assigned_trainer_id","booking_id","deposit_confirmed_at","created_at"],
+  intake_cards:         ["application_id","recipient_staff_id","channel_id","message_id"],
   feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
 };
 

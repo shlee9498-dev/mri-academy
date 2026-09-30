@@ -125,5 +125,15 @@ if [[ "$portal" == 404* ]]; then
 fi
 echo "  ✓ /api/student-portal/summary → $portal  (404 아님 = 마운트 성공)"
 
+# 신청 창구 공개 API(intake-api.cjs) 마운트 확인. env 0개라 503 intake_unavailable 이 정상 — 404 면 마운트 실패.
+intake="$(probe /api/applications/options 2>/dev/null)" || intake=""
+if [[ -z "$intake" || "$intake" == 404* ]]; then
+  echo "❌ GET /api/applications/options → ${intake:-응답 없음}"
+  echo "   404 · 무응답 = intake-api 가 마운트되지 않았거나 서버가 죽었다."
+  dump_log
+  exit 1
+fi
+echo "  ✓ /api/applications/options → $intake  (404 아님 = 마운트 성공)"
+
 echo "✅ 부팅 스모크 통과 — env 0개로 기동·서빙·마운트 확인"
 exit 0
