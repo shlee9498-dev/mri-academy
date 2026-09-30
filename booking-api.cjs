@@ -47,6 +47,8 @@ module.exports = function mountBookingApi(app, deps) {
   const { sbSelect, sbRpc, limit, discordDM, portal, trainer } = deps;
   // 판수가 움직인 뒤 부르는 훅(§45 판수 부족 알림 · server.js 가 준다) — 없으면 부르지 않는다(10분 점검이 대신 잡는다)
   const onGamesChanged = typeof deps.onGamesChanged === "function" ? deps.onGamesChanged : null;
+  // 레벨 테스트(상담 예약) 「완료」 뒤 부르는 훅 — 상담 기록(consults) 자동 생성(server.js 가 준다 · 오너 OK 2026-09-30)
+  const onConsultDone = typeof deps.onConsultDone === "function" ? deps.onConsultDone : null;
   const { readSession, opaqueId, readOpaqueId, fail, scrub } = portal;
   // 트레이너 판정(포털 세션 또는 사이트 JWT → staff 명부)과 응답 가드(scrubTrainer)는 trainer-portal.cjs 한 곳이 정본이다.
   const { requireTrainer: requireTrainerBase, sendTrainer } = trainer;
@@ -557,6 +559,9 @@ module.exports = function mountBookingApi(app, deps) {
         return rpcFail(res, out.already === "session" || out.hasSession
           ? "already_recorded" : "registration_missing");
       }
+      // 레벨 테스트(상담)는 판수 없이 닫힌다(closed · no_hold). 상담 기록은 서버가 남긴다 — 응답은 기다리지 않는다.
+      // 판정(정말 상담 예약인지 · 이미 기록했는지)은 훅 쪽이 예약을 다시 읽어서 한다.
+      if (out?.closed && out?.reason === "no_hold" && onConsultDone) onConsultDone(bookingId, req.staff);
       // §45 판수 부족 알림 — 기록으로 그 트레이너 잔여가 음수가 됐는지 본다. 응답은 기다리지 않는다.
       if (out?.recorded && onGamesChanged)
         sbSelect("slot_bookings", `select=student_id&id=eq.${bookingId}&limit=1`)

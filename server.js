@@ -1306,9 +1306,9 @@ if (process.env.DISCORD_TOKEN) {
   //   LESSON_LOCK_FROM     개인 1:1 레슨만 잠근다. 개인은 예약이 판수(5·8·10)를 알고 있어서
   //                        「완료」 한 번이면 기록이 끝난다 — 앱 화면이 늦어도 막히지 않는다.
   //   LESSON_LOCK_ALL_FROM 레슨 전부(그룹 포함) · /판수정정 을 잠근다. null 이면 이 단계는 꺼져 있다.
-  //   ⚠️ 진단상담 · 강의(직강)는 이 단계에서도 **잠그지 않는다.** 둘 다 consults 로그를 남기는 곳이
-  //      /수업등록 뿐이다 — 앱 「완료」(상담)는 예약만 닫고 consults 행을 만들지 않는다. 잠그면
-  //      상담 가산 정산 입력이 끊긴다. 앱에 그 경로가 생기면 진단상담은 잠금에 넣는다(오너 9/30).
+  //   ⚠️ 강의(직강)는 이 단계에서도 **잠그지 않는다** — 직강 출석 기록이 앱으로 오기 전까지 봇이 유일한 입구다(오너 9/30).
+  //      진단상담은 잠근다 — 앱 「완료」(레벨 테스트)가 consults 기록을 남기게 됐다(consult-record.cjs · 오너 OK 9/30).
+  //      예약 없이 한 레벨 테스트는 오너에게 말한다(안내 문구).
   //
   // ⏸ **둘 다 보류(오너 지시 2026-09-30 「10/1 0시 잠금 보류」).** 앱에 「수업 기록하기(예약 없이)」와
   //    「판수 조정 요청(오너 승인 카드)」이 아직 없어서, 잠그면 디스코드로 약속한 수업 기록과 판수 정정이
@@ -1482,9 +1482,14 @@ if (process.env.DISCORD_TOKEN) {
     // 유형을 안 고르면 개인이다(명령 정의의 기본값과 같다).
     const isPersonalLesson = guboon === "레슨" && (!lessonType || lessonType === "개인");
     if (!isMriOwner(itx)) {
-      if (guboon === "레슨" && lessonLockedAll())            // 진단상담 · 강의는 그대로(위 LESSON_LOCK_ALL_FROM 주석)
+      if (guboon === "레슨" && lessonLockedAll())            // 강의는 그대로(위 LESSON_LOCK_ALL_FROM 주석)
         return itx.reply({
-          content: "10/1부터 수업 기록은 앱에서 해줘. 예약 카드에서 「완료」를 누르고 판수를 넣으면 끝이야. 예약 없이 한 수업은 오너에게 말해줘.",
+          content: "10/1부터 수업 기록은 앱에서 해줘. 예약이 있으면 예약 카드의 「완료」, 예약 없이 한 수업은 「수업 기록하기」로 남기면 돼.",
+          ephemeral: true,
+        });
+      if (guboon === "진단상담" && lessonLockedAll())
+        return itx.reply({
+          content: "레벨 테스트 기록은 앱에서 해줘. 예약 카드에서 「레벨 테스트 마침」을 누르면 상담 기록까지 남아. 예약 없이 한 테스트는 오너에게 말해줘.",
           ephemeral: true,
         });
       if (isPersonalLesson && lessonLocked())
@@ -1776,7 +1781,7 @@ if (process.env.DISCORD_TOKEN) {
     // 그 정정도 트레이너가 할 수 있어야 한다(오너 지시 2026-09-29 「안 되면 개인만 잠금」).
     if (lessonLockedAll() && !isOwner)
       return itx.reply({
-        content: "10/1부터 판수 정정은 오너가 해. 학생 이름과 고칠 판수, 이유를 오너에게 보내줘.",
+        content: "판수 정정은 앱의 「판수 조정 요청」으로 올려줘. 오너가 승인하면 반영돼.",
         ephemeral: true,
       });
     if (!process.env.SUPABASE_URL)
@@ -7972,9 +7977,34 @@ const gamesShort = require("./games-short.cjs")({
   sbSelect, sbInsert, sbPatch, sbRpc, discordDM, appUrl: STUDENT_APP_URL, notifyAssigned: false,
 });
 
+// ── 레벨 테스트 「완료」 → 상담 기록 자동 생성(오너 OK 2026-09-30 · consult-record.cjs) ──
+// 봇 /수업등록 진단상담과 같은 consults 기록 + 상담 가산용 결제 진행자(payments.handler_id · 비어 있을 때 · 한 건일 때만).
+// 결제를 못 찾거나(0건 · 여러 건) 진행자를 못 채우면 오너에게 한 줄 — 가산이 빠진 채 지나가지 않게.
+const consultRecorder = require("./consult-record.cjs")({ sbSelect, sbInsert, sbPatch });
+const LEVELTEST_WARN = {
+  payment_missing: "상담 결제를 못 찾았어 — 입금이 들어오면 결제에 진행자를 적어줘",
+  payment_ambiguous: "상담 결제가 여러 건이라 고르지 않았어 — 맞는 결제에 진행자를 적어줘",
+  handler_differs: "결제에 이미 다른 진행자가 적혀 있어서 그대로 뒀어",
+  handler_patch_failed: "결제에 진행자를 못 적었어(정산 잠긴 달일 수 있어) — 확인해줘",
+};
+function onLevelTestDone(bookingId, staff) {
+  consultRecorder.recordLevelTestDone({ bookingId, trainerId: staff.id, trainerName: staff.name })
+    .then((r) => {
+      if (r?.skipped) return;
+      console.log(`[leveltest] 상담 기록 #${r.consultId} · 예약 #${bookingId} · 결제 ${r.paymentId || "없음"} · 진행자 ${r.handlerSet ? "채움" : "그대로"}`);
+      if (r.warn) ownerDM(`레벨 테스트 완료 — ${r.studentName} · 진행 ${staff.name} · ${r.playedOn}\n`
+        + `상담 기록 #${r.consultId} 남김 · ${LEVELTEST_WARN[r.warn] || r.warn}`);
+    })
+    .catch((e) => {
+      console.error("leveltest_consult", bookingId, e?.status || e?.message);
+      ownerDM(`⚠️ 레벨 테스트 완료 — 상담 기록 실패 · 예약 #${bookingId} · 진행 ${staff.name} · 직접 기록해줘`);
+    });
+}
+
 require("./booking-api.cjs")(app, {
   sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,
   onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 「완료」 · 예약(선차감) 직후
+  onConsultDone: onLevelTestDone,                                  // 레벨 테스트 「완료」 → 상담 기록
 });
 
 // ── 트레이너 앱 「수업 기록하기(예약 없이)」·「판수 조정 요청」(계약 §9.9 · §9.10 · 오너 최우선 2026-09-30) ──
