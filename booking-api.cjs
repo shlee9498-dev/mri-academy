@@ -104,8 +104,15 @@ module.exports = function mountBookingApi(app, deps) {
     const s = readSession(req.headers["x-portal-session"]);
     if (!s) return fail(res, 401, "session_expired");
     if (s.scope !== "student" || !s.sub) return fail(res, 403, "account_link_pending");
-    req.portal = s;
-    next();
+    // 세션의 디스코드가 지금 명부 연결과 같은지(student-portal 과 같은 판정 · 2026-10-01 연결 정정 사고)
+    portal.linkMatches(s).then((ok) => {
+      if (!ok) return fail(res, 401, "session_expired");
+      req.portal = s;
+      next();
+    }).catch((e) => {
+      console.error("booking_link_check", e?.message);
+      fail(res, 503, "portal_unavailable");
+    });
   }
 
   // 트레이너 판정은 trainer-portal.cjs 의 requireTrainer(포털 세션 scope trainer 또는 기존 사이트 JWT).

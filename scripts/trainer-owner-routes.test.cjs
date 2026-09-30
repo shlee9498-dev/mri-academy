@@ -155,7 +155,9 @@ const call = async (staffId, path, method = "GET", body) => {
     ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
   return { status: r.status, json: await r.json().catch(() => null) };
 };
-// 수강생 앱(/api/student-portal) — 같은 서버 · 수강생 세션
+// 수강생 앱(/api/student-portal) — 같은 서버 · 수강생 세션. 세션 pid 는 s{id} — 요청마다 명부 연결(discord_id)과 같아야 통과한다
+//   (2026-10-01 연결 정정 사고 · student-portal linkMatches). 수강생 시험은 그 학생의 discord_id 를 s{id} 로 맞춘다.
+const linkFixture = (studentId) => { const s = db.students.find((x) => x.id === studentId); if (s) s.discord_id = `s${studentId}`; };
 const callStudent = async (studentId, path) => {
   const r = await fetch(base.replace("/trainer-portal", "/student-portal") + path, { headers: { "x-portal-secret": "test-portal-secret",
     "x-portal-session": portal.issueSession({ provider: "discord", pid: `s${studentId}`, sub: studentId, scope: "student" }, 3600) } });
@@ -398,6 +400,7 @@ test("수강생 요약 — 누적 수업 · 조정 순합 · 트레이너별 지
     { id: 21, student_id: 11, trainer_id: 5, games: -2, played_at: daysAgo(2), created_by: "adjreq:32", memo: "조정(보상): x", created_at: "2026-09-01T00:00:00Z" },
   );
   rpcOut = { portal_remaining_by_trainer: [{ trainerId: 5, remaining: 8 }, { trainerId: 4, remaining: 7 }] };
+  linkFixture(11);
   const r = await callStudent(11, "/summary");
   rpcOut = {};
   assert.equal(r.status, 200);
@@ -426,6 +429,7 @@ test("수강생 판수 내역 · 수업 목록 — 되돌린 조정은 두 줄 �
   );
   db.games_adjust_requests = [{ id: 31, kind: "no_show" }, { id: 32, kind: "compensation" }, { id: 33, kind: "compensation" }];
   db.lesson_journals = [];
+  linkFixture(11);
   const r = await callStudent(11, "/games-ledger");
   assert.equal(r.status, 200);
   assert.deepEqual(r.json.rows.map((x) => [x.kind, x.games, x.balance, x.label]), [
@@ -591,4 +595,14 @@ test("트레이너 — 합친 명부(§38)는 담당이어도 · 최근 90일 �
   // 트레이너A(2)는 합친 #19 가 담당 · active 여도 목록에 없다
   const r2 = await call(2, "/students");
   assert.deepEqual(r2.json.students.map((s) => s.displayName), ["가"]);
+});
+
+test("수강생 세션 — 세션의 디스코드가 지금 명부 연결과 다르면 401 session_expired(연결을 뗐거나 다른 수강생으로 옮김 · 2026-10-01)", async () => {
+  db = rosterDb();
+  // 13 = 연결 없음(discord_id null) · 16 = 다른 계정에 연결됨 — 둘 다 s{id} 세션은 막혀야 한다
+  db.students.find((x) => x.id === 16).discord_id = "someone-else";
+  assert.equal((await callStudent(13, "/summary")).status, 401);
+  const moved = await callStudent(16, "/summary");
+  assert.equal(moved.status, 401);
+  assert.equal(moved.json.error.code, "session_expired");
 });
