@@ -8152,6 +8152,10 @@ require("./trainer-lessons.cjs")(app, {
   adjreqCard: (a) => (adjreqPortalCard ? adjreqPortalCard(a) : Promise.resolve(false)),
 });
 
+// ── 공개 지표 — 최근 30일 실측(GET /api/public-metrics · 로그인 없음 · 숫자와 트레이너 표시명만 · 오너 지시 2026-09-30) ──
+// 매일 00:05 KST 에 어제까지 30일을 다시 세어 ops_state 에 두고 그날 하루 고정한다(cronTick). 정의는 docs/public-metrics.md.
+const publicMetrics = require("./public-metrics.cjs")(app, { sbSelect, opsStateGet, opsStateSet, limit });
+
 // [재발 방지] 기동 시 시트 웹훅 연결 식별 — 어느 Apps Script 배포(=어느 스프레드시트)에 붙는지 즉시 확인.
 //   봇은 SHEET_ID가 아니라 SHEET_WEBHOOK_URL(Apps Script /exec)로 씀 → 배포ID가 정본/구 시트 식별키.
 //   (2026-07 사고: Apps Script 재배포/재바인딩 후 webhook URL 미갱신 → 봇이 구 시트에 계속 기록)
@@ -8915,6 +8919,8 @@ async function cronTick() {
   await gamesShort.run({ label: "tick" }).catch((e) => console.error("short_tick", e?.message));
   // 현금영수증 4일 미발급(계약 §9.5 · 오너 판정 9/30) — 낮에 한 번. 신청마다 한 통 · 한 번만.
   await maybeRunDaily("cashReceiptOverdue", "09:05", runCashReceiptOverdue, "현금영수증 4일 미발급");
+  // 공개 지표(최근 30일 실측) — 자정 직후 한 번. 기동이 늦어도 그날 첫 틱이 채운다(docs/public-metrics.md).
+  await maybeRunDaily("publicMetrics", "00:05", () => publicMetrics.run(), "공개 지표 계산");
   // 오너 승인 카드 다시 띄우기(ops_state 'payreq:resend') — 매 틱. 목록이 비어 있으면 읽기 한 번으로 끝난다.
   await runPayreqResend().catch((e) => console.error("payreq_resend", e?.message));
 }
