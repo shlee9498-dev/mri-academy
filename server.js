@@ -5900,6 +5900,17 @@ app.post("/api/gdcup-apply", async (req, res) => {
           await sbPatch("gdcup_apps", `id=eq.${prev.id}`, row);
           appId = prev.id; updated = true;
         } else {
+          // 팀장 디코ID로 기존 건이 안 걸렸는데 같은 닉이 이미 유효한 팀의 팀장으로 올라가 있으면
+          // 중복 접수다 — 디코ID를 다르게 적어 두 번 넣으면 종전엔 그대로 두 행이 됐다.
+          const leaderIgn = String((members[0] || {}).ign || "").trim().toLowerCase();
+          if (leaderIgn) {
+            const seen = await sbSelect("gdcup_apps", `select=id,members&season=eq.${season}&status=neq.cancelled`);
+            const dup = (seen || []).some(function (r) {
+              const m0 = Array.isArray(r.members) ? (r.members[0] || {}) : {};
+              return String(m0.ign || "").trim().toLowerCase() === leaderIgn;
+            });
+            if (dup) return res.status(409).json({ error: "already_applied" });
+          }
           const ins = await sbInsert("gdcup_apps", row);
           appId = ins?.id ?? null;
         }
@@ -7060,6 +7071,16 @@ app.post("/api/gdcup-solo", async (req, res) => {
     const b = req.body || {};
     const ign = String(b.ign || "").slice(0, 30);
     if (!ign) return res.status(400).json({ error: "no_ign" });
+    const season = gdSeason(b.season);
+    // 같은 시즌에 같은 닉으로 유효한 신청이 이미 있으면 한 건 더 넣지 않는다.
+    // 팀 신청(/api/gdcup-apply)은 leader_discord로 기존 건을 찾아 수정하지만 솔로엔 그 대조가 없었고,
+    // 9/26 킬내기에서 같은 닉 중복이 2쌍 들어왔다(간격 3.9초 · 5.5초) — 한 쌍은 수동 정리했다.
+    // 대조는 PostgREST ilike 대신 JS에서 한다 — LIKE의 `_`가 GmI_mri 같은 닉에서 오탐을 만든다.
+    const ignKey = ign.trim().toLowerCase();
+    const seen = await sbSelect("gdcup_solos", `select=id,ign&season=eq.${season}&status=neq.cancelled`);
+    if ((seen || []).some((r) => String(r.ign || "").trim().toLowerCase() === ignKey)) {
+      return res.status(409).json({ error: "already_applied" });
+    }
     const rec = {
       kind: b.kind === "short" ? "short" : "solo",
       ign: ign,
@@ -7067,7 +7088,7 @@ app.post("/api/gdcup-solo", async (req, res) => {
       discord: String(b.discord || "").slice(0, 60),
       note: String(b.note || "").slice(0, 200),
       status: "waiting",
-      season: gdSeason(b.season),
+      season: season,
       ip: ip,
     };
     const row = await sbInsert("gdcup_solos", rec);
