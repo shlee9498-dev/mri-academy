@@ -135,5 +135,15 @@ if [[ -z "$intake" || "$intake" == 404* ]]; then
 fi
 echo "  ✓ /api/applications/options → $intake  (404 아님 = 마운트 성공)"
 
+# 앱 라이브 시청(live-watch.cjs) 마운트 확인. 키(YOUTUBE_API_KEY)가 없으니 200 live:false 가 정상 — 404 면 마운트 실패.
+live="$(probe /api/live 2>/dev/null)" || live=""
+if [[ "$live" != 200*'"live":false'* ]]; then
+  echo "❌ GET /api/live → ${live:-응답 없음}"
+  echo "   200 live:false 가 아니면 live-watch 가 마운트되지 않았거나 키 없이 감지가 켜졌다."
+  dump_log
+  exit 1
+fi
+echo "  ✓ /api/live → $live  (키 없이 live:false)"
+
 echo "✅ 부팅 스모크 통과 — env 0개로 기동·서빙·마운트 확인"
 exit 0

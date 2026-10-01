@@ -8417,6 +8417,11 @@ function adjustAlertText(a) {
 // 매일 00:05 KST 에 어제까지 30일을 다시 세어 ops_state 에 두고 그날 하루 고정한다(cronTick). 정의는 docs/public-metrics.md.
 const publicMetrics = require("./public-metrics.cjs")(app, { sbSelect, opsStateGet, opsStateSet, limit });
 
+// ── 앱 라이브 시청 1단계 — 유튜브 공식 기능만(GET /api/live · 푸시 콜백 /api/live/websub · 계약 §9.24 · 어플 10/1) ──
+// 검색 API 없이 푸시(WebSub) + 채널 피드 5분 + videos.list 로 「지금 라이브 중인 영상」을 안다. 키(YOUTUBE_API_KEY)가 없으면 감지만 꺼진다.
+const liveWatch = require("./live-watch.cjs")(app, { limit });
+liveWatch.start();
+
 // [재발 방지] 기동 시 시트 웹훅 연결 식별 — 어느 Apps Script 배포(=어느 스프레드시트)에 붙는지 즉시 확인.
 //   봇은 SHEET_ID가 아니라 SHEET_WEBHOOK_URL(Apps Script /exec)로 씀 → 배포ID가 정본/구 시트 식별키.
 //   (2026-07 사고: Apps Script 재배포/재바인딩 후 webhook URL 미갱신 → 봇이 구 시트에 계속 기록)
