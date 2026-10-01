@@ -257,6 +257,9 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | `attendanceKnown` | boolean | 아니오 | **`false` 면 진행 회차가 미상이다** — 아래 |
 | `ownerConfirmedUnits` | number | 아니오 | **2026-10-01 추가(§58)** — `completedUnits` 중 **출석 기록 없이 오너가 「다 들음」으로 확인한 회차**(날짜 없음). 없으면 `0`. 이 값이 있으면 출석 행이 없어도 `attendanceKnown=true` 다(오너가 확인한 숫자). 표시 권장: 「24/24 · 7회 오너 확인」처럼 따로 한 줄 |
 
+- **취소된 강의는 내리지 않는다**(2026-10-01 오너 판정 · 환불 강의 카드 숨김). `status` 가 `cancelled`(환불 · 결제 무효)인 강의는
+  `courses[]` 에 없다. 종료(`done`) · 멈춤(`paused`)은 그대로 온다 — 앱은 `status` 로 「종료」 표시만 하면 된다.
+
 ⚠️ **`attendanceKnown === false` 면 `completedUnits`·`remainingUnits` 를 표시하지 마세요.**
 구 체계 강의는 진행 이력이 `courses.memo` 에만 있고 `course_attendance` 는 비어 있습니다
 (2026-09-27 실측: 강의 18행 **전부 출석 0행**). 그 상태에서 `completedUnits: 0` 을 그대로 그리면

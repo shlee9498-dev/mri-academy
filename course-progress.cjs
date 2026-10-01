@@ -4,7 +4,7 @@
 // 수강생 앱 /summary 의 courses(계약 §7.1)와 트레이너 앱 /students 의 courses(계약 §9.12)가
 // **같은 함수**로 회차를 센다. 두 벌이면 한쪽 화면만 「0회 진행」이 되는 일이 생긴다.
 //
-//   loadCourseProgress(sbSelect, { studentIds, statuses }) → Map<studentId, 요약[]>
+//   loadCourseProgress(sbSelect, { studentIds, statuses, hideCancelled }) → Map<studentId, 요약[]>
 //     · 강의 · 출석 · 예정 회차를 수강생 수와 무관하게 최대 3왕복으로 읽는다(in.() 묶음).
 //   summarizeCourses(courses, attendance, sessionsById, attOk) → 같은 Map (순수 함수 · 시험 대상)
 //
@@ -57,9 +57,11 @@ function summarizeCourses(courses, attendance, sessionsById, attOk) {
   return out;
 }
 
-// statuses 를 주면 그 상태의 강의만(트레이너 앱 = active · paused). 안 주면 전부(수강생 앱 · 종전 그대로).
+// statuses 를 주면 그 상태의 강의만(트레이너 앱 = active · paused). 안 주면 전부.
+// hideCancelled — 취소(환불 · 무효 · status cancelled) 강의를 뺀다(수강생 앱 · 2026-10-01 오너 판정 「환불 강의 카드 숨김」).
+//   종료(done) · 멈춤(paused) · 재구성(reconstructed)은 그대로 보인다 — 들은 기록이라 수강생이 볼 이유가 있다.
 // 강의 조회 자체가 실패하면 빈 Map — 호출자는 「강의 없음」으로 그린다(종전 coursesFor 와 같다).
-async function loadCourseProgress(sbSelect, { studentIds, statuses } = {}) {
+async function loadCourseProgress(sbSelect, { studentIds, statuses, hideCancelled } = {}) {
   const ids = [...new Set((studentIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   if (!ids.length) return new Map();
   let courses;
@@ -67,6 +69,7 @@ async function loadCourseProgress(sbSelect, { studentIds, statuses } = {}) {
     courses = await sbSelect("courses",
       `select=id,student_id,level,scheme,started_on,status,units_total,confirmed_units&student_id=in.(${ids.join(",")})`
       + (statuses?.length ? `&status=in.(${statuses.join(",")})` : "")
+      + (hideCancelled ? "&status=neq.cancelled" : "")
       + `&order=started_on.desc`);
   } catch { return new Map(); }
   if (!courses.length) return new Map();
