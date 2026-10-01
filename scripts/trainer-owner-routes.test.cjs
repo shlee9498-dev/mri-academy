@@ -228,7 +228,8 @@ const rosterDb = () => ({
     { id: 2, course_id: 1, session_id: 71, units: 1, status: "done" },
     { id: 3, course_id: 1, session_id: 72, units: 1, status: "scheduled" },
   ],
-  course_sessions: [{ id: 72, held_on: "2026-10-04", start_time: "14:00:00", end_time: "17:00:00", status: "scheduled", duration_min: 180, label: null }],
+  course_sessions: [{ id: 72, held_on: "2026-10-04", start_time: "14:00:00", end_time: "17:00:00", status: "scheduled", duration_min: 180, label: null,
+                     source: "panel", trainer_id: 4 }],
 });
 
 test("오너 — 전체 수강생(prospect · 합친 행 제외) · 필터 칩 · 담당 · 트레이너별 잔여(§41b) · 연결 · 직강 회차 · inMyScope", async () => {
@@ -589,9 +590,68 @@ test("대시보드 — 카드 · 이번 주 수업 · 처리 대기 · 트레이
   assert.deepEqual(d.trainers.map((t) => t.colorKey), ["ink", "gold", "grey"]);   // /students 칩과 같은 키
   assert.deepEqual(d.thresholds, { pendingRedHours: 6, slotsRedWindowHours: 72, slotsYellowWindowDays: 7, courseLowUnits: 2 });
   // 직강 숫자(§9.22.4) — 이 주의 회차는 예정(scheduled)뿐이고 직강 칸 · 진행 중 강의가 없다 → 전부 0
-  assert.deepEqual(d.courseSummary, { classesWeek: 0, classesToday: 0, attendanceWeek: 0, absentWeek: 0, lowUnits: [] });
+  assert.deepEqual(d.courseSummary, { classesWeek: 0, classesToday: 0, slotsWeek: 0, slotsToday: 0, heldWeek: 0, heldToday: 0,
+    attendanceWeek: 0, absentWeek: 0, lowUnits: [] });
   const body = JSON.stringify(d);
   for (const leak of ["memo", "정정", "created_by", "student_name", "1234567890", "adjreq"]) assert.equal(body.includes(leak), false, leak);
+});
+
+test("§61 대시보드 직강 — 예약 없는 직강 칸도 오늘 · 이번 주 수업 · 열어둔 칸과 진행한 강의 따로 · 원장 행 열린 칸에 직강 칸", async () => {
+  db = dashDb();
+  const cslot = (id, slot_start, o = {}) => ({ id, trainer_id: 4, slot_start, lesson_type: "course", capacity: 3, status: "open",
+    duration_min: 180, course_level: null, ...o });
+  db.trainer_slots.push(
+    cslot(300, "2025-01-08T10:00:00Z"),                                            // 오늘(1/8) 19:00 KST · 예약 없음 → slot 줄
+    cslot(301, "2025-01-09T10:00:00Z", { course_level: "중급반" }),                 // 예약 1 → booking 줄
+    cslot(302, "2025-01-07T10:00:00Z"),                                            // 출석 받음(회차 703) → course 줄
+    cslot(303, "2025-01-10T10:00:00Z", { status: "cancelled" }),                    // 취소 칸 — 없음
+    cslot(304, hoursFromNow(10)),                                                  // 열린 직강 칸(지금 기준) — 원장 행 열린 칸
+  );
+  db.slot_bookings.push({ id: 590, slot_id: 301, student_id: 16, status: "booked", span_head_id: null, duration_min: null, games_held: 0, booked_at: null, course_id: 1 });
+  db.course_sessions.push({ id: 703, held_on: "2025-01-07", start_time: "19:00:00", end_time: "22:00:00", duration_min: 180, label: "초급반",
+    status: "done", slot_id: 302, trainer_id: 4 });
+  db.course_attendance.push({ id: 3, session_id: 703, course_id: 1, units: 1, status: "done" });
+  const r = await call(4, "/owner/dashboard?date=2025-01-08");
+  assert.equal(r.status, 200);
+  const d = r.json;
+  const cl = d.lessons.filter((l) => l.lessonType === "course" || l.kind === "course");
+  assert.deepEqual(cl.map((l) => [l.kind, l.date, l.trainerName, l.students.length, l.status, l.courseLevel ?? null]), [
+    ["course", "2025-01-07", "원장", 1, "done", null],
+    ["slot", "2025-01-08", "원장", 0, "open", null],
+    ["booking", "2025-01-09", "원장", 1, "booked", "intermediate"],
+    ["course", "2025-01-11", "원장", 2, "scheduled", null],
+    ["course", "2025-01-12", null, 0, "scheduled", null],
+  ]);
+  const sl = d.lessons.find((l) => l.kind === "slot");
+  assert.equal(sl.key, portal.opaqueId("slot", 300));                           // 트레이너 칸 목록의 칸 id 와 같은 값
+  assert.deepEqual([sl.durationMin, sl.startAt], [180, "2025-01-08T10:00:00Z"]);
+  assert.deepEqual(d.cards.slice(1, 3).map((c) => c.value), [3, 14]);            // 오늘 2 + 직강 칸 1 · 이번 주 11 + 직강 3
+  // 열어둔 칸 = 300 · 301 · 302(이 주 · 취소 303 제외 · 304 는 지금 기준 칸이라 이 주 밖) · 진행한 강의 = 출석 done 회차 703 하나
+  assert.deepEqual(d.courseSummary, { classesWeek: 3, classesToday: 1, slotsWeek: 3, slotsToday: 1, heldWeek: 1, heldToday: 0,
+    attendanceWeek: 1, absentWeek: 0, lowUnits: [] });
+  const owner = d.trainers.find((t) => t.trainerName === "원장");
+  assert.deepEqual([owner.lessonsToday, owner.lessonsWeek, owner.openSlots72h, owner.openSlots7d, owner.color], [1, 5, 2, 2, "green"]);
+});
+
+test("§61 원장 목록 — 직강 출석이 「마지막 수업」 · 보류 판정에 든다 · 이관 묶음은 안 든다 · courseState", async () => {
+  db = rosterDb();
+  const cs = (id, held_on, source, trainer_id, status = "done") =>
+    ({ id, held_on, start_time: null, end_time: null, status, duration_min: 180, label: null, source, trainer_id });
+  db.course_sessions.push(cs(70, daysAgo(3), "panel", 4), cs(71, daysAgo(1), "sheet_import", null));   // 사(16) — 직강만
+  db.course_sessions.push(cs(74, daysAgo(2), "panel", 2));                                            // 가(10) — 끝난 강의의 출석
+  db.course_attendance.push({ id: 4, course_id: 3, session_id: 74, units: 1, status: "done" });
+  const r = await call(4, "/students");
+  assert.equal(r.status, 200);
+  const by = Object.fromEntries(r.json.students.map((s) => [s.displayName, s]));
+  assert.equal(by["사"].lastLessonOn, daysAgo(3));                // 레슨 없음 → 직강 출석(이관 묶음 1일 전은 날짜가 아니라 안 든다)
+  assert.deepEqual([by["가"].lastLessonOn, by["가"].listState, by["가"].holdSince], [daysAgo(2), "active", null]);   // 종전 보류(20일 전 레슨)
+  assert.equal(by["나"].lastLessonOn, daysAgo(5));                // 직강 없는 사람은 그대로
+  assert.deepEqual(r.json.students.map((s) => [s.displayName, s.courseState]), [
+    ["가", null], ["나", null], ["다", "paused"], ["라", null], ["사", "active"], ["아", null], ["자", null],
+  ]);
+  // 트레이너A — 그 트레이너가 진행한 직강 회차도 「나와의 수업」이다(보류가 풀린다)
+  const a = Object.fromEntries((await call(2, "/students")).json.students.map((s) => [s.displayName, s]));
+  assert.deepEqual([a["가"].listState, a["가"].lastLessonOn], ["active", daysAgo(2)]);
 });
 
 test("트레이너 — 합친 명부(§38)는 담당이어도 · 최근 90일 수업이 있어도 범위 밖(2026-10-01)", async () => {

@@ -3890,6 +3890,8 @@ $$;
 --     public.record_lesson_from_booking(bigint,bigint,integer,date), public.relink_review_lesson(bigint,bigint,bigint,text),
 --     public.reopen_trainer_slot(bigint,bigint), public.resolve_booking(bigint,bigint,text), public.sweep_pending_review()
 --   to service_role;
+--   ⚠️ 뒤에 생긴 함수도 이 목록에 같이 넣는다 — §50a revert_games_adjustment · §59a/§59e 직강 함수들 ·
+--      §61 relink_review_anchor(bigint,bigint,text,bigint,bigint,bigint,text)(2026-10-01 · 61c).
 --   revoke execute on function <위 17개 그대로> from public, anon, authenticated;
 --   commit;
 --   notify pgrst, 'reload schema';
@@ -6085,3 +6087,197 @@ notify pgrst, 'reload schema';
 --      실행 전: consults 35칸 · 인덱스 4 · 제약 13 · 13행(행 지문 9c917ecc).
 --      실행 후: 46칸 · 인덱스 8 · 제약 19(check 4 + 외래키 2) · 13행 그대로(행 지문 9c917ecc 같음).
 --      사전 되돌림 시험 통과 — 틀린 유형 · 틀린 결과 거절 · 맞는 값 통과 · 같은 원본 메시지 두 번 거절 · 전부 되돌림 확인.
+
+-- ============================================================
+-- §61  보낸 복기를 직강 회차 · 다른 수업으로 다시 잇기 — 변경 기록 칸 넷 + relink_review_anchor() (2026-10-01 · 어플 전달 「직강 · 원장 데이터 구멍」 1)
+--
+-- 오너 검수(10/1 전수 검사): 직강만 들은 수강생이 복기를 「연결 없음」으로 보내 받는 사람이 레슨 트레이너가 됐다(복기 #19).
+--   수강생이 보낸 복기를 **직강 회차**로 다시 이을 수 있어야 한다 — 직강 회차로 이으면 받는 사람 = 원장.
+--   §44 relink_review_lesson() 은 「보낸 수업 복기 → 다른 내 수업」만 한다. 이 함수는 보낸 복기(수업 · 직강 · 연결 없음)를
+--   **내 수업 또는 내 직강 회차로** 옮긴다(자유 기록으로 되돌리기는 안 한다 — 서버가 막는다).
+--   서버(review-api PUT /reviews/:id)는 보낸 복기의 연결 바꾸기를 전부 이 함수로 부른다. §44 함수는 그대로 둔다(오너 SQL 용 · 동작 같음).
+--
+-- 받는 사람 = 보내기 규칙과 같다 — 수업 = 그 수업 트레이너 · 직강 회차 = 원장(staff role owner · active · 가장 작은 id).
+-- 직강 회차 = 내 강의(courses.student_id)의 출석(course_attendance)이 있는 회차 — 취소된 출석 · 취소된 회차는 안 된다
+--   (서버 resolveAnchor 와 같은 판정 · 「그 수업에 없던 것」).
+-- 트레이너 답 · 사진 · 그리기 · 반응 · 공개 범위 · 보낸 시각은 그대로다. 연결 · 받는 사람 · updated_at 만 바뀐다(§44 와 같다).
+--
+-- 변경 기록: review_anchor_changes 의 수업 칸(from/to_session_id)은 lesson_sessions 만 가리킨다. 직강 회차를 가리킬 칸과
+--   전 · 후 연결 종류를 더한다(더하기만). 기존 행 0(실측 10/1) · §44 함수는 새 칸을 안 쓰니 기본값 lesson 이 맞다(그 함수는 수업 → 수업만 한다).
+--
+-- A 구간(새 칸 · 새 칸의 제약 · 새 함수 · 더하기만). 코드가 부르기 전까지는 아무 동작도 바꾸지 않는다.
+--
+-- 반환: {"relinked":true, from_kind, to_kind, from_session_id, to_session_id, from_course_session_id, to_course_session_id,
+--        from_played_at, to_played_at, from_trainer_id, to_trainer_id, feedback_trainer_ids:[…]} · {"unchanged":true}
+--       · {"error":"forbidden"|"invalid_body"|"review_not_found"|"not_published"|
+--                  "anchor_not_found"|"anchor_student_mismatch"|"anchor_taken"}
+alter table public.review_anchor_changes add column if not exists from_kind text not null default 'lesson'
+  check (from_kind in ('lesson','course','none'));
+alter table public.review_anchor_changes add column if not exists to_kind text not null default 'lesson'
+  check (to_kind in ('lesson','course','none'));
+alter table public.review_anchor_changes add column if not exists from_course_session_id bigint
+  references public.course_sessions(id) on delete set null;
+alter table public.review_anchor_changes add column if not exists to_course_session_id bigint
+  references public.course_sessions(id) on delete set null;
+
+create or replace function public.relink_review_anchor(
+  p_review_id bigint, p_student_id bigint, p_kind text,
+  p_session_id bigint default null, p_course_id bigint default null, p_course_session_id bigint default null,
+  p_changed_by text default 'student')
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_r    lesson_reviews%rowtype;
+  v_ls   lesson_sessions%rowtype;
+  v_cstu bigint;
+  v_to   date;
+  v_from date;
+  v_rcpt bigint;
+  v_fb   jsonb;
+begin
+  -- 공개 키(anon · authenticated)로는 부르지 못한다(§46 decide_games_adjustment 와 같은 가드 · 권한 회수 §46c 와 별개).
+  if coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb->>'role', '') in ('anon', 'authenticated') then
+    return jsonb_build_object('error', 'forbidden');
+  end if;
+  if p_changed_by is null or p_changed_by not in ('student','owner') then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+  -- 대상 모양 — 수업 = 수업 id 하나 · 직강 회차 = 강의 id + 회차 id(앵커 제약 chk_lr_anchor · chk_lr_course_pair 와 같다)
+  if p_kind = 'lesson' then
+    if p_session_id is null or p_course_id is not null or p_course_session_id is not null then
+      return jsonb_build_object('error','invalid_body');
+    end if;
+  elsif p_kind = 'course' then
+    if p_session_id is not null or p_course_id is null or p_course_session_id is null then
+      return jsonb_build_object('error','invalid_body');
+    end if;
+  else
+    return jsonb_build_object('error','invalid_body');
+  end if;
+
+  -- 복기 행을 잠근다 — 같은 복기를 동시에 두 번 옮겨도 기록이 한 줄씩 순서대로 남는다.
+  select * into v_r from lesson_reviews where id = p_review_id for update;
+  if not found or v_r.student_id is distinct from p_student_id
+     or v_r.author_role <> 'student' or v_r.hidden_at is not null then
+    return jsonb_build_object('error','review_not_found');
+  end if;
+  if v_r.status <> 'published' then return jsonb_build_object('error','not_published'); end if;
+
+  if p_kind = 'lesson' then
+    select * into v_ls from lesson_sessions where id = p_session_id;
+    if not found then return jsonb_build_object('error','anchor_not_found'); end if;
+    if v_ls.student_id is distinct from p_student_id then
+      return jsonb_build_object('error','anchor_student_mismatch');
+    end if;
+    if v_r.anchor_kind = 'lesson' and v_r.lesson_session_id is not distinct from p_session_id then
+      return jsonb_build_object('unchanged', true);
+    end if;
+    -- 수강생 1명 × 수업 1회 = 복기 1건(uq_lr_student_lesson) — 먼저 보고 계약 코드로 돌려준다
+    if exists (select 1 from lesson_reviews
+                where student_id = p_student_id and author_role = 'student'
+                  and lesson_session_id = p_session_id and id <> p_review_id) then
+      return jsonb_build_object('error','anchor_taken');
+    end if;
+    v_to   := v_ls.played_at;
+    v_rcpt := coalesce(v_ls.trainer_id, v_r.recipient_trainer_id);
+  else
+    select student_id into v_cstu from courses where id = p_course_id;
+    if not found then return jsonb_build_object('error','anchor_not_found'); end if;
+    if v_cstu is distinct from p_student_id then
+      return jsonb_build_object('error','anchor_student_mismatch');
+    end if;
+    -- 그 회차에 출석한 것만 — 취소된 출석(회차 정정) · 취소된 회차는 그 수업에 없던 것이다
+    select s.held_on into v_to
+      from course_attendance a join course_sessions s on s.id = a.session_id
+     where a.course_id = p_course_id and a.session_id = p_course_session_id
+       and a.status <> 'cancelled' and s.status <> 'cancelled';
+    if not found then return jsonb_build_object('error','anchor_student_mismatch'); end if;
+    if v_r.anchor_kind = 'course' and v_r.course_session_id is not distinct from p_course_session_id
+       and v_r.course_id is not distinct from p_course_id then
+      return jsonb_build_object('unchanged', true);
+    end if;
+    -- 수강생 1명 × 직강 회차 1회 = 복기 1건(uq_lr_student_course)
+    if exists (select 1 from lesson_reviews
+                where student_id = p_student_id and author_role = 'student'
+                  and course_session_id = p_course_session_id and course_id = p_course_id and id <> p_review_id) then
+      return jsonb_build_object('error','anchor_taken');
+    end if;
+    -- 받는 사람 = 원장(보내기 규칙 — 강의 복기는 오너가 받는다) · 원장 행이 없으면 받는 사람은 그대로
+    select id into v_rcpt from staff where role = 'owner' and active order by id limit 1;
+    v_rcpt := coalesce(v_rcpt, v_r.recipient_trainer_id);
+  end if;
+
+  if v_r.lesson_session_id is not null then
+    select played_at into v_from from lesson_sessions where id = v_r.lesson_session_id;
+  elsif v_r.course_session_id is not null then
+    select held_on into v_from from course_sessions where id = v_r.course_session_id;
+  end if;
+  select coalesce(jsonb_agg(distinct trainer_id), '[]'::jsonb) into v_fb
+    from review_feedback where review_id = p_review_id;
+
+  update lesson_reviews
+     set anchor_kind = p_kind, lesson_session_id = p_session_id,
+         course_session_id = p_course_session_id, course_id = p_course_id,
+         recipient_trainer_id = v_rcpt, updated_at = now()
+   where id = p_review_id;
+
+  insert into review_anchor_changes (review_id, changed_by, from_kind, to_kind,
+                                     from_session_id, to_session_id, from_course_session_id, to_course_session_id,
+                                     from_played_at, to_played_at, from_trainer_id, to_trainer_id, had_feedback)
+  values (p_review_id, p_changed_by, v_r.anchor_kind, p_kind,
+          v_r.lesson_session_id, p_session_id, v_r.course_session_id, p_course_session_id,
+          v_from, v_to, v_r.recipient_trainer_id, v_rcpt, jsonb_array_length(v_fb) > 0);
+
+  return jsonb_build_object('relinked', true, 'from_kind', v_r.anchor_kind, 'to_kind', p_kind,
+    'from_session_id', v_r.lesson_session_id, 'to_session_id', p_session_id,
+    'from_course_session_id', v_r.course_session_id, 'to_course_session_id', p_course_session_id,
+    'from_played_at', v_from, 'to_played_at', v_to,
+    'from_trainer_id', v_r.recipient_trainer_id, 'to_trainer_id', v_rcpt,
+    'feedback_trainer_ids', v_fb);
+
+exception
+  when unique_violation then return jsonb_build_object('error','anchor_taken');
+end;
+$$;
+
+notify pgrst, 'reload schema';
+
+-- ── 61b) 검증 ────────────────────────────────────────────────────────────────
+--   select proname, pg_get_function_identity_arguments(oid), length(replace(prosrc, E'\r','')) as len,
+--          md5(replace(prosrc, E'\r','')) as md5
+--     from pg_proc where proname = 'relink_review_anchor' and pronamespace = 'public'::regnamespace;
+--   select column_name, is_nullable, column_default from information_schema.columns
+--    where table_schema = 'public' and table_name = 'review_anchor_changes' and ordinal_position > 11 order by ordinal_position;
+--     기대: 함수 1개(인자 7) 5735 · 6224f83eafe5ebc34a71190d657d3fe2 · 표 11 → 15칸(from_kind · to_kind NOT NULL 기본 lesson ·
+--           from/to_course_session_id) · 제약 5 → 9(검사 2 + 외래키 2)
+--
+-- ── 61c) 권한 좁히기 — 오너 실행(권한 변경 = Level 0 · 세션 훅이 막는다) · §46c 목록에 더한다 ──────────────
+--   함수 안에 공개 키 가드(anon · authenticated → forbidden)가 있어 회수 전에도 공개 키로는 못 바꾼다(§46 와 같은 가드).
+--   §46c 와 같은 순서 — service_role 먼저 허락 → 회수:
+--     grant execute on function public.relink_review_anchor(bigint, bigint, text, bigint, bigint, bigint, text) to service_role;
+--     revoke execute on function public.relink_review_anchor(bigint, bigint, text, bigint, bigint, bigint, text) from public, anon, authenticated;
+--
+-- 오너가 SQL 로 고칠 때(정정 · B 구간 · 오너 OK 뒤):
+--   select public.relink_review_anchor(<복기 id>, <수강생 id>, 'course', null, <강의 id>, <회차 id>, 'owner');
+--   select public.relink_review_anchor(<복기 id>, <수강생 id>, 'lesson', <수업 id>, null, null, 'owner');
+--
+-- 되돌리기(코드의 호출을 먼저 되돌릴 것 — review-api PUT /reviews/:id 가 이 함수를 부른다 · 지우는 DDL = B 구간 · 오너 OK):
+--   drop function if exists public.relink_review_anchor(bigint, bigint, text, bigint, bigint, bigint, text);
+--   alter table public.review_anchor_changes drop column if exists from_kind, drop column if exists to_kind,
+--     drop column if exists from_course_session_id, drop column if exists to_course_session_id;   -- 기록의 종류 · 회차 칸까지 지운다
+--
+--   ✅ 61 실행 완료 2026-10-01 (세션 실행 · A 구간 · 이 블록 그대로 · 블록 md5 858c879b043f1e9e424ba1c7b7813503).
+--      실행 전: review_anchor_changes 11칸 · 0행 · 제약 5 · relink_review_anchor 없음 · lesson_reviews 18행(지문 82098f98) ·
+--               §44 relink_review_lesson 지문 cd7e22c7.
+--      실행 후: 15칸 · 0행 · 제약 9 · 함수 1개 5735 · 6224f83e(정본 본문과 같다) · lesson_reviews 18행 지문 82098f98 같음 ·
+--               §44 함수 지문 cd7e22c7 같음 · notify pgrst.
+--      사전 되돌림 시험 28항목 통과(실제 함수 · 실제 복기 #19 · 강의 17 · 회차 7 · 8 · 가짜 복기 1 · 가짜 답 1 → 전부 되돌림 · 끝나고 변화 0 확인) —
+--      호출자 · 모양 오류 invalid_body 4 / 남의 복기 · 없는 복기 review_not_found / draft not_published / 남의 강의 · 출석 없는 회차
+--      anchor_student_mismatch / 없는 강의 · 없는 수업 anchor_not_found / 남의 수업 anchor_student_mismatch /
+--      연결 없음 → 직강 회차 = 받는 사람 5 → 4(원장) · 기록 none>course · 회차 8 · 날짜 · 답 없음 / 같은 회차 unchanged /
+--      회차 → 다른 회차 / 다른 복기가 잡은 회차 anchor_taken / 취소된 출석 · 취소된 회차 anchor_student_mismatch /
+--      직강 → 수업 = 받는 사람 수업 트레이너 · 답한 트레이너 [4] · had_feedback / 수업 → 수업 / 같은 수업 unchanged /
+--      다른 복기가 잡은 수업 anchor_taken / 수업 → 직강(오너 정정 changed_by owner) / 숨긴 복기 review_not_found /
+--      공개 키(anon) forbidden · service_role 통과 / §44 함수 그대로 = 새 칸 기본값 lesson>lesson / 기록 종류 검사(pending 거절) /
+--      나머지 칸(제목 · 본문 · 범위 · 보낸 시각 · 출처 · 상태 · 숨김) 그대로.
+-- ============================================================

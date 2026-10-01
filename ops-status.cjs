@@ -78,6 +78,8 @@ function trainerColor(row) {
 //             회차 행에 진행자(trainer_id · §59)가 있으면 그 값이 먼저다. 취소된 출석(§59d 회차 정정)은 명단에서 뺀다.
 //   직강 반 수업 칸(§59 · lesson_type course)은 출석을 받기 전엔 booking(예약 명단)으로, 출석을 받은 뒤엔
 //   course(회차 · 출석 명단)로 **한 번만** 나온다 — 칸 하나가 수업 하나다(같은 칸이 두 줄로 세지지 않게).
+//   slot    = 예약도 출석도 없는 직강 칸(§61 · 2026-10-01 오너 검수 「오늘 · 이번 주 수업에 직강 포함」) — 원장은 칸을 열면
+//             그 시각에 강의를 한다(반 수업은 예약 없이 와도 출석을 받는다). 명단은 빈 배열.
 const STAGE = { booked: 0, pending_review: 1, done: 2, no_show: 2 };
 function groupStatus(statuses) {
   let best = null;
@@ -122,6 +124,13 @@ function buildLessons({ slots = [], bookings = [], sessions = [], courseSessions
                trainerId: s.trainer_id, studentIds: [...new Set(bs.map((b) => b.student_id))],
                status: groupStatus(bs.map((b) => b.status)) });
   }
+  // 예약 · 출석이 없는 직강 칸(취소 제외 — 호출자가 거른다)
+  for (const s of slots) {
+    if (s.lesson_type !== "course" || s.status === "cancelled" || bySlot.has(s.id) || attendedSlots.has(s.id)) continue;
+    out.push({ kind: "slot", ref: s.id, date: kstDate(Date.parse(s.slot_start)), startAt: s.slot_start,
+               durationMin: Number(s.duration_min || 30), lessonType: "course", courseLevel: s.course_level ?? null,
+               trainerId: s.trainer_id, studentIds: [], status: s.status });
+  }
 
   const groups = new Map();
   for (const r of sessions) {
@@ -153,7 +162,7 @@ function buildLessons({ slots = [], bookings = [], sessions = [], courseSessions
                label: cs.label || levels.join(" · ") || null, status: cs.status });
   }
 
-  const KIND_ORDER = { booking: 0, course: 1, record: 2 };
+  const KIND_ORDER = { booking: 0, slot: 0, course: 1, record: 2 };
   return out.sort((a, b) => a.date.localeCompare(b.date)
     || (a.startAt === null) - (b.startAt === null)
     || String(a.startAt || "").localeCompare(String(b.startAt || ""))
@@ -165,6 +174,9 @@ function buildLessons({ slots = [], bookings = [], sessions = [], courseSessions
 //   courseSessions = 이번 주 회차 · attendance = 그 회차들의 출석 행(status · units) · bookings = 이번 주 칸 예약
 //   강의 = 직강 칸 하나 + 칸 없이 기록한 회차 하나(출석 done 이 있는 것). 칸에 딸린 회차는 칸으로 한 번만 센다.
 //   출석 = done 출석 units 합 · 결석 = 직강 칸 예약 중 no_show.
+//   나눠 세기(§61 · 2026-10-01 오너 검수 「이번 주 강의 = 열어둔 직강 칸 · 진행한 강의 따로」):
+//     slotsWeek · slotsToday = 열어둔 직강 칸(취소 제외 · 지난 칸 포함) · heldWeek · heldToday = 진행한 강의 = 출석 done 이 있는 회차
+//     (칸에 딸린 회차도 칸 없이 기록한 회차도 하나씩). classesWeek · classesToday 는 종전 그대로(칸 + 칸 없는 회차).
 function buildCourseSummary({ slots = [], courseSessions = [], attendance = [], bookings = [], today }) {
   const courseSlots = slots.filter((s) => s.lesson_type === "course");
   const courseSlotIds = new Set(courseSlots.map((s) => s.id));
@@ -173,10 +185,15 @@ function buildCourseSummary({ slots = [], courseSessions = [], attendance = [], 
   const doneAtt = attendance.filter((a) => a.status === "done" && liveIds.has(a.session_id));
   const attended = new Set(doneAtt.map((a) => a.session_id));
   const loose = live.filter((cs) => cs.slot_id == null && attended.has(cs.id));
+  const held = live.filter((cs) => attended.has(cs.id));
   const slotDay = (s) => kstDate(Date.parse(s.slot_start));
   return {
     classesWeek: courseSlots.length + loose.length,
     classesToday: courseSlots.filter((s) => slotDay(s) === today).length + loose.filter((cs) => cs.held_on === today).length,
+    slotsWeek: courseSlots.length,
+    slotsToday: courseSlots.filter((s) => slotDay(s) === today).length,
+    heldWeek: held.length,
+    heldToday: held.filter((cs) => cs.held_on === today).length,
     attendanceWeek: doneAtt.reduce((n, a) => n + Number(a.units || 0), 0),
     absentWeek: bookings.filter((b) => b.status === "no_show" && b.span_head_id == null && courseSlotIds.has(b.slot_id)).length,
   };

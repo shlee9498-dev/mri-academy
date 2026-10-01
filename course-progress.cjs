@@ -22,13 +22,37 @@
 // ============================================================
 "use strict";
 
+// 이관 묶음 회차(시트 이관 · 사진 재집계) — 날짜가 실제 수업일이 아닐 수 있다. 「마지막 수업」 · 수업 고르기 목록에서 뺀다.
+const isImportSource = (source) => source === "sheet_import" || source === "photo_recount";
+
 // 출석 한 줄의 종류(§59d · 계약 §9.22) — add 원장 「출석 추가」 · makeup 「보강」 · import 이관 묶음(날짜가 실제 수업일이
 //   아닐 수 있다) · attend 그 밖의 출석. 정정 표시는 memo 가 글자 그대로 '추가' | '보강' 일 때만이다.
 function attendanceKind(memo, source) {
   if (memo === "추가") return "add";
   if (memo === "보강") return "makeup";
-  if (source === "sheet_import" || source === "photo_recount") return "import";
+  if (isImportSource(source)) return "import";
   return "attend";
+}
+
+// 회차 번호(복기 「중급반 n회차」 · 수업 고르기 · 계약 §8.12 · 2026-10-01 어플 전달) — 강의 하나의 출석에서 회차마다 몇 회차인지.
+//   날짜 없이 확인한 몫(confirmed_units · §58)과 이관 묶음을 먼저 센 뒤, 날짜 있는 출석(done · 회차 취소 아님)을
+//   날짜 · 시작 시각 · 회차 id 순으로 더해 간다. 그 회차의 번호 = 거기까지의 합(반 회차는 1씩 · 0.5 회차면 소수 둘째 자리까지).
+//   rows = course_attendance(session_id, units, status) + course_sessions 임베드(held_on, start_time, status, source).
+//   → Map<회차 id, 번호> — 이관 묶음 · 취소 · 예정 회차는 들어 있지 않다.
+function unitNumbers(confirmedUnits, rows) {
+  const ok = (rows || []).filter((a) => a.status === "done" && a.course_sessions && a.course_sessions.status !== "cancelled");
+  let n = Number(confirmedUnits || 0)
+    + ok.filter((a) => isImportSource(a.course_sessions.source)).reduce((s, a) => s + Number(a.units || 0), 0);
+  const out = new Map();
+  const dated = ok.filter((a) => !isImportSource(a.course_sessions.source)).sort((x, y) =>
+    String(x.course_sessions.held_on).localeCompare(String(y.course_sessions.held_on))
+    || String(x.course_sessions.start_time || "").localeCompare(String(y.course_sessions.start_time || ""))
+    || Number(x.session_id) - Number(y.session_id));
+  for (const a of dated) {
+    n += Number(a.units || 0);
+    out.set(Number(a.session_id), Math.round(n * 100) / 100);
+  }
+  return out;
 }
 const HISTORY_MAX = 30;              // 수강생 앱 직강 카드 출석 이력 — 최근 것부터 이만큼
 
@@ -130,6 +154,74 @@ async function loadCourseProgress(sbSelect, { studentIds, statuses, hideCancelle
   return summarizeCourses(courses, att, sessById, attOk, { history: !!history, withIds: !!withIds });
 }
 
+// ── 직강 출석 회차(복기 수업 고르기 · 원장 화면 「마지막 수업」 · §61 · 2026-10-01 어플 전달 「직강 · 원장 데이터 구멍」) ──
+// 출석한 회차 한 줄씩 — done · 회차 취소 아님 · 이관 묶음 아님(날짜가 실제 수업일이 아닐 수 있다) · 최근부터.
+//   courses = { id, student_id, level, confirmed_units, trainer_id } · att = course_attendance + course_sessions 임베드
+//   (held_on, start_time, status, source, trainer_id). 순수 함수(시험 대상).
+//   → [{ studentId, sessionId, courseId, heldOn, startTime, level, unitNo, trainerId }] — trainerId = 회차 트레이너 → 없으면 강의 담당.
+function attendedSessions(courses, att) {
+  const byCourse = {};
+  for (const a of att || []) (byCourse[a.course_id] ||= []).push(a);
+  const out = [];
+  for (const c of courses || []) {
+    const rows = byCourse[c.id] || [];
+    const nums = unitNumbers(c.confirmed_units, rows);
+    for (const a of rows) {
+      const s = a.course_sessions;
+      if (a.status !== "done" || !s || s.status === "cancelled" || isImportSource(s.source)) continue;
+      out.push({
+        studentId: Number(c.student_id), sessionId: Number(a.session_id), courseId: Number(c.id),
+        heldOn: s.held_on, startTime: (s.start_time || "").slice(0, 5) || null, level: c.level,
+        unitNo: nums.get(Number(a.session_id)) ?? null, trainerId: s.trainer_id ?? c.trainer_id ?? null,
+      });
+    }
+  }
+  return out.sort((x, y) => String(y.heldOn).localeCompare(String(x.heldOn))
+    || String(y.startTime || "").localeCompare(String(x.startTime || "")) || y.sessionId - x.sessionId);
+}
+
+// 직강 상태 한 낱말(트레이너 앱 목록 courseState · 계약 §9.12 · §61) — list = summarizeCourses 결과 한 사람 몫.
+//   진행 중(active) 강의가 하나라도 있으면 active · 멈춘(paused) 강의만 있으면 paused · 둘 다 없으면 null.
+function courseStateOf(list) {
+  const st = new Set((list || []).map((c) => c.status));
+  return st.has("active") ? "active" : st.has("paused") ? "paused" : null;
+}
+
+// 수강생들의 출석 회차(위 attendedSessions) — 취소(환불) 강의는 뺀다(수강생 앱 카드와 같다 · hideCancelled).
+//   두 왕복(강의 → 출석+회차 임베드). 조회가 실패하면 빈 배열 — 부르는 쪽은 「직강 출석 없음」으로 그린다(레슨 목록은 그대로).
+async function loadAttendedSessions(sbSelect, studentIds) {
+  const ids = [...new Set((Array.isArray(studentIds) ? studentIds : [studentIds]).map(Number)
+    .filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return [];
+  try {
+    const courses = await sbSelect("courses",
+      `select=id,student_id,level,confirmed_units,trainer_id&student_id=in.(${ids.join(",")})&status=neq.cancelled`);
+    if (!courses.length) return [];
+    const att = await sbSelect("course_attendance",
+      "select=course_id,session_id,units,status,course_sessions(held_on,start_time,status,source,trainer_id)"
+      + `&course_id=in.(${courses.map((c) => c.id).join(",")})`);
+    return attendedSessions(courses, att);
+  } catch (e) { console.error("course_attended", e?.message); return []; }
+}
+
+// 강의별 반 · 회차 번호(복기 anchorDetail · 계약 §8.3) — Map<강의 id, { level, nums: Map<회차 id, 번호> }> · 조회 실패는 빈 Map
+async function loadUnitNumbers(sbSelect, courseIds) {
+  const ids = [...new Set((courseIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  const out = new Map();
+  if (!ids.length) return out;
+  try {
+    const [courses, att] = await Promise.all([
+      sbSelect("courses", `select=id,level,confirmed_units&id=in.(${ids.join(",")})`),
+      sbSelect("course_attendance",
+        `select=course_id,session_id,units,status,course_sessions(held_on,start_time,status,source)&course_id=in.(${ids.join(",")})`),
+    ]);
+    const byCourse = {};
+    for (const a of att) (byCourse[a.course_id] ||= []).push(a);
+    for (const c of courses) out.set(Number(c.id), { level: c.level, nums: unitNumbers(c.confirmed_units, byCourse[c.id] || []) });
+  } catch (e) { console.error("course_unit_numbers", e?.message); }
+  return out;
+}
+
 // ── 직강 반 수업(§59 · 계약 §9.21) ──
 // 반 키(API) ↔ 강의 반(DB). 키는 레벨(§9.16 · games-view LEVELS)과 같은 낱말이다.
 const COURSE_LEVEL_BY_KEY = Object.freeze({ beginner: "초급반", intermediate: "중급반", advanced: "심화반" });
@@ -151,5 +243,6 @@ function pickCourse(list, levelKr) {
   return open[0] || mine.sort(byStart).at(-1);
 }
 
-module.exports = { loadCourseProgress, summarizeCourses, pickCourse, attendanceKind, COURSE_LEVEL_BY_KEY, COURSE_KEY_BY_LEVEL,
-  CLASS_LEVELS };
+module.exports = { loadCourseProgress, summarizeCourses, pickCourse, attendanceKind, isImportSource, unitNumbers,
+  attendedSessions, loadAttendedSessions, loadUnitNumbers, courseStateOf,
+  COURSE_LEVEL_BY_KEY, COURSE_KEY_BY_LEVEL, CLASS_LEVELS };

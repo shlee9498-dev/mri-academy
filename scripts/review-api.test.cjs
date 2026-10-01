@@ -250,21 +250,26 @@ test("과제 기한 검사 — 그 수강생의 예약 · 내 슬롯 · booked �
   assert.equal(T.dueCheck({ ...base, booking: null }), null);
 });
 
-test("앵커 바꾸기 허용 — draft 는 무엇이든 · 연결 끊김은 다시 잇기 · 보낸 수업 복기는 수업으로만(§44)", () => {
+test("앵커 바꾸기 허용 — draft 는 무엇이든 · 연결 끊김은 다시 잇기 · 보낸 복기는 내 수업 · 내 직강 회차로만(§44 · §61)", () => {
   const A = T.anchorChangeAllowed;
   const pub = { status: "published", anchor_kind: "lesson", lesson_session_id: 31, course_session_id: null };
   assert.equal(A({ status: "draft", anchor_kind: "lesson", lesson_session_id: 31 }, "none"), true);
   assert.equal(A({ status: "draft", anchor_kind: "pending" }, "course"), true);
   assert.equal(A(pub, "lesson"), true);                                                     // 보낸 수업 복기 → 다른 내 수업
+  assert.equal(A(pub, "course"), true);                                                     // → 내 직강 회차(§61)
   assert.equal(A(pub, "none"), false);                                                      // 수업을 떼어 자유 기록으로는 안 된다
-  assert.equal(A(pub, "course"), false);
   assert.equal(A(pub, "pending"), false);
   assert.equal(A({ ...pub, lesson_session_id: null }, "none"), true);                       // 연결 끊김은 종전대로
   const course = { status: "published", anchor_kind: "course", lesson_session_id: null, course_session_id: 7 };
-  assert.equal(A(course, "course"), false);                                                 // 강의 복기는 그대로 잠김
-  assert.equal(A(course, "lesson"), false);
+  assert.equal(A(course, "course"), true);                                                  // 직강 복기 → 다른 회차(§61)
+  assert.equal(A(course, "lesson"), true);
+  assert.equal(A(course, "none"), false);
   assert.equal(A({ ...course, course_session_id: null }, "lesson"), true);
-  assert.equal(A({ status: "published", anchor_kind: "none" }, "lesson"), false);           // 자유 기록은 보낸 뒤 연결 불가(종전)
+  const free = { status: "published", anchor_kind: "none" };
+  assert.equal(A(free, "course"), true);                                                    // 「연결 없음」으로 보낸 복기 → 직강 회차(#19 · §61)
+  assert.equal(A(free, "lesson"), true);
+  assert.equal(A(free, "none"), false);
+  assert.equal(A(free, "pending"), false);
   assert.equal(A(null, "lesson"), false);
 });
 
@@ -277,6 +282,13 @@ test("연결 수업 변경 DM — 월/일 · 끊긴 연결 · 받는 트레이�
     "📝 연결 수업이 바뀌었어요 — 가나다 복기 9/25 → 9/22");
   assert.equal(T.relinkDmText({ studentName: null, fromPlayedAt: null, toPlayedAt: "2026-09-22", newRecipientName: "트레이너B" }),
     "📝 연결 수업이 바뀌었어요 — 수강생 복기 연결 끊긴 수업 → 9/22\n이제 트레이너B 트레이너가 받아요");
+  // §61 — 연결 없음 · 직강 회차
+  assert.equal(T.relinkDmText({ studentName: "가나다", fromKind: "none", fromPlayedAt: null, toKind: "course", toPlayedAt: "2026-09-29",
+    newRecipientName: "트레이너A" }), "📝 연결 수업이 바뀌었어요 — 가나다 복기 연결 없음 → 9/29 직강\n이제 트레이너A 트레이너가 받아요");
+  assert.equal(T.relinkDmText({ studentName: "가나다", fromKind: "course", fromPlayedAt: "2026-09-29", toKind: "lesson", toPlayedAt: "2026-09-02" }),
+    "📝 연결 수업이 바뀌었어요 — 가나다 복기 9/29 직강 → 9/2");
+  assert.equal(T.relinkDmText({ studentName: "가나다", fromKind: "course", fromPlayedAt: null, toKind: "course", toPlayedAt: "2026-09-28" }),
+    "📝 연결 수업이 바뀌었어요 — 가나다 복기 연결 끊긴 수업 → 9/28 직강");
 });
 
 test("§57 범위 바꾸기 — 공개 대기 중이면 같은 값도 고른 것으로(대기 해제) · 대기 없고 같으면 그대로", () => {

@@ -4,7 +4,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const ops = require("../ops-status.cjs");
-const { summarizeCourses, pickCourse, attendanceKind } = require("../course-progress.cjs");
+const { summarizeCourses, pickCourse, attendanceKind, unitNumbers, attendedSessions, courseStateOf } = require("../course-progress.cjs");
 
 test("주 = 그 날이 든 월~일 · 날짜 판정", () => {
   assert.deepEqual(ops.weekOf("2025-01-08"), { from: "2025-01-06", to: "2025-01-12" });   // 수
@@ -241,7 +241,9 @@ test("직강 숫자 · 남은 회차 적은 직강생 · 출석 종류(§59d · 
   const bookings = [{ slot_id: 1, status: "no_show", span_head_id: null }, { slot_id: 3, status: "no_show", span_head_id: null },
     { slot_id: 2, status: "booked", span_head_id: null }];
   assert.deepEqual(ops.buildCourseSummary({ slots, courseSessions, attendance, bookings, today: "2025-01-08" }),
-    { classesWeek: 3, classesToday: 2, attendanceWeek: 3, absentWeek: 1 });
+    { classesWeek: 3, classesToday: 2, attendanceWeek: 3, absentWeek: 1,
+      // §61 나눠 세기 — 열어둔 칸 2(오늘 1) · 진행한 강의 = 출석 done 이 있는 회차 10 · 11(오늘 11) · 취소 회차 12 · 취소 출석뿐인 13 은 안 든다
+      slotsWeek: 2, slotsToday: 1, heldWeek: 2, heldToday: 1 });
 
   const prog = new Map([
     [7, [{ level: "심화반", status: "active", startedOn: "2026-01-01", remainingUnits: 0, unitsTotal: 8 },
@@ -259,4 +261,70 @@ test("직강 숫자 · 남은 회차 적은 직강생 · 출석 종류(§59d · 
   assert.deepEqual([attendanceKind("추가", "panel"), attendanceKind("보강", "panel"), attendanceKind(" 추가", "panel"),
     attendanceKind("긴 이관 메모", "sheet_import"), attendanceKind(null, "photo_recount"), attendanceKind(null, "panel")],
     ["add", "makeup", "attend", "import", "import", "attend"]);
+});
+
+test("§61 회차 번호 — 날짜 없는 확인분 · 이관 묶음을 먼저 세고 날짜 있는 출석을 날짜 · 시각순으로 더한다", () => {
+  const cs = (held_on, start_time, source = "panel", status = "done") => ({ held_on, start_time, source, status });
+  const rows = [
+    { session_id: 9, units: 1, status: "done", course_sessions: cs("2026-09-29", null) },
+    { session_id: 7, units: 1, status: "done", course_sessions: cs("2026-09-28", null) },
+    { session_id: 8, units: 1, status: "done", course_sessions: cs("2026-09-28", "19:00:00") },              // 같은 날 늦은 시각이 뒤
+    { session_id: 3, units: "12.00", status: "done", course_sessions: cs("2026-05-01", null, "sheet_import") },   // 이관 묶음 — 먼저 센다 · 번호 없음
+    { session_id: 4, units: 1, status: "cancelled", course_sessions: cs("2026-09-20", null) },              // 취소 출석
+    { session_id: 5, units: 1, status: "done", course_sessions: cs("2026-09-21", null, "panel", "cancelled") },   // 취소 회차
+    { session_id: 6, units: 1, status: "scheduled", course_sessions: cs("2026-10-05", null, "panel", "scheduled") },
+  ];
+  const m = unitNumbers("2.00", rows);
+  assert.deepEqual([...m.entries()], [[7, 15], [8, 16], [9, 17]]);                                        // 2 + 12 → 15 · 16 · 17
+  assert.deepEqual([...unitNumbers(0, [{ session_id: 1, units: 0.5, status: "done", course_sessions: cs("2026-09-01", null) },
+    { session_id: 2, units: 1, status: "done", course_sessions: cs("2026-09-02", null) }]).entries()], [[1, 0.5], [2, 1.5]]);
+  assert.equal(unitNumbers(null, []).size, 0);
+});
+
+test("§61 출석 회차 목록 — done · 회차 취소 아님 · 이관 아님 · 최근부터 · 진행자 = 회차 → 강의 담당", () => {
+  const courses = [{ id: 17, student_id: 37, level: "중급반", confirmed_units: "0.00", trainer_id: 4 },
+                   { id: 20, student_id: 37, level: "개인강의", confirmed_units: null, trainer_id: null }];
+  const cs = (held_on, start_time, trainer_id = null, source = "panel", status = "done") => ({ held_on, start_time, source, status, trainer_id });
+  const att = [
+    { course_id: 17, session_id: 7, units: 1, status: "done", course_sessions: cs("2026-09-28", null) },
+    { course_id: 17, session_id: 8, units: 1, status: "done", course_sessions: cs("2026-09-29", "19:00:00", 5) },
+    { course_id: 17, session_id: 2, units: 3, status: "done", course_sessions: cs("2026-05-01", null, null, "photo_recount") },
+    { course_id: 20, session_id: 11, units: 1, status: "cancelled", course_sessions: cs("2026-09-30", null) },
+    { course_id: 20, session_id: 12, units: 1, status: "done", course_sessions: null },                  // 회차 행 없음 — 뺀다
+  ];
+  assert.deepEqual(attendedSessions(courses, att), [
+    { studentId: 37, sessionId: 8, courseId: 17, heldOn: "2026-09-29", startTime: "19:00", level: "중급반", unitNo: 5, trainerId: 5 },
+    { studentId: 37, sessionId: 7, courseId: 17, heldOn: "2026-09-28", startTime: null, level: "중급반", unitNo: 4, trainerId: 4 },
+  ]);
+  assert.deepEqual(attendedSessions([], att), []);
+});
+
+test("§61 직강 상태 한 낱말 — 진행 중 하나라도 active · 멈춤만 paused · 없으면 null", () => {
+  assert.equal(courseStateOf([{ status: "paused" }, { status: "active" }]), "active");
+  assert.equal(courseStateOf([{ status: "paused" }]), "paused");
+  assert.equal(courseStateOf([]), null);
+  assert.equal(courseStateOf(null), null);
+});
+
+test("§61 예약 · 출석 없는 직강 칸도 수업 줄(slot) — 오늘 · 이번 주 수업에 든다 · 출석 받은 칸 · 예약 있는 칸 · 취소 칸은 slot 이 아니다", () => {
+  const slots = [
+    { id: 1, trainer_id: 4, slot_start: "2026-10-01T10:00:00Z", lesson_type: "course", course_level: null, duration_min: 180, capacity: 3, status: "open" },
+    { id: 2, trainer_id: 4, slot_start: "2026-10-02T00:00:00Z", lesson_type: "course", course_level: "심화반", duration_min: 180, capacity: 3, status: "open" },
+    { id: 3, trainer_id: 4, slot_start: "2026-10-03T00:00:00Z", lesson_type: "course", course_level: null, duration_min: 180, capacity: 3, status: "open" },
+    { id: 4, trainer_id: 4, slot_start: "2026-10-04T00:00:00Z", lesson_type: "course", course_level: null, duration_min: 180, capacity: 3, status: "cancelled" },
+    { id: 5, trainer_id: 2, slot_start: "2026-10-01T05:00:00Z", lesson_type: "participate", duration_min: 60, capacity: 4, status: "open" },
+  ];
+  const bookings = [{ id: 10, slot_id: 2, student_id: 7, status: "booked", span_head_id: null, duration_min: null }];
+  const courseSessions = [{ id: 40, held_on: "2026-10-03", start_time: "09:00:00", duration_min: 180, label: "중급반", status: "done", slot_id: 3, trainer_id: 4 }];
+  const attendance = [{ session_id: 40, course_id: 5 }];
+  const courses = [{ id: 5, student_id: 8, trainer_id: 4, level: "중급반" }];
+  const ls = ops.buildLessons({ slots, bookings, sessions: [], courseSessions, attendance, courses });
+  assert.deepEqual(ls.map((l) => [l.kind, l.ref, l.date, l.lessonType, l.courseLevel, l.studentIds.length, l.status]), [
+    ["slot", 1, "2026-10-01", "course", null, 0, "open"],          // 예약 없음 — 원장이 연 칸 그대로
+    ["booking", 10, "2026-10-02", "course", "심화반", 1, "booked"],
+    ["course", 40, "2026-10-03", null, undefined, 1, "done"],     // 출석 받은 칸은 회차 줄 하나
+  ]);                                                              // 그룹 레슨 칸(예약 없음)은 종전대로 안 나온다 · 취소 칸 없음
+  const rows = ops.buildTrainerRows({ trainers: [{ id: 4, name: "원장", role: "owner" }], lessons: ls, sessions: [], openSlots: [],
+    assigned: {}, review: {}, today: "2026-10-01", nowMs: Date.parse("2026-10-01T00:00:00Z") });
+  assert.deepEqual([rows[0].lessonsToday, rows[0].lessonsWeek], [1, 3]);
 });

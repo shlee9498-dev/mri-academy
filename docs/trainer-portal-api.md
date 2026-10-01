@@ -79,6 +79,7 @@ body 없음(다른 키 있으면 400) · 세션 헤더 **불요**(있어도 검�
 - `remainingGames` = registered − played − held. **음수 그대로**(0 클램프 금지). §23 `portal_remaining_games()` · 수강생 앱 `/summary` 와 같은 식.
 - 정렬: 담당(isPrimary) 먼저, 이름순. `status` ∈ active · paused · done(done 은 90일 진행분에만 나타난다).
 - `lastLessonOn` 은 **`lesson_sessions` 행이 하나도 없을 때만 null**(신규 수강생 · 아직 수업 전). 예약만 있고 수업이 없어도 null.
+  **2026-10-01(§61 · 오너 검수)부터 직강 출석도 「마지막 수업」이다** — 출석 `done` · 회차 취소 아님 · 이관 묶음 아님(날짜가 실제 수업일이 아닐 수 있다) 중 가장 늦은 날과 레슨 중 늦은 쪽. 레슨 · 직강 출석이 둘 다 없을 때만 null.
 - `pubgName` = `students.pubg_name`(배그 닉네임 · 2026-09-25 추가). 비어 있으면 **null** — 앱은 「이름」만 표시하고, 있으면 「이름(pubgName)」.
 
 ### GET /journals?days=30 — 범위 내 수강생의 수업 일기 (120회/분 · days 1~180 · 최근 갱신순 최대 200건)
@@ -213,7 +214,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | | `isPrimary` | boolean | 아니오 | true = 담당, false = 최근 90일 진행만 |
 | | `registeredGames` `playedGames` `playedWithMe` `heldGames` | integer | 아니오 | ≥ 0 |
 | | `remainingGames` | integer | 아니오 | **음수 가능** |
-| | `lastLessonOn` | string(YYYY-MM-DD) | **가능** | `lesson_sessions` 0건이면 null(아직 수업 전) |
+| | `lastLessonOn` | string(YYYY-MM-DD) | **가능** | 레슨(`lesson_sessions`) · 직강 출석(§61 · 2026-10-01) 둘 다 0건이면 null(아직 수업 전) |
 | GET /journals | `id` `sessionId` | string | 아니오 | 불투명 id |
 | | `studentDisplayName` | string | 아니오 | 범위 맵에서 채움 · `"?"` 발생 조건 없음 |
 | | `studentPubgName` | string | **가능** | 범위 맵의 `students.pubg_name` · 비어 있으면 null |
@@ -418,10 +419,10 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | 라우트 | 본문 | 응답 · 규칙 |
 |---|---|---|
 | `GET /reviews?days=90` | | `{ reviews: [요약 §8.3] }` — 내 복기(숨김 제외) · 최근 수정순 · 최대 200 · `days` 1~365(기본 90 · 수정 시각 기준) |
-| `GET /reviews/recipients` | | `{ recipients:[{ staffId, displayName, isPrimary, lastLessonOn }], defaultStaffId, defaultVisibility }` — 담당 ∪ 최근 90일 수업 트레이너(비활성 제외) · 최근 수업순 · 기본 = 최근 수업 트레이너 → 없으면 담당 · 둘 다 없으면 빈 배열 + null. **`defaultVisibility`**(2026-09-26 계약 보강 B) = 내가 마지막으로 보낸 복기의 범위 `private` · `students` · 보낸 적 없으면 **null**. 보내기에서 범위를 생략했을 때 서버가 쓰는 값과 **같은 함수**로 센다 — 숨긴 복기 · 엑셀 출처(보낼 때 private 강제)도 센다 · 트레이너가 쓴 이관 복기는 세지 않는다 · `group` 은 `private`. 확인창은 이 값을 미리 골라 두고, null 이면 범위를 꼭 고르게 한다(생략하면 400 `visibility_required`) |
+| `GET /reviews/recipients` | | `{ recipients:[{ staffId, displayName, isPrimary, lastLessonOn }], defaultStaffId, defaultVisibility }` — 담당 ∪ 최근 90일 수업 트레이너(비활성 제외) · 최근 수업순 · 기본 = 최근 수업 트레이너 → 없으면 담당 · 둘 다 없으면 빈 배열 + null. **직강(§8.12 · 2026-10-01)**: 최근 90일 직강 출석은 원장의 「마지막 수업」으로 센다(직강 복기는 원장이 받는다) · 수업 기록 없이 진행 중 강의만 있으면 원장이 후보 · 기본 · 판수 조정 행은 수업이 아니다. **`defaultVisibility`**(2026-09-26 계약 보강 B) = 내가 마지막으로 보낸 복기의 범위 `private` · `students` · 보낸 적 없으면 **null**. 보내기에서 범위를 생략했을 때 서버가 쓰는 값과 **같은 함수**로 센다 — 숨긴 복기 · 엑셀 출처(보낼 때 private 강제)도 센다 · 트레이너가 쓴 이관 복기는 세지 않는다 · `group` 은 `private`. 확인창은 이 값을 미리 골라 두고, null 이면 범위를 꼭 고르게 한다(생략하면 400 `visibility_required`) |
 | `POST /reviews` | `{ anchorKind, sessionId?, courseId?, courseSessionId?, source? }` | `{ review: 상세 §8.4, existing }` — `anchorKind` = `lesson`(sessionId) · `course`(courseId+courseSessionId) · `none` · `pending`. 수업·강의 연결이 있고 내 복기가 이미 있으면 새로 만들지 않고 그 복기 + `existing:true` · 그 복기를 숨겼으면 409 `anchor_taken` · 남의 수업·강의 400 `anchor_student_mismatch` · `source` = `app`(기본) · `xlsx`(앱이 엑셀을 파싱해 만들 때) |
 | `GET /reviews/:id` | | `{ review: 상세 §8.4 }` — 내 복기 · 또는 공유 복기(`visibility=students` · 보냄 · 숨김 아님 · 내가 「수강생 전체」 범위 안). 내 복기면 읽음 기록 |
-| `PUT /reviews/:id` | `{ title?, body?, srcFileName?, anchorKind?, sessionId?, courseId?, courseSessionId? }` | `{ review: 요약 §8.3 }` — 내가 쓴 복기만(보낸 뒤에도 수정 가능 → `updatedAt > publishedAt` = 「수정됨」). 제목 60 · 본문 8000 · 파일명 200자 넘으면 400 `review_too_long`. 앵커는 `anchorKind` 와 같이만 · draft 또는 연결 끊김일 때 · **보낸 수업 복기는 다른 내 수업(`anchorKind:"lesson"`)으로만**(§8.10 · 2026-09-30) — 그 밖은 409 `review_not_draft` · 보낸 복기를 `pending` 으로는 400 `anchor_required` · 이미 복기가 있는 수업이면 409 `anchor_taken` |
+| `PUT /reviews/:id` | `{ title?, body?, srcFileName?, anchorKind?, sessionId?, courseId?, courseSessionId? }` | `{ review: 요약 §8.3 }` — 내가 쓴 복기만(보낸 뒤에도 수정 가능 → `updatedAt > publishedAt` = 「수정됨」). 제목 60 · 본문 8000 · 파일명 200자 넘으면 400 `review_too_long`. 앵커는 `anchorKind` 와 같이만 · draft 또는 연결 끊김일 때 · **보낸 복기는 내 수업(`lesson`) · 내 직강 회차(`course`)로**(§8.10 · §8.12 · 2026-10-01 연결 없음 · 직강 복기도) — 자유 기록(`none`)으로 떼기는 409 `review_not_draft` · 보낸 복기를 `pending` 으로는 400 `anchor_required` · 이미 복기가 있는 수업 · 회차면 409 `anchor_taken` |
 | `DELETE /reviews/:id` | | 204 — draft = 삭제(사진 파일 먼저) · 보낸 복기 = **숨김**(목록·상세·피드·트레이너 어디에도 안 나옴 · 되살리기·완전 삭제는 오너 SQL) |
 | `POST /reviews/:id/publish` | `{ recipientTrainerId?, visibility? }` | `{ published:true, recipientDisplayName, visibility }` — `pending` 400 `anchor_required`. **범위**: 요청값(`private`·`students` · `group` 은 400 `visibility_invalid`) → 없으면 내가 마지막으로 보낸 복기의 값(= `GET /reviews/recipients` 의 `defaultVisibility`) → 그것도 없으면(첫 보내기) 400 `visibility_required` · 엑셀 출처(`source ≠ app`)는 요청값과 무관하게 `private`. **받는 트레이너**: 수업 = 그 수업 트레이너 · 강의 = 오너 · 자유 기록(또는 연결 끊김) = `recipientTrainerId` 필수(없으면 400 `recipient_required` · 후보 밖 400 `recipient_invalid`). 이미 보낸 복기면 현재 상태를 돌려준다(멱등) |
 | `PUT /reviews/:id/visibility` | `{ visibility }` | `{ visibility, visibilityChangedAt }` — 내 복기(트레이너가 쓴 이관 복기 포함) · 숨김 아님 · 보낸 뒤에도 · 좁히면 즉시 남에게 404 |
@@ -449,11 +450,12 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `anchorKind` | string | 아니오 | `lesson` · `course` · `none` · `pending` |
 | `sessionId` · `courseId` · `courseSessionId` | string | **가능** | 앵커 종류에 맞는 것만 값. **연결 끊김 = `anchorKind` 는 lesson/course 인데 id 가 null**(추가 키 없음 · 서버 설계 §5.5) |
 | `playedAt` | string(YYYY-MM-DD) | **가능** | 수업일(강의 = 회차 날짜) · none·pending · 연결 끊김은 null |
+| `anchorDetail` | object | **가능** | 연결 대상 한 줄(§8.12 · 2026-10-01) — 수업 `{ games }`(그 수업 판수) · 직강 회차 `{ level, courseLevel, unitNo }`(「중급반 14회차」) · 연결 없음 · 고르기 전 · 연결 끊김 = **null**(화면 「수업 연결 전」) |
 | `title` | string | **가능** | |
 | `status` | string | 아니오 | `draft` · `published` |
 | `authorRole` | string | 아니오 | `student` · `trainer`(트레이너가 쓴 이관 복기 — 내용 수정·삭제 불가 · 범위만) |
 | `recipientDisplayName` | string | **가능** | 보낸 복기의 받는 트레이너 · draft 는 null |
-| `gameCount` · `imageCount` | integer | 아니오 | ≥ 0 |
+| `gameCount` · `imageCount` | integer | 아니오 | ≥ 0 — `gameCount` = **복기에 적은 판 기록 수**(판 · 맵 줄)다. 그 수업 판수가 아니다 → 수업 판수는 `anchorDetail.games`(목록 「0판」 = 판 기록 0) |
 | `hasFeedback` · `unreadFeedback` | boolean | 아니오 | 답 있음 · 내가 마지막으로 연 뒤에 새 답이 있음 |
 | `updatedAt` | string(ISO) | 아니오 | 판·페이즈 변경도 반영 |
 | `publishedAt` | string(ISO) | **가능** | draft 는 null |
@@ -493,7 +495,8 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `recipientDisplayName` · `visibilityChangedAt` · `srcFileName` | string | **가능** | **내 복기에만** 값(공유 열람은 늘 null) |
 | `createdAt` | string(ISO) | 아니오 | |
 | `readOnly` | boolean | 아니오 | true = 공유 열람 · 트레이너가 쓴 복기 → 편집 라우트는 404 |
-| `anchorChanges[]` | array | 아니오 | 보낸 뒤 연결 수업을 바꾼 기록(§8.10) `{ fromPlayedAt, toPlayedAt, changedAt }` · 오래된 순 · 최근 20건 · `fromPlayedAt` 은 null 가능(연결 끊긴 복기를 다시 이은 경우) · **내 복기에만**(공유 열람 · draft 는 빈 배열) |
+| `anchorChanges[]` | array | 아니오 | 보낸 뒤 연결 수업을 바꾼 기록(§8.10) `{ fromKind, toKind, fromPlayedAt, toPlayedAt, changedAt }` · 오래된 순 · 최근 20건 · `fromPlayedAt` 은 null 가능(연결 끊긴 · 연결 없던 복기를 이은 경우 — `fromKind=none` 이면 「연결 없음」) · **내 복기에만**(공유 열람 · draft 는 빈 배열) |
+| `anchorDetail` | object | **가능** | 요약(§8.3)과 같다 — 공유 열람자는 null(세션 id 를 안 싣는 것과 같은 선) |
 | `games[]` | array | 아니오 | `{ id, ord, seqLabel, map, mapRaw, phases:[{ id, ord, phaseFrom, phaseTo, phaseToEnd, headerRaw, lines:[{ ord, text, kind, suggestedKind }], tags, suggestedTags, images:[이미지] }] }` · ord 순 |
 | `attachments[]` | array | 아니오 | 페이즈에 붙지 않은 사진(이미지 모양 같음) |
 | 이미지 | object | — | `{ id, ord, displayUrl, thumbUrl, originalUrl?, width, height, annotations:[{ authorRole, authorDisplayName, v, shapes, version, mine }] }` · URL 은 **서명 10분**(캐시하지 말고 상세를 다시 부를 때 새 URL) · `originalUrl` 은 **내 복기에만** · **null 가능(PR-2 확정)**: `displayUrl` — 공유 열람인데 표시본이 아직 없을 때(내 복기면 원본 URL 로 대신) · `thumbUrl` — 썸네일이 아직 없을 때(앱은 `displayUrl` 을 쓴다) · `width`·`height` — 서버가 크기를 못 읽었을 때 · `shapes` = **도형 배열**(§8.8) · `v` = 형식 버전(1) · `mine` = 내 레이어 |
@@ -608,18 +611,18 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | 항목 | 규칙 |
 |---|---|
 | 누가 | 복기를 쓴 수강생 본인(내가 쓴 · 숨기지 않은 복기 — 아니면 404 `review_not_found`) |
-| 무엇을 | 보낸 **수업** 복기(`anchorKind=lesson`)의 수업만 **다른 내 수업**으로. 수업 → 자유 기록 · 강의로는 안 된다(409 `review_not_draft`) · 강의 복기 · 자유 기록은 보낸 뒤 연결을 못 바꾼다(종전 그대로 · 연결 끊김만 다시 잇기) |
+| 무엇을 | 보낸 복기(수업 · 직강 · 연결 없음)를 **내 수업 · 내 직강 회차**로(§8.12 · 2026-10-01 넓힘 — 종전은 수업 → 수업만). 자유 기록으로 떼기는 안 된다(409 `review_not_draft`) |
 | 트레이너 답 전 | 자유롭게 바꾼다 · 알림 없음 |
 | 트레이너 답 뒤 | 바꿀 수 있다 · 서버가 **답한 트레이너마다** 디스코드 DM 「📝 연결 수업이 바뀌었어요 — {이름} 복기 {전 날짜} → {후 날짜}」 · 받는 트레이너가 바뀌었으면 「이제 {트레이너} 트레이너가 받아요」 한 줄 더 · DM 실패는 변경을 되돌리지 않는다 |
-| 받는 트레이너 | 새 수업의 트레이너로 바뀐다(보내기 규칙과 같다) — 새 트레이너 목록에 「답 기다려요」로 뜨고, 전 트레이너는 범위(§3) 안이면 계속 읽을 수 있다(답은 못 한다) |
+| 받는 트레이너 | 새 수업의 트레이너로 바뀐다 · 직강 회차면 원장(보내기 규칙과 같다) — 새 트레이너 목록에 「답 기다려요」로 뜨고, 전 트레이너는 범위(§3) 안이면 계속 읽을 수 있다(답은 못 한다) |
 | 그대로인 것 | 트레이너 답 · 판 · 페이즈 · 사진 · 그리기 · 반응 · 공개 범위 · 보낸 시각 |
 | 바뀌는 것 | 연결 수업(`sessionId` · `playedAt`) · 받는 트레이너 · `updatedAt`(트레이너 목록에 「안 읽음」으로 다시 뜬다) |
-| 변경 기록 | 한 번 바꿀 때마다 `review_anchor_changes` 에 한 줄(전·후 수업 · 날짜 · 받는 트레이너 · 답 유무 · 시각). 바꾸기와 기록은 DB 함수 하나(`relink_review_lesson`)라 **같이 되거나 같이 안 된다**. 오너가 SQL 로 고친 것도 같은 표에 남는다(`changed_by = owner`) |
-| 상세 표시 | `anchorChanges[]` = `{ fromPlayedAt, toPlayedAt, changedAt }`(§8.4) — 작성자 본인 · 전체 필드를 보는 트레이너에게만 |
+| 변경 기록 | 한 번 바꿀 때마다 `review_anchor_changes` 에 한 줄(전·후 종류 · 수업 · 직강 회차 · 날짜 · 받는 트레이너 · 답 유무 · 시각). 바꾸기와 기록은 DB 함수 하나(`relink_review_anchor` · §61 — 종전 `relink_review_lesson` 의 일을 넓힌 것)라 **같이 되거나 같이 안 된다**. 오너가 SQL 로 고친 것도 같은 표에 남는다(`changed_by = owner`) |
+| 상세 표시 | `anchorChanges[]` = `{ fromKind, toKind, fromPlayedAt, toPlayedAt, changedAt }`(§8.4) — 종류 = `lesson` · `course` · `none`(§61 전 기록은 `lesson`) · 작성자 본인 · 전체 필드를 보는 트레이너에게만 |
 | 같은 수업을 다시 보내면 | 아무것도 안 바뀐다(기록 · DM 없음 · 응답은 현재 요약) |
 | draft | 종전 그대로(무엇으로든 바꾼다 · 기록 · DM 없음) |
 
-**앱 쪽(반장)**: 보낸 복기 상세에 「연결 수업 바꾸기」 → 수업 고르기(`GET /sessions` 중 `hasReview=false` 인 내 수업) → 위 `PUT`. 답이 있는 복기(`hasFeedback`)면 확인창에서 「트레이너에게 알림이 가요」를 먼저 보여 준다. 409 `anchor_taken` = 그 수업엔 이미 복기가 있다.
+**앱 쪽(반장)**: 보낸 복기 상세에 「연결 수업 바꾸기」 → 수업 고르기(`GET /sessions` 의 `sessions[]` · `courseSessions[]` 중 `hasReview=false` · §8.12) → 위 `PUT`. 답이 있는 복기(`hasFeedback`)면 확인창에서 「트레이너에게 알림이 가요」를 먼저 보여 준다. 409 `anchor_taken` = 그 수업엔 이미 복기가 있다.
 
 ### 8.11 디스코드에서 옮겨온 복기 (2026-10-01 · 어플 9/30 「1순위」 · §57 · 서버 반영)
 
@@ -629,7 +632,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 |---|---|
 | 무엇이 옮겨지나 | 트레이너 서버(현태 · 준구 · 무리 강의)의 수강생 피드백 채널 글. 수강생 글 = 수강생 복기 · 트레이너 글 = 그 복기의 답(`feedback[]` · `kind=overall`) · 앞선 수강생 글이 없는 트레이너 글 = 트레이너가 쓴 복기(`authorRole=trainer`) · 사진 = `attachments[]`(트레이너 답 사진은 `uploadedByRole=trainer`) · 영상 · 파일은 옮기지 않는다 |
 | 시각 | `createdAt` · `publishedAt` · `updatedAt` · 답의 `createdAt` = **디스코드에 쓴 원래 시각**(목록이 원래 순서대로 섞인다) |
-| 제목 · 연결 | `title` = 「9/14 수업」(강의 채널은 「9/14 강의」) · 그 날짜에 그 트레이너 수업 기록이 정확히 1건이면 `anchorKind=lesson`(`playedAt` 있음) · 아니면 `none`(자유 기록 모양 · 보낸 복기라 연결은 못 바꾼다 — §8.10 종전 규칙) |
+| 제목 · 연결 | `title` = 「9/14 수업」(강의 채널은 「9/14 강의」) · 그 날짜에 그 트레이너 수업 기록이 정확히 1건이면 `anchorKind=lesson`(`playedAt` 있음) · 아니면 `none`(자유 기록 모양 · 수강생이 내 수업 · 내 직강 회차로 이을 수 있다 — §8.10 · §8.12) |
 | 목록 추가 키(§8.3 · 수강생 · 트레이너 둘 다) | `source` string · 아니오 · `app` · `xlsx` · `discord` · `journal_import` / `publicAt` string(ISO) · **가능** · 공개 대기 중이면 그 끝 시각 · 아니면 null |
 | 상세 추가 키(§8.4) | `publicAt` — 본인 · 전체 필드를 보는 트레이너에게만(공유 열람자는 null) · `source` 는 종전부터 있다 |
 | 공개 대기 | `visibility=private` + `publicAt` 있음 = 「나와 트레이너만 · {publicAt} 에 수강생 모두에게 보여요」. 그 시각이 지나면 서버(10분 틱)가 `visibility=students` · `publicAt=null` 로 바꾼다 |
@@ -641,6 +644,62 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 **트레이너 메모(「수강생 메모」 · 다음 PR · 모양 먼저)** — 트레이너 개인 노트 채널(현태)의 글은 수강생 복기로 옮기지 않고 트레이너 앱 메모로 옮긴다(트레이너 · 원장만 · 수강생 앱에는 없다). 채널 읽기 권한을 오너가 봇에 준 뒤 옮긴다.
 
 `GET /api/trainer-portal/students/:id/notes` → `{ "notes": [{ "id", "body", "writtenAt", "source", "authorDisplayName" }] }` — `id` 불투명 · `source` = `discord` · `app` · 최신순 · 그 수강생을 볼 수 있는 트레이너(§9.14 범위) · 원장만(아니면 404) · 키 이름에 `memo` 를 쓰지 않는다(응답 가드 어간) · 쓰기(`POST`)는 그다음.
+
+
+### 8.12 직강 회차 연결 · 「0판」 자리 (2026-10-01 · 어플 전달 「직강 · 원장 데이터 구멍」 · 오너 10/1 전수 검사 · §61)
+
+**반장 계약 한 줄**: `GET /sessions` 에 `courseSessions[]`(직강 출석 회차) · 수업 고르기에 레슨과 같이 보이고 고르면 `{ anchorKind:"course", courseId, courseSessionId }` → 받는 사람 = 원장 · 보낸 「연결 없음」 · 직강 복기도 `PUT /reviews/:id` 로 내 수업 · 내 직강 회차에 다시 잇는다 · 요약 · 상세에 `anchorDetail`(수업 = 판수 · 직강 = 반 · 회차 · 연결 없음 = null → 「수업 연결 전」) · `gameCount` 는 판 기록 수라 「N판」 표시에 쓰지 않는다.
+
+`GET /api/student-portal/sessions` — 최상위에 `courseSessions[]` 가 붙는다(`sessions[]` 는 그대로 · 레슨이 하나도 없어도 `{ sessions: [], courseSessions: [...] }`):
+
+```json
+"courseSessions": [
+  { "courseSessionId": "…", "courseId": "…", "heldOn": "2026-09-29", "startTime": "19:00", "level": "중급반", "courseLevel": "intermediate",
+    "unitNo": 2, "trainerDisplayName": "원장", "hasReview": false, "reviewStatus": null, "unreadFeedback": false, "reviewDue": false } ]
+```
+
+| 키 | 타입 | null | 뜻 |
+|---|---|---|---|
+| `courseSessionId` · `courseId` | string | 아니오 | 불투명 `csession` · `course` — `POST /reviews` · `PUT /reviews/:id` 의 `courseSessionId` · `courseId` 에 그대로 보낸다 |
+| `heldOn` · `startTime` | date · `HH:MM` | 시작 시각 **가능** | 회차 날짜 · 시작 시각(없으면 null) |
+| `level` · `courseLevel` | string | `courseLevel` **가능** | 강의 반(`중급반` …) · 반 키(`beginner` · `intermediate` · `advanced` · 개인강의 · 기타는 null) |
+| `unitNo` | number | **가능** | 그 강의의 몇 회차(날짜 없이 확인한 몫 · 이관 묶음을 먼저 센 뒤 날짜 순으로 더한 값 · 0.5 회차면 소수) |
+| `trainerDisplayName` | string | 아니오 | 진행 트레이너(회차 → 강의 담당 · 없으면 「원장」) |
+| `hasReview` · `reviewStatus` · `unreadFeedback` · `reviewDue` | | | `sessions[]` 의 같은 이름 넷과 같은 뜻(§8.3 끝) — 복기 모듈이 꺼져 있으면 키가 없다 |
+
+- 들어가는 회차: 내 강의(취소 · 환불 강의 제외)의 출석 중 `done` · 회차 취소 아님 · **이관 묶음 아님**(시트 이관 · 사진 재집계는 날짜가 실제 수업일이 아닐 수 있다) · 최근부터.
+- 수업 고르기(새 복기 · 보낸 복기 다시 잇기)는 `sessions[]` 와 `courseSessions[]` 를 날짜로 섞어 보여 주면 된다. 직강 줄 표시 예: 「9/29 중급반 2회차 · 원장」.
+- 홈 「오늘 수업 복기」 카드(`/summary` `reviewDueToday`)는 **이번에 바꾸지 않았다** — 직강 회차는 넣지 않는다(필요하면 따로 요청).
+
+**보낸 복기 다시 잇기**(§8.10 넓힘) — `PUT /reviews/:id { anchorKind, sessionId | courseId+courseSessionId }`
+
+| 지금 연결 | → 내 수업(`lesson`) | → 내 직강 회차(`course`) | → 자유 기록(`none`) |
+|---|---|---|---|
+| 수업 | ✅(§44 종전) | ✅ | 409 `review_not_draft` |
+| 직강 회차 | ✅ | ✅ | 409 |
+| 연결 없음(자유 기록 · 디스코드 이관 `none`) | ✅ | ✅ (복기 #19 사례) | 409(같은 값도) |
+
+- 받는 사람: 수업 = 그 수업 트레이너 · 직강 회차 = 원장(`staff.role=owner` · 보내기 규칙과 같다). 답이 달린 뒤면 답한 트레이너마다 DM —
+  「📝 연결 수업이 바뀌었어요 — {이름} 복기 연결 없음 → 9/29 직강」(수업 = 「9/29」 · 직강 = 「9/29 직강」 · 연결 없음 = 「연결 없음」).
+- 남의 회차 · 출석하지 않은 회차 · 취소된 출석 · 취소된 회차 = 400 `anchor_student_mismatch` · 이미 복기가 있는 회차 = 409 `anchor_taken` · 같은 대상이면 아무것도 안 바뀐다.
+- 변경 기록 · 상세 `anchorChanges[]` 에 `fromKind` · `toKind`(§8.4).
+
+**받는 사람 기본값**(`GET /reviews/recipients` · 연결 없음으로 보낼 때) — 가장 최근 수업(레슨 · 직강 회차)의 트레이너 → 수업 기록 없이 진행 중 강의만 있으면 원장 → 담당.
+직강 회차의 「마지막 수업」은 원장 줄의 `lastLessonOn` 으로 보인다 · 판수 조정 행은 수업이 아니다.
+
+**「0판」 자리 — `anchorDetail`**(요약 §8.3 · 상세 §8.4 · 트레이너 목록 §8.9 도 같은 값)
+
+| 연결 | `anchorDetail` | 화면 예 |
+|---|---|---|
+| 수업 | `{ "games": 5 }` — 그 수업 판수(`lesson_sessions.games`) | 「5판」 |
+| 직강 회차 | `{ "level": "중급반", "courseLevel": "intermediate", "unitNo": 2 }` | 「중급반 2회차」 |
+| 연결 없음 · 고르기 전 · 연결 끊김 | `null` | 「수업 연결 전」 |
+
+- 점검(10/1): 복기 #4 가 잇는 수업 #237 은 **5판**이다 — 목록 「0판」은 복기에 적은 판 기록(`gameCount`)이 0 이라서였다.
+  판수 없이 닫힌 그룹 수업 0건 · 판수 0 인 수업 행 0건(0 이하 4행은 전부 오너 SQL 정정 행 — 수업 아님).
+
+**시험** — `scripts/review-course.test.cjs`(CI `test:deps` · 가짜 PostgREST 위 진짜 라우트 5묶음) · `scripts/ops-status.test.cjs`(회차 번호 · 출석 회차 목록 · 직강 상태) ·
+DB 함수 = 운영 DB 되돌림 시험 28항목(`supabase_admin_panel.sql` §61).
 
 ---
 
@@ -1266,9 +1325,15 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
   - 레벨 테스트 예약도 `booking` 이다(`lessonType: "consult"`). 취소된 예약 · 칸 · 회차는 없다.
   - `key` 는 목록 안에서 유일한 불투명 문자열(React key 용). `booking` 의 `key` 는 트레이너 칸 목록의 예약 id 와 같은 값이다(머리 예약).
   - `course` = 직강 회차(`course_sessions`). `status` ∈ `scheduled` · `done` · `cancelled`.
+  - `slot` = **예약도 출석도 없는 원장 직강 칸**(§61 · 2026-10-01 오너 검수 「오늘 · 이번 주 수업에 직강 포함」) —
+    `{ key, kind:"slot", date, startAt, durationMin, lessonType:"course", courseLevel, trainerKey, trainerName, students:[], status }`
+    · `key` = 트레이너 칸 목록의 칸 id(불투명 `slot`) · `status` = 칸 상태(`open` · `closed`) · `courseLevel` = 반 키(반 없는 칸이면 null).
+    직강 칸은 예약이 생기면 `booking`(명단) → 출석을 받으면 `course`(회차) 줄로 **한 번만** 나온다. `cards` 의 오늘 · 이번 주 수업과 트레이너 표 `lessonsToday` · `lessonsWeek` 가 이 줄까지 센다.
 - `pending[].color` — 🔴 `red` = 가장 오래된 건이 **6시간 초과** · 🟡 `yellow` = 있음 · 🟢 `green` = 없음(#385 §1.2).
   `booking_review` 는 수업 단위로 센다(그룹은 칸 하나 = 1건) · `oldestAt` = 수업이 끝난 시각. 부를 때마다 48시간 경과 예약을 먼저 옮긴다(트레이너 칸 목록과 같다).
 - 열린 칸 = 지금부터 창 안 · `open` · 자리가 남은 칸(그룹은 예약 수 < 정원) · **레벨 테스트 칸 제외**. `?date` 와 무관하게 지금 기준이다(처리 대기도 같다).
+  **원장 직강 칸도 든다**(§61 · 2026-10-01 오너 검수 「트레이너별 표 열린 칸에 직강 칸 포함」 — 원장 행 `openSlots72h` · `openSlots7d` 와 `openSlots72h` 카드 합).
+  원장 행 색은 종전대로 열린 칸으로 판정하지 않는다.
 - `?date` 형식이 틀리면 400 `invalid_body`. `trainers[]` 순서 = 트레이너 이름순 · 오너 마지막(`/students` 의 `trainers` 와 같다).
   `booking_review` = 끝났는데 「완료」를 안 누른 예약(`pending_review`).
 - `trainers[]` — 활성 트레이너 + 오너. `gamesWeek` = 이번 주 기록 판수 합(조정 제외). `assignedActive` = 담당 활성 수강생 수.
@@ -1294,6 +1359,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `currentPack` | `{ size, remaining, total }` | **가능** | 지금 쓰는 묶음 — **내 판수 기준**(§9.2 `remainingMine` 과 같은 축). 줄에 「`remaining`/`size`」(예 「1/33」) |
 | `appLinked` | boolean | 아니오 | 수강생 앱 연결 여부(종전 오너만 → **모든 계정**) |
 | `assignedTrainer` | `{ trainerKey, trainerName }` | **가능** | 담당 트레이너(종전 오너만 → **모든 계정**) |
+| `courseState` | `"active"` · `"paused"` | **가능** | 직강 상태 한 낱말(§61 · 2026-10-01 오너 검수 「직강 멈춤 상태를 응답에」) — 진행 중 강의가 하나라도 있으면 `active` · 멈춘 강의만 있으면 `paused`(「직강 멈춤」 표시) · 없으면 null. `courses[].status` 를 줄인 값이다 |
 
 - 최상위 `trainers`(`[{ trainerKey, trainerName, colorKey }]` · 활성 트레이너 + 원장)도 **모든 계정**에 내린다.
 - **색 점** = 트레이너 색이다. 서버는 **색 키**만 준다 — `colorKey` ∈ `"gold"` · `"ink"` · `"grey"` · `null`
@@ -1311,7 +1377,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | 값 | 조건 |
 |---|---|
 | `done` 종료 | 트레이너가 「종료」를 눌렀고(§9.17) **그 뒤에** 새 수업 · 새 등록 · 잡힌 예약이 없다. 생기면 자동으로 풀린다 |
-| `hold` 보류 | 잡힌 예약이 없고, 기준일 **다음 날부터 14일이 지났다**(기준일 + 15일째부터). 기준일 = 마지막 수업일(판수 조정 행 제외) → 없으면 가장 최근 등록 시작일 → 없으면 명부 등록일 |
+| `hold` 보류 | 잡힌 예약이 없고, 기준일 **다음 날부터 14일이 지났다**(기준일 + 15일째부터). 기준일 = 마지막 수업일(판수 조정 행 제외 · **직강 출석 포함** §61 2026-10-01 — 트레이너 목록은 그 트레이너가 진행한 회차만) → 없으면 가장 최근 등록 시작일 → 없으면 명부 등록일 |
 | `active` 진행 중 | 나머지. 예약이나 수업이 생기면 보류에서 자동으로 돌아온다 |
 
 - 트레이너 계정 = **나와의** 기록 기준(마지막 수업 · 예약 · 등록 · 종료 모두 나). 병행수강생은 다른 트레이너와 수업해도
@@ -2008,13 +2074,16 @@ PATCH /api/trainer-portal/bookings/:id
 ### 9.22.4 원장 홈 숫자 — `GET /owner/dashboard` → `courseSummary` · `thresholds.courseLowUnits`
 
 ```json
-"courseSummary": { "classesWeek": 3, "classesToday": 1, "attendanceWeek": 7, "absentWeek": 1,
+"courseSummary": { "classesWeek": 3, "classesToday": 1, "slotsWeek": 3, "slotsToday": 1, "heldWeek": 2, "heldToday": 0,
+  "attendanceWeek": 7, "absentWeek": 1,
   "lowUnits": [ { "studentKey": "…", "displayName": "…", "pubgName": null, "courseLevel": "beginner", "unitsLeft": -1, "unitsTotal": 4 } ] }
 ```
 
 | 키 | 뜻 |
 |---|---|
 | `classesWeek` · `classesToday` | 이번 주(월~일) · 오늘 강의 수 = 원장 직강 칸(취소 제외) + 칸 없이 기록한 회차(출석 있는 것). 칸에 딸린 회차는 칸으로 한 번만 |
+| `slotsWeek` · `slotsToday` | **열어둔 직강 칸**(§61 · 2026-10-01 오너 검수 「이번 주 강의를 나눠서」) — 이번 주 · 오늘 원장 직강 칸(취소 제외 · 지난 칸 포함 · 예약 · 출석과 무관) |
+| `heldWeek` · `heldToday` | **진행한 강의** — 이번 주 · 오늘 회차 중 출석(`done`)이 하나라도 있는 것(칸에 딸린 회차 · 칸 없이 기록한 회차 하나씩 · 취소 회차 제외). 카드는 「열어둔 칸 N · 진행 M」으로 나눠 쓰기를 권한다 |
 | `attendanceWeek` | 이번 주 출석 수(취소한 출석 · 취소 회차 제외) |
 | `absentWeek` | 이번 주 직강 칸 결석(`no_show`) 수 |
 | `lowUnits[]` | **남은 회차가 `thresholds.courseLowUnits`(2) 이하**인 진행 중 직강생 · 반마다 한 줄 · 적은 순(음수 = 초과 출석이 맨 앞) · 테스트 계정 제외 |

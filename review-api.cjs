@@ -32,6 +32,8 @@
 const crypto = require("crypto");
 // 수업 기록 행 판정 한 벌(판수 조정 · 봇 정정 · 0 이하 행은 수업이 아니다) — 원장 화면 · 공개 지표와 같다.
 const { isLessonRow } = require("./ops-status.cjs");
+// 직강 출석 회차 · 회차 번호 한 벌(§61 · 수강생 앱 /sessions · 원장 화면과 같은 함수)
+const courseProgress = require("./course-progress.cjs");
 
 const REVIEW_EMOJIS = ["👍", "🔥", "💡", "🙌", "💪", "🎯"];                       // DDL review_reactions_emoji_check 와 같은 6개
 const MAPS = ["에란겔", "미라마", "태이고", "론도", "사녹", "비켄디", "데스턴", "파라모", "카라킨", "기타"];   // review_games.map check
@@ -224,12 +226,13 @@ function trainerUnread(readAt, updatedAt) {
 }
 
 // 앵커를 바꿀 수 있는가(PUT /reviews/:id) — draft 는 무엇이든 · 연결이 끊긴 보낸 복기는 다시 잇기 ·
-//   보낸 수업 복기는 **다른 내 수업으로만**(2026-09-30 오너 지시 · 답 전 자유 · 답 뒤 = 답한 트레이너 알림 + 변경 기록 · §44)
+//   보낸 복기는 **내 수업 · 내 직강 회차로**(답 전 자유 · 답 뒤 = 답한 트레이너 알림 + 변경 기록) — 자유 기록으로 떼기는 안 된다.
+//   2026-09-30 오너 지시 = 수업 → 수업(§44) · 2026-10-01 어플 전달(오너 검수) = 연결 없음 · 직강 복기도 · 직강 회차로도(§61)
 function anchorChangeAllowed(r, kind) {
   if (!r) return false;
   if (r.status === "draft") return true;
   const lost = (r.anchor_kind === "lesson" && !r.lesson_session_id) || (r.anchor_kind === "course" && !r.course_session_id);
-  return lost || (r.anchor_kind === "lesson" && kind === "lesson");
+  return lost || kind === "lesson" || kind === "course";
 }
 
 // 「9/25」 — YYYY-MM-DD 를 월/일로(DM 용) · 형식이 아니면 null
@@ -240,8 +243,14 @@ function monthDay(d) {
 
 // 연결 수업이 바뀐 복기 — 답한 트레이너에게 가는 DM(문구 = 오너 지시 「연결 수업이 바뀌었어요」)
 //   받는 트레이너가 바뀌었고 이 DM 을 받는 사람이 새 받는 사람이 아니면 한 줄 더(누가 이어 받는지)
-function relinkDmText({ studentName, fromPlayedAt, toPlayedAt, newRecipientName }) {
-  const from = monthDay(fromPlayedAt) || "연결 끊긴 수업", to = monthDay(toPlayedAt) || "새 수업";
+//   종류(§61): 연결 없음 = 「연결 없음」 · 직강 회차 = 「9/29 직강」 · 수업 = 「9/29」(종류를 안 주면 수업 — §44 와 같은 문구)
+function relinkDmText({ studentName, fromKind, fromPlayedAt, toKind, toPlayedAt, newRecipientName }) {
+  const label = (kind, d, gone) => {
+    if (kind === "none") return "연결 없음";
+    const md = monthDay(d);
+    return md ? (kind === "course" ? `${md} 직강` : md) : gone;
+  };
+  const from = label(fromKind, fromPlayedAt, "연결 끊긴 수업"), to = label(toKind, toPlayedAt, "새 수업");
   return `📝 연결 수업이 바뀌었어요 — ${studentName || "수강생"} 복기 ${from} → ${to}`
     + (newRecipientName ? `\n이제 ${newRecipientName} 트레이너가 받아요` : "");
 }
@@ -637,14 +646,40 @@ module.exports = function mountReviewApi(app, deps) {
     const lm = new Map(ls.map((r) => [r.id, r.played_at])), cm = new Map(cs.map((r) => [r.id, r.held_on]));
     return (r) => (r.lesson_session_id ? lm.get(r.lesson_session_id) ?? null : r.course_session_id ? cm.get(r.course_session_id) ?? null : null);
   }
-  // 연결 수업 변경 기록(§44 · 최근 20건 · 오래된 순) — 날짜만(세션 id · 트레이너 id 는 싣지 않는다).
-  //   표가 없으면(§44 미실행) 빈 배열 — 상세 전체를 503 으로 만들지 않는다.
+  // 연결 수업 변경 기록(§44 · 최근 20건 · 오래된 순) — 날짜 · 종류만(세션 id · 트레이너 id 는 싣지 않는다).
+  //   종류(§61) = lesson · course · none — §61 전 기록은 lesson. 표가 없으면(§44 미실행) 빈 배열 — 상세 전체를 503 으로 만들지 않는다.
   async function anchorChangesOf(rid) {
     try {
       const rows = await sbSelect("review_anchor_changes",
-        `select=from_played_at,to_played_at,created_at&review_id=eq.${rid}&order=created_at.desc,id.desc&limit=20`);
-      return rows.reverse().map((c) => ({ fromPlayedAt: c.from_played_at ?? null, toPlayedAt: c.to_played_at ?? null, changedAt: c.created_at }));
+        `select=from_kind,to_kind,from_played_at,to_played_at,created_at&review_id=eq.${rid}&order=created_at.desc,id.desc&limit=20`);
+      return rows.reverse().map((c) => ({
+        fromKind: c.from_kind || "lesson", toKind: c.to_kind || "lesson",
+        fromPlayedAt: c.from_played_at ?? null, toPlayedAt: c.to_played_at ?? null, changedAt: c.created_at,
+      }));
     } catch (e) { console.error("review_anchor_changes_read", pgErr(e).code || e?.status || ""); return []; }
+  }
+  // 연결 대상 한 줄(목록 「0판」 자리 · 계약 §8.3 anchorDetail · 2026-10-01 어플 전달) — 수업 = 그 수업 판수 { games } ·
+  //   직강 회차 = 반 · 몇 회차 { level, courseLevel, unitNo } · 연결 없음 · 고르기 전 · 연결 끊김 = null(화면 「수업 연결 전」).
+  //   gameCount 는 복기에 적은 판 기록 수라 그 수업 판수가 아니다(복기 #4 「0판」 = 판 기록 0 · 그 수업은 5판).
+  async function anchorDetailMap(rows) {
+    const lids = rows.filter((r) => r.anchor_kind === "lesson").map((r) => r.lesson_session_id);
+    const cids = rows.filter((r) => r.anchor_kind === "course" && r.course_session_id).map((r) => r.course_id);
+    const [ls, units] = await Promise.all([
+      inList(lids) ? sbSelect("lesson_sessions", `select=id,games&id=in.(${inList(lids)})`) : [],
+      courseProgress.loadUnitNumbers(sbSelect, cids),
+    ]);
+    const games = new Map(ls.map((x) => [Number(x.id), x.games]));
+    return (r) => {
+      if (r.anchor_kind === "lesson" && r.lesson_session_id && games.has(Number(r.lesson_session_id)))
+        return { games: Number(games.get(Number(r.lesson_session_id))) };
+      if (r.anchor_kind === "course" && r.course_session_id && r.course_id) {
+        const u = units.get(Number(r.course_id));
+        if (!u) return null;
+        return { level: u.level, courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[u.level] || null,
+                 unitNo: u.nums.get(Number(r.course_session_id)) ?? null };
+      }
+      return null;
+    };
   }
   // 안 읽은 답 — 수강생 본인 기준(reader_kind student)
   async function feedbackState(sub, reviewIds) {
@@ -740,13 +775,14 @@ module.exports = function mountReviewApi(app, deps) {
     if (!rows.length) return [];
     const ids = rows.map((r) => r.id);
     const l = inList(ids);
-    const [games, images, fb, reacts, playedAt, names] = await Promise.all([
+    const [games, images, fb, reacts, playedAt, names, anchorDetail] = await Promise.all([
       sbSelect("review_games", `select=review_id&review_id=in.(${l})`),
       sbSelect("review_images", `select=review_id&review_id=in.(${l})&${LIVE_IMAGE}`),
       feedbackState(sub, ids),
       sbSelect("review_reactions", `select=review_id,emoji,reactor_kind,reactor_id&review_id=in.(${l})`),
       playedAtMap(rows),
       staffNameMap(rows.map((r) => r.recipient_trainer_id)),
+      anchorDetailMap(rows),
     ]);
     const cnt = (arr) => arr.reduce((m, x) => m.set(x.review_id, (m.get(x.review_id) || 0) + 1), new Map());
     const gc = cnt(games), ic = cnt(images);
@@ -758,11 +794,12 @@ module.exports = function mountReviewApi(app, deps) {
         id: opaqueId("review", r.id),
         ...anchorIds(r, true),
         playedAt: playedAt(r),
+        anchorDetail: anchorDetail(r),                            // 수업 판수 · 직강 반 · 회차(§8.3 · 「0판」 자리)
         title: r.title ?? null,
         status: r.status,
         authorRole: r.author_role,
         recipientDisplayName: r.recipient_trainer_id ? names[r.recipient_trainer_id] || null : null,
-        gameCount: gc.get(r.id) || 0,
+        gameCount: gc.get(r.id) || 0,                             // 복기에 적은 판 기록 수(수업 판수가 아니다 — anchorDetail.games)
         imageCount: ic.get(r.id) || 0,
         hasFeedback: (f.count || 0) > 0,
         unreadFeedback: !!f.unread,
@@ -834,7 +871,7 @@ module.exports = function mountReviewApi(app, deps) {
     const own = trainerView ? !!acc?.full : isOwn(viewer.id, r);
     const games = await sbSelect("review_games", `select=id,ord,seq_label,map,map_raw&review_id=eq.${r.id}&order=ord.asc`);
     const gl = inList(games.map((g) => g.id));
-    const [phases, images, feedback, reacts, playedAt, anchorChanges] = await Promise.all([
+    const [phases, images, feedback, reacts, playedAt, anchorChanges, anchorDetail] = await Promise.all([
       gl ? sbSelect("review_phases",
         `select=id,game_id,ord,phase_from,phase_to,phase_to_end,header_raw,lines,tags,suggested_tags&game_id=in.(${gl})&order=ord.asc`) : [],
       sbSelect("review_images", `select=${IMAGE_COLS}&review_id=eq.${r.id}&${LIVE_IMAGE}&order=ord.asc,id.asc`),
@@ -842,6 +879,7 @@ module.exports = function mountReviewApi(app, deps) {
       sbSelect("review_reactions", `select=reactor_kind,reactor_id,emoji,created_at&review_id=eq.${r.id}&order=created_at.asc`),
       playedAtMap([r]),
       own && r.status === "published" ? anchorChangesOf(r.id) : [],   // 공유 열람자에게는 빈 배열(세션 id 를 안 싣는 것과 같은 선)
+      own ? anchorDetailMap([r]) : () => null,                         // 수업 판수 · 직강 회차도 세션 id 와 같은 선(본인 · 전체 필드 트레이너)
     ]);
     const trainerIds = [r.recipient_trainer_id, r.author_staff_id, ...feedback.map((f) => f.trainer_id),
       ...reacts.filter((x) => x.reactor_kind === "trainer").map((x) => x.reactor_id)];
@@ -868,6 +906,7 @@ module.exports = function mountReviewApi(app, deps) {
       id: opaqueId("review", r.id),
       ...anchorIds(r, own),
       playedAt: playedAt(r),
+      anchorDetail: anchorDetail(r),
       title: r.title ?? null,
       body: r.body ?? null,
       status: r.status,
@@ -942,24 +981,39 @@ module.exports = function mountReviewApi(app, deps) {
     return null;
   }
 
-  // 받는 사람 후보(§4) = 담당(active) ∪ 최근 90일 수업 트레이너(active) · 기본 = 최근 수업 트레이너 → 없으면 담당
+  // 원장(직강 복기를 받는 사람) = staff role owner · active · 가장 작은 id — 보내기 · DB 함수(§61 relink_review_anchor)와 같은 규칙
+  async function ownerStaffId() {
+    return (await sbSelect("staff", "select=id&role=eq.owner&active=eq.true&order=id.asc&limit=1"))[0]?.id ?? null;
+  }
+
+  // 받는 사람 후보(§4) = 담당(active) ∪ 최근 90일 수업 트레이너(active) ∪ 원장(최근 90일 직강 출석 · 또는 수업 없이 진행 중인 강의만)
+  //   기본 = 가장 최근 수업(레슨 · 직강 회차)의 트레이너 → 수업이 없고 진행 중인 강의만 있으면 원장 → 담당.
+  //   직강 회차는 원장이 받으니 원장의 「마지막 수업」으로 센다. 판수 조정 · 봇 정정 행은 수업이 아니다(isLessonRow).
+  //   (2026-10-01 어플 전달 「연결 없음이면 최근 수업한 트레이너 · 직강만 들으면 원장」 — 복기 #19 가 레슨 트레이너에게 간 일)
   async function recipientCandidates(sub) {
     const since = kstDate(Date.now() - RECIPIENT_WINDOW_DAYS * 86400_000);
-    const [stu, sess] = await Promise.all([
+    const [stu, sess, attended, activeCourse, owner] = await Promise.all([
       sbSelect("students", `select=trainer_id&id=eq.${sub}&limit=1`),
-      sbSelect("lesson_sessions", `select=trainer_id,played_at&student_id=eq.${sub}&played_at=gte.${since}&trainer_id=not.is.null&order=played_at.desc`),
+      sbSelect("lesson_sessions", `select=trainer_id,played_at,games,created_by,memo&student_id=eq.${sub}&played_at=gte.${since}&trainer_id=not.is.null&order=played_at.desc`),
+      courseProgress.loadAttendedSessions(sbSelect, sub),
+      sbSelect("courses", `select=id&student_id=eq.${sub}&status=eq.active&limit=1`).catch(() => []),
+      ownerStaffId().catch(() => null),
     ]);
     const assigned = stu[0]?.trainer_id ?? null;
     const last = new Map();
-    for (const s of sess) if (!last.has(s.trainer_id)) last.set(s.trainer_id, s.played_at);
-    const ids = [...new Set([...(assigned ? [assigned] : []), ...last.keys()])];
+    for (const s of sess.filter(isLessonRow)) if (!last.has(s.trainer_id)) last.set(s.trainer_id, String(s.played_at).slice(0, 10));
+    const lastCourse = attended.find((c) => String(c.heldOn) >= since)?.heldOn ?? null;           // 최근부터 정렬돼 있다
+    if (owner && lastCourse && !(String(last.get(owner) || "") >= String(lastCourse))) last.set(owner, String(lastCourse).slice(0, 10));
+    const courseOnly = !!owner && last.size === 0 && activeCourse.length > 0;                      // 직강만 듣는다(수업 기록 없음)
+    const ids = [...new Set([...(assigned ? [assigned] : []), ...last.keys(), ...(courseOnly ? [owner] : [])])];
     if (!ids.length) return { list: [], defaultId: null };
     const staff = await sbSelect("staff", `select=id,name,active&id=in.(${ids.join(",")})`);
     const active = new Map(staff.filter((s) => s.active !== false).map((s) => [s.id, s.name]));
     const list = ids.filter((id) => active.has(id))
-      .map((id) => ({ id, name: active.get(id), lastLessonOn: last.get(id) ? String(last.get(id)).slice(0, 10) : null }))
+      .map((id) => ({ id, name: active.get(id), lastLessonOn: last.get(id) || null }))
       .sort((a, b) => String(b.lastLessonOn || "").localeCompare(String(a.lastLessonOn || "")));
-    const defaultId = list.find((c) => c.lastLessonOn)?.id ?? (active.has(assigned) ? assigned : null);
+    const defaultId = list.find((c) => c.lastLessonOn)?.id
+      ?? (courseOnly && active.has(owner) ? owner : active.has(assigned) ? assigned : null);
     return { list, defaultId };
   }
 
@@ -1084,7 +1138,8 @@ module.exports = function mountReviewApi(app, deps) {
     send(res, { review: out });
   }));
 
-  // 연결 수업 바꾸기 함수(§44 relink_review_lesson)의 오류 → 계약 코드. 없는 코드는 503(함수가 계약 밖 값을 돌려줬다).
+  // 연결 바꾸기 함수(§61 relink_review_anchor · §44 와 같은 코드 + forbidden)의 오류 → 계약 코드.
+  //   없는 코드는 503(함수가 계약 밖 값을 돌려줬다) · forbidden 은 서버 키로 부르는 한 생기지 않는다(생기면 503).
   const RELINK_ERR = {
     review_not_found: [404, "review_not_found"], not_published: [409, "review_not_draft"], not_lesson: [409, "review_not_draft"],
     anchor_not_found: [400, "invalid_body"], anchor_student_mismatch: [400, "anchor_student_mismatch"],
@@ -1104,7 +1159,8 @@ module.exports = function mountReviewApi(app, deps) {
     let sent = 0;
     for (const id of ids) {
       const msg = relinkDmText({
-        studentName: stu[0]?.name, fromPlayedAt: out.from_played_at, toPlayedAt: out.to_played_at,
+        studentName: stu[0]?.name, fromKind: out.from_kind, fromPlayedAt: out.from_played_at,
+        toKind: out.to_kind, toPlayedAt: out.to_played_at,
         newRecipientName: changed && id !== newRid ? byId.get(newRid)?.name || null : null,
       });
       if (await discordDM(byId.get(id)?.discord_id, msg)) sent++;
@@ -1112,7 +1168,7 @@ module.exports = function mountReviewApi(app, deps) {
     console.log(`[review] relink_dm sent=${sent}/${ids.length}`);
   }
 
-  // PUT /reviews/:id — 제목 · 본문 · 파일명 · 앵커(draft · 연결 끊김 · 보낸 수업 복기는 다른 내 수업으로)
+  // PUT /reviews/:id — 제목 · 본문 · 파일명 · 앵커(draft · 연결 끊김 · 보낸 복기는 내 수업 · 내 직강 회차로)
   app.put(`${P}/reviews/:id`, writeLimit,
     bodyOnly(["title", "body", "srcFileName", "anchorKind", "sessionId", "courseId", "courseSessionId"]),
     requireStudent, needReady, wrap(async (req, res) => {
@@ -1127,7 +1183,7 @@ module.exports = function mountReviewApi(app, deps) {
         if (typeof b[key] === "string" && b[key].length > max) return fail(res, 400, "review_too_long");
         patch[col] = b[key];
       }
-      let relink = null;                                                         // 보낸 수업 복기 → 다른 내 수업(§44)
+      let relink = null;                                                         // 보낸 복기 → 내 수업 · 내 직강 회차(§44 · §61)
       if (b.anchorKind !== undefined) {
         if (!anchorChangeAllowed(r, b.anchorKind)) return fail(res, 409, "review_not_draft");
         const a = await resolveAnchor(sub, b);
@@ -1135,17 +1191,19 @@ module.exports = function mountReviewApi(app, deps) {
         if (r.status === "published" && a.value.anchor_kind === "pending") return fail(res, 400, "anchor_required");
         const ex = await existingFor(sub, a.value);
         if (ex && ex.id !== r.id) return fail(res, 409, "anchor_taken");
-        if (r.status === "published" && r.anchor_kind === "lesson" && a.value.anchor_kind === "lesson") relink = a.value.lesson_session_id;
+        if (r.status === "published" && (a.value.anchor_kind === "lesson" || a.value.anchor_kind === "course")) relink = a.value;
         else Object.assign(patch, a.value);
       } else if (b.sessionId !== undefined || b.courseId !== undefined || b.courseSessionId !== undefined) {
         return fail(res, 400, "invalid_body");                                  // 앵커 id 는 anchorKind 와 같이만
       }
-      // 보낸 복기의 연결 수업은 DB 함수 한 번으로 바꾼다 — 연결 · 받는 트레이너(= 새 수업 트레이너) · 변경 기록이 같이 되거나
-      // 같이 안 된다(§44). 같은 수업이면 아무것도 안 한다(unchanged). 제목·본문 같은 나머지 칸은 그 뒤에 따로 고친다.
+      // 보낸 복기의 연결은 DB 함수 한 번으로 바꾼다 — 연결 · 받는 사람(수업 = 그 수업 트레이너 · 직강 회차 = 원장) · 변경 기록이
+      // 같이 되거나 같이 안 된다(§61 · §44 와 같은 규칙에 연결 없음 · 직강을 더했다). 같은 대상이면 아무것도 안 한다(unchanged).
+      // 제목·본문 같은 나머지 칸은 그 뒤에 따로 고친다.
       let moved = null;
       if (relink) {
-        const out = await sbRpc("relink_review_lesson",
-          { p_review_id: r.id, p_student_id: sub, p_session_id: relink, p_changed_by: "student" });
+        const out = await sbRpc("relink_review_anchor", {
+          p_review_id: r.id, p_student_id: sub, p_kind: relink.anchor_kind, p_session_id: relink.lesson_session_id,
+          p_course_id: relink.course_id, p_course_session_id: relink.course_session_id, p_changed_by: "student" });
         if (out?.error) { const m = RELINK_ERR[out.error] || [503, "portal_unavailable"]; return fail(res, m[0], m[1]); }
         if (out?.relinked) moved = out;
       }
@@ -1157,7 +1215,7 @@ module.exports = function mountReviewApi(app, deps) {
       } else if (moved) row = (await loadReview(r.id)) || r;
       if (moved) {
         const n = (moved.feedback_trainer_ids || []).length;
-        console.log(`[review] relink #${r.id} feedback_trainers=${n} recipient_changed=${Number(moved.from_trainer_id) !== Number(moved.to_trainer_id)}`);
+        console.log(`[review] relink #${r.id} ${moved.from_kind}>${moved.to_kind} feedback_trainers=${n} recipient_changed=${Number(moved.from_trainer_id) !== Number(moved.to_trainer_id)}`);
         if (n) notifyRelink(sub, moved).catch((e) => console.error("review_relink_dm", e?.message));
       }
       send(res, { review: (await summaries(sub, [row]))[0] });
@@ -1208,7 +1266,7 @@ module.exports = function mountReviewApi(app, deps) {
       if (r.anchor_kind === "lesson" && r.lesson_session_id) {
         recipient = (await sbSelect("lesson_sessions", `select=trainer_id&id=eq.${r.lesson_session_id}&limit=1`))[0]?.trainer_id ?? null;
       } else if (r.anchor_kind === "course" && r.course_id) {
-        recipient = (await sbSelect("staff", "select=id&role=eq.owner&active=eq.true&order=id.asc&limit=1"))[0]?.id ?? null;
+        recipient = await ownerStaffId();
       } else {
         if (b.recipientTrainerId === undefined || b.recipientTrainerId === null) return fail(res, 400, "recipient_required");
         const tid = readOpaqueId("staff", b.recipientTrainerId);
@@ -1732,6 +1790,33 @@ module.exports = function mountReviewApi(app, deps) {
     return out;
   };
 
+  // ── /sessions 직강 회차 확장(§61 · student-portal.cjs 가 부른다) — 회차마다 위와 같은 넷 ──
+  //   rows = course-progress attendedSessions 결과({ sessionId, courseId, heldOn }) · 키 = `${courseId}:${sessionId}`
+  //   (수강생 1명 × 직강 회차 1회 = 복기 1건 · uq_lr_student_course · 숨긴 것도 「있음」 — 위와 같은 기준)
+  hooks.courseSessionExtras = async (sub, rows) => {
+    const out = new Map();
+    if (!ready || !rows.length) return out;
+    const revs = await sbSelect("lesson_reviews",
+      `select=id,course_id,course_session_id,status,hidden_at&student_id=eq.${sub}&author_role=eq.student`
+      + `&course_session_id=in.(${inList(rows.map((s) => s.sessionId))})`);
+    const shown = revs.filter((r) => !r.hidden_at);
+    const fb = await feedbackState(sub, shown.map((r) => r.id));
+    const key = (courseId, sessionId) => `${Number(courseId)}:${Number(sessionId)}`;
+    const byKey = new Map(revs.map((r) => [key(r.course_id, r.course_session_id), r]));
+    const today = kstDate(Date.now());
+    for (const s of rows) {
+      const rv = byKey.get(key(s.courseId, s.sessionId));
+      const vis = rv && !rv.hidden_at ? rv : null;
+      out.set(key(s.courseId, s.sessionId), {
+        hasReview: !!vis,
+        reviewStatus: vis ? vis.status : null,
+        unreadFeedback: vis ? !!fb.get(vis.id)?.unread : false,
+        reviewDue: String(s.heldOn).slice(0, 10) === today && !rv,
+      });
+    }
+    return out;
+  };
+
   // 본문 파서 오류(server.js 의 express.json 256kb · JSON 깨짐) — 복기 라우트군은 기본 HTML 대신 계약 오류 코드로 답한다
   app.use([`${P}/reviews`, `${P}/games`, `${P}/phases`, `${P}/images`], (err, req, res, next) => {
     if (res.headersSent) return next(err);
@@ -1819,7 +1904,7 @@ module.exports = function mountReviewApi(app, deps) {
       if (!rows.length) return [];
       const me = Number(staff.id);
       const l = inList(rows.map((r) => r.id));
-      const [games, images, fb, reads, reacts, playedAt, tnames, people] = await Promise.all([
+      const [games, images, fb, reads, reacts, playedAt, tnames, people, anchorDetail] = await Promise.all([
         sbSelect("review_games", `select=review_id&review_id=in.(${l})`),
         sbSelect("review_images", `select=review_id&review_id=in.(${l})&${LIVE_IMAGE}`),
         sbSelect("review_feedback", `select=review_id,trainer_id,kind&review_id=in.(${l})`),
@@ -1828,6 +1913,7 @@ module.exports = function mountReviewApi(app, deps) {
         playedAtMap(rows),
         staffNameMap(rows.flatMap((r) => [r.recipient_trainer_id, r.author_staff_id])),
         studentNameMap(rows.map((r) => r.student_id)),
+        anchorDetailMap(rows),
       ]);
       const cnt = (arr) => arr.reduce((m, x) => m.set(x.review_id, (m.get(x.review_id) || 0) + 1), new Map());
       const gc = cnt(games), ic = cnt(images), fc = cnt(fb);
@@ -1844,6 +1930,7 @@ module.exports = function mountReviewApi(app, deps) {
           id: opaqueId("review", r.id),
           ...anchorIds(r, true),
           playedAt: playedAt(r),
+          anchorDetail: anchorDetail(r),                          // 수업 판수 · 직강 반 · 회차(수강생 목록과 같은 값)
           title: r.title ?? null,
           status: r.status,
           authorRole: r.author_role,
