@@ -1668,9 +1668,11 @@ module.exports = function mountReviewApi(app, deps) {
     const fq = parseFeedQuery(req.query || {});
     if (fq.error) return fail(res, 400, fq.error);
     if (!(await inShareScope(sub))) return send(res, { items: [], nextCursor: null });
-    send(res, await feedPage(fq, { kind: "student", id: sub }));
+    send(res, await feedPage(fq, { kind: "student", id: sub }, (r) => Number(r.student_id) === Number(sub)));
   }));
-  async function feedPage({ tags, map, days, cur }, viewer) {
+  // canSeeAnchor(r) — 수업 판수 · 직강 반 · 회차(anchorDetail)를 실을 줄인가. 상세(§8.4)와 같은 선 — 세션 id 를 볼 수 있는 사람만
+  //   (수강생 = 내 복기 · 트레이너 = 오너 · 받는 트레이너 · 작성자 · 범위 안 수강생). 남의 복기는 null(2026-10-02 반장 요청 · §8.5).
+  async function feedPage({ tags, map, days, cur }, viewer, canSeeAnchor = () => false) {
     const trainerView = viewer.kind === "trainer";
     let idSet = null;
     if (tags.length) {
@@ -1685,7 +1687,8 @@ module.exports = function mountReviewApi(app, deps) {
     }
     if (idSet && !idSet.size) return { items: [], nextCursor: null };
     const since = new Date(Date.now() - days * 86400_000).toISOString();
-    let qs = "select=id,student_id,author_role,author_staff_id,lesson_session_id,course_session_id,status,published_at"
+    let qs = "select=id,student_id,author_role,author_staff_id,lesson_session_id,course_session_id,status,published_at,"
+      + "anchor_kind,course_id,recipient_trainer_id"
       + `&status=eq.published&hidden_at=is.null&visibility=eq.students&published_at=gte.${encodeURIComponent(since)}`
       + `&order=published_at.desc,id.desc&limit=${FEED_PAGE + 1}`;
     if (cur) qs += `&or=${encodeURIComponent(`(published_at.lt."${cur.publishedAt}",and(published_at.eq."${cur.publishedAt}",id.lt.${cur.id}))`)}`;
@@ -1694,7 +1697,7 @@ module.exports = function mountReviewApi(app, deps) {
     const page = rows.slice(0, FEED_PAGE);
     if (!page.length) return { items: [], nextCursor: null };
     const l = inList(page.map((r) => r.id));
-    const [games, reacts, fb, imgs, playedAt, sdisp, tnames] = await Promise.all([
+    const [games, reacts, fb, imgs, playedAt, sdisp, tnames, anchorDetail] = await Promise.all([
       sbSelect("review_games", `select=id,review_id,ord,map&review_id=in.(${l})&order=ord.asc`),
       sbSelect("review_reactions", `select=review_id,reactor_kind,reactor_id,emoji&review_id=in.(${l})`),
       sbSelect("review_feedback", `select=review_id&review_id=in.(${l})&kind=in.(comment,overall)`),
@@ -1702,6 +1705,7 @@ module.exports = function mountReviewApi(app, deps) {
       playedAtMap(page),
       (trainerView ? studentNameMap : studentDisplayMap)(page.filter((r) => r.author_role === "student").map((r) => r.student_id)),
       staffNameMap(page.filter((r) => r.author_role === "trainer").map((r) => r.author_staff_id)),
+      anchorDetailMap(page.filter(canSeeAnchor)),
     ]);
     const gl = inList(games.map((g) => g.id));
     const phases = gl ? await sbSelect("review_phases", `select=game_id,tags&game_id=in.(${gl})`) : [];
@@ -1723,6 +1727,7 @@ module.exports = function mountReviewApi(app, deps) {
         ...(trainerView ? { authorPubgName: byTrainer ? null : sdisp[r.student_id]?.pubg_name || null } : {}),
         authorRole: r.author_role,
         playedAt: playedAt(r),
+        anchorDetail: canSeeAnchor(r) ? anchorDetail(r) : null,      // 수업 판수 · 직강 반 · 회차 — 볼 수 있는 줄만(위 canSeeAnchor)
         publishedAt: r.published_at,
         gameCount: gs.length,
         maps: [...new Set(gs.map((g) => g.map).filter(Boolean))],
@@ -1974,10 +1979,15 @@ module.exports = function mountReviewApi(app, deps) {
     }));
 
     // GET /feed — 수강생과 같은 필터·커서 · 활성 트레이너 전원 · 작성자 = 이름 + authorPubgName
+    //   anchorDetail 은 trainerAccess 의 full 과 같은 판정(오너 · 받는 트레이너 · 작성자 · 범위 안 수강생)일 때만
     app.get(`${T}/feed`, readLimit, requireTrainer, needReady, wrap(async (req, res) => {
       const fq = parseFeedQuery(req.query || {});
       if (fq.error) return fail(res, 400, fq.error);
-      sendTrainer(res, await feedPage(fq, { kind: "trainer", id: Number(req.staff.id) }));
+      const me = Number(req.staff.id), owner = req.staff.role === "owner";
+      const scope = owner ? null : await scopedStudents(me);
+      const full = (r) => owner || Number(r.recipient_trainer_id) === me
+        || (r.author_role === "trainer" && Number(r.author_staff_id) === me) || !!scope?.has(Number(r.student_id));
+      sendTrainer(res, await feedPage(fq, { kind: "trainer", id: me }, full));
     }));
 
     // GET /reviews/:id — 상세 + canReply(열람자에겐 「답은 받는 트레이너가 해요」) · 읽음 기록(트레이너)
