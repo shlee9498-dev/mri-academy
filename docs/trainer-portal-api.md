@@ -1603,6 +1603,7 @@ PATCH /api/trainer-portal/bookings/:id
 > 오류 `scope_denied` · `booking_closed` · `level_required` · `already_enrolled` · `cancel_window_passed`. 각 절에 적었다.
 > 다섯 라우트 모두 **트레이너 · 원장만**이다 — 명부에 있어도 사무 계정은 403 `not_staff`.
 > 키 이름은 트레이너 가드 규칙을 지킨다 — `name` · `realName` · `studentId` 와 `discord` · `fee` · `payment` · `amount` 어간은 쓰지 않는다.
+> **2026-10-01**: 상담 보드(§9.23)가 신청을 카드로 함께 보여 준다 — 이 절의 라우트는 그대로이고, 보드 카드의 `applicationId` 로 부른다.
 
 ### 9.20.1 상태
 
@@ -2010,4 +2011,178 @@ PATCH /api/trainer-portal/bookings/:id
 | `bulk_row` | 409 | 옮겨 온 기록이라 앱에서는 바꿀 수 없어요 |
 | `already_recorded` | 409 | 그 수업에 이미 출석이 있어요 |
 | `future_date` | 400 | 아직 오지 않은 날짜예요 |
+| `owner_only` | 403 | 원장 계정에서만 할 수 있어요 |
+
+## 9.23 상담 보드 — 레벨 테스트 · 클랜 상담 · 일반 상담 (2026-10-01 · 어플 요청 · **계약 · 서버 구현 전**)
+
+> 설계 `docs/consult-board-design.md`. 디코 상담 기록 채널(담당 · 대상자 · 유형 · 일정 · 시간 · 진행 상태 · 입금 상태 · 메모)을 앱 보드로 옮기고,
+> 신청 창구(§9.20)와 한 흐름으로 보여 준다. **결제 · 상담 가산 정산은 그대로** — 보드는 결제를 만들거나 고치지 않는다.
+> 라우트는 전부 `/api/trainer-portal` 아래 · **트레이너 · 원장만**(사무 계정 403 `not_staff`). 서버가 들어가면 이 머리줄을 고친다.
+
+### 9.23.1 카드 — 보드의 한 줄
+
+카드 한 장 = 상담 한 건. 카드는 상담 기록 · 레벨 테스트 예약 · 아직 칸을 못 잡은 신청에서 오지만 **앱은 `id` 하나로만 부른다**
+(메모 · 결과 · 넘김을 처음 적는 순간 서버가 그 카드의 상담 기록을 만들어 붙인다 — `id` 는 바뀌지 않는다).
+
+```json
+{ "id": "…", "type": "level_test", "stage": "scheduled", "deposit": "waiting",
+  "result": null, "resultNote": null, "resultAt": null,
+  "target": { "displayName": "…", "pubgName": null, "studentKey": "…", "rosterStatus": "prospect" },
+  "trainer":  { "trainerKey": "…", "trainerName": "…", "colorKey": "gold" },
+  "handler":  null,
+  "handover": null,
+  "scheduledAt": "2026-10-08T11:00:00Z", "durationMin": 90, "doneAt": null,
+  "note": null, "origin": "application",
+  "applicationId": "…", "bookingId": "…",
+  "createdAt": "…", "updatedAt": "…",
+  "actions": { "edit": true, "done": false, "result": false, "handover": true, "link": false, "enroll": false },
+  "ownerView": { "applicantName": "실명", "age": 17 } }
+```
+
+| 키 | 값 |
+|---|---|
+| `type` | `level_test`(레벨 테스트 · 유료) · `clan`(클랜 상담 · 무료) · `general`(일반 상담 · 무료) |
+| `stage` | `applied`(신청 · 시간 전) → `scheduled`(시간 잡힘) → `done`(끝남) · `closed`(취소 · 노쇼 · 신청 닫음) |
+| `deposit` | `none`(무료) · `waiting` · `confirmed` · `refunded` — **읽기만**(9.23.13) |
+| `result` · `resultNote` · `resultAt` | `enrolled`(등록) · `thinking`(고민 중) · `declined`(안 함) · `null` |
+| `target` | 대상자. `displayName` = 명부 이름(신청 단계면 디스코드 표시 이름) · `studentKey` = §9.14 수강생 id(명부에 안 붙었으면 `null`) · `rosterStatus` ∈ `prospect` · `active` · `paused` · `done` · `null` |
+| `trainer` · `handler` · `handover` | 담당 · 진행자 · 넘겨받은 트레이너. `handover` 는 `{ trainerKey, trainerName, colorKey, at, note }` · 없으면 `null` |
+| `scheduledAt` · `durationMin` · `doneAt` | 잡힌 시각 · 길이 · 끝난 시각(ISO · 없으면 `null`). 예약 카드는 칸 값이다 |
+| `note` | 상담 메모(500자 · 없으면 `null`) |
+| `origin` | 어디서 온 카드인지 — `application`(신청) · `booking`(레벨 테스트 칸) · `app`(보드에서 만듦) · `site`(옛 신청서) · `discord`(디코 기록 옮김) · `bot`(봇 /수업등록) · `other` |
+| `applicationId` · `bookingId` | 신청(§9.20) · 예약 id — 그 흐름의 라우트(맡기 · 칸 넣기 · 「완료」 · 노쇼 · 취소)에 그대로 쓴다. 없으면 `null` |
+| `actions` | 이 카드에서 누를 수 있는 보드 동작(9.23.4~9.23.10). `false` 면 버튼을 숨긴다 |
+| `ownerView` | **원장 · 신청 카드만** — 실명 · 나이(§9.20.2 와 같다). 트레이너 응답에는 키가 없다 |
+
+- 단계별로 누르는 것: 신청 카드 = §9.20 맡기 · 칸 넣기 · 닫기 / 시간 잡힌 레벨 테스트 = 「완료」(§9.16 `level`) · 노쇼 · 예약 취소 /
+  그 밖(클랜 · 일반 · 칸 없는 상담) = 9.23.6 「끝남」 · 9.23.5 취소. 결과 · 넘김 · 메모 · 명부 연결 · 등록하기는 모든 카드에서 보드 라우트로.
+- 전화번호 · 금액 · 결제 키는 없다(트레이너 가드).
+
+### 9.23.2 `GET /consults?view=&month=&type=&trainerKey=` — 보드 (120회/분)
+
+- `view` 없음 = 열린 카드(신청 · 시간 잡힘 · 끝났는데 결과 없음 · 고민 중) + 최근 14일 안에 바뀐 카드.
+  `view=month&month=YYYY-MM` = 그 달(기준 = 끝난 시각 → 잡힌 시각 → 만든 날 · KST) 전부. `view=all` = 원장 전용(트레이너 403 `owner_only`).
+- 트레이너 범위 = 내가 담당 · 진행 · 넘겨받은 카드 + 내 상담 칸 예약 + 신청 목록 규칙(§9.20.2)과 같은 신청. **담당이 비어 있는 상담은 원장만 본다**(원장이 담당을 정한다 · 9.23.5).
+- `type` = 한 유형만 · `trainerKey` = 원장이 트레이너로 거르기(트레이너가 보내면 무시).
+- 응답 `{ "consults": [카드…], "asOf": "…" }` — 시간 잡힌 카드는 시각 빠른 순, 나머지는 최근에 바뀐 순.
+
+### 9.23.3 `GET /consults/:id` — 카드 하나
+
+- 응답 `{ "consult": 카드 }`. 범위 밖 403 `scope_denied` · 없으면 404 `not_found`.
+
+### 9.23.4 `POST /consults` — 상담 만들기 (30회/분)
+
+```json
+{ "type": "clan", "target": { "studentId": "…" }, "scheduledAt": "2026-10-03T12:00:00Z", "durationMin": 60,
+  "note": "클랜 가입 상담", "trainerKey": "…" }
+```
+- `target` = `{ "studentId": "…" }`(명부) 또는 `{ "displayName": "…"(1~30자), "pubgName": "…"? }`(명부에 아직 없음 — 나중에 9.23.9 로 붙인다).
+- `trainerKey` = 담당 — **원장만**(트레이너가 만들면 담당 = 본인 · 보내면 400). `scheduledAt` · `durationMin`(30~180) · `note`(500자) 선택.
+- `level_test` 도 만들 수 있다 — **칸 없이 한 레벨 테스트**용(유료 · 입금 대기). 칸이 있는 레벨 테스트는 상담 칸 예약(§9.20.4 · 대신 넣기)으로 잡는다.
+- 200 `{ "consult": 카드 }`(`origin: "app"`).
+
+### 9.23.5 `PATCH /consults/:id` — 고치기 (30회/분)
+
+```json
+{ "type": "general", "scheduledAt": "…", "durationMin": 60, "note": "…", "trainerKey": "…", "status": "cancelled" }
+```
+- 보낸 키만 바꾼다. `trainerKey`(담당 바꾸기)는 원장만. `status` ∈ `cancelled` · `noshow` → `stage: "closed"`.
+- 예약 카드의 시각 · 길이 · 취소는 칸에서 한다 → 409 `use_booking`(§9.19 · 예약 취소 · 노쇼). 신청 카드의 취소는 → 409 `use_application`(§9.20.7 닫기).
+  예약 · 신청 카드의 `type` 은 `level_test` 로 고정 → 409 `type_locked`.
+- 고칠 수 있는 사람 = 원장 · 담당 · 진행자 · 넘겨받은 트레이너. 아니면 403 `scope_denied`.
+- 200 `{ "consult": 카드 }`.
+
+### 9.23.6 `POST /consults/:id/done` — 끝남 (칸 없는 상담)
+
+- 본문 `{ "at": "ISO" }` 선택(생략 = 지금 · 앞으로의 시각은 400 `future_date`). 진행자가 비어 있으면 누른 사람이 진행자가 된다.
+- 예약 카드는 409 `use_booking`(레벨 테스트 「완료」로 — 레벨을 같이 받는다). 이미 끝났으면 409 `already_done` · 닫힌 카드 409 `closed`.
+- 결제는 건드리지 않는다 — 칸 없이 한 **유료** 상담의 상담 가산은 지금처럼 결제(입금 신청 · `/결제신청`) 쪽 진행자로 센다.
+- 200 `{ "consult": 카드 }`.
+
+### 9.23.7 `POST /consults/:id/result` — 결과
+
+```json
+{ "result": "thinking", "note": "다음 주 시간 보고 연락 준다고 함" }
+```
+- `result` ∈ `thinking` · `declined` · `enrolled` · `null`(지우기) · `note` 500자 선택.
+- `thinking` · `enrolled` 은 **끝난 카드만**(409 `not_done`) · `declined` 는 언제든.
+- `enrolled` 은 대상자가 이미 **active 수강생**일 때만(따로 등록한 사람 · 재등록) — 아니면 409 `enroll_first`(9.23.10 「등록하기」로).
+- `thinking` 으로 정하면 3일 뒤 담당에게 DM 이 한 번 간다(9.23.12) — 다시 `thinking` 으로 정하면 그때부터 다시 3일.
+- 200 `{ "consult": 카드 }`.
+
+### 9.23.8 `POST /consults/:id/handover` — 넘김
+
+```json
+{ "trainerKey": "…", "note": "레슨은 현태 트레이너가 맡기로" }
+```
+- 다른 트레이너에게 넘긴다(상담은 원장이 하고 레슨은 트레이너가 맡는 경우 등). 넘겨받은 트레이너에게 DM 이 간다 · 그 트레이너 보드에 카드가 생긴다.
+- `trainerKey: null` = 넘김 지우기. 활성 트레이너 · 원장만 받을 수 있다(아니면 400 `invalid_body`). `note` 200자.
+- 「등록하기」의 담당은 넘겨받은 트레이너가 먼저다(9.23.10).
+- 200 `{ "consult": 카드, "dmSent": true }`.
+
+### 9.23.9 `POST /consults/:id/link` — 명부 연결
+
+- 본문 `{ "studentId": "…" }`(이미 있는 수강생 · 합친 명부 제외) 또는 `{ "newProspect": true }`(카드의 표시 이름으로 prospect 명부를 만든다 · 담당 = 카드 담당).
+- 이미 붙어 있으면 409 `already_linked`(신청 카드는 늘 붙어 있다). 원장 · 담당 · 넘겨받은 트레이너만.
+- 200 `{ "consult": 카드 }`.
+
+### 9.23.10 `POST /consults/:id/enroll` — 등록하기
+
+```json
+{ "level": "beginner", "trainerKey": "…" }
+```
+- **신청 카드** → §9.20.6 등록과 같다(같은 함수 · 담당 = 맡은 트레이너 · 14~17세는 오너 확인 뒤). `trainerKey` 를 보내면 400.
+- **그 밖** → 명부에 붙은 사람이어야 한다(409 `link_first`) · 끝난 카드만(409 `not_done`).
+  prospect → active · 레벨(`level` 필수 · 진행 중 직강생은 반 레벨이 따라가므로 무시) · 담당 = `trainerKey` → 넘겨받은 트레이너 → 카드 담당 순.
+  이미 active 면 상태는 그대로 두고 결과만 `enrolled`. 명부에 디스코드가 있으면 수강생 앱이 바로 열린다(`appReady: true`) · 없으면 지금처럼 연결 신청.
+- 200 `{ "consult": 카드, "student": { "id": "…" }, "appReady": true, "dmSent": true }` — `dmSent` = 등록 안내 DM(prospect → active 일 때만 · 신청 등록과 같은 문장).
+- 오류: 409 `already_enrolled` · `link_first` · `not_done` · `owner_check_needed`(§9.20.6) · 400 `level_required` · `invalid_body`.
+
+### 9.23.11 `GET /consults/stats?month=YYYY-MM` — 숫자
+
+```json
+{ "month": "2026-10",
+  "total": { "done": 12, "enrolled": 5, "thinking": 3, "declined": 2, "conversionRate": 0.42 },
+  "trainers": [ { "trainerKey": "…", "trainerName": "…", "colorKey": "gold", "done": 5, "enrolled": 2, "thinking": 1, "declined": 1, "conversionRate": 0.4 } ],
+  "byType": { "level_test": 9, "clan": 2, "general": 1 },
+  "months": [ { "month": "2026-05", "done": 3, "enrolled": 1 }, "…최근 6개월" ],
+  "thinkingOverdue": [ { "id": "…", "displayName": "…", "trainerName": "…", "days": 4 } ] }
+```
+- `month` 생략 = 이번 달(KST). 기준 월 = 끝난 시각 → 잡힌 시각 → 만든 날. 트레이너 = 진행자 → 없으면 담당.
+- **등록 전환율 = 등록 ÷ 끝난 상담**(끝난 상담 0 이면 `null`). 취소 · 노쇼는 세지 않는다.
+- 트레이너 계정은 `trainers` 에 **본인 줄만** · `total` · `months` 도 본인 기준. 원장은 전부.
+- `thinkingOverdue` = 「고민 중」으로 정한 지 3일(72시간) 지난 카드.
+
+### 9.23.12 「고민 중」 3일 — 담당 DM (서버 · 라우트 없음)
+
+- 10분 점검이 `result: "thinking"` 으로 정한 지 72시간 지난 카드를 찾아 **넘겨받은 트레이너 → 담당 → 진행자** 순으로 한 명에게 DM 을 **한 번** 보낸다.
+- 운영진 DM 이라 반말이다 — 「고민 중 3일 지났어 — ○○ · 레벨 테스트(10/3) · 한 번 연락해 볼래? 결과가 정해지면 앱 상담 보드에서 바꿔 줘」.
+
+### 9.23.13 입금 · 정산 — 보드는 읽기만
+
+- 유료 상담의 `deposit` 은 결제에서 읽는다 — 신청은 §9.20 원장 카드 [입금 확인] · 그 밖은 입금 신청(수강생 앱) · `/결제신청`(구분 상담)이 결제를 만들고,
+  레벨 테스트 「완료」가 그 결제를 상담 기록에 붙인다(지금 규칙 · ±45일 · 딱 한 건).
+- 상담 가산(트레이너 +10,000)은 지금처럼 **결제의 진행자**로 센다. 보드의 진행자 · 넘김 · 결과는 정산에 들어가지 않는다.
+- 보드에서 [입금 확인]을 누르게 하는 건 결제 트랙 확인 뒤 별도 계약이다.
+
+### 9.23.14 디코 상담 기록 옮기기 (앱 화면 없음)
+
+- 오너가 채널을 알려 주면 서버가 드라이런(쓰기 0) → 오너 OK → 쓰기 순서로 옮긴다(피드백 이관과 같은 방식). 옮긴 카드는 `origin: "discord"`.
+- 이미 있는 상담 기록과 겹치는 메시지는 새 카드를 만들지 않는다. 대상자를 명부에서 못 찾은 카드는 `target.studentKey: null` 로 온다 — 9.23.9 로 붙인다.
+
+### 9.23.15 코드 · 문구(제안 · 앱이 최종)
+
+| 코드 | HTTP | 문구 제안 |
+|---|---|---|
+| `use_booking` | 409 | 레벨 테스트 칸에서 바꿔 주세요 |
+| `use_application` | 409 | 신청 카드의 「닫기」로 정리해 주세요 |
+| `type_locked` | 409 | 레벨 테스트 칸 상담은 유형을 바꿀 수 없어요 |
+| `not_done` | 409 | 상담이 끝난 뒤에 정할 수 있어요 |
+| `already_done` | 409 | 이미 끝난 상담이에요 |
+| `enroll_first` | 409 | 「등록하기」로 등록해 주세요 |
+| `link_first` | 409 | 먼저 명부에 연결해 주세요 |
+| `already_linked` | 409 | 이미 명부에 연결돼 있어요 |
+| `already_enrolled` | 409 | 이미 등록된 수강생이에요 |
+| `closed` | 409 | 닫힌 상담이에요 |
+| `future_date` | 400 | 아직 오지 않은 시각이에요 |
 | `owner_only` | 403 | 원장 계정에서만 할 수 있어요 |
