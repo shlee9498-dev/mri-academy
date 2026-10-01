@@ -238,7 +238,7 @@ test("403 quotaExceeded — 30분 쉰다 · 로그에 키 · 요청 주소가 �
   assert.equal(w.current().live, true);
   for (const l of log.lines) {
     assert.ok(!l.includes(KEY), "로그에 키");
-    assert.ok(!l.includes("googleapis.com"), "로그에 요청 주소");
+    assert.ok(!/https?:\/\//.test(l), "로그에 요청 주소");
   }
 });
 
@@ -258,12 +258,12 @@ test("6시간 넘게 다시 확인 못 한 라이브는 내린다", async () => 
 test("구독 확인 — 우리 채널 subscribe 만 답한다 · unsubscribe · 다른 주제는 404", () => {
   const { w } = setup();
   const q = (o) => new URLSearchParams(o);
-  assert.deepEqual(w.verify(q({ "hub.mode": "subscribe", "hub.topic": topicOf(CHANNELS[0]), "hub.challenge": "abc123", "hub.lease_seconds": "432000" })),
+  assert.deepEqual(w.hubAnswer(q({ "hub.mode": "subscribe", "hub.topic": topicOf(CHANNELS[0]), "hub.challenge": "abc123", "hub.lease_seconds": "432000" })),
     { status: 200, body: "abc123" });
-  assert.equal(w.verify(q({ "hub.mode": "unsubscribe", "hub.topic": topicOf(CHANNELS[0]), "hub.challenge": "x" })).status, 404);
-  assert.equal(w.verify(q({ "hub.mode": "subscribe", "hub.topic": "https://www.youtube.com/xml/feeds/videos.xml?channel_id=UCx", "hub.challenge": "x" })).status, 404);
-  assert.equal(w.verify(q({ "hub.mode": "subscribe", "hub.topic": topicOf(CHANNELS[0]) })).status, 404);
-  assert.equal(w.verify(q({ "hub.mode": "subscribe", "hub.topic": topicOf(CHANNELS[0]), "hub.challenge": "<script>x</script>" })).status, 404);
+  assert.equal(w.hubAnswer(q({ "hub.mode": "unsubscribe", "hub.topic": topicOf(CHANNELS[0]), "hub.challenge": "x" })).status, 404);
+  assert.equal(w.hubAnswer(q({ "hub.mode": "subscribe", "hub.topic": "https://www.youtube.com/xml/feeds/videos.xml?channel_id=UCx", "hub.challenge": "x" })).status, 404);
+  assert.equal(w.hubAnswer(q({ "hub.mode": "subscribe", "hub.topic": topicOf(CHANNELS[0]) })).status, 404);
+  assert.equal(w.hubAnswer(q({ "hub.mode": "subscribe", "hub.topic": topicOf(CHANNELS[0]), "hub.challenge": "<script>x</script>" })).status, 404);
 });
 
 test("구독 요청이 실패하면 30분 뒤 다시 · 성공하면 4일 동안 안 부른다", async () => {

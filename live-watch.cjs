@@ -273,7 +273,8 @@ function createLiveWatch({ key = "", secret = null, fetchImpl = (...a) => fetch(
   }
 
   // 구독 확인(허브가 GET 으로 묻는다) — 우리 채널 피드의 subscribe 만 답한다. unsubscribe 는 거절(남이 우리 구독을 끊지 못하게).
-  function verify(params) {
+  //   되돌려 주는 값은 확인 값 모양(숫자 · 영문 · ._~-)만 · 한 번 더 URL 인코딩한다(그 모양이면 글자가 바뀌지 않는다).
+  function hubAnswer(params) {
     const mode = params.get("hub.mode"), topic = params.get("hub.topic"), challenge = params.get("hub.challenge");
     const ch = channels.find((c) => topicOf(c) === topic);
     if (mode === "subscribe" && ch && CHALLENGE_RE.test(challenge || "")) {
@@ -281,7 +282,7 @@ function createLiveWatch({ key = "", secret = null, fetchImpl = (...a) => fetch(
       const sec = Number.isFinite(lease) && lease > 0 ? Math.min(lease, LEASE_SEC) : LEASE_SEC;
       subs.set(ch.channelId, { renewAt: now() + sec * 800 });
       log.log(`[live] 푸시 구독 확인 ${ch.label}`);
-      return { status: 200, body: challenge };
+      return { status: 200, body: encodeURIComponent(challenge) };
     }
     if (mode === "denied" && ch) { log.error(`[live] 푸시 구독 거절됨 ${ch.label}`); return { status: 200, body: "" }; }
     return { status: 404, body: "" };
@@ -333,7 +334,7 @@ function createLiveWatch({ key = "", secret = null, fetchImpl = (...a) => fetch(
     };
   }
 
-  return { tick, kick, verify, receive, current, checkDue, pollFeeds, subscribe,
+  return { tick, kick, hubAnswer, receive, current, checkDue, pollFeeds, subscribe,
     _state: { videos, queue, subs, get backoffUntil() { return backoffUntil; } } };
 }
 
@@ -350,9 +351,9 @@ module.exports = function mountLiveWatch(app, deps = {}) {
     res.json(w.current());
   });
   // 유튜브 푸시 허브 콜백 — 확인(GET) · 알림(POST)
-  app.get("/api/live/websub", limit("liveHubVerify", 30, 60_000), (req, res) => {
+  app.get("/api/live/websub", limit("liveHubAnswer", 30, 60_000), (req, res) => {
     const q = new URLSearchParams(String(req.originalUrl || "").split("?")[1] || "");
-    const out = w.verify(q);
+    const out = w.hubAnswer(q);
     res.set("X-Content-Type-Options", "nosniff");
     res.status(out.status).type("text/plain").send(out.body);
   });
