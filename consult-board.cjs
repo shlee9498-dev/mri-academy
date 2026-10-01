@@ -39,7 +39,7 @@ const ROW_COLS = "id,kind,consult_type,student_name,student_id,trainer_id,handle
   + "created_at,updated_at,booking_id,application_id,outcome,outcome_note,outcome_at,outcome_by,game_nick,alias";
 const BOOKING_COLS = "id,slot_id,student_id,status,booked_at,trainer_slots!inner(trainer_id,slot_start,duration_min,lesson_type)";
 const APP_COLS = "id,status,student_id,display_name,real_name,age,pubg_name,assigned_trainer_id,preferred_trainer_id,booking_id,"
-  + "deposit_confirmed_at,tested_at,enrolled_at,closed_reason,created_at,updated_at";
+  + "deposit_confirmed_at,tested_at,enrolled_at,closed_reason,closed_note,created_at,updated_at";
 const STUDENT_COLS = "id,name,pubg_name,status,discord_id,merged_into,level";
 
 const kstDate = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
@@ -74,7 +74,8 @@ function stageOf({ row, booking, app }) {
   if (row && (row.status === "done" || row.status === "confirmed")) return "done";
   if (row && (row.status === "cancelled" || row.status === "noshow")) return "closed";
   if (app) {
-    if (app.status === "closed") return "closed";
+    // 마침 뒤에 닫은 신청은 끝난 상담이다(레벨 테스트는 했다) — 숫자의 「끝난 상담」에 들어가야 전환율이 맞는다
+    if (app.status === "closed") return app.tested_at ? "done" : "closed";
     if (app.status === "tested" || app.status === "enrolled") return "done";
     if (booking?.status === "done") return "done";
     if (booking?.status === "no_show") return "closed";
@@ -97,10 +98,11 @@ function depositOf({ row, app, type }) {
   if (row && !app && row.charge_type == null && !Number(row.fee)) return "none";
   return "waiting";
 }
+// 결과 — 상담 기록에 적은 결과 먼저. 없으면 신청에서 읽는다: 등록 = 등록 · 닫힘 = 안 함(마침 뒤 닫음은 이유와 상관없이 · 마침 전은 「본인이 안 하기로 함」만)
 function resultOf({ row, app }) {
   if (row?.outcome) return row.outcome;
   if (app?.status === "enrolled") return "enrolled";
-  if (app?.status === "closed" && app.closed_reason === "declined") return "declined";
+  if (app?.status === "closed" && (app.tested_at || app.closed_reason === "declined")) return "declined";
   return null;
 }
 
@@ -156,7 +158,8 @@ function cardOf({ row, booking, app, type }) {
   return {
     key, row, booking, app, type, stage, result,
     deposit: depositOf({ row, app, type }),
-    resultNote: row?.outcome ? row.outcome_note ?? null : null,
+    // 신청을 닫아서 정해진 「안 함」은 닫을 때 적은 한 줄이 결과 메모다(디스코드 카드가 트레이너에게도 보여 주는 값과 같다)
+    resultNote: row?.outcome ? row.outcome_note ?? null : result === "declined" && app ? app.closed_note ?? null : null,
     resultAt: row?.outcome ? row.outcome_at ?? null
       : result === "enrolled" ? app?.enrolled_at ?? null : result === "declined" ? app?.updated_at ?? null : null,
     studentId: row?.student_id ?? booking?.student_id ?? app?.student_id ?? null,
@@ -231,7 +234,7 @@ function statsOf(cards, { month, nowMs, onlyTrainerId = null, coachIds = [] }) {
   for (let i = 5; i >= 0; i--) {
     const mm = new Date(Date.UTC(y, m - 1 - i, 1)).toISOString().slice(0, 7);
     const a = agg(mine.filter((c) => monthOf(c) === mm));
-    months.push({ month: mm, done: a.done, enrolled: a.enrolled });
+    months.push({ month: mm, done: a.done, enrolled: a.enrolled, conversionRate: a.conversionRate });
   }
   // 「고민 중」 3일 — 트레이너는 내가 닿는 카드(넘겨받음 포함) · 원장은 전부
   const thinkingOverdue = live
