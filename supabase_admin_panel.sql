@@ -4794,8 +4794,9 @@ notify pgrst, 'reload schema';
 --
 --   59a (A 구간 · 더하기만 · 세션 실행): 새 칸 넷 · 제약 둘 · 인덱스 둘 · 새 함수 다섯.
 --   59b (B 구간 · 오너 OK 뒤 세션 실행): lesson_type 제약 교체(+'course') · 기존 함수 셋에 직강 칸 거절 한 줄씩.
---   59c (B 구간 · 오너 OK 뒤 · 데이터): 원장이 「참여형」으로 연 칸 → 직강 반 수업 칸(반은 오너 답).
---     59b 전에는 open_course_slot 이 course_slots_not_ready 를 돌려준다 — 칸 없이 바로 출석(59a)은 지금 된다.
+--   59c (B 구간 · 오너 OK 뒤 · 데이터): 원장이 「참여형」으로 연 칸 → 직강 반 수업 칸(반 없음 · 오너 9/30 답).
+--   59e (B 구간 · 오너 OK 10/1): 반 없는 직강 칸 — 반은 칸에 묶지 않고 출석 때 수강생마다 진행 중 직강의 회차가 준다.
+--     59b · 59c · 59e 는 2026-10-01 저녁 실행했다(아래 각 블록의 실행 기록).
 --   JS 사본: course-progress.cjs pickCourse(남은 회차 · 강의 고르기 표시용) — course_pick 과 같이 움직인다.
 -- ============================================================
 
@@ -5391,15 +5392,21 @@ $$;
 commit;
 notify pgrst, 'reload schema';
 
--- ── 59c) B 구간 · 데이터 — 원장이 「참여형」으로 연 칸 → 직강 반 수업 칸(반 = 오너 답 · 59b 뒤) ─────────
---   대상 = 원장(staff 4) · participate · open · 10/1 이후 · 예약 0건. 반은 요일 · 시각별로 오너가 정한다.
+-- ── 59c) B 구간 · 데이터 — 원장이 「참여형」으로 연 칸 → 직강 반 수업 칸(반 없음 · 59b · 59e 뒤) ─────────
+--   대상 = 원장(staff 4) · participate · open · 10/1 이후 · 예약 0건. 반은 비운다(오너 9/30 「참여형 = 직강 수업반 · 반은 칸에 묶지 않는다」
+--   · 10/1 어플 전달) — 반을 비우려면 59e 의 짝 제약 교체가 먼저다.
 --   ⚠️ 예약이 한 건이라도 생긴 칸은 바꾸지 않는다(not exists) — 판수 경로로 잡힌 자리가 회차 칸으로 바뀌면 안 된다.
---   update public.trainer_slots set lesson_type = 'course', course_level = '<반>'
---    where id in (<칸 번호>) and trainer_id = 4 and lesson_type = 'participate' and status = 'open'
+--   update public.trainer_slots set lesson_type = 'course', course_level = null
+--    where id in (237,249,241,247,245,248,246,239,243,240,244) and trainer_id = 4 and lesson_type = 'participate' and status = 'open'
 --      and not exists (select 1 from public.slot_bookings b where b.slot_id = trainer_slots.id);
---   검증: select id, lesson_type, course_level from public.trainer_slots where id in (<칸 번호>);
+--   검증: select id, lesson_type, course_level from public.trainer_slots where id in (<위 열한 칸>);
 --   되돌리기: update public.trainer_slots set lesson_type = 'participate', course_level = null
---              where id in (<칸 번호>) and not exists (select 1 from public.slot_bookings b where b.slot_id = trainer_slots.id);
+--              where id in (<위 열한 칸>) and not exists (select 1 from public.slot_bookings b where b.slot_id = trainer_slots.id);
+--
+--   ✅ 59c 실행 완료 2026-10-01 21:3x KST (세션 실행 · B 구간 · 오너 OK 10/1 어플 전달 「전부 직강 칸으로 전환 OK」 · 59e 뒤).
+--      대상 13칸 중 열린 11칸(10/1 19:00 ~ 10/23 19:00 · 180분 · 정원 3) 전환 · 취소된 2칸(238 · 242)은 그대로.
+--      실행 전: participate 35 · personal 166 · 예약 10 · 강의 18 · 출석 done 8행 71회 · 회차 8.
+--      실행 후: course 11(반 없음) · participate 24 · personal 166 · 나머지 전부 그대로.
 --
 -- ── 59b 검증 ────────────────────────────────────────────────────────────────
 --   select pg_get_constraintdef(oid) from pg_constraint where conname = 'trainer_slots_lesson_type_check';   -- 'course' 포함
@@ -5407,6 +5414,13 @@ notify pgrst, 'reload schema';
 --      and proname in ('book_slot','record_lesson_from_booking','complete_bookings_for_session');
 -- 되돌리기: §47 book_slot · §50 record_lesson_from_booking · §23 complete_bookings_for_session 를 다시 실행하고
 --   직강 칸이 0개일 때만 제약을 종전 네 값으로 되돌린다(직강 칸이 남아 있으면 제약 추가가 실패한다).
+--
+--   ✅ 59b 실행 완료 2026-10-01 21:3x KST (세션 실행 · B 구간 · 오너 OK 10/1 어플 전달 · 이 블록 그대로 · 블록 md5 b3d2fa559cf84f02b657b71e30c981c8).
+--      실행 전: lesson_type 네 값 · book_slot 3504 · d15c1bc6 / record_lesson_from_booking 4442 · 12d768a9 /
+--               complete_bookings_for_session 878 · adab47a8 · 직강 칸 0.
+--      실행 후: lesson_type +course · book_slot 3667 · 44ff9a42 / record_lesson_from_booking 4595 · fe597597 /
+--               complete_bookings_for_session 922 · 21c100c3 (셋 다 정본 본문과 일치).
+--      사전 되돌림 시험(59e 와 묶어 17항목) 통과 — 판수 경로로 직강 칸 예약 시도 → course_slot.
 
 -- ── 59d) A 구간 — 회차 정정(추가 · 취소 · 보강) · 출석 되살리기 (2026-10-01 · 반장 요청 · 어플 8번 · 계약 §9.22) ──
 --   ① record_course_attendance 정정판 — 취소된 출석은 「없는 것」으로 본다(같은 회차에 다시 넣으면 그 행을 되살린다).
@@ -5665,6 +5679,341 @@ notify pgrst, 'reload schema';
 --      실행 후: record_course_attendance 6721 · 75a63f0e / correct_course_attendance 1255 · 582067eb /
 --               cancel_course_attendance 1655 · e857a433 (셋 다 정본 본문과 일치 · 겹 정의 없음) · 출석 · 회차 그대로.
 --      사전 되돌림 시험(59b 포함 · 12항목) 통과 · 실행 뒤 보강 · 잘못된 종류 · 미래 날짜 · 반 다름 되돌림 시험 통과.
+
+-- ── 59e) B 구간 · 오너 OK(10/1 어플 전달) — 반 없는 직강 칸(「참여형 = 직강 수업반」 · 반은 칸에 묶지 않는다) ─────────
+--   오너 9/30 답: 참여형 = 직강 수업반이고 반은 칸에 묶지 않는다. 칸의 반은 비워 두고, 출석 때 수강생마다 진행 중 직강의 회차가 준다.
+--   직강 칸 넣기는 남은 회차로 판정하고, 진행 중 직강이 둘 이상인 수강생은 원장이 고른다.
+--   ① 짝 제약 교체 — 「직강 칸이면 반이 꼭 있다」 → 「반은 직강 칸에만 붙는다(직강 칸은 반이 없어도 된다)」.
+--   ② course_pick — 반이 비면(null) 진행 중인 반 강의(초급 · 중급 · 심화) 전부에서 고른다(남은 회차가 있는 가장 오래된 것 ·
+--      순서는 종전 그대로). 개인강의 · 기타 강의(원장 1:1 등 · 지금 0건)는 반 수업 칸이 깎지 않는다.
+--   ③ course_pick_slot(새 함수) — 그 칸 예약에 고른 강의(slot_bookings.course_id)가 있고 아직 진행 중이면 그 강의 · 없으면 ②.
+--   ④ open_course_slot — 반 없이 열 수 있다(반을 주면 종전처럼 확인한다).
+--   ⑤ book_course_slot — 넣을 때 강의를 고를 수 있다(p_course_id). 인자가 늘어 같은 이름이 둘이 되면 PostgREST 가
+--      고르지 못한다(PGRST203) — 옛 판(인자 셋)을 지우고 넷(넷째 기본값 null)으로 다시 만든다. 인자 셋으로 부르던 서버도 그대로 돈다.
+--   ⑥ record_course_attendance — 칸 출석은 ③으로 강의를 고른다. 칸 없는 출석도 반 없이(null) 받는다
+--      (같은 날 · 같은 시작 시각 · 반 없음끼리 한 회차). 반을 주던 종전 호출은 글자 그대로 같은 판정이다.
+--   판수 · 정산 계산은 바뀌지 않는다(직강 회차 경로만).
+begin;
+alter table public.trainer_slots drop constraint if exists chk_trainer_slots_course_pair;
+alter table public.trainer_slots add constraint chk_trainer_slots_course_pair
+  check (course_level is null or lesson_type = 'course');
+
+create or replace function public.course_pick(p_student_id bigint, p_level text,
+  out o_course_id bigint, out o_units_left numeric, out o_other_level text)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  select c.id, course_units_left(c.id) into o_course_id, o_units_left
+    from courses c
+   where c.student_id = p_student_id and c.status = 'active'
+     and (c.level = p_level or (p_level is null and c.level in ('초급반','중급반','심화반')))
+   order by (coalesce(course_units_left(c.id), 1) > 0) desc,
+            case when coalesce(course_units_left(c.id), 1) > 0 then c.started_on end asc,
+            c.started_on desc, c.id desc
+   limit 1;
+  if o_course_id is null and p_level is not null then
+    select c.level into o_other_level
+      from courses c
+     where c.student_id = p_student_id and c.status = 'active'
+     order by c.started_on desc, c.id desc
+     limit 1;
+  end if;
+end;
+$$;
+
+create or replace function public.course_pick_slot(p_student_id bigint, p_level text, p_slot_id bigint,
+  out o_course_id bigint, out o_units_left numeric, out o_other_level text)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if p_slot_id is not null then
+    select b.course_id into o_course_id
+      from slot_bookings b join courses c on c.id = b.course_id
+     where b.slot_id = p_slot_id and b.student_id = p_student_id and b.span_head_id is null
+       and b.status <> 'cancelled' and c.status = 'active'
+       and (c.level = p_level or (p_level is null and c.level in ('초급반','중급반','심화반')))
+     order by b.id desc
+     limit 1;
+    if o_course_id is not null then
+      o_units_left := course_units_left(o_course_id);
+      return;
+    end if;
+  end if;
+  select k.o_course_id, k.o_units_left, k.o_other_level into o_course_id, o_units_left, o_other_level
+    from course_pick(p_student_id, p_level) k;
+end;
+$$;
+
+create or replace function public.open_course_slot(
+  p_trainer_id bigint, p_start timestamptz, p_span_min int, p_capacity int, p_level text)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_id bigint;
+begin
+  if p_trainer_id is null or p_start is null or p_span_min is null or p_capacity is null then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+  if p_level is not null and p_level not in ('초급반','중급반','심화반') then return jsonb_build_object('error','invalid_body'); end if;
+  if p_span_min not in (30,60,90,120,150,180) then return jsonb_build_object('error','invalid_body'); end if;
+  if p_capacity < 1 or p_capacity > 8 then return jsonb_build_object('error','invalid_body'); end if;
+  if (extract(epoch from p_start)::bigint % 1800) <> 0 then return jsonb_build_object('error','invalid_body'); end if;
+  if not exists (select 1 from staff where id = p_trainer_id and role = 'owner' and active is not false) then
+    return jsonb_build_object('error','owner_only');
+  end if;
+
+  perform pg_advisory_xact_lock(p_trainer_id);
+  if exists (
+    select 1 from trainer_slots
+     where trainer_id = p_trainer_id
+       and status <> 'cancelled'
+       and tstzrange(slot_start, slot_start + make_interval(mins => duration_min), '[)')
+           && tstzrange(p_start,  p_start  + make_interval(mins => p_span_min),  '[)')
+  ) then
+    return jsonb_build_object('error','slot_taken');
+  end if;
+
+  insert into trainer_slots (trainer_id, slot_start, lesson_type, capacity, status, duration_min, course_level)
+    values (p_trainer_id, p_start, 'course', p_capacity, 'open', p_span_min, p_level)
+    returning id into v_id;
+  return jsonb_build_object('created', 1, 'firstId', v_id, 'durationMin', p_span_min);
+
+exception
+  when unique_violation then return jsonb_build_object('error','slot_taken');
+  when check_violation  then return jsonb_build_object('error','course_slots_not_ready');
+end;
+$$;
+
+drop function if exists public.book_course_slot(bigint, bigint, bigint);
+create or replace function public.book_course_slot(
+  p_student_id bigint, p_slot_id bigint, p_by_staff bigint default null, p_course_id bigint default null)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_slot   trainer_slots%rowtype;
+  v_cid    bigint;
+  v_left   numeric;
+  v_other  text;
+  v_clevel text;
+  v_booked int;
+  v_id     bigint;
+begin
+  if p_student_id is null or p_slot_id is null then return jsonb_build_object('error','invalid_body'); end if;
+  select * into v_slot from trainer_slots where id = p_slot_id for update;
+  if not found then return jsonb_build_object('error','slot_not_found'); end if;
+  if v_slot.lesson_type is distinct from 'course' then return jsonb_build_object('error','not_course_slot'); end if;
+  if v_slot.status <> 'open' then return jsonb_build_object('error','slot_taken'); end if;
+  if p_by_staff is null then
+    if v_slot.slot_start - now() < interval '3 hours' then return jsonb_build_object('error','booking_closed'); end if;
+  else
+    if v_slot.trainer_id is distinct from p_by_staff then return jsonb_build_object('error','scope_denied'); end if;
+    if v_slot.slot_start + make_interval(mins => v_slot.duration_min) <= now() then
+      return jsonb_build_object('error','booking_closed');
+    end if;
+  end if;
+
+  if p_course_id is not null then
+    -- 고른 강의(진행 중 직강이 둘 이상일 때) — 그 수강생의 진행 중 반 강의여야 하고, 칸에 반이 있으면 같은 반이어야 한다.
+    select c.id, course_units_left(c.id), c.level into v_cid, v_left, v_clevel
+      from courses c
+     where c.id = p_course_id and c.student_id = p_student_id and c.status = 'active'
+       and c.level in ('초급반','중급반','심화반');
+    if v_cid is null then return jsonb_build_object('error','no_course'); end if;
+    if v_slot.course_level is not null and v_clevel is distinct from v_slot.course_level then
+      return jsonb_build_object('error','level_mismatch');
+    end if;
+  else
+    select k.o_course_id, k.o_units_left, k.o_other_level into v_cid, v_left, v_other
+      from course_pick(p_student_id, v_slot.course_level) k;
+    if v_cid is null then
+      return jsonb_build_object('error', case when v_other is null then 'no_course' else 'level_mismatch' end);
+    end if;
+  end if;
+  if v_left is not null and v_left <= 0 then
+    return jsonb_build_object('error','no_units_left');
+  end if;
+
+  select count(*) into v_booked from slot_bookings where slot_id = v_slot.id and status = 'booked';
+  if v_booked >= v_slot.capacity then return jsonb_build_object('error','slot_full'); end if;
+
+  insert into slot_bookings (slot_id, student_id, games_held, status, course_id)
+    values (v_slot.id, p_student_id, 0, 'booked', v_cid)
+    returning id into v_id;
+  return jsonb_build_object('bookingId', v_id, 'gamesHeld', 0, 'courseId', v_cid, 'unitsLeft', v_left);
+
+exception
+  when unique_violation then return jsonb_build_object('error','already_booked');
+end;
+$$;
+
+create or replace function public.record_course_attendance(
+  p_trainer_id   bigint,
+  p_slot_id      bigint,
+  p_present      bigint[],
+  p_held_on      date    default null,
+  p_level        text    default null,
+  p_start_time   time    default null,
+  p_duration_min int     default null,
+  p_actor        text    default null,
+  p_same_day_ok  boolean default false,
+  p_mark_absent  boolean default false)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_slot    trainer_slots%rowtype;
+  v_today   date := (now() at time zone 'Asia/Seoul')::date;
+  v_slotday date;
+  v_day     date;
+  v_level   text;
+  v_start   time;
+  v_dur     int;
+  v_sess    bigint;
+  v_sstat   text;
+  v_ids     bigint[];
+  v_sid     bigint;
+  v_pick    record;
+  v_left    numeric;
+  v_rej     jsonb := '[]'::jsonb;
+  v_rec     jsonb := '[]'::jsonb;
+  v_skip    jsonb := '[]'::jsonb;
+  v_absent  jsonb := '[]'::jsonb;
+begin
+  if p_trainer_id is null or p_present is null then return jsonb_build_object('error','invalid_body'); end if;
+  select coalesce(array_agg(distinct x order by x), '{}'::bigint[]) into v_ids
+    from unnest(p_present) x where x is not null;
+
+  -- 같은 트레이너의 칸 열기 · 출석이 한 줄로 선다(칸 없는 회차를 두 요청이 같이 만들지 않게).
+  perform pg_advisory_xact_lock(p_trainer_id);
+
+  if p_slot_id is not null then
+    select * into v_slot from trainer_slots where id = p_slot_id for update;
+    if not found then return jsonb_build_object('error','not_found'); end if;
+    if v_slot.trainer_id is distinct from p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
+    if v_slot.lesson_type is distinct from 'course' then return jsonb_build_object('error','not_course_slot'); end if;
+    if v_slot.status = 'cancelled' then return jsonb_build_object('error','slot_cancelled'); end if;
+    v_slotday := (v_slot.slot_start at time zone 'Asia/Seoul')::date;
+    v_day     := coalesce(p_held_on, v_slotday);
+    if abs(v_day - v_slotday) > 1 then return jsonb_build_object('error','invalid_body'); end if;   -- 자정 넘김만
+    v_level := v_slot.course_level;                                                                 -- 반 없는 칸이면 null
+    v_start := (v_slot.slot_start at time zone 'Asia/Seoul')::time;
+    v_dur   := v_slot.duration_min;
+    select id, status into v_sess, v_sstat from course_sessions where slot_id = v_slot.id for update;
+  else
+    if not exists (select 1 from staff where id = p_trainer_id and role = 'owner' and active is not false) then
+      return jsonb_build_object('error','owner_only');
+    end if;
+    if (p_level is not null and p_level not in ('초급반','중급반','심화반')) or p_held_on is null
+       or cardinality(v_ids) = 0 then
+      return jsonb_build_object('error','invalid_body');
+    end if;
+    v_dur := coalesce(p_duration_min, 180);
+    if v_dur not in (30,60,90,120,150,180) then return jsonb_build_object('error','invalid_body'); end if;
+    v_level := p_level;                                                                             -- 반 없이 받으면 null
+    v_day   := p_held_on;
+    v_start := p_start_time;
+    select id, status into v_sess, v_sstat from course_sessions
+     where slot_id is null and trainer_id = p_trainer_id and held_on = v_day and label is not distinct from v_level
+       and start_time is not distinct from v_start and source = 'panel' and kind = 'group'
+     order by id
+     limit 1
+     for update;
+  end if;
+  if v_day > v_today then return jsonb_build_object('error','future_date'); end if;
+  if v_sstat = 'cancelled' then return jsonb_build_object('error','session_cancelled'); end if;
+
+  -- ① 판정 — 전원 먼저(쓰기 전) · 취소된 출석은 없는 것으로 본다 · 칸 예약에 고른 강의가 있으면 그 강의(③ course_pick_slot)
+  foreach v_sid in array v_ids loop
+    continue when v_sess is not null and exists (
+      select 1 from course_attendance a join courses c on c.id = a.course_id
+       where a.session_id = v_sess and c.student_id = v_sid and a.status = 'done');
+    select * into v_pick from course_pick_slot(v_sid, v_level, p_slot_id);
+    if v_pick.o_course_id is null then
+      v_rej := v_rej || jsonb_build_array(jsonb_build_object('studentId', v_sid,
+                 'code', case when v_pick.o_other_level is null then 'no_course' else 'level_mismatch' end));
+    elsif not coalesce(p_same_day_ok, false) and exists (
+      select 1 from course_attendance a
+        join course_sessions s on s.id = a.session_id
+        join courses c on c.id = a.course_id
+       where c.student_id = v_sid and s.held_on = v_day and s.status <> 'cancelled'
+         and a.status = 'done' and s.id is distinct from v_sess) then
+      v_rej := v_rej || jsonb_build_array(jsonb_build_object('studentId', v_sid, 'code', 'already_today'));
+    end if;
+  end loop;
+  if jsonb_array_length(v_rej) > 0 then
+    return jsonb_build_object('error','students_rejected','rejected', v_rej);
+  end if;
+
+  -- ② 회차 행 — 출석한 사람이 있을 때만 만든다(아무도 안 왔으면 결석 처리만)
+  if v_sess is null and cardinality(v_ids) > 0 then
+    insert into course_sessions (held_on, start_time, end_time, duration_min, kind, label, status, source,
+                                 created_by, slot_id, trainer_id)
+      values (v_day, v_start, v_start + make_interval(mins => v_dur), v_dur, 'group', v_level, 'done', 'panel',
+              p_actor, p_slot_id, p_trainer_id)
+      returning id into v_sess;
+  end if;
+
+  -- ③ 출석 — 학생별 units 1 · 같은 회차 · 같은 강의의 취소 행은 되살린다(유니크 session_id · course_id)
+  foreach v_sid in array v_ids loop
+    if exists (select 1 from course_attendance a join courses c on c.id = a.course_id
+                where a.session_id = v_sess and c.student_id = v_sid and a.status = 'done') then
+      v_skip := v_skip || to_jsonb(v_sid);
+      continue;
+    end if;
+    select * into v_pick from course_pick_slot(v_sid, v_level, p_slot_id);
+    insert into course_attendance (session_id, course_id, units, units_auto, status, created_by)
+      values (v_sess, v_pick.o_course_id, 1, 1, 'done', p_actor)
+    on conflict (session_id, course_id) do update
+      set status = 'done', units = 1, units_auto = 1, adjust_reason = null, created_by = excluded.created_by
+      where course_attendance.status = 'cancelled';
+    v_left := course_units_left(v_pick.o_course_id);
+    v_rec := v_rec || jsonb_build_array(jsonb_build_object('studentId', v_sid, 'courseId', v_pick.o_course_id,
+                                        'unitsLeft', v_left, 'overdrawn', coalesce(v_left < 0, false)));
+  end loop;
+
+  -- ④ 칸 예약 상태
+  if p_slot_id is not null then
+    update slot_bookings set status = 'done'
+     where slot_id = p_slot_id and span_head_id is null and student_id = any(v_ids)
+       and status in ('booked','pending_review','no_show');
+    if coalesce(p_mark_absent, false) then
+      with u as (
+        update slot_bookings b set status = 'no_show'
+         where b.slot_id = p_slot_id and b.span_head_id is null
+           and b.status in ('booked','pending_review')
+           and not (b.student_id = any(v_ids))
+           and not exists (select 1 from course_attendance a join courses c on c.id = a.course_id
+                            where a.session_id = v_sess and c.student_id = b.student_id and a.status = 'done')
+        returning b.student_id)
+      select coalesce(jsonb_agg(u.student_id order by u.student_id), '[]'::jsonb) into v_absent from u;
+    end if;
+  end if;
+
+  return jsonb_build_object('sessionId', v_sess, 'heldOn', v_day, 'level', v_level,
+                            'recorded', v_rec, 'alreadyRecorded', v_skip, 'noShow', v_absent);
+end;
+$$;
+commit;
+notify pgrst, 'reload schema';
+
+-- ── 59e 검증 ────────────────────────────────────────────────────────────────
+--   select pg_get_constraintdef(oid) from pg_constraint where conname = 'chk_trainer_slots_course_pair';   -- course_level is null or course
+--   select proname, pg_get_function_identity_arguments(oid), length(prosrc), left(md5(prosrc), 8) from pg_proc
+--    where pronamespace = 'public'::regnamespace and proname in
+--      ('course_pick','course_pick_slot','open_course_slot','book_course_slot','record_course_attendance');   -- 5행 · book_course_slot 인자 넷 하나
+-- 권한 좁히기는 §59a 와 같이 오너 실행(§46c 목록에 더한다 — 새로 생긴 것 · 다시 만든 것):
+--   public.course_pick_slot(bigint, text, bigint) · public.book_course_slot(bigint, bigint, bigint, bigint)
+-- 되돌리기(코드를 먼저 되돌린 뒤 · 지우는 DDL = B 구간 · 오너 OK):
+--   ① 반 없는 직강 칸이 남아 있으면 먼저 반을 정하거나 participate 로 되돌린다(59c 되돌리기).
+--   ② §59a 의 course_pick · open_course_slot · book_course_slot(인자 셋 — 넷짜리를 drop 한 뒤) 과 §59d 의 record_course_attendance 를 다시 실행 ·
+--      drop function public.course_pick_slot(bigint, text, bigint) · 짝 제약을 종전 「(lesson_type = 'course') = (course_level is not null)」로.
+--
+--   ✅ 59e 실행 완료 2026-10-01 21:3x KST (세션 실행 · B 구간 · 오너 OK 10/1 어플 전달 · 이 블록 그대로 · 블록 md5 5db76fb8e975e5938379e8e37487d977).
+--      실행 전: 짝 제약 「직강 칸이면 반 필수」 · course_pick 607 · cdfa6328 / open_course_slot 1814 · a7520e14 /
+--               book_course_slot(인자 셋) 2031 · d766b3fd / record_course_attendance 6721 · 75a63f0e · course_pick_slot 없음.
+--      실행 후: 짝 제약 「반은 직강 칸에만」 · course_pick 694 · 6b3f0232 / course_pick_slot 699 · c0e4df55 /
+--               open_course_slot 1731 · 6a34bc68 / book_course_slot(인자 넷) 2648 · 49451053 / record_course_attendance 6997 · 6c0a943c
+--               (전부 정본 본문과 일치 · 겹 정의 없음) · 데이터 그대로.
+--      사전 되돌림 시험 17항목 통과 — 반 없는 칸 열기 · 틀린 반 거절 · 반 있는 칸 그대로 · 판수 경로 거절 · 넣기 자동 고르기 ·
+--      두 번 넣기 · 강의 없음 · 남의 강의 고르기 · 고른 강의에서 출석이 빠짐(먼저 시작한 강의가 아니라) · 반 있는 칸에 다른 반 고르기 거절 ·
+--      칸 없이 반 없이 출석 · 같은 날 · 시각 · 반 없음 한 회차 · 틀린 반 거절 · 반을 주는 종전 호출 · 전환 대상 11칸 · 레슨 칸에 반 달기 거절.
 
 -- ════════════════════════════════════════════════════════════════════════════════════════════════
 -- §60  상담 보드 — 유형 · 예약 · 신청 연결 · 결과 · 넘김 (2026-10-01 · 어플 요청 · 계약 §9.23 · 설계 docs/consult-board-design.md)

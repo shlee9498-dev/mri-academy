@@ -1700,16 +1700,17 @@ PATCH /api/trainer-portal/bookings/:id
   - 등록되면 같은 디스코드로 바로 들어온다(연결 신청 없음).
 - 「판수 채우기」 이벤트 할인은 결제 트랙 합의 뒤 별도 계약(설계 §7.3 · 할인은 아카데미 부담 · 트레이너 지급은 정가 기준).
 
-## 9.21 원장 직강 반 수업 — 칸 · 넣기 · 출석 · 원장 수업 기록 ✅ **서버 반영 (2026-10-01 · §59)** · 칸 열기는 §59b(오너 OK) 뒤
+## 9.21 원장 직강 반 수업 — 칸 · 넣기 · 출석 · 원장 수업 기록 ✅ **서버 반영 (2026-10-01 · §59)** · **칸 열림(§59b · §59e 실행 10/1)** · 반 없는 칸 9.21.14
 
 오너 지적(10/1): 원장 계정도 판수만 받았다. 원장 수업(직강)은 **판수가 아니라 회차**다.
 원장이 강의 시간을 「참여형」으로 열고 직강생(레슨 판수 0)을 넣으면 「판수가 모자라서」로 막혔다.
 
 - 칸 종류 `lessonType: "course"` = **직강 반 수업**. 원장만 연다. 반 = `courseLevel`(`beginner` 초급 · `intermediate` 중급 · `advanced` 심화 — §9.16 레벨과 같은 낱말).
+  **반은 선택이다** — 비우면 **반 없는 직강 칸**(9.21.14 · 오너 9/30 「참여형 = 직강 수업반 · 반은 칸에 묶지 않음」).
 - **남은 회차** = 강의 총 회차 − 출석 − 오너 확인 완료(§58). `GET /students` 의 `courses[].remainingUnits` 와 같은 식이다.
-- 넣기 · 예약 판정은 판수 대신 **그 반 진행 중 강의의 남은 회차**(0 이하면 막는다). **선차감 없음** — 예약 때 회차가 빠지지 않는다.
+- 넣기 · 예약 판정은 판수 대신 **그 반 진행 중 강의의 남은 회차**(0 이하면 막는다 · 반 없는 칸은 진행 중인 반 수업 강의). **선차감 없음** — 예약 때 회차가 빠지지 않는다.
 - 회차는 **출석**으로 빠진다(1회 1단위). 출석 판정에서 남은 회차가 0 이하여도 **막지 않고 알린다**(수업은 이미 했다 — 레슨 「완료」와 같은 원칙).
-- 강의가 여러 개면(재등록) **남은 회차가 있는 가장 오래된 강의**부터 쓴다.
+- 강의가 여러 개면(재등록) **남은 회차가 있는 가장 오래된 강의**부터 쓴다. 진행 중 강의가 둘 이상이면 넣을 때 원장이 고르고(9.21.3) 그 강의에서 빠진다.
 
 ### 9.21.1 칸 열기 — `POST /slots` (원장만)
 
@@ -1718,10 +1719,11 @@ PATCH /api/trainer-portal/bookings/:id
   "durationMin": 180, "capacity": 3, "repeat": { "weeks": 8 } }
 ```
 
-- `courseLevel` 필수(직강 칸에만 · 다른 칸에 보내면 400). `durationMin` 생략 = **180** · `capacity` 생략 = **3**(1~8). 반복 · `endAt` 규칙은 §9.3 · §9.4 그대로.
+- `courseLevel` **선택**(직강 칸에만 · 다른 칸에 보내면 400 · 반 키 밖 값 400). **생략 · null = 반 없는 칸**(9.21.14).
+  `durationMin` 생략 = **180** · `capacity` 생략 = **3**(1~8). 반복 · `endAt` 규칙은 §9.3 · §9.4 그대로.
 - 트레이너 계정은 403 `owner_only`. 겹치면 409 `slot_taken`(같은 범위 겹침 판정).
-- ⚠️ **§59b(오너 OK) 전에는 503 `course_slots_not_ready`** — 칸은 못 열지만 **칸 없이 출석(9.21.5)은 지금 된다**.
-  59b 가 실행되면 원장이 「참여형」으로 연 10/1 이후 칸(예약 0건)은 서버에서 직강 칸으로 바꾼다 — 앱이 다시 열 필요 없다.
+- ✅ **§59b · §59e 실행 완료(10/1 21:3x KST)** — 칸이 열린다. 원장이 「참여형」으로 연 10/1 이후 칸(예약 0건) **11개는 서버에서 반 없는 직강 칸으로 바꿨다**
+  (취소된 칸 2개는 그대로). 앱이 다시 열 필요 없다. 503 `course_slots_not_ready` 는 이제 나오지 않는다(코드만 남겨 둔다).
 
 ### 9.21.2 칸 목록 — `GET /slots` (직강 칸에만 붙는 키)
 
@@ -1735,19 +1737,31 @@ PATCH /api/trainer-portal/bookings/:id
 ```
 
 - `bookings[].studentKey` — `GET /students` 의 `id` 와 **같은 값**(이 화면에서 바로 출석 명단 · 넣기에 쓴다). 모든 칸에 붙는다.
-- 직강 칸 예약만: `attended`(이 칸 출석에 있나) · `unitsLeft`(그 반 강의 남은 회차 · 그 반 강의가 없으면 null).
+- 직강 칸 예약만: `attended`(이 칸 출석에 있나) · `unitsLeft`(이 예약이 쓸 강의의 남은 회차 — 넣을 때 고른 강의(9.21.3), 없으면 다음 출석이 빠질 강의 · 맞는 강의가 없으면 null).
+- 반 없는 칸은 `courseLevel: null`(9.21.14).
 - 직강 칸 예약은 **`no_show` 도 목록에 온다**(결석 표시). 레슨 칸은 종전 그대로(no_show 안 옴).
 - `attendance` — 출석을 받았으면 `taken: true` · 명단에는 **예약 없이 온 사람도** 있다(`booked: false`). 안 받았으면 `{ taken:false, sessionKey:null, count:0, students:[] }`.
 - 직강 칸 예약은 판수 기록이 없는 게 정상이라 `registrationMissing` 은 늘 false.
 
-### 9.21.3 넣기 — `POST /slots/:id/bookings` `{ "studentId": "…" }` (원장 · 내 칸)
+### 9.21.3 넣기 — `POST /slots/:id/bookings` `{ "studentId": "…", "courseKey"?: "…" }` (원장 · 내 칸)
 
 → `{ "bookingId": "…", "gamesHeld": 0, "remainingAfter": null, "unitsLeft": 6 }`
 
 - 레슨 칸과 달리 **담당 범위 검사가 없다** — 그 반 진행 중 강의가 있는 수강생이면 넣는다(직강생은 원장 담당 명부 밖일 수 있다).
-  넣을 사람 고르기는 `GET /students`(원장 = 전체)에서 `courses[]` 중 `status:"active"` · 같은 반인 사람을 앱이 거른다.
+  반 없는 칸은 진행 중인 반 수업 강의(초급 · 중급 · 심화)가 있으면 넣는다.
+  넣을 사람 고르기는 `GET /course-classes`(§9.22.1 · 반 없는 칸은 최상위 `students`)를 쓰면 된다 — `GET /students`(원장 = 전체)의 `courses[]` 로 걸러도 같다.
+- **진행 중 강의가 둘 이상이면 고른다**(§59e · 오너 10/1). `courseKey` 없이 보내면 넣지 않고 409:
+  ```json
+  { "error": { "code": "course_choice_needed",
+      "courses": [ { "courseKey": "…", "courseLevel": "beginner", "level": "초급반", "unitsLeft": 3, "unitsTotal": 8, "startedOn": "2026-08-04" },
+                   { "courseKey": "…", "courseLevel": "intermediate", "level": "중급반", "unitsLeft": 8, "unitsTotal": 8, "startedOn": "2026-09-22" } ] } }
+  ```
+  `courses[]` 는 먼저 시작한 강의부터(칸에 반이 있으면 그 반 강의만). 앱은 하나를 고르게 하고 그 `courseKey` 를 실어 다시 보낸다. **하나뿐이면 묻지 않고 넣는다.**
+- `courseKey` = `GET /course-classes` `students[].courses[].courseKey`(§9.22.1) · 직강생 상세 `courseHistory[].courseKey`(9.21.8)와 같은 값.
+  그 수강생의 진행 중 반 수업 강의가 아니면 409 `no_course` · 칸 반과 다른 반이면 409 `level_mismatch` · 직강 칸이 아닌 칸에 보내면 400.
+- 고른 강의는 예약에 남는다 — 출석 때 **그 강의에서 1회** 빠진다(그 사이 강의가 끝났으면 다음 출석이 빠질 강의로). 응답 `unitsLeft` 도 그 강의 값이다.
 - `durationMin` 을 보내면 400. 수업이 **끝나기 전까지** 넣을 수 있다(늦게 온 사람 · 수강생 본인 예약은 3시간 전 마감).
-- 수강생에게 DM: 「원장님이 예약을 잡아 줬어요 📅 … 직강 심화반 / 판수는 쓰지 않아요. 수업에 나오면 직강 남은 회차에서 1회가 빠져요.」
+- 수강생에게 DM: 「원장님이 예약을 잡아 줬어요 📅 … 직강 심화반 / 판수는 쓰지 않아요. 수업에 나오면 직강 남은 회차에서 1회가 빠져요.」(반 없는 칸은 「직강」)
 
 ### 9.21.4 출석 — `POST /slots/:id/attendance` (원장 · 내 칸 · 30회/분)
 
@@ -1770,6 +1784,8 @@ PATCH /api/trainer-portal/bookings/:id
 - **한 명이라도 막히면 아무것도 쓰지 않는다** → 409
   `{ "error": { "code": "students_rejected", "rejected": [ { "studentKey": "…", "code": "level_mismatch" } ] } }`
   사람별 코드: `no_course`(그 반 강의 없음) · `level_mismatch`(다른 반 강의만 있음) · `already_today`(오늘 다른 직강 출석이 있음 — 맞으면 `sameDayOk:true` 로 다시).
+  반 없는 칸에서는 `level_mismatch` 가 나오지 않는다(`no_course` = 진행 중인 반 수업 강의가 없음).
+- 회차는 사람마다 **그 예약에 고른 강의**(9.21.3)에서 빠진다 — 예약이 없거나 고른 강의가 끝났으면 남은 회차가 있는 가장 오래된 강의. 반 없는 칸은 응답 `courseLevel: null`.
 - 아직 오지 않은 날짜면 400 `future_date`. 직강 칸이 아니면 409 `not_course_slot` · 닫힌 칸 409 `slot_cancelled`.
 
 ### 9.21.5 칸 없이 출석 — `POST /course-attendance` (원장만 · 「수업 기록하기」 직강 반 출석)
@@ -1780,14 +1796,16 @@ PATCH /api/trainer-portal/bookings/:id
 ```
 
 - 칸을 안 열고 한 수업. 응답 · 막힘 규칙은 9.21.4 와 같다(결석 표시는 없다 — 예약이 없다).
+- `courseLevel` **선택** — 생략 · null = 반 없이(9.21.14): 수강생마다 진행 중인 반 수업 강의에서 1회. 같은 날 · 같은 시작 시각 · 반 없음끼리 한 회차다.
 - `present` 1~12명 · `heldOn` 오늘부터 **31일 전까지**(더 지난 건 회차 정정) · `startTime` `HH:MM` 선택 · `durationMin` 30~180(생략 180).
 - 같은 날 · 같은 반 · 같은 시작 시각이면 **같은 회차에 더한다**(늦게 온 사람을 따로 보내도 회차가 둘이 되지 않는다).
 - 트레이너 계정 403 `owner_only`.
 - **2026-10-01 추가(§9.22.3)**: 그날 같은 반 직강 칸이 있으면 409 `slot_exists` + `slotId` — 그 칸으로(9.21.4) 다시 보낸다.
+  반 없는 칸이 있는 날은 어느 반으로 보내도 걸리고, 반 없이 보내면 그날 어느 반 칸이든 걸린다.
 
 ### 9.21.6 「완료」 — 직강 칸 예약 `POST /bookings/:id/complete`
 
-- 직강 칸 예약이면 **그 한 명만 출석**으로 넣는다(다른 예약자는 건드리지 않는다). 판수 함수는 타지 않는다.
+- 직강 칸 예약이면 **그 한 명만 출석**으로 넣는다(다른 예약자는 건드리지 않는다 · 회차는 9.21.4 와 같은 강의에서 빠진다). 판수 함수는 타지 않는다.
 - body: `{ "playedAt"?: "YYYY-MM-DD", "sameDayOk"?: true }` — `games` · `level` 은 400. `sameDayOk` 는 직강 예약에만(레슨 예약에 보내면 400).
 - 200 `{ "resolved": true, "status": "done", "outcome": "attended", "games": 0, "playedAt": "…", "remainingAfter": null, "remainingWasShort": false, "unitsLeft": 5, "overdrawn": false }`
 - 이미 그 회차에 출석이 있으면 409 `already_recorded` · 막히면 사람별 코드 그대로(409 `no_course` · `level_mismatch` · `already_today`).
@@ -1818,8 +1836,10 @@ PATCH /api/trainer-portal/bookings/:id
 ### 9.21.9 수강생 앱 (`/api/student-portal`)
 
 - `GET /availability`: 직강 칸은 **그 반 진행 중 강의가 있는 수강생에게만** 온다. 붙는 키 `courseLevel` · `unitsLeft`(그 반 강의 남은 회차).
+  반 없는 칸은 진행 중인 반 수업 강의가 있는 수강생에게 온다(`courseLevel: null` · `unitsLeft` = 다음 출석이 빠질 강의).
   `lessonType: "course"` 를 모르는 화면은 이 칸을 그리지 않거나 「직강」으로 그린다 — 레슨 수강생에게는 오지 않는다.
 - `POST /bookings { slotId }`: 직강 칸이면 회차로 판정 → `{ bookingId, gamesHeld: 0, unitsLeft }`. `durationMin` 은 400.
+  수강생 본인 예약은 강의를 고르지 않는다 — 남은 회차가 있는 가장 오래된 강의로 잡힌다(고르기는 원장 넣기에만 있다).
   막힘: 409 `no_units_left` · `no_course` · `level_mismatch` · `already_booked` · `slot_full` · `booking_closed`(3시간 전).
 - 예약 DM: 「예약 완료! 🎉 … 직강 심화반 · 진행 … / 판수는 쓰지 않아요. 수업에 나오면 직강 남은 회차에서 1회가 빠져요.」
 - 출석 이력 · 다음 강의(수강생 앱 직강 카드) → **§9.22.6 에서 반영**(2026-10-01).
@@ -1844,7 +1864,8 @@ PATCH /api/trainer-portal/bookings/:id
 | 코드 | HTTP | 문구 제안 |
 |---|---|---|
 | `no_units_left` | 409 | 남은 회차가 없어요 |
-| `no_course` | 409 | 이 반 직강을 듣는 수강생이 아니에요 |
+| `no_course` | 409 | 이 반 직강을 듣는 수강생이 아니에요(반 없는 칸은 「진행 중인 직강이 없어요」) |
+| `course_choice_needed` | 409 | 어느 직강에서 회차를 뺄지 골라 주세요 |
 | `level_mismatch` | 409 | 다른 반 직강을 듣고 있어요 |
 | `already_booked` | 409 | 이미 이 수업에 들어가 있어요 |
 | `already_today` | 409 | 오늘 이미 직강 출석이 있어요. 맞으면 한 번 더 눌러 주세요 |
@@ -1853,7 +1874,7 @@ PATCH /api/trainer-portal/bookings/:id
 | `not_course_slot` · `slot_cancelled` | 409 | 이 칸에서는 출석을 받을 수 없어요 |
 | `future_date` | 400 | 아직 오지 않은 날짜예요 |
 | `owner_only` | 403 | 원장 계정에서만 할 수 있어요 |
-| `course_slots_not_ready` | 503 | 직강 칸은 곧 열려요. 지금은 「수업 기록하기」로 출석을 남겨 주세요 |
+| `course_slots_not_ready` | 503 | (10/1 §59b 실행 뒤 나오지 않는다 · 코드만 남겨 둔다) |
 
 ### 9.21.13 이번에 없는 것 (다음 단계 · 어플 7~11)
 
@@ -1861,14 +1882,34 @@ PATCH /api/trainer-portal/bookings/:id
 남은 것: 원장 1:1 · DAY PASS 회 단위 기록(§9.22.7 초안) · 입금 신청의 원장 강의 상품 · 출석 기반 강의 지급. 대시보드(§9.13)는 직강 칸을 출석 전엔 예약 줄(`lessonType:"course"` · `courseLevel`)로, 출석 뒤엔 회차 줄(`kind:"course"`)로
 **한 번만** 보여준다. 「72시간 열린 칸」에서는 직강 칸을 뺀다(레슨 칸 공급을 보는 숫자다).
 
+### 9.21.14 반 없는 직강 칸 (§59e · 오너 9/30 · 10/1 실행)
+
+오너 9/30: 「참여형 = 직강 수업반 · 반은 칸에 묶지 않음」. 원장이 「참여형」으로 열던 수업은 반을 가리지 않는 직강 수업이다.
+칸의 반은 비워 두고, 출석 때 **수강생마다 자기 진행 중 직강**의 회차가 빠진다.
+
+| | 반 있는 칸(종전) | 반 없는 칸(§59e) |
+|---|---|---|
+| 열기 `POST /slots` | `courseLevel` 줌 | `courseLevel` 생략(또는 null) |
+| 칸 목록 · 수강생 앱 | `courseLevel: "advanced"` | `courseLevel: null` |
+| 넣을 수 있는 사람 | 그 반 진행 중 강의가 있는 수강생 | 진행 중인 반 수업 강의(초급 · 중급 · 심화)가 있는 수강생 누구나 |
+| 회차가 빠지는 강의 | 그 반 강의 | 사람마다 — 넣을 때 고른 강의, 없으면 남은 회차가 있는 가장 오래된 반 수업 강의 |
+| 진행 중 강의 둘 이상 | 그 반 강의가 둘 이상이면 고르기 | 반 수업 강의가 둘 이상이면 고르기(409 `course_choice_needed` · 9.21.3) |
+| 출석 막힘 코드 | `no_course` · `level_mismatch` · `already_today` | `no_course` · `already_today` |
+| 반 목록(§9.22.1) | `levels[].classes` · `levels[].students` | 최상위 `classes` · `students` |
+
+- 개인강의 · 기타 강의는 반 없는 칸이 깎지 않는다(원장 1:1 · DAY PASS 는 §9.22.7 에서 따로 · 그런 진행 중 강의는 10/1 실측 0개).
+- 반 있는 칸도 종전대로 열 수 있다. 어느 쪽을 쓸지는 앱 화면이 정한다 — 오너 답대로면 반 고르기를 빼고 반 없는 칸만 연다.
+- 10/1 실측: 반 없는 칸 11개(전환분 · 예약 0건) · 진행 중 반 수업 강의 8개(심화 2 · 중급 3 · 초급 3) · 진행 중 강의가 둘 이상인 수강생 0명.
+  지금은 고르기(409)가 뜨지 않는다 — 재등록으로 진행 중 강의가 겹치면 그때 뜬다.
+
 ## 9.22 원장 수업 화면 · 강의 칸 — 반 목록 · 회차 정정 · 원장 홈 숫자 · 수강생 직강 카드 ✅ **서버 반영 (2026-10-01 · §59d · 반장 요청 · 어플 5~10)**
 
 반장 요청 항목 ↔ 라우트. **새 라우트는 9.22.1 · 9.22.2 둘**이고 나머지는 기존 응답에 키가 붙는다.
 
 | 반장 항목 | 라우트 | 상태 |
 |---|---|---|
-| 시간 열기 「직강 반 수업」(원장만 · 반 · 정원 · 3시간 기본 · 매주 반복) | `POST /slots` `lessonType:"course"`(§9.21.1) | ✅ 서버 · **칸 열기는 §59b 오너 OK 뒤**(그 전 503 `course_slots_not_ready`) |
-| 직강생 넣기(남은 회차로 판정) | `POST /slots/:id/bookings`(§9.21.3) | ✅ 칸이 열린 뒤 |
+| 시간 열기 「직강 반 수업」(원장만 · 반 · 정원 · 3시간 기본 · 매주 반복) | `POST /slots` `lessonType:"course"`(§9.21.1) | ✅ **칸 열림(§59b · §59e 10/1)** · 반은 선택 — 비우면 반 없는 칸(§9.21.14) |
+| 직강생 넣기(남은 회차로 판정) | `POST /slots/:id/bookings`(§9.21.3) | ✅ · 진행 중 강의가 둘 이상이면 고르기(409 `course_choice_needed` → `courseKey`) |
 | 원장 수업 기록하기 — 직강 반 출석 | `GET /course-classes`(9.22.1) → 칸 있는 날 `POST /slots/:id/attendance` · 칸 없는 날 `POST /course-attendance` | ✅ |
 | 원장 수업 기록하기 — 레벨 테스트 · 대타 레슨(판수) | 레벨 테스트 칸 「완료」(§9.16) · `POST /lessons`(§9.9) | ✅ 종전 그대로 |
 | 원장 수업 기록하기 — 원장 1:1 · DAY PASS | 9.22.7 초안 | ⏳ 오너 · 결제 트랙 확인 뒤 |
@@ -1879,10 +1920,16 @@ PATCH /api/trainer-portal/bookings/:id
 
 ### 9.22.1 반 목록 — `GET /course-classes` (원장만 · 120회/분)
 
-「직강 반 출석」 첫 화면 한 번에: 반 3개 → 반마다 요일 시각 묶음 → 체크할 명단(남은 회차).
+「직강 반 출석」 첫 화면 한 번에: 반 없는 칸 묶음(§9.21.14) + 반 3개 → 요일 시각 묶음 → 체크할 명단(남은 회차).
 
 ```json
 { "today": "2026-10-01",
+  "classes": [ { "classKey": "all|4|19:00", "courseLevel": null, "weekday": 4, "weekdayLabel": "목",
+                 "startTime": "19:00", "durationMin": 180, "capacity": 3, "headcount": 8, "nextSlot": { … }, "recent": [ … ] } ],
+  "headcount": 8,
+  "students": [ { "studentKey": "…", "studentDisplayName": "…", "studentPubgName": null,
+                  "courseLevel": "advanced", "level": "심화반", "unitsLeft": 5, "unitsTotal": 8, "overdrawn": false,
+                  "courses": [ { "courseKey": "…", "courseLevel": "advanced", "level": "심화반", "unitsLeft": 5, "unitsTotal": 8 } ] } ],
   "levels": [
     { "courseLevel": "advanced", "level": "심화반", "headcount": 2,
       "students": [ { "studentKey": "…", "studentDisplayName": "…", "studentPubgName": null,
@@ -1896,7 +1943,10 @@ PATCH /api/trainer-portal/bookings/:id
 
 | 키 | 뜻 |
 |---|---|
-| `levels` | 늘 3개 · 순서 `beginner` · `intermediate` · `advanced` |
+| `classes`(최상위) | **반 없는 칸**(§9.21.14) 묶음 · 모양은 `levels[].classes[]` 와 같다. `courseLevel: null` · `classKey` = `all\|요일\|시각` · `headcount` = 최상위 `headcount` |
+| `headcount`(최상위) | 진행 중인 반 수업 강의가 있는 수강생 수 = 최상위 `students.length` |
+| `students[]`(최상위) | 반 없는 칸의 체크 명단 · 이름순. `courseLevel` · `level` · `unitsLeft` = 다음 출석이 빠질 강의 · `courses[]` = 그 사람의 진행 중 반 수업 강의(먼저 시작한 것부터 · `courseKey` 포함) — **둘 이상이면 넣기에서 `courseKey` 로 고른다**(§9.21.3) |
+| `levels` | 반 있는 칸 · 늘 3개 · 순서 `beginner` · `intermediate` · `advanced` |
 | `headcount` | 그 반 **진행 중(active) 강의가 있는 수강생 수** = `students.length`. 직강생은 요일에 묶이지 않아 반 안의 모든 묶음이 같은 값이다 |
 | `students[]` | 체크 명단 · 이름순. `unitsLeft` = 다음 출석이 빠질 강의의 남은 회차(칸 목록 §9.21.2 와 같은 값) · `overdrawn` = 0 미만. 테스트 계정 · 합친 명부는 빠진다(`?includeTest=1` 이면 테스트 계정 포함) |
 | `classes[]` | 요일 시각 묶음(반 · 요일 · 시작 시각이 같으면 하나) · 월요일부터 · 시각순 |
@@ -1906,12 +1956,12 @@ PATCH /api/trainer-portal/bookings/:id
 | `recent[]` | 오늘까지 최근 4번(최근부터) · `slotId` 있으면 칸 수업 · `sessionKey` 있으면 출석을 받은 회차 · `attendedCount` = 출석 수 |
 
 - 요일 시각은 **따로 적는 시간표가 없다** — 원장 직강 칸(지난 28일 ~ 앞으로 28일 · 취소 제외)과 칸 없이 기록한 회차(지난 28일 · 시작 시각이 있는 것)에서 모은다.
-  §59b 전이고 칸 없이 기록한 적도 없으면 `classes` 가 빈다 → 앱은 반만 고르고 날짜 · 시각을 직접 받는다.
+  칸도 없고 칸 없이 기록한 적도 없으면 `classes` 가 빈다 → 앱은 날짜 · 시각을 직접 받는다. 칸 없이 반 없이 기록한 회차는 최상위 `classes` 에 묶인다.
 - 트레이너 계정 403 `owner_only`.
 
-**「직강 반 출석」 흐름** — ① 반 · 묶음 고르기 ② 수강생 체크(`students[]`) ③ 날짜 고르고 기록:
+**「직강 반 출석」 흐름** — ① 묶음 고르기(반 없는 칸 = 최상위 `classes` · 반 있는 칸 = `levels[].classes`) ② 수강생 체크(같은 자리의 `students[]`) ③ 날짜 고르고 기록:
 그 날짜에 칸이 있으면(`recent[].slotId` · `nextSlot`) `POST /slots/:slotId/attendance`(§9.21.4 · 명단에 없는 예약자는 결석) ·
-없으면 `POST /course-attendance` `{ courseLevel, heldOn, startTime, present }`(§9.21.5). 칸이 있는데 칸 없이 보내면 409 `slot_exists`(9.22.3).
+없으면 `POST /course-attendance` `{ courseLevel?, heldOn, startTime, present }`(§9.21.5 · 반 없는 묶음은 `courseLevel` 생략). 칸이 있는데 칸 없이 보내면 409 `slot_exists`(9.22.3).
 
 ### 9.22.2 회차 정정 — 출석 추가 · 보강 · 취소 (원장만 · 사유 필수 · 30회/분)
 
@@ -1922,6 +1972,7 @@ PATCH /api/trainer-portal/bookings/:id
   "courseLevel": "advanced", "heldOn": "2026-09-29", "startTime": "14:00", "durationMin": 180, "sameDayOk": false }
 ```
 칸 수업이면 `courseLevel` · `startTime` · `durationMin` 대신 `"slotId": "…"`(같이 보내면 400 · `heldOn` 은 자정 넘김 ±1일만).
+칸 없는 수업의 `courseLevel` 은 선택이다(생략 = 반 없이 · §9.21.14).
 
 → 200
 ```json
