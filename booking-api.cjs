@@ -44,6 +44,24 @@ const MY_TRAINER_WINDOW_DAYS = 90;
 // KST 날짜. server.js 의 kstToday() 와 **같은 식**이어야 봇이 넣은 played_at 과 경계가 맞는다.
 const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(0, 10);
 
+// 직강 반 수업 칸(§59 · 계약 §9.21) — 원장만 연다. 판수가 아니라 남은 회차로 넣고, 출석으로 회차가 빠진다.
+//   반 키 ↔ DB 값 · 남은 회차 표시 · 강의 고르기 사본은 course-progress.cjs 한 벌이다(판정은 DB 함수가 한다).
+const courseProgress = require("./course-progress.cjs");
+const { COURSE_LEVEL_BY_KEY, COURSE_KEY_BY_LEVEL, pickCourse } = courseProgress;
+const COURSE_SPAN_DEFAULT = 180;     // 원장 강의 기본 길이(3시간)
+const COURSE_CAP_DEFAULT = 3;        // 기본 정원 — 원장이 「참여형」으로 열던 칸과 같은 값
+const ATTEND_MAX = 12;               // 출석 한 번에 받는 인원 상한(정원 상한 8 + 칸 없이 기록하는 날의 여유)
+const ATTEND_BACK_DAYS = 31;         // 칸 없이 기록하는 출석의 날짜 하한(오늘 − 31일) — 더 지난 건 회차 정정(다음 단계)
+const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+// 달력에 있는 날짜인가(2026-02-30 · 2026-13-01 거절) — trainer-lessons.cjs isRealDate 와 같은 판정.
+const isRealDate = (s) => typeof s === "string" && DATE_RE.test(s)
+  && Number.isFinite(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
+// 칸 이름(DM · 계약 §9.21) — 직강 칸은 반까지 붙인다.
+const TYPE_LABEL = { personal: "개인 1:1", spectate: "그룹 관전형", participate: "그룹 참여형", consult: "상담", course: "직강" };
+const typeLabel = (slot) => (slot?.lesson_type === "course" && slot.course_level
+  ? `직강 ${slot.course_level}` : TYPE_LABEL[slot?.lesson_type] || slot?.lesson_type);
+const unitsOf = (v) => (v === null || v === undefined || v === "" ? null : Number(v));
+
 module.exports = function mountBookingApi(app, deps) {
   const { sbSelect, sbRpc, limit, discordDM, portal, trainer } = deps;
   // 판수가 움직인 뒤 부르는 훅(§45 판수 부족 알림 · server.js 가 준다) — 없으면 부르지 않는다(10분 점검이 대신 잡는다)
@@ -54,7 +72,7 @@ module.exports = function mountBookingApi(app, deps) {
   const setLevel = typeof deps.setLevel === "function" ? deps.setLevel : null;
   const { readSession, opaqueId, readOpaqueId, fail, scrub } = portal;
   // 트레이너 판정(포털 세션 또는 사이트 JWT → staff 명부)과 응답 가드(scrubTrainer)는 trainer-portal.cjs 한 곳이 정본이다.
-  const { requireTrainer: requireTrainerBase, sendTrainer } = trainer;
+  const { requireTrainer: requireTrainerBase, sendTrainer, scrubTrainer } = trainer;
   // 「대신 넣기」의 범위 판정(계약 §9.4 · 범위 규칙 §3)도 trainer-portal 의 것을 그대로 쓴다 —
   // 담당 + 최근 90일 진행 수강생. 여기서 따로 세면 로스터에 보이는 사람과 넣을 수 있는 사람이 갈린다.
   const { scopedStudents } = trainer;
@@ -137,8 +155,37 @@ module.exports = function mountBookingApi(app, deps) {
     // 그룹 「완료」에 판수가 없다(§42). 예약은 닫히지 않았다 — 앱이 판수 입력칸을 띄우고 다시 보낸다.
     // invalid_body 와 코드를 가른다: 이건 「고쳐서 다시」가 정답인 상태라 화면이 할 일이 다르다.
     games_required: 400,
+    // 직강 반 수업(§59 · 계약 §9.21). 판수 코드(insufficient_games)와 가른다 — 앱 문구가 「회차」다.
+    no_course: 409, level_mismatch: 409, no_units_left: 409, already_booked: 409, already_today: 409,
+    not_course_slot: 409, slot_cancelled: 409, session_cancelled: 409, attendance_recorded: 409,
+    course_slot: 409, future_date: 400, owner_only: 403,
+    // §59b(lesson_type 'course' 허용) 전 — 칸은 못 열지만 칸 없이 바로 출석은 된다.
+    course_slots_not_ready: 503,
   };
   const rpcFail = (res, code) => fail(res, STATUS[code] || 400, code);
+  // 출석 판정에서 막힌 사람들(§59 students_rejected) — 사람별 코드를 싣는다. 키는 studentKey(불투명 id · 가드 규칙).
+  const rejectFail = (res, rejected) => res.status(409).json(scrubTrainer({ error: {
+    code: "students_rejected",
+    rejected: (rejected || []).map((r) => ({ studentKey: opaqueId("student", r.studentId), code: r.code })),
+  } }));
+  // 출석 결과 한 줄 — 내부 id 를 불투명 키로 바꾼다.
+  const attendOut = (out) => ({
+    sessionKey: out.sessionId == null ? null : opaqueId("course_session", out.sessionId),
+    heldOn: out.heldOn,
+    courseLevel: COURSE_KEY_BY_LEVEL[out.level] || null,
+    recorded: (out.recorded || []).map((r) => ({
+      studentKey: opaqueId("student", r.studentId), unitsLeft: unitsOf(r.unitsLeft), overdrawn: r.overdrawn === true,
+    })),
+    alreadyRecorded: (out.alreadyRecorded || []).map((id) => opaqueId("student", id)),
+    noShow: (out.noShow || []).map((id) => opaqueId("student", id)),
+  });
+  // 출석 명단(present) — 불투명 학생 id 배열 · 중복 · 형식 오류는 400. 칸 출석은 빈 명단(전원 결석)도 받는다.
+  function readPresent(v, { allowEmpty }) {
+    if (!Array.isArray(v) || v.length > ATTEND_MAX || (!allowEmpty && !v.length)) return null;
+    if (new Set(v).size !== v.length) return null;
+    const ids = v.map((x) => (typeof x === "string" ? readOpaqueId("student", x) : null));
+    return ids.some((x) => x == null) ? null : ids;
+  }
 
   // ══════════════ 수강생 ══════════════
 
@@ -162,13 +209,16 @@ module.exports = function mountBookingApi(app, deps) {
     // played_at 은 date(KST) 라 경계도 kstDate 로 맞춘다(봇 kstToday 와 같은 식).
     const since = kstDate(new Date(Date.now() - MY_TRAINER_WINDOW_DAYS * 86400_000).toISOString());
 
-    const [stu, sess, slots] = await Promise.all([
+    const [stu, sess, slots, myCourses] = await Promise.all([
       sbSelect("students", `select=trainer_id&id=eq.${sid}`),
       sbSelect("lesson_sessions", `select=trainer_id&student_id=eq.${sid}&played_at=gte.${since}`),
       sbSelect("trainer_slots",
         // 트레이너 필터 없음 — 전원. closed 도 받아서 아래에서 "내 예약" 만 남긴다. cancelled 는 제외.
-        `select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min&status=in.(open,closed)`
+        `select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min,course_level&status=in.(open,closed)`
         + `&slot_start=gte.${nowIso}&slot_start=lt.${until}&order=slot_start.asc`),
+      // 직강 반 수업 칸(§59)은 그 반 진행 중 강의가 있는 수강생에게만 보인다 — 남은 회차도 여기서 센다.
+      courseProgress.loadCourseProgress(sbSelect, { studentIds: [sid], statuses: ["active"] })
+        .then((m) => m.get(sid) || []),
     ]);
     const myTrainers = new Set([stu[0]?.trainer_id, ...sess.map((r) => r.trainer_id)].filter(Boolean));
     if (!slots.length) return send(res, { slots: [] });
@@ -198,8 +248,11 @@ module.exports = function mountBookingApi(app, deps) {
     // 비교는 **숫자로** 한다 — PostgREST 는 timestamptz 를 `+00:00` 로, toISOString 은 `.000Z`
     // 로 주므로 문자열 비교는 형식 차이에 걸린다(:377 과 같은 방식).
     const bookCutoff = Date.now() + BOOK_LEAD_MIN * 60_000;
+    // 직강 칸은 그 반 강의가 있는 수강생에게만 — 강의가 없는 사람에게 보이면 누를 때마다 no_course 다.
+    const courseOf = (s) => (s.lesson_type === "course" ? pickCourse(myCourses, s.course_level) : null);
     const visible = live.filter((s) =>
-      mine.has(s.id) || (s.status === "open" && Date.parse(s.slot_start) >= bookCutoff));
+      mine.has(s.id) || (s.status === "open" && Date.parse(s.slot_start) >= bookCutoff
+        && (s.lesson_type !== "course" || courseOf(s))));
 
     send(res, {
       slots: visible.map((s) => ({
@@ -227,6 +280,11 @@ module.exports = function mountBookingApi(app, deps) {
         bookedByMe: mine.has(s.id),
         // 내 예약일 때만. DELETE /bookings/:id 에 그대로 넘기면 된다.
         ...(mine.has(s.id) ? { bookingId: opaqueId("booking", mine.get(s.id)) } : {}),
+        // 직강 반 수업 칸만(§59 · 계약 §9.21) — 반 · 그 반 강의의 남은 회차(선차감 없음 · 출석하면 1회 빠진다)
+        ...(s.lesson_type === "course" ? {
+          courseLevel: COURSE_KEY_BY_LEVEL[s.course_level] || null,
+          unitsLeft: courseOf(s)?.remainingUnits ?? null,
+        } : {}),
       })),
       // 개인은 이 중에서 고른다. 그룹은 길이 선택이 없다.
       personalDurations: DURATION_MIN,
@@ -242,6 +300,16 @@ module.exports = function mountBookingApi(app, deps) {
       if (slotId == null) return fail(res, 400, "invalid_body");
       const d = req.body?.durationMin;
       if (d !== undefined && !DURATION_MIN.includes(d)) return fail(res, 400, "invalid_body");
+
+      // 직강 반 수업 칸(§59)은 판수가 아니라 남은 회차로 잡는다 — book_slot 으로 보내면 판수 게이트에 막힌다.
+      const [slot] = await sbSelect("trainer_slots", `select=id,lesson_type&id=eq.${slotId}`);
+      if (slot?.lesson_type === "course") {
+        if (d !== undefined) return fail(res, 400, "invalid_body");          // 길이는 칸이 안다
+        const out = await sbRpc("book_course_slot", { p_student_id: req.portal.sub, p_slot_id: slotId, p_by_staff: null });
+        if (out?.error) return rpcFail(res, out.error);
+        notifyBooking(slotId, req.portal.sub, "booked", 0).catch(() => {});
+        return send(res, { bookingId: opaqueId("booking", out.bookingId), gamesHeld: 0, unitsLeft: unitsOf(out.unitsLeft) });
+      }
 
       // 정원·선차감·연속칸 점유는 전부 여기 안에서 잠금과 함께 처리된다(§23 book_slot).
       const out = await sbRpc("book_slot", {
@@ -284,19 +352,29 @@ module.exports = function mountBookingApi(app, deps) {
   //   겹치는 주만 건너뛰고 나머지는 만든다(계약: 「겹치는 주는 건너뛰고 응답에 알린다」).
   //   한 트랜잭션으로 묶지 않은 게 의도다 — 한 주가 겹쳤다고 12주 전체를 실패시키면 트레이너가
   //   겹치는 주를 찾아 빼고 다시 보내야 한다. 예약은 복제하지 않는다 — 칸만 만든다.
+  //
+  // 직강 반 수업 칸(§59 · 계약 §9.21) — lessonType "course" + courseLevel(beginner · intermediate · advanced).
+  //   **원장만** 연다(트레이너는 403 owner_only). 길이 생략 = 180분 · 정원 생략 = 3. 매주 반복도 같다.
+  //   판정(원장 · 겹침 · 길이 · 정원)은 §59 open_course_slot 이 한다. §59b 전이면 503 course_slots_not_ready.
   app.post(`${TRAINER}/slots`, rateLimit("trainerSlots", 20, 60_000),
-    bodyOnly(["startAt", "endAt", "durationMin", "lessonType", "capacity", "repeat"]), requireTrainer,
+    bodyOnly(["startAt", "endAt", "durationMin", "lessonType", "capacity", "repeat", "courseLevel"]), requireTrainer,
     wrap(async (req, res) => {
       const { startAt, endAt, lessonType } = req.body || {};
-      const durationMin = req.body?.durationMin;
-      const capacity = req.body?.capacity ?? 1;
+      const isCourse = lessonType === "course";
+      const durationMin = req.body?.durationMin ?? (isCourse && endAt === undefined ? COURSE_SPAN_DEFAULT : undefined);
+      const capacity = req.body?.capacity ?? (isCourse ? COURSE_CAP_DEFAULT : 1);
       const repeat = req.body?.repeat;
-      if (!["personal", "spectate", "participate", "consult"].includes(lessonType))
+      if (!["personal", "spectate", "participate", "consult", "course"].includes(lessonType))
         return fail(res, 400, "invalid_body");
+      // 반은 직강 칸에만 · 직강 칸에는 반이 꼭 있어야 한다.
+      const courseLevel = req.body?.courseLevel;
+      const levelKr = isCourse ? COURSE_LEVEL_BY_KEY[courseLevel] : null;
+      if (isCourse ? !levelKr : courseLevel !== undefined) return fail(res, 400, "invalid_body");
+      if (isCourse && req.staff.role !== "owner") return fail(res, 403, "owner_only");
       if (!Number.isInteger(capacity) || capacity < 1 || capacity > 8)
         return fail(res, 400, "invalid_body");
       // 둘 중 하나만. 함께 오면 어느 쪽이 이겼는지 호출자가 알 수 없다 — 조용히 고르지 않는다.
-      if (endAt !== undefined && durationMin !== undefined) return fail(res, 400, "invalid_body");
+      if (endAt !== undefined && req.body?.durationMin !== undefined) return fail(res, 400, "invalid_body");
       const t0 = Date.parse(startAt);
       if (!Number.isFinite(t0)) return fail(res, 400, "invalid_body");
 
@@ -321,10 +399,15 @@ module.exports = function mountBookingApi(app, deps) {
 
       // 정원 강제(개인·상담 = 1)와 겹침 판정은 전부 함수 안이다 — 여기서 세고 여기서 넣으면
       // 두 요청이 같이 통과한다(파일 머리 "동시성" 주석과 같은 이유).
-      const open = (startMs) => sbRpc("open_trainer_slots", {
-        p_trainer_id: req.staff.id, p_start: new Date(startMs).toISOString(),
-        p_span_min: span, p_lesson_type: lessonType, p_capacity: capacity,
-      });
+      const open = (startMs) => (isCourse
+        ? sbRpc("open_course_slot", {
+            p_trainer_id: req.staff.id, p_start: new Date(startMs).toISOString(),
+            p_span_min: span, p_capacity: capacity, p_level: levelKr,
+          })
+        : sbRpc("open_trainer_slots", {
+            p_trainer_id: req.staff.id, p_start: new Date(startMs).toISOString(),
+            p_span_min: span, p_lesson_type: lessonType, p_capacity: capacity,
+          }));
 
       if (weeks === 1) {
         const out = await open(t0);
@@ -399,9 +482,26 @@ module.exports = function mountBookingApi(app, deps) {
       const d = req.body?.durationMin;
       if (d !== undefined && !DURATION_MIN.includes(d)) return fail(res, 400, "invalid_body");
 
-      const [slot] = await sbSelect("trainer_slots", `select=id,trainer_id&id=eq.${slotId}`);
+      const [slot] = await sbSelect("trainer_slots", `select=id,trainer_id,lesson_type&id=eq.${slotId}`);
       if (!slot) return fail(res, 404, "slot_not_found");
       if (slot.trainer_id !== req.staff.id) return fail(res, 403, "scope_denied");
+
+      // 직강 반 수업 칸(§59 · 계약 §9.21) — 판수 대신 그 반 강의의 남은 회차로 넣는다(선차감 없음).
+      //   범위 = 그 반 진행 중 강의가 있는 수강생(함수가 판정한다) — 직강생은 원장 담당 명부 밖일 수 있어
+      //   scopedStudents(담당 ∪ 90일 레슨)로 막으면 정작 직강생을 못 넣는다. 수업이 끝나기 전까지 넣을 수 있다.
+      if (slot.lesson_type === "course") {
+        if (d !== undefined) return fail(res, 400, "invalid_body");
+        const out = await sbRpc("book_course_slot", { p_student_id: studentId, p_slot_id: slotId, p_by_staff: req.staff.id });
+        if (out?.error) return rpcFail(res, out.error);
+        notifyAssigned(slotId, studentId, 0, req.staff.name).catch(() => {});
+        return sendTrainer(res, {
+          bookingId: opaqueId("booking", out.bookingId),
+          gamesHeld: 0,
+          remainingAfter: null,
+          unitsLeft: unitsOf(out.unitsLeft),
+        });
+      }
+
       const scope = await scopedStudents(req.staff.id);
       if (!scope.has(studentId)) return fail(res, 403, "scope_denied");
 
@@ -442,7 +542,7 @@ module.exports = function mountBookingApi(app, deps) {
       sbRpc("sweep_pending_review", {})
         .catch((e) => { console.error("booking_sweep", e?.message); }),   // 실패해도 목록은 보여준다
       sbSelect("trainer_slots",
-        `select=id,slot_start,lesson_type,capacity,status,duration_min&trainer_id=eq.${req.staff.id}`
+        `select=id,slot_start,lesson_type,capacity,status,duration_min,course_level&trainer_id=eq.${req.staff.id}`
         + `&slot_start=gte.${from}&slot_start=lt.${until}&order=slot_start.asc`),
     ]);
     // 길이표(계약 §9.11) — 대신 넣기 · 「시간 달라짐」 · 수업 기록하기 · 칸 열기가 같은 표를 쓴다.
@@ -450,11 +550,15 @@ module.exports = function mountBookingApi(app, deps) {
     if (!slots.length) return sendTrainer(res, { slots: [], ...lengths });
 
     const ids = slots.map((s) => s.id);
+    // 직강 반 수업 칸(§59) — 출석 · 남은 회차를 싣고, 판수 기록과는 짝짓지 않는다.
+    const courseSlots = slots.filter((s) => s.lesson_type === "course");
+    const courseSlotIds = new Set(courseSlots.map((s) => s.id));
     // booked 만 보면 「확인 필요」(pending_review)가 목록에서 사라진다. done 도 가져온다 —
-    // 아래 등록 누락 감지의 대상이다.
-    const books = await sbSelect("slot_bookings",
+    // 아래 등록 누락 감지의 대상이다. no_show 는 **직강 칸만** 싣는다(결석 표시 · 레슨 칸은 종전 그대로).
+    const books = (await sbSelect("slot_bookings",
       `select=id,slot_id,student_id,status,duration_min,span_head_id,booked_at`
-      + `&status=in.(booked,pending_review,done)&span_head_id=is.null&slot_id=in.(${ids.join(",")})`);
+      + `&status=in.(booked,pending_review,done,no_show)&span_head_id=is.null&slot_id=in.(${ids.join(",")})`))
+      .filter((b) => b.status !== "no_show" || courseSlotIds.has(b.slot_id));
     const sids = [...new Set(books.map((b) => b.student_id))];
 
     // 등록 누락 감지(오너 판정 2026-09-04): done 인데 같은 날(트레이너+날짜+수강생)
@@ -463,7 +567,8 @@ module.exports = function mountBookingApi(app, deps) {
     // 「판수는 봇 경로만」 원칙을 깨는 비용이 더 크고, 정상 흐름에선 봇이 done 을 자동으로 찍는다.
     // 날짜 축은 kstDate() = 봇 kstToday() 와 같은 식이라 경계가 어긋나지 않는다.
     const slotStart = Object.fromEntries(slots.map((s) => [s.id, s.slot_start]));
-    const doneBooks = books.filter((b) => b.status === "done");
+    // 직강 반 수업 칸(§59)은 판수 기록이 없는 게 정상이다(출석으로 닫힌다) — 등록 누락 감지에서 뺀다.
+    const doneBooks = books.filter((b) => b.status === "done" && !courseSlotIds.has(b.slot_id));
     // 등록 누락 감지와 이름 조회는 둘 다 books 에서만 파생돼 서로 독립이다 — 한 파동으로
     // 묶는다(2026-09-27 속도). 판정식·플래그 의미는 그대로다.
     const regMissingOf = async () => {
@@ -485,6 +590,22 @@ module.exports = function mountBookingApi(app, deps) {
     // 단 신청 창구로 들어온 신청자(prospect)는 실명이 원장 전용이다(계약 §9.20.8 · §55) — 신청의 디스코드 표시 이름으로 바꾼다.
     //   신청이 없는 prospect(운영진이 명부에 직접 넣은 사람)는 명부 이름 그대로다.
     //   신청을 못 읽으면 실명으로 돌아가지 않고 prospect 전부 「신청자」로 둔다(닫힌 쪽으로 실패).
+    // 직강 칸의 출석(§59) — 칸마다 회차 행 하나(slot_id) · 그 회차의 출석 학생. 예약 없이 온 사람도 출석에 있다.
+    const attendanceOf = async () => {
+      const out = new Map();                       // slot_id → { sessionId, students: Set<student_id> }
+      if (!courseSlots.length) return out;
+      const cs = await sbSelect("course_sessions",
+        `select=id,slot_id&slot_id=in.(${courseSlots.map((s) => s.id).join(",")})&status=neq.cancelled`);
+      if (!cs.length) return out;
+      const att = await sbSelect("course_attendance",
+        `select=session_id,courses!inner(student_id)&session_id=in.(${cs.map((c) => c.id).join(",")})&status=eq.done`);
+      for (const c of cs) out.set(c.slot_id, { sessionId: c.id, students: new Set() });
+      const bySess = new Map(cs.map((c) => [c.id, c.slot_id]));
+      for (const a of att) out.get(bySess.get(a.session_id))?.students.add(a.courses?.student_id);
+      return out;
+    };
+    const attendance = await attendanceOf();
+    for (const v of attendance.values()) for (const id of v.students) if (id != null && !sids.includes(id)) sids.push(id);
     const namesOf = async () => {
       if (!sids.length) return {};
       const rows = await sbSelect("students", `select=id,name,pubg_name,status&id=in.(${sids.join(",")})`);
@@ -505,17 +626,32 @@ module.exports = function mountBookingApi(app, deps) {
       }
       return Object.fromEntries(rows.map((r) => [r.id, r]));
     };
-    const [regMissing, names] = await Promise.all([regMissingOf(), namesOf()]);
+    // 직강 칸에 걸린 수강생의 남은 회차(표시용 · 판정은 DB) — 진행 중 강의만 한 번에 읽는다.
+    const courseSids = [...new Set([
+      ...books.filter((b) => courseSlotIds.has(b.slot_id)).map((b) => b.student_id),
+      ...[...attendance.values()].flatMap((v) => [...v.students]),
+    ])].filter((id) => id != null);
+    const [regMissing, names, progress] = await Promise.all([regMissingOf(), namesOf(),
+      courseSids.length ? courseProgress.loadCourseProgress(sbSelect, { studentIds: courseSids, statuses: ["active"] })
+        : Promise.resolve(new Map())]);
+    const levelOf = Object.fromEntries(courseSlots.map((s) => [s.id, s.course_level]));
+    const unitsLeftOf = (sid, slotId) => pickCourse(progress.get(sid) || [], levelOf[slotId])?.remainingUnits ?? null;
     const by = {};
     for (const b of books) (by[b.slot_id] = by[b.slot_id] || []).push({
       id: opaqueId("booking", b.id),
+      studentKey: opaqueId("student", b.student_id),   // GET /students 의 id 와 같은 값(§9.21 출석 명단에 그대로 보낸다)
       studentDisplayName: names[b.student_id]?.name || "?",
       studentPubgName: names[b.student_id]?.pubg_name || null,   // students.pubg_name · 없으면 null(오너 요청 2026-09-25)
       durationMin: b.duration_min ?? null,
       bookedAt: b.booked_at,                        // 예약 생성 시각(ISO · NOT NULL) — 앱 「새 예약」 카드 기준(오너 요청 2026-09-24 b)
       status: b.status,
       needsReview: b.status === "pending_review",   // 트레이너 홈의 「확인 필요」 배지
-      registrationMissing: regMissing.has(b.id),    // 「등록 누락?」 배지 — done 인데 세션 행 없음
+      registrationMissing: regMissing.has(b.id),    // 「등록 누락?」 배지 — done 인데 세션 행 없음(직강 칸은 늘 false)
+      // 직강 칸만(§59) — 출석했는지 · 그 반 강의의 남은 회차
+      ...(courseSlotIds.has(b.slot_id) ? {
+        attended: attendance.get(b.slot_id)?.students.has(b.student_id) === true,
+        unitsLeft: unitsLeftOf(b.student_id, b.slot_id),
+      } : {}),
     });
 
     // 남은 자리는 **산 예약만** 센다. by[] 에는 done·pending_review 도 들어 있어 그대로 세면
@@ -523,15 +659,34 @@ module.exports = function mountBookingApi(app, deps) {
     const taken = {};
     for (const b of books) if (b.status === "booked") taken[b.slot_id] = (taken[b.slot_id] || 0) + 1;
 
+    // 직강 칸의 출석 명단(§59) — 예약 없이 온 사람까지 전부. 회차 행이 없으면 taken:false · 빈 명단.
+    const attendanceOut = (slotId) => {
+      const a = attendance.get(slotId);
+      const booked = new Set((by[slotId] || []).map((x) => x.studentKey));
+      const students = a ? [...a.students].filter((id) => id != null).map((id) => ({
+        studentKey: opaqueId("student", id),
+        studentDisplayName: names[id]?.name || "?",
+        studentPubgName: names[id]?.pubg_name || null,
+        booked: booked.has(opaqueId("student", id)),
+        unitsLeft: unitsLeftOf(id, slotId),
+      })) : [];
+      return { taken: !!a, sessionKey: a ? opaqueId("course_session", a.sessionId) : null, count: students.length, students };
+    };
+
     sendTrainer(res, {
       slots: slots.map((s) => ({
         id: opaqueId("slot", s.id),
         startAt: s.slot_start, slotMinutes: SLOT_MIN,
-        durationMin: s.duration_min ?? SLOT_MIN,   // 이 칸이 차지하는 길이(그룹 · 레벨 테스트는 30~180)
+        durationMin: s.duration_min ?? SLOT_MIN,   // 이 칸이 차지하는 길이(그룹 · 레벨 테스트 · 직강은 30~180)
         lessonType: s.lesson_type, capacity: s.capacity, status: s.status,
         takenCount: taken[s.id] || 0,
         seatsLeft: Math.max(0, s.capacity - (taken[s.id] || 0)),
         bookings: by[s.id] || [],
+        // 직강 반 수업 칸만(§59 · 계약 §9.21)
+        ...(s.lesson_type === "course" ? {
+          courseLevel: COURSE_KEY_BY_LEVEL[s.course_level] || null,
+          attendance: attendanceOut(s.id),
+        } : {}),
       })),
       ...lengths,
     });
@@ -569,11 +724,44 @@ module.exports = function mountBookingApi(app, deps) {
   //     playedAt 실제 수업 날짜. 자정을 넘겨 진행한 경우다. 슬롯 날짜 ±1일까지.
   //   잔여가 모자라도 **막지 않는다** — 수업은 이미 끝났고 기록이 먼저다. 막으면 판수가
   //   영영 안 빠진다. 대신 remainingWasShort 로 알리고 화면이 기록 **성공 뒤에** 안내한다.
+  //
+  //   ⚠️ 직강 반 수업 칸의 예약(§59 · 계약 §9.21)은 판수가 아니라 **출석**으로 닫는다 — 그 한 명만 출석으로 넣는다
+  //     (record_course_attendance · 다른 예약자는 건드리지 않는다). games · level 은 받지 않는다(400).
+  //     sameDayOk 는 직강 예약에만 — 같은 날 다른 직강 출석이 있으면 409 already_today 이고, 맞으면 true 로 다시 보낸다.
+  //     outcome "attended" · unitsLeft(출석 뒤 남은 회차 · 0 이하여도 막지 않는다) · overdrawn.
   app.post(`${TRAINER}/bookings/:id/complete`, rateLimit("trainerResolve", 60, 60_000),
-    bodyOnly(["games", "playedAt", "level"]), requireTrainer, wrap(async (req, res) => {
+    bodyOnly(["games", "playedAt", "level", "sameDayOk"]), requireTrainer, wrap(async (req, res) => {
       const bookingId = readOpaqueId("booking", req.params.id);
       if (bookingId == null) return fail(res, 400, "invalid_body");
       const games = req.body?.games, playedAt = req.body?.playedAt;
+      const sameDayOk = req.body?.sameDayOk;
+      if (sameDayOk !== undefined && typeof sameDayOk !== "boolean") return fail(res, 400, "invalid_body");
+      if (playedAt !== undefined && !(typeof playedAt === "string" && DATE_RE.test(playedAt)))
+        return fail(res, 400, "invalid_body");
+
+      // 직강 칸 예약인지 먼저 본다 — 판수 함수(record_lesson_from_booking)로 보내면 회차가 아니라 판수가 움직인다.
+      const bk0 = (await sbSelect("slot_bookings",
+        `select=id,slot_id,student_id,span_head_id,trainer_slots!inner(lesson_type,trainer_id)&id=eq.${bookingId}&limit=1`))[0];
+      if (bk0?.trainer_slots?.lesson_type === "course") {
+        if (games !== undefined || req.body?.level !== undefined) return fail(res, 400, "invalid_body");
+        if (bk0.trainer_slots.trainer_id !== req.staff.id) return fail(res, 403, "scope_denied");
+        const out = await sbRpc("record_course_attendance", {
+          p_trainer_id: req.staff.id, p_slot_id: bk0.slot_id, p_present: [bk0.student_id],
+          p_held_on: playedAt ?? null, p_actor: `staff:${req.staff.id}`,
+          p_same_day_ok: sameDayOk === true, p_mark_absent: false,
+        });
+        if (out?.error === "students_rejected") return rpcFail(res, out.rejected?.[0]?.code || "invalid_body");
+        if (out?.error) return rpcFail(res, out.error);
+        const mine = (out.recorded || [])[0];
+        if (!mine) return rpcFail(res, "already_recorded");     // 이 회차에 이미 출석이 있다(두 번 세지 않았다)
+        return sendTrainer(res, {
+          resolved: true, status: "done", outcome: "attended",
+          games: 0, playedAt: out.heldOn || null,
+          remainingAfter: null, remainingWasShort: false,
+          unitsLeft: unitsOf(mine.unitsLeft), overdrawn: mine.overdrawn === true,
+        });
+      }
+      if (sameDayOk !== undefined) return fail(res, 400, "invalid_body");   // 레슨 「완료」에는 없는 칸이다
       // 레벨(§9.16 · 선택) — 레벨 테스트 예약에만 받는다. 값 · 예약 종류를 기록 전에 본다(기록 뒤에 거절하면 반쯤 된다).
       const level = req.body?.level;
       let levelStudentId = null;
@@ -587,10 +775,8 @@ module.exports = function mountBookingApi(app, deps) {
       if (games !== undefined
         && (!Number.isInteger(games) || games < GAMES_MIN || games > GAMES_MAX))
         return fail(res, 400, "invalid_body");
-      // 날짜 **형식**만 여기서 본다. 슬롯 날짜 ±1일 판정은 §42 함수가 한다 — 슬롯 시각을
+      // 날짜는 **형식**만 위에서 봤다. 슬롯 날짜 ±1일 판정은 §42 함수가 한다 — 슬롯 시각을
       // 아는 쪽이 거기라서, 여기서 또 재면 두 곳이 갈라진다.
-      if (playedAt !== undefined && !(typeof playedAt === "string" && DATE_RE.test(playedAt)))
-        return fail(res, 400, "invalid_body");
       // §37 미실행 배포에서는 PostgREST 가 404 를 주고 sbRpc 가 throw 한다 — wrap 이 500 으로
       // 감싼다. 조용히 「완료됨」으로 답하지 않는다.
       const out = await sbRpc("record_lesson_from_booking", {
@@ -643,10 +829,68 @@ module.exports = function mountBookingApi(app, deps) {
       sendTrainer(res, { resolved: true, status: out.status });
     }));
 
+  // POST /slots/:id/attendance — 직강 반 수업 칸 출석(§59 · 계약 §9.21)
+  //   body { present: [studentId…], heldOn?, sameDayOk? } — present 는 GET /students 의 id(= 칸 목록의 studentKey).
+  //   출석한 사람 = course_attendance units 1 · 예약은 done. **명단에 없는 예약자는 no_show**(회차는 빠지지 않는다).
+  //   다시 보내도 된다 — 이미 출석한 사람은 alreadyRecorded 로 건너뛰고, 늦게 온 사람만 더해진다(빠진 사람을 빼지는 않는다 ·
+  //   출석 취소는 회차 정정 단계). 예약 없이 온 사람도 그 반 강의가 있으면 넣을 수 있다.
+  //   한 명이라도 막히면(그 반 강의 없음 · 다른 반 · 같은 날 이미 출석) 아무것도 쓰지 않고 409 students_rejected.
+  app.post(`${TRAINER}/slots/:id/attendance`, rateLimit("trainerAttend", 30, 60_000),
+    bodyOnly(["present", "heldOn", "sameDayOk"]), requireTrainer, wrap(async (req, res) => {
+      const slotId = readOpaqueId("slot", req.params.id);
+      const present = readPresent(req.body?.present, { allowEmpty: true });
+      const heldOn = req.body?.heldOn, sameDayOk = req.body?.sameDayOk;
+      if (slotId == null || !present) return fail(res, 400, "invalid_body");
+      if (heldOn !== undefined && !isRealDate(heldOn)) return fail(res, 400, "invalid_body");
+      if (sameDayOk !== undefined && typeof sameDayOk !== "boolean") return fail(res, 400, "invalid_body");
+      const out = await sbRpc("record_course_attendance", {
+        p_trainer_id: req.staff.id, p_slot_id: slotId, p_present: present,
+        p_held_on: heldOn ?? null, p_actor: `staff:${req.staff.id}`,
+        p_same_day_ok: sameDayOk === true, p_mark_absent: true,
+      });
+      if (out?.error === "students_rejected") return rejectFail(res, out.rejected);
+      if (out?.error) return rpcFail(res, out.error);
+      sendTrainer(res, attendOut(out));
+    }));
+
+  // POST /course-attendance — 칸 없이 직강 출석(원장 「수업 기록하기」 · §59 · 계약 §9.21)
+  //   body { courseLevel, heldOn, present: [studentId…] (1~12), startTime?: "HH:MM", durationMin?: 30~180(기본 180), sameDayOk? }
+  //   같은 날 · 같은 반 · 같은 시작 시각이면 같은 회차에 더한다(늦게 온 사람). 날짜는 오늘부터 31일 전까지.
+  app.post(`${TRAINER}/course-attendance`, rateLimit("trainerAttend", 30, 60_000),
+    bodyOnly(["courseLevel", "heldOn", "present", "startTime", "durationMin", "sameDayOk"]), requireTrainer,
+    wrap(async (req, res) => {
+      if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
+      const b = req.body || {};
+      const levelKr = COURSE_LEVEL_BY_KEY[b.courseLevel];
+      const present = readPresent(b.present, { allowEmpty: false });
+      const today = kstDate(new Date().toISOString());
+      const back = kstDate(new Date(Date.now() - ATTEND_BACK_DAYS * 86400_000).toISOString());
+      if (!levelKr || !present) return fail(res, 400, "invalid_body");
+      if (!isRealDate(b.heldOn)) return fail(res, 400, "invalid_body");
+      if (b.heldOn > today) return fail(res, 400, "future_date");
+      if (b.heldOn < back) return fail(res, 400, "invalid_body");
+      if (b.startTime !== undefined && !(typeof b.startTime === "string" && TIME_RE.test(b.startTime)))
+        return fail(res, 400, "invalid_body");
+      if (b.durationMin !== undefined && !SPAN_MIN.includes(b.durationMin)) return fail(res, 400, "invalid_body");
+      if (b.sameDayOk !== undefined && typeof b.sameDayOk !== "boolean") return fail(res, 400, "invalid_body");
+      const out = await sbRpc("record_course_attendance", {
+        p_trainer_id: req.staff.id, p_slot_id: null, p_present: present,
+        p_held_on: b.heldOn, p_level: levelKr, p_start_time: b.startTime ?? null,
+        p_duration_min: b.durationMin ?? COURSE_SPAN_DEFAULT, p_actor: `staff:${req.staff.id}`,
+        p_same_day_ok: b.sameDayOk === true, p_mark_absent: false,
+      });
+      if (out?.error === "students_rejected") return rejectFail(res, out.rejected);
+      if (out?.error) return rpcFail(res, out.error);
+      sendTrainer(res, attendOut(out));
+    }));
+
   // DELETE /slots/:id — 예약자 전원 복원 + DM
+  //   직강 칸에 출석이 이미 있으면 닫지 않는다(409 attendance_recorded) — 회차 행이 칸 없이 남는다(§59).
   app.delete(`${TRAINER}/slots/:id`, requireTrainer, wrap(async (req, res) => {
     const slotId = readOpaqueId("slot", req.params.id);
     if (slotId == null) return fail(res, 400, "invalid_body");
+    const attended = await sbSelect("course_sessions", `select=id&slot_id=eq.${slotId}&status=neq.cancelled&limit=1`);
+    if (attended.length) return fail(res, 409, "attendance_recorded");
     const out = await sbRpc("cancel_slot", { p_trainer_id: req.staff.id, p_slot_id: slotId });
     if (out?.error) return rpcFail(res, out.error);
     notifyTrainerCancel(slotId, out.studentIds || [], req.staff.name).catch(() => {});
@@ -680,14 +924,14 @@ module.exports = function mountBookingApi(app, deps) {
   // 전부 베스트에포트다. DM 실패가 예약을 되돌리지 않는다 — 예약은 이미 커밋됐고,
   // 되돌리면 "성공했는데 사라진 예약"이라는 더 나쁜 상태가 된다.
   const fmt = (iso) => new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
-  const TYPE_LABEL = { personal: "개인 1:1", spectate: "그룹 관전형", participate: "그룹 참여형", consult: "상담" };
+  // 칸 이름표는 파일 머리 TYPE_LABEL · typeLabel() 한 벌이다(직강 칸은 반까지 붙는다 · §59).
 
   // 관계자 = 진행 트레이너(슬롯 주인 · tr) + 담당 트레이너(students.trainer_id · owner).
   // owner 는 **진행과 다를 때만** 채운다 — 같은 사람에게 두 통 보내지 않는다.
   // 담당 밖 트레이너에게 예약이 잡히면 담당도 알아야 한다(오너 지시 2026-09-10 ②).
   async function slotAndPeople(slotId, studentId) {
     const [slot] = await sbSelect("trainer_slots",
-      `select=slot_start,lesson_type,trainer_id&id=eq.${slotId}`);
+      `select=slot_start,lesson_type,trainer_id,course_level&id=eq.${slotId}`);
     if (!slot) return null;
     const [stu] = studentId
       ? await sbSelect("students", `select=name,discord_id,trainer_id&id=eq.${studentId}`) : [null];
@@ -702,12 +946,10 @@ module.exports = function mountBookingApi(app, deps) {
   async function notifyBooking(slotId, studentId, _kind, gamesHeld) {
     const p = await slotAndPeople(slotId, studentId);
     if (!p) return;
-    const when = fmt(p.slot.slot_start), type = TYPE_LABEL[p.slot.lesson_type] || p.slot.lesson_type;
+    const when = fmt(p.slot.slot_start), type = typeLabel(p.slot);
     // 수강생 DM — ui-copy. 차감·상담료 문장은 §2(돈 문구 절제)라 담백하게, 첫 줄만 기쁨.
     // 「담당」→「진행」: 담당 밖 트레이너 예약이 생기면서 슬롯 주인이 담당이 아닐 수 있다.
-    const held = p.slot.lesson_type === "consult" ? "판수 차감은 없어요. 상담료는 별도예요."
-      : gamesHeld > 0 ? `${gamesHeld}판이 먼저 차감되고, 수업 기록이 등록되면 맞춰져요.`
-      : "판수는 수업 후에 차감돼요.";
+    const held = heldLine(p.slot, gamesHeld);
     await discordDM(p.stu?.discord_id, `예약 완료! 🎉 ${when} · ${type} · 진행 ${p.tr?.name || "미배정"}\n${held}`);
     await discordDM(p.tr?.discord_id, `📅 예약 접수 — ${when} · ${type} · ${p.stu?.name || "?"}`);
     // 담당 밖 트레이너에게 잡힌 예약 — 담당에게도 한 통. 누가 진행하는지까지 적는다.
@@ -721,12 +963,11 @@ module.exports = function mountBookingApi(app, deps) {
   async function notifyAssigned(slotId, studentId, gamesHeld, trainerName) {
     const p = await slotAndPeople(slotId, studentId);
     if (!p) return;
-    const when = fmt(p.slot.slot_start), type = TYPE_LABEL[p.slot.lesson_type] || p.slot.lesson_type;
-    const held = p.slot.lesson_type === "consult" ? "판수 차감은 없어요. 상담료는 별도예요."
-      : gamesHeld > 0 ? `${gamesHeld}판이 먼저 차감되고, 수업 기록이 등록되면 맞춰져요.`
-      : "판수는 수업 후에 차감돼요.";
-    await discordDM(p.stu?.discord_id,
-      `${trainerName || p.tr?.name || "담당"} 트레이너가 예약을 잡아 줬어요 📅 ${when} ${type}\n${held}`);
+    const when = fmt(p.slot.slot_start), type = typeLabel(p.slot);
+    const held = heldLine(p.slot, gamesHeld);
+    // 직강 칸은 원장이 넣는다 — 「○○ 트레이너가」 대신 원장님으로 쓴다(§59).
+    const who = p.slot.lesson_type === "course" ? "원장님이" : `${trainerName || p.tr?.name || "담당"} 트레이너가`;
+    await discordDM(p.stu?.discord_id, `${who} 예약을 잡아 줬어요 📅 ${when} ${type}\n${held}`);
   }
 
   async function notifyCancelByStudent(bookingId, studentId, restored) {
@@ -746,13 +987,22 @@ module.exports = function mountBookingApi(app, deps) {
   }
 
   async function notifyTrainerCancel(slotId, studentIds, trainerName) {
-    const [slot] = await sbSelect("trainer_slots", `select=slot_start&id=eq.${slotId}`);
+    const [slot] = await sbSelect("trainer_slots", `select=slot_start,lesson_type,course_level&id=eq.${slotId}`);
     if (!slot || !studentIds.length) return;
     const when = fmt(slot.slot_start);
     const rows = await sbSelect("students", `select=discord_id&id=in.(${studentIds.join(",")})`);
-    for (const r of rows)
-      await discordDM(r.discord_id,
-        `⚠️ 수업이 취소됐어요 — ${when}\n트레이너(${trainerName}) 사정입니다. **차감분은 100% 복원**됐어요.`);
+    // 직강 칸(§59)은 선차감이 없다 — 「복원」 대신 회차가 그대로라고 쓴다(ui-copy §2 · 이모지 없이).
+    const text = slot.lesson_type === "course"
+      ? `수업이 취소됐어요 — ${when} ${typeLabel(slot)}\n원장님 사정이에요. 직강 남은 회차는 그대로예요.`
+      : `⚠️ 수업이 취소됐어요 — ${when}\n트레이너(${trainerName}) 사정입니다. **차감분은 100% 복원**됐어요.`;
+    for (const r of rows) await discordDM(r.discord_id, text);
+  }
+
+  // 예약 DM 의 차감 한 줄 — 상담 · 직강 · 개인(선차감) · 그룹. 돈 · 차감 문구라 담백하게(ui-copy §2).
+  function heldLine(slot, gamesHeld) {
+    if (slot.lesson_type === "consult") return "판수 차감은 없어요. 상담료는 별도예요.";
+    if (slot.lesson_type === "course") return "판수는 쓰지 않아요. 수업에 나오면 직강 남은 회차에서 1회가 빠져요.";
+    return gamesHeld > 0 ? `${gamesHeld}판이 먼저 차감되고, 수업 기록이 등록되면 맞춰져요.` : "판수는 수업 후에 차감돼요.";
   }
 
   probe().catch((e) => console.error("booking_probe", e?.message));

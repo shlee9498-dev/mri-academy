@@ -740,7 +740,8 @@ module.exports = function mountStudentPortal(app, deps) {
   }
 
   // 오늘(KST) 예약 중 끝난 시각이 지난 booked 가 하나라도 있나(계약 보강 D).
-  // §23 에 끝 시각 컬럼이 없다 — 개인 레슨은 duration_min(머리 행에만 있다), 그 외는 슬롯 1칸 30분.
+  // §23 에 끝 시각 컬럼이 없다 — 개인 레슨은 duration_min(머리 행에만 있다), 그 외는 칸 길이(§40 한 덩어리 칸 ·
+  // §59 직강 칸 180분 — 종전엔 30분으로 봐서 3시간 수업이 시작 30분 뒤 「끝남」이 됐다). 칸 길이도 없으면 30분.
   // 트레이너가 /수업등록 을 하면 예약이 done 으로 바뀌므로, 여기 남는 건 「끝났는데 아직 등록 전」뿐이다.
   const SLOT_MIN = 30;
   async function endedBookingToday(studentId) {
@@ -750,11 +751,12 @@ module.exports = function mountStudentPortal(app, deps) {
       const dayStart = new Date(`${today}T00:00:00+09:00`).toISOString();
       const dayEnd = new Date(Date.parse(dayStart) + 86400_000).toISOString();
       const rows = await sbSelect("slot_bookings",
-        "select=duration_min,trainer_slots!inner(slot_start)"
+        "select=duration_min,trainer_slots!inner(slot_start,duration_min)"
         + `&student_id=eq.${studentId}&status=eq.booked&span_head_id=is.null`
         + `&trainer_slots.slot_start=gte.${dayStart}&trainer_slots.slot_start=lt.${dayEnd}`);
       const nowMs = Date.now();
-      return rows.some((b) => Date.parse(b.trainer_slots.slot_start) + (Number(b.duration_min) || SLOT_MIN) * 60_000 <= nowMs);
+      return rows.some((b) => Date.parse(b.trainer_slots.slot_start)
+        + (Number(b.duration_min) || Number(b.trainer_slots.duration_min) || SLOT_MIN) * 60_000 <= nowMs);
     } catch (e) { console.error("summary_ended_booking", e?.message); return false; }
   }
 

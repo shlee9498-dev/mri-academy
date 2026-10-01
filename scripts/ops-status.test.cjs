@@ -191,3 +191,32 @@ test("직강 회차 요약 — 오너 확인 완료 회차(§58 · 날짜 없음
   assert.deepEqual([c.completedUnits, c.remainingUnits, c.ownerConfirmedUnits, c.attendanceKnown], [0, 12, 0, false]);
   assert.equal(summarizeCourses(courses, att, {}, false).get(90)[0].attendanceKnown, false);   // 출석 조회 실패면 여전히 미상
 });
+
+test("직강 반 수업 칸(§59) — 출석 전엔 예약 줄 · 출석 뒤엔 회차 줄 하나 · 판수 기록과 짝짓지 않는다 · 진행자는 회차 행", () => {
+  const slots = [{ id: 1, trainer_id: 4, slot_start: "2026-10-02T00:00:00Z", lesson_type: "course", course_level: "심화반", duration_min: 180, capacity: 3 },
+                 { id: 2, trainer_id: 4, slot_start: "2026-10-03T00:00:00Z", lesson_type: "course", course_level: "중급반", duration_min: 180, capacity: 3 }];
+  const bk = (id, slot_id, student_id, status) => ({ id, slot_id, student_id, status, span_head_id: null, duration_min: null });
+  const bookings = [bk(10, 1, 7, "booked"), bk(11, 1, 8, "booked"), bk(12, 2, 7, "done"), bk(13, 2, 9, "no_show")];
+  // 원장이 같은 날 레슨도 기록했다 — 직강 칸의 done 예약이 이 기록을 「예약 기록」으로 먹으면 안 된다
+  const sessions = [{ id: 30, student_id: 7, trainer_id: 4, played_at: "2026-10-03", games: 5, created_by: "portal", created_at: "2026-10-03T05:00:00Z", memo: null }];
+  const courseSessions = [{ id: 40, held_on: "2026-10-03", start_time: "09:00:00", duration_min: 180, label: "중급반", status: "done", slot_id: 2, trainer_id: 4 }];
+  const attendance = [{ session_id: 40, course_id: 5 }];
+  const courses = [{ id: 5, student_id: 7, trainer_id: null, level: "중급반" }];
+  const ls = ops.buildLessons({ slots, bookings, sessions, courseSessions, attendance, courses });
+  assert.deepEqual(ls.map((l) => [l.kind, l.date, l.lessonType, l.courseLevel, l.trainerId, l.studentIds.join("+"), l.status ?? l.source]), [
+    ["booking", "2026-10-02", "course", "심화반", 4, "7+8", "booked"],     // 출석 전 — 예약 명단
+    ["course", "2026-10-03", null, undefined, 4, "7", "done"],             // 출석 뒤 — 회차 하나(칸의 예약 줄은 안 나온다) · 진행자 = 회차 행
+    ["record", "2026-10-03", null, undefined, 4, "7", "app"],              // 같은 날 레슨 기록은 그대로 따로 센다
+  ]);
+});
+
+test("강의 고르기 사본(pickCourse · §59 course_pick 과 같은 규칙) — 남은 회차 있는 가장 오래된 것 · 다 썼으면 가장 최근 · 반 다르면 null", () => {
+  const { pickCourse } = require("../course-progress.cjs");
+  const c = (startedOn, remainingUnits, o = {}) => ({ level: "심화반", status: "active", startedOn, remainingUnits, ...o });
+  assert.equal(pickCourse([c("2026-09-01", 3), c("2026-08-01", 2)], "심화반").startedOn, "2026-08-01");
+  assert.equal(pickCourse([c("2026-09-01", 3), c("2026-08-01", 0)], "심화반").startedOn, "2026-09-01");
+  assert.equal(pickCourse([c("2026-09-01", -1), c("2026-08-01", 0)], "심화반").startedOn, "2026-09-01");   // 다 썼으면 최근 것
+  assert.equal(pickCourse([c("2026-09-01", 3, { status: "paused" })], "심화반"), null);
+  assert.equal(pickCourse([c("2026-09-01", 3)], "중급반"), null);
+  assert.equal(pickCourse([], "심화반"), null);
+});
