@@ -111,7 +111,8 @@ const deps = {
 const app = express();
 app.use(express.json());
 const portal = require("../student-portal.cjs")(app, deps);
-require("../review-api.cjs")(app, { ...deps, portal });
+const reviewApi = require("../review-api.cjs")(app, { ...deps, portal });
+reviewApi.mountTrainer(require("../trainer-portal.cjs")(app, { ...deps, portal }));   // 트레이너 피드(server.js 와 같은 순서)
 let base, server;
 test.before(async () => {
   server = app.listen(0);
@@ -127,6 +128,11 @@ const call = async (studentId, path, method = "GET", body) => {
   return { status: r.status, json: await r.json().catch(() => null) };
 };
 const R = (id) => portal.opaqueId("review", id);
+const callTrainer = async (staffId, path) => {
+  const r = await fetch(base.replace("/student-portal", "/trainer-portal") + path, { headers: { "x-portal-secret": "test-portal-secret",
+    "x-portal-session": portal.issueSession({ provider: "discord", pid: `p${staffId}`, sub: staffId, scope: "trainer" }, 3600) } });
+  return { status: r.status, json: await r.json().catch(() => null) };
+};
 
 const DAY = 86400_000;
 const kst = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
@@ -271,4 +277,39 @@ test("목록 anchorDetail — 수업 = 그 수업 판수 · 직강 = 반 · 몇 
   const d = await call(37, `/reviews/${R(21)}`);
   assert.deepEqual(d.json.review.anchorDetail, { level: "중급반", courseLevel: "intermediate", unitNo: 13 });
   assert.deepEqual(d.json.review.anchorChanges, []);
+});
+
+test("피드 anchorDetail — 내 복기만 판수 · 반 · 회차 · 남의 복기는 null(상세와 같은 선 · 2026-10-02 반장 요청)", async () => {
+  db = fixture();
+  const recent = new Date(Date.now() - DAY).toISOString();
+  for (const r of db.lesson_reviews) if (r.status === "published") Object.assign(r, { visibility: "students", published_at: recent });
+  db.lesson_reviews.push(review(30, 100, { anchor_kind: "course", course_id: 18, course_session_id: 6, status: "published",
+    recipient_trainer_id: 4, visibility: "students", published_at: recent }));
+  const mine = await call(37, "/feed");
+  assert.equal(mine.status, 200);
+  const by = Object.fromEntries(mine.json.items.map((x) => [x.id, x]));
+  assert.deepEqual(by[R(21)].anchorDetail, { level: "중급반", courseLevel: "intermediate", unitNo: 13 });   // 내 직강 복기
+  assert.deepEqual(by[R(22)].anchorDetail, { games: 14 });                                                // 내 수업 복기
+  assert.equal(by[R(19)].anchorDetail, null);                                                             // 내 복기지만 연결 없음
+  assert.equal(by[R(30)].anchorDetail, null);                                                             // 남(#100)의 복기
+  const theirs = await call(100, "/feed");
+  const t = Object.fromEntries(theirs.json.items.map((x) => [x.id, x]));
+  assert.deepEqual(t[R(30)].anchorDetail, { level: "심화반", courseLevel: "advanced", unitNo: 1 });
+  assert.equal(t[R(21)].anchorDetail, null);
+  assert.equal(JSON.stringify(theirs.json).includes(portal.opaqueId("csession", 7)), false);              // 세션 id 는 여전히 안 싣는다
+});
+
+test("트레이너 피드 anchorDetail — 원장은 전부 · 트레이너는 범위 안 수강생 · 받는 사람 줄만 · 나머지 null", async () => {
+  db = fixture();
+  const recent = new Date(Date.now() - DAY).toISOString();
+  for (const r of db.lesson_reviews) if (r.status === "published") Object.assign(r, { visibility: "students", published_at: recent });
+  db.lesson_reviews.push(review(30, 100, { anchor_kind: "course", course_id: 18, course_session_id: 6, status: "published",
+    recipient_trainer_id: 4, visibility: "students", published_at: recent }));
+  const own = await callTrainer(4, "/feed");                                    // 원장
+  assert.equal(own.status, 200);
+  const o = Object.fromEntries(own.json.items.map((x) => [x.id, x]));
+  assert.deepEqual([o[R(21)].anchorDetail?.unitNo, o[R(22)].anchorDetail, o[R(30)].anchorDetail?.level], [13, { games: 14 }, "심화반"]);
+  const b = await callTrainer(5, "/feed");                                      // 트레이너B — #37 담당 · #100 은 범위 밖
+  const t = Object.fromEntries(b.json.items.map((x) => [x.id, x]));
+  assert.deepEqual([t[R(21)].anchorDetail?.unitNo, t[R(22)].anchorDetail, t[R(30)].anchorDetail], [13, { games: 14 }, null]);
 });

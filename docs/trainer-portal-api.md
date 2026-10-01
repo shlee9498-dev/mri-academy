@@ -505,6 +505,8 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 
 ### 8.5 피드 한 줄(`GET /feed`)
 `{ id, authorDisplayName, authorRole, playedAt(null 가능 · 없으면 publishedAt 을 보인다), publishedAt, gameCount, maps(판 순서 · 중복 제거), tags(확정 태그 많이 쓰인 순 최대 3), reactionCounts, myReactions, hasTrainerComment(총평·코멘트 있음), thumbUrl(첫 사진 썸네일 · 서명 10분 · 없으면 null) }` — 잔여·결제·담당·세션 id·메모·원본 URL 없음. `nextCursor` = 다음 쪽이 있으면 서명된 문자열(그대로 다시 보낸다) · 끝이면 null.
+**`anchorDetail`(2026-10-02 · 반장 요청 · §8.12 와 같은 모양)** — 수업 `{ games }` · 직강 회차 `{ level, courseLevel, unitNo }` · 그 밖 null.
+**볼 수 있는 줄에만 값**이다(상세 §8.4 와 같은 선 — 세션 id 를 볼 수 있는 사람): 수강생 피드 = **내 복기만** · 트레이너 피드 = 원장은 전부 · 트레이너는 받는 사람 · 작성자 · 범위 안 수강생(담당 ∪ 최근 90일)의 복기만. **남의 복기는 null** — 화면은 「N판」 · 「n회차」를 빼고 그린다(`gameCount` 를 판수로 쓰지 않는다).
 
 ### 8.6 앱 쪽에 필요한 것(반장 인계) · PR-1 에 없는 것
 - **앱 응답 가드(`src/lib/portal/guard.ts`) `CONTRACT_KEY_EXCEPTIONS` 에 `unreadFeedback` 추가 필요** — 어간 `fee` 에 걸린다(v2.7 §12 9 의 키 검토에서 빠진 키). 서버 scrub 에는 이 PR 에서 같은 예외를 넣었다. 앱에 없으면 `GET /reviews` · `GET /sessions` 응답에서 가드가 throw 한다.
