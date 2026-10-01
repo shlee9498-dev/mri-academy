@@ -8341,6 +8341,14 @@ intakeFlow = require("./intake-cards.cjs").mountIntakeFlow({
 // 상태 전이는 위 흐름(intakeFlow) 한 벌이라 앱에서 누른 것도 디스코드 카드에 그대로 보인다.
 require("./intake-trainer.cjs")(app, { sbSelect, limit, trainer: trainerPortal, portal: studentPortal, flow: () => intakeFlow });
 
+// ── 상담 보드(계약 §9.23 · 설계 docs/consult-board-design.md · §60 · /api/trainer-portal/consults*) ──
+// 레벨 테스트 · 클랜 상담 · 일반 상담을 한 보드로 — 신청 · 레벨 테스트 예약 · 상담 기록을 카드 한 장으로 묶는다.
+// 결제는 읽기만(상담 가산은 그대로 payments.handler_id) · 신청 등록은 위 흐름(intakeFlow.enroll) 한 벌 · 「고민 중」 3일 DM 은 cronTick.
+const consultBoard = require("./consult-board.cjs")(app, {
+  sbSelect, sbInsert, sbPatch, limit, discordDM, trainer: trainerPortal, portal: studentPortal, flow: () => intakeFlow,
+  dmEnrolled: require("./intake-cards.cjs").dmEnrolled, appUrl: STUDENT_APP_URL,
+});
+
 // ── 레벨 테스트 「완료」 → 상담 기록 자동 생성(오너 OK 2026-09-30 · consult-record.cjs) ──
 // 봇 /수업등록 진단상담과 같은 consults 기록 + 상담 가산용 결제 진행자(payments.handler_id · 비어 있을 때 · 한 건일 때만).
 // 결제를 못 찾거나(0건 · 여러 건) 진행자를 못 채우면 오너에게 한 줄 — 가산이 빠진 채 지나가지 않게.
@@ -8491,7 +8499,10 @@ const REQUIRED_SCHEMA = {
                      "registered_at","status","memo",
                      // §22d 승격(2026-09-04) — 오너 DDL 실행 완료를 실DB에서 확인했고
                      // /api/apply가 이 컬럼들에 쓴다. inflow만 SCHEMA_OPTIONAL에 남는다(22d-1 미실행).
-                     "source","phone","platform","game_nick","playtime","focus","stats_consent"],
+                     "source","phone","platform","game_nick","playtime","focus","stats_consent",
+                     // §60 상담 보드(2026-10-01 · 세션 실행 · 실측 46칸) — consult-board.cjs · consult-record.cjs 가 쓴다
+                     "consult_type","booking_id","application_id","outcome","outcome_note","outcome_at","outcome_by",
+                     "thinking_reminded_at","handover_at","handover_note","updated_at"],
   course_attendance:["id","session_id","course_id","units","units_auto","adjust_reason","status",
                      "memo","created_by"],
   course_sessions:  ["id","held_on","start_time","end_time","duration_min","kind","label","status",
@@ -9211,6 +9222,8 @@ async function cronTick() {
   intakeApi.logOpen();
   //   봇이 로그인한 뒤에만 — 재알림은 한 번뿐이라(reminded_at) 봇이 없을 때 돌면 보내지도 못하고 기회만 쓴다.
   if (intakeFlow && botClient) await intakeFlow.remind().catch((e) => console.error("intake_remind", e?.status || "", e?.message));
+  // 상담 보드 「고민 중」 3일(계약 §9.23.12) — 매 틱 · 한 카드에 한 번(thinking_reminded_at). 위와 같은 이유로 봇이 있을 때만.
+  if (botClient) await consultBoard.remindThinking().catch((e) => console.error("consult_thinking", e?.status || "", e?.message));
   // 오너 승인 카드 다시 띄우기(ops_state 'payreq:resend') — 매 틱. 목록이 비어 있으면 읽기 한 번으로 끝난다.
   await runPayreqResend().catch((e) => console.error("payreq_resend", e?.message));
   // 주간 보류 DM(계약 §9.17 · 오너 확정 9/30) — 월요일 10:00 KST 에 한 번. 날짜 키라 월요일마다 새로 돈다.
