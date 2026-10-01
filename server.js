@@ -8495,7 +8495,8 @@ const REQUIRED_SCHEMA = {
   course_attendance:["id","session_id","course_id","units","units_auto","adjust_reason","status",
                      "memo","created_by"],
   course_sessions:  ["id","held_on","start_time","end_time","duration_min","kind","label","status",
-                     "source","is_partial","schedule_id","memo","created_by"],
+                     "source","is_partial","schedule_id","memo","created_by",
+                     "slot_id","trainer_id"],                // §59 직강 반 수업 칸 출석(2026-10-01 · 세션 실행 확인)
   // trainer_id 승격(2026-08-16) — §17e DDL 실행을 실DB에서 확인(courses 2행 전부 trainer_id=4).
   courses:          ["id","student_id","level","scheme","session_minutes","unit_price","units_total",
                      "started_on","ended_on","status","source","verified_at","verified_by","memo","created_by",
@@ -8574,7 +8575,8 @@ const REQUIRED_SCHEMA = {
   // 부팅 자기점검만 warn→error로 올려 미실행을 잡는다.
   // duration_min 승격(2026-09-28 · §40) — 그룹 한 덩어리 슬롯의 길이. 부재하면 예약 화면이
   // 90분 그룹을 30분으로 그리고 open_trainer_slots 의 겹침 판정도 틀어진다.
-  trainer_slots: ["id","trainer_id","slot_start","lesson_type","capacity","status","created_at","duration_min"],
+  trainer_slots: ["id","trainer_id","slot_start","lesson_type","capacity","status","created_at","duration_min",
+                  "course_level"],                           // §59 직강 반 수업 칸의 반(2026-10-01 · 세션 실행 확인)
   // §33 보호자 동의서(2026-09-27) — 오너 실행 대기. 미실행이면 부팅에서 MISSING 으로 잡힌다.
   //   ⚠️ check 제약 4개는 이 목록으로 못 잡는다(컬럼 존재 프로브) — §33c 로만 확인된다.
   guardian_consents:["id","student_name","student_birth","student_discord","student_id",
@@ -8585,7 +8587,8 @@ const REQUIRED_SCHEMA = {
                      "retention_until","purged_at","purge_note","withdrawn_at","withdrawn_reason",
                      "source","ip","user_agent","created_at"],
   slot_bookings: ["id","slot_id","student_id","games_held","duration_min","status",
-                  "booked_at","cancelled_at","span_head_id"],
+                  "booked_at","cancelled_at","span_head_id",
+                  "course_id"],                              // §59 직강 반 수업 칸 예약의 강의(2026-10-01 · 세션 실행 확인)
   // §29 수업 복기 11표(2026-09-25 오너 운영 실행 · 실DB 지문 9항 = 정본 해시 일치 확인). 읽고 쓰는 코드는 PR-1(review-api.cjs)부터지만
   // 3곳 동기(정본 SQL §29 · 이 목록 · 실DB) 규칙대로 먼저 올린다 — 부팅 [schema] OK 줄이 notify pgrst 뒤 PostgREST 가
   // 새 표·컬럼을 보는지까지 확인해 준다. 컬럼 목록은 docs/lesson-review-server-design.md §6 과 글자 단위로 같다.

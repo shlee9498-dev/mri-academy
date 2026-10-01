@@ -458,9 +458,12 @@ module.exports = function mountTrainerPortal(app, deps) {
   }
 
   // ════════════════ GET /students ════════════════
+  //   원장 계정은 테스트 계정(test-accounts.cjs)을 기본으로 뺀다(2026-10-01 어플 · 원장 명부) — ?includeTest=1 이면 넣는다.
+  //   트레이너 계정은 종전 그대로(행마다 isTest 를 실어 앱이 가린다).
   app.get(`${TRAINER}/students`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
     const owner = req.staff.role === "owner";
     const scope = owner ? await ownerScope(req.staff.id) : await scopedStudents(req.staff.id);
+    if (owner && req.query.includeTest !== "1") for (const id of [...scope.keys()]) if (isTestStudent(id)) scope.delete(id);
     const head = { scope: owner ? "all" : "mine" };
     if (!scope.size) {
       const book = await staffBook();
@@ -498,6 +501,7 @@ module.exports = function mountTrainerPortal(app, deps) {
     const r = rows[0];
     const per = perTrainerOf(r);
     sendTrainer(res, {
+      ...(one.owner ? { courseHistory: await courseHistoryOf(sid) } : {}),
       student: rowOut(r, one.owner, book),
       games: {
         registeredGames: r.carry + r.a.reg,
@@ -515,6 +519,43 @@ module.exports = function mountTrainerPortal(app, deps) {
       canEnd: r.remainingMine <= 0,
     });
   }));
+
+  // 직강 이력(원장 상세 · 계약 §9.21.8) — 강의마다 반 · 상태 · 회차 · 출석 날짜 · 결제일(금액 없음 · 가드가 막는다).
+  //   취소(환불 · 무효) 강의도 보인다(원장 화면이다). 출석은 done 만 · 최근 날짜부터.
+  async function courseHistoryOf(sid) {
+    const courses = await sbSelect("courses",
+      `select=id,level,scheme,status,started_on,ended_on,units_total,confirmed_units&student_id=eq.${sid}&order=started_on.desc`);
+    if (!courses.length) return [];
+    const cids = courses.map((c) => c.id).join(",");
+    const [att, pays] = await Promise.all([
+      sbSelect("course_attendance",
+        `select=course_id,units,status,course_sessions!inner(id,held_on,start_time,slot_id,status)&course_id=in.(${cids})&status=eq.done`),
+      // 결제 표(payments)는 결제 트랙 소관 — 읽기만 · 날짜와 종류만 쓴다(금액 칸은 읽지도 않는다).
+      sbSelect("payments", `select=course_id,paid_at,kind,voided_at&course_id=in.(${cids})`).catch(() => []),
+    ]);
+    const progress = courseProgress.summarizeCourses(courses.map((c) => ({ ...c, student_id: sid })), att, {}, true).get(sid) || [];
+    return courses.map((c, i) => {
+      const mine = att.filter((a) => a.course_id === c.id && a.course_sessions?.status !== "cancelled")
+        .map((a) => ({
+          on: a.course_sessions.held_on,
+          startTime: (a.course_sessions.start_time || "").slice(0, 5) || null,
+          units: Number(a.units || 0),
+          fromSlot: a.course_sessions.slot_id != null,
+        }))
+        .sort((x, y) => String(y.on).localeCompare(String(x.on)) || String(y.startTime || "").localeCompare(String(x.startTime || "")));
+      const p = progress[i] || {};
+      return {
+        courseKey: opaqueId("course", c.id),
+        level: c.level, courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[c.level] || null,
+        scheme: c.scheme || null, status: c.status, startedOn: c.started_on, endedOn: c.ended_on || null,
+        unitsTotal: p.unitsTotal ?? Number(c.units_total || 0), completedUnits: p.completedUnits ?? 0,
+        remainingUnits: p.remainingUnits ?? null, ownerConfirmedUnits: Number(c.confirmed_units || 0),
+        attendance: mine,
+        paidOn: pays.filter((x) => x.course_id === c.id && !x.voided_at && x.kind !== "refund").map((x) => x.paid_at).sort(),
+        refundedOn: pays.filter((x) => x.course_id === c.id && !x.voided_at && x.kind === "refund").map((x) => x.paid_at).sort(),
+      };
+    });
+  }
 
   // ════════════════ GET /students/:id/games-ledger — 판수 내역(계약 §9.15 · 수강생 앱 §7.4 와 같은 모양) ════════════════
   app.get(`${TRAINER}/students/:id/games-ledger`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
@@ -641,15 +682,15 @@ module.exports = function mountTrainerPortal(app, deps) {
     const [book, weekSlots, openSlots, sessions, courseSessions, assignedRows, payreqs, adjreqs, linkreqs] = await Promise.all([
       staffBook(),
       // 칸은 30분 단위라 한 주에 수백 행이 된다 — 쪼개 읽는다(두 트레이너가 하루 12시간씩 열면 주 670행대)
-      selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min"
+      selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min,course_level"
         + `&status=neq.cancelled&slot_start=gte.${weekStart}&slot_start=lt.${weekEnd}`),
-      // 열린 칸 = 지금부터 7일 · status open · 상담(레벨 테스트) 칸 제외(수업 칸 공급을 본다)
+      // 열린 칸 = 지금부터 7일 · status open · 상담(레벨 테스트) · 직강(원장 반 수업 · §59) 칸 제외(레슨 칸 공급을 본다)
       selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,capacity"
-        + `&status=eq.open&lesson_type=neq.consult&slot_start=gte.${nowIso}&slot_start=lt.${slotsUntil}`),
+        + `&status=eq.open&lesson_type=not.in.(consult,course)&slot_start=gte.${nowIso}&slot_start=lt.${slotsUntil}`),
       // memo 는 /판수정정 행을 거르는 데만 쓴다 — 응답에 싣지 않는다(가드가 memo 어간을 막는다)
       selectAll(sbSelect, "lesson_sessions", "select=id,student_id,trainer_id,played_at,games,created_by,created_at,memo"
         + `&played_at=gte.${week.from}&played_at=lte.${week.to}`),
-      sbSelect("course_sessions", "select=id,held_on,start_time,duration_min,label,status"
+      sbSelect("course_sessions", "select=id,held_on,start_time,duration_min,label,status,slot_id,trainer_id"
         + `&held_on=gte.${week.from}&held_on=lte.${week.to}`),
       sbSelect("students", "select=trainer_id&status=eq.active&merged_into=is.null&trainer_id=not.is.null"),
       sbSelect("payment_requests", "select=created_at&status=eq.pending"),
@@ -721,7 +762,8 @@ module.exports = function mountTrainerPortal(app, deps) {
           id: opaqueId("student", id), displayName: stu[id]?.name || "?", pubgName: stu[id]?.pubg_name || null,
         })),
       };
-      if (l.kind === "booking") return { ...base, lessonType: l.lessonType, status: l.status };
+      if (l.kind === "booking") return { ...base, lessonType: l.lessonType, status: l.status,
+        ...(l.lessonType === "course" ? { courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[l.courseLevel] || null } : {}) };
       if (l.kind === "record") return { ...base, lessonType: null, games: l.games, source: l.source };
       return { ...base, label: l.label, status: l.status };
     };

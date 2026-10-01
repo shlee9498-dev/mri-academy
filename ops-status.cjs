@@ -74,6 +74,9 @@ function trainerColor(row) {
 //   record  = 예약 없이 기록한 수업. 같은 날 · 같은 트레이너 · 같은 수강생의 done 예약이 있으면 그 예약의 기록이라 뺀다.
 //             한 번에 넣은 행(같은 트레이너 · 날짜 · created_at — 봇 · 앱 둘 다 한 요청으로 넣는다)은 한 수업이다.
 //   course  = 직강 회차. 학생 · 트레이너는 출석 행 → 강의에서 온다(출석 행이 없으면 빈 목록 · 트레이너 null).
+//             회차 행에 진행자(trainer_id · §59)가 있으면 그 값이 먼저다.
+//   직강 반 수업 칸(§59 · lesson_type course)은 출석을 받기 전엔 booking(예약 명단)으로, 출석을 받은 뒤엔
+//   course(회차 · 출석 명단)로 **한 번만** 나온다 — 칸 하나가 수업 하나다(같은 칸이 두 줄로 세지지 않게).
 const STAGE = { booked: 0, pending_review: 1, done: 2, no_show: 2 };
 function groupStatus(statuses) {
   let best = null;
@@ -86,11 +89,19 @@ function buildLessons({ slots = [], bookings = [], sessions = [], courseSessions
   const out = [];
   const doneKeys = new Set();          // `${trainer}|${student}|${date}` — done 예약이 남긴 기록을 빼려고
 
+  // 출석을 받은 직강 칸 — 그 칸의 예약 줄은 내지 않는다(회차 줄이 대신한다).
+  const attendedSlots = new Set(courseSessions.filter((cs) => cs.slot_id != null && cs.status !== "cancelled").map((cs) => cs.slot_id));
   const live = bookings.filter((b) => b.status !== "cancelled" && slotById.has(b.slot_id));
   const bySlot = new Map();
   for (const b of live) {
     const s = slotById.get(b.slot_id);
     const date = kstDate(Date.parse(s.slot_start));
+    if (s.lesson_type === "course") {                       // 판수 기록과 짝짓지 않는다(doneKeys 밖)
+      if (attendedSlots.has(s.id)) continue;
+      if (!bySlot.has(s.id)) bySlot.set(s.id, []);
+      bySlot.get(s.id).push(b);
+      continue;
+    }
     if (b.status === "done") doneKeys.add(`${s.trainer_id}|${b.student_id}|${date}`);
     if (s.lesson_type === "personal") {
       if (b.span_head_id != null) continue;                 // 꼬리 칸
@@ -106,6 +117,7 @@ function buildLessons({ slots = [], bookings = [], sessions = [], courseSessions
     const s = slotById.get(slotId);
     out.push({ kind: "booking", ref: Math.min(...bs.map((b) => b.id)), date: kstDate(Date.parse(s.slot_start)),
                startAt: s.slot_start, durationMin: Number(s.duration_min || 30), lessonType: s.lesson_type,
+               ...(s.lesson_type === "course" ? { courseLevel: s.course_level ?? null } : {}),
                trainerId: s.trainer_id, studentIds: [...new Set(bs.map((b) => b.student_id))],
                status: groupStatus(bs.map((b) => b.status)) });
   }
@@ -134,7 +146,7 @@ function buildLessons({ slots = [], bookings = [], sessions = [], courseSessions
     out.push({ kind: "course", ref: cs.id, date: cs.held_on,
                startAt: cs.start_time ? new Date(Date.parse(`${cs.held_on}T${cs.start_time}+09:00`)).toISOString() : null,
                durationMin: cs.duration_min ?? null, lessonType: null,
-               trainerId: tids.length === 1 ? tids[0] : null,
+               trainerId: cs.trainer_id ?? (tids.length === 1 ? tids[0] : null),
                studentIds: [...new Set(cids.map((c) => c.student_id))],
                label: cs.label || levels.join(" · ") || null, status: cs.status });
   }

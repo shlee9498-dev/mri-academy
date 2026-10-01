@@ -96,4 +96,20 @@ async function loadCourseProgress(sbSelect, { studentIds, statuses, hideCancelle
   return summarizeCourses(courses, att, sessById, attOk);
 }
 
-module.exports = { loadCourseProgress, summarizeCourses };
+// ── 직강 반 수업(§59 · 계약 §9.21) ──
+// 반 키(API) ↔ 강의 반(DB). 키는 레벨(§9.16 · games-view LEVELS)과 같은 낱말이다.
+const COURSE_LEVEL_BY_KEY = Object.freeze({ beginner: "초급반", intermediate: "중급반", advanced: "심화반" });
+const COURSE_KEY_BY_LEVEL = Object.freeze({ "초급반": "beginner", "중급반": "intermediate", "심화반": "advanced" });
+
+// 그 반 강의 고르기 — §59 course_pick() 의 JS 사본(표시용 · 판정은 DB 함수가 한다).
+//   진행 중(active) · 그 반 강의 중 남은 회차가 있는 가장 오래된 것, 없으면 가장 최근 것. 그 반 강의가 없으면 null.
+//   list = summarizeCourses 결과 한 사람 몫({ level, status, startedOn, remainingUnits }).
+function pickCourse(list, levelKr) {
+  const mine = (list || []).filter((c) => c.status === "active" && c.level === levelKr);
+  if (!mine.length) return null;
+  const byStart = (a, b) => String(a.startedOn).localeCompare(String(b.startedOn));
+  const open = mine.filter((c) => Number(c.remainingUnits) > 0).sort(byStart);
+  return open[0] || mine.sort(byStart).at(-1);
+}
+
+module.exports = { loadCourseProgress, summarizeCourses, pickCourse, COURSE_LEVEL_BY_KEY, COURSE_KEY_BY_LEVEL };

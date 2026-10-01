@@ -214,12 +214,12 @@ function fresh() {
     intake_cards: [],
     payment_requests: [],
     trainer_slots: [
-      { id: 700, trainer_id: 2, slot_start: iso(now + 2 * DAY), lesson_type: "consult", capacity: 1, status: "open", duration_min: 60 },
-      { id: 701, trainer_id: 2, slot_start: iso(now + 2 * DAY + HOUR), lesson_type: "personal", capacity: 1, status: "open", duration_min: 30 },
-      { id: 702, trainer_id: 5, slot_start: iso(now + 2 * DAY), lesson_type: "consult", capacity: 1, status: "open", duration_min: 90 },
-      { id: 703, trainer_id: 2, slot_start: iso(now + HOUR), lesson_type: "consult", capacity: 1, status: "open", duration_min: 60 },
-      { id: 704, trainer_id: 2, slot_start: iso(now + 3 * DAY), lesson_type: "personal", capacity: 1, status: "closed", duration_min: 30 },
-      { id: 705, trainer_id: 2, slot_start: iso(now + 4 * DAY), lesson_type: "consult", capacity: 1, status: "closed", duration_min: 60 },
+      { id: 700, trainer_id: 2, slot_start: iso(now + 2 * DAY), lesson_type: "consult", capacity: 1, status: "open", duration_min: 60, course_level: null },
+      { id: 701, trainer_id: 2, slot_start: iso(now + 2 * DAY + HOUR), lesson_type: "personal", capacity: 1, status: "open", duration_min: 30, course_level: null },
+      { id: 702, trainer_id: 5, slot_start: iso(now + 2 * DAY), lesson_type: "consult", capacity: 1, status: "open", duration_min: 90, course_level: null },
+      { id: 703, trainer_id: 2, slot_start: iso(now + HOUR), lesson_type: "consult", capacity: 1, status: "open", duration_min: 60, course_level: null },
+      { id: 704, trainer_id: 2, slot_start: iso(now + 3 * DAY), lesson_type: "personal", capacity: 1, status: "closed", duration_min: 30, course_level: null },
+      { id: 705, trainer_id: 2, slot_start: iso(now + 4 * DAY), lesson_type: "consult", capacity: 1, status: "closed", duration_min: 60, course_level: null },
     ],
     slot_bookings: [
       // 일반 수강생 예약(이름은 명부 그대로 보여야 한다)

@@ -41,6 +41,7 @@ function cmp(a, b) {
 function match(v, expr) {
   if (expr === "is.null") return v == null;
   if (expr === "not.is.null") return v != null;
+  if (expr.startsWith("not.in.")) return !match(v, expr.slice(4));
   const i = expr.indexOf(".");
   const op = expr.slice(0, i), arg = expr.slice(i + 1);
   if (v == null && op !== "neq") return false;
@@ -59,6 +60,8 @@ const pick = (row, cols) => Object.fromEntries(cols.map((c) => {
   if (!(c in row)) throw new Error(`fake: 없는 칸 ${c}`);
   return [c, row[c]];
 }));
+// 임베드 → 이 표의 외래키 칸(진짜 PostgREST 는 FK 로 찾는다)
+const EMBED_FK = { trainer_slots: "slot_id", courses: "course_id", course_sessions: "session_id" };
 let db = {};
 const calls = { select: [], rpc: [], write: [] };
 let rpcOut = {};                                          // 함수 이름 → 돌려줄 값(함수면 인자로 불러서) · 없으면 null
@@ -87,7 +90,8 @@ async function sbSelect(table, query) {
   const { sel, limit, offset, filters } = parseQuery(query);
   let out = rows.map((r) => ({ ...r }));
   for (const [emb, e] of Object.entries(sel.embeds)) {
-    out = out.map((r) => ({ ...r, [emb]: (db[emb] || []).find((x) => x.id === r.slot_id) || null }))
+    const fk = EMBED_FK[emb] || "slot_id";
+    out = out.map((r) => ({ ...r, [emb]: (db[emb] || []).find((x) => x.id === r[fk]) || null }))
       .filter((r) => !e.inner || r[emb]);
   }
   out = out.filter((r) => passes(r, filters)).slice(offset, offset + limit);
@@ -212,7 +216,7 @@ const rosterDb = () => ({
     { id: 5, student_id: 13, trainer_id: 2, games: 10, played_at: daysAgo(100), created_by: "portal", memo: null, created_at: "2026-08-01T00:00:00Z" },
     { id: 6, student_id: 15, trainer_id: 5, games: 5, played_at: daysAgo(5), created_by: "portal", memo: null, created_at: "2026-08-01T00:00:00Z" },
   ],
-  trainer_slots: [{ id: 900, trainer_id: 5, slot_start: hoursFromNow(24), lesson_type: "personal", capacity: 1, status: "closed", duration_min: 30 }],
+  trainer_slots: [{ id: 900, trainer_id: 5, slot_start: hoursFromNow(24), lesson_type: "personal", capacity: 1, status: "closed", duration_min: 30, course_level: null }],
   slot_bookings: [{ id: 901, slot_id: 900, student_id: 11, games_held: 5, status: "booked", span_head_id: null, duration_min: 60 }],
   courses: [
     { id: 1, student_id: 16, level: "심화반", scheme: "new", started_on: "2026-09-01", status: "active", units_total: 12, confirmed_units: 0, trainer_id: 4, memo: "x" },
@@ -463,7 +467,7 @@ test("수강생 판수 내역 · 수업 목록 — 되돌린 조정은 두 줄 �
 
 // ════════ GET /owner/dashboard ════════ — 주는 2025-01-06(월)~12(일) 고정 · 열린 칸 · 대기 시각은 지금 기준
 const dashDb = () => {
-  const slot = (id, trainer_id, slot_start, o = {}) => ({ id, trainer_id, slot_start, lesson_type: "personal", capacity: 1, status: "closed", duration_min: 30, ...o });
+  const slot = (id, trainer_id, slot_start, o = {}) => ({ id, trainer_id, slot_start, lesson_type: "personal", capacity: 1, status: "closed", duration_min: 30, course_level: null, ...o });
   const bk = (id, slot_id, student_id, status, o = {}) => ({ id, slot_id, student_id, status, span_head_id: null, duration_min: null, games_held: 5, booked_at: null, ...o });
   const ss = (id, student_id, trainer_id, played_at, games, created_by, created_at, memo = null) =>
     ({ id, student_id, trainer_id, played_at, games, created_by, created_at, memo, settled_period: null });
@@ -515,9 +519,9 @@ const dashDb = () => {
       ss(611, 10, 2, "2025-01-13", 5, "portal", "2025-01-13T09:00:00Z"),   // 다음 주 — 안 센다
     ],
     course_sessions: [
-      { id: 700, held_on: "2025-01-11", start_time: "14:00:00", end_time: "17:00:00", duration_min: 180, label: null, status: "scheduled" },
-      { id: 701, held_on: "2025-01-10", start_time: "14:00:00", end_time: "17:00:00", duration_min: 180, label: null, status: "cancelled" },
-      { id: 702, held_on: "2025-01-12", start_time: null, end_time: null, duration_min: null, label: "보강", status: "scheduled" },
+      { id: 700, held_on: "2025-01-11", start_time: "14:00:00", end_time: "17:00:00", duration_min: 180, label: null, status: "scheduled", slot_id: null, trainer_id: null },
+      { id: 701, held_on: "2025-01-10", start_time: "14:00:00", end_time: "17:00:00", duration_min: 180, label: null, status: "cancelled", slot_id: null, trainer_id: null },
+      { id: 702, held_on: "2025-01-12", start_time: null, end_time: null, duration_min: null, label: "보강", status: "scheduled", slot_id: null, trainer_id: null },
     ],
     course_attendance: [{ id: 1, session_id: 700, course_id: 1, units: 1, status: "scheduled" }, { id: 2, session_id: 700, course_id: 4, units: 1, status: "scheduled" }],
     courses: [{ id: 1, student_id: 16, trainer_id: 4, level: "심화반" }, { id: 4, student_id: 12, trainer_id: 4, level: "심화반" }],
