@@ -5665,3 +5665,74 @@ notify pgrst, 'reload schema';
 --      실행 후: record_course_attendance 6721 · 75a63f0e / correct_course_attendance 1255 · 582067eb /
 --               cancel_course_attendance 1655 · e857a433 (셋 다 정본 본문과 일치 · 겹 정의 없음) · 출석 · 회차 그대로.
 --      사전 되돌림 시험(59b 포함 · 12항목) 통과 · 실행 뒤 보강 · 잘못된 종류 · 미래 날짜 · 반 다름 되돌림 시험 통과.
+
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- §60  상담 보드 — 유형 · 예약 · 신청 연결 · 결과 · 넘김 (2026-10-01 · 어플 요청 · 계약 §9.23 · 설계 docs/consult-board-design.md)
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+--   A 구간(더하기만) — consults 에 칸 · 새 칸에만 거는 제약 · 인덱스를 더한다. 기존 칸 · 제약 · 13행은 그대로다.
+--   · consult_type  보드 유형(level_test · clan · general). 비어 있는 옛 행은 서버가 kind 로 읽는다(consult → level_test · clan → clan ·
+--                   direct_lecture 는 상담이 아니라 보드에서 뺀다). kind 는 손대지 않는다 — 봇 · 사이트 신청 · 정산 문서가 쓰는 값이다.
+--   · booking_id    레벨 테스트 예약 — 한 예약에 한 행(부분 유니크). 「완료」(consult-record.cjs)가 이 행을 채운다.
+--   · application_id 신청 창구(§54) — 신청 카드에 메모 · 결과를 적을 때 붙는다.
+--   · outcome …     결과(등록 · 고민 중 · 안 함) · 결과 메모 · 정한 시각 · 누가. thinking_reminded_at = 「고민 중」 3일 DM 을 보낸 시각.
+--   · handover_at · handover_note  넘긴 시각 · 한 줄(넘겨받은 트레이너는 기존 handover_to).
+--   · channel_msg_id 부분 유니크 — 디코 상담 기록 옮기기가 같은 메시지를 두 번 넣지 않게(지금 13행 전부 비어 있다).
+--   상담 가산 정산은 payments(kind consult · handler_id)로 센다 — 이 블록과 무관하다.
+alter table public.consults add column if not exists consult_type         text;
+alter table public.consults add column if not exists booking_id           bigint references public.slot_bookings(id);
+alter table public.consults add column if not exists application_id       bigint references public.intake_applications(id);
+alter table public.consults add column if not exists outcome              text;
+alter table public.consults add column if not exists outcome_note         text;
+alter table public.consults add column if not exists outcome_at           timestamptz;
+alter table public.consults add column if not exists outcome_by           text;
+alter table public.consults add column if not exists thinking_reminded_at timestamptz;
+alter table public.consults add column if not exists handover_at          timestamptz;
+alter table public.consults add column if not exists handover_note        text;
+alter table public.consults add column if not exists updated_at           timestamptz;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_consult_type') then
+    alter table public.consults add constraint chk_consults_consult_type
+      check (consult_type is null or consult_type in ('level_test','clan','general'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_outcome') then
+    alter table public.consults add constraint chk_consults_outcome
+      check (outcome is null or outcome in ('enrolled','thinking','declined'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_outcome_note') then
+    alter table public.consults add constraint chk_consults_outcome_note
+      check (outcome_note is null or char_length(outcome_note) <= 500);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_handover_note') then
+    alter table public.consults add constraint chk_consults_handover_note
+      check (handover_note is null or char_length(handover_note) <= 200);
+  end if;
+end $$;
+
+create unique index if not exists uq_consults_booking     on public.consults (booking_id)     where booking_id is not null;
+create unique index if not exists uq_consults_channel_msg on public.consults (channel_msg_id) where channel_msg_id is not null;
+create index        if not exists ix_consults_application on public.consults (application_id) where application_id is not null;
+create index        if not exists ix_consults_thinking    on public.consults (outcome_at)
+  where outcome = 'thinking' and thinking_reminded_at is null;
+
+notify pgrst, 'reload schema';
+
+-- ── 60 검증 ─────────────────────────────────────────────────────────────────
+--   select count(*) from information_schema.columns where table_schema='public' and table_name='consults';   -- 35 → 46
+--   select conname from pg_constraint where conrelid='public.consults'::regclass and conname like 'chk_consults_%';  -- 새 넷
+--   select indexname from pg_indexes where tablename='consults' and indexname in
+--     ('uq_consults_booking','uq_consults_channel_msg','ix_consults_application','ix_consults_thinking');  -- 4
+--   select count(*) from public.consults;   -- 그대로(13)
+-- 되돌리기(코드를 먼저 되돌린 뒤 · 지우는 DDL = B 구간 · 오너 OK):
+--   drop index if exists uq_consults_booking, uq_consults_channel_msg, ix_consults_application, ix_consults_thinking;
+--   alter table public.consults drop constraint if exists chk_consults_consult_type, drop constraint if exists chk_consults_outcome,
+--     drop constraint if exists chk_consults_outcome_note, drop constraint if exists chk_consults_handover_note;
+--   alter table public.consults drop column if exists consult_type, drop column if exists booking_id, drop column if exists application_id,
+--     drop column if exists outcome, drop column if exists outcome_note, drop column if exists outcome_at, drop column if exists outcome_by,
+--     drop column if exists thinking_reminded_at, drop column if exists handover_at, drop column if exists handover_note, drop column if exists updated_at;
+--
+--   ✅ 60 실행 완료 2026-10-01 17:3x KST (세션 실행 · A 구간 · 이 블록 그대로 · 블록 md5 dc2320b444e81755c61d2c5537581295).
+--      실행 전: consults 35칸 · 인덱스 4 · 제약 13 · 13행(행 지문 9c917ecc).
+--      실행 후: 46칸 · 인덱스 8 · 제약 19(check 4 + 외래키 2) · 13행 그대로(행 지문 9c917ecc 같음).
+--      사전 되돌림 시험 통과 — 틀린 유형 · 틀린 결과 거절 · 맞는 값 통과 · 같은 원본 메시지 두 번 거절 · 전부 되돌림 확인.

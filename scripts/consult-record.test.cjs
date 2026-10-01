@@ -29,22 +29,34 @@ test("결제 짝 — 무효 · 이미 붙음 · 0원 · 기간 밖은 빼고 정
   assert.equal(T.pickPayment([], [], "2026-10-03").candidates, 0);
 });
 
-// 가짜 DB
-function fakeDb({ booking, student = { id: 7, name: "가나" }, pays = [], linked = [], dupConsult = false, patchThrows = false }) {
-  const log = { consults: [], patches: [] };
+// 가짜 DB — 찾는 순서(booking_id → 신청의 상담 기록 → 메모 표시)를 질의 모양으로 가른다
+function fakeDb({ booking, student = { id: 7, name: "가나" }, pays = [], linked = [], byBooking = null, app = null, byApp = null,
+                  marked = [], patchThrows = false, insertConflict = null, patchMiss = false }) {
+  const log = { consults: [], patches: [], conflictRow: null };
   const deps = {
     sbSelect: async (t, q) => {
       if (t === "slot_bookings") return booking ? [booking] : [];
-      if (t === "consults" && q.includes("memo=like")) return dupConsult ? [{ id: 55 }] : [];
+      if (t === "intake_applications") return app ? [app] : [];
       if (t === "consults" && q.includes("payment_id=in")) return linked.map((id) => ({ payment_id: id }));
+      if (t === "consults" && q.includes("booking_id=eq.")) { const r = log.conflictRow || byBooking; return r ? [r] : []; }
+      if (t === "consults" && q.includes("application_id=eq.")) return byApp ? [byApp] : [];
+      if (t === "consults" && q.includes("memo=like")) return marked;
       if (t === "students") return student ? [student] : [];
       if (t === "payments") return pays;
       throw new Error("select " + t);
     },
-    sbInsert: async (t, row) => { log.consults.push(row); return { id: 900, ...row }; },
+    sbInsert: async (t, row) => {
+      if (insertConflict) {
+        log.conflictRow = insertConflict;
+        throw Object.assign(new Error("supabase_insert_409"), { status: 409, body: JSON.stringify({ code: "23505" }) });
+      }
+      log.consults.push(row); return { id: 900, ...row };
+    },
     sbPatch: async (t, f, patch) => {
-      if (patchThrows) { const e = new Error("55006"); e.status = 400; throw e; }
-      log.patches.push({ t, f, patch }); return [{ id: 1 }];
+      if (t === "payments" && patchThrows) { const e = new Error("55006"); e.status = 400; throw e; }
+      log.patches.push({ t, f, patch });
+      if (t === "consults" && patchMiss) return [];
+      return [{ id: Number(/id=eq\.(\d+)/.exec(f)?.[1] || 1), ...patch }];
     },
   };
   return { deps, log };
@@ -98,9 +110,83 @@ test("상담 기록 — 상담 예약이 아니거나 · 남의 예약이거나 
   assert.deepEqual(await createRecorder(notConsult.deps).recordLevelTestDone({ bookingId: 31, trainerId: 2 }), { skipped: "not_consult" });
   const notMine = fakeDb({ booking: consultBooking() });
   assert.deepEqual(await createRecorder(notMine.deps).recordLevelTestDone({ bookingId: 31, trainerId: 5 }), { skipped: "not_mine" });
-  const dup = fakeDb({ booking: consultBooking(), dupConsult: true });
+  const dup = fakeDb({ booking: consultBooking(), marked: [{ id: 55, status: "done", memo: "레벨 테스트 완료(앱 예약 #31)" }] });
   assert.equal((await createRecorder(dup.deps).recordLevelTestDone({ bookingId: 31, trainerId: 2 })).skipped, "exists");
   assert.equal(dup.log.consults.length, 0);
+  const byId = fakeDb({ booking: consultBooking(), byBooking: { id: 56, status: "done", booking_id: 31 } });
+  assert.deepEqual(await createRecorder(byId.deps).recordLevelTestDone({ bookingId: 31, trainerId: 2 }), { skipped: "exists", consultId: 56 });
   const open = fakeDb({ booking: consultBooking({ status: "booked" }) });
   assert.deepEqual(await createRecorder(open.deps).recordLevelTestDone({ bookingId: 31, trainerId: 2 }), { skipped: "not_consult" });
+});
+
+test("상담 기록 — 새 행에 예약 · 신청 · 유형을 같이 적는다(§60) · 메모 표시는 그대로", async () => {
+  const { deps, log } = fakeDb({ booking: consultBooking(), app: { id: 41 } });
+  await createRecorder(deps).recordLevelTestDone({ bookingId: 31, trainerId: 2, trainerName: "트레이너B" });
+  const c = log.consults[0];
+  assert.equal(c.booking_id, 31);
+  assert.equal(c.application_id, 41);
+  assert.equal(c.consult_type, "level_test");
+  assert.equal(c.memo, "레벨 테스트 완료(앱 예약 #31)");
+  assert.ok(c.updated_at);
+});
+
+test("상담 기록 — 메모 표시 「#31」은 「#310」 기록에 걸리지 않는다", async () => {
+  assert.equal(T.markOf("레벨 테스트 완료(앱 예약 #31)"), 31);
+  assert.equal(T.markOf("레벨 테스트 완료(앱 예약 #310)"), 310);
+  assert.equal(T.markOf("메모 없음"), null);
+  const { deps, log } = fakeDb({ booking: consultBooking(), marked: [{ id: 57, status: "done", memo: "레벨 테스트 완료(앱 예약 #310)" }] });
+  const r = await createRecorder(deps).recordLevelTestDone({ bookingId: 31, trainerId: 2 });
+  assert.equal(r.skipped, undefined);
+  assert.equal(log.consults.length, 1);                                // 다른 예약 기록이라 새로 만든다
+});
+
+test("상담 기록 — 상담 보드가 먼저 만든 예약 행은 새로 만들지 않고 채운다(사람이 쓴 메모 · 대상자는 그대로)", async () => {
+  const board = { id: 70, status: "scheduled", memo: "후반 운영이 약함", booking_id: 31, application_id: null,
+    trainer_id: 2, trainer_name: null, student_id: 7, consult_type: "level_test" };
+  const { deps, log } = fakeDb({ booking: consultBooking(), byBooking: board, pays: [{ id: 1, amount: 20000, paid_at: "2026-10-01", handler_id: null }] });
+  const r = await createRecorder(deps).recordLevelTestDone({ bookingId: 31, trainerId: 2, trainerName: "트레이너B" });
+  assert.equal(log.consults.length, 0);
+  const p = log.patches.find((x) => x.t === "consults");
+  assert.equal(p.f, "id=eq.70&status=neq.done");                        // 사이에 끝났으면 안 덮는다
+  assert.equal(p.patch.status, "done");
+  assert.equal(p.patch.handler_id, 2);
+  assert.equal(p.patch.payment_id, 1);
+  assert.equal(p.patch.fee, 20000);
+  assert.equal(p.patch.trainer_name, "트레이너B");
+  assert.ok(!("memo" in p.patch), "사람이 쓴 메모를 덮었다");
+  assert.ok(!("student_id" in p.patch));
+  assert.equal(r.consultId, 70);
+  assert.equal(r.handlerSet, true);                                      // 결제 진행자 규칙은 그대로
+});
+
+test("상담 기록 — 신청 카드에 붙은 행(application_id)도 채운다 · 예약 번호를 같이 적는다", async () => {
+  const board = { id: 71, status: "scheduled", memo: null, booking_id: null, application_id: 41,
+    trainer_id: 2, trainer_name: null, student_id: null, consult_type: "level_test" };
+  const { deps, log } = fakeDb({ booking: consultBooking(), app: { id: 41 }, byApp: board });
+  await createRecorder(deps).recordLevelTestDone({ bookingId: 31, trainerId: 2 });
+  assert.equal(log.consults.length, 0);
+  const p = log.patches.find((x) => x.t === "consults");
+  assert.equal(p.f, "id=eq.71&status=neq.done");
+  assert.equal(p.patch.booking_id, 31);
+  assert.equal(p.patch.student_id, 7);
+  assert.equal(p.patch.memo, "레벨 테스트 완료(앱 예약 #31)");
+  // 다른 예약에 이미 붙은 신청 행은 건드리지 않는다
+  const other = fakeDb({ booking: consultBooking(), app: { id: 41 }, byApp: { ...board, booking_id: 30 } });
+  await createRecorder(other.deps).recordLevelTestDone({ bookingId: 31, trainerId: 2 });
+  assert.equal(other.log.consults.length, 1);
+});
+
+test("상담 기록 — 만들다 같은 예약 행과 부딪히면(23505) 그 행을 채운다 · 이미 끝났으면 그대로", async () => {
+  const cur = { id: 72, status: "pending", memo: null, booking_id: 31, application_id: null, trainer_id: 2, trainer_name: null,
+    student_id: 7, consult_type: "level_test" };
+  const a = fakeDb({ booking: consultBooking(), insertConflict: cur });
+  const r = await createRecorder(a.deps).recordLevelTestDone({ bookingId: 31, trainerId: 2 });
+  assert.equal(r.consultId, 72);
+  assert.equal(a.log.patches.find((x) => x.t === "consults").f, "id=eq.72&status=neq.done");
+  const b = fakeDb({ booking: consultBooking(), insertConflict: { ...cur, status: "done" } });
+  assert.deepEqual(await createRecorder(b.deps).recordLevelTestDone({ bookingId: 31, trainerId: 2 }), { skipped: "exists", consultId: 72 });
+  // 채우는 사이에 다른 「완료」가 먼저 채웠으면(0행) 아무것도 더 안 한다
+  const c = fakeDb({ booking: consultBooking(), byBooking: { ...cur }, patchMiss: true, pays: [{ id: 1, amount: 20000, paid_at: "2026-10-01", handler_id: null }] });
+  assert.deepEqual(await createRecorder(c.deps).recordLevelTestDone({ bookingId: 31, trainerId: 2 }), { skipped: "exists", consultId: 72 });
+  assert.ok(!c.log.patches.some((x) => x.t === "payments"), "끝난 기록인데 결제 진행자를 또 적었다");
 });
