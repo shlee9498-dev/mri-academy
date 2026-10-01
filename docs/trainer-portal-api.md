@@ -2149,13 +2149,14 @@ PATCH /api/trainer-portal/bookings/:id
   "total": { "done": 12, "enrolled": 5, "thinking": 3, "declined": 2, "conversionRate": 0.42 },
   "trainers": [ { "trainerKey": "…", "trainerName": "…", "colorKey": "gold", "done": 5, "enrolled": 2, "thinking": 1, "declined": 1, "conversionRate": 0.4 } ],
   "byType": { "level_test": 9, "clan": 2, "general": 1 },
-  "months": [ { "month": "2026-05", "done": 3, "enrolled": 1 }, "…최근 6개월" ],
+  "months": [ { "month": "2026-05", "done": 3, "enrolled": 1, "conversionRate": 0.33 }, "…최근 6개월" ],
   "thinkingOverdue": [ { "id": "…", "displayName": "…", "trainerName": "…", "days": 4 } ] }
 ```
 - `month` 생략 = 이번 달(KST). 기준 월 = 끝난 시각 → 잡힌 시각 → 만든 날. 트레이너 = 진행자 → 없으면 담당.
 - **등록 전환율 = 등록 ÷ 끝난 상담**(끝난 상담 0 이면 `null`). 취소 · 노쇼는 세지 않는다.
 - 트레이너 계정은 `trainers` 에 **본인 줄만** · `total` · `months` 도 본인 기준. 원장은 전부.
 - `thinkingOverdue` = 「고민 중」으로 정한 지 3일(72시간) 지난 카드.
+- `months[].conversionRate` = 그 달 등록 ÷ 끝난 상담(끝난 상담 0 이면 `null`) — 지난달 전환율은 `months` 끝에서 두 번째 칸이다(10/1 클로드디자인 제안 반영).
 
 ### 9.23.12 「고민 중」 3일 — 담당 DM (서버 · 라우트 없음)
 
@@ -2217,5 +2218,7 @@ PATCH /api/trainer-portal/bookings/:id
 - **명부 연결** — `newProspect` 의 명부 이름 = 카드의 별칭 → 이름(30자) · 배그 닉 = 카드의 배그 닉. 합친 명부는 합쳐진 쪽으로 본다(이미 연결된 카드).
   prospect 의 `displayName` 은 가장 최근 신청의 디스코드 표시 이름(신청 없이 명부에 넣은 prospect 는 명부 이름 — 칸 목록 §9.20.8 과 같은 규칙).
 - **숫자** — `trainers` 순서는 트레이너 이름순 · 원장 마지막(§9.12 와 같다). 트레이너의 `thinkingOverdue` 는 내가 담당 · 진행 · 넘겨받은 카드.
+- **닫힌 신청** — 마침(레벨 테스트) 뒤에 닫은 신청은 `stage: "done"` · `result: "declined"`(닫은 이유와 상관없이)로 **끝난 상담에 센다** — 전환율 분모가 빠지지 않게.
+  `resultNote` = 닫을 때 적은 한 줄(디스코드 카드가 맡은 트레이너에게도 보여 주는 값). 마침 전에 닫은 신청은 `closed` 이고, 이유가 「본인이 안 하기로 함」이면 `result: "declined"`.
 - **「고민 중」 3일 DM** — KST 10시~24시에만 보낸다(밤에 3일이 찬 것은 다음 날 10시 첫 점검). 받을 사람이 퇴사 · 디스코드 없음이면 보내지 않고 다시 시도하지 않는다.
 - **요청 한도** — 읽기 120회/분 · 쓰기 30회/분(다른 트레이너 라우트와 따로 센다).

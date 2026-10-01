@@ -296,6 +296,7 @@ test("단계 — 확정 = 끝남 · 봇 로그 = 끝남 · 사이트 신청 = �
   assert.equal(B.stageOf({ app: { status: "paid" }, booking: { status: "done" } }), "done");     // 「마침」이 늦어도
   assert.equal(B.stageOf({ app: { status: "booked" }, booking: { status: "no_show" } }), "closed");
   assert.equal(B.stageOf({ app: { status: "closed" }, booking: { status: "booked" }, row: { status: "scheduled" } }), "closed");
+  assert.equal(B.stageOf({ app: { status: "closed", tested_at: "2026-10-03T12:00:00Z" } }), "done");   // 마침 뒤 닫음 = 끝난 상담
   assert.equal(B.stageOf({ booking: { status: "pending_review" } }), "scheduled");
   assert.equal(B.stageOf({ booking: { status: "done" }, row: { status: "scheduled" } }), "done");
 });
@@ -308,6 +309,15 @@ test("입금(읽기만) — 결제 · 신청 입금 확인 = confirmed · 무료
   assert.equal(B.depositOf({ row: null, app: { deposit_confirmed_at: "2026-10-01T00:00:00Z" }, type: "level_test" }), "confirmed");
   assert.equal(B.depositOf({ row: null, app: null, type: "level_test" }), "waiting");
   assert.equal(B.depositOf({ row: { paid_status: "refunded" }, type: "level_test" }), "refunded");
+});
+
+test("결과 — 기록의 결과 먼저 · 신청 등록 = 등록 · 닫힌 신청 = 안 함(마침 뒤는 이유와 상관없이 · 마침 전은 「본인이 안 하기로 함」만)", () => {
+  assert.equal(B.resultOf({ row: { outcome: "thinking" }, app: { status: "closed", tested_at: "x" } }), "thinking");
+  assert.equal(B.resultOf({ app: { status: "enrolled" } }), "enrolled");
+  assert.equal(B.resultOf({ app: { status: "closed", tested_at: "2026-10-03T12:00:00Z", closed_reason: "no_reply" } }), "declined");
+  assert.equal(B.resultOf({ app: { status: "closed", tested_at: null, closed_reason: "declined" } }), "declined");
+  assert.equal(B.resultOf({ app: { status: "closed", tested_at: null, closed_reason: "no_reply" } }), null);
+  assert.equal(B.resultOf({ app: { status: "tested" } }), null);
 });
 
 test("보드가 처음 만드는 기록 — 끝남은 「완료」만 적는다(결제 진행자 연결을 건너뛰지 않게)", () => {
@@ -354,7 +364,8 @@ test("숫자 — 전환율 = 등록 ÷ 끝난 상담 · 취소는 안 센다 · 
   assert.deepEqual(all.trainers.map((t) => [t.trainerId, t.done]), [[2, 3], [5, 1]]);
   assert.deepEqual(all.byType, { level_test: 4, clan: 1, general: 0 });
   assert.deepEqual(all.months.map((m) => m.month), ["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"]);
-  assert.deepEqual(all.months.slice(-2).map((m) => [m.done, m.enrolled]), [[1, 1], [4, 1]]);
+  assert.deepEqual(all.months.slice(-2).map((m) => [m.done, m.enrolled, m.conversionRate]), [[1, 1, 1], [4, 1, 0.25]]);
+  assert.equal(all.months[0].conversionRate, null);                      // 끝난 상담 0 = null
   assert.deepEqual(all.thinkingOverdue.map((x) => [x.card.key.id, x.days]), [[2, 5]]);
   const t5 = B.statsOf(cards, { month: "2026-10", nowMs: now, onlyTrainerId: 5 });
   assert.deepEqual(t5.total, { done: 1, enrolled: 0, thinking: 0, declined: 1, conversionRate: 0 });
@@ -736,6 +747,23 @@ test("숫자 — 원장은 전부 · 트레이너는 본인 줄만 · 고민 중
   assert.equal(t5.json.thinkingOverdue.length, 1);                      // 넘겨받은 카드
   assert.equal((await call(2, "/consults/stats?month=2026-13")).status, 400);
   assert.equal((await call(2, "/consults/stats")).status, 200);           // 생략 = 이번 달
+});
+
+test("마침 뒤에 닫은 신청 — 끝난 상담으로 세고 결과 = 안 함 · 결과 메모 = 닫을 때 적은 한 줄", async () => {
+  fresh();
+  const a = db.intake_applications.find((x) => x.id === 101);
+  Object.assign(a, { status: "closed", closed_reason: "no_reply", closed_note: "세 번 연락했는데 답 없음" });
+  const r = await call(2, `/consults/${A(101)}`);
+  assert.equal(r.json.consult.stage, "done");
+  assert.equal(r.json.consult.result, "declined");
+  assert.equal(r.json.consult.resultNote, "세 번 연락했는데 답 없음");
+  assert.equal(r.json.consult.actions.enroll, false);
+  const month = new Date(Date.parse(a.tested_at) + 9 * HOUR).toISOString().slice(0, 7);   // 마친 달(달 경계에서도 맞게)
+  const s = await call(2, `/consults/stats?month=${month}`);
+  const mine = s.json.trainers[0];
+  assert.equal(mine.trainerName, "트레이너A");
+  assert.ok(mine.done >= 1 && mine.declined >= 1, JSON.stringify(mine));
+  assert.ok("conversionRate" in s.json.months.at(-1));
 });
 
 // ════════ 「고민 중」 3일 DM ════════
