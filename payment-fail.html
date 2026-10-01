@@ -4,11 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>결제 실패 · MRI ACADEMY</title>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
   :root{--bg:#0a0a0c;--card:#141417;--line:#26262b;--gold:#f5c518;--ink:#ededf0;--ink-dim:#a0a0a8;--ink-faint:#6b6b73;--red:#e63946}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font-family:Pretendard,-apple-system,system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Pretendard Variable',Pretendard,-apple-system,system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
   .box{width:100%;max-width:440px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:36px 26px;text-align:center}
+  .mark{font-family:'Saira Condensed','Pretendard Variable',sans-serif;font-weight:700;font-size:13px;letter-spacing:.18em;color:var(--ink-faint);margin-bottom:18px}
   .icon{font-size:46px;margin-bottom:10px}
   h1{font-size:21px;margin:6px 0 4px}
   .sub{color:var(--ink-dim);font-size:13.5px;line-height:1.7;margin-bottom:20px}
@@ -21,12 +24,13 @@
 </head>
 <body>
 <div class="box">
+  <div class="mark">MRI ACADEMY</div>
   <div class="icon">⚠️</div>
   <h1>결제가 취소되었어요</h1>
   <p class="sub">결제가 완료되지 않았습니다. 아래 사유를 확인하고 다시 시도해 주세요.</p>
   <div class="reason" id="reason">사유를 불러오는 중…</div>
   <a class="btn" href="apply.html">다시 신청하기</a>
-  <span class="alt">문제가 계속되면 <a href="https://open.kakao.com/o/sAUU6OGf">카카오</a> · <a href="https://discord.gg/szFa7teEJs">디스코드</a>로 문의해 주세요.</span>
+  <span class="alt">문제가 계속되면 <a href="https://open.kakao.com/o/sAUU6OGf">카카오</a> · <a href="https://discord.gg/9RjqdSKw">디스코드</a>로 문의해 주세요.</span>
 </div>
 <script>
 const q = new URLSearchParams(location.search);
