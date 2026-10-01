@@ -47,7 +47,7 @@ const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().
 // 직강 반 수업 칸(§59 · 계약 §9.21) — 원장만 연다. 판수가 아니라 남은 회차로 넣고, 출석으로 회차가 빠진다.
 //   반 키 ↔ DB 값 · 남은 회차 표시 · 강의 고르기 사본은 course-progress.cjs 한 벌이다(판정은 DB 함수가 한다).
 const courseProgress = require("./course-progress.cjs");
-const { COURSE_LEVEL_BY_KEY, COURSE_KEY_BY_LEVEL, pickCourse } = courseProgress;
+const { COURSE_LEVEL_BY_KEY, COURSE_KEY_BY_LEVEL, pickCourse, CLASS_LEVELS } = courseProgress;
 const COURSE_SPAN_DEFAULT = 180;     // 원장 강의 기본 길이(3시간)
 const COURSE_CAP_DEFAULT = 3;        // 기본 정원 — 원장이 「참여형」으로 열던 칸과 같은 값
 const ATTEND_MAX = 12;               // 출석 한 번에 받는 인원 상한(정원 상한 8 + 칸 없이 기록하는 날의 여유)
@@ -174,7 +174,7 @@ module.exports = function mountBookingApi(app, deps) {
     course_slot: 409, future_date: 400, owner_only: 403,
     // 회차 정정(§59d · 계약 §9.22). slot_exists 는 칸 id 를 실어 따로 답한다(slotExists).
     reason_required: 400, already_cancelled: 409, bulk_row: 409,
-    // §59b(lesson_type 'course' 허용) 전 — 칸은 못 열지만 칸 없이 바로 출석은 된다.
+    // §59b(lesson_type 'course' 허용) 전 코드 — 10/1 실행 뒤로는 나오지 않는다(함수가 남겨 둔 코드라 번역만 둔다).
     course_slots_not_ready: 503,
   };
   const rpcFail = (res, code) => fail(res, STATUS[code] || 400, code);
@@ -209,18 +209,31 @@ module.exports = function mountBookingApi(app, deps) {
     const n = [...t].length;
     return n >= REASON_MIN && n <= REASON_MAX ? t : null;
   }
-  // 그날 같은 반 직강 칸(원장 · 취소 제외)이 있으면 그 칸 id — 칸 없이 출석 · 정정의 가드(계약 §9.22.3).
+  // 그날 직강 칸(원장 · 취소 제외)이 있으면 그 칸 id — 칸 없이 출석 · 정정의 가드(계약 §9.22.3).
   //   칸 수업을 칸 없이 기록하면 회차가 둘로 갈리고 그 칸 예약은 「완료 확인 필요」로 남는다 — 칸 출석으로 보낸다.
+  //   반 없는 칸(§59e)은 어느 반 기록이든 걸린다 · 반 없이 기록하면 어느 반 칸이든 걸린다 · 둘 다 반이 있으면 같은 반만.
   //   startTime 을 주면 그 시각 칸만 본다(같은 날 다른 시각 수업은 따로 기록할 수 있다).
   async function courseSlotOn(staffId, levelKr, ymd, startTime) {
     const dayStart = new Date(Date.parse(`${ymd}T00:00:00+09:00`)).toISOString();
     const dayEnd = new Date(Date.parse(dayStart) + 86400_000).toISOString();
-    const rows = await sbSelect("trainer_slots", `select=id,slot_start&trainer_id=eq.${staffId}&lesson_type=eq.course`
-      + `&course_level=eq.${encodeURIComponent(levelKr)}&status=neq.cancelled`
-      + `&slot_start=gte.${dayStart}&slot_start=lt.${dayEnd}&order=slot_start.asc`);
+    const rows = (await sbSelect("trainer_slots", `select=id,slot_start,course_level&trainer_id=eq.${staffId}&lesson_type=eq.course`
+      + `&status=neq.cancelled&slot_start=gte.${dayStart}&slot_start=lt.${dayEnd}&order=slot_start.asc`))
+      .filter((r) => r.course_level == null || levelKr == null || r.course_level === levelKr);
     rows.sort((a, b) => Date.parse(a.slot_start) - Date.parse(b.slot_start));
     const hit = startTime ? rows.find((r) => kstHHMM(r.slot_start) === startTime) : rows[0];
     return hit ? hit.id : null;
+  }
+  // 반 키(선택) — 없음(undefined · null) = 반 없이(§59e · null) · 반 키 밖 값 = undefined(→ 400)
+  const readLevel = (v) => (v === undefined || v === null ? null : COURSE_LEVEL_BY_KEY[v] || undefined);
+  // 넣기에서 고를 강의(§59e) — 그 수강생의 진행 중 반 수업 강의(칸에 반이 있으면 그 반만) · 먼저 시작한 것부터.
+  //   courseKey = 직강 이력(GET /students/:id courseHistory[].courseKey)과 같은 불투명 id.
+  async function courseOptions(studentId, levelKr) {
+    const m = await courseProgress.loadCourseProgress(sbSelect, { studentIds: [studentId], statuses: ["active"], withIds: true });
+    return (m.get(Number(studentId)) || [])
+      .filter((c) => c.status === "active" && (levelKr ? c.level === levelKr : CLASS_LEVELS.includes(c.level)))
+      .sort((a, b) => String(a.startedOn).localeCompare(String(b.startedOn)))
+      .map((c) => ({ courseKey: opaqueId("course", c.courseId), courseLevel: COURSE_KEY_BY_LEVEL[c.level] || null, level: c.level,
+                     unitsLeft: unitsOf(c.remainingUnits), unitsTotal: unitsOf(c.unitsTotal), startedOn: c.startedOn }));
   }
   const slotExists = (res, slotId) => res.status(409).json(scrubTrainer({ error: {
     code: "slot_exists", slotId: opaqueId("slot", slotId) } }));
@@ -397,9 +410,10 @@ module.exports = function mountBookingApi(app, deps) {
   //   한 트랜잭션으로 묶지 않은 게 의도다 — 한 주가 겹쳤다고 12주 전체를 실패시키면 트레이너가
   //   겹치는 주를 찾아 빼고 다시 보내야 한다. 예약은 복제하지 않는다 — 칸만 만든다.
   //
-  // 직강 반 수업 칸(§59 · 계약 §9.21) — lessonType "course" + courseLevel(beginner · intermediate · advanced).
-  //   **원장만** 연다(트레이너는 403 owner_only). 길이 생략 = 180분 · 정원 생략 = 3. 매주 반복도 같다.
-  //   판정(원장 · 겹침 · 길이 · 정원)은 §59 open_course_slot 이 한다. §59b 전이면 503 course_slots_not_ready.
+  // 직강 반 수업 칸(§59 · 계약 §9.21) — lessonType "course" · courseLevel(beginner · intermediate · advanced)은 **선택**이다.
+  //   반을 안 주면 반 없는 직강 칸(§59e · 오너 9/30 「참여형 = 직강 수업반 · 반은 칸에 묶지 않는다」) — 출석 때 수강생마다
+  //   진행 중인 직강의 회차가 준다. **원장만** 연다(트레이너는 403 owner_only). 길이 생략 = 180분 · 정원 생략 = 3. 매주 반복도 같다.
+  //   판정(원장 · 겹침 · 길이 · 정원)은 §59 open_course_slot 이 한다.
   app.post(`${TRAINER}/slots`, rateLimit("trainerSlots", 20, 60_000),
     bodyOnly(["startAt", "endAt", "durationMin", "lessonType", "capacity", "repeat", "courseLevel"]), requireTrainer,
     wrap(async (req, res) => {
@@ -410,10 +424,11 @@ module.exports = function mountBookingApi(app, deps) {
       const repeat = req.body?.repeat;
       if (!["personal", "spectate", "participate", "consult", "course"].includes(lessonType))
         return fail(res, 400, "invalid_body");
-      // 반은 직강 칸에만 · 직강 칸에는 반이 꼭 있어야 한다.
+      // 반은 직강 칸에만 붙는다 · 직강 칸은 반이 없어도 된다(§59e). 반 키 밖 값은 400.
       const courseLevel = req.body?.courseLevel;
-      const levelKr = isCourse ? COURSE_LEVEL_BY_KEY[courseLevel] : null;
-      if (isCourse ? !levelKr : courseLevel !== undefined) return fail(res, 400, "invalid_body");
+      const hasLevel = courseLevel !== undefined && courseLevel !== null;
+      const levelKr = isCourse && hasLevel ? COURSE_LEVEL_BY_KEY[courseLevel] : null;
+      if (isCourse ? hasLevel && !levelKr : courseLevel !== undefined) return fail(res, 400, "invalid_body");
       if (isCourse && req.staff.role !== "owner") return fail(res, 403, "owner_only");
       if (!Number.isInteger(capacity) || capacity < 1 || capacity > 8)
         return fail(res, 400, "invalid_body");
@@ -519,23 +534,34 @@ module.exports = function mountBookingApi(app, deps) {
   //   범위: 내 칸 + 내 수강생(로스터와 같은 scopedStudents — 담당 + 최근 90일 진행).
   //   ⚠️ 레벨 테스트 신규(prospect)는 로스터 범위 밖이라 여기로 못 넣는다 — 본인이 앱에서 잡는다.
   app.post(`${TRAINER}/slots/:id/bookings`, rateLimit("trainerAssign", 20, 60_000),
-    bodyOnly(["studentId", "durationMin"]), requireTrainer, wrap(async (req, res) => {
+    bodyOnly(["studentId", "durationMin", "courseKey"]), requireTrainer, wrap(async (req, res) => {
       const slotId = readOpaqueId("slot", req.params.id);
       const studentId = readOpaqueId("student", req.body?.studentId);
       if (slotId == null || studentId == null) return fail(res, 400, "invalid_body");
       const d = req.body?.durationMin;
       if (d !== undefined && !DURATION_MIN.includes(d)) return fail(res, 400, "invalid_body");
+      const courseKey = req.body?.courseKey;
+      const courseId = courseKey === undefined ? null : typeof courseKey === "string" ? readOpaqueId("course", courseKey) : null;
+      if (courseKey !== undefined && courseId == null) return fail(res, 400, "invalid_body");
 
-      const [slot] = await sbSelect("trainer_slots", `select=id,trainer_id,lesson_type&id=eq.${slotId}`);
+      const [slot] = await sbSelect("trainer_slots", `select=id,trainer_id,lesson_type,course_level&id=eq.${slotId}`);
       if (!slot) return fail(res, 404, "slot_not_found");
       if (slot.trainer_id !== req.staff.id) return fail(res, 403, "scope_denied");
+      if (courseKey !== undefined && slot.lesson_type !== "course") return fail(res, 400, "invalid_body");   // 강의 고르기는 직강 칸만
 
-      // 직강 반 수업 칸(§59 · 계약 §9.21) — 판수 대신 그 반 강의의 남은 회차로 넣는다(선차감 없음).
-      //   범위 = 그 반 진행 중 강의가 있는 수강생(함수가 판정한다) — 직강생은 원장 담당 명부 밖일 수 있어
+      // 직강 반 수업 칸(§59 · 계약 §9.21) — 판수 대신 강의의 남은 회차로 넣는다(선차감 없음).
+      //   범위 = 진행 중 강의가 있는 수강생(함수가 판정한다) — 직강생은 원장 담당 명부 밖일 수 있어
       //   scopedStudents(담당 ∪ 90일 레슨)로 막으면 정작 직강생을 못 넣는다. 수업이 끝나기 전까지 넣을 수 있다.
+      //   진행 중 강의(그 칸에 맞는 반 수업 강의)가 둘 이상이면 원장이 고른다(§59e · 오너 10/1) — courseKey 없이 오면
+      //   409 course_choice_needed + 고를 강의 목록. 하나뿐이면 묻지 않는다.
       if (slot.lesson_type === "course") {
         if (d !== undefined) return fail(res, 400, "invalid_body");
-        const out = await sbRpc("book_course_slot", { p_student_id: studentId, p_slot_id: slotId, p_by_staff: req.staff.id });
+        if (courseId == null) {
+          const options = await courseOptions(studentId, slot.course_level);
+          if (options.length >= 2) return res.status(409).json(scrubTrainer({ error: { code: "course_choice_needed", courses: options } }));
+        }
+        const out = await sbRpc("book_course_slot", { p_student_id: studentId, p_slot_id: slotId, p_by_staff: req.staff.id,
+          p_course_id: courseId });
         if (out?.error) return rpcFail(res, out.error);
         notifyAssigned(slotId, studentId, 0, req.staff.name).catch(() => {});
         return sendTrainer(res, {
@@ -600,7 +626,7 @@ module.exports = function mountBookingApi(app, deps) {
     // booked 만 보면 「확인 필요」(pending_review)가 목록에서 사라진다. done 도 가져온다 —
     // 아래 등록 누락 감지의 대상이다. no_show 는 **직강 칸만** 싣는다(결석 표시 · 레슨 칸은 종전 그대로).
     const books = (await sbSelect("slot_bookings",
-      `select=id,slot_id,student_id,status,duration_min,span_head_id,booked_at`
+      `select=id,slot_id,student_id,status,duration_min,span_head_id,booked_at,course_id`
       + `&status=in.(booked,pending_review,done,no_show)&span_head_id=is.null&slot_id=in.(${ids.join(",")})`))
       .filter((b) => b.status !== "no_show" || courseSlotIds.has(b.slot_id));
     const sids = [...new Set(books.map((b) => b.student_id))];
@@ -676,10 +702,22 @@ module.exports = function mountBookingApi(app, deps) {
       ...[...attendance.values()].flatMap((v) => [...v.students]),
     ])].filter((id) => id != null);
     const [regMissing, names, progress] = await Promise.all([regMissingOf(), namesOf(),
-      courseSids.length ? courseProgress.loadCourseProgress(sbSelect, { studentIds: courseSids, statuses: ["active"] })
+      courseSids.length ? courseProgress.loadCourseProgress(sbSelect, { studentIds: courseSids, statuses: ["active"], withIds: true })
         : Promise.resolve(new Map())]);
     const levelOf = Object.fromEntries(courseSlots.map((s) => [s.id, s.course_level]));
-    const unitsLeftOf = (sid, slotId) => pickCourse(progress.get(sid) || [], levelOf[slotId])?.remainingUnits ?? null;
+    // 남은 회차 — 예약에 고른 강의(slot_bookings.course_id · §59e 넣을 때 고른 것)가 있으면 그 강의, 없으면 다음 출석이 빠질 강의.
+    //   DB 출석(course_pick_slot)과 같은 순서다. 반 없는 칸(§59e)은 반 수업 강의 전부에서 고른다.
+    const bookedCourse = new Map(books.filter((b) => courseSlotIds.has(b.slot_id) && b.course_id != null)
+      .map((b) => [`${b.slot_id}|${b.student_id}`, Number(b.course_id)]));
+    const unitsLeftOf = (sid, slotId) => {
+      const list = progress.get(sid) || [];
+      const lv = levelOf[slotId];
+      const cid = bookedCourse.get(`${slotId}|${sid}`);
+      const booked = cid != null ? list.find((x) => x.courseId === cid
+        && (lv ? x.level === lv : CLASS_LEVELS.includes(x.level))) : null;       // DB course_pick_slot 과 같은 조건
+      const c = booked || pickCourse(list, lv);
+      return c?.remainingUnits ?? null;
+    };
     const by = {};
     for (const b of books) (by[b.slot_id] = by[b.slot_id] || []).push({
       id: opaqueId("booking", b.id),
@@ -898,18 +936,19 @@ module.exports = function mountBookingApi(app, deps) {
     }));
 
   // POST /course-attendance — 칸 없이 직강 출석(원장 「수업 기록하기」 · §59 · 계약 §9.21)
-  //   body { courseLevel, heldOn, present: [studentId…] (1~12), startTime?: "HH:MM", durationMin?: 30~180(기본 180), sameDayOk? }
-  //   같은 날 · 같은 반 · 같은 시작 시각이면 같은 회차에 더한다(늦게 온 사람). 날짜는 오늘부터 31일 전까지.
+  //   body { courseLevel?, heldOn, present: [studentId…] (1~12), startTime?: "HH:MM", durationMin?: 30~180(기본 180), sameDayOk? }
+  //   courseLevel 을 안 주면 반 없이(§59e) — 수강생마다 진행 중인 반 수업 강의에서 1회가 빠진다.
+  //   같은 날 · 같은 반(또는 반 없음끼리) · 같은 시작 시각이면 같은 회차에 더한다(늦게 온 사람). 날짜는 오늘부터 31일 전까지.
   app.post(`${TRAINER}/course-attendance`, rateLimit("trainerAttend", 30, 60_000),
     bodyOnly(["courseLevel", "heldOn", "present", "startTime", "durationMin", "sameDayOk"]), requireTrainer,
     wrap(async (req, res) => {
       if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
       const b = req.body || {};
-      const levelKr = COURSE_LEVEL_BY_KEY[b.courseLevel];
+      const levelKr = readLevel(b.courseLevel);
       const present = readPresent(b.present, { allowEmpty: false });
       const today = kstDate(new Date().toISOString());
       const back = kstDate(new Date(Date.now() - ATTEND_BACK_DAYS * 86400_000).toISOString());
-      if (!levelKr || !present) return fail(res, 400, "invalid_body");
+      if (levelKr === undefined || !present) return fail(res, 400, "invalid_body");
       if (!isRealDate(b.heldOn)) return fail(res, 400, "invalid_body");
       if (b.heldOn > today) return fail(res, 400, "future_date");
       if (b.heldOn < back) return fail(res, 400, "invalid_body");
@@ -917,7 +956,7 @@ module.exports = function mountBookingApi(app, deps) {
         return fail(res, 400, "invalid_body");
       if (b.durationMin !== undefined && !SPAN_MIN.includes(b.durationMin)) return fail(res, 400, "invalid_body");
       if (b.sameDayOk !== undefined && typeof b.sameDayOk !== "boolean") return fail(res, 400, "invalid_body");
-      // 그날 같은 반 직강 칸이 있으면 칸 출석(9.21.4)으로 보낸다 — 409 slot_exists + slotId(계약 §9.22.3)
+      // 그날 직강 칸(같은 반이거나 반 없는 칸)이 있으면 칸 출석(9.21.4)으로 보낸다 — 409 slot_exists + slotId(계약 §9.22.3)
       const here = await courseSlotOn(req.staff.id, levelKr, b.heldOn, b.startTime);
       if (here != null) return slotExists(res, here);
       const out = await sbRpc("record_course_attendance", {
@@ -933,7 +972,8 @@ module.exports = function mountBookingApi(app, deps) {
 
   // GET /course-classes — 원장 「직강 반 출석」 첫 화면(계약 §9.22.1): 반 3개 · 반마다 요일 시각 묶음 · 인원 · 체크할 명단(남은 회차)
   //   요일 시각은 원장 직강 칸(지난 28일 ~ 앞으로 28일 · 취소 제외)과 칸 없이 기록한 회차(지난 28일 · 시작 시각 있는 것)에서 모은다 —
-  //   반 시간표를 따로 적는 표는 없다. §59b 전이고 칸 없이 기록한 적도 없으면 classes 가 빈다(앱은 날짜 · 시각을 직접 고른다).
+  //   반 시간표를 따로 적는 표는 없다. 칸도 없고 칸 없이 기록한 적도 없으면 classes 가 빈다(앱은 날짜 · 시각을 직접 고른다).
+  //   반 없는 칸(§59e)의 묶음 · 명단은 최상위 classes · students 로 따로 내린다(levels 는 반 있는 칸 · 종전 그대로).
   //   명단 = 그 반 진행 중(active) 강의가 있는 수강생(합친 명부 · 테스트 계정 제외 · ?includeTest=1 이면 넣는다).
   //   unitsLeft 는 다음 출석이 빠질 강의(pickCourse) 기준 — 칸 목록(§9.21.2)과 같은 값이다.
   app.get(`${TRAINER}/course-classes`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
@@ -958,7 +998,7 @@ module.exports = function mountBookingApi(app, deps) {
         `select=session_id&status=eq.done&session_id=in.(${sessions.map((c) => c.id).join(",")})`) : [],
       upcoming.length ? sbSelect("slot_bookings",
         `select=slot_id&status=eq.booked&span_head_id=is.null&slot_id=in.(${upcoming.map((x) => x.id).join(",")})`) : [],
-      sids.length ? courseProgress.loadCourseProgress(sbSelect, { studentIds: sids, statuses: ["active"] }) : new Map(),
+      sids.length ? courseProgress.loadCourseProgress(sbSelect, { studentIds: sids, statuses: ["active"], withIds: true }) : new Map(),
       sids.length ? sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})&merged_into=is.null`) : [],
     ]);
     const attended = {};
@@ -984,18 +1024,37 @@ module.exports = function mountBookingApi(app, deps) {
     }
     for (const list of Object.values(roster))
       list.sort((a, b) => String(a.studentDisplayName).localeCompare(String(b.studentDisplayName), "ko"));
+    // 반 없는 직강 칸(§59e · 오너 9/30 「참여형 = 직강 수업반」)의 명단 — 진행 중인 반 수업 강의가 있는 사람 전부.
+    //   unitsLeft = 다음 출석이 빠질 강의(pickCourse · 반 없음) · courses = 그 사람의 진행 중 반 수업 강의(둘 이상이면 넣기에서 courseKey 로 고른다).
+    const everyone = [];
+    for (const [sid, list] of progress) {
+      if (!nameOf[sid]) continue;
+      const c = pickCourse(list, null);
+      if (!c) continue;
+      const mine = list.filter((x) => x.status === "active" && CLASS_LEVELS.includes(x.level))
+        .sort((a, b) => String(a.startedOn).localeCompare(String(b.startedOn)));
+      everyone.push({
+        studentKey: opaqueId("student", sid),
+        studentDisplayName: nameOf[sid].name || "?", studentPubgName: nameOf[sid].pubg_name || null,
+        courseLevel: COURSE_KEY_BY_LEVEL[c.level] || null, level: c.level,
+        unitsLeft: unitsOf(c.remainingUnits), unitsTotal: unitsOf(c.unitsTotal), overdrawn: Number(c.remainingUnits) < 0,
+        courses: mine.map((x) => ({ courseKey: opaqueId("course", x.courseId), courseLevel: COURSE_KEY_BY_LEVEL[x.level] || null,
+          level: x.level, unitsLeft: unitsOf(x.remainingUnits), unitsTotal: unitsOf(x.unitsTotal) })),
+      });
+    }
+    everyone.sort((a, b) => String(a.studentDisplayName).localeCompare(String(b.studentDisplayName), "ko"));
 
-    // 요일 시각 묶음 — 반 · 요일 · 시작 시각이 같으면 한 묶음. 날짜마다 칸 · 회차 · 출석 수.
+    // 요일 시각 묶음 — 반(반 없는 칸은 「all」) · 요일 · 시작 시각이 같으면 한 묶음. 날짜마다 칸 · 회차 · 출석 수.
     const classes = new Map();
     const ensure = (levelKr, ymd, hhmm) => {
-      const k = `${COURSE_KEY_BY_LEVEL[levelKr]}|${weekdayOf(ymd)}|${hhmm}`;
+      const k = `${COURSE_KEY_BY_LEVEL[levelKr] || "all"}|${weekdayOf(ymd)}|${hhmm}`;
       if (!classes.has(k)) classes.set(k, { k, levelKr, weekday: weekdayOf(ymd), startTime: hhmm,
         durationMin: null, capacity: null, days: new Map(), next: null });
       return classes.get(k);
     };
     const slotById = new Map(slots.map((x) => [x.id, x]));
     for (const x of slots) {
-      if (!COURSE_KEY_BY_LEVEL[x.course_level]) continue;
+      if (x.course_level != null && !COURSE_KEY_BY_LEVEL[x.course_level]) continue;
       const ymd = kstDate(x.slot_start);
       const c = ensure(x.course_level, ymd, kstHHMM(x.slot_start));
       c.durationMin = x.duration_min ?? c.durationMin;            // 시각순이라 마지막 칸 값이 남는다
@@ -1009,7 +1068,7 @@ module.exports = function mountBookingApi(app, deps) {
       const levelKr = sl ? sl.course_level : cs.label;
       const ymd = sl ? kstDate(sl.slot_start) : cs.held_on;
       const hhmm = sl ? kstHHMM(sl.slot_start) : (cs.start_time || "").slice(0, 5);
-      if (!COURSE_KEY_BY_LEVEL[levelKr] || !hhmm) continue;        // 반 밖 이름 · 시각 없는 회차는 묶음이 없다
+      if ((levelKr != null && !COURSE_KEY_BY_LEVEL[levelKr]) || !hhmm) continue;   // 반 밖 이름 · 시각 없는 회차는 묶음이 없다
       const c = ensure(levelKr, ymd, hhmm);
       if (c.durationMin == null) c.durationMin = cs.duration_min ?? null;
       const d = c.days.get(ymd) || { slotId: sl ? sl.id : null, sessionId: null, count: 0 };
@@ -1019,9 +1078,9 @@ module.exports = function mountBookingApi(app, deps) {
     }
     const monFirst = (w) => (w + 6) % 7;
     const classOut = (c) => ({
-      classKey: c.k, courseLevel: COURSE_KEY_BY_LEVEL[c.levelKr], weekday: c.weekday, weekdayLabel: WEEKDAY_KR[c.weekday],
+      classKey: c.k, courseLevel: COURSE_KEY_BY_LEVEL[c.levelKr] || null, weekday: c.weekday, weekdayLabel: WEEKDAY_KR[c.weekday],
       startTime: c.startTime, durationMin: c.durationMin, capacity: c.capacity,
-      headcount: roster[c.levelKr].length,
+      headcount: c.levelKr ? roster[c.levelKr].length : everyone.length,
       nextSlot: c.next ? { ...c.next, slotId: opaqueId("slot", c.next.slotId) } : null,
       recent: [...c.days.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, CLASS_RECENT_MAX)
         .map(([on, d]) => ({ on, slotId: d.slotId == null ? null : opaqueId("slot", d.slotId),
@@ -1031,6 +1090,10 @@ module.exports = function mountBookingApi(app, deps) {
       || a.startTime.localeCompare(b.startTime));
     sendTrainer(res, {
       today,
+      // 반 없는 직강 칸(§59e) — 묶음 · 명단(진행 중인 반 수업 강의가 있는 사람 전부)
+      classes: sorted.filter((c) => c.levelKr == null).map(classOut),
+      headcount: everyone.length,
+      students: everyone,
       levels: Object.keys(roster).map((levelKr) => ({
         courseLevel: COURSE_KEY_BY_LEVEL[levelKr], level: levelKr,
         headcount: roster[levelKr].length,
@@ -1064,8 +1127,8 @@ module.exports = function mountBookingApi(app, deps) {
           return fail(res, 400, "invalid_body");
         if (b.heldOn !== undefined && !isRealDate(b.heldOn)) return fail(res, 400, "invalid_body");
       } else {
-        levelKr = COURSE_LEVEL_BY_KEY[b.courseLevel];
-        if (!levelKr || !isRealDate(b.heldOn)) return fail(res, 400, "invalid_body");
+        levelKr = readLevel(b.courseLevel);                       // 생략 = 반 없이(§59e)
+        if (levelKr === undefined || !isRealDate(b.heldOn)) return fail(res, 400, "invalid_body");
         if (b.startTime !== undefined && !(typeof b.startTime === "string" && TIME_RE.test(b.startTime)))
           return fail(res, 400, "invalid_body");
         if (b.durationMin !== undefined && !SPAN_MIN.includes(b.durationMin)) return fail(res, 400, "invalid_body");

@@ -113,7 +113,7 @@ const deps = {
       if (Date.parse(slot.slot_start) - Date.now() < 3 * HOUR) return { error: "booking_closed" };
       if (db.slot_bookings.some((b) => b.slot_id === slot.id && b.status === "booked")) return { error: "slot_full" };
       const bk = { id: nextId++, slot_id: slot.id, student_id: args.p_student_id, status: "booked", duration_min: null,
-        span_head_id: null, games_held: 0, booked_at: new Date().toISOString() };
+        span_head_id: null, games_held: 0, booked_at: new Date().toISOString(), course_id: null };
       db.slot_bookings.push(bk);
       return { bookingId: bk.id, gamesHeld: 0 };
     }
@@ -223,9 +223,9 @@ function fresh() {
     ],
     slot_bookings: [
       // 일반 수강생 예약(이름은 명부 그대로 보여야 한다)
-      { id: 800, slot_id: 704, student_id: 10, status: "booked", duration_min: 30, span_head_id: null, games_held: 3, booked_at: iso(now - DAY) },
+      { id: 800, slot_id: 704, student_id: 10, status: "booked", duration_min: 30, span_head_id: null, games_held: 3, booked_at: iso(now - DAY), course_id: null },
       // 운영진이 명부에 직접 넣은 prospect 의 상담 예약(신청 없음 → 명부 이름 그대로)
-      { id: 801, slot_id: 705, student_id: 34, status: "booked", duration_min: 60, span_head_id: null, games_held: 0, booked_at: iso(now - DAY) },
+      { id: 801, slot_id: 705, student_id: 34, status: "booked", duration_min: 60, span_head_id: null, games_held: 0, booked_at: iso(now - DAY), course_id: null },
     ],
     lesson_sessions: [],
   };

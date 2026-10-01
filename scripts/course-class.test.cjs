@@ -208,13 +208,17 @@ const reset = (extra = {}) => { db = { ...baseDb(), ...extra }; calls.select.len
 const argsOf = (fn) => calls.rpcArgs.filter(([f]) => f === fn).map(([, a]) => a);
 
 // ════════ 칸 열기 ════════
-test("칸 열기 — 원장만 · 반 필수 · 길이 180 · 정원 3 기본 · open_course_slot 으로 · 매주 반복", async () => {
+test("칸 열기 — 원장만 · 반 선택(§59e 반 없는 칸) · 길이 180 · 정원 3 기본 · open_course_slot 으로 · 매주 반복", async () => {
   reset();
   rpcOut.open_course_slot = (a) => ({ created: 1, firstId: 900, durationMin: a.p_span_min });
   const startAt = at(grid(Date.now() + 3 * DAY));
   assert.deepEqual(await call(2, "/slots", "POST", { startAt, lessonType: "course", courseLevel: "advanced" }),
     { status: 403, json: { error: { code: "owner_only" } } });
-  assert.equal((await call(4, "/slots", "POST", { startAt, lessonType: "course" })).status, 400);                         // 반 없음
+  const noLevel = await call(4, "/slots", "POST", { startAt, lessonType: "course" });                                      // 반 없는 칸(§59e)
+  assert.equal(noLevel.status, 200);
+  assert.deepEqual(argsOf("open_course_slot")[0], { p_trainer_id: 4, p_start: startAt, p_span_min: 180, p_capacity: 3, p_level: null });
+  assert.equal((await call(4, "/slots", "POST", { startAt, lessonType: "course", courseLevel: null })).status, 200);
+  calls.rpcArgs.length = 0;
   assert.equal((await call(4, "/slots", "POST", { startAt, lessonType: "course", courseLevel: "expert" })).status, 400);   // 반 키 밖
   assert.equal((await call(4, "/slots", "POST", { startAt, lessonType: "participate", courseLevel: "advanced" })).status, 400);
   const r = await call(4, "/slots", "POST", { startAt, lessonType: "course", courseLevel: "advanced" });
@@ -242,7 +246,7 @@ test("넣기 — 직강 칸은 book_course_slot(원장 · 담당 범위 검사 �
   const r = await call(4, `/slots/${SL(900)}/bookings`, "POST", { studentId: S(11) });
   assert.equal(r.status, 200);
   assert.deepEqual(r.json, { bookingId: B(50), gamesHeld: 0, remainingAfter: null, unitsLeft: 6 });
-  assert.deepEqual(argsOf("book_course_slot")[0], { p_student_id: 11, p_slot_id: 900, p_by_staff: 4 });
+  assert.deepEqual(argsOf("book_course_slot")[0], { p_student_id: 11, p_slot_id: 900, p_by_staff: 4, p_course_id: null });
   assert.deepEqual(argsOf("book_slot"), []);
   await new Promise((r2) => setTimeout(r2, 20));
   assert.ok(dms.some((d) => d.to === "s11" && d.text.startsWith("원장님이 예약을 잡아 줬어요") && d.text.includes("직강 심화반")
@@ -254,6 +258,50 @@ test("넣기 — 직강 칸은 book_course_slot(원장 · 담당 범위 검사 �
       { status: 409, json: { error: { code } } }, code);
   }
   assert.equal((await call(2, `/slots/${SL(900)}/bookings`, "POST", { studentId: S(11) })).status, 403);   // 남의 칸
+});
+
+test("반 없는 칸 넣기(§59e) — 진행 중 반 수업 강의가 둘 이상이면 409 course_choice_needed(고를 강의) · courseKey 로 고른다 · 하나면 묻지 않는다", async () => {
+  reset({ trainer_slots: [slot(905, { course_level: null })] });
+  db.courses.push(course(4, 12, "초급반", { started_on: "2026-09-01", units_total: 10 }), course(5, 12, "중급반", { started_on: "2026-07-01" }),
+    course(6, 12, "개인강의", { started_on: "2026-06-01" }));                       // 개인강의는 반 수업 칸이 깎지 않는다
+  rpcOut.book_course_slot = (a) => ({ bookingId: 52, gamesHeld: 0, courseId: a.p_course_id ?? 2, unitsLeft: "9.00" });
+  const ask = await call(4, `/slots/${SL(905)}/bookings`, "POST", { studentId: S(12) });
+  assert.equal(ask.status, 409);
+  assert.equal(ask.json.error.code, "course_choice_needed");
+  assert.deepEqual(ask.json.error.courses.map((c) => [c.courseKey, c.courseLevel, c.level, c.unitsLeft, c.unitsTotal, c.startedOn]),
+    [[portal.opaqueId("course", 5), "intermediate", "중급반", 8, 8, "2026-07-01"], [portal.opaqueId("course", 4), "beginner", "초급반", 10, 10, "2026-09-01"]]);
+  assert.deepEqual(argsOf("book_course_slot"), []);                                   // 고르기 전에는 넣지 않는다
+  const pick = await call(4, `/slots/${SL(905)}/bookings`, "POST", { studentId: S(12), courseKey: portal.opaqueId("course", 4) });
+  assert.equal(pick.status, 200);
+  assert.deepEqual(argsOf("book_course_slot")[0], { p_student_id: 12, p_slot_id: 905, p_by_staff: 4, p_course_id: 4 });
+  assert.deepEqual(pick.json, { bookingId: B(52), gamesHeld: 0, remainingAfter: null, unitsLeft: 9 });
+  // 강의가 하나뿐이면 묻지 않고 바로 넣는다(#11 · 중급반 하나)
+  calls.rpcArgs.length = 0;
+  assert.equal((await call(4, `/slots/${SL(905)}/bookings`, "POST", { studentId: S(11) })).status, 200);
+  assert.deepEqual(argsOf("book_course_slot")[0], { p_student_id: 11, p_slot_id: 905, p_by_staff: 4, p_course_id: null });
+  // 틀린 courseKey · 다른 종류 키 · 레슨 칸에 courseKey → 400
+  assert.equal((await call(4, `/slots/${SL(905)}/bookings`, "POST", { studentId: S(12), courseKey: "zzz" })).status, 400);
+  assert.equal((await call(4, `/slots/${SL(905)}/bookings`, "POST", { studentId: S(12), courseKey: S(12) })).status, 400);
+  db.trainer_slots.push(slot(906, { lesson_type: "participate", course_level: null }));
+  assert.equal((await call(4, `/slots/${SL(906)}/bookings`, "POST", { studentId: S(12), courseKey: portal.opaqueId("course", 4) })).status, 400);
+  // 반이 있는 칸은 그 반 강의만 센다 — 심화반 칸에 #12 는 고를 것이 없어 함수가 판정한다(level_mismatch)
+  db.trainer_slots.push(slot(907));
+  rpcOut.book_course_slot = { error: "level_mismatch" };
+  assert.deepEqual(await call(4, `/slots/${SL(907)}/bookings`, "POST", { studentId: S(12) }), { status: 409, json: { error: { code: "level_mismatch" } } });
+});
+
+test("반 없는 칸(§59e) — 수강생 앱은 진행 중 반 수업 강의가 있으면 반과 상관없이 보인다 · 칸 목록 남은 회차는 고른 강의 기준", async () => {
+  const soon = at(grid(Date.now() + 2 * DAY));
+  reset({ trainer_slots: [slot(908, { slot_start: soon, course_level: null })], slot_bookings: [bk(62, 908, 12, "booked", { course_id: 4 })] });
+  db.courses.push(course(4, 12, "초급반", { started_on: "2026-09-01", units_total: 10 }), course(5, 12, "중급반", { started_on: "2026-07-01" }));
+  const r10 = await callStudent(10, "/availability");                                 // 심화반 강의 → 반 없는 칸도 보인다
+  assert.deepEqual(r10.json.slots.filter((x) => x.lessonType === "course").map((x) => [x.id, x.courseLevel, x.unitsLeft]), [[SL(908), null, 6]]);
+  const r11 = await callStudent(11, "/availability");                                 // 중급반 강의
+  assert.deepEqual(r11.json.slots.filter((x) => x.lessonType === "course").map((x) => x.id), [SL(908)]);
+  const t = await call(4, "/slots");
+  const sl = t.json.slots.find((x) => x.id === SL(908));
+  assert.equal(sl.courseLevel, null);
+  assert.deepEqual(sl.bookings.map((b) => [b.studentKey, b.unitsLeft]), [[S(12), 10]]);   // 고른 강의(초급반 10회) — 먼저 시작한 중급반(8회)이 아니다
 });
 
 test("수강생 — 그 반 강의가 있는 사람만 직강 칸이 보인다 · 남은 회차 · 예약은 book_course_slot", async () => {
@@ -322,6 +370,12 @@ test("칸 없이 출석(원장 수업 기록하기) — 원장만 · 반 · 날�
   assert.deepEqual(r.json.recorded, [{ studentKey: S(11), unitsLeft: -1, overdrawn: true }]);     // 0 이하도 막지 않고 알린다
   assert.deepEqual(argsOf("record_course_attendance")[0], { p_trainer_id: 4, p_slot_id: null, p_present: [11], p_held_on: today,
     p_level: "중급반", p_start_time: "19:00", p_duration_min: 180, p_actor: "staff:4", p_same_day_ok: false, p_mark_absent: false });
+  // 반 없이(§59e) — courseLevel 생략 · null 이면 p_level null(수강생마다 진행 중인 반 수업 강의에서 빠진다)
+  calls.rpcArgs.length = 0;
+  const { courseLevel: _lv, ...noLevel } = body;
+  assert.equal((await call(4, "/course-attendance", "POST", noLevel)).status, 200);
+  assert.equal((await call(4, "/course-attendance", "POST", { ...body, courseLevel: null })).status, 200);
+  assert.deepEqual(argsOf("record_course_attendance").map((a) => a.p_level), [null, null]);
   const tomorrow = kst(Date.now() + DAY), old = kst(Date.now() - 40 * DAY);
   assert.deepEqual(await call(4, "/course-attendance", "POST", { ...body, heldOn: tomorrow }), { status: 400, json: { error: { code: "future_date" } } });
   for (const bad of [{ ...body, heldOn: old }, { ...body, present: [] }, { ...body, courseLevel: "중급반" }, { ...body, startTime: "7pm" },
@@ -513,6 +567,39 @@ test("반 목록 — 원장만 · 반 3개 · 요일 시각 묶음(칸 + 칸 없
   const all = await call(4, "/course-classes?includeTest=1");
   assert.deepEqual(all.json.levels[2].students.map((x) => x.studentKey), [S(10), S(106)]);    // 이름순
   assert.equal(all.json.levels[2].headcount, 2);
+  // 반 없는 칸이 없으면 반 없는 묶음은 비어 있고, 명단은 진행 중인 반 수업 강의가 있는 사람 전부다
+  assert.deepEqual(r.json.classes, []);
+  assert.equal(r.json.headcount, 2);
+  assert.deepEqual(r.json.students.map((x) => [x.studentKey, x.courseLevel, x.unitsLeft, x.courses.length]), [[S(10), "advanced", 5, 1], [S(11), "intermediate", 7, 1]]);
+  assert.deepEqual(r.json.students[0].courses, [{ courseKey: portal.opaqueId("course", 1), courseLevel: "advanced", level: "심화반", unitsLeft: 5, unitsTotal: 8 }]);
+});
+
+test("반 목록 — 반 없는 칸(§59e) 묶음 · 반 없이 기록한 회차 · 명단 = 전체(강의 둘이면 courses 둘)", async () => {
+  const today = kst(Date.now());
+  const past = addDays(today, -7), soon = addDays(today, 7);
+  reset({
+    trainer_slots: [slot(921, { slot_start: kstAt(soon, "19:00"), course_level: null }), slot(920, { slot_start: kstAt(past, "19:00"), course_level: null })],
+    slot_bookings: [bk(63, 921, 10, "booked", { course_id: 1 })],
+    course_sessions: [
+      { id: 84, slot_id: 920, held_on: past, start_time: "19:00:00", duration_min: 180, label: null, status: "done", trainer_id: 4 },
+      { id: 85, slot_id: null, held_on: past, start_time: "09:00:00", duration_min: 180, label: null, status: "done", trainer_id: 4 },
+    ],
+    course_attendance: [
+      { id: 5, session_id: 84, course_id: 1, units: 1, status: "done" },
+      { id: 6, session_id: 84, course_id: 2, units: 1, status: "done" },
+      { id: 7, session_id: 85, course_id: 2, units: 1, status: "done" },
+    ],
+  });
+  db.courses.push(course(4, 11, "초급반", { started_on: "2026-09-01" }));
+  const r = await call(4, "/course-classes");
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.classes.map((c) => [c.classKey, c.courseLevel, c.startTime, c.headcount, c.nextSlot?.slotId ?? null,
+    c.recent.map((d) => [d.on, d.attendedCount])]),
+    [[`all|${wdOf(past)}|09:00`, null, "09:00", 2, null, [[past, 1]]],
+     [`all|${wdOf(past)}|19:00`, null, "19:00", 2, SL(921), [[past, 2]]]]);
+  assert.deepEqual(r.json.levels.map((l) => l.classes.length), [0, 0, 0]);          // 반 없는 칸은 반 묶음에 안 들어간다
+  const nb = r.json.students.find((x) => x.studentKey === S(11));
+  assert.deepEqual(nb.courses.map((c) => c.courseLevel), ["intermediate", "beginner"]);   // 먼저 시작한 강의부터
 });
 
 test("칸 있는 날 가드 — 그날 같은 반 직강 칸이 있으면 칸 없이 출석 · 정정을 409 slot_exists(칸 id)로 돌려보낸다", async () => {
@@ -531,6 +618,12 @@ test("칸 있는 날 가드 — 그날 같은 반 직강 칸이 있으면 칸 �
   assert.deepEqual(await call(4, "/course-attendance/corrections", "POST",
     { kind: "add", studentId: S(10), reason: "출석 누락", courseLevel: "advanced", heldOn: today, startTime: "19:00" }), exists);
   assert.deepEqual(argsOf("correct_course_attendance"), []);
+  // 반 없이 기록하면 어느 반 칸이든 걸린다
+  assert.deepEqual(await call(4, "/course-attendance", "POST", { heldOn: today, present: [S(10)], startTime: "19:00" }), exists);
+  // 반 없는 칸(§59e)은 어느 반 기록이든 걸린다
+  db.trainer_slots.push(slot(912, { slot_start: kstAt(today, "09:00"), course_level: null }));
+  assert.deepEqual(await call(4, "/course-attendance", "POST", { ...body, courseLevel: "intermediate", startTime: "09:00" }),
+    { status: 409, json: { error: { code: "slot_exists", slotId: SL(912) } } });
 });
 
 test("회차 정정 — 출석 추가 · 보강: 원장만 · 사유 필수 · 칸 없이(반 · 날짜) 또는 칸으로 · 응답 키 · 기록(admin_audit) · DB 코드", async () => {
