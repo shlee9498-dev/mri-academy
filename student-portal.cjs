@@ -868,9 +868,9 @@ module.exports = function mountStudentPortal(app, deps) {
 
   // 식은 course-progress.cjs 한 벌이다(트레이너 앱 §9.12 와 공유 · 2026-09-30 옮김 · 계산 불변).
   //   출석 행이 아예 없는 것과 「정말 0회 진행」은 다르다 — attendanceKnown 으로 가른다.
-  //   수강생 앱은 상태 필터 없이 전부(종전 그대로).
+  //   수강생 앱은 취소(환불 · 무효) 강의만 빼고 전부 — 종료 · 멈춤은 그대로 보인다(2026-10-01 오너 판정).
   async function coursesFor(studentId) {
-    const m = await courseProgress.loadCourseProgress(sbSelect, { studentIds: [studentId] });
+    const m = await courseProgress.loadCourseProgress(sbSelect, { studentIds: [studentId], hideCancelled: true });
     return m.get(Number(studentId)) || [];
   }
 

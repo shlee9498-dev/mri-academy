@@ -600,6 +600,20 @@ test("트레이너 — 합친 명부(§38)는 담당이어도 · 최근 90일 �
   assert.deepEqual(r2.json.students.map((s) => s.displayName), ["가"]);
 });
 
+test("수강생 요약 — 환불 · 무효로 취소된 강의(cancelled)는 카드에서 빠진다 · 종료 · 멈춤은 그대로(2026-10-01)", async () => {
+  db = rosterDb();
+  // 12 를 쓴다 — 16 은 다음 시험이 「연결 끊김」을 보는 번호라 여기서 세션을 열면 연결 확인이 남는다
+  db.courses.push(
+    { id: 4, student_id: 12, level: "심화반", scheme: "new", started_on: "2026-08-01", status: "cancelled", units_total: 8, confirmed_units: 0, trainer_id: 4, memo: "x" },
+    { id: 5, student_id: 12, level: "초급반", scheme: "old", started_on: "2026-03-01", status: "done", units_total: 12, confirmed_units: 12, trainer_id: 4, memo: "x" },
+  );
+  linkFixture(12);
+  const r = await callStudent(12, "/summary");
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.courses.map((c) => [c.startedOn, c.status]).sort(), [["2026-03-01", "done"], ["2026-05-01", "paused"]]);
+  assert.equal(r.json.courses.find((c) => c.status === "done").remainingUnits, 0);    // 종료 강의는 남은 0 으로 그대로
+});
+
 test("수강생 세션 — 세션의 디스코드가 지금 명부 연결과 다르면 401 session_expired(연결을 뗐거나 다른 수강생으로 옮김 · 2026-10-01)", async () => {
   db = rosterDb();
   // 13 = 연결 없음(discord_id null) · 16 = 다른 계정에 연결됨 — 둘 다 s{id} 세션은 막혀야 한다
