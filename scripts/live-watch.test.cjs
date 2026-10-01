@@ -13,6 +13,7 @@ const { createLiveWatch, parseFeed, classify, dueAt, deriveSecret, CHANNELS, top
 const CH = CHANNELS[0].channelId;
 const KEY = "AIzaSy-TEST-KEY-not-real-000000000000";
 const SECRET = "test-secret";
+const OTHER = `UC${"o".repeat(22)}`;                        // 남의 채널(모양은 맞다)
 const vid = (n) => `vid${String(n).padStart(8, "0")}`;            // 11글자 영상 id
 const T0 = Date.parse("2026-10-01T11:00:00Z");
 
@@ -73,11 +74,20 @@ const sign = (body, secret = SECRET) => `sha1=${crypto.createHmac("sha1", secret
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 test("피드 읽기 — 영상 id · 채널 id · 지운 영상 · 이상한 id 는 버린다", () => {
-  const xml = feedXml([[vid(1)], [vid(2), "UCother000000000000000"], ["bad id"]], [vid(9)]);
+  const xml = feedXml([[vid(1)], [vid(2), OTHER], ["bad id"]], [vid(9)]);
   const out = parseFeed(xml);
-  assert.deepEqual(out.entries, [{ videoId: vid(1), channelId: CH }, { videoId: vid(2), channelId: "UCother000000000000000" }]);
+  assert.deepEqual(out.entries, [{ videoId: vid(1), channelId: CH }, { videoId: vid(2), channelId: OTHER }]);
   assert.deepEqual(out.deleted, [vid(9)]);
   assert.deepEqual(parseFeed(""), { entries: [], deleted: [] });
+});
+
+test("피드 읽기 — 닫히지 않은 태그가 잔뜩 와도 한 번 훑고 끝난다(느린 정규식 공격)", () => {
+  const evil = "<entry".repeat(20_000) + "<at:deleted-entry ref=".repeat(20_000) + "<yt:videoId>".repeat(5_000);
+  const t0 = process.hrtime.bigint();
+  const out = parseFeed(evil);
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.deepEqual(out, { entries: [], deleted: [] });
+  assert.ok(ms < 500, `${ms.toFixed(1)}ms`);
 });
 
 test("판정 읽기 — live · upcoming · none · 끝난 라이브는 none", () => {
@@ -147,7 +157,8 @@ test("2분 뒤 다시 본다 — 라이브만(다시보기 · 먼 예정은 안 
   clock.t += NEAR_MS;
   await w.tick();
   assert.equal(w.current().live, false);
-  assert.ok(log.lines.some((l) => l.includes(`라이브 끝 muri ${vid(1)}`)));
+  assert.ok(log.lines.some((l) => l.includes("라이브 끝 이무리")));
+  assert.ok(log.lines.every((l) => !l.includes(vid(1))), "영상 id 는 로그에 없다");
   // 피드는 5분마다 · 구독은 한 번
   assert.equal(yt.calls.feed, 1);
   clock.t = T0 + FEED_MS;
@@ -170,7 +181,7 @@ test("푸시 — 서명이 맞고 우리 채널이면 바로 판정 · 틀린 �
   const good = Buffer.from(feedXml([[vid(5)]]));
   assert.deepEqual(w.receive(good, sign(good, "wrong")), { ok: false, reason: "signature" });
   assert.deepEqual(w.receive(good, undefined), { ok: false, reason: "signature" });
-  const other = Buffer.from(feedXml([[vid(6), "UCother000000000000000"]]));
+  const other = Buffer.from(feedXml([[vid(6), OTHER]]));
   assert.deepEqual(w.receive(other, sign(other)), { ok: true, queued: 0 });
   assert.equal(yt.calls.urls.length, 0);
   assert.deepEqual(w.receive(good, sign(good)), { ok: true, queued: 1 });
@@ -185,7 +196,7 @@ test("푸시 — 서명이 맞고 우리 채널이면 바로 판정 · 틀린 �
 });
 
 test("푸시로 온 영상이 우리 채널이 아니면(videos.list 결과) 기억만 하고 다시 안 부른다", async () => {
-  const state = { feed: [], items: { [vid(7)]: { snippet: { channelId: "UCother000000000000000", title: "x", liveBroadcastContent: "live" } } } };
+  const state = { feed: [], items: { [vid(7)]: { snippet: { channelId: OTHER, title: "x", liveBroadcastContent: "live" } } } };
   const { w, yt } = setup(state);
   const body = Buffer.from(feedXml([[vid(7)]]));
   w.receive(body, sign(body));
@@ -252,6 +263,7 @@ test("구독 확인 — 우리 채널 subscribe 만 답한다 · unsubscribe · 
   assert.equal(w.verify(q({ "hub.mode": "unsubscribe", "hub.topic": topicOf(CHANNELS[0]), "hub.challenge": "x" })).status, 404);
   assert.equal(w.verify(q({ "hub.mode": "subscribe", "hub.topic": "https://www.youtube.com/xml/feeds/videos.xml?channel_id=UCx", "hub.challenge": "x" })).status, 404);
   assert.equal(w.verify(q({ "hub.mode": "subscribe", "hub.topic": topicOf(CHANNELS[0]) })).status, 404);
+  assert.equal(w.verify(q({ "hub.mode": "subscribe", "hub.topic": topicOf(CHANNELS[0]), "hub.challenge": "<script>x</script>" })).status, 404);
 });
 
 test("구독 요청이 실패하면 30분 뒤 다시 · 성공하면 4일 동안 안 부른다", async () => {

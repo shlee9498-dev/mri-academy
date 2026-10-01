@@ -15,14 +15,15 @@
 //   없으면 감지를 끄고 GET /api/live 는 늘 live:false · checkedAt:null.
 // 푸시 서명 비밀은 SESSION_SECRET 에서 파생한다(새 env 없음). 서명이 틀린 푸시는 받았다고만 답하고 버린다(WebSub 규칙).
 // 채널은 아래 CHANNELS 한 표 — 3단계(현태 공개 수업)는 한 줄 더한다(라벨 「현태 공개 수업」).
-// 로그에는 영상 id · 건수 · 상태 코드만 남긴다(제목 · 키 · 요청 주소 없음).
+// 로그에는 채널 이름 · 상태 코드만 남긴다(영상 id · 제목 · 키 · 요청 주소 없음 — 남이 보낸 값이 로그에 들어가지 않게).
 // ============================================================
 "use strict";
 const crypto = require("node:crypto");
 const express = require("express");
 
+// slug = 바뀌지 않는 채널 이름표(응답의 channelKey) · label = 화면 표시 이름. 로그에는 label 만 쓴다.
 const CHANNELS = Object.freeze([
-  Object.freeze({ key: "muri", channelId: "UC61rXYYq3ySbmkAA3vnhrXA", label: "이무리" }),   // 매일 라이브(어플 10/1)
+  Object.freeze({ slug: "muri", channelId: "UC61rXYYq3ySbmkAA3vnhrXA", label: "이무리" }),   // 매일 라이브(어플 10/1)
 ]);
 const CALLBACK_BASE = "https://mri-academy-production.up.railway.app";   // server.js OAUTH_REDIRECT 와 같은 주소
 const HUB_URL = "https://pubsubhubbub.appspot.com/subscribe";
@@ -47,17 +48,50 @@ const QUEUE_MAX = 100;
 const KEEP_MAX = 500;                   // 기억하는 영상 수(끝난 것 · 오래 본 것부터 버린다)
 const FETCH_TIMEOUT_MS = 8_000;
 const ID_RE = /^[A-Za-z0-9_-]{11}$/;
+const CHANNEL_RE = /^UC[A-Za-z0-9_-]{22}$/;
+const CHALLENGE_RE = /^[A-Za-z0-9._~-]{1,255}$/;   // 허브가 보내는 확인 값(숫자 · 16진) — 이 모양만 되돌려 준다
+// videos.list 실패 이유 — 아는 것만 로그에 적는다(응답 글자를 그대로 남기지 않는다)
+const KNOWN_REASONS = Object.freeze(["quotaExceeded", "dailyLimitExceeded", "rateLimitExceeded", "keyInvalid", "keyExpired",
+  "accessNotConfigured", "forbidden", "badRequest", "backendError"]);
 
 // 피드(Atom) 읽기 — 푸시 본문과 공개 피드가 같은 모양이다. 영상 id · 채널 id 만 뽑는다(다른 값은 읽지 않는다).
+//   남이 보낸 본문에 정규식을 통째로 걸지 않는다(느린 정규식 공격) — indexOf 로 앞에서 뒤로 한 번만 훑는다.
+function tagValue(chunk, open, close) {
+  const a = chunk.indexOf(open);
+  if (a < 0) return null;
+  const b = chunk.indexOf(close, a + open.length);
+  return b < 0 ? null : chunk.slice(a + open.length, b).trim();
+}
 function parseFeed(xml) {
   const text = String(xml || "");
   const entries = [];
-  for (const m of text.matchAll(/<entry\b[\s\S]*?<\/entry>/g)) {
-    const videoId = /<yt:videoId>\s*([^<\s]+)\s*<\/yt:videoId>/.exec(m[0])?.[1];
-    const channelId = /<yt:channelId>\s*([^<\s]+)\s*<\/yt:channelId>/.exec(m[0])?.[1] || null;
-    if (videoId && ID_RE.test(videoId)) entries.push({ videoId, channelId });
+  for (let pos = 0; ;) {
+    const s = text.indexOf("<entry", pos);
+    if (s < 0) break;
+    const e = text.indexOf("</entry>", s);
+    if (e < 0) break;
+    const chunk = text.slice(s, e);
+    const videoId = tagValue(chunk, "<yt:videoId>", "</yt:videoId>");
+    const channelId = tagValue(chunk, "<yt:channelId>", "</yt:channelId>");
+    if (videoId && ID_RE.test(videoId))
+      entries.push({ videoId, channelId: channelId && CHANNEL_RE.test(channelId) ? channelId : null });
+    pos = e + "</entry>".length;
   }
-  const deleted = [...text.matchAll(/<at:deleted-entry\b[^>]*\bref="yt:video:([A-Za-z0-9_-]{11})"/g)].map((m) => m[1]);
+  const deleted = [];
+  const REF = 'ref="yt:video:';
+  for (let pos = 0; ;) {
+    const s = text.indexOf("<at:deleted-entry", pos);
+    if (s < 0) break;
+    const e = text.indexOf(">", s);
+    if (e < 0) break;
+    const tag = text.slice(s, e);
+    const r = tag.indexOf(REF);
+    if (r >= 0) {
+      const id = tag.slice(r + REF.length, r + REF.length + 11);
+      if (ID_RE.test(id) && tag[r + REF.length + 11] === '"') deleted.push(id);
+    }
+    pos = e + 1;
+  }
   return { entries, deleted };
 }
 
@@ -92,13 +126,14 @@ function deriveSecret(sessionSecret) {
 
 function createLiveWatch({ key = "", secret = null, fetchImpl = (...a) => fetch(...a), now = Date.now,
   channels = CHANNELS, callbackBase = CALLBACK_BASE, log = console } = {}) {
-  const videos = new Map();              // 영상 id → { channelKey, state, title, startedAt, scheduledAt, checkedAt, confirmedAt }
+  const videos = new Map();              // 영상 id → { slug, state, title, startedAt, scheduledAt, checkedAt, confirmedAt }
   const queue = new Set();               // 아직 판정 안 한 새 영상 id
   const subs = new Map();                // 채널 id → { renewAt }
   let lastFeedAt = 0, lastCheckAt = null, backoffUntil = 0, running = false;
   let budgetHour = -1, budgetUsed = 0;
   const timeout = () => (typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : undefined);
   const channelById = (id) => channels.find((c) => c.channelId === id) || null;
+  const labelOf = (slug) => channels.find((c) => c.slug === slug)?.label || "?";
 
   function enqueue(id) { if (!videos.has(id) && queue.size < QUEUE_MAX) queue.add(id); }
   function takeBudget(t) {
@@ -123,8 +158,9 @@ function createLiveWatch({ key = "", secret = null, fetchImpl = (...a) => fetch(
     try { r = await fetchImpl(url, { signal: timeout() }); }
     catch (e) { log.error(`[live] videos.list 연결 실패 ${e?.name || ""}`.trim()); return false; }
     if (!r.ok) {
-      let reason = "";
-      try { reason = (await r.json())?.error?.errors?.[0]?.reason || ""; } catch { /* 본문 없음 */ }
+      let got = "";
+      try { got = (await r.json())?.error?.errors?.[0]?.reason || ""; } catch { /* 본문 없음 */ }
+      const reason = KNOWN_REASONS.find((x) => x === got) || (got ? "other" : "");
       log.error(`[live] videos.list ${r.status}${reason ? ` ${reason}` : ""}`);
       if (r.status === 403 || r.status === 429) backoffUntil = now() + BACKOFF_MS;
       return false;
@@ -141,17 +177,18 @@ function createLiveWatch({ key = "", secret = null, fetchImpl = (...a) => fetch(
       const ch = channelById(c.channelId);
       const prev = videos.get(id);
       // 우리 채널이 아니면(가짜 푸시) 끝난 영상으로만 기억한다 — 같은 id 로 다시 와도 판정을 또 부르지 않는다.
-      if (!ch) { videos.set(id, { channelKey: null, state: "none", title: null, startedAt: null, scheduledAt: null, checkedAt: t, confirmedAt: t }); continue; }
-      videos.set(id, { channelKey: ch.key, state: c.state, title: c.title, startedAt: c.startedAt, scheduledAt: c.scheduledAt,
+      if (!ch) { videos.set(id, { slug: null, state: "none", title: null, startedAt: null, scheduledAt: null, checkedAt: t, confirmedAt: t }); continue; }
+      videos.set(id, { slug: ch.slug, state: c.state, title: c.title, startedAt: c.startedAt, scheduledAt: c.scheduledAt,
                        checkedAt: t, confirmedAt: t });
-      if (prev?.state !== "live" && c.state === "live") log.log(`[live] 라이브 시작 ${ch.key} ${id}`);
-      if (prev?.state === "live" && c.state !== "live") log.log(`[live] 라이브 끝 ${ch.key} ${id}`);
+      // 로그에는 채널 이름(코드에 적힌 값)만 — 영상 id 는 남이 보낸 푸시에서 올 수 있어 남기지 않는다
+      if (prev?.state !== "live" && c.state === "live") log.log(`[live] 라이브 시작 ${ch.label}`);
+      if (prev?.state === "live" && c.state !== "live") log.log(`[live] 라이브 끝 ${ch.label}`);
     }
     for (const id of ids) {
       if (seen.has(id)) continue;                               // 지워졌거나 비공개 — 끝난 것으로 기억(다시 안 본다)
       const prev = videos.get(id);
-      if (prev?.state === "live") log.log(`[live] 라이브 끝(영상 없음) ${prev.channelKey} ${id}`);
-      videos.set(id, { channelKey: prev?.channelKey || null, state: "none", title: null, startedAt: null, scheduledAt: null,
+      if (prev?.state === "live") log.log(`[live] 라이브 끝(영상 없음) ${labelOf(prev.slug)}`);
+      videos.set(id, { slug: prev?.slug || null, state: "none", title: null, startedAt: null, scheduledAt: null,
                        checkedAt: t, confirmedAt: t });
     }
     lastCheckAt = t;
@@ -186,8 +223,8 @@ function createLiveWatch({ key = "", secret = null, fetchImpl = (...a) => fetch(
     for (const ch of channels) {
       let r;
       try { r = await fetchImpl(feedOf(ch), { signal: timeout() }); }
-      catch (e) { log.error(`[live] 피드 연결 실패 ${ch.key} ${e?.name || ""}`.trim()); continue; }
-      if (!r.ok) { log.error(`[live] 피드 ${r.status} ${ch.key}`); continue; }
+      catch (e) { log.error(`[live] 피드 연결 실패 ${ch.label} ${e?.name || ""}`.trim()); continue; }
+      if (!r.ok) { log.error(`[live] 피드 ${r.status} ${ch.label}`); continue; }
       let text = "";
       try { text = await r.text(); } catch { continue; }
       for (const e of parseFeed(text).entries) if (!e.channelId || e.channelId === ch.channelId) enqueue(e.videoId);
@@ -203,16 +240,16 @@ function createLiveWatch({ key = "", secret = null, fetchImpl = (...a) => fetch(
     try { r = await fetchImpl(HUB_URL, { method: "POST", body, signal: timeout() }); }
     catch (e) {
       subs.set(ch.channelId, { renewAt: now() + RETRY_SUB_MS });
-      log.error(`[live] 푸시 구독 요청 실패 ${ch.key} ${e?.name || ""}`.trim());
+      log.error(`[live] 푸시 구독 요청 실패 ${ch.label} ${e?.name || ""}`.trim());
       return false;
     }
     if (r.status === 202 || r.status === 204) {
       subs.set(ch.channelId, { renewAt: now() + LEASE_SEC * 800 });
-      log.log(`[live] 푸시 구독 요청 ${ch.key} → ${r.status}`);
+      log.log(`[live] 푸시 구독 요청 ${ch.label} → ${r.status}`);
       return true;
     }
     subs.set(ch.channelId, { renewAt: now() + RETRY_SUB_MS });
-    log.error(`[live] 푸시 구독 요청 ${ch.key} → ${r.status}`);
+    log.error(`[live] 푸시 구독 요청 ${ch.label} → ${r.status}`);
     return false;
   }
 
@@ -239,14 +276,14 @@ function createLiveWatch({ key = "", secret = null, fetchImpl = (...a) => fetch(
   function verify(params) {
     const mode = params.get("hub.mode"), topic = params.get("hub.topic"), challenge = params.get("hub.challenge");
     const ch = channels.find((c) => topicOf(c) === topic);
-    if (mode === "subscribe" && ch && challenge && challenge.length <= 255) {
+    if (mode === "subscribe" && ch && CHALLENGE_RE.test(challenge || "")) {
       const lease = Number(params.get("hub.lease_seconds"));
       const sec = Number.isFinite(lease) && lease > 0 ? Math.min(lease, LEASE_SEC) : LEASE_SEC;
       subs.set(ch.channelId, { renewAt: now() + sec * 800 });
-      log.log(`[live] 푸시 구독 확인 ${ch.key} · ${Math.round(sec / 3600)}시간`);
+      log.log(`[live] 푸시 구독 확인 ${ch.label}`);
       return { status: 200, body: challenge };
     }
-    if (mode === "denied" && ch) { log.error(`[live] 푸시 구독 거절됨 ${ch.key}`); return { status: 200, body: "" }; }
+    if (mode === "denied" && ch) { log.error(`[live] 푸시 구독 거절됨 ${ch.label}`); return { status: 200, body: "" }; }
     return { status: 404, body: "" };
   }
 
@@ -270,7 +307,7 @@ function createLiveWatch({ key = "", secret = null, fetchImpl = (...a) => fetch(
     for (const id of deleted) {
       const v = videos.get(id);
       if (!v || v.state === "none") continue;
-      if (v.state === "live") log.log(`[live] 라이브 끝(지움) ${v.channelKey} ${id}`);
+      if (v.state === "live") log.log(`[live] 라이브 끝(지움) ${labelOf(v.slug)}`);
       v.state = "none";
     }
     return { ok: true, queued };
@@ -282,9 +319,9 @@ function createLiveWatch({ key = "", secret = null, fetchImpl = (...a) => fetch(
     const items = [];
     for (const [videoId, v] of videos) {
       if (v.state !== "live" || t - v.confirmedAt > STALE_MS) continue;
-      const order = channels.findIndex((c) => c.key === v.channelKey);
+      const order = channels.findIndex((c) => c.slug === v.slug);
       if (order < 0) continue;
-      items.push({ order, videoId, title: v.title, startedAt: v.startedAt, channel: channels[order].label, channelKey: v.channelKey });
+      items.push({ order, videoId, title: v.title, startedAt: v.startedAt, channel: channels[order].label, channelKey: v.slug });
     }
     items.sort((a, b) => a.order - b.order || String(b.startedAt || "").localeCompare(String(a.startedAt || "")));
     const list = items.map(({ order: _o, ...x }) => x);
@@ -316,6 +353,7 @@ module.exports = function mountLiveWatch(app, deps = {}) {
   app.get("/api/live/websub", limit("liveHubVerify", 30, 60_000), (req, res) => {
     const q = new URLSearchParams(String(req.originalUrl || "").split("?")[1] || "");
     const out = w.verify(q);
+    res.set("X-Content-Type-Options", "nosniff");
     res.status(out.status).type("text/plain").send(out.body);
   });
   app.post("/api/live/websub", limit("liveHubPush", 120, 60_000), express.raw({ type: () => true, limit: "64kb" }), (req, res) => {
