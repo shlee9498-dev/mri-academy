@@ -923,7 +923,8 @@ module.exports = function mountReviewApi(app, deps) {
       const c = (await sbSelect("courses", `select=id,student_id&id=eq.${cid}&limit=1`))[0];
       if (!c) return { error: [400, "invalid_body"] };
       if (Number(c.student_id) !== Number(sub)) return { error: [400, "anchor_student_mismatch"] };
-      const att = await sbSelect("course_attendance", `select=course_id&course_id=eq.${cid}&session_id=eq.${csid}&limit=1`);
+      // 취소된 출석(§59d 회차 정정)은 그 수업에 없던 것이다 — 복기를 걸 수 없다
+      const att = await sbSelect("course_attendance", `select=course_id&course_id=eq.${cid}&session_id=eq.${csid}&status=neq.cancelled&limit=1`);
       if (!att.length) return { error: [400, "anchor_student_mismatch"] };
       return { value: { anchor_kind: "course", lesson_session_id: null, course_session_id: csid, course_id: cid } };
     }

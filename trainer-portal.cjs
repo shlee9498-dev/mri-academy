@@ -520,8 +520,10 @@ module.exports = function mountTrainerPortal(app, deps) {
     });
   }));
 
-  // 직강 이력(원장 상세 · 계약 §9.21.8) — 강의마다 반 · 상태 · 회차 · 출석 날짜 · 결제일(금액 없음 · 가드가 막는다).
-  //   취소(환불 · 무효) 강의도 보인다(원장 화면이다). 출석은 done 만 · 최근 날짜부터.
+  // 직강 이력(원장 상세 · 계약 §9.21.8 · §9.22.5) — 강의마다 반 · 상태 · 회차 · 출석 날짜 · 결제일(금액 없음 · 가드가 막는다).
+  //   취소(환불 · 무효) 강의도 보인다(원장 화면이다). attendance = done 만 · 최근 날짜부터(종전 그대로) ·
+  //   §59d 회차 정정으로 취소한 출석은 cancelledAttendance 로 따로 온다(attendance 를 합산하는 화면이 틀리지 않게).
+  //   출석 행 memo 는 정정 표시('추가' · '보강')와 글자 그대로 같은지만 본다 — 값은 응답에 싣지 않는다(가드가 memo 어간을 막는다).
   async function courseHistoryOf(sid) {
     const courses = await sbSelect("courses",
       `select=id,level,scheme,status,started_on,ended_on,units_total,confirmed_units&student_id=eq.${sid}&order=started_on.desc`);
@@ -529,20 +531,37 @@ module.exports = function mountTrainerPortal(app, deps) {
     const cids = courses.map((c) => c.id).join(",");
     const [att, pays] = await Promise.all([
       sbSelect("course_attendance",
-        `select=course_id,units,status,course_sessions!inner(id,held_on,start_time,slot_id,status)&course_id=in.(${cids})&status=eq.done`),
+        `select=id,course_id,units,status,memo,adjust_reason,course_sessions!inner(id,held_on,start_time,slot_id,status,source)`
+        + `&course_id=in.(${cids})&status=in.(done,cancelled)`),
       // 결제 표(payments)는 결제 트랙 소관 — 읽기만 · 날짜와 종류만 쓴다(금액 칸은 읽지도 않는다).
       sbSelect("payments", `select=course_id,paid_at,kind,voided_at&course_id=in.(${cids})`).catch(() => []),
     ]);
-    const progress = courseProgress.summarizeCourses(courses.map((c) => ({ ...c, student_id: sid })), att, {}, true).get(sid) || [];
+    const done = att.filter((a) => a.status === "done");
+    const progress = courseProgress.summarizeCourses(courses.map((c) => ({ ...c, student_id: sid })), done, {}, true).get(sid) || [];
+    const byRecent = (x, y) => String(y.on).localeCompare(String(x.on)) || String(y.startTime || "").localeCompare(String(x.startTime || ""));
+    const rowOf = (a) => ({
+      attendanceKey: opaqueId("course_attendance", a.id),
+      on: a.course_sessions.held_on,
+      startTime: (a.course_sessions.start_time || "").slice(0, 5) || null,
+      units: Number(a.units || 0),
+    });
     return courses.map((c, i) => {
-      const mine = att.filter((a) => a.course_id === c.id && a.course_sessions?.status !== "cancelled")
-        .map((a) => ({
-          on: a.course_sessions.held_on,
-          startTime: (a.course_sessions.start_time || "").slice(0, 5) || null,
-          units: Number(a.units || 0),
-          fromSlot: a.course_sessions.slot_id != null,
-        }))
-        .sort((x, y) => String(y.on).localeCompare(String(x.on)) || String(y.startTime || "").localeCompare(String(x.startTime || "")));
+      const live = att.filter((a) => a.course_id === c.id && a.course_sessions?.status !== "cancelled");
+      const mine = live.filter((a) => a.status === "done")
+        .map((a) => {
+          const kind = courseProgress.attendanceKind(a.memo, a.course_sessions.source);
+          return {
+            ...rowOf(a),
+            fromSlot: a.course_sessions.slot_id != null,
+            kind,                                                   // attend · add · makeup · import
+            reason: kind === "add" || kind === "makeup" ? (a.adjust_reason || null) : null,
+            cancellable: Number(a.units || 0) <= 1,                 // 이관 묶음(units > 1)은 앱에서 취소하지 않는다(bulk_row)
+          };
+        })
+        .sort(byRecent);
+      const cancelled = live.filter((a) => a.status === "cancelled")
+        .map((a) => ({ ...rowOf(a), reason: a.adjust_reason || null }))
+        .sort(byRecent);
       const p = progress[i] || {};
       return {
         courseKey: opaqueId("course", c.id),
@@ -551,6 +570,7 @@ module.exports = function mountTrainerPortal(app, deps) {
         unitsTotal: p.unitsTotal ?? Number(c.units_total || 0), completedUnits: p.completedUnits ?? 0,
         remainingUnits: p.remainingUnits ?? null, ownerConfirmedUnits: Number(c.confirmed_units || 0),
         attendance: mine,
+        cancelledAttendance: cancelled,
         paidOn: pays.filter((x) => x.course_id === c.id && !x.voided_at && x.kind !== "refund").map((x) => x.paid_at).sort(),
         refundedOn: pays.filter((x) => x.course_id === c.id && !x.voided_at && x.kind === "refund").map((x) => x.paid_at).sort(),
       };
@@ -679,7 +699,7 @@ module.exports = function mountTrainerPortal(app, deps) {
 
     // ① 한 파동 — 「완료 확인 필요」가 최신이 되게 sweep 도 같이 돌린다(트레이너 칸 목록과 같다 · 실패해도 계속).
     //    예약은 sweep 이 끝난 ② 에서 읽는다.
-    const [book, weekSlots, openSlots, sessions, courseSessions, assignedRows, payreqs, adjreqs, linkreqs] = await Promise.all([
+    const [book, weekSlots, openSlots, sessions, courseSessions, assignedRows, payreqs, adjreqs, linkreqs, activeCourses] = await Promise.all([
       staffBook(),
       // 칸은 30분 단위라 한 주에 수백 행이 된다 — 쪼개 읽는다(두 트레이너가 하루 12시간씩 열면 주 670행대)
       selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min,course_level"
@@ -696,6 +716,8 @@ module.exports = function mountTrainerPortal(app, deps) {
       sbSelect("payment_requests", "select=created_at&status=eq.pending"),
       sbSelect("games_adjust_requests", "select=created_at&status=eq.pending"),
       sbSelect("student_link_requests", "select=created_at&status=eq.pending"),
+      // 진행 중 직강생(원장 홈 「남은 회차 적은 직강생」 · 계약 §9.22) — 실패해도 대시보드는 내린다(목록만 빈다)
+      sbSelect("courses", "select=student_id&status=eq.active").catch((e) => { console.error("dashboard_courses", e?.message); return []; }),
       sbRpc ? sbRpc("sweep_pending_review", {}).catch((e) => console.error("dashboard_sweep", e?.message)) : null,
     ]);
 
@@ -703,7 +725,8 @@ module.exports = function mountTrainerPortal(app, deps) {
     //    이번 주 예약은 칸 id 목록 대신 칸 시각으로 묶어 읽는다(칸이 수백 개면 in.() 주소가 길어진다).
     const groupOpen = openSlots.filter((s) => Number(s.capacity || 1) > 1).map((s) => s.id);
     const csIds = courseSessions.map((c) => c.id);
-    const [bookings, reviewRows, groupTaken, attendance] = await Promise.all([
+    const courseSids = [...new Set(activeCourses.map((r) => r.student_id))].filter((id) => !isTestStudent(id));
+    const [bookings, reviewRows, groupTaken, attendance, courseProg] = await Promise.all([
       weekSlots.length
         ? selectAll(sbSelect, "slot_bookings", "select=id,slot_id,student_id,status,span_head_id,duration_min,trainer_slots!inner(slot_start)"
             + `&status=neq.cancelled&trainer_slots.slot_start=gte.${weekStart}&trainer_slots.slot_start=lt.${weekEnd}`)
@@ -711,7 +734,9 @@ module.exports = function mountTrainerPortal(app, deps) {
       sbSelect("slot_bookings", "select=id,slot_id,duration_min,trainer_slots!inner(trainer_id,slot_start,duration_min,lesson_type)"
         + "&status=eq.pending_review&span_head_id=is.null"),
       groupOpen.length ? sbSelect("slot_bookings", `select=slot_id&status=eq.booked&slot_id=in.(${groupOpen.join(",")})`) : [],
-      csIds.length ? sbSelect("course_attendance", `select=session_id,course_id&session_id=in.(${csIds.join(",")})`) : [],
+      // status · units — 취소된 출석(§59d 회차 정정)은 수업 명단 · 출석 수에서 뺀다
+      csIds.length ? sbSelect("course_attendance", `select=session_id,course_id,status,units&session_id=in.(${csIds.join(",")})`) : [],
+      courseSids.length ? courseProgress.loadCourseProgress(sbSelect, { studentIds: courseSids, statuses: ["active"] }) : new Map(),
     ]);
     const cids = [...new Set(attendance.map((a) => a.course_id))];
     const courses = cids.length
@@ -748,8 +773,12 @@ module.exports = function mountTrainerPortal(app, deps) {
       trainers: book.coaches, lessons, sessions, openSlots: freeSlots, assigned, review, today, nowMs,
     });
 
+    // 직강 숫자 · 남은 회차 적은 직강생(계약 §9.22.4) — 판정은 ops-status.cjs 한 벌이다.
+    const courseNums = ops.buildCourseSummary({ slots: weekSlots, courseSessions, attendance, bookings, today });
+    const low = ops.lowUnitsList(courseProg, courseProgress.pickCourse);
+
     // 수업에 나오는 수강생 이름 — 한 번에(오너 화면이라 전원 볼 수 있다 · 합친 행도 이름은 보인다)
-    const sids = [...new Set(lessons.flatMap((l) => l.studentIds))];
+    const sids = [...new Set([...lessons.flatMap((l) => l.studentIds), ...low.map((r) => r.studentId)])];
     const stu = {};
     if (sids.length) for (const s of await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})`)) stu[s.id] = s;
     const KEY_KIND = { booking: "booking", record: "session", course: "course_session" };
@@ -787,6 +816,16 @@ module.exports = function mountTrainerPortal(app, deps) {
         openSlots72h: r.openSlots72h, openSlots7d: r.openSlots7d,
         assignedActive: r.assignedActive, needsReview: r.needsReview, color: r.color,
       })),
+      // 원장 홈 직강 숫자(계약 §9.22.4) — cards 와 따로 둔다(카드 줄 배치를 바꾸지 않게)
+      courseSummary: {
+        ...courseNums,
+        lowUnits: low.map((r) => ({
+          studentKey: opaqueId("student", r.studentId),
+          displayName: stu[r.studentId]?.name || "?", pubgName: stu[r.studentId]?.pubg_name || null,
+          courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[r.level] || null,
+          unitsLeft: r.unitsLeft, unitsTotal: r.unitsTotal,
+        })),
+      },
       thresholds: ops.THRESHOLDS,
     });
   }));

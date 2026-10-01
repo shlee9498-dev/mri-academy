@@ -5407,3 +5407,261 @@ notify pgrst, 'reload schema';
 --      and proname in ('book_slot','record_lesson_from_booking','complete_bookings_for_session');
 -- 되돌리기: §47 book_slot · §50 record_lesson_from_booking · §23 complete_bookings_for_session 를 다시 실행하고
 --   직강 칸이 0개일 때만 제약을 종전 네 값으로 되돌린다(직강 칸이 남아 있으면 제약 추가가 실패한다).
+
+-- ── 59d) A 구간 — 회차 정정(추가 · 취소 · 보강) · 출석 되살리기 (2026-10-01 · 반장 요청 · 어플 8번 · 계약 §9.22) ──
+--   ① record_course_attendance 정정판 — 취소된 출석은 「없는 것」으로 본다(같은 회차에 다시 넣으면 그 행을 되살린다).
+--      §59a 판은 취소 행도 「이미 있음」으로 봐서, 취소 뒤 다시 넣으면 건너뛰었다(유니크 session_id · course_id).
+--      ⚠️ 같은 이름 · 같은 인자 교체다. §59a 실행 뒤 운영 사용 0건(앱 출석 0 · 직강 칸 0 · 2026-10-01 12:1x 실측)이라 A 로 본다.
+--   ② correct_course_attendance — 원장 「출석 추가 · 보강」(사유 필수). 출석은 ① 그대로 넣고 그 줄에 표시만 단다
+--      (memo '추가' | '보강' · adjust_reason = 사유). 보강도 1회 빠진다(빠진 수업을 다른 날 듣는 것 — 원래 수업은 결석이라 안 빠졌다).
+--   ③ cancel_course_attendance — 원장 「출석 취소」(사유 필수). 행은 지우지 않고 status cancelled · adjust_reason = 사유.
+--      칸 출석이면 그 칸 예약을 done → no_show 로 돌린다. 이관 묶음 행(units > 1)은 앱에서 취소하지 않는다(bulk_row).
+--   기록(누가 · 언제)은 서버가 admin_audit 에 남긴다(course.attendance.add · makeup · cancel).
+create or replace function public.record_course_attendance(
+  p_trainer_id   bigint,
+  p_slot_id      bigint,
+  p_present      bigint[],
+  p_held_on      date    default null,
+  p_level        text    default null,
+  p_start_time   time    default null,
+  p_duration_min int     default null,
+  p_actor        text    default null,
+  p_same_day_ok  boolean default false,
+  p_mark_absent  boolean default false)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_slot    trainer_slots%rowtype;
+  v_today   date := (now() at time zone 'Asia/Seoul')::date;
+  v_slotday date;
+  v_day     date;
+  v_level   text;
+  v_start   time;
+  v_dur     int;
+  v_sess    bigint;
+  v_sstat   text;
+  v_ids     bigint[];
+  v_sid     bigint;
+  v_pick    record;
+  v_left    numeric;
+  v_rej     jsonb := '[]'::jsonb;
+  v_rec     jsonb := '[]'::jsonb;
+  v_skip    jsonb := '[]'::jsonb;
+  v_absent  jsonb := '[]'::jsonb;
+begin
+  if p_trainer_id is null or p_present is null then return jsonb_build_object('error','invalid_body'); end if;
+  select coalesce(array_agg(distinct x order by x), '{}'::bigint[]) into v_ids
+    from unnest(p_present) x where x is not null;
+
+  -- 같은 트레이너의 칸 열기 · 출석이 한 줄로 선다(칸 없는 회차를 두 요청이 같이 만들지 않게).
+  perform pg_advisory_xact_lock(p_trainer_id);
+
+  if p_slot_id is not null then
+    select * into v_slot from trainer_slots where id = p_slot_id for update;
+    if not found then return jsonb_build_object('error','not_found'); end if;
+    if v_slot.trainer_id is distinct from p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
+    if v_slot.lesson_type is distinct from 'course' then return jsonb_build_object('error','not_course_slot'); end if;
+    if v_slot.status = 'cancelled' then return jsonb_build_object('error','slot_cancelled'); end if;
+    v_slotday := (v_slot.slot_start at time zone 'Asia/Seoul')::date;
+    v_day     := coalesce(p_held_on, v_slotday);
+    if abs(v_day - v_slotday) > 1 then return jsonb_build_object('error','invalid_body'); end if;   -- 자정 넘김만
+    v_level := v_slot.course_level;
+    v_start := (v_slot.slot_start at time zone 'Asia/Seoul')::time;
+    v_dur   := v_slot.duration_min;
+    select id, status into v_sess, v_sstat from course_sessions where slot_id = v_slot.id for update;
+  else
+    if not exists (select 1 from staff where id = p_trainer_id and role = 'owner' and active is not false) then
+      return jsonb_build_object('error','owner_only');
+    end if;
+    if p_level is null or p_level not in ('초급반','중급반','심화반') or p_held_on is null
+       or cardinality(v_ids) = 0 then
+      return jsonb_build_object('error','invalid_body');
+    end if;
+    v_dur := coalesce(p_duration_min, 180);
+    if v_dur not in (30,60,90,120,150,180) then return jsonb_build_object('error','invalid_body'); end if;
+    v_level := p_level;
+    v_day   := p_held_on;
+    v_start := p_start_time;
+    select id, status into v_sess, v_sstat from course_sessions
+     where slot_id is null and trainer_id = p_trainer_id and held_on = v_day and label = v_level
+       and start_time is not distinct from v_start and source = 'panel' and kind = 'group'
+     order by id
+     limit 1
+     for update;
+  end if;
+  if v_day > v_today then return jsonb_build_object('error','future_date'); end if;
+  if v_sstat = 'cancelled' then return jsonb_build_object('error','session_cancelled'); end if;
+
+  -- ① 판정 — 전원 먼저(쓰기 전) · 취소된 출석은 없는 것으로 본다
+  foreach v_sid in array v_ids loop
+    continue when v_sess is not null and exists (
+      select 1 from course_attendance a join courses c on c.id = a.course_id
+       where a.session_id = v_sess and c.student_id = v_sid and a.status = 'done');
+    select * into v_pick from course_pick(v_sid, v_level);
+    if v_pick.o_course_id is null then
+      v_rej := v_rej || jsonb_build_array(jsonb_build_object('studentId', v_sid,
+                 'code', case when v_pick.o_other_level is null then 'no_course' else 'level_mismatch' end));
+    elsif not coalesce(p_same_day_ok, false) and exists (
+      select 1 from course_attendance a
+        join course_sessions s on s.id = a.session_id
+        join courses c on c.id = a.course_id
+       where c.student_id = v_sid and s.held_on = v_day and s.status <> 'cancelled'
+         and a.status = 'done' and s.id is distinct from v_sess) then
+      v_rej := v_rej || jsonb_build_array(jsonb_build_object('studentId', v_sid, 'code', 'already_today'));
+    end if;
+  end loop;
+  if jsonb_array_length(v_rej) > 0 then
+    return jsonb_build_object('error','students_rejected','rejected', v_rej);
+  end if;
+
+  -- ② 회차 행 — 출석한 사람이 있을 때만 만든다(아무도 안 왔으면 결석 처리만)
+  if v_sess is null and cardinality(v_ids) > 0 then
+    insert into course_sessions (held_on, start_time, end_time, duration_min, kind, label, status, source,
+                                 created_by, slot_id, trainer_id)
+      values (v_day, v_start, v_start + make_interval(mins => v_dur), v_dur, 'group', v_level, 'done', 'panel',
+              p_actor, p_slot_id, p_trainer_id)
+      returning id into v_sess;
+  end if;
+
+  -- ③ 출석 — 학생별 units 1 · 같은 회차 · 같은 강의의 취소 행은 되살린다(유니크 session_id · course_id)
+  foreach v_sid in array v_ids loop
+    if exists (select 1 from course_attendance a join courses c on c.id = a.course_id
+                where a.session_id = v_sess and c.student_id = v_sid and a.status = 'done') then
+      v_skip := v_skip || to_jsonb(v_sid);
+      continue;
+    end if;
+    select * into v_pick from course_pick(v_sid, v_level);
+    insert into course_attendance (session_id, course_id, units, units_auto, status, created_by)
+      values (v_sess, v_pick.o_course_id, 1, 1, 'done', p_actor)
+    on conflict (session_id, course_id) do update
+      set status = 'done', units = 1, units_auto = 1, adjust_reason = null, created_by = excluded.created_by
+      where course_attendance.status = 'cancelled';
+    v_left := course_units_left(v_pick.o_course_id);
+    v_rec := v_rec || jsonb_build_array(jsonb_build_object('studentId', v_sid, 'courseId', v_pick.o_course_id,
+                                        'unitsLeft', v_left, 'overdrawn', coalesce(v_left < 0, false)));
+  end loop;
+
+  -- ④ 칸 예약 상태
+  if p_slot_id is not null then
+    update slot_bookings set status = 'done'
+     where slot_id = p_slot_id and span_head_id is null and student_id = any(v_ids)
+       and status in ('booked','pending_review','no_show');
+    if coalesce(p_mark_absent, false) then
+      with u as (
+        update slot_bookings b set status = 'no_show'
+         where b.slot_id = p_slot_id and b.span_head_id is null
+           and b.status in ('booked','pending_review')
+           and not (b.student_id = any(v_ids))
+           and not exists (select 1 from course_attendance a join courses c on c.id = a.course_id
+                            where a.session_id = v_sess and c.student_id = b.student_id and a.status = 'done')
+        returning b.student_id)
+      select coalesce(jsonb_agg(u.student_id order by u.student_id), '[]'::jsonb) into v_absent from u;
+    end if;
+  end if;
+
+  return jsonb_build_object('sessionId', v_sess, 'heldOn', v_day, 'level', v_level,
+                            'recorded', v_rec, 'alreadyRecorded', v_skip, 'noShow', v_absent);
+end;
+$$;
+
+-- 원장 「출석 추가 · 보강」 — 출석은 record_course_attendance 그대로(같은 판정 · 같은 회차 묶기) · 그 줄에 표시와 사유만 단다.
+create or replace function public.correct_course_attendance(
+  p_trainer_id   bigint,
+  p_kind         text,
+  p_student_id   bigint,
+  p_held_on      date    default null,
+  p_level        text    default null,
+  p_slot_id      bigint  default null,
+  p_start_time   time    default null,
+  p_duration_min int     default null,
+  p_reason       text    default null,
+  p_actor        text    default null,
+  p_same_day_ok  boolean default false)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_reason text := nullif(btrim(coalesce(p_reason, '')), '');
+  v_out    jsonb;
+  v_rec    jsonb;
+begin
+  if p_kind is null or p_kind not in ('add','makeup') or p_student_id is null then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+  if v_reason is null or char_length(v_reason) < 2 or char_length(v_reason) > 200 then
+    return jsonb_build_object('error','reason_required');
+  end if;
+  if not exists (select 1 from staff where id = p_trainer_id and role = 'owner' and active is not false) then
+    return jsonb_build_object('error','owner_only');
+  end if;
+
+  v_out := record_course_attendance(p_trainer_id, p_slot_id, array[p_student_id], p_held_on, p_level,
+                                    p_start_time, p_duration_min, p_actor, p_same_day_ok, false);
+  if v_out ? 'error' then return v_out; end if;
+  v_rec := v_out->'recorded'->0;
+  if v_rec is null then return jsonb_build_object('error','already_recorded'); end if;
+
+  update course_attendance
+     set memo = case p_kind when 'makeup' then '보강' else '추가' end, adjust_reason = v_reason
+   where session_id = (v_out->>'sessionId')::bigint and course_id = (v_rec->>'courseId')::bigint and status = 'done';
+  return v_out || jsonb_build_object('kind', p_kind);
+end;
+$$;
+
+-- 원장 「출석 취소」 — 지우지 않고 cancelled + 사유. 칸 출석이면 그 칸 예약을 done → no_show. 회차는 돌아온다.
+create or replace function public.cancel_course_attendance(
+  p_trainer_id    bigint,
+  p_attendance_id bigint,
+  p_reason        text default null,
+  p_actor         text default null)
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_reason text := nullif(btrim(coalesce(p_reason, '')), '');
+  v_a      course_attendance%rowtype;
+  v_s      course_sessions%rowtype;
+  v_sid    bigint;
+begin
+  if p_attendance_id is null then return jsonb_build_object('error','invalid_body'); end if;
+  if v_reason is null or char_length(v_reason) < 2 or char_length(v_reason) > 200 then
+    return jsonb_build_object('error','reason_required');
+  end if;
+  if not exists (select 1 from staff where id = p_trainer_id and role = 'owner' and active is not false) then
+    return jsonb_build_object('error','owner_only');
+  end if;
+
+  select * into v_a from course_attendance where id = p_attendance_id for update;
+  if not found then return jsonb_build_object('error','not_found'); end if;
+  if v_a.status <> 'done' then return jsonb_build_object('error','already_cancelled'); end if;
+  -- 이관 묶음 행(units > 1 · 예: 「완료 34」 판독 이월)은 여러 회차를 한 줄로 적은 것이라 앱에서 취소하지 않는다.
+  if v_a.units > 1 then return jsonb_build_object('error','bulk_row'); end if;
+
+  select * into v_s from course_sessions where id = v_a.session_id;
+  select student_id into v_sid from courses where id = v_a.course_id;
+
+  update course_attendance set status = 'cancelled', adjust_reason = v_reason where id = v_a.id;
+  if v_s.slot_id is not null then
+    update slot_bookings set status = 'no_show'
+     where slot_id = v_s.slot_id and student_id = v_sid and span_head_id is null and status = 'done';
+  end if;
+
+  return jsonb_build_object('cancelled', true, 'attendanceId', v_a.id, 'courseId', v_a.course_id, 'studentId', v_sid,
+                            'heldOn', v_s.held_on, 'unitsLeft', course_units_left(v_a.course_id));
+end;
+$$;
+
+notify pgrst, 'reload schema';
+
+-- ── 59d 검증 ────────────────────────────────────────────────────────────────
+--   select proname, md5(prosrc), length(prosrc) from pg_proc where pronamespace = 'public'::regnamespace
+--      and proname in ('record_course_attendance','correct_course_attendance','cancel_course_attendance');     -- 3행
+--   select count(*) from pg_proc where pronamespace = 'public'::regnamespace and proname = 'record_course_attendance';  -- 1(겹 정의 없음)
+-- 권한 좁히기는 §59a 와 같이 오너 실행(새 함수 둘을 같은 목록에 더한다):
+--   public.correct_course_attendance(bigint, text, bigint, date, text, bigint, time, integer, text, text, boolean)
+--   public.cancel_course_attendance(bigint, bigint, text, text)
+-- 되돌리기(코드를 먼저 되돌린 뒤): drop function if exists 위 둘 · record_course_attendance 는 §59a 블록을 다시 실행.
+--
+--   ✅ 59d 실행 완료 2026-10-01 12:2x KST (세션 실행 · A 구간 · 이 블록 그대로 · 블록 md5 ee49bf99cd3ba16c700e0b1a29c64e73).
+--      실행 전: record_course_attendance 6369 · b47543e2 · 새 함수 둘 없음 · 출석 done 8행 71회 · 회차 8.
+--      실행 후: record_course_attendance 6721 · 75a63f0e / correct_course_attendance 1255 · 582067eb /
+--               cancel_course_attendance 1655 · e857a433 (셋 다 정본 본문과 일치 · 겹 정의 없음) · 출석 · 회차 그대로.
+--      사전 되돌림 시험(59b 포함 · 12항목) 통과 · 실행 뒤 보강 · 잘못된 종류 · 미래 날짜 · 반 다름 되돌림 시험 통과.

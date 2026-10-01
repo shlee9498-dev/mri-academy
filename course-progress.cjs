@@ -16,11 +16,26 @@
 //   · 오너 확인 완료 회차(courses.confirmed_units · §58 · 2026-10-01) — 기록 없이 끝난 몫을 날짜 없이 더한다.
 //     진행 회차 = 출석 done + 이 값 · 이 값이 있으면 출석 행이 없어도 attendanceKnown=true(오너가 확인한 숫자다).
 //     server.js remainFromDB(잔여 알림)도 같은 식이다.
-// 값(이름 · 메모)은 읽지도 로그에 남기지도 않는다 — 코드와 건수만.
+// 값(이름 · 메모)은 로그에 남기지도 내보내지도 않는다 — 코드와 건수만.
+//   예외 하나: 출석 이력(history · §59d · 계약 §9.22)은 출석 행 memo 가 원장 정정 표시 '추가' · '보강' 과
+//   **글자 그대로 같은지만** 본다(attendanceKind). 이관 행의 긴 메모는 비교만 하고 버린다.
 // ============================================================
 "use strict";
 
-function summarizeCourses(courses, attendance, sessionsById, attOk) {
+// 출석 한 줄의 종류(§59d · 계약 §9.22) — add 원장 「출석 추가」 · makeup 「보강」 · import 이관 묶음(날짜가 실제 수업일이
+//   아닐 수 있다) · attend 그 밖의 출석. 정정 표시는 memo 가 글자 그대로 '추가' | '보강' 일 때만이다.
+function attendanceKind(memo, source) {
+  if (memo === "추가") return "add";
+  if (memo === "보강") return "makeup";
+  if (source === "sheet_import" || source === "photo_recount") return "import";
+  return "attend";
+}
+const HISTORY_MAX = 30;              // 수강생 앱 직강 카드 출석 이력 — 최근 것부터 이만큼
+
+// opts.history — 강의마다 attendance(출석 이력 · done · 취소 회차 제외 · 최근부터 HISTORY_MAX)를 붙인다.
+//   attendance 행에 course_sessions 임베드(held_on · start_time · source · status)와 memo 가 있어야 한다.
+// opts.withIds — 강의마다 내부 courseId 를 붙인다(부르는 쪽이 짝짓기에 쓰고 **응답 전에 뗀다** — 앱에는 내부 id 를 내리지 않는다).
+function summarizeCourses(courses, attendance, sessionsById, attOk, opts = {}) {
   const byCourse = {};
   for (const a of attendance) (byCourse[a.course_id] ||= []).push(a);
   const out = new Map();
@@ -45,6 +60,7 @@ function summarizeCourses(courses, attendance, sessionsById, attOk) {
     const total = Number(c.units_total || 0);
     if (!out.has(c.student_id)) out.set(c.student_id, []);
     out.get(c.student_id).push({
+      ...(opts.withIds ? { courseId: c.id } : {}),
       level: c.level, scheme: c.scheme || null,
       startedOn: c.started_on, status: c.status,
       unitsTotal: total, completedUnits: completed,
@@ -52,16 +68,33 @@ function summarizeCourses(courses, attendance, sessionsById, attOk) {
       ownerConfirmedUnits: confirmed,                                   // completedUnits 중 날짜 없이 오너가 확인한 몫
       attendanceKnown,
       nextSession,
+      ...(opts.history ? { attendance: historyOf(mine) } : {}),
     });
   }
   return out;
+}
+
+// 출석 이력 한 강의 몫 — done 이고 회차가 취소되지 않은 행만 · 날짜 · 시작 시각 최근부터.
+function historyOf(rows) {
+  return rows
+    .filter((a) => a.status === "done" && a.course_sessions && a.course_sessions.status !== "cancelled")
+    .map((a) => ({
+      on: a.course_sessions.held_on,
+      startTime: (a.course_sessions.start_time || "").slice(0, 5) || null,
+      units: Number(a.units || 0),
+      kind: attendanceKind(a.memo, a.course_sessions.source),
+    }))
+    .sort((x, y) => String(y.on).localeCompare(String(x.on)) || String(y.startTime || "").localeCompare(String(x.startTime || "")))
+    .slice(0, HISTORY_MAX);
 }
 
 // statuses 를 주면 그 상태의 강의만(트레이너 앱 = active · paused). 안 주면 전부.
 // hideCancelled — 취소(환불 · 무효 · status cancelled) 강의를 뺀다(수강생 앱 · 2026-10-01 오너 판정 「환불 강의 카드 숨김」).
 //   종료(done) · 멈춤(paused) · 재구성(reconstructed)은 그대로 보인다 — 들은 기록이라 수강생이 볼 이유가 있다.
 // 강의 조회 자체가 실패하면 빈 Map — 호출자는 「강의 없음」으로 그린다(종전 coursesFor 와 같다).
-async function loadCourseProgress(sbSelect, { studentIds, statuses, hideCancelled } = {}) {
+// history — 강의마다 출석 이력을 붙인다(수강생 앱 직강 카드 · 계약 §9.22). 출석 행에 회차를 임베드해 읽는다(왕복 수 그대로).
+// withIds — 강의마다 내부 courseId(summarizeCourses opts.withIds · 응답 전에 뗄 것).
+async function loadCourseProgress(sbSelect, { studentIds, statuses, hideCancelled, history, withIds } = {}) {
   const ids = [...new Set((studentIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   if (!ids.length) return new Map();
   let courses;
@@ -77,7 +110,8 @@ async function loadCourseProgress(sbSelect, { studentIds, statuses, hideCancelle
   let att = [], attOk = false;
   try {
     att = await sbSelect("course_attendance",
-      `select=course_id,units,session_id,status&course_id=in.(${courses.map((c) => c.id).join(",")})`);
+      `select=course_id,units,session_id,status${history ? ",memo,course_sessions(held_on,start_time,source,status)" : ""}`
+      + `&course_id=in.(${courses.map((c) => c.id).join(",")})`);
     attOk = true;
   } catch (e) { console.error("courses_attendance", e?.message); }
 
@@ -93,7 +127,7 @@ async function loadCourseProgress(sbSelect, { studentIds, statuses, hideCancelle
       for (const r of ss) sessById[r.id] = r;
     } catch (e) { console.error("courses_sessions", e?.message); }
   }
-  return summarizeCourses(courses, att, sessById, attOk);
+  return summarizeCourses(courses, att, sessById, attOk, { history: !!history, withIds: !!withIds });
 }
 
 // ── 직강 반 수업(§59 · 계약 §9.21) ──
@@ -112,4 +146,4 @@ function pickCourse(list, levelKr) {
   return open[0] || mine.sort(byStart).at(-1);
 }
 
-module.exports = { loadCourseProgress, summarizeCourses, pickCourse, COURSE_LEVEL_BY_KEY, COURSE_KEY_BY_LEVEL };
+module.exports = { loadCourseProgress, summarizeCourses, pickCourse, attendanceKind, COURSE_LEVEL_BY_KEY, COURSE_KEY_BY_LEVEL };

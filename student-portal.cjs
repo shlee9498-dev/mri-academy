@@ -871,9 +871,40 @@ module.exports = function mountStudentPortal(app, deps) {
   // 식은 course-progress.cjs 한 벌이다(트레이너 앱 §9.12 와 공유 · 2026-09-30 옮김 · 계산 불변).
   //   출석 행이 아예 없는 것과 「정말 0회 진행」은 다르다 — attendanceKnown 으로 가른다.
   //   수강생 앱은 취소(환불 · 무효) 강의만 빼고 전부 — 종료 · 멈춤은 그대로 보인다(2026-10-01 오너 판정).
+  //   직강 카드(계약 §9.22.6) — 강의마다 attendance(출석 이력 · 최근 30 · 정정 사유는 없다)와
+  //   nextClass(다가오는 직강 칸 예약 · 없으면 null)를 붙인다. 예약은 그 예약이 잡은 강의(slot_bookings.course_id)에,
+  //   강의가 안 적힌 예약은 같은 반 진행 중 강의 중 다음 출석이 빠질 강의(pickCourse)에 붙는다.
   async function coursesFor(studentId) {
-    const m = await courseProgress.loadCourseProgress(sbSelect, { studentIds: [studentId], hideCancelled: true });
-    return m.get(Number(studentId)) || [];
+    const sid = Number(studentId);
+    const [m, upcoming] = await Promise.all([
+      courseProgress.loadCourseProgress(sbSelect, { studentIds: [sid], hideCancelled: true, history: true, withIds: true }),
+      upcomingCourseClasses(sid),
+    ]);
+    const list = m.get(sid) || [];
+    const next = new Map();                                  // 강의 자리 → 가장 이른 예약 하나
+    for (const b of upcoming) {
+      let i = b.courseId != null ? list.findIndex((c) => c.courseId === b.courseId) : -1;
+      if (i < 0) i = list.indexOf(courseProgress.pickCourse(list, b.level));
+      if (i < 0 || next.has(i)) continue;
+      next.set(i, { bookingId: opaqueId("booking", b.id), startAt: b.startAt, durationMin: b.durationMin,
+                    courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[b.level] || null });
+    }
+    // 내부 courseId 는 여기서 뗀다(앱에는 내부 id 를 내리지 않는다)
+    return list.map(({ courseId: _id, ...c }, i) => ({ ...c, nextClass: next.get(i) || null }));
+  }
+  // 다가오는 직강 칸 예약(booked) — 빠른 순. 실패하면 빈 목록(카드는 「다음 강의 없음」으로 그린다).
+  async function upcomingCourseClasses(studentId) {
+    if (!bookingReady) return [];
+    try {
+      const rows = await sbSelect("slot_bookings",
+        "select=id,course_id,trainer_slots!inner(slot_start,duration_min,lesson_type,course_level)"
+        + `&student_id=eq.${studentId}&status=eq.booked&span_head_id=is.null`
+        + `&trainer_slots.lesson_type=eq.course&trainer_slots.slot_start=gte.${encodeURIComponent(new Date().toISOString())}`
+        + "&order=trainer_slots(slot_start).asc&limit=10");
+      return rows.map((r) => ({ id: r.id, courseId: r.course_id ?? null, startAt: r.trainer_slots.slot_start,
+        durationMin: Number(r.trainer_slots.duration_min || 0) || null, level: r.trainer_slots.course_level }))
+        .sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
+    } catch (e) { console.error("summary_course_next", e?.message); return []; }
   }
 
 

@@ -51,8 +51,19 @@ const { COURSE_LEVEL_BY_KEY, COURSE_KEY_BY_LEVEL, pickCourse } = courseProgress;
 const COURSE_SPAN_DEFAULT = 180;     // 원장 강의 기본 길이(3시간)
 const COURSE_CAP_DEFAULT = 3;        // 기본 정원 — 원장이 「참여형」으로 열던 칸과 같은 값
 const ATTEND_MAX = 12;               // 출석 한 번에 받는 인원 상한(정원 상한 8 + 칸 없이 기록하는 날의 여유)
-const ATTEND_BACK_DAYS = 31;         // 칸 없이 기록하는 출석의 날짜 하한(오늘 − 31일) — 더 지난 건 회차 정정(다음 단계)
+const ATTEND_BACK_DAYS = 31;         // 칸 없이 기록하는 출석의 날짜 하한(오늘 − 31일) — 더 지난 건 회차 정정(§9.22.2 · 365일)
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+// 회차 정정(§59d · 계약 §9.22) — 날짜 하한(오늘 − 365일) · 사유 길이(글자 수 · DB char_length 와 같다).
+const CORRECT_BACK_DAYS = 365;
+const REASON_MIN = 2, REASON_MAX = 200;
+// 반 목록(계약 §9.22.1) — 요일 시각을 모으는 창(직강 칸 앞뒤 · 칸 없이 기록한 회차는 지난 쪽만) · 최근 회차 수.
+const CLASS_WINDOW_DAYS = 28;
+const CLASS_RECENT_MAX = 4;
+const WEEKDAY_KR = ["일", "월", "화", "수", "목", "금", "토"];
+// KST 시각 HH:MM · 요일(0=일) — kstDate 와 같은 축.
+const kstHHMM = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(11, 16);
+const weekdayOf = (ymd) => new Date(`${ymd}T00:00:00Z`).getUTCDay();
+const { isTestStudent } = require("./test-accounts.cjs");
 // 달력에 있는 날짜인가(2026-02-30 · 2026-13-01 거절) — trainer-lessons.cjs isRealDate 와 같은 판정.
 const isRealDate = (s) => typeof s === "string" && DATE_RE.test(s)
   && Number.isFinite(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
@@ -64,6 +75,8 @@ const unitsOf = (v) => (v === null || v === undefined || v === "" ? null : Numbe
 
 module.exports = function mountBookingApi(app, deps) {
   const { sbSelect, sbRpc, limit, discordDM, portal, trainer } = deps;
+  // 회차 정정 기록(admin_audit) — 없는 배포(시험 등)에서는 기록만 건너뛴다.
+  const sbInsert = typeof deps.sbInsert === "function" ? deps.sbInsert : null;
   // 판수가 움직인 뒤 부르는 훅(§45 판수 부족 알림 · server.js 가 준다) — 없으면 부르지 않는다(10분 점검이 대신 잡는다)
   const onGamesChanged = typeof deps.onGamesChanged === "function" ? deps.onGamesChanged : null;
   // 레벨 테스트(상담 예약) 「완료」 뒤 부르는 훅 — 상담 기록(consults) 자동 생성(server.js 가 준다 · 오너 OK 2026-09-30)
@@ -159,6 +172,8 @@ module.exports = function mountBookingApi(app, deps) {
     no_course: 409, level_mismatch: 409, no_units_left: 409, already_booked: 409, already_today: 409,
     not_course_slot: 409, slot_cancelled: 409, session_cancelled: 409, attendance_recorded: 409,
     course_slot: 409, future_date: 400, owner_only: 403,
+    // 회차 정정(§59d · 계약 §9.22). slot_exists 는 칸 id 를 실어 따로 답한다(slotExists).
+    reason_required: 400, already_cancelled: 409, bulk_row: 409,
     // §59b(lesson_type 'course' 허용) 전 — 칸은 못 열지만 칸 없이 바로 출석은 된다.
     course_slots_not_ready: 503,
   };
@@ -185,6 +200,35 @@ module.exports = function mountBookingApi(app, deps) {
     if (new Set(v).size !== v.length) return null;
     const ids = v.map((x) => (typeof x === "string" ? readOpaqueId("student", x) : null));
     return ids.some((x) => x == null) ? null : ids;
+  }
+  // 정정 사유 — 앞뒤 공백을 떼고 2~200자. 없거나 짧으면 null(→ 400 reason_required) · 문자열이 아니면 undefined(→ 400 invalid_body).
+  function readReason(v) {
+    if (v === undefined || v === null) return null;
+    if (typeof v !== "string") return undefined;
+    const t = v.trim();
+    const n = [...t].length;
+    return n >= REASON_MIN && n <= REASON_MAX ? t : null;
+  }
+  // 그날 같은 반 직강 칸(원장 · 취소 제외)이 있으면 그 칸 id — 칸 없이 출석 · 정정의 가드(계약 §9.22.3).
+  //   칸 수업을 칸 없이 기록하면 회차가 둘로 갈리고 그 칸 예약은 「완료 확인 필요」로 남는다 — 칸 출석으로 보낸다.
+  //   startTime 을 주면 그 시각 칸만 본다(같은 날 다른 시각 수업은 따로 기록할 수 있다).
+  async function courseSlotOn(staffId, levelKr, ymd, startTime) {
+    const dayStart = new Date(Date.parse(`${ymd}T00:00:00+09:00`)).toISOString();
+    const dayEnd = new Date(Date.parse(dayStart) + 86400_000).toISOString();
+    const rows = await sbSelect("trainer_slots", `select=id,slot_start&trainer_id=eq.${staffId}&lesson_type=eq.course`
+      + `&course_level=eq.${encodeURIComponent(levelKr)}&status=neq.cancelled`
+      + `&slot_start=gte.${dayStart}&slot_start=lt.${dayEnd}&order=slot_start.asc`);
+    rows.sort((a, b) => Date.parse(a.slot_start) - Date.parse(b.slot_start));
+    const hit = startTime ? rows.find((r) => kstHHMM(r.slot_start) === startTime) : rows[0];
+    return hit ? hit.id : null;
+  }
+  const slotExists = (res, slotId) => res.status(409).json(scrubTrainer({ error: {
+    code: "slot_exists", slotId: opaqueId("slot", slotId) } }));
+  // 회차 정정 기록(누가 · 언제 · 무엇을 · 사유) — admin_audit. 정정은 이미 커밋됐다 — 기록 실패는 로그만 남긴다.
+  async function audit(staff, action, target, detail) {
+    if (!sbInsert) return;
+    try { await sbInsert("admin_audit", { actor_id: `staff:${staff.id}`, actor_name: staff.name, action, target, detail }); }
+    catch (e) { console.error("course_audit", action, e?.status || "fail"); }
   }
 
   // ══════════════ 수강생 ══════════════
@@ -873,6 +917,9 @@ module.exports = function mountBookingApi(app, deps) {
         return fail(res, 400, "invalid_body");
       if (b.durationMin !== undefined && !SPAN_MIN.includes(b.durationMin)) return fail(res, 400, "invalid_body");
       if (b.sameDayOk !== undefined && typeof b.sameDayOk !== "boolean") return fail(res, 400, "invalid_body");
+      // 그날 같은 반 직강 칸이 있으면 칸 출석(9.21.4)으로 보낸다 — 409 slot_exists + slotId(계약 §9.22.3)
+      const here = await courseSlotOn(req.staff.id, levelKr, b.heldOn, b.startTime);
+      if (here != null) return slotExists(res, here);
       const out = await sbRpc("record_course_attendance", {
         p_trainer_id: req.staff.id, p_slot_id: null, p_present: present,
         p_held_on: b.heldOn, p_level: levelKr, p_start_time: b.startTime ?? null,
@@ -882,6 +929,206 @@ module.exports = function mountBookingApi(app, deps) {
       if (out?.error === "students_rejected") return rejectFail(res, out.rejected);
       if (out?.error) return rpcFail(res, out.error);
       sendTrainer(res, attendOut(out));
+    }));
+
+  // GET /course-classes — 원장 「직강 반 출석」 첫 화면(계약 §9.22.1): 반 3개 · 반마다 요일 시각 묶음 · 인원 · 체크할 명단(남은 회차)
+  //   요일 시각은 원장 직강 칸(지난 28일 ~ 앞으로 28일 · 취소 제외)과 칸 없이 기록한 회차(지난 28일 · 시작 시각 있는 것)에서 모은다 —
+  //   반 시간표를 따로 적는 표는 없다. §59b 전이고 칸 없이 기록한 적도 없으면 classes 가 빈다(앱은 날짜 · 시각을 직접 고른다).
+  //   명단 = 그 반 진행 중(active) 강의가 있는 수강생(합친 명부 · 테스트 계정 제외 · ?includeTest=1 이면 넣는다).
+  //   unitsLeft 는 다음 출석이 빠질 강의(pickCourse) 기준 — 칸 목록(§9.21.2)과 같은 값이다.
+  app.get(`${TRAINER}/course-classes`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
+    if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
+    const nowMs = Date.now();
+    const today = kstDate(new Date(nowMs).toISOString());
+    const from = new Date(nowMs - CLASS_WINDOW_DAYS * 86400_000).toISOString();
+    const until = new Date(nowMs + CLASS_WINDOW_DAYS * 86400_000).toISOString();
+    const [slots, sessions, active] = await Promise.all([
+      sbSelect("trainer_slots", `select=id,slot_start,duration_min,capacity,status,course_level&trainer_id=eq.${req.staff.id}`
+        + `&lesson_type=eq.course&status=neq.cancelled&slot_start=gte.${from}&slot_start=lt.${until}&order=slot_start.asc`),
+      sbSelect("course_sessions", `select=id,held_on,start_time,duration_min,label,slot_id,status&trainer_id=eq.${req.staff.id}`
+        + `&held_on=gte.${kstDate(from)}&held_on=lte.${today}&status=neq.cancelled`),
+      sbSelect("courses", "select=student_id&status=eq.active"),
+    ]);
+    slots.sort((a, b) => Date.parse(a.slot_start) - Date.parse(b.slot_start));      // 아래 「마지막 칸 값」 · 「가장 이른 다음 칸」이 시각순에 기댄다
+    const includeTest = req.query.includeTest === "1";
+    const sids = [...new Set(active.map((r) => r.student_id))].filter((id) => includeTest || !isTestStudent(id));
+    const upcoming = slots.filter((s) => Date.parse(s.slot_start) + Number(s.duration_min || 0) * 60_000 > nowMs);
+    const [att, booked, progress, people] = await Promise.all([
+      sessions.length ? sbSelect("course_attendance",
+        `select=session_id&status=eq.done&session_id=in.(${sessions.map((c) => c.id).join(",")})`) : [],
+      upcoming.length ? sbSelect("slot_bookings",
+        `select=slot_id&status=eq.booked&span_head_id=is.null&slot_id=in.(${upcoming.map((x) => x.id).join(",")})`) : [],
+      sids.length ? courseProgress.loadCourseProgress(sbSelect, { studentIds: sids, statuses: ["active"] }) : new Map(),
+      sids.length ? sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})&merged_into=is.null`) : [],
+    ]);
+    const attended = {};
+    for (const a of att) attended[a.session_id] = (attended[a.session_id] || 0) + 1;
+    const bookedOf = {};
+    for (const x of booked) bookedOf[x.slot_id] = (bookedOf[x.slot_id] || 0) + 1;
+
+    // 명단 — 반마다
+    const nameOf = Object.fromEntries(people.map((p) => [p.id, p]));
+    const roster = { "초급반": [], "중급반": [], "심화반": [] };
+    for (const [sid, list] of progress) {
+      if (!nameOf[sid]) continue;                                   // 합친 명부
+      for (const level of Object.keys(roster)) {
+        const c = pickCourse(list, level);
+        if (!c) continue;
+        roster[level].push({
+          studentKey: opaqueId("student", sid),
+          studentDisplayName: nameOf[sid].name || "?", studentPubgName: nameOf[sid].pubg_name || null,
+          unitsLeft: unitsOf(c.remainingUnits), unitsTotal: unitsOf(c.unitsTotal),
+          overdrawn: Number(c.remainingUnits) < 0,
+        });
+      }
+    }
+    for (const list of Object.values(roster))
+      list.sort((a, b) => String(a.studentDisplayName).localeCompare(String(b.studentDisplayName), "ko"));
+
+    // 요일 시각 묶음 — 반 · 요일 · 시작 시각이 같으면 한 묶음. 날짜마다 칸 · 회차 · 출석 수.
+    const classes = new Map();
+    const ensure = (levelKr, ymd, hhmm) => {
+      const k = `${COURSE_KEY_BY_LEVEL[levelKr]}|${weekdayOf(ymd)}|${hhmm}`;
+      if (!classes.has(k)) classes.set(k, { k, levelKr, weekday: weekdayOf(ymd), startTime: hhmm,
+        durationMin: null, capacity: null, days: new Map(), next: null });
+      return classes.get(k);
+    };
+    const slotById = new Map(slots.map((x) => [x.id, x]));
+    for (const x of slots) {
+      if (!COURSE_KEY_BY_LEVEL[x.course_level]) continue;
+      const ymd = kstDate(x.slot_start);
+      const c = ensure(x.course_level, ymd, kstHHMM(x.slot_start));
+      c.durationMin = x.duration_min ?? c.durationMin;            // 시각순이라 마지막 칸 값이 남는다
+      c.capacity = x.capacity ?? c.capacity;
+      if (ymd <= today) c.days.set(ymd, { slotId: x.id, sessionId: null, count: 0 });
+      if (!c.next && upcoming.includes(x)) c.next = { slotId: x.id, startAt: x.slot_start, bookedCount: bookedOf[x.id] || 0,
+        seatsLeft: Math.max(0, Number(x.capacity || 0) - (bookedOf[x.id] || 0)) };
+    }
+    for (const cs of sessions) {
+      const sl = cs.slot_id != null ? slotById.get(cs.slot_id) : null;
+      const levelKr = sl ? sl.course_level : cs.label;
+      const ymd = sl ? kstDate(sl.slot_start) : cs.held_on;
+      const hhmm = sl ? kstHHMM(sl.slot_start) : (cs.start_time || "").slice(0, 5);
+      if (!COURSE_KEY_BY_LEVEL[levelKr] || !hhmm) continue;        // 반 밖 이름 · 시각 없는 회차는 묶음이 없다
+      const c = ensure(levelKr, ymd, hhmm);
+      if (c.durationMin == null) c.durationMin = cs.duration_min ?? null;
+      const d = c.days.get(ymd) || { slotId: sl ? sl.id : null, sessionId: null, count: 0 };
+      d.sessionId = cs.id;
+      d.count += attended[cs.id] || 0;
+      c.days.set(ymd, d);
+    }
+    const monFirst = (w) => (w + 6) % 7;
+    const classOut = (c) => ({
+      classKey: c.k, courseLevel: COURSE_KEY_BY_LEVEL[c.levelKr], weekday: c.weekday, weekdayLabel: WEEKDAY_KR[c.weekday],
+      startTime: c.startTime, durationMin: c.durationMin, capacity: c.capacity,
+      headcount: roster[c.levelKr].length,
+      nextSlot: c.next ? { ...c.next, slotId: opaqueId("slot", c.next.slotId) } : null,
+      recent: [...c.days.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, CLASS_RECENT_MAX)
+        .map(([on, d]) => ({ on, slotId: d.slotId == null ? null : opaqueId("slot", d.slotId),
+          sessionKey: d.sessionId == null ? null : opaqueId("course_session", d.sessionId), attendedCount: d.count })),
+    });
+    const sorted = [...classes.values()].sort((a, b) => monFirst(a.weekday) - monFirst(b.weekday)
+      || a.startTime.localeCompare(b.startTime));
+    sendTrainer(res, {
+      today,
+      levels: Object.keys(roster).map((levelKr) => ({
+        courseLevel: COURSE_KEY_BY_LEVEL[levelKr], level: levelKr,
+        headcount: roster[levelKr].length,
+        students: roster[levelKr],
+        classes: sorted.filter((c) => c.levelKr === levelKr).map(classOut),
+      })),
+    });
+  }));
+
+  // POST /course-attendance/corrections — 회차 정정 「출석 추가 · 보강」(원장만 · 사유 필수 · §59d · 계약 §9.22.2)
+  //   body { kind: "add" | "makeup", studentId, reason, sameDayOk?,
+  //          slotId?  — 칸 수업이면 칸으로(heldOn 은 자정 넘김 ±1일만) ·
+  //          courseLevel · heldOn · startTime? · durationMin? — 칸 없는 수업 }
+  //   출석은 record_course_attendance 와 같은 판정 · 같은 회차 묶기로 넣고(correct_course_attendance) 그 줄에 표시 · 사유를 단다.
+  //   날짜는 오늘부터 365일 전까지(칸 없이 출석의 31일보다 넓다 — 지난 기록을 바로잡는 입구라서).
+  //   한 명씩이다 — 막히면 그 사람 코드 그대로(409 no_course · level_mismatch · already_today) · 그 회차에 이미 있으면 409 already_recorded.
+  app.post(`${TRAINER}/course-attendance/corrections`, rateLimit("trainerAttend", 30, 60_000),
+    bodyOnly(["kind", "studentId", "reason", "slotId", "courseLevel", "heldOn", "startTime", "durationMin", "sameDayOk"]),
+    requireTrainer, wrap(async (req, res) => {
+      if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
+      const b = req.body || {};
+      const studentId = typeof b.studentId === "string" ? readOpaqueId("student", b.studentId) : null;
+      if (!["add", "makeup"].includes(b.kind) || studentId == null) return fail(res, 400, "invalid_body");
+      const reason = readReason(b.reason);
+      if (reason === undefined) return fail(res, 400, "invalid_body");
+      if (reason === null) return fail(res, 400, "reason_required");
+      let slotId = null, levelKr = null;
+      if (b.slotId !== undefined) {
+        slotId = typeof b.slotId === "string" ? readOpaqueId("slot", b.slotId) : null;
+        if (slotId == null || b.courseLevel !== undefined || b.startTime !== undefined || b.durationMin !== undefined)
+          return fail(res, 400, "invalid_body");
+        if (b.heldOn !== undefined && !isRealDate(b.heldOn)) return fail(res, 400, "invalid_body");
+      } else {
+        levelKr = COURSE_LEVEL_BY_KEY[b.courseLevel];
+        if (!levelKr || !isRealDate(b.heldOn)) return fail(res, 400, "invalid_body");
+        if (b.startTime !== undefined && !(typeof b.startTime === "string" && TIME_RE.test(b.startTime)))
+          return fail(res, 400, "invalid_body");
+        if (b.durationMin !== undefined && !SPAN_MIN.includes(b.durationMin)) return fail(res, 400, "invalid_body");
+      }
+      if (b.heldOn !== undefined) {
+        if (b.heldOn > kstDate(new Date().toISOString())) return fail(res, 400, "future_date");
+        if (b.heldOn < kstDate(new Date(Date.now() - CORRECT_BACK_DAYS * 86400_000).toISOString())) return fail(res, 400, "invalid_body");
+      }
+      if (b.sameDayOk !== undefined && typeof b.sameDayOk !== "boolean") return fail(res, 400, "invalid_body");
+      if (slotId == null) {
+        const here = await courseSlotOn(req.staff.id, levelKr, b.heldOn, b.startTime);
+        if (here != null) return slotExists(res, here);
+      }
+      const out = await sbRpc("correct_course_attendance", {
+        p_trainer_id: req.staff.id, p_kind: b.kind, p_student_id: studentId,
+        p_held_on: b.heldOn ?? null, p_level: levelKr, p_slot_id: slotId,
+        p_start_time: b.startTime ?? null, p_duration_min: slotId == null ? (b.durationMin ?? COURSE_SPAN_DEFAULT) : null,
+        p_reason: reason, p_actor: `staff:${req.staff.id}`, p_same_day_ok: b.sameDayOk === true,
+      });
+      if (out?.error === "students_rejected") return rpcFail(res, out.rejected?.[0]?.code || "invalid_body");
+      if (out?.error) return rpcFail(res, out.error);
+      const rec = (out?.recorded || [])[0];
+      if (!rec) return rpcFail(res, "already_recorded");
+      const [row] = await sbSelect("course_attendance",
+        `select=id&session_id=eq.${out.sessionId}&course_id=eq.${rec.courseId}&status=eq.done&limit=1`);
+      await audit(req.staff, `course.attendance.${b.kind}`, row ? `course_attendance:${row.id}` : `course_sessions:${out.sessionId}`,
+        { studentId, courseId: rec.courseId, sessionId: out.sessionId, heldOn: out.heldOn, level: out.level,
+          slotId, reason, unitsLeft: unitsOf(rec.unitsLeft) });
+      sendTrainer(res, {
+        kind: b.kind,
+        attendanceKey: row ? opaqueId("course_attendance", row.id) : null,
+        sessionKey: opaqueId("course_session", out.sessionId),
+        heldOn: out.heldOn, courseLevel: COURSE_KEY_BY_LEVEL[out.level] || null,
+        studentKey: opaqueId("student", studentId),
+        unitsLeft: unitsOf(rec.unitsLeft), overdrawn: rec.overdrawn === true,
+      });
+    }));
+
+  // POST /course-attendance/:id/cancel — 회차 정정 「출석 취소」(원장만 · 사유 필수 · §59d · 계약 §9.22.2)
+  //   :id = 직강 이력(GET /students/:id courseHistory[].attendance[].attendanceKey). 행은 지우지 않고 cancelled + 사유 —
+  //   회차가 1 돌아온다. 칸 출석이면 그 칸 예약이 결석(no_show)으로 바뀐다. 이관 묶음 행(units > 1)은 409 bulk_row.
+  app.post(`${TRAINER}/course-attendance/:id/cancel`, rateLimit("trainerAttend", 30, 60_000), bodyOnly(["reason"]),
+    requireTrainer, wrap(async (req, res) => {
+      if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
+      const attId = readOpaqueId("course_attendance", req.params.id);
+      if (attId == null) return fail(res, 400, "invalid_body");
+      const reason = readReason(req.body?.reason);
+      if (reason === undefined) return fail(res, 400, "invalid_body");
+      if (reason === null) return fail(res, 400, "reason_required");
+      const out = await sbRpc("cancel_course_attendance", {
+        p_trainer_id: req.staff.id, p_attendance_id: attId, p_reason: reason, p_actor: `staff:${req.staff.id}`,
+      });
+      if (out?.error) return rpcFail(res, out.error);
+      await audit(req.staff, "course.attendance.cancel", `course_attendance:${attId}`,
+        { studentId: out.studentId, courseId: out.courseId, heldOn: out.heldOn, reason, unitsLeft: unitsOf(out.unitsLeft) });
+      sendTrainer(res, {
+        cancelled: true,
+        attendanceKey: opaqueId("course_attendance", attId),
+        courseKey: out.courseId == null ? null : opaqueId("course", out.courseId),
+        studentKey: out.studentId == null ? null : opaqueId("student", out.studentId),
+        heldOn: out.heldOn ?? null,
+        unitsLeft: unitsOf(out.unitsLeft),
+      });
     }));
 
   // DELETE /slots/:id — 예약자 전원 복원 + DM
