@@ -34,7 +34,7 @@ start.html?code=ORDER10 ─ [디스코드로 신청하기](OAuth) ─ 입력 ─
 | 보호자 동의 | `consent.html` · §33 `guardian_consents` · 생년월일로 판정. 등록을 막는 코드는 없다 | 14~17세 안내 + 보호자 동의 확인 뒤에만 등록(§11-4 · PR-3) |
 | 방문 집계 | Umami(사이트 22쪽) · 사용자 이벤트는 `apply_submit` 하나 | `start_view` · `start_submit` 에 코드를 싣는다 |
 | 레슨문의 봇 | **이 저장소에 없다**(코드 · env 0건). index.html 「Discord 상담문의로」 2곳(945 · 953)이 초대 링크로 간다 | 그 2곳을 새 페이지로. 디스코드 안의 안내문 · 고정 메시지는 오너가 링크로 바꾼다 |
-| 초대 링크 | `szFa7teEJs` 가 9곳(apply · trainer-apply · index 4곳 · payment-fail · lesson-schedule · server.js 챗봇 안내) | 만료 없는 새 초대를 한 곳으로 모은다(§6.3) |
+| 초대 링크 | `szFa7teEJs`(30일 만료)가 9곳(apply · trainer-apply · index 4곳 · payment-fail · lesson-schedule · server.js 챗봇 안내) | ✅ 10/1 `9RjqdSKw`(만료 없음 · 횟수 제한 없음)로 통일 · 저장소 밖은 `mriacademy.gg/discord`(§6.3) |
 
 ## 2. 클로드디자인 명세와 맞춘 것 · 바꾼 것
 
@@ -206,15 +206,16 @@ DDL 원문은 정본 파일 하나에만 둔다(문서에 베끼면 갈라진다
 - 넘긴 메시지의 [답장] → 모달 → 봇이 신청자 DM 으로 「이름 + 말」을 보낸다(오너 = `MRI ACADEMY 이름` · 트레이너 = `이름 트레이너`).
   답장할 수 있는 사람 = 오너 · 맡은 트레이너.
 
-### 6.3 초대 링크
+### 6.3 초대 링크 ✅ 10/1
 
-- 오너 확인: 지금 쓰는 초대는 30일 만료다.
-- **오너**: 디스코드에서 「만료 없음 · 횟수 제한 없음」 초대를 새로 만들어 코드를 준다.
-- **세션**:
-  - `discord.html` 하나를 만든다(`mriacademy.gg/discord` → 초대로 바로 이동).
-  - 사이트 9곳을 그 주소로 바꾼다.
-  - 유튜브 · 사이트에는 `mriacademy.gg/discord` 를 건다 — 다음에 초대가 바뀌어도 한 줄만 고친다.
-- GmI 초대(`YfZD8d22wJ` · 카지노 트랙 페이지)와 `9RjqdSKw` 는 건드리지 않는다.
+- 오너 확인(10/1): `discord.gg/9RjqdSKw` = 만료 없음 · 횟수 제한 없음. 종전 `szFa7teEJs` 는 30일 만료였다.
+- **세션(10/1)**: 사이트 9곳(위 표)을 `9RjqdSKw` 로 바꿨다. 사이트 · 챗봇 안내는 초대를 **직접** 건다
+  (어플 「이 코드로 통일」 · 휴대폰에서 디스코드 앱이 바로 열린다 — 넘김 페이지를 거치면 앱 대신 브라우저가 열릴 수 있다).
+- `mriacademy.gg/discord` = **저장소 밖**(유튜브 설명 · 고정 댓글 · 쇼츠)에 거는 주소. 다음에 초대가 바뀌어도 거기는 안 고쳐도 된다.
+  - GitHub Pages 동안 = `discord.html`(넘김 · noindex · sitemap 제외 — 넘김 주소라 검색 콘솔이 오류로 잡는다).
+  - Cloudflare Pages 로 옮기면 `_redirects` 의 `/discord` 302 한 줄이 같은 일을 한다(`discord.html` 은 허용 목록에 없어 안 올라간다).
+- 초대가 또 바뀌면 `grep -rn 9RjqdSKw` 로 전부 같이 고친다.
+- GmI 초대(`YfZD8d22wJ` · 카지노 트랙 페이지)는 건드리지 않는다.
 
 ### 6.4 레슨문의
 
@@ -294,7 +295,7 @@ DDL 원문은 정본 파일 하나에만 둔다(문서에 베끼면 갈라진다
    `REQUIRED_SCHEMA` 에 §55 칸 4개(`tested_at` · `guardian_verified_at` · `guardian_verified_by` · `enrolled_at`) · 시험 흐름 +α · 라우트 8건.
    DDL 없음(§55 에 이미 있던 칸).
 5. **PR-4 페이지** — `start.html`(시안) + sitemap + index 「상담문의」 2곳. 개인정보처리방침 개정은 먼저 따로 올렸다(#439 · 10/1 고지 · 10/8 시행).
-6. **초대 링크** — 오너가 새 초대 코드를 주면 `mriacademy.gg/discord` 한 곳 + 9곳 교체(작은 PR).
+6. ✅ **초대 링크**(10/1) — `9RjqdSKw` 로 9곳 교체 + `mriacademy.gg/discord`(GitHub Pages `discord.html` · Cloudflare `_redirects`).
 7. **할인 결제** — 결제 트랙 합의(정가 · 할인액 · 코드 기록 · 트레이너 정가 기준) + 오너 「OK」(B).
 8. **옛 apply.html 정리** — 창구가 안정되면 start.html 로 넘긴다(오너 결정 1) · 토스 심사 결과를 보고 결제 트랙과 함께.
 

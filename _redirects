@@ -1,6 +1,8 @@
 # Cloudflare Pages 주소 넘김 — scripts/build-site.cjs 가 dist/ 로 복사한다(GitHub Pages 는 이 파일을 쓰지 않는다).
 # 문법: 「보내는 주소  받는 주소  코드」. 302 = 임시(초대 링크가 바뀌면 이 줄만 고친다 · 브라우저가 오래 기억하지 않게).
 
-# 디스코드 서버 초대 — 사이트 · 신청 페이지는 초대 코드를 직접 박지 않고 /discord 만 부른다(계약 §6.3)
-# ⚠️ 지금 값은 사이트 index.html 에 있는 초대와 같다. 오너가 「만료 없음 · 횟수 제한 없음」 초대를 새로 주면 여기만 바꾼다.
-/discord  https://discord.gg/szFa7teEJs  302
+# 디스코드 서버 초대 — 유튜브 설명 · 고정 댓글처럼 저장소 밖에 거는 링크는 mriacademy.gg/discord 를 쓴다(설계 §6.3).
+#   사이트 페이지 · 챗봇 안내는 같은 초대를 직접 건다(10/1 어플 「이 코드로 통일」 · 휴대폰에서 디스코드 앱이 바로 열린다).
+# 9RjqdSKw = 만료 없음 · 횟수 제한 없음(오너 확인 10/1). 사이트 · 신청 페이지 · 챗봇 안내도 같은 초대다.
+# GitHub Pages 동안은 discord.html 이 같은 일을 한다(이 파일은 Cloudflare 만 읽는다). 초대가 바뀌면 `grep -rn 9RjqdSKw` 로 전부 같이 고친다.
+/discord  https://discord.gg/9RjqdSKw  302
