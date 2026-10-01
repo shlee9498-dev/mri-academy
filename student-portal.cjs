@@ -220,7 +220,8 @@ module.exports = function mountStudentPortal(app, deps) {
   // hasReview · reviewStatus · unreadFeedback · reviewDue 가 붙는다. 비어 있거나 실패하면 종전 응답 그대로.
   // summaryExtras(계약 보강 D · 2026-09-26 오너 판정)는 /summary 에 reviewDueToday 를 붙인다 —
   // 등록 전 예약은 lesson_sessions 행이 없어서 sessions[] 안에 실을 칸이 없다(그래서 최상위 키).
-  const hooks = { sessionExtras: null, summaryExtras: null };
+  // courseSessionExtras(§61 · 2026-10-01)는 /sessions 의 courseSessions[](직강 출석 회차)에 같은 넷을 붙인다.
+  const hooks = { sessionExtras: null, summaryExtras: null, courseSessionExtras: null };
 
   // ── 연결 확인(2026-10-01 · 잘못 붙은 연결 정정 사고) ──
   // 세션은 무상태 서명(24h)이라 명부에서 디스코드 연결을 떼거나 다른 수강생으로 옮겨도 이미 나간 세션이 그대로 산다.
@@ -949,16 +950,47 @@ module.exports = function mountStudentPortal(app, deps) {
     return out.sort((a, b) => String(b.played_at).localeCompare(String(a.played_at)));
   }
 
+  // 직강 출석 회차(§61 · 계약 §8.12 · 2026-10-01 어플 전달) — 복기 「수업 고르기」에 레슨 수업과 같이 보인다.
+  //   내 강의(취소 · 환불 제외)의 출석 중 done · 회차 취소 아님 · 이관 묶음 아님 · 최근부터(course-progress attendedSessions).
+  //   회차마다 반 · 몇 회차 · 진행 트레이너 + 복기 넷(hasReview · reviewStatus · unreadFeedback · reviewDue — 복기 모듈이 채운다).
+  //   실패해도 레슨 목록은 내려간다(빈 배열).
+  async function courseSessionsOut(sid) {
+    try {
+      const list = await courseProgress.loadAttendedSessions(sbSelect, sid);
+      if (!list.length) return [];
+      let extras = new Map();
+      if (hooks.courseSessionExtras) {
+        try { extras = await hooks.courseSessionExtras(sid, list); }
+        catch (e) { console.error("portal_course_session_extras", e?.message); }
+      }
+      const names = await trainerNames(list.map((c) => c.trainerId));
+      return list.map((c) => ({
+        courseSessionId: opaqueId("csession", c.sessionId),
+        courseId: opaqueId("course", c.courseId),
+        heldOn: c.heldOn,
+        startTime: c.startTime,
+        level: c.level,
+        courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[c.level] || null,
+        unitNo: c.unitNo,
+        trainerDisplayName: names[c.trainerId] || "원장",
+        ...(extras.get(`${c.courseId}:${c.sessionId}`) || {}),
+      }));
+    } catch (e) { console.error("portal_course_sessions", e?.message); return []; }
+  }
+
   // ════════════════ GET /sessions ════════════════
   app.get(`${PREFIX}/sessions`, requireStudent, wrap(async (req, res) => {
     const sid = req.portal.sub;
-    const raw = await sbSelect("lesson_sessions",
-      `select=id,played_at,games,trainer_id,memo,created_by&student_id=eq.${sid}&order=played_at.desc`);
+    const [raw, courseSessions] = await Promise.all([
+      sbSelect("lesson_sessions",
+        `select=id,played_at,games,trainer_id,memo,created_by&student_id=eq.${sid}&order=played_at.desc`),
+      courseSessionsOut(sid),
+    ]);
     // 판수 조정(노쇼 · 늦은 취소 · 보상 · 되돌림 · 계약 §7.4)은 수업이 아니다 — 판수 내역(/games-ledger)에서만 보인다.
     //   접기 전에 뺀다. 안 빼면 같은 날 보상(−3)이 그날 수업 판수를 깎아 보이게 한다.
     //   봇 /판수정정(memo '정정:')은 종전대로 그날 수업에 접힌다(2026-09-04 오너 판정 · 아래 foldCorrections).
     const rows = foldCorrections(raw.filter((r) => !isAdjReqRow(r)));
-    if (!rows.length) return send(res, { sessions: [] });
+    if (!rows.length) return send(res, { sessions: [], courseSessions });   // 직강만 듣는 수강생도 회차는 보인다
 
     const ids = rows.map((r) => r.id);
 
@@ -1010,6 +1042,7 @@ module.exports = function mountStudentPortal(app, deps) {
         hasFeedback: feedbacked.has(r.id),
         ...(extras.get(r.id) || {}),
       })),
+      courseSessions,
     });
   }));
 

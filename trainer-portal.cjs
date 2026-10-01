@@ -292,7 +292,7 @@ module.exports = function mountTrainerPortal(app, deps) {
     // ⚠️ 식은 §41 portal_remaining_for_trainer() 와 같아야 한다 — 한쪽만 고치면 트레이너
     //    화면의 숫자와 예약 판정이 갈린다.
     // 전 기간 조회라 쪼개 읽는다(selectAll) — 오너 범위는 전체 수업 행을 읽는다.
-    const [book, enrolls, sessions, held, upcoming, endings, extra, courseMap] = await Promise.all([
+    const [book, enrolls, sessions, held, upcoming, endings, extra, courseMap, attended] = await Promise.all([
       staffBook(),
       selectAll(sbSelect, "lesson_enrollments",
         `select=id,student_id,games_total,trainer_id,started_on&student_id=in.(${ids})&status=in.(${ENROLL_STATUSES.join(",")})`),
@@ -318,6 +318,9 @@ module.exports = function mountTrainerPortal(app, deps) {
         .catch(() => sbSelect("students", `select=id,created_at,trainer_id,discord_id&id=in.(${ids})`)),
       // 직강 회차 — 진행 중 강의만(active · paused). 수강생 앱 §7.1 과 같은 함수다.
       courseProgress.loadCourseProgress(sbSelect, { studentIds: sidList, statuses: ["active", "paused"] }),
+      // 직강 출석 회차(§61 · 2026-10-01 오너 검수) — 「마지막 수업」 · 자동 보류에 레슨 수업과 같이 센다.
+      //   출석 done · 회차 취소 아님 · 이관 묶음 아님(날짜가 실제 수업일이 아닐 수 있다). 실패하면 빈 배열(종전과 같다).
+      courseProgress.loadAttendedSessions(sbSelect, sidList),
     ]);
     const today = kstDate(Date.now());
     const me = staff.id;
@@ -327,7 +330,8 @@ module.exports = function mountTrainerPortal(app, deps) {
     const acc = new Map();         // sid → { reg, played, held, byT: Map<tid, {reg, used, lesson, adj, held, packs[]}>, lastLesson:{any, byT}, lastEnroll:{any, byT} }
     const A = (sid) => {
       if (!acc.has(sid)) acc.set(sid, { reg: 0, played: 0, lesson: 0, adj: 0, held: 0, byT: new Map(),
-        lastLessonAny: null, lastEnrollAny: null, lastLessonByT: new Map(), lastEnrollByT: new Map(), upAny: null, upByT: new Map() });
+        lastLessonAny: null, lastEnrollAny: null, lastLessonByT: new Map(), lastEnrollByT: new Map(), upAny: null, upByT: new Map(),
+        lastCourseAny: null, lastCourseByT: new Map() });
       return acc.get(sid);
     };
     const T = (a, tid) => {
@@ -351,6 +355,13 @@ module.exports = function mountTrainerPortal(app, deps) {
         a.lastLessonAny = later(a.lastLessonAny, r.played_at);
         if (r.trainer_id != null) a.lastLessonByT.set(r.trainer_id, later(a.lastLessonByT.get(r.trainer_id), r.played_at));
       }
+    }
+    // 직강 출석 — 판수 합에는 안 들어가고(회차라서) 날짜만 「마지막 수업」에 든다. 트레이너 = 회차 진행자 → 강의 담당.
+    //   lastLessonByT 에는 넣지 않는다 — 그 키들은 「종료」 판정의 관계 트레이너 목록이기도 하다(직강은 원장 관계 · 종료 대상 아님).
+    for (const c of attended) {
+      const a = A(c.studentId);
+      a.lastCourseAny = later(a.lastCourseAny, c.heldOn);
+      if (c.trainerId != null) a.lastCourseByT.set(c.trainerId, later(a.lastCourseByT.get(c.trainerId), c.heldOn));
     }
     for (const h of held) {
       const a = A(h.student_id); const g = Number(h.games_held || 0); const tid = h.trainer_slots?.trainer_id;
@@ -380,24 +391,27 @@ module.exports = function mountTrainerPortal(app, deps) {
       const remainingMine = carryMine + mine.reg - mine.used - mine.held;
       const createdOn = x.created_at ? kstDate(Date.parse(x.created_at)) : null;
 
+      // 마지막 수업 = 레슨 수업 ∪ 직강 출석(§61) — 목록 「마지막 수업」 · 자동 보류가 같은 날짜를 본다
+      const lastClassAny = later(a.lastLessonAny, a.lastCourseAny);
       // 목록 탭(§9.14) — 트레이너 = 나와의 기록 · 오너 = 누구와든 + 진행 중 직강
       let st;
       if (!owner) {
-        st = gv.listState({ today, lastLessonOn: a.lastLessonByT.get(me) || null, lastEnrollOn: a.lastEnrollByT.get(me) || null,
+        st = gv.listState({ today, lastLessonOn: later(a.lastLessonByT.get(me) || null, a.lastCourseByT.get(me) || null),
+          lastEnrollOn: a.lastEnrollByT.get(me) || null,
           createdOn, hasUpcoming: !!a.upByT.get(me), endedOn: endedBy.get(s.id)?.get(me) || null });
       } else {
         // 관계 트레이너(등록 · 수업 · 담당) 전원이 종료했을 때만 오너 화면에서도 종료
         const rel = new Set([...a.lastEnrollByT.keys(), ...a.lastLessonByT.keys(), ...(assigned != null ? [assigned] : [])]);
         const ends = endedBy.get(s.id);
         const allEnded = rel.size > 0 && ends && [...rel].every((tid) => ends.has(tid));
-        st = gv.listState({ today, lastLessonOn: a.lastLessonAny, lastEnrollOn: a.lastEnrollAny, createdOn,
+        st = gv.listState({ today, lastLessonOn: lastClassAny, lastEnrollOn: a.lastEnrollAny, createdOn,
           hasUpcoming: !!a.upAny, inCourse: courses.length > 0,
           endedOn: allEnded ? [...rel].map((tid) => ends.get(tid)).sort().at(-1) : null });
       }
       const lv = gv.effectiveLevel(x.level ?? null, courses);
       const next = owner ? a.upAny : (a.upByT.get(me) || null);
       return {
-        s, a, x, courses, carry, assigned, mine, remainingMine, st, lv,
+        s, a, x, courses, carry, assigned, mine, remainingMine, st, lv, lastClassAny,
         nextBooking: next ? { startAt: next } : null,
         currentPack: gv.currentPack({ carry: carryMine, packs: mine.packs, used: mine.used, held: mine.held }),
       };
@@ -441,9 +455,12 @@ module.exports = function mountTrainerPortal(app, deps) {
       remainingGames: reg - a.played - a.held,    // 음수 그대로(0 클램프 금지 · 정본 B-4) — **합계**다
       // 내 판수만(§41 · 계약 §9.2). 예약 판정이 보는 숫자가 이것이다.
       remainingMine: r.remainingMine,
-      lastLessonOn: a.lastLessonAny,    // 마지막 수업일(누구와든 · 판수 조정 행 제외)
+      lastLessonOn: r.lastClassAny,     // 마지막 수업일(누구와든 · 판수 조정 행 제외 · 직강 출석 포함 §61 — 이관 묶음은 날짜가 없어 안 든다)
       // 직강 회차(§9.12) — attendanceKnown=false 면 completedUnits · remainingUnits 를 그리지 말 것(구 체계 = 미상)
       courses: r.courses,
+      // 직강 상태 한 낱말(§61 · 2026-10-01 오너 검수 「직강 멈춤 상태 응답에 포함」) — 진행 중 강의가 하나라도 있으면 active ·
+      //   멈춘 강의만 있으면 paused · 진행 중 · 멈춤 강의가 없으면 null. 목록 탭(listState)은 종전대로 멈춤도 「진행 중」에 둔다.
+      courseState: courseProgress.courseStateOf(r.courses),
       inMyScope: owner ? s.inMyScope : true,
       isTest: isTestStudent(s.id),      // 테스트 계정(test-accounts.cjs) — 앱은 이 값으로 가린다 · 표시명으로 판정하지 않는다
       // ── §9.14 (모든 계정) ──
@@ -704,9 +721,10 @@ module.exports = function mountTrainerPortal(app, deps) {
       // 칸은 30분 단위라 한 주에 수백 행이 된다 — 쪼개 읽는다(두 트레이너가 하루 12시간씩 열면 주 670행대)
       selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min,course_level"
         + `&status=neq.cancelled&slot_start=gte.${weekStart}&slot_start=lt.${weekEnd}`),
-      // 열린 칸 = 지금부터 7일 · status open · 상담(레벨 테스트) · 직강(원장 반 수업 · §59) 칸 제외(레슨 칸 공급을 본다)
+      // 열린 칸 = 지금부터 7일 · status open · 상담(레벨 테스트) 칸 제외. 직강(원장 반 수업 · §59) 칸은 넣는다
+      //   (§61 · 2026-10-01 오너 검수 「트레이너별 표 열린 칸에 직강 칸 포함」 — 원장 행 색은 종전대로 판정하지 않는다)
       selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,capacity"
-        + `&status=eq.open&lesson_type=not.in.(consult,course)&slot_start=gte.${nowIso}&slot_start=lt.${slotsUntil}`),
+        + `&status=eq.open&lesson_type=neq.consult&slot_start=gte.${nowIso}&slot_start=lt.${slotsUntil}`),
       // memo 는 /판수정정 행을 거르는 데만 쓴다 — 응답에 싣지 않는다(가드가 memo 어간을 막는다)
       selectAll(sbSelect, "lesson_sessions", "select=id,student_id,trainer_id,played_at,games,created_by,created_at,memo"
         + `&played_at=gte.${week.from}&played_at=lte.${week.to}`),
@@ -781,7 +799,7 @@ module.exports = function mountTrainerPortal(app, deps) {
     const sids = [...new Set([...lessons.flatMap((l) => l.studentIds), ...low.map((r) => r.studentId)])];
     const stu = {};
     if (sids.length) for (const s of await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})`)) stu[s.id] = s;
-    const KEY_KIND = { booking: "booking", record: "session", course: "course_session" };
+    const KEY_KIND = { booking: "booking", record: "session", course: "course_session", slot: "slot" };
     const apiLesson = (l) => {
       const base = {
         key: opaqueId(KEY_KIND[l.kind], l.ref), kind: l.kind, date: l.date, startAt: l.startAt, durationMin: l.durationMin,
@@ -794,6 +812,9 @@ module.exports = function mountTrainerPortal(app, deps) {
       if (l.kind === "booking") return { ...base, lessonType: l.lessonType, status: l.status,
         ...(l.lessonType === "course" ? { courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[l.courseLevel] || null } : {}) };
       if (l.kind === "record") return { ...base, lessonType: null, games: l.games, source: l.source };
+      // 예약 · 출석 없는 직강 칸(§61) — key 는 트레이너 칸 목록의 칸 id 와 같은 값 · status = 칸 상태(open · closed)
+      if (l.kind === "slot") return { ...base, lessonType: "course", status: l.status,
+        courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[l.courseLevel] || null };
       return { ...base, label: l.label, status: l.status };
     };
 

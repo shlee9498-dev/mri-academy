@@ -8626,7 +8626,9 @@ const REQUIRED_SCHEMA = {
   review_reactions:     ["review_id","phase_id","reactor_kind","reactor_id","emoji","created_at"],
   // §44 보낸 복기의 연결 수업 변경 기록(2026-09-30) — relink_review_lesson() 이 쓰고 상세 anchorChanges 가 읽는다.
   review_anchor_changes: ["id","review_id","changed_by","from_session_id","to_session_id","from_played_at","to_played_at",
-                          "from_trainer_id","to_trainer_id","had_feedback","created_at"],
+                          "from_trainer_id","to_trainer_id","had_feedback","created_at",
+                          // §61 직강 회차로 다시 잇기(2026-10-01) — relink_review_anchor() 가 쓰고 상세 anchorChanges 가 종류를 읽는다
+                          "from_kind","to_kind","from_course_session_id","to_course_session_id"],
   // §45 트레이너별 판수 부족 알림 상태(2026-09-30) — games-short.cjs 가 읽고 쓴다. 부족 목록은 함수 portal_short_pools().
   games_short_notices:  ["id","student_id","trainer_id","remaining","opened_at","hold","notified_at","student_dm","trainer_dm","cleared_at"],
   // §46 판수 조정 요청(2026-09-30) — trainer-lessons.cjs 가 쓰고, 승인 · 반려는 함수 decide_games_adjustment() 가 한다.
