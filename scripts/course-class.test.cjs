@@ -1,6 +1,8 @@
 // node --test scripts/course-class.test.cjs — 원장 직강 반 수업(§59 · 계약 §9.21)
 //   칸 열기(원장만) · 넣기 · 수강생 예약 · 칸 출석 · 칸 없이 출석 · 「완료」 분기 · 칸 목록 · 수강생 칸 목록 ·
 //   칸 닫기 가드 · 원장 명부(테스트 계정 숨김 · 직강 이력).
+//   §59d · 계약 §9.22 — 반 목록 · 칸 있는 날 가드(slot_exists) · 회차 정정(추가 · 보강 · 취소 · 사유 · 기록) ·
+//   원장 홈 직강 숫자 · 수강생 직강 카드(출석 이력 · 다음 강의).
 //   진짜 라우트(student-portal · trainer-portal · booking-api · 가드 포함)를 가짜 PostgREST 위에 띄운다.
 //   DB 함수(open_course_slot · book_course_slot · record_course_attendance)의 판정은 운영 DB 에서 되돌림 시험으로 봤다
 //   (supabase_admin_panel.sql §59) — 여기서는 서버가 **어느 함수를 어떤 인자로** 부르고 결과를 어떻게 내리는지를 본다.
@@ -409,18 +411,24 @@ test("원장 명부 — 테스트 계정은 기본으로 빠지고 includeTest=1
   assert.equal(t?.isTest, true);
 });
 
-test("원장 상세 — 직강 이력: 반 · 상태 · 회차 · 출석 날짜(최근부터) · 결제일 · 환불일(금액 없음) · 트레이너는 없음", async () => {
+test("원장 상세 — 직강 이력: 반 · 상태 · 회차 · 출석(종류 · 사유 · 취소 가능) · 취소한 출석 따로 · 결제일 · 환불일(금액 없음) · 트레이너는 없음", async () => {
   reset({
     courses: [course(1, 10, "심화반", { confirmed_units: 2 }), course(4, 10, "초급반", { status: "cancelled", started_on: "2026-05-01" })],
     course_sessions: [
-      { id: 80, held_on: "2026-09-28", start_time: "19:00:00", slot_id: null, status: "done" },
-      { id: 81, held_on: "2026-09-30", start_time: "09:00:00", slot_id: 900, status: "done" },
-      { id: 82, held_on: "2026-09-29", start_time: null, slot_id: null, status: "cancelled" },
+      { id: 80, held_on: "2026-09-28", start_time: "19:00:00", slot_id: null, status: "done", source: "panel" },
+      { id: 81, held_on: "2026-09-30", start_time: "09:00:00", slot_id: 900, status: "done", source: "panel" },
+      { id: 82, held_on: "2026-09-29", start_time: null, slot_id: null, status: "cancelled", source: "panel" },
+      { id: 83, held_on: "2026-01-16", start_time: null, slot_id: null, status: "done", source: "sheet_import" },
+      { id: 84, held_on: "2026-09-27", start_time: "19:00:00", slot_id: null, status: "done", source: "panel" },
+      { id: 85, held_on: "2026-09-26", start_time: "09:00:00", slot_id: null, status: "done", source: "panel" },
     ],
     course_attendance: [
-      { id: 1, session_id: 80, course_id: 1, units: 1, status: "done" },
-      { id: 2, session_id: 81, course_id: 1, units: 1, status: "done" },
-      { id: 3, session_id: 82, course_id: 1, units: 1, status: "done" },
+      { id: 1, session_id: 80, course_id: 1, units: 1, status: "done", memo: "이관 메모 긴 글", adjust_reason: null },
+      { id: 2, session_id: 81, course_id: 1, units: 1, status: "done", memo: null, adjust_reason: null },
+      { id: 3, session_id: 82, course_id: 1, units: 1, status: "done", memo: null, adjust_reason: null },
+      { id: 4, session_id: 83, course_id: 1, units: 2, status: "done", memo: "구 체계 이월 메모", adjust_reason: null },
+      { id: 5, session_id: 84, course_id: 1, units: 1, status: "done", memo: "추가", adjust_reason: "출석 누락" },
+      { id: 6, session_id: 85, course_id: 1, units: 1, status: "cancelled", memo: "보강", adjust_reason: "잘못 누름" },
     ],
     payments: [
       { id: 1, course_id: 1, paid_at: "2026-08-01", kind: "course", voided_at: null, amount: 290000 },
@@ -429,21 +437,258 @@ test("원장 상세 — 직강 이력: 반 · 상태 · 회차 · 출석 날짜(
       { id: 4, course_id: 1, paid_at: "2026-08-02", kind: "course", voided_at: "2026-08-03T00:00:00Z", amount: 1 },
     ],
   });
+  const CA = (id) => portal.opaqueId("course_attendance", id);
   const r = await call(4, `/students/${S(10)}`);
   assert.equal(r.status, 200);
   const [c1, c4] = r.json.courseHistory;
+  // 완료 = done 출석 1+1+1(취소 회차의 출석도 DB 식과 같이 센다)+2+1 = 6 · 확인 완료 2 → 8 · 취소한 출석(6)은 안 센다
   assert.deepEqual([c1.courseKey, c1.level, c1.courseLevel, c1.status, c1.unitsTotal, c1.completedUnits, c1.remainingUnits, c1.ownerConfirmedUnits],
-    [portal.opaqueId("course", 1), "심화반", "advanced", "active", 8, 5, 3, 2]);
+    [portal.opaqueId("course", 1), "심화반", "advanced", "active", 8, 8, 0, 2]);
   assert.deepEqual(c1.attendance, [
-    { on: "2026-09-30", startTime: "09:00", units: 1, fromSlot: true },
-    { on: "2026-09-28", startTime: "19:00", units: 1, fromSlot: false },
+    { attendanceKey: CA(2), on: "2026-09-30", startTime: "09:00", units: 1, fromSlot: true, kind: "attend", reason: null, cancellable: true },
+    { attendanceKey: CA(1), on: "2026-09-28", startTime: "19:00", units: 1, fromSlot: false, kind: "attend", reason: null, cancellable: true },
+    { attendanceKey: CA(5), on: "2026-09-27", startTime: "19:00", units: 1, fromSlot: false, kind: "add", reason: "출석 누락", cancellable: true },
+    { attendanceKey: CA(4), on: "2026-01-16", startTime: null, units: 2, fromSlot: false, kind: "import", reason: null, cancellable: false },
   ]);                                                                         // 취소된 회차(9/29)는 목록에서 빠진다
+  assert.deepEqual(c1.cancelledAttendance, [{ attendanceKey: CA(6), on: "2026-09-26", startTime: "09:00", units: 1, reason: "잘못 누름" }]);
   assert.deepEqual([c1.paidOn, c1.refundedOn], [["2026-08-01"], []]);        // 무효 결제는 빠진다
-  assert.deepEqual([c4.status, c4.paidOn, c4.refundedOn], ["cancelled", ["2026-05-01"], ["2026-06-01"]]);
-  assert.equal(JSON.stringify(r.json).includes("290000"), false);
+  assert.deepEqual([c4.status, c4.paidOn, c4.refundedOn, c4.attendance, c4.cancelledAttendance], ["cancelled", ["2026-05-01"], ["2026-06-01"], [], []]);
+  const body = JSON.stringify(r.json);
+  for (const leak of ["290000", "이관 메모", "구 체계 이월 메모"]) assert.equal(body.includes(leak), false, leak);   // 금액 · 메모 원문은 없다
   assert.ok(!calls.select.some((q) => q.startsWith("payments?") && q.includes("amount")), "금액 칸은 읽지도 않는다");
   // 트레이너 계정 상세에는 직강 이력이 없다(담당 수강생이어도)
   const r2 = await call(2, `/students/${S(10)}`);
   assert.equal(r2.status, 200);
   assert.equal("courseHistory" in r2.json, false);
+});
+
+// ════════ §59d · 계약 §9.22 — 반 목록 · 회차 정정 · 원장 홈 · 수강생 직강 카드 ════════
+const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
+const kstAt = (ymd, hhmm) => new Date(Date.parse(`${ymd}T${hhmm}:00+09:00`)).toISOString();
+const WD = ["일", "월", "화", "수", "목", "금", "토"];
+const wdOf = (ymd) => new Date(`${ymd}T00:00:00Z`).getUTCDay();
+const CA = (id) => portal.opaqueId("course_attendance", id);
+const auditRows = () => calls.write.filter(([op, t]) => op === "insert" && t === "admin_audit").map(([, , row]) => row);
+
+test("반 목록 — 원장만 · 반 3개 · 요일 시각 묶음(칸 + 칸 없이 기록한 회차) · 인원 · 체크 명단(남은 회차) · 다음 칸 · 최근 회차", async () => {
+  const today = kst(Date.now());
+  const past = addDays(today, -7), soon = addDays(today, 7), d3 = addDays(today, -3);
+  reset({
+    trainer_slots: [
+      slot(901, { slot_start: kstAt(soon, "19:00") }),                       // 다가오는 칸(같은 요일 · 시각)
+      slot(900, { slot_start: kstAt(past, "19:00") }),                       // 지난 칸 — 순서가 뒤섞여 와도 시각순으로 본다
+      slot(902, { slot_start: kstAt(soon, "21:00"), status: "cancelled" }),  // 취소 칸은 안 온다
+      slot(903, { slot_start: kstAt(soon, "10:00"), trainer_id: 2 }),        // 남의 칸은 안 온다
+    ],
+    slot_bookings: [bk(60, 901, 10, "booked", { course_id: 1 }), bk(61, 901, 106, "cancelled", { course_id: 3 })],
+    course_sessions: [
+      { id: 81, slot_id: 900, held_on: past, start_time: "19:00:00", duration_min: 180, label: "심화반", status: "done", trainer_id: 4 },
+      { id: 82, slot_id: null, held_on: d3, start_time: "09:00:00", duration_min: 120, label: "중급반", status: "done", trainer_id: 4 },
+      { id: 83, slot_id: null, held_on: d3, start_time: null, duration_min: 180, label: "중급반", status: "done", trainer_id: 4 },   // 시각 없음 — 묶음 없음
+    ],
+    course_attendance: [
+      { id: 1, session_id: 81, course_id: 1, units: 1, status: "done" },
+      { id: 2, session_id: 81, course_id: 3, units: 1, status: "done" },
+      { id: 3, session_id: 81, course_id: 2, units: 1, status: "cancelled" },
+      { id: 4, session_id: 82, course_id: 2, units: 1, status: "done" },
+    ],
+  });
+  assert.deepEqual(await call(2, "/course-classes"), { status: 403, json: { error: { code: "owner_only" } } });
+  const r = await call(4, "/course-classes");
+  assert.equal(r.status, 200);
+  assert.equal(r.json.today, today);
+  assert.deepEqual(r.json.levels.map((l) => [l.courseLevel, l.level, l.headcount]),
+    [["beginner", "초급반", 0], ["intermediate", "중급반", 1], ["advanced", "심화반", 1]]);
+  const [beg, mid, adv] = r.json.levels;
+  assert.deepEqual([beg.students, beg.classes], [[], []]);
+  assert.deepEqual(mid.students, [{ studentKey: S(11), studentDisplayName: "나", studentPubgName: null, unitsLeft: 7, unitsTotal: 8, overdrawn: false }]);
+  assert.deepEqual(mid.classes, [{ classKey: `intermediate|${wdOf(d3)}|09:00`, courseLevel: "intermediate", weekday: wdOf(d3), weekdayLabel: WD[wdOf(d3)],
+    startTime: "09:00", durationMin: 120, capacity: null, headcount: 1, nextSlot: null,
+    recent: [{ on: d3, slotId: null, sessionKey: portal.opaqueId("course_session", 82), attendedCount: 1 }] }]);
+  assert.deepEqual(adv.students.map((x) => [x.studentKey, x.unitsLeft]), [[S(10), 5]]);       // 테스트 계정(#106)은 빠진다
+  assert.deepEqual(adv.classes, [{ classKey: `advanced|${wdOf(past)}|19:00`, courseLevel: "advanced", weekday: wdOf(past), weekdayLabel: WD[wdOf(past)],
+    startTime: "19:00", durationMin: 180, capacity: 3, headcount: 1,
+    nextSlot: { slotId: SL(901), startAt: kstAt(soon, "19:00"), bookedCount: 1, seatsLeft: 2 },
+    recent: [{ on: past, slotId: SL(900), sessionKey: portal.opaqueId("course_session", 81), attendedCount: 2 }] }]);
+  const all = await call(4, "/course-classes?includeTest=1");
+  assert.deepEqual(all.json.levels[2].students.map((x) => x.studentKey), [S(10), S(106)]);    // 이름순
+  assert.equal(all.json.levels[2].headcount, 2);
+});
+
+test("칸 있는 날 가드 — 그날 같은 반 직강 칸이 있으면 칸 없이 출석 · 정정을 409 slot_exists(칸 id)로 돌려보낸다", async () => {
+  const today = kst(Date.now());
+  reset({ trainer_slots: [slot(911, { slot_start: kstAt(today, "21:00"), status: "cancelled" }), slot(910, { slot_start: kstAt(today, "19:00") })] });
+  rpcOut.record_course_attendance = { sessionId: 75, heldOn: today, level: "심화반", recorded: [], alreadyRecorded: [], noShow: [] };
+  const body = { courseLevel: "advanced", heldOn: today, present: [S(10)] };
+  const exists = { status: 409, json: { error: { code: "slot_exists", slotId: SL(910) } } };
+  assert.deepEqual(await call(4, "/course-attendance", "POST", { ...body, startTime: "19:00" }), exists);
+  assert.deepEqual(await call(4, "/course-attendance", "POST", body), exists);                    // 시각을 안 주면 그날 그 반 칸 아무거나
+  assert.deepEqual(argsOf("record_course_attendance"), []);
+  assert.equal((await call(4, "/course-attendance", "POST", { ...body, startTime: "21:00" })).status, 200);   // 취소 칸 시각은 막지 않는다
+  assert.equal((await call(4, "/course-attendance", "POST", { ...body, startTime: "09:00" })).status, 200);   // 다른 시각 수업
+  assert.equal((await call(4, "/course-attendance", "POST", { ...body, courseLevel: "intermediate" })).status, 200);   // 다른 반
+  // 정정도 칸 없이 보낼 때 같은 가드를 탄다
+  assert.deepEqual(await call(4, "/course-attendance/corrections", "POST",
+    { kind: "add", studentId: S(10), reason: "출석 누락", courseLevel: "advanced", heldOn: today, startTime: "19:00" }), exists);
+  assert.deepEqual(argsOf("correct_course_attendance"), []);
+});
+
+test("회차 정정 — 출석 추가 · 보강: 원장만 · 사유 필수 · 칸 없이(반 · 날짜) 또는 칸으로 · 응답 키 · 기록(admin_audit) · DB 코드", async () => {
+  const today = kst(Date.now()), d2 = addDays(today, -2), d1 = addDays(today, -1);
+  reset({ trainer_slots: [slot(920, { slot_start: kstAt(d1, "19:00") })] });
+  const fake = (sessionId, heldOn) => (a) => {
+    db.course_attendance.push({ id: 700 + db.course_attendance.length, session_id: sessionId, course_id: 1, units: 1, status: "done" });
+    return { sessionId, heldOn, level: "심화반", kind: a.p_kind,
+      recorded: [{ studentId: 10, courseId: 1, unitsLeft: "4.00", overdrawn: false }], alreadyRecorded: [], noShow: [] };
+  };
+  rpcOut.correct_course_attendance = fake(90, d2);
+  const body = { kind: "makeup", studentId: S(10), reason: "  월요일 결석 보강  ", courseLevel: "advanced", heldOn: d2, startTime: "14:00" };
+  assert.deepEqual(await call(2, "/course-attendance/corrections", "POST", body), { status: 403, json: { error: { code: "owner_only" } } });
+  const r = await call(4, "/course-attendance/corrections", "POST", body);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, { kind: "makeup", attendanceKey: CA(700), sessionKey: portal.opaqueId("course_session", 90),
+    heldOn: d2, courseLevel: "advanced", studentKey: S(10), unitsLeft: 4, overdrawn: false });
+  assert.deepEqual(argsOf("correct_course_attendance")[0], { p_trainer_id: 4, p_kind: "makeup", p_student_id: 10, p_held_on: d2, p_level: "심화반",
+    p_slot_id: null, p_start_time: "14:00", p_duration_min: 180, p_reason: "월요일 결석 보강", p_actor: "staff:4", p_same_day_ok: false });
+  assert.deepEqual(auditRows().map((x) => [x.actor_id, x.action, x.target, x.detail.reason, x.detail.heldOn, x.detail.studentId]),
+    [["staff:4", "course.attendance.makeup", "course_attendance:700", "월요일 결석 보강", d2, 10]]);
+
+  // 칸으로 — 반 · 시각 · 길이는 칸이 정한다(같이 보내면 400) · 가드를 타지 않는다
+  calls.rpcArgs.length = 0;
+  rpcOut.correct_course_attendance = fake(91, d1);
+  const r2 = await call(4, "/course-attendance/corrections", "POST", { kind: "add", studentId: S(10), reason: "체크 누락", slotId: SL(920), sameDayOk: true });
+  assert.equal(r2.status, 200);
+  assert.equal(r2.json.kind, "add");
+  assert.deepEqual(argsOf("correct_course_attendance")[0], { p_trainer_id: 4, p_kind: "add", p_student_id: 10, p_held_on: null, p_level: null,
+    p_slot_id: 920, p_start_time: null, p_duration_min: null, p_reason: "체크 누락", p_actor: "staff:4", p_same_day_ok: true });
+
+  // 형식 · 사유 · 날짜 — 전부 400
+  const old = addDays(today, -400), tomorrow = addDays(today, 1);
+  for (const [bad, code] of [
+    [{ ...body, kind: "fix" }, "invalid_body"], [{ ...body, studentId: "x" }, "invalid_body"], [{ ...body, studentId: SL(10) }, "invalid_body"],
+    [{ ...body, reason: undefined }, "reason_required"], [{ ...body, reason: " 가 " }, "reason_required"],
+    [{ ...body, reason: "가".repeat(201) }, "reason_required"], [{ ...body, reason: 5 }, "invalid_body"],
+    [{ ...body, slotId: SL(920) }, "invalid_body"],                                          // 칸과 반을 같이
+    [{ kind: "add", studentId: S(10), reason: "사유", slotId: SL(920), startTime: "19:00" }, "invalid_body"],
+    [{ kind: "add", studentId: S(10), reason: "사유", slotId: "x" }, "invalid_body"],
+    [{ ...body, heldOn: tomorrow }, "future_date"], [{ ...body, heldOn: old }, "invalid_body"], [{ ...body, heldOn: "2026-02-30" }, "invalid_body"],
+    [{ ...body, startTime: "7pm" }, "invalid_body"], [{ ...body, durationMin: 200 }, "invalid_body"], [{ ...body, sameDayOk: "y" }, "invalid_body"],
+    [{ ...body, games: 1 }, "invalid_body"],
+  ]) {
+    const x = await call(4, "/course-attendance/corrections", "POST", bad);
+    assert.deepEqual([x.status, x.json?.error?.code], [400, code], JSON.stringify(bad));
+  }
+  // DB 판정 코드 그대로 — 한 명이라 사람별 코드를 바로 · 그 회차에 이미 있으면 already_recorded
+  for (const [out, status, code] of [
+    [{ error: "students_rejected", rejected: [{ studentId: 10, code: "level_mismatch" }] }, 409, "level_mismatch"],
+    [{ error: "students_rejected", rejected: [{ studentId: 10, code: "already_today" }] }, 409, "already_today"],
+    [{ sessionId: 90, heldOn: d2, level: "심화반", recorded: [], alreadyRecorded: [10], noShow: [] }, 409, "already_recorded"],
+    [{ error: "already_recorded" }, 409, "already_recorded"], [{ error: "session_cancelled" }, 409, "session_cancelled"],
+    [{ error: "reason_required" }, 400, "reason_required"], [{ error: "future_date" }, 400, "future_date"],
+  ]) {
+    rpcOut.correct_course_attendance = out;
+    const x = await call(4, "/course-attendance/corrections", "POST", body);
+    assert.deepEqual([x.status, x.json?.error?.code], [status, code], JSON.stringify(out));
+  }
+  assert.equal(auditRows().length, 2);                                                       // 실패는 기록하지 않는다
+});
+
+test("회차 정정 — 출석 취소: 원장만 · 사유 필수 · cancel_course_attendance · 응답 키 · 기록 · 묶음 행 · 이미 취소 · 없는 출석", async () => {
+  reset();
+  rpcOut.cancel_course_attendance = { cancelled: true, attendanceId: 26, courseId: 1, studentId: 10, heldOn: "2026-09-30", unitsLeft: "6.00" };
+  assert.deepEqual(await call(2, `/course-attendance/${CA(26)}/cancel`, "POST", { reason: "잘못 누름" }),
+    { status: 403, json: { error: { code: "owner_only" } } });
+  const r = await call(4, `/course-attendance/${CA(26)}/cancel`, "POST", { reason: " 잘못 누름 " });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, { cancelled: true, attendanceKey: CA(26), courseKey: portal.opaqueId("course", 1), studentKey: S(10),
+    heldOn: "2026-09-30", unitsLeft: 6 });
+  assert.deepEqual(argsOf("cancel_course_attendance")[0], { p_trainer_id: 4, p_attendance_id: 26, p_reason: "잘못 누름", p_actor: "staff:4" });
+  assert.deepEqual(auditRows().map((x) => [x.action, x.target, x.detail.reason, x.detail.studentId]),
+    [["course.attendance.cancel", "course_attendance:26", "잘못 누름", 10]]);
+  for (const [path, body, code] of [
+    [`/course-attendance/${CA(26)}/cancel`, {}, "reason_required"],
+    [`/course-attendance/${CA(26)}/cancel`, { reason: "x" }, "reason_required"],
+    [`/course-attendance/${CA(26)}/cancel`, { reason: "사유", extra: 1 }, "invalid_body"],
+    ["/course-attendance/zz/cancel", { reason: "사유" }, "invalid_body"],
+    [`/course-attendance/${S(26)}/cancel`, { reason: "사유" }, "invalid_body"],             // 다른 종류의 키
+  ]) assert.deepEqual((await call(4, path, "POST", body)).json, { error: { code } }, path + JSON.stringify(body));
+  for (const [code, status] of [["already_cancelled", 409], ["bulk_row", 409], ["not_found", 404]]) {
+    rpcOut.cancel_course_attendance = { error: code };
+    assert.deepEqual(await call(4, `/course-attendance/${CA(26)}/cancel`, "POST", { reason: "사유" }), { status, json: { error: { code } } });
+  }
+  assert.equal(auditRows().length, 1);
+});
+
+test("원장 홈 — 직강 숫자(이번 주 강의 · 오늘 · 출석 · 결석) · 남은 회차 적은 직강생(2 이하 · 음수 먼저 · 테스트 제외) · 취소 출석은 명단 밖", async () => {
+  reset({
+    trainer_slots: [
+      slot(950, { slot_start: "2025-01-07T10:00:00Z" }),                                   // 1/7 19:00 KST
+      slot(951, { slot_start: "2025-01-08T00:00:00Z" }),                                   // 1/8 09:00 KST(오늘)
+      slot(952, { slot_start: "2025-01-09T00:00:00Z", status: "cancelled" }),
+    ],
+    slot_bookings: [bk(960, 950, 10, "done", { course_id: 1 }), bk(961, 950, 11, "no_show"), bk(962, 951, 10, "booked", { course_id: 1 })],
+    course_sessions: [
+      { id: 970, held_on: "2025-01-07", start_time: "19:00:00", duration_min: 180, label: "심화반", status: "done", slot_id: 950, trainer_id: 4 },
+      { id: 971, held_on: "2025-01-08", start_time: "14:00:00", duration_min: 180, label: "중급반", status: "done", slot_id: null, trainer_id: 4 },
+      { id: 972, held_on: "2025-01-09", start_time: "14:00:00", duration_min: 180, label: "중급반", status: "done", slot_id: null, trainer_id: 4 },
+    ],
+    course_attendance: [
+      { id: 1, session_id: 970, course_id: 1, units: 1, status: "done" },
+      { id: 2, session_id: 970, course_id: 3, units: 1, status: "cancelled" },
+      { id: 3, session_id: 971, course_id: 2, units: 1, status: "done" },
+      { id: 4, session_id: 972, course_id: 2, units: 1, status: "cancelled" },
+    ],
+    courses: [course(1, 10, "심화반", { confirmed_units: 6 }), course(2, 11, "중급반"), course(3, 106, "심화반", { units_total: 2 }),
+      course(5, 12, "초급반", { units_total: 4, confirmed_units: 5 })],
+  });
+  const r = await call(4, "/owner/dashboard?date=2025-01-08");
+  assert.equal(r.status, 200);
+  const { courseSummary: cs, lessons } = r.json;
+  // 강의 = 직강 칸 2(취소 칸 제외) + 칸 없이 기록한 회차 중 출석 있는 것 1(취소 출석뿐인 972 제외)
+  assert.deepEqual([cs.classesWeek, cs.classesToday, cs.attendanceWeek, cs.absentWeek], [3, 2, 2, 1]);
+  assert.deepEqual(cs.lowUnits, [
+    { studentKey: S(12), displayName: "다", pubgName: null, courseLevel: "beginner", unitsLeft: -1, unitsTotal: 4 },
+    { studentKey: S(10), displayName: "가", pubgName: null, courseLevel: "advanced", unitsLeft: 1, unitsTotal: 8 },
+  ]);                                                                                       // #106(테스트 · 남은 2)은 빠진다
+  assert.deepEqual(lessons.find((l) => l.key === portal.opaqueId("course_session", 970)).students.map((x) => x.displayName), ["가"]);
+  assert.deepEqual(lessons.find((l) => l.key === portal.opaqueId("course_session", 972)).students, []);
+  assert.equal(r.json.thresholds.courseLowUnits, 2);
+});
+
+test("수강생 직강 카드 — 출석 이력(최근부터 · 종류 · 취소 · 취소 회차 제외 · 메모 원문 없음) · 다음 강의(그 강의 예약 중 가장 이른 것) · 내부 id 없음", async () => {
+  const t1 = at(grid(Date.now() + 2 * DAY)), t2 = at(grid(Date.now() + 9 * DAY));
+  reset({
+    courses: [course(1, 10, "심화반", { confirmed_units: 2 }), course(6, 10, "심화반", { status: "cancelled", started_on: "2026-06-01" })],
+    course_sessions: [
+      { id: 980, held_on: "2026-09-28", start_time: "19:00:00", status: "done", source: "panel" },
+      { id: 981, held_on: "2026-01-16", start_time: null, status: "done", source: "sheet_import" },
+      { id: 982, held_on: "2026-09-29", start_time: "19:00:00", status: "cancelled", source: "panel" },
+      { id: 983, held_on: "2026-09-30", start_time: "09:00:00", status: "done", source: "panel" },
+      { id: 984, held_on: "2026-09-27", start_time: "09:00:00", status: "done", source: "panel" },
+    ],
+    course_attendance: [
+      { id: 1, session_id: 980, course_id: 1, units: 1, status: "done", memo: null },
+      { id: 2, session_id: 981, course_id: 1, units: 3, status: "done", memo: "이관 메모 원문" },
+      { id: 3, session_id: 982, course_id: 1, units: 1, status: "done", memo: null },
+      { id: 4, session_id: 983, course_id: 1, units: 1, status: "done", memo: "보강" },
+      { id: 5, session_id: 984, course_id: 1, units: 1, status: "cancelled", memo: "추가" },
+    ],
+    trainer_slots: [slot(991, { slot_start: t2 }), slot(990, { slot_start: t1 }),
+      slot(992, { slot_start: t1, lesson_type: "participate", course_level: null, trainer_id: 2 })],
+    slot_bookings: [bk(996, 991, 10, "booked", { course_id: 1 }), bk(995, 990, 10, "booked", { course_id: 1 }), bk(997, 992, 10, "booked")],
+  });
+  const r = await callStudent(10, "/summary");
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.courses.length, 1);                                                    // 취소 강의는 숨김(종전 그대로)
+  const [c] = r.json.courses;
+  assert.deepEqual(c.attendance, [
+    { on: "2026-09-30", startTime: "09:00", units: 1, kind: "makeup" },
+    { on: "2026-09-28", startTime: "19:00", units: 1, kind: "attend" },
+    { on: "2026-01-16", startTime: null, units: 3, kind: "import" },
+  ]);
+  assert.deepEqual(c.nextClass, { bookingId: B(995), startAt: t1, durationMin: 180, courseLevel: "advanced" });
+  // 완료 = done 1 + 3 + 1(취소 회차의 출석도 DB 식처럼 센다) + 1 = 6 · 확인 2 → 8 · 남은 0
+  assert.deepEqual([c.unitsTotal, c.completedUnits, c.remainingUnits], [8, 8, 0]);
+  const body = JSON.stringify(r.json);
+  for (const leak of ["courseId", "이관 메모"]) assert.equal(body.includes(leak), false, leak);
 });

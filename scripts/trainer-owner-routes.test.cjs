@@ -587,7 +587,9 @@ test("대시보드 — 카드 · 이번 주 수업 · 처리 대기 · 트레이
   ]);
   assert.equal(d.trainers[0].trainerKey, T(2));
   assert.deepEqual(d.trainers.map((t) => t.colorKey), ["ink", "gold", "grey"]);   // /students 칩과 같은 키
-  assert.deepEqual(d.thresholds, { pendingRedHours: 6, slotsRedWindowHours: 72, slotsYellowWindowDays: 7 });
+  assert.deepEqual(d.thresholds, { pendingRedHours: 6, slotsRedWindowHours: 72, slotsYellowWindowDays: 7, courseLowUnits: 2 });
+  // 직강 숫자(§9.22.4) — 이 주의 회차는 예정(scheduled)뿐이고 직강 칸 · 진행 중 강의가 없다 → 전부 0
+  assert.deepEqual(d.courseSummary, { classesWeek: 0, classesToday: 0, attendanceWeek: 0, absentWeek: 0, lowUnits: [] });
   const body = JSON.stringify(d);
   for (const leak of ["memo", "정정", "created_by", "student_name", "1234567890", "adjreq"]) assert.equal(body.includes(leak), false, leak);
 });

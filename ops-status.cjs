@@ -11,7 +11,8 @@
 "use strict";
 
 // 기준값 — #385 §1.2 오너 확정(2026-09-27). 전체판에서 ops_settings 표로 옮긴다(앱 배포 없이 바꾸려고).
-const THRESHOLDS = Object.freeze({ pendingRedHours: 6, slotsRedWindowHours: 72, slotsYellowWindowDays: 7 });
+// courseLowUnits — 원장 홈 「남은 회차 적은 직강생」 기준(이 값 이하 · 음수 포함 · 계약 §9.22). 잔여 알림(server.js DIRECT_LOW)과 같은 2.
+const THRESHOLDS = Object.freeze({ pendingRedHours: 6, slotsRedWindowHours: 72, slotsYellowWindowDays: 7, courseLowUnits: 2 });
 
 const DAY_MS = 86400_000;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -74,7 +75,7 @@ function trainerColor(row) {
 //   record  = 예약 없이 기록한 수업. 같은 날 · 같은 트레이너 · 같은 수강생의 done 예약이 있으면 그 예약의 기록이라 뺀다.
 //             한 번에 넣은 행(같은 트레이너 · 날짜 · created_at — 봇 · 앱 둘 다 한 요청으로 넣는다)은 한 수업이다.
 //   course  = 직강 회차. 학생 · 트레이너는 출석 행 → 강의에서 온다(출석 행이 없으면 빈 목록 · 트레이너 null).
-//             회차 행에 진행자(trainer_id · §59)가 있으면 그 값이 먼저다.
+//             회차 행에 진행자(trainer_id · §59)가 있으면 그 값이 먼저다. 취소된 출석(§59d 회차 정정)은 명단에서 뺀다.
 //   직강 반 수업 칸(§59 · lesson_type course)은 출석을 받기 전엔 booking(예약 명단)으로, 출석을 받은 뒤엔
 //   course(회차 · 출석 명단)로 **한 번만** 나온다 — 칸 하나가 수업 하나다(같은 칸이 두 줄로 세지지 않게).
 const STAGE = { booked: 0, pending_review: 1, done: 2, no_show: 2 };
@@ -140,7 +141,8 @@ function buildLessons({ slots = [], bookings = [], sessions = [], courseSessions
   const courseById = new Map(courses.map((c) => [c.id, c]));
   for (const cs of courseSessions) {
     if (cs.status === "cancelled") continue;
-    const cids = attendance.filter((a) => a.session_id === cs.id).map((a) => courseById.get(a.course_id)).filter(Boolean);
+    const cids = attendance.filter((a) => a.session_id === cs.id && a.status !== "cancelled")
+      .map((a) => courseById.get(a.course_id)).filter(Boolean);
     const tids = [...new Set(cids.map((c) => c.trainer_id).filter((t) => t != null))];
     const levels = [...new Set(cids.map((c) => c.level).filter(Boolean))];
     out.push({ kind: "course", ref: cs.id, date: cs.held_on,
@@ -156,6 +158,43 @@ function buildLessons({ slots = [], bookings = [], sessions = [], courseSessions
     || (a.startAt === null) - (b.startAt === null)
     || String(a.startAt || "").localeCompare(String(b.startAt || ""))
     || KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.ref - b.ref);
+}
+
+// ── 직강 숫자(원장 홈 · 계약 §9.22) ── 이번 주 강의 · 오늘 강의 · 출석 · 결석
+//   slots          = 이번 주 칸(취소 제외 · 호출자가 거른다) — lesson_type course 만 센다
+//   courseSessions = 이번 주 회차 · attendance = 그 회차들의 출석 행(status · units) · bookings = 이번 주 칸 예약
+//   강의 = 직강 칸 하나 + 칸 없이 기록한 회차 하나(출석 done 이 있는 것). 칸에 딸린 회차는 칸으로 한 번만 센다.
+//   출석 = done 출석 units 합 · 결석 = 직강 칸 예약 중 no_show.
+function buildCourseSummary({ slots = [], courseSessions = [], attendance = [], bookings = [], today }) {
+  const courseSlots = slots.filter((s) => s.lesson_type === "course");
+  const courseSlotIds = new Set(courseSlots.map((s) => s.id));
+  const live = courseSessions.filter((cs) => cs.status !== "cancelled");
+  const liveIds = new Set(live.map((cs) => cs.id));
+  const doneAtt = attendance.filter((a) => a.status === "done" && liveIds.has(a.session_id));
+  const attended = new Set(doneAtt.map((a) => a.session_id));
+  const loose = live.filter((cs) => cs.slot_id == null && attended.has(cs.id));
+  const slotDay = (s) => kstDate(Date.parse(s.slot_start));
+  return {
+    classesWeek: courseSlots.length + loose.length,
+    classesToday: courseSlots.filter((s) => slotDay(s) === today).length + loose.filter((cs) => cs.held_on === today).length,
+    attendanceWeek: doneAtt.reduce((n, a) => n + Number(a.units || 0), 0),
+    absentWeek: bookings.filter((b) => b.status === "no_show" && b.span_head_id == null && courseSlotIds.has(b.slot_id)).length,
+  };
+}
+
+// 남은 회차 적은 직강생 — progress = loadCourseProgress(진행 중) 결과 Map<studentId, 요약[]>.
+//   사람 · 반마다 다음 출석이 빠질 강의(pickCourse)의 남은 회차가 기준값 이하면 넣는다(음수 = 초과 출석 · 맨 앞).
+//   반환 [{ studentId, level, unitsLeft, unitsTotal }] — 적은 순 · 같으면 studentId 순. 이름 · 키는 호출자가 씌운다.
+function lowUnitsList(progress, pickCourse, th = THRESHOLDS) {
+  const out = [];
+  for (const [studentId, list] of progress) {
+    for (const level of [...new Set(list.filter((c) => c.status === "active").map((c) => c.level))]) {
+      const c = pickCourse(list, level);
+      if (!c || !(Number(c.remainingUnits) <= th.courseLowUnits)) continue;
+      out.push({ studentId, level, unitsLeft: Number(c.remainingUnits), unitsTotal: Number(c.unitsTotal) });
+    }
+  }
+  return out.sort((a, b) => a.unitsLeft - b.unitsLeft || a.studentId - b.studentId);
 }
 
 // ── 처리 대기 ── items = { payment_request: [ISO…], adjustment_request: […], link_request: […], booking_review: […] }
@@ -205,5 +244,5 @@ function buildTrainerRows({ trainers, lessons, sessions, openSlots, assigned, re
 module.exports = {
   THRESHOLDS, weekOf, kstDate, kstStartIso, addDays, isRealDate,
   isLessonRow, sourceOf, worst, pendingColor, slotColor, trainerColor,
-  buildLessons, buildPending, buildTrainerRows, PENDING_KINDS,
+  buildLessons, buildPending, buildTrainerRows, PENDING_KINDS, buildCourseSummary, lowUnitsList,
 };

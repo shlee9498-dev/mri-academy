@@ -4,7 +4,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const ops = require("../ops-status.cjs");
-const { summarizeCourses } = require("../course-progress.cjs");
+const { summarizeCourses, pickCourse, attendanceKind } = require("../course-progress.cjs");
 
 test("주 = 그 날이 든 월~일 · 날짜 판정", () => {
   assert.deepEqual(ops.weekOf("2025-01-08"), { from: "2025-01-06", to: "2025-01-12" });   // 수
@@ -219,4 +219,44 @@ test("강의 고르기 사본(pickCourse · §59 course_pick 과 같은 규칙) 
   assert.equal(pickCourse([c("2026-09-01", 3, { status: "paused" })], "심화반"), null);
   assert.equal(pickCourse([c("2026-09-01", 3)], "중급반"), null);
   assert.equal(pickCourse([], "심화반"), null);
+});
+
+test("직강 숫자 · 남은 회차 적은 직강생 · 출석 종류(§59d · 계약 §9.22) — 취소 출석 · 취소 회차 · 취소 칸은 안 센다", () => {
+  const slots = [
+    { id: 1, lesson_type: "course", slot_start: "2025-01-07T10:00:00Z", status: "open" },
+    { id: 2, lesson_type: "course", slot_start: "2025-01-07T15:30:00Z", status: "open" },     // 1/8 00:30 KST — 오늘(1/8)로 센다
+    { id: 3, lesson_type: "participate", slot_start: "2025-01-08T01:00:00Z", status: "open" },
+  ];
+  const courseSessions = [
+    { id: 10, held_on: "2025-01-07", slot_id: 1, status: "done" },
+    { id: 11, held_on: "2025-01-08", slot_id: null, status: "done" },
+    { id: 12, held_on: "2025-01-08", slot_id: null, status: "cancelled" },                     // 취소 회차 — 출석이 있어도 안 센다
+    { id: 13, held_on: "2025-01-09", slot_id: null, status: "done" },                          // 취소 출석뿐
+  ];
+  const attendance = [
+    { session_id: 10, status: "done", units: 1 }, { session_id: 10, status: "cancelled", units: 1 },
+    { session_id: 11, status: "done", units: 1 }, { session_id: 11, status: "done", units: 1 },
+    { session_id: 12, status: "done", units: 1 }, { session_id: 13, status: "cancelled", units: 1 },
+  ];
+  const bookings = [{ slot_id: 1, status: "no_show", span_head_id: null }, { slot_id: 3, status: "no_show", span_head_id: null },
+    { slot_id: 2, status: "booked", span_head_id: null }];
+  assert.deepEqual(ops.buildCourseSummary({ slots, courseSessions, attendance, bookings, today: "2025-01-08" }),
+    { classesWeek: 3, classesToday: 2, attendanceWeek: 3, absentWeek: 1 });
+
+  const prog = new Map([
+    [7, [{ level: "심화반", status: "active", startedOn: "2026-01-01", remainingUnits: 0, unitsTotal: 8 },
+         { level: "심화반", status: "active", startedOn: "2026-05-01", remainingUnits: 8, unitsTotal: 8 }]],   // 재등록 — 다음 출석은 새 강의(8)
+    [8, [{ level: "중급반", status: "active", startedOn: "2026-01-01", remainingUnits: 2, unitsTotal: 8 }]],
+    [9, [{ level: "초급반", status: "active", startedOn: "2026-01-01", remainingUnits: -2, unitsTotal: 4 },
+         { level: "심화반", status: "paused", startedOn: "2026-01-01", remainingUnits: 1, unitsTotal: 8 }]],    // 멈춘 강의는 안 본다
+  ]);
+  assert.deepEqual(ops.lowUnitsList(prog, pickCourse), [
+    { studentId: 9, level: "초급반", unitsLeft: -2, unitsTotal: 4 },
+    { studentId: 8, level: "중급반", unitsLeft: 2, unitsTotal: 8 },
+  ]);
+  assert.equal(ops.THRESHOLDS.courseLowUnits, 2);
+
+  assert.deepEqual([attendanceKind("추가", "panel"), attendanceKind("보강", "panel"), attendanceKind(" 추가", "panel"),
+    attendanceKind("긴 이관 메모", "sheet_import"), attendanceKind(null, "photo_recount"), attendanceKind(null, "panel")],
+    ["add", "makeup", "attend", "import", "import", "attend"]);
 });
