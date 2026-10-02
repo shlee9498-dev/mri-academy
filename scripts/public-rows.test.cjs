@@ -93,9 +93,9 @@ test("성장 기록 — 수강 성장 등록(시작 → 등록 때) · 정기 �
   const out = progressPublic(rows);
   assert.deepEqual(out.map((s) => [s.alias, s.delta.tierFrom, s.delta.tierTo, s.delta.seasons]), [
     ["가나**", "Platinum 2", "Master", 2],
-    ["하거**", "Gold 3", "Crystal 4", 0],
-    ["마바**", "Crystal 4", "Diamond 2", 1],
-    ["버서**", "Gold 2", "Platinum 3", 1],
+    ["하**", "Gold 3", "Crystal 4", 0],                                         // 세 글자 닉 → 앞 한 글자(검수 13차)
+    ["마**", "Crystal 4", "Diamond 2", 1],
+    ["버**", "Gold 2", "Platinum 3", 1],
   ]);
   const top = out[0];
   assert.deepEqual(top.trajectory.map((p) => p.rankPoint), [2485, 3408]);                     // 사이트: 첫 = 수강 전 RP · 끝 = 지금 RP
@@ -111,8 +111,8 @@ test("성장 기록 — 수강 성장 등록(시작 → 등록 때) · 정기 �
 
 test("성장 기록 닉 — 클랜 태그(GmI_ · Gm + 구분자)를 떼고 가린다 · 그래도 겹치면 상승 순 A · B · 테스트 계정 추적은 뺀다", () => {
   assert.equal(maskNick("GmI_hello"), "he**");
-  assert.equal(maskNick("Gmi_abc"), "ab**");
-  assert.equal(maskNick("Gm.xyz"), "xy**");
+  assert.equal(maskNick("Gmi_abcd"), "ab**");
+  assert.equal(maskNick("Gm.wxyz"), "wx**");
   assert.equal(maskNick("GmI_"), "Gm**");                                   // 태그만 있으면 원래 닉으로
   assert.equal(maskNick("Gmoney"), "Gm**");                                 // 구분자 없는 「Gm」은 태그가 아니다
   assert.equal(maskNick("GmIAce"), "Gm**");
@@ -120,6 +120,10 @@ test("성장 기록 닉 — 클랜 태그(GmI_ · Gm + 구분자)를 떼고 가�
   assert.equal(maskNick("GmI_AB"), "A**");
   assert.equal(maskNick("GmI_진"), "진**");
   assert.equal(maskNick("세진"), "세**");                                    // 태그 없는 두 글자 닉도 같다
+  assert.equal(maskNick("GmI_홍길동"), "홍**");                              // 세 글자 이하 → 앞 한 글자만(검수 13차)
+  assert.equal(maskNick("GmI_abc"), "a**");
+  assert.equal(maskNick("홍길동"), "홍**");
+  assert.equal(maskNick("GmI_abcd"), "ab**");                                // 네 글자부터 두 글자
   const { TEST_STUDENT_IDS } = require("../test-accounts.cjs");
   const TEST_ID = [...TEST_STUDENT_IDS][0];
   const pair = (name, from, to, base) => [

@@ -33,14 +33,15 @@ function scrubText(text, words, to = "레슨생") {
 // ── 공개 성장 기록(GET /api/progress-public · 사이트 「기록실」 · gmi-progress.html) ──
 // 닉은 앞 두 글자 + **(2026-07-29 오너 승인 규격 「세**」 · 10/3 오너 「공개 거부 없음 · 가림 규칙 그대로」).
 //   클랜 태그(「GmI_」 · 「Gm」과 그 뒤 구분자)는 떼고 나머지에서 센다 — 태그째 가리면 여럿이 「Gm**」로 겹친다(10/3 지휘).
-//   남은 닉이 두 글자 이하면 앞 한 글자만 남긴다(「GmI_세진」 → 「세**」 · 두 글자 닉이 통째로 드러나지 않게 · 검수 12차).
+//   남은 닉이 세 글자 이하면 앞 한 글자만 남긴다(「GmI_세진」 → 「세**」 · 「GmI_홍길동」 → 「홍**」 — 짧은 닉 · 한글 세 글자 이름이
+//   두 글자로 거의 드러나지 않게 · 검수 12차 · 13차).
 //   태그만 있는 닉 · 구분자 없는 닉(「GmIAce」)은 원래 닉으로 가린다(「Gm**」). 그래도 겹치면 progressPublic 이 상승 순으로 「 A」 · 「 B」를 붙인다.
 const CLAN_TAG = /^(?:gmi|gm)[^0-9A-Za-z가-힣]+/i;
 function maskNick(n) {
   const t = String(n || "").trim();
   if (!t) return "익명";
   const chars = Array.from(t.replace(CLAN_TAG, "") || t);
-  return chars.slice(0, chars.length <= 2 ? 1 : 2).join("") + "**";
+  return chars.slice(0, chars.length <= 3 ? 1 : 2).join("") + "**";
 }
 // 티어 표기 — 영문 · 하위 단계까지(「Platinum 2」) · 마스터는 단계 없이 · 서바이버 = tier_index 8(RP 컷 · server.js tierIndex)
 function tierText(r) {
