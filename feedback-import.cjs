@@ -19,6 +19,14 @@
 //   students.discord_id  — 비어 있고 요청이 fill:true 일 때만 · 그 id 를 가진 수강생이 없을 때만(어플 9/30 규칙)
 // 무엇을 안 하나: 기존 복기 · 답 수정 없음. 디스코드에는 쓰지 않는다(읽기만 — 시험이 소스를 검사한다).
 //   글쓴이가 명부의 다른 수강생이면(부딪힘) 그 채널은 아무것도 쓰지 않고 멈춘다(어플 9/30).
+//
+// 글쓴이 모드(채널에 byAuthor:true · 2026-10-03 지휘 주문 · 오너 「3~9월 피드백 복기 앱으로」) — 그룹 채널용.
+//   · 수강생 = 글쓴이 디스코드 id ↔ students.discord_id 가 맞을 때만(채널 이름 · 닉네임으로 붙이지 않는다). 한 채널에 여러 수강생이면
+//     각자 자기 복기로 들어간다. 못 맞춘 글쓴이는 넣지 않고 결과의 unmatched(디스코드 id · 건수 · 기간)로만 남긴다(오너 확인 목록).
+//   · 잡담 · 일정 연락은 뺀다 — chatterOf(양식 표시가 없고 짧은 말 · 일정 말). 사진이 있는 글은 늘 남긴다.
+//   · 트레이너 글은 답(review_feedback)으로만 넣는다 — 그 복기에 단 답장이거나, 채널에 수강생이 한 명이고 바로 앞 글이
+//     그 수강생 복기(72시간 안)일 때. 그 밖(그룹 채널의 답장 없는 글 · 앞선 복기 없음)은 넣지 않고 trainerUnattached 로 센다.
+//   · 짝 기록(feedback_channel_map)과 명부 채우기(fill)는 하지 않는다. studentId 는 요청에 넣지 않는다.
 // ============================================================
 "use strict";
 const crypto = require("node:crypto");
@@ -38,6 +46,13 @@ const MAX_MSGS_PER_CH = 3000;
 const PAGE_DELAY_MS = 300;
 const STALE_MS = 15 * 60_000;                       // 다른 프로세스가 돌리는 중(배포 겹침) — 채널마다 heartbeat · 15분 넘게 조용하면 죽은 것으로 본다
 const PHOTO_ONLY_ANSWER = "사진을 같이 보냈어요";      // 글 없이 사진만 보낸 트레이너 답(overall 은 본문이 있어야 한다)
+const STRICT_ANSWER_MS = 72 * 3600_000;             // 글쓴이 모드 — 답장 표시 없는 트레이너 글은 바로 앞 복기가 72시간 안일 때만 답
+const CHATTER_MAX = 25;                             // 글쓴이 모드 — 양식 표시 없이 이보다 짧으면 잡담(「넵 감사합니다」 · 「오늘도 고생하셨어요」)
+const SCHEDULE_MAX = 120;                           // 글쓴이 모드 — 양식 표시 없이 이보다 짧고 일정 말이 있으면 일정 연락
+// 수업 노트 표시 — 양식 기호 · 복기 말 · 배그 수업 말. 하나라도 있으면 잡담 · 일정으로 보지 않는다.
+const FORM_MARK = /📅|🎯|🔥|✅|📝|📌|날짜|배운|느낀|목표|피드백|복기|교전|운영|포지션|에임|반동|자기장|피킹|엄폐|각도|사격|탄착|감도|파밍|차량|수류탄|연막/;
+// 일정 말 — 시각 · 요일 · 가능 여부 · 지각 · 취소 · 변경 · 접속
+const SCHEDULE_WORD = /(?<![\d.])\d{1,2}\s*시(?!간)|\d{1,2}:\d{2}|내일|모레|오늘\s*(?:밤|저녁|오후|오전)|이번\s*주|다음\s*주|[월화수목금토일]요일|주말|가능하(?:세|신|실|시)|괜찮으(?:세|신)|될까요|되실까|늦(?:을|어|게|었)|지각|취소|변경|미뤄|미룰|연기|접속|들어가|대기|일정|스케줄|시간\s*(?:되|괜|가능|맞|어때)/;
 
 const kstDate = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
 const shiftDate = (ymd, days) => new Date(Date.parse(`${ymd}T00:00:00Z`) + days * 86400_000).toISOString().slice(0, 10);
@@ -45,6 +60,15 @@ const md = (ymd) => `${Number(ymd.slice(5, 7))}/${Number(ymd.slice(8, 10))}`;
 const SNOWFLAKE = /^\d{15,21}$/;
 
 // ── 순수 함수(시험: scripts/feedback-import.test.cjs) ─────────────────────
+
+// 잡담 · 일정 판정(글쓴이 모드) → "short" | "schedule" | null(수업 노트). 사진 여부는 부르는 쪽이 본다(사진이 있으면 늘 남긴다).
+function chatterOf(text) {
+  const t = String(text || "").trim();
+  if (FORM_MARK.test(t)) return null;
+  if (t.length < SCHEDULE_MAX && SCHEDULE_WORD.test(t)) return "schedule";   // 짧은 일정 연락도 일정으로 센다(「내일 8시 가능하세요?」)
+  if (t.length < CHATTER_MAX) return "short";
+  return null;
+}
 
 // discord.js 메시지(또는 시험 픽스처) → 판정에 쓰는 모양만. 스레드 안 글은 답장 표시가 없으면 스레드 시작 글에 답한 것으로 본다.
 function normMessage(m, threadStarterId = null) {
@@ -93,9 +117,12 @@ function lessonDateOf(text, msgMs) {
 //   → { stop, studentAuthor, fillCandidate, reviews[], answers[], skipped{} }
 //     stop = null | "collision"(다른 수강생 글) | "ambiguous_author"(명부 id 가 비었는데 모르는 글쓴이가 둘 이상)
 function planChannel(msgs, ctx) {
-  const skipped = { system: 0, bot: 0, notice: 0, pinned: 0, short: 0, empty: 0, fileOnly: 0, unknown: 0 };
+  const byAuthor = ctx.byAuthor === true;
+  const skipped = { system: 0, bot: 0, notice: 0, pinned: 0, short: 0, empty: 0, fileOnly: 0, unknown: 0,
+    ...(byAuthor ? { schedule: 0 } : {}) };
   // files = 사진 밖 첨부(영상 등) 전부 — 옮기지 않는다(오너 판정 대기 · 결과에 건수만)
-  const out = { stop: null, studentAuthor: null, fillCandidate: null, reviews: [], answers: [], skipped, files: 0 };
+  const out = { stop: null, studentAuthor: null, fillCandidate: null, reviews: [], answers: [], skipped, files: 0,
+    ...(byAuthor ? { unmatched: new Map(), trainerUnattached: 0 } : {}) };
   const live = [];
   for (const m of msgs) {
     if (m.system) { skipped.system++; continue; }
@@ -104,6 +131,7 @@ function planChannel(msgs, ctx) {
     if (m.pinned) { skipped.pinned++; continue; }
     live.push(m);
   }
+  if (byAuthor) return planByAuthor(live, ctx, out);
   // 글쓴이 판정 — 트레이너(staff) · 그 수강생 · 다른 수강생(부딪힘 → 채널 멈춤) · 모르는 사람
   const others = new Set();
   for (const m of live) {
@@ -166,6 +194,70 @@ function planChannel(msgs, ctx) {
   return out;
 }
 
+// 글쓴이 모드 계획(planChannel 이 부른다 · live = 시스템 · 봇 · 공지 · 고정을 뺀 글).
+//   수강생 = studentByDiscord(명부 디스코드 id)만. 복기 묶음마다 studentId 를 단다.
+function planByAuthor(live, ctx, out) {
+  const { skipped } = out;
+  const imgs = (m) => m.atts.filter((a) => IMAGE_TYPES.has(a.type));
+  const files = (m) => m.atts.filter((a) => !IMAGE_TYPES.has(a.type));
+  // 채널의 비트레이너 글쓴이 수(명부 · 모르는 사람 모두) — 둘 이상이면 답장 표시 없는 트레이너 글은 누구 것인지 모른다
+  const people = new Set(live.filter((m) => m.authorId && !ctx.staffByDiscord.has(m.authorId)).map((m) => m.authorId));
+  const solo = people.size === 1;
+  const byMsg = new Map();             // 글 id → 수강생 복기(답장 대상 찾기)
+  const lastByAuthor = new Map();      // 디스코드 id → 그 사람의 마지막 복기
+  let lastOther = null;                // 마지막 비트레이너 글쓴이(잡담 포함 · 「바로 앞 글」 판정)
+  let cur = null;
+  for (const m of live) {
+    const staffId = m.authorId ? ctx.staffByDiscord.get(m.authorId) : undefined;
+    const sid = staffId == null && m.authorId ? ctx.studentByDiscord.get(m.authorId) : undefined;
+    const role = staffId != null ? "trainer" : (sid != null ? "student" : null);
+    if (role !== "trainer" && m.authorId) lastOther = m.authorId;
+    if (!role) {
+      skipped.unknown++;
+      if (m.authorId) {
+        const u = out.unmatched.get(m.authorId) || { n: 0, img: 0, first: m.ts, last: m.ts };
+        u.n++; u.img += imgs(m).length; u.first = Math.min(u.first, m.ts); u.last = Math.max(u.last, m.ts);
+        out.unmatched.set(m.authorId, u);
+      }
+      continue;
+    }
+    out.files += files(m).length;
+    const text = m.content.trim();
+    const canJoin = (g) => g && g.role === role && (role === "student" ? g.studentId === Number(sid) : g.staffId === staffId)
+      && m.ts - g.lastTs <= MERGE_MS && (g.body.length + (text ? text.length + 2 : 0)) <= (g.kind === "answer" ? ANSWER_MAX : BODY_MAX);
+    if (canJoin(cur)) {
+      if (text) cur.body = cur.body ? `${cur.body}\n\n${text}` : text;
+      cur.images.push(...imgs(m)); cur.files.push(...files(m));
+      cur.msgIds.push(m.id); cur.lastTs = m.ts;
+      if (cur.kind === "review") byMsg.set(m.id, cur);
+      continue;
+    }
+    if (!imgs(m).length) {
+      if (!text) { if (files(m).length) skipped.fileOnly++; else skipped.empty++; continue; }
+      const why = chatterOf(text);
+      if (why) { skipped[why]++; continue; }
+    }
+    if (role === "student") {
+      const g = { kind: "review", role, studentId: Number(sid), key: m.id, msgIds: [m.id], ts: m.ts, lastTs: m.ts, body: text,
+        images: imgs(m), files: files(m), ...lessonDateOf(text, m.ts) };
+      out.reviews.push(g); byMsg.set(m.id, g); lastByAuthor.set(m.authorId, g);
+      cur = g;
+      continue;
+    }
+    // 트레이너 — 답장한 복기 → (수강생 한 명 채널) 바로 앞 글이 그 수강생 복기이고 72시간 안 → 아니면 넣지 않는다
+    let target = m.refId ? byMsg.get(m.refId) : null;
+    if (!target && solo && lastOther) {
+      const g = lastByAuthor.get(lastOther);
+      if (g && m.ts - g.lastTs <= STRICT_ANSWER_MS) target = g;
+    }
+    if (!target) { out.trainerUnattached++; cur = null; continue; }
+    const a = { kind: "answer", role, staffId, key: m.id, reviewKey: target.key, msgIds: [m.id], ts: m.ts, lastTs: m.ts,
+      body: text, images: imgs(m), files: files(m) };
+    out.answers.push(a); cur = a;
+  }
+  return out;
+}
+
 // 수강생 복기 → 수업 연결. 그 트레이너와 그 날짜의 수업 기록이 정확히 1건이고 아직 다른 복기가 안 붙었으면 그 수업.
 //   날짜를 본문에서 못 찾았으면(글 날짜) 전날도 본다(밤 수업 뒤 자정 넘어 쓴 글). 아니면 null(연결 없음 · 수강생이 나중에 고를 수 있다).
 function anchorFor(g, lessons, trainerId, used, isLessonRow) {
@@ -189,7 +281,11 @@ function validateRequest(req) {
   const seen = new Set();
   for (const c of req.channels) {
     if (!c || !SNOWFLAKE.test(String(c.g)) || !SNOWFLAKE.test(String(c.ch))) return "channel_id";
-    if (!Number.isInteger(c.studentId) || c.studentId <= 0 || !Number.isInteger(c.trainerId) || c.trainerId <= 0) return "channel_people";
+    if (c.byAuthor !== undefined && c.byAuthor !== true) return "channel_by_author";
+    if (c.byAuthor === true) {                                       // 글쓴이 모드 — 수강생은 글쓴이로 정한다 · 채우기 없음
+      if (c.studentId !== undefined || c.fill === true) return "channel_people";
+      if (!Number.isInteger(c.trainerId) || c.trainerId <= 0) return "channel_people";
+    } else if (!Number.isInteger(c.studentId) || c.studentId <= 0 || !Number.isInteger(c.trainerId) || c.trainerId <= 0) return "channel_people";
     if (c.kind !== "lesson" && c.kind !== "lecture") return "channel_kind";
     if (c.fill !== undefined && typeof c.fill !== "boolean") return "channel_fill";
     if (seen.has(String(c.ch))) return "channel_duplicate";
@@ -292,15 +388,18 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
     let channel = null;
     try { channel = await client.channels.fetch(String(c.ch)); } catch (e) { res.status = "error"; res.error = `channel_${e?.status || e?.code || "fetch"}`; return res; }
     if (!channel || String(channel.guildId) !== String(c.g)) { res.status = "error"; res.error = "channel_guild_mismatch"; return res; }
-    const stu = base.students.get(Number(c.studentId));
-    if (!stu) { res.status = "error"; res.error = "student_missing"; return res; }
+    const byAuthor = c.byAuthor === true;
+    const stu = byAuthor ? null : base.students.get(Number(c.studentId));
+    if (!byAuthor && !stu) { res.status = "error"; res.error = "student_missing"; return res; }
     if (!base.staffIds.has(Number(c.trainerId))) { res.status = "error"; res.error = "trainer_missing"; return res; }
 
     const msgs = await readAll(channel);
-    const plan = planChannel(msgs, {
-      staffByDiscord: base.staffByDiscord, studentByDiscord: base.studentByDiscord,
-      studentId: c.studentId, studentDiscord: stu.discord_id ? String(stu.discord_id) : null,
-    });
+    const plan = planChannel(msgs, byAuthor
+      ? { byAuthor: true, staffByDiscord: base.staffByDiscord, studentByDiscord: base.studentByDiscord }
+      : { staffByDiscord: base.staffByDiscord, studentByDiscord: base.studentByDiscord,
+          studentId: c.studentId, studentDiscord: stu.discord_id ? String(stu.discord_id) : null });
+    // 복기마다 수강생 — 글쓴이 모드는 글쓴이, 아니면 요청의 그 수강생
+    const sidOf = (g) => (byAuthor ? g.studentId : Number(c.studentId));
     const studentReviews = plan.reviews.filter((g) => g.role === "student");
     Object.assign(res, {
       messages: msgs.length,
@@ -314,23 +413,32 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
       last: msgs.length ? kstDate(msgs[msgs.length - 1].ts) : null,
       fill: plan.fillCandidate ? (c.fill ? "would_fill" : "held") : "none",
     });
+    if (byAuthor) {
+      // 수강생별 복기 수 · 넣지 않는 트레이너 글 · 못 맞춘 글쓴이(디스코드 id 는 이 결과 행에만 — 로그에는 건수만)
+      res.byStudent = {};
+      for (const g of studentReviews) res.byStudent[g.studentId] = (res.byStudent[g.studentId] || 0) + 1;
+      res.trainerUnattached = plan.trainerUnattached;
+      res.unmatched = [...plan.unmatched].map(([id, u]) => ({ id, n: u.n, img: u.img, first: kstDate(u.first), last: kstDate(u.last) }));
+    }
     if (plan.stop) { res.status = "stopped"; res.reason = plan.stop; return res; }
 
-    // 수업 연결(레슨 채널 · 수강생 복기만)
+    // 수업 연결(레슨 채널 · 수강생 복기만) — 수강생마다 그 수강생 수업에서 찾는다
     const used = new Set();
-    let lessons = [];
+    const lessonsBy = new Map();
     if (c.kind === "lesson" && studentReviews.length) {
-      lessons = await sb.select("lesson_sessions", `select=id,played_at,trainer_id,games,created_by,memo&student_id=eq.${c.studentId}`);
-      const taken = await sb.select("lesson_reviews",
-        `select=lesson_session_id,src_msg&student_id=eq.${c.studentId}&author_role=eq.student&lesson_session_id=not.is.null`);
       const mine = new Set(plan.reviews.map((g) => g.key));
-      for (const t of taken) if (!mine.has(String(t.src_msg))) used.add(Number(t.lesson_session_id));   // 재실행: 이번 글이 잡은 자리는 다시 잡는다
+      for (const sid of new Set(studentReviews.map(sidOf))) {
+        lessonsBy.set(sid, await sb.select("lesson_sessions", `select=id,played_at,trainer_id,games,created_by,memo&student_id=eq.${sid}`));
+        const taken = await sb.select("lesson_reviews",
+          `select=lesson_session_id,src_msg&student_id=eq.${sid}&author_role=eq.student&lesson_session_id=not.is.null`);
+        for (const t of taken) if (!mine.has(String(t.src_msg))) used.add(Number(t.lesson_session_id));   // 재실행: 이번 글이 잡은 자리는 다시 잡는다
+      }
     }
     let anchored = 0;
     for (const g of plan.reviews) {
       g.lesson = null;
       if (g.role !== "student" || c.kind !== "lesson") continue;
-      const l = anchorFor(g, lessons, c.trainerId, used, isLessonRow);
+      const l = anchorFor(g, lessonsBy.get(sidOf(g)) || [], c.trainerId, used, isLessonRow);
       if (l) { g.lesson = l; used.add(Number(l.id)); anchored++; }
     }
     res.anchors = { lesson: anchored, none: plan.reviews.length - anchored };
@@ -340,15 +448,16 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
     const w = { reviewsNew: 0, reviewsExisting: 0, relinked: 0, answersNew: 0, answersExisting: 0, answersOrphan: 0,
       imagesNew: 0, imagesExisting: 0, imagesSkipped: 0, imagesFailed: 0, reads: 0 };
     res.written = w;
-    // ① 명부 discord_id 채우기(비어 있고 요청이 fill:true · 그 id 를 가진 수강생이 없을 때만)
-    if (plan.fillCandidate && c.fill === true) {
+    // ① 명부 discord_id 채우기(비어 있고 요청이 fill:true · 그 id 를 가진 수강생이 없을 때만 · 글쓴이 모드는 안 한다)
+    if (!byAuthor && plan.fillCandidate && c.fill === true) {
       const holder = await sb.select("students", `select=id&discord_id=eq.${plan.fillCandidate}&limit=1`);
       if (holder.length && Number(holder[0].id) !== Number(c.studentId)) { res.status = "stopped"; res.reason = "collision"; res.fill = "conflict"; return res; }
       const patched = holder.length ? [] : await sb.patch("students", `id=eq.${c.studentId}&discord_id=is.null&select=id`, { discord_id: plan.fillCandidate });
       res.fill = patched.length ? "filled" : "kept";
     }
-    // ② 짝 기록(오너 목록) — 있으면 그대로 둔다
-    const mapRow = (await sb.select("feedback_channel_map", `select=src_channel&src_guild=eq.${c.g}&src_channel=eq.${c.ch}&limit=1`))[0];
+    // ② 짝 기록(오너 목록) — 있으면 그대로 둔다 · 글쓴이 모드는 채널 하나에 수강생이 여럿일 수 있어 남기지 않는다
+    const mapRow = byAuthor ? true
+      : (await sb.select("feedback_channel_map", `select=src_channel&src_guild=eq.${c.g}&src_channel=eq.${c.ch}&limit=1`))[0];
     if (!mapRow) {
       await sb.insert("feedback_channel_map", { src_guild: String(c.g), src_channel: String(c.ch), student_id: c.studentId, kind: "student",
         confirmed_by_staff_id: base.confirmedBy, confirmed_at: new Date(base.started).toISOString(), note: "피드백 이관 §57 · 오너 짝 목록 9/30" });
@@ -359,7 +468,7 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
       const at = new Date(g.ts).toISOString();
       const ymd = g.lesson ? String(g.lesson.played_at).slice(0, 10) : g.date;
       const row = {
-        student_id: c.studentId,
+        student_id: sidOf(g),
         anchor_kind: g.lesson ? "lesson" : "none",
         lesson_session_id: g.lesson ? Number(g.lesson.id) : null,
         author_role: g.role,
@@ -380,7 +489,7 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
         if (r.unlinked) w.relinked++;
         // 읽음 — 수강생 본인 · 받는 트레이너(수강생 복기) / 쓴 트레이너(트레이너 복기)
         const readAt = new Date(now()).toISOString();
-        const readers = [["student", c.studentId], ["trainer", g.role === "student" ? c.trainerId : g.staffId]];
+        const readers = [["student", sidOf(g)], ["trainer", g.role === "student" ? c.trainerId : g.staffId]];
         for (const [kind, id] of readers) {
           await sb.upsert("review_reads", { review_id: r.id, reader_kind: kind, reader_id: id, read_at: readAt }, "review_id,reader_kind,reader_id");
           w.reads++;
@@ -459,6 +568,9 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
       reviews: result.channels.reduce((s, r) => s + (r.reviews || 0) + (r.trainerReviews || 0), 0),
       answers: result.channels.reduce((s, r) => s + (r.answers || 0), 0),
       reviewsNew: sum("reviewsNew"), answersNew: sum("answersNew"), imagesNew: sum("imagesNew"),
+      trainerUnattached: result.channels.reduce((s, r) => s + (r.trainerUnattached || 0), 0),
+      unmatchedAuthors: new Set(result.channels.flatMap((r) => (r.unmatched || []).map((u) => u.id))).size,
+      unmatchedPosts: result.channels.reduce((s, r) => s + (r.unmatched || []).reduce((n, u) => n + u.n, 0), 0),
     };
     await opsStateSet(RES_KEY, result);
     const t = result.totals;
@@ -491,6 +603,6 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
 }
 
 module.exports = {
-  createFeedbackImport, normMessage, lessonDateOf, planChannel, anchorFor, titleOf, validateRequest, uniqueViolation,
-  REQ_KEY, RES_KEY, NOTICE_PREFIX, MIN_POST, MERGE_MS, PUBLIC_WAIT_MS, PHOTO_ONLY_ANSWER,
+  createFeedbackImport, normMessage, lessonDateOf, planChannel, anchorFor, titleOf, validateRequest, uniqueViolation, chatterOf,
+  REQ_KEY, RES_KEY, NOTICE_PREFIX, MIN_POST, MERGE_MS, PUBLIC_WAIT_MS, PHOTO_ONLY_ANSWER, STRICT_ANSWER_MS,
 };
