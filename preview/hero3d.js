@@ -130,7 +130,7 @@ function start() {
 
   function frame() {
     requestAnimationFrame(frame);
-    if (!visible || document.hidden) return;
+    if (!visible || document.hidden || hero.classList.contains("hasvid")) return;
     const t = clock.getElapsedTime();
     const k = Math.min(1, window.scrollY / Math.max(1, hero.offsetHeight)); // 첫 화면 스크롤 비율
     // 자기장: 시간에 따라 천천히 줄었다가(26 → 14) 스크롤하면 더 줄어든다
