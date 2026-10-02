@@ -115,6 +115,11 @@ test("성장 기록 닉 — 클랜 태그(GmI_ · Gm + 구분자)를 떼고 가�
   assert.equal(maskNick("Gm.xyz"), "xy**");
   assert.equal(maskNick("GmI_"), "Gm**");                                   // 태그만 있으면 원래 닉으로
   assert.equal(maskNick("Gmoney"), "Gm**");                                 // 구분자 없는 「Gm」은 태그가 아니다
+  assert.equal(maskNick("GmIAce"), "Gm**");
+  assert.equal(maskNick("GmI_세진"), "세**");                                // 남은 닉이 두 글자 이하 → 앞 한 글자만(검수 12차)
+  assert.equal(maskNick("GmI_AB"), "A**");
+  assert.equal(maskNick("GmI_진"), "진**");
+  assert.equal(maskNick("세진"), "세**");                                    // 태그 없는 두 글자 닉도 같다
   const { TEST_STUDENT_IDS } = require("../test-accounts.cjs");
   const TEST_ID = [...TEST_STUDENT_IDS][0];
   const pair = (name, from, to, base) => [
@@ -129,5 +134,5 @@ test("성장 기록 닉 — 클랜 태그(GmI_ · Gm + 구분자)를 떼고 가�
     snap({ student_id: TEST_ID, player_name: "테스트계정", tier: "Diamond", sub_tier: "1", tier_index: 6, rank_point: 3300, created_at: "2026-09-03T20:00:00Z" }),
   ];
   assert.deepEqual(progressPublic(rows).map((s) => [s.alias, s.delta.tierTo]),
-    [["ab** A", "Crystal 1"], ["ab** B", "Platinum 1"], ["zz**", "Platinum 1"]]);
+    [["ab** A", "Crystal 1"], ["ab** B", "Platinum 1"], ["z**", "Platinum 1"]]);         // 「GmI_zz」 — 남은 두 글자 → 한 글자
 });
