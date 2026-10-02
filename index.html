@@ -203,8 +203,15 @@ a{color:inherit}
 .stat2 .k,.stat1 .k{margin-top:6px;font-size:14px;color:var(--mute);display:block}
 .stat1{margin-top:22px}
 .stat1 .v{display:block;font-size:clamp(40px,4vw,52px);line-height:1}
-.stat1 .v::after{content:'명';font:700 16px/1 var(--sans);margin-left:4px}
-.stat1[hidden]{display:none}
+.stat1 .v{color:var(--gold)}
+.stat2 .v small,.stat1 .v small{font:800 16px/1 var(--num);letter-spacing:.06em;margin-left:4px}
+.recs{list-style:none;margin-top:16px;display:grid;gap:6px;font-size:14px;color:var(--mute)}
+.recs li{padding-left:12px;position:relative}
+.recs li::before{content:'';position:absolute;left:0;top:.7em;width:4px;height:4px;border-radius:50%;background:var(--mute)}
+.person .tot{margin-top:14px;font-size:15px}
+.person .tot b{font-weight:800}
+.person .tot span{color:var(--mute);margin-left:8px;font-size:14px}
+.person .r30{margin-top:2px;font-size:13px;color:var(--mute)}
 .person .one{margin-top:16px}
 .person .links{margin-top:auto;padding-top:16px}
 
@@ -402,18 +409,19 @@ html.vr-lock{overflow:hidden}
       <div class="eyebrow">PUBG Ranked Coaching · Squad · Asia Server</div>
       <h1 class="sign"><span class="sr">경쟁전 </span>TOP <span class="g">200</span></h1>
       <div class="hero-row">
-        <p>아시아 서버 상위 200등, 서바이버. 스쿼드 경쟁전 서바이버로 시즌을 마감한 사람만 가르쳐요</p>
+        <p>아시아 서버 상위 200등, 서바이버. 가르치는 세 명 모두 서바이버를 달성했어요</p>
         <div class="hero-acts">
           <a class="link" href="#plans">가격 먼저 보기</a>
           <a class="cta" href="apply.html?utm_source=site&amp;utm_medium=hero">레벨 테스트 신청 · <span class="p">20,000원</span></a>
         </div>
       </div>
 
-      <!-- 3. 숫자 한 줄 — 첫 숫자는 서버 값(graduations)이 올 때만 보인다(하드코딩 금지) -->
+      <!-- 3. 숫자 한 줄 — 지휘가 장부에서 뽑은 10/3 기준 고정 숫자.
+           서버 값으로 바꿀 자리: data-srv 이름표(lessonStudents · lessonGames · graduatesMasterPlus) — 경비 응답이 생기면 스크립트로 덮어쓴다 -->
       <div class="facts">
-        <div class="fact" id="factGrad" hidden><div class="v"><span id="gradN"></span><small>명</small></div><div class="k">레슨으로 마스터 이상 달성</div></div>
-        <div class="fact"><div class="v">3<small>명</small></div><div class="k">가르치는 사람 전원 서바이버</div></div>
-        <div class="fact"><div class="v">24<small>시간</small></div><div class="k">연중무휴 수업</div></div>
+        <div class="fact"><div class="v"><span data-srv="lessonStudents">78</span><small>명</small></div><div class="k">2026년 4~9월 레슨 수강생</div></div>
+        <div class="fact"><div class="v"><span data-srv="lessonGames">3,931</span><small>판</small></div><div class="k">같은 기간 레슨 판수</div></div>
+        <div class="fact"><div class="v"><span data-srv="graduatesMasterPlus">5</span><small>명</small></div><div class="k">레슨으로 마스터 이상 달성</div></div>
       </div>
 
       <!-- 4. 칸 배치 -->
@@ -437,27 +445,37 @@ html.vr-lock{overflow:hidden}
           </div>
         </a>
 
-        <!-- 가르치는 사람 셋 — 같은 크기 칸 · 사진은 이름 옆 64px 원 -->
+        <!-- 가르치는 사람 셋 — 같은 크기 칸 · 사진은 이름 옆 64px 원
+             기록 · 누적 숫자는 지휘가 장부에서 뽑은 10/3 기준 고정 글자. 최근 30일은 서버 값(byTrainer.students30)이 오면 덮어쓴다 -->
         <article class="cell s4 person rise" id="trainers" aria-labelledby="muriH">
           <div class="who"><img class="av" src="img/trainers/mr-lead.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">원장 · 직강</div><div class="nm" id="muriH">이무리</div></div></div>
           <div class="stat2">
-            <div><div class="v num">5,000</div><div class="k">점 이상 · 스쿼드</div></div>
-            <div><div class="v num">600</div><div class="k">평균 딜량 이상</div></div>
+            <div><div class="v num">5,000<small>RP</small></div><div class="k">스쿼드 경쟁전</div></div>
+            <!-- 「평균 딜량 600+」 큰 숫자는 오너 확인 대기(S38 한 계정 583) — 빼려면 이 div 한 덩어리만 지운다 -->
+            <div><div class="v num">600+</div><div class="k">평균 딜량</div></div>
           </div>
-          <p class="one">시즌 29부터 36까지 스쿼드 경쟁전에서, 수강생들과 함께 달성했어요</p>
+          <ul class="recs">
+            <li>S29 카카오 1위 · 5,000 RP · 평균 딜량 684</li>
+            <li>S36 카카오 1위 · 서바이버 5,002 RP · 평균 딜량 614</li>
+            <li>S38 스팀 서바이버 두 계정 · 4,359 RP · 4,370 RP</li>
+          </ul>
           <div class="links"><a href="#plans">원장 직강 보기</a><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a></div>
         </article>
 
         <article class="cell s4 person rise" aria-labelledby="htH">
           <div class="who"><img class="av" src="img/trainers/ht-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너 · 이번 시즌 우수 트레이너</div><div class="nm" id="htH">현태</div></div></div>
-          <div class="stat1" data-trainer="hyuntae" hidden><span class="v num"></span><span class="k">최근 30일 수강생</span></div>
+          <div class="stat1"><span class="v num">4,527<small>RP</small></span><span class="k">S41 스팀 서바이버</span></div>
+          <p class="tot">누적 <b>50명</b> · <b>2,496판</b><span>2026년 4월부터</span></p>
+          <p class="r30">최근 30일 <span data-trainer="hyuntae">16</span>명</p>
           <p class="one">기초부터 하나씩 잡아 줘요</p>
           <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae">현태에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_Hye0n" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/gusxo3874" target="_blank" rel="noopener">SOOP</a></div>
         </article>
 
         <article class="cell s4 person rise" aria-labelledby="jgH">
           <div class="who"><img class="av" src="img/trainers/jg-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너</div><div class="nm" id="jgH">준구</div></div></div>
-          <div class="stat1" data-trainer="jungu" hidden><span class="v num"></span><span class="k">최근 30일 수강생</span></div>
+          <div class="stat1"><span class="v num">S38</span><span class="k">서바이버</span></div>
+          <p class="tot">누적 <b>37명</b> · <b>1,425판</b><span>2026년 3월부터</span></p>
+          <p class="r30">최근 30일 <span data-trainer="jungu">7</span>명</p>
           <p class="one">교전과 판단을 실전에서 바로 써먹게 잡아 줘요</p>
           <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">SOOP</a></div>
         </article>
@@ -716,15 +734,16 @@ html.vr-lock{overflow:hidden}
 // 「레슨으로 마스터 이상 달성」 — 서버 값(graduations)이 숫자로 올 때만 연다. 키 이름은 경비 응답으로 확정(지금은 요청 초안의 이름)
 (function(){
   fetch("https://mri-academy-production.up.railway.app/api/site-metrics", { cache: "no-store" }).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+    var ok = function(n){ return typeof n === "number" && isFinite(n) && n > 0; };
     (d && d.byTrainer || []).forEach(function(t){
-      var box = document.querySelector('.stat1[data-trainer="' + t.id + '"]');
-      if (box && typeof t.students30 === "number" && t.students30 > 0) { box.querySelector(".v").textContent = t.students30; box.hidden = false; }
+      var el = document.querySelector('.r30 [data-trainer="' + t.id + '"]');
+      if (el && ok(t.students30)) el.textContent = t.students30;
     });
-    var n = d && d.graduatesMasterPlus;
-    if (typeof n === "number" && isFinite(n) && n > 0) {
-      document.getElementById("gradN").textContent = n.toLocaleString("ko-KR");
-      document.getElementById("factGrad").hidden = false;
-    }
+    // 숫자 한 줄 — 경비 응답에 값이 생기면 10/3 고정 숫자를 덮어쓴다(키 이름은 요청 초안 기준)
+    document.querySelectorAll("[data-srv]").forEach(function(el){
+      var v = d && d[el.getAttribute("data-srv")];
+      if (ok(v)) el.textContent = v.toLocaleString("ko-KR");
+    });
   }).catch(function(){});
 })();
 // 스크롤 등장 — 움직임 줄이기 · IntersectionObserver 없음이면 처음부터 보인다
