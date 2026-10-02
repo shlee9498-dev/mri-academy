@@ -332,7 +332,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 "byTrainer": [
   { "trainerId": "…", "trainerName": "트레이너A",
     "registeredGames": 64, "lessonGames": 26, "adjustedGames": 5, "heldGames": 0, "remainingGames": 33,
-    "currentPack": { "games": 43, "used": 10 } } ]
+    "currentPack": { "games": 43, "used": 10, "remaining": 33 } } ]
 ```
 
 | 키 | 뜻 |
@@ -342,7 +342,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | `adjustedGames` | 그 트레이너 조정 순합(`+` 더 뺌 · `−` 돌려줌) |
 | `heldGames` | 그 트레이너 예약 선차감 |
 | `remainingGames` | 그 트레이너 잔여 = 등록 − 수업 − 조정 − 선차감 = `remainingByTrainer[].remaining`(0 이어도 여기에는 온다) |
-| `currentPack` | **홈 막대** `{ games, used }` — 먼저 산 묶음부터 쓴다고 보고 **다 쓴 묶음은 뺀** 묶음 합(`games`)과 그 안에서 쓴 판수(`used`). `games − used = remainingGames`. 등록 · 이월이 없으면 `null` |
+| `currentPack` | **홈 막대** `{ games, used, remaining }` — 먼저 산 묶음부터 쓴다고 보고 **다 쓴 묶음은 뺀** 묶음 합(`games`)과 그 안에서 쓴 판수(`used`). `remaining` = `games − used` = `remainingGames`(🆕 2026-10-02 §9.27 · 앱은 빼기를 하지 않고 이 값을 쓴다). 등록 · 이월이 없으면 `null` |
 
 - 한 줄 = 이 수강생과 등록 · 이월 · 수업 · 조정 · 선차감 중 하나라도 있는 트레이너. 순서는 잔여 내림차순(같으면 서버 순서 그대로).
 - `trainerId` 는 `remainingByTrainer` · `currentPacks` · 판수 내역 필터와 **같은 값**이다.
@@ -930,7 +930,8 @@ DB 함수 = 운영 DB 되돌림 시험 28항목(`supabase_admin_panel.sql` §61)
   "products": [
     { "key": "lesson10", "label": "10판 패키지", "won": 45000,  "games": 10 },
     { "key": "lesson21", "label": "21판 패키지", "won": 90000,  "games": 21 },
-    { "key": "lesson33", "label": "33판 패키지", "won": 140000, "games": 33 }
+    { "key": "lesson33", "label": "33판 패키지", "won": 140000, "games": 33 },
+    { "key": "lesson99", "label": "99판 패키지", "won": 420000, "games": 99 }
   ],
   "quantityMax": 5,
   "cashReceipt": { "recommendFromWon": 100000 },
@@ -940,12 +941,14 @@ DB 함수 = 운영 DB 되돌림 시험 28항목(`supabase_admin_panel.sql` §61)
 ```
 
 - `products[].won` · `games` 는 **1개(단가)** 값이다. 합계는 서버가 신청 때 단가 × 수량으로 정한다.
-  값은 `config/payments.js`(결제 트랙 소관)에서 읽는다. **앱에 금액을 박지 말 것.** 목록은 **판수 3종**뿐이다
+  값은 `config/payments.js`(결제 트랙 소관)에서 읽는다. **앱에 금액을 박지 말 것.** 목록은 **판수 4종**뿐이다
   (승인 시 본표 편입이 자동인 상품만 · 레벨 테스트는 뺐다 — 오너 2026-09-30, 신규는 사이트 · 디스코드).
+  🆕 **2026-10-02 99판(`lesson99` · 420,000 · 99판)이 정식 상품이 됐다**(오너 「정식상품처리해도돼」 · 사이트 개편과 같은 이름).
+  값은 33판 × 3 그대로라 종전처럼 `lesson33` 수량 3 으로 보내도 합계 · 판수가 같다. 앱은 목록을 그대로 그리면 99판이 한 줄 더 보인다.
 - `quantityMax` — 수량 선택 상한(지금 5).
 - `cashReceipt.recommendFromWon` — **계좌이체 합계**가 이 금액 이상이면 현금영수증 번호 입력을 권한다(필수 아님).
 - `card` — 그로블 결제 링크. **링크가 있는 상품만** 실린다. 하나도 없으면 **`card` 키 자체가 없다** → 앱은 카드 선택지를 숨긴다.
-  링크는 env `GROBLE_LINK_LESSON10` · `21` · `33`(오너가 그로블 상품을 만들어 넣는다 · 공용 3개). 가격은 계좌이체와 같다(카드 할증 없음).
+  링크는 env `GROBLE_LINK_LESSON10` · `21` · `33` · `99`(오너가 그로블 상품을 만들어 넣는다 · 99판은 2026-10-02 추가 · 없으면 99판만 카드가 숨는다). 가격은 계좌이체와 같다(카드 할증 없음).
 - `bank` — env `PAY_BANK_NAME` · `PAY_BANK_ACCOUNT` · `PAY_BANK_HOLDER`. 셋 중 하나라도 없으면 **`bank` 키 자체가 없다**
   — 앱은 계좌 영역을 숨기고 「계좌는 트레이너에게 물어봐 주세요」. 기동 로그 `[pay-info] 계좌 안내` · `[pay-info] 카드 링크` 로 켜짐을 본다(값은 로그에 안 남는다).
 - `assignedTrainer` = 담당 트레이너(없거나 비활성이면 `null`). 「담당 트레이너」를 고르면 이 `trainerId` 를 싣는다.
@@ -962,8 +965,8 @@ DB 함수 = 운영 DB 되돌림 시험 28항목(`supabase_admin_panel.sql` §61)
 { "productKey": "lesson33", "quantity": 1, "method": "card", "orderNo": "G20261001-0001", "trainerId": "…(선택)" }
 ```
 
-→ `{ "requestId": "…", "status": "pending", "quantity": 3, "games": 99, "won": 420000, "method": "transfer", "ownerNotified": true }`
-(`games` · `won` 은 **합계**)
+→ `{ "requestId": "…", "status": "pending", "quantity": 3, "games": 99, "unitGames": 33, "won": 420000, "method": "transfer", "ownerNotified": true }`
+(`games` · `won` 은 **합계** · `unitGames` 는 1개 판수 — 🆕 2026-10-02 §9.27)
 
 | 키 | 필수 | 규칙 |
 |---|---|---|
@@ -988,12 +991,12 @@ DB 함수 = 운영 DB 되돌림 시험 28항목(`supabase_admin_panel.sql` §61)
 
 ```json
 { "requests": [ { "requestId": "…", "status": "pending", "label": "33판 패키지", "quantity": 3,
-                  "won": 420000, "games": 99, "method": "transfer",
+                  "won": 420000, "games": 99, "unitGames": 33, "method": "transfer",
                   "cashReceipt": { "purpose": "deduction", "last4": "5678", "issued": false },
                   "paidOn": "2026-10-02", "requestedAt": "2026-10-02T01:10:00Z" } ] }
 ```
 
-- `status` ∈ `pending` · `approved` · `rejected` · `void`. `won` · `games` 는 합계 · `label` 은 단가 상품 이름 · 수량은 `quantity`.
+- `status` ∈ `pending` · `approved` · `rejected` · `void`. `won` · `games` 는 합계 · `label` 은 단가 상품 이름 · 수량은 `quantity` · 1개 판수는 `unitGames`(§9.27).
 - `method` ∈ `transfer` · `card` · `other`(옛 봇 신청의 숨고 · 기타).
 - `cashReceipt` — 번호를 넣은 계좌이체만. `issued: true` 면 「발급됨」. 번호를 안 넣었거나 카드면 `null`.
 
@@ -2651,3 +2654,36 @@ banned 「쓸 수 없는 말이 들어 있어요」 · 409 taken 「이미 누�
 **반장**: 트레이너 화면의 이름은 활동명 키(`activityName` · `studentActivityName` · `authorActivityName`)를 앞에, 본명 키(`displayName` · `studentDisplayName` ·
 `authorDisplayName`)를 뒤에 보여 주고(활동명이 null 이면 본명만 · 목록 · 고르기 · 오류 응답 `students[]` 모두 같은 순서), 검색은 `GET /students?q=` 를 쓴다. 면제는 `POST /adjustments` `kind: "exempt"` + `exemptOf` +
 `exemptReason` 칩(합의 변경은 `newBookingId` 필수) — 판수는 그대로 · 409 `exempt_limit` 이면 「약관대로 처리돼요」 · 원장 화면은 `GET /owner/exemptions?month=`.
+
+## 9.27 앱이 판수를 직접 계산하지 않게 — 서버가 싣는 값 둘 (2026-10-02 · 검수 보고 · 지휘 주문) · **서버 반영(이 PR)**
+
+> 검수가 수강생 앱에서 판수를 **앱이 직접 계산하는 곳 2곳**을 찾았다. 계산식이 앱과 서버 두 벌이 되면 언젠가 갈라진다.
+> 서버가 값을 실어 주고 앱은 그대로 그린다. 키를 **더하기만** 했다 — 지금 키는 그대로라 앱을 고치기 전에도 깨지지 않는다.
+
+### 9.27.1 트레이너별 묶음 막대의 남은 판수 — `GET /summary` `lesson.byTrainer[].currentPack.remaining`
+
+```json
+"byTrainer": [ { "trainerId": "…", "trainerName": "트레이너A", "remainingGames": 33,
+                 "currentPack": { "games": 43, "used": 10, "remaining": 33 } } ]
+```
+
+- `remaining` = `games − used` = 그 트레이너 잔여(`remainingGames` · §41 식)와 **같은 값**이다. 다 써서 넘치면 음수로 온다.
+- 앱은 막대 글자(「33판 남았어요」)에 **`currentPack.remaining` 을 그대로** 쓴다. `games − used` 를 앱에서 빼지 않는다.
+- `lesson.currentPacks[].remaining`(지금 쓰는 **한 묶음** 안의 남은 판수 · 「33판 묶음 중 1판」)과는 **뜻이 다르다** — 막대는 다 쓴 묶음만 뺀 합 기준이다.
+- 묶음이 없으면 `currentPack` 이 `null` 이다(종전과 같다).
+
+### 9.27.2 결제 신청 응답의 판수 — `POST` · `GET /payment-requests` `games` · 🆕 `unitGames`
+
+| 키 | 뜻 |
+|---|---|
+| `games` | **합계** 판수. 판수 결제면 **늘 숫자**다(10/2 실측 신청 34건 전부 판수 · 빈 값 0건). 판수 없는 결제(강의 · 상담 · 기타 — 앱으로는 못 보낸다 · 옛 봇 신청만)는 `null` |
+| 🆕 `unitGames` | **1개(단가)** 판수. `quantity` 와 짝이다(`games = unitGames × quantity`). 판수 없는 결제는 `null` |
+
+- 앱은 「33판 × 3 = 99판」을 **`unitGames` · `quantity` · `games` 그대로** 그린다. `games ÷ quantity` 같은 나눗셈을 하지 않는다.
+- 수량 칸이 없던 옛 신청은 서버가 단가의 정수배로 풀어 `quantity` · `unitGames` 를 채운다(종전 `label` 과 같은 규칙).
+- 99판 패키지(`lesson99` · §9.5)로 낸 신청은 `label` 「99판 패키지」 · `quantity` 1 · `unitGames` 99 다. 33판 × 3 으로 낸 신청은 「33판 패키지」 · 3 · 33.
+
+### 9.27.3 계약 한 줄
+
+**반장**: 수강생 앱 홈 막대의 남은 판수는 `GET /summary` `lesson.byTrainer[].currentPack.remaining` 을 그대로 쓰고(앱에서 `games − used` 를 빼지 않는다 · 음수면 넘친 것),
+입금 신청 화면 · 내역은 `POST` · `GET /payment-requests` 의 `games`(합계) · `unitGames`(1개) · `quantity` 를 그대로 그린다(`games` 가 `null` 이면 판수 없는 결제 — 판수 줄을 그리지 않는다).

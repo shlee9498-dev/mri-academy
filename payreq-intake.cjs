@@ -11,7 +11,7 @@
 //              ⚠️ 번호 원문은 DB(payment_requests.cash_receipt_number)와 **오너 카드에만** 간다.
 //                 수강생 앱 응답 · 트레이너 쪽 · 로그에는 뒤 4자리(last4)만. 키 이름에 phone 을 쓰지 않는다(앱 가드).
 //   카드       method "card" · 그로블 주문번호(orderNo) 필수 · 같은 주문번호 두 번 금지(대기 · 승인).
-//              링크는 env(GROBLE_LINK_LESSON10/21/33) — 없으면 그 상품은 카드를 받지 않는다(앱은 카드 선택지를 숨긴다).
+//              링크는 env(GROBLE_LINK_LESSON10/21/33/99) — 없으면 그 상품은 카드를 받지 않는다(앱은 카드 선택지를 숨긴다).
 //              레벨 테스트 링크(GROBLE_LINK_LEVELTEST)는 신청 창구(start.html · intake-api.cjs)만 읽는다(결제 트랙 10/2).
 //              가격은 계좌이체와 같다(카드 할증 없음) · 할부는 기록하지 않는다(판수는 승인 때 전부).
 // ============================================================
@@ -27,6 +27,7 @@ const GROBLE_LINK_ENV = Object.freeze({
   lesson10: "GROBLE_LINK_LESSON10",
   lesson21: "GROBLE_LINK_LESSON21",
   lesson33: "GROBLE_LINK_LESSON33",
+  lesson99: "GROBLE_LINK_LESSON99",   // 2026-10-02 정식 상품 · 그로블 상품이 없으면 env 를 비워 두면 된다(카드만 숨는다)
 });
 // 신청 창구(아직 수강생이 아닌 사람)가 파는 상품 — 수강생 앱 목록에는 넣지 않는다(결제 트랙 결정 2026-10-02).
 const GROBLE_LINK_ENV_INTAKE = Object.freeze({
@@ -45,6 +46,9 @@ const PORTAL_PRODUCTS = Object.freeze([
   Object.freeze({ key: "lesson10", kind: "판수", games: 10 }),
   Object.freeze({ key: "lesson21", kind: "판수", games: 21 }),
   Object.freeze({ key: "lesson33", kind: "판수", games: 33 }),
+  // 99판(33판 × 3 · 2026-10-02 정식 상품 · 오너 「정식상품처리해도돼」) — 종전에도 33판 수량 3 으로 살 수 있었다.
+  //   목록에 따로 두는 건 사이트 · 챗봇과 같은 이름으로 보이게 하려는 것이다. 판수 · 금액 식은 같다(99판 · 420,000).
+  Object.freeze({ key: "lesson99", kind: "판수", games: 99 }),
 ]);
 // ⚠️ 가격은 여기에 적지 않는다. `config/payments.js` 가 정본이고 **결제 트랙 소관**이라 읽기만 한다.
 //    ESM 이라 동적 import 로 한 번만 읽어 캐시한다(이 파일 · server.js 는 CJS). 못 읽으면 빈 목록(추측하지 않는다).

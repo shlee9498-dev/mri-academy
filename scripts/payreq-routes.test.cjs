@@ -71,6 +71,7 @@ test("POST — 수량 3 = 420,000원 · 99판(서버 계산) · 계좌이체 · 
   const r = await call("POST", "/payment-requests", { productKey: "lesson33", quantity: 3, depositorName: "가나다" });
   assert.equal(r.status, 200);
   assert.deepEqual([r.json.won, r.json.games, r.json.quantity, r.json.method, r.json.status], [420000, 99, 3, "transfer", "pending"]);
+  assert.equal(r.json.unitGames, 33);                                                  // 1개 판수(계약 §9.27)
   const row = st.inserts[0].row;
   assert.deepEqual([row.amount, row.games, row.quantity, row.pay_channel, row.deposit_ref, row.cash_receipt_number], [420000, 99, 3, "transfer", null, null]);
   assert.match(row.memo, /입금자 가나다/);
@@ -142,6 +143,7 @@ test("GET /payment-requests — 수량 · 방법 · 현금영수증 뒤 4자리 
   assert.equal(r.status, 200);
   const [a, b, c] = r.json.requests;
   assert.deepEqual([a.label, a.quantity, a.won, a.games, a.method, a.cashReceipt], ["33판 패키지", 3, 420000, 99, "transfer", null]);
+  assert.deepEqual([a.unitGames, r.json.requests[1].unitGames], [33, 21]);           // 1개 판수(계약 §9.27) — 앱이 나누지 않는다
   assert.deepEqual(b.cashReceipt, { purpose: "deduction", last4: "1111", issued: true });
   assert.deepEqual([c.method, c.cashReceipt], ["card", null]);
   assert.equal(/memo|student_name|select=\*/.test(st.lastListQ), false);             // 이름 · 메모는 읽지도 않는다

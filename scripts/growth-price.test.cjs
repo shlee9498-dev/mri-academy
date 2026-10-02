@@ -48,12 +48,15 @@ test("챗봇 가격 — 정본(config/payments.js)에서 만든다 · 옛 금액
   const t = priceBook.chatbotPriceFacts(PRICES);
   for (const want of ["10판 45,000원", "21판 90,000원", "33판 140,000원", "레벨 테스트: 20,000원 · 60~90분",
     "초급 250,000원", "중급 270,000원", "심화 290,000원", "초급 세트 280,000원", "중급 세트 340,000원", "심화 세트 405,000원",
-    "첫 체험 50,000원", "이후 70,000원", "150,000원", "최소 10판 45,000원"]) assert.ok(t.includes(want), want);
+    "99판 420,000원(33판 × 3)", "VIP 룸(https://mriacademy.gg/#vip)", "최소 10판 45,000원"]) assert.ok(t.includes(want), want);
+  // 원장 1:1 · VIP DAY PASS 는 가격 미확정 · 판매 0건(2026-10-02 사이트 개편 · VIP 룸 #481) — 금액을 싣지 않는다
+  for (const gone of [/(?<![0-9,])50,000원/, /(?<![0-9,])70,000원/, /(?<![0-9,])150,000원/, /첫 체험/]) assert.equal(gone.test(t), false, String(gone));
   // server.js 안내문 본문에도 손으로 적은 옛 금액이 없어야 한다(가격 줄은 {{PRICE_FACTS}} 자리로만 들어간다)
   const src = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
   const tpl = src.slice(src.indexOf("const SYSTEM_TEMPLATE"), src.indexOf("const priceBook = require"));
   assert.ok(tpl.includes("{{PRICE_FACTS}}"));
-  for (const stale of ["40,000", "80,000", "120,000", "15,000", "390,000", "480,000", "판당 4,000", "레벨테스트 무관"]) {
+  for (const stale of ["40,000", "80,000", "120,000", "15,000", "390,000", "480,000", "판당 4,000", "레벨테스트 무관",
+                       "학원법", "해당 상담 금액", "입문 세트", "도약 세트", "마스터 세트"]) {
     assert.equal(tpl.includes(stale), false, stale);
   }
 });
