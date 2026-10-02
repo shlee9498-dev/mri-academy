@@ -124,8 +124,7 @@ h3{font-size:19px}
 .btn.line:hover{background:var(--panel)}
 
 /* 상단 */
-.top{position:sticky;top:0;z-index:50;background:rgba(244,245,246,.94);border-bottom:1px solid var(--line)}
-@supports (backdrop-filter:blur(8px)){.top{background:rgba(244,245,246,.86);backdrop-filter:saturate(1.2) blur(8px)}}
+.top{position:sticky;top:0;z-index:50;background:var(--ground);border-bottom:1px solid var(--line)}
 .top-in{display:flex;align-items:center;gap:28px;height:64px}
 .logo{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink);font-family:var(--num);font-weight:800;font-size:20px;letter-spacing:.06em}
 .logo .mk{width:30px;height:30px;border-radius:var(--r);background:var(--ink);color:#fff;display:grid;place-items:center;font-size:17px;letter-spacing:0}
@@ -155,12 +154,13 @@ h3{font-size:19px}
 .lead-ph img{width:100%;height:100%;object-fit:cover}
 .lead-ph figcaption{position:absolute;left:0;right:0;bottom:0;padding:40px 22px 18px;background:linear-gradient(transparent,rgba(11,12,14,.92));color:#fff;font-weight:700;font-size:15px}
 .lead-ph figcaption span{display:block;font-family:var(--num);font-size:12.5px;letter-spacing:.16em;color:#C9CDD2;font-weight:700}
-.metrics{margin-top:40px;background:var(--feat);color:var(--feat-ink);border-radius:var(--r);padding:20px 24px;display:grid;grid-template-columns:repeat(2,minmax(0,220px)) 1fr;gap:4px 28px;align-items:end}
+.metrics{margin:0 0 28px;background:var(--feat);color:var(--feat-ink);border-radius:var(--r);padding:20px 24px;display:grid;grid-template-columns:repeat(2,minmax(0,220px));gap:12px 28px;align-items:end}
 .metrics[hidden]{display:none}
 .metric .v{font-family:var(--num);font-weight:700;font-size:44px;line-height:1;font-variant-numeric:tabular-nums;color:#fff}
 .metric .v small{font-family:var(--sans);font-size:16px;font-weight:700;margin-left:3px;color:#C9CDD2}
 .metric .k{font-size:14px;color:#C9CDD2;margin-top:6px}
-.metrics .src{font-size:13px;color:#A9AFB6;text-align:right}
+.metrics .src{grid-column:1/-1;font-size:13px;color:#A9AFB6}
+.metrics .src b{color:#fff;font-weight:700}
 
 /* 2. 트레이너 두 명 — 완전히 같은 틀(사진 4:5 · 배지 칸 · 소개 2줄 · 버튼 바닥) */
 .pair{display:grid;grid-template-columns:repeat(2,1fr);gap:20px}
@@ -295,8 +295,7 @@ footer{padding:48px 0 64px;font-size:14.5px;color:var(--mute)}
   .lead-ph{max-width:420px}
   .pair{grid-template-columns:1fr;gap:12px}
   .metrics{grid-template-columns:1fr 1fr}
-  .metrics .src{grid-column:1/-1;text-align:left;margin-top:8px}
-  .menu-m{display:flex;gap:18px;overflow-x:auto;padding:0 24px 10px;scrollbar-width:none}
+  .menu-m{display:flex;flex-wrap:wrap;gap:6px 16px;padding:0 24px 10px}
   .menu-m::-webkit-scrollbar{display:none}
   .menu-m a{flex:none;text-decoration:none;color:var(--body);font-weight:600;font-size:15px}
   .top-in{justify-content:space-between}
@@ -412,12 +411,9 @@ html.vr-lock{overflow:hidden}
           <figcaption><span>SURVIVOR · 원장</span>이무리</figcaption>
         </figure>
       </div>
-      <!-- 지표: GET /api/site-metrics(최근 30일 실측 · 매일 갱신). 값이 없으면 통째로 숨긴다(누적 숫자 · 빈 칸 공개 금지) -->
-      <div class="metrics" id="metrics" hidden aria-live="polite">
-        <div class="metric"><div class="v"><span id="mStudents"></span><small>명</small></div><div class="k">최근 30일 수업한 수강생</div></div>
-        <div class="metric"><div class="v"><span id="mGames"></span><small>판</small></div><div class="k">최근 30일 같이 한 게임</div></div>
-        <div class="src" id="mSrc">최근 30일 기준 · 매일 갱신</div>
-      </div>
+      <!-- 원장 직강 숫자 자리 — 단위는 「회」(1회 3시간 · 8회 과정). 레슨 판수를 여기 붙이지 않는다.
+           공개할 값은 경비(서버)가 응답으로 정해 내려 준다 — 사이트는 계산하지 않는다. 응답이 생기기 전까지 숨김 -->
+      <div class="metrics lec" id="lecMetrics" hidden aria-live="polite"></div>
     </div>
   </section>
 
@@ -426,6 +422,13 @@ html.vr-lock{overflow:hidden}
     <div class="wrap">
       <div class="sec-head">
         <div><h2>같이 게임하는 트레이너</h2><p>둘 다 서바이버예요. 레슨은 이 두 명과 판 단위로 해요</p></div>
+      </div>
+      <!-- 지표: GET /api/site-metrics(최근 30일 실측 · 매일 갱신). 레슨(트레이너) 숫자라 이 구간에 둔다.
+           값이 없으면 통째로 숨긴다(누적 숫자 · 빈 칸 공개 금지) -->
+      <div class="metrics" id="metrics" hidden aria-live="polite">
+        <div class="src"><b>레슨(트레이너)</b> · 최근 30일 <span id="mSrc">· 매일 갱신</span></div>
+        <div class="metric"><div class="v"><span id="mStudents"></span><small>명</small></div><div class="k">레슨을 들은 수강생</div></div>
+        <div class="metric"><div class="v"><span id="mGames"></span><small>판</small></div><div class="k">트레이너와 같이 한 판수</div></div>
       </div>
       <div class="pair">
         <article class="tc" id="tc-hyuntae">
@@ -527,9 +530,9 @@ html.vr-lock{overflow:hidden}
         </article>
         <article class="way">
           <div><div class="tag">강의 + 레슨</div><h3>세트</h3></div>
-          <p>원장 강의 8번과 레슨을 묶어서 들어요</p>
+          <p>원장 강의 8회와 레슨 판수를 묶어서 들어요</p>
           <dl>
-            <div><dt>구성</dt><dd>초급 세트는 초급 강의와 레슨 10판, 중급 세트는 중급 강의와 21판, 심화 세트는 심화 강의와 33판</dd></div>
+            <div><dt>구성</dt><dd>초급 세트는 초급 강의 8회와 레슨 10판, 중급 세트는 중급 강의 8회와 레슨 21판, 심화 세트는 심화 강의 8회와 레슨 33판</dd></div>
             <div><dt>이런 분께</dt><dd>이론과 실전을 처음부터 같이 가고 싶은 분</dd></div>
           </dl>
           <div class="from"><b>280,000</b>원부터</div>
@@ -611,9 +614,9 @@ html.vr-lock{overflow:hidden}
         <div class="pgrp">
           <div><h3>세트</h3><p class="gd">원장 강의 8회 + 레슨</p></div>
           <div>
-            <div class="prow"><div class="n">초급 세트<small>초급 강의 + 레슨 10판</small></div><del>295,000</del><div class="p">280,000<small>원</small></div></div>
-            <div class="prow"><div class="n">중급 세트<small>중급 강의 + 레슨 21판</small></div><del>360,000</del><div class="p">340,000<small>원</small></div></div>
-            <div class="prow"><div class="n">심화 세트<small>심화 강의 + 레슨 33판</small></div><del>430,000</del><div class="p">405,000<small>원</small></div></div>
+            <div class="prow"><div class="n">초급 세트<small>초급 강의 8회 + 레슨 10판</small></div><del>295,000</del><div class="p">280,000<small>원</small></div></div>
+            <div class="prow"><div class="n">중급 세트<small>중급 강의 8회 + 레슨 21판</small></div><del>360,000</del><div class="p">340,000<small>원</small></div></div>
+            <div class="prow"><div class="n">심화 세트<small>심화 강의 8회 + 레슨 33판</small></div><del>430,000</del><div class="p">405,000<small>원</small></div></div>
           </div>
         </div>
       </div>
@@ -716,7 +719,7 @@ html.vr-lock{overflow:hidden}
       document.getElementById("mGames").textContent = d.games30.toLocaleString("ko-KR");
       if (d.asOf) {
         var t = new Date(d.asOf);
-        if (!isNaN(t)) document.getElementById("mSrc").textContent = "최근 30일 기준 · 매일 갱신 · " + (t.getMonth() + 1) + "월 " + t.getDate() + "일 계산";
+        if (!isNaN(t)) document.getElementById("mSrc").textContent = "· 매일 갱신 · " + (t.getMonth() + 1) + "월 " + t.getDate() + "일 계산";
       }
       document.getElementById("metrics").hidden = false;
     }
