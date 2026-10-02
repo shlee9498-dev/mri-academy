@@ -7,8 +7,16 @@
 (function () {
   var lite = !!window.MRI_LITE;
 
+  // 파일 주소는 여기 고정 목록에서만 고른다(페이지 속성 값을 주소로 쓰지 않음)
+  var CLIPS = {
+    hero: { src: "preview/b-hero.mp4", poster: "preview/b-hero.jpg" },
+    lane: { src: "preview/b-lane.mp4", poster: "preview/b-lane.jpg" }
+  };
+
   function arm(video, onReady) {
-    var src = video.getAttribute("data-src"), poster = video.getAttribute("data-poster");
+    var clip = CLIPS[video.getAttribute("data-clip")];
+    if (!clip) return;
+    var src = clip.src, poster = clip.poster;
     if (lite) {
       // 포스터만: 이미지가 실제로 있을 때만 붙인다
       var im = new Image();
