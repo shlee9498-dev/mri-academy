@@ -4,7 +4,11 @@
 //
 // 누가 돌리나 — 세션이 오너 확인 뒤 ops_state 'feedback_import:request' 한 행을 쓰면 봇이 1분 안에 집어 한 번 돈다.
 //   { id, mode: "dry" | "write", confirmedBy: 오너 staff id,
-//     channels: [{ g: 서버 id, ch: 채널 id, studentId, trainerId, kind: "lesson" | "lecture", fill: true | false }] }
+//     channels: [{ g: 서버 id, ch: 채널 id, studentId, trainerId, kind: "lesson" | "lecture", fill: true | false }],
+//     include: [메시지 id] · exclude: [메시지 id] }   ← 손으로 넣기 · 빼기(선택 · 2026-10-03 검수 12차)
+//   include = 거르기(잡담 · 일정 · 짧은 말)에 걸린 글 중 넣을 것 — 거르기만 건너뛰고 짝 맞추기 · 겹침 막기 · 공개 규칙은 같다
+//             (못 맞춘 글쓴이의 글 · 붙일 곳 없는 트레이너 글은 include 로도 안 들어간다). exclude = 들어갈 글 중 뺄 것(묶음에도 안 붙는다).
+//   드라이런 결과의 dropped(버린 글) · kept(들어갈 글 · 글쓴이 모드)에 메시지 id · 누구 · 글자 수가 있다 — 오너가 링크로 훑고 고른다.
 //   결과 = ops_state 'feedback_import:result'(채널마다 건수 · 멈춘 이유). 본문 · 이름 · 디스코드 id 는 적지 않는다.
 //   같은 id 는 다시 안 돈다(끝난 결과가 있으면). 돌다가 프로세스가 죽으면 다음 기동이 처음부터 다시 돈다 — 멱등이라 괜찮다.
 //
@@ -61,16 +65,24 @@ const FORM_MARK = /📅|🎯|🔥|✅|📝|📌|날짜|배운|느낀|목표|피�
 // 복기 양식 표시 — 양식 기호 · 「배운 점」 · 「느낀 점」 · 복기 · 「날짜 :」. 분명한 일정 표시가 있어도 이게 있으면 노트다(10/3 검수 11차).
 //   「피드백 감사합니다」 · 「날짜 변경 가능할까요」처럼 대화에도 쓰는 말은 여기 넣지 않는다.
 const TEMPLATE_MARK = /📅|🎯|🔥|✅|📝|📌|배운\s*(?:점|내용|것)|느낀\s*(?:점|것)|복기|날짜\s*[:：]/;
-// 분명한 일정 · 대화 표시 — 있으면 배그 낱말이 있어도 일정 연락으로 버린다(양식 표시만 예외 · 검수 11차).
-//   「내일 연습 몇 시에 해요」 · 「내일 9시 훈련장 접속 가능하세요?」 · 「일찍 들어갈게요」 · 「상담 가능할까요」 · 「스쿼드 같이 하실 분」
-const STRONG_CHAT = new RegExp([
-  "몇\\s*시(?!간)",                                                                         // 몇 시 · 몇시
+// 분명한 일정 · 대화 표시 — 있으면 배그 낱말이 있어도 일정 연락으로 버린다(양식 표시만 예외 · 검수 11차 · 12차).
+//   STRONG_ALWAYS 는 그것만으로 일정 — 가능 여부 묻기 · 날 + 시각(「내일 9시」 · 「내일 … 몇 시」) · 「일찍 들어갈게요」 · 끝이 「하실 분」인 모집.
+//   STRONG_ASKED 는 부탁 · 질문 끝맺음(ASK_END)이 같이 있을 때만 일정 — 노트에도 쓰는 말이라서다(검수 12차:
+//     「상담 때 들은 대로 자기장 끝선 먼저 잡기」 · 「접속하자마자 감도부터 확인할 것」 · 「수류탄 먼저 까고 들어갈게요 라고 콜하기」는 노트).
+//   「몇 시 방향」은 방향이다. 둘이 부딪치면 걸러지는 쪽을 택한다(지휘 10/3) — 남는 노트는 요청 include 로 다시 넣는다.
+const DAY_WORD = "(?:내일|모레|오늘|이따|담주|다음\\s*주|[월화수목금토일]요일)";
+const CLOCK = "(?:(?<![\\d.:])\\d{1,2}\\s*시(?!\\s*(?:간|방향|쪽|각))|\\d{1,2}:\\d{2}|몇\\s*시(?!\\s*(?:간|방향|쪽)))";
+const STRONG_ALWAYS = new RegExp([
   "가능(?:하세요|하신가요|하실까요|하실지|하신지|할까요|할지|한가요|하나요|해요\\s*[?？])", "괜찮으(?:세요|신가요|실까요)", "되실까요", "되시나요", "될까요",
-  "(?:내일|모레|오늘|이따|담주|다음\\s*주|[월화수목금토일]요일)[^.!?\\n]{0,12}?(?:(?<![\\d.:])\\d{1,2}\\s*시(?!\\s*(?:간|방향|쪽|각))|\\d{1,2}:\\d{2})",   // 날 + 시각
-  "접속", "상담", "문의",
-  "(?:일찍|먼저)\\s*(?:들어가|들어갈|나가|나갈|가볼|자러|잘게|쉴게)", "들어갈게요", "나갈게요",            // 먼저 나가요 · 일찍 들어갈게요
-  "하실\\s*분", "할\\s*사람", "하실래요", "같이\\s*(?:하실|할\\s*분|해요\\s*[?？])",                      // 같이 할 사람 구하기
+  `${DAY_WORD}[^.!?\\n]{0,12}?${CLOCK}`,                                                         // 날 + 시각 · 날 + 몇 시
+  "일찍\\s*(?:들어가|들어갈|나가|나갈|가볼|자러|잘게|쉴게)",                                          // 「일찍 들어갈게요」
+  "(?:하실|할)\\s*(?:분|사람)\\s*(?:[?？!~.ㅎㅋ]*\\s*$|구해요|구합니다|계신가요|있나요|있으신가요|모집)", "하실래요",   // 끝이 「하실 분」 · 같이 할 사람 구하기
 ].join("|"));
+const STRONG_ASKED = new RegExp([
+  "상담", "문의", "접속", "하실\\s*분", "들어갈게요", "나갈게요", "같이", "몇\\s*시(?!\\s*(?:간|방향|쪽))",
+].join("|"));
+const ASK_END = /[요죠]\s*[?？]|가능|드려요|드립니다|부탁|[할될갈볼]까요|까요\s*[?？]/;   // 부탁 · 질문 끝맺음
+const strongChat = (t) => STRONG_ALWAYS.test(t) || (STRONG_ASKED.test(t) && ASK_END.test(t));
 // 배그 수업 말 — 장면 · 사격 · 장비 · 맵 · 마음가짐. 있으면 짧아도 노트(「힐 타이밍 늦음 주의」 · 「레드존 생존 연습함」 · 「3시 방향 능선 먼저 체크하기」).
 //   일상 말과 겹치는 낱말은 넣지 않는다 — 「적」만(적다) · 「총」만(총 3회) · 「집」(집에 가서) · 「콜」(「콜!」) · 「방」(디코 방) · 「차」(차례)
 const GAME_WORD = new RegExp([
@@ -91,7 +103,7 @@ const GAME_WORD = new RegExp([
   // 맵 · 모드 · 기록 · 사람
   "에란겔", "미라마", "태이고", "사녹", "비켄디", "론도", "데스턴", "카라킨", "파라모", "랭겜", "경쟁전", "스쿼드", "듀오", "훈련장", "인게임",
   "리플레이", "킬로그", "킬캠", "관전", "팀원", "아군", "적군", "적팀", "(?<![가-힣])적\\s*(?:\\d|한\\s*명|두\\s*명|위치|발견)",
-  "(?<![가-힣])적을\\s*(?:보|맞|잡|못)", "상대\\s*(?:팀|위치|각|보다)", "풀파티",
+  "(?<![가-힣])적을\\s*(?:보|맞|잡|못)", "상대(?:가|를|한테|의|방|\\s*팀|\\s*위치|\\s*각|\\s*보다)", "풀파티",
   // 마음가짐 · 습관 · 연습
   "판단", "반응", "순발력", "집중", "긴장", "침착", "멘탈", "습관", "실수(?!로)", "타이밍", "템포", "손목", "마우스", "연습", "훈련", "루틴", "티어",
 ].join("|"));
@@ -124,7 +136,7 @@ function chatterOf(text) {
   const t = String(text || "").trim();
   if (t.replace(/[^가-힣A-Za-z0-9]/g, "").length < NOTE_MIN) return "short";
   if (TEMPLATE_MARK.test(t)) return null;
-  if (STRONG_CHAT.test(t)) return "schedule";
+  if (strongChat(t)) return "schedule";
   if (FORM_MARK.test(t) || GAME_WORD.test(t) || GAME_WORD_EN.test(t)) return null;
   if (t.length < SCHEDULE_MAX && SCHEDULE_WORD.test(t)) return "schedule";   // 짧은 일정 연락도 일정으로 센다(「내일 8시 가능하세요?」)
   if (t.length < CHATTER_MAX) return "short";
@@ -180,10 +192,10 @@ function lessonDateOf(text, msgMs) {
 //     stop = null | "collision"(다른 수강생 글) | "ambiguous_author"(명부 id 가 비었는데 모르는 글쓴이가 둘 이상)
 function planChannel(msgs, ctx) {
   const byAuthor = ctx.byAuthor === true;
-  const skipped = { system: 0, bot: 0, notice: 0, pinned: 0, short: 0, empty: 0, fileOnly: 0, unknown: 0,
+  const skipped = { system: 0, bot: 0, notice: 0, pinned: 0, short: 0, empty: 0, fileOnly: 0, unknown: 0, excluded: 0,
     ...(byAuthor ? { schedule: 0 } : {}) };
   // files = 사진 밖 첨부(영상 등) 전부 — 옮기지 않는다(오너 판정 대기 · 결과에 건수만)
-  const out = { stop: null, studentAuthor: null, fillCandidate: null, reviews: [], answers: [], skipped, files: 0,
+  const out = { stop: null, studentAuthor: null, fillCandidate: null, reviews: [], answers: [], skipped, files: 0, included: 0, msgInfo: new Map(),
     ...(byAuthor ? { unmatched: new Map(), trainerUnattached: 0 } : {}) };
   const live = [];
   for (const m of msgs) {
@@ -243,8 +255,10 @@ function planFixed(live, ctx, out) {
     const staffId = m.authorId ? ctx.staffByDiscord.get(m.authorId) : undefined;
     const role = staffId != null ? "trainer" : (studentAuthor && m.authorId === studentAuthor ? "student" : null);
     if (!role) { skipped.unknown++; continue; }
+    if (ctx.exclude?.has(m.id)) { skipped.excluded++; continue; }                     // 손으로 빼기(요청 exclude)
     out.files += files(m).length;
     const text = m.content.trim();
+    out.msgInfo.set(m.id, { ch: m.ch, who: role === "trainer" ? `t${staffId}` : `s${Number(ctx.studentId)}`, len: text.length, img: imgs(m).length });
     const canJoin = (g) => g && g.role === role && (role === "student" || g.staffId === staffId)
       && m.ts - g.lastTs <= MERGE_MS && (g.body.length + (text ? text.length + 2 : 0)) <= (g.kind === "answer" ? ANSWER_MAX : BODY_MAX);
     if (canJoin(cur)) {
@@ -256,7 +270,10 @@ function planFixed(live, ctx, out) {
     }
     if (role === "student") {
       // 짧은 말 · 영상만 있는 글은 복기가 아니다(묶음을 끊지도 않는다). 사진이 있으면 글이 없어도 복기다.
-      if (text.length < MIN_POST && !imgs(m).length) { if (files(m).length) skipped.fileOnly++; else skipped.short++; continue; }
+      if (text.length < MIN_POST && !imgs(m).length) {
+        if (text && ctx.include?.has(m.id)) out.included++;                           // 손으로 넣기(요청 include) — 짧아도 복기
+        else { if (files(m).length) skipped.fileOnly++; else skipped.short++; continue; }
+      }
       const g = { kind: "review", role, key: m.id, msgIds: [m.id], ts: m.ts, lastTs: m.ts, body: text,
         images: imgs(m), files: files(m), ...lessonDateOf(text, m.ts) };
       out.reviews.push(g); byMsg.set(m.id, g);
@@ -311,8 +328,10 @@ function planByAuthor(live, ctx, out) {
       continue;
     }
     const who = role === "trainer" ? `t${staffId}` : `s${Number(sid)}`;
+    if (ctx.exclude?.has(m.id)) { skipped.excluded++; drop(m, "excluded", who); continue; }   // 손으로 빼기(요청 exclude) — 묶음에도 안 붙는다
     out.files += files(m).length;
     const text = m.content.trim();
+    out.msgInfo.set(m.id, { ch: m.ch, who, len: text.length, img: imgs(m).length });
     // 트레이너 글이 가리키는 복기 key — 답장 표시 없음 = undefined · 복기(또는 그 복기에 단 답)가 아닌 글에 단 답장 = null
     const refKey = role !== "trainer" || !m.refId ? undefined
       : (byMsg.get(m.refId)?.key ?? answerByMsg.get(m.refId)?.reviewKey ?? null);
@@ -332,7 +351,8 @@ function planByAuthor(live, ctx, out) {
     if (!imgs(m).length) {
       if (!text) { if (files(m).length) { skipped.fileOnly++; drop(m, "fileOnly", who); } else skipped.empty++; continue; }
       const why = chatterOf(text);
-      if (why) { skipped[why]++; drop(m, why, who); continue; }
+      if (why && ctx.include?.has(m.id)) out.included++;                              // 손으로 넣기(요청 include) — 거르기만 건너뛴다(짝 · 겹침 · 공개 규칙은 같다)
+      else if (why) { skipped[why]++; drop(m, why, who); continue; }
     }
     if (role === "student") {
       const g = { kind: "review", role, studentId: Number(sid), key: m.id, msgIds: [m.id], ts: m.ts, lastTs: m.ts, body: text,
@@ -402,6 +422,15 @@ function validateRequest(req) {
   if (req.mode !== "dry" && req.mode !== "write") return "request_mode";
   if (req.mode === "write" && !(Number.isInteger(req.confirmedBy) && req.confirmedBy > 0)) return "request_confirmed_by";
   if (!Array.isArray(req.channels) || !req.channels.length || req.channels.length > 120) return "request_channels";
+  // 손으로 넣기 · 빼기 — 메시지 id 목록(드라이런 결과 dropped · kept 에서 고른다). 같은 id 를 둘 다에 넣지 않는다
+  for (const k of ["include", "exclude"]) {
+    if (req[k] === undefined) continue;
+    if (!Array.isArray(req[k]) || req[k].length > 5000 || req[k].some((x) => !SNOWFLAKE.test(String(x)))) return `request_${k}`;
+  }
+  if (req.include && req.exclude) {
+    const ex = new Set(req.exclude.map(String));
+    if (req.include.some((x) => ex.has(String(x)))) return "request_include_exclude";
+  }
   const seen = new Set();
   for (const c of req.channels) {
     if (!c || !SNOWFLAKE.test(String(c.g)) || !SNOWFLAKE.test(String(c.ch))) return "channel_id";
@@ -518,9 +547,10 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
     if (!base.staffIds.has(Number(c.trainerId))) { res.status = "error"; res.error = "trainer_missing"; return res; }
 
     const msgs = await readAll(channel);
+    const hand = { include: base.include, exclude: base.exclude };                  // 손으로 넣기 · 빼기(요청 · 채널 공통)
     const plan = planChannel(msgs, byAuthor
-      ? { byAuthor: true, staffByDiscord: base.staffByDiscord, studentByDiscord: base.studentByDiscord }
-      : { staffByDiscord: base.staffByDiscord, studentByDiscord: base.studentByDiscord,
+      ? { byAuthor: true, staffByDiscord: base.staffByDiscord, studentByDiscord: base.studentByDiscord, ...hand }
+      : { staffByDiscord: base.staffByDiscord, studentByDiscord: base.studentByDiscord, ...hand,
           studentId: c.studentId, studentDiscord: stu.discord_id ? String(stu.discord_id) : null });
     // 복기마다 수강생 — 글쓴이 모드는 글쓴이, 아니면 요청의 그 수강생
     const sidOf = (g) => (byAuthor ? g.studentId : Number(c.studentId));
@@ -533,6 +563,7 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
       images: [...plan.reviews, ...plan.answers].reduce((s, g) => s + g.images.length, 0),
       files: plan.files,                                                                    // 사진 밖 첨부(영상 등) — 옮기지 않는다
       skipped: plan.skipped,
+      included: plan.included,                                                              // 손으로 넣은 글(요청 include · 거르기를 건너뛴 것)
       first: msgs.length ? kstDate(msgs[0].ts) : null,
       last: msgs.length ? kstDate(msgs[msgs.length - 1].ts) : null,
       fill: plan.fillCandidate ? (c.fill ? "would_fill" : "held") : "none",
@@ -565,6 +596,14 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
     const fresh = plan.reviews.filter((g) => !g.existing);
     res.existing = { reviews: plan.reviews.length - fresh.length, answers: plan.answers.filter((a) => a.existing).length };
     res.toInsert = { reviews: fresh.length, answers: plan.answers.length - res.existing.answers };
+    // 들어갈 글 — 새로 넣을 묶음의 메시지 id · 누구 · 글자 수(사진 수). 본문은 남기지 않는다 — 오너가 링크로 훑고 exclude 로 뺀다
+    if (byAuthor) {
+      res.kept = [...fresh, ...plan.answers.filter((a) => !a.existing)].flatMap((g) => g.msgIds.map((id) => {
+        const i = plan.msgInfo.get(id) || {};
+        return { id, ...(i.ch && i.ch !== String(c.ch) ? { th: i.ch } : {}), who: i.who, len: i.len ?? 0, ...(i.img ? { img: i.img } : {}),
+          kind: g.kind === "answer" ? "a" : "r" };
+      }));
+    }
 
     // 수업 연결(레슨 채널 · 새로 넣을 수강생 복기만) — 수강생마다 그 수강생 수업에서 찾는다. 이미 복기가 붙은 수업은 건너뛴다
     const used = new Set();
@@ -697,6 +736,7 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
       staffByDiscord: new Map(staff.filter((s) => s.discord_id).map((s) => [String(s.discord_id), Number(s.id)])),
       studentByDiscord: new Map(students.filter((s) => s.discord_id).map((s) => [String(s.discord_id), Number(s.id)])),
       students: new Map(students.map((s) => [Number(s.id), s])),
+      include: new Set((req.include || []).map(String)), exclude: new Set((req.exclude || []).map(String)),
     };
     for (const c of req.channels) {
       let row;
@@ -724,6 +764,8 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
       toInsert: { reviews: result.channels.reduce((s, r) => s + (r.toInsert?.reviews || 0), 0),
         answers: result.channels.reduce((s, r) => s + (r.toInsert?.answers || 0), 0) },
       dropped: result.channels.flatMap((r) => r.dropped || []).reduce((o, d) => ({ ...o, [d.why]: (o[d.why] || 0) + 1 }), {}),
+      included: result.channels.reduce((s, r) => s + (r.included || 0), 0),
+      excluded: result.channels.reduce((s, r) => s + (r.skipped?.excluded || 0), 0),
       unmatchedAuthors: new Set(result.channels.flatMap((r) => (r.unmatched || []).map((u) => u.id))).size,
       unmatchedPosts: result.channels.reduce((s, r) => s + (r.unmatched || []).reduce((n, u) => n + u.n, 0), 0),
     };

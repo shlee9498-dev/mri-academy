@@ -53,7 +53,7 @@ test("planChannel — 공지 · 시스템 · 봇 · 고정 제외 · 10분 안 �
   ];
   const p = planChannel(msgs, ctxOf());
   assert.equal(p.stop, null);
-  assert.deepEqual(p.skipped, { system: 1, bot: 1, notice: 1, pinned: 1, short: 1, empty: 0, fileOnly: 0, unknown: 0 });
+  assert.deepEqual(p.skipped, { system: 1, bot: 1, notice: 1, pinned: 1, short: 1, empty: 0, fileOnly: 0, unknown: 0, excluded: 0 });
   assert.equal(p.reviews.length, 2);
   const [tr, st] = p.reviews;
   assert.equal(tr.role, "trainer"); assert.equal(tr.staffId, 5);
@@ -561,7 +561,7 @@ function authorRunner(msgs, seedRows = {}) {
     log: () => {}, logError: () => {}, now: () => Date.parse("2026-10-03T01:00:00Z"), sleep: async () => {},
   });
   const run = async (id, mode, ch) => { store[REQ_KEY] = { id, mode, confirmedBy: 4, channels: [{ g: G, ch: CH, trainerId: 5, kind: "lesson", ...ch }] }; await imp.poll(); return store[RES_KEY]; };
-  return { sb, store, run, CH };
+  return { sb, store, run, CH, poll: () => imp.poll() };
 }
 
 test("실행(글쓴이 모드) — 10분 안에 A · B 복기에 연달아 답장 → 답 2개가 각자 자기 복기에 들어간다", async () => {
@@ -680,4 +680,57 @@ test("실행(글쓴이 모드) — 옛 일정 행 5분 뒤의 진짜 노트는 �
   assert.equal(sb.db.lesson_reviews[1].body, "레드존 생존 연습함");
   await run("rx-w2", "write", { byAuthor: true });
   assert.equal(sb.db.lesson_reviews.length, 2);
+});
+
+// ── 검수 12차(2026-10-03) — 노트에도 쓰는 일정 말은 부탁 · 질문 끝맺음이 있을 때만 · 손으로 넣기 · 빼기 ──
+test("chatterOf — 상담 · 문의 · 접속 · 하실 분 · 들어갈게요 · 몇 시는 부탁 · 질문 끝맺음이 있을 때만 일정 · 몇 시 방향은 방향 · 11차 6줄은 계속 일정", () => {
+  for (const t of [
+    "상담 때 들은 대로 자기장 끝선 먼저 잡기", "접속하자마자 감도부터 확인할 것", "문의했던 반동 제어는 아래로 당기는 힘 일정하게",
+    "같이 하실 분 구할 때도 스쿼드 오더 연습하기", "상대가 몇 명인지 모르면 먼저 들어가지 말기", "수류탄 먼저 까고 들어갈게요 라고 콜하기",
+    "몇 시 방향인지 콜하는 습관 들이기",
+  ]) assert.equal(chatterOf(t), null, t);
+  for (const t of [
+    "내일 연습 몇 시에 해요", "오늘 랭겜 몇시에 하실래요?", "내일 9시 훈련장 접속 가능하세요?",
+    "오늘 집중이 잘 안 돼서 일찍 들어갈게요", "티어 올리고 싶어서 문의드려요 상담 가능할까요", "내일 스쿼드 같이 하실 분",
+    "상담 언제 받을 수 있나요?", "오늘 교전 연습 몇 시에 해요?",
+  ]) assert.equal(chatterOf(t), "schedule", t);
+});
+
+test("validateRequest — include · exclude 는 메시지 id 목록 · 같은 id 를 둘 다에 넣지 않는다", () => {
+  const ch = { g: "100000000000000001", ch: "100000000000000002", trainerId: 5, kind: "lesson", byAuthor: true };
+  const ok = { id: "h1", mode: "dry", channels: [ch] };
+  assert.equal(validateRequest({ ...ok, include: ["100000000000000123"], exclude: ["100000000000000124"] }), null);
+  assert.equal(validateRequest({ ...ok, include: "100000000000000123" }), "request_include");
+  assert.equal(validateRequest({ ...ok, exclude: ["abc"] }), "request_exclude");
+  assert.equal(validateRequest({ ...ok, include: ["100000000000000123"], exclude: ["100000000000000123"] }), "request_include_exclude");
+});
+
+test("실행(글쓴이 모드) — 버려진 노트를 include 로 넣으면 1건 · exclude 한 글은 안 들어감 · 못 맞춘 글쓴이는 include 로도 못 넣음 · 다시 돌려도 그대로", async () => {
+  const note = raw({ content: "2:1 상황에선 먼저 빠지는 게 맞다", createdTimestamp: T0 });                   // 규칙으로는 잡담(짧고 배그 낱말 없음)
+  const chat = raw({ content: "치킨 먹었어요 ㅋㅋㅋ 오늘 재밌었어요", createdTimestamp: T0 + 2 * DAY });            // 규칙으로는 노트(치킨)
+  const form = raw({ content: FORM, createdTimestamp: T0 + 4 * DAY });
+  const stranger = raw({ author: { id: STRANGER }, content: "저도 2:1 상황 정리했어요", createdTimestamp: T0 + 5 * DAY });
+  const imp = authorRunner([note, chat, form, stranger]);
+  const d0 = (await imp.run("h-dry0", "dry", { byAuthor: true })).channels[0];
+  assert.deepEqual(d0.dropped.map((d) => [d.id, d.why]), [[note.id, "short"]]);
+  assert.deepEqual(d0.kept.map((k) => [k.id, k.who, k.len, k.kind]), [[chat.id, "s98", 20, "r"], [form.id, "s98", FORM.length, "r"]]);
+  assert.equal(JSON.stringify(d0.kept).includes("치킨"), false);                            // 본문은 안 싣는다
+
+  // include · exclude 는 요청 단위 — 드라이런 dropped · kept 에서 오너가 고른 메시지 id
+  const go = async (id, mode) => {
+    imp.store[REQ_KEY] = { id, mode, confirmedBy: 4, include: [note.id, stranger.id], exclude: [chat.id],
+      channels: [{ g: "300000000000000001", ch: imp.CH, trainerId: 5, kind: "lesson", byAuthor: true }] };
+    await imp.poll();
+    return imp.store[RES_KEY];
+  };
+  const d1 = (await go("h-dry1", "dry")).channels[0];
+  assert.equal(d1.included, 1);                                                              // 못 맞춘 글쓴이 글은 include 로도 안 들어간다
+  assert.equal(d1.skipped.excluded, 1);
+  assert.deepEqual(d1.kept.map((k) => k.id), [note.id, form.id]);
+  assert.deepEqual(d1.dropped.map((d) => [d.id, d.why]), [[chat.id, "excluded"]]);
+  await go("h-w1", "write");
+  assert.deepEqual(imp.sb.db.lesson_reviews.map((r) => r.src_msg), [note.id, form.id]);
+  assert.equal(imp.sb.db.lesson_reviews[0].visibility, "private");                         // 공개 규칙은 같다(7일 뒤 수강생 모두)
+  await go("h-w2", "write");
+  assert.equal(imp.sb.db.lesson_reviews.length, 2);
 });
