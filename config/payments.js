@@ -21,9 +21,13 @@
  * 2026-10-02 상담 키 정리(결제 트랙 결정 · 경비 대행): 레슨 상담(consultLesson · 15,000)을 지우고
  * 강의 상담 키(consultCourse)를 levelTest(「레벨 테스트」 · 20,000)로 바꿨다. 10/1 신청분부터
  * 상담은 레벨 테스트 한 가지다(오너 확정 9/28). 레벨 테스트 카드 결제는 신청 창구(start.html) 쪽이다.
+ *
+ * 2026-10-02 사이트 개편(지휘 주문 · 경비 대행): 99판(lesson99 = 33판 × 3 · 420,000)을 정식 상품으로 더했다
+ * (오너 「정식상품처리해도돼」). 가격은 33판 × 3 그대로다 — 33판 값이 바뀌면 함께 바꾼다(시험이 둘의 관계를 본다).
+ * 세트 표시 이름은 초급 · 중급 · 심화 세트로 바꿨다(사이트 #480 · 금액 그대로).
  */
 export const PRODUCT_KEYS = /** @type {const} */ ([
-  "lesson10", "lesson21", "lesson33",
+  "lesson10", "lesson21", "lesson33", "lesson99",
   "levelTest",
   "direct8_beginner", "direct8_inter", "direct8_advanced",
   "oneOnOneTrial", "oneOnOne", "vipDayPass",
@@ -50,6 +54,7 @@ export const PRICES = {
   lesson10: 45000,
   lesson21: 90000,
   lesson33: 140000,
+  lesson99: 420000,   // 33판 × 3 (2026-10-02 정식 상품)
 
   levelTest: 20000,
 
@@ -100,6 +105,7 @@ export const GROBLE_LINKS = {
   lesson10: "",
   lesson21: "",
   lesson33: "",
+  lesson99: "",
 
   levelTest: "",
 
@@ -121,6 +127,7 @@ export const PRODUCT_LABELS = {
   lesson10: "10판 패키지",
   lesson21: "21판 패키지",
   lesson33: "33판 패키지",
+  lesson99: "99판 패키지",
 
   levelTest: "레벨 테스트",
 
@@ -132,9 +139,9 @@ export const PRODUCT_LABELS = {
   oneOnOne: "실시간 1:1 직강",
   vipDayPass: "VIP DAY PASS",
 
-  setEntry: "입문 세트",
-  setLeap: "도약 세트",
-  setMaster: "마스터 세트",
+  setEntry: "초급 세트",
+  setLeap: "중급 세트",
+  setMaster: "심화 세트",
 };
 
 /** 45000 → "45,000원" */

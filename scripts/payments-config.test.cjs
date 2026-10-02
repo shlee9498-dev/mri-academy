@@ -22,6 +22,15 @@ test("네 곳의 키 목록이 같다 · 레벨 테스트는 levelTest 하나(20
   for (const old of ["consultLesson", "consultCourse"]) assert.equal(m.PRODUCT_KEYS.includes(old), false, old);
 });
 
+test("99판 = 33판 × 3 · 세트 이름 초급 · 중급 · 심화(2026-10-02 사이트 개편 · 오너 「정식상품처리해도돼」)", async () => {
+  const m = await loadConfig();
+  assert.equal(m.PRICES.lesson99, m.PRICES.lesson33 * 3);           // 33판 값이 바뀌면 99판도 함께 바꾼다
+  assert.equal(m.PRICES.lesson99, 420000);
+  assert.equal(m.PRODUCT_LABELS.lesson99, "99판 패키지");
+  assert.deepEqual([m.PRODUCT_LABELS.setEntry, m.PRODUCT_LABELS.setLeap, m.PRODUCT_LABELS.setMaster],
+                   ["초급 세트", "중급 세트", "심화 세트"]);
+});
+
 test("옛 상담 키(consultLesson · consultCourse)를 읽는 코드가 없다 — 주석의 경위 설명만 남는다", () => {
   const skip = new Set(["node_modules", "docs", "scripts", ".git", ".claude"]);
   const hits = [];

@@ -518,6 +518,7 @@ module.exports = function mountStudentPortal(app, deps) {
         status: "pending",
         quantity: parsed.quantity,
         games: parsed.games,
+        unitGames: p.games,               // 1개(단가) 판수 — 「33판 × 3」을 앱이 나눗셈으로 만들지 않게(계약 §9.27 · 2026-10-02)
         won: parsed.won,
         method: parsed.method,
         ownerNotified: notified === true,
@@ -543,7 +544,8 @@ module.exports = function mountStudentPortal(app, deps) {
           label: u.label,                   // 단가 상품 이름(예: 33판 패키지) — 수량은 quantity
           quantity: u.quantity,
           won: Number(r.amount),            // 합계
-          games: r.games ?? null,           // 합계
+          games: r.games ?? null,           // 합계 — 판수 결제는 늘 숫자(10/2 실측 34/34) · 판수 없는 결제(강의 · 상담 · 기타)만 null
+          unitGames: u.unitGames ?? null,   // 1개(단가) 판수 — quantity 와 짝(계약 §9.27) · 앱이 games ÷ quantity 를 하지 않게
           method: payreqIntake.methodOf(r), // transfer · card · other(옛 봇 신청의 숨고 · 기타)
           cashReceipt: payreqIntake.receiptForStudent(r),
           paidOn: r.paid_on,

@@ -18,11 +18,13 @@ function loadPrices() {
 const won = (n) => `${Number(n).toLocaleString("ko-KR")}원`;
 
 // 챗봇 [핵심 사실]의 가격 줄 — 전부 PRICES 에서 온다. 레벨 테스트 = levelTest(오너 확정 9/28 · 10/1 신청분부터 20,000원 한 가지 · 키 이름은 2026-10-02 결제 트랙 정리).
+//   2026-10-02 사이트 개편(VIP 룸 #481 · 지휘 주문): 원장 1:1 직강 · VIP DAY PASS 는 가격 미확정 · 판매 0건이라 금액을 싣지 않는다.
+//   config 의 oneOnOneTrial · oneOnOne · vipDayPass 값은 여기서 읽지 않는다 — 챗봇은 VIP 룸 문의로만 안내한다.
+//   99판(lesson99 = 33판 × 3)은 같은 날 정식 상품이 됐다(오너 「정식상품처리해도돼」).
 function chatbotPriceFacts(P) {
   return [
-    `- 레슨 요금(특가): 10판 ${won(P.lesson10)} / 21판 ${won(P.lesson21)} / 33판 ${won(P.lesson33)}.`,
-    `- 원장 1:1(이무리) 2시간: 첫 체험 ${won(P.oneOnOneTrial)} / 이후 ${won(P.oneOnOne)}.`,
-    `- 원장 하루 집중(VIP DAY PASS): ${won(P.vipDayPass)}. 오전~저녁 종일, 레벨테스트 없이 신청 가능, 24시간 전 일정 조율.`,
+    `- 레슨 요금(특가): 10판 ${won(P.lesson10)} / 21판 ${won(P.lesson21)} / 33판 ${won(P.lesson33)} / 99판 ${won(P.lesson99)}(33판 × 3).`,
+    `- 원장 1:1 직강 · VIP DAY PASS: 가격을 공개하지 않습니다. **금액을 말하지 말고**, 홈페이지 VIP 룸(https://mriacademy.gg/#vip)에서 카카오나 디스코드로 문의하면 목표와 쓸 수 있는 시간에 맞춰 구성과 금액을 안내한다고만 답하세요.`,
     `- 원장 강의(1회 3시간 · 8번): 초급 ${won(P.direct8_beginner)} / 중급 ${won(P.direct8_inter)} / 심화 ${won(P.direct8_advanced)}. 시간 예약제.`,
     `- 세트(원장 강의 8번 + 레슨): 초급 세트 ${won(P.setEntry)}(초급 강의 8번 + 레슨 10판) / 중급 세트 ${won(P.setLeap)}(중급 강의 + 레슨 21판) / 심화 세트 ${won(P.setMaster)}(심화 강의 + 레슨 33판).`,
     `- 레벨 테스트: ${won(P.levelTest)} · 60~90분. 처음 오는 분은 레슨 포함 모두 레벨 테스트부터 시작합니다. 트레이너가 다시보기를 미리 보고 지금 실력에 맞는 수업을 같이 정합니다.`,

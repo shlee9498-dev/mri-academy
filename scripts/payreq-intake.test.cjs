@@ -60,7 +60,7 @@ test("카드 링크 env — https:// 만 켠다 · 빈 값 · 형식 틀림은 �
   const r = P.cardLinksFromEnv({ GROBLE_LINK_LESSON10: "https://example.test/a", GROBLE_LINK_LESSON21: "http://x", GROBLE_LINK_LESSON33: " " });
   assert.deepEqual(r.links, { lesson10: "https://example.test/a" });
   assert.deepEqual(r.bad, ["GROBLE_LINK_LESSON21"]);
-  assert.deepEqual(r.missing, ["GROBLE_LINK_LESSON33"]);
+  assert.deepEqual(r.missing, ["GROBLE_LINK_LESSON33", "GROBLE_LINK_LESSON99"]);   // 99판 링크(2026-10-02 정식 상품)는 없으면 카드만 숨는다
   assert.deepEqual(P.cardLinksFromEnv({}).links, {});
 });
 
