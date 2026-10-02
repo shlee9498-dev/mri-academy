@@ -80,15 +80,92 @@ test("공개 응답 가드 — 허용 키 말고는 throw(수강생 이름 · id
   }
 });
 
-test("사이트 모양(명세 §8 · /api/site-metrics) — students30 · games30 · rebook30 · byTrainer · 「회」 없음 · 트레이너 키", () => {
+test("사이트 모양(명세 §8 · /api/site-metrics) — students30 · games30 · rebook30 · 직강 두 칸 · byTrainer · 레슨 「수업 회」 없음 · 트레이너 키", () => {
   const { siteShape } = require("../public-metrics.cjs")._test;
   const sessions = [ss(1, 10, 2, "2026-09-10", 5), ss(2, 11, 5, "2026-09-11", 8)];
   const m = computeMetrics({ sessions, payments: [], students, enrollTrainer: new Map(), staff }, W);
   const site = siteShape({ asOf: "x", ...m });
-  assert.deepEqual(Object.keys(site), ["asOf", "students30", "games30", "rebook30", "byTrainer"]);
+  assert.deepEqual(Object.keys(site), ["asOf", "students30", "games30", "rebook30", "directSessions30", "directStudents30", "byTrainer"]);
   assert.deepEqual([site.students30, site.games30, site.rebook30], [2, 13, null]);          // 결제 없음 → null
-  assert.deepEqual(site.byTrainer.map((t) => [t.id, t.name, t.students30, t.games30]),
-    [["muri", "원장", 0, 0], ["jungu", "트레이너A", 1, 5], ["hyuntae", "트레이너B", 1, 8]]);
-  assert.equal(JSON.stringify(site).includes("lessons"), false);                              // 사이트에는 「회」를 안 싣는다
+  assert.deepEqual([site.directSessions30, site.directStudents30], [null, null]);            // 직강 행을 안 읽었으면 null
+  assert.deepEqual(site.byTrainer.map((t) => [t.id, t.name, t.students30, t.games30, t.directSessions30]),
+    [["muri", "원장", 0, 0, null], ["jungu", "트레이너A", 1, 5, null], ["hyuntae", "트레이너B", 1, 8, null]]);
+  assert.equal(JSON.stringify(site).includes("lessons"), false);                              // 레슨 「수업 회」는 안 싣는다
   assert.doesNotThrow(() => assertPublic(site));
+  // 직강 키가 없던 날의 저장본도 같은 모양으로 내린다
+  const old = siteShape({ asOf: "x", students: 1, games: 5, repurchase: { ratePct: 10 }, trainers: [] });
+  assert.deepEqual([old.directSessions30, old.directStudents30], [null, null]);
+});
+
+// ── 직강(원장 강의 · 「회」 · 2026-10-02) ──
+const { directOf, DIRECT_RECORDED_SINCE, siteShape } = require("../public-metrics.cjs")._test;
+const DW = windowOf("2026-11-01");                                   // 10/2 ~ 10/31 — 날짜 있는 기록 시작(9/28) 뒤
+const dcourses = [
+  { id: 1, student_id: 10, status: "active", trainer_id: 4 }, { id: 2, student_id: 11, status: "done", trainer_id: 4 },
+  { id: 3, student_id: 12, status: "cancelled", trainer_id: 4 },     // 환불 · 무효 강의
+  { id: 4, student_id: TEST_ID, status: "active", trainer_id: 4 }, { id: 5, student_id: 14, status: "active", trainer_id: 4 },   // 테스트 · 합친 행
+];
+const cs = (id, held_on, status, source, trainer_id = 4) => ({ id, held_on, status, source, trainer_id });
+const at = (id, session_id, course_id, status = "done") => ({ id, session_id, course_id, status });
+const dsessions = [
+  cs(50, "2026-10-05", "done", "panel"), cs(51, "2026-10-06", "done", "bot"),
+  cs(52, "2026-10-07", "done", "sheet_import"),                      // 이관 묶음 — 날짜가 실제 수업일이 아니다
+  cs(53, "2026-10-08", "cancelled", "panel"),                        // 회차 취소
+  cs(54, "2026-10-09", "done", "panel"),                             // 취소 강의 · 테스트 · 합친 행 출석뿐
+  cs(55, "2026-10-01", "done", "panel"),                             // 창 밖
+  cs(56, "2026-10-10", "done", "panel", null),                       // 회차 트레이너 없음 → 강의 담당
+];
+const dattendance = [
+  at(1, 50, 1), at(2, 50, 2),                                        // 그룹 회차 — 1회 · 2명
+  at(3, 51, 1), at(4, 51, 2, "cancelled"),
+  at(5, 52, 1), at(6, 53, 1), at(7, 54, 3), at(8, 54, 4), at(9, 54, 5), at(10, 55, 1),
+  at(11, 56, 2),
+];
+
+test("직강 — 날짜 있는 끝난 회차만 · 그룹도 1회 · 이관 · 취소 · 창 밖 · 취소 강의 · 테스트 · 합친 행은 안 센다 · 원장 귀속", () => {
+  const d = directOf({ courseSessions: dsessions, attendance: dattendance, courses: dcourses }, DW,
+    (sid) => sid !== TEST_ID && sid !== 14, Date.parse("2026-11-01T00:00:00Z"));
+  assert.deepEqual([d.sessions, d.students, d.unrecorded, d.ready, d.since], [3, 2, 0, true, DIRECT_RECORDED_SINCE]);
+  assert.deepEqual([...d.sessionsByTrainer], [[4, 3]]);
+});
+
+test("직강 공개 가드 — 창이 기록 시작일(9/28) 앞을 덮거나 안 닫힌 기록이 있으면 ready false · 사이트 숫자는 null", () => {
+  const now = Date.parse("2026-11-01T00:00:00Z");
+  const counted = (sid) => sid !== TEST_ID && sid !== 14;            // 테스트 계정 · 합친 행 제외(computeMetrics 와 같다)
+  // ① 날짜 가드 — 10/15 계산분 창(9/15~10/14)은 9/28 앞을 덮는다
+  const early = directOf({ courseSessions: dsessions, attendance: dattendance, courses: dcourses }, windowOf("2026-10-15"), counted, now);
+  assert.equal(early.ready, false);
+  assert.equal(windowOf("2026-10-28").from, DIRECT_RECORDED_SINCE);  // 10/28 계산분부터 창 전체가 기록 기간이다
+  // ② 안 닫힌 기록 — 끝난 직강 칸에 살아 있는 예약 · 회차 없음 / 날짜 지난 예정 회차
+  const slot = (id, slot_start, o = {}) => ({ id, slot_start, duration_min: 180, status: "open", ...o });
+  const slots = [
+    slot(900, "2026-10-20T00:00:00Z"),                               // 끝남 · 예약 booked · 회차 없음 → 안 닫힘
+    slot(901, "2026-10-21T00:00:00Z"),                               // 끝남 · 회차 있음 → 닫힘
+    slot(902, "2026-10-22T00:00:00Z"),                               // 끝남 · 노쇼 · 취소 예약뿐 → 닫힘(수업 없음)
+    slot(903, "2026-10-31T23:30:00Z"),                               // 아직 진행 중 → 안 센다
+    slot(904, "2026-10-23T00:00:00Z", { status: "cancelled" }),      // 칸 취소
+  ];
+  const bookings = [{ slot_id: 900, status: "booked" }, { slot_id: 901, status: "booked" }, { slot_id: 902, status: "no_show" },
+                    { slot_id: 902, status: "cancelled" }, { slot_id: 903, status: "booked" }, { slot_id: 904, status: "booked" }];
+  const open1 = directOf({ courseSessions: dsessions, attendance: dattendance, courses: dcourses, slots, bookings,
+    slotSessions: [{ slot_id: 901 }] }, DW, counted, now);
+  assert.deepEqual([open1.unrecorded, open1.ready, open1.sessions], [1, false, 3]);   // 숫자는 세되 공개하지 않는다
+  const stale = directOf({ courseSessions: [...dsessions, cs(60, "2026-10-12", "scheduled", "panel")], attendance: dattendance,
+    courses: dcourses }, DW, counted, now);
+  assert.deepEqual([stale.unrecorded, stale.ready], [1, false]);
+});
+
+test("직강 — computeMetrics 출력 · 사이트 모양 · 공개 가드(읽기 실패면 null)", () => {
+  const direct = { courseSessions: dsessions, attendance: dattendance, courses: dcourses };
+  const m = computeMetrics({ sessions: [], payments: [], students, enrollTrainer: new Map(), staff, direct }, DW, Date.parse("2026-11-01T00:00:00Z"));
+  assert.deepEqual(m.direct, { since: DIRECT_RECORDED_SINCE, ready: true, sessions: 3, students: 2, unrecorded: 0 });
+  assert.deepEqual(m.trainers.map((t) => [t.name, t.directSessions]), [["원장", 3], ["트레이너A", 0], ["트레이너B", 0]]);
+  const site = siteShape({ asOf: "x", ...m });
+  assert.deepEqual([site.directSessions30, site.directStudents30], [3, 2]);
+  assert.deepEqual(site.byTrainer.map((t) => [t.id, t.directSessions30]), [["muri", 3], ["jungu", 0], ["hyuntae", 0]]);
+  assert.doesNotThrow(() => assertPublic({ asOf: "x", ...m }));
+  assert.doesNotThrow(() => assertPublic(site));
+  const failed = computeMetrics({ sessions: [], payments: [], students, enrollTrainer: new Map(), staff, direct: null }, DW);
+  assert.deepEqual(failed.direct, { since: DIRECT_RECORDED_SINCE, ready: false, sessions: null, students: null, unrecorded: null });
+  assert.deepEqual([siteShape(failed).directSessions30, siteShape(failed).byTrainer[0].directSessions30], [null, null]);
 });

@@ -190,7 +190,7 @@ const STAFF = [
 const stu = (id, name, o = {}) => ({ id, name, status: "active", trainer_id: 2, carry_games: 0, pubg_name: null,
   discord_id: `s${id}`, merged_into: null, level: null, created_at: "2025-01-01T00:00:00Z", note: "메모", ...o });
 const course = (id, student_id, level, o = {}) => ({ id, student_id, level, scheme: "new", started_on: "2026-08-01", ended_on: null,
-  status: "active", units_total: 8, confirmed_units: 0, trainer_id: 4, memo: "x", ...o });
+  status: "active", units_total: 8, confirmed_units: 0, session_minutes: 180, trainer_id: 4, memo: "x", ...o });
 const slot = (id, o = {}) => ({ id, trainer_id: 4, slot_start: at(grid(Date.now() + 2 * DAY)), lesson_type: "course", capacity: 3,
   status: "open", duration_min: 180, course_level: "심화반", created_at: "2026-10-01T00:00:00Z", ...o });
 const bk = (id, slot_id, student_id, status = "booked", o = {}) => ({ id, slot_id, student_id, status, games_held: 0,

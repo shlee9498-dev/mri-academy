@@ -543,7 +543,7 @@ module.exports = function mountTrainerPortal(app, deps) {
   //   출석 행 memo 는 정정 표시('추가' · '보강')와 글자 그대로 같은지만 본다 — 값은 응답에 싣지 않는다(가드가 memo 어간을 막는다).
   async function courseHistoryOf(sid) {
     const courses = await sbSelect("courses",
-      `select=id,level,scheme,status,started_on,ended_on,units_total,confirmed_units&student_id=eq.${sid}&order=started_on.desc`);
+      `select=id,level,scheme,status,started_on,ended_on,units_total,confirmed_units,session_minutes&student_id=eq.${sid}&order=started_on.desc`);
     if (!courses.length) return [];
     const cids = courses.map((c) => c.id).join(",");
     const [att, pays] = await Promise.all([
@@ -586,6 +586,7 @@ module.exports = function mountTrainerPortal(app, deps) {
         scheme: c.scheme || null, status: c.status, startedOn: c.started_on, endedOn: c.ended_on || null,
         unitsTotal: p.unitsTotal ?? Number(c.units_total || 0), completedUnits: p.completedUnits ?? 0,
         remainingUnits: p.remainingUnits ?? null, ownerConfirmedUnits: Number(c.confirmed_units || 0),
+        sessionMinutes: p.sessionMinutes ?? null,                       // 1회 길이(분) · 직강은 「회」 단위(§9.28)
         attendance: mine,
         cancelledAttendance: cancelled,
         paidOn: pays.filter((x) => x.course_id === c.id && !x.voided_at && x.kind !== "refund").map((x) => x.paid_at).sort(),

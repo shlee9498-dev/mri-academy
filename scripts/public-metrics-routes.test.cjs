@@ -12,6 +12,8 @@ const kst = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
 const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
 const TODAY = kst(Date.now());
 const YESTERDAY = addDays(TODAY, -1);
+// 직강 공개 가드(창 첫날 ≥ 2026-09-28) — 날짜에 따라 기대값이 갈린다(가짜 DB 의 직강 행은 0건 · 안 닫힌 기록 0)
+const DIRECT_READY = addDays(TODAY, -30) >= "2026-09-28";
 
 const st = { selects: 0, fail: false, state: {} };
 const deps = {
@@ -48,6 +50,7 @@ test("첫 요청이 계산해 저장 · 두 번째는 다시 세지 않는다 ·
   assert.deepEqual([a.json.students, a.json.lessons, a.json.games, a.json.window.to], [1, 1, 5, YESTERDAY]);
   assert.deepEqual(a.json.repurchase, { payers: 1, repeaters: 1, ratePct: 100, basis: "all_time" });
   assert.deepEqual(a.json.trainers.map((t) => t.name), ["트레이너A"]);
+  assert.deepEqual([a.json.direct.sessions, a.json.direct.unrecorded, a.json.direct.ready], [0, 0, DIRECT_READY]);
   assert.equal(st.state.public_metrics.date, TODAY);
   const body = JSON.stringify(a.json);
   for (const leak of ["가나다", "contact", "student_id", "000", "memo"]) assert.equal(body.includes(leak), false, leak);
@@ -62,7 +65,8 @@ test("GET /api/site-metrics — 명세 §8 모양 · 같은 계산본(다시 세
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), {
     asOf: st.state.public_metrics.value.asOf, students30: 1, games30: 5, rebook30: 100,
-    byTrainer: [{ id: "jungu", name: "트레이너A", students30: 1, games30: 5, rebook30: 100 }],
+    directSessions30: DIRECT_READY ? 0 : null, directStudents30: DIRECT_READY ? 0 : null,
+    byTrainer: [{ id: "jungu", name: "트레이너A", students30: 1, games30: 5, rebook30: 100, directSessions30: DIRECT_READY ? 0 : null }],
   });
   assert.equal(st.selects, n);
 });

@@ -156,7 +156,7 @@ test("트레이너 표 — 오늘 · 이번 주 수업 · 판수 합(조정 · �
 
 test("직강 회차 요약 — 출석 행 없으면 미상 · done 합 · 가장 이른 예정 회차", () => {
   const courses = [
-    { id: 1, student_id: 16, level: "심화반", scheme: "new", started_on: "2025-01-01", status: "active", units_total: 12 },
+    { id: 1, student_id: 16, level: "심화반", scheme: "new", started_on: "2025-01-01", status: "active", units_total: 12, session_minutes: 180 },
     { id: 2, student_id: 12, level: "중급반", scheme: "old", started_on: "2024-11-01", status: "paused", units_total: 8 },
   ];
   const att = [
@@ -167,10 +167,11 @@ test("직강 회차 요약 — 출석 행 없으면 미상 · done 합 · 가장
                  73: { id: 73, held_on: "2025-01-17", start_time: "14:00:00", end_time: "17:00:00" } };
   const m = summarizeCourses(courses, att, sess, true);
   assert.deepEqual(m.get(16), [{ level: "심화반", scheme: "new", startedOn: "2025-01-01", status: "active", unitsTotal: 12,
-    completedUnits: 2.5, remainingUnits: 9.5, ownerConfirmedUnits: 0, attendanceKnown: true,
+    completedUnits: 2.5, remainingUnits: 9.5, sessionMinutes: 180, ownerConfirmedUnits: 0, attendanceKnown: true,
     nextSession: { date: "2025-01-10", startTime: "14:00", endTime: "17:00", type: "direct" } }]);
   assert.deepEqual(m.get(12)[0].attendanceKnown, false);
   assert.deepEqual([m.get(12)[0].completedUnits, m.get(12)[0].nextSession], [0, null]);
+  assert.equal(m.get(12)[0].sessionMinutes, null);                     // 1회 길이가 없는 강의는 null(지어내지 않는다 · §9.28)
   assert.equal(summarizeCourses(courses, att, sess, false).get(16)[0].attendanceKnown, false);   // 출석 조회 실패 = 미상
 });
 
