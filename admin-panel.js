@@ -66,6 +66,14 @@ module.exports = function mountAdminPanel(app, deps) {
   // 같은 방식으로 시행월을 그어 과거를 건드리지 않는다.
   const LESSON_ONLY_START = "2026-08";
 
+  // 2026-10-02 오너(지휘 주문 8 · 결정대기함 A19): 빵다 성과급(순매출 6%)은 그 달 **업로드 약속**
+  //   (이무리 채널 주 1회 롱폼 · 주 3회 이상 숏폼)을 지킨 달에만 준다. 미달 달은 기본급만이고 6% 몫은 지급하지 않는다
+  //   (오너 원문 「미달은 가차없이 전속 이무리에게 귀속 · 빵다기본급까지만」). 판정은 staff_month_conditions(§64) 한 줄이다.
+  //   9월분부터 본다 — 9월은 오너 판정으로 이미 기본급만 지급했다(10/2 정산 · payouts #19).
+  //   ⚠️ 판정 줄이 아직 없으면 6% 를 0 으로 둔다(「판정 전」). 지급 전에 판정을 먼저 넣게 해서 실수로 6% 가 나가지 않게 한다.
+  const BONUS_CONDITION_START = "2026-09";
+  const BONUS_CONDITION_KEY = "upload_promise";
+
   // ── 수수료 컬럼 존재 플래그 ────────────────────────────
   // payments.fee_amount/net_amount는 DDL이 실행돼야 존재한다. 매 쿼리를 try/catch로
   // 감싸는 대신, 기동 시 1회 프로브한 결과(server.js probeOptionalSchema)를 참조한다.
@@ -390,7 +398,8 @@ module.exports = function mountAdminPanel(app, deps) {
   // 직원(빵다) 급여: 기본급 + 순매출 6% (7월분/8·2 지급부터, 6월분 이전 동결).
   //   순매출 = floor100(금액/1.1) — 100원 버림 (시트 검증: 360,000→327,200 / 120,000→109,000 / 40,000→36,300).
   //   수수료 적용 대상: comp_note에 '6%' 또는 '순매출' 표기된 직원 (소영 등 기본급만은 제안 0).
-  function computeStaffSalary(st, payments, period) {
+  //   9월분부터는 업로드 약속 판정(conditions · §64)이 「지킴」일 때만 6% 를 제안한다(위 BONUS_CONDITION_START).
+  function computeStaffSalary(st, payments, period, conditions = []) {
     // 정산 귀속월 기준. settled_period가 없으면 paid_at 월 — 기존 행은 산출값 불변.
     const monthPays = payments.filter((p) => !isVoid(p) && settlePeriod(p) === period);
     // 2026-08부터 kind='lesson'만 6% 대상. 그전 달은 전 kind 합산(현행 동결) — 위 LESSON_ONLY_START 주석 참조.
@@ -398,13 +407,26 @@ module.exports = function mountAdminPanel(app, deps) {
     const netRevenue = sum(base, (p) => floor100(payBase(p) / 1.1));           // 당월 순매출(VAT 제외·버림)
     const commissioned = !!(st.comp_note && /6%|순매출/.test(st.comp_note));
     const applies = commissioned && period >= SALARY_START;      // 6월분 이전 동결
-    const suggestCommission = applies ? round100(netRevenue * NET_RATE) : 0;    // 순매출 6%
+    const full = applies ? round100(netRevenue * NET_RATE) : 0;               // 순매출 6%(조건 보기 전)
+    // 업로드 약속 판정 — true 지킴 · false 미달 · null 판정 전(줄 없음). 9월분 전 · 6% 대상 아님이면 판정을 보지 않는다.
+    const gated = applies && period >= BONUS_CONDITION_START;
+    const cond = gated
+      ? (conditions || []).find((x) => Number(x.staff_id) === Number(st.id) && x.period === period && x.condition_key === BONUS_CONDITION_KEY)
+      : null;
+    const met = gated ? (cond ? cond.met === true : null) : null;
+    const suggestCommission = !applies ? 0 : (!gated || met === true) ? full : 0;
     return {
       staff_id: st.id, name: st.name, base_salary: st.base_salary || 0,
       suggest_commission: suggestCommission, comp_note: st.comp_note || null,
       month_revenue: netRevenue,                                  // 순매출 기준 표기
-      note: applies ? "순매출 6% + 기본급 · 지급 시 owner 최종확정"
-        : (commissioned ? "6월분 이전 동결(수수료 미발생)" : "기본급만"),
+      commission_full: full,                                      // 조건 보기 전 6%(화면이 「미달로 0」을 보여 줄 때 쓴다)
+      bonus_condition: gated ? { key: BONUS_CONDITION_KEY, met, decided_at: cond?.decided_at || null } : null,
+      forfeited: gated && met === false ? full : 0,                // 미달 확정 몫 — 지급하지 않고 아카데미 귀속(오너 10/2)
+      note: !applies ? (commissioned ? "6월분 이전 동결(수수료 미발생)" : "기본급만")
+        : !gated ? "순매출 6% + 기본급 · 지급 시 owner 최종확정"
+        : met === true ? "업로드 약속 지킴 → 순매출 6% + 기본급 · 지급 시 owner 최종확정"
+        : met === false ? "업로드 약속 미달 → 기본급만 · 6% 몫은 아카데미 귀속(오너 10/2)"
+        : "업로드 약속 판정 전 → 기본급만으로 둔다 · 판정을 넣으면 다시 계산",
     };
   }
 
@@ -461,7 +483,7 @@ module.exports = function mountAdminPanel(app, deps) {
   // 지급액이 바뀌는 코드라 실DB 없이 고정할 수 있어야 한다. 라우트·권한은 내보내지 않는다.
   module.exports._engine = {
     computeStudent, computeTrainer, computeStaffSalary, aggregateConsults,
-    trainerBaseRateAt, floor100, RATE_FLAT, RATE_FLAT_FROM, LEVELTEST_START,
+    trainerBaseRateAt, floor100, RATE_FLAT, RATE_FLAT_FROM, LEVELTEST_START, BONUS_CONDITION_START,
   };
 
   // ── 대시보드: 정산 전체 현황 ───────────────────────────
@@ -473,7 +495,7 @@ module.exports = function mountAdminPanel(app, deps) {
     const period = String(req.query.period || "").match(/^\d{4}-\d{2}$/) ? req.query.period : null;
     try {
       const [students, payments, sessions, payouts, staff, graduations, enrollments, courses,
-             roster] = await Promise.all([
+             roster, staffConditions] = await Promise.all([
         sbSelect("students", "select=*&order=name.asc"),
         sbSelect("payments", "select=*"),
         // lesson_enrollment_id(§19 백필 대상)는 미실행 환경이 있어 축소 재요청으로 흡수한다.
@@ -509,6 +531,8 @@ module.exports = function mountAdminPanel(app, deps) {
         // 같은 규칙을 코드로 재구성한다(enrollments·courses와 같은 degrade 경로) — 뷰가
         // 없다고 패널이 비면 DDL 실행 전까지 화면이 통째로 죽는 회귀가 된다.
         sbSelect("v_panel_roster", "select=*").catch(() => []),
+        // 직원 월별 조건(§64 · 업로드 약속) — 미실행이면 빈 배열. 그러면 9월분부터 빵다 6% 가 「판정 전」 0 으로 보인다(지급 안 함 쪽으로 실패).
+        sbSelect("staff_month_conditions", "select=staff_id,period,condition_key,met,decided_at").catch(() => []),
       ]);
       const payByStu = groupBy(payments, "student_id");
       const sessByStu = groupBy(sessions, "student_id");
@@ -711,7 +735,7 @@ module.exports = function mountAdminPanel(app, deps) {
       //    남아 있을 수 있고, 목록에서 빼면 갚아야 할 돈이 화면에서 사라진다.
       const employees = c.isOwner
         ? staff.filter((s) => s.role === "staff" && s.active !== false)
-            .map((s) => computeStaffSalary(s, payments, period || currentPeriod()))
+            .map((s) => computeStaffSalary(s, payments, period || currentPeriod(), staffConditions))
         : [];
 
       res.json({

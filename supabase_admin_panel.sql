@@ -6551,3 +6551,41 @@ end $$;
 --      12일 뒤 불가항력 = exempt_limit nextOn 10/26 / 28일 뒤 불가항력 정상 / 트레이너 사정 1 · 2 · 3번째(3번째 over true) /
 --      면제 줄 6 · 전부 0판 · 판수 기록(lesson_sessions) 0.
 -- ============================================================
+
+-- ============================================================
+-- 64) 직원 월별 성과 조건 — 빵다 업로드 약속 (2026-10-02 · 지휘 주문 8 · 결정대기함 A19)
+--     오너 원문(10/2): 「미달은 가차없이 전속 이무리에게 귀속 · 빵다기본급까지만」.
+--     빵다(순매출 6% 대상 · comp_note 6%/순매출)는 그 달 업로드 약속(이무리 채널 주 1회 롱폼 · 주 3회 이상 숏폼)을
+--     지킨 달에만 6% 를 받는다. 미달 달은 기본급만이고 6% 몫은 지급하지 않는다(아카데미 귀속).
+--     엔진(admin-panel.js computeStaffSalary)은 9월분부터 이 표의 한 줄을 본다:
+--       met = true → 6% 제안 · met = false → 0(미달 확정) · 줄 없음 → 0(「판정 전」 · 지급 전에 판정을 먼저 넣는다).
+--     판정은 월말 업로드 점검(편집자 업로드 점검 · 주별 롱폼 · 숏폼 수) 뒤 오너가 정한다 — 세션은 오너 OK 뒤에만 넣는다.
+--     A 구간(새 테이블만 · 더하기). 실행 전까지 server.js SCHEMA_OPTIONAL 경고 1줄 · 엔진은 빈 배열(= 판정 전)로 동작.
+--     ⚠️ 잠긴 달(period_locks) 판정을 바꾸면 화면 숫자만 바뀐다 — 지급(payouts)은 그대로이고 정정은 다음 달 조정으로 한다.
+-- ============================================================
+create table if not exists public.staff_month_conditions (
+  id            bigint generated always as identity primary key,
+  staff_id      bigint not null references public.staff(id),
+  period        text   not null check (period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),   -- 정산 귀속월 'YYYY-MM'
+  condition_key text   not null check (condition_key in ('upload_promise')),     -- 조건이 늘면 여기 더한다(제약 교체 = B)
+  met           boolean not null,                                                  -- true 지킴 · false 미달
+  evidence      jsonb,                                  -- 주별 롱폼 · 숏폼 수 등 점검 근거(영상 제목 · 링크 원문은 넣지 않는다)
+  memo          text,
+  decided_by    text   not null,                        -- 'owner' · 'claude_session(오너 OK 날짜)'
+  decided_at    timestamptz not null default now(),
+  unique (staff_id, period, condition_key)
+);
+alter table public.staff_month_conditions enable row level security;   -- service_role 만 통과
+--
+-- 실행 뒤 검증(세션):
+--   select column_name from information_schema.columns where table_schema='public' and table_name='staff_month_conditions';   -- 9
+--   select conname from pg_constraint where conrelid = 'public.staff_month_conditions'::regclass order by 1;
+--   select count(*) from staff_month_conditions;                                                                                 -- 0
+--   notify pgrst, 'reload schema';
+--
+-- 판정 넣기(B · 오너 OK 뒤 · 예시 — 9월분 미달은 10/2 정산 판단 그대로):
+--   insert into staff_month_conditions (staff_id, period, condition_key, met, evidence, decided_by, memo)
+--   values (3, '2026-09', 'upload_promise', false, null, 'owner', '10/2 정산 — 미달 · 기본급만 지급(payouts #19)');
+--
+-- 되돌림: drop table if exists public.staff_month_conditions;   -- 판정 줄이 있으면 먼저 오너 확인
+-- ============================================================

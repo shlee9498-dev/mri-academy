@@ -8697,6 +8697,9 @@ const SCHEMA_OPTIONAL = {
   // 명시 select 만 hasVoidColumn() 으로 가른다. 무효 행을 실제로 쓰기 시작하면 승격한다.
   payments: ["pay_channel", "fee_amount", "net_amount", "lesson_enrollment_id", "settled_period",
              "deposit_ref", "voided_at", "void_reason"],
+  // §64 직원 월별 조건(업로드 약속 · 2026-10-02 오너) — 미실행이면 admin-panel 이 빈 배열로 읽어 9월분부터 빵다 6% 를
+  // 「판정 전」 0 으로 보인다(지급 안 함 쪽으로 실패). 판정을 넣기 시작하면 REQUIRED 로 올린다.
+  staff_month_conditions: ["staff_id", "period", "condition_key", "met", "evidence", "memo", "decided_by", "decided_at"],
   lesson_sessions: ["lesson_enrollment_id"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
