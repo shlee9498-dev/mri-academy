@@ -285,11 +285,16 @@
   if (h1) {
     var k = 0;
     h1.querySelectorAll("[data-line]").forEach(function (line) {
-      var words = line.textContent.trim().split(/\s+/), cls = line.className;
-      line.innerHTML = words.map(function (w) {
-        return '<span class="w"><span style="transition-delay:' + (0.12 + 0.09 * k++) + 's">' + w + "</span></span>";
-      }).join(" ");
-      line.className = cls;
+      var words = line.textContent.trim().split(/\s+/);
+      line.textContent = "";
+      words.forEach(function (w, i) {
+        // 글자는 textContent 로만 넣는다(HTML 로 다시 읽히지 않게)
+        var outer = document.createElement("span"), inner = document.createElement("span");
+        outer.className = "w"; inner.style.transitionDelay = (0.12 + 0.09 * k++) + "s"; inner.textContent = w;
+        outer.appendChild(inner);
+        if (i) line.appendChild(document.createTextNode(" "));
+        line.appendChild(outer);
+      });
     });
   }
   requestAnimationFrame(function () { setTimeout(function () { if (hero) hero.classList.add("go"); }, 60); });

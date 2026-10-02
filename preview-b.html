@@ -406,7 +406,10 @@ html.vr-lock{overflow:hidden}
 // 영상: 썸네일을 눌러야 유튜브를 불러온다(nocookie). 인용 카드 · BEFORE/AFTER 는 그 시각부터 재생
 function ytFrame(id, st, opts) {
   var ifr = document.createElement("iframe");
-  ifr.src = "https://www.youtube-nocookie.com/embed/" + id + "?rel=0&modestbranding=1&playsinline=1" + (st ? "&start=" + st : "") + (opts || "&autoplay=1");
+  // 속성에서 온 값은 형식을 검사한 뒤에만 주소에 넣는다(유튜브 id 11자 · 시작 초는 정수)
+  if (!/^[A-Za-z0-9_-]{11}$/.test(String(id))) return ifr;
+  st = parseInt(st, 10) || 0;
+  ifr.src = "https://www.youtube-nocookie.com/embed/" + id + "?rel=0&modestbranding=1&playsinline=1" + (st ? "&start=" + st : "") + (opts === "bg" ? "&autoplay=1&mute=1&loop=1&playlist=" + id + "&controls=0&disablekb=1&iv_load_policy=3" : "&autoplay=1");
   ifr.allow = "autoplay; encrypted-media; picture-in-picture"; ifr.allowFullscreen = true; ifr.title = "MRI ACADEMY 수업 영상";
   return ifr;
 }
@@ -444,7 +447,7 @@ document.querySelectorAll(".ba-c").forEach(function (c) {
   if (window.MRI_LITE) return;
   var id = box.getAttribute("data-yt-bg"), st = box.getAttribute("data-start") || "0";
   window.addEventListener("load", function () {
-    var ifr = ytFrame(id, st, "&autoplay=1&mute=1&loop=1&playlist=" + id + "&controls=0&disablekb=1&iv_load_policy=3");
+    var ifr = ytFrame(id, st, "bg");
     ifr.tabIndex = -1; ifr.title = "초급반 오더강의 리플레이 장면"; box.appendChild(ifr);
   });
 })();
