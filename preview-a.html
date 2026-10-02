@@ -431,8 +431,8 @@ function ytFrame(id, st, opts) {
   var ifr = document.createElement("iframe");
   // 속성에서 온 값은 형식을 검사한 뒤에만 주소에 넣는다(유튜브 id 11자 · 시작 초는 정수)
   if (!/^[A-Za-z0-9_-]{11}$/.test(String(id))) return ifr;
-  st = parseInt(st, 10) || 0;
-  ifr.src = "https://www.youtube-nocookie.com/embed/" + id + "?rel=0&modestbranding=1&playsinline=1" + (st ? "&start=" + st : "") + (opts === "bg" ? "&autoplay=1&mute=1&loop=1&playlist=" + id + "&controls=0&disablekb=1&iv_load_policy=3" : "&autoplay=1");
+  var vid = encodeURIComponent(id), sec = Math.max(0, parseInt(st, 10) || 0);
+  ifr.src = "https://www.youtube-nocookie.com/embed/" + vid + "?rel=0&modestbranding=1&playsinline=1" + (sec ? "&start=" + sec : "") + (opts === "bg" ? "&autoplay=1&mute=1&loop=1&playlist=" + vid + "&controls=0&disablekb=1&iv_load_policy=3" : "&autoplay=1");
   ifr.allow = "autoplay; encrypted-media; picture-in-picture"; ifr.allowFullscreen = true; ifr.title = "MRI ACADEMY 수업 영상";
   return ifr;
 }
