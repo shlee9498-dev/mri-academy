@@ -29,9 +29,11 @@ test("99판 = 33판 × 3 · 세트 이름 초급 · 중급 · 심화(2026-10-02 
   assert.equal(m.PRODUCT_LABELS.lesson99, "99판 패키지");
   assert.deepEqual([m.PRODUCT_LABELS.setEntry, m.PRODUCT_LABELS.setLeap, m.PRODUCT_LABELS.setMaster],
                    ["초급 세트", "중급 세트", "심화 세트"]);
+  // 원장 1:1 · VIP DAY PASS 금액 키는 지웠다(2026-10-02 · 가격 미확정 · 판매 0건 · 읽는 코드 0곳)
+  for (const gone of ["oneOnOneTrial", "oneOnOne", "vipDayPass"]) assert.equal(m.PRODUCT_KEYS.includes(gone), false, gone);
 });
 
-test("옛 상담 키(consultLesson · consultCourse)를 읽는 코드가 없다 — 주석의 경위 설명만 남는다", () => {
+test("지운 키(consultLesson · consultCourse · oneOnOneTrial · oneOnOne · vipDayPass)를 읽는 코드가 없다 — 주석의 경위 설명만 남는다", () => {
   const skip = new Set(["node_modules", "docs", "scripts", ".git", ".claude"]);
   const hits = [];
   const walk = (dir) => {
@@ -43,7 +45,7 @@ test("옛 상담 키(consultLesson · consultCourse)를 읽는 코드가 없다 
       fs.readFileSync(p, "utf8").split("\n").forEach((line, i) => {
         const t = line.trim();
         if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return;
-        if (/\bconsult(Lesson|Course)\b/.test(line)) hits.push(`${path.relative(ROOT, p)}:${i + 1}`);
+        if (/\b(consult(Lesson|Course)|oneOnOne(Trial)?|vipDayPass)\b/.test(line)) hits.push(`${path.relative(ROOT, p)}:${i + 1}`);
       });
     }
   };

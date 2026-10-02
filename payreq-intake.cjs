@@ -4,6 +4,7 @@
 // 순수 함수만 둔다(DB · 디스코드 없음) — student-portal.cjs(수강생 앱 입구) · server.js(오너 카드 · 알림)가 같이 쓴다.
 //
 //   수량       quantity 1~5 · 금액 · 판수는 서버가 단가 × 수량으로 계산한다(앱은 보내지 않는다).
+//              상품마다 한도가 다를 수 있다 — 99판은 1개까지(오너 결정 2026-10-02) · 나머지는 5(QUANTITY_MAX).
 //   같은 신청   같은 상품 · 같은 금액이 10분 안에 또 오면 409 recent_duplicate — 앱이 확인받고 confirmDuplicate 로 다시 보낸다.
 //              대기 중 신청이 있다는 이유만으로는 막지 않는다(종전 409 request_pending 폐지).
 //   현금영수증  { purpose: "deduction"(소득공제) | "proof"(지출증빙), number } — 계좌이체만.
@@ -48,8 +49,11 @@ const PORTAL_PRODUCTS = Object.freeze([
   Object.freeze({ key: "lesson33", kind: "판수", games: 33 }),
   // 99판(33판 × 3 · 2026-10-02 정식 상품 · 오너 「정식상품처리해도돼」) — 종전에도 33판 수량 3 으로 살 수 있었다.
   //   목록에 따로 두는 건 사이트 · 챗봇과 같은 이름으로 보이게 하려는 것이다. 판수 · 금액 식은 같다(99판 · 420,000).
-  Object.freeze({ key: "lesson99", kind: "판수", games: 99 }),
+  //   한 번에 1개까지(quantityMax 1 · 오너 결정 2026-10-02) — 더 필요하면 신청을 한 번 더 한다.
+  Object.freeze({ key: "lesson99", kind: "판수", games: 99, quantityMax: 1 }),
 ]);
+// 상품별 수량 한도 — 상품에 quantityMax 가 없으면 공통 한도(QUANTITY_MAX).
+const quantityMaxOf = (p) => (Number.isInteger(p?.quantityMax) && p.quantityMax >= 1 ? p.quantityMax : QUANTITY_MAX);
 // ⚠️ 가격은 여기에 적지 않는다. `config/payments.js` 가 정본이고 **결제 트랙 소관**이라 읽기만 한다.
 //    ESM 이라 동적 import 로 한 번만 읽어 캐시한다(이 파일 · server.js 는 CJS). 못 읽으면 빈 목록(추측하지 않는다).
 let productsCache = null;
@@ -99,7 +103,7 @@ function parsePayreqBody(body, { products = [], links = {} } = {}) {
 
   let quantity = 1;
   if (b.quantity !== undefined && b.quantity !== null) {
-    if (!Number.isInteger(b.quantity) || b.quantity < 1 || b.quantity > QUANTITY_MAX) return { ok: false, code: "invalid_body" };
+    if (!Number.isInteger(b.quantity) || b.quantity < 1 || b.quantity > quantityMaxOf(product)) return { ok: false, code: "invalid_body" };
     quantity = b.quantity;
   }
   const method = b.method === undefined || b.method === null ? "transfer" : b.method;
@@ -214,7 +218,7 @@ function overdueReceipts(rows, today) {
 }
 
 module.exports = {
-  QUANTITY_MAX, CR_RECOMMEND_FROM_WON, RECENT_DUP_MS, CR_OVERDUE_DAYS, CR_ALERT_FROM, GROBLE_LINK_ENV, GROBLE_LINK_ENV_INTAKE,
+  QUANTITY_MAX, quantityMaxOf, CR_RECOMMEND_FROM_WON, RECENT_DUP_MS, CR_OVERDUE_DAYS, CR_ALERT_FROM, GROBLE_LINK_ENV, GROBLE_LINK_ENV_INTAKE,
   PURPOSES, PAYREQ_KEYS,
   PORTAL_PRODUCTS, loadProducts, cardLinksFromEnv, normalizeCashReceipt, parsePayreqBody, recentDuplicate, methodOf, unitOf, productText,
   receiptApplies, formatReceiptNumber, last4, receiptOwnerLine, receiptForStudent, overdueReceipts, addDays,

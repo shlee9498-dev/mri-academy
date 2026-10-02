@@ -928,10 +928,10 @@ DB 함수 = 운영 DB 되돌림 시험 28항목(`supabase_admin_panel.sql` §61)
 ```json
 { "bank": { "label": "국민은행", "account": "…", "holder": "…" },
   "products": [
-    { "key": "lesson10", "label": "10판 패키지", "won": 45000,  "games": 10 },
-    { "key": "lesson21", "label": "21판 패키지", "won": 90000,  "games": 21 },
-    { "key": "lesson33", "label": "33판 패키지", "won": 140000, "games": 33 },
-    { "key": "lesson99", "label": "99판 패키지", "won": 420000, "games": 99 }
+    { "key": "lesson10", "label": "10판 패키지", "won": 45000,  "games": 10, "quantityMax": 5 },
+    { "key": "lesson21", "label": "21판 패키지", "won": 90000,  "games": 21, "quantityMax": 5 },
+    { "key": "lesson33", "label": "33판 패키지", "won": 140000, "games": 33, "quantityMax": 5 },
+    { "key": "lesson99", "label": "99판 패키지", "won": 420000, "games": 99, "quantityMax": 1 }
   ],
   "quantityMax": 5,
   "cashReceipt": { "recommendFromWon": 100000 },
@@ -945,10 +945,15 @@ DB 함수 = 운영 DB 되돌림 시험 28항목(`supabase_admin_panel.sql` §61)
   (승인 시 본표 편입이 자동인 상품만 · 레벨 테스트는 뺐다 — 오너 2026-09-30, 신규는 사이트 · 디스코드).
   🆕 **2026-10-02 99판(`lesson99` · 420,000 · 99판)이 정식 상품이 됐다**(오너 「정식상품처리해도돼」 · 사이트 개편과 같은 이름).
   값은 33판 × 3 그대로라 종전처럼 `lesson33` 수량 3 으로 보내도 합계 · 판수가 같다. 앱은 목록을 그대로 그리면 99판이 한 줄 더 보인다.
-- `quantityMax` — 수량 선택 상한(지금 5).
+- `quantityMax` — 수량 선택 상한(지금 5 · 공통). 🆕 **2026-10-02 상품마다 `products[].quantityMax` 가 온다** —
+  99판은 **1**(오너 결정 · 한 번에 1개까지 · 더 필요하면 신청을 한 번 더), 나머지는 5. 앱은 수량 선택을 **그 상품의 `quantityMax`** 로 막는다.
+  넘겨 보내면 400 `invalid_body`(수량 칸 규칙과 같다). 맨 위 `quantityMax` 는 종전 키라 그대로 둔다.
 - `cashReceipt.recommendFromWon` — **계좌이체 합계**가 이 금액 이상이면 현금영수증 번호 입력을 권한다(필수 아님).
 - `card` — 그로블 결제 링크. **링크가 있는 상품만** 실린다. 하나도 없으면 **`card` 키 자체가 없다** → 앱은 카드 선택지를 숨긴다.
   링크는 env `GROBLE_LINK_LESSON10` · `21` · `33` · `99`(오너가 그로블 상품을 만들어 넣는다 · 99판은 2026-10-02 추가 · 없으면 99판만 카드가 숨는다). 가격은 계좌이체와 같다(카드 할증 없음).
+  🆕 99판 카드(오너 결정 2026-10-02 「연다」) — 서버 코드는 다 들어 있다. Railway 서비스 변수 `GROBLE_LINK_LESSON99` 에
+  그로블 99판(420,000) 결제 페이지 주소 **전체**(`https://` 로 시작 · 띄어쓰기 · 따옴표 없이)를 넣으면 재배포 뒤 `card.links.lesson99` 가 실린다.
+  카드도 수량 1 이다(위 한도) · 수수료는 승인 때 그로블 4.84%(420,000 → 20,328)로 본표에 들어간다(§18d).
 - `bank` — env `PAY_BANK_NAME` · `PAY_BANK_ACCOUNT` · `PAY_BANK_HOLDER`. 셋 중 하나라도 없으면 **`bank` 키 자체가 없다**
   — 앱은 계좌 영역을 숨기고 「계좌는 트레이너에게 물어봐 주세요」. 기동 로그 `[pay-info] 계좌 안내` · `[pay-info] 카드 링크` 로 켜짐을 본다(값은 로그에 안 남는다).
 - `assignedTrainer` = 담당 트레이너(없거나 비활성이면 `null`). 「담당 트레이너」를 고르면 이 `trainerId` 를 싣는다.

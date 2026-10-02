@@ -25,12 +25,15 @@
  * 2026-10-02 사이트 개편(지휘 주문 · 경비 대행): 99판(lesson99 = 33판 × 3 · 420,000)을 정식 상품으로 더했다
  * (오너 「정식상품처리해도돼」). 가격은 33판 × 3 그대로다 — 33판 값이 바뀌면 함께 바꾼다(시험이 둘의 관계를 본다).
  * 세트 표시 이름은 초급 · 중급 · 심화 세트로 바꿨다(사이트 #480 · 금액 그대로).
+ *
+ * 2026-10-02 원장 1:1 직강(oneOnOneTrial 50,000 · oneOnOne 70,000) · VIP DAY PASS(vipDayPass 150,000) 키를 지웠다
+ * (지휘 주문 · 오너 결정). 가격 미확정 · 판매 0건이고 읽는 코드가 0곳이었다(챗봇은 #483 부터 VIP 룸 문의로만 안내).
+ * 사이트 VIP 룸도 금액을 싣지 않는다. 다시 팔게 되면 오너가 정한 값으로 네 곳에 함께 넣는다.
  */
 export const PRODUCT_KEYS = /** @type {const} */ ([
   "lesson10", "lesson21", "lesson33", "lesson99",
   "levelTest",
   "direct8_beginner", "direct8_inter", "direct8_advanced",
-  "oneOnOneTrial", "oneOnOne", "vipDayPass",
   "setEntry", "setLeap", "setMaster",
 ]);
 
@@ -44,7 +47,7 @@ export const PRODUCT_KEYS = /** @type {const} */ ([
  *   세트 3종  개편  290,000→280,000 / 390,000→340,000 / 480,000→405,000
  *             구성도 바뀐다: 강의 8회로 통일 + 레슨을 실제 판매 SKU(10·21·33판)에 맞춘다.
  *             기존 세트는 20판·30판이라 단품에 없는 판수를 팔고 있었다.
- *   직강 8회 3종 · 1:1 직강 · VIP DAY PASS · 상담비 2종  현행 유지
+ *   직강 8회 3종 · 1:1 직강 · VIP DAY PASS · 상담비 2종  현행 유지(1:1 · DAY PASS 는 2026-10-02 삭제 — 위 상품 키 주석)
  *   (2026-10-02 상담비 2종 → 레벨 테스트 20,000 한 가지 · 레슨 상담 15,000 폐지 — 위 상품 키 주석)
  *
  * 그로블 상품 가격은 그로블 대시보드에서 따로 수정한다 — 링크 URL은 유지되므로
@@ -61,10 +64,6 @@ export const PRICES = {
   direct8_beginner: 250000,
   direct8_inter: 270000,
   direct8_advanced: 290000,
-
-  oneOnOneTrial: 50000,
-  oneOnOne: 70000,
-  vipDayPass: 150000,
 
   setEntry: 280000,
   setLeap: 340000,
@@ -113,10 +112,6 @@ export const GROBLE_LINKS = {
   direct8_inter: "",
   direct8_advanced: "",
 
-  oneOnOneTrial: "",
-  oneOnOne: "",
-  vipDayPass: "",
-
   setEntry: "",
   setLeap: "",
   setMaster: "",
@@ -134,10 +129,6 @@ export const PRODUCT_LABELS = {
   direct8_beginner: "직강 8회 · 기초 입문",
   direct8_inter: "직강 8회 · 체계적 과정",
   direct8_advanced: "직강 8회 · 고점 돌파",
-
-  oneOnOneTrial: "실시간 1:1 직강 · 첫 체험",
-  oneOnOne: "실시간 1:1 직강",
-  vipDayPass: "VIP DAY PASS",
 
   setEntry: "초급 세트",
   setLeap: "중급 세트",
