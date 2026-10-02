@@ -192,6 +192,22 @@ a{color:inherit}
 .links a:hover{color:var(--ink)}
 .tr .apply{margin-top:16px;display:inline-block}
 
+/* 가르치는 사람 셋 — 같은 크기 칸 · 얼굴은 64px 원 */
+.person{display:flex;flex-direction:column}
+.person .who{display:flex;align-items:center;gap:14px}
+.person .av{width:64px;height:64px;border-radius:50%;object-fit:cover;object-position:50% 20%;background:var(--cell-2);flex:none}
+.person .role{font-size:13px;color:var(--mute);font-weight:600}
+.person .nm{font-size:26px;font-weight:800;line-height:1.15;margin-top:2px}
+.stat2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:22px}
+.stat2 .v{font-size:clamp(40px,4vw,52px);line-height:1;color:var(--gold)}
+.stat2 .k,.stat1 .k{margin-top:6px;font-size:14px;color:var(--mute);display:block}
+.stat1{margin-top:22px}
+.stat1 .v{display:block;font-size:clamp(40px,4vw,52px);line-height:1}
+.stat1 .v::after{content:'명';font:700 16px/1 var(--sans);margin-left:4px}
+.stat1[hidden]{display:none}
+.person .one{margin-top:16px}
+.person .links{margin-top:auto;padding-top:16px}
+
 /* 커리큘럼 */
 .steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:24px;border-top:1px solid var(--line)}
 .step{padding:20px 20px 4px 0}
@@ -290,6 +306,8 @@ footer p{margin-top:16px;font-size:13px}
   .wrap{padding:0 16px}
   .top-in{gap:16px;height:56px}
   .top .cta .p,.top .cta .dot{display:none}
+  .menu{display:none}
+  .top-in{justify-content:space-between}
   .grid{grid-template-columns:minmax(0,1fr)}
   .s7,.s5,.s6,.s8,.s4,.s12{grid-column:auto}
   .hero-row{grid-template-columns:1fr}
@@ -381,10 +399,10 @@ html.vr-lock{overflow:hidden}
   <!-- 2. 간판 -->
   <section class="hero">
     <div class="wrap">
-      <div class="eyebrow">PUBG Ranked Coaching · Squad</div>
+      <div class="eyebrow">PUBG Ranked Coaching · Squad · Asia Server</div>
       <h1 class="sign"><span class="sr">경쟁전 </span>TOP <span class="g">200</span></h1>
       <div class="hero-row">
-        <p>경쟁전 상위 200등, 서바이버. 가르치는 세 명 모두 거기서 시즌을 끝냈어요</p>
+        <p>아시아 서버 상위 200등, 서바이버. 스쿼드 경쟁전 서바이버로 시즌을 마감한 사람만 가르쳐요</p>
         <div class="hero-acts">
           <a class="link" href="#plans">가격 먼저 보기</a>
           <a class="cta" href="apply.html?utm_source=site&amp;utm_medium=hero">레벨 테스트 신청 · <span class="p">20,000원</span></a>
@@ -409,41 +427,39 @@ html.vr-lock{overflow:hidden}
           <a class="link more" href="gmi-progress.html">성장 기록 전체 보기</a>
         </article>
 
-        <article class="cell s5 boss rise" id="muri" aria-labelledby="muriH">
-          <div class="ph"><img src="img/trainers/mr-lead.jpg" alt="이무리 원장" width="480" height="600" loading="lazy"></div>
+        <!-- 메인 영상 — 준구 트레이너 매드무비(오너 10/3) · 누르면 유튜브로 -->
+        <a class="cell s5 vid rise" href="https://youtu.be/LkHHjpjKQbU" target="_blank" rel="noopener" aria-label="준구 트레이너 매드무비 유튜브에서 보기">
+          <div class="th"><img src="https://i.ytimg.com/vi/LkHHjpjKQbU/hqdefault.jpg" alt="" width="480" height="360" loading="lazy" onerror="this.remove()"></div>
           <div class="bd">
-            <div class="eyebrow">원장 · 직강</div>
-            <div class="nm" id="muriH">이무리 <span class="rank">#1</span></div>
-            <p class="one">전세계 최초 솔로 단독 서바이버</p>
-            <p class="sub">GmI 클랜장이에요. 원장 직강은 1회 3시간, 8회 과정이에요</p>
-            <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=muri">원장에게 신청</a></div>
+            <div class="eyebrow">Mad Movie · YouTube</div>
+            <b>준구 트레이너 매드무비</b>
+            <span>교전 장면을 모은 영상이에요</span>
           </div>
+        </a>
+
+        <!-- 가르치는 사람 셋 — 같은 크기 칸 · 사진은 이름 옆 64px 원 -->
+        <article class="cell s4 person rise" id="trainers" aria-labelledby="muriH">
+          <div class="who"><img class="av" src="img/trainers/mr-lead.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">원장 · 직강</div><div class="nm" id="muriH">이무리</div></div></div>
+          <div class="stat2">
+            <div><div class="v num">5,000</div><div class="k">점 이상 · 스쿼드</div></div>
+            <div><div class="v num">600</div><div class="k">평균 딜량 이상</div></div>
+          </div>
+          <p class="one">시즌 29부터 36까지 스쿼드 경쟁전에서, 수강생들과 함께 달성했어요</p>
+          <div class="links"><a href="#plans">원장 직강 보기</a><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a></div>
         </article>
 
-        <article class="cell s6 rise" id="trainers" aria-labelledby="htH">
-          <div class="tr">
-            <div class="ph"><img src="img/trainers/ht-frame.jpg" alt="현태 트레이너" width="360" height="450" loading="lazy"></div>
-            <div>
-              <div class="role">트레이너 · 이번 시즌 우수 트레이너</div>
-              <div class="nm" id="htH">현태</div>
-              <p class="one">기초부터 하나씩 잡아 줘요</p>
-              <div class="links"><a href="https://dak.gg/pubg/profile/steam/GmI_Hye0n" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://www.youtube.com/watch?v=-R2p-C4kUl0" target="_blank" rel="noopener">매드무비</a><a href="https://ch.sooplive.co.kr/gusxo3874" target="_blank" rel="noopener">SOOP</a></div>
-              <a class="link apply" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae">현태에게 신청</a>
-            </div>
-          </div>
+        <article class="cell s4 person rise" aria-labelledby="htH">
+          <div class="who"><img class="av" src="img/trainers/ht-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너 · 이번 시즌 우수 트레이너</div><div class="nm" id="htH">현태</div></div></div>
+          <div class="stat1" data-trainer="hyuntae" hidden><span class="v num"></span><span class="k">최근 30일 수강생</span></div>
+          <p class="one">기초부터 하나씩 잡아 줘요</p>
+          <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae">현태에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_Hye0n" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/gusxo3874" target="_blank" rel="noopener">SOOP</a></div>
         </article>
 
-        <article class="cell s6 rise" aria-labelledby="jgH">
-          <div class="tr">
-            <div class="ph"><img src="img/trainers/jg-frame.jpg" alt="준구 트레이너" width="360" height="450" loading="lazy"></div>
-            <div>
-              <div class="role">트레이너</div>
-              <div class="nm" id="jgH">준구</div>
-              <p class="one">교전과 판단을 실전에서 바로 써먹게 잡아 줘요</p>
-              <div class="links"><a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://youtu.be/LkHHjpjKQbU" target="_blank" rel="noopener">매드무비</a><a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">SOOP</a></div>
-              <a class="link apply" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 신청</a>
-            </div>
-          </div>
+        <article class="cell s4 person rise" aria-labelledby="jgH">
+          <div class="who"><img class="av" src="img/trainers/jg-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너</div><div class="nm" id="jgH">준구</div></div></div>
+          <div class="stat1" data-trainer="jungu" hidden><span class="v num"></span><span class="k">최근 30일 수강생</span></div>
+          <p class="one">교전과 판단을 실전에서 바로 써먹게 잡아 줘요</p>
+          <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">SOOP</a></div>
         </article>
 
         <!-- 커리큘럼 — gmi-progress.html 문구 그대로 -->
@@ -459,7 +475,7 @@ html.vr-lock{overflow:hidden}
         </article>
 
         <!-- 복기 -->
-        <article class="cell s8 rise" id="review" aria-labelledby="revH">
+        <article class="cell s12 rise" id="review" aria-labelledby="revH">
           <div class="eyebrow">Debrief</div>
           <h2 id="revH">수업 끝? 아니죠. 복기가 남아요</h2>
           <p class="lead">페이즈마다 지도 한 장과 판단 한 줄을 남겨요. 다음 판에서 같은 자리에 섰을 때 꺼내 보면 돼요. 복기는 수강생 앱에 쌓여요</p>
@@ -506,14 +522,6 @@ html.vr-lock{overflow:hidden}
           <a class="link review-acts" href="https://app.mriacademy.gg/" rel="noopener">수강생 앱 열기</a>
         </article>
 
-        <a class="cell s4 vid rise" href="https://www.youtube.com/watch?v=BrWPZCHhNbI" target="_blank" rel="noopener" aria-label="초급반 오더강의 영상 유튜브에서 보기">
-          <div class="th"><img src="https://i.ytimg.com/vi/BrWPZCHhNbI/hqdefault.jpg" alt="" width="480" height="360" loading="lazy" onerror="this.remove()"></div>
-          <div class="bd">
-            <div class="eyebrow">Lecture · YouTube</div>
-            <b>견고해 보이는 상대 집을 어떻게 박고 밀어야 할까?</b>
-            <span>초급반 오더강의 · 리플레이로 복기해요</span>
-          </div>
-        </a>
       </div>
     </div>
   </section>
@@ -635,7 +643,7 @@ html.vr-lock{overflow:hidden}
 <footer>
   <div class="wrap">
     <div class="fl">
-      <a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#plans">가격</a><a href="#rules">차감 기준</a><a href="lesson-schedule.html">수업 시간표</a>
+      <a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#plans">가격</a><a href="#rules">차감 기준</a><a href="lesson-schedule.html">수업 시간표</a><a href="https://app.mriacademy.gg/" rel="noopener">수강생 앱</a>
       <a href="success.html">성장 기록</a><a href="lesson-feedback.html">코칭 기록</a><a href="community.html">후기</a><a href="gmi-progress.html">클랜 성장 기록</a>
       <a href="trainer-recruit.html">트레이너 모집</a><a href="sound-guide.html">사운드 세팅 가이드</a><a href="graphics-guide.html">그래픽 세팅 가이드</a>
       <a href="https://shlee9498-dev.github.io/gmi-clancup/" target="_blank" rel="noopener">클랜컵</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP</a>
@@ -708,6 +716,10 @@ html.vr-lock{overflow:hidden}
 // 「레슨으로 마스터 이상 달성」 — 서버 값(graduations)이 숫자로 올 때만 연다. 키 이름은 경비 응답으로 확정(지금은 요청 초안의 이름)
 (function(){
   fetch("https://mri-academy-production.up.railway.app/api/site-metrics", { cache: "no-store" }).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+    (d && d.byTrainer || []).forEach(function(t){
+      var box = document.querySelector('.stat1[data-trainer="' + t.id + '"]');
+      if (box && typeof t.students30 === "number" && t.students30 > 0) { box.querySelector(".v").textContent = t.students30; box.hidden = false; }
+    });
     var n = d && d.graduatesMasterPlus;
     if (typeof n === "number" && isFinite(n) && n > 0) {
       document.getElementById("gradN").textContent = n.toLocaleString("ko-KR");
@@ -750,7 +762,7 @@ html.vr-lock{overflow:hidden}
       <a class="vr-btn main" href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">카카오로 문의하기</a>
       <a class="vr-btn sub" href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener" data-disc-channel="상담문의">Discord로 문의하기</a>
     </div>
-    <div class="vr-sign">MRI ACADEMY · 전세계 최초 솔로 단독 서바이버 이무리</div>
+    <div class="vr-sign">MRI ACADEMY · 원장 이무리</div>
   </div>
 </dialog>
 <script>
