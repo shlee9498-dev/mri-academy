@@ -257,6 +257,7 @@ upsert(`lesson_session_titles.session_id`). 수강생 앱 `/sessions` 의 `title
 | `scheme` | string | **예** | `"new"` · `"old"` — `courses.scheme` 그대로. 구 체계 강의를 구분해 안내 문구를 가르는 용도 |
 | `attendanceKnown` | boolean | 아니오 | **`false` 면 진행 회차가 미상이다** — 아래 |
 | `ownerConfirmedUnits` | number | 아니오 | **2026-10-01 추가(§58)** — `completedUnits` 중 **출석 기록 없이 오너가 「다 들음」으로 확인한 회차**(날짜 없음). 없으면 `0`. 이 값이 있으면 출석 행이 없어도 `attendanceKnown=true` 다(오너가 확인한 숫자). 표시 권장: 「24/24 · 7회 오너 확인」처럼 따로 한 줄 |
+| `sessionMinutes` | number | **예** | **2026-10-02 추가(§9.28)** — 직강 **1회 길이(분)** · `courses.session_minutes` 그대로(지금 18개 강의 전부 `180`). 없으면 `null` — 앱이 3시간을 지어내지 않는다 |
 
 - **취소된 강의는 내리지 않는다**(2026-10-01 오너 판정 · 환불 강의 카드 숨김). `status` 가 `cancelled`(환불 · 결제 무효)인 강의는
   `courses[]` 에 없다. 종료(`done`) · 멈춤(`paused`)은 그대로 온다 — 앱은 `status` 로 「종료」 표시만 하면 된다.
@@ -2692,3 +2693,49 @@ banned 「쓸 수 없는 말이 들어 있어요」 · 409 taken 「이미 누�
 
 **반장**: 수강생 앱 홈 막대의 남은 판수는 `GET /summary` `lesson.byTrainer[].currentPack.remaining` 을 그대로 쓰고(앱에서 `games − used` 를 빼지 않는다 · 음수면 넘친 것),
 입금 신청 화면 · 내역은 `POST` · `GET /payment-requests` 의 `games`(합계) · `unitGames`(1개) · `quantity` 를 그대로 그린다(`games` 가 `null` 이면 판수 없는 결제 — 판수 줄을 그리지 않는다).
+
+## 9.28 직강은 「회」, 레슨은 「판」 — 단위를 섞지 않는다 (2026-10-02 · 오너 원문 · 지휘 주문) · **서버 반영(이 PR)**
+
+> 오너 원문: 「강의 횟수랑 레슨 판수랑 구분좀해줘라 어플이랑 사이트랑 난 판수가아니라 횟수 1회 3시간 진행인데..」
+> 레슨은 **판**(게임 수)으로 사고 · 쓰고 · 남는다. 원장 직강(강의)은 **회**(1회 = 3시간 수업)로 사고 · 듣고 · 남는다.
+> 두 숫자는 더하거나 같은 칸에 두지 않는다. 회차 숫자는 **서버 값 그대로** 그린다(앱 · 사이트가 계산하지 않는다).
+
+### 9.28.1 수강생 앱 — 직강 회차는 이미 내려간다 · 🆕 `sessionMinutes`
+
+`GET /api/student-portal/summary` → `courses[]`(§7.1 · §9.22.6) — 강의마다 아래 값이 **이미 있다**. 이번에 더한 키는 `sessionMinutes` 하나다.
+
+| 화면 글자 | 키 | 뜻 |
+|---|---|---|
+| 총 회차 | `unitsTotal` | 결제한 강의 회차(8 · 12 · 24 · 36) |
+| 진행 회차 | `completedUnits` | 출석(날짜 있는 회차 + 이관 묶음) + 오너 확인 완료(`ownerConfirmedUnits` · 날짜 없음) |
+| 남은 회차 | `remainingUnits` | `unitsTotal − completedUnits` · 넘치면 음수 |
+| 1회 길이 | 🆕 `sessionMinutes` | 분. 지금 전부 `180` · 없으면 `null` |
+
+```json
+{ "level": "심화반", "unitsTotal": 8, "completedUnits": 3, "remainingUnits": 5, "sessionMinutes": 180,
+  "ownerConfirmedUnits": 0, "attendanceKnown": true, "attendance": [ … ], "nextClass": null }
+```
+
+- 표시 예: 「심화반 · 8회 중 3회 들었어요 · 5회 남았어요 · 1회 3시간」. **「판」을 쓰지 않는다.**
+- 회차는 0.5 단위가 올 수 있다(반 회차 · `2.5`). 소수 그대로 적는다.
+- ⚠️ `attendanceKnown === false` 면 진행 · 남은 회차를 그리지 않는다(§7.1 그대로 · 10/2 실측 3개 — 구 체계라 기록이 없다 · 취소 강의 제외).
+- 트레이너 앱 `GET /students` `courses[]`(§9.12) · 원장 상세 `courseHistory[]`(§9.22.5)에도 같은 `sessionMinutes` 가 온다(같은 함수).
+
+### 9.28.2 사이트 공개 지표 — 직강 두 칸 (`GET /api/site-metrics`)
+
+`docs/public-metrics.md` §1.1 · §2.1 이 정본이다. 요약:
+
+| 키 | 뜻 |
+|---|---|
+| `games30` · `students30` | **레슨**(판) — 종전 그대로 |
+| 🆕 `directSessions30` | **직강** 최근 30일 진행 회차(회 · 그룹도 1회) |
+| 🆕 `directStudents30` | 직강 최근 30일 출석한 수강생 수 |
+| 🆕 `byTrainer[].directSessions30` | 트레이너별 직강 회차(원장 말고는 0) |
+
+- 직강 두 칸은 **기록이 믿을 만할 때만 숫자**이고 그 전에는 `null` 이다 — 사이트는 `null` 이면 칸을 감춘다.
+- 10/2 현재 `null` 이다: 날짜 있는 직강 기록이 9/28부터라 30일 창이 기록 없는 기간을 덮고, 지난 직강 칸 예약 중 아직 닫히지 않은 것이 있다.
+
+### 9.28.3 계약 한 줄
+
+**반장**: 수강생 앱 직강 카드는 `courses[]` 의 `unitsTotal` · `completedUnits` · `remainingUnits` · 🆕 `sessionMinutes` 를 그대로 「회」로 그린다(「판」 금지 · `attendanceKnown` 이 `false` 면 총 회차만).
+**사이트**: 공개 지표의 직강은 `directSessions30` · `directStudents30`(회)이고 레슨 `games30`(판)과 따로 그린다. `null` 이면 칸을 감춘다.

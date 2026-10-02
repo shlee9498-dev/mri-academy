@@ -15,10 +15,16 @@
 //   repurchase     = 레슨 · 세트 결제(판수 있음 · 무효 제외) 2회 이상 수강생 / 결제 수강생 — **전 기간** · 환불 수강생 제외
 //                    트레이너별 귀속 = 결제가 연결된 등록(lesson_enrollment_id)의 트레이너 · 연결 없으면 수강생 담당
 //   ratePct        = 내림(부풀리지 않는다 — 사이트 문구 「부풀림 없이」와 같은 방향)
+//   direct         = 직강(원장 강의 · 단위 「회」 · 레슨 「판」과 따로 센다 · 2026-10-02 오너 「강의 횟수랑 레슨 판수랑 구분」)
+//                    **날짜 있는 기록만** 센다 — 이관 묶음(날짜가 강의 시작일) · 날짜 없는 오너 확인 몫(confirmed_units)은 뺀다.
+//                    sessions = 창 안에 끝난(done) 직강 회차 수(그룹도 1회) · students = 그 회차에 출석한 수강생 수
+//                    ready = 창 첫날이 DIRECT_RECORDED_SINCE 이후 && 창 안 지난 직강 기록이 다 닫혔다(unrecorded 0)
+//                    ready 가 아니면 사이트 모양의 직강 숫자는 null — 기록이 빈 기간을 「적은 숫자」로 공개하지 않는다.
 // ============================================================
 "use strict";
 const { isLessonRow, kstDate, addDays } = require("./ops-status.cjs");
 const { TEST_STUDENT_IDS } = require("./test-accounts.cjs");
+const { isImportSource } = require("./course-progress.cjs");
 
 const WINDOW_DAYS = 30;
 const STATE_KEY = "public_metrics";
@@ -42,11 +48,59 @@ function repurchaseOf(countsByStudent) {
   return { payers, repeaters, ratePct: floorPct(repeaters, payers) };
 }
 
+// ── 직강(원장 강의 · 「회」) — docs/public-metrics.md §1.1 ──
+// 날짜 있는 직강 기록은 이 날부터다(course_sessions 첫 비이관 회차 · 2026-10-02 실측). 그 전 직강은 courses.confirmed_units 에
+//   날짜 없이만 있어 30일 창에 넣을 수 없다 — 창이 이 날 이전을 덮는 동안은 공개하지 않는다(실제보다 적게 보인다).
+const DIRECT_RECORDED_SINCE = "2026-09-28";
+const LIVE_BOOKING = new Set(["booked", "pending_review"]);   // 수업이 끝났는데 아직 닫히지 않은 예약
+
+// 순수 계산 — 창 안의 직강 회차 · 출석과 「닫히지 않은 기록」 수.
+//   courseSessions = 창 안(held_on)의 course_sessions · attendance = 그 회차들의 course_attendance
+//   courses = [{ id, student_id, status, trainer_id }] · slots = 창 안 직강 칸(trainer_slots · lesson_type course)
+//   bookings = 그 칸들의 예약 · slotSessions = 그 칸에 걸린 course_sessions(slot_id) — 칸이 닫혔는지(출석이 들어갔는지) 본다
+//   unrecorded = 끝난 직강 칸 중 예약이 살아 있는데 회차가 안 생긴 칸 + 날짜가 지났는데 아직 예정(scheduled)인 회차
+//   회차 트레이너 = 회차 행 → 없으면 강의 담당(course-progress attendedSessions 와 같다).
+function directOf({ courseSessions = [], attendance = [], courses = [], slots = [], bookings = [], slotSessions = [] }, window, counted, nowMs) {
+  const courseById = new Map(courses.map((c) => [c.id, c]));
+  const inWindow = (d) => typeof d === "string" && d >= window.from && d <= window.to;
+  const held = new Map(courseSessions
+    .filter((s) => s.status === "done" && !isImportSource(s.source) && inWindow(s.held_on))
+    .map((s) => [s.id, s]));
+  const rows = attendance.filter((a) => {
+    if (a.status !== "done" || !held.has(a.session_id)) return false;
+    const c = courseById.get(a.course_id);
+    return !!c && c.status !== "cancelled" && counted(c.student_id);
+  });
+  const sessionsByTrainer = new Map();
+  for (const a of rows) {
+    const tid = held.get(a.session_id).trainer_id ?? courseById.get(a.course_id).trainer_id ?? null;
+    if (tid == null) continue;
+    if (!sessionsByTrainer.has(tid)) sessionsByTrainer.set(tid, new Set());
+    sessionsByTrainer.get(tid).add(a.session_id);
+  }
+
+  const closed = new Set(slotSessions.map((s) => s.slot_id));
+  const openSlots = slots.filter((s) => s.status !== "cancelled" && !closed.has(s.id)
+    && Date.parse(s.slot_start) + Number(s.duration_min || 0) * 60_000 <= nowMs
+    && bookings.some((b) => b.slot_id === s.id && LIVE_BOOKING.has(b.status))).length;
+  const staleScheduled = courseSessions.filter((s) => s.status === "scheduled" && inWindow(s.held_on)).length;
+  const unrecorded = openSlots + staleScheduled;
+  return {
+    since: DIRECT_RECORDED_SINCE,
+    ready: window.from >= DIRECT_RECORDED_SINCE && unrecorded === 0,
+    sessions: new Set(rows.map((a) => a.session_id)).size,
+    students: new Set(rows.map((a) => courseById.get(a.course_id).student_id)).size,
+    unrecorded,
+    sessionsByTrainer: new Map([...sessionsByTrainer].map(([k, v]) => [k, v.size])),
+  };
+}
+
 // 순수 계산 — rows 를 받아 공개 숫자만 돌려준다.
 //   sessions   = 창 안의 lesson_sessions 행 · payments = 전 기간 결제 행
 //   students   = Map<id, { trainer_id, merged_into }> · enrollTrainer = Map<등록 id, trainer_id>
 //   staff      = [{ id, name, role, active }]
-function computeMetrics({ sessions, payments, students, enrollTrainer, staff }, window) {
+//   direct     = directOf 입력(직강 행 묶음) · 읽기에 실패했으면 null — 그때 직강 숫자는 null · ready false
+function computeMetrics({ sessions, payments, students, enrollTrainer, staff, direct = null }, window, nowMs = Date.now()) {
   const counted = (sid) => {
     const s = students.get(sid);
     return !!s && s.merged_into == null && !TEST_STUDENT_IDS.has(sid);
@@ -78,15 +132,19 @@ function computeMetrics({ sessions, payments, students, enrollTrainer, staff }, 
 
   const coaches = staff.filter((s) => s.active !== false && (s.role === "trainer" || s.role === "owner"))
     .sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
+  const d = direct ? directOf(direct, window, counted, nowMs) : null;
   return {
     window,
     ...sum(lessonRows),
     repurchase: { ...repurchaseOf(all), basis: "all_time" },
+    direct: d ? { since: d.since, ready: d.ready, sessions: d.sessions, students: d.students, unrecorded: d.unrecorded }
+              : { since: DIRECT_RECORDED_SINCE, ready: false, sessions: null, students: null, unrecorded: null },
     trainers: coaches.map((c) => ({
       id: trainerKeyOf(c.id),
       name: c.name,
       ...sum(lessonRows.filter((r) => r.trainer_id === c.id)),
       repurchase: repurchaseOf(byTrainer.get(c.id) || new Map()),
+      directSessions: d ? (d.sessionsByTrainer.get(c.id) || 0) : null,
     })),
   };
 }
@@ -94,18 +152,25 @@ function computeMetrics({ sessions, payments, students, enrollTrainer, staff }, 
 // 공개 응답 가드 — 숫자 · 날짜 · 트레이너 표시명 말고는 싣지 않는다. 키가 늘면 여기서 먼저 막힌다.
 const PUBLIC_KEYS = new Set(["asOf", "window", "from", "to", "days", "students", "lessons", "studentLessons", "games",
   "repurchase", "payers", "repeaters", "ratePct", "basis", "trainers", "id", "name",
-  "students30", "games30", "rebook30", "byTrainer"]);
+  "students30", "games30", "rebook30", "byTrainer",
+  "direct", "since", "ready", "sessions", "unrecorded", "directSessions", "directSessions30", "directStudents30"]);
 
-// 명세 §8 모양(GET /api/site-metrics) — 사이트는 수강생 수 · 판수 · 재결제율만 쓴다(「회」는 안 쓴다 · 오너 9/30).
+// 명세 §8 모양(GET /api/site-metrics) — 레슨은 수강생 수 · 판수 · 재결제율(레슨 「수업 회」는 안 싣는다 · 오너 9/30).
 //   rebook30 = 재결제율 %(권장안 · 오너 OK — **전 기간** 기준 · 내림 · 결제 수강생 0 이면 null). 이름은 명세 그대로 둔다.
+//   직강(원장 강의 · 「회」 · 2026-10-02)은 directSessions30 · directStudents30 — direct.ready 가 아니면 null(사이트는 칸을 감춘다).
+//   저장본이 이 키를 갖기 전 날짜의 것이어도(direct 없음) null 로 내린다.
 function siteShape(v) {
+  const d = v.direct?.ready === true ? v.direct : null;
   return {
     asOf: v.asOf,
     students30: v.students,
     games30: v.games,
     rebook30: v.repurchase?.ratePct ?? null,
+    directSessions30: d ? d.sessions : null,
+    directStudents30: d ? d.students : null,
     byTrainer: (v.trainers || []).map((t) => ({
       id: t.id, name: t.name, students30: t.students, games30: t.games, rebook30: t.repurchase?.ratePct ?? null,
+      directSessions30: d ? (t.directSessions ?? null) : null,
     })),
   };
 }
@@ -139,9 +204,28 @@ module.exports = function mountPublicMetrics(app, deps) {
     }
   }
 
+  // 직강 행 묶음(directOf 입력) — 창 경계는 KST 하루. 칸은 시작 시각으로 거른다.
+  async function loadDirect(window) {
+    const fromIso = new Date(Date.parse(`${window.from}T00:00:00+09:00`)).toISOString();
+    const toIso = new Date(Date.parse(`${addDays(window.to, 1)}T00:00:00+09:00`)).toISOString();
+    const [courseSessions, courses, slots] = await Promise.all([
+      selectAll("course_sessions", `select=id,held_on,status,source,trainer_id&held_on=gte.${window.from}&held_on=lte.${window.to}`),
+      selectAll("courses", "select=id,student_id,status,trainer_id"),
+      selectAll("trainer_slots", "select=id,slot_start,duration_min,status&lesson_type=eq.course"
+        + `&slot_start=gte.${encodeURIComponent(fromIso)}&slot_start=lt.${encodeURIComponent(toIso)}`),
+    ]);
+    const sids = courseSessions.map((r) => r.id), slotIds = slots.map((r) => r.id);
+    const [attendance, bookings, slotSessions] = await Promise.all([
+      sids.length ? selectAll("course_attendance", `select=id,session_id,course_id,status&session_id=in.(${sids.join(",")})`) : [],
+      slotIds.length ? selectAll("slot_bookings", `select=id,slot_id,status&slot_id=in.(${slotIds.join(",")})`) : [],
+      slotIds.length ? selectAll("course_sessions", `select=id,slot_id&slot_id=in.(${slotIds.join(",")})`) : [],
+    ]);
+    return { courseSessions, attendance, courses, slots, bookings, slotSessions };
+  }
+
   async function compute(today) {
     const window = windowOf(today);
-    const [sessions, payments, studentRows, enrolls, staff] = await Promise.all([
+    const [sessions, payments, studentRows, enrolls, staff, direct] = await Promise.all([
       // memo 는 /판수정정 행을 거르는 데만 쓴다(응답에 없다)
       selectAll("lesson_sessions", "select=id,student_id,trainer_id,played_at,games,created_by,created_at,memo"
         + `&played_at=gte.${window.from}&played_at=lte.${window.to}`),
@@ -149,12 +233,14 @@ module.exports = function mountPublicMetrics(app, deps) {
       selectAll("students", "select=id,trainer_id,merged_into"),
       selectAll("lesson_enrollments", "select=id,trainer_id"),
       sbSelect("staff", "select=id,name,role,active"),
+      // 직강은 읽기에 실패해도 레슨 숫자는 낸다(그날 직강은 null · ready false)
+      loadDirect(window).catch((e) => { console.error("public_metrics_direct", e?.message); return null; }),
     ]);
     const value = computeMetrics({
-      sessions, payments, staff,
+      sessions, payments, staff, direct,
       students: new Map(studentRows.map((s) => [s.id, s])),
       enrollTrainer: new Map(enrolls.map((e) => [e.id, e.trainer_id])),
-    }, window);
+    }, window, Date.now());
     return assertPublic({ asOf: new Date().toISOString(), ...value });
   }
 
@@ -165,7 +251,8 @@ module.exports = function mountPublicMetrics(app, deps) {
     await opsStateSet(STATE_KEY, { date: today, value });
     cache = { date: today, value };
     console.log(`[public-metrics] ${value.window.from}~${value.window.to} · 수강생 ${value.students} · 수업 ${value.lessons} · 판수 ${value.games}`
-      + ` · 재결제 ${value.repurchase.repeaters}/${value.repurchase.payers}`);
+      + ` · 재결제 ${value.repurchase.repeaters}/${value.repurchase.payers}`
+      + ` · 직강 ${value.direct.sessions ?? "?"}회(${value.direct.ready ? "공개" : `비공개 · 안 닫힌 기록 ${value.direct.unrecorded ?? "?"}`})`);
     return value;
   }
 
@@ -202,4 +289,4 @@ module.exports = function mountPublicMetrics(app, deps) {
 
   return { run, current };
 };
-module.exports._test = { computeMetrics, windowOf, assertPublic, siteShape, TEST_STUDENT_IDS, WINDOW_DAYS };
+module.exports._test = { computeMetrics, directOf, windowOf, assertPublic, siteShape, TEST_STUDENT_IDS, WINDOW_DAYS, DIRECT_RECORDED_SINCE };

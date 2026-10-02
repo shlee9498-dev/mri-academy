@@ -16,6 +16,8 @@
 //   · 오너 확인 완료 회차(courses.confirmed_units · §58 · 2026-10-01) — 기록 없이 끝난 몫을 날짜 없이 더한다.
 //     진행 회차 = 출석 done + 이 값 · 이 값이 있으면 출석 행이 없어도 attendanceKnown=true(오너가 확인한 숫자다).
 //     server.js remainFromDB(잔여 알림)도 같은 식이다.
+//   · 직강은 「회」 단위다(레슨 「판」과 다르다 · 2026-10-02 오너 「판수가 아니라 횟수 · 1회 3시간」) — 1회 길이는
+//     courses.session_minutes 를 sessionMinutes 로 그대로 싣는다(계약 §9.28). 앱이 「1회 3시간」을 적을 때 이 값을 쓴다.
 // 값(이름 · 메모)은 로그에 남기지도 내보내지도 않는다 — 코드와 건수만.
 //   예외 하나: 출석 이력(history · §59d · 계약 §9.22)은 출석 행 memo 가 원장 정정 표시 '추가' · '보강' 과
 //   **글자 그대로 같은지만** 본다(attendanceKind). 이관 행의 긴 메모는 비교만 하고 버린다.
@@ -89,6 +91,7 @@ function summarizeCourses(courses, attendance, sessionsById, attOk, opts = {}) {
       startedOn: c.started_on, status: c.status,
       unitsTotal: total, completedUnits: completed,
       remainingUnits: total - completed,
+      sessionMinutes: Number(c.session_minutes) > 0 ? Number(c.session_minutes) : null,   // 1회 길이(분) · §9.28
       ownerConfirmedUnits: confirmed,                                   // completedUnits 중 날짜 없이 오너가 확인한 몫
       attendanceKnown,
       nextSession,
@@ -124,7 +127,7 @@ async function loadCourseProgress(sbSelect, { studentIds, statuses, hideCancelle
   let courses;
   try {
     courses = await sbSelect("courses",
-      `select=id,student_id,level,scheme,started_on,status,units_total,confirmed_units&student_id=in.(${ids.join(",")})`
+      `select=id,student_id,level,scheme,started_on,status,units_total,confirmed_units,session_minutes&student_id=in.(${ids.join(",")})`
       + (statuses?.length ? `&status=in.(${statuses.join(",")})` : "")
       + (hideCancelled ? "&status=neq.cancelled" : "")
       + `&order=started_on.desc`);
