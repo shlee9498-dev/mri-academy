@@ -2456,3 +2456,188 @@ PATCH /api/trainer-portal/bookings/:id
 **반장 계약 한 줄**: 레벨 테스트 칸 길이는 `GET /slots` → `levelTest.lengths`(지금 [60, 90])로만 고르게 한다 — 그 밖은
 400 `level_test_length { allowed }`. 안내문 날짜는 `intake.opensOn` · 열렸는지는 `intake.open` · 봇 안내는 `levelTest.botRecordOpen`
 이 `true` 일 때만(`GET /applications` 에도 `intake` 가 같이 온다).
+
+## 9.26 활동명 · 이름 보이는 범위 · 늦은 취소 · 노쇼 면제 기록 (2026-10-02 · 어플 요청 · 오너 OK 10/2) · **계약 · DDL 정본 §62 · §63 · 서버 구현 전**
+
+> 이름표는 활동명, 출석부는 본명이에요. 수강생 앱은 어디서든 활동명만 보이고, 본명은 트레이너 · 원장만 봐요.
+> 늦은 취소 · 노쇼를 예외로 넘길 때는 판수를 빼지 않고 「0판 면제」 한 줄을 남겨요. 28일 횟수는 서버가 세요.
+> 순서: DDL §62 · §63a(A) 세션 실행 → §63b(B · 기존 제약 교체) 오너 원문 OK 뒤 실행 → 서버 PR → 이 절 ✅.
+> DDL 이 돌기 전에는 아래 키 · 라우트가 없어요(앱은 키가 없으면 지금처럼 보여 주면 돼요).
+
+### 9.26.1 활동명 — 규칙 (DB `students.display_name` · §62)
+
+| 항목 | 규칙 |
+|---|---|
+| 처음 값 | 디스코드 연결(승인) 때 디스코드 표시 이름 — 서버 닉 → 전역 표시 이름 → 사용자명 순. 아래 규칙에 맞고 겹치지 않을 때만 넣는다 |
+| 비어 있으면 | 앱에는 「#번호」(수강생 번호) · `activityNameTemp: true` · DB 에는 저장하지 않는다 |
+| 길이 | 2~12자(한 글자씩 센다 · 한글 한 글자 = 1) |
+| 글자 | 한글 · 영문 · 숫자 · `_` `.` `-` (띄어쓰기 · 이모지 · 「#」 시작 안 됨) |
+| 겹침 | 활동명끼리 겹치면 안 된다(영문은 대소문자 무시). 옛 활동명은 다른 사람이 쓸 수 있다 |
+| 금지어 | 운영진 사칭(원장 · 트레이너 · 운영자 · 관리자 · 공식 · MRI · 운영진 이름) · 욕설 · 비하 — 목록은 서버 한 곳(오너가 더할 수 있다) |
+| 바꾸기 | 수강생 앱 설정에서 **30일에 1번**(마지막으로 직접 바꾼 때부터). 연결 · 채우기로 들어간 처음 값은 30일에 안 넣는다 — 처음 한 번은 바로 바꿀 수 있다 |
+| 옛 활동명 | 지우지 않고 이력 표(`student_display_names`)에 쌓는다 · 트레이너 · 원장 검색에 걸린다 |
+
+- `student_aliases` 를 쓰지 않는 이유(§62 머리말): (alias, kind) 전체 유일이라 놓은 이름을 다른 사람이 다시 쓰면 이력이 부딪히고,
+  kind 를 더하려면 제약 교체(B)이고, 봇 이름 찾기(/수업등록 · 연결 후보)가 kind 없이 읽어서 옛 활동명이 섞인다.
+- 기존 행 채우기(디스코드 닉 → 활동명)는 B 구간이다 — §62b(방법 · 건수만 · 실행 안 함).
+
+### 9.26.2 수강생 앱 — 내 활동명 (어플)
+
+**GET /summary** 에 세 키를 더한다(다른 키는 그대로).
+
+```json
+"activityName": "에임장인",
+"activityNameTemp": false,
+"activityNameChangeableAt": null
+```
+
+| 키 | 뜻 |
+|---|---|
+| `activityName` | 내 활동명. 비어 있으면 「#번호」 |
+| `activityNameTemp` | `true` = 아직 정하지 않았다(「#번호」 · 설정에서 정하라는 안내를 띄운다) |
+| `activityNameChangeableAt` | 다음에 바꿀 수 있는 때(ISO) · 지금 바꿀 수 있으면 `null` |
+
+**PUT /activity-name** `{ "activityName": "새이름" }` (5회/분)
+
+- 200 `{ "activityName": "새이름", "activityNameTemp": false, "activityNameChangeableAt": "2026-11-01T03:00:00Z" }`
+- 400 `{ "error": { "code": "activity_name_invalid", "reason": "length" | "chars" | "hash" | "banned" } }`
+- 409 `activity_name_taken` · 409 `activity_name_cooldown { "changeableAt": "…" }` · 같은 이름이면 200(바뀐 것 없음 · 30일 안 셈)
+- 바뀌기 전 이름은 이력 표에 한 줄 쌓인다. 가드(scrub) 때문에 키에 `name` 단독 · `student` · `discord` 를 쓰지 않는다 — `activityName` 은 통과한다.
+
+문구 제안(앱이 최종): 400 length 「2~12자로 정해 주세요」 · chars 「한글 · 영문 · 숫자와 _ . - 만 쓸 수 있어요」 ·
+banned 「쓸 수 없는 말이 들어 있어요」 · 409 taken 「이미 누가 쓰고 있어요」 · cooldown 「{날짜}부터 다시 바꿀 수 있어요」.
+
+### 9.26.3 이름 보이는 범위 (오너 OK 10/2)
+
+| 받는 쪽 | 무엇이 보이나 |
+|---|---|
+| 수강생 앱(어디서든) | **활동명만** — 내 화면 · 그룹 · 공개 복기 · 랭킹 · 후기. 남의 이름 · 내 이름 모두 |
+| 트레이너 · 원장 앱 | 본명(`displayName` 계열 그대로) + 활동명(새 키) · 나이는 계속 내리지 않는다 |
+| 신청 창구(§55) 실명 · 나이 | 지금처럼 오너 전용 — 명부에 등록된 뒤부터 트레이너에게 본명 |
+| 전달문 · 로그 · 문서 | 지금처럼 `#번호` |
+
+**수강생 앱 — 값만 바뀌는 키**(키 이름 그대로 · 지금은 배그 닉 → 디스코드 닉 → 「수강생」 순으로 채운다 → 바뀐 뒤: 활동명 → 「#번호」)
+
+| 라우트 | 키 |
+|---|---|
+| `GET /feed`(공유 복기) | `items[].authorDisplayName` |
+| `GET /reviews/:id` · `POST /reviews` · 사진 올리기 응답 | `review.authorDisplayName` · `…images[].annotations[].authorDisplayName` |
+| `GET /reviews/:id`(내 복기) | `review.reactions.reactors[].displayName` — 수강생은 활동명 · 트레이너는 지금처럼 |
+
+- 그룹 명단 · 랭킹 · 후기는 지금 수강생 앱에 없다 — 생기면 처음부터 활동명으로 낸다.
+- 예외 하나: `GET /pay-info` 의 `depositorHint`(입금자명 기본값)는 **본인에게만** 가는 본명이고 입금 대조에 쓴다 — 그대로 둔다
+  (오너가 「본명도 빼라」면 `null` 로 바꾸고 수강생이 직접 적는다).
+- ⚠️ 남는 구멍: 공유 복기 본문 · 트레이너 답 · 디스코드에서 옮긴 피드백 글 안에 적힌 이름은 키로 못 거른다(글 그대로 나간다).
+  필요하면 공개 피드백에 쓰는 치환 사전(`public-rows.cjs`)을 공유 복기 글에도 거는 후속 작업으로 한다.
+
+**트레이너 앱 — 더해지는 키**(본명 키 옆에 같은 자리 · 같은 모양)
+
+| 지금 키(본명) | 더해지는 키(활동명) | 라우트 |
+|---|---|---|
+| `displayName` | `activityName` | `GET /students` · `GET /students/:id` · `GET /owner/dashboard`(`lessons[].students[]` · `courseSummary.lowUnits[]`) · `POST /lessons` `recorded[].student` · `GET /adjustments` `requests[].student` |
+| `studentDisplayName` | `studentActivityName` | `GET /journals` · `GET /slots`(`bookings[]` · `attendance.students[]`) · `GET /course-classes` · `GET /reviews` |
+| `authorDisplayName` | `authorActivityName` | `GET /reviews` · `GET /feed` · `GET /reviews/:id`(+ `annotations[]`) |
+| `reactors[].displayName` | `reactors[].activityName` | `GET /reviews/:id` |
+| `target.displayName` | `target.activityName` | 상담 보드(`GET /consults` 등 · 명부에 있는 사람만 · 신청자는 `null`) |
+
+- 활동명이 비어 있으면 「#번호」가 아니라 **`null`** 이다(트레이너 앱은 본명만 보여 주면 된다).
+- 신청 목록(`GET /applications`)은 아직 명부 밖이라 활동명이 없다 — 그대로다.
+
+**트레이너 · 원장 검색 — `GET /students?q=`**(새 쿼리 · 없으면 지금처럼 전체)
+
+- 본명 · 활동명 · 배그 닉 · 별명(`student_aliases`) · 옛 활동명 중 하나라도 들어 있으면 나온다(대소문자 무시 · 부분 일치 · 1~20자).
+- 걸린 행마다 `matchedBy` ∈ `displayName` · `activityName` · `pubgName` · `alias` · `pastActivityName` — 앱은 「옛 활동명으로 찾음」처럼 보여 줄 수 있다.
+- 범위(담당 + 최근 90일 · 원장 전체)는 지금 목록과 같다.
+
+### 9.26.4 늦은 취소 · 노쇼 면제 기록 — `POST /adjustments` `kind: "exempt"` (판수 계산 변경 B · 오너 OK 10/2)
+
+늦은 취소 −3 · 노쇼 −5 는 그대로다. **예외로 넘길 때만** 판수를 빼지 않고 0판 「면제」 한 줄을 남긴다.
+
+```json
+{ "studentId": "…", "kind": "exempt", "exemptOf": "no_show", "exemptReason": "agreed_change",
+  "reason": "다음 주 같은 시간으로 옮김", "playedAt": "2026-10-03", "bookingId": "…", "newBookingId": "…" }
+```
+
+| 필드 | 필수 | 뜻 |
+|---|---|---|
+| `exemptOf` | 필수 | 무엇을 면제하나 — `late_cancel`(늦은 취소) · `no_show`(노쇼) |
+| `exemptReason` | 필수 | 사유 칩 — 아래 표 |
+| `reason` | 필수 | 2~200자(종전 규칙 그대로) |
+| `playedAt` | 선택 | 그 수업 날짜(KST) · 기본 오늘 · `bookingId` 를 주면 그 예약 날짜 · 31일 전까지 · 미래 불가 |
+| `bookingId` | 선택 | 그 수업 예약(`GET /slots` 의 `bookings[].id`). **닫힌(취소된) 예약만** — 아래 오류 |
+| `newBookingId` | 합의 변경만 필수 | 다시 잡은 예약(같은 모양의 예약 id) |
+| `remainingDelta` | 보내지 않음 | 서버가 0 으로 넣는다(보내면 0 일 때만 받는다) |
+
+| `exemptReason` | 칩 | 규칙 |
+|---|---|---|
+| `agreed_change` | 합의 변경 | 수업일부터 **7일 안** 다시 잡은 예약(`newBookingId`) 필수 · 같은 수강생 · 열림 · 대기 · 끝남 · 그 예약 하나로 면제 한 번 |
+| `force_majeure` | 불가항력 | **수강생당 28일에 1번**(수업일 앞뒤 28일 안에 다른 불가항력 면제가 있으면 409 `exempt_limit`) |
+| `server_maintenance` | 서버 점검 | 횟수에 안 넣는다 |
+| `trainer_reason` | 트레이너 사정 | 수강생 횟수에 안 넣는다 · **트레이너당 28일 3번째부터** 원장 화면 표시(막지 않는다) |
+| `fixed_class_swap` | 고정반 대체 | 횟수에 안 넣는다 |
+
+- **바로 반영**(`status: "applied"` · `mode: "direct"`) · 원장 승인 카드 없음 · 판수 · 잔여 그대로(`remainingBefore` = `remainingAfter`).
+- 예약이 걸린 면제: 열린 예약(booked · 대기)은 **먼저 칸을 취소**하고 면제를 남긴다(선차감이 풀린다). 노쇼 버튼으로 닫은 예약은 판수가 이미
+  빠져서 면제할 수 없다 — 원장이 보상 조정(+)으로 돌린다. 그날 열린 예약이 있는데 `bookingId` 없이 보내면 §9.10 처럼 409 `booking_exists`.
+- 잠긴 달 409 `period_locked`(원장만) · 범위 밖 403 `scope_denied` 는 §9.18 그대로.
+
+**응답** (200)
+
+```json
+{ "requestId": "…", "status": "applied", "kind": "exempt", "remainingDelta": 0, "playedAt": "2026-10-03",
+  "exemptOf": "no_show", "exemptReason": "agreed_change", "remainingBefore": 12, "remainingAfter": 12,
+  "revertibleUntil": "2026-10-04T03:10:00Z", "forceMajeureNextOn": null, "trainerReason28d": null, "trainerReasonOver": false }
+```
+
+- `forceMajeureNextOn` = 불가항력이면 이 수강생이 다음에 쓸 수 있는 날 · `trainerReason28d` · `trainerReasonOver` = 트레이너 사정일 때만 값.
+
+| 오류 | 뜻 | 문구 제안 |
+|---|---|---|
+| 400 `invalid_body` | 칩 · 종류 · 사유 길이 · 합의 변경이 아닌데 `newBookingId` | — |
+| 409 `exempt_limit` `{ nextOn }` | 불가항력 28일에 이미 1번 | 「약관대로 처리돼요」 + 「{nextOn}부터 다시 쓸 수 있어요」 |
+| 400 `new_booking_required` | 합의 변경인데 다시 잡은 예약 없음 | 「다시 잡은 예약을 골라 주세요」 |
+| 409 `new_booking_invalid` | 그 수강생 예약이 아니거나 취소됨 | — |
+| 409 `new_booking_out_of_window` | 다시 잡은 예약이 수업일부터 7일 밖 | 「7일 안에 다시 잡은 예약만 돼요」 |
+| 409 `new_booking_used` | 그 예약으로 이미 면제함 | — |
+| 404 `booking_not_found` | 내 칸 · 그 수강생 예약이 아님 | — |
+| 409 `booking_open` | 예약이 아직 열려 있음 | 「칸을 먼저 취소해 주세요」 |
+| 409 `booking_no_show` | 노쇼로 닫은 예약 | 「노쇼로 닫은 예약은 원장님께 말해 주세요」 |
+| 409 `booking_done` | 끝난 예약 | — |
+
+- **되돌리기** `POST /adjustments/:id/revert` — §9.18 그대로(바로 반영 24시간 · 원장 제한 없음). 되돌린 면제는 불가항력 횟수 ·
+  합의 변경 예약 사용에서 빠진다.
+- **목록** `GET /adjustments` 행마다 `exemptOf` · `exemptReason` · `bookingId` · `newBookingId`(면제가 아니면 `null`).
+- 수강생 앱에는 면제 줄이 보이지 않는다(0판 · 판수 내역이 바뀌지 않는다).
+
+### 9.26.5 원장 화면 — 월별 면제 건수
+
+**GET /owner/exemptions?month=2026-10** (원장만 · 없으면 이번 달 KST · 되돌린 면제 제외)
+
+```json
+{ "month": "2026-10", "total": 4,
+  "byReason": { "agreed_change": 1, "force_majeure": 1, "server_maintenance": 0, "trainer_reason": 2, "fixed_class_swap": 0 },
+  "byStudent": [ { "studentId": "…", "displayName": "본명", "activityName": "활동명", "count": 2, "forceMajeure": 1 } ],
+  "byTrainer": [ { "trainerKey": "…", "trainerName": "현태", "count": 3, "trainerReason": 2,
+                   "trainerReason28d": 3, "trainerReasonOver": true } ] }
+```
+
+- `trainerReasonOver` = 최근 28일(오늘 기준) 트레이너 사정 면제가 2번을 넘음 → 원장 화면에 표시.
+- `byStudent` · `byTrainer` 는 건수 많은 순.
+
+### 9.26.6 DDL — 정본 `supabase_admin_panel.sql` §62 · §63 (실행 전 · 되돌림 시험 끝)
+
+- §62(A): `students` 칸 셋(`display_name` · `display_name_set_by` · `display_name_changed_at`) + 제약 둘 + 활동명 유일 인덱스 + 이력 표 `student_display_names`.
+- §62b(B · 실행 안 함): 기존 행 채우기 — 저장된 닉 6명 SQL · 연결됐는데 닉 없는 18명은 봇이 디스코드에서 읽어 채움 · 나머지 69명은 비워 둠.
+- §63a(A): `games_adjust_requests` 칸 넷(`exempt_of` · `exempt_reason` · `booking_id` · `new_booking_id`) + 제약 넷 + 인덱스 셋 +
+  `record_games_exemption()`(검사 · 28일 횟수 · 넣기를 한 트랜잭션에서).
+- §63b(B · 오너 원문 OK 뒤): 기존 제약 셋 교체(`gar_kind_chk` 에 exempt · `gar_delta_chk` · `gar_kind_delta_chk` 에 exempt 0판).
+- 되돌림 시험(10/2 · 운영 DB · 전부 롤백 · 남은 변화 0 확인): §62 · §63a · §63b 블록 그대로 + 함수 16경우 + 제약 8경우 — 전부 기대대로.
+
+### 9.26.7 계약 한 줄
+
+**어플**: 수강생 앱의 이름은 전부 서버가 주는 값을 그대로 쓴다(공유 복기 · 반응 · 그림 작성자 키는 이름 그대로 · 값이 활동명) — 내 활동명은
+`GET /summary` 의 `activityName` · `activityNameTemp` · `activityNameChangeableAt`, 바꾸기는 `PUT /activity-name`(400 `activity_name_invalid { reason }` · 409 `activity_name_taken` · `activity_name_cooldown { changeableAt }`).
+
+**반장**: 트레이너 화면의 이름은 본명 키(`displayName` · `studentDisplayName` · `authorDisplayName`) 옆에 활동명 키(`activityName` · `studentActivityName` ·
+`authorActivityName`)를 같이 보여 주고(null 이면 본명만), 검색은 `GET /students?q=` 를 쓴다. 면제는 `POST /adjustments` `kind: "exempt"` + `exemptOf` +
+`exemptReason` 칩(합의 변경은 `newBookingId` 필수) — 판수는 그대로 · 409 `exempt_limit` 이면 「약관대로 처리돼요」 · 원장 화면은 `GET /owner/exemptions?month=`.
