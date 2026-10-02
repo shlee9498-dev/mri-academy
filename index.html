@@ -419,45 +419,42 @@ footer b{color:var(--gold)}
 .cb-sugs .cbl{width:100%;font-size:12px;font-weight:700;color:var(--ink-dim);margin-bottom:2px;letter-spacing:.04em}
 .cb-chip{background:transparent;border:1px solid var(--line);color:var(--ink);padding:7px 11px;font-size:12.5px;cursor:pointer;font-family:var(--body);text-align:left;line-height:1.3;transition:border-color .15s}
 .cb-chip:hover{border-color:var(--gold)}
-/* ===== VIP 섹션 ===== */
-.vip-section{position:relative;margin:64px 0;padding:2px;border-radius:24px;
-  background:linear-gradient(135deg,rgba(245,197,24,.55),rgba(245,197,24,.05) 35%,rgba(168,85,247,.15) 65%,rgba(245,197,24,.4));
-  overflow:hidden;}
-.vip-inner{position:relative;background:
-  radial-gradient(ellipse 80% 60% at 50% 0%,rgba(245,197,24,.10),transparent 60%),
-  linear-gradient(180deg,#121119,#0c0c10);
-  border-radius:22px;padding:48px 28px;}
-/* vip-inner 그리드 장식 제거 — DESIGN.md v2 */
-.vip-head{text-align:center;position:relative;margin-bottom:32px;}
-.vip-kick{font-family:var(--display);letter-spacing:.28em;font-size:12px;
-  color:var(--gold);}
-.vip-title{font-family:var(--display);font-size:clamp(30px,7vw,46px);margin:10px 0 8px;color:var(--gold);}
-.vip-desc{color:var(--ink-dim);font-size:14px;max-width:480px;margin:0 auto;}
-
-/* 스포트라이트 (1일권) */
-.vip-spotlight{position:relative;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center;
-  background:linear-gradient(135deg,rgba(245,197,24,.12),rgba(20,18,12,.6));
-  border:1px solid var(--gold-soft);border-radius:18px;padding:28px;margin-bottom:40px;overflow:hidden;}
-.vip-spotlight::after{content:'';position:absolute;top:-60%;right:-10%;width:280px;height:280px;border-radius:50%;
-  background:radial-gradient(circle,rgba(245,197,24,.22),transparent 70%);pointer-events:none;}
-.vs-ribbon{position:absolute;top:16px;left:-34px;transform:rotate(-45deg);background:var(--gold);color:#1a1500;
-  font-family:var(--display);font-size:10px;letter-spacing:.08em;padding:5px 40px;}
-.vs-tag{font-family:var(--display);color:var(--gold);font-size:14px;}
-.vs-name{font-family:var(--display);font-size:24px;margin:6px 0 4px;letter-spacing:.02em;}
-.vs-quote{color:var(--ink-dim);font-size:13.5px;font-style:italic;margin-bottom:14px;}
-.vs-list{list-style:none;display:flex;flex-direction:column;gap:8px;}
-.vs-list li{position:relative;padding-left:22px;font-size:13.5px;color:var(--ink-dim);}
-.vs-list li::before{content:'◆';position:absolute;left:0;color:var(--gold);font-size:11px;top:2px;}
-.vs-list li b{color:var(--ink);}
-.vs-right{text-align:center;position:relative;z-index:1;min-width:180px;
-  background:rgba(10,10,12,.5);border:1px solid var(--line);border-radius:14px;padding:22px 20px;}
-.vs-price-label{font-size:12px;color:var(--ink-faint);letter-spacing:.1em;}
-.vs-price{font-family:var(--display);font-size:34px;color:var(--gold);line-height:1;margin:6px 0 2px;}
-.vs-price span{font-size:16px;}
-.vs-sub{font-size:11px;color:var(--ink-faint);letter-spacing:.15em;margin-bottom:16px;}
-.vs-btn{display:block;background:var(--gold);color:#1a1500;font-weight:800;font-size:14px;
-  padding:13px;border-radius:9px;text-decoration:none;transition:transform .12s,background .15s;}
-.vs-btn:hover{transform:translateY(-2px);background:#fde047;}
+/* ===== VIP 룸 — 일반 스크롤 밖 · 입구를 눌렀을 때만 열린다 ===== */
+.vip-door{display:block;margin:28px auto 0;max-width:520px;text-align:center;font-size:12.5px;color:var(--ink-faint);text-decoration:none;letter-spacing:.02em}
+.vip-door span{color:var(--ink-dim);border-bottom:1px solid var(--line);padding-bottom:1px;transition:color .2s,border-color .2s}
+.vip-door:hover span,.vip-door:focus-visible span{color:var(--gold);border-color:var(--gold-soft)}
+.vroom{--vr-ivory:#ece6d6;--vr-mute:#8c867a;--vr-hair:rgba(236,230,214,.14);
+  width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;
+  background:#050505;color:var(--vr-ivory);overflow-y:auto;overscroll-behavior:contain}
+.vroom::backdrop{background:#000}
+.vroom[open]{animation:vrIn .5s ease both}
+@keyframes vrIn{from{opacity:0}to{opacity:1}}
+.vr-wrap{max-width:720px;margin:0 auto;padding:88px 24px 96px;min-height:100%;display:flex;flex-direction:column}
+.vr-close{position:fixed;top:18px;right:18px;width:44px;height:44px;border-radius:50%;background:transparent;border:1px solid var(--vr-hair);color:var(--vr-mute);font-size:20px;line-height:1;cursor:pointer;transition:color .2s,border-color .2s}
+.vr-close:hover,.vr-close:focus-visible{color:var(--vr-ivory);border-color:var(--vr-ivory)}
+.vr-kick{font-family:'Saira Condensed',sans-serif;font-weight:700;letter-spacing:.42em;font-size:11px;color:var(--gold);text-transform:uppercase}
+.vr-title{font-weight:300;font-size:clamp(34px,8vw,56px);line-height:1.15;letter-spacing:-.01em;margin:22px 0 18px;color:var(--vr-ivory)}
+.vr-title b{font-weight:700}
+.vr-lead{font-size:15px;line-height:1.85;color:var(--vr-mute);max-width:520px;font-weight:400}
+.vr-rule{height:1px;background:var(--vr-hair);margin:56px 0 8px;border:0}
+.vr-item{display:grid;grid-template-columns:56px 1fr;gap:8px 20px;padding:36px 0;border-bottom:1px solid var(--vr-hair)}
+.vr-no{font-family:'Saira Condensed',sans-serif;font-size:13px;letter-spacing:.2em;color:var(--vr-mute);padding-top:6px}
+.vr-name{font-size:22px;font-weight:600;color:var(--vr-ivory);letter-spacing:-.005em}
+.vr-en{display:block;font-family:'Saira Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.3em;color:var(--vr-mute);margin-top:6px;text-transform:uppercase}
+.vr-desc{grid-column:2;font-size:14.5px;line-height:1.85;color:var(--vr-mute);margin-top:8px}
+.vr-desc b{color:var(--vr-ivory);font-weight:600}
+.vr-price{margin:48px 0 0;font-size:13.5px;line-height:1.8;color:var(--vr-mute)}
+.vr-price strong{color:var(--vr-ivory);font-weight:600}
+.vr-cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}
+.vr-btn{flex:1 1 220px;display:block;text-align:center;padding:16px 18px;font-size:14px;font-weight:700;text-decoration:none;letter-spacing:.02em;transition:background .2s,color .2s,border-color .2s}
+.vr-btn.main{background:var(--vr-ivory);color:#050505}
+.vr-btn.main:hover,.vr-btn.main:focus-visible{background:var(--gold)}
+.vr-btn.sub{border:1px solid var(--vr-hair);color:var(--vr-ivory)}
+.vr-btn.sub:hover,.vr-btn.sub:focus-visible{border-color:var(--vr-ivory)}
+.vr-sign{margin-top:auto;padding-top:64px;font-size:12px;color:var(--vr-mute);letter-spacing:.04em}
+@media(max-width:560px){.vr-wrap{padding:76px 16px 72px}.vr-item{grid-template-columns:1fr}.vr-desc{grid-column:1}.vr-no{padding-top:0}}
+@media(prefers-reduced-motion:reduce){.vroom[open]{animation:none}}
+html.vr-lock{overflow:hidden}
 
 /* 블록 라벨 */
 .vip-block-label{display:flex;align-items:center;gap:14px;margin:36px 0 18px;
@@ -467,7 +464,6 @@ footer b{color:var(--gold)}
 .vip-plan::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1px;
   background:linear-gradient(135deg,rgba(245,197,24,.3),transparent 60%);
   -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;}
-@media(max-width:640px){.vip-spotlight{grid-template-columns:1fr;}.vip-inner{padding:36px 16px;}.vs-right{min-width:0;}}
 </style>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
 </head>
@@ -477,7 +473,7 @@ footer b{color:var(--gold)}
   <div class="nav-in">
     <a href="#hero" style="text-decoration:none"><div class="logo"><span class="mk">M</span><span>MRI ACADEMY<small>PUBG COACHING</small></span></div></a>
     <div class="nav-links">
-      <a href="#trainers">트레이너</a><a href="#proof">성과</a><a href="#plans">가격</a><a href="#vip" style="color:var(--gold);font-weight:800;">⭐1:1</a><a href="#how">수업방식</a><a href="#consult">상담</a>
+      <a href="#trainers">트레이너</a><a href="#proof">성과</a><a href="#plans">가격</a><a href="#how">수업방식</a><a href="#consult">상담</a>
       <a href="#faq">FAQ</a>
       <a href="trainer-recruit.html">트레이너모집</a><a href="#clan">클랜</a>
       <a href="https://shlee9498-dev.github.io/gmi-clancup/" target="_blank" rel="noopener">클랜컵</a>
@@ -818,11 +814,6 @@ footer b{color:var(--gold)}
         <span class="pr"><b>세트</b>. 강의와 레슨을 묶어 진행합니다.</span>
         <span class="go">가격 보기 →</span>
       </a>
-      <a class="pick" href="#vip">
-        <span class="ps">시간이 없어 하루에 몰아서 끝내고 싶다</span>
-        <span class="pr"><b>프리미엄 1:1 · VIP DAY PASS</b>. 종일 집중으로 진행합니다.</span>
-        <span class="go">자세히 →</span>
-      </a>
     </div>
   </section>
 
@@ -830,7 +821,7 @@ footer b{color:var(--gold)}
   <section id="plans">
     <div class="kick">Programs</div>
     <div class="s-title">강의 · 세트 · 레슨</div>
-    <p class="s-desc">판수만 필요하면 <b>레슨 단품</b>, 기초부터 잡으려면 <b style="color:var(--gold)">이무리 클랜장 직강</b>, 둘을 묶으면 <b>세트</b>입니다. 아래로 갈수록 금액이 올라갑니다. 실시간 1:1 직강은 <a href="#vip" style="color:var(--gold)">프리미엄 1:1</a> 섹션에 있습니다.</p>
+    <p class="s-desc">판수만 필요하면 <b>레슨 단품</b>, 기초부터 잡으려면 <b style="color:var(--gold)">이무리 클랜장 직강</b>, 둘을 묶으면 <b>세트</b>입니다. 아래로 갈수록 금액이 올라갑니다.</p>
 
     <div style="background:linear-gradient(135deg,rgba(245,197,24,.1),rgba(245,197,24,.02));border:1px solid var(--gold-soft,rgba(245,197,24,.3));border-radius:14px;padding:18px 20px;margin-bottom:28px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
       <div style="font-size:30px;">♾️</div>
@@ -875,7 +866,6 @@ footer b{color:var(--gold)}
 
   </section>
 
-  <!-- ========== VIP 섹션 ========== -->
 
 
   <!-- CONSULT --><div class="vip-block-label"><span class="vbl-line"></span><span>강의 · 이무리 직강 (1회 3시간 · 8회 과정)</span><span class="vbl-line"></span></div>
@@ -928,6 +918,7 @@ footer b{color:var(--gold)}
         </div>
       </div>
       <p class="plan-note">취소선 금액은 <b>같은 구성을 따로 신청할 때의 합계</b>입니다 — 묶으면 15,000~25,000원을 아낍니다 · 강의 포함으로 상담(테스트) 비용 <b>20,000원</b> 1회 · 트레이너·일정 우선 배정</p>
+      <a class="vip-door" href="#vip" data-vip-open>정해진 구성 말고 이무리와 1:1로 맞추고 싶다면 <span>VIP 룸</span></a>
 
       
   <section id="consult">
@@ -963,61 +954,6 @@ footer b{color:var(--gold)}
     <div class="acct">신청서 접수 후 <b style="color:var(--gold)">24시간 이내에 상담 일정과 결제 방법을 안내</b>드립니다. (온라인 카드결제는 준비 중 — 오픈 시 사이트에서 바로 결제 가능)</div>
   </section>
 
-  <section id="vip" class="vip-section">
-    <div class="vip-inner">
-      <div class="vip-head">
-        <div class="vip-kick">⭐ PREMIUM · 이무리 클랜장 직접</div>
-        <h2 class="vip-title">프리미엄 1:1</h2>
-        <p class="vip-desc">정해진 커리큘럼 대신 <b>당신 게임</b>을 그 자리에서 봅니다. 실시간 옆에서 보는 1:1, 하루에 몰아서 끝내는 집중 과정 두 가지입니다.</p>
-      </div>
-
-      <!-- 솔로 1:1 실시간 직강 (입문 미끼·최우선) -->
-      <div class="vip-spotlight">
-        <div class="vs-ribbon">NEW · 실시간 1:1</div>
-        <div class="vs-left">
-          <div class="vs-tag">🎯 솔로 서바이버 1:1 직강</div>
-          <div class="vs-name">실시간 옆에서 직강</div>
-          <p class="vs-quote">"전세계 최초 솔로 서바이버가, 당신 게임을 처음부터 끝까지"</p>
-          <ul class="vs-list">
-            <li>당신이 <b>직접 플레이</b>하는 걸 옆에서 실시간 관전</li>
-            <li>매 순간 <b>판단·포지션·교전</b> 실시간 피드백</li>
-            <li>끝나고 <b>리플레이 복기</b>로 한 번 더 짚어줌</li>
-            <li><b style="color:var(--gold)">레벨테스트 없이</b> 바로 신청 가능</li>
-          </ul>
-        </div>
-        <div class="vs-right">
-          <div class="vs-price-label">2시간 · 첫 체험</div>
-          <div class="vs-price">50,000<span>원</span></div>
-          <div class="vs-sub">이후 70,000원 / 2H</div>
-          <a class="vs-btn" href="apply.html">1:1 직강 신청 →</a>
-        </div>
-      </div>
-
-      <!-- 1일 집중 (하루 완성) -->
-      <div class="vip-spotlight">
-        <div class="vs-ribbon">NEW · 하루 완성</div>
-        <div class="vs-left">
-          <div class="vs-tag">⭐ 이무리 1일 집중</div>
-          <div class="vs-name">VIP DAY PASS</div>
-          <p class="vs-quote">"시간은 없고, 빠르게 끌어올리고 싶은 분께"</p>
-          <ul class="vs-list">
-            <li>오전~저녁 <b>종일</b>, 이무리 직강 우선 진행</li>
-            <li>원하는 강의 주제 집중 (실전·복기·운영 등)</li>
-            <li>24시간 전 일정 조율 · 전용/그룹 여부 협의</li>
-            <li><b style="color:var(--gold)">레벨테스트 없이</b> 바로 신청 가능</li>
-          </ul>
-        </div>
-        <div class="vs-right">
-          <div class="vs-price-label">1일 집중</div>
-          <div class="vs-price">150,000<span>원</span></div>
-          <div class="vs-sub">/ 1 DAY</div>
-          <a class="vs-btn" href="apply.html">1일 집중 신청 →</a>
-        </div>
-      </div>
-
-
-    </div>
-  </section>
 
 
   <!-- FAQ -->
@@ -1198,7 +1134,7 @@ footer b{color:var(--gold)}
       <a href="#trainers">트레이너</a><a href="#proof">성과</a><a href="#plans">가격</a><a href="#consult">상담</a>
       <a href="trainer-recruit.html">트레이너 모집</a><a href="gmi-progress.html">성장기록</a>
       <a href="lesson-schedule.html">일정</a><a href="lesson-feedback.html">코칭기록</a>
-      <a href="community.html">후기</a>
+      <a href="community.html">후기</a><a href="#vip" data-vip-open>VIP 룸</a>
       <a href="https://shlee9498-dev.github.io/gmi-clancup/" target="_blank" rel="noopener">클랜컵</a>
     </div>
     <div class="fl">
@@ -1302,6 +1238,60 @@ const STATS_API = "https://mri-academy-production.up.railway.app";
   document.querySelectorAll(".cb-chip").forEach(c=>c.addEventListener("click",()=>{
     input.value=c.dataset.q; const s=document.getElementById("cbSugs"); if(s) s.remove(); ask();
   }));
+})();
+</script>
+
+<!-- ===== VIP 룸 — 입구(#vip)를 눌렀을 때만 열린다. 가격은 싣지 않고 첫 문의에서 정한다 ===== -->
+<dialog class="vroom" id="vipRoom" aria-labelledby="vrTitle">
+  <button type="button" class="vr-close" data-vip-close aria-label="VIP 룸 닫기">×</button>
+  <div class="vr-wrap">
+    <div class="vr-kick">Private · VIP Room</div>
+    <h2 class="vr-title" id="vrTitle">이무리와<br><b>단둘이</b></h2>
+    <p class="vr-lead">정해진 패키지 대신 내 게임에 맞춰 짜는 자리예요. 무엇을 얼마나 할지는 첫 문의에서 같이 정해요</p>
+    <hr class="vr-rule">
+    <div class="vr-item">
+      <div class="vr-no">01</div>
+      <div class="vr-name">1:1 직강<span class="vr-en">Live Private Coaching</span></div>
+      <p class="vr-desc">내가 플레이하는 판을 이무리가 <b>옆에서 실시간으로</b> 봐요. 자기장 읽는 타이밍, 차 내리는 자리, 교전 들어가는 순간을 그 판 안에서 바로 짚고 끝나면 리플레이로 한 번 더 복기해요.</p>
+    </div>
+    <div class="vr-item">
+      <div class="vr-no">02</div>
+      <div class="vr-name">VIP DAY PASS<span class="vr-en">One Day Intensive</span></div>
+      <p class="vr-desc">하루를 통째로 비워 <b>고치고 싶은 것만</b> 몰아서 해요. 실전, 복기, 운영 중에 주제를 고르고 일정은 24시간 전까지 맞춰요.</p>
+    </div>
+    <p class="vr-price"><strong>가격은 공개하지 않아요.</strong> 목표와 쓸 수 있는 시간을 알려주시면 구성과 금액을 맞춰서 안내해요.</p>
+    <div class="vr-cta">
+      <a class="vr-btn main" href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">카카오로 문의하기</a>
+      <a class="vr-btn sub" href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener" data-disc-channel="상담문의">Discord로 문의하기</a>
+    </div>
+    <div class="vr-sign">MRI ACADEMY · 전세계 최초 솔로 단독 서바이버 이무리</div>
+  </div>
+</dialog>
+<script>
+// VIP 룸: 입구 클릭 · 주소 #vip 로 열고, 닫으면 주소에서 #vip 를 지운다
+(function(){
+  const room = document.getElementById("vipRoom");
+  if (!room || typeof room.showModal !== "function") return;
+  let opener = null;
+  function open(){
+    if (room.open) return;
+    opener = document.activeElement;
+    document.documentElement.classList.add("vr-lock");
+    room.showModal();
+    room.scrollTop = 0;
+    if (window.umami) umami.track("vip_room_open");
+  }
+  room.addEventListener("close", function(){
+    document.documentElement.classList.remove("vr-lock");
+    if (location.hash === "#vip") history.replaceState(null, "", location.pathname + location.search);
+    if (opener && opener.focus) opener.focus();
+  });
+  document.querySelectorAll("[data-vip-open]").forEach(function(a){
+    a.addEventListener("click", function(e){ e.preventDefault(); history.replaceState(null, "", "#vip"); open(); });
+  });
+  room.querySelector("[data-vip-close]").addEventListener("click", function(){ room.close(); });
+  if (location.hash === "#vip") open();
+  window.addEventListener("hashchange", function(){ if (location.hash === "#vip") open(); });
 })();
 </script>
 </body>
