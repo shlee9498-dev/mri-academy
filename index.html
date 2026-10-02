@@ -138,43 +138,57 @@ h3{font-size:19px}
 .top .btn{min-height:40px;font-size:15px;padding:0 16px}
 .menu-m{display:none}
 
-/* 1. 첫 화면 + 트레이너 */
-.hero{padding:48px 0 56px}
-.hero-head{display:grid;grid-template-columns:1.25fr 1fr;gap:40px;align-items:end;margin-bottom:32px}
-.hero h1{font-size:clamp(34px,5.4vw,58px);letter-spacing:-.035em;line-height:1.14}
-.hero .lead{margin-top:18px;font-size:18px;color:var(--body);max-width:560px}
-.metrics{background:var(--feat);color:var(--feat-ink);border-radius:var(--r);padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:4px 20px}
+/* 1. 첫 화면 — 원장 한 사람(이 아카데미를 누가 이끄는지) */
+.hero{padding:56px 0 64px}
+.lead-grid{display:grid;grid-template-columns:1.1fr 420px;gap:56px;align-items:center}
+.hero h1{font-size:clamp(34px,5.2vw,56px);letter-spacing:-.035em;line-height:1.14}
+.hero .lead{margin-top:18px;font-size:18px;color:var(--body);max-width:540px}
+.boss{margin-top:32px;padding-top:24px;border-top:1px solid var(--line)}
+.boss .role{font-family:var(--num);font-weight:700;font-size:13px;letter-spacing:.16em;color:var(--mute)}
+.boss .who{margin-top:4px;font-size:28px;font-weight:800;color:var(--ink);letter-spacing:-.02em}
+.boss .proof{margin-top:12px;display:grid;gap:6px}
+.boss .proof li{list-style:none;display:flex;gap:10px;align-items:baseline;color:var(--body)}
+.boss .proof li::before{content:'';flex:none;width:6px;height:6px;border-radius:50%;background:var(--ink);transform:translateY(-2px)}
+.boss .proof b{color:var(--ink)}
+.hero-acts{margin-top:28px;display:flex;gap:10px;flex-wrap:wrap}
+.lead-ph{position:relative;background:#0B0C0E;border-radius:var(--r);overflow:hidden;aspect-ratio:4/5}
+.lead-ph img{width:100%;height:100%;object-fit:cover}
+.lead-ph figcaption{position:absolute;left:0;right:0;bottom:0;padding:40px 22px 18px;background:linear-gradient(transparent,rgba(11,12,14,.92));color:#fff;font-weight:700;font-size:15px}
+.lead-ph figcaption span{display:block;font-family:var(--num);font-size:12.5px;letter-spacing:.16em;color:#C9CDD2;font-weight:700}
+.metrics{margin-top:40px;background:var(--feat);color:var(--feat-ink);border-radius:var(--r);padding:20px 24px;display:grid;grid-template-columns:repeat(2,minmax(0,220px)) 1fr;gap:4px 28px;align-items:end}
 .metrics[hidden]{display:none}
 .metric .v{font-family:var(--num);font-weight:700;font-size:44px;line-height:1;font-variant-numeric:tabular-nums;color:#fff}
 .metric .v small{font-family:var(--sans);font-size:16px;font-weight:700;margin-left:3px;color:#C9CDD2}
 .metric .k{font-size:14px;color:#C9CDD2;margin-top:6px}
-.metrics .src{grid-column:1/-1;margin-top:12px;padding-top:10px;border-top:1px solid #2A2E33;font-size:13px;color:#A9AFB6}
+.metrics .src{font-size:13px;color:#A9AFB6;text-align:right}
 
-.trainers{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
-.tc{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;display:grid;grid-template-columns:148px 1fr;align-content:start}
-.tc .ph{position:relative;background:#0B0C0E;aspect-ratio:4/5}
-.tc .ph img{width:100%;height:100%;object-fit:cover;object-position:50% 30%}
-.tc .bd{padding:14px 16px 16px;display:flex;flex-direction:column;gap:4px;min-width:0}
+/* 2. 트레이너 두 명 — 완전히 같은 틀(사진 4:5 · 배지 칸 · 소개 2줄 · 버튼 바닥) */
+.pair{display:grid;grid-template-columns:repeat(2,1fr);gap:20px}
+.tc{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;display:grid;grid-template-columns:200px 1fr;grid-template-rows:1fr auto}
+.tc .ph{grid-row:1;background:#0B0C0E;aspect-ratio:4/5}
+.tc .ph img{width:100%;height:100%;object-fit:cover}
+.tc .bd{padding:20px 22px;display:flex;flex-direction:column;min-width:0}
 .tc .tier{font-family:var(--num);font-weight:700;font-size:13px;letter-spacing:.16em;color:var(--mute)}
-.tc .nm{font-size:22px;font-weight:800;color:var(--ink);letter-spacing:-.02em;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.badge{font-size:12.5px;font-weight:700;color:var(--body);background:var(--panel-muted);border-radius:999px;padding:3px 9px;letter-spacing:0}
-.tc .one{color:var(--body)}
-.tc .tm{font-size:14.5px;color:var(--mute)}
+.tc .nm{margin-top:2px;font-size:24px;font-weight:800;color:var(--ink);letter-spacing:-.02em;line-height:1.3}
+.tc .slot{height:28px;margin-top:6px;display:flex;align-items:center}
+.badge{font-size:12.5px;font-weight:700;color:var(--body);background:var(--panel-muted);border-radius:999px;padding:3px 10px}
+.tc .one{margin-top:8px;min-height:3.3em;line-height:1.65;color:var(--body)}
+.tc .tm{font-size:14.5px;color:var(--mute);height:24px}
 .tc .tm b{font-family:var(--num);font-size:18px;color:var(--ink);font-variant-numeric:tabular-nums}
-.tc .tm[hidden]{display:none}
-.tc .acts{margin-top:auto;padding-top:8px}
-.tc .btn{width:100%;min-height:42px;font-size:15px;padding:0 10px;white-space:nowrap}
-.tc details{grid-column:1/-1;border-top:1px solid var(--line);padding:10px 16px 12px}
-.tc summary{cursor:pointer;font-weight:700;color:var(--ink);font-size:15px;list-style:none;display:flex;justify-content:space-between}
+.tc .tm.off{visibility:hidden}
+.tc .acts{margin-top:auto;padding-top:14px}
+.tc .btn{width:100%;min-height:46px;white-space:nowrap}
+.tc details{grid-column:1/-1;border-top:1px solid var(--line);padding:0 22px}
+.tc summary{cursor:pointer;font-weight:700;color:var(--ink);font-size:15px;list-style:none;display:flex;justify-content:space-between;align-items:center;height:48px}
 .tc summary::-webkit-details-marker{display:none}
 .tc summary::after{content:'+';font-family:var(--num);font-size:20px;line-height:1}
 .tc details[open] summary::after{content:'−'}
-.tc .more{padding-top:10px;display:flex;flex-direction:column;gap:10px;font-size:15px}
+.tc .more{padding-bottom:16px;display:flex;flex-direction:column;gap:10px;font-size:15px}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chips span{font-size:13.5px;font-weight:600;color:var(--body);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
 .links{display:flex;flex-wrap:wrap;gap:14px}
 .links a{font-weight:700;color:var(--ink);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px;font-size:14.5px}
-.hero-note{margin-top:18px;font-size:15px;color:var(--mute)}
+.pair-note{margin-top:18px;font-size:15px;color:var(--mute)}
 
 /* 공통 절 */
 .sec{padding:80px 0;border-top:1px solid var(--line)}
@@ -274,16 +288,18 @@ footer{padding:48px 0 64px;font-size:14.5px;color:var(--mute)}
 .bizinfo{margin:18px 0 10px;line-height:1.8}
 
 /* 휴대폰 */
-@media(max-width:1100px){.tc{grid-template-columns:120px 1fr}.tc .one{font-size:15px}}
+@media(max-width:1100px){.lead-grid{grid-template-columns:1fr 360px;gap:40px}.tc{grid-template-columns:160px 1fr}}
 @media(max-width:960px){
   .menu,.top-r .book{display:none}
-  .trainers{grid-template-columns:1fr;gap:10px}
-  .tc{grid-template-columns:132px 1fr}
+  .lead-grid{grid-template-columns:1fr;gap:28px}
+  .lead-ph{max-width:420px}
+  .pair{grid-template-columns:1fr;gap:12px}
+  .metrics{grid-template-columns:1fr 1fr}
+  .metrics .src{grid-column:1/-1;text-align:left;margin-top:8px}
   .menu-m{display:flex;gap:18px;overflow-x:auto;padding:0 24px 10px;scrollbar-width:none}
   .menu-m::-webkit-scrollbar{display:none}
   .menu-m a{flex:none;text-decoration:none;color:var(--body);font-weight:600;font-size:15px}
   .top-in{justify-content:space-between}
-  .hero-head{grid-template-columns:1fr;gap:24px}
   .fit,.ways,.cases{grid-template-columns:1fr}
   .flow{grid-template-columns:1fr}
   .flow div+div{border-left:0;border-top:1px solid var(--line)}
@@ -296,10 +312,15 @@ footer{padding:48px 0 64px;font-size:14.5px;color:var(--mute)}
   .hero{padding:36px 0 40px}
   .hero .lead{font-size:16.5px}
   .metric .v{font-size:36px}
-  .tc{grid-template-columns:104px 1fr}
-  .tc .bd{padding:10px 12px 12px}
+  .tc{grid-template-columns:116px 1fr}
+  .tc .bd{padding:12px 14px}
   .tc .nm{font-size:20px}
-  .tc details{padding:8px 12px 10px}
+  .tc .slot{height:24px;margin-top:4px}
+  .tc .one{font-size:15px;margin-top:4px}
+  .tc .acts{padding-top:10px}
+  .tc .btn{min-height:42px;font-size:15px}
+  .tc details{padding:0 14px}
+  .boss .who{font-size:24px}
   .logo{font-size:17px;white-space:nowrap}
   .logo .mk{width:26px;height:26px;font-size:15px}
   .top .btn{min-height:38px;font-size:14px;padding:0 12px;white-space:nowrap}
@@ -365,30 +386,56 @@ html.vr-lock{overflow:hidden}
 
 <main id="top">
 
-  <!-- 1. 첫 화면 — 무엇을 하는 곳인지 + 트레이너 세 명(같은 크기 · 각자 레벨 테스트) -->
-  <section class="hero" id="trainers">
+  <!-- 1. 첫 화면 — 무엇을 하는 곳인지 + 이 아카데미를 이끄는 원장 한 사람 -->
+  <section class="hero" id="muri">
     <div class="wrap">
-      <div class="hero-head">
+      <div class="lead-grid">
         <div>
           <h1>배그 경쟁전 티어를<br><span class="u">올리는 코칭</span></h1>
           <p class="lead">경쟁전 최상위 티어인 서바이버 트레이너가 같이 게임하면서, 판마다 무엇을 바꿔야 하는지 짚어 줘요</p>
+          <div class="boss">
+            <div class="role">MRI ACADEMY 원장</div>
+            <div class="who">이무리</div>
+            <ul class="proof">
+              <li><span><b>전세계 최초 솔로 단독 서바이버</b>예요</span></li>
+              <li><span>GmI 클랜장이에요</span></li>
+              <li><span>원장 강의 8회 과정을 직접 가르쳐요</span></li>
+            </ul>
+            <div class="hero-acts">
+              <a class="btn ink" href="apply.html?utm_source=site&amp;utm_medium=hero&amp;utm_content=muri">원장에게 레벨 테스트</a>
+              <a class="btn line" href="#trainers">트레이너 보기</a>
+            </div>
+          </div>
         </div>
-        <!-- 지표: GET /api/site-metrics(최근 30일 실측 · 매일 갱신). 값이 없으면 통째로 숨긴다(누적 숫자 · 빈 칸 공개 금지) -->
-        <div class="metrics" id="metrics" hidden aria-live="polite">
-          <div class="metric"><div class="v"><span id="mStudents"></span><small>명</small></div><div class="k">최근 30일 수업한 수강생</div></div>
-          <div class="metric"><div class="v"><span id="mGames"></span><small>판</small></div><div class="k">최근 30일 같이 한 게임</div></div>
-          <div class="src" id="mSrc">최근 30일 기준 · 매일 갱신</div>
-        </div>
+        <figure class="lead-ph">
+          <img src="img/trainers/mr-lead.jpg" alt="이무리 원장" width="480" height="600" fetchpriority="high">
+          <figcaption><span>SURVIVOR · 원장</span>이무리</figcaption>
+        </figure>
       </div>
+      <!-- 지표: GET /api/site-metrics(최근 30일 실측 · 매일 갱신). 값이 없으면 통째로 숨긴다(누적 숫자 · 빈 칸 공개 금지) -->
+      <div class="metrics" id="metrics" hidden aria-live="polite">
+        <div class="metric"><div class="v"><span id="mStudents"></span><small>명</small></div><div class="k">최근 30일 수업한 수강생</div></div>
+        <div class="metric"><div class="v"><span id="mGames"></span><small>판</small></div><div class="k">최근 30일 같이 한 게임</div></div>
+        <div class="src" id="mSrc">최근 30일 기준 · 매일 갱신</div>
+      </div>
+    </div>
+  </section>
 
-      <div class="trainers">
+  <!-- 2. 트레이너 두 명 — 완전히 같은 틀 -->
+  <section class="sec" id="trainers">
+    <div class="wrap">
+      <div class="sec-head">
+        <div><h2>같이 게임하는 트레이너</h2><p>둘 다 서바이버예요. 레슨은 이 두 명과 판 단위로 해요</p></div>
+      </div>
+      <div class="pair">
         <article class="tc" id="tc-hyuntae">
-          <div class="ph"><img src="img/trainers/ht-card.jpg" alt="현태 트레이너" width="480" height="600" fetchpriority="high"></div>
+          <div class="ph"><img src="img/trainers/ht-frame.jpg" alt="현태 트레이너" width="360" height="450" loading="lazy"></div>
           <div class="bd">
-            <div class="tier">SURVIVOR</div>
-            <div class="nm">현태 <span class="badge">이번 시즌 우수 트레이너</span></div>
+            <div class="tier">SURVIVOR · 트레이너</div>
+            <div class="nm">현태</div>
+            <div class="slot"><span class="badge">이번 시즌 우수 트레이너</span></div>
             <p class="one">기초부터 하나씩 잡아 줘요</p>
-            <p class="tm" data-trainer="hyuntae" hidden>최근 30일 수강생 <b></b>명</p>
+            <p class="tm off" data-trainer="hyuntae">최근 30일 수강생 <b></b>명</p>
             <div class="acts"><a class="btn ink" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae">현태에게 레벨 테스트</a></div>
           </div>
           <details>
@@ -399,14 +446,14 @@ html.vr-lock{overflow:hidden}
             </div>
           </details>
         </article>
-
         <article class="tc" id="tc-jungu">
-          <div class="ph"><img src="img/trainers/jg-card.jpg" alt="준구 트레이너" width="480" height="600" fetchpriority="high"></div>
+          <div class="ph"><img src="img/trainers/jg-frame.jpg" alt="준구 트레이너" width="360" height="450" loading="lazy"></div>
           <div class="bd">
-            <div class="tier">SURVIVOR</div>
+            <div class="tier">SURVIVOR · 트레이너</div>
             <div class="nm">준구</div>
-            <p class="one">교전과 판단을 실전에서 바로</p>
-            <p class="tm" data-trainer="jungu" hidden>최근 30일 수강생 <b></b>명</p>
+            <div class="slot" aria-hidden="true"></div>
+            <p class="one">교전과 판단을 실전에서 바로 써먹게 잡아 줘요</p>
+            <p class="tm off" data-trainer="jungu">최근 30일 수강생 <b></b>명</p>
             <div class="acts"><a class="btn ink" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 레벨 테스트</a></div>
           </div>
           <details>
@@ -417,27 +464,8 @@ html.vr-lock{overflow:hidden}
             </div>
           </details>
         </article>
-
-        <article class="tc" id="tc-muri">
-          <div class="ph"><img src="img/trainers/mr-card.jpg" alt="이무리 원장" width="480" height="600" fetchpriority="high"></div>
-          <div class="bd">
-            <div class="tier">SURVIVOR · 원장</div>
-            <div class="nm">이무리</div>
-            <p class="one">운영과 판단을 강의로 정리해요</p>
-            <p class="tm" data-trainer="muri" hidden>최근 30일 수강생 <b></b>명</p>
-            <div class="acts"><a class="btn ink" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=muri">원장에게 레벨 테스트</a></div>
-          </div>
-          <details>
-            <summary>자세히</summary>
-            <div class="more">
-              <p>전세계 최초 솔로 단독 서바이버예요. 같은 실력대 3명까지 모아 1회 3시간씩 8번 가르쳐요</p>
-              <div class="chips"><span>초급 강의</span><span>중급 강의</span><span>심화 강의</span></div>
-              <div class="links"><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP 방송</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a></div>
-            </div>
-          </details>
-        </article>
       </div>
-      <p class="hero-note">레벨 테스트는 트레이너가 내 다시보기를 미리 보고, 60~90분 동안 지금 실력과 맞는 수업을 같이 정하는 시간이에요</p>
+      <p class="pair-note">레벨 테스트는 트레이너가 내 다시보기를 미리 보고, 60~90분 동안 지금 실력과 맞는 수업을 같이 정하는 시간이에요</p>
     </div>
   </section>
 
@@ -694,7 +722,7 @@ html.vr-lock{overflow:hidden}
     }
     (d.byTrainer || []).forEach(function(t){
       var el = document.querySelector('.tm[data-trainer="' + t.id + '"]');
-      if (el && ok(t.students30)) { el.querySelector("b").textContent = t.students30; el.hidden = false; }
+      if (el && ok(t.students30)) { el.querySelector("b").textContent = t.students30; el.classList.remove("off"); }
     });
   }).catch(function(){});
 })();

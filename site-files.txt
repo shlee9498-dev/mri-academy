@@ -65,9 +65,10 @@ file_00000000820872098aacb0a58103a70e.png
 img/trainers/ht-band.jpg
 img/trainers/jg-band.jpg
 img/trainers/mr-band.jpg
-img/trainers/ht-card.jpg
-img/trainers/jg-card.jpg
-img/trainers/mr-card.jpg
+img/trainers/ht-frame.jpg
+img/trainers/jg-frame.jpg
+img/trainers/mr-frame.jpg
+img/trainers/mr-lead.jpg
 site.webmanifest
 panel.webmanifest
 
