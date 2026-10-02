@@ -407,7 +407,8 @@ module.exports = function mountStudentPortal(app, deps) {
     send(res, {
       ...(bank ? { bank } : {}),
       // won · games 는 1개(단가) 값이다. 합계는 서버가 신청 때 단가 × 수량으로 정한다.
-      products: list.map((p) => ({ key: p.key, label: p.label, won: p.amount, games: p.games })),
+      //   quantityMax = 그 상품 수량 한도(99판 1 · 나머지 5 · 2026-10-02). 맨 위 quantityMax 는 공통 한도(종전 키 · 그대로 둔다).
+      products: list.map((p) => ({ key: p.key, label: p.label, won: p.amount, games: p.games, quantityMax: payreqIntake.quantityMaxOf(p) })),
       quantityMax: payreqIntake.QUANTITY_MAX,
       // 계좌이체 합계가 이 금액 이상이면 앱이 현금영수증 번호 입력을 권한다(필수 아님).
       cashReceipt: { recommendFromWon: payreqIntake.CR_RECOMMEND_FROM_WON },

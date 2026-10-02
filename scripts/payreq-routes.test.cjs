@@ -59,11 +59,18 @@ test("GET /pay-info — 단가 · 수량 한도 · 현금영수증 권함 금액
   assert.equal(r.json.quantityMax, 5);
   assert.deepEqual(r.json.cashReceipt, { recommendFromWon: 100000 });
   assert.equal("card" in r.json, false);                                  // 링크 0개 → card 키 없음
-  assert.deepEqual(r.json.products.find((p) => p.key === "lesson33"), { key: "lesson33", label: "33판 패키지", won: 140000, games: 33 });
+  assert.deepEqual(r.json.products.find((p) => p.key === "lesson33"), { key: "lesson33", label: "33판 패키지", won: 140000, games: 33, quantityMax: 5 });
+  // 99판 — 한 번에 1개까지(오너 결정 2026-10-02) · 단가 420,000 · 99판
+  assert.deepEqual(r.json.products.find((p) => p.key === "lesson99"), { key: "lesson99", label: "99판 패키지", won: 420000, games: 99, quantityMax: 1 });
   process.env.GROBLE_LINK_LESSON33 = "https://example.test/p/33";
   r = await call("GET", "/pay-info");
   assert.deepEqual(r.json.card, { links: { lesson33: "https://example.test/p/33" } });
+  // 99판 카드(그로블) — env GROBLE_LINK_LESSON99 를 넣으면 그 상품만 카드가 열린다
+  process.env.GROBLE_LINK_LESSON99 = "https://example.test/p/99";
+  r = await call("GET", "/pay-info");
+  assert.deepEqual(r.json.card, { links: { lesson33: "https://example.test/p/33", lesson99: "https://example.test/p/99" } });
   delete process.env.GROBLE_LINK_LESSON33;
+  delete process.env.GROBLE_LINK_LESSON99;
 });
 
 test("POST — 수량 3 = 420,000원 · 99판(서버 계산) · 계좌이체 · 트레이너 DM 에 수량", async () => {

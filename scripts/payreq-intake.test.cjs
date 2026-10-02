@@ -9,8 +9,9 @@ const PRODUCTS = [
   { key: "lesson10", kind: "판수", games: 10, amount: 45000, label: "10판 패키지" },
   { key: "lesson21", kind: "판수", games: 21, amount: 90000, label: "21판 패키지" },
   { key: "lesson33", kind: "판수", games: 33, amount: 140000, label: "33판 패키지" },
+  { key: "lesson99", kind: "판수", games: 99, amount: 420000, label: "99판 패키지", quantityMax: 1 },
 ];
-const LINKS = { lesson33: "https://example.test/p/33" };
+const LINKS = { lesson33: "https://example.test/p/33", lesson99: "https://example.test/p/99" };
 const parse = (b) => P.parsePayreqBody(b, { products: PRODUCTS, links: LINKS });
 
 test("수량 — 없으면 1 · 1~5 · 금액 · 판수는 단가 × 수량(서버 계산)", () => {
@@ -56,6 +57,19 @@ test("카드 — 링크 켜진 상품만 · 주문번호 필수(4~40 · 영문 �
   assert.equal(parse({ productKey: "lesson33", method: "card", orderNo: "G0001", quantity: 2 }).won, 280000);
 });
 
+test("99판 — 한 번에 1개까지(오너 결정 2026-10-02) · 카드도 받는다 · 다른 상품 한도는 5 그대로", () => {
+  const one = parse({ productKey: "lesson99", depositorName: "가나다" });
+  assert.deepEqual([one.ok, one.quantity, one.won, one.games], [true, 1, 420000, 99]);
+  assert.equal(parse({ productKey: "lesson99", quantity: 2, depositorName: "가나다" }).code, "invalid_body");
+  const card = parse({ productKey: "lesson99", method: "card", orderNo: "G0099" });
+  assert.deepEqual([card.ok, card.won, card.games, card.method], [true, 420000, 99, "card"]);
+  assert.equal(parse({ productKey: "lesson33", quantity: 5, depositorName: "가나다" }).won, 700000);   // 33판은 5개까지 그대로
+  assert.equal(P.quantityMaxOf({ key: "lesson99", quantityMax: 1 }), 1);
+  assert.equal(P.quantityMaxOf({ key: "lesson33" }), P.QUANTITY_MAX);
+  // 실제 상품 표(PORTAL_PRODUCTS) — 99판만 1
+  assert.deepEqual(P.PORTAL_PRODUCTS.map((p) => [p.key, P.quantityMaxOf(p)]), [["lesson10", 5], ["lesson21", 5], ["lesson33", 5], ["lesson99", 1]]);
+});
+
 test("카드 링크 env — https:// 만 켠다 · 빈 값 · 형식 틀림은 이름만 알린다", () => {
   const r = P.cardLinksFromEnv({ GROBLE_LINK_LESSON10: "https://example.test/a", GROBLE_LINK_LESSON21: "http://x", GROBLE_LINK_LESSON33: " " });
   assert.deepEqual(r.links, { lesson10: "https://example.test/a" });
@@ -90,7 +104,9 @@ test("방금 같은 신청 — 같은 종류 · 판수 · 금액 · 10분 안 ·
 
 test("수량 풀이 — quantity 칸 · 옛 행(정수배) · 모르는 행", () => {
   assert.deepEqual(P.unitOf({ kind: "판수", games: 99, amount: 420000, quantity: 3 }, PRODUCTS), { quantity: 3, label: "33판 패키지", unitGames: 33 });
-  assert.deepEqual(P.unitOf({ kind: "판수", games: 99, amount: 420000 }, PRODUCTS), { quantity: 3, label: "33판 패키지", unitGames: 33 });  // #31 정정 뒤 모양
+  // #31 정정 뒤 모양(수량 칸 없음 · 99판 420,000) — 2026-10-02 정식 상품 99판 패키지와 딱 맞아 그대로 푼다
+  assert.deepEqual(P.unitOf({ kind: "판수", games: 99, amount: 420000 }, PRODUCTS), { quantity: 1, label: "99판 패키지", unitGames: 99 });
+  assert.deepEqual(P.unitOf({ kind: "판수", games: 66, amount: 280000 }, PRODUCTS), { quantity: 2, label: "33판 패키지", unitGames: 33 });  // 정수배
   assert.deepEqual(P.unitOf({ kind: "판수", games: 21, amount: 90000 }, PRODUCTS), { quantity: 1, label: "21판 패키지", unitGames: 21 });
   assert.equal(P.unitOf({ kind: "판수", games: 12, amount: 50000 }, PRODUCTS).quantity, 1);
   assert.equal(P.productText({ kind: "판수", games: 99, amount: 420000, quantity: 3 }, PRODUCTS), "33판 × 3 = 99판");
