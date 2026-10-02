@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>MRI ACADEMY · 미리보기 A안 「실제 영상」</title>
+<meta name="description" content="MRI ACADEMY 사이트 재제작 미리보기 — 운영 화면이 아니에요">
+<meta name="robots" content="noindex, nofollow">
+<link rel="canonical" href="https://mriacademy.gg/">
+<meta name="theme-color" content="#06080b">
+<link rel="icon" href="favicon-32.png" sizes="32x32">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Saira+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="preview/cine.css">
+<style>
+@media(max-width:560px){.top .lg{display:none}}
+/* 영상 자리(썸네일 + 눌러서 재생) */
+.yt{position:relative;margin:0;padding:0}
+.yt.wide .yt-play,.yt.wide iframe{aspect-ratio:16/9}
+.yt.tall .yt-play,.yt.tall iframe{aspect-ratio:9/16}
+.yt-play{display:block;width:100%;border:0;padding:0;background:#0b0e13;cursor:pointer;position:relative;overflow:hidden}
+.yt-play img{width:100%;height:100%;object-fit:cover;opacity:.78;transition:opacity .4s,transform 1.2s var(--ease)}
+.yt-play:hover img{opacity:.95;transform:scale(1.03)}
+.yt-btn{position:absolute;left:50%;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px;border-radius:50%;display:grid;place-items:center;color:#0a0a0a;background:var(--gold);box-shadow:0 0 0 1px rgba(245,197,24,.5);transition:transform .3s var(--ease)}
+.yt-play:hover .yt-btn{transform:scale(1.08)}
+.yt iframe{display:block;width:100%;border:0}
+.yt figcaption{padding:14px 18px 16px;display:grid;gap:2px}
+.yt figcaption b{color:var(--ink);font-size:15px}
+.yt figcaption span{color:var(--mute);font-size:13.5px}
+.boss .yt{margin-top:22px}
+.cases-wrap{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start;margin-top:56px}
+.cases-wrap .cases{margin-top:0;grid-template-columns:1fr}
+.cases-wrap .case{display:grid;grid-template-columns:150px 1fr;gap:28px;align-items:center}
+.cases-wrap .case .who{flex-direction:column;gap:4px}
+.cases-wrap .case .row{margin-top:0}
+.cases-wrap .case .meter{grid-column:1/-1;margin-top:0}
+/* A안: 첫 화면 리플레이 배경(지도 → 실제 리플레이로 넘어감) */
+.hero-media{opacity:0;transition:opacity 1.6s var(--ease)}
+.hero-media.on{opacity:1}
+.hero-media iframe{position:absolute;top:50%;left:50%;width:max(100vw,177.78vh);height:max(56.25vw,100vh);transform:translate(-50%,-50%);border:0;pointer-events:none}
+.hero-media img{filter:saturate(.7) brightness(.55)}
+.replay-tag{position:absolute;right:32px;bottom:96px;z-index:2;display:flex;gap:12px;align-items:center;font-size:13px;color:var(--body);opacity:0;transition:opacity 1s 1.4s}
+.hero.go .replay-tag{opacity:1}
+.replay-tag .rec,.lane .rec{position:static;display:flex;gap:8px;align-items:center;font-family:var(--cond);letter-spacing:.2em;font-size:11.5px;color:var(--ink)}
+/* 원장 강의 인용 */
+.lecture{margin-top:22px}
+.lec-v{position:relative;aspect-ratio:16/9;background:#0b0e13;cursor:pointer;overflow:hidden}
+.lec-v img,.lec-v iframe{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border:0}
+.lec-v img{opacity:.8}
+.lec-cap{padding:16px 20px 8px;display:grid;gap:4px}
+.lec-cap .k{font-family:var(--cond);letter-spacing:.18em;font-size:12px;color:var(--mute);font-weight:700}
+.lec-cap b{color:var(--ink);font-size:16px}
+.qs{padding:8px 12px 14px;display:grid;gap:4px}
+.q{display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:baseline;text-align:left;background:transparent;border:0;border-top:1px solid var(--line);padding:12px 8px;color:var(--body);font:inherit;cursor:pointer;transition:background .2s,color .2s}
+.q:hover,.q.on{background:rgba(245,197,24,.06);color:var(--ink)}
+.q .ts{font-family:var(--cond);font-weight:700;color:var(--gold);letter-spacing:.06em}
+.q .qt{font-weight:600}
+/* 폰 틀(세로 쇼츠) */
+.phone{margin:0;width:100%;max-width:260px}
+.ph-scr{position:relative;aspect-ratio:9/16;border-radius:30px;overflow:hidden;background:#0b0e13;border:8px solid #11161e;box-shadow:0 0 0 1px var(--line-2),0 30px 70px -30px rgba(0,0,0,.8)}
+.ph-scr::before{content:'';position:absolute;top:8px;left:50%;width:70px;height:18px;margin-left:-35px;border-radius:12px;background:#11161e;z-index:2}
+.ph-scr img,.ph-scr iframe{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border:0}
+.ph-play{position:absolute;inset:0;border:0;background:transparent;cursor:pointer}
+.phone figcaption{margin-top:14px;display:grid;gap:2px}
+.phone figcaption b{color:var(--ink)}.phone figcaption span{font-size:13.5px;color:var(--mute)}
+.lane{margin-top:48px;display:grid;grid-template-columns:260px 1fr;gap:48px;align-items:center}
+.lane .big{font-family:var(--display);color:var(--ink);font-size:clamp(26px,3vw,40px);line-height:1.2;margin-top:14px}
+.beats{list-style:none;margin-top:22px;display:grid;gap:10px}
+.beats li{display:grid;grid-template-columns:52px 1fr;gap:12px;color:var(--body)}
+.beats span{font-family:var(--cond);font-weight:700;color:var(--zone)}
+.proof{margin-top:48px;display:grid;grid-template-columns:260px 1fr;gap:40px;align-items:center}
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ba-c{text-align:left;display:grid;gap:10px;align-content:start;padding:22px;border:1px solid var(--line);background:linear-gradient(180deg,var(--glass-2),var(--glass));border-radius:4px;color:var(--body);font:inherit;cursor:pointer;min-height:180px;transition:border-color .25s,transform .3s var(--ease)}
+.ba-c:hover{border-color:var(--line-2);transform:translateY(-2px)}
+.ba-c .tag{font-family:var(--cond);letter-spacing:.18em;font-size:12px;font-weight:700;color:var(--mute)}
+.ba-c.on .tag{color:var(--gold)}
+.ba-c b{color:var(--ink);font-size:18px;line-height:1.45}
+.ba-c.on b{font-family:var(--display);font-weight:400;font-size:40px;line-height:1.1}
+.ba-c .t{font-size:13px;color:var(--mute);margin-top:auto}
+@media(max-width:860px){.lane,.proof{grid-template-columns:1fr;gap:24px}.phone{max-width:220px}.replay-tag{right:20px}}
+@media(max-width:560px){.ba{grid-template-columns:1fr}.ba-c{min-height:0}.ba-c.on b{font-size:32px}.replay-tag{display:none}}
+/* A안 첫 화면 오른쪽 세로 클립 */
+.hero-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:48px;align-items:end}
+.clip{border-radius:4px}
+.clip-v{position:relative;aspect-ratio:9/16;overflow:hidden;background:#0b0e13}
+.clip-v img,.clip-v iframe{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border:0}
+.clip-v iframe{pointer-events:none}
+.clip-cap{padding:14px 16px;display:grid;gap:2px}
+.clip-cap b{color:var(--ink)}.clip-cap span{font-size:13px;color:var(--mute)}
+.clip-cap .rec{position:static;display:flex;gap:8px;align-items:center;font-family:var(--cond);letter-spacing:.2em;font-size:11.5px;color:var(--body)}
+@media(max-width:960px){.hero-grid{grid-template-columns:1fr}.clip{display:grid;grid-template-columns:120px 1fr;align-items:center}.clip-v{aspect-ratio:9/16}
+  .cases-wrap{grid-template-columns:1fr}.cases-wrap .yt{max-width:300px}}
+@media(max-width:560px){.cases-wrap .case{grid-template-columns:1fr;gap:14px}}
+/* ===== VIP 룸 — 일반 스크롤 밖 · 입구를 눌렀을 때만 열린다 ===== */
+.vroom{--vr-ivory:#ece6d6;--vr-mute:#8c867a;--vr-hair:rgba(236,230,214,.14);
+  width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;
+  background:#050505;color:var(--vr-ivory);overflow-y:auto;overscroll-behavior:contain;word-break:keep-all}
+.vroom::backdrop{background:#000}
+.vroom[open]{animation:vrIn .5s ease both}
+@keyframes vrIn{from{opacity:0}to{opacity:1}}
+.vr-wrap{max-width:720px;margin:0 auto;padding:88px 24px 96px;min-height:100%;display:flex;flex-direction:column}
+.vr-close{position:fixed;top:18px;right:18px;width:44px;height:44px;border-radius:50%;background:transparent;border:1px solid var(--vr-hair);color:var(--vr-mute);font-size:20px;line-height:1;cursor:pointer;transition:color .2s,border-color .2s}
+.vr-close:hover,.vr-close:focus-visible{color:var(--vr-ivory);border-color:var(--vr-ivory)}
+.vr-kick{font-family:'Saira Condensed',sans-serif;font-weight:700;letter-spacing:.42em;font-size:11px;color:var(--gold);text-transform:uppercase}
+.vr-title{font-weight:300;font-size:clamp(34px,8vw,56px);line-height:1.15;letter-spacing:-.01em;margin:22px 0 18px;color:var(--vr-ivory)}
+.vr-title b{font-weight:700}
+.vr-lead{font-size:15px;line-height:1.85;color:var(--vr-mute);max-width:520px;font-weight:400}
+.vr-rule{height:1px;background:var(--vr-hair);margin:56px 0 8px;border:0}
+.vr-item{display:grid;grid-template-columns:56px 1fr;gap:8px 20px;padding:36px 0;border-bottom:1px solid var(--vr-hair)}
+.vr-no{font-family:'Saira Condensed',sans-serif;font-size:13px;letter-spacing:.2em;color:var(--vr-mute);padding-top:6px}
+.vr-name{font-size:22px;font-weight:600;color:var(--vr-ivory);letter-spacing:-.005em}
+.vr-en{display:block;font-family:'Saira Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.3em;color:var(--vr-mute);margin-top:6px;text-transform:uppercase}
+.vr-desc{grid-column:2;font-size:14.5px;line-height:1.85;color:var(--vr-mute);margin-top:8px}
+.vr-desc b{color:var(--vr-ivory);font-weight:600}
+.vr-price{margin:48px 0 0;font-size:13.5px;line-height:1.8;color:var(--vr-mute)}
+.vr-price strong{color:var(--vr-ivory);font-weight:600}
+.vr-cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}
+.vr-btn{flex:1 1 220px;display:block;text-align:center;padding:16px 18px;font-size:14px;font-weight:700;text-decoration:none;letter-spacing:.02em;transition:background .2s,color .2s,border-color .2s}
+.vr-btn.main{background:var(--vr-ivory);color:#050505}
+.vr-btn.main:hover,.vr-btn.main:focus-visible{background:var(--gold)}
+.vr-btn.sub{border:1px solid var(--vr-hair);color:var(--vr-ivory)}
+.vr-btn.sub:hover,.vr-btn.sub:focus-visible{border-color:var(--vr-ivory)}
+.vr-sign{margin-top:auto;padding-top:64px;font-size:12px;color:var(--vr-mute);letter-spacing:.04em}
+@media(max-width:560px){.vr-wrap{padding:76px 16px 72px}.vr-item{grid-template-columns:1fr}.vr-desc{grid-column:1}.vr-no{padding-top:0}}
+@media(prefers-reduced-motion:reduce){.vroom[open]{animation:none}}
+html.vr-lock{overflow:hidden}
+
+</style>
+
+<script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
+</head>
+<body class="v-a">
+<canvas id="map" aria-hidden="true"></canvas>
+<div class="vignette" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+<div class="zonebar" aria-hidden="true"><b></b></div>
+
+<header class="top">
+  <div class="top-in">
+    <a class="brand" href="#p1" aria-label="MRI ACADEMY 처음으로"><i><span>M</span></i>MRI ACADEMY</a>
+    <nav class="nav" aria-label="주 메뉴"><a href="#muri">원장</a><a href="#trainers">트레이너</a><a href="#cases">성장 기록</a><a href="#plans">가격</a><a href="lesson-schedule.html">수업 시간표</a></nav>
+    <div class="top-r">
+      <button type="button" class="snd" aria-pressed="false" aria-label="배경 소리 켜고 끄기"><span class="bars" aria-hidden="true"><b></b><b></b><b></b></span><span class="t">소리 꺼짐</span></button>
+      <a class="btn sm" href="apply.html?utm_source=preview-a&amp;utm_medium=top">레벨 테스트<span class="lg"> 신청</span></a>
+    </div>
+  </div>
+</header>
+
+<nav class="hud" aria-hidden="true">
+  <div class="ph"><span>낙하</span><i></i>01</div>
+  <div class="ph"><span>원장</span><i></i>02</div>
+  <div class="ph"><span>트레이너</span><i></i>03</div>
+  <div class="ph"><span>성장 기록</span><i></i>04</div>
+  <div class="ph"><span>가격</span><i></i>05</div>
+  <div class="ph"><span>최종 서클</span><i></i>06</div>
+</nav>
+
+<main>
+  <!-- PHASE 1 · 낙하 -->
+  <section class="phase hero" id="p1" data-phase>
+    <div class="hero-media" aria-hidden="true" data-yt-bg="BrWPZCHhNbI" data-start="37"><img src="https://i.ytimg.com/vi/BrWPZCHhNbI/maxresdefault.jpg" alt="" onerror="this.onerror=null;this.src='preview/a-poster.jpg'"></div>
+    <div class="replay-tag" aria-hidden="true"><span class="rec"><i></i>REPLAY</span>초급반 오더강의 · 리플레이 지도</div>
+    <div class="meta" aria-hidden="true"><span>MRI ACADEMY · PUBG 경쟁전 코칭</span><span><b>PHASE 01</b> / 06 · 낙하</span></div>
+    <div class="wrap">
+      <div class="hero-grid">
+        <div>
+          <h1 data-split><span data-line>다음 서클,</span><br><span data-line>어디로 갈지</span><br><span data-line class="g">아는 사람</span></h1>
+          <div class="sub">
+            <p class="reveal d3">배그 경쟁전 티어를 올리는 코칭이에요. 서바이버 트레이너가 같이 게임하면서 판마다 무엇을 바꿔야 하는지 짚어 줘요</p>
+            <div class="acts reveal d4">
+              <a class="btn gold" href="apply.html?utm_source=preview-a&amp;utm_medium=hero">레벨 테스트 신청 <span class="arr">→</span></a>
+              <a class="btn" href="#muri">원장부터 보기</a>
+            </div>
+          </div>
+          <div class="stats" id="stats" hidden>
+            <div class="stat"><div class="v"><span data-k="students">0</span><small>명</small></div><div class="k">최근 30일 수업한 수강생</div></div>
+            <div class="stat"><div class="v"><span data-k="games">0</span><small>판</small></div><div class="k">최근 30일 같이 한 게임</div></div>
+            <div class="stat"><div class="v"><span data-count="3">0</span><small>명</small></div><div class="k">코치 전원 서바이버</div></div>
+          </div>
+        </div>
+        
+      </div>
+    </div>
+    <div class="scrollcue" aria-hidden="true">SCROLL<i></i></div>
+  </section>
+
+  <!-- PHASE 2 · 원장 -->
+  <section class="phase" id="muri" data-phase>
+    <div class="wrap boss">
+      <div>
+        <div class="kick reveal"><b>PHASE 02</b> / 06 · 원장</div>
+        <div class="name reveal d1">이무리</div>
+        <div class="title reveal d1">MRI ACADEMY 원장 · GmI 클랜장</div>
+        <div class="feat glass reveal d2"><span class="corner c1"></span><span class="corner c4"></span>
+          <div class="big">전세계 최초 솔로 단독 서바이버</div>
+          <p>그 판단 기준을 원장 강의 8회 과정으로 직접 가르쳐요</p>
+        </div>
+        <div class="facts reveal d3">
+          <div class="glass"><div class="k">LECTURE</div><div class="v">1회 3시간 · 8회 과정</div></div>
+          <div class="glass"><div class="k">CLASS</div><div class="v">같은 실력대 3명까지</div></div>
+        </div>
+        <div class="lecture glass reveal d3"><span class="corner c1"></span><span class="corner c4"></span>
+          <div class="lec-v" data-yt="BrWPZCHhNbI" data-start="149"><img src="https://i.ytimg.com/vi/BrWPZCHhNbI/hqdefault.jpg" alt="" loading="lazy" onerror="this.onerror=null;this.src='preview/a-poster.jpg'"><span class="yt-btn" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></span></div>
+          <div class="lec-cap"><span class="k">강의에서 실제로 하는 말 · 초급반 오더강의</span><b>견고해 보이는 상대 집을 어떻게 박고 밀어야 할까?</b></div>
+          <div class="qs"><button type="button" class="q" data-t="149"><span class="ts">2:29</span><span class="qt">「살리려 안 해도 돼!」</span></button><button type="button" class="q" data-t="298"><span class="ts">4:58</span><span class="qt">「이 자리에 처음에 가는 인원이 박으면 안 됐어요!」</span></button><button type="button" class="q" data-t="447"><span class="ts">7:27</span><span class="qt">「차 타고 3명이서 이렇게 와 버릴 수 있단 말이야!」</span></button><button type="button" class="q" data-t="597"><span class="ts">9:57</span><span class="qt">「내가 회전 각을 막아야 되는 건지」</span></button></div>
+        </div>
+        <div class="acts reveal d4">
+          <a class="btn" href="apply.html?utm_source=preview-a&amp;utm_medium=muri">원장에게 레벨 테스트 <span class="arr">→</span></a>
+          <a class="btn" href="#plans">강의 가격 보기</a>
+        </div>
+      </div>
+      <figure class="boss-ph">
+        <div class="frame"><img src="img/trainers/mr-lead.jpg" alt="이무리 원장" width="480" height="600" loading="lazy"></div>
+        <span class="tag" aria-hidden="true">HEAD COACH · MRI ACADEMY</span>
+        <span class="crown" aria-hidden="true">SOLO SURVIVOR</span>
+      </figure>
+    </div>
+  </section>
+
+  <!-- PHASE 3 · 트레이너 -->
+  <section class="phase" id="trainers" data-phase>
+    <div class="wrap">
+      <div class="kick reveal"><b>PHASE 03</b> / 06 · 트레이너</div>
+      <h2 class="h2 reveal d1">같이 게임하며<br>고쳐 주는 두 사람</h2>
+      <p class="lede reveal d2">둘 다 서바이버예요. 레슨은 이 두 명과 판 단위로 해요</p>
+      <div class="lane reveal d2">
+        <figure class="phone" data-yt="45-48nPFDeM" data-start="38">
+            <div class="ph-scr"><img src="https://i.ytimg.com/vi/45-48nPFDeM/hqdefault.jpg" alt="" loading="lazy" onerror="this.onerror=null;this.src='preview/a-poster.jpg'"><button type="button" class="ph-play" aria-label="라인전 · 교전 템포 영상 재생"><span class="yt-btn" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></span></button></div>
+            <figcaption><b>라인전 · 교전 템포</b><span>능선 교전에서 차량 탄 사람이 해줘야 하는 플레이</span></figcaption>
+          </figure>
+        <div class="lane-t"><div class="kick"><b>LESSON CLIP</b></div>
+          <p class="big">차량, 연막, 팀 합으로<br>다음 서클을 먼저 잡아요</p>
+          <ul class="beats"><li><span>0:40</span>검은 차량이 연막 속으로 들어가는 순간</li><li><span>1:13</span>차량 뒤에 엄폐하고 팀원에게 콜</li><li><span>1:47</span>스코프로 마무리하는 교전</li></ul>
+        </div>
+      </div>
+      <div class="duo">
+        <article class="tr glass reveal">
+          <span class="corner c1"></span><span class="corner c2"></span><span class="corner c3"></span><span class="corner c4"></span>
+          <div class="pic"><img src="img/trainers/ht-frame.jpg" alt="현태 트레이너" width="360" height="450" loading="lazy"><span class="no" aria-hidden="true">01</span></div>
+          <div class="bd">
+            <div class="tier">SURVIVOR · TRAINER</div>
+            <div class="nm">현태</div>
+            <span class="badge">이번 시즌 우수 트레이너</span>
+            <p class="one">기초부터 하나씩 잡아 줘요</p>
+            <div class="chips"><span>파밍과 주도권</span><span>우선순위</span><span>포지션</span><span>브리핑과 교전</span></div>
+            <div class="links"><a href="https://www.youtube.com/watch?v=-R2p-C4kUl0" target="_blank" rel="noopener">매드무비</a><a href="https://dak.gg/pubg/profile/steam/GmI_Hye0n" target="_blank" rel="noopener">전적</a><a href="https://ch.sooplive.co.kr/gusxo3874" target="_blank" rel="noopener">SOOP</a></div>
+            <div class="sp"></div>
+            <a class="btn" href="apply.html?utm_source=preview-a&amp;utm_medium=trainers&amp;utm_content=hyuntae">현태에게 레벨 테스트 <span class="arr">→</span></a>
+          </div>
+        </article>
+        <article class="tr glass reveal">
+          <span class="corner c1"></span><span class="corner c2"></span><span class="corner c3"></span><span class="corner c4"></span>
+          <div class="pic"><img src="img/trainers/jg-frame.jpg" alt="준구 트레이너" width="360" height="450" loading="lazy"><span class="no" aria-hidden="true">02</span></div>
+          <div class="bd">
+            <div class="tier">SURVIVOR · TRAINER</div>
+            <div class="nm">준구</div>
+            <span class="badge empty" aria-hidden="true">·</span>
+            <p class="one">교전과 판단을 실전에서 바로 써먹게 잡아 줘요</p>
+            <div class="chips"><span>파밍과 주도권</span><span>우선순위</span><span>포지션</span><span>브리핑과 교전</span></div>
+            <div class="links"><a href="https://youtu.be/LkHHjpjKQbU" target="_blank" rel="noopener">매드무비</a><a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">전적</a><a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">SOOP</a></div>
+            <div class="sp"></div>
+            <a class="btn" href="apply.html?utm_source=preview-a&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 레벨 테스트 <span class="arr">→</span></a>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- PHASE 4 · 성장 기록 -->
+  <section class="phase" id="cases" data-phase>
+    <div class="wrap">
+      <div class="kick reveal"><b>PHASE 04</b> / 06 · 성장 기록</div>
+      <h2 class="h2 reveal d1">같은 판 수,<br>다른 성적</h2>
+      <p class="lede reveal d2">게임을 같은 만큼 했는데 성적이 달라졌다면 오른 건 실력이에요. 딜은 한 판 평균 딜량이에요</p>
+      <div class="proof reveal">
+        <figure class="phone" data-yt="29HMASCtxcQ" data-start="0">
+            <div class="ph-scr"><img src="https://i.ytimg.com/vi/29HMASCtxcQ/hqdefault.jpg" alt="" loading="lazy" onerror="this.onerror=null;this.src='preview/a-poster.jpg'"><button type="button" class="ph-play" aria-label="상담 22분, 탄착군이 달라졌어요 영상 재생"><span class="yt-btn" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></span></button></div>
+            <figcaption><b>상담 22분, 탄착군이 달라졌어요</b><span>에임 교정 없이 반동 이해만으로</span></figcaption>
+          </figure>
+        <div class="ba">
+          <button type="button" class="ba-c" data-t="2" data-for="proof"><span class="tag">BEFORE · 상담 17분</span><b>「먼저 총기 반동에 대한 이해도를 테스트합니다」</b><span class="t">0:02부터 보기</span></button>
+          <button type="button" class="ba-c on" data-t="21" data-for="proof"><span class="tag">AFTER · 상담 39분</span><b>7발 중 7발</b><span class="t">0:21부터 보기</span></button>
+        </div>
+      </div>
+      <div>
+        <div class="cases">
+          <article class="case glass" style="--w:100%">
+          <span class="corner c1"></span><span class="corner c4"></span>
+          <div class="who"><b>세**</b><span>12개월</span></div>
+          <div class="row">
+            <div><div class="k">시작</div><div class="t">골드</div><div class="n"><span data-count="2446">0</span></div></div>
+            <div class="arrow" aria-hidden="true">→</div>
+            <div class="to"><div class="k">지금</div><div class="t">서바이버</div><div class="n"><span data-count="5065">0</span></div></div>
+          </div>
+          <div class="meter" aria-hidden="true"><b></b></div>
+        </article>
+          <article class="case glass" style="--w:72%">
+          <span class="corner c1"></span><span class="corner c4"></span>
+          <div class="who"><b>지**</b><span>8개월 · 같은 200판</span></div>
+          <div class="row">
+            <div><div class="k">시작</div><div class="t">플래티넘</div><div class="n"><span data-count="170">0</span><small>딜</small></div></div>
+            <div class="arrow" aria-hidden="true">→</div>
+            <div class="to"><div class="k">지금</div><div class="t">마스터</div><div class="n"><span data-count="350">0</span><small>딜</small></div></div>
+          </div>
+          <div class="meter" aria-hidden="true"><b></b></div>
+        </article>
+          <article class="case glass" style="--w:88%">
+          <span class="corner c1"></span><span class="corner c4"></span>
+          <div class="who"><b>텐**</b><span>12개월 · 같은 100판</span></div>
+          <div class="row">
+            <div><div class="k">시작</div><div class="t">플래티넘</div><div class="n"><span data-count="180">0</span><small>딜</small></div></div>
+            <div class="arrow" aria-hidden="true">→</div>
+            <div class="to"><div class="k">지금</div><div class="t">서바이버</div><div class="n"><span data-count="460">0</span><small>딜</small></div></div>
+          </div>
+          <div class="meter" aria-hidden="true"><b></b></div>
+        </article>
+        </div>
+      </div>
+      <div class="honest reveal"><p>평균 6개월에서 1년이 걸려요. 절반은 수강생의 노력이에요</p><a href="success.html">사례 모두 보기</a></div>
+    </div>
+  </section>
+
+  <!-- PHASE 5 · 가격 -->
+  <section class="phase" id="plans" data-phase>
+    <div class="wrap">
+      <div class="kick reveal"><b>PHASE 05</b> / 06 · 가격</div>
+      <h2 class="h2 reveal d1">싼 것부터<br>적었어요</h2>
+      <p class="lede reveal d2">취소선은 정가이고, 지금은 특가가 적용돼 있어요</p>
+      <div class="plans">
+        <article class="plan lt glass reveal">
+          <div class="k">START</div><h3>레벨 테스트</h3>
+          <p class="desc">처음 오는 분은 모두 여기서 시작해요</p>
+          <div class="big"><span data-count="20000">0</span><small>원</small></div>
+          <p class="note">다시보기 복기와 지금 실력 확인 · 60~90분<br>예약 3시간 전까지 취소하면 전액 환불돼요</p>
+          <div class="fill"></div>
+          <a class="btn gold" href="apply.html?utm_source=preview-a&amp;utm_medium=plans">레벨 테스트 신청 <span class="arr">→</span></a>
+        </article>
+        <article class="plan glass reveal d1">
+          <div class="k">LESSON</div><h3>레슨</h3>
+          <p class="desc">서바이버 트레이너와 판 단위로</p>
+          <ul>
+            <li><span class="n">10판<small>판당 4,500원</small></span><span class="p"><del>50,000</del>45,000<small>원</small></span></li>
+            <li><span class="n">21판<small>판당 4,286원</small></span><span class="p"><del>105,000</del>90,000<small>원</small></span></li>
+            <li><span class="n">33판<small>판당 4,242원</small></span><span class="p"><del>165,000</del>140,000<small>원</small></span></li>
+            <li><span class="n">99판<small>33판 × 3</small></span><span class="p">420,000<small>원</small></span></li>
+          </ul>
+        </article>
+        <article class="plan glass reveal d2">
+          <div class="k">LECTURE</div><h3>원장 강의</h3>
+          <p class="desc">1회 3시간 · 8회 과정</p>
+          <ul>
+            <li><span class="n">초급 강의</span><span class="p"><del>320,000</del>250,000<small>원</small></span></li>
+            <li><span class="n">중급 강의</span><span class="p"><del>340,000</del>270,000<small>원</small></span></li>
+            <li><span class="n">심화 강의</span><span class="p"><del>360,000</del>290,000<small>원</small></span></li>
+          </ul>
+        </article>
+        <article class="plan glass reveal d3">
+          <div class="k">SET</div><h3>세트</h3>
+          <p class="desc">원장 강의 8회 + 레슨</p>
+          <ul>
+            <li><span class="n">초급 세트<small>초급 강의 + 레슨 10판</small></span><span class="p"><del>295,000</del>280,000<small>원</small></span></li>
+            <li><span class="n">중급 세트<small>중급 강의 + 레슨 21판</small></span><span class="p"><del>360,000</del>340,000<small>원</small></span></li>
+            <li><span class="n">심화 세트<small>심화 강의 + 레슨 33판</small></span><span class="p"><del>430,000</del>405,000<small>원</small></span></li>
+          </ul>
+        </article>
+      </div>
+      <div class="pnotes reveal">
+        <p>개인레슨 시간별 판수 차감 — <b>1시간 5판, 1시간 30분 8판, 2시간 10판, 2시간 30분 13판, 3시간 15판</b> · 그룹 레슨과 관전형은 실제로 한 판 수만큼</p>
+        <p>핵이나 버그로 터진 게임은 무효로 처리해요</p>
+        <p>트레이너 1인당 정원은 25명이에요. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b>을 넘으면 각각 그 주 다음 주부터 정가로 바뀌어요</p>
+        <p>환불은 남은 판수 × 판당 단가(강의는 남은 회차 × 회당 단가)이고 위약금은 없어요. 자세한 기준은 <a href="terms.html">이용약관 제7조</a>에 있어요</p>
+      </div>
+      <a class="vip-door" href="#vip" data-vip-open>정해진 구성 말고 원장과 1:1로 맞추고 싶다면 <span>VIP 룸</span></a>
+    </div>
+  </section>
+
+  <!-- PHASE 6 · 최종 서클 -->
+  <section class="phase final" id="start" data-phase>
+    <div class="wrap">
+      <div class="kick reveal"><b>PHASE 06</b> / 06 · 최종 서클</div>
+      <h2 class="h2 reveal d1">뭐부터 할지 모르겠다면<br>레벨 테스트부터</h2>
+      <p class="lede reveal d2">20,000원은 트레이너가 다시보기를 미리 보고 준비하는 시간 값이에요. 간단한 질문은 디스코드로 편하게 물어보세요</p>
+      <div class="acts reveal d3">
+        <a class="btn gold" href="apply.html?utm_source=preview-a&amp;utm_medium=final">레벨 테스트 신청 <span class="arr">→</span></a>
+        <a class="btn" href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">디스코드로 물어보기</a>
+      </div>
+      <div class="flow">
+        <div class="glass reveal"><span class="n">01</span><b>레벨 테스트</b><span>20,000원 · 60~90분</span></div>
+        <div class="glass reveal d1"><span class="n">02</span><b>트레이너가 맞는 수업 안내</b><span>다시보기를 보고 지금 실력에 맞춰</span></div>
+        <div class="glass reveal d2"><span class="n">03</span><b>수업 고르기</b><span>레슨, 원장 강의, 세트 중 하나</span></div>
+      </div>
+      <div class="faq">
+        <details><summary>레슨이랑 원장 강의는 뭐가 달라요?</summary><div class="a"><b>레슨</b>은 판수 기준으로 서바이버 트레이너와 같이 게임하며 배워요. <b>원장 강의</b>는 예약한 1회 3시간 동안 이무리 원장이 직접 가르치는 8회 과정이고, 레벨 테스트에 합격했거나 레슨을 마친 분이 들을 수 있어요.</div></details>
+        <details><summary>처음인데 뭐부터 하면 돼요?</summary><div class="a">레벨 테스트부터 해요. 다시보기 파일 2개 이상을 받아 플레이와 습관, 교전 디테일을 60~90분 동안 보고 방향을 잡아요. <b>다이아 2 · 300딜 이하</b>라면 레슨부터 권해요.</div></details>
+        <details><summary>판수는 어떻게 줄어요?</summary><div class="a"><b>개인 레슨</b>은 시간 기준으로 1시간에 5판이에요. <b>그룹 레슨과 관전형</b>은 실제로 한 판 수만큼 줄어요.</div></details>
+        <details><summary>환불이 되나요?</summary><div class="a">수강 시작 전이면 전액 돌려드려요. 시작한 뒤에는 <b>남은 판수 × 판당 단가</b>(강의는 남은 회차 × 회당 단가)로 돌려드리고 위약금은 없어요. 무료로 받은 보너스 판은 먼저 쓴 것으로 보고, 결제한 판수 중 남은 만큼만 계산해요. 레벨 테스트는 예약 3시간 전까지 취소하면 전액 환불이고, 그 뒤 취소와 불참은 환불되지 않아요. 자세한 기준은 <a href="terms.html">이용약관 제7조</a>에 있어요.</div></details>
+        <details><summary>기존 수강생인데 가격이 바뀌었어요. 저도 새 가격인가요?</summary><div class="a">아니요. <b>기존 수강생은 등록 당시 조건이 그대로 유지</b>돼요(기존 등록 기준 2시간 = 1회 포함). 새 가격표는 신규 등록부터 적용하고, 재등록할 때 안내해요.</div></details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="fl">
+      <a href="#trainers">트레이너</a><a href="#muri">원장</a><a href="#plans">가격</a><a href="lesson-schedule.html">수업 시간표</a>
+      <a href="success.html">성장 기록</a><a href="lesson-feedback.html">코칭 기록</a><a href="community.html">후기</a><a href="gmi-progress.html">클랜 성장 기록</a>
+      <a href="trainer-recruit.html">트레이너 모집</a><a href="sound-guide.html">사운드 세팅 가이드</a><a href="graphics-guide.html">그래픽 세팅 가이드</a>
+      <a href="https://shlee9498-dev.github.io/gmi-clancup/" target="_blank" rel="noopener">클랜컵</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP</a>
+      <a href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">카카오</a><a href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">Discord</a><a href="#vip" data-vip-open>VIP 룸</a>
+    </div>
+    <div class="fl">
+      <a href="terms.html">이용약관</a>
+      <a href="privacy.html"><b>개인정보처리방침</b></a>
+    </div>
+    <div class="bizinfo">
+      상호명: 무리아카데미 · 대표자: 이주형 · 사업자등록번호: 761-10-02908<br>
+      통신판매업신고번호: 2026-화도수동-0325 · 사업장 주소: 경기도 남양주시 녹촌로 51<br>
+      고객센터: 010-5264-9498 · 이메일: shlee9498@naver.com
+    </div>
+    <p>© 2026 MRI ACADEMY</p>
+  </div>
+</footer>
+
+
+<script src="preview/cine.js"></script>
+<script>
+// 영상: 썸네일을 눌러야 유튜브를 불러온다(nocookie). 인용 카드 · BEFORE/AFTER 는 그 시각부터 재생
+function ytFrame(id, st, opts) {
+  var ifr = document.createElement("iframe");
+  // 속성에서 온 값은 형식을 검사한 뒤에만 주소에 넣는다(유튜브 id 11자 · 시작 초는 정수)
+  if (!/^[A-Za-z0-9_-]{11}$/.test(String(id))) return ifr;
+  var vid = encodeURIComponent(id), sec = Math.max(0, parseInt(st, 10) || 0);
+  ifr.src = "https://www.youtube-nocookie.com/embed/" + vid + "?rel=0&modestbranding=1&playsinline=1" + (sec ? "&start=" + sec : "") + (opts === "bg" ? "&autoplay=1&mute=1&loop=1&playlist=" + vid + "&controls=0&disablekb=1&iv_load_policy=3" : "&autoplay=1");
+  ifr.allow = "autoplay; encrypted-media; picture-in-picture"; ifr.allowFullscreen = true; ifr.title = "MRI ACADEMY 수업 영상";
+  return ifr;
+}
+function playIn(box, st) {
+  var id = box.getAttribute("data-yt"), scr = box.querySelector(".ph-scr") || box;
+  var old = scr.querySelector("iframe"); if (old) old.remove();
+  scr.querySelectorAll("img,.yt-btn,.ph-play").forEach(function (n) { n.style.display = "none"; });
+  scr.appendChild(ytFrame(id, st));
+}
+document.querySelectorAll(".yt[data-yt]").forEach(function (f) {
+  var b = f.querySelector(".yt-play"); if (!b) return;
+  b.addEventListener("click", function () {
+    var st = parseInt(f.getAttribute("data-start") || "0", 10) || 0, ifr = ytFrame(f.getAttribute("data-yt"), st); ifr.title = b.getAttribute("aria-label"); b.replaceWith(ifr);
+  });
+});
+document.querySelectorAll(".lec-v,.phone").forEach(function (box) {
+  box.addEventListener("click", function (e) { if (e.target.closest("iframe")) return; playIn(box, parseInt(box.getAttribute("data-start") || "0", 10)); });
+});
+document.querySelectorAll(".q").forEach(function (q) {
+  q.addEventListener("click", function () {
+    document.querySelectorAll(".q").forEach(function (o) { o.classList.toggle("on", o === q); });
+    playIn(document.querySelector(".lec-v"), parseInt(q.getAttribute("data-t"), 10));
+  });
+});
+document.querySelectorAll(".ba-c").forEach(function (c) {
+  c.addEventListener("click", function () {
+    document.querySelectorAll(".ba-c").forEach(function (o) { o.classList.toggle("on", o === c); });
+    playIn(document.querySelector(".proof .phone"), parseInt(c.getAttribute("data-t"), 10));
+  });
+});
+// A안 첫 화면: 전술 지도가 먼저 보이고, 1.4초 뒤 실제 리플레이 장면이 겹쳐 올라온다(음소거 · 반복 · 컨트롤 없음)
+(function () {
+  var box = document.querySelector(".hero-media[data-yt-bg]"); if (!box) return;
+  setTimeout(function () { box.classList.add("on"); }, 1400);
+  if (window.MRI_LITE) return;
+  var id = box.getAttribute("data-yt-bg"), st = box.getAttribute("data-start") || "0";
+  window.addEventListener("load", function () {
+    var ifr = ytFrame(id, st, "bg");
+    ifr.tabIndex = -1; ifr.title = "초급반 오더강의 리플레이 장면"; box.appendChild(ifr);
+  });
+})();
+</script>
+
+<!-- ===== VIP 룸 — 입구(#vip)를 눌렀을 때만 열린다. 가격은 싣지 않고 첫 문의에서 정한다 ===== -->
+<dialog class="vroom" id="vipRoom" aria-labelledby="vrTitle">
+  <button type="button" class="vr-close" data-vip-close aria-label="VIP 룸 닫기">×</button>
+  <div class="vr-wrap">
+    <div class="vr-kick">Private · VIP Room</div>
+    <h2 class="vr-title" id="vrTitle">이무리와<br><b>단둘이</b></h2>
+    <p class="vr-lead">정해진 패키지 대신 내 게임에 맞춰 짜는 자리예요. 무엇을 얼마나 할지는 첫 문의에서 같이 정해요</p>
+    <hr class="vr-rule">
+    <div class="vr-item">
+      <div class="vr-no">01</div>
+      <div class="vr-name">1:1 직강<span class="vr-en">Live Private Coaching</span></div>
+      <p class="vr-desc">내가 플레이하는 판을 이무리가 <b>옆에서 실시간으로</b> 봐요. 자기장 읽는 타이밍, 차 내리는 자리, 교전 들어가는 순간을 그 판 안에서 바로 짚고 끝나면 리플레이로 한 번 더 복기해요.</p>
+    </div>
+    <div class="vr-item">
+      <div class="vr-no">02</div>
+      <div class="vr-name">VIP DAY PASS<span class="vr-en">One Day Intensive</span></div>
+      <p class="vr-desc">하루를 통째로 비워 <b>고치고 싶은 것만</b> 몰아서 해요. 실전, 복기, 운영 중에 주제를 고르고 일정은 24시간 전까지 맞춰요.</p>
+    </div>
+    <p class="vr-price"><strong>가격은 공개하지 않아요.</strong> 목표와 쓸 수 있는 시간을 알려주시면 구성과 금액을 맞춰서 안내해요.</p>
+    <div class="vr-cta">
+      <a class="vr-btn main" href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">카카오로 문의하기</a>
+      <a class="vr-btn sub" href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener" data-disc-channel="상담문의">Discord로 문의하기</a>
+    </div>
+    <div class="vr-sign">MRI ACADEMY · 전세계 최초 솔로 단독 서바이버 이무리</div>
+  </div>
+</dialog>
+<script>
+// VIP 룸: 입구 클릭 · 주소 #vip 로 열고, 닫으면 주소에서 #vip 를 지운다
+(function(){
+  const room = document.getElementById("vipRoom");
+  if (!room || typeof room.showModal !== "function") return;
+  let opener = null, pushed = false;
+  function open(){
+    if (room.open) return;
+    opener = document.activeElement;
+    document.documentElement.classList.add("vr-lock");
+    room.showModal();
+    room.scrollTop = 0;
+    if (window.umami) umami.track("vip_room_open");
+  }
+  room.addEventListener("close", function(){
+    document.documentElement.classList.remove("vr-lock");
+    // 입구로 열었으면 뒤로 한 칸(안드로이드 뒤로가기와 같은 결과) · 주소로 바로 들어왔으면 #vip 만 지운다
+    if (pushed) { pushed = false; if (location.hash === "#vip") history.back(); }
+    else if (location.hash === "#vip") history.replaceState(null, "", location.pathname + location.search);
+    if (opener && opener.focus) opener.focus();
+  });
+  document.querySelectorAll("[data-vip-open]").forEach(function(a){
+    a.addEventListener("click", function(e){ e.preventDefault(); if (location.hash !== "#vip") { history.pushState(null, "", "#vip"); pushed = true; } open(); });
+  });
+  room.querySelector("[data-vip-close]").addEventListener("click", function(){ room.close(); });
+  if (location.hash === "#vip") open();
+  window.addEventListener("hashchange", function(){ if (location.hash === "#vip") open(); });
+  // 뒤로가기로 #vip 가 빠지면 룸을 닫는다(사이트를 떠나지 않게)
+  window.addEventListener("popstate", function(){ if (room.open && location.hash !== "#vip") { pushed = false; room.close(); } });
+})();
+</script>
+</body>
+</html>
