@@ -176,3 +176,39 @@ test("확정표 금액을 정수 분수로 다시 계산해도 같다 (단가 �
     assert.equal(trainerOf(tid).lesson_accrued, Number(exact), `트레이너 ${tid}`);
   }
 });
+
+test("빵다 성과급 조건(§64 · 오너 10/2) — 9월분부터 업로드 약속 지킨 달만 6% · 미달 · 판정 전은 기본급만", () => {
+  // 픽스처 없이 최소 행만 — 순매출 = floor100(금액 / 1.1). 330,000 → 300,000 → 6% = 18,000.
+  const st = { id: 3, name: "직원A", base_salary: 500000, comp_note: "기본급 + 순매출 6%" };
+  const pays = (period) => [{ id: 1, student_id: 1, kind: "lesson", amount: 330000, net_amount: 330000, fee_amount: 0,
+                              paid_at: `${period}-05`, settled_period: period }];
+  const cond = (period, met, staff_id = 3) => ({ staff_id, period, condition_key: "upload_promise", met, decided_at: "2026-10-02T05:00:00Z" });
+
+  // 8월분(조건 시작 전) — 판정을 보지 않고 종전 그대로 6%
+  const aug = E.computeStaffSalary(st, pays("2026-08"), "2026-08", [cond("2026-08", false)]);
+  assert.deepEqual([aug.suggest_commission, aug.commission_full, aug.bonus_condition, aug.forfeited], [18000, 18000, null, 0]);
+
+  // 10월분 지킴 → 6%
+  const ok = E.computeStaffSalary(st, pays("2026-10"), "2026-10", [cond("2026-10", true)]);
+  assert.deepEqual([ok.suggest_commission, ok.bonus_condition.met, ok.forfeited], [18000, true, 0]);
+  assert.match(ok.note, /지킴/);
+
+  // 10월분 미달 → 0 · 6% 몫은 귀속(forfeited)
+  const miss = E.computeStaffSalary(st, pays("2026-10"), "2026-10", [cond("2026-10", false)]);
+  assert.deepEqual([miss.suggest_commission, miss.commission_full, miss.bonus_condition.met, miss.forfeited], [0, 18000, false, 18000]);
+  assert.match(miss.note, /미달/);
+
+  // 판정 줄 없음 → 0(판정 전) · 귀속은 아직 아니다
+  const none = E.computeStaffSalary(st, pays("2026-10"), "2026-10", []);
+  assert.deepEqual([none.suggest_commission, none.bonus_condition.met, none.forfeited], [0, null, 0]);
+  assert.match(none.note, /판정 전/);
+
+  // 다른 직원 · 다른 달 판정은 안 본다 · 조건 인자 생략도 판정 전
+  assert.equal(E.computeStaffSalary(st, pays("2026-10"), "2026-10", [cond("2026-10", true, 9), cond("2026-09", true)]).suggest_commission, 0);
+  assert.equal(E.computeStaffSalary(st, pays("2026-10"), "2026-10").suggest_commission, 0);
+
+  // 6% 대상이 아닌 직원은 판정과 무관하게 기본급만(종전 그대로)
+  const plain = E.computeStaffSalary({ id: 7, name: "직원B", base_salary: 300000, comp_note: "기본급" }, pays("2026-10"), "2026-10", []);
+  assert.deepEqual([plain.suggest_commission, plain.bonus_condition, plain.note], [0, null, "기본급만"]);
+  assert.equal(E.BONUS_CONDITION_START, "2026-09");
+});

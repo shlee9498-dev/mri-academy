@@ -1064,16 +1064,32 @@ async function loadPayList(reset){
 }
 
 // 급여 탭: 직원 급여 — owner 전용, 기본 숨김.
+// 업로드 약속(§64 · 2026-10-02 오너) — 서버 bonus_condition.met 이 true 충족 · false 미달 · null 판정 전.
+//   판정 전 달은 성과급 6% 가 0 으로 잡힌다 → 판정을 깜빡하고 지급기록을 누르면 빵다가 덜 받는다. 그래서 표 위에 안내를 띄우고
+//   지급기록 버튼에서 한 번 더 확인받는다. bonus_condition 이 null 이면(6% 대상 아님 · 9월분 전) 「—」.
+const CONDITION_BADGE = (c) => !c ? `<span class="muted">—</span>`
+  : c.met === true ? `<span class="badge ok">충족</span>`
+  : c.met === false ? `<span class="badge danger">미달</span>`
+  : `<span class="badge warn">판정 전</span>`;
+function conditionNote(e){
+  const c = e.bonus_condition; if(!c) return "";
+  if(c.met === false) return `<div class="muted" style="font-size:10.5px;margin-top:3px">6% ${won(e.forfeited)}원 아카데미 귀속</div>`;
+  if(c.met === null) return `<div class="muted" style="font-size:10.5px;margin-top:3px">충족이면 6% ${won(e.commission_full)}원</div>`;
+  return "";
+}
 function renderOwnerSalary(){
   const box = document.getElementById("pane-salary");
   const E = DATA.employees||[];
+  const pending = E.filter(e=>e.bonus_condition && e.bonus_condition.met === null);
   box.innerHTML = E.length ? `
     <section style="margin-top:14px">
       <div class="sec-h"><h2>직원 급여 (제안값)</h2><span class="tag">최종은 수동 확정</span><span class="line"></span></div>
-      <div class="card scroll"><table class="tbl"><thead><tr><th>직원</th><th>기본급</th><th>당월매출</th><th>수수료(제안)</th><th>규칙</th><th></th></tr></thead><tbody>
+      ${ pending.length ? `<div class="hint" role="note" style="color:var(--gold);margin:0 0 10px">업로드 약속 판정 전인 직원이 있어요(${pending.map(e=>esc(e.name)).join(" · ")}). 판정 전에는 성과급 6%가 0원으로 잡혀요. 지급기록을 누르기 전에 판정을 먼저 넣어 주세요. 판정 넣기는 세션에 요청하면 돼요.</div>` : "" }
+      <div class="card scroll"><table class="tbl"><thead><tr><th>직원</th><th>기본급</th><th>당월매출</th><th>수수료(제안)</th><th>업로드 약속</th><th>규칙</th><th></th></tr></thead><tbody>
       ${ E.map(e=>`<tr><td class="name">${esc(e.name)}</td><td>${won(e.base_salary)}</td><td class="muted">${won(e.month_revenue)}</td>
-        <td class="pay">${won(e.suggest_commission)}</td><td class="muted" style="text-align:left;font-size:11px">${esc(e.comp_note||"")}</td>
-        <td><button class="btn sm" onclick="payoutFor(${e.staff_id},'${esc(e.name)}',${(e.base_salary||0)+(e.suggest_commission||0)})">지급기록</button></td></tr>`).join("") }
+        <td class="pay">${won(e.suggest_commission)}</td><td>${CONDITION_BADGE(e.bonus_condition)}${conditionNote(e)}</td>
+        <td class="muted" style="text-align:left;font-size:11px">${esc(e.comp_note||"")}</td>
+        <td><button class="btn sm" onclick="payoutFor(${e.staff_id},'${esc(e.name)}',${(e.base_salary||0)+(e.suggest_commission||0)},${e.bonus_condition && e.bonus_condition.met === null ? 1 : 0})">지급기록</button></td></tr>`).join("") }
       </tbody></table></div>
     </section>` : `<div class="empty" style="padding:40px 20px">등록된 직원이 없어요. 직원은 도구 탭 → 운영진 관리에서 추가합니다.</div>`;
 }
@@ -1306,7 +1322,9 @@ function sessFor(id,name){
   if(!confirmLeft(id, games)) return;
   act(async ()=>{ await api("/api/admin/sessions","POST",{student_id:id,games,played_at:today()}); toast(name+" "+games+"판 기록"); });
 }
-function payoutFor(staff_id,name,gross){
+function payoutFor(staff_id,name,gross,conditionPending){
+  // 업로드 약속 판정 전 — 그대로 기록하면 성과급 6% 없이 기본급만 들어간다. 판정을 먼저 넣게 한 번 멈춘다.
+  if(conditionPending && !confirm(`${name} · 이 달은 업로드 약속 판정 전이에요.\n지금 기록하면 성과급 6% 없이 기본급만 들어가요.\n판정을 먼저 넣으려면 취소를 눌러 주세요.`)) return;
   const g=prompt(`${name} · 지급 세전액`, gross); if(g===null) return;
   const val=parseInt(g); if(!(val>=0)) return toast("금액 확인",true);
   act(async ()=>{ await api("/api/admin/payouts","POST",{staff_id,gross:val,paid_on:today()}); toast(name+" 지급 "+won(val)+"원 기록"); });
