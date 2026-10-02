@@ -56,8 +56,21 @@ const STRICT_ANSWER_MS = 72 * 3600_000;             // 글쓴이 모드 — 답�
 const CHATTER_MAX = 25;                             // 글쓴이 모드 — 수업 말 없이 이보다 짧으면 잡담(「넵 감사합니다」 · 「오늘도 고생하셨어요」)
 const SCHEDULE_MAX = 120;                           // 글쓴이 모드 — 수업 말 없이 이보다 짧고 일정 말이 있으면 일정 연락
 const NOTE_MIN = 4;                                 // 글쓴이 모드 — 알맹이(한글 · 영문 · 숫자)가 이보다 적으면 수업 말이 있어도 잡담(「치킨!」 · 「킬 3」)
-// 수업 노트 표시 — 양식 기호 · 복기 말. 있으면 잡담 · 일정으로 보지 않는다.
+// 수업 노트 표시 — 양식 기호 · 복기 말. 있으면 잡담 · 일정으로 보지 않는다(분명한 일정 표시가 있으면 아래 TEMPLATE_MARK 만 예외).
 const FORM_MARK = /📅|🎯|🔥|✅|📝|📌|날짜|배운|느낀|목표|피드백|복기/;
+// 복기 양식 표시 — 양식 기호 · 「배운 점」 · 「느낀 점」 · 복기 · 「날짜 :」. 분명한 일정 표시가 있어도 이게 있으면 노트다(10/3 검수 11차).
+//   「피드백 감사합니다」 · 「날짜 변경 가능할까요」처럼 대화에도 쓰는 말은 여기 넣지 않는다.
+const TEMPLATE_MARK = /📅|🎯|🔥|✅|📝|📌|배운\s*(?:점|내용|것)|느낀\s*(?:점|것)|복기|날짜\s*[:：]/;
+// 분명한 일정 · 대화 표시 — 있으면 배그 낱말이 있어도 일정 연락으로 버린다(양식 표시만 예외 · 검수 11차).
+//   「내일 연습 몇 시에 해요」 · 「내일 9시 훈련장 접속 가능하세요?」 · 「일찍 들어갈게요」 · 「상담 가능할까요」 · 「스쿼드 같이 하실 분」
+const STRONG_CHAT = new RegExp([
+  "몇\\s*시(?!간)",                                                                         // 몇 시 · 몇시
+  "가능(?:하세요|하신가요|하실까요|하실지|하신지|할까요|할지|한가요|하나요|해요\\s*[?？])", "괜찮으(?:세요|신가요|실까요)", "되실까요", "되시나요", "될까요",
+  "(?:내일|모레|오늘|이따|담주|다음\\s*주|[월화수목금토일]요일)[^.!?\\n]{0,12}?(?:(?<![\\d.:])\\d{1,2}\\s*시(?!\\s*(?:간|방향|쪽|각))|\\d{1,2}:\\d{2})",   // 날 + 시각
+  "접속", "상담", "문의",
+  "(?:일찍|먼저)\\s*(?:들어가|들어갈|나가|나갈|가볼|자러|잘게|쉴게)", "들어갈게요", "나갈게요",            // 먼저 나가요 · 일찍 들어갈게요
+  "하실\\s*분", "할\\s*사람", "하실래요", "같이\\s*(?:하실|할\\s*분|해요\\s*[?？])",                      // 같이 할 사람 구하기
+].join("|"));
 // 배그 수업 말 — 장면 · 사격 · 장비 · 맵 · 마음가짐. 있으면 짧아도 노트(「힐 타이밍 늦음 주의」 · 「레드존 생존 연습함」 · 「3시 방향 능선 먼저 체크하기」).
 //   일상 말과 겹치는 낱말은 넣지 않는다 — 「적」만(적다) · 「총」만(총 3회) · 「집」(집에 가서) · 「콜」(「콜!」) · 「방」(디코 방) · 「차」(차례)
 const GAME_WORD = new RegExp([
@@ -104,10 +117,14 @@ const SNOWFLAKE = /^\d{15,21}$/;
 // ── 순수 함수(시험: scripts/feedback-import.test.cjs) ─────────────────────
 
 // 잡담 · 일정 판정(글쓴이 모드) → "short" | "schedule" | null(수업 노트). 사진 여부는 부르는 쪽이 본다(사진이 있으면 늘 남긴다).
-//   순서: 알맹이가 거의 없으면 잡담 → 양식 표시 · 배그 수업 말이 있으면 노트(짧아도) → 짧은 일정 연락 → 짧은 말 → 나머지는 노트.
+//   순서: 알맹이가 거의 없으면 잡담 → 복기 양식 표시면 노트 → 분명한 일정 · 대화 표시면 일정(배그 낱말이 있어도 · 검수 11차)
+//         → 양식 표시 · 배그 수업 말이 있으면 노트(짧아도) → 짧은 일정 연락 → 짧은 말 → 나머지는 노트.
+//   옛 복기는 7일 뒤 수강생 모두에게 공개된다 — 잡담이 섞이면 그대로 나간다. 버린 글은 결과 dropped 로 오너가 훑는다.
 function chatterOf(text) {
   const t = String(text || "").trim();
   if (t.replace(/[^가-힣A-Za-z0-9]/g, "").length < NOTE_MIN) return "short";
+  if (TEMPLATE_MARK.test(t)) return null;
+  if (STRONG_CHAT.test(t)) return "schedule";
   if (FORM_MARK.test(t) || GAME_WORD.test(t) || GAME_WORD_EN.test(t)) return null;
   if (t.length < SCHEDULE_MAX && SCHEDULE_WORD.test(t)) return "schedule";   // 짧은 일정 연락도 일정으로 센다(「내일 8시 가능하세요?」)
   if (t.length < CHATTER_MAX) return "short";
@@ -341,9 +358,11 @@ function planByAuthor(live, ctx, out) {
 // 이미 옮긴 행 찾기(다시 돌리기 · 거르는 기준이 바뀐 재실행) → 묶음마다 g.existing = 행 id(없으면 그대로).
 //   rows = 이 채널에서 옮긴 행(src_msg 있음) · same(g, row) = 같은 사람 행인지.
 //   ① 묶음 첫 글 id = src_msg(종전과 같다) — 먼저 전부 맞춘다.
-//   ② 아니면 같은 글쓴이 사슬(g.chain · 버린 글 포함)의 글이 src_msg 인 행:
-//      · ①로 아무 묶음도 안 잡은 행 → 그 행이 이 묶음이다(첫 글이 버려졌거나 새로 살아나 첫 글이 바뀌었다)
-//      · ①로 다른 묶음이 잡은 행 → 그 행 본문에 이 묶음 본문이 문단째 들어 있을 때만 같은 것(종전에 한 건으로 합쳐졌다)
+//   ② 아니면 같은 글쓴이 사슬(g.chain · 버린 글 포함)의 글이 src_msg 인 행 — **본문이 문단째 겹칠 때만** 같은 것으로 본다
+//      (행 본문에 묶음 본문이 들어 있거나 · 묶음 본문에 행 본문이 들어 있거나). 첫 글이 버려졌거나 살아나 첫 글이 바뀐 경우 · 종전에
+//      한 건으로 합쳐졌다가 갈라진 답이 여기 걸린다. 본문을 안 보고 사슬만으로 잡으면 같은 사슬의 새 노트가 옛 일정 행으로 잡혀
+//      빠진다(검수 11차 — 옛 행 「다음 예약은 평일 저녁으로…」 · 5분 뒤 「레드존 생존 연습함」).
+//      본문 없는 묶음(사진만)은 아무 묶음도 안 잡은 사슬 행이 있으면 그 행이다 — 사진은 그 행에 붙는다(같은 파일은 한 번).
 //   이번 실행에서 넣은 행은 rows 에 없다(실행 전에 읽는다) — 같은 사슬의 새 묶음끼리 서로 막지 않는다.
 function resolveExisting(groups, rows, same) {
   const bySrc = new Map(rows.map((r) => [String(r.src_msg), r]));
@@ -352,14 +371,13 @@ function resolveExisting(groups, rows, same) {
     const r = bySrc.get(String(g.key));
     if (r && same(g, r)) { g.existing = Number(r.id); claimed.add(Number(r.id)); }
   }
-  const inBody = (r, g) => !!g.body && `\n\n${String(r.body || "")}\n\n`.includes(`\n\n${g.body}\n\n`);
+  const para = (t) => `\n\n${String(t || "")}\n\n`;
+  const overlaps = (r, g) => !!g.body && !!r.body && (para(r.body).includes(para(g.body)) || para(g.body).includes(para(r.body)));
   for (const g of groups) {
     if (g.existing) continue;
     const hits = (g.chain || g.msgIds).map((id) => bySrc.get(String(id))).filter((r) => r && same(g, r));
-    const free = hits.find((r) => !claimed.has(Number(r.id)));
-    if (free) { g.existing = Number(free.id); claimed.add(Number(free.id)); continue; }
-    const dup = hits.find((r) => inBody(r, g));
-    if (dup) g.existing = Number(dup.id);
+    const hit = hits.find((r) => overlaps(r, g)) || (!g.body ? hits.find((r) => !claimed.has(Number(r.id))) : null);
+    if (hit) { g.existing = Number(hit.id); claimed.add(Number(hit.id)); }
   }
   return groups;
 }

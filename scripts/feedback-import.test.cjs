@@ -634,3 +634,50 @@ test("resolveExisting — 첫 글 id 먼저 · 사슬의 빈 행 · 다른 묶�
   resolveExisting([d1, d2, d3], [{ id: 9, src_msg: "10", body: "앞 답\n\n뒤 답" }], same);
   assert.equal(d1.existing, 9); assert.equal(d2.existing, 9); assert.equal(d3.existing, undefined);   // 「뒤」는 문단이 아니다
 });
+
+// ── 검수 11차(2026-10-03) — 분명한 일정 표시는 배그 낱말보다 먼저 · 사슬 행도 본문이 겹칠 때만 「이미 옮김」 ──
+test("chatterOf — 분명한 일정 · 대화 표시(몇 시 · 가능하세요 · 날+시각 · 접속 · 상담 · 같이 할 사람)는 배그 낱말이 있어도 일정 · 양식 표시만 예외", () => {
+  for (const t of [
+    "내일 연습 몇 시에 해요", "오늘 랭겜 몇시에 하실래요?", "내일 9시 훈련장 접속 가능하세요?",
+    "오늘 집중이 잘 안 돼서 일찍 들어갈게요", "티어 올리고 싶어서 문의드려요 상담 가능할까요", "내일 스쿼드 같이 하실 분",
+  ]) assert.equal(chatterOf(t), "schedule", t);
+  for (const t of [                                                           // 지난번 살린 노트는 그대로 노트
+    "3시 방향 능선 먼저 체크하기", "상대가 집 안으로 들어가는 걸 보고 바로 따라가서 잡았어요", "힐 타이밍 늦음 주의",
+    "레드존 생존 연습함", "감도 변경하고 다시 맞춰보기", "연기 뿌리고 들어가기", "건물 안에서 대기하다가 늦게 나온 게 아쉬움",
+    "오늘 교전 연습 많이 했어요 다음엔 9시 방향 엄폐 먼저 볼게요",
+  ]) assert.equal(chatterOf(t), null, t);
+  // 양식 표시가 있으면 일정 말이 섞여도 노트(복기 끝에 다음 수업 시각을 적은 경우)
+  assert.equal(chatterOf("📅 수업 날짜 : 2026. 09. 13\n🎯 배운 내용 : 교전 각\n다음 수업 내일 9시 가능하세요?"), null);
+  assert.equal(chatterOf("피드백 감사합니다 내일 몇 시에 가능하세요?"), "schedule");          // 「피드백」은 대화에도 쓴다 — 양식 예외가 아니다
+});
+
+test("resolveExisting — 사슬의 짝 없는 옛 행도 본문이 문단째 겹칠 때만 같은 것 · 사진만 있는 묶음은 빈 사슬 행에 붙는다", () => {
+  const same = () => true;
+  const note = { key: "2", chain: ["1", "2"], body: "레드존 생존 연습함", msgIds: ["2"] };
+  resolveExisting([note], [{ id: 5, src_msg: "1", body: "다음 예약은 평일 저녁으로 잡아주세요" }], same);
+  assert.equal(note.existing, undefined);                                    // 옛 일정 행으로 잡히지 않는다(검수 11차 재현)
+  const grown = { key: "3", chain: ["3", "4"], body: "에임 연습함\n\n반동 제어 연습", msgIds: ["3", "4"] };
+  resolveExisting([grown], [{ id: 6, src_msg: "4", body: "반동 제어 연습" }], same);
+  assert.equal(grown.existing, 6);                                           // 새 묶음 본문에 옛 행 본문이 들어 있다 = 같은 것
+  const photo = { key: "8", chain: ["7", "8"], body: "", msgIds: ["8"] };
+  resolveExisting([photo], [{ id: 7, src_msg: "7", body: "오늘 스샷 올려요" }], same);
+  assert.equal(photo.existing, 7);                                           // 사진만 — 그 행에 붙는다
+});
+
+test("실행(글쓴이 모드) — 옛 일정 행 5분 뒤의 진짜 노트는 새로 들어간다 · 다시 돌려도 그대로(검수 11차 재현)", async () => {
+  const m1 = raw({ content: "다음 예약은 평일 저녁으로 잡아주세요", createdTimestamp: T0 });
+  const m2 = raw({ content: "레드존 생존 연습함", createdTimestamp: T0 + 5 * MIN });
+  const { sb, run, CH } = authorRunner([m1, m2], {
+    lesson_reviews: [{ id: 900, student_id: 98, author_role: "student", author_staff_id: null, src_channel: "300000000000000005",
+      src_msg: m1.id, body: "다음 예약은 평일 저녁으로 잡아주세요", lesson_session_id: null }],
+  });
+  assert.equal(CH, "300000000000000005");
+  const dry = (await run("rx-dry", "dry", { byAuthor: true })).channels[0];
+  assert.deepEqual([dry.existing, dry.toInsert], [{ reviews: 0, answers: 0 }, { reviews: 1, answers: 0 }]);
+  assert.deepEqual(dry.droppedBy, { s98: { schedule: 1 } });
+  await run("rx-w1", "write", { byAuthor: true });
+  assert.equal(sb.db.lesson_reviews.length, 2);
+  assert.equal(sb.db.lesson_reviews[1].body, "레드존 생존 연습함");
+  await run("rx-w2", "write", { byAuthor: true });
+  assert.equal(sb.db.lesson_reviews.length, 2);
+});
