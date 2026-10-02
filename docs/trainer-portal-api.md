@@ -2460,6 +2460,8 @@ PATCH /api/trainer-portal/bookings/:id
 ## 9.26 활동명 · 이름 보이는 범위 · 늦은 취소 · 노쇼 면제 기록 (2026-10-02 · 어플 요청 · 오너 OK 10/2) · **계약 · DDL 정본 §62 · §63 · 서버 구현 전**
 
 > 이름표는 활동명, 출석부는 본명이에요. 수강생 앱은 어디서든 활동명만 보이고, 본명은 트레이너 · 원장만 봐요.
+> 사람들은 디스코드 아이디가 아니라 **서버 닉**으로 불러요 — 활동명 처음 값은 MRI 서버 닉이 1순위예요(어플 10/2 추가).
+> 트레이너 쪽(디스코드 · 앱)도 활동명으로 불러요. 저장소 · 문서 · 로그 · 세션 전달문 · STATE 는 계속 `#번호`예요(공개 저장소).
 > 늦은 취소 · 노쇼를 예외로 넘길 때는 판수를 빼지 않고 「0판 면제」 한 줄을 남겨요. 28일 횟수는 서버가 세요.
 > 순서: DDL §62 · §63a(A) 세션 실행 → §63b(B · 기존 제약 교체) 오너 원문 OK 뒤 실행 → 서버 PR → 이 절 ✅.
 > DDL 이 돌기 전에는 아래 키 · 라우트가 없어요(앱은 키가 없으면 지금처럼 보여 주면 돼요).
@@ -2468,7 +2470,7 @@ PATCH /api/trainer-portal/bookings/:id
 
 | 항목 | 규칙 |
 |---|---|
-| 처음 값 | 디스코드 연결(승인) 때 디스코드 표시 이름 — 서버 닉 → 전역 표시 이름 → 사용자명 순. 아래 규칙에 맞고 겹치지 않을 때만 넣는다 |
+| 처음 값 | 디스코드 연결(승인) 때 봇이 읽는다 — **① MRI 디스코드 서버 닉(`GUILD_ID` 길드 멤버 닉) → ② 디스코드 전체 표시 이름(`global_name`) → ③ 「#번호」**. 사용자명(`username` · 디스코드 아이디)은 쓰지 않는다. 단계마다 아래 규칙(길이 · 글자 · 금지어 · 겹침)에 걸리면 다음 단계로 넘어간다. 웹 로그인 토큰에는 서버 닉이 없어서 봇이 연결 승인 때 읽는다 |
 | 비어 있으면 | 앱에는 「#번호」(수강생 번호) · `activityNameTemp: true` · DB 에는 저장하지 않는다 |
 | 길이 | 2~12자(한 글자씩 센다 · 한글 한 글자 = 1) |
 | 글자 | 한글 · 영문 · 숫자 · `_` `.` `-` (띄어쓰기 · 이모지 · 「#」 시작 안 됨) |
@@ -2512,9 +2514,10 @@ banned 「쓸 수 없는 말이 들어 있어요」 · 409 taken 「이미 누�
 | 받는 쪽 | 무엇이 보이나 |
 |---|---|
 | 수강생 앱(어디서든) | **활동명만** — 내 화면 · 그룹 · 공개 복기 · 랭킹 · 후기. 남의 이름 · 내 이름 모두 |
-| 트레이너 · 원장 앱 | 본명(`displayName` 계열 그대로) + 활동명(새 키) · 나이는 계속 내리지 않는다 |
+| 트레이너 · 원장 앱 | **활동명 우선 + 본명**(`displayName` 계열 그대로 + 활동명 새 키) — 목록 · 고르기 · 오류 응답의 `students[]` 표시까지 활동명을 앞에 · 나이는 계속 내리지 않는다 |
+| 트레이너 디스코드(봇 DM · 알림 · 자동완성) | **활동명**(비어 있으면 본명 — 트레이너는 본명을 볼 수 있다) · 원장 카드는 이번 범위 밖(지금처럼) |
 | 신청 창구(§55) 실명 · 나이 | 지금처럼 오너 전용 — 명부에 등록된 뒤부터 트레이너에게 본명 |
-| 전달문 · 로그 · 문서 | 지금처럼 `#번호` |
+| 저장소 · 문서 · 로그 · 코드 세션 전달문 · STATE.md | 계속 `#번호` — 저장소가 공개라 이름 금지 유지 |
 
 **수강생 앱 — 값만 바뀌는 키**(키 이름 그대로 · 지금은 배그 닉 → 디스코드 닉 → 「수강생」 순으로 채운다 → 바뀐 뒤: 활동명 → 「#번호」)
 
@@ -2541,6 +2544,13 @@ banned 「쓸 수 없는 말이 들어 있어요」 · 409 taken 「이미 누�
 | `target.displayName` | `target.activityName` | 상담 보드(`GET /consults` 등 · 명부에 있는 사람만 · 신청자는 `null`) |
 
 - 활동명이 비어 있으면 「#번호」가 아니라 **`null`** 이다(트레이너 앱은 본명만 보여 주면 된다).
+- 표시 순서: **활동명 앞 · 본명 뒤**(예: 「에임장인 · 본명」). 목록 · 고르기(대신 넣기 · 출석 · 반 명단)도 같다.
+- 오류 응답의 `students[]`(409 `already_recorded_today` · `students_rejected`)는 **id 만** 온다 — 앱이 `GET /students` 의 이름으로 붙이니 같은 순서로 보여 준다.
+
+**트레이너 디스코드 — 봇 메시지의 수강생 이름**(서버 PR 에서 바꾼다 · 지금은 본명)
+- 수강생 앱 알림(예약 · 취소 · 입금 신청) · 복기 알림 · 판수 부족 알림 · 보류 요약 · 상담 보드 알림 · 수업 기록 알림 → **활동명**(비면 본명)
+- 봇 자동완성(`/수업등록` · `/연결승인` 등 수강생 고르기) 라벨 → 「활동명(본명)」 · 이름 찾기에 활동명 · 옛 활동명도 건다
+- 신청 카드의 신청자 이름(아직 명부 밖)은 지금처럼 디스코드 이름이다
 - 신청 목록(`GET /applications`)은 아직 명부 밖이라 활동명이 없다 — 그대로다.
 
 **트레이너 · 원장 검색 — `GET /students?q=`**(새 쿼리 · 없으면 지금처럼 전체)
@@ -2627,7 +2637,7 @@ banned 「쓸 수 없는 말이 들어 있어요」 · 409 taken 「이미 누�
 ### 9.26.6 DDL — 정본 `supabase_admin_panel.sql` §62 · §63 (실행 전 · 되돌림 시험 끝)
 
 - §62(A): `students` 칸 셋(`display_name` · `display_name_set_by` · `display_name_changed_at`) + 제약 둘 + 활동명 유일 인덱스 + 이력 표 `student_display_names`.
-- §62b(B · 실행 안 함): 기존 행 채우기 — 저장된 닉 6명 SQL · 연결됐는데 닉 없는 18명은 봇이 디스코드에서 읽어 채움 · 나머지 69명은 비워 둠.
+- §62b(B · 실행 안 함): 기존 행 채우기 — 디스코드 연결 21명은 봇이 ① 서버 닉 → ② 전체 표시 이름 순으로 읽어 규칙 통과분만 채운다(**드라이런으로 건수 먼저 보고 → 오너 OK → 쓰기**) · 미연결 72명은 비워 둔다(「#번호」 · 연결할 때 채워진다). 명부의 `discord_nick` 은 직원이 손으로 적은 값이라 쓰지 않는다.
 - §63a(A): `games_adjust_requests` 칸 넷(`exempt_of` · `exempt_reason` · `booking_id` · `new_booking_id`) + 제약 넷 + 인덱스 셋 +
   `record_games_exemption()`(검사 · 28일 횟수 · 넣기를 한 트랜잭션에서).
 - §63b(B · 오너 원문 OK 뒤): 기존 제약 셋 교체(`gar_kind_chk` 에 exempt · `gar_delta_chk` · `gar_kind_delta_chk` 에 exempt 0판).
@@ -2638,6 +2648,6 @@ banned 「쓸 수 없는 말이 들어 있어요」 · 409 taken 「이미 누�
 **어플**: 수강생 앱의 이름은 전부 서버가 주는 값을 그대로 쓴다(공유 복기 · 반응 · 그림 작성자 키는 이름 그대로 · 값이 활동명) — 내 활동명은
 `GET /summary` 의 `activityName` · `activityNameTemp` · `activityNameChangeableAt`, 바꾸기는 `PUT /activity-name`(400 `activity_name_invalid { reason }` · 409 `activity_name_taken` · `activity_name_cooldown { changeableAt }`).
 
-**반장**: 트레이너 화면의 이름은 본명 키(`displayName` · `studentDisplayName` · `authorDisplayName`) 옆에 활동명 키(`activityName` · `studentActivityName` ·
-`authorActivityName`)를 같이 보여 주고(null 이면 본명만), 검색은 `GET /students?q=` 를 쓴다. 면제는 `POST /adjustments` `kind: "exempt"` + `exemptOf` +
+**반장**: 트레이너 화면의 이름은 활동명 키(`activityName` · `studentActivityName` · `authorActivityName`)를 앞에, 본명 키(`displayName` · `studentDisplayName` ·
+`authorDisplayName`)를 뒤에 보여 주고(활동명이 null 이면 본명만 · 목록 · 고르기 · 오류 응답 `students[]` 모두 같은 순서), 검색은 `GET /students?q=` 를 쓴다. 면제는 `POST /adjustments` `kind: "exempt"` + `exemptOf` +
 `exemptReason` 칩(합의 변경은 `newBookingId` 필수) — 판수는 그대로 · 409 `exempt_limit` 이면 「약관대로 처리돼요」 · 원장 화면은 `GET /owner/exemptions?month=`.

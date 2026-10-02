@@ -6287,8 +6287,9 @@ notify pgrst, 'reload schema';
 --
 -- 이름표는 활동명, 출석부는 본명. 수강생 앱 어디서든(내 화면 · 그룹 · 공개 복기 · 랭킹 · 후기) 활동명만 보이고,
 --   본명(students.name)은 트레이너 · 원장 응답에만 나간다. 신청 창구(§55) 실명 · 나이는 지금처럼 오너 전용이다.
--- 처음 값: 디스코드 연결 때 디스코드 닉(서버 닉 → 전역 표시 이름 → 사용자명 · 규칙에 맞을 때만). 비어 있으면
---   앱에는 「#번호」가 보인다(저장하지 않는다 — 활동명 칸은 비어 있다).
+-- 처음 값: 디스코드 연결(승인) 때 봇이 읽는다 — ① MRI 디스코드 서버(GUILD_ID) 닉 → ② 전체 표시 이름(global_name) → ③ 비움.
+--   사용자명(username)은 쓰지 않는다. 단계마다 규칙에 걸리면 다음 단계(어플 10/2 추가). 비어 있으면 앱에는 「#번호」가 보인다
+--   (저장하지 않는다 — 활동명 칸은 비어 있다).
 -- 바꾸기: 수강생 앱 설정에서 30일에 1번 · 2~12자 · 활동명끼리 중복 불가(대소문자 무시) · 금지어 · 글자 종류는 서버가 거른다.
 --   DB 는 길이 · 앞뒤 공백 · 「#」 시작만 막는다(글자 종류 · 금지어는 정책이라 서버 한 곳에 둔다).
 -- 옛 활동명은 지우지 않고 이력 표(student_display_names)에 쌓는다. student_aliases 를 쓰지 않는 이유:
@@ -6330,18 +6331,12 @@ create index if not exists idx_sdn_name on public.student_display_names (lower(d
 alter table public.student_display_names enable row level security;   -- service_role 만 통과
 
 -- ── 62b) 기존 행 채우기 — B 구간(있던 행 값) · 오너 OK 뒤 · ⚠️ 실행하지 않음(방법 · 건수만) ─────────────────
---   실측(2026-10-02 · 합친 행 2 제외 93명): 디스코드 연결 21(닉 저장 3 · 닉 없음 18) · 미연결 72(닉 저장 3 · 닉 없음 69).
---   저장된 닉 6개는 전부 규칙(2~12자 · 한글 · 영문 · 숫자 · _ . -) 통과 · 서로 겹침 0.
---   ① 저장된 닉 6명 → 아래 update(set_by 'backfill')
---   ② 연결됐는데 닉이 없는 18명 → 봇이 디스코드에서 표시 이름을 읽어 같은 규칙으로 채운다(서버 1회 실행 · SQL 로는 못 한다)
---   ③ 연결 안 됐고 닉도 없는 69명 → 비워 둔다(앱 「#번호」 · 연결할 때 채워진다)
---   update public.students s
---      set display_name = btrim(s.discord_nick), display_name_set_by = 'backfill'
---    where s.merged_into is null and s.display_name is null
---      and char_length(btrim(s.discord_nick)) between 2 and 12 and left(btrim(s.discord_nick), 1) <> '#'
---      and btrim(s.discord_nick) ~ '^[가-힣A-Za-z0-9_.-]+$'
---      and not exists (select 1 from public.students o where o.id <> s.id and lower(o.display_name) = lower(btrim(s.discord_nick)));
---   검증: select count(*) from students where display_name_set_by = 'backfill';   -- 6
+--   실측(2026-10-02 · 합친 행 2 제외 93명): 디스코드 연결 21 · 미연결 72.
+--   ① 연결 21명 → 봇이 ① 서버 닉 → ② 전체 표시 이름 순으로 읽어 규칙 통과분만 채운다(set_by 'backfill' · 서버 1회 실행 ·
+--      SQL 로는 못 한다 — 서버 닉은 디스코드에만 있다). 드라이런으로 「채울 수 · 규칙에 걸린 수 · 겹친 수」를 먼저 보고 → 오너 OK → 쓰기.
+--   ② 미연결 72명 → 비워 둔다(앱 「#번호」 · 연결할 때 채워진다).
+--   명부의 students.discord_nick(6명 · 직원이 손으로 적은 값 · 디스코드와 맞춘 적 없음)은 쓰지 않는다(어플 10/2 — 서버 닉이 정본).
+--   쓰기 뒤 검증: select count(*) from students where display_name_set_by = 'backfill';   -- 드라이런 「채울 수」와 같아야 한다
 --
 -- 되돌리기(코드의 활동명 읽기 · 쓰기를 먼저 되돌릴 것 · 지우는 DDL = B 구간 · 오너 OK):
 --   drop table if exists public.student_display_names;
