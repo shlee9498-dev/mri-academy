@@ -5,7 +5,10 @@
 // 누가 돌리나 — 세션이 오너 확인 뒤 ops_state 'feedback_import:request' 한 행을 쓰면 봇이 1분 안에 집어 한 번 돈다.
 //   { id, mode: "dry" | "write", confirmedBy: 오너 staff id,
 //     channels: [{ g: 서버 id, ch: 채널 id, studentId, trainerId, kind: "lesson" | "lecture", fill: true | false }],
-//     include: [메시지 id] · exclude: [메시지 id] }   ← 손으로 넣기 · 빼기(선택 · 2026-10-03 검수 12차)
+//     include: [메시지 id] · exclude: [메시지 id],   ← 손으로 넣기 · 빼기(선택 · 2026-10-03 검수 12차)
+//     publish: "hold" | "wait7" }                     ← 공개 시점(글쓴이 모드 채널만 · 검수 13차) — hold(기본) = private 만 · public_at 비움
+//                                                       (본인 · 트레이너만 본다 · 본인이 앱에서 범위를 바꾸면 열린다) · wait7 = 실행 + 7일 뒤 「수강생 모두」
+//                                                       채널 모드(studentId 있는 채널)는 publish 와 상관없이 종전대로 wait7 이다
 //   include = 거르기(잡담 · 일정 · 짧은 말)에 걸린 글 중 넣을 것 — 거르기만 건너뛰고 짝 맞추기 · 겹침 막기 · 공개 규칙은 같다
 //             (못 맞춘 글쓴이의 글 · 붙일 곳 없는 트레이너 글은 include 로도 안 들어간다). exclude = 들어갈 글 중 뺄 것(묶음에도 안 붙는다).
 //   드라이런 결과의 dropped(버린 글) · kept(들어갈 글 · 글쓴이 모드)에 메시지 id · 누구 · 글자 수가 있다 — 오너가 링크로 훑고 고른다.
@@ -15,6 +18,7 @@
 // 무엇을 쓰나(write · 더하기만):
 //   lesson_reviews   — 수강생 글 = 수강생 복기 · 앞선 수강생 글이 없는 트레이너 글 = 트레이너 복기.
 //                      source=discord · published · visibility=private + public_at = 실행 + 7일(그 뒤 「수강생 모두」 · review-api flipPublicDue)
+//                      · 글쓴이 모드는 요청 publish 가 hold(기본)면 public_at 을 비운다(아래 요청 모양)
 //                      · 작성 · 보낸 · 수정 시각 = 원래 글 시각 · src_msg = 첫 글 id(재실행 멱등 · 있으면 건너뛴다 ·
 //                        첫 글이 바뀌어도 같은 글쓴이 10분 사슬의 옛 src_msg 를 찾는다 — 아래 「겹침 막기」)
 //   review_feedback  — 트레이너 답(kind=overall · src_msg · 원래 글 시각) — 답장한 글 → 없으면 바로 앞 수강생 복기(14일 안)
@@ -83,6 +87,17 @@ const STRONG_ASKED = new RegExp([
 ].join("|"));
 const ASK_END = /[요죠]\s*[?？]|가능|드려요|드립니다|부탁|[할될갈볼]까요|까요\s*[?？]/;   // 부탁 · 질문 끝맺음
 const strongChat = (t) => STRONG_ALWAYS.test(t) || (STRONG_ASKED.test(t) && ASK_END.test(t));
+// 짧은 일정 · 잡담 — 날 말(오늘 · 내일 · 이따 · 주말 · 저녁 …)과 행동 끝맺음(해요 · 하자 · ㄱ · 봬요 · 쉴게요 · 돌려요 · 미뤄 · 못 할 것 같아요 ·
+//   감사합니다 …)이 같이 있으면 배그 낱말이 있어도 일정(검수 13차 — 「내일 같이 랭겜 해요」 · 「오늘 랭겜 ㄱ」 · 「저녁에 듀오 돌려요」 ·
+//   「오늘 티어 올렸어요 ㅎㅎ 감사합니다」). 60자 미만만 본다. 「낮」은 「낮게」(감도)와 겹쳐 뺐다.
+const DAY_ACT_MAX = 60;
+const DAY_NEAR = /오늘|내일|모레|이따|주말|저녁|아침|(?<![가-힣])밤|오후|오전|담주|다음\s*주|이번\s*주|[월화수목금토일]요일/;
+const ACT_END = new RegExp([
+  "해요", "하자", "할래요", "하실래요", "(?<![가-힣ㄱ-ㅎ])ㄱ+(?![가-힣])", "봬요", "뵐게요", "뵙겠습니다", "쉴게요", "쉬어요", "쉬고", "쉽니다",
+  "돌려요", "돌릴래요", "돌리자", "미뤄", "미룰", "못\\s*할\\s*것\\s*같", "못\\s*해요", "못\\s*갈", "못\\s*들어",
+  "감사합니다", "감사해요", "고마워요", "고맙습니다", "가실\\s*분",
+].join("|"));
+const dayChat = (t) => t.length < DAY_ACT_MAX && DAY_NEAR.test(t) && ACT_END.test(t);
 // 배그 수업 말 — 장면 · 사격 · 장비 · 맵 · 마음가짐. 있으면 짧아도 노트(「힐 타이밍 늦음 주의」 · 「레드존 생존 연습함」 · 「3시 방향 능선 먼저 체크하기」).
 //   일상 말과 겹치는 낱말은 넣지 않는다 — 「적」만(적다) · 「총」만(총 3회) · 「집」(집에 가서) · 「콜」(「콜!」) · 「방」(디코 방) · 「차」(차례)
 const GAME_WORD = new RegExp([
@@ -129,14 +144,15 @@ const SNOWFLAKE = /^\d{15,21}$/;
 // ── 순수 함수(시험: scripts/feedback-import.test.cjs) ─────────────────────
 
 // 잡담 · 일정 판정(글쓴이 모드) → "short" | "schedule" | null(수업 노트). 사진 여부는 부르는 쪽이 본다(사진이 있으면 늘 남긴다).
-//   순서: 알맹이가 거의 없으면 잡담 → 복기 양식 표시면 노트 → 분명한 일정 · 대화 표시면 일정(배그 낱말이 있어도 · 검수 11차)
+//   순서: 알맹이가 거의 없으면 잡담 → 복기 양식 표시면 노트 → 분명한 일정 · 대화 표시 · 짧은 날 말 + 행동 끝맺음이면 일정
+//         (배그 낱말이 있어도 · 검수 11차 · 13차)
 //         → 양식 표시 · 배그 수업 말이 있으면 노트(짧아도) → 짧은 일정 연락 → 짧은 말 → 나머지는 노트.
 //   옛 복기는 7일 뒤 수강생 모두에게 공개된다 — 잡담이 섞이면 그대로 나간다. 버린 글은 결과 dropped 로 오너가 훑는다.
 function chatterOf(text) {
   const t = String(text || "").trim();
   if (t.replace(/[^가-힣A-Za-z0-9]/g, "").length < NOTE_MIN) return "short";
   if (TEMPLATE_MARK.test(t)) return null;
-  if (strongChat(t)) return "schedule";
+  if (strongChat(t) || dayChat(t)) return "schedule";
   if (FORM_MARK.test(t) || GAME_WORD.test(t) || GAME_WORD_EN.test(t)) return null;
   if (t.length < SCHEDULE_MAX && SCHEDULE_WORD.test(t)) return "schedule";   // 짧은 일정 연락도 일정으로 센다(「내일 8시 가능하세요?」)
   if (t.length < CHATTER_MAX) return "short";
@@ -427,6 +443,8 @@ function validateRequest(req) {
     if (req[k] === undefined) continue;
     if (!Array.isArray(req[k]) || req[k].length > 5000 || req[k].some((x) => !SNOWFLAKE.test(String(x)))) return `request_${k}`;
   }
+  // 공개 시점(글쓴이 모드 채널) — hold(기본 · private 만 · public_at 비움) | wait7(실행 + 7일 뒤 「수강생 모두」 · 종전 규칙)
+  if (req.publish !== undefined && req.publish !== "hold" && req.publish !== "wait7") return "request_publish";
   if (req.include && req.exclude) {
     const ex = new Set(req.exclude.map(String));
     if (req.include.some((x) => ex.has(String(x)))) return "request_include_exclude";
@@ -542,6 +560,9 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
     try { channel = await client.channels.fetch(String(c.ch)); } catch (e) { res.status = "error"; res.error = `channel_${e?.status || e?.code || "fetch"}`; return res; }
     if (!channel || String(channel.guildId) !== String(c.g)) { res.status = "error"; res.error = "channel_guild_mismatch"; return res; }
     const byAuthor = c.byAuthor === true;
+    // 공개 시점 — 글쓴이 모드만 요청의 publish 를 따른다(hold = public_at 비움). 채널 모드는 종전대로 실행 + 7일
+    const publicAt = byAuthor && base.publish !== "wait7" ? null : base.publicAt;
+    res.publish = byAuthor ? base.publish : "wait7";
     const stu = byAuthor ? null : base.students.get(Number(c.studentId));
     if (!byAuthor && !stu) { res.status = "error"; res.error = "student_missing"; return res; }
     if (!base.staffIds.has(Number(c.trainerId))) { res.status = "error"; res.error = "trainer_missing"; return res; }
@@ -668,7 +689,7 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
         body: g.body ? g.body.slice(0, BODY_MAX) : null,
         src_guild: String(c.g), src_channel: String(c.ch), src_msg: g.key,
         created_at: at, updated_at: new Date(g.lastTs).toISOString(), published_at: at,
-        visibility: "private", public_at: base.publicAt,
+        visibility: "private", public_at: publicAt,
       };
       const r = await ensureReview(row);
       idByKey.set(g.key, r.id);
@@ -721,7 +742,8 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
     }
     const client = getClient();
     if (!client) return { skipped: "no_client" };                    // 다음 틱에 다시(결과를 남기지 않는다)
-    const result = { id: req.id, mode: req.mode, status: "running", bootId, startedAt: new Date(started).toISOString(),
+    const result = { id: req.id, mode: req.mode, publish: req.publish === "wait7" ? "wait7" : "hold", status: "running", bootId,
+      startedAt: new Date(started).toISOString(),
       heartbeatAt: new Date(started).toISOString(),
       publicAt: req.mode === "write" ? new Date(started + PUBLIC_WAIT_MS).toISOString() : null, channels: [] };
     await opsStateSet(RES_KEY, result);
@@ -737,6 +759,7 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
       studentByDiscord: new Map(students.filter((s) => s.discord_id).map((s) => [String(s.discord_id), Number(s.id)])),
       students: new Map(students.map((s) => [Number(s.id), s])),
       include: new Set((req.include || []).map(String)), exclude: new Set((req.exclude || []).map(String)),
+      publish: req.publish === "wait7" ? "wait7" : "hold",
     };
     for (const c of req.channels) {
       let row;

@@ -376,7 +376,7 @@ const ctxAuthor = (o = {}) => ({ byAuthor: true, staffByDiscord: new Map([[TRN, 
 test("chatterOf — 양식 표시가 있으면 노트 · 짧은 말 = 잡담 · 일정 말 = 일정 · 길면 노트", () => {
   assert.equal(chatterOf(FORM), null);
   assert.equal(chatterOf("넵 감사합니다"), "short");
-  assert.equal(chatterOf("오늘도 고생 많으셨습니다 다음에 봬요"), "short");
+  assert.equal(chatterOf("오늘도 고생 많으셨습니다 다음에 봬요"), "schedule");          // 날 말 + 「봬요」(검수 13차) — 버리는 건 같다
   assert.equal(chatterOf("내일 저녁 8시에 수업 가능하실까요? 확인 부탁드려요"), "schedule");
   assert.equal(chatterOf("죄송해요 오늘 10분 정도 늦을 것 같습니다 바로 들어갈게요"), "schedule");
   assert.equal(chatterOf("오늘 교전 연습 많이 했어요 다음엔 9시 방향 엄폐 먼저 볼게요"), null);   // 수업 말이 있으면 노트
@@ -393,7 +393,7 @@ test("planChannel(글쓴이 모드) — 그룹 채널: 글쓴이마다 자기 �
     attachments: new Map([["p1", { id: "p1", size: 10, url: "https://cdn.test/p1.png", contentType: "image/png" }]]), createdTimestamp: T0 + 40 * MIN });
   const reply = M({ author: { id: TRN }, content: "좋아요 엄폐 뒤 각 잡는 거 계속 해요", createdTimestamp: T0 + 60 * MIN });
   reply.refId = b1.id;
-  const loose = M({ author: { id: TRN }, content: "다들 오늘 수고 많았어요 다음 주에 이어서 해요 자기장 운영", createdTimestamp: T0 + 80 * MIN });   // 답 뒤 10분 넘게 → 따로
+  const loose = M({ author: { id: TRN }, content: "둘 다 자기장 운영은 다음에 같이 봐요", createdTimestamp: T0 + 80 * MIN });   // 답 뒤 10분 넘게 → 따로
   const photo = M({ author: { id: STU2 }, content: "", createdTimestamp: T0 + 2 * DAY,
     attachments: new Map([["p2", { id: "p2", size: 10, url: "https://cdn.test/p2.png", contentType: "image/png" }]]) });
   const p = planChannel([a1, a2, b1, sched, thanks, stranger, reply, loose, photo], ctxAuthor());
@@ -437,7 +437,7 @@ test("실행(글쓴이 모드) — 글쓴이마다 그 수강생 복기 · 짝 �
     raw({ content: FORM, createdTimestamp: T0 }),
     raw({ author: { id: STU2 }, content: "📅 수업 날짜 : 2026. 09. 13\n🎯 배운 내용 : 엄폐 후 피킹", createdTimestamp: T0 + 5 * MIN }),
     raw({ author: { id: STRANGER }, content: "저도 오늘 배운 거 정리했어요 교전 각 잡기 연습", createdTimestamp: T0 + 6 * MIN }),
-    raw({ author: { id: TRN }, content: "둘 다 좋아요 다음 주에 이어서 해요 교전", createdTimestamp: T0 + 40 * MIN }),   // 그룹 · 답장 없음 → 안 넣는다
+    raw({ author: { id: TRN }, content: "둘 다 엄폐 뒤 각 잡는 게 좋아졌어요 교전", createdTimestamp: T0 + 40 * MIN }),   // 그룹 · 답장 없음 → 안 넣는다
     raw({ content: "내일 저녁 8시 가능하세요?", createdTimestamp: T0 + 41 * MIN }),
   ];
   const reply = raw({ author: { id: TRN }, content: "엄폐 뒤 각 잡는 거 좋아요", createdTimestamp: T0 + 50 * MIN });
@@ -460,7 +460,7 @@ test("실행(글쓴이 모드) — 글쓴이마다 그 수강생 복기 · 짝 �
     fetchImpl: async (url) => ({ ok: true, arrayBuffer: async () => Buffer.from(url) }),
     log: () => {}, logError: () => {}, now: () => Date.parse("2026-10-03T01:00:00Z"), sleep: async () => {},
   });
-  const req = (id, mode) => ({ id, mode, confirmedBy: 4, channels: [{ g: G, ch: CH, trainerId: 5, kind: "lesson", byAuthor: true }] });
+  const req = (id, mode) => ({ id, mode, confirmedBy: 4, publish: "wait7", channels: [{ g: G, ch: CH, trainerId: 5, kind: "lesson", byAuthor: true }] });
 
   store[REQ_KEY] = req("ba-dry", "dry");
   await imp.poll();
@@ -733,4 +733,44 @@ test("실행(글쓴이 모드) — 버려진 노트를 include 로 넣으면 1�
   assert.equal(imp.sb.db.lesson_reviews[0].visibility, "private");                         // 공개 규칙은 같다(7일 뒤 수강생 모두)
   await go("h-w2", "write");
   assert.equal(imp.sb.db.lesson_reviews.length, 2);
+});
+
+// ── 검수 13차(2026-10-03) — 짧은 날 말 + 행동 끝맺음 · 공개 시점(hold · wait7) ──
+test("chatterOf — 60자 미만 · 날 말 + 행동 끝맺음이면 배그 낱말이 있어도 일정(검수 13차 13줄)", () => {
+  for (const t of [
+    "내일 같이 랭겜 해요", "오늘 랭겜 ㄱ", "오늘 스쿼드 같이 하자", "주말에 스쿼드 한 판 해요", "오늘 연습 못 할 것 같아요",
+    "내일 연습 쉴게요", "오늘은 연습 쉬고 내일 해요", "선생님 오늘 수업 연습 미뤄주세요", "이따 훈련장에서 봬요", "저녁에 듀오 돌려요",
+    "오늘 경쟁전 같이 가실 분 있나요", "오늘 티어 올렸어요 ㅎㅎ 감사합니다", "오늘 연습 재밌었어요 감사합니다 선생님",
+  ]) assert.equal(chatterOf(t), "schedule", t);
+  assert.equal(chatterOf("감도 낮게 해요"), null);                                         // 날 말이 없다(「낮」은 날 말에서 뺐다)
+});
+
+test("validateRequest — publish 는 hold · wait7 만", () => {
+  const ch = { g: "100000000000000001", ch: "100000000000000002", trainerId: 5, kind: "lesson", byAuthor: true };
+  assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch], publish: "hold" }), null);
+  assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch], publish: "wait7" }), null);
+  assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch], publish: "now" }), "request_publish");
+});
+
+test("실행(글쓴이 모드) — 공개 시점: 기본 hold 는 public_at 비움 · wait7 은 종전(실행 + 7일) · 채널 모드는 늘 종전 · 결과에 어느 쪽인지", async () => {
+  const note = raw({ content: FORM, createdTimestamp: T0 });
+  const NOW = Date.parse("2026-10-03T01:00:00Z");
+  const hold = authorRunner([note]);
+  const r1 = await hold.run("pub-hold", "write", { byAuthor: true });                        // publish 없음 = hold
+  assert.deepEqual([r1.publish, r1.channels[0].publish], ["hold", "hold"]);
+  assert.deepEqual(hold.sb.db.lesson_reviews.map((r) => [r.visibility, r.public_at]), [["private", null]]);   // 본인 · 트레이너만
+
+  const wait = authorRunner([note]);
+  wait.store[REQ_KEY] = { id: "pub-wait", mode: "write", confirmedBy: 4, publish: "wait7",
+    channels: [{ g: "300000000000000001", ch: wait.CH, trainerId: 5, kind: "lesson", byAuthor: true }] };
+  await wait.poll();
+  assert.equal(wait.store[RES_KEY].channels[0].publish, "wait7");
+  assert.equal(wait.sb.db.lesson_reviews[0].public_at, new Date(NOW + PUBLIC_WAIT_MS).toISOString());
+
+  const fixed = authorRunner([note]);                                                       // 채널 모드(종전 통로) — hold 를 줘도 종전대로
+  fixed.store[REQ_KEY] = { id: "pub-fixed", mode: "write", confirmedBy: 4, publish: "hold",
+    channels: [{ g: "300000000000000001", ch: fixed.CH, studentId: 98, trainerId: 5, kind: "lesson", fill: false }] };
+  await fixed.poll();
+  assert.equal(fixed.store[RES_KEY].channels[0].publish, "wait7");
+  assert.equal(fixed.sb.db.lesson_reviews[0].public_at, new Date(NOW + PUBLIC_WAIT_MS).toISOString());
 });
