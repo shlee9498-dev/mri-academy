@@ -834,7 +834,7 @@ DB 함수 = 운영 DB 되돌림 시험 28항목(`supabase_admin_panel.sql` §61)
 - `endAt` 과 함께 보내면 400 `invalid_body` — 둘 중 하나만.
 - **그룹(`participate`·`spectate`)·레벨 테스트(`consult`)는 한 덩어리 1행**으로 만든다.
   `personal` 은 종전대로 30분 칸 여러 개.
-- 레벨 테스트 = `lessonType: "consult"` · `durationMin: 90` · `capacity: 1`.
+- 레벨 테스트 = `lessonType: "consult"` · `durationMin` **60 또는 90** · `capacity: 1`. 그 밖의 길이는 400 `level_test_length`(§9.25 · 2026-10-02).
 
 **응답**: `{ "created": 1, "firstId": "…", "durationMin": 90 }`
 개인은 종전대로 `created` 가 칸 수이고 `durationMin` 은 30 이다(칸 하나의 길이).
@@ -1215,9 +1215,9 @@ DB 함수 = 운영 DB 되돌림 시험 28항목(`supabase_admin_panel.sql` §61)
 | 어디 | 무엇 |
 |---|---|
 | `GET /availability`(수강생) | `personalDurations: [60, 90, 120, 150, 180]`(숫자 배열 · 구버전 호환) + **새 `personalLengths`** |
-| `GET /slots`(트레이너) | **새 `personalLengths`** · **새 `groupLengths: [30, 60, 90, 120, 150, 180]`**(그룹 · 레벨 테스트 칸 길이) |
+| `GET /slots`(트레이너) | **새 `personalLengths`** · **새 `groupLengths: [30, 60, 90, 120, 150, 180]`**(그룹 칸 길이) · 레벨 테스트 칸은 `levelTest.lengths: [60, 90]`(§9.25) |
 | `POST /bookings`(수강생) · `POST /slots/:id/bookings`(대신 넣기) | `durationMin` 에 150 · 180 을 받는다 → `gamesHeld` 13 · 15 |
-| `POST /slots`(칸 열기 · 매주 반복) | 그룹 · 레벨 테스트 `durationMin` 최대 180 · 개인은 종전대로 30분 칸(최대 24시간) |
+| `POST /slots`(칸 열기 · 매주 반복) | 그룹 `durationMin` 최대 180 · 레벨 테스트는 60 · 90만(§9.25) · 개인은 종전대로 30분 칸(최대 24시간) |
 | 「완료 · 기록하기」의 「시간 달라짐」 · 수업 기록하기(§9.9) | `games` 1~50 그대로 — 길이로 고르게 하면 `personalLengths` 로 판수를 채워 보낸다 |
 
 ```json
@@ -2404,3 +2404,55 @@ PATCH /api/trainer-portal/bookings/:id
   같은 `/api/live` 의 `items` 에 함께 온다.
 - **신청 페이지 「어디서 오셨어요?」(유튜브 라이브 · `utm_source=youtube` 미리 고름)** — 새 수집 항목이라 개인정보처리방침에
   「유입 경로(선택)」을 더하는 개정(시행 7일 전 고지)이 먼저다. 오너 OK 뒤 방침 · 서버(칸 · 선택지) · 페이지를 같이 연다.
+
+## 9.25 레벨 테스트 칸 길이 · 신청 창구 오픈일 · 봇 기록 입구 ✅ **서버 반영 (2026-10-02 · 어플 · 반장 요청)**
+
+판수 · 정산 계산은 그대로다(레벨 테스트는 판수 차감 없음). 목적은 둘 — 칸 길이를 레벨 테스트 규칙(60~90분 · 오너 9/28)에
+맞추고, 안내문이 날짜 · 입구를 하드코딩하지 않게 서버 값으로 내려준다(10/1 잠금이 창구보다 먼저 온 꼴의 재발 방지).
+
+### 9.25.1 칸 열기 — `POST /slots` `lessonType: "consult"`
+- `durationMin` **60 · 90 둘 다 된다** — 200 `{ "created": 1, "firstId": "…", "durationMin": 60 }`(90 도 같은 모양).
+- 그 밖(30 · 120 · 150 · 180 · `endAt` 으로 만든 다른 길이) → 400 `{ "error": { "code": "level_test_length", "allowed": [60, 90] } }`.
+  길이표 밖 값(예: 45)은 종전대로 400 `invalid_body`.
+- 정원 1 고정 · 판수 차감 없음 · 겹치면 409 `slot_taken` — 종전 그대로.
+- 매주 반복(`repeat`)은 **지금은 그대로 받는다**(2~12주). 막을지는 ⏳ 오너 결정(어플 추천: 레벨 테스트 칸 반복 불가).
+- 이미 열려 있는 다른 길이 칸은 건드리지 않는다. 닫은 칸 「다시 열기」는 원래 길이로 되살린다.
+
+### 9.25.2 칸 목록 — `GET /slots` 에 두 키
+```json
+"levelTest": { "lengths": [60, 90], "botRecordOpen": true },
+"intake": { "opensOn": "2026-10-08", "open": false }
+```
+
+| 키 | 뜻 |
+|---|---|
+| `levelTest.lengths` | 레벨 테스트 칸 길이 고르기 목록(분). 이 밖은 서버가 400 |
+| `levelTest.botRecordOpen` | 봇 /수업등록 「진단상담」으로 레벨 테스트를 남길 수 있는지. `false` 면 안내문에서 봇 이야기를 뺀다 |
+| `intake.opensOn` | 신청 창구(start.html) 제출이 열리는 날(KST `YYYY-MM-DD`) — 화면의 「(10/8)」 대신 이 값 |
+| `intake.open` | 오늘(KST)이 `opensOn` 이상이면 `true` — 미리보기 제목 「신청 창구가 열리면 이렇게 보여요」는 `false` 일 때만 |
+
+- 칸이 하나도 없어도 두 키는 온다(`slots: []` 와 같이).
+- `botRecordOpen` 정본 = 서버 `CONSULT_LOCK_FROM`(10/1 오너 지시로 풀어 둠 = 열림). 봇이 안 뜬 배포면 `false`.
+- `opensOn` 정본 = 서버 `INTAKE_ACCEPT_FROM`(개인정보처리방침 개정 시행일과 같은 날). 날짜만 보고 열려 그날 재배포가 없다.
+
+### 9.25.3 신청 목록 — `GET /applications` 에도 같은 `intake` 키
+`{ "applications": [ … ], "intake": { "opensOn": "2026-10-08", "open": false } }` — 9.25.2 와 같은 값이다.
+
+### 9.25.4 지금 값 (2026-10-02 실측)
+- 봇 /수업등록 「진단상담」 **열림**(`CONSULT_LOCK_FROM = null`) — 10/1 부터 잠긴 건 레슨 기록 · /판수정정 뿐이다. 강의(직강)도 열림.
+- 신청 창구 제출 **10/8 열림**(`INTAKE_ACCEPT_FROM = "2026-10-08"`).
+- 다시 잠그는 날: 신청 창구 「맡기 → 칸에 넣기 → 마침 → 상담 기록」이 운영에서 확인된 날. 그때 `CONSULT_LOCK_FROM` 에
+  날짜만 넣으면 그날부터 `botRecordOpen` 이 `false` 가 된다(봇 동작 변경이라 오너 OK · 날짜).
+
+### 9.25.5 코드 · 문구(제안 · 앱이 최종)
+
+| 상황 | 문구 |
+|---|---|
+| 400 `level_test_length` | 레벨 테스트 칸은 1시간이나 1시간 30분으로 열 수 있어요 |
+| `intake.open: false` · `botRecordOpen: true` | 신청 창구는 {opensOn}에 열려요. 그 전 레벨 테스트는 봇 /수업등록 「진단상담」으로 남겨 주세요 |
+| `intake.open: true` | 신청자는 레벨 테스트 칸에 넣고 「레벨 테스트 마침」으로 남겨요 |
+| `botRecordOpen: false` · `intake.open: false` | 레벨 테스트 기록은 원장님께 말해 주세요 |
+
+**반장 계약 한 줄**: 레벨 테스트 칸 길이는 `GET /slots` → `levelTest.lengths`(지금 [60, 90])로만 고르게 한다 — 그 밖은
+400 `level_test_length { allowed }`. 안내문 날짜는 `intake.opensOn` · 열렸는지는 `intake.open` · 봇 안내는 `levelTest.botRecordOpen`
+이 `true` 일 때만(`GET /applications` 에도 `intake` 가 같이 온다).

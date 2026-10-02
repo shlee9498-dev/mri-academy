@@ -982,6 +982,9 @@ function payreqReceiptRow(id) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`payreq_cr:${id}`).setLabel("현금영수증 발급함").setStyle(ButtonStyle.Secondary));
 }
+// 봇 /수업등록 「진단상담」(레벨 테스트 기록)이 지금 열려 있는지 — 트레이너 앱 안내문이 봇을 가리켜도 되는지(계약 §9.25 · 어플 10/2).
+//   봇이 안 뜬 배포(DISCORD_TOKEN 없음)면 false 로 남는다. 판정의 정본은 아래 봇 블록의 CONSULT_LOCK_FROM 하나다.
+let consultBotOpen = () => false;
 if (process.env.DISCORD_TOKEN) {
   const client = new Client({
     intents: [
@@ -1411,6 +1414,7 @@ if (process.env.DISCORD_TOKEN) {
   const lessonLocked = () => !!LESSON_LOCK_FROM && kstToday() >= LESSON_LOCK_FROM;
   const lessonLockedAll = () => !!LESSON_LOCK_ALL_FROM && kstToday() >= LESSON_LOCK_ALL_FROM;
   const consultLocked = () => !!CONSULT_LOCK_FROM && kstToday() >= CONSULT_LOCK_FROM;
+  consultBotOpen = () => !consultLocked();                  // 트레이너 앱 「levelTest.botRecordOpen」(§9.25)이 같은 판정을 쓴다
   const isMriOwner = (itx) => !!process.env.MRI_OWNER_ID && itx.user.id === process.env.MRI_OWNER_ID;
   // /수업등록 성공분을 DB lesson_sessions에도 기록(시트 병행·검증용).
   //   시트가 진실인 단계 — DB insert는 best-effort: 실패/이름 미매칭이어도 명령 성공(오너 DM만).
@@ -8339,7 +8343,8 @@ intakeFlow = require("./intake-cards.cjs").mountIntakeFlow({
 // ── 신청 창구 트레이너 앱 라우트(계약 §9.20 · PR-3 · /api/trainer-portal/applications*) ──
 // trainer-portal 뒤 — 그 파일이 건 공유비밀 게이트 · 트레이너 판정 · 응답 가드를 같은 함수로 쓴다.
 // 상태 전이는 위 흐름(intakeFlow) 한 벌이라 앱에서 누른 것도 디스코드 카드에 그대로 보인다.
-require("./intake-trainer.cjs")(app, { sbSelect, limit, trainer: trainerPortal, portal: studentPortal, flow: () => intakeFlow });
+require("./intake-trainer.cjs")(app, { sbSelect, limit, trainer: trainerPortal, portal: studentPortal, flow: () => intakeFlow,
+  intakeOpensOn: INTAKE_ACCEPT_FROM });                            // 신청 목록의 「intake」 키(계약 §9.25)
 
 // ── 상담 보드(계약 §9.23 · 설계 docs/consult-board-design.md · §60 · /api/trainer-portal/consults*) ──
 // 레벨 테스트 · 클랜 상담 · 일반 상담을 한 보드로 — 신청 · 레벨 테스트 예약 · 상담 기록을 카드 한 장으로 묶는다.
@@ -8381,6 +8386,8 @@ require("./booking-api.cjs")(app, {
   onConsultDone: onLevelTestDone,                                  // 레벨 테스트 「완료」 → 상담 기록
   // 레벨 테스트 「완료」의 레벨(계약 §9.16) — 명부 레벨 칸 · 직강생이면 false(반 레벨이 따라간다)
   setLevel: async (studentId, level, staff) => (await trainerPortal.setLevel(studentId, level, staff)).ok,
+  // 칸 목록의 레벨 테스트 안내 키(계약 §9.25) — 신청 창구 오픈일 · 봇 「진단상담」 입구
+  levelTest: { intakeOpensOn: INTAKE_ACCEPT_FROM, botRecordOpen: () => consultBotOpen() },
 });
 
 // ── 트레이너 앱 「수업 기록하기(예약 없이)」·「판수 조정 요청」(계약 §9.9 · §9.10 · 오너 최우선 2026-09-30) ──

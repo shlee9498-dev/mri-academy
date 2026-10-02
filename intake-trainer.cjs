@@ -26,6 +26,10 @@ module.exports = function mountIntakeTrainer(app, deps) {
   const { opaqueId, readOpaqueId, fail } = portal;
   const T = "/api/trainer-portal/applications";
   const enc = encodeURIComponent;
+  // 신청 창구 오픈일(계약 §9.25 · server.js INTAKE_ACCEPT_FROM) — 미리보기 제목 · 안내문이 「(10/8)」을 하드코딩하지 않게 내려준다.
+  const intakeOpensOn = deps.intakeOpensOn || null;
+  const kstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const intakeNow = () => ({ opensOn: intakeOpensOn, open: intakeOpensOn ? kstToday() >= intakeOpensOn : null });
   const rateLimit = (name, max, windowMs) => limit(name, max, windowMs, (res) => fail(res, 429, "rate_limited"));
   const wrap = (fn) => (req, res) => fn(req, res).catch((e) => {
     console.error("intake_trainer_error", req.method, (req.originalUrl || "").split("?")[0], e?.status || "", String(e?.message || "").slice(0, 120));
@@ -129,7 +133,7 @@ module.exports = function mountIntakeTrainer(app, deps) {
       }
       return out;
     });
-    sendTrainer(res, { applications });
+    sendTrainer(res, { applications, intake: intakeNow() });
   }));
 
   // ════════ POST /applications/:id/claim ════════

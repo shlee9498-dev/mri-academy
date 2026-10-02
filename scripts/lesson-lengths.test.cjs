@@ -38,3 +38,8 @@ test("DB 사본과 같다 — 한 덩어리 칸 길이(open_trainer_slots · 칸
   const chk = last(/check \(duration_min in \(([\d, ]+)\)\)/);
   assert.deepEqual(chk[1].split(",").map((x) => Number(x.trim())), [...L.GROUP_LENGTHS]);
 });
+
+test("레벨 테스트 칸 길이 — 60 · 90분 · 그룹 길이표 안(DB 칸 길이 제약이 받는 값) (계약 §9.25)", () => {
+  assert.deepEqual([...L.LEVEL_TEST_LENGTHS], [60, 90]);
+  for (const m of L.LEVEL_TEST_LENGTHS) assert.ok(L.GROUP_LENGTHS.includes(m), `${m}분`);
+});
