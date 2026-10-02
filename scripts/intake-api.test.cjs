@@ -258,6 +258,23 @@ test("GET /api/applications/options — 활성 트레이너 · 원장만 · 레�
   assert.ok(r.json.slots.some((s) => s.key === "weekday_evening"));
 });
 
+test("GET /api/applications/options — 레벨 테스트 카드 링크는 env GROBLE_LINK_LEVELTEST(https://)가 있을 때만 card.links.levelTest", async () => {
+  db = freshDb();
+  const prev = process.env.GROBLE_LINK_LEVELTEST;
+  try {
+    delete process.env.GROBLE_LINK_LEVELTEST;
+    assert.equal("card" in (await call("/api/applications/options")).json, false);
+    process.env.GROBLE_LINK_LEVELTEST = "http://example.test/lt";                 // https:// 가 아니면 켜지 않는다
+    assert.equal("card" in (await call("/api/applications/options")).json, false);
+    process.env.GROBLE_LINK_LEVELTEST = "https://example.test/lt";
+    const r = await call("/api/applications/options");
+    assert.deepEqual(r.json.card, { links: { levelTest: "https://example.test/lt" } });
+    assert.equal(r.json.levelTestWon, 20000);
+  } finally {
+    if (prev === undefined) delete process.env.GROBLE_LINK_LEVELTEST; else process.env.GROBLE_LINK_LEVELTEST = prev;
+  }
+});
+
 test("POST — 로그인 없으면 401 · 14세 미만은 아무것도 저장하지 않는다", async () => {
   db = freshDb(); writes.length = 0;
   assert.equal((await call("/api/applications", { method: "POST", body: good() })).json.error.code, "login_required");

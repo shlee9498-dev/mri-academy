@@ -13,7 +13,9 @@
 //      그 결제에 진행자를 채운다. 0건 · 여러 건이면 채우지 않고 오너에게 알린다(추측으로 붙이면 가산이 남에게 간다).
 //      이미 진행자가 적힌 결제는 건드리지 않는다. 가산 금액(10,000 / 15,000)은 엔진이 paid_at 으로 정한다.
 //   금액(fee) = 붙은 결제 금액 그대로. 결제가 없으면 신청일(예약한 날 · KST)로 정한다 —
-//      10/1 이후 = consultCourse(레벨 테스트) · 그 전 = consultLesson(레슨 상담 기존 금액). 값은 config/payments.js 정본.
+//      10/1 이후 = levelTest(레벨 테스트 · config/payments.js 정본) · 그 전 = 0(금액 모름).
+//      9/30 이전 신청분이 쓰던 레슨 상담 키(consultLesson)는 2026-10-02 결제 트랙 결정으로 지웠다 —
+//      앱 레벨 테스트 칸 · 예약은 10/2 기준 0건이라 그 전 신청으로 이 길을 타는 예약이 없다(실측).
 //
 // 같은 예약에 두 번 만들지 않는다 — booking_id(§60 · 예약 하나에 한 행) → 그 예약의 신청에 붙은 상담 기록(상담 보드 ·
 //   application_id) → §60 전 메모 표시(「앱 예약 #id」) 순으로 찾는다. 찾은 행이 끝남이면 아무것도 안 하고, 아니면
@@ -29,9 +31,10 @@ const dayDiff = (a, b) => Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${
 
 // ── 순수 함수(테스트: scripts/consult-record.test.cjs) ──────────────────────
 // 결제가 없을 때의 금액 — 신청일로 정한다. prices = config/payments.js PRICES
+//   9/30 이전 신청분은 0(옛 레슨 상담가는 정본에서 지웠다 · 추측하지 않는다 — 결제가 붙으면 그 금액을 쓴다).
 function consultFeeFor(appliedOn, prices) {
-  const key = String(appliedOn || "") >= LEVELTEST_START ? "consultCourse" : "consultLesson";
-  const v = Number(prices?.[key]);
+  if (String(appliedOn || "") < LEVELTEST_START) return 0;
+  const v = Number(prices?.levelTest);
   return Number.isInteger(v) && v > 0 ? v : 0;
 }
 

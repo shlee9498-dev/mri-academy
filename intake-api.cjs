@@ -3,7 +3,7 @@
 //   트레이너 앱 라우트(계약 §9.20)는 뒤 PR 이다.
 //
 //   GET  /api/events/:code          이벤트 배너 { code, title, until, discount, active, payWithinDays } · 없는 코드 404
-//   GET  /api/applications/options  폼 선택지(트레이너 · 티어 · 시간대 · 레벨 테스트비 · 개인정보 안내 판 · 최소 나이)
+//   GET  /api/applications/options  폼 선택지(트레이너 · 티어 · 시간대 · 레벨 테스트비 · 카드 링크 · 개인정보 안내 판 · 최소 나이)
 //   GET  /api/applications/me       로그인한 사람의 신청 상태
 //   POST /api/applications          신청
 //
@@ -13,6 +13,8 @@
 // 오너 결정(2026-09-30): 14세 미만은 받지 않는다(아무것도 저장하지 않는다) · 배그 닉 · 플랫폼 필수 ·
 //   로그인하면서 디스코드 서버 자동 입장(server.js 콜백 · 결과는 토큰 gj) · prospect 는 수강생 앱 로그인 막기(student-portal).
 "use strict";
+
+const { cardLinksFromEnv, GROBLE_LINK_ENV_INTAKE } = require("./payreq-intake.cjs");
 
 // 칩 값 → 기본 이름. 화면 이름은 명세(클로드디자인)가 정본이고, 값이 바뀌면 여기만 고친다(DB 는 값을 검사하지 않는다).
 const TIERS = Object.freeze({
@@ -149,14 +151,14 @@ function pgCode(e) {
   try { return JSON.parse(e?.body || "{}").code || null; } catch { return null; }
 }
 
-// 레벨 테스트비 — config/payments.js(결제 트랙 정본 · 읽기만)의 consultCourse. 못 읽으면 null(추측하지 않는다).
+// 레벨 테스트비 — config/payments.js(결제 트랙 정본 · 읽기만)의 levelTest. 못 읽으면 null(추측하지 않는다).
 //   선택지 응답과 카드 [입금 확인](intake-cards.cjs)이 같은 값을 쓴다.
 let priceCache;
 async function levelTestWon() {
   if (priceCache !== undefined) return priceCache;
   try {
     const m = await import("./config/payments.js");
-    priceCache = Number.isInteger(m.PRICES?.consultCourse) ? m.PRICES.consultCourse : null;
+    priceCache = Number.isInteger(m.PRICES?.levelTest) ? m.PRICES.levelTest : null;
   } catch (e) { console.error("intake_price", e?.message); priceCache = null; }
   return priceCache;
 }
@@ -179,6 +181,14 @@ function mountIntake(app, deps) {
     return on;
   }
   logOpen();
+  // 레벨 테스트 카드(그로블) 링크 — env GROBLE_LINK_LEVELTEST 로만 온다(오너가 넣는다 · 결제 트랙 10/2).
+  //   요청마다 env 를 읽는다(앱 pay-info 와 같은 규칙 · https:// 만). 기동 로그에는 켜짐 여부와 env 이름만 남긴다.
+  const levelTestCard = () => cardLinksFromEnv(process.env, GROBLE_LINK_ENV_INTAKE).links.levelTest || null;
+  {
+    const { links, bad } = cardLinksFromEnv(process.env, GROBLE_LINK_ENV_INTAKE);
+    console.log(`[intake] 레벨 테스트 카드 링크 ${links.levelTest ? "켜짐" : "꺼짐"}`
+      + (bad.length ? ` · 형식 틀림(https:// 아님): ${bad.join(", ")}` : ""));
+  }
   const enc = encodeURIComponent;
   const fail = (res, status, code) => res.status(status).json({ error: { code } });
   const rateLimit = (name, max, windowMs) => limit(name, max, windowMs, (res) => fail(res, 429, "rate_limited"));
@@ -248,11 +258,14 @@ function mountIntake(app, deps) {
   app.get("/api/applications/options", rateLimit("intakeOptions", 60, 60_000), wrap(async (req, res) => {
     if (!ready()) return fail(res, 503, "intake_unavailable");
     const staff = await sbSelect("staff", "select=id,name&active=eq.true&role=in.(trainer,owner)&order=id.asc");
+    const ltCard = levelTestCard();
     res.json({
       trainers: staff.map((s) => ({ id: portal.opaqueId("trainer", s.id), name: s.name })),
       tiers: Object.entries(TIERS).map(([key, label]) => ({ key, label })),
       slots: Object.entries(SLOTS).map(([key, label]) => ({ key, label })),
       levelTestWon: await levelTestWon(),
+      // 카드 링크가 없으면 card 키 자체가 없다(앱 pay-info 의 card.links 와 같은 모양) — 화면은 카드 선택지를 숨긴다.
+      ...(ltCard ? { card: { links: { levelTest: ltCard } } } : {}),
       privacyVersion: PRIVACY_VERSION,
       minAge: MIN_AGE,
       accepting: accepting(),

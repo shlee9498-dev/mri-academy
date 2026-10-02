@@ -12,6 +12,7 @@
 //                 수강생 앱 응답 · 트레이너 쪽 · 로그에는 뒤 4자리(last4)만. 키 이름에 phone 을 쓰지 않는다(앱 가드).
 //   카드       method "card" · 그로블 주문번호(orderNo) 필수 · 같은 주문번호 두 번 금지(대기 · 승인).
 //              링크는 env(GROBLE_LINK_LESSON10/21/33) — 없으면 그 상품은 카드를 받지 않는다(앱은 카드 선택지를 숨긴다).
+//              레벨 테스트 링크(GROBLE_LINK_LEVELTEST)는 신청 창구(start.html · intake-api.cjs)만 읽는다(결제 트랙 10/2).
 //              가격은 계좌이체와 같다(카드 할증 없음) · 할부는 기록하지 않는다(판수는 승인 때 전부).
 // ============================================================
 "use strict";
@@ -21,10 +22,15 @@ const CR_RECOMMEND_FROM_WON = 100000;          // 계좌이체 합계가 이 이
 const RECENT_DUP_MS = 10 * 60 * 1000;           // 같은 상품 · 같은 금액 10분
 const CR_OVERDUE_DAYS = 4;                      // 입금일로부터 4일이 지나도 미발급이면 오너 DM(오너 판정 9/30 — 7일에서 당김 · 자진발급 5일 기한)
 const CR_ALERT_FROM = "2026-09-30";             // 이 날(KST)부터 들어온 신청만 알린다 — 그 전 신청은 이 기능이 없던 때다
+// env 이름 규칙 = GROBLE_LINK_ + 상품 키(config/payments.js) 대문자.
 const GROBLE_LINK_ENV = Object.freeze({
   lesson10: "GROBLE_LINK_LESSON10",
   lesson21: "GROBLE_LINK_LESSON21",
   lesson33: "GROBLE_LINK_LESSON33",
+});
+// 신청 창구(아직 수강생이 아닌 사람)가 파는 상품 — 수강생 앱 목록에는 넣지 않는다(결제 트랙 결정 2026-10-02).
+const GROBLE_LINK_ENV_INTAKE = Object.freeze({
+  levelTest: "GROBLE_LINK_LEVELTEST",
 });
 const PURPOSES = Object.freeze({ deduction: "소득공제", proof: "지출증빙" });
 const PAYREQ_KEYS = Object.freeze(["productKey", "quantity", "method", "depositorName", "orderNo",
@@ -34,7 +40,7 @@ const ORDER_NO = /^[A-Za-z0-9_-]{4,40}$/;
 
 // 앱에서 팔 수 있는 상품 — 승인 시 본표 편입이 **자동인 것**(판수)뿐이다(계약 §9.5).
 //   강의 · 세트 · 직강은 §18d 에서 수동이라 자동 입구를 열면 승인 뒤 아무 일도 안 일어난 것처럼 보인다.
-//   레벨 테스트(consultCourse)는 뺐다(오너 2026-09-30 — 수강생 앱은 기존 수강생 전용).
+//   레벨 테스트(levelTest)는 뺐다(오너 2026-09-30 — 수강생 앱은 기존 수강생 전용 · 카드 결제는 신청 창구 쪽 · 결제 트랙 10/2).
 const PORTAL_PRODUCTS = Object.freeze([
   Object.freeze({ key: "lesson10", kind: "판수", games: 10 }),
   Object.freeze({ key: "lesson21", kind: "판수", games: 21 }),
@@ -55,9 +61,10 @@ async function loadProducts() {
 }
 
 // 그로블 링크 — env 값이 https:// 로 시작할 때만 켠다. 형식이 틀린 값은 켜지 않고 이름만 알린다(값은 로그에 안 남긴다).
-function cardLinksFromEnv(env = {}) {
+//   map = { 상품 키: env 이름 } — 기본은 수강생 앱 표. 신청 창구는 GROBLE_LINK_ENV_INTAKE 를 넘긴다.
+function cardLinksFromEnv(env = {}, map = GROBLE_LINK_ENV) {
   const links = {}, missing = [], bad = [];
-  for (const [key, name] of Object.entries(GROBLE_LINK_ENV)) {
+  for (const [key, name] of Object.entries(map)) {
     const v = String(env[name] || "").trim();
     if (!v) missing.push(name);
     else if (!/^https:\/\/\S+$/.test(v)) bad.push(name);
@@ -203,7 +210,8 @@ function overdueReceipts(rows, today) {
 }
 
 module.exports = {
-  QUANTITY_MAX, CR_RECOMMEND_FROM_WON, RECENT_DUP_MS, CR_OVERDUE_DAYS, CR_ALERT_FROM, GROBLE_LINK_ENV, PURPOSES, PAYREQ_KEYS,
+  QUANTITY_MAX, CR_RECOMMEND_FROM_WON, RECENT_DUP_MS, CR_OVERDUE_DAYS, CR_ALERT_FROM, GROBLE_LINK_ENV, GROBLE_LINK_ENV_INTAKE,
+  PURPOSES, PAYREQ_KEYS,
   PORTAL_PRODUCTS, loadProducts, cardLinksFromEnv, normalizeCashReceipt, parsePayreqBody, recentDuplicate, methodOf, unitOf, productText,
   receiptApplies, formatReceiptNumber, last4, receiptOwnerLine, receiptForStudent, overdueReceipts, addDays,
 };

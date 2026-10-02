@@ -25,7 +25,7 @@
 
 ## 2. 유형 · 단계 · 결과
 
-- **유형** `type`: `level_test`(레벨 테스트 · 유료 · 정가 `PRICES.consultCourse`) · `clan`(클랜 상담 · GmI · 무료) · `general`(일반 상담 · 무료).
+- **유형** `type`: `level_test`(레벨 테스트 · 유료 · 정가 `PRICES.levelTest`) · `clan`(클랜 상담 · GmI · 무료) · `general`(일반 상담 · 무료).
   DB 는 새 칸 `consults.consult_type`. 칸이 비어 있는 옛 행은 `kind` 로 읽는다 — `consult` → `level_test` · `clan` → `clan`.
   (`kind` 는 그대로 둔다 — 봇 · 사이트 신청 · 정산 문서가 쓰는 값이다. 일반 상담도 `kind='consult'` 에 `consult_type='general'`.)
 - **단계** `stage`: `applied`(신청 · 시간 전) → `scheduled`(시간 잡힘) → `done`(끝남) · 어느 단계든 `closed`(취소 · 노쇼 · 신청 닫음).

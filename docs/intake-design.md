@@ -30,7 +30,7 @@ start.html?code=ORDER10 ─ [디스코드로 신청하기](OAuth) ─ 입력 ─
 | 수강생 앱 로그인 `/exchange` | `discord_id` 로 찾고 **상태를 보지 않는다** → 디스코드가 붙은 prospect 는 지금도 로그인된다(해당 0명) | prospect 는 403 `application_pending`(§11-6 · PR-1 반영) |
 | 레벨 테스트 칸 | `trainer_slots.lesson_type='consult'` · 90분 · 예약은 `slot_bookings`(`student_id` 필수). 트레이너 대신 넣기는 내 수강생(active · paused) + 90일 안에 가르친 사람만 → **prospect 는 못 넣는다** | 내가 맡은 신청자는 넣는다(§5.3) |
 | 「완료」 | consult 예약이면 `level` 을 받고 `consults` 기록을 자동으로 만든다(`consult-record.cjs`). ±45일 상담 결제 1건이면 자동 연결 | 그대로 쓴다. 신청 상태만 `tested` 로 |
-| 레벨 테스트비 | 20,000(`PRICES.consultCourse` 「강의 상담 / 레벨테스트」). 기록 = `/결제신청` 구분 상담 → §18d → `payments.kind='consult'` | 오너 카드 [입금 확인] 한 번(§11-5 · PR-2) |
+| 레벨 테스트비 | 20,000(`PRICES.levelTest` 「레벨 테스트」 · 2026-10-02 키 정리 전 이름 `consultCourse`). 카드 결제 링크 = env `GROBLE_LINK_LEVELTEST`(신청 창구 전용 · 수강생 앱에는 없다). 기록 = `/결제신청` 구분 상담 → §18d → `payments.kind='consult'` | 오너 카드 [입금 확인] 한 번(§11-5 · PR-2) |
 | 보호자 동의 | `consent.html` · §33 `guardian_consents` · 생년월일로 판정. 등록을 막는 코드는 없다 | 14~17세 안내 + 보호자 동의 확인 뒤에만 등록(§11-4 · PR-3) |
 | 방문 집계 | Umami(사이트 22쪽) · 사용자 이벤트는 `apply_submit` 하나 | `start_view` · `start_submit` 에 코드를 싣는다 |
 | 레슨문의 봇 | **이 저장소에 없다**(코드 · env 0건). index.html 「Discord 상담문의로」 2곳(945 · 953)이 초대 링크로 간다 | 그 2곳을 새 페이지로. 디스코드 안의 안내문 · 고정 메시지는 오너가 링크로 바꾼다 |
@@ -118,7 +118,7 @@ DDL 원문은 정본 파일 하나에만 둔다(문서에 베끼면 갈라진다
 | 메서드 · 경로 | 인증 | 요청 → 응답 |
 |---|---|---|
 | `GET /api/events/:code` | 없음 | `{ code, title, until, discount, active, payWithinDays }` · 기간 밖 · 꺼짐이면 `active: false` · 없는 코드 404 `not_found` |
-| `GET /api/applications/options` | 없음 | `{ trainers: [{ id, name }], tiers: […], slots: […], levelTestWon: 20000, privacyVersion, minAge: 14, accepting }`. `accepting` = 제출을 받는 중인지(아래 🔒). 트레이너 = 활성 트레이너, id 는 불투명. 레벨 테스트비는 `config/payments.js` 에서 읽는다 |
+| `GET /api/applications/options` | 없음 | `{ trainers: [{ id, name }], tiers: […], slots: […], levelTestWon: 20000, card?: { links: { levelTest } }, privacyVersion, minAge: 14, accepting }`. `accepting` = 제출을 받는 중인지(아래 🔒). 트레이너 = 활성 트레이너, id 는 불투명. 레벨 테스트비는 `config/payments.js` 에서 읽는다. `card` 는 env `GROBLE_LINK_LEVELTEST` 가 `https://` 로 들어 있을 때만 온다(없으면 키 자체가 없다 → 화면은 카드 선택지를 숨긴다 · 앱 `pay-info` 의 `card.links` 와 같은 모양 · 결제 트랙 결정 2026-10-02) |
 | `GET /api/applications/me` | Bearer | `{ state: "none" \| "open" \| "student", application?: { id, status, trainerName, levelTestAt, depositConfirmed } }` |
 | `POST /api/applications` | Bearer | 아래 |
 
@@ -184,7 +184,7 @@ DDL 원문은 정본 파일 하나에만 둔다(문서에 베끼면 갈라진다
 - **카드는 DB 상태를 그리는 화면이다**(`intake-cards.cjs` `renderCard`). 맡기 · 배정 · 입금 확인 · 닫기 · (PR-3) 레벨 테스트 칸 뒤에
   `intake_cards` 에 적힌 카드 전부를 다시 그린다(`refresh`). 트레이너 카드는 남이 맡거나 닫히면 한 줄로 접힌다(세부는 맡은 사람 · 오너만).
 - [배정] 은 새 신청 · 맡음 상태에서만(칸이 잡힌 뒤에는 칸부터 옮긴다). 카드가 없던 사람에게는 새 카드를, 옮겨 온 사람에게는 한 줄 DM 을 보낸다.
-- [입금 확인](오너 결정 5): 결제 요청 1건(구분 상담 · 정가 `consultCourse` · 그 prospect · 맡은 트레이너 · 입금일 = 누른 날 KST ·
+- [입금 확인](오너 결정 5): 결제 요청 1건(구분 상담 · 정가 `levelTest` · 그 prospect · 맡은 트레이너 · 입금일 = 누른 날 KST ·
   계좌이체 · `requested_by='intake:<id>'`)을 만들고 승인한다 → §18d 트리거가 `payments(consult)` 를 만든다. 요청 번호를 신청 행에 적어 두어
   다시 눌러도 요청은 1건이다. §18d 가 막으면(잠긴 달 등) 요청은 pending · 신청은 booked 그대로 두고 사유를 오너에게 보인다.
 - [닫기]: 이유 6종(§55 CHECK). 앞으로 남은 레벨 테스트 칸이 살아 있으면 막는다(칸부터 취소). 입금 확인된 신청이면 「환불은 따로」를 띄운다.
@@ -194,7 +194,7 @@ DDL 원문은 정본 파일 하나에만 둔다(문서에 베끼면 갈라진다
 ### 6.2 신청자 DM
 
 - 접수 · 레벨 테스트 안내 · 일정 확정은 **어플 전달 원문(2026-09-30)** 그대로(`dmReceived` · `dmScheduled` · `dmConfirmed` · 시험이 원문을 고정).
-  ① 제출 직후 · ② 레벨 테스트 칸을 넣을 때(PR-3) · ③ [입금 확인] 뒤. 가격은 원문 숫자 대신 정본(`consultCourse`)을 찍는다 — 지금 같은 20,000원.
+  ① 제출 직후 · ② 레벨 테스트 칸을 넣을 때(PR-3) · ③ [입금 확인] 뒤. 가격은 원문 숫자 대신 정본(`levelTest`)을 찍는다 — 지금 같은 20,000원.
 - 등록 DM(앱 안내)은 표에 없으면 시안을 받아 넣는다.
 - 계좌는 env `PAY_BANK_NAME` · `PAY_BANK_ACCOUNT` · `PAY_BANK_HOLDER`(수강생 앱 입금 신청과 같은 값). **페이지 · 코드에 박지 않는다.**
 
