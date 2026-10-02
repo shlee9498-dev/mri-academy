@@ -353,7 +353,7 @@ module.exports = function mountStudentPortal(app, deps) {
   //    ESM 이라 동적 import 로 한 번만 읽어 캐시한다(server.js 는 CJS).
   //
   // 앱에서 팔 수 있는 상품(판수 3종)과 가격 읽기는 payreq-intake.cjs 한 벌이다 — server.js 오너 카드도 같은 목록을 본다.
-  //   레벨 테스트(consultCourse)는 뺐다(오너 2026-09-30). 목록 밖 키라 POST /payment-requests 도 400 이다.
+  //   레벨 테스트(levelTest)는 뺐다(오너 2026-09-30). 목록 밖 키라 POST /payment-requests 도 400 이다.
   const products = () => payreqIntake.loadProducts();
 
   // 계좌는 **env 로만** 온다. 코드·저장소에 계좌번호를 두지 않는다(저장소 규칙).

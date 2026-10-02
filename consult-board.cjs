@@ -292,7 +292,7 @@ module.exports = function mountConsultBoard(app, deps) {
       try { prices = (await import("./config/payments.js")).PRICES || {}; }
       catch (e) { console.error("consult_board_prices", e?.message); prices = {}; }
     }
-    const v = Number(prices.consultCourse);
+    const v = Number(prices.levelTest);
     return Number.isInteger(v) && v > 0 ? v : 0;
   }
 

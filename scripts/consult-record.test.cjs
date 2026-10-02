@@ -6,11 +6,13 @@ const assert = require("node:assert/strict");
 const createRecorder = require("../consult-record.cjs");
 const T = createRecorder._test;
 
-const PRICES = { consultLesson: 15000, consultCourse: 20000 };
+const PRICES = { levelTest: 20000 };
 
-test("결제가 없을 때 금액 — 10/1 신청분부터 레벨 테스트 가격 · 그 전은 레슨 상담 기존 가격", () => {
+test("결제가 없을 때 금액 — 10/1 신청분부터 레벨 테스트 가격 · 그 전은 0(옛 레슨 상담 키는 10/2 결제 트랙 결정으로 지움)", () => {
   assert.equal(T.consultFeeFor("2026-10-01", PRICES), 20000);
-  assert.equal(T.consultFeeFor("2026-09-30", PRICES), 15000);
+  assert.equal(T.consultFeeFor("2026-09-30", PRICES), 0);
+  assert.equal(T.consultFeeFor("2026-09-30", { ...PRICES, consultLesson: 15000 }), 0);   // 옛 키가 남아 있어도 읽지 않는다
+  assert.equal(T.consultFeeFor("2026-10-01", { consultCourse: 20000 }), 0);              // 옛 이름은 안 읽는다(정본은 levelTest)
   assert.equal(T.consultFeeFor("2026-10-01", {}), 0);                 // 가격표를 못 읽으면 0(추측하지 않는다)
 });
 
@@ -89,7 +91,7 @@ test("상담 기록 — 결제가 없으면 신청일 금액 · 미납 · 오너
   const r = await createRecorder(deps).recordLevelTestDone({ bookingId: 31, trainerId: 2, trainerName: "트레이너B" });
   assert.equal(log.consults[0].paid_status, "unpaid");
   assert.equal(log.consults[0].payment_id, null);
-  assert.equal(log.consults[0].fee, 20000);                           // config/payments.js consultCourse
+  assert.equal(log.consults[0].fee, 20000);                           // config/payments.js levelTest
   assert.equal(r.warn, "payment_missing");
   assert.equal(log.patches.length, 0);
 });

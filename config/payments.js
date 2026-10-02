@@ -17,10 +17,14 @@
 /**
  * 상품 키 — PRICES와 GROBLE_LINKS가 같은 키를 공유한다.
  * 키를 추가·삭제할 때는 반드시 양쪽을 함께 고친다(아래 개발용 정합성 검사가 잡는다).
+ *
+ * 2026-10-02 상담 키 정리(결제 트랙 결정 · 경비 대행): 레슨 상담(consultLesson · 15,000)을 지우고
+ * 강의 상담 키(consultCourse)를 levelTest(「레벨 테스트」 · 20,000)로 바꿨다. 10/1 신청분부터
+ * 상담은 레벨 테스트 한 가지다(오너 확정 9/28). 레벨 테스트 카드 결제는 신청 창구(start.html) 쪽이다.
  */
 export const PRODUCT_KEYS = /** @type {const} */ ([
   "lesson10", "lesson21", "lesson33",
-  "consultLesson", "consultCourse",
+  "levelTest",
   "direct8_beginner", "direct8_inter", "direct8_advanced",
   "oneOnOneTrial", "oneOnOne", "vipDayPass",
   "setEntry", "setLeap", "setMaster",
@@ -37,6 +41,7 @@ export const PRODUCT_KEYS = /** @type {const} */ ([
  *             구성도 바뀐다: 강의 8회로 통일 + 레슨을 실제 판매 SKU(10·21·33판)에 맞춘다.
  *             기존 세트는 20판·30판이라 단품에 없는 판수를 팔고 있었다.
  *   직강 8회 3종 · 1:1 직강 · VIP DAY PASS · 상담비 2종  현행 유지
+ *   (2026-10-02 상담비 2종 → 레벨 테스트 20,000 한 가지 · 레슨 상담 15,000 폐지 — 위 상품 키 주석)
  *
  * 그로블 상품 가격은 그로블 대시보드에서 따로 수정한다 — 링크 URL은 유지되므로
  * GROBLE_LINKS는 개정과 무관하게 그대로 둔다.
@@ -46,8 +51,7 @@ export const PRICES = {
   lesson21: 90000,
   lesson33: 140000,
 
-  consultLesson: 15000,
-  consultCourse: 20000,
+  levelTest: 20000,
 
   direct8_beginner: 250000,
   direct8_inter: 270000,
@@ -97,8 +101,7 @@ export const GROBLE_LINKS = {
   lesson21: "",
   lesson33: "",
 
-  consultLesson: "",
-  consultCourse: "",
+  levelTest: "",
 
   direct8_beginner: "",
   direct8_inter: "",
@@ -119,8 +122,7 @@ export const PRODUCT_LABELS = {
   lesson21: "21판 패키지",
   lesson33: "33판 패키지",
 
-  consultLesson: "레슨 상담",
-  consultCourse: "강의 상담 / 레벨테스트",
+  levelTest: "레벨 테스트",
 
   direct8_beginner: "직강 8회 · 기초 입문",
   direct8_inter: "직강 8회 · 체계적 과정",

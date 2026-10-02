@@ -64,6 +64,16 @@ test("카드 링크 env — https:// 만 켠다 · 빈 값 · 형식 틀림은 �
   assert.deepEqual(P.cardLinksFromEnv({}).links, {});
 });
 
+test("카드 링크 env — 레벨 테스트(GROBLE_LINK_LEVELTEST)는 신청 창구 표로만 읽는다 · 이름 규칙 = GROBLE_LINK_ + 상품 키 대문자", () => {
+  const env = { GROBLE_LINK_LEVELTEST: "https://example.test/lt", GROBLE_LINK_LESSON10: "https://example.test/a" };
+  assert.deepEqual(P.cardLinksFromEnv(env).links, { lesson10: "https://example.test/a" });          // 수강생 앱 표에는 없다
+  assert.deepEqual(P.cardLinksFromEnv(env, P.GROBLE_LINK_ENV_INTAKE).links, { levelTest: "https://example.test/lt" });
+  assert.deepEqual(P.cardLinksFromEnv({ GROBLE_LINK_LEVELTEST: "http://x" }, P.GROBLE_LINK_ENV_INTAKE).bad, ["GROBLE_LINK_LEVELTEST"]);
+  assert.deepEqual(P.cardLinksFromEnv({}, P.GROBLE_LINK_ENV_INTAKE).missing, ["GROBLE_LINK_LEVELTEST"]);
+  for (const map of [P.GROBLE_LINK_ENV, P.GROBLE_LINK_ENV_INTAKE])
+    for (const [key, name] of Object.entries(map)) assert.equal(name, `GROBLE_LINK_${key.toUpperCase()}`);
+});
+
 test("방금 같은 신청 — 같은 종류 · 판수 · 금액 · 10분 안 · 대기 또는 승인만", () => {
   const now = Date.parse("2026-10-01T03:00:00Z");
   const at = (min) => new Date(now - min * 60000).toISOString();

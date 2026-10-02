@@ -107,6 +107,11 @@ MRIacademy 가 「결제 UI 화면 · 봇 · 앱 표시」.
 | `config/payments.js:122-123` | 라벨 「레슨 상담」 · 「강의 상담 / 레벨테스트」 | 새 명칭 |
 | `config/payments.js:23` | 키 목록 `consultLesson`·`consultCourse` | 키를 합칠지 |
 
+> ✅ **정리됨(2026-10-02 · 결제 트랙 결정 · 경비 대행)**: `consultLesson`(15,000) 삭제 · `consultCourse` → `levelTest`(「레벨 테스트」 · 20,000).
+> 네 곳(`PRODUCT_KEYS` · `PRICES` · `GROBLE_LINKS` · `PRODUCT_LABELS`)을 같이 바꾸고 읽는 곳(consult-record · intake-api · consult-board · price-book)을 전부 옮겼다.
+> 정산 엔진의 상담 가산(`admin-panel.js` · 10,000 / 15,000)은 상품 키가 아니라 `payments.kind='consult'` · `handler_id` · `paid_at` 으로 정해서 영향이 없다.
+> ⓑ `apply.html` 의 레슨 상담 15,000(문구 210 · 금액 분기 374)은 그대로다 — 결제 흐름 · 가격 표시(토스 심사 대상)라 결제 트랙 · 오너 확인 뒤.
+
 ### ⓑ 사이트 화면 (MRIacademy 소관 · 가격 숫자는 결제 트랙 확인)
 
 | 파일:줄 | 현재 |
