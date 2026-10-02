@@ -22,6 +22,9 @@ const PERSONAL_LENGTHS = Object.freeze([
 ]);
 const PERSONAL_DURATIONS = Object.freeze(PERSONAL_LENGTHS.map((l) => l.min));
 const GROUP_LENGTHS = Object.freeze([30, 60, 90, 120, 150, 180]);
+// 레벨 테스트 칸 길이 — 1시간 · 1시간 30분만(레벨 테스트 60~90분 · 오너 확정 9/28 · 계약 §9.25 · 어플 · 반장 10/2).
+//   GROUP_LENGTHS 의 부분집합이어야 한다(DB chk_trainer_slots_duration 은 그룹 길이 목록으로 본다 — JS 가 먼저 좁힌다).
+const LEVEL_TEST_LENGTHS = Object.freeze([60, 90]);
 
 const gamesForMinutes = (min) => PERSONAL_LENGTHS.find((l) => l.min === Number(min))?.games ?? null;
 
@@ -34,4 +37,4 @@ const hoursLabel = (h) => {
   return `${whole}시간${half ? " 30분" : ""}`;
 };
 
-module.exports = { PERSONAL_LENGTHS, PERSONAL_DURATIONS, GROUP_LENGTHS, gamesForMinutes, HOURS_TO_GAMES, hoursLabel };
+module.exports = { PERSONAL_LENGTHS, PERSONAL_DURATIONS, GROUP_LENGTHS, LEVEL_TEST_LENGTHS, gamesForMinutes, HOURS_TO_GAMES, hoursLabel };

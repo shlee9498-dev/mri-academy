@@ -18,7 +18,7 @@
 // 차감표 — lesson-lengths.cjs 한 벌(JS) + §47 book_slot() 의 case 식(DB) · 두 곳이 같이 움직여야 한다.
 // 여기서는 길이 유효성 검사와 앱에 내려주는 길이표에만 쓰고, 판수 산출은 DB 가 한다
 // (게이트와 표시가 갈리면 "화면엔 5판인데 예약은 거부"가 난다). 2026-09-30 오너: 150 · 180분(13 · 15판) 추가.
-const { PERSONAL_LENGTHS, PERSONAL_DURATIONS, GROUP_LENGTHS } = require("./lesson-lengths.cjs");
+const { PERSONAL_LENGTHS, PERSONAL_DURATIONS, GROUP_LENGTHS, LEVEL_TEST_LENGTHS } = require("./lesson-lengths.cjs");
 const DURATION_MIN = PERSONAL_DURATIONS;
 const SLOT_MIN = 30;                 // 슬롯 단위. §23 trainer_slots 의 전개 간격과 같다.
 // 슬롯 한 덩어리의 길이(§40 · 계약 §9.3). 그룹·레벨 테스트는 **1행이 이 길이를 통째로** 차지한다 —
@@ -89,6 +89,12 @@ module.exports = function mountBookingApi(app, deps) {
   // 「대신 넣기」의 범위 판정(계약 §9.4 · 범위 규칙 §3)도 trainer-portal 의 것을 그대로 쓴다 —
   // 담당 + 최근 90일 진행 수강생. 여기서 따로 세면 로스터에 보이는 사람과 넣을 수 있는 사람이 갈린다.
   const { scopedStudents } = trainer;
+  // 레벨 테스트 안내(계약 §9.25 · 어플 · 반장 10/2) — 신청 창구 오픈일(server.js INTAKE_ACCEPT_FROM)과
+  //   봇 /수업등록 「진단상담」 입구(server.js CONSULT_LOCK_FROM · 봇이 안 뜬 배포면 false)를 앱이 하드코딩하지 않게 내려준다.
+  //   안내문이 막힌 문을 가리키지 않게 하는 게 목적이다(10/1 잠금이 창구보다 먼저 온 사고와 같은 꼴 방지).
+  const intakeOpensOn = deps.levelTest?.intakeOpensOn || null;
+  const botRecordOpen = typeof deps.levelTest?.botRecordOpen === "function" ? deps.levelTest.botRecordOpen : () => null;
+  const intakeNow = () => ({ opensOn: intakeOpensOn, open: intakeOpensOn ? kstDate(new Date().toISOString()) >= intakeOpensOn : null });
   // 429 도 부록 A 한 형태(rate_limited). 키·창은 server.js limit() 그대로.
   const rateLimit = (name, max, windowMs) =>
     limit(name, max, windowMs, (res) => fail(res, 429, "rate_limited"));
@@ -449,6 +455,9 @@ module.exports = function mountBookingApi(app, deps) {
         // 그룹·상담은 한 덩어리라 길이 목록 밖 값을 받을 수 없다. 개인은 하루치까지 연다.
         if (lessonType !== "personal" && !SPAN_MIN.includes(span)) return fail(res, 400, "invalid_body");
       }
+      // 레벨 테스트 칸은 1시간 · 1시간 30분만(계약 §9.25) — 그룹 길이표 안이어도 그 밖은 거절한다. 판수 차감 없음은 그대로다.
+      if (lessonType === "consult" && !LEVEL_TEST_LENGTHS.includes(span))
+        return res.status(400).json(scrubTrainer({ error: { code: "level_test_length", allowed: LEVEL_TEST_LENGTHS } }));
       if (t0 % (SLOT_MIN * 60_000) !== 0) return fail(res, 400, "invalid_body");  // 30분 격자
       if (lessonType === "personal" && span / SLOT_MIN > MAX_SLOTS_PER_OPEN)
         return fail(res, 400, "invalid_body");
@@ -616,7 +625,12 @@ module.exports = function mountBookingApi(app, deps) {
         + `&slot_start=gte.${from}&slot_start=lt.${until}&order=slot_start.asc`),
     ]);
     // 길이표(계약 §9.11) — 대신 넣기 · 「시간 달라짐」 · 수업 기록하기 · 칸 열기가 같은 표를 쓴다.
-    const lengths = { personalLengths: PERSONAL_LENGTHS, groupLengths: GROUP_LENGTHS };
+    // + 레벨 테스트 칸 길이 · 봇 기록 입구 · 신청 창구 오픈일(계약 §9.25) — 안내문의 「(10/8)」 하드코딩 대신 쓴다.
+    const lengths = {
+      personalLengths: PERSONAL_LENGTHS, groupLengths: GROUP_LENGTHS,
+      levelTest: { lengths: LEVEL_TEST_LENGTHS, botRecordOpen: botRecordOpen() },
+      intake: intakeNow(),
+    };
     if (!slots.length) return sendTrainer(res, { slots: [], ...lengths });
 
     const ids = slots.map((s) => s.id);

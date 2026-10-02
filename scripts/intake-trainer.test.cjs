@@ -106,6 +106,8 @@ const deps = {
   sbRpc: async (fn, args) => {
     rpcCalls.push(fn);
     if (fn === "sweep_pending_review") return null;
+    // §40 open_trainer_slots 흉내 — 칸 열기(계약 §9.25 길이 시험)가 어떤 인자로 부르는지만 본다
+    if (fn === "open_trainer_slots") { openArgs.push(args); return { created: 1, firstId: nextId++, durationMin: args.p_span_min }; }
     if (fn === "book_slot") {
       const slot = db.trainer_slots.find((x) => x.id === args.p_slot_id);
       if (!slot) return { error: "slot_not_found" };
@@ -134,7 +136,7 @@ const deps = {
 };
 
 // ── 가짜 디스코드 ──
-let sent = [], rpcCalls = [];
+let sent = [], rpcCalls = [], openArgs = [], botOpen = true;
 const HOUR = 3600_000, DAY = 86400_000;
 const OWNER_D = "900000000000000001", APPLICANT_B = "900000000000000098", APPLICANT_C = "900000000000000097";
 
@@ -151,8 +153,10 @@ const flow = require("../intake-cards.cjs").mountIntakeFlow({
   edit: async () => true,
   log: () => {}, logError: () => {},
 });
-require("../intake-trainer.cjs")(app, { sbSelect, limit: deps.limit, trainer: trainerApi, portal, flow: () => (flowOn ? flow : null) });
-require("../booking-api.cjs")(app, { ...deps, portal, trainer: trainerApi });
+require("../intake-trainer.cjs")(app, { sbSelect, limit: deps.limit, trainer: trainerApi, portal, flow: () => (flowOn ? flow : null),
+  intakeOpensOn: "2026-10-08" });
+require("../booking-api.cjs")(app, { ...deps, portal, trainer: trainerApi,
+  levelTest: { intakeOpensOn: "2026-10-08", botRecordOpen: () => botOpen } });
 
 let base, server;
 test.before(async () => {
@@ -174,7 +178,7 @@ const T = (id) => portal.opaqueId("trainer", id);
 
 // ── 픽스처 ── 트레이너A=2 · 사무=3 · 원장=4 · 트레이너B=5
 function fresh() {
-  nextId = 5000; sent = []; rpcCalls = []; failTable = null; flowOn = true;
+  nextId = 5000; sent = []; rpcCalls = []; openArgs = []; botOpen = true; failTable = null; flowOn = true;
   const now = Date.now();
   const iso = (ms) => new Date(ms).toISOString();
   const appRow = (id, o) => ({
@@ -393,4 +397,41 @@ test("흐름이 없으면(기동 전) 503 · 목록은 흐름 없이도 돈다",
   flowOn = false;
   assert.equal((await call(2, `/applications/${A(101)}/claim`, "POST")).json.error.code, "portal_unavailable");
   assert.equal((await call(2, "/applications")).status, 200);
+});
+
+// ════════ 레벨 테스트 칸 길이 · 안내 키 (계약 §9.25 · 어플 · 반장 10/2) ════════
+test("레벨 테스트 칸 — 60 · 90분만 열린다 · 그 밖은 400 level_test_length { allowed } · 그룹 칸은 그대로", async () => {
+  fresh();
+  const startAt = new Date(Math.ceil((Date.now() + 2 * DAY) / (30 * 60_000)) * 30 * 60_000).toISOString();
+  for (const durationMin of [60, 90]) {
+    const r = await call(2, "/slots", "POST", { startAt, lessonType: "consult", durationMin });
+    assert.equal(r.status, 200, `${durationMin}분`);
+    assert.equal(r.json.durationMin, durationMin);
+  }
+  assert.deepEqual(openArgs.map((a) => [a.p_lesson_type, a.p_span_min, a.p_capacity]), [["consult", 60, 1], ["consult", 90, 1]]);
+  for (const durationMin of [30, 120, 150, 180]) {
+    assert.deepEqual(await call(2, "/slots", "POST", { startAt, lessonType: "consult", durationMin }),
+      { status: 400, json: { error: { code: "level_test_length", allowed: [60, 90] } } }, `${durationMin}분`);
+  }
+  // endAt 으로 길이를 정해도 같다(2시간 → 거절)
+  const endAt = new Date(Date.parse(startAt) + 2 * HOUR).toISOString();
+  assert.equal((await call(2, "/slots", "POST", { startAt, endAt, lessonType: "consult" })).json.error.code, "level_test_length");
+  // 길이표 밖(45분)은 종전대로 invalid_body · 그룹 칸 120분은 그대로 열린다
+  assert.equal((await call(2, "/slots", "POST", { startAt, lessonType: "consult", durationMin: 45 })).json.error.code, "invalid_body");
+  assert.equal((await call(2, "/slots", "POST", { startAt, lessonType: "participate", durationMin: 120, capacity: 3 })).status, 200);
+  assert.equal(openArgs.length, 3, "거절된 요청은 DB 함수까지 가지 않는다");
+});
+
+test("칸 목록 · 신청 목록 — levelTest(길이 · 봇 기록 입구) · intake(오픈일 · 열렸는지)", async () => {
+  fresh();
+  const today = new Date(Date.now() + 9 * HOUR).toISOString().slice(0, 10);
+  const r = await call(2, "/slots");
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.levelTest, { lengths: [60, 90], botRecordOpen: true });
+  assert.deepEqual(r.json.intake, { opensOn: "2026-10-08", open: today >= "2026-10-08" });
+  botOpen = false;                                       // 봇 「진단상담」이 잠기면 안내문이 봇을 가리키지 않게
+  assert.equal((await call(2, "/slots")).json.levelTest.botRecordOpen, false);
+  const a = await call(2, "/applications");
+  assert.equal(a.status, 200);
+  assert.deepEqual(a.json.intake, { opensOn: "2026-10-08", open: today >= "2026-10-08" });
 });
