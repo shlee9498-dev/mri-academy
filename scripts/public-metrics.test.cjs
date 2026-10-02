@@ -110,6 +110,13 @@ test("graduatesMasterPlus — 레슨으로(via_lesson) 마스터 · 서바이버
     g(8, { tier: "Survivor" }),                                                                 // 이름 · 명부 없음 → 행 하나 = 한 사람
   ];
   assert.equal(masterPlusOf(rows, students), 3);
+  // 같은 사람이 한 행은 명부 연결 · 다른 행은 이름만 — 연결 행의 이름(그 행 student_name 또는 명부 이름)과 같으면 한 번만
+  const named = new Map([[21, { trainer_id: 5, merged_into: null, name: "홍 길동" }], [22, { trainer_id: 5, merged_into: null, name: "임꺽정" }]]);
+  assert.equal(masterPlusOf([
+    g(11, { student_id: 21 }), g(12, { student_name: "홍길동" }),                              // 명부 이름과 같다 → 한 사람
+    g(13, { student_id: 22, student_name: "꺽정이" }), g(14, { student_name: "꺽정 이", tier: "서바이버" }),   // 연결 행 이름과 같다 → 한 사람
+    g(15, { student_name: "전우치" }),                                                         // 연결 행이 없는 이름 → 따로
+  ], named), 3);
   const m = computeMetrics({ sessions: [], payments: [], students, enrollTrainer: new Map(), staff, graduations: rows }, W);
   assert.equal(m.graduatesMasterPlus, 3);
   const { siteShape } = require("../public-metrics.cjs")._test;

@@ -108,3 +108,26 @@ test("성장 기록 — 수강 성장 등록(시작 → 등록 때) · 정기 �
   assert.equal(progressPublic(rows, 2).length, 2);
   assert.deepEqual(progressPublic([]), []);
 });
+
+test("성장 기록 닉 — 클랜 태그(GmI_ · Gm + 구분자)를 떼고 가린다 · 그래도 겹치면 상승 순 A · B · 테스트 계정 추적은 뺀다", () => {
+  assert.equal(maskNick("GmI_hello"), "he**");
+  assert.equal(maskNick("Gmi_abc"), "ab**");
+  assert.equal(maskNick("Gm.xyz"), "xy**");
+  assert.equal(maskNick("GmI_"), "Gm**");                                   // 태그만 있으면 원래 닉으로
+  assert.equal(maskNick("Gmoney"), "Gm**");                                 // 구분자 없는 「Gm」은 태그가 아니다
+  const { TEST_STUDENT_IDS } = require("../test-accounts.cjs");
+  const TEST_ID = [...TEST_STUDENT_IDS][0];
+  const pair = (name, from, to, base) => [
+    snap({ player_name: name, snapshot_type: "baseline", season_id: S(40), tier: "Gold", sub_tier: "2", tier_index: 3, rank_point: base, created_at: "2026-06-10T10:00:00Z" }),
+    snap({ player_name: name, snapshot_type: "after", season_id: S(42), tier: to, sub_tier: "1", tier_index: from, rank_point: base + 500, created_at: "2026-06-10T10:00:01Z" }),
+  ];
+  const rows = [
+    ...pair("GmI_abcd", 5, "Crystal", 2000),                               // 겹침 — 더 오른 쪽이 A
+    ...pair("GmI_abxy", 4, "Platinum", 2100),
+    ...pair("GmI_zz", 4, "Platinum", 1900),
+    snap({ student_id: TEST_ID, player_name: "테스트계정", tier: "Gold", sub_tier: "3", tier_index: 3, rank_point: 1900, created_at: "2026-08-03T20:00:00Z" }),
+    snap({ student_id: TEST_ID, player_name: "테스트계정", tier: "Diamond", sub_tier: "1", tier_index: 6, rank_point: 3300, created_at: "2026-09-03T20:00:00Z" }),
+  ];
+  assert.deepEqual(progressPublic(rows).map((s) => [s.alias, s.delta.tierTo]),
+    [["ab** A", "Crystal 1"], ["ab** B", "Platinum 1"], ["zz**", "Platinum 1"]]);
+});

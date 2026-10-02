@@ -99,18 +99,31 @@ function directOf({ courseSessions = [], attendance = [], courses = [], slots = 
 }
 
 // 레슨으로 마스터 이상 달성 인원 — graduations 행(via_lesson · 마스터 · 서바이버)의 사람 수(위 정의 graduatesMasterPlus).
+//   같은 사람이 한 행은 명부 연결 · 다른 행은 이름만이면 한 번만 센다 — 연결된 행의 이름(그 행 student_name · 명부 이름)과
+//   같은 이름의 이름만 행은 그 수강생으로 본다(10/3 지휘). 이름은 세는 데만 쓰고 응답에 없다.
 const MASTER_PLUS = /^(마스터|서바이버|master|survivor)$/i;
+const nameKey = (n) => String(n || "").replace(/\s+/g, "").toLowerCase();
 function masterPlusOf(rows, students) {
+  const hits = rows.filter((g) => g.via_lesson === true && MASTER_PLUS.test(String(g.tier || "").trim()));
+  const canon = (sid) => students.get(sid)?.merged_into ?? sid;
+  const linkedByName = new Map();                            // 이름 → 연결된 수강생(합친 행은 남은 쪽)
+  for (const g of hits) {
+    if (g.student_id == null) continue;
+    const sid = Number(g.student_id);
+    for (const n of [g.student_name, students.get(sid)?.name, students.get(canon(sid))?.name]) {
+      const k = nameKey(n);
+      if (k) linkedByName.set(k, canon(sid));
+    }
+  }
   const who = new Set();
-  for (const g of rows) {
-    if (g.via_lesson !== true || !MASTER_PLUS.test(String(g.tier || "").trim())) continue;
-    if (g.student_id != null) {
-      const sid = Number(g.student_id);
-      if (TEST_STUDENT_IDS.has(sid)) continue;
-      who.add(`s${students.get(sid)?.merged_into ?? sid}`);
+  for (const g of hits) {
+    const sid = g.student_id != null ? canon(Number(g.student_id)) : linkedByName.get(nameKey(g.student_name));
+    if (sid != null) {
+      if (TEST_STUDENT_IDS.has(Number(g.student_id ?? sid)) || TEST_STUDENT_IDS.has(sid)) continue;
+      who.add(`s${sid}`);
     } else {
-      const name = String(g.student_name || "").replace(/\s+/g, "").toLowerCase();
-      who.add(name ? `n${name}` : `g${g.id}`);
+      const k = nameKey(g.student_name);
+      who.add(k ? `n${k}` : `g${g.id}`);
     }
   }
   return who.size;
@@ -256,7 +269,8 @@ module.exports = function mountPublicMetrics(app, deps) {
       selectAll("lesson_sessions", "select=id,student_id,trainer_id,played_at,games,created_by,created_at,memo"
         + `&played_at=gte.${window.from}&played_at=lte.${window.to}`),
       selectAll("payments", "select=id,student_id,kind,games,voided_at,lesson_enrollment_id"),
-      selectAll("students", "select=id,trainer_id,merged_into"),
+      // name 은 마스터 이상 달성 인원에서 같은 사람을 가리는 데만 쓴다(응답에 없다)
+      selectAll("students", "select=id,trainer_id,merged_into,name"),
       selectAll("lesson_enrollments", "select=id,trainer_id"),
       sbSelect("staff", "select=id,name,role,active"),
       // 직강은 읽기에 실패해도 레슨 숫자는 낸다(그날 직강은 null · ready false)

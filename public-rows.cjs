@@ -1,6 +1,7 @@
 // 공개 API 응답 모양 — 로그인 없이 받는 응답에서 수강생 식별정보를 걷어내는 순수 함수
 //   (2026-09-30 개인정보 전수 점검 · 오너 OK) + 공개 성장 기록 계산(2026-10-03 · 사이트 「기록실」). 테스트: scripts/public-rows.test.cjs
 "use strict";
+const { TEST_STUDENT_IDS } = require("./test-accounts.cjs");
 
 // 커뮤니티(후기 · 레슨 동향 · 답글) — 작성자 디스코드 ID 는 공개 목록에 싣지 않는다.
 //   화면의 수정 · 삭제 버튼은 서버가 own 으로 알려 준다(본인 글이거나 운영진).
@@ -31,10 +32,14 @@ function scrubText(text, words, to = "레슨생") {
 
 // ── 공개 성장 기록(GET /api/progress-public · 사이트 「기록실」 · gmi-progress.html) ──
 // 닉은 앞 두 글자 + **(2026-07-29 오너 승인 규격 「세**」 · 10/3 오너 「공개 거부 없음 · 가림 규칙 그대로」).
+//   클랜 태그(「GmI_」 · 「Gm」과 그 뒤 구분자)는 떼고 나머지에서 센다 — 태그째 가리면 여럿이 「Gm**」로 겹친다(10/3 지휘).
+//   태그를 떼고 남는 게 없으면 원래 닉으로 가린다. 그래도 겹치면 progressPublic 이 상승 순으로 「 A」 · 「 B」를 붙인다.
+const CLAN_TAG = /^(?:gmi|gm)[^0-9A-Za-z가-힣]+/i;
 function maskNick(n) {
   const t = String(n || "").trim();
   if (!t) return "익명";
-  return Array.from(t).slice(0, 2).join("") + "**";
+  const rest = t.replace(CLAN_TAG, "");
+  return Array.from(rest || t).slice(0, 2).join("") + "**";
 }
 // 티어 표기 — 영문 · 하위 단계까지(「Platinum 2」) · 마스터는 단계 없이 · 서바이버 = tier_index 8(RP 컷 · server.js tierIndex)
 function tierText(r) {
@@ -74,6 +79,7 @@ function progressPublic(rows, max = 20) {
   const tracking = new Map(), pairs = new Map();
   for (const r of rows || []) {
     if (r.snapshot_type === "tracking" && r.student_id != null) {
+      if (TEST_STUDENT_IDS.has(Number(r.student_id))) continue;     // 테스트 계정 — 공개 지표 사람 수와 같은 기준(test-accounts.cjs)
       if (!tracking.has(r.student_id)) tracking.set(r.student_id, []);
       tracking.get(r.student_id).push(r);
     } else if (r.snapshot_type === "baseline" || r.snapshot_type === "after") {
@@ -105,11 +111,22 @@ function progressPublic(rows, max = 20) {
       delta: deltaOf(p.base, p.after, null) });
   }
   const seen = new Set();
-  return out.filter((s) => isRise(s.delta))
+  const list = out.filter((s) => isRise(s.delta))
     .sort((a, b) => b.delta.tierDelta - a.delta.tierDelta || (b.delta.rpDelta || 0) - (a.delta.rpDelta || 0))
     .filter((s) => (seen.has(s.key) ? false : seen.add(s.key)))
     .slice(0, max)
     .map(({ key: _k, ...s }) => s);
+  // 가린 닉이 겹치면 상승 순으로 「 A」 · 「 B」 …(공개 목록 안에서만 — 같은 사람 둘은 위에서 이미 하나로 줄였다)
+  const count = new Map();
+  for (const s of list) count.set(s.alias, (count.get(s.alias) || 0) + 1);
+  const nth = new Map();
+  for (const s of list) {
+    if (count.get(s.alias) < 2) continue;
+    const i = nth.get(s.alias) || 0;
+    nth.set(s.alias, i + 1);
+    s.alias = `${s.alias} ${String.fromCharCode(65 + (i % 26))}`;
+  }
+  return list;
 }
 
 module.exports = { communityRow, communityRows, scrubWords, scrubText, maskNick, tierText, seasonNum, progressPublic };
