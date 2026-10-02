@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>MRI 회색 뼈대 v1</title>
+<style>
+/* 회색 뼈대 — 색 · 글꼴 · 문구 없음. 덩어리 크기와 위치만. 검정 = 채운 버튼 자리(구획당 1개). 이름표는 덩어리 설명일 뿐 화면 문구가 아니다 */
+:root{--bg:#f2f2f2;--b1:#cfcfcf;--b2:#dedede;--b3:#e8e8e8;--line:#bdbdbd;--btn:#111;--lab:#8a8a8a;--wrap:1120px;--g:24px;color-scheme:light}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);font:12px/1.4 ui-monospace,Menlo,monospace;color:var(--lab)}
+.wrap{max-width:var(--wrap);margin:0 auto;padding:0 var(--g)}
+.b{background:var(--b1);border-radius:2px;position:relative}
+.b.l2{background:var(--b2)} .b.l3{background:var(--b3)}
+.b>i{position:absolute;left:8px;top:6px;font-style:normal;font-size:11px;color:var(--lab);white-space:nowrap}
+.t{height:12px;background:var(--b2);border-radius:2px}            /* 본문 한 줄 */
+.t.s{height:9px} .t.w60{width:60%} .t.w40{width:40%} .t.w80{width:80%} .t.w30{width:30%}
+.btn{background:var(--btn);height:52px;border-radius:2px;width:200px;position:relative}
+.btn>i{position:absolute;left:12px;top:17px;font-style:normal;font-size:11px;color:#999}
+.lnk{height:10px;width:110px;border-bottom:2px solid var(--line)}
+section{position:relative;padding:72px 0;border-top:1px dashed #cfcfcf}
+.tag{position:absolute;right:16px;top:12px;font-size:11px;color:#aaa}
+
+/* 맨 위 — 한 줄, 글자 메뉴만. 로고 · 메뉴 · 버튼 모두 같은 시작선 */
+.top{min-height:62px;background:var(--bg);border-bottom:1px solid #d6d6d6}
+.top .wrap{height:62px;display:flex;align-items:center;gap:28px}
+.top .logo{width:150px;height:22px}
+.top .menu{display:flex;gap:20px;flex:1}
+.top .menu .t{width:56px}
+.top .btn{width:120px;height:40px}
+
+/* 1. 첫 화면 — 주인공은 결과 숫자 하나. 사진 두 장은 같은 크기로 붙인다 */
+.hero .wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:center}
+.hero .kick{width:180px;height:10px;margin-bottom:22px}
+.hero .num{height:150px;width:100%;max-width:520px}
+.hero .unit{height:22px;width:170px;margin-top:14px}
+.hero .sub{margin-top:26px;display:grid;gap:10px;max-width:440px}
+.hero .acts{margin-top:32px;display:flex;align-items:center;gap:22px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.pair .ph{aspect-ratio:4/5}
+.pair .cap{height:56px;border-top:1px solid #f2f2f2;padding:12px;display:grid;gap:8px;background:var(--b2)}
+.pair .cap .t{background:var(--b1)}
+
+/* 2. 가격 — 45,000 을 크게, 원 · 10판은 작게. 21 · 33 · 99판은 글씨 줄. 박스 · 테두리 없음 */
+.price .head{margin-bottom:40px;display:grid;gap:12px}
+.price .head .h{height:34px;width:200px}
+.price .main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:end}
+.price .lab{height:16px;width:90px;margin-bottom:12px}
+.price .big{display:flex;align-items:flex-end;gap:10px}
+.price .big .n{height:120px;width:360px}
+.price .big .u{height:26px;width:34px}
+.price .per{margin-top:12px;height:12px;width:150px}
+.rows{display:grid;gap:22px}
+.row{display:grid;grid-template-columns:90px 1fr 90px;gap:16px;align-items:center}
+.row .t:last-child{justify-self:end;width:90px;height:16px}
+.groups{margin-top:56px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:48px}
+.groups .gh{height:20px;width:110px;margin-bottom:18px}
+.price .acts{margin-top:48px;display:flex;align-items:center;gap:22px}
+
+/* 3. 트레이너 — 같은 틀 3개. 사진 위에는 이름 하나만, 소개는 아래 단색 바탕 */
+.tr .head{margin-bottom:36px;display:grid;gap:12px}
+.tr .head .h{height:34px;width:360px}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
+.card .ph{aspect-ratio:4/5}
+.card .nm{position:absolute;left:16px;bottom:16px;height:34px;width:46%;background:#a9a9a9}
+.card .nm>i{color:#eee}
+.card .bd{padding:16px 0 0;display:grid;gap:10px}
+.tr .acts{margin-top:40px;display:flex;align-items:center;gap:22px}
+
+@media(max-width:860px){
+  .wrap{padding:0 16px}
+  .top .menu{display:none}
+  .top .wrap{justify-content:space-between}
+  .top .m2{display:flex}
+  .hero .wrap,.price .main{grid-template-columns:1fr;gap:28px}
+  .hero .num{height:96px}
+  .price .big .n{height:84px;width:240px}
+  .groups{grid-template-columns:1fr;gap:28px}
+  section{padding:48px 0}
+  /* 폰 가로 넘기기 — 끝을 잘라서 다음 카드가 있다는 걸 보여 준다 */
+  .cards{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:76%;overflow-x:auto;margin-right:-16px;padding-right:16px;scroll-snap-type:x mandatory}
+  .card{scroll-snap-align:start}
+  .btn{width:100%}
+}
+.menu2{display:none}
+@media(max-width:860px){.menu2{display:flex;gap:16px;padding:0 16px 12px;overflow:hidden}.menu2 .t{width:56px;flex:none}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="b logo"></div>
+    <nav class="menu" aria-hidden="true"><div class="t"></div><div class="t"></div><div class="t"></div><div class="t"></div><div class="t"></div></nav>
+    <div class="btn" aria-hidden="true"></div>
+  </div>
+  <nav class="menu2" aria-hidden="true"><div class="t"></div><div class="t"></div><div class="t"></div><div class="t"></div><div class="t"></div><div class="t"></div></nav>
+</header>
+
+<section class="hero" id="hero" aria-label="첫 화면 뼈대">
+  <span class="tag">01 첫 화면</span>
+  <div class="wrap">
+    <div>
+      <div class="t kick"></div>
+      <div class="b num"><i>결과 숫자 (주인공 하나)</i></div>
+      <div class="b l2 unit"><i>몇 발 중 · 상담 시각</i></div>
+      <div class="sub"><div class="t"></div><div class="t w60"></div></div>
+      <div class="acts"><div class="btn"><i>채운 버튼 1</i></div><div class="lnk"></div></div>
+    </div>
+    <div class="pair">
+      <div><div class="b ph"><i>전 사진</i></div><div class="cap"><div class="t w60"></div><div class="t s w40"></div></div></div>
+      <div><div class="b ph"><i>후 사진</i></div><div class="cap"><div class="t w60"></div><div class="t s w40"></div></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="price" id="price" aria-label="가격 뼈대">
+  <span class="tag">02 가격</span>
+  <div class="wrap">
+    <div class="head"><div class="b h"></div><div class="t w40"></div></div>
+    <div class="main">
+      <div>
+        <div class="b l2 lab"><i>10판</i></div>
+        <div class="big"><div class="b n"><i>45,000 (주인공)</i></div><div class="b l2 u"><i>원</i></div></div>
+        <div class="t per"></div>
+      </div>
+      <div class="rows" aria-label="21 · 33 · 99판 글씨 줄">
+        <div class="row"><div class="t"></div><div></div><div class="t"></div></div>
+        <div class="row"><div class="t"></div><div></div><div class="t"></div></div>
+        <div class="row"><div class="t"></div><div></div><div class="t"></div></div>
+      </div>
+    </div>
+    <div class="groups">
+      <div><div class="b l2 gh"><i>원장 직강</i></div><div class="rows"><div class="row"><div class="t"></div><div></div><div class="t"></div></div><div class="row"><div class="t"></div><div></div><div class="t"></div></div><div class="row"><div class="t"></div><div></div><div class="t"></div></div></div></div>
+      <div><div class="b l2 gh"><i>세트</i></div><div class="rows"><div class="row"><div class="t"></div><div></div><div class="t"></div></div><div class="row"><div class="t"></div><div></div><div class="t"></div></div><div class="row"><div class="t"></div><div></div><div class="t"></div></div></div></div>
+      <div><div class="b l2 gh"><i>차감 · 환불 안내</i></div><div class="rows"><div class="t"></div><div class="t w80"></div><div class="t w60"></div></div></div>
+    </div>
+    <div class="acts"><div class="btn"><i>채운 버튼 1</i></div><div class="lnk"></div></div>
+  </div>
+</section>
+
+<section class="tr" id="trainers" aria-label="트레이너 뼈대">
+  <span class="tag">03 트레이너</span>
+  <div class="wrap">
+    <div class="head"><div class="b h"></div><div class="t w40"></div></div>
+    <div class="cards">
+      <div class="card"><div class="b ph"><i>사진 · 같은 틀</i><div class="b nm"><i>이름</i></div></div><div class="bd"><div class="t w80"></div><div class="t w60"></div><div class="lnk"></div></div></div>
+      <div class="card"><div class="b ph"><i>사진 · 같은 틀</i><div class="b nm"><i>이름</i></div></div><div class="bd"><div class="t w80"></div><div class="t w60"></div><div class="lnk"></div></div></div>
+      <div class="card"><div class="b ph"><i>사진 · 같은 틀</i><div class="b nm"><i>이름</i></div></div><div class="bd"><div class="t w80"></div><div class="t w60"></div><div class="lnk"></div></div></div>
+    </div>
+    <div class="acts"><div class="btn"><i>채운 버튼 1</i></div></div>
+  </div>
+</section>
+
+</body>
+</html>
