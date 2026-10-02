@@ -6281,3 +6281,278 @@ notify pgrst, 'reload schema';
 --      공개 키(anon) forbidden · service_role 통과 / §44 함수 그대로 = 새 칸 기본값 lesson>lesson / 기록 종류 검사(pending 거절) /
 --      나머지 칸(제목 · 본문 · 범위 · 보낸 시각 · 출처 · 상태 · 숨김) 그대로.
 -- ============================================================
+
+-- ============================================================
+-- §62  활동명 — 수강생 앱에 보이는 이름 · 옛 활동명 이력 (2026-10-02 · 어플 요청 · 오너 OK 10/2 · 계약 §9.26)
+--
+-- 이름표는 활동명, 출석부는 본명. 수강생 앱 어디서든(내 화면 · 그룹 · 공개 복기 · 랭킹 · 후기) 활동명만 보이고,
+--   본명(students.name)은 트레이너 · 원장 응답에만 나간다. 신청 창구(§55) 실명 · 나이는 지금처럼 오너 전용이다.
+-- 처음 값: 디스코드 연결 때 디스코드 닉(서버 닉 → 전역 표시 이름 → 사용자명 · 규칙에 맞을 때만). 비어 있으면
+--   앱에는 「#번호」가 보인다(저장하지 않는다 — 활동명 칸은 비어 있다).
+-- 바꾸기: 수강생 앱 설정에서 30일에 1번 · 2~12자 · 활동명끼리 중복 불가(대소문자 무시) · 금지어 · 글자 종류는 서버가 거른다.
+--   DB 는 길이 · 앞뒤 공백 · 「#」 시작만 막는다(글자 종류 · 금지어는 정책이라 서버 한 곳에 둔다).
+-- 옛 활동명은 지우지 않고 이력 표(student_display_names)에 쌓는다. student_aliases 를 쓰지 않는 이유:
+--   ① student_aliases 는 (alias, kind) 전체 유일이다 — 한 사람이 놓은 이름을 다른 사람이 쓰다가 바꾸면 이력이 부딪힌다
+--   ② kind 목록이 제약으로 고정돼 있어 kind 를 더하려면 제약 교체(B)다
+--   ③ 봇 이름 해석(/수업등록 · 연결 후보)이 student_aliases 를 kind 없이 읽는다 — 옛 활동명이 봇 이름 찾기에 섞인다
+--   트레이너 · 원장 검색은 활동명 · 본명 · 배그 닉 · 별명(student_aliases) · 옛 활동명(이 표)을 전부 본다(서버).
+--
+-- A 구간(새 칸 · 새 칸의 제약 · 새 인덱스 · 새 표 · 더하기만). 코드가 쓰기 전까지 아무 동작도 바꾸지 않는다.
+-- 기존 행 값 채우기는 B — 62b(실행하지 않음 · 방법 · 건수만).
+alter table public.students add column if not exists display_name text;
+alter table public.students add column if not exists display_name_set_by text;        -- link · student · staff · backfill
+alter table public.students add column if not exists display_name_changed_at timestamptz;  -- 수강생이 직접 바꾼 시각(30일 규칙) · 연결 · 채우기는 안 적는다
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_students_display_name') then
+    alter table public.students add constraint chk_students_display_name check (
+      display_name is null
+      or (char_length(display_name) between 2 and 12 and display_name = btrim(display_name) and left(display_name, 1) <> '#'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_students_display_name_set_by') then
+    alter table public.students add constraint chk_students_display_name_set_by check (
+      display_name_set_by is null or display_name_set_by in ('link', 'student', 'staff', 'backfill'));
+  end if;
+end $$;
+-- 활동명끼리 중복 불가(영문은 대소문자 무시). 비어 있는 행은 상관없다.
+create unique index if not exists uq_students_display_name on public.students (lower(display_name)) where display_name is not null;
+
+-- 옛 활동명 이력 — 바뀔 때마다 한 줄(바뀌기 전 이름). 지우지 않는다.
+create table if not exists public.student_display_names (
+  id           bigint generated always as identity primary key,
+  student_id   bigint not null references public.students(id) on delete cascade,
+  display_name text   not null,                              -- 바뀌기 전 활동명
+  set_by       text   check (set_by in ('link', 'student', 'staff', 'backfill')),   -- 그 이름이 어떻게 들어왔나
+  replaced_by  text   not null check (replaced_by in ('student', 'staff')),         -- 누가 바꿨나
+  replaced_at  timestamptz not null default now()
+);
+create index if not exists idx_sdn_student on public.student_display_names (student_id, replaced_at desc);
+create index if not exists idx_sdn_name on public.student_display_names (lower(display_name));
+alter table public.student_display_names enable row level security;   -- service_role 만 통과
+
+-- ── 62b) 기존 행 채우기 — B 구간(있던 행 값) · 오너 OK 뒤 · ⚠️ 실행하지 않음(방법 · 건수만) ─────────────────
+--   실측(2026-10-02 · 합친 행 2 제외 93명): 디스코드 연결 21(닉 저장 3 · 닉 없음 18) · 미연결 72(닉 저장 3 · 닉 없음 69).
+--   저장된 닉 6개는 전부 규칙(2~12자 · 한글 · 영문 · 숫자 · _ . -) 통과 · 서로 겹침 0.
+--   ① 저장된 닉 6명 → 아래 update(set_by 'backfill')
+--   ② 연결됐는데 닉이 없는 18명 → 봇이 디스코드에서 표시 이름을 읽어 같은 규칙으로 채운다(서버 1회 실행 · SQL 로는 못 한다)
+--   ③ 연결 안 됐고 닉도 없는 69명 → 비워 둔다(앱 「#번호」 · 연결할 때 채워진다)
+--   update public.students s
+--      set display_name = btrim(s.discord_nick), display_name_set_by = 'backfill'
+--    where s.merged_into is null and s.display_name is null
+--      and char_length(btrim(s.discord_nick)) between 2 and 12 and left(btrim(s.discord_nick), 1) <> '#'
+--      and btrim(s.discord_nick) ~ '^[가-힣A-Za-z0-9_.-]+$'
+--      and not exists (select 1 from public.students o where o.id <> s.id and lower(o.display_name) = lower(btrim(s.discord_nick)));
+--   검증: select count(*) from students where display_name_set_by = 'backfill';   -- 6
+--
+-- 되돌리기(코드의 활동명 읽기 · 쓰기를 먼저 되돌릴 것 · 지우는 DDL = B 구간 · 오너 OK):
+--   drop table if exists public.student_display_names;
+--   drop index if exists public.uq_students_display_name;
+--   alter table public.students drop constraint if exists chk_students_display_name,
+--     drop constraint if exists chk_students_display_name_set_by,
+--     drop column if exists display_name, drop column if exists display_name_set_by, drop column if exists display_name_changed_at;
+--
+-- 실행 뒤 검증(세션):
+--   select column_name from information_schema.columns where table_schema='public' and table_name='students'
+--     and column_name in ('display_name','display_name_set_by','display_name_changed_at');               -- 3
+--   select conname from pg_constraint where conname in ('chk_students_display_name','chk_students_display_name_set_by');  -- 2
+--   select indexdef from pg_indexes where indexname = 'uq_students_display_name';                          -- 1
+--   select to_regclass('public.student_display_names');                                                     -- 실재
+--   select count(*) from students where display_name is not null;                                           -- 0(채우기 전)
+--   notify pgrst, 'reload schema';
+--
+--   ⚠️ 62 미실행(2026-10-02 · 어플 회신 「DDL 문 실행 전」 요청) — 되돌림 시험만 끝(운영 DB · 블록 그대로 · 전부 롤백 · 남은 변화 0):
+--      #ab · 앞 공백 · 1자 · 13자 = check_violation / 대소문자만 다른 겹침 = unique_violation / set_by 'bot' = check_violation /
+--      정상 이름 · 이력 한 줄 넣기 통과. 실측 전: students 95행 · display_name 칸 없음 · student_display_names 없음.
+-- ============================================================
+
+-- ============================================================
+-- §63  늦은 취소 · 노쇼 면제 기록(0판) — 판수 조정 요청에 'exempt' (2026-10-02 · 어플 요청 · 오너 OK 10/2 · 계약 §9.26)
+--
+-- 늦은 취소 · 노쇼를 예외로 넘길 때(합의 변경 · 불가항력 · 서버 점검 · 트레이너 사정 · 고정반 대체) 판수는 빼지 않고
+--   「0판 면제」 한 줄을 남긴다. 사유 칩 필수 · 28일 횟수는 서버(이 함수)가 센다. 늦은 취소 −3 · 노쇼 −5 는 그대로다.
+--   합의 변경      = 7일 안에 다시 잡은 예약(new_booking_id) 필수 · 그 예약 하나로 면제 한 번(두 번 못 쓴다)
+--   불가항력       = 수강생당 28일에 1번(수업일 기준 앞뒤 28일 안에 다른 불가항력 면제가 있으면 거절)
+--   서버 점검 · 고정반 대체 = 횟수에 안 넣는다
+--   트레이너 사정  = 수강생 횟수에 안 넣는다 · 트레이너당 28일 3번째부터 원장 화면 표시(막지 않는다)
+-- 면제 줄은 판수 기록(lesson_sessions)을 만들지 않는다 — 잔여는 그대로다. 바로 반영으로 남긴다(status approved · decided_by direct).
+-- 예약이 걸린 면제는 원래 예약(booking_id)을 같이 적는다. 열린 예약(booked · pending_review)은 먼저 닫아야 하고(칸 취소),
+--   노쇼로 닫은 예약은 판수가 이미 빠져서 면제할 수 없다(보상 조정으로 · 원장).
+--
+-- 63a = A 구간(새 칸 넷 · 새 칸의 제약 · 인덱스 · 새 함수 record_games_exemption).
+-- 63b = B 구간(기존 제약 세 개 교체 — kind 에 exempt · 0판 허용) · 오너 원문 OK 뒤. 63b 전에는 함수가 넣는 줄이 제약에 걸려 거절된다.
+--   games_adjust_requests 0행(실측 2026-10-02) — 교체로 막히는 기존 행은 없다.
+
+-- ── 63a) A 구간 ─────────────────────────────────────────────
+alter table public.games_adjust_requests add column if not exists exempt_of text;       -- 무엇을 면제했나: late_cancel · no_show
+alter table public.games_adjust_requests add column if not exists exempt_reason text;   -- 사유 칩
+alter table public.games_adjust_requests add column if not exists booking_id bigint
+  references public.slot_bookings(id) on delete set null;                              -- 원래 예약(있으면)
+alter table public.games_adjust_requests add column if not exists new_booking_id bigint
+  references public.slot_bookings(id) on delete set null;                              -- 합의 변경으로 다시 잡은 예약
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'gar_exempt_of_chk') then
+    alter table public.games_adjust_requests add constraint gar_exempt_of_chk
+      check (exempt_of is null or exempt_of in ('late_cancel', 'no_show'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'gar_exempt_reason_chk') then
+    alter table public.games_adjust_requests add constraint gar_exempt_reason_chk
+      check (exempt_reason is null or exempt_reason in
+             ('agreed_change', 'force_majeure', 'server_maintenance', 'trainer_reason', 'fixed_class_swap'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'gar_exempt_fields_chk') then
+    alter table public.games_adjust_requests add constraint gar_exempt_fields_chk
+      check ((kind = 'exempt') = (exempt_of is not null and exempt_reason is not null));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'gar_exempt_agreed_chk') then
+    alter table public.games_adjust_requests add constraint gar_exempt_agreed_chk
+      check (exempt_reason is distinct from 'agreed_change' or new_booking_id is not null);
+  end if;
+end $$;
+create index if not exists ix_gar_exempt_student on public.games_adjust_requests (student_id, played_at) where kind = 'exempt';
+create index if not exists ix_gar_exempt_trainer on public.games_adjust_requests (trainer_id, played_at) where kind = 'exempt';
+-- 다시 잡은 예약 하나로 면제 한 번(되돌린 · 취소된 줄은 빼고)
+create unique index if not exists uq_gar_new_booking on public.games_adjust_requests (new_booking_id)
+  where new_booking_id is not null and status in ('pending', 'approved');
+
+-- 면제 기록 — 검사 · 횟수 · 넣기를 한 트랜잭션에서(같은 수강생 · 같은 트레이너 동시 요청은 잠금으로 줄을 세운다).
+-- 서버(trainer-lessons POST /adjustments kind 'exempt')가 범위(scopedStudents) · 잠긴 달 · 같은 날 열린 예약을 먼저 본 뒤 부른다.
+-- 반환: {"requestId", "remaining", "forceMajeureNextOn"?, "trainerReason28d"?, "trainerReasonOver"}
+--       · {"error": "forbidden" | "invalid_body" | "booking_not_found" | "booking_open" | "booking_no_show" | "booking_done" |
+--                   "new_booking_required" | "new_booking_invalid" | "new_booking_out_of_window" | "new_booking_used" |
+--                   "exempt_limit"(+ "nextOn")}
+create or replace function public.record_games_exemption(
+  p_student_id bigint, p_trainer_id bigint, p_exempt_of text, p_exempt_reason text, p_reason text, p_played_at date,
+  p_booking_id bigint default null, p_new_booking_id bigint default null, p_decided_by text default 'direct')
+returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_b      slot_bookings%rowtype;
+  v_nb     slot_bookings%rowtype;
+  v_new_on date;
+  v_last   date;
+  v_tr     int;
+  v_rem    int;
+  v_id     bigint;
+begin
+  -- 공개 키(anon · authenticated)로는 부르지 못한다(§46 decide_games_adjustment 와 같은 가드).
+  if coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb->>'role', '') in ('anon', 'authenticated') then
+    return jsonb_build_object('error', 'forbidden');
+  end if;
+  if p_student_id is null or p_trainer_id is null or p_played_at is null
+     or p_exempt_of is null or p_exempt_of not in ('late_cancel', 'no_show')
+     or p_exempt_reason is null
+     or p_exempt_reason not in ('agreed_change', 'force_majeure', 'server_maintenance', 'trainer_reason', 'fixed_class_swap')
+     or char_length(coalesce(p_reason, '')) not between 2 and 200
+     or (p_exempt_reason <> 'agreed_change' and p_new_booking_id is not null) then
+    return jsonb_build_object('error', 'invalid_body');
+  end if;
+
+  -- 같은 수강생 · 같은 트레이너의 면제는 한 줄씩(28일 세기가 동시 요청으로 새지 않게)
+  perform pg_advisory_xact_lock(hashtextextended('gar_exempt_student:' || p_student_id, 0));
+  perform pg_advisory_xact_lock(hashtextextended('gar_exempt_trainer:' || p_trainer_id, 0));
+
+  -- 원래 예약(있으면) — 이 수강생 · 이 트레이너 칸 · 꼬리 행 아님 · 닫힌(취소된) 예약만
+  if p_booking_id is not null then
+    select b.* into v_b from slot_bookings b join trainer_slots t on t.id = b.slot_id
+     where b.id = p_booking_id and b.student_id = p_student_id and t.trainer_id = p_trainer_id and b.span_head_id is null;
+    if not found then return jsonb_build_object('error', 'booking_not_found'); end if;
+    if v_b.status in ('booked', 'pending_review') then return jsonb_build_object('error', 'booking_open'); end if;
+    if v_b.status = 'no_show' then return jsonb_build_object('error', 'booking_no_show'); end if;
+    if v_b.status = 'done' then return jsonb_build_object('error', 'booking_done'); end if;
+  end if;
+
+  -- 합의 변경 — 수업일부터 7일 안에 다시 잡은 예약(같은 수강생 · 열림 · 대기 · 끝남) · 그 예약 하나로 한 번
+  if p_exempt_reason = 'agreed_change' then
+    if p_new_booking_id is null then return jsonb_build_object('error', 'new_booking_required'); end if;
+    select b.* into v_nb from slot_bookings b
+     where b.id = p_new_booking_id and b.student_id = p_student_id and b.span_head_id is null
+       and b.status in ('booked', 'pending_review', 'done');
+    if not found then return jsonb_build_object('error', 'new_booking_invalid'); end if;
+    select (t.slot_start at time zone 'Asia/Seoul')::date into v_new_on from trainer_slots t where t.id = v_nb.slot_id;
+    if v_new_on is null or v_new_on < p_played_at or v_new_on > p_played_at + 7 then
+      return jsonb_build_object('error', 'new_booking_out_of_window');
+    end if;
+    if exists (select 1 from games_adjust_requests
+                where new_booking_id = p_new_booking_id and status in ('pending', 'approved')) then
+      return jsonb_build_object('error', 'new_booking_used');
+    end if;
+  end if;
+
+  -- 불가항력 — 수강생당 28일에 1번(수업일 앞뒤 28일 안에 다른 불가항력 면제가 있으면 거절)
+  if p_exempt_reason = 'force_majeure' then
+    select max(played_at) into v_last from games_adjust_requests
+     where student_id = p_student_id and kind = 'exempt' and exempt_reason = 'force_majeure' and status = 'approved'
+       and played_at > p_played_at - 28 and played_at < p_played_at + 28;
+    if v_last is not null then
+      return jsonb_build_object('error', 'exempt_limit', 'nextOn', to_char(v_last + 28, 'YYYY-MM-DD'));
+    end if;
+  end if;
+
+  v_rem := portal_remaining_for_trainer(p_student_id, p_trainer_id);
+  insert into games_adjust_requests (student_id, trainer_id, kind, remaining_delta, reason, played_at, status,
+                                     decided_at, decided_by, remaining_before, remaining_after, owner_notified,
+                                     exempt_of, exempt_reason, booking_id, new_booking_id)
+  values (p_student_id, p_trainer_id, 'exempt', 0, p_reason, p_played_at, 'approved',
+          now(), coalesce(nullif(p_decided_by, ''), 'direct'), v_rem, v_rem, false,
+          p_exempt_of, p_exempt_reason, p_booking_id, p_new_booking_id)
+  returning id into v_id;
+
+  -- 트레이너 사정 — 이 트레이너의 최근 28일(수업일 기준 · 이번 줄 포함) 건수 · 3번째부터 원장 화면 표시
+  if p_exempt_reason = 'trainer_reason' then
+    select count(*) into v_tr from games_adjust_requests
+     where trainer_id = p_trainer_id and kind = 'exempt' and exempt_reason = 'trainer_reason' and status = 'approved'
+       and played_at > p_played_at - 28 and played_at <= p_played_at;
+  end if;
+
+  return jsonb_build_object('requestId', v_id, 'remaining', v_rem,
+    'forceMajeureNextOn', case when p_exempt_reason = 'force_majeure' then to_char(p_played_at + 28, 'YYYY-MM-DD') end,
+    'trainerReason28d', v_tr,
+    'trainerReasonOver', coalesce(v_tr, 0) > 2);
+end $$;
+
+-- ── 63b) B 구간 — 기존 제약 세 개 교체(kind 에 exempt · exempt 만 0판) · 오너 원문 OK 뒤 · ⚠️ 실행하지 않음 ────────
+--   alter table public.games_adjust_requests drop constraint if exists gar_kind_chk,
+--     add constraint gar_kind_chk check (kind = any (array['correction', 'compensation', 'late_cancel', 'no_show', 'other', 'exempt']));
+--   alter table public.games_adjust_requests drop constraint if exists gar_delta_chk,
+--     add constraint gar_delta_chk check (
+--       (kind = 'exempt' and remaining_delta = 0)
+--       or (kind <> 'exempt' and remaining_delta <> 0 and remaining_delta between -50 and 50));
+--   alter table public.games_adjust_requests drop constraint if exists gar_kind_delta_chk,
+--     add constraint gar_kind_delta_chk check (
+--       (kind = 'late_cancel' and remaining_delta = -3) or (kind = 'no_show' and remaining_delta = -5)
+--       or (kind = 'compensation' and remaining_delta > 0) or kind in ('correction', 'other')
+--       or (kind = 'exempt' and remaining_delta = 0));
+--   교체 전 정의(되돌림용 · 실측 2026-10-02):
+--     gar_kind_chk       CHECK ((kind = ANY (ARRAY['correction','compensation','late_cancel','no_show','other'])))
+--     gar_delta_chk      CHECK (((remaining_delta <> 0) AND ((remaining_delta >= '-50') AND (remaining_delta <= 50))))
+--     gar_kind_delta_chk CHECK ((((kind = 'late_cancel') AND (remaining_delta = '-3')) OR ((kind = 'no_show') AND (remaining_delta = '-5'))
+--                               OR ((kind = 'compensation') AND (remaining_delta > 0)) OR (kind = ANY (ARRAY['correction','other']))))
+--
+-- 권한 좁히기 — 오너 실행(§46c 와 같은 순서 · 권한 변경 = Level 0):
+--   grant execute on function public.record_games_exemption(bigint, bigint, text, text, text, date, bigint, bigint, text) to service_role;
+--   revoke execute on function public.record_games_exemption(bigint, bigint, text, text, text, date, bigint, bigint, text) from public, anon, authenticated;
+--
+-- 되돌리기(코드의 호출을 먼저 되돌릴 것 · 지우는 DDL = B 구간 · 오너 OK):
+--   delete from public.games_adjust_requests where kind = 'exempt';   -- 면제 줄이 있으면(기록이 지워진다 — 오너 판단)
+--   63b 를 거꾸로(위 「교체 전 정의」로 다시 교체)
+--   drop function if exists public.record_games_exemption(bigint, bigint, text, text, text, date, bigint, bigint, text);
+--   drop index if exists public.uq_gar_new_booking, public.ix_gar_exempt_trainer, public.ix_gar_exempt_student;
+--   alter table public.games_adjust_requests drop constraint if exists gar_exempt_agreed_chk, drop constraint if exists gar_exempt_fields_chk,
+--     drop constraint if exists gar_exempt_reason_chk, drop constraint if exists gar_exempt_of_chk,
+--     drop column if exists new_booking_id, drop column if exists booking_id, drop column if exists exempt_reason, drop column if exists exempt_of;
+--
+-- 실행 뒤 검증(세션):
+--   select column_name from information_schema.columns where table_schema='public' and table_name='games_adjust_requests'
+--     and column_name in ('exempt_of','exempt_reason','booking_id','new_booking_id');                      -- 4
+--   select conname from pg_constraint where conrelid = 'public.games_adjust_requests'::regclass and conname like 'gar_exempt%';  -- 4
+--   select proname, length(pg_get_functiondef(oid)), left(md5(pg_get_functiondef(oid)), 8) from pg_proc where proname = 'record_games_exemption';
+--   select count(*) from games_adjust_requests;                                                             -- 0(전 · 후 같음)
+--   notify pgrst, 'reload schema';
+--
+--   ⚠️ 63a · 63b 미실행(2026-10-02) — 되돌림 시험만 끝(운영 DB · 63a 블록 + 63b 주석 블록 그대로 · 전부 롤백 · 남은 변화 0 ·
+--      games_adjust_requests 일련번호 6개 소모 = 다음 번호 19):
+--      종류 틀림 · 사유 1자 · 합의 변경 아닌데 새 예약 = invalid_body / 꼬리 예약 = booking_not_found / 열린 예약 = booking_open /
+--      끝난 예약 = booking_done / 합의 변경 새 예약 없음 = new_booking_required / 합의 변경 정상(9/28 → 9/29 예약) /
+--      같은 새 예약 다시 = new_booking_used / 꼬리 새 예약 = new_booking_invalid / 불가항력 정상(다음 10/26) /
+--      12일 뒤 불가항력 = exempt_limit nextOn 10/26 / 28일 뒤 불가항력 정상 / 트레이너 사정 1 · 2 · 3번째(3번째 over true) /
+--      면제 줄 6 · 전부 0판 · 판수 기록(lesson_sessions) 0.
+-- ============================================================
