@@ -6576,12 +6576,12 @@ create table if not exists public.staff_month_conditions (
   unique (staff_id, period, condition_key)
 );
 alter table public.staff_month_conditions enable row level security;   -- service_role 만 통과
+notify pgrst, 'reload schema';   -- 블록을 통째로 붙여 실행해도 PostgREST 새로고침이 빠지지 않게 실행 줄로 둔다(검수 지적 10/2)
 --
--- 실행 뒤 검증(세션):
+-- 실행 뒤 검증(세션 · 읽기만):
 --   select column_name from information_schema.columns where table_schema='public' and table_name='staff_month_conditions';   -- 9
 --   select conname from pg_constraint where conrelid = 'public.staff_month_conditions'::regclass order by 1;
 --   select count(*) from staff_month_conditions;                                                                                 -- 0
---   notify pgrst, 'reload schema';
 --
 -- 판정 넣기(B · 오너 OK 뒤 · 예시 — 9월분 미달은 10/2 정산 판단 그대로):
 --   insert into staff_month_conditions (staff_id, period, condition_key, met, evidence, decided_by, memo)
