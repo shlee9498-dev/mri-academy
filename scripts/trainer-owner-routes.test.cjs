@@ -418,9 +418,9 @@ test("수강생 요약 — 누적 수업 · 조정 순합 · 트레이너별 지
   // 트레이너별 누적 · 홈 막대(§7.3 byTrainer) — B: 21 등록 · 수업 5 · 조정 +3 · 선차감 5 → 잔여 8 · 막대 21 중 13
   assert.deepEqual(l.byTrainer, [
     { trainerId: T(5), trainerName: "트레이너B", registeredGames: 21, lessonGames: 5, adjustedGames: 3, heldGames: 5,
-      remainingGames: 8, currentPack: { games: 21, used: 13 } },
+      remainingGames: 8, currentPack: { games: 21, used: 13, remaining: 8 } },
     { trainerId: T(4), trainerName: "원장", registeredGames: 10, lessonGames: 3, adjustedGames: 0, heldGames: 0,
-      remainingGames: 7, currentPack: { games: 10, used: 3 } },
+      remainingGames: 7, currentPack: { games: 10, used: 3, remaining: 7 } },
   ]);
   assert.equal(l.byTrainer.reduce((a, t) => a + t.remainingGames, 0), l.remainingGames);   // 쪼갠 합 = 합계
 });

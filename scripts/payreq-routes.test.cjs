@@ -131,21 +131,25 @@ test("POST 카드 — 링크 없으면 400 · 주문번호 저장 · 같은 주�
   delete process.env.GROBLE_LINK_LESSON33;
 });
 
-test("GET /payment-requests — 수량 · 방법 · 현금영수증 뒤 4자리 · 옛 행(#31 모양)은 정수배로 푼다 · 가드 통과", async () => {
+test("GET /payment-requests — 수량 · 방법 · 현금영수증 뒤 4자리 · 옛 행은 상품과 맞으면 그대로 · 아니면 정수배로 푼다 · 가드 통과", async () => {
   reset();
   st.list = [
     { id: 31, status: "approved", kind: "판수", amount: 420000, games: 99, quantity: null, pay_channel: null, paid_on: "2026-09-30", created_at: "2026-09-30T02:49:00Z" },
     { id: 40, status: "pending", kind: "판수", amount: 90000, games: 21, quantity: 1, pay_channel: "transfer", paid_on: "2026-10-01", created_at: "2026-10-01T02:00:00Z",
       cash_receipt_purpose: "deduction", cash_receipt_number: "01000001111", cash_receipt_issued_at: "2026-10-01T03:00:00Z", memo: "앱 입금 신청 · 입금자 가나다", student_name: "가나다" },
     { id: 41, status: "pending", kind: "판수", amount: 140000, games: 33, quantity: 1, pay_channel: "groble", deposit_ref: "G0001", paid_on: "2026-10-01", created_at: "2026-10-01T02:10:00Z" },
+    { id: 42, status: "approved", kind: "판수", amount: 280000, games: 66, quantity: null, pay_channel: null, paid_on: "2026-09-29", created_at: "2026-09-29T02:00:00Z" },
   ];
   const r = await call("GET", "/payment-requests");
   assert.equal(r.status, 200);
-  const [a, b, c] = r.json.requests;
-  assert.deepEqual([a.label, a.quantity, a.won, a.games, a.method, a.cashReceipt], ["33판 패키지", 3, 420000, 99, "transfer", null]);
-  assert.deepEqual([a.unitGames, r.json.requests[1].unitGames], [33, 21]);           // 1개 판수(계약 §9.27) — 앱이 나누지 않는다
+  const [a, b, c, d] = r.json.requests;
+  // 수량 칸이 없는 옛 행(#31 모양 · 99판 420,000)은 2026-10-02 정식 상품 99판 패키지와 딱 맞아 「99판 패키지 × 1」로 푼다.
+  //   99판 상품이 없던 때는 33판 × 3 으로 풀었다 — 합계 · 판수는 그대로라 화면 숫자는 같다(이름표만 사이트와 같아진다).
+  assert.deepEqual([a.label, a.quantity, a.won, a.games, a.method, a.cashReceipt], ["99판 패키지", 1, 420000, 99, "transfer", null]);
+  assert.deepEqual([a.unitGames, r.json.requests[1].unitGames], [99, 21]);           // 1개 판수(계약 §9.27) — 앱이 나누지 않는다
   assert.deepEqual(b.cashReceipt, { purpose: "deduction", last4: "1111", issued: true });
   assert.deepEqual([c.method, c.cashReceipt], ["card", null]);
+  assert.deepEqual([d.label, d.quantity, d.games, d.unitGames], ["33판 패키지", 2, 66, 33]);   // 상품에 없는 66판 = 33판 × 2(정수배)
   assert.equal(/memo|student_name|select=\*/.test(st.lastListQ), false);             // 이름 · 메모는 읽지도 않는다
   const body = JSON.stringify(r.json);
   for (const leak of ["01000001111", "G0001", "memo", "student_name", "amount"]) assert.equal(body.includes(leak), false, leak);
