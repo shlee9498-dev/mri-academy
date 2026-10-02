@@ -85,7 +85,8 @@ test("사이트 모양(명세 §8 · /api/site-metrics) — students30 · games3
   const sessions = [ss(1, 10, 2, "2026-09-10", 5), ss(2, 11, 5, "2026-09-11", 8)];
   const m = computeMetrics({ sessions, payments: [], students, enrollTrainer: new Map(), staff }, W);
   const site = siteShape({ asOf: "x", ...m });
-  assert.deepEqual(Object.keys(site), ["asOf", "students30", "games30", "rebook30", "directSessions30", "directStudents30", "byTrainer"]);
+  assert.deepEqual(Object.keys(site), ["asOf", "students30", "games30", "rebook30", "graduatesMasterPlus", "directSessions30", "directStudents30", "byTrainer"]);
+  assert.equal(site.graduatesMasterPlus, null);                                               // graduations 를 안 읽었으면 null
   assert.deepEqual([site.students30, site.games30, site.rebook30], [2, 13, null]);          // 결제 없음 → null
   assert.deepEqual([site.directSessions30, site.directStudents30], [null, null]);            // 직강 행을 안 읽었으면 null
   assert.deepEqual(site.byTrainer.map((t) => [t.id, t.name, t.students30, t.games30, t.directSessions30]),
@@ -94,7 +95,25 @@ test("사이트 모양(명세 §8 · /api/site-metrics) — students30 · games3
   assert.doesNotThrow(() => assertPublic(site));
   // 직강 키가 없던 날의 저장본도 같은 모양으로 내린다
   const old = siteShape({ asOf: "x", students: 1, games: 5, repurchase: { ratePct: 10 }, trainers: [] });
-  assert.deepEqual([old.directSessions30, old.directStudents30], [null, null]);
+  assert.deepEqual([old.directSessions30, old.directStudents30, old.graduatesMasterPlus], [null, null, null]);
+});
+
+test("graduatesMasterPlus — 레슨으로(via_lesson) 마스터 · 서바이버 달성 사람 수 · 전 기간 · 같은 사람 한 번 · 합친 행 · 테스트 계정", () => {
+  const { masterPlusOf } = require("../public-metrics.cjs")._test;
+  const g = (id, o) => ({ id, student_id: null, student_name: null, tier: "마스터", via_lesson: true, ...o });
+  const rows = [
+    g(1, { student_name: "가 나" }), g(2, { student_name: "가나", tier: "서바이버" }),          // 같은 이름(띄어쓰기만 다름) = 한 사람
+    g(3, { student_id: 10 }), g(4, { student_id: 14 }),                                         // 14 는 10 으로 합친 행 → 한 사람
+    g(5, { student_id: TEST_ID }),                                                              // 테스트 계정
+    g(6, { student_name: "다라", via_lesson: false }),                                         // 레슨 밖 달성
+    g(7, { student_name: "마바", tier: "다이아" }),                                              // 마스터 미만
+    g(8, { tier: "Survivor" }),                                                                 // 이름 · 명부 없음 → 행 하나 = 한 사람
+  ];
+  assert.equal(masterPlusOf(rows, students), 3);
+  const m = computeMetrics({ sessions: [], payments: [], students, enrollTrainer: new Map(), staff, graduations: rows }, W);
+  assert.equal(m.graduatesMasterPlus, 3);
+  const { siteShape } = require("../public-metrics.cjs")._test;
+  assert.doesNotThrow(() => assertPublic(siteShape({ asOf: "x", ...m })));
 });
 
 // ── 직강(원장 강의 · 「회」 · 2026-10-02) ──

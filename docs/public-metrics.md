@@ -47,13 +47,26 @@
   10/2 09:00 직강 칸 예약 1건이 아직 닫히지 않았다(출석 미기록).
   그 3회도 10/1 에 사후 입력됐고 시작 시각이 없다 — 9/29 의 2회(중급반 · 심화반)가 한 강의였는지 장부로는 가를 수 없다(한 강의였다면 2회).
 
+### 1.2 레슨으로 마스터 이상 — 2026-10-03 추가(사이트 「기록실」)
+
+| 지표 | 키 | 정의 |
+|---|---|---|
+| 마스터 이상 달성 | `graduatesMasterPlus` | `graduations` 중 **레슨으로**(`via_lesson`) **마스터 · 서바이버**를 달성한 **사람 수** · **전 기간**(30일 창 아님) |
+
+- 한 사람 가리기: 명부 연결(`student_id`)이 있으면 그 수강생(합친 행은 남은 쪽) · 없으면 적힌 이름(띄어쓰기 · 대소문자 무시). 이름은 세는 데만 쓰고 응답에 없다.
+- 빼는 것: 레슨 밖 달성(`via_lesson=false`) · 마스터 미만 · 테스트 계정.
+- 읽기에 실패하면 `null`(나머지 숫자는 그대로 낸다). 사이트는 0 이하 · `null` 이면 칸을 감추거나 고정값을 둔다.
+- 10/3 실측: graduations 5행(마스터 4 · 서바이버 1 · 전부 레슨) = **5명**(지휘 장부 「5명」과 같다).
+- 배포 직후 오늘 저장본에 이 키가 없으면(배포 전 계산) 첫 요청이 한 번 다시 센다.
+
 ## 2. API
 
 ### 2.1 `GET /api/site-metrics` — 사이트용(개편 2단계 명세 §8)
 
 ```json
-{ "asOf": "2026-09-30T04:48:13.3Z", "students30": 31, "games30": 555, "rebook30": 51,
-  "byTrainer": [ { "id": "hyuntae", "name": "현태", "students30": 25, "games30": 424, "rebook30": 47 } ] }
+{ "asOf": "2026-09-30T04:48:13.3Z", "students30": 31, "games30": 555, "rebook30": 51, "graduatesMasterPlus": 5,
+  "directSessions30": null, "directStudents30": null,
+  "byTrainer": [ { "id": "hyuntae", "name": "현태", "students30": 25, "games30": 424, "rebook30": 47, "directSessions30": null } ] }
 ```
 
 - `id` = 트레이너 공개 키(`hyuntae` · `jungu` · `muri` — 사이트가 쓰던 `data-k` 와 같다 · 표에 없는 트레이너는 `t<번호>`).
@@ -90,6 +103,33 @@
 - `ratePct` 는 결제 수강생이 0 이면 `null`(0% 가 아니다 — 화면은 칸을 감춘다).
 - 오늘 계산이 실패하면 **어제 저장본**을 내린다(`asOf` · `window` 로 날짜가 드러난다). 저장본도 없으면 503 `not_ready`.
 - 저장: `ops_state` 키 `public_metrics` `{ date, value }` · 크론 `cron:publicMetrics`.
+
+### 2.3 `GET /api/progress-public` — 성장 기록(사이트 「기록실」 · `gmi-progress.html` · 2026-10-03 고침)
+
+계산은 `public-rows.cjs` `progressPublic`(순수 · 시험 `scripts/public-rows.test.cjs`) · 라우트는 `server.js` · 캐시 5분 · 로그인 없음.
+
+```json
+{ "updatedAt": "2026-10-03T00:05:00Z",
+  "students": [ { "alias": "세**",
+    "trajectory": [ { "date": "2026-07-27", "tier": "Platinum 2", "rankPoint": 2485, "avgDamage": null },
+                    { "date": "2026-07-27", "tier": "Master", "rankPoint": 3408, "avgDamage": null } ],
+    "delta": { "tierFrom": "Platinum 2", "tierTo": "Master", "tierDelta": 3, "rpDelta": 923, "dmgDelta": null,
+               "months": null, "seasons": 2 } } ] }
+```
+
+- **출처 두 가지**
+  1. 정기 추적(`student_snapshots` · `snapshot_type=tracking` · 명부 연결) — 수강생마다 **처음 랭크 기록 → 마지막 랭크 기록**(언랭 스냅샷은 건너뛴다).
+     `trajectory` = 그 사이 랭크 기록(하루 마지막 · 최대 12점) · `months` = 두 기록 사이 개월(최소 1).
+  2. 수강 성장 등록(디코 「📈 수강 성장 등록」 버튼 · `baseline` → `after` · 배그 계정마다) — **첫 시작 기록 → 마지막 등록 기록**.
+     `after` 는 등록(또는 `/성장재계산`) 때 그 시즌 전적이다 — 「지금」이 아니라 **등록 때 달성**이다. `trajectory` = 두 점 · `months` = `null`.
+- **올라간 기록만** 싣는다 — 두 티어가 다 있고 티어가 올랐거나, 같은 티어면 RP 가 올랐을 때. 시즌 초기화로 내려간 기록 · 언랭 기록은 성장 기록이 아니다.
+- 같은 계정이 두 출처에 다 있으면 더 많이 오른 쪽 하나만. 순서 = 티어 상승 → RP 상승 · 최대 20.
+- `delta.seasons` = 첫 기록 시즌 → 끝 기록 시즌(40 → 42 = 2). `tierFrom` · `tierTo` 는 영문 + 하위 단계(「Platinum 2」) · 마스터는 단계 없이 · 서바이버(`tier_index` 8)는 「Survivor」.
+- 닉은 앞 두 글자 + `**`(2026-07-29 규격 · 10/3 오너 「그대로」). 배그 닉 원문 · 디스코드 · 수강생 번호는 싣지 않는다.
+- **10/3 실측**: 고치기 전 응답은 정기 추적만 읽어(8/3~10/1 · 16명) 10월 시즌 초기화(S42 → S43)로 **거의 전원이 내려간 기록**이었다(마스터 → 크리스탈 등).
+  지휘 장부의 사례(플래티넘 2 → 마스터 · S40 → S42 / 크리스탈 4 → 다이아 2 / 골드 2 → 플래티넘 3)는 **수강 성장 등록**에 있었다(명부 연결 없음 · 이 라우트가 안 읽었다).
+  고친 뒤 7줄: 위 3사례 + 실버 4 → 플래티넘 3 · 크리스탈 2 → 다이아 4 · 정기 추적 2줄(골드 3 → 크리스탈 4 · 플래티넘 3 → 플래티넘 1).
+  가린 닉 7줄 중 4줄이 같은 「Gm**」(클랜 태그로 시작하는 닉) — 가림 규칙을 바꿀지는 판정 대기.
 
 ## 3. 사이트 교체안 — `index.html` (문구는 클로드디자인 시안 수령 뒤 확정)
 
