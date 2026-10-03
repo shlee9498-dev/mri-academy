@@ -745,11 +745,12 @@ test("chatterOf — 60자 미만 · 날 말 + 행동 끝맺음이면 배그 낱�
   assert.equal(chatterOf("감도 낮게 해요"), null);                                         // 날 말이 없다(「낮」은 날 말에서 뺐다)
 });
 
-test("validateRequest — publish 는 hold · wait7 만", () => {
+test("validateRequest — publish 는 hold · wait7 · now 만 · 글자가 정확히 맞을 때만(now = 2026-10-03 오너 「바로 공개」)", () => {
   const ch = { g: "100000000000000001", ch: "100000000000000002", trainerId: 5, kind: "lesson", byAuthor: true };
-  assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch], publish: "hold" }), null);
-  assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch], publish: "wait7" }), null);
-  assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch], publish: "now" }), "request_publish");
+  for (const p of ["hold", "wait7", "now"]) assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch], publish: p }), null, p);
+  assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch] }), null);                             // 없으면 hold
+  for (const p of ["NOW", "Now", "now ", " now", "public", "students", "", null, true, 1, ["now"]])
+    assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch], publish: p }), "request_publish", JSON.stringify(p));
 });
 
 test("실행(글쓴이 모드) — 공개 시점: 기본 hold 는 public_at 비움 · wait7 은 종전(실행 + 7일) · 채널 모드는 늘 종전 · 결과에 어느 쪽인지", async () => {
@@ -766,6 +767,7 @@ test("실행(글쓴이 모드) — 공개 시점: 기본 hold 는 public_at 비�
   await wait.poll();
   assert.equal(wait.store[RES_KEY].channels[0].publish, "wait7");
   assert.equal(wait.sb.db.lesson_reviews[0].public_at, new Date(NOW + PUBLIC_WAIT_MS).toISOString());
+  assert.equal(wait.sb.db.lesson_reviews[0].visibility, "private");                           // 7일 동안은 본인 · 트레이너만
 
   const fixed = authorRunner([note]);                                                       // 채널 모드(종전 통로) — hold 를 줘도 종전대로
   fixed.store[REQ_KEY] = { id: "pub-fixed", mode: "write", confirmedBy: 4, publish: "hold",
@@ -773,4 +775,41 @@ test("실행(글쓴이 모드) — 공개 시점: 기본 hold 는 public_at 비�
   await fixed.poll();
   assert.equal(fixed.store[RES_KEY].channels[0].publish, "wait7");
   assert.equal(fixed.sb.db.lesson_reviews[0].public_at, new Date(NOW + PUBLIC_WAIT_MS).toISOString());
+  assert.equal(fixed.sb.db.lesson_reviews[0].visibility, "private");
+});
+
+test("실행(글쓴이 모드) — publish now: 처음부터 「수강생 모두」(students · public_at 비움) · 드라이런 결과에 now · 채널 모드는 종전 · 이미 옮긴 행은 안 고친다", async () => {
+  const note = raw({ content: FORM, createdTimestamp: T0 });
+  const NOW = Date.parse("2026-10-03T01:00:00Z");
+  const ch = (r) => ({ g: "300000000000000001", ch: r.CH, trainerId: 5, kind: "lesson", byAuthor: true });
+
+  const now = authorRunner([note]);
+  now.store[REQ_KEY] = { id: "pub-now-dry", mode: "dry", publish: "now", channels: [ch(now)] };
+  await now.poll();
+  const dry = now.store[RES_KEY];
+  assert.deepEqual([dry.publish, dry.channels[0].publish, dry.channels[0].status], ["now", "now", "planned"]);
+  assert.equal(now.sb.writes.length, 0);                                                    // 드라이런은 쓰지 않는다
+  now.store[REQ_KEY] = { id: "pub-now", mode: "write", confirmedBy: 4, publish: "now", channels: [ch(now)] };
+  await now.poll();
+  assert.deepEqual([now.store[RES_KEY].publish, now.store[RES_KEY].channels[0].publish], ["now", "now"]);
+  assert.deepEqual(now.sb.db.lesson_reviews.map((r) => [r.source, r.status, r.visibility, r.public_at, r.published_at]),
+    [["discord", "published", "students", null, new Date(T0).toISOString()]]);              // 앱이 「수강생 모두」로 보낸 복기와 같은 모양 · 시각은 원래 글
+
+  const fixed = authorRunner([note]);                                                       // 채널 모드 — now 를 줘도 종전(private · 7일 대기)
+  fixed.store[REQ_KEY] = { id: "pub-now-fixed", mode: "write", confirmedBy: 4, publish: "now",
+    channels: [{ g: "300000000000000001", ch: fixed.CH, studentId: 98, trainerId: 5, kind: "lesson", fill: false }] };
+  await fixed.poll();
+  assert.equal(fixed.store[RES_KEY].channels[0].publish, "wait7");
+  assert.deepEqual(fixed.sb.db.lesson_reviews.map((r) => [r.visibility, r.public_at]),
+    [["private", new Date(NOW + PUBLIC_WAIT_MS).toISOString()]]);
+
+  const before = { id: 50, student_id: 98, author_role: "student", author_staff_id: null, src_channel: "300000000000000005",
+    src_msg: note.id, body: FORM, visibility: "private", public_at: null, status: "published", source: "discord" };
+  const old = authorRunner([note], { lesson_reviews: [{ ...before }] });                     // 이미 옮긴 행(파일럿 같은) — now 로 다시 돌려도 그대로
+  old.store[REQ_KEY] = { id: "pub-now-old", mode: "write", confirmedBy: 4, publish: "now", channels: [ch(old)] };
+  await old.poll();
+  const w = old.store[RES_KEY].channels[0].written;
+  assert.deepEqual([w.reviewsNew, w.reviewsExisting], [0, 1]);
+  assert.deepEqual(old.sb.db.lesson_reviews, [before]);
+  assert.ok(!old.sb.writes.some(([, t]) => t === "lesson_reviews"));                         // 넣기도 고치기도 없다
 });
