@@ -6,8 +6,10 @@
 //   { id, mode: "dry" | "write", confirmedBy: 오너 staff id,
 //     channels: [{ g: 서버 id, ch: 채널 id, studentId, trainerId, kind: "lesson" | "lecture", fill: true | false }],
 //     include: [메시지 id] · exclude: [메시지 id],   ← 손으로 넣기 · 빼기(선택 · 2026-10-03 검수 12차)
-//     publish: "hold" | "wait7" }                     ← 공개 시점(글쓴이 모드 채널만 · 검수 13차) — hold(기본) = private 만 · public_at 비움
+//     publish: "hold" | "wait7" | "now" }             ← 공개 시점(글쓴이 모드 채널만 · 검수 13차) — hold(기본) = private 만 · public_at 비움
 //                                                       (본인 · 트레이너만 본다 · 본인이 앱에서 범위를 바꾸면 열린다) · wait7 = 실행 + 7일 뒤 「수강생 모두」
+//                                                       · now = 처음부터 「수강생 모두」(visibility students · public_at 비움 — 앱이 「수강생 모두」로
+//                                                         보낸 복기와 같은 모양 · 2026-10-03 오너 「그냥 바로 공개로 넣어」). 글자가 정확히 맞을 때만 받는다
 //                                                       채널 모드(studentId 있는 채널)는 publish 와 상관없이 종전대로 wait7 이다
 //   include = 거르기(잡담 · 일정 · 짧은 말)에 걸린 글 중 넣을 것 — 거르기만 건너뛰고 짝 맞추기 · 겹침 막기 · 공개 규칙은 같다
 //             (못 맞춘 글쓴이의 글 · 붙일 곳 없는 트레이너 글은 include 로도 안 들어간다). exclude = 들어갈 글 중 뺄 것(묶음에도 안 붙는다).
@@ -18,7 +20,7 @@
 // 무엇을 쓰나(write · 더하기만):
 //   lesson_reviews   — 수강생 글 = 수강생 복기 · 앞선 수강생 글이 없는 트레이너 글 = 트레이너 복기.
 //                      source=discord · published · visibility=private + public_at = 실행 + 7일(그 뒤 「수강생 모두」 · review-api flipPublicDue)
-//                      · 글쓴이 모드는 요청 publish 가 hold(기본)면 public_at 을 비운다(아래 요청 모양)
+//                      · 글쓴이 모드는 요청 publish 가 hold(기본)면 public_at 을 비운다 · now 면 visibility=students · public_at 비움(위 요청 모양)
 //                      · 작성 · 보낸 · 수정 시각 = 원래 글 시각 · src_msg = 첫 글 id(재실행 멱등 · 있으면 건너뛴다 ·
 //                        첫 글이 바뀌어도 같은 글쓴이 10분 사슬의 옛 src_msg 를 찾는다 — 아래 「겹침 막기」)
 //   review_feedback  — 트레이너 답(kind=overall · src_msg · 원래 글 시각) — 답장한 글 → 없으면 바로 앞 수강생 복기(14일 안)
@@ -53,6 +55,8 @@ const MIN_POST = 15;                                // 기존 피드백 수집(s
 const MERGE_MS = 10 * 60_000;                       // 같은 사람의 이어진 글(10분 안 · 사이에 다른 사람 글 없음) = 한 건
 const ANSWER_WINDOW_MS = 14 * 86400_000;            // 답장 표시 없는 트레이너 글은 14일 안의 바로 앞 수강생 복기에 붙인다
 const PUBLIC_WAIT_MS = 7 * 86400_000;               // 어플 9/30 — 옮긴 뒤 7일 공개 대기
+const PUBLISH = ["hold", "wait7", "now"];           // 요청 publish(글쓴이 모드) — 정확한 글자만 · 없으면 hold
+const publishOf = (req) => (PUBLISH.includes(req?.publish) ? req.publish : "hold");
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);   // 버킷 lesson-reviews allowed_mime_types 와 같다
 const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 const BODY_MAX = 8000, ANSWER_MAX = 4000;           // DDL lesson_reviews.body · review_feedback.body
@@ -444,7 +448,8 @@ function validateRequest(req) {
     if (!Array.isArray(req[k]) || req[k].length > 5000 || req[k].some((x) => !SNOWFLAKE.test(String(x)))) return `request_${k}`;
   }
   // 공개 시점(글쓴이 모드 채널) — hold(기본 · private 만 · public_at 비움) | wait7(실행 + 7일 뒤 「수강생 모두」 · 종전 규칙)
-  if (req.publish !== undefined && req.publish !== "hold" && req.publish !== "wait7") return "request_publish";
+  //   | now(처음부터 「수강생 모두」 · 2026-10-03 오너). 글자가 정확히 맞아야 한다 — 「NOW」 · 「now 」 · true 는 거절
+  if (req.publish !== undefined && !PUBLISH.includes(req.publish)) return "request_publish";
   if (req.include && req.exclude) {
     const ex = new Set(req.exclude.map(String));
     if (req.include.some((x) => ex.has(String(x)))) return "request_include_exclude";
@@ -560,9 +565,12 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
     try { channel = await client.channels.fetch(String(c.ch)); } catch (e) { res.status = "error"; res.error = `channel_${e?.status || e?.code || "fetch"}`; return res; }
     if (!channel || String(channel.guildId) !== String(c.g)) { res.status = "error"; res.error = "channel_guild_mismatch"; return res; }
     const byAuthor = c.byAuthor === true;
-    // 공개 시점 — 글쓴이 모드만 요청의 publish 를 따른다(hold = public_at 비움). 채널 모드는 종전대로 실행 + 7일
-    const publicAt = byAuthor && base.publish !== "wait7" ? null : base.publicAt;
-    res.publish = byAuthor ? base.publish : "wait7";
+    // 공개 시점 — 글쓴이 모드만 요청의 publish 를 따른다. 채널 모드는 종전대로 실행 + 7일
+    //   hold = private · public_at 비움 / wait7 = private · 실행 + 7일 / now = students · public_at 비움(앱이 「수강생 모두」로 보낸 복기와 같은 모양)
+    const publish = byAuthor ? base.publish : "wait7";
+    const publicAt = publish === "wait7" ? base.publicAt : null;
+    const visibility = publish === "now" ? "students" : "private";
+    res.publish = publish;
     const stu = byAuthor ? null : base.students.get(Number(c.studentId));
     if (!byAuthor && !stu) { res.status = "error"; res.error = "student_missing"; return res; }
     if (!base.staffIds.has(Number(c.trainerId))) { res.status = "error"; res.error = "trainer_missing"; return res; }
@@ -689,7 +697,7 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
         body: g.body ? g.body.slice(0, BODY_MAX) : null,
         src_guild: String(c.g), src_channel: String(c.ch), src_msg: g.key,
         created_at: at, updated_at: new Date(g.lastTs).toISOString(), published_at: at,
-        visibility: "private", public_at: publicAt,
+        visibility, public_at: publicAt,                 // 위 공개 시점(hold · wait7 = private · now = students)
       };
       const r = await ensureReview(row);
       idByKey.set(g.key, r.id);
@@ -742,12 +750,12 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
     }
     const client = getClient();
     if (!client) return { skipped: "no_client" };                    // 다음 틱에 다시(결과를 남기지 않는다)
-    const result = { id: req.id, mode: req.mode, publish: req.publish === "wait7" ? "wait7" : "hold", status: "running", bootId,
+    const result = { id: req.id, mode: req.mode, publish: publishOf(req), status: "running", bootId,
       startedAt: new Date(started).toISOString(),
       heartbeatAt: new Date(started).toISOString(),
       publicAt: req.mode === "write" ? new Date(started + PUBLIC_WAIT_MS).toISOString() : null, channels: [] };
     await opsStateSet(RES_KEY, result);
-    log(`[fbimport] start id=${req.id} mode=${req.mode} channels=${req.channels.length}`);
+    log(`[fbimport] start id=${req.id} mode=${req.mode} publish=${result.publish} channels=${req.channels.length}`);
     const [staff, students] = await Promise.all([
       sb.select("staff", "select=id,discord_id"),
       sb.select("students", "select=id,discord_id"),
@@ -759,7 +767,7 @@ function createFeedbackImport({ getClient, sb, opsStateGet, opsStateSet, importI
       studentByDiscord: new Map(students.filter((s) => s.discord_id).map((s) => [String(s.discord_id), Number(s.id)])),
       students: new Map(students.map((s) => [Number(s.id), s])),
       include: new Set((req.include || []).map(String)), exclude: new Set((req.exclude || []).map(String)),
-      publish: req.publish === "wait7" ? "wait7" : "hold",
+      publish: result.publish,
     };
     for (const c of req.channels) {
       let row;

@@ -639,6 +639,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | 목록 추가 키(§8.3 · 수강생 · 트레이너 둘 다) | `source` string · 아니오 · `app` · `xlsx` · `discord` · `journal_import` / `publicAt` string(ISO) · **가능** · 공개 대기 중이면 그 끝 시각 · 아니면 null |
 | 상세 추가 키(§8.4) | `publicAt` — 본인 · 전체 필드를 보는 트레이너에게만(공유 열람자는 null) · `source` 는 종전부터 있다 |
 | 공개 대기 | `visibility=private` + `publicAt` 있음 = 「나와 트레이너만 · {publicAt} 에 수강생 모두에게 보여요」. 그 시각이 지나면 서버(10분 틱)가 `visibility=students` · `publicAt=null` 로 바꾼다 |
+| 옮길 때 고른 공개 시점(2026-10-03 · 새 키 없음) | 옮기는 요청마다 오너가 고른다 — 7일 대기(위) · **대기 없이 「나와 트레이너만」**(`private` · `publicAt=null` — 일반 비공개 복기와 같다) · **처음부터 「수강생 모두」**(`students` · `publicAt=null` — 앱에서 「수강생 모두」로 보낸 복기와 같다 · 오너 10/3 「그냥 바로 공개로 넣어」). 앱은 종전 키(`visibility` · `publicAt` · `source`)만 보면 된다 |
 | 수강생이 고르면 | `PUT /reviews/:id/visibility`(단건) · `PUT /reviews/visibility`(일괄)에 **지금과 같은 `private` 을 보내도** 대기가 풀린다(`publicAt=null` · 「나와 트레이너만」 고정). 단건 응답에 `publicAt: null` 이 붙는다 · 일괄은 대기가 풀린 것도 `updated` 로 센다 |
 | 트레이너 목록 | 옮긴 복기는 `awaitingReply=false`(답 기다려요 아님) · 옮길 때 수강생 · 받는 트레이너가 **읽은 것으로** 넣는다(안 읽음 · 새 답 표시가 한꺼번에 뜨지 않게) — 옮긴 뒤에 새로 단 답은 종전처럼 안 읽음이 된다 |
 | 수강생 목록 창 | `GET /reviews?days=` 는 종전대로 수정 시각 기준이지만 **`source=discord` 는 창과 상관없이 늘 싣는다**(4~6월 글도 앱에 있어야 한다 · 어플 9/30) |
