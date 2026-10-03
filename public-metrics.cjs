@@ -20,6 +20,9 @@
 //                    sessions = 창 안에 끝난(done) 직강 회차 수(그룹도 1회) · students = 그 회차에 출석한 수강생 수
 //                    ready = 창 첫날이 DIRECT_RECORDED_SINCE 이후 && 창 안 지난 직강 기록이 다 닫혔다(unrecorded 0)
 //                    ready 가 아니면 사이트 모양의 직강 숫자는 null — 기록이 빈 기간을 「적은 숫자」로 공개하지 않는다.
+//   graduatesMasterPlus = 레슨으로 마스터 이상 달성한 사람 수 — graduations(via_lesson · 마스터 · 서바이버) **전 기간**(30일 창 아님 · 2026-10-03 사이트 「기록실」)
+//                    명부 연결(student_id)이 있으면 그 수강생(합친 행은 남은 쪽) · 없으면 적힌 이름으로 한 사람을 가린다(응답엔 숫자만) · 테스트 계정 제외
+//                    읽기에 실패하면 null(사이트는 칸을 감추거나 고정값을 둔다)
 // ============================================================
 "use strict";
 const { isLessonRow, kstDate, addDays } = require("./ops-status.cjs");
@@ -95,12 +98,44 @@ function directOf({ courseSessions = [], attendance = [], courses = [], slots = 
   };
 }
 
+// 레슨으로 마스터 이상 달성 인원 — graduations 행(via_lesson · 마스터 · 서바이버)의 사람 수(위 정의 graduatesMasterPlus).
+//   같은 사람이 한 행은 명부 연결 · 다른 행은 이름만이면 한 번만 센다 — 연결된 행의 이름(그 행 student_name · 명부 이름)과
+//   같은 이름의 이름만 행은 그 수강생으로 본다(10/3 지휘). 이름은 세는 데만 쓰고 응답에 없다.
+const MASTER_PLUS = /^(마스터|서바이버|master|survivor)$/i;
+const nameKey = (n) => String(n || "").replace(/\s+/g, "").toLowerCase();
+function masterPlusOf(rows, students) {
+  const hits = rows.filter((g) => g.via_lesson === true && MASTER_PLUS.test(String(g.tier || "").trim()));
+  const canon = (sid) => students.get(sid)?.merged_into ?? sid;
+  const linkedByName = new Map();                            // 이름 → 연결된 수강생(합친 행은 남은 쪽)
+  for (const g of hits) {
+    if (g.student_id == null) continue;
+    const sid = Number(g.student_id);
+    for (const n of [g.student_name, students.get(sid)?.name, students.get(canon(sid))?.name]) {
+      const k = nameKey(n);
+      if (k) linkedByName.set(k, canon(sid));
+    }
+  }
+  const who = new Set();
+  for (const g of hits) {
+    const sid = g.student_id != null ? canon(Number(g.student_id)) : linkedByName.get(nameKey(g.student_name));
+    if (sid != null) {
+      if (TEST_STUDENT_IDS.has(Number(g.student_id ?? sid)) || TEST_STUDENT_IDS.has(sid)) continue;
+      who.add(`s${sid}`);
+    } else {
+      const k = nameKey(g.student_name);
+      who.add(k ? `n${k}` : `g${g.id}`);
+    }
+  }
+  return who.size;
+}
+
 // 순수 계산 — rows 를 받아 공개 숫자만 돌려준다.
 //   sessions   = 창 안의 lesson_sessions 행 · payments = 전 기간 결제 행
 //   students   = Map<id, { trainer_id, merged_into }> · enrollTrainer = Map<등록 id, trainer_id>
 //   staff      = [{ id, name, role, active }]
 //   direct     = directOf 입력(직강 행 묶음) · 읽기에 실패했으면 null — 그때 직강 숫자는 null · ready false
-function computeMetrics({ sessions, payments, students, enrollTrainer, staff, direct = null }, window, nowMs = Date.now()) {
+//   graduations = graduations 행 · 읽기에 실패했으면 null — 그때 graduatesMasterPlus 는 null
+function computeMetrics({ sessions, payments, students, enrollTrainer, staff, direct = null, graduations = null }, window, nowMs = Date.now()) {
   const counted = (sid) => {
     const s = students.get(sid);
     return !!s && s.merged_into == null && !TEST_STUDENT_IDS.has(sid);
@@ -137,6 +172,7 @@ function computeMetrics({ sessions, payments, students, enrollTrainer, staff, di
     window,
     ...sum(lessonRows),
     repurchase: { ...repurchaseOf(all), basis: "all_time" },
+    graduatesMasterPlus: graduations ? masterPlusOf(graduations, students) : null,
     direct: d ? { since: d.since, ready: d.ready, sessions: d.sessions, students: d.students, unrecorded: d.unrecorded }
               : { since: DIRECT_RECORDED_SINCE, ready: false, sessions: null, students: null, unrecorded: null },
     trainers: coaches.map((c) => ({
@@ -153,12 +189,14 @@ function computeMetrics({ sessions, payments, students, enrollTrainer, staff, di
 const PUBLIC_KEYS = new Set(["asOf", "window", "from", "to", "days", "students", "lessons", "studentLessons", "games",
   "repurchase", "payers", "repeaters", "ratePct", "basis", "trainers", "id", "name",
   "students30", "games30", "rebook30", "byTrainer",
-  "direct", "since", "ready", "sessions", "unrecorded", "directSessions", "directSessions30", "directStudents30"]);
+  "direct", "since", "ready", "sessions", "unrecorded", "directSessions", "directSessions30", "directStudents30",
+  "graduatesMasterPlus"]);
 
 // 명세 §8 모양(GET /api/site-metrics) — 레슨은 수강생 수 · 판수 · 재결제율(레슨 「수업 회」는 안 싣는다 · 오너 9/30).
 //   rebook30 = 재결제율 %(권장안 · 오너 OK — **전 기간** 기준 · 내림 · 결제 수강생 0 이면 null). 이름은 명세 그대로 둔다.
 //   직강(원장 강의 · 「회」 · 2026-10-02)은 directSessions30 · directStudents30 — direct.ready 가 아니면 null(사이트는 칸을 감춘다).
 //   저장본이 이 키를 갖기 전 날짜의 것이어도(direct 없음) null 로 내린다.
+//   graduatesMasterPlus = 레슨으로 마스터 이상 달성 인원(전 기간 · 30일 창 아님) — 0 이하면 사이트가 숨긴다.
 function siteShape(v) {
   const d = v.direct?.ready === true ? v.direct : null;
   return {
@@ -166,6 +204,7 @@ function siteShape(v) {
     students30: v.students,
     games30: v.games,
     rebook30: v.repurchase?.ratePct ?? null,
+    graduatesMasterPlus: v.graduatesMasterPlus ?? null,
     directSessions30: d ? d.sessions : null,
     directStudents30: d ? d.students : null,
     byTrainer: (v.trainers || []).map((t) => ({
@@ -225,19 +264,23 @@ module.exports = function mountPublicMetrics(app, deps) {
 
   async function compute(today) {
     const window = windowOf(today);
-    const [sessions, payments, studentRows, enrolls, staff, direct] = await Promise.all([
+    const [sessions, payments, studentRows, enrolls, staff, direct, graduations] = await Promise.all([
       // memo 는 /판수정정 행을 거르는 데만 쓴다(응답에 없다)
       selectAll("lesson_sessions", "select=id,student_id,trainer_id,played_at,games,created_by,created_at,memo"
         + `&played_at=gte.${window.from}&played_at=lte.${window.to}`),
       selectAll("payments", "select=id,student_id,kind,games,voided_at,lesson_enrollment_id"),
-      selectAll("students", "select=id,trainer_id,merged_into"),
+      // name 은 마스터 이상 달성 인원에서 같은 사람을 가리는 데만 쓴다(응답에 없다)
+      selectAll("students", "select=id,trainer_id,merged_into,name"),
       selectAll("lesson_enrollments", "select=id,trainer_id"),
       sbSelect("staff", "select=id,name,role,active"),
       // 직강은 읽기에 실패해도 레슨 숫자는 낸다(그날 직강은 null · ready false)
       loadDirect(window).catch((e) => { console.error("public_metrics_direct", e?.message); return null; }),
+      // student_name 은 한 사람을 가리는 데만 쓴다(응답에 없다) · 실패해도 나머지 숫자는 낸다
+      selectAll("graduations", "select=id,student_id,student_name,tier,via_lesson")
+        .catch((e) => { console.error("public_metrics_graduations", e?.message); return null; }),
     ]);
     const value = computeMetrics({
-      sessions, payments, staff, direct,
+      sessions, payments, staff, direct, graduations,
       students: new Map(studentRows.map((s) => [s.id, s])),
       enrollTrainer: new Map(enrolls.map((e) => [e.id, e.trainer_id])),
     }, window, Date.now());
@@ -252,7 +295,8 @@ module.exports = function mountPublicMetrics(app, deps) {
     cache = { date: today, value };
     console.log(`[public-metrics] ${value.window.from}~${value.window.to} · 수강생 ${value.students} · 수업 ${value.lessons} · 판수 ${value.games}`
       + ` · 재결제 ${value.repurchase.repeaters}/${value.repurchase.payers}`
-      + ` · 직강 ${value.direct.sessions ?? "?"}회(${value.direct.ready ? "공개" : `비공개 · 안 닫힌 기록 ${value.direct.unrecorded ?? "?"}`})`);
+      + ` · 직강 ${value.direct.sessions ?? "?"}회(${value.direct.ready ? "공개" : `비공개 · 안 닫힌 기록 ${value.direct.unrecorded ?? "?"}`})`
+      + ` · 마스터 이상 ${value.graduatesMasterPlus ?? "?"}명`);
     return value;
   }
 
@@ -261,7 +305,8 @@ module.exports = function mountPublicMetrics(app, deps) {
     const today = kstDate(Date.now());
     if (cache?.date === today) return cache.value;
     const saved = await opsStateGet(STATE_KEY);
-    if (saved?.date === today && saved.value) { cache = saved; return saved.value; }
+    // 오늘 저장본이어도 새 키(graduatesMasterPlus · 10/3)가 없으면 배포 전 계산이다 — 한 번 다시 센다
+    if (saved?.date === today && saved.value && saved.value.graduatesMasterPlus !== undefined) { cache = saved; return saved.value; }
     if (!inflight) inflight = run().finally(() => { inflight = null; });
     try { return await inflight; }
     catch (e) {
@@ -289,4 +334,4 @@ module.exports = function mountPublicMetrics(app, deps) {
 
   return { run, current };
 };
-module.exports._test = { computeMetrics, directOf, windowOf, assertPublic, siteShape, TEST_STUDENT_IDS, WINDOW_DAYS, DIRECT_RECORDED_SINCE };
+module.exports._test = { computeMetrics, directOf, masterPlusOf, windowOf, assertPublic, siteShape, TEST_STUDENT_IDS, WINDOW_DAYS, DIRECT_RECORDED_SINCE };
