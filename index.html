@@ -416,11 +416,12 @@ html.vr-lock{overflow:hidden}
         </div>
       </div>
 
-      <!-- 3. 숫자 한 줄 — 지휘가 장부에서 뽑은 10/3 기준 고정 숫자.
-           서버 값으로 바꿀 자리: data-srv 이름표(lessonStudents · lessonGames · graduatesMasterPlus) — 경비 응답이 생기면 스크립트로 덮어쓴다 -->
+      <!-- 3. 숫자 한 줄 — 지휘가 장부에서 뽑은 10/3 기준 숫자.
+           78명 · 3,931판은 고정 글자다. 서버 키(lessonStudents · lessonGames)는 아직 응답에 없다 — 생기면 data-srv 를 달아 덮어쓴다.
+           5명은 /api/site-metrics 의 graduatesMasterPlus(#493 배포)가 오면 그 값으로 덮어쓴다 -->
       <div class="facts">
-        <div class="fact"><div class="v"><span data-srv="lessonStudents">78</span><small>명</small></div><div class="k">2026년 4~9월 레슨 수강생</div></div>
-        <div class="fact"><div class="v"><span data-srv="lessonGames">3,931</span><small>판</small></div><div class="k">같은 기간 레슨 판수</div></div>
+        <div class="fact"><div class="v"><span>78</span><small>명</small></div><div class="k">2026년 4~9월 레슨 수강생</div></div>
+        <div class="fact"><div class="v"><span>3,931</span><small>판</small></div><div class="k">같은 기간 레슨 판수</div></div>
         <div class="fact"><div class="v"><span data-srv="graduatesMasterPlus">5</span><small>명</small></div><div class="k">레슨으로 마스터 이상 달성</div></div>
       </div>
 
@@ -430,7 +431,7 @@ html.vr-lock{overflow:hidden}
         <!-- 성장 기록 — GET /api/progress-public(전적 스냅샷 원장 · 상위 상승 순 · 닉 마스킹 「세**」) -->
         <article class="cell s7 rise" id="growth" aria-labelledby="growthH">
           <div class="eyebrow">Growth Record</div>
-          <h2 id="growthH">수강 전과 지금, 전적으로 남은 기록</h2>
+          <h2 id="growthH">수강 전과 달성, 전적으로 남은 기록</h2>
           <div id="growthBody"><p class="state">기록을 불러오고 있어요</p></div>
           <a class="link more" href="gmi-progress.html">성장 기록 전체 보기</a>
         </article>
@@ -714,7 +715,7 @@ html.vr-lock{overflow:hidden}
     var top = list[0], f = el("div", "feat");
     f.appendChild(side("before", "수강 전", top.delta.tierFrom, rpOf(top.trajectory, false)));
     f.appendChild(el("div", "arr", "→"));
-    f.appendChild(side("after", "지금", top.delta.tierTo, rpOf(top.trajectory, true)));
+    f.appendChild(side("after", "달성", top.delta.tierTo, rpOf(top.trajectory, true)));
     box.appendChild(f);
     var who = el("p", "feat-who"); who.appendChild(el("b", null, top.alias || "익명"));
     var sp = span(top); if (sp) who.appendChild(document.createTextNode(" · " + sp));
