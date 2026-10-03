@@ -313,3 +313,54 @@ test("트레이너 피드 anchorDetail — 원장은 전부 · 트레이너는 �
   const t = Object.fromEntries(b.json.items.map((x) => [x.id, x]));
   assert.deepEqual([t[R(21)].anchorDetail?.unitNo, t[R(22)].anchorDetail, t[R(30)].anchorDetail], [13, { games: 14 }, null]);
 });
+
+// ── §57 이관 publish now(2026-10-03 오너 「그냥 바로 공개로 넣어」) — 이관기(feedback-import.cjs)가 넣은 행을 진짜 피드 · 상세가 읽는다 ──
+//   이관기는 이 가짜 DB 위에서 돈다(DB 기본값은 review() 픽스처 기본값으로 채운다 · 디스코드는 가짜 채널).
+const { createFeedbackImport, REQ_KEY } = require("../feedback-import.cjs");
+const { isLessonRow } = require("../ops-status.cjs");
+
+test("이관 publish now — 넣은 복기가 다른 수강생 피드 · 상세 · 트레이너 피드에 보인다 · hold 는 안 보인다 · wait7 은 대기 끝에 보인다", async () => {
+  db = fixture();
+  const G = "300000000000000001";
+  const CH = { now: "300000000000000011", hold: "300000000000000012", wait7: "300000000000000013" };
+  const at = Date.now() - 2 * DAY;                                              // 피드 30일 창 안
+  const note = (id, t) => ({ id, type: 0, content: `🎯 배운 내용 : 교전 각 잡기 · 자기장 운영 ${t}`, author: { id: "s37", bot: false },
+    attachments: new Map(), createdTimestamp: at });
+  const msgs = { [CH.now]: [note("310000000000000001", "a")], [CH.hold]: [note("310000000000000002", "b")], [CH.wait7]: [note("310000000000000003", "c")] };
+  const channel = (id) => ({ id, guildId: G,
+    messages: { fetch: async ({ before }) => new Map(before ? [] : msgs[id].map((m) => [m.id, m])) },
+    threads: { fetchActive: async () => ({ threads: new Map() }), fetchArchived: async () => ({ threads: new Map() }) } });
+  const { id: _id, ...defaults } = review(0, 0);                                // DB 기본값(빈 칸) — 이관기가 안 적는 칸
+  const store = {};
+  const imp = createFeedbackImport({
+    getClient: () => ({ channels: { fetch: async (id) => (msgs[id] ? channel(id) : null) } }),
+    sb: { select: sbSelect, patch: deps.sbPatch, upsert: async (_t, row) => row,
+      insert: (t, row) => deps.sbInsert(t, t === "lesson_reviews" ? { ...defaults, ...row } : row) },
+    opsStateGet: async (k) => store[k] || null, opsStateSet: async (k, v) => { store[k] = v; },
+    importImage: async () => ({ id: 1 }), isLessonRow, log: () => {}, logError: () => {}, sleep: async () => {},
+  });
+  const ids = {};
+  for (const p of ["now", "hold", "wait7"]) {
+    store[REQ_KEY] = { id: `e2e-${p}`, mode: "write", confirmedBy: 4, publish: p,
+      channels: [{ g: G, ch: CH[p], trainerId: 5, kind: "lesson", byAuthor: true }] };
+    await imp.poll();
+    ids[p] = db.lesson_reviews.find((r) => r.src_channel === CH[p]).id;
+  }
+  const row = (p) => db.lesson_reviews.find((r) => r.id === ids[p]);
+  assert.deepEqual([row("now").visibility, row("now").public_at, row("now").source, row("now").student_id], ["students", null, "discord", 37]);
+  assert.deepEqual([row("hold").visibility, row("hold").public_at], ["private", null]);
+  assert.deepEqual([row("wait7").visibility, row("wait7").public_at != null], ["private", true]);
+
+  const seen = async (who) => new Set((await call(who, "/feed")).json.items.map((x) => x.id));
+  const other = await seen(100);                                                // 다른 수강생(활성 · 범위 안)
+  assert.deepEqual([other.has(R(ids.now)), other.has(R(ids.hold)), other.has(R(ids.wait7))], [true, false, false]);
+  assert.equal((await call(100, `/reviews/${R(ids.now)}`)).status, 200);        // 상세도 열린다
+  assert.equal((await call(100, `/reviews/${R(ids.hold)}`)).status, 404);
+  const trainer = new Set((await callTrainer(2, "/feed")).json.items.map((x) => x.id));   // 담당 아닌 트레이너도 「수강생 모두」는 본다
+  assert.deepEqual([trainer.has(R(ids.now)), trainer.has(R(ids.hold))], [true, false]);
+
+  await reviewApi.flipPublicDue({ nowMs: Date.now() + 8 * DAY });               // 7일 대기 끝 — wait7 만 열리고 now · hold 는 그대로
+  assert.deepEqual([row("wait7").visibility, row("now").visibility, row("now").visibility_changed_at, row("hold").visibility],
+    ["students", "students", null, "private"]);
+  assert.equal((await seen(100)).has(R(ids.wait7)), true);
+});
