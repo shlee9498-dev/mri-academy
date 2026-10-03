@@ -30,6 +30,11 @@ const deps = {
     if (table === "students") return [{ id: 10, trainer_id: 2, merged_into: null, name: "가나다" }];
     if (table === "lesson_enrollments") return [{ id: 7, trainer_id: 2 }];
     if (table === "staff") return [{ id: 2, name: "트레이너A", role: "trainer", active: true, contact_phone: "000" }];
+    if (table === "graduations") return [
+      { id: 1, student_id: null, student_name: "라마바", tier: "마스터", via_lesson: true },
+      { id: 2, student_id: 10, student_name: "가나다", tier: "서바이버", via_lesson: true },
+      { id: 3, student_id: null, student_name: "사아자", tier: "마스터", via_lesson: false },     // 레슨 밖 달성 — 안 센다
+    ];
     return [];
   },
   opsStateGet: async (k) => st.state[k] || null,
@@ -53,7 +58,8 @@ test("첫 요청이 계산해 저장 · 두 번째는 다시 세지 않는다 ·
   assert.deepEqual([a.json.direct.sessions, a.json.direct.unrecorded, a.json.direct.ready], [0, 0, DIRECT_READY]);
   assert.equal(st.state.public_metrics.date, TODAY);
   const body = JSON.stringify(a.json);
-  for (const leak of ["가나다", "contact", "student_id", "000", "memo"]) assert.equal(body.includes(leak), false, leak);
+  assert.equal(a.json.graduatesMasterPlus, 2);
+  for (const leak of ["가나다", "라마바", "contact", "student_id", "student_name", "000", "memo"]) assert.equal(body.includes(leak), false, leak);
   const n = st.selects;
   assert.equal((await get()).status, 200);
   assert.equal(st.selects, n);                                        // 메모리 캐시
@@ -64,7 +70,7 @@ test("GET /api/site-metrics — 명세 §8 모양 · 같은 계산본(다시 세
   const r = await fetch(`${base}/api/site-metrics`);
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), {
-    asOf: st.state.public_metrics.value.asOf, students30: 1, games30: 5, rebook30: 100,
+    asOf: st.state.public_metrics.value.asOf, students30: 1, games30: 5, rebook30: 100, graduatesMasterPlus: 2,
     directSessions30: DIRECT_READY ? 0 : null, directStudents30: DIRECT_READY ? 0 : null,
     byTrainer: [{ id: "jungu", name: "트레이너A", students30: 1, games30: 5, rebook30: 100, directSessions30: DIRECT_READY ? 0 : null }],
   });
@@ -76,6 +82,19 @@ test("크론 run() 은 다시 세어 저장한다", async () => {
   const v = await pm.run();
   assert.equal(v.students, 1);
   assert.ok(st.selects > n);
+});
+
+test("오늘 저장본이어도 graduatesMasterPlus 가 없으면(배포 전 계산) 한 번 다시 센다", async () => {
+  const app3 = express();
+  st.state.public_metrics = { date: TODAY, value: { asOf: "old", window: { from: "a", to: "b", days: 30 }, students: 9, games: 1, trainers: [] } };
+  require("../public-metrics.cjs")(app3, deps);
+  const s3 = app3.listen(0); await new Promise((r) => s3.once("listening", r));
+  const n = st.selects;
+  const r = await fetch(`http://127.0.0.1:${s3.address().port}/api/site-metrics`);
+  const j = await r.json();
+  assert.deepEqual([r.status, j.students30, j.graduatesMasterPlus], [200, 1, 2]);
+  assert.ok(st.selects > n);
+  s3.close();
 });
 
 test("오늘 계산이 실패하면 어제 저장본 · 저장본도 없으면 503", async () => {

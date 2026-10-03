@@ -53,7 +53,7 @@ test("planChannel — 공지 · 시스템 · 봇 · 고정 제외 · 10분 안 �
   ];
   const p = planChannel(msgs, ctxOf());
   assert.equal(p.stop, null);
-  assert.deepEqual(p.skipped, { system: 1, bot: 1, notice: 1, pinned: 1, short: 1, empty: 0, fileOnly: 0, unknown: 0 });
+  assert.deepEqual(p.skipped, { system: 1, bot: 1, notice: 1, pinned: 1, short: 1, empty: 0, fileOnly: 0, unknown: 0, excluded: 0 });
   assert.equal(p.reviews.length, 2);
   const [tr, st] = p.reviews;
   assert.equal(tr.role, "trainer"); assert.equal(tr.staffId, 5);
@@ -143,6 +143,7 @@ function fakeDb(seed) {
     if (v === "is.null") return row[k] == null;
     if (v === "not.is.null") return row[k] != null;
     if (v.startsWith("eq.")) return row[k] != null && String(row[k]) === v.slice(3);
+    if (v.startsWith("in.(") && v.endsWith(")")) return row[k] != null && v.slice(4, -1).split(",").includes(String(row[k]));
     throw new Error(`fake: 모르는 필터 ${k}=${v}`);
   };
   const rowsOf = (t) => (db[t] ||= []);
@@ -364,4 +365,412 @@ test("실행 — 다른 프로세스가 돌리는 중이면 기다린다(배포 
   const out = await h.imp.poll();
   assert.equal(out.status, "done");
   assert.equal(h.store[RES_KEY].bootId, h.imp.bootId);
+});
+
+// ── 글쓴이 모드(byAuthor · 2026-10-03 지휘 주문 · 그룹 채널) ──
+const { chatterOf, STRICT_ANSWER_MS } = require("../feedback-import.cjs");
+const STU2 = "900000000000000011";                         // 같은 그룹 채널의 두 번째 수강생(명부 77 이 아닌 새 id)
+const ctxAuthor = (o = {}) => ({ byAuthor: true, staffByDiscord: new Map([[TRN, 5]]),
+  studentByDiscord: new Map([[STU, 98], [STU2, 61]]), ...o });
+
+test("chatterOf — 양식 표시가 있으면 노트 · 짧은 말 = 잡담 · 일정 말 = 일정 · 길면 노트", () => {
+  assert.equal(chatterOf(FORM), null);
+  assert.equal(chatterOf("넵 감사합니다"), "short");
+  assert.equal(chatterOf("오늘도 고생 많으셨습니다 다음에 봬요"), "schedule");          // 날 말 + 「봬요」(검수 13차) — 버리는 건 같다
+  assert.equal(chatterOf("내일 저녁 8시에 수업 가능하실까요? 확인 부탁드려요"), "schedule");
+  assert.equal(chatterOf("죄송해요 오늘 10분 정도 늦을 것 같습니다 바로 들어갈게요"), "schedule");
+  assert.equal(chatterOf("오늘 교전 연습 많이 했어요 다음엔 9시 방향 엄폐 먼저 볼게요"), null);   // 수업 말이 있으면 노트
+  assert.equal(chatterOf("오늘 수업에서 상대 위치를 먼저 보고 움직이는 습관이 중요하다는 걸 알았습니다. 다음 판부터 계속 의식하면서 해보겠습니다."), null);
+});
+
+test("planChannel(글쓴이 모드) — 그룹 채널: 글쓴이마다 자기 복기 · 못 맞춘 글쓴이 목록 · 잡담 · 일정 제외 · 답장 없는 트레이너 글은 안 넣는다", () => {
+  const a1 = M({ content: FORM, createdTimestamp: T0 });
+  const a2 = M({ content: "추가로 자기장 운영도 연습했어요 다음엔 차량 동선", createdTimestamp: T0 + 2 * MIN });   // 10분 안 이어 쓰기
+  const b1 = M({ author: { id: STU2 }, content: "📅 9/13 그룹 수업 복기 — 오늘 배운 건 엄폐 후 피킹", createdTimestamp: T0 + 5 * MIN });
+  const sched = M({ content: "내일 저녁 8시 가능하세요?", createdTimestamp: T0 + 30 * MIN });
+  const thanks = M({ author: { id: STU2 }, content: "넵 감사합니다", createdTimestamp: T0 + 31 * MIN });
+  const stranger = M({ author: { id: STRANGER }, content: "저도 오늘 배운 거 정리해 봤어요 교전 각 잡기",
+    attachments: new Map([["p1", { id: "p1", size: 10, url: "https://cdn.test/p1.png", contentType: "image/png" }]]), createdTimestamp: T0 + 40 * MIN });
+  const reply = M({ author: { id: TRN }, content: "좋아요 엄폐 뒤 각 잡는 거 계속 해요", createdTimestamp: T0 + 60 * MIN });
+  reply.refId = b1.id;
+  const loose = M({ author: { id: TRN }, content: "둘 다 자기장 운영은 다음에 같이 봐요", createdTimestamp: T0 + 80 * MIN });   // 답 뒤 10분 넘게 → 따로
+  const photo = M({ author: { id: STU2 }, content: "", createdTimestamp: T0 + 2 * DAY,
+    attachments: new Map([["p2", { id: "p2", size: 10, url: "https://cdn.test/p2.png", contentType: "image/png" }]]) });
+  const p = planChannel([a1, a2, b1, sched, thanks, stranger, reply, loose, photo], ctxAuthor());
+  assert.equal(p.stop, null);
+  assert.deepEqual(p.reviews.map((g) => [g.studentId, g.msgIds.length]), [[98, 2], [61, 1], [61, 1]]);   // 사진만 있는 글도 복기
+  assert.equal(p.answers.length, 1);
+  assert.equal(p.answers[0].reviewKey, b1.id);                     // 답장 표시가 가리키는 그 수강생 복기
+  assert.equal(p.trainerUnattached, 1);                            // 그룹 채널 · 답장 없음 → 넣지 않는다
+  assert.equal(p.skipped.schedule, 1); assert.equal(p.skipped.short, 1); assert.equal(p.skipped.unknown, 1);
+  assert.deepEqual([...p.unmatched].map(([id, u]) => [id, u.n, u.img]), [[STRANGER, 1, 1]]);
+  assert.ok(!p.reviews.some((g) => g.role === "trainer"));          // 글쓴이 모드는 트레이너 복기를 만들지 않는다
+});
+
+test("planChannel(글쓴이 모드) — 수강생 한 명 채널: 바로 앞 복기(72시간 안)에만 답 · 그 사이 잡담은 괜찮다 · 앞선 복기 없으면 안 넣는다", () => {
+  const first = M({ author: { id: TRN }, content: "처음 오셨네요 여기에 수업 기록 남겨 주세요 피드백 드릴게요", createdTimestamp: T0 - DAY });
+  const r1 = M({ content: FORM, createdTimestamp: T0 });
+  const ok = M({ content: "넵 감사합니다", createdTimestamp: T0 + 10 * 60 * MIN });              // 잡담(같은 수강생) — 앞 글 판정은 그대로
+  const ans = M({ author: { id: TRN }, content: "좋아요 다음엔 자기장 먼저 봐요", createdTimestamp: T0 + 20 * 60 * MIN });
+  const r2 = M({ content: "📅 9/20 수업 복기 — 차량 운영 연습", createdTimestamp: T0 + 6 * DAY });
+  const late = M({ author: { id: TRN }, content: "지난번 복기 다시 보니 교전 각이 좋아졌어요", createdTimestamp: T0 + 6 * DAY + STRICT_ANSWER_MS + MIN });
+  const p = planChannel([first, r1, ok, ans, r2, late], ctxAuthor());
+  assert.equal(p.reviews.length, 2);
+  assert.equal(p.answers.length, 1); assert.equal(p.answers[0].reviewKey, r1.id);
+  assert.equal(p.trainerUnattached, 2);                            // 앞선 복기 없는 첫 글 · 72시간 넘은 글
+  assert.equal(p.skipped.short, 1);
+});
+
+test("validateRequest — 글쓴이 모드: studentId 없음 · fill 금지 · byAuthor 는 true 만", () => {
+  const ch = { g: "100000000000000001", ch: "100000000000000002", trainerId: 5, kind: "lesson", byAuthor: true };
+  assert.equal(validateRequest({ id: "a1", mode: "dry", channels: [ch] }), null);
+  assert.equal(validateRequest({ id: "a1", mode: "write", confirmedBy: 4, channels: [ch] }), null);
+  assert.equal(validateRequest({ id: "a1", mode: "dry", channels: [{ ...ch, studentId: 98 }] }), "channel_people");
+  assert.equal(validateRequest({ id: "a1", mode: "dry", channels: [{ ...ch, fill: true }] }), "channel_people");
+  assert.equal(validateRequest({ id: "a1", mode: "dry", channels: [{ ...ch, byAuthor: false }] }), "channel_by_author");
+  assert.equal(validateRequest({ id: "a1", mode: "dry", channels: [{ ...ch, trainerId: undefined }] }), "channel_people");
+});
+
+test("실행(글쓴이 모드) — 글쓴이마다 그 수강생 복기 · 짝 기록 · 명부 채우기 없음 · 못 맞춘 글쓴이는 결과에만 · 재실행 멱등", async () => {
+  const G = "300000000000000001", CH = "300000000000000003";
+  const msgs = [
+    raw({ content: FORM, createdTimestamp: T0 }),
+    raw({ author: { id: STU2 }, content: "📅 수업 날짜 : 2026. 09. 13\n🎯 배운 내용 : 엄폐 후 피킹", createdTimestamp: T0 + 5 * MIN }),
+    raw({ author: { id: STRANGER }, content: "저도 오늘 배운 거 정리했어요 교전 각 잡기 연습", createdTimestamp: T0 + 6 * MIN }),
+    raw({ author: { id: TRN }, content: "둘 다 엄폐 뒤 각 잡는 게 좋아졌어요 교전", createdTimestamp: T0 + 40 * MIN }),   // 그룹 · 답장 없음 → 안 넣는다
+    raw({ content: "내일 저녁 8시 가능하세요?", createdTimestamp: T0 + 41 * MIN }),
+  ];
+  const reply = raw({ author: { id: TRN }, content: "엄폐 뒤 각 잡는 거 좋아요", createdTimestamp: T0 + 50 * MIN });
+  reply.reference = { messageId: msgs[1].id };
+  msgs.push(reply);
+  const sb = fakeDb({
+    staff: [{ id: 5, discord_id: TRN }],
+    students: [{ id: 98, discord_id: STU }, { id: 61, discord_id: STU2 }],
+    lesson_sessions: [
+      { id: 11, student_id: 98, played_at: "2026-09-13", trainer_id: 5, games: 6, created_by: "portal", memo: null },
+      { id: 21, student_id: 61, played_at: "2026-09-13", trainer_id: 5, games: 6, created_by: "portal", memo: null },
+    ],
+    lesson_reviews: [], review_feedback: [], feedback_channel_map: [], review_reads: [],
+  });
+  const store = {};
+  const imp = createFeedbackImport({
+    getClient: () => ({ channels: { fetch: async (id) => (id === CH ? fakeChannel(CH, G, msgs) : null) } }),
+    sb, opsStateGet: async (k) => store[k] || null, opsStateSet: async (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); },
+    importImage: async () => ({ id: 1, existing: false }), isLessonRow,
+    fetchImpl: async (url) => ({ ok: true, arrayBuffer: async () => Buffer.from(url) }),
+    log: () => {}, logError: () => {}, now: () => Date.parse("2026-10-03T01:00:00Z"), sleep: async () => {},
+  });
+  const req = (id, mode) => ({ id, mode, confirmedBy: 4, publish: "wait7", channels: [{ g: G, ch: CH, trainerId: 5, kind: "lesson", byAuthor: true }] });
+
+  store[REQ_KEY] = req("ba-dry", "dry");
+  await imp.poll();
+  const dry = store[RES_KEY].channels[0];
+  assert.equal(dry.status, "planned");
+  assert.equal(sb.writes.length, 0);
+  assert.deepEqual(dry.byStudent, { 98: 1, 61: 1 });
+  assert.equal(dry.answers, 1); assert.equal(dry.trainerUnattached, 1); assert.equal(dry.skipped.schedule, 1);
+  assert.deepEqual(dry.unmatched.map((u) => [u.id, u.n, u.first]), [[STRANGER, 1, "2026-09-14"]]);
+  assert.deepEqual(dry.anchors, { lesson: 2, none: 0 });
+  assert.equal(store[RES_KEY].totals.unmatchedAuthors, 1); assert.equal(store[RES_KEY].totals.trainerUnattached, 1);
+
+  store[REQ_KEY] = req("ba-w1", "write");
+  await imp.poll();
+  const rv = sb.db.lesson_reviews;
+  assert.deepEqual(rv.map((r) => [r.student_id, r.lesson_session_id, r.author_role, r.visibility]),
+    [[98, 11, "student", "private"], [61, 21, "student", "private"]]);
+  assert.equal(rv[0].public_at, new Date(Date.parse("2026-10-03T01:00:00Z") + PUBLIC_WAIT_MS).toISOString());
+  assert.equal(sb.db.review_feedback.length, 1);
+  assert.equal(sb.db.review_feedback[0].review_id, rv[1].id);       // 답장한 그 수강생 복기에만
+  assert.deepEqual(sb.db.review_reads.map((r) => [r.reader_kind, r.reader_id]).sort(),
+    [["student", 61], ["student", 98], ["trainer", 5], ["trainer", 5]]);
+  assert.equal(sb.db.feedback_channel_map.length, 0);              // 짝 기록 없음
+  assert.ok(!sb.writes.some(([op, t]) => op === "patch" && t === "students"));   // 명부 채우기 없음
+
+  store[REQ_KEY] = req("ba-w2", "write");
+  await imp.poll();
+  const again = store[RES_KEY].channels[0].written;
+  assert.equal(again.reviewsNew, 0); assert.equal(again.reviewsExisting, 2); assert.equal(again.answersExisting, 1);
+  assert.equal(sb.db.lesson_reviews.length, 2);
+});
+
+// ── #490 수정(검수 · 반장 점검 2026-10-03) — 답 합치기 · 잡담/일정 거르기 · 겹침 막기 ──
+const { resolveExisting } = require("../feedback-import.cjs");
+
+test("chatterOf — 배그 장면 말은 짧아도 노트 · 「○시 방향」은 시각이 아니다 · 배그에도 쓰는 말(들어가 · 대기 · 늦게)은 일정으로 안 본다", () => {
+  assert.equal(chatterOf("3시 방향 능선 먼저 체크하기"), null);
+  assert.equal(chatterOf("상대가 집 안으로 들어가는 걸 보고 바로 따라가서 잡았어요"), null);
+  assert.equal(chatterOf("힐 타이밍 늦음 주의"), null);
+  assert.equal(chatterOf("레드존 생존 연습함"), null);
+  assert.equal(chatterOf("감도 변경하고 다시 맞춰보기"), null);
+  assert.equal(chatterOf("연기 뿌리고 들어가기"), null);
+  assert.equal(chatterOf("건물 안에서 대기하다가 늦게 나온 게 아쉬움"), null);
+  assert.equal(chatterOf("내일 9시에 디코 들어갈게요"), "schedule");
+  assert.equal(chatterOf("수업 시간 변경 가능할까요?"), "schedule");
+  assert.equal(chatterOf("다음 주 화요일 저녁 괜찮으세요?"), "schedule");
+  assert.equal(chatterOf("치킨!"), "short");                      // 알맹이가 너무 적다
+  assert.equal(chatterOf("ㅋㅋㅋㅋ"), "short");
+  assert.equal(chatterOf("오늘도 감사했습니다"), "short");
+});
+
+test("planChannel(글쓴이 모드) — 10분 안에 A · B 복기에 연달아 답장하면 답 둘 · 각자 자기 복기에 · 그룹 채널의 답장 없는 이어 쓰기는 안 합친다 · 버린 글 목록", () => {
+  const a = M({ content: FORM, createdTimestamp: T0 });
+  const b = M({ author: { id: STU2 }, content: "📅 9/13 수업 복기 — 엄폐 뒤 피킹 연습", createdTimestamp: T0 + 3 * MIN });
+  const toA = M({ author: { id: TRN }, content: "A는 교전 각이 좋아졌어요", createdTimestamp: T0 + 20 * MIN });
+  toA.refId = a.id;
+  const toB = M({ author: { id: TRN }, content: "B는 피킹 뒤 엄폐가 늦어요", createdTimestamp: T0 + 23 * MIN });   // 10분 안 · 다른 복기에 답장
+  toB.refId = b.id;
+  const self = M({ author: { id: TRN }, content: "B는 반동 제어도 같이 연습해요", createdTimestamp: T0 + 24 * MIN });     // 자기 B 답에 단 답장 → B 답에 합친다
+  self.refId = toB.id;
+  const loose = M({ author: { id: TRN }, content: "둘 다 자기장 운영은 다음에 같이 봐요", createdTimestamp: T0 + 25 * MIN });  // 답장 없음 · 그룹 → 안 합친다
+  const sched = M({ content: "내일 9시에 디코 들어갈게요", createdTimestamp: T0 + 40 * MIN });
+  const vid = M({ author: { id: STU2 }, createdTimestamp: T0 + 50 * MIN,
+    attachments: new Map([["v9", { id: "v9", size: 10, url: "https://cdn.test/v9.mp4", contentType: "video/mp4" }]]) });
+  const p = planChannel([a, b, toA, toB, self, loose, sched, vid], ctxAuthor());
+  assert.deepEqual(p.answers.map((x) => [x.reviewKey, x.msgIds.length]), [[a.id, 1], [b.id, 2]]);
+  assert.equal(p.answers[1].body, "B는 피킹 뒤 엄폐가 늦어요\n\nB는 반동 제어도 같이 연습해요");
+  assert.equal(p.trainerUnattached, 1);
+  assert.deepEqual(p.dropped.map((d) => [d.id, d.why, d.who]),
+    [[loose.id, "unattached", "t5"], [sched.id, "schedule", "s98"], [vid.id, "fileOnly", "s61"]]);
+  // 수강생 한 명 채널 — 10분 안에 두 복기에 답장하면 답 둘 · 답장 없는 이어 쓰기는 앞 답에 붙는다
+  const r1 = M({ content: FORM, createdTimestamp: T0 });
+  const r2 = M({ content: "📅 9/14 수업 복기 — 차량 운영 연습", createdTimestamp: T0 + 30 * MIN });
+  const t1 = M({ author: { id: TRN }, content: "첫 수업은 교전 각이 좋았어요", createdTimestamp: T0 + 40 * MIN });
+  t1.refId = r1.id;
+  const t2 = M({ author: { id: TRN }, content: "둘째 수업은 차량 동선이 좋았어요", createdTimestamp: T0 + 44 * MIN });
+  t2.refId = r2.id;
+  const t3 = M({ author: { id: TRN }, content: "다음엔 자기장 먼저 봐요", createdTimestamp: T0 + 46 * MIN });
+  const q = planChannel([r1, r2, t1, t2, t3], ctxAuthor());
+  assert.deepEqual(q.answers.map((x) => [x.reviewKey, x.msgIds.length]), [[r1.id, 1], [r2.id, 2]]);
+  assert.equal(q.trainerUnattached, 0);
+});
+
+// 글쓴이 모드 실행 도구 — 가짜 디스코드 채널 하나 · 가짜 DB
+function authorRunner(msgs, seedRows = {}) {
+  const G = "300000000000000001", CH = "300000000000000005";
+  const sb = fakeDb({
+    staff: [{ id: 5, discord_id: TRN }],
+    students: [{ id: 98, discord_id: STU }, { id: 61, discord_id: STU2 }],
+    lesson_sessions: [], lesson_reviews: [], review_feedback: [], feedback_channel_map: [], review_reads: [], ...seedRows,
+  });
+  const store = {};
+  const imp = createFeedbackImport({
+    getClient: () => ({ channels: { fetch: async (id) => (id === CH ? fakeChannel(CH, G, msgs) : null) } }),
+    sb, opsStateGet: async (k) => store[k] || null, opsStateSet: async (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); },
+    importImage: async () => ({ id: 1, existing: false }), isLessonRow,
+    fetchImpl: async (url) => ({ ok: true, arrayBuffer: async () => Buffer.from(url) }),
+    log: () => {}, logError: () => {}, now: () => Date.parse("2026-10-03T01:00:00Z"), sleep: async () => {},
+  });
+  const run = async (id, mode, ch) => { store[REQ_KEY] = { id, mode, confirmedBy: 4, channels: [{ g: G, ch: CH, trainerId: 5, kind: "lesson", ...ch }] }; await imp.poll(); return store[RES_KEY]; };
+  return { sb, store, run, CH, poll: () => imp.poll() };
+}
+
+test("실행(글쓴이 모드) — 10분 안에 A · B 복기에 연달아 답장 → 답 2개가 각자 자기 복기에 들어간다", async () => {
+  const a = raw({ content: FORM, createdTimestamp: T0 });
+  const b = raw({ author: { id: STU2 }, content: "📅 수업 날짜 : 2026. 09. 13\n🎯 배운 내용 : 엄폐 뒤 피킹", createdTimestamp: T0 + 3 * MIN });
+  const toA = raw({ author: { id: TRN }, content: "A는 교전 각이 좋아졌어요", createdTimestamp: T0 + 20 * MIN });
+  toA.reference = { messageId: a.id };
+  const toB = raw({ author: { id: TRN }, content: "B는 피킹 뒤 엄폐가 늦어요", createdTimestamp: T0 + 23 * MIN });
+  toB.reference = { messageId: b.id };
+  const { sb, run } = authorRunner([a, b, toA, toB]);
+  const res = await run("ab-w1", "write", { byAuthor: true });
+  assert.equal(res.channels[0].status, "ok");
+  const rv = sb.db.lesson_reviews, fb = sb.db.review_feedback;
+  assert.equal(fb.length, 2);
+  const reviewOf = (sid) => rv.find((r) => r.student_id === sid).id;
+  assert.deepEqual(fb.map((f) => [f.review_id, f.body]),
+    [[reviewOf(98), "A는 교전 각이 좋아졌어요"], [reviewOf(61), "B는 피킹 뒤 엄폐가 늦어요"]]);
+});
+
+test("실행 — 종전 기준으로 넣은 묶음을 새 기준(글쓴이 모드)으로 다시 돌려도 복기 · 답 수가 그대로", async () => {
+  const D = DAY;
+  const msgs = [
+    raw({ content: "오늘 수업 내용 정리해서 올려요", createdTimestamp: T0 }),                                    // 종전: 묶음 첫 글 · 새 기준: 잡담(버림)
+    raw({ content: "오늘은 자기장 안쪽 능선을 먼저 잡고 교전을 나눠서 하는 연습을 했습니다", createdTimestamp: T0 + 2 * MIN }),
+    raw({ content: "에임 연습함", createdTimestamp: T0 + 2 * 60 * MIN }),                                       // 종전: 15자 미만 버림 · 새 기준: 첫 글
+    raw({ content: "반동 제어가 아직 흔들려서 훈련장에서 매일 10분씩 연습하기로 했습니다", createdTimestamp: T0 + 2 * 60 * MIN + 3 * MIN }),
+    raw({ content: "📅 수업 날짜 : 2026. 09. 15\n🎯 배운 내용 : 차량 동선", createdTimestamp: T0 + D }),
+    raw({ content: "📅 수업 날짜 : 2026. 09. 15\n🎯 배운 내용 : 건물 진입 순서", createdTimestamp: T0 + D + 30 * MIN }),
+  ];
+  const t1 = raw({ author: { id: TRN }, content: "차량 동선 좋아요 다음엔 자기장 먼저", createdTimestamp: T0 + D + 40 * MIN });
+  t1.reference = { messageId: msgs[4].id };
+  const t2 = raw({ author: { id: TRN }, content: "건물 진입은 계단 쪽 각을 먼저 봐요", createdTimestamp: T0 + D + 45 * MIN });   // 종전: 앞 답에 합침 · 새 기준: 다른 복기 답
+  t2.reference = { messageId: msgs[5].id };
+  msgs.push(t1, t2);
+  const { sb, run } = authorRunner(msgs);
+  const old = await run("old-w1", "write", { studentId: 98, fill: false });                      // 종전 통로(10/1 파일럿과 같은 길)
+  assert.equal(old.channels[0].status, "ok");
+  assert.equal(sb.db.lesson_reviews.length, 4); assert.equal(sb.db.review_feedback.length, 1);
+  assert.equal(sb.db.lesson_reviews[0].src_msg, msgs[0].id);                                       // 종전 첫 글 = 잡담이 될 글
+  assert.equal(sb.db.lesson_reviews[1].src_msg, msgs[3].id);                                       // 종전엔 「에임 연습함」이 빠졌다
+
+  const dry = await run("new-dry", "dry", { byAuthor: true });
+  const ch = dry.channels[0];
+  assert.equal(ch.reviews, 4); assert.equal(ch.answers, 2);
+  assert.deepEqual(ch.existing, { reviews: 4, answers: 2 });                                     // 첫 글이 바뀐 두 묶음 · 갈라진 답까지 이미 있음
+  assert.deepEqual(ch.toInsert, { reviews: 0, answers: 0 });
+  assert.deepEqual(ch.droppedBy, { s98: { short: 1 } });
+
+  const w = await run("new-w1", "write", { byAuthor: true });
+  assert.equal(w.channels[0].written.reviewsNew, 0); assert.equal(w.channels[0].written.answersNew, 0);
+  assert.equal(sb.db.lesson_reviews.length, 4); assert.equal(sb.db.review_feedback.length, 1);
+  const again = await run("new-w2", "write", { byAuthor: true });
+  assert.equal(again.channels[0].written.reviewsNew, 0);
+  assert.equal(sb.db.lesson_reviews.length, 4); assert.equal(sb.db.review_feedback.length, 1);
+});
+
+test("resolveExisting — 첫 글 id 먼저 · 사슬의 빈 행 · 다른 묶음이 잡은 행은 본문이 문단째 들어 있을 때만 · 이번에 넣을 묶음끼리는 안 막는다", () => {
+  const same = () => true;
+  const g = (key, chain, body) => ({ key, chain, body, msgIds: [key] });
+  // 첫 글 id 가 맞는 묶음이 먼저 잡는다 — 같은 사슬의 다른 묶음은 그 행을 못 가져간다(본문이 달라서)
+  const a = g("2", ["1", "2", "3"], "가"), b = g("3", ["1", "2", "3"], "나");
+  resolveExisting([a, b], [{ id: 7, src_msg: "3", body: "나" }], same);
+  assert.equal(a.existing, undefined); assert.equal(b.existing, 7);
+  // 첫 글이 버려져 바뀐 묶음 — 사슬의 옛 첫 글 행(아무도 안 잡음)을 잡는다
+  const c = g("5", ["4", "5"], "다");
+  resolveExisting([c], [{ id: 8, src_msg: "4", body: "옛 첫 글\n\n다" }], same);
+  assert.equal(c.existing, 8);
+  // 종전 한 건으로 합쳐진 답이 둘로 갈라짐 — 뒤 묶음 본문이 그 행에 문단째 있으면 같은 것
+  const d1 = g("10", ["10", "11"], "앞 답"), d2 = g("11", ["10", "11"], "뒤 답"), d3 = g("12", ["10", "11", "12"], "뒤");
+  resolveExisting([d1, d2, d3], [{ id: 9, src_msg: "10", body: "앞 답\n\n뒤 답" }], same);
+  assert.equal(d1.existing, 9); assert.equal(d2.existing, 9); assert.equal(d3.existing, undefined);   // 「뒤」는 문단이 아니다
+});
+
+// ── 검수 11차(2026-10-03) — 분명한 일정 표시는 배그 낱말보다 먼저 · 사슬 행도 본문이 겹칠 때만 「이미 옮김」 ──
+test("chatterOf — 분명한 일정 · 대화 표시(몇 시 · 가능하세요 · 날+시각 · 접속 · 상담 · 같이 할 사람)는 배그 낱말이 있어도 일정 · 양식 표시만 예외", () => {
+  for (const t of [
+    "내일 연습 몇 시에 해요", "오늘 랭겜 몇시에 하실래요?", "내일 9시 훈련장 접속 가능하세요?",
+    "오늘 집중이 잘 안 돼서 일찍 들어갈게요", "티어 올리고 싶어서 문의드려요 상담 가능할까요", "내일 스쿼드 같이 하실 분",
+  ]) assert.equal(chatterOf(t), "schedule", t);
+  for (const t of [                                                           // 지난번 살린 노트는 그대로 노트
+    "3시 방향 능선 먼저 체크하기", "상대가 집 안으로 들어가는 걸 보고 바로 따라가서 잡았어요", "힐 타이밍 늦음 주의",
+    "레드존 생존 연습함", "감도 변경하고 다시 맞춰보기", "연기 뿌리고 들어가기", "건물 안에서 대기하다가 늦게 나온 게 아쉬움",
+    "오늘 교전 연습 많이 했어요 다음엔 9시 방향 엄폐 먼저 볼게요",
+  ]) assert.equal(chatterOf(t), null, t);
+  // 양식 표시가 있으면 일정 말이 섞여도 노트(복기 끝에 다음 수업 시각을 적은 경우)
+  assert.equal(chatterOf("📅 수업 날짜 : 2026. 09. 13\n🎯 배운 내용 : 교전 각\n다음 수업 내일 9시 가능하세요?"), null);
+  assert.equal(chatterOf("피드백 감사합니다 내일 몇 시에 가능하세요?"), "schedule");          // 「피드백」은 대화에도 쓴다 — 양식 예외가 아니다
+});
+
+test("resolveExisting — 사슬의 짝 없는 옛 행도 본문이 문단째 겹칠 때만 같은 것 · 사진만 있는 묶음은 빈 사슬 행에 붙는다", () => {
+  const same = () => true;
+  const note = { key: "2", chain: ["1", "2"], body: "레드존 생존 연습함", msgIds: ["2"] };
+  resolveExisting([note], [{ id: 5, src_msg: "1", body: "다음 예약은 평일 저녁으로 잡아주세요" }], same);
+  assert.equal(note.existing, undefined);                                    // 옛 일정 행으로 잡히지 않는다(검수 11차 재현)
+  const grown = { key: "3", chain: ["3", "4"], body: "에임 연습함\n\n반동 제어 연습", msgIds: ["3", "4"] };
+  resolveExisting([grown], [{ id: 6, src_msg: "4", body: "반동 제어 연습" }], same);
+  assert.equal(grown.existing, 6);                                           // 새 묶음 본문에 옛 행 본문이 들어 있다 = 같은 것
+  const photo = { key: "8", chain: ["7", "8"], body: "", msgIds: ["8"] };
+  resolveExisting([photo], [{ id: 7, src_msg: "7", body: "오늘 스샷 올려요" }], same);
+  assert.equal(photo.existing, 7);                                           // 사진만 — 그 행에 붙는다
+});
+
+test("실행(글쓴이 모드) — 옛 일정 행 5분 뒤의 진짜 노트는 새로 들어간다 · 다시 돌려도 그대로(검수 11차 재현)", async () => {
+  const m1 = raw({ content: "다음 예약은 평일 저녁으로 잡아주세요", createdTimestamp: T0 });
+  const m2 = raw({ content: "레드존 생존 연습함", createdTimestamp: T0 + 5 * MIN });
+  const { sb, run, CH } = authorRunner([m1, m2], {
+    lesson_reviews: [{ id: 900, student_id: 98, author_role: "student", author_staff_id: null, src_channel: "300000000000000005",
+      src_msg: m1.id, body: "다음 예약은 평일 저녁으로 잡아주세요", lesson_session_id: null }],
+  });
+  assert.equal(CH, "300000000000000005");
+  const dry = (await run("rx-dry", "dry", { byAuthor: true })).channels[0];
+  assert.deepEqual([dry.existing, dry.toInsert], [{ reviews: 0, answers: 0 }, { reviews: 1, answers: 0 }]);
+  assert.deepEqual(dry.droppedBy, { s98: { schedule: 1 } });
+  await run("rx-w1", "write", { byAuthor: true });
+  assert.equal(sb.db.lesson_reviews.length, 2);
+  assert.equal(sb.db.lesson_reviews[1].body, "레드존 생존 연습함");
+  await run("rx-w2", "write", { byAuthor: true });
+  assert.equal(sb.db.lesson_reviews.length, 2);
+});
+
+// ── 검수 12차(2026-10-03) — 노트에도 쓰는 일정 말은 부탁 · 질문 끝맺음이 있을 때만 · 손으로 넣기 · 빼기 ──
+test("chatterOf — 상담 · 문의 · 접속 · 하실 분 · 들어갈게요 · 몇 시는 부탁 · 질문 끝맺음이 있을 때만 일정 · 몇 시 방향은 방향 · 11차 6줄은 계속 일정", () => {
+  for (const t of [
+    "상담 때 들은 대로 자기장 끝선 먼저 잡기", "접속하자마자 감도부터 확인할 것", "문의했던 반동 제어는 아래로 당기는 힘 일정하게",
+    "같이 하실 분 구할 때도 스쿼드 오더 연습하기", "상대가 몇 명인지 모르면 먼저 들어가지 말기", "수류탄 먼저 까고 들어갈게요 라고 콜하기",
+    "몇 시 방향인지 콜하는 습관 들이기",
+  ]) assert.equal(chatterOf(t), null, t);
+  for (const t of [
+    "내일 연습 몇 시에 해요", "오늘 랭겜 몇시에 하실래요?", "내일 9시 훈련장 접속 가능하세요?",
+    "오늘 집중이 잘 안 돼서 일찍 들어갈게요", "티어 올리고 싶어서 문의드려요 상담 가능할까요", "내일 스쿼드 같이 하실 분",
+    "상담 언제 받을 수 있나요?", "오늘 교전 연습 몇 시에 해요?",
+  ]) assert.equal(chatterOf(t), "schedule", t);
+});
+
+test("validateRequest — include · exclude 는 메시지 id 목록 · 같은 id 를 둘 다에 넣지 않는다", () => {
+  const ch = { g: "100000000000000001", ch: "100000000000000002", trainerId: 5, kind: "lesson", byAuthor: true };
+  const ok = { id: "h1", mode: "dry", channels: [ch] };
+  assert.equal(validateRequest({ ...ok, include: ["100000000000000123"], exclude: ["100000000000000124"] }), null);
+  assert.equal(validateRequest({ ...ok, include: "100000000000000123" }), "request_include");
+  assert.equal(validateRequest({ ...ok, exclude: ["abc"] }), "request_exclude");
+  assert.equal(validateRequest({ ...ok, include: ["100000000000000123"], exclude: ["100000000000000123"] }), "request_include_exclude");
+});
+
+test("실행(글쓴이 모드) — 버려진 노트를 include 로 넣으면 1건 · exclude 한 글은 안 들어감 · 못 맞춘 글쓴이는 include 로도 못 넣음 · 다시 돌려도 그대로", async () => {
+  const note = raw({ content: "2:1 상황에선 먼저 빠지는 게 맞다", createdTimestamp: T0 });                   // 규칙으로는 잡담(짧고 배그 낱말 없음)
+  const chat = raw({ content: "치킨 먹었어요 ㅋㅋㅋ 오늘 재밌었어요", createdTimestamp: T0 + 2 * DAY });            // 규칙으로는 노트(치킨)
+  const form = raw({ content: FORM, createdTimestamp: T0 + 4 * DAY });
+  const stranger = raw({ author: { id: STRANGER }, content: "저도 2:1 상황 정리했어요", createdTimestamp: T0 + 5 * DAY });
+  const imp = authorRunner([note, chat, form, stranger]);
+  const d0 = (await imp.run("h-dry0", "dry", { byAuthor: true })).channels[0];
+  assert.deepEqual(d0.dropped.map((d) => [d.id, d.why]), [[note.id, "short"]]);
+  assert.deepEqual(d0.kept.map((k) => [k.id, k.who, k.len, k.kind]), [[chat.id, "s98", 20, "r"], [form.id, "s98", FORM.length, "r"]]);
+  assert.equal(JSON.stringify(d0.kept).includes("치킨"), false);                            // 본문은 안 싣는다
+
+  // include · exclude 는 요청 단위 — 드라이런 dropped · kept 에서 오너가 고른 메시지 id
+  const go = async (id, mode) => {
+    imp.store[REQ_KEY] = { id, mode, confirmedBy: 4, include: [note.id, stranger.id], exclude: [chat.id],
+      channels: [{ g: "300000000000000001", ch: imp.CH, trainerId: 5, kind: "lesson", byAuthor: true }] };
+    await imp.poll();
+    return imp.store[RES_KEY];
+  };
+  const d1 = (await go("h-dry1", "dry")).channels[0];
+  assert.equal(d1.included, 1);                                                              // 못 맞춘 글쓴이 글은 include 로도 안 들어간다
+  assert.equal(d1.skipped.excluded, 1);
+  assert.deepEqual(d1.kept.map((k) => k.id), [note.id, form.id]);
+  assert.deepEqual(d1.dropped.map((d) => [d.id, d.why]), [[chat.id, "excluded"]]);
+  await go("h-w1", "write");
+  assert.deepEqual(imp.sb.db.lesson_reviews.map((r) => r.src_msg), [note.id, form.id]);
+  assert.equal(imp.sb.db.lesson_reviews[0].visibility, "private");                         // 공개 규칙은 같다(7일 뒤 수강생 모두)
+  await go("h-w2", "write");
+  assert.equal(imp.sb.db.lesson_reviews.length, 2);
+});
+
+// ── 검수 13차(2026-10-03) — 짧은 날 말 + 행동 끝맺음 · 공개 시점(hold · wait7) ──
+test("chatterOf — 60자 미만 · 날 말 + 행동 끝맺음이면 배그 낱말이 있어도 일정(검수 13차 13줄)", () => {
+  for (const t of [
+    "내일 같이 랭겜 해요", "오늘 랭겜 ㄱ", "오늘 스쿼드 같이 하자", "주말에 스쿼드 한 판 해요", "오늘 연습 못 할 것 같아요",
+    "내일 연습 쉴게요", "오늘은 연습 쉬고 내일 해요", "선생님 오늘 수업 연습 미뤄주세요", "이따 훈련장에서 봬요", "저녁에 듀오 돌려요",
+    "오늘 경쟁전 같이 가실 분 있나요", "오늘 티어 올렸어요 ㅎㅎ 감사합니다", "오늘 연습 재밌었어요 감사합니다 선생님",
+  ]) assert.equal(chatterOf(t), "schedule", t);
+  assert.equal(chatterOf("감도 낮게 해요"), null);                                         // 날 말이 없다(「낮」은 날 말에서 뺐다)
+});
+
+test("validateRequest — publish 는 hold · wait7 만", () => {
+  const ch = { g: "100000000000000001", ch: "100000000000000002", trainerId: 5, kind: "lesson", byAuthor: true };
+  assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch], publish: "hold" }), null);
+  assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch], publish: "wait7" }), null);
+  assert.equal(validateRequest({ id: "p1", mode: "dry", channels: [ch], publish: "now" }), "request_publish");
+});
+
+test("실행(글쓴이 모드) — 공개 시점: 기본 hold 는 public_at 비움 · wait7 은 종전(실행 + 7일) · 채널 모드는 늘 종전 · 결과에 어느 쪽인지", async () => {
+  const note = raw({ content: FORM, createdTimestamp: T0 });
+  const NOW = Date.parse("2026-10-03T01:00:00Z");
+  const hold = authorRunner([note]);
+  const r1 = await hold.run("pub-hold", "write", { byAuthor: true });                        // publish 없음 = hold
+  assert.deepEqual([r1.publish, r1.channels[0].publish], ["hold", "hold"]);
+  assert.deepEqual(hold.sb.db.lesson_reviews.map((r) => [r.visibility, r.public_at]), [["private", null]]);   // 본인 · 트레이너만
+
+  const wait = authorRunner([note]);
+  wait.store[REQ_KEY] = { id: "pub-wait", mode: "write", confirmedBy: 4, publish: "wait7",
+    channels: [{ g: "300000000000000001", ch: wait.CH, trainerId: 5, kind: "lesson", byAuthor: true }] };
+  await wait.poll();
+  assert.equal(wait.store[RES_KEY].channels[0].publish, "wait7");
+  assert.equal(wait.sb.db.lesson_reviews[0].public_at, new Date(NOW + PUBLIC_WAIT_MS).toISOString());
+
+  const fixed = authorRunner([note]);                                                       // 채널 모드(종전 통로) — hold 를 줘도 종전대로
+  fixed.store[REQ_KEY] = { id: "pub-fixed", mode: "write", confirmedBy: 4, publish: "hold",
+    channels: [{ g: "300000000000000001", ch: fixed.CH, studentId: 98, trainerId: 5, kind: "lesson", fill: false }] };
+  await fixed.poll();
+  assert.equal(fixed.store[RES_KEY].channels[0].publish, "wait7");
+  assert.equal(fixed.sb.db.lesson_reviews[0].public_at, new Date(NOW + PUBLIC_WAIT_MS).toISOString());
 });

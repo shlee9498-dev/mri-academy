@@ -7594,61 +7594,31 @@ app.post("/api/gdcup-solo-tier", async (req, res) => {
 });
 
 // ══ 공개 read API 2종 — gmi-progress·lesson-feedback 동적 전환용 (PII 정책: 2026-07-29 오너 승인) ══
-// ① progress: 부분 마스킹 인게임닉("세**") ② feedback: 완전 익명("레슨생 A") + 본문 내
+// ① progress: 부분 마스킹 인게임닉("세**" · public-rows maskNick) ② feedback: 완전 익명("레슨생 A") + 본문 내
 //   이름·디스코드 닉·배그 닉·별칭 사전 치환(사전을 못 읽으면 비움 · 9/30) ③ 트레이너 활동명 공개 ④ 익명화 전제 본문 전문.
 // 서버측 마스킹만 신뢰(클라 0), 5분 캐시. 실패 시 프론트는 정적 폴백("기록 불러오는 중").
 const PUB_CACHE = { prog: null, progAt: 0, feed: null, feedAt: 0 };
 const PUB_TTL = 5 * 60 * 1000;
-function pubMaskNick(n) {
-  const t = String(n || "").trim();
-  if (!t) return "익명";
-  return Array.from(t).slice(0, 2).join("") + "**";   // 사례 5건과 동일 규격("세**")
-}
-
-// [공개] 수강생 성장 요약 — student_snapshots 시계열 (닉 부분 마스킹, 상위 20명)
+// [공개] 수강생 성장 기록 — 정기 추적(tracking) + 수강 성장 등록(baseline → after) · 올라간 기록만 · 닉 부분 마스킹 · 상위 20
+//   계산은 public-rows.cjs progressPublic(순수 · 시험 scripts/public-rows.test.cjs). 사이트 「기록실」 · gmi-progress.html 이 쓴다.
 app.get("/api/progress-public", async (_req, res) => {
   try {
     if (!process.env.SUPABASE_URL) return res.json({ updatedAt: null, students: [] });
     if (PUB_CACHE.prog && Date.now() - PUB_CACHE.progAt < PUB_TTL) return res.json(PUB_CACHE.prog);
-    const snaps = await sbSelect("student_snapshots",
-      "select=student_id,player_name,tier,tier_index,rank_point,avg_damage,created_at" +
-      "&student_id=not.is.null&order=created_at.asc&limit=5000");
-    const by = {};
-    (snaps || []).forEach((r) => { (by[r.student_id] = by[r.student_id] || []).push(r); });
-    const grouped = Object.values(by).map((arr) => {
-      const f = arr[0], l = arr[arr.length - 1];
-      const dd = {};                                   // 일 단위 버킷: 일별 마지막 스냅 (월 버킷은 매일 적재 초기에 1점 → 전원 탈락)
-      arr.forEach((r) => { dd[String(r.created_at).slice(0, 10)] = r; });
-      let pts = Object.values(dd);
-      if (pts.length > 12) {                           // 최대 12점 균등 다운샘플 — 첫·끝 스냅 항상 포함
-        const step = (pts.length - 1) / 11;
-        pts = Array.from({ length: 12 }, (_, i) => pts[Math.round(i * step)]);
-      }
-      const trajectory = pts.map((r) => ({
-        date: String(r.created_at).slice(0, 10), tier: r.tier || null,
-        rankPoint: r.rank_point ?? null, avgDamage: r.avg_damage ?? null,
-      }));
-      const months = Math.max(1, Math.round((new Date(l.created_at) - new Date(f.created_at)) / 2592000000));
-      return {
-        alias: pubMaskNick(l.player_name || f.player_name),
-        trajectory,
-        delta: {
-          tierFrom: f.tier || null, tierTo: l.tier || null,
-          tierDelta: (l.tier_index != null && f.tier_index != null) ? l.tier_index - f.tier_index : null,
-          rpDelta: (l.rank_point != null && f.rank_point != null) ? l.rank_point - f.rank_point : null,
-          dmgDelta: (l.avg_damage != null && f.avg_damage != null) ? l.avg_damage - f.avg_damage : null,
-          months,
-        },
-      };
-    });
-    const withTraj = grouped.filter((s) => s.trajectory.length >= 2);
-    const students = withTraj
-      .sort((a, b) => (b.delta.tierDelta || 0) - (a.delta.tierDelta || 0) || (b.delta.rpDelta || 0) - (a.delta.rpDelta || 0))
-      .slice(0, 20);
+    const snaps = [];
+    for (let offset = 0; ; offset += 1000) {             // 매일 쌓인다 — 한 번에 자르지 않고 끝까지 읽는다
+      const page = await sbSelect("student_snapshots",
+        "select=student_id,player_name,platform,snapshot_type,season_id,tier,sub_tier,tier_index,rank_point,avg_damage,created_at"
+        + `&order=created_at.asc,id.asc&limit=1000&offset=${offset}`);
+      snaps.push(...(page || []));
+      if (!page || page.length < 1000) break;
+    }
+    const students = publicRows.progressPublic(snaps);
     // 단계별 카운트 — 어느 단계에서 0이 되는지 특정용(캐시 미스 시에만 출력, 5분 1회)
-    console.log(`[progress_public] rows=${(snaps || []).length}`
-      + ` days=${new Set((snaps || []).map((r) => String(r.created_at).slice(0, 10))).size}`
-      + ` students=${grouped.length} traj2plus=${withTraj.length} out=${students.length}`);
+    console.log(`[progress_public] rows=${snaps.length}`
+      + ` tracking=${new Set(snaps.filter((r) => r.snapshot_type === "tracking" && r.student_id != null).map((r) => r.student_id)).size}`
+      + ` registered=${new Set(snaps.filter((r) => r.snapshot_type === "after").map((r) => `${r.player_name}|${r.platform}`)).size}`
+      + ` out=${students.length}`);
     const out = { updatedAt: new Date().toISOString(), students };
     PUB_CACHE.prog = out; PUB_CACHE.progAt = Date.now();
     res.json(out);

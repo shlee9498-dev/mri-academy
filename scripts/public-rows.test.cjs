@@ -44,3 +44,99 @@ test("공개 코칭 기록 치환 — 긴 단어 먼저 · 한 번에 바꾼다 
   assert.equal(scrubText("본문", []), "본문");
   assert.equal(scrubText(null, words), "");
 });
+
+// ── 공개 성장 기록(GET /api/progress-public · 2026-10-03 사이트 「기록실」) ──
+const { maskNick, tierText, seasonNum, progressPublic } = require("../public-rows.cjs");
+const S = (n) => `division.bro.official.pc-2018-${n}`;
+const snap = (o) => ({ student_id: null, player_name: "가나다라", platform: "steam", snapshot_type: "tracking", season_id: S(42),
+  tier: null, sub_tier: null, tier_index: 0, rank_point: null, avg_damage: null, created_at: "2026-08-03T20:00:00Z", ...o });
+
+test("성장 기록 표기 — 닉 앞 두 글자 · 티어 하위 단계 · 마스터는 단계 없이 · 서바이버 · 시즌 번호", () => {
+  assert.equal(maskNick("세상에서제일"), "세상**");
+  assert.equal(maskNick("  "), "익명");
+  assert.equal(tierText({ tier: "Platinum", sub_tier: "2", tier_index: 4 }), "Platinum 2");
+  assert.equal(tierText({ tier: "Master", sub_tier: "1", tier_index: 7 }), "Master");
+  assert.equal(tierText({ tier: "Master", sub_tier: "1", tier_index: 8 }), "Survivor");
+  assert.equal(tierText({ tier: null, tier_index: 0 }), null);
+  assert.equal(seasonNum(S(42)), 42);
+  assert.equal(seasonNum(null), null);
+});
+
+test("성장 기록 — 수강 성장 등록(시작 → 등록 때) · 정기 추적(첫 랭크 → 마지막 랭크) · 올라간 기록만 · 같은 계정 한 번 · 상위 상승 순", () => {
+  const rows = [
+    // 수강 성장 등록 ① 플래티넘 2(S40) → 마스터(S42) — 지휘 장부 사례
+    snap({ player_name: "가나다라", snapshot_type: "baseline", season_id: S(40), tier: "Platinum", sub_tier: "2", tier_index: 4, rank_point: 2485, created_at: "2026-07-27T07:04:18Z" }),
+    snap({ player_name: "가나다라", snapshot_type: "after", season_id: S(42), tier: "Master", sub_tier: "1", tier_index: 7, rank_point: 3408, created_at: "2026-07-27T07:04:18Z" }),
+    // ② 크리스탈 4(S41) → 다이아 2(S42)
+    snap({ player_name: "마바사", snapshot_type: "baseline", season_id: S(41), tier: "Crystal", sub_tier: "4", tier_index: 5, rank_point: 2649, created_at: "2026-07-26T06:11:03Z" }),
+    snap({ player_name: "마바사", snapshot_type: "after", season_id: S(42), tier: "Diamond", sub_tier: "2", tier_index: 6, rank_point: 3294, created_at: "2026-07-26T06:11:03Z" }),
+    // ③ 시작 시즌 언랭 — 수강 전 티어가 없어 싣지 않는다
+    snap({ player_name: "아자차", snapshot_type: "baseline", season_id: S(40), created_at: "2026-06-10T10:00:00Z" }),
+    snap({ player_name: "아자차", snapshot_type: "after", season_id: S(41), tier: "Diamond", sub_tier: "3", tier_index: 6, rank_point: 3135, created_at: "2026-06-10T10:00:00Z" }),
+    // ④ 그대로 · 내려감 — 싣지 않는다
+    snap({ player_name: "카타파", snapshot_type: "baseline", season_id: S(41), tier: "Platinum", sub_tier: "3", tier_index: 4, rank_point: 2325, created_at: "2026-06-26T11:18:41Z" }),
+    snap({ player_name: "카타파", snapshot_type: "after", season_id: S(42), tier: "Gold", sub_tier: "2", tier_index: 3, rank_point: 2078, created_at: "2026-06-26T11:18:41Z" }),
+    // 정기 추적 ⑤ 골드 3 → 크리스탈 4(S42 안) · 새 시즌(S43) 언랭 스냅샷은 건너뛴다
+    snap({ student_id: 39, player_name: "하거너", tier: "Gold", sub_tier: "3", tier_index: 3, rank_point: 1970, avg_damage: 200, created_at: "2026-08-03T20:00:00Z" }),
+    snap({ student_id: 39, player_name: "하거너", tier: "Platinum", sub_tier: "1", tier_index: 4, rank_point: 2400, avg_damage: 230, created_at: "2026-09-01T20:00:00Z" }),
+    snap({ student_id: 39, player_name: "하거너", tier: "Crystal", sub_tier: "4", tier_index: 5, rank_point: 2638, avg_damage: 260, created_at: "2026-09-20T20:00:00Z" }),
+    snap({ student_id: 39, player_name: "하거너", season_id: S(43), created_at: "2026-10-01T20:00:00Z" }),
+    // ⑥ 시즌 초기화로 내려감(마스터 S42 → 크리스탈 S43) — 성장 기록이 아니다
+    snap({ student_id: 10, player_name: "더러머", tier: "Master", sub_tier: "1", tier_index: 7, rank_point: 3400, created_at: "2026-08-03T20:00:00Z" }),
+    snap({ student_id: 10, player_name: "더러머", season_id: S(43), tier: "Crystal", sub_tier: "4", tier_index: 5, rank_point: 2617, created_at: "2026-10-01T20:00:00Z" }),
+    // ⑦ 같은 계정이 등록도 있고 추적도 있다 — 더 많이 오른 쪽 하나만(등록: 골드 2 → 플래 3 · 추적: 플래 3 → 플래 1)
+    snap({ player_name: "버서어", snapshot_type: "baseline", season_id: S(40), tier: "Gold", sub_tier: "2", tier_index: 3, rank_point: 2047, created_at: "2026-06-10T12:04:49Z" }),
+    snap({ player_name: "버서어", snapshot_type: "after", season_id: S(41), tier: "Platinum", sub_tier: "3", tier_index: 4, rank_point: 2366, created_at: "2026-06-10T12:04:49Z" }),
+    snap({ student_id: 102, player_name: "버서어", season_id: S(43), tier: "Platinum", sub_tier: "3", tier_index: 4, rank_point: 2325, created_at: "2026-09-17T20:00:00Z" }),
+    snap({ student_id: 102, player_name: "버서어", season_id: S(43), tier: "Platinum", sub_tier: "1", tier_index: 4, rank_point: 2550, created_at: "2026-10-01T20:00:00Z" }),
+  ];
+  const out = progressPublic(rows);
+  assert.deepEqual(out.map((s) => [s.alias, s.delta.tierFrom, s.delta.tierTo, s.delta.seasons]), [
+    ["가나**", "Platinum 2", "Master", 2],
+    ["하**", "Gold 3", "Crystal 4", 0],                                         // 세 글자 닉 → 앞 한 글자(검수 13차)
+    ["마**", "Crystal 4", "Diamond 2", 1],
+    ["버**", "Gold 2", "Platinum 3", 1],
+  ]);
+  const top = out[0];
+  assert.deepEqual(top.trajectory.map((p) => p.rankPoint), [2485, 3408]);                     // 사이트: 첫 = 수강 전 RP · 끝 = 지금 RP
+  assert.deepEqual([top.delta.tierDelta, top.delta.rpDelta, top.delta.months], [3, 923, null]);
+  const tr = out[1];
+  assert.deepEqual(tr.trajectory.map((p) => [p.tier, p.rankPoint]), [["Gold 3", 1970], ["Platinum 1", 2400], ["Crystal 4", 2638]]);
+  assert.deepEqual([tr.delta.rpDelta, tr.delta.dmgDelta, tr.delta.months], [668, 60, 2]);
+  assert.ok(!JSON.stringify(out).includes("가나다라"));                                      // 닉 원문은 안 싣는다
+  assert.ok(!JSON.stringify(out).includes("student_id"));
+  assert.equal(progressPublic(rows, 2).length, 2);
+  assert.deepEqual(progressPublic([]), []);
+});
+
+test("성장 기록 닉 — 클랜 태그(GmI_ · Gm + 구분자)를 떼고 가린다 · 그래도 겹치면 상승 순 A · B · 테스트 계정 추적은 뺀다", () => {
+  assert.equal(maskNick("GmI_hello"), "he**");
+  assert.equal(maskNick("Gmi_abcd"), "ab**");
+  assert.equal(maskNick("Gm.wxyz"), "wx**");
+  assert.equal(maskNick("GmI_"), "Gm**");                                   // 태그만 있으면 원래 닉으로
+  assert.equal(maskNick("Gmoney"), "Gm**");                                 // 구분자 없는 「Gm」은 태그가 아니다
+  assert.equal(maskNick("GmIAce"), "Gm**");
+  assert.equal(maskNick("GmI_세진"), "세**");                                // 남은 닉이 두 글자 이하 → 앞 한 글자만(검수 12차)
+  assert.equal(maskNick("GmI_AB"), "A**");
+  assert.equal(maskNick("GmI_진"), "진**");
+  assert.equal(maskNick("세진"), "세**");                                    // 태그 없는 두 글자 닉도 같다
+  assert.equal(maskNick("GmI_홍길동"), "홍**");                              // 세 글자 이하 → 앞 한 글자만(검수 13차)
+  assert.equal(maskNick("GmI_abc"), "a**");
+  assert.equal(maskNick("홍길동"), "홍**");
+  assert.equal(maskNick("GmI_abcd"), "ab**");                                // 네 글자부터 두 글자
+  const { TEST_STUDENT_IDS } = require("../test-accounts.cjs");
+  const TEST_ID = [...TEST_STUDENT_IDS][0];
+  const pair = (name, from, to, base) => [
+    snap({ player_name: name, snapshot_type: "baseline", season_id: S(40), tier: "Gold", sub_tier: "2", tier_index: 3, rank_point: base, created_at: "2026-06-10T10:00:00Z" }),
+    snap({ player_name: name, snapshot_type: "after", season_id: S(42), tier: to, sub_tier: "1", tier_index: from, rank_point: base + 500, created_at: "2026-06-10T10:00:01Z" }),
+  ];
+  const rows = [
+    ...pair("GmI_abcd", 5, "Crystal", 2000),                               // 겹침 — 더 오른 쪽이 A
+    ...pair("GmI_abxy", 4, "Platinum", 2100),
+    ...pair("GmI_zz", 4, "Platinum", 1900),
+    snap({ student_id: TEST_ID, player_name: "테스트계정", tier: "Gold", sub_tier: "3", tier_index: 3, rank_point: 1900, created_at: "2026-08-03T20:00:00Z" }),
+    snap({ student_id: TEST_ID, player_name: "테스트계정", tier: "Diamond", sub_tier: "1", tier_index: 6, rank_point: 3300, created_at: "2026-09-03T20:00:00Z" }),
+  ];
+  assert.deepEqual(progressPublic(rows).map((s) => [s.alias, s.delta.tierTo]),
+    [["ab** A", "Crystal 1"], ["ab** B", "Platinum 1"], ["z**", "Platinum 1"]]);         // 「GmI_zz」 — 남은 두 글자 → 한 글자
+});
