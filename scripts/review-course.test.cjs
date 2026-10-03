@@ -37,7 +37,7 @@ const cmp = (a, b) => (typeof a === "number" ? a - Number(b) : String(a).localeC
 function match(v, expr) {
   if (expr === "is.null") return v == null;
   if (expr === "not.is.null") return v != null;
-  if (expr.startsWith("not.in.")) return !match(v, expr.slice(4));
+  if (expr.startsWith("not.in.") || expr.startsWith("not.like.")) return !match(v, expr.slice(4));
   const i = expr.indexOf(".");
   const op = expr.slice(0, i), arg = expr.slice(i + 1);
   if (v == null && op !== "neq") return false;
@@ -49,6 +49,7 @@ function match(v, expr) {
     case "gt": return cmp(v, arg) > 0;
     case "lt": return cmp(v, arg) < 0;
     case "lte": return cmp(v, arg) <= 0;
+    case "like": return new RegExp(`^${arg.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`).test(String(v));   // 사진 LIVE_IMAGE
     default: throw new Error(`fake: 모르는 연산 ${expr}`);
   }
 }
@@ -363,4 +364,96 @@ test("이관 publish now — 넣은 복기가 다른 수강생 피드 · 상세 
   assert.deepEqual([row("wait7").visibility, row("now").visibility, row("now").visibility_changed_at, row("hold").visibility],
     ["students", "students", null, "private"]);
   assert.equal((await seen(100)).has(R(ids.wait7)), true);
+});
+
+// ── §8.13 피드 기간 · 글쓴이 · best[] · 내 목록 사진(2026-10-03 반장 요청) — 공개 범위는 그대로 ──
+const isoAgo = (n) => new Date(Date.now() - n * DAY).toISOString();
+const pub = (id, sid, n, o = {}) => review(id, sid, { status: "published", recipient_trainer_id: 5, visibility: "students", published_at: isoAgo(n), ...o });
+const react = (reviewId, n) => Array.from({ length: n }, (_, i) => ({ review_id: reviewId, reactor_kind: "student", reactor_id: 900 + i, emoji: "👍" }));
+const feedIds = async (who, q = "") => {
+  const r = await call(who, `/feed${q}`);
+  assert.equal(r.status, 200, q);
+  return { ids: new Set(r.json.items.map((x) => x.id)), best: r.json.best, json: r.json };
+};
+
+test("피드 기간 365 · all — 90일 밖 공개 글이 보인다 · 비공개 글은 어떤 기간 · 글쓴이 · best 로도 남에게 안 나온다", async () => {
+  db = fixture();
+  db.lesson_reviews.push(pub(40, 37, 200), pub(43, 37, 2),
+    pub(41, 37, 200, { visibility: "private" }), pub(42, 37, 1, { visibility: "private" }));   // 41 · 42 = 나와 트레이너만
+  db.review_reactions = [...react(41, 9), ...react(42, 9), ...react(40, 3)];
+  const want = { "": [false, true], "?days=90": [false, true], "?days=365": [true, true], "?days=all": [true, true], "?days=7": [false, true] };
+  for (const [q, [old, recent]] of Object.entries(want)) {
+    const { ids, best } = await feedIds(100, q);                                // 다른 수강생(활성 · 범위 안)
+    assert.deepEqual([ids.has(R(40)), ids.has(R(43)), ids.has(R(41)), ids.has(R(42))], [old, recent, false, false], q);
+    assert.ok(!best.some((x) => x.id === R(41) || x.id === R(42)), q);           // 반응이 많아도 비공개는 best 에 없다
+  }
+  assert.deepEqual((await feedIds(100, "?days=all")).best.map((x) => x.id), [R(40)]);
+  const key37 = (await feedIds(100, "?days=all")).json.items.find((x) => x.id === R(40)).authorKey;
+  const mine = await feedIds(100, `?days=all&author=${key37}`);                  // 글쓴이로 걸러도 공개 글만
+  assert.deepEqual([...mine.ids].sort(), [R(40), R(43)].sort());
+  const t = await callTrainer(2, `/feed?days=all&author=${key37}`);             // 트레이너 피드도 같은 선
+  assert.deepEqual(t.json.items.map((x) => x.id).sort(), [R(40), R(43)].sort());
+  assert.equal((await call(100, "/feed?author=a_short")).status, 400);          // 모양이 틀린 키
+  assert.deepEqual((await feedIds(100, `?author=a_${"A".repeat(22)}`)).json, { items: [], nextCursor: null, best: [] });   // 모르는 키 = 빈 목록
+});
+
+test("글쓴이 키 — 이름이 같은 두 수강생은 키가 다르고 author 로 한 사람 글만 · 번호 · 디스코드 id 가 안 드러난다", async () => {
+  db = fixture();
+  for (const s of db.students) if (s.id === 90 || s.id === 50) s.pubg_name = "같은닉";      // 동명이인
+  db.lesson_reviews.push(pub(50, 90, 3), pub(51, 50, 3), pub(52, 90, 4),
+    pub(53, 90, 5, { author_role: "trainer", author_staff_id: 5 }));            // 트레이너가 쓴 복기(수강생 90 쪽)
+  const { json } = await feedIds(37);
+  const by = Object.fromEntries(json.items.map((x) => [x.id, x]));
+  assert.deepEqual([by[R(50)].authorDisplayName, by[R(51)].authorDisplayName], ["같은닉", "같은닉"]);
+  const [k90, k50, kT] = [by[R(50)].authorKey, by[R(51)].authorKey, by[R(53)].authorKey];
+  assert.equal(by[R(52)].authorKey, k90);                                       // 같은 사람 = 같은 키
+  assert.ok(k90 !== k50 && k90 !== kT && k50 !== kT);                           // 이름이 같아도 · 트레이너도 다른 키
+  for (const k of [k90, k50, kT]) {
+    assert.match(k, /^a_[A-Za-z0-9_-]{22}$/);
+    const decoded = Buffer.from(k.slice(2), "base64url").toString("latin1");
+    assert.ok(!/student|trainer|:\d/.test(decoded), "키를 풀어도 종류 · 번호가 안 나온다");
+    assert.ok(![portal.opaqueId("student", 90), portal.opaqueId("student", 50), "s90", "s50"].includes(k));
+  }
+  assert.deepEqual([...(await feedIds(37, `?author=${k90}`)).ids].sort(), [R(50), R(52)].sort());   // 90 만 · 50 안 섞임
+  assert.deepEqual([...(await feedIds(37, `?author=${k50}`)).ids], [R(51)]);
+  assert.deepEqual([...(await feedIds(37, `?author=${kT}`)).ids], [R(53)]);                      // 트레이너 글만
+  const tf = await callTrainer(4, `/feed?author=${k50}`);
+  assert.deepEqual(tf.json.items.map((x) => [x.id, x.authorKey]), [[R(51), k50]]);               // 트레이너 피드도 같은 키
+});
+
+test("best[] — 첫 쪽 밖까지 기간 전체에서 반응 3개 이상 많은 순 최대 3 · 커서로 부른 쪽에는 없다", async () => {
+  db = fixture();
+  for (let i = 0; i < 25; i++) db.lesson_reviews.push(pub(60 + i, 90, 1 + i / 100));   // 25건 — 첫 쪽 20건 밖에 5건
+  db.lesson_reviews.push(pub(90, 90, 1, { visibility: "private" }));
+  db.review_reactions = [...react(84, 5), ...react(62, 4), ...react(61, 3), ...react(63, 2), ...react(90, 9)];
+  const first = await feedIds(37);
+  assert.equal(first.json.items.length, 20);
+  assert.ok(!first.ids.has(R(84)));                                             // 84 는 첫 쪽 밖(가짜 DB 는 넣은 순서)
+  assert.deepEqual(first.best.map((x) => [x.id, x.reactionCounts["👍"]]), [[R(84), 5], [R(62), 4], [R(61), 3]]);
+  assert.equal(typeof first.best[0].authorKey, "string");                       // items 와 같은 모양
+  assert.ok(first.json.nextCursor);
+  const next = await call(37, `/feed?cursor=${encodeURIComponent(first.json.nextCursor)}`);
+  assert.equal(next.status, 200);
+  assert.equal("best" in next.json, false);                                     // 다음 쪽에는 best 가 없다
+});
+
+test("내 목록 thumbUrl — 첫 사진 썸네일(서명) · 사진 없거나 올리는 중이면 null", async () => {
+  db = fixture();
+  db.review_images = [
+    { id: 1, review_id: 19, original_path: "students/37/reviews/19/a.orig.png", thumb_path: "students/37/reviews/19/a.thumb.webp", created_at: "2026-10-01T01:00:00Z" },
+    { id: 2, review_id: 19, original_path: "students/37/reviews/19/b.orig.png", thumb_path: "students/37/reviews/19/b.thumb.webp", created_at: "2026-10-01T02:00:00Z" },
+    { id: 3, review_id: 22, original_path: "pending/x.png", thumb_path: "pending/x.thumb.webp", created_at: "2026-10-01T03:00:00Z" },   // 올리는 중
+  ];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opts) => (String(url).startsWith("http://fake.test/storage/v1/object/sign/")
+    ? new Response(JSON.stringify(JSON.parse(opts.body).paths.map((p) => ({ path: p, signedURL: `/object/sign/x/${p}?token=t` }))), { status: 200 })
+    : realFetch(url, opts));
+  try {
+    const r = await call(37, "/reviews");
+    assert.equal(r.status, 200);
+    const by = Object.fromEntries(r.json.reviews.map((x) => [x.id, x]));
+    assert.match(by[R(19)].thumbUrl, /a\.thumb\.webp\?token=t$/);               // 첫 사진
+    assert.equal(by[R(19)].imageCount, 2);
+    assert.deepEqual([by[R(22)].thumbUrl, by[R(22)].imageCount, by[R(18)].thumbUrl], [null, 0, null]);
+  } finally { global.fetch = realFetch; }
 });
