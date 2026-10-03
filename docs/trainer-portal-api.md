@@ -436,7 +436,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `POST /games/:id/phases` | `{ phaseFrom?, phaseTo?, phaseToEnd?, headerRaw?, lines?, tags? }` | `{ phase }` — `phaseFrom` 0~9(기본 1 · 0 = 시작 전) · `phaseTo` null 또는 ≥ phaseFrom · 줄 200개 · 줄 1000자 · 머리말 500자 · 태그 3개(slug · 중복 제거 · 넘으면 400 `phase_tags_limit` · 사전에 없으면 400 `tag_unknown`) · 판당 30개 |
 | `PUT /phases/:id` · `DELETE /phases/:id` | 같은 본문(**부분 갱신** — 보낸 키만 바뀐다 · `lines` 는 배열 통째) | `{ phase }`(images 키 없음) · 204 |
 | `PUT /games/:id/phases/order` | `{ ord:[phaseId…] }` | 204 · 규칙은 판 순서와 같다 |
-| `GET /feed?tag=&tag=&map=&days=30\|90&cursor=` | | `{ items:[피드 §8.5], nextCursor }` — `visibility=students` · 보냄 · 숨김 아님 · 20건 · 보낸 시각 최신순. **내가 「수강생 전체」 범위 밖이면 빈 목록**(active·paused 또는 done 이면서 마지막 수업 90일 안). 태그 여러 개 = **하나라도** 있는 복기 · 맵과 같이 주면 둘 다 · 잘못된 태그·맵·커서 400 `invalid_body` · `days` 기본 30 |
+| `GET /feed?tag=&tag=&map=&days=30\|90\|365\|all&author=&cursor=` | | `{ items:[피드 §8.5], nextCursor, best? }` — `visibility=students` · 보냄 · 숨김 아님 · 20건 · 보낸 시각 최신순. **내가 「수강생 전체」 범위 밖이면 빈 목록**(active·paused 또는 done 이면서 마지막 수업 90일 안). 태그 여러 개 = **하나라도** 있는 복기 · 맵과 같이 주면 둘 다 · 잘못된 태그·맵·커서·글쓴이 400 `invalid_body` · `days` 기본 30 · `365` · `all` · `author` · `best` 는 §8.13 |
 | `POST /reviews/:id/images?phaseId=&ord=` (PR-2) | **raw 바이너리 1장**(multipart 아님) · `Content-Type: image/*` · 헤더 `X-Image-Sha256?` | `{ image: 이미지 §8.4, existing }` — 내가 쓴 복기만 · png·jpeg·webp · 8MB · 페이즈 4 · 복기 60 · 월 200장/1GB · 같은 자리 같은 파일은 `existing:true`(§8.8) |
 | `DELETE /images/:id` (PR-2) | | 204 — 파일 3개 먼저 · 사진 행 · 그 사진의 그리기 레이어도 함께 · 내 복기의 사진만 |
 | `PUT /images/:id/annotation` (PR-2) | `{ version, shapes, v? }` | `{ version }` — **내 레이어만 통째로** · `version` = 마지막으로 받은 내 레이어 버전(없으면 0) · 다르면 409 `annotation_conflict` · 도형 형식 §8.8 |
@@ -457,6 +457,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `authorRole` | string | 아니오 | `student` · `trainer`(트레이너가 쓴 이관 복기 — 내용 수정·삭제 불가 · 범위만) |
 | `recipientDisplayName` | string | **가능** | 보낸 복기의 받는 트레이너 · draft 는 null |
 | `gameCount` · `imageCount` | integer | 아니오 | ≥ 0 — `gameCount` = **복기에 적은 판 기록 수**(판 · 맵 줄)다. 그 수업 판수가 아니다 → 수업 판수는 `anchorDetail.games`(목록 「0판」 = 판 기록 0) |
+| `thumbUrl` | string | **가능** | 첫 사진 썸네일(서명 10분) · 사진이 없으면 null — 피드 §8.5 와 같은 규칙(2026-10-03 · §8.13) |
 | `hasFeedback` · `unreadFeedback` | boolean | 아니오 | 답 있음 · 내가 마지막으로 연 뒤에 새 답이 있음 |
 | `updatedAt` | string(ISO) | 아니오 | 판·페이즈 변경도 반영 |
 | `publishedAt` | string(ISO) | **가능** | draft 는 null |
@@ -505,7 +506,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `reactions` | object | 아니오 | `{ counts, mine, reactors? }` — `reactors`(`[{ emoji, role, displayName }]`)는 **작성자 본인에게만** |
 
 ### 8.5 피드 한 줄(`GET /feed`)
-`{ id, authorDisplayName, authorRole, playedAt(null 가능 · 없으면 publishedAt 을 보인다), publishedAt, gameCount, maps(판 순서 · 중복 제거), tags(확정 태그 많이 쓰인 순 최대 3), reactionCounts, myReactions, hasTrainerComment(총평·코멘트 있음), thumbUrl(첫 사진 썸네일 · 서명 10분 · 없으면 null) }` — 잔여·결제·담당·세션 id·메모·원본 URL 없음. `nextCursor` = 다음 쪽이 있으면 서명된 문자열(그대로 다시 보낸다) · 끝이면 null.
+`{ id, authorKey(§8.13), authorDisplayName, authorRole, playedAt(null 가능 · 없으면 publishedAt 을 보인다), publishedAt, gameCount, maps(판 순서 · 중복 제거), tags(확정 태그 많이 쓰인 순 최대 3), reactionCounts, myReactions, hasTrainerComment(총평·코멘트 있음), thumbUrl(첫 사진 썸네일 · 서명 10분 · 없으면 null) }` — 잔여·결제·담당·세션 id·메모·원본 URL 없음. `nextCursor` = 다음 쪽이 있으면 서명된 문자열(그대로 다시 보낸다) · 끝이면 null.
 **`anchorDetail`(2026-10-02 · 반장 요청 · §8.12 와 같은 모양)** — 수업 `{ games }` · 직강 회차 `{ level, courseLevel, unitNo }` · 그 밖 null.
 **볼 수 있는 줄에만 값**이다(상세 §8.4 와 같은 선 — 세션 id 를 볼 수 있는 사람): 수강생 피드 = **내 복기만** · 트레이너 피드 = 원장은 전부 · 트레이너는 받는 사람 · 작성자 · 범위 안 수강생(담당 ∪ 최근 90일)의 복기만. **남의 복기는 null** — 화면은 「N판」 · 「n회차」를 빼고 그린다(`gameCount` 를 판수로 쓰지 않는다).
 
@@ -575,7 +576,7 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 | `POST /reviews/:id/feedback` | `{ kind, phaseId?, body }` | `{ feedback }` — 받는 트레이너·오너만(아니면 404) · **1차 `kind` = `comment`**(`phaseId` = 그 복기의 페이즈 · 필수) · **`overall`**(총평 · `phaseId` 없음) · `body` 1~4000자(앞뒤 공백 제거 · 공백뿐 400 `invalid_body` · 초과 400 `review_too_long`) · `mark`·`task`·`lineOrd`·`verdict`·`dueBookingId` 는 **2차**(지금 보내면 400 `invalid_body`) |
 | `PUT /feedback/:id` | `{ body }` | `{ feedback }` — **내 답만**(오너도 남의 답은 404) · 본문만 바뀐다(종류·페이즈 그대로) · `updatedAt` 갱신 |
 | `DELETE /feedback/:id` | | 204 — 내 답(오너는 누구 답이든) |
-| `GET /feed?tag=&map=&days=&cursor=` | | 수강생 `/feed`(§8.2 · §8.5)와 같은 필터·커서 · **활성 트레이너 전원** · 항목의 작성자 = `authorDisplayName`(이름) + `authorPubgName` |
+| `GET /feed?tag=&map=&days=&author=&cursor=` | | 수강생 `/feed`(§8.2 · §8.5)와 같은 필터·커서 · **활성 트레이너 전원** · 항목의 작성자 = `authorDisplayName`(이름) + `authorPubgName` · `days` 365 · all · `author` · `authorKey` · `best` 도 같다(§8.13) |
 | `POST /reviews/:id/reactions/:emoji` · `DELETE …` | | `{ reactionCounts, myReactions }` — 볼 수 있는 보낸 복기에만 · 이모지 6개(§8.2) · **반응만으로는 `awaitingReply` 가 풀리지 않는다**(답 = comment·overall) |
 
 **요약(목록 한 줄)** — 수강생 요약(§8.3)의 `id` · `anchorKind` · `sessionId` · `courseId` · `courseSessionId` · `playedAt` · `title` · `status`(늘 `published`) · `authorRole` · `gameCount` · `imageCount` · `hasFeedback` · `updatedAt` · `publishedAt` · `visibility` · `reactionCounts` 에 더해:
@@ -704,6 +705,39 @@ PR-2 추가: 400 `image_type` · `review_limit_images` · `review_limit_month` �
 
 **시험** — `scripts/review-course.test.cjs`(CI `test:deps` · 가짜 PostgREST 위 진짜 라우트 5묶음) · `scripts/ops-status.test.cjs`(회차 번호 · 출석 회차 목록 · 직강 상태) ·
 DB 함수 = 운영 DB 되돌림 시험 28항목(`supabase_admin_panel.sql` §61).
+
+### 8.13 피드 기간 넓히기 · 글쓴이로 거르기 · 반응 많은 복기 · 내 목록 사진 (2026-10-03 · 반장 요청 · 수강생 앱 #98 뒤)
+
+**반장 계약 한 줄**: `GET /feed?days=` 에 `365` · `all` · 항목마다 `authorKey` · `author=<authorKey>` 면 기간 전체에서 그 사람 글만 · 커서 없이 부른 첫 쪽에 `best[]`(같은 조건 전체에서 반응 3개 이상 · 많은 순 최대 3) · `GET /reviews` 요약에 `thumbUrl`.
+**공개 범위는 그대로다** — 피드 · `best` 는 늘 `visibility=students` · 보냄 · 숨김 아님만 싣는다. 기간 · 글쓴이 · 베스트 어느 것도 이 선을 넓히지 않는다(「나와 트레이너만」 글은 어떤 `days` · `author` 로도 남에게 안 나간다 · 내 비공개 글은 `GET /reviews` 에서만).
+
+| 요청 | 이번에 | 모양 · 이유 |
+|---|---|---|
+| ① 90일 밖 옛 복기 | **함** | `days` = `30`(기본) · `90` · `365` · `all`(기간 없음) · 그 밖 값은 종전처럼 30. 커서 · 태그 · 맵과 같이 쓴다. 옮겨 온 4~6월 복기를 앱에서 볼 길이 이것뿐이다 |
+| ② 글쓴이로 거르기 | **함** | 항목 `authorKey`(string) — 같은 사람이면 늘 같은 값 · 사람이 다르면 다른 값(이름이 같아도) · 트레이너가 쓴 복기는 그 트레이너 값. `author=<authorKey>` = 그 사람 글만 · 기간 전체에서 서버가 거른다(커서 · 태그 · 맵 · 기간과 같이). 모양이 틀리면 400 `invalid_body` · 공개 글이 없는 사람이면 빈 목록 |
+| ③ 반응 많은 복기 | **함(첫 쪽 `best[]`)** | 커서 없이 부른 첫 쪽에만 `best: [피드 한 줄]` — 같은 조건(기간 · 태그 · 맵 · 글쓴이)의 **전체**에서 반응 수 합 3 이상 · 많은 순(같으면 최근) 최대 3 · 없으면 `[]`. 다음 쪽(커서)에는 키가 없다. 정렬 자체를 바꾸는 `sort=reactions` 는 **다음에** — 반응 수 순서로 이어 받는 커서는 DB 집계(뷰 · 함수 = DDL)가 있어야 한다 |
+| ④ 내 복기 목록 사진 | **함** | `GET /reviews` 요약(§8.3)에 `thumbUrl` — 첫 사진 썸네일 · 서명 10분 · 없으면 null(피드와 같은 규칙). 트레이너 목록은 요청 밖이라 그대로 |
+
+- **`authorKey` 는 번호 · 디스코드 id 를 담지 않는다** — 서버 비밀값으로 만든 HMAC 이라 되돌릴 수 없다. ⚠️ 종전 불투명 id(`id` · `courseId` 등)는 「종류:번호」를 base64 로 싣고 서명만 붙인 모양이라 풀면 번호가 보인다 — 그래서 사람을 가리키는 이 키에는 그 방식을 쓰지 않았다.
+- `best[]` 항목은 `items` 와 같은 모양이고 같은 복기가 `items` 에도 나올 수 있다(앱은 `id` 로 겹침 처리). 「수강생 전체」 범위 밖이면 `items` · `best` 둘 다 빈 배열.
+- 트레이너 피드(`GET /api/trainer-portal/feed`)도 같은 쿼리 · 같은 키다.
+- 종전 키 · 순서 · 커서 모양은 그대로다(더하기만). 앱 가드 어간에 걸리는 새 키 없음(`authorKey` · `best` · `thumbUrl`).
+
+```json
+GET /api/student-portal/feed?days=all&author=a_Xk3…
+{
+  "items": [
+    { "id": "…", "authorKey": "a_Xk3…", "authorDisplayName": "에임장인", "authorRole": "student",
+      "playedAt": null, "anchorDetail": null, "publishedAt": "2026-05-12T11:02:00Z", "gameCount": 0, "maps": [], "tags": [],
+      "reactionCounts": { "👍": 4 }, "myReactions": [], "hasTrainerComment": false, "thumbUrl": null }
+  ],
+  "nextCursor": "…",
+  "best": [ /* 같은 모양 최대 3 — 커서 없이 부른 첫 쪽에만 */ ]
+}
+GET /api/student-portal/reviews → { "reviews": [ { …요약 §8.3…, "thumbUrl": "https://…(10분)" | null } ] }
+```
+
+**시험** — `scripts/review-course.test.cjs`(진짜 라우트 · 가짜 PostgREST): 90일 밖 공개 글이 `365` · `all` 에서 보이고 `30` · `90` 에선 안 보임 / 비공개 글은 어떤 `days` · `author` 로도 남의 피드 · `best` 에 안 나옴 / 이름이 같은 두 수강생의 `authorKey` 가 다르고 `author` 로 한 사람 글만 / 트레이너 피드도 같은 거르기 / `best` 가 첫 쪽 밖의 복기까지 보고 3개 이상만 / 내 목록 `thumbUrl`.
 
 ---
 

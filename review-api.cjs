@@ -57,6 +57,8 @@ const RECIPIENT_WINDOW_DAYS = 90;    // 받는 사람 후보 = 담당 ∪ 최근
 const TRAINER_LIST_DAYS = 30;        // 트레이너 목록 기본 창(설계 §5.2 · 보낸 시각 기준 · days 1~365)
 const FEED_PAGE = 20;
 const FEED_ID_CAP = 2000;            // 태그·맵 필터 후보 id 상한(1차 규모 · 넘치면 최근 것부터)
+const FEED_DAYS = { 30: 30, 90: 90, 365: 365, all: null };   // §8.13 피드 기간 — all = 기간 없음 · 그 밖 값은 종전처럼 30
+const BEST_MIN = 3, BEST_MAX = 3;    // §8.13 첫 쪽 best[] — 반응 수 합 3 이상 · 많은 순 최대 3(앱 「반응 많은 복기」와 같은 선)
 const PURGE_DAYS = 90;               // §3.7 — 마지막 수정 90일 지난 draft 의 사진 정리(목록 imagePurgeAt 과 같은 기준)
 const SWEEP_CAP = 200;               // §3.7 — 1회 상한 200장(넘치면 다음 날)
 const PENDING_STALE_MS = 86400_000;  // 업로드 도중 끊긴 자리 행(pending/…) — 하루 지나면 정리 대상
@@ -292,6 +294,18 @@ function dueCheck({ booking, slot, studentId, staffId, nowMs }) {
   if (booking.status !== "booked") return null;
   const t = Date.parse(slot.slot_start);
   return Number.isFinite(t) && t > nowMs ? slot.slot_start : null;
+}
+
+// 피드 글쓴이 키(§8.13 · 2026-10-03 반장 요청) — 같은 사람이면 늘 같은 값 · 이름이 같아도 사람이 다르면 다른 값.
+//   번호 · 디스코드 id 를 담지 않는다: opaqueId 는 「종류:번호」를 base64 로 싣고 서명만 붙여서 풀면 번호가 보인다 —
+//   사람을 가리키는 이 키는 서버 비밀값 HMAC 만 쓴다(되돌릴 수 없다 · 서버도 키 → 사람은 공개 글 글쓴이를 다시 계산해 찾는다).
+const AUTHOR_KEY_RE = /^a_[A-Za-z0-9_-]{22}$/;
+function authorKeyOf(secret, r) {
+  const trainer = r?.author_role === "trainer";
+  const id = trainer ? r.author_staff_id : r?.student_id;
+  if (id == null) return null;
+  return "a_" + crypto.createHmac("sha256", secret).update(`review-author:${trainer ? "trainer" : "student"}:${id}`)
+    .digest("base64url").slice(0, 22);
 }
 
 // 피드 커서 — (published_at, id) 를 서명한다(위조 방지 · opaqueId 와 같은 HMAC 방식)
@@ -777,7 +791,7 @@ module.exports = function mountReviewApi(app, deps) {
     const l = inList(ids);
     const [games, images, fb, reacts, playedAt, names, anchorDetail] = await Promise.all([
       sbSelect("review_games", `select=review_id&review_id=in.(${l})`),
-      sbSelect("review_images", `select=review_id&review_id=in.(${l})&${LIVE_IMAGE}`),
+      sbSelect("review_images", `select=review_id,thumb_path,created_at&review_id=in.(${l})&${LIVE_IMAGE}&order=created_at.asc`),
       feedbackState(sub, ids),
       sbSelect("review_reactions", `select=review_id,emoji,reactor_kind,reactor_id&review_id=in.(${l})`),
       playedAtMap(rows),
@@ -788,6 +802,10 @@ module.exports = function mountReviewApi(app, deps) {
     const gc = cnt(games), ic = cnt(images);
     const rx = new Map();
     for (const x of reacts) { if (!rx.has(x.review_id)) rx.set(x.review_id, []); rx.get(x.review_id).push(x); }
+    // 첫 사진 썸네일(§8.13 · 피드 §8.5 와 같은 규칙 — 서명 10분 · 썸네일이 없으면 null)
+    const thumbOf = new Map();
+    for (const i of images) if (i.thumb_path && !thumbOf.has(i.review_id)) thumbOf.set(i.review_id, i.thumb_path);
+    const urls = await signPaths([...thumbOf.values()]);
     return rows.map((r) => {
       const f = fb.get(r.id) || {};
       return {
@@ -801,6 +819,7 @@ module.exports = function mountReviewApi(app, deps) {
         recipientDisplayName: r.recipient_trainer_id ? names[r.recipient_trainer_id] || null : null,
         gameCount: gc.get(r.id) || 0,                             // 복기에 적은 판 기록 수(수업 판수가 아니다 — anchorDetail.games)
         imageCount: ic.get(r.id) || 0,
+        thumbUrl: thumbOf.has(r.id) ? urls.get(thumbOf.get(r.id)) || null : null,
         hasFeedback: (f.count || 0) > 0,
         unreadFeedback: !!f.unread,
         updatedAt: r.updated_at,
@@ -1648,32 +1667,40 @@ module.exports = function mountReviewApi(app, deps) {
     send(res, { version });
   }));
 
-  // ── 공유 피드 GET /feed?tag=&tag=&map=&days=30|90&cursor= (v2.7 §15.4) — 수강생 · 트레이너(PR-3) 공통 ──
+  // ── 공유 피드 GET /feed?tag=&tag=&map=&days=30|90|365|all&author=&cursor= (v2.7 §15.4 · §8.13) — 수강생 · 트레이너(PR-3) 공통 ──
   //   범위 = visibility students ∧ published ∧ 숨김 아님 · 수강생은 보는 사람이 「수강생 전체」 범위 안(아니면 빈 목록) ·
   //   트레이너는 활성 트레이너 전원(requireTrainer 가 비활성을 막는다 · v2.7 35)
   //   태그 여러 개 = 하나라도 있는 복기(OR) · 맵과 같이 주면 둘 다 만족 · 정렬 = 보낸 시각 최신순 · 20건 커서
   //   작성자 표시: 수강생 화면 = pubg_name → 디코닉 → 「수강생」 · 트레이너 화면 = 이름 + authorPubgName(v2.7 36)
+  //   §8.13(2026-10-03 반장 요청): days 365 · all · author=<authorKey> 그 사람 글만 · 커서 없는 첫 쪽에 best[](반응 많은 복기)
+  //     — 위 범위(공개 글만)는 어느 것도 넓히지 않는다. 기간 · 글쓴이 · 태그 · 맵은 그 안에서만 좁힌다
   function parseFeedQuery(q) {
     const tags = [].concat(q.tag ?? []).map(String);
     if (tags.some((t) => !/^[a-z_]{1,32}$/.test(t)) || tags.length > 12) return { error: "invalid_body" };
     const map = q.map === undefined ? null : String(q.map);
     if (map !== null && !MAPS.includes(map)) return { error: "invalid_body" };
-    const days = String(q.days) === "90" ? 90 : 30;
+    const dk = String(q.days ?? 30);
+    const days = Object.prototype.hasOwnProperty.call(FEED_DAYS, dk) ? FEED_DAYS[dk] : 30;
+    const author = q.author === undefined ? null : String(q.author);
+    if (author !== null && !AUTHOR_KEY_RE.test(author)) return { error: "invalid_body" };
     const cur = q.cursor === undefined ? null : readCursor(process.env.SESSION_SECRET, q.cursor);
     if (q.cursor !== undefined && !cur) return { error: "invalid_body" };
-    return { tags, map, days, cur };
+    return { tags, map, days, author, cur };
   }
   app.get(`${P}/feed`, readLimit, requireStudent, needReady, wrap(async (req, res) => {
     const sub = req.portal.sub;
     const fq = parseFeedQuery(req.query || {});
     if (fq.error) return fail(res, 400, fq.error);
-    if (!(await inShareScope(sub))) return send(res, { items: [], nextCursor: null });
+    if (!(await inShareScope(sub))) return send(res, { items: [], nextCursor: null, ...(fq.cur ? {} : { best: [] }) });
     send(res, await feedPage(fq, { kind: "student", id: sub }, (r) => Number(r.student_id) === Number(sub)));
   }));
   // canSeeAnchor(r) — 수업 판수 · 직강 반 · 회차(anchorDetail)를 실을 줄인가. 상세(§8.4)와 같은 선 — 세션 id 를 볼 수 있는 사람만
   //   (수강생 = 내 복기 · 트레이너 = 오너 · 받는 트레이너 · 작성자 · 범위 안 수강생). 남의 복기는 null(2026-10-02 반장 요청 · §8.5).
-  async function feedPage({ tags, map, days, cur }, viewer, canSeeAnchor = () => false) {
-    const trainerView = viewer.kind === "trainer";
+  const FEED_COLS = "id,student_id,author_role,author_staff_id,lesson_session_id,course_session_id,status,published_at,"
+    + "anchor_kind,course_id,recipient_trainer_id";
+  async function feedPage({ tags, map, days, author = null, cur }, viewer, canSeeAnchor = () => false) {
+    const first = !cur;                                             // best[] 는 커서 없이 부른 첫 쪽에만(§8.13)
+    const empty = () => ({ items: [], nextCursor: null, ...(first ? { best: [] } : {}) });
     let idSet = null;
     if (tags.length) {
       const ph = await sbSelect("review_phases",
@@ -1685,17 +1712,60 @@ module.exports = function mountReviewApi(app, deps) {
       const ms = new Set(gs.map((x) => x.review_id));
       idSet = idSet ? new Set([...idSet].filter((x) => ms.has(x))) : ms;
     }
-    if (idSet && !idSet.size) return { items: [], nextCursor: null };
-    const since = new Date(Date.now() - days * 86400_000).toISOString();
-    let qs = "select=id,student_id,author_role,author_staff_id,lesson_session_id,course_session_id,status,published_at,"
-      + "anchor_kind,course_id,recipient_trainer_id"
-      + `&status=eq.published&hidden_at=is.null&visibility=eq.students&published_at=gte.${encodeURIComponent(since)}`
-      + `&order=published_at.desc,id.desc&limit=${FEED_PAGE + 1}`;
+    if (idSet && !idSet.size) return empty();
+    // 공개 범위가 바닥이다 — 기간 · 글쓴이 · 태그 · 맵은 이 안에서만 좁힌다(비공개 글은 어느 조합으로도 안 나온다)
+    let scope = "&status=eq.published&hidden_at=is.null&visibility=eq.students";
+    if (days != null) scope += `&published_at=gte.${encodeURIComponent(new Date(Date.now() - days * 86400_000).toISOString())}`;
+    if (author) {
+      const who = await authorByKey(author);
+      if (!who) return empty();                                     // 공개 글이 없는 글쓴이 · 지난 키 — 빈 목록
+      scope += who.role === "trainer" ? `&author_role=eq.trainer&author_staff_id=eq.${who.id}`
+        : `&author_role=eq.student&student_id=eq.${who.id}`;
+    }
+    if (idSet) scope += `&id=in.(${[...idSet].slice(0, FEED_ID_CAP).join(",")})`;
+    let qs = `select=${FEED_COLS}${scope}&order=published_at.desc,id.desc&limit=${FEED_PAGE + 1}`;
     if (cur) qs += `&or=${encodeURIComponent(`(published_at.lt."${cur.publishedAt}",and(published_at.eq."${cur.publishedAt}",id.lt.${cur.id}))`)}`;
-    if (idSet) qs += `&id=in.(${[...idSet].slice(0, FEED_ID_CAP).join(",")})`;
     const rows = await sbSelect("lesson_reviews", qs);
     const page = rows.slice(0, FEED_PAGE);
-    if (!page.length) return { items: [], nextCursor: null };
+    const best = first ? await bestRows(scope) : [];
+    if (!page.length && !best.length) return empty();
+    const onPage = new Set(page.map((r) => r.id));
+    const built = await feedItems([...page, ...best.filter((r) => !onPage.has(r.id))], viewer, canSeeAnchor);
+    const last = page[page.length - 1];
+    return {
+      items: page.map((r) => built.get(r.id)),
+      nextCursor: rows.length > FEED_PAGE ? signCursor(process.env.SESSION_SECRET, last.published_at, last.id) : null,
+      ...(first ? { best: best.map((r) => built.get(r.id)) } : {}),
+    };
+  }
+  // author=<authorKey> → 그 글쓴이. 공개 글(피드 범위)의 글쓴이 안에서만 키를 다시 계산해 찾는다 — 없으면 null
+  async function authorByKey(key) {
+    const rows = await sbSelect("lesson_reviews",
+      `select=student_id,author_role,author_staff_id&status=eq.published&hidden_at=is.null&visibility=eq.students&limit=${FEED_ID_CAP}`);
+    const hit = rows.find((r) => authorKeyOf(process.env.SESSION_SECRET, r) === key);
+    if (!hit) return null;
+    return hit.author_role === "trainer" ? { role: "trainer", id: Number(hit.author_staff_id) } : { role: "student", id: Number(hit.student_id) };
+  }
+  // 첫 쪽 best[] — 같은 범위(scope) **전체**에서 반응 수 합 BEST_MIN 이상 · 많은 순(같으면 최근) 최대 BEST_MAX(§8.13)
+  //   반응 수 순서로 이어 받는 커서(sort=reactions)는 DB 집계가 있어야 해서 다음에 — 지금은 위 몇 개만 서버가 골라 준다
+  async function bestRows(scope) {
+    const cand = await sbSelect("lesson_reviews", `select=id,published_at${scope}&order=published_at.desc,id.desc&limit=${FEED_ID_CAP}`);
+    if (!cand.length) return [];
+    const n = new Map();
+    for (let i = 0; i < cand.length; i += 200) {
+      const l = inList(cand.slice(i, i + 200).map((r) => r.id));
+      for (const x of await sbSelect("review_reactions", `select=review_id&review_id=in.(${l})`)) n.set(x.review_id, (n.get(x.review_id) || 0) + 1);
+    }
+    const top = cand.filter((r) => (n.get(r.id) || 0) >= BEST_MIN)
+      .sort((a, b) => n.get(b.id) - n.get(a.id) || String(b.published_at).localeCompare(String(a.published_at)) || b.id - a.id)
+      .slice(0, BEST_MAX);
+    if (!top.length) return [];
+    const byId = new Map((await sbSelect("lesson_reviews", `select=${FEED_COLS}&id=in.(${inList(top.map((r) => r.id))})`)).map((r) => [r.id, r]));
+    return top.map((r) => byId.get(r.id)).filter(Boolean);
+  }
+  // 피드 한 줄(§8.5) — id → 항목. 쪽 · best[] 가 같이 쓴다(한 번에 모아 읽는다)
+  async function feedItems(page, viewer, canSeeAnchor) {
+    const trainerView = viewer.kind === "trainer";
     const l = inList(page.map((r) => r.id));
     const [games, reacts, fb, imgs, playedAt, sdisp, tnames, anchorDetail] = await Promise.all([
       sbSelect("review_games", `select=id,review_id,ord,map&review_id=in.(${l})&order=ord.asc`),
@@ -1716,12 +1786,13 @@ module.exports = function mountReviewApi(app, deps) {
     const thumbOf = new Map();
     for (const i of imgs) if (!thumbOf.has(i.review_id)) thumbOf.set(i.review_id, i.thumb_path);
     const urls = await signPaths([...thumbOf.values()]);
-    const items = page.map((r) => {
+    return new Map(page.map((r) => {
       const gs = gBy.get(r.id) || [];
       const rs = reactionSummary(rBy.get(r.id), viewer.kind, viewer.id);
       const byTrainer = r.author_role === "trainer";
-      return {
+      return [r.id, {
         id: opaqueId("review", r.id),
+        authorKey: authorKeyOf(process.env.SESSION_SECRET, r),        // §8.13 같은 사람 = 같은 값 · 번호 · 디스코드 id 없음
         authorDisplayName: byTrainer ? tnames[r.author_staff_id] || "트레이너"
           : (trainerView ? sdisp[r.student_id]?.name : sdisp[r.student_id]) || "수강생",
         ...(trainerView ? { authorPubgName: byTrainer ? null : sdisp[r.student_id]?.pubg_name || null } : {}),
@@ -1736,10 +1807,8 @@ module.exports = function mountReviewApi(app, deps) {
         myReactions: rs.mine,
         hasTrainerComment: commented.has(r.id),
         thumbUrl: thumbOf.has(r.id) ? urls.get(thumbOf.get(r.id)) || null : null,
-      };
-    });
-    const last = page[page.length - 1];
-    return { items, nextCursor: rows.length > FEED_PAGE ? signCursor(process.env.SESSION_SECRET, last.published_at, last.id) : null };
+      }];
+    }));
   }
 
   // ── /summary 확장(계약 보강 D · 2026-09-26 오너 판정) — 홈 「오늘 수업 복기」 카드 한 개 ──
