@@ -133,6 +133,7 @@ a{color:inherit}
 .sign .g{color:var(--gold)}
 .hero-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px 48px;align-items:end;margin-top:clamp(20px,3vw,32px)}
 .hero-row p{font-size:clamp(18px,1.7vw,22px);line-height:1.55;max-width:620px}
+.hero-row .note{margin-top:8px;font-size:15px;line-height:1.6;color:var(--mute)}
 .hero-acts{display:flex;align-items:center;gap:24px}
 
 /* 3. 숫자 한 줄 */
@@ -214,6 +215,11 @@ a{color:inherit}
 .person .r30{margin-top:2px;font-size:13px;color:var(--mute)}
 .person .one{margin-top:16px}
 .person .links{margin-top:auto;padding-top:16px}
+.ask{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.ask-h{font-size:14px;font-weight:800}
+.ask ul{list-style:none;margin-top:8px;display:grid;gap:6px;font-size:14px;color:var(--mute)}
+.ask b{color:var(--ink);font:700 15px/1 var(--num);letter-spacing:.02em}
+.ask a{color:var(--ink);text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}
 
 /* 커리큘럼 */
 .steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:24px;border-top:1px solid var(--line)}
@@ -397,7 +403,7 @@ html.vr-lock{overflow:hidden}
     <nav class="menu" aria-label="주 메뉴">
       <a href="#growth">성장 기록</a><a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#plans">가격</a><a href="lesson-schedule.html">수업 시간표</a><a href="https://app.mriacademy.gg/" rel="noopener">수강생 앱</a>
     </nav>
-    <a class="cta" href="apply.html?utm_source=site&amp;utm_medium=top">레벨 테스트 신청<span class="dot"> · </span><span class="p">20,000원</span></a>
+    <a class="cta" href="#start">레벨 테스트 신청<span class="dot"> · </span><span class="p">20,000원</span></a>
   </div>
 </header>
 
@@ -407,9 +413,13 @@ html.vr-lock{overflow:hidden}
   <section class="hero">
     <div class="wrap">
       <div class="eyebrow">PUBG Ranked Coaching · Squad · Asia Server</div>
-      <h1 class="sign"><span class="sr">경쟁전 </span>TOP <span class="g">200</span></h1>
+      <!-- 간판 = 오너 10/3 확정 사실만(29시즌 · 수강생 세 분과 1위 · 그때 최고 점수 5,000 · 36시즌부터 9,999 · 그 뒤 강의 방송). 점수 · 순위 주장은 넓히지 않는다 -->
+      <h1 class="sign"><span class="sr">29시즌 </span>S29 <span class="g">1위</span></h1>
       <div class="hero-row">
-        <p>아시아 서버 상위 200등, 서바이버. 가르치는 세 명 모두 서바이버를 달성했어요</p>
+        <div class="hero-txt">
+          <p>29시즌, 수강생 세 분과 함께 1위를 달성했어요. 그 뒤로 강의 방송을 시작했어요</p>
+          <p class="note">1위 점수 5,000점은 그때 최고 점수였어요. 36시즌에 서바이버가 생기면서 최고 점수가 9,999점으로 바뀌었어요</p>
+        </div>
         <div class="hero-acts">
           <a class="link" href="#plans">가격 먼저 보기</a>
           <a class="cta" href="apply.html?utm_source=site&amp;utm_medium=hero">레벨 테스트 신청 · <span class="p">20,000원</span></a>
@@ -450,16 +460,21 @@ html.vr-lock{overflow:hidden}
              기록 · 누적 숫자는 지휘가 장부에서 뽑은 10/3 기준 고정 글자. 최근 30일은 서버 값(byTrainer.students30)이 오면 덮어쓴다 -->
         <article class="cell s4 person rise" id="trainers" aria-labelledby="muriH">
           <div class="who"><img class="av" src="img/trainers/mr-lead.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">원장 · 직강</div><div class="nm" id="muriH">이무리</div></div></div>
-          <div class="stat2">
-            <div><div class="v num">5,000<small>RP</small></div><div class="k">스쿼드 경쟁전</div></div>
-            <!-- 「평균 딜량 600+」 큰 숫자는 오너 확인 대기(S38 한 계정 583) — 빼려면 이 div 한 덩어리만 지운다 -->
-            <div><div class="v num">600+</div><div class="k">평균 딜량</div></div>
-          </div>
+          <div class="stat1"><span class="v num">5,000<small>RP</small></span><span class="k">29시즌 1위 · 그때 최고 점수</span></div>
           <ul class="recs">
             <li>S29 카카오 1위 · 5,000 RP · 평균 딜량 684</li>
             <li>S36 카카오 1위 · 서바이버 5,002 RP · 평균 딜량 614</li>
             <li>S38 스팀 서바이버 두 계정 · 4,359 RP · 4,370 RP</li>
           </ul>
+          <!-- 원장 직강 신청 창구 — 오너 10/3 지정(디코 아이디 · 강의 서버 · 이메일 둘) -->
+          <div class="ask">
+            <div class="ask-h">원장에게 바로 신청</div>
+            <ul>
+              <li>디스코드 <b>e_muri</b> 친구 추가 후 메시지로 신청</li>
+              <li><a href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">MRI ACADEMY 강의 서버</a>에서 신청</li>
+              <li>이메일 <a href="mailto:shlee9498@naver.com">shlee9498@naver.com</a> 또는 <a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></li>
+            </ul>
+          </div>
           <div class="links"><a href="#plans">원장 직강 보기</a><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a></div>
         </article>
 
