@@ -129,16 +129,21 @@ a{color:inherit}
 /* 2. 간판 */
 .hero{padding:clamp(48px,7vw,96px) 0 clamp(32px,4vw,48px)}
 .hero .eyebrow{margin-bottom:clamp(12px,2vw,20px)}
-.sign{font:800 clamp(88px,15vw,216px)/.86 var(--num);letter-spacing:-.01em;text-transform:uppercase}
-.sign .g{color:var(--gold)}
+/* 간판 = 실적 두 줄. 줄마다 「누가 · 기간」 작은 머리 + 「몇 명 · 얼마나」 큰 글자 */
+.sign{display:grid;gap:clamp(18px,2.6vw,32px)}
+.sign .ln{display:block}
+.sign .hd{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;font-size:clamp(16px,1.5vw,20px);font-weight:700;color:var(--mute)}
+.sign .hd b{color:var(--ink);font-weight:800}
+.sign .big{display:block;margin-top:6px;font:800 clamp(38px,6.2vw,88px)/1.02 var(--num);letter-spacing:-.01em;color:var(--ink);text-wrap:balance}
+.sign .big small{font:800 .42em/1 var(--sans);margin:0 .12em 0 .06em}
+.sign .big .sep{color:var(--mute);font-weight:400;margin:0 .14em}
+.hero-row .note{font-size:15px;line-height:1.6;color:var(--mute)}
 .hero-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px 48px;align-items:end;margin-top:clamp(20px,3vw,32px)}
 .hero-row p{font-size:clamp(18px,1.7vw,22px);line-height:1.55;max-width:620px}
-.hero-row .what{margin-top:6px;font-size:16px;font-weight:700;color:var(--ink)}
-.hero-row .note{margin-top:8px;font-size:15px;line-height:1.6;color:var(--mute)}
 .hero-acts{display:flex;align-items:center;gap:24px}
 
 /* 3. 숫자 한 줄 */
-.facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:clamp(28px,4vw,48px) 0 var(--gap)}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:clamp(28px,4vw,48px) 0 var(--gap)}
 .fact{padding:22px 24px 22px 0}
 .fact+.fact{padding-left:24px;border-left:1px solid var(--line)}
 .fact .v{font:800 clamp(40px,4.4vw,60px)/1 var(--num)}
@@ -215,6 +220,7 @@ a{color:inherit}
 .person .tot span{color:var(--mute);margin-left:8px;font-size:14px}
 .person .r30{margin-top:2px;font-size:13px;color:var(--mute)}
 .person .one{margin-top:16px}
+.person .fine{margin-top:8px;font-size:13px;line-height:1.6;color:var(--mute)}
 .person .links{margin-top:auto;padding-top:16px}
 .ask{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
 .ask-h{font-size:14px;font-weight:800}
@@ -413,14 +419,17 @@ html.vr-lock{overflow:hidden}
   <!-- 2. 간판 -->
   <section class="hero">
     <div class="wrap">
-      <div class="eyebrow">Season 29 · Kakao Server · Squad</div>
-      <!-- 간판 = 오너 10/3 확정 사실만(29시즌 · 수강생 세 분과 1위 · 그때 최고 점수 5,000 · 36시즌부터 9,999 · 그 뒤 강의 방송). 점수 · 순위 주장은 넓히지 않는다 -->
-      <h1 class="sign"><span class="sr">29시즌 카카오 서버 </span>S29 <span class="g">1위</span></h1>
+      <div class="eyebrow">배틀그라운드 경쟁전 코칭</div>
+      <!-- 간판 = 실적 두 줄(오너 10/4 확정 숫자 · 고정 글자). 근거는 PR 본문 — 원장 101명 = 관리대장 + 적립 내역 + 전체현황 합친 수강생 ·
+           2023년 9월 = 강의 서버 개설일 · 4,200시간 이상 = 입금 기준 약 1,890시간 + 수업 800회 × 3시간 ·
+           트레이너 78명 = DB 2026-04-01 ~ 09-30 레슨 · 세트 결제자 · 약 4,000판 = 같은 기간 결제 3,795판 · 3월 중순부터 누적 4,000판 -->
+      <h1 class="sign">
+        <span class="ln"><span class="hd"><b>원장</b><span>2023년 9월 ~ 2026년 9월</span></span><span class="big">101<small>명</small><span class="sep">·</span>직강 4,200<small>시간 이상</small></span></span>
+        <span class="ln"><span class="hd"><b>트레이너</b><span>2026년 4월 ~ 9월</span></span><span class="big">78<small>명</small><span class="sep">·</span>레슨 약 4,000<small>판</small></span></span>
+      </h1>
       <div class="hero-row">
         <div class="hero-txt">
-          <p>29시즌 카카오 서버에서 수강생 세 분과 함께 1위를 달성했어요. 그 뒤로 강의 방송을 시작했어요</p>
-          <p class="what">배틀그라운드 경쟁전 코칭, MRI ACADEMY예요</p>
-          <p class="note">1위 점수 5,000점은 그때 최고 점수였어요. 36시즌에 서바이버가 생기면서 최고 점수가 9,999점으로 바뀌었어요</p>
+          <p class="note">29시즌(2024년 6월) · 수강생 3명과 번갈아 가며 처음부터 끝까지 함께 5,000점 달성</p>
         </div>
         <div class="hero-acts">
           <a class="link" href="#plans">가격 먼저 보기</a>
@@ -428,12 +437,9 @@ html.vr-lock{overflow:hidden}
         </div>
       </div>
 
-      <!-- 3. 숫자 한 줄 — 지휘가 장부에서 뽑은 10/3 기준 숫자.
-           78명 · 3,931판은 고정 글자다. 서버 키(lessonStudents · lessonGames)는 아직 응답에 없다 — 생기면 data-srv 를 달아 덮어쓴다.
+      <!-- 3. 숫자 한 줄 — 레슨 수강생 · 판수는 간판 둘째 줄로 올라갔다(10/4).
            5명은 /api/site-metrics 의 graduatesMasterPlus(#493 배포)가 오면 그 값으로 덮어쓴다 -->
       <div class="facts">
-        <div class="fact"><div class="v"><span>78</span><small>명</small></div><div class="k">2026년 4~9월 레슨 수강생</div></div>
-        <div class="fact"><div class="v"><span>3,931</span><small>판</small></div><div class="k">같은 기간 레슨 판수</div></div>
         <div class="fact"><div class="v"><span data-srv="graduatesMasterPlus">5</span><small>명</small></div><div class="k">레슨으로 마스터 이상 달성</div></div>
       </div>
 
@@ -462,7 +468,10 @@ html.vr-lock{overflow:hidden}
              기록 · 누적 숫자는 지휘가 장부에서 뽑은 10/3 기준 고정 글자. 최근 30일은 서버 값(byTrainer.students30)이 오면 덮어쓴다 -->
         <article class="cell s4 person rise" id="trainers" aria-labelledby="muriH">
           <div class="who"><img class="av" src="img/trainers/mr-lead.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">원장 · 직강</div><div class="nm" id="muriH">이무리</div></div></div>
-          <div class="stat1"><span class="v num">5,000<small>RP</small></span><span class="k">29시즌 1위 · 그때 최고 점수</span></div>
+          <!-- 첫 화면 간판에서 내려온 29시즌 기록(10/4) -->
+          <div class="stat1"><span class="v num">S29 1위</span><span class="k">카카오 서버 · 5,000 RP</span></div>
+          <p class="one">29시즌 카카오 서버에서 수강생 세 분과 함께 1위를 달성했어요. 그 뒤로 강의 방송을 시작했어요</p>
+          <p class="fine">1위 점수 5,000점은 그때 최고 점수였어요. 36시즌에 서바이버가 생기면서 최고 점수가 9,999점으로 바뀌었어요</p>
           <ul class="recs">
             <li>S29 카카오 1위 · 5,000 RP · 평균 딜량 684</li>
             <li>S36 카카오 1위 · 서바이버 5,002 RP · 평균 딜량 614</li>
