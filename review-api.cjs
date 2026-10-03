@@ -59,6 +59,7 @@ const FEED_PAGE = 20;
 const FEED_ID_CAP = 2000;            // 태그·맵 필터 후보 id 상한(1차 규모 · 넘치면 최근 것부터)
 const FEED_DAYS = { 30: 30, 90: 90, 365: 365, all: null };   // §8.13 피드 기간 — all = 기간 없음 · 그 밖 값은 종전처럼 30
 const BEST_MIN = 3, BEST_MAX = 3;    // §8.13 첫 쪽 best[] — 반응 수 합 3 이상 · 많은 순 최대 3(앱 「반응 많은 복기」와 같은 선)
+const EXCERPT_MAX = 80;              // §8.13 피드 excerpt — 글자 단위(이모지 1자) · 넘으면 79자 + 「…」
 const PURGE_DAYS = 90;               // §3.7 — 마지막 수정 90일 지난 draft 의 사진 정리(목록 imagePurgeAt 과 같은 기준)
 const SWEEP_CAP = 200;               // §3.7 — 1회 상한 200장(넘치면 다음 날)
 const PENDING_STALE_MS = 86400_000;  // 업로드 도중 끊긴 자리 행(pending/…) — 하루 지나면 정리 대상
@@ -127,6 +128,19 @@ function normalizeLines(lines, { importKinds = false } = {}) {
 const linesOut = (lines) => (Array.isArray(lines) ? lines : []).map((l) => ({
   ord: l.ord, text: l.text, kind: l.kind ?? null, suggestedKind: l.suggested_kind ?? null,
 }));
+
+// §8.13 피드 excerpt — 본문 앞부분 한 줄. 본문이 비면 페이즈 줄 글(부르는 쪽이 판 → 페이즈 → 줄 순서로 넘긴다).
+//   줄바꿈 · 탭 · 연속 공백 → 공백 한 칸 · 앞뒤 공백 제거 · 80자(글자 단위) 넘으면 79자 + 「…」 · 글이 없으면 null
+const GRAPHEMES = typeof Intl === "object" && typeof Intl.Segmenter === "function"
+  ? new Intl.Segmenter("ko", { granularity: "grapheme" }) : null;
+const flatText = (s) => (typeof s === "string" ? s : "").replace(/[\u200b\u2060\ufeff]/g, "")   // 폭 없는 공백 · BOM 은 지운다(이모지 잇는 ZWJ 는 둔다)
+  .replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+function excerptOf(body, lineTexts = []) {
+  const text = flatText(body) || flatText(lineTexts.map(flatText).filter(Boolean).join(" "));
+  if (!text) return null;
+  const chars = GRAPHEMES ? Array.from(GRAPHEMES.segment(text), (x) => x.segment) : Array.from(text);
+  return chars.length <= EXCERPT_MAX ? text : `${chars.slice(0, EXCERPT_MAX - 1).join("").trimEnd()}…`;
+}
 
 // 확정 태그 — slug 형식 · 중복 제거 · 페이즈당 3개(존재·활성 여부는 DB 트리거 trg_rp_tags 가 본다 → tag_unknown)
 function normalizeTags(tags) {
@@ -1697,7 +1711,7 @@ module.exports = function mountReviewApi(app, deps) {
   // canSeeAnchor(r) — 수업 판수 · 직강 반 · 회차(anchorDetail)를 실을 줄인가. 상세(§8.4)와 같은 선 — 세션 id 를 볼 수 있는 사람만
   //   (수강생 = 내 복기 · 트레이너 = 오너 · 받는 트레이너 · 작성자 · 범위 안 수강생). 남의 복기는 null(2026-10-02 반장 요청 · §8.5).
   const FEED_COLS = "id,student_id,author_role,author_staff_id,lesson_session_id,course_session_id,status,published_at,"
-    + "anchor_kind,course_id,recipient_trainer_id";
+    + "anchor_kind,course_id,recipient_trainer_id,body";                // body = excerpt 재료(§8.13 · 응답에는 발췌만 · 본문은 안 싣는다)
   async function feedPage({ tags, map, days, author = null, cur }, viewer, canSeeAnchor = () => false) {
     const first = !cur;                                             // best[] 는 커서 없이 부른 첫 쪽에만(§8.13)
     const empty = () => ({ items: [], nextCursor: null, ...(first ? { best: [] } : {}) });
@@ -1778,10 +1792,15 @@ module.exports = function mountReviewApi(app, deps) {
       anchorDetailMap(page.filter(canSeeAnchor)),
     ]);
     const gl = inList(games.map((g) => g.id));
-    const phases = gl ? await sbSelect("review_phases", `select=game_id,tags&game_id=in.(${gl})`) : [];
+    const phases = gl ? await sbSelect("review_phases", `select=game_id,ord,tags,lines&game_id=in.(${gl})`) : [];
     const gameReview = new Map(games.map((g) => [g.id, g.review_id]));
     const group = (arr, key) => arr.reduce((m, x) => { const k = key(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); return m; }, new Map());
     const gBy = group(games, (g) => g.review_id), pBy = group(phases, (p) => gameReview.get(p.game_id));
+    const pByGame = group(phases, (p) => p.game_id);
+    const byOrd = (a, b) => (a?.ord ?? 0) - (b?.ord ?? 0);
+    // 본문이 빈 복기의 excerpt 재료 — 줄 글을 판 → 페이즈 → 줄 순서로(§8.13)
+    const lineTexts = (gs) => [...gs].sort(byOrd).flatMap((g) => [...(pByGame.get(g.id) || [])].sort(byOrd))
+      .flatMap((p) => (Array.isArray(p.lines) ? [...p.lines].sort(byOrd) : []).map((l) => l?.text));
     const rBy = group(reacts, (x) => x.review_id), commented = new Set(fb.map((f) => f.review_id));
     const thumbOf = new Map();
     for (const i of imgs) if (!thumbOf.has(i.review_id)) thumbOf.set(i.review_id, i.thumb_path);
@@ -1807,6 +1826,7 @@ module.exports = function mountReviewApi(app, deps) {
         myReactions: rs.mine,
         hasTrainerComment: commented.has(r.id),
         thumbUrl: thumbOf.has(r.id) ? urls.get(thumbOf.get(r.id)) || null : null,
+        excerpt: excerptOf(r.body, flatText(r.body) ? [] : lineTexts(gs)),   // §8.13 글 앞부분 한 줄 · 80자 · 없으면 null
       }];
     }));
   }
@@ -2180,6 +2200,6 @@ module.exports._test = {
   reactionSummary, topTags, imagePurgeAt, unreadFrom, signCursor, readCursor, pgErr,
   trainerUnread, parseFeedbackBody, dueCheck, anchorChangeAllowed, monthDay, relinkDmText,
   sniffImage, orientedSize, imagePath, derivPath, isPendingPath, isStoragePath, normalizeShapes, sweepMode, planSweep,
-  visibilityPatch, awaitingReplyOf,
+  visibilityPatch, awaitingReplyOf, excerptOf, EXCERPT_MAX,
   REVIEW_EMOJIS, MAPS, LIMITS,
 };

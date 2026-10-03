@@ -473,6 +473,59 @@ test("숨긴 공개 글 — 피드 · 기간 · 글쓴이 · best · 트레이�
   assert.equal((await call(37, `/reviews/${R(71)}`)).status, 404);              // 상세도 404(§8.4)
 });
 
+// §8.13 excerpt(10/4 · 반장 요청) — 그림 없는 카드의 글 미리보기. 판 · 페이즈 픽스처는 피드가 고르는 칸만 있으면 된다
+const game = (id, review_id, ord, map = null) => ({ id, review_id, ord, map });
+const phase = (id, game_id, ord, lines) => ({ id, game_id, ord, tags: [],
+  lines: lines.map(([o, text]) => ({ ord: o, text, kind: null, suggested_kind: null })) });
+
+test("피드 excerpt — 본문 한 줄 · 80자 · 본문이 없으면 줄 글(판 → 페이즈 → 줄) · 글이 없으면 null · best · 트레이너 피드도 같은 값", async () => {
+  db = fixture();
+  db.lesson_reviews.push(
+    pub(80, 90, 1, { body: "3페이즈 자기장 끝에서\n\n  차로 진입하다   측면 맞음" }),
+    pub(81, 90, 2, { body: "가".repeat(100) }),
+    pub(82, 50, 3, { body: null }),                                              // 앱 글 — 줄 글만
+    pub(83, 50, 4, { body: "   " }));                                            // 글이 없다
+  db.review_games = [game(902, 82, 2, "미라마"), game(901, 82, 1, "에란겔")];      // 넣은 순서 ≠ 판 순서
+  db.review_phases = [phase(912, 901, 2, [[1, "둘째 페이즈"]]), phase(921, 902, 1, [[1, "둘째 판"]]),
+    phase(911, 901, 1, [[2, " 첫 판\n둘째 줄 "], [1, "첫 판 첫 줄"]])];          // 줄 순서도 엇갈리게
+  db.review_reactions = react(81, 3);
+  const { json } = await feedIds(37);
+  const by = Object.fromEntries(json.items.map((x) => [x.id, x]));
+  assert.deepEqual([by[R(80)].excerpt, by[R(81)].excerpt, by[R(82)].excerpt, by[R(83)].excerpt],
+    ["3페이즈 자기장 끝에서 차로 진입하다 측면 맞음", `${"가".repeat(79)}…`, "첫 판 첫 줄 첫 판 둘째 줄 둘째 페이즈 둘째 판", null]);
+  assert.equal("body" in by[R(80)], false);                                     // 본문 자체는 안 싣는다(발췌만)
+  assert.deepEqual(json.best.map((x) => [x.id, x.excerpt]), [[R(81), `${"가".repeat(79)}…`]]);   // best 항목에도
+  const t = await callTrainer(4, "/feed");
+  const tex = Object.fromEntries(t.json.items.map((x) => [x.id, x.excerpt]));
+  assert.deepEqual([tex[R(80)], tex[R(81)], tex[R(82)], tex[R(83)]],
+    [by[R(80)].excerpt, by[R(81)].excerpt, by[R(82)].excerpt, null]);           // 트레이너 피드도 같은 값
+});
+
+test("excerpt 는 공개 글에서만 — 「나와 트레이너만」 · 숨긴 글 · 보내기 전 글 내용이 어느 피드 응답에도 안 나온다", async () => {
+  db = fixture();
+  db.lesson_reviews.push(
+    pub(70, 90, 1, { body: "공개 글" }),
+    pub(71, 90, 1, { visibility: "private", body: "MARK-PRIVATE-BODY 나와 트레이너만" }),
+    pub(72, 90, 1, { visibility: "private", body: null }),                      // 줄 글만 있는 비공개 글
+    pub(73, 90, 1, { hidden_at: isoAgo(0), body: "MARK-HIDDEN 지운 글" }),
+    review(74, 90, { status: "draft", visibility: "students", body: "MARK-DRAFT 쓰는 중" }));
+  db.review_games = [game(970, 72, 1), game(980, 70, 1)];
+  db.review_phases = [phase(971, 970, 1, [[1, "MARK-PRIVATE-LINE 줄 글"]]), phase(981, 980, 1, [[1, "공개 글의 줄"]])];
+  db.review_reactions = [...react(71, 9), ...react(72, 9), ...react(73, 9), ...react(74, 9)];   // 새면 best 맨 위로 올라올 수
+  const key90 = (await feedIds(100)).json.items.find((x) => x.id === R(70)).authorKey;
+  const views = [];
+  for (const q of ["", "?days=all", `?days=all&author=${key90}`]) {
+    views.push([`남 ${q}`, await call(100, `/feed${q}`)], [`글쓴이 ${q}`, await call(90, `/feed${q}`)],
+      [`원장 ${q}`, await callTrainer(4, `/feed${q}`)], [`받는 트레이너 ${q}`, await callTrainer(5, `/feed${q}`)]);
+  }
+  for (const [who, r] of views) {
+    assert.equal(r.status, 200, who);
+    assert.equal(JSON.stringify(r.json).includes("MARK-"), false, who);
+    assert.deepEqual(r.json.items.map((x) => [x.id, x.excerpt]), [[R(70), "공개 글"]], who);
+    assert.deepEqual(r.json.best, [], who);
+  }
+});
+
 test("내 목록 thumbUrl — 첫 사진 썸네일(서명) · 사진 없거나 올리는 중이면 null", async () => {
   db = fixture();
   db.review_images = [
