@@ -437,6 +437,42 @@ test("best[] — 첫 쪽 밖까지 기간 전체에서 반응 3개 이상 많은
   assert.equal("best" in next.json, false);                                     // 다음 쪽에는 best 가 없다
 });
 
+// 검수 18차 — 위 시험은 반응 3개 이상이 꼭 3건이라 「최대 3」 을 지워도 통과했다. 5건 · 동점을 넣어 끊기는 자리와 순서를 본다
+test("best[] 최대 3 — 반응 3개 이상이 5건이어도 많은 순 3건에서 끊긴다 · 수가 같으면 최근 것이 먼저", async () => {
+  db = fixture();
+  db.lesson_reviews.push(pub(60, 90, 1), pub(61, 90, 4), pub(62, 90, 2), pub(63, 90, 3), pub(64, 90, 5));   // 61(4일 전)을 62(2일 전)보다 먼저 넣는다
+  db.review_reactions = [...react(60, 6), ...react(61, 4), ...react(62, 4), ...react(63, 3), ...react(64, 3)];
+  const { best } = await feedIds(37, "?days=all");
+  assert.deepEqual(best.map((x) => [x.id, x.reactionCounts["👍"]]), [[R(60), 6], [R(62), 4], [R(61), 4]]);
+});
+
+// 검수 18차 — 피드 범위의 숨김 조건(hidden_at)을 지워도 통과하던 구멍(#496 이전부터). 글쓴이가 지운(= 숨긴) 공개 글로 본다
+test("숨긴 공개 글 — 피드 · 기간 · 글쓴이 · best · 트레이너 피드 어디에도 안 나온다 · 반응이 많아도", async () => {
+  db = fixture();
+  db.lesson_reviews.push(pub(70, 90, 2), pub(71, 90, 1), pub(72, 50, 1));
+  db.review_reactions = [...react(70, 3), ...react(71, 9), ...react(72, 4)];
+  const before = await feedIds(37, "?days=all");
+  assert.deepEqual(before.best.map((x) => x.id), [R(71), R(72), R(70)]);
+  const keyOf = Object.fromEntries(before.json.items.map((x) => [x.id, x.authorKey]));
+  const [k90, k50] = [keyOf[R(70)], keyOf[R(72)]];
+  assert.equal((await call(90, `/reviews/${R(71)}`, "DELETE")).status, 204);    // 보낸 복기 지우기 = 숨김(hidden_at)
+  assert.equal((await call(50, `/reviews/${R(72)}`, "DELETE")).status, 204);
+  assert.deepEqual(db.lesson_reviews.filter((r) => r.id >= 70).map((r) => [r.id, r.status, r.visibility, !!r.hidden_at]),
+    [[70, "published", "students", false], [71, "published", "students", true], [72, "published", "students", true]]);   // 공개 칸은 그대로 · 숨김만
+  for (const q of ["", "?days=30", "?days=all"]) {
+    const { ids, best } = await feedIds(37, q);
+    assert.deepEqual([ids.has(R(70)), ids.has(R(71)), ids.has(R(72))], [true, false, false], q);
+    assert.deepEqual(best.map((x) => x.id), [R(70)], q);                         // 반응 9 · 4 여도 숨기면 best 에서 빠진다
+  }
+  const a90 = await feedIds(37, `?days=all&author=${k90}`);
+  assert.deepEqual([[...a90.ids], a90.best.map((x) => x.id)], [[R(70)], [R(70)]]);   // 같은 글쓴이의 숨긴 글만 빠진다
+  assert.deepEqual((await feedIds(37, `?days=all&author=${k50}`)).json, { items: [], nextCursor: null, best: [] });   // 숨긴 글뿐 = 모르는 키와 같은 빈 목록
+  const t = await callTrainer(4, "/feed?days=all");                             // 원장 피드도 같은 선
+  const tids = new Set(t.json.items.map((x) => x.id));
+  assert.deepEqual([tids.has(R(70)), tids.has(R(71)), tids.has(R(72)), t.json.best.map((x) => x.id)], [true, false, false, [R(70)]]);
+  assert.equal((await call(37, `/reviews/${R(71)}`)).status, 404);              // 상세도 404(§8.4)
+});
+
 test("내 목록 thumbUrl — 첫 사진 썸네일(서명) · 사진 없거나 올리는 중이면 null", async () => {
   db = fixture();
   db.review_images = [
