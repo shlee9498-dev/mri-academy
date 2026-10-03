@@ -722,6 +722,7 @@ DB 함수 = 운영 DB 되돌림 시험 28항목(`supabase_admin_panel.sql` §61)
 - `best[]` 항목은 `items` 와 같은 모양이고 같은 복기가 `items` 에도 나올 수 있다(앱은 `id` 로 겹침 처리). 「수강생 전체」 범위 밖이면 `items` · `best` 둘 다 빈 배열.
 - 트레이너 피드(`GET /api/trainer-portal/feed`)도 같은 쿼리 · 같은 키다.
 - 종전 키 · 순서 · 커서 모양은 그대로다(더하기만). 앱 가드 어간에 걸리는 새 키 없음(`authorKey` · `best` · `thumbUrl`).
+- **규모 한계**(검수 18차 · 10/3 운영 실측) — 글쓴이 찾기(`author=`)와 `best` 후보는 공개 글을 한 번에 2,000건(`FEED_ID_CAP`)까지 달라고 하지만 PostgREST 는 한 번에 주는 행 수(max-rows)에서 **조용히** 자른다. 이 값은 SQL 로 안 보이는 Supabase 플랫폼 설정이고 기본은 1,000 이다(`trainer-portal.cjs` `selectAll` · `public-metrics.cjs` 도 1,000 전제). 10/3 공개 글은 **87건**이고 가장 큰 표도 931행이라 아직 잘린 적이 없다. **공개 글이 1,000건을 넘는 날부터** ① 글쓴이 찾기는 정렬이 없어 어느 1,000건을 볼지 DB 가 정한다 — 그 밖에만 글이 있는 사람은 키를 줘도 빈 목록 ② `best` 는 최근 1,000건 안에서만 고른다(「전체에서」가 깨진다). 태그 · 맵 거르기의 후보 id(`review_phases` · `review_games`)도 같은 상한이다(#496 이전부터). 고칠 때는 글쓴이 찾기 = 쪽 넘김(`selectAll` 모양) · `best` = DB 집계(뷰 · 함수 = DDL · `sort=reactions` 와 같이).
 
 ```json
 GET /api/student-portal/feed?days=all&author=a_Xk3…
@@ -737,7 +738,7 @@ GET /api/student-portal/feed?days=all&author=a_Xk3…
 GET /api/student-portal/reviews → { "reviews": [ { …요약 §8.3…, "thumbUrl": "https://…(10분)" | null } ] }
 ```
 
-**시험** — `scripts/review-course.test.cjs`(진짜 라우트 · 가짜 PostgREST): 90일 밖 공개 글이 `365` · `all` 에서 보이고 `30` · `90` 에선 안 보임 / 비공개 글은 어떤 `days` · `author` 로도 남의 피드 · `best` 에 안 나옴 / 이름이 같은 두 수강생의 `authorKey` 가 다르고 `author` 로 한 사람 글만 / 트레이너 피드도 같은 거르기 / `best` 가 첫 쪽 밖의 복기까지 보고 3개 이상만 / 내 목록 `thumbUrl`.
+**시험** — `scripts/review-course.test.cjs`(진짜 라우트 · 가짜 PostgREST): 90일 밖 공개 글이 `365` · `all` 에서 보이고 `30` · `90` 에선 안 보임 / 비공개 글은 어떤 `days` · `author` 로도 남의 피드 · `best` 에 안 나옴 / 이름이 같은 두 수강생의 `authorKey` 가 다르고 `author` 로 한 사람 글만 / 트레이너 피드도 같은 거르기 / `best` 가 첫 쪽 밖의 복기까지 보고 3개 이상만 / `best` 는 최대 3 · 반응 수가 같으면 최근 것 먼저(3개 이상 5건 중 3) / 글쓴이가 지운(숨긴) 공개 글은 피드 · 기간 · 글쓴이 · `best` · 트레이너 피드 어디에도 없고 상세 404 / 내 목록 `thumbUrl`. 「최대 3」 · 동점 순서 · 숨김 조건은 하나씩 지워 보면 해당 시험이 깨지는 것까지 확인했다(검수 18차 구멍 2곳).
 
 ---
 
