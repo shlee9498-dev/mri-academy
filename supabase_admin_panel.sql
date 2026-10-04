@@ -6682,6 +6682,8 @@ notify pgrst, 'reload schema';   -- 블록을 통째로 붙여 실행해도 Post
 --    where conrelid in ('public.notices'::regclass, 'public.notice_recipients'::regclass) group by 1, 2 order by 1, 2;
 --     -- notice_recipients c 5 · f 3 · p 1 · u 2 / notices c 20 · f 7 · p 1 · u 1
 --   select indexname from pg_indexes where tablename in ('notices','notice_recipients') order by 1;               -- 9
+--   select relname, relrowsecurity from pg_class where relname in ('notices','notice_recipients');            -- 둘 다 true
+--   select (select count(*) from notices) as n, (select count(*) from notice_recipients) as r;                  -- 0 · 0
 --
 --   ✅ 되돌림 시험 끝(10/4 · 운영 DB · 이 블록 그대로 + 줄 26개 시험을 한 DO 블록에서 실행하고 끝에서 일부러 오류를 내 전부 롤백 ·
 --      시험 뒤 notice% 이름 relation 0 = 남은 변화 없음): 칸 27 · 12 · 제약 위 숫자 · 인덱스 9 · RLS 둘 다 켜짐 /
@@ -6689,8 +6691,6 @@ notify pgrst, 'reload schema';   -- 블록을 통째로 붙여 실행해도 Post
 --      트레이너에게 특별 공지 · 고른 사람 없음 · 빈 배열 · 반 없는 반별 · sent 인데 시각 없음 · 본문 4,001자 = 전부 check /
 --      4,000자 = 받음 · 보내기 → 되돌리기 → 보내기 = 받음 · 보낸 글 버리기 · 초안 내리기 = check / 받는 사람 같은 직원 · 같은 수강생 = unique ·
 --      둘 다 · 아무도 = check · 확인 전 답 · 줄바꿈 답 · 201자 답 · 수강생 줄 답 = check · 200자 답 = 받음.
---   select relname, relrowsecurity from pg_class where relname in ('notices','notice_recipients');            -- 둘 다 true
---   select (select count(*) from notices) as n, (select count(*) from notice_recipients) as r;                  -- 0 · 0
 --
 -- 앱 밖 초안 넣기(지휘 · 세션 — 아무에게도 안 나간다 · 보내기는 원장이 앱에서 미리보기 뒤에. 직원 id 는 명부 조회로):
 --   insert into notices (kind, title, body, author_staff_id, drafted_label, audience_type, target_ids)
