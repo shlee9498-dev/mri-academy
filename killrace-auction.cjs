@@ -419,7 +419,7 @@ function createAuctionApi({ store, isAdmin, register, saveBonus, onCreate, now =
   const postGem = captainAction((state, me, body, t) => gemPick(state, { captainId: me.id, lotId: String(body.lotId || "") }, t));
 
   // POST /api/killrace/auction/admin { action, … } — 진행자(x-admin-key)
-  const ADMIN = {
+  const ADMIN = new Map(Object.entries({
     open: (s, b, t) => openLot(s, { lotId: b.lotId ? String(b.lotId) : undefined }, t),
     closeNow: (s, b, t) => closeNow(s, t),
     bidFor: (s, b, t) => bid(s, { captainId: String(b.captainId || ""), amount: b.amount }, t),     // 팀장 폰이 안 될 때 진행자가 대신
@@ -431,7 +431,7 @@ function createAuctionApi({ store, isAdmin, register, saveBonus, onCreate, now =
     gemSkip: (s, b, t) => gemSkip(s, t),
     rename: (s, b, t) => renameTeam(s, { captainId: String(b.captainId || ""), teamName: b.teamName }, t),
     finish: (s, b, t) => finish(s, t),
-  };
+  }));
   const postAdmin = guard((req, res) => serial(async () => {
     if (!isAdmin(req)) return send(res, 401, { error: { code: "unauthorized" } });
     const body = req.body || {}; const action = String(body.action || "");
@@ -467,8 +467,8 @@ function createAuctionApi({ store, isAdmin, register, saveBonus, onCreate, now =
       return send(res, 200, { ok: true, results });
     }
 
-    // 자기 키만 본다 — "constructor" 같은 물려받은 이름으로는 아무것도 부르지 않는다
-    const fn = Object.prototype.hasOwnProperty.call(ADMIN, action) ? ADMIN[action] : null;
+    // Map 에서만 찾는다 — "constructor" 같은 물려받은 이름으로는 아무것도 부르지 않는다
+    const fn = ADMIN.get(action);
     if (typeof fn !== "function") return send(res, 400, { error: { code: "bad_action" } });
     const before = c.state.rev;
     const r = fn(c.state, body, t);
