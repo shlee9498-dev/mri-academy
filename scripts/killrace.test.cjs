@@ -147,10 +147,11 @@ test("점수: 치킨 판 +8(관제탑 9/26) — 감점은 그대로 · 이탈은
   assert.deepEqual([T.baseScore(2, 480, 1, 0), T.baseScore(2, 480, 2, 0), T.baseScore(2, 480, 1, 6)], [14, 6, 8]);
 });
 
-test("순위: 총점 → 치킨 → 킬 → 딜 · 완전 동점은 같은 순위", () => {
+test("순위: 총점 → 총 킬 → 치킨 → 딜 · 완전 동점은 같은 순위(지휘 10/4 — 킬이 치킨보다 먼저)", () => {
   const mk = (name, total, chickens, kills, damage) => ({ team: { name }, total, chickens, kills, damage });
-  const r = T.rankTeams([mk("C", 10, 0, 5, 900), mk("A", 12, 0, 1, 1), mk("B", 10, 1, 1, 1), mk("D", 10, 0, 5, 950), mk("E", 10, 0, 5, 950)]);
-  assert.deepEqual(r.map((t) => `${t.rank}${t.team.name}`), ["1A", "2B", "3D", "3E", "5C"]);
+  const r = T.rankTeams([mk("C", 10, 0, 5, 900), mk("A", 12, 0, 1, 1), mk("B", 10, 1, 1, 1), mk("D", 10, 0, 5, 950), mk("E", 10, 0, 5, 950), mk("F", 10, 1, 5, 100)]);
+  // 총점 10 다섯 팀: 킬 5 가 킬 1 보다 위(B 는 치킨이 있어도 맨 아래) · 킬이 같으면 치킨 있는 F 가 위 · 그다음 딜
+  assert.deepEqual(r.map((t) => `${t.rank}${t.team.name}`), ["1A", "2F", "3D", "3E", "5C", "6B"]);
   assert.equal(r[0].tieBroken, false); assert.equal(r[1].tieBroken, true);
 });
 
@@ -223,11 +224,11 @@ test("DM 나누기: 1900자 안 · 줄 보존", () => {
 
 test("공개 발표 요약: 메달 · 음수 · 동점 안내", () => {
   const res = { ev: { name: "대승배 GmI 킬내기" }, teams: T.rankTeams([
-    { team: { name: "A" }, total: 5, chickens: 1, kills: 1, damage: 1 }, { team: { name: "B" }, total: 5, chickens: 0, kills: 9, damage: 9 },
+    { team: { name: "A" }, total: 5, chickens: 0, kills: 9, damage: 9 }, { team: { name: "B" }, total: 5, chickens: 1, kills: 1, damage: 1 },
     { team: { name: "C" }, total: -3, chickens: 0, kills: 0, damage: 0 }, { team: { name: "D" }, total: -4, chickens: 0, kills: 0, damage: 0 }]) };
   const txt = T.formatPublic(res);
   assert.match(txt, /🥇 1위 A — 5점\n🥈 2위 B — 5점\n🥉 3위 C — -3점\n4위 D — -4점/);
-  assert.match(txt, /동점은 치킨 수 → 킬 → 딜/);
+  assert.match(txt, /동점은 총 킬 → 치킨 수 순/);
   assert.match(txt, /수고 많으셨어요! 🎉$/);
 });
 
@@ -400,27 +401,20 @@ test("2회 · 치킨 판 사망 감점(1회 때 빠졌던 것): 죽은 사람은
   assert.equal(T.scoreGame({ members: members.map((mm) => ({ ...mm, deathType: "alive" })), deadSlots: [], place: 1 }).penalty, 0);
 });
 
-test("2회 · 설정 읽기: 없으면 전부 꺼짐(1회 동작) · 시각은 ISO/ms · 보너스는 정수만", () => {
-  assert.deepEqual(T.normEventConfig(null), { boostAt: null, boostMul: 1.5, hideAt: null, published: false, bonus: {}, teamSize: null, modes: null });
-  const c = T.normEventConfig({ boostAt: "2026-10-08T13:35:00Z", hideAt: HIDE, published: true, bonus: { A: 3, B: "x", C: 1.5 }, teamSize: 4, boostMul: 9, modes: ["duo", "duo-fpp"] });
-  assert.deepEqual(c, { boostAt: BOOST, boostMul: 1.5, hideAt: HIDE, published: true, bonus: { A: 3 }, teamSize: 4, modes: ["duo", "duo-fpp"] });
+test("2회 · 설정 읽기: 없으면 1회 동작 · 시각은 ISO/ms · 보너스는 정수만 · 가리는 시각은 읽지 않는다", () => {
+  assert.deepEqual(T.normEventConfig(null), { boostAt: null, boostMul: 1.5, bonus: {}, teamSize: null, modes: null, auto: true, voidDeaths: {}, voidGames: {}, liveTokens: {} });
+  const c = T.normEventConfig({ boostAt: "2026-10-08T13:35:00Z", hideAt: HIDE, published: true, bonus: { A: 3, B: "x", C: 1.5 }, teamSize: 4, boostMul: 9, modes: ["duo", "duo-fpp"],
+    auto: false, voidDeaths: { "A|m1": [2, 9, "x"], "A|m2": [] }, voidGames: { "A|m3": true, "A|m4": "yes" }, liveTokens: { A: "tok", B: 5 } });
+  assert.deepEqual(c, { boostAt: BOOST, boostMul: 1.5, bonus: { A: 3 }, teamSize: 4, modes: ["duo", "duo-fpp"], auto: false, voidDeaths: { "A|m1": [2] }, voidGames: { "A|m3": true }, liveTokens: { A: "tok" } });
   assert.equal(T.normEventConfig({ boostMul: 2 }).boostMul, 2);
 });
 
-test("2회 · 비공개: 22:20부터 채널에 순위를 싣지 않는다 · 그 전은 잠정 순위 · 끝난 뒤는 발표문", () => {
+test("2회 · 채널 게시: 끝까지 순위를 싣는다(가리는 시간 없음 — 지휘 10/4 개정) · 끝난 뒤는 발표문", () => {
   const cfg = T.normEventConfig({ hideAt: HIDE, boostAt: BOOST });
   const teams = T.rankTeams([{ team: { name: "불사조" }, total: 41, chickens: 1, kills: 20, damage: 3000 }, { team: { name: "막판" }, total: 12, chickens: 0, kills: 6, damage: 900 }]);
-  const before = T.formatChannelPost({ ev: EV2, cfg, teams, at: HIDE - 1 });
-  assert.match(before, /중간 순위 \(22:19 기준 · 잠정\)\n🥇 1위 불사조 — 41점/);
-  const hidden = T.formatChannelPost({ ev: EV2, cfg, teams, at: HIDE });
-  assert.equal(hidden, "🤫 2회 대승배 GmI 킬내기 — 22:20부터 순위는 비공개예요\n최종 결과는 23:00 발표 때 공개해요");
-  assert.doesNotMatch(hidden, /불사조|41|막판|12점|위 /);                    // 팀명 · 점수 · 순위가 한 글자도 없다
+  assert.match(T.formatChannelPost({ ev: EV2, cfg, teams, at: HIDE - 1 }), /중간 순위 \(22:19 기준 · 잠정\)\n🥇 1위 불사조 — 41점/);
+  assert.match(T.formatChannelPost({ ev: EV2, cfg, teams, at: EV2.end - 60000 }), /중간 순위 \(22:59 기준 · 잠정\)\n🥇 1위 불사조 — 41점\n🥈 2위 막판 — 12점/);
   assert.match(T.formatChannelPost({ ev: EV2, cfg, teams, at: EV2.end }), /^🏆 2회 대승배 GmI 킬내기 결과\n🥇 1위 불사조 — 41점/);
-  // 설정이 없으면(1회) 비공개 구간이 없다
-  assert.match(T.formatChannelPost({ ev: EV2, cfg: T.normEventConfig(null), teams, at: HIDE + 1 }), /중간 순위/);
-  assert.deepEqual([T.hiddenForPost(cfg, EV2, HIDE - 1), T.hiddenForPost(cfg, EV2, HIDE), T.hiddenForPost(cfg, EV2, EV2.end)], [false, true, false]);
-  // 공개 점수판은 끝 시각이 지나도 발표 전이면 계속 가린다
-  assert.deepEqual([T.hiddenForBoard(cfg, HIDE - 1), T.hiddenForBoard(cfg, EV2.end + 600000), T.hiddenForBoard({ ...cfg, published: true }, EV2.end + 600000)], [false, true, false]);
 });
 
 const boardRows = [
@@ -431,29 +425,42 @@ const boardRows = [
 ];
 const boardTeams = [{ name: "막판", platform: "steam", members: [] }, { name: "불사조", platform: "steam", members: [] }];
 
-test("2회 · 점수판: 비공개 시간에 보는 사람 화면엔 점수 · 순위 · 판수가 없다 · 진행자 화면은 판별 점수까지", () => {
-  const cfg = T.normEventConfig({ hideAt: HIDE, boostAt: BOOST, bonus: { 불사조: 4, 막판: 0 } });
-  const open = T.buildBoard({ ev: EV2, teams: boardTeams, cfg, rows: boardRows, at: HIDE - 1, admin: false });
-  assert.deepEqual(open.teams.map((t) => [t.rank, t.name, t.total, t.gameScore, t.bonus, t.games, t.chickens]), [[1, "불사조", 41, 37, 4, 2, 1], [2, "막판", -10, -10, 0, 1, 0]]);
-  assert.equal(open.teams[0].rows, undefined);                               // 공개 화면엔 판별 표가 없다
-  const hidden = T.buildBoard({ ev: EV2, teams: boardTeams, cfg, rows: boardRows, at: HIDE, admin: false });
-  assert.deepEqual(hidden.teams, [{ name: "막판" }, { name: "불사조" }]);     // 이름만 · 가나다순(순위가 드러나지 않게)
-  assert.equal(hidden.hidden, true);
-  assert.doesNotMatch(JSON.stringify(hidden), /"total"|"rank"|"score"|"kills"|"games"|"bonus"|41|-10/);
-  // 진행자는 비공개 시간에도 전부 본다 — 팀 · 판 · 킬 · 딜 · 감점 · 치킨 · 배수
-  const host = T.buildBoard({ ev: EV2, teams: boardTeams, cfg, rows: boardRows, at: HIDE + 60000, admin: true });
-  assert.deepEqual([host.hidden, host.hiddenForPublic, host.updatedAt], [false, true, "2026-10-08T13:58:00Z"]);
-  assert.deepEqual(host.teams[0].rows.map((r) => [r.seq, r.map, r.kills, r.damage, r.dmgPts, r.penalty, r.deadSlots, r.chicken, r.boost, r.base, r.score]),
+test("2회 · 점수판: 끝까지 공개 · 판별 내역 · 인원 미달 판은 0점 줄 · 잠정 킬은 총점에 섞이지 않는다 · 역전 계산", () => {
+  const cfg = T.normEventConfig({ hideAt: HIDE, boostAt: BOOST, bonus: { 불사조: 4, 막판: 0 }, liveTokens: { 막판: "tok-b" } });
+  const live = { presses: { 막판: [Date.parse("2026-10-08T12:20:00Z"), Date.parse("2026-10-08T12:50:00Z"), Date.parse("2026-10-08T12:51:00Z")], 불사조: [Date.parse("2026-10-08T13:00:00Z")] },
+    ranks: { prev: { 불사조: 2, 막판: 1 }, at: 123 }, gains: [{ team: "불사조", delta: 11, at: EV2.end - 60000 }, { team: "막판", delta: 3, at: EV2.end - 20 * 60000 }] };
+  // 22:20 이 지나도 · 끝난 뒤에도 공개 화면에 순위 · 점수 · 판별 내역이 그대로 나온다
+  for (const at of [HIDE + 60000, EV2.end - 1, EV2.end + 600000]) {
+    const b = T.buildBoard({ ev: EV2, teams: boardTeams, cfg, rows: boardRows, at, admin: false, live });
+    assert.equal(b.hidden, undefined);
+    assert.deepEqual(b.teams.map((t) => [t.rank, t.name, t.total, t.gameScore, t.bonus, t.games, t.chickens]), [[1, "불사조", 41, 37, 4, 2, 1], [2, "막판", -10, -10, 0, 1, 0]]);
+  }
+  const pub = T.buildBoard({ ev: EV2, teams: boardTeams, cfg, rows: boardRows, at: EV2.end - 1, admin: false, live });
+  assert.deepEqual(pub.teams[0].rows.map((r) => [r.seq, r.map, r.kills, r.damage, r.dmgPts, r.penalty, r.deadSlots, r.chicken, r.boost, r.base, r.score]),
     [[1, "에란겔", 9, 1230, 12, 3, [2], 8, null, 26, 26], [2, "미라마", 3, 520, 5, 1, [4], 0, 1.5, 7, 11]]);
-  assert.deepEqual(host.teams[1].rows.map((r) => [r.leave, r.score]), [[true, -10]]);   // 제외 판(seq 없음)은 안 나온다
-  // 발표하면 공개 화면이 열린다
-  const pub = T.buildBoard({ ev: EV2, teams: boardTeams, cfg: { ...cfg, published: true }, rows: boardRows, at: EV2.end + 1, admin: false });
-  assert.deepEqual([pub.hidden, pub.teams[0].total], [false, 41]);
+  // 막판: 이탈 판(−10) + 3명으로 뛴 판(0점 줄 · 감점도 −10 도 없다)
+  assert.deepEqual(pub.teams[1].rows.map((r) => [r.seq, !!r.void, r.score, r.leave]), [[1, false, -10, true], [null, true, 0, undefined]]);
+  assert.deepEqual([pub.teams[0].boostUsed, pub.teams[1].boostUsed], [true, false]);
+  // 잠정 킬 = 마지막 확정 판(무효 판 포함)이 끝난 뒤에 누른 것만 · 총점은 그대로
+  assert.deepEqual(pub.teams.map((t) => [t.name, t.provisional, t.total]), [["불사조", 0, 41], ["막판", 2, -10]]);
+  // 역전: 2등은 1등까지 51점 → 52점이 필요 → 치킨 한 번(+8) 뒤 44점 · 1등은 2등과 51점 차
+  assert.deepEqual(pub.teams[1].chase, { toFirst: 51, need: 52, afterChicken: 44, toNext: 51, nextName: "불사조" });
+  assert.deepEqual(pub.teams[0].chase, { lead: 51 });
+  assert.deepEqual(pub.teams.map((t) => t.prevRank), [2, 1]);
+  assert.deepEqual(pub.gains, [{ team: "불사조", delta: 11, at: EV2.end - 60000 }]);       // 5분 지난 것은 뺀다
+  assert.equal(pub.updatedAt, "2026-10-08T13:58:00Z");
+  // 공개 응답에는 팀 주소 토큰 · 제외 판 목록이 없다. 진행자만 본다
+  assert.doesNotMatch(JSON.stringify(pub), /tok-b|liveToken|excluded/);
+  const host = T.buildBoard({ ev: EV2, teams: boardTeams, cfg, rows: boardRows, at: EV2.end - 1, admin: true, live });
+  assert.deepEqual([host.teams[1].liveToken, host.teams[0].liveToken, host.teams[1].excluded], ["tok-b", null, []]);
+  // live 가 없어도(자동 집계 전) 그대로 그려진다
+  assert.deepEqual(T.buildBoard({ ev: EV2, teams: boardTeams, cfg, rows: boardRows, at: EV2.start, admin: false }).teams.map((t) => t.provisional), [0, 0]);
 });
 
 // 가짜 DB · PUBG — 집계 전체를 돌려 배수 · 보너스 · 저장값을 본다
 function fakeWorld({ cfgValue, matches, teamRows, stored = [] }) {
   const db = { upserts: [], patches: [], ops: cfgValue == null ? [] : [{ value: cfgValue }] };
+  const matchCalls = {};
   const players = new Map();                 // accountId → 최근 매치 id(최신순)
   for (const m of matches) for (const p of Object.values(m.parts)) { if (!players.has(p.accountId)) players.set(p.accountId, []); players.get(p.accountId).unshift(m.id); }
   const deps = {
@@ -470,10 +477,10 @@ function fakeWorld({ cfgValue, matches, teamRows, stored = [] }) {
       const ids = decodeURIComponent(path.split("=")[1]).split(",");
       return { data: ids.filter((id) => players.has(id)).map((id) => ({ id, attributes: { name: id }, relationships: { matches: { data: players.get(id).map((mid) => ({ id: mid })) } } })) };
     },
-    pubgMatch: async (platform, id) => { const m = matches.find((x) => x.id === id); return { createdAt: new Date(m.at).toISOString(), mapName: "Baltic_Main", mode: m.mode || "squad", matchType: "official", telemetryUrl: "", rosters: m.rosters, parts: m.parts }; },
+    pubgMatch: async (platform, id) => { matchCalls[id] = (matchCalls[id] || 0) + 1; const m = matches.find((x) => x.id === id); return { duration: 1500, createdAt: new Date(m.at).toISOString(), mapName: "Baltic_Main", mode: m.mode || "squad", matchType: "official", telemetryUrl: "", rosters: m.rosters, parts: m.parts }; },
     env: {}, now: () => EV2.end + 5 * 60000, sleep: async () => {}, playersGapMs: 0, log: { log() {}, warn() {}, error() {} },
   };
-  return { db, bot: k.createKillrace(deps) };
+  return { db, matchCalls, bot: k.createKillrace(deps) };
 }
 // 한 팀 4명이 한 로스터로 뛴 판 — kills = 1번 선수 킬, 나머지 0 · 딜 0 · 전원 생존
 function squadMatch(id, at, accs, { kills = 0, rank = 5, dead = [] } = {}) {
@@ -529,11 +536,156 @@ test("2회 · /킬내기이탈: 배수 판 이탈 = −10 · 해제하면 배수
 });
 
 test("2회 · 팀 등록: 2~4명 · 설정 저장은 있던 값에 덧붙인다", async () => {
-  const w = fakeWorld({ cfgValue: { hideAt: "2026-10-08T13:20:00Z" }, matches: [squadMatch("x", EV2.start, ["account.d1", "account.d2"])], teamRows: [] });
+  const w = fakeWorld({ cfgValue: { boostAt: "2026-10-08T13:35:00Z" }, matches: [squadMatch("x", EV2.start, ["account.d1", "account.d2"])], teamRows: [] });
   const duo = await w.bot.registerTeam({ teamName: "듀오", platform: "steam", igns: ["account.d1", "account.d2", "", ""] });
   assert.deepEqual(duo.members.map((m) => m.slot), [1, 2]);
   await assert.rejects(() => w.bot.registerTeam({ teamName: "혼자", platform: "steam", igns: ["account.d1", "", "", ""] }), /2명 이상/);
   const cfg = await w.bot.saveConfig(EV2.id, { bonus: { 듀오: 2 }, teamSize: 2 });
-  assert.deepEqual([cfg.hideAt, cfg.bonus, cfg.teamSize], [HIDE, { 듀오: 2 }, 2]);      // 비공개 시각은 그대로 남는다
+  assert.deepEqual([cfg.boostAt, cfg.bonus, cfg.teamSize], [BOOST, { 듀오: 2 }, 2]);      // 있던 배수 시각은 그대로 남는다
   assert.equal(k.COMMANDS[0].options.find((o) => o.name === "슬롯3").required, false);
+});
+
+// ── 지휘 10/4 개정 주문 · 룰 보충(「4명 전원」 = 그 판 시작 명단에 팀 4명이 다 있느냐 · 전적 명단으로 판정) ──
+const savedRows = (w) => w.db.upserts.filter(([t]) => t === "event_matches").pop()[1];
+
+test("2회 · 4명 전원: 3명으로 시작한 판은 무효(0점 · 감점 없음 · 이탈 −10 도 못 붙인다) · 4명이 시작한 판의 이탈은 −10", async () => {
+  const A = accsOf("a");
+  const matches = [
+    squadMatch("a1", EV2.start + 5 * 60000, A, { kills: 6, dead: [1, 2, 3, 4] }),                  // 21:05 4명 시작 → 6 − 10 = −4
+    squadMatch("a2", EV2.start + 40 * 60000, A.slice(0, 3), { kills: 9, dead: [1, 2, 3] }),        // 21:40 3명 시작(한 명 팅김) · 전원 조기 이탈 → 무효
+    squadMatch("a3", EV2.start + 60 * 60000, A, { kills: 2 }),                                      // 22:00 4명 시작 → 2
+  ];
+  const w = fakeWorld({ cfgValue: {}, matches, teamRows: [teamRow("불사조", "a")] });
+  const res = await w.bot.aggregate();
+  const t = res.teams[0];
+  assert.deepEqual(t.games.map((g) => [g.matchId, g.seq, g.score]), [["a1", 1, -4], ["a3", 2, 2]]);       // 무효 판은 순번도 없다
+  assert.deepEqual(t.excluded.map((g) => [g.matchId, g.excluded.code]), [["a2", "인원"]]);
+  assert.equal(t.total, -2);                                                                               // 3명 판의 9킬 · 사망 3명은 어디에도 안 들어간다
+  const rows = savedRows(w);
+  const void2 = rows.find((r) => r.match_id === "a2");
+  assert.deepEqual([void2.seq, void2.score, void2.penalty, void2.kills], [null, null, null, null]);
+  // 3명 시작 판에는 이탈을 붙일 자리가 없다 — 판 번호(seq)가 없어서 /킬내기이탈 · 진행자 화면 어디서도 고를 수 없다
+  const w2 = fakeWorld({ cfgValue: {}, matches: [], teamRows: [teamRow("불사조", "a")], stored: rows });
+  const b = await w2.bot.board();
+  assert.deepEqual(b.teams[0].rows.map((r) => [r.seq, !!r.void, r.score]), [[1, false, -4], [null, true, 0], [2, false, 2]]);
+  assert.equal(b.teams[0].total, -2);
+  // 4명이 시작한 판에서 조기 이탈 → −10 고정(킬 · 감점 무시)
+  const w3 = fakeWorld({ cfgValue: {}, matches: [], teamRows: [teamRow("불사조", "a")], stored: rows.filter((r) => r.match_id === "a1") });
+  const left = await w3.bot.setLeave({ teamName: "불사조", seq: 1, clear: false });
+  assert.deepEqual([left.base, left.score, w3.db.patches[0][2].leave_flag], [-4, -10, true]);
+});
+
+test("2회 · 23:00 전에 시작한 판까지 인정: 22:59:59 시작은 인정 · 23:00:00 시작은 시간 밖", async () => {
+  const A = accsOf("a");
+  const w = fakeWorld({ cfgValue: {}, matches: [squadMatch("in", EV2.end - 1000, A, { kills: 3 }), squadMatch("out", EV2.end, A, { kills: 50 })], teamRows: [teamRow("불사조", "a")] });
+  const t = (await w.bot.aggregate()).teams[0];
+  assert.deepEqual(t.games.map((g) => g.matchId), ["in"]);
+  assert.deepEqual(t.excluded.map((g) => [g.matchId, g.excluded.code]), [["out", "time"]]);
+  assert.equal(t.total, 3);
+});
+
+test("2회 · 블루칩: 살아나 끝까지 살면 감점 없음 · 살아났다 다시 죽어도 감점은 한 번", async () => {
+  const A = accsOf("a");
+  // 치킨 판 · 2번은 부활해 생존(alive) · 3번은 부활 뒤 재사망(전적상 사망 한 줄)
+  const w = fakeWorld({ cfgValue: {}, matches: [squadMatch("c1", EV2.start + 60000, A, { kills: 4, rank: 1, dead: [3] })], teamRows: [teamRow("불사조", "a")] });
+  const g = (await w.bot.aggregate()).teams[0].games[0];
+  assert.deepEqual([g.deadSlots, g.penalty, g.score], [[3], 2, 4 + 8 - 2]);
+});
+
+test("2회 · 핵 사망 무효(진행자 표시): 그 사망만 감점에서 빠진다 · 다음 집계에도 유지 · 죽지 않은 슬롯은 거절", async () => {
+  const A = accsOf("a");
+  const matches = [squadMatch("h1", BOOST + 60000, A, { kills: 5, dead: [1, 3] })];        // 22:36 배수 판 · 5 − 4 − 2 = −1 → ×1.5 = −1.5 → −1
+  const w = fakeWorld({ cfgValue: { boostAt: "2026-10-08T13:35:00Z" }, matches, teamRows: [teamRow("불사조", "a")] });
+  const g0 = (await w.bot.aggregate()).teams[0].games[0];
+  assert.deepEqual([g0.deadSlots, g0.base, g0.score], [[1, 3], -1, -1]);
+  const stored = savedRows(w).map((r) => ({ ...r, leave_flag: false }));
+  const w2 = fakeWorld({ cfgValue: { boostAt: "2026-10-08T13:35:00Z" }, matches, teamRows: [teamRow("불사조", "a")], stored });
+  await assert.rejects(() => w2.bot.setVoidDeath({ teamName: "불사조", seq: 1, slot: 2 }), /죽지 않았어요/);
+  const v = await w2.bot.setVoidDeath({ teamName: "불사조", seq: 1, slot: 1 });           // 1번 사망 무효 → 5 − 2 = 3 → ×1.5 = 4.5 → 5
+  assert.deepEqual([v.penalty, v.score], [2, 5]);
+  const patch = w2.db.patches[0][2];
+  assert.deepEqual([patch.penalty, patch.score, patch.flags.deadSlots, patch.flags.voidSlots, patch.flags.base], [2, 5, [3], [1], 3]);
+  // 설정에 남아 다음 집계가 같은 값을 낸다
+  const g1 = (await w2.bot.aggregate()).teams[0].games[0];
+  assert.deepEqual([g1.deadSlots, g1.voidSlots, g1.score], [[3], [1], 5]);
+  // 해제하면 원래대로
+  const c = await w2.bot.setVoidDeath({ teamName: "불사조", seq: 1, slot: 1, clear: true });
+  assert.deepEqual([c.penalty, c.score], [6, -1]);
+  assert.deepEqual((await w2.bot.loadConfig(EV2.id)).voidDeaths, {});
+});
+
+test("2회 · 집계는 한 번에 하나 · 같은 판은 다시 받지 않는다 · 판 끝 시각을 남긴다", async () => {
+  const A = accsOf("a");
+  const w = fakeWorld({ cfgValue: {}, matches: [squadMatch("m1", EV2.start + 60000, A, { kills: 1 })], teamRows: [teamRow("불사조", "a")] });
+  const [r1, r2] = await Promise.all([w.bot.aggregate(), w.bot.aggregate()]);
+  assert.deepEqual([r1.teams[0].total, r2.teams[0].total], [1, 1]);
+  assert.equal(w.matchCalls.m1, 1);                                                          // 두 번 돌아도 매치 조회는 한 번
+  assert.equal(savedRows(w)[0].flags.endMs, EV2.start + 60000 + 1500 * 1000);                // 시작 + duration(초)
+});
+
+test("2회 · 팀 주소 토큰: 없는 팀만 새로 만든다", async () => {
+  const w = fakeWorld({ cfgValue: { liveTokens: { 불사조: "keep" } }, matches: [], teamRows: [teamRow("불사조", "a"), teamRow("막판", "b")] });
+  let n = 0;
+  const r = await w.bot.ensureLiveTokens(() => `new${++n}`);
+  assert.deepEqual([r.tokens, r.made], [{ 불사조: "keep", 막판: "new1" }, 1]);
+});
+
+test("2회 · 딜 점수: 그 판 팀 4명 딜 합계를 100 으로 나눈 몫 — 합계 399 는 +3 · 400 은 +4 · 기절만 시킨 건 킬이 아니다(딜에만 들어간다)", () => {
+  const members = [99.9, 100, 99.6, 99.5].map((damage, i) => ({ slot: i + 1, kills: 0, damage }));      // 합 399.0
+  const g = T.scoreGame({ members, deadSlots: [], place: 7 });
+  assert.deepEqual([g.damage, g.dmgPts, g.kills, g.score], [399, 3, 0, 3]);
+  assert.equal(T.scoreGame({ members: members.map((x, i) => (i ? x : { ...x, damage: 100.9 })), deadSlots: [], place: 7 }).dmgPts, 4);
+});
+
+// ── 지휘 10/4 밤 정정: 무효 기준은 「낙하」 · 이탈은 킬이 있어도 −10 · 딜 점수는 판마다 따로 ──
+test("2회 · 낙하 못 한 팀원이 있는 판(진행자 「이 판 무효」): 0점 · 감점 없음 · 이탈 −10 없음 · 해제하면 다음 집계에 되살아난다", async () => {
+  const A = accsOf("a");
+  const matches = [
+    squadMatch("d1", EV2.start + 5 * 60000, A, { kills: 3, dead: [1, 2, 3, 4] }),      // 한 명이 튕겨 낙하를 못 했고 나머지도 나온 판 — 전적에는 4명 다 잡힌다
+    squadMatch("d2", EV2.start + 20 * 60000, A, { kills: 5 }),
+  ];
+  const w = fakeWorld({ cfgValue: {}, matches, teamRows: [teamRow("불사조", "a")] });
+  const before = (await w.bot.aggregate()).teams[0];
+  assert.deepEqual(before.games.map((g) => [g.matchId, g.seq, g.score]), [["d1", 1, -7], ["d2", 2, 5]]);       // 표시 전: 3 − 10 = −7
+  const w2 = fakeWorld({ cfgValue: {}, matches, teamRows: [teamRow("불사조", "a")], stored: savedRows(w) });
+  await assert.rejects(() => w2.bot.setVoidGame({ teamName: "불사조", matchId: "" }), /못 찾았어요/);
+  await w2.bot.setVoidGame({ teamName: "불사조", matchId: "d1" });
+  const patch = w2.db.patches[0][2];
+  assert.deepEqual([patch.seq, patch.score, patch.penalty, patch.flags.excluded.code], [null, null, null, "무효"]);
+  const after = (await w2.bot.aggregate()).teams[0];
+  assert.deepEqual(after.games.map((g) => [g.matchId, g.seq, g.score]), [["d2", 1, 5]]);                          // 무효 판은 순번에서 빠지고 다음 판이 1판
+  assert.deepEqual(after.excluded.map((g) => [g.matchId, g.excluded.code]), [["d1", "무효"]]);
+  assert.equal(after.total, 5);                                                                                   // 점수 0 · 감점 0 · −10 없음
+  const w3 = fakeWorld({ cfgValue: w2.db.ops[0].value, matches: [], teamRows: [teamRow("불사조", "a")], stored: savedRows(w2) });
+  const b = await w3.bot.board({ admin: true });
+  assert.deepEqual(b.teams[0].rows.map((r) => [r.seq, !!r.void, r.why || null, r.score, r.matchId]), [[null, true, "drop", 0, "d1"], [1, false, null, 5, "d2"]]);
+  // 해제 → 다음 집계에서 원래 점수로
+  await w2.bot.setVoidGame({ teamName: "불사조", matchId: "d1", clear: true });
+  assert.deepEqual((await w2.bot.aggregate()).teams[0].games.map((g) => [g.matchId, g.seq, g.score]), [["d1", 1, -7], ["d2", 2, 5]]);
+});
+
+test("2회 · 낙하 뒤 조기 이탈: 킬이 있어도 −10 고정 · 살아서 나간 흔적(logout)은 진행자 힌트로만", async () => {
+  const A = accsOf("a");
+  const m = squadMatch("l1", EV2.start + 5 * 60000, A, { kills: 4 });
+  Object.values(m.parts)[2].deathType = "logout";                                                                // 3번이 살아 있는 채로 나감
+  const w = fakeWorld({ cfgValue: {}, matches: [m], teamRows: [teamRow("불사조", "a")] });
+  const g = (await w.bot.aggregate()).teams[0].games[0];
+  assert.deepEqual([g.kills, g.deadSlots, g.score], [4, [3], 2]);                                                 // 자동으로는 사망 감점까지만(−2) — −10 은 진행자가 붙인다
+  assert.deepEqual(savedRows(w)[0].flags.logout, [3]);
+  const stored = savedRows(w).map((r) => ({ ...r, leave_flag: false }));
+  const w2 = fakeWorld({ cfgValue: {}, matches: [], teamRows: [teamRow("불사조", "a")], stored });
+  assert.deepEqual((await w2.bot.board({ admin: true })).teams[0].rows[0].logout, [3]);
+  assert.equal((await w2.bot.board()).teams[0].rows[0].logout, undefined);                                        // 공개 화면에는 싣지 않는다
+  const left = await w2.bot.setLeave({ teamName: "불사조", seq: 1, clear: false });
+  assert.deepEqual([left.base, left.score], [2, -10]);                                                            // 4킬이 있어도 −10
+});
+
+test("2회 · 딜 점수는 판마다 따로: 합계 199 는 +1 · 150 + 150 두 판은 +2(합쳐서 +3 이 아니다)", async () => {
+  const one = T.scoreGame({ members: [99.5, 99.5, 0, 0].map((damage, i) => ({ slot: i + 1, kills: 0, damage })), deadSlots: [], place: 9 });
+  assert.deepEqual([one.damage, one.dmgPts, one.score], [199, 1, 1]);
+  const A = accsOf("a");
+  const mk = (id, min) => { const m = squadMatch(id, EV2.start + min * 60000, A); Object.values(m.parts)[0].damageDealt = 150; return m; };
+  const w = fakeWorld({ cfgValue: {}, matches: [mk("x1", 5), mk("x2", 40)], teamRows: [teamRow("불사조", "a")] });
+  const t = (await w.bot.aggregate()).teams[0];
+  assert.deepEqual([t.games.map((g) => g.dmgPts), t.total, t.damage], [[1, 1], 2, 300]);
 });

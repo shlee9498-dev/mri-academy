@@ -313,19 +313,42 @@ function summary(state) {
   return { teams, bench };
 }
 
-// ── /킬내기팀등록 으로 넘길 모양 ── 슬롯1 = 최상위 티어(사망 감점 4). 같은 티어는 비싸게 산 순, 팀장(i등급)은 맨 뒤
+// ── /킬내기팀등록 으로 넘길 모양 ── 슬롯 = 사망 감점 순서(1번 −4 … 4번 −1).
+// 기본은 낙찰가 높은 순(같으면 올라온 순서)이고 팀장은 마지막 슬롯이다. 진행자가 고친 순서(state.slots)가 있으면 그것을 쓴다(지휘 10/4 개정).
+function teamMembers(state, c) {
+  const picks = c.picks.map((id) => lotOf(state, id)).sort((a, b) => (b.price || 0) - (a.price || 0) || a.order - b.order);
+  const auto = [...picks.map((l) => ({ ign: l.ign, platform: l.platform, price: l.price || 0, gem: !!l.gem })), { ign: c.ign, platform: c.platform, captain: true }];
+  const saved = state.slots && state.slots[c.id];
+  if (!Array.isArray(saved) || saved.length !== auto.length) return { members: auto, edited: false };
+  const byIgn = new Map(auto.map((m) => [m.ign, m]));
+  const ordered = saved.map((ign) => byIgn.get(ign));
+  // 저장한 뒤 팀 구성이 바뀌었으면(낙찰 취소 · 교체) 고친 순서는 버리고 기본 순서로 돌아간다
+  if (ordered.some((m) => !m) || new Set(saved).size !== saved.length) return { members: auto, edited: false };
+  return { members: ordered, edited: true };
+}
 function registerPlan(state) {
   return state.captains.map((c) => {
-    const picks = c.picks.map((id) => lotOf(state, id))
-      .sort((a, b) => tierRank(state.config, a.tier) - tierRank(state.config, b.tier) || (b.price || 0) - (a.price || 0) || a.order - b.order);
-    const members = [...picks.map((l) => ({ ign: l.ign, platform: l.platform })), { ign: c.ign, platform: c.platform }];
+    const { members, edited } = teamMembers(state, c);
     const platforms = [...new Set(members.map((m) => m.platform))];
     return {
       captainId: c.id, teamName: c.teamName, igns: members.map((m) => m.ign),
+      slots: members.map((m, i) => ({ slot: i + 1, ign: m.ign, price: m.captain ? null : m.price, captain: !!m.captain })), edited,
       platform: platforms.length === 1 && platforms[0] ? platforms[0] : null,      // 섞였거나 비어 있으면 null — 등록 전에 진행자가 본다
       mixed: platforms.filter(Boolean).length > 1, full: slotsLeft(state, c) === 0, bonus: bonusOf(state, c),
     };
   });
+}
+// 진행자가 슬롯 순서를 고친다 — 마감 뒤에만. order = 그 팀 전원의 닉을 1번부터 순서대로
+function setSlots(state, { captainId, order }, now) {
+  if (state.phase !== "done") return fail("wrong_phase");
+  const cap = capOf(state, captainId);
+  if (!cap) return fail("captain_not_found");
+  const names = teamMembers({ ...state, slots: null }, cap).members.map((m) => m.ign);
+  const next = Array.isArray(order) ? order.map((x) => String(x || "")) : [];
+  if (next.length !== names.length || new Set(next).size !== next.length || next.some((ign) => !names.includes(ign))) return fail("bad_slot_order");
+  state.slots = { ...(state.slots || {}), [cap.id]: next };
+  touch(state, now);
+  return ok();
 }
 
 // ── 화면에 내보내는 모양(토큰 없음) ──
@@ -430,6 +453,7 @@ function createAuctionApi({ store, isAdmin, register, saveBonus, onCreate, now =
     gemFor: (s, b, t) => gemPick(s, { captainId: String(b.captainId || ""), lotId: String(b.lotId || "") }, t),
     gemSkip: (s, b, t) => gemSkip(s, t),
     rename: (s, b, t) => renameTeam(s, { captainId: String(b.captainId || ""), teamName: b.teamName }, t),
+    slots: (s, b, t) => setSlots(s, { captainId: String(b.captainId || ""), order: b.order }, t),     // 사망 감점 슬롯 순서 고치기(마감 뒤)
     finish: (s, b, t) => finish(s, t),
   }));
   const postAdmin = guard((req, res) => serial(async () => {
@@ -486,56 +510,17 @@ function createAuctionApi({ store, isAdmin, register, saveBonus, onCreate, now =
   return { mount, getState, postBid, postGem, postAdmin, _peek: () => cache };
 }
 
-// ═══════════════ 점수판(웹) ═══════════════
-// GET  /api/killrace/board — 공개: 팀 순위(비공개 시간엔 점수 없음) · 진행자(x-admin-key): 판별 점수까지
-// POST /api/killrace/board/admin { action: "publish" | "unpublish" | "times", hideAt, boostAt } — 진행자
-// killrace = createKillrace(...) 가 돌려준 것(board · saveConfig). 점수는 마지막 /킬내기집계 저장분이다.
-const isoOrNull = (v) => { if (v == null || v === "") return null; const t = Date.parse(v); return Number.isFinite(t) ? new Date(t).toISOString() : undefined; };
-function mountBoard(app, { killrace, isAdmin, log = console }) {
-  const guard = (handler) => async (req, res) => {
-    try { await handler(req, res); }
-    catch (e) {
-      if (e && e.userMsg) return res.status(404).json({ error: { code: "no_event" } });
-      log.error("[killrace-board]", req.method, String(e && e.message).slice(0, 80));
-      res.status(503).json({ error: { code: "board_unavailable" } });
-    }
-  };
-  app.get("/api/killrace/board", guard(async (req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    res.json(await killrace.board({ admin: isAdmin(req) }));
-  }));
-  app.post("/api/killrace/board/admin", guard(async (req, res) => {
-    if (!isAdmin(req)) return res.status(401).json({ error: { code: "unauthorized" } });
-    const body = req.body || {}; const action = String(body.action || "");
-    const ev = await killrace.currentEvent();
-    let patch;
-    if (action === "publish") patch = { published: true };
-    else if (action === "unpublish") patch = { published: false };
-    else if (action === "times") {
-      const hideAt = isoOrNull(body.hideAt); const boostAt = isoOrNull(body.boostAt);
-      if (hideAt === undefined || boostAt === undefined) return res.status(400).json({ error: { code: "bad_time" } });
-      patch = { hideAt, boostAt };
-    } else return res.status(400).json({ error: { code: "bad_action" } });
-    const cfg = await killrace.saveConfig(ev.id, patch);
-    log.log(`[killrace-board] ${action} event#${ev.id}`);
-    res.json({ ok: true, hideAt: cfg.hideAt, boostAt: cfg.boostAt, published: cfg.published });
-  }));
-}
-
-// 경매를 만들 때 비공개 · 배수 시각이 비어 있으면 끝 시각 기준으로 채운다 — 끝 40분 전 비공개 · 25분 전부터 배수 판
-// (21:00~23:00 이면 22:20 · 22:35 = 지휘 10/4 규격). 이미 값이 있으면 건드리지 않는다.
-const HIDE_BEFORE_END_MS = 40 * 60000; const BOOST_BEFORE_END_MS = 25 * 60000;
+// 경매를 만들 때 배수 시각이 비어 있으면 끝 25분 전으로 채운다(21:00~23:00 이면 22:35 = 지휘 10/4 규격). 값이 있으면 건드리지 않는다.
+// 점수판 HTTP 는 killrace-live.cjs 로 옮겼다. 순위를 가리는 시각(hideAt)은 없앴다 — 점수판은 끝까지 공개한다.
+const BOOST_BEFORE_END_MS = 25 * 60000;
 function defaultTimes(ev, cfg) {
-  const patch = {};
-  if (cfg.hideAt == null) patch.hideAt = new Date(ev.end - HIDE_BEFORE_END_MS).toISOString();
-  if (cfg.boostAt == null) patch.boostAt = new Date(ev.end - BOOST_BEFORE_END_MS).toISOString();
-  return patch;
+  return cfg.boostAt == null ? { boostAt: new Date(ev.end - BOOST_BEFORE_END_MS).toISOString() } : {};
 }
 
 module.exports = {
-  DEFAULT_CONFIG, createAuctionApi, mountBoard, defaultTimes,
+  DEFAULT_CONFIG, createAuctionApi, defaultTimes,
   _test: {
     normConfig, teamPlan, createAuction, tick, openLot, bid, closeNow, undoLastSale, withdrawLot, addLot, startGems, gemPick, gemSkip,
-    gemRound, renameTeam, finish, summary, registerPlan, publicView, adminView, captainByToken, remaining, slotsLeft, tierRank,
+    gemRound, renameTeam, setSlots, teamMembers, finish, summary, registerPlan, publicView, adminView, captainByToken, remaining, slotsLeft, tierRank,
   },
 };

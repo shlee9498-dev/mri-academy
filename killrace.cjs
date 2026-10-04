@@ -12,7 +12,7 @@
 // 판 점수: Σ4인 kills + floor(Σ4인 damageDealt / 100) + (팀 winPlace 1 이면 치킨 +8) − Σ 사망 슬롯 감점
 //          (1번 4 · 2번 3 · 3번 2 · 4번 1 · 선수당 판 1회) — 치킨 +8 은 관제탑 2026-09-26 확정. 치킨 판도 사망 감점은 그대로
 //          (블루칩 부활 후 최종 생존만 면제 — 아래 사망 판정).
-//          이탈 판 = −10 고정(킬·딜·치킨·감점 무시 · 오너 /킬내기이탈). 음수 허용. 총점 = Σ판. 동점 = 치킨 수 → 킬 → 딜.
+//          이탈 판 = −10 고정(킬·딜·치킨·감점 무시 · 오너 /킬내기이탈). 음수 허용. 총점 = Σ판. 동점 = 총 킬 → 치킨 수 → 딜(지휘 10/4 · 1회는 치킨 수 → 킬이었다).
 // 사망 판정: 텔레메트리 LogPlayerKillV2 의 victim 이면 사망 — 단 로그아웃 상태에서 난 사망(나간 뒤 남은 캐릭터)은 제외,
 //          팀 winPlace 1 + deathType alive 는 감점 없음(블루칩 부활 치킨). 기절(LogPlayerMakeGroggy)은 사망 아님.
 //          텔레메트리 실패 판만 deathType ≠ "alive" 로 대체(카드 「판정: deathType(대체)」) · 명령 옵션으로 전부 deathType 도 가능.
@@ -22,13 +22,19 @@
 //       뽑은 결과는 event_matches.deaths 에 저장해 다시 집계할 때 건너뛴다.
 //
 // ── 2회 대승배(2026-10-08 · 지휘 10/4) 추가분 — 설정이 없으면 1회와 똑같이 돈다 ──
-// 설정: ops_state 'killrace:event:<event id>' = { boostAt, boostMul, hideAt, published, bonus{팀명:점}, teamSize, modes } (DDL 없음)
+// 설정: ops_state 'killrace:event:<event id>' = { boostAt, boostMul, bonus{팀명:점}, teamSize, modes, auto, voidDeaths, liveTokens } (DDL 없음)
 // · 막판 1.5배: boostAt 이후 **처음 시작한 인정 판** 하나만 판 점수 × boostMul(소수점 올림). 팀별로 딱 한 판.
 //   그 판이 이탈이면 −10 고정 그대로이고 배수 기회는 그 판에서 쓴 것으로 본다(다음 판으로 넘어가지 않는다).
-// · 순위 비공개: hideAt 부터는 중간 순위를 채널 · 공개 점수판에 내지 않는다. 진행자(오너 DM · 진행자 화면)는 계속 본다.
-//   공개 점수판은 발표(published)해야 풀린다 — 끝 시각이 지나도 아직 돌고 있는 판이 있어서 자동으로 풀지 않는다.
+// · 점수판은 끝까지 공개한다(지휘 10/4 개정 — 오너: 「점수판 비공개 오바」). 가리는 장치는 뺐다.
 // · 경매 보너스: 팀 총점 = Σ판 + bonus[팀명](남은 포인트 10당 +1 · killrace-auction.cjs 가 저장).
-// · 팀 인원: 2~4명(슬롯1 이 최상위 티어). 다음 회차 듀오까지 같은 코드로 돈다.
+// · 팀 인원: 2~4명(슬롯은 경매 뒤 진행자가 정한다). 다음 회차 듀오까지 같은 코드로 돈다.
+// · 무효 판(지휘 10/4 밤 정정 · 오너 확정) — 점수 0 · 감점 0 · 이탈 −10 도 없다. 두 갈래다.
+//   ① 전적 명단에 팀원이 빠진 판(4인 팀이 3명으로 잡힌 판) = 자동. 점수판 「4명이 아니라 인정되지 않았어요」.
+//   ② 튕겨서 낙하를 못 한 팀원이 있는 판 = 진행자가 「이 판 무효」 로 표시(voidGames['팀명|matchId']). 낙하 여부는 전적으로 가려내지 못해 수동이다.
+//   낙하한 뒤 튕긴 판은 그대로 인정한다. 살아 있는데 나가면 킬이 있어도 −10(/킬내기이탈 · 진행자 화면 「이탈 −10」 — 수동).
+//   살아서 나간 흔적(deathType logout)은 flags.logout 에 남겨 진행자 화면에 힌트로만 보여 준다(튕김과 고의 이탈을 전적으로 구분할 수 없다).
+// · 핵 사망 무효: 진행자가 리플레이로 확인한 사망은 voidDeaths['팀명|matchId'] = [슬롯…] 에 적어 감점에서 뺀다(수동 표시).
+// · 자동 집계 · 잠정 킬 · 점수판 HTTP 는 killrace-live.cjs 가 맡는다. 여기는 집계와 점수 계산만.
 
 const SLOT_PENALTY = [4, 3, 2, 1];              // 1번(최상위 티어) 사망 = −4 … 4번 = −1 · 전원 = −10
 const LEAVE_SCORE = -10;                        // 이탈 판 고정 점수
@@ -226,20 +232,31 @@ function normEventConfig(value) {
   const bonus = {};
   if (v.bonus && typeof v.bonus === "object") for (const [k2, n2] of Object.entries(v.bonus)) if (Number.isInteger(n2)) bonus[k2] = n2;
   const modes = Array.isArray(v.modes) && v.modes.length ? v.modes.map(String) : null;
+  const voidDeaths = {};
+  if (v.voidDeaths && typeof v.voidDeaths === "object") {
+    for (const [k2, arr] of Object.entries(v.voidDeaths)) {
+      const slots = Array.isArray(arr) ? arr.filter((x) => Number.isInteger(x) && x >= 1 && x <= SLOT_PENALTY.length) : [];
+      if (slots.length) voidDeaths[k2] = slots;
+    }
+  }
+  const voidGames = {};
+  if (v.voidGames && typeof v.voidGames === "object") for (const [k2, on] of Object.entries(v.voidGames)) if (on === true) voidGames[k2] = true;
+  const liveTokens = {};
+  if (v.liveTokens && typeof v.liveTokens === "object") for (const [k2, t2] of Object.entries(v.liveTokens)) if (typeof t2 === "string" && t2) liveTokens[k2] = t2;
   return {
     boostAt: ms(v.boostAt), boostMul: Number.isFinite(mul) && mul >= 1 && mul <= 3 ? mul : 1.5,
-    hideAt: ms(v.hideAt), published: v.published === true, bonus, teamSize: Number.isInteger(v.teamSize) ? v.teamSize : null, modes,
+    bonus, teamSize: Number.isInteger(v.teamSize) ? v.teamSize : null, modes,
+    auto: v.auto !== false, voidDeaths, voidGames, liveTokens,
   };
 }
-// 지금 순위를 밖에 내면 안 되는가 — 채널 게시용(끝 시각이 지나면 오너가 올리는 것이 곧 발표다)
-const hiddenForPost = (cfg, ev, at) => !!(cfg && cfg.hideAt != null && at >= cfg.hideAt && at < ev.end && !cfg.published);
-// 공개 점수판용 — 발표 전에는 끝 시각이 지나도 계속 가린다
-const hiddenForBoard = (cfg, at) => !!(cfg && cfg.hideAt != null && at >= cfg.hideAt && !cfg.published);
+const voidKey = (teamName, matchId) => `${teamName}|${matchId}`;
+const VOID_GAME = { code: "무효", reason: "낙하 전 튕김(진행자 표시)" };
+const VOID_CODES = new Set(["인원", "무효"]);
 
-// 순위 — 총점 → 치킨 수 → 킬 합 → 딜 합(이탈 판의 킬·딜·치킨은 뺀다 = 「무시」)
+// 순위 — 총점 → 총 킬 → 치킨 수 → 딜 합(이탈 판의 킬·딜·치킨은 뺀다 = 「무시」) · 지휘 10/4: 킬이 치킨보다 먼저
 function rankTeams(list) {
-  const key = (t) => [t.total, t.chickens, t.kills, t.damage];
-  list.sort((a, b) => b.total - a.total || b.chickens - a.chickens || b.kills - a.kills || b.damage - a.damage || a.team.name.localeCompare(b.team.name));
+  const key = (t) => [t.total, t.kills, t.chickens, t.damage];
+  list.sort((a, b) => b.total - a.total || b.kills - a.kills || b.chickens - a.chickens || b.damage - a.damage || a.team.name.localeCompare(b.team.name));
   list.forEach((t, i) => {
     const prev = list[i - 1];
     t.rank = prev && key(prev).join("|") === key(t).join("|") ? prev.rank : i + 1;
@@ -337,7 +354,7 @@ function publicBody(res) {
   return [
     `🏆 ${res.ev.name} 결과`,
     ...rankLines(res),
-    ...(tie ? ["(동점은 치킨 수 → 킬 → 딜 순으로 정했어요)"] : []),
+    ...(tie ? ["(동점은 총 킬 → 치킨 수 순으로 정했어요)"] : []),
     "참가해 주신 모든 분, 정말 수고 많으셨어요! 🎉",
   ].join("\n");
 }
@@ -349,13 +366,6 @@ function formatPublic(res) {
 // 라운드 사이에 올린 중간 순위를 최종으로 읽으면 항의가 나온다 — 끝난 뒤 게시만 발표문이다.
 function formatChannelPost(res) {
   if (res.at >= res.ev.end) return publicBody(res);
-  if (hiddenForPost(res.cfg, res.ev, res.at)) {
-    // 순위 · 점수를 한 글자도 싣지 않는다(막판에 포기하는 팀이 없게 — 지휘 10/4)
-    return [
-      `🤫 ${res.ev.name} — ${kstHm(res.cfg.hideAt)}부터 순위는 비공개예요`,
-      `최종 결과는 ${kstHm(res.ev.end)} 발표 때 공개해요`,
-    ].join("\n");
-  }
   return [
     `⏳ ${res.ev.name} 중간 순위 (${kstHm(res.at)} 기준 · 잠정)`,
     ...rankLines(res),
@@ -453,44 +463,77 @@ async function fetchTelemetry(url, accountIds, { fetchImpl = fetch, timeoutMs = 
   } finally { clearTimeout(timer); }
 }
 
-// 점수판 — 저장된 판(rows · seq 있는 것만)으로 팀 합계 · 순위를 만든다.
-// 공개(admin=false)는 비공개 시간(hideAt ~ 발표 전)에 점수 · 순위 · 판수를 싣지 않는다. 진행자(admin)는 판별 점수까지 본다.
-function buildBoard({ ev, teams, cfg, rows, at, admin }) {
-  const head = { event: { name: ev.name, start: ev.start, end: ev.end }, serverNow: at, admin: !!admin,
-    hideAt: cfg.hideAt, boostAt: cfg.boostAt, boostMul: cfg.boostMul, published: cfg.published };
-  const hidden = hiddenForBoard(cfg, at);
-  if (hidden && !admin) {
-    return { ...head, hidden: true, teams: teams.map((t) => ({ name: t.name })).sort((a, b) => a.name.localeCompare(b.name)) };
-  }
-  const byTeam = new Map(teams.map((t) => [t.name, []]));
+// 점수판 — 저장된 판(rows)으로 팀 합계 · 순위 · 판별 내역을 만든다. 끝까지 공개(가리는 시간 없음).
+// 인원 미달로 빠진 판(flags.excluded.code "인원")도 0점 줄로 보여 준다. 그 밖의 제외 판은 진행자만 본다.
+// live = { presses{팀:[시각…]}, ranks{prev{팀:순위}, at}, gains[{team,delta,at}], run{…} } — killrace-live.cjs 가 넘긴다(없어도 된다).
+// 잠정 킬 = 그 팀의 마지막 확정 판이 끝난 뒤에 누른 것만. 총점에는 절대 더하지 않는다.
+const GAIN_SHOW_MS = 5 * 60000;
+function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
+  const lv = live || {};
+  const byTeam = new Map(teams.map((t) => [t.name, { games: [], voids: [], other: [], lastEnd: 0, boostUsed: false }]));
   let updatedAt = null;
   for (const r of rows || []) {
-    if (r.seq == null || !byTeam.has(r.team_name)) continue;
+    const b = byTeam.get(r.team_name);
+    if (!b) continue;
     const f = r.flags || {};
+    const startedAt = r.created_at ? Date.parse(r.created_at) : null;
+    const endMs = Number(f.endMs) || startedAt || 0;
+    if (r.updated_at && (!updatedAt || r.updated_at > updatedAt)) updatedAt = r.updated_at;
+    if (r.seq == null) {
+      const ex = f.excluded;
+      if (ex && VOID_CODES.has(ex.code)) {
+        b.voids.push({ seq: null, void: true, why: ex.code === "무효" ? "drop" : "short", map: mapKo(r.map), startedAt, score: 0, reason: ex.reason || "",
+          ...(admin ? { matchId: r.match_id } : {}) });
+        if (endMs > b.lastEnd) b.lastEnd = endMs;
+      } else if (ex) b.other.push({ map: mapKo(r.map), startedAt, reason: ex.reason || "" });
+      continue;
+    }
     const kills = Number(r.kills) || 0; const damage = Number(r.damage_sum) || 0; const penalty = Number(r.penalty) || 0;
     const leave = !!r.leave_flag; const boost = Number(f.boost) > 1 ? Number(f.boost) : null;
-    byTeam.get(r.team_name).push({
-      seq: r.seq, map: mapKo(r.map), startedAt: r.created_at ? Date.parse(r.created_at) : null,
+    if (boost) b.boostUsed = true;
+    b.games.push({
+      seq: r.seq, map: mapKo(r.map), startedAt,
       kills, damage: Math.floor(damage), dmgPts: dmgPoints(damage), chicken: chickenPoints(r.win_place), place: r.win_place,
-      penalty, deadSlots: Array.isArray(f.deadSlots) ? f.deadSlots : [], boost, leave,
+      penalty, deadSlots: Array.isArray(f.deadSlots) ? f.deadSlots : [], voidSlots: Array.isArray(f.voidSlots) ? f.voidSlots : [], boost, leave,
       base: baseScore(kills, damage, r.win_place, penalty), score: Number(r.score) || 0,
+      ...(admin ? { matchId: r.match_id, logout: Array.isArray(f.logout) ? f.logout : [] } : {}),
     });
-    if (r.updated_at && (!updatedAt || r.updated_at > updatedAt)) updatedAt = r.updated_at;
+    if (endMs > b.lastEnd) b.lastEnd = endMs;
   }
   const list = teams.map((t) => {
-    const games = byTeam.get(t.name).sort((a, b) => a.seq - b.seq);
+    const b = byTeam.get(t.name);
+    const games = b.games.sort((x, y) => x.seq - y.seq);
     const counted = games.filter((g) => !g.leave);
     const bonus = cfg.bonus[t.name] || 0;
-    return { team: { name: t.name }, games, bonus, gameScore: sum(games, (g) => g.score), total: sum(games, (g) => g.score) + bonus,
-      chickens: counted.filter((g) => g.place === 1).length, kills: sum(counted, (g) => g.kills), damage: sum(counted, (g) => g.damage) };
+    const gameScore = sum(games, (g) => g.score);
+    const presses = (lv.presses && lv.presses[t.name]) || [];
+    return { team: { name: t.name }, members: t.members.map((x) => ({ slot: x.slot, ign: x.ign })), games,
+      rows: [...games, ...b.voids].sort((x, y) => (x.startedAt || 0) - (y.startedAt || 0)), other: b.other,
+      bonus, gameScore, total: gameScore + bonus,
+      chickens: counted.filter((g) => g.place === 1).length, kills: sum(counted, (g) => g.kills), damage: sum(counted, (g) => g.damage),
+      provisional: presses.filter((ts) => ts > b.lastEnd).length, boostUsed: b.boostUsed, lastEnd: b.lastEnd };
   });
   rankTeams(list);
+  // 역전까지 — 1등 총점을 넘기려면 몇 점이 더 필요한가(서버가 계산해 내려준다). 치킨 한 번(+8)을 넣으면 남는 점수 = 킬(또는 딜 100)로 채울 몫
+  const top = list[0];
+  list.forEach((t, i) => {
+    if (list.length < 2) { t.chase = null; return; }
+    if (t.rank === 1) { const rival = list.find((x) => x.rank > 1); t.chase = { lead: rival ? t.total - rival.total : 0 }; return; }
+    const toFirst = top.total - t.total; const need = toFirst + 1; const above = list[i - 1];
+    t.chase = { toFirst, need, afterChicken: Math.max(0, need - CHICKEN_BONUS), toNext: above.total - t.total, nextName: above.team.name };
+  });
+  const prev = (lv.ranks && lv.ranks.prev) || {};
   return {
-    ...head, hidden: false, hiddenForPublic: hidden, updatedAt,
+    event: { name: ev.name, start: ev.start, end: ev.end }, serverNow: at, admin: !!admin,
+    boostAt: cfg.boostAt, boostMul: cfg.boostMul, auto: cfg.auto, updatedAt,
+    run: lv.run || null, rankChangedAt: (lv.ranks && lv.ranks.at) || null,
+    gains: (lv.gains || []).filter((g) => at - g.at < GAIN_SHOW_MS),
     teams: list.map((t) => ({
-      name: t.team.name, rank: t.rank, total: t.total, gameScore: t.gameScore, bonus: t.bonus, games: t.games.length,
-      chickens: t.chickens, kills: t.kills, damage: t.damage,
-      ...(admin ? { rows: t.games } : {}),
+      name: t.team.name, rank: t.rank, prevRank: Number.isInteger(prev[t.team.name]) ? prev[t.team.name] : null,
+      total: t.total, gameScore: t.gameScore, bonus: t.bonus, games: t.games.length,
+      chickens: t.chickens, kills: t.kills, damage: t.damage, provisional: t.provisional, boostUsed: t.boostUsed, lastEnd: t.lastEnd,
+      chase: t.chase, members: t.members, rows: t.rows,
+      ...(admin ? { excluded: t.other, liveToken: cfg.liveTokens[t.team.name] || null } : {}),
     })),
   };
 }
@@ -513,6 +556,9 @@ function createKillrace(deps) {
   const gapMs = deps.playersGapMs == null ? PLAYERS_GAP_MS : deps.playersGapMs;
   let lastPlayersAt = 0;
   let busy = false;
+  // 매치 결과는 끝나면 안 바뀐다 — 1분마다 도는 자동 집계가 같은 판을 다시 받지 않게 기억해 둔다(실패한 조회는 기억하지 않는다)
+  const matchKeep = new Map(); const MATCH_KEEP_MAX = 400;
+  let aggChain = Promise.resolve();                      // 집계는 한 번에 하나(자동 · 「지금 집계」 · /킬내기집계 가 겹쳐도 차례로)
 
   async function playersCall(path) {
     const wait = lastPlayersAt + gapMs - now();
@@ -607,7 +653,12 @@ function createKillrace(deps) {
   }
 
   // ── /킬내기집계 ──
-  async function aggregate({ deathMode = "deathType", progress = () => {} } = {}) {
+  function aggregate(opts) {
+    const run = aggChain.then(() => aggregateOnce(opts), () => aggregateOnce(opts));
+    aggChain = run.catch(() => {});
+    return run;
+  }
+  async function aggregateOnce({ deathMode = "deathType", progress = () => {} } = {}) {
     const t0 = now();
     const ev = await currentEvent();
     const teams = await loadTeams(ev.id);
@@ -640,16 +691,20 @@ function createKillrace(deps) {
     }
 
     // 2) 팀별 후보 → 매치 조회(무캐시 · 실행 안에서만 재사용) → 창 판정
-    const matchMemo = new Map();
     const getMatch = (platform, id) => {
       const k = `${platform}:${id}`;
-      if (!matchMemo.has(k)) {
-        matchMemo.set(k, pubgMatch(platform, id, 0).then((m) => ({
-          id, createdAtMs: Date.parse(m.createdAt), map: m.mapName, mode: m.mode, matchType: m.matchType,
-          telemetryUrl: m.telemetryUrl || "", rosters: m.rosters || [], parts: m.parts || {},
-        })));
+      if (!matchKeep.has(k)) {
+        if (matchKeep.size >= MATCH_KEEP_MAX) matchKeep.clear();
+        const p = pubgMatch(platform, id, 0).then((m) => {
+          const createdAtMs = Date.parse(m.createdAt); const dur = Number(m.duration) || 0;
+          return { id, createdAtMs, endMs: Number.isFinite(createdAtMs) && dur > 0 ? createdAtMs + dur * 1000 : null,
+            map: m.mapName, mode: m.mode, matchType: m.matchType,
+            telemetryUrl: m.telemetryUrl || "", rosters: m.rosters || [], parts: m.parts || {} };
+        });
+        p.catch(() => { if (matchKeep.get(k) === p) matchKeep.delete(k); });
+        matchKeep.set(k, p);
       }
-      return matchMemo.get(k);
+      return matchKeep.get(k);
     };
     const apiRecords = [];
     let fetchedTotal = 0;
@@ -694,7 +749,7 @@ function createKillrace(deps) {
       const prev = stored.get(key);
       const prevOk = prev && prev.flags && prev.flags.sig === teamSig(r.team) && prev.deaths;
       records.push({
-        teamName: r.team.name, sig: teamSig(r.team), matchId: r.m.id, createdAtMs: r.m.createdAtMs, map: r.m.map,
+        teamName: r.team.name, sig: teamSig(r.team), matchId: r.m.id, createdAtMs: r.m.createdAtMs, endMs: r.m.endMs || null, map: r.m.map,
         mode: r.m.mode, matchType: r.m.matchType, telemetryUrl: r.m.telemetryUrl,
         excluded: r.cls.kind === "excluded" ? { code: r.cls.code, reason: r.cls.reason } : null,
         members: r.cls.kind === "ok" ? r.cls.members : [], place: r.cls.kind === "ok" ? r.cls.place : null,
@@ -709,12 +764,16 @@ function createKillrace(deps) {
       const reusable = team && row.seq != null && f.sig === teamSig(team) && row.deaths && Array.isArray(row.deaths.members);
       if (reusable) {
         records.push({
-          teamName: team.name, sig: f.sig, matchId: row.match_id, createdAtMs: Date.parse(row.created_at), map: row.map,
+          teamName: team.name, sig: f.sig, matchId: row.match_id, createdAtMs: Date.parse(row.created_at), endMs: Number(f.endMs) || null, map: row.map,
           mode: f.mode, matchType: f.matchType, telemetryUrl: f.tel || "", excluded: null,
           members: row.deaths.members, place: row.win_place, encounter: f.encounter || [],
           telemetry: row.deaths.telemetry || null, leave: !!row.leave_flag, source: "stored",
         });
       } else if (row.seq != null) stale.push(row);
+    }
+
+    for (const rec of records) {
+      if (!rec.excluded && cfg.voidGames[voidKey(rec.teamName, rec.matchId)]) { rec.excluded = { ...VOID_GAME }; rec.members = []; rec.place = null; }
     }
 
     // 5) 텔레메트리 — 인정 판 중 저장된 추출 결과가 없는 판만 · 매치당 1회(조우 판은 두 팀 선수를 한 번에) · 순서대로
@@ -755,7 +814,11 @@ function createKillrace(deps) {
       rec.verdict = rec.members.map((mm) => (rec.used === "telemetry"
         ? telemetryVerdict(rec.telemetry.players[mm.accountId], mm, rec.place)
         : deathTypeVerdict(mm)));
-      rec.deadSlots = rec.members.filter((mm, i) => rec.verdict[i].dead).map((mm) => mm.slot);
+      // 핵 사망 무효(진행자 수동 표시) — 죽은 것으로 판정된 슬롯 중 표시된 것만 감점에서 뺀다
+      const voided = cfg.voidDeaths[voidKey(rec.teamName, rec.matchId)] || [];
+      const dead = rec.members.filter((mm, i) => rec.verdict[i].dead).map((mm) => mm.slot);
+      rec.voidSlots = dead.filter((slot) => voided.includes(slot));
+      rec.deadSlots = dead.filter((slot) => !voided.includes(slot));
       Object.assign(rec, scoreGame(rec));
     }
     for (const team of teams) {
@@ -782,7 +845,9 @@ function createKillrace(deps) {
       flags: {
         sig: rec.sig, mode: rec.mode || null, matchType: rec.matchType || null, tel: rec.telemetryUrl || null,
         encounter: rec.encounter || [], excluded: rec.excluded, deadSlots: rec.excluded ? [] : rec.deadSlots,
-        source: rec.source,
+        source: rec.source, endMs: rec.endMs || null,
+        ...(rec.excluded || !rec.voidSlots.length ? {} : { voidSlots: rec.voidSlots }),
+        ...(rec.excluded ? {} : { logout: rec.members.filter((x) => x.deathType === "logout").map((x) => x.slot) }),
         ...(rec.excluded || !rec.boost ? {} : { boost: rec.boost, base: rec.base }),
       },
       updated_at: stamp,
@@ -818,14 +883,75 @@ function createKillrace(deps) {
     return { ev, cfg, deathMode, teams: summary, warn, stale: stale.length, stats, at: now(), ms: now() - t0 };
   }
 
-  // ── 점수판(웹) — 마지막 집계 저장분을 그대로 읽는다(PUBG 조회 없음). admin = 진행자(판별 점수까지 · 가리지 않음) ──
-  async function board({ admin = false } = {}) {
+  // ── 점수판(웹) — 마지막 집계 저장분을 그대로 읽는다(PUBG 조회 없음). admin = 진행자(제외 판 · 팀별 잠정 킬 주소까지) ──
+  async function board({ admin = false, live = null } = {}) {
     const ev = await currentEvent();
     const [teams, cfg, rows] = await Promise.all([
       loadTeams(ev.id), loadConfig(ev.id),
-      sbSelect("event_matches", `select=team_name,match_id,seq,map,created_at,damage_sum,kills,win_place,penalty,leave_flag,score,flags,updated_at&event_id=eq.${ev.id}&seq=not.is.null`),
+      sbSelect("event_matches", `select=team_name,match_id,seq,map,created_at,damage_sum,kills,win_place,penalty,leave_flag,score,flags,updated_at&event_id=eq.${ev.id}`),
     ]);
-    return buildBoard({ ev, teams, cfg, rows, at: now(), admin });
+    return buildBoard({ ev, teams, cfg, rows, at: now(), admin, live: typeof live === "function" ? await live(ev) : live });
+  }
+
+  // ── 핵 사망 무효(진행자 수동 표시) — 설정에 적고 그 판 점수를 바로 다시 센다. 다음 집계도 같은 표시를 읽는다 ──
+  async function setVoidDeath({ teamName, seq, slot, clear }) {
+    const ev = await currentEvent();
+    const name = String(teamName || "").trim();
+    const sl = Number(slot);
+    const q = `event_id=eq.${ev.id}&team_name=eq.${encodeURIComponent(name)}`;
+    const rows = await sbSelect("event_matches", `select=match_id,seq,kills,damage_sum,win_place,penalty,score,leave_flag,flags,deaths&${q}&seq=eq.${Number(seq)}`);
+    if (!rows.length) throw userErr(`${name} ${seq}판이 없어요.`);
+    const row = rows[0]; const f = row.flags || {};
+    const dead = ((row.deaths && row.deaths.verdict) || []).filter((v) => v.dead).map((v) => v.slot);
+    if (!clear && !dead.includes(sl)) throw userErr(`${sl}번은 그 판에서 죽지 않았어요.`);
+    const raw = await loadConfigRaw(ev.id);
+    const all = { ...(raw.voidDeaths && typeof raw.voidDeaths === "object" ? raw.voidDeaths : {}) };
+    const key = voidKey(name, row.match_id);
+    const set = new Set(Array.isArray(all[key]) ? all[key] : []);
+    if (clear) set.delete(sl); else set.add(sl);
+    if (set.size) all[key] = [...set].sort((a, b) => a - b); else delete all[key];
+    await saveConfig(ev.id, { voidDeaths: all });
+    const voidSlots = dead.filter((x) => set.has(x)); const deadSlots = dead.filter((x) => !set.has(x));
+    const penalty = sum(deadSlots, (x) => SLOT_PENALTY[x - 1] || 0);
+    const base = baseScore(Number(row.kills) || 0, Number(row.damage_sum) || 0, row.win_place, penalty);
+    const boost = Number(f.boost) > 1 ? Number(f.boost) : null;
+    const score = finalScore(base, !!row.leave_flag, boost);
+    const flags = { ...f, deadSlots, ...(boost ? { base } : {}) };
+    if (voidSlots.length) flags.voidSlots = voidSlots; else delete flags.voidSlots;
+    await sbPatch("event_matches", `${q}&match_id=eq.${encodeURIComponent(row.match_id)}`, { penalty, score, flags, updated_at: new Date(now()).toISOString() });
+    return { ev, name, seq: Number(seq), slot: sl, clear: !!clear, penalty, score };
+  }
+
+  // ── 판 무효(진행자 수동 표시) — 튕겨서 낙하를 못 한 팀원이 있던 판. 점수 0 · 감점 0 · 이탈 −10 없음 ──
+  // 표시하면 그 줄을 바로 제외로 돌린다. 해제는 설정만 지우고 다음 집계가 그 판을 다시 인정 판으로 계산한다(판 번호도 그때 다시 매긴다).
+  async function setVoidGame({ teamName, matchId, clear }) {
+    const ev = await currentEvent();
+    const name = String(teamName || "").trim(); const mid = String(matchId || "");
+    const q = `event_id=eq.${ev.id}&team_name=eq.${encodeURIComponent(name)}&match_id=eq.${encodeURIComponent(mid)}`;
+    const rows = await sbSelect("event_matches", `select=match_id,seq,flags&${q}`);
+    if (!mid || !rows.length) throw userErr("그 판을 못 찾았어요.");
+    const raw = await loadConfigRaw(ev.id);
+    const all = { ...(raw.voidGames && typeof raw.voidGames === "object" ? raw.voidGames : {}) };
+    const key = voidKey(name, mid);
+    if (clear) delete all[key]; else all[key] = true;
+    await saveConfig(ev.id, { voidGames: all });
+    if (!clear) {
+      await sbPatch("event_matches", q, { seq: null, score: null, penalty: null, kills: null, damage_sum: null, win_place: null, deaths: null,
+        flags: { ...(rows[0].flags || {}), excluded: { ...VOID_GAME }, deadSlots: [] }, updated_at: new Date(now()).toISOString() });
+    }
+    return { ev, name, matchId: mid, clear: !!clear };
+  }
+
+  // 팀별 잠정 킬 주소에 쓸 토큰 — 없는 팀만 새로 만든다(이미 있는 주소는 그대로 둔다)
+  async function ensureLiveTokens(makeToken) {
+    const ev = await currentEvent();
+    const teams = await loadTeams(ev.id);
+    const raw = await loadConfigRaw(ev.id);
+    const tokens = { ...(raw.liveTokens && typeof raw.liveTokens === "object" ? raw.liveTokens : {}) };
+    let made = 0;
+    for (const t of teams) if (!tokens[t.name]) { tokens[t.name] = makeToken(); made++; }
+    if (made) await saveConfig(ev.id, { liveTokens: tokens });
+    return { ev, tokens, made };
   }
 
   // 게시할 채널 — KILLRACE_RESULT_CHANNEL_ID 가 있으면 그 채널, 없으면 명령을 친 채널.
@@ -951,12 +1077,7 @@ function createKillrace(deps) {
           if (itx.options.getBoolean("게시")) {
             try {
               await (await resultChannel(itx)).send({ content: formatChannelPost(res) });
-              const hidden = hiddenForPost(res.cfg, res.ev, res.at);
-              posted = res.at >= res.ev.end ? " · 결과 채널에 올렸어요" : hidden ? " · 비공개 시간이라 순위 없이 안내만 올렸어요" : " · 결과 채널에 중간 순위(잠정)로 올렸어요";
-              // 끝난 뒤 올린 것이 곧 발표다 → 공개 점수판도 같이 연다(설정이 있을 때만 · 실패해도 게시는 끝난 것)
-              if (res.at >= res.ev.end && res.cfg.hideAt != null && !res.cfg.published) {
-                try { await saveConfig(res.ev.id, { published: true }); } catch (e2) { log.warn("[killrace] publish_flag_failed", logSafe(e2)); }
-              }
+              posted = res.at >= res.ev.end ? " · 결과 채널에 올렸어요" : " · 결과 채널에 중간 순위(잠정)로 올렸어요";
               log.log(`[killrace] post_ok event#${res.ev.id} live=${res.at < res.ev.end}`);
             } catch (e) {
               posted = ` · 게시는 못 했어요(${shortErr(e).slice(0, 40)})`;
@@ -985,13 +1106,13 @@ function createKillrace(deps) {
     }
   }
 
-  return { handle, registerTeam, aggregate, setLeave, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, board };
+  return { handle, registerTeam, aggregate, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board };
 }
 
 module.exports = {
   COMMANDS, createKillrace,
   _test: {
-    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, applyBoost, finalScore, boostTarget, normEventConfig, hiddenForPost, hiddenForBoard, buildBoard, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
+    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, applyBoost, finalScore, boostTarget, normEventConfig, buildBoard, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote,
   },

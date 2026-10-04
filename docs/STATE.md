@@ -94,7 +94,7 @@
 
 ## 메인(총괄·조정) — 2026-09-30
 
-- **진행(10/4)**: 킬내기 2회(10/8 목 21:00 · 4인 · 경매 팀 구성 · 지휘 10/4 주문) 초안 PR 2건(Draft) — mri-academy `killrace-auction.cjs`(웹 경매 엔진 · `/api/killrace/auction*` · `/api/killrace/board*`) + `killrace.cjs`(22:35 이후 첫 판 1.5배 올림 · 22:20 순위 비공개 · 남은 포인트 10당 +1 보너스 · 팀 2~4명) · gmi-clancup `auction.html`(진행자 · 팀장 · 방송) · `killnaegi-board.html`(점수판 · 진행자 판별 점수). 저장은 `ops_state` 두 줄(`killrace:auction:<id>` · `killrace:event:<id>`) — DDL · env 추가 없음. 5/10 경매 도구(`gmi-auction-tool.html`)는 5/18 삭제된 서버 없는 단일 HTML 이라 재사용하지 않았다.
+- **진행(10/4)**: 킬내기 2회(10/8 목 21:00 · 4인 · 경매 팀 구성) Draft PR 4건 — 지휘 10/4 개정 주문 반영. mri-academy #505(솔로 신청 API `killrace-apply.cjs` · 계좌는 오너 전용) · #504(`killrace-live.cjs` 1분 자동 집계 · 「지금 집계」 · 팀별 +1킬 잠정 값 · 점수판 API / `killrace.cjs` 점수판 끝까지 공개 · 동점 총 킬 → 치킨 · 무효 판 · 핵 사망 무효 / 경매 슬롯 = 낙찰가 순 + 진행자 수정) · gmi-clancup #91(신청 폼) · #90(경매 · 점수판 · 방송 오버레이 · +1킬 화면). DDL · env 추가 없음(`ops_state` 줄만).
 - **대기(10/4)**: 오너 — 2회 `event_defs` 행 넣기(21:00~23:00 KST = 12:00~14:00 UTC) · PR 머지 판정(수요일 리허설 전 · 목 19:00 이후 머지 금지) · 스팀/카카오 섞인 팀 처리(집계는 한 팀 한 플랫폼) · 신청 폼 2회 전환(마감 시각 · season 키 10 분리).
 - **다음(10/4)**: 머지 뒤 운영 주소에서 가짜 15명 리허설(수 밤) → 안 되면 음성 + 시트로 전환 보고.
 - **진행(9/30)**: 킬내기 2회차 준비 2건 머지·배포 — mri-academy#417(솔로·팀 신청에 같은 시즌 같은 닉 중복 거절 `409 already_applied`. `/api/gdcup-solo` 엔 중복 검사가 아예 없었고 season=9 에서 같은 닉 2쌍이 3.9초·5.5초 간격으로 들어왔다) · gmi-clancup#89(제출 버튼 성공 뒤에도 풀려 재클릭이 그대로 한 건 더 들어가던 것을 잠금 + season=9 는 「이 폼 접수분」뿐임을 문구·주석에 명시). Railway 배포 SUCCESS(8f8b59c) · Pages run 228 success.

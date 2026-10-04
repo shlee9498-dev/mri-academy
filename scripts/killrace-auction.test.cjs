@@ -206,7 +206,7 @@ test("마감: 남은 포인트 10당 +1점 보너스 표 · 교체 선수 · 낙
   assert.equal(T.finish(s, t).code, "wrong_phase");
 });
 
-test("팀 등록으로 넘기는 모양: 슬롯1 = 최상위 티어 · 같은 티어는 비싼 순 · 팀장은 맨 뒤 · 플랫폼 섞임 표시", () => {
+test("팀 등록으로 넘기는 모양: 슬롯 = 낙찰가 높은 순 · 팀장은 마지막 슬롯 · 진행자가 고친 순서가 우선 · 플랫폼 섞임 표시", () => {
   const ps = [
     { ign: "CapA", platform: "steam" }, { ign: "CapB", platform: "kakao" }, { ign: "CapC", platform: "steam" },
     { ign: "a1", tier: "T1", platform: "steam" }, { ign: "a2", tier: "T1", platform: "steam" }, { ign: "a3", tier: "T3", platform: "steam" },
@@ -216,14 +216,26 @@ test("팀 등록으로 넘기는 모양: 슬롯1 = 최상위 티어 · 같은 �
   const s = make(12, { players: ps, captains: ["CapA", "CapB", "CapC"] });
   let t = T0;
   const buy = (ign, id, amount) => { T.openLot(s, { lotId: s.lots.find((l) => l.ign === ign).id }, t); T.bid(s, { captainId: id, amount }, t); T.closeNow(s, t + 1); t += 10; };
-  buy("a3", "C1", 5); buy("a1", "C1", 30); buy("a2", "C1", 35);          // 산 순서와 무관하게 티어 → 가격 순
+  buy("a3", "C1", 40); buy("a1", "C1", 30); buy("a2", "C1", 30);          // 티어와 무관하게 낙찰가 순(T3 를 40 에 샀으면 1번) · 같은 값이면 올라온 순서
   buy("b1", "C2", 10); buy("b2", "C2", 12); buy("b3", "C2", 5);
   buy("c1", "C3", 30); buy("c2", "C3", 10);
+  // 마감 전에는 슬롯을 못 고친다
+  assert.equal(T.setSlots(s, { captainId: "C1", order: ["CapA", "a1", "a2", "a3"] }, t).code, "wrong_phase");
   T.finish(s, t);
   const plan = T.registerPlan(s);
-  assert.deepEqual(plan[0], { captainId: "C1", teamName: "CapA 팀", igns: ["a2", "a1", "a3", "CapA"], platform: "steam", mixed: false, full: true, bonus: 3 });
+  assert.deepEqual(plan[0], { captainId: "C1", teamName: "CapA 팀", igns: ["a3", "a1", "a2", "CapA"],
+    slots: [{ slot: 1, ign: "a3", price: 40, captain: false }, { slot: 2, ign: "a1", price: 30, captain: false }, { slot: 3, ign: "a2", price: 30, captain: false }, { slot: 4, ign: "CapA", price: null, captain: true }],
+    edited: false, platform: "steam", mixed: false, full: true, bonus: 0 });
   assert.deepEqual([plan[1].igns, plan[1].platform, plan[1].mixed], [["b2", "b1", "b3", "CapB"], null, true]);   // 스팀 · 카카오 섞임
   assert.deepEqual([plan[2].igns, plan[2].full, plan[2].platform], [["c1", "c2", "CapC"], false, "steam"]);      // 3명뿐
+  // 진행자가 고친다 — 그 팀 전원의 닉을 1번부터. 빠지거나 겹치거나 남의 팀 닉이면 거절
+  assert.equal(T.setSlots(s, { captainId: "C1", order: ["CapA", "a1", "a2"] }, t).code, "bad_slot_order");
+  assert.equal(T.setSlots(s, { captainId: "C1", order: ["CapA", "a1", "a1", "a3"] }, t).code, "bad_slot_order");
+  assert.equal(T.setSlots(s, { captainId: "C1", order: ["CapA", "a1", "a2", "b1"] }, t).code, "bad_slot_order");
+  assert.equal(T.setSlots(s, { captainId: "C9", order: [] }, t).code, "captain_not_found");
+  assert.equal(T.setSlots(s, { captainId: "C1", order: ["CapA", "a1", "a2", "a3"] }, t).ok, true);
+  const edited = T.registerPlan(s);
+  assert.deepEqual([edited[0].igns, edited[0].edited, edited[1].edited], [["CapA", "a1", "a2", "a3"], true, false]);
   assert.equal(T.renameTeam(s, { captainId: "C1", teamName: "불사조" }, t).ok, true);
   assert.equal(T.renameTeam(s, { captainId: "C2", teamName: "불사조" }, t).code, "dup_team_name");
   assert.equal(T.registerPlan(s)[0].teamName, "불사조");
@@ -338,29 +350,9 @@ test("API: 마감 뒤 팀 등록으로 넘기고 보너스를 저장한다 · �
   assert.equal((await h.call(h.api.getState)).body.exists, false);
 });
 
-test("경매를 만들 때 비공개 · 배수 시각 기본값: 끝 40분 전 · 25분 전(21:00~23:00 → 22:20 · 22:35) · 있던 값은 그대로", () => {
+test("경매를 만들 때 배수 시각 기본값: 끝 25분 전(21:00~23:00 → 22:35) · 있던 값은 그대로 · 가리는 시각은 만들지 않는다", () => {
   const ev = { start: Date.parse("2026-10-08T12:00:00Z"), end: Date.parse("2026-10-08T14:00:00Z") };
-  assert.deepEqual(a.defaultTimes(ev, { hideAt: null, boostAt: null }), { hideAt: "2026-10-08T13:20:00.000Z", boostAt: "2026-10-08T13:35:00.000Z" });
-  assert.deepEqual(a.defaultTimes(ev, { hideAt: 1, boostAt: null }), { boostAt: "2026-10-08T13:35:00.000Z" });
-  assert.deepEqual(a.defaultTimes(ev, { hideAt: 1, boostAt: 2 }), {});
+  assert.deepEqual(a.defaultTimes(ev, { boostAt: null }), { boostAt: "2026-10-08T13:35:00.000Z" });
+  assert.deepEqual(a.defaultTimes(ev, { boostAt: 2 }), {});
 });
 
-test("점수판 라우트: 공개 조회 · 진행자만 발표/시각 변경", async () => {
-  const routes = {}; const saved = [];
-  const app = { get: (p, fn) => { routes[`GET ${p}`] = fn; }, post: (p, fn) => { routes[`POST ${p}`] = fn; } };
-  const killrace = {
-    board: async ({ admin }) => ({ hidden: !admin, admin }),
-    currentEvent: async () => ({ id: 2 }),
-    saveConfig: async (id, patch) => { saved.push([id, patch]); return { hideAt: 1, boostAt: 2, published: !!patch.published }; },
-  };
-  a.mountBoard(app, { killrace, isAdmin: (req) => req.headers["x-admin-key"] === "host", log: { log() {}, error() {} } });
-  const run = async (key, headers = {}, body) => { const res = fakeRes(); await routes[key]({ method: key.split(" ")[0], headers, body }, res); return res; };
-  assert.deepEqual((await run("GET /api/killrace/board")).body, { hidden: true, admin: false });
-  assert.deepEqual((await run("GET /api/killrace/board", { "x-admin-key": "host" })).body, { hidden: false, admin: true });
-  assert.equal((await run("POST /api/killrace/board/admin", {}, { action: "publish" })).code, 401);
-  assert.equal((await run("POST /api/killrace/board/admin", { "x-admin-key": "host" }, { action: "publish" })).body.published, true);
-  await run("POST /api/killrace/board/admin", { "x-admin-key": "host" }, { action: "times", hideAt: "2026-10-08T13:20:00Z", boostAt: "" });
-  assert.deepEqual(saved[1], [2, { hideAt: "2026-10-08T13:20:00.000Z", boostAt: null }]);
-  assert.equal((await run("POST /api/killrace/board/admin", { "x-admin-key": "host" }, { action: "times", hideAt: "어제", boostAt: null })).code, 400);
-  assert.equal(saved.length, 2);
-});
