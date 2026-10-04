@@ -38,6 +38,9 @@ const RECORD_CHANGE_DAYS = 14;
 const RECORD_CHANGE_MAX = 20;
 const RECORD_CHANGE_KIND = Object.freeze({ "session.cancel": "cancel", "session.restore": "restore", "session.correct": "correct" });
 const RECORD_CHANGE_ACTIONS = Object.keys(RECORD_CHANGE_KIND);
+// 원장 홈 「최근 연결 처리」(§9.32.3) — 연결 신청 승인 · 거절 · /연결승인 · 해제(admin_audit · 봇이 남긴다) · 같은 14일 · 20줄
+const LINK_CHANGE_ACTIONS = ["student.link", "student.link_reject", "student.unlink"];
+const idOf = (s, prefix) => { const m = new RegExp(`^${prefix}:(\\d+)$`).exec(String(s || "")); return m ? Number(m[1]) : null; };
 const JOURNAL_DAYS_MAX = 180;
 const JOURNAL_LIMIT = 200;
 const FEEDBACK_MAX = 4000;      // journal_feedback_body_check 와 같은 값
@@ -725,7 +728,8 @@ module.exports = function mountTrainerPortal(app, deps) {
     // ① 한 파동 — 「완료 확인 필요」가 최신이 되게 sweep 도 같이 돌린다(트레이너 칸 목록과 같다 · 실패해도 계속).
     //    예약은 sweep 이 끝난 ② 에서 읽는다.
     const changesSince = new Date(nowMs - RECORD_CHANGE_DAYS * 86400_000).toISOString();
-    const [book, weekSlots, openSlots, sessions, courseSessions, assignedRows, payreqs, adjreqs, linkreqs, activeCourses, recordChanges] = await Promise.all([
+    const [book, weekSlots, openSlots, sessions, courseSessions, assignedRows, payreqs, adjreqs, linkreqs, activeCourses, recordChanges,
+           linkAudit] = await Promise.all([
       staffBook(),
       // 칸은 30분 단위라 한 주에 수백 행이 된다 — 쪼개 읽는다(두 트레이너가 하루 12시간씩 열면 주 670행대)
       selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min,course_level"
@@ -749,6 +753,10 @@ module.exports = function mountTrainerPortal(app, deps) {
       sbSelect("admin_audit", `select=action,detail,created_at&action=in.(${RECORD_CHANGE_ACTIONS.join(",")})`
         + `&created_at=gte.${changesSince}&order=created_at.desc&limit=${RECORD_CHANGE_MAX}`)
         .catch((e) => { console.error("dashboard_record_changes", e?.status || e?.message); return []; }),
+      // 최근 연결 처리(§9.32.3) — 트레이너도 승인 · 거절하게 된 뒤 원장이 한눈에 본다 · 실패해도 대시보드는 내린다(목록만 빈다)
+      sbSelect("admin_audit", `select=action,actor_name,target,detail,created_at&action=in.(${LINK_CHANGE_ACTIONS.join(",")})`
+        + `&created_at=gte.${changesSince}&order=created_at.desc&limit=${RECORD_CHANGE_MAX}`)
+        .catch((e) => { console.error("dashboard_link_changes", e?.status || e?.message); return []; }),
       sbRpc ? sbRpc("sweep_pending_review", {}).catch((e) => console.error("dashboard_sweep", e?.message)) : null,
     ]);
 
@@ -810,8 +818,18 @@ module.exports = function mountTrainerPortal(app, deps) {
 
     // 수업에 나오는 수강생 이름 — 한 번에(오너 화면이라 전원 볼 수 있다 · 합친 행도 이름은 보인다)
     const changeRows = (recordChanges || []).filter((a) => a?.detail && a.detail.student_id != null).slice(0, RECORD_CHANGE_MAX);
+    // 연결 처리 줄 — 붙인 기록(student:N) · 신청 번호(linkreq:N · detail.request_id · via) 를 꺼낸다(옛 줄은 detail 이 짧다)
+    const linkRows = (linkAudit || []).filter((a) => a && LINK_CHANGE_ACTIONS.includes(a.action))
+      .sort((x, y) => String(y.created_at).localeCompare(String(x.created_at))).slice(0, RECORD_CHANGE_MAX)
+      .map((a) => {
+        const d = a.detail && typeof a.detail === "object" ? a.detail : {};
+        const studentId = idOf(a.target, "student") ?? (d.student_id != null ? Number(d.student_id) : null);
+        const requestNo = d.request_id != null ? Number(d.request_id) : (idOf(a.target, "linkreq") ?? idOf(d.via, "linkreq"));
+        return { a, d, studentId, requestNo };
+      });
     const sids = [...new Set([...lessons.flatMap((l) => l.studentIds), ...low.map((r) => r.studentId),
-                              ...changeRows.map((a) => Number(a.detail.student_id))])];
+                              ...changeRows.map((a) => Number(a.detail.student_id)),
+                              ...linkRows.map((r) => r.studentId).filter((x) => x != null)])];
     const stu = {};
     if (sids.length) for (const s of await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})`)) stu[s.id] = s;
     const KEY_KIND = { booking: "booking", record: "session", course: "course_session", slot: "slot" };
@@ -874,6 +892,21 @@ module.exports = function mountTrainerPortal(app, deps) {
           playedAt: correct ? (d.played_at_after || d.played_at || null) : (d.played_at || null),
           ...(correct ? { playedAtBefore: d.played_at || null } : {}),
           gamesBefore: d.games_before ?? null, gamesAfter: d.games_after ?? null, reason: d.reason || null,
+        };
+      }),
+      // 최근 연결 처리(§9.32.3) — 누가(원장 · 트레이너) · 언제 · 어느 신청을 · 어느 기록에 · 최근 14일 · 최대 20
+      linkChanges: linkRows.map(({ a, d, studentId, requestNo }) => {
+        const staffId = d.staff_id != null ? Number(d.staff_id) : null;
+        const role = d.role || (String(a.actor_name || "").startsWith("owner") ? "owner" : null);
+        return {
+          at: a.created_at,
+          action: a.action === "student.link_reject" ? "reject" : a.action === "student.unlink" ? "unlink"
+            : requestNo != null ? "approve" : "link",
+          by: { trainerKey: staffId == null ? null : opaqueId("trainer", staffId),
+                displayName: (staffId != null && book.names[staffId]) || (role === "owner" ? "원장" : (a.actor_name || "운영진")), role },
+          requestNo,
+          student: studentId == null ? null : { id: opaqueId("student", studentId), displayName: stu[studentId]?.name || "?" },
+          claimedName: d.claimed_name || null,
         };
       }),
       thresholds: ops.THRESHOLDS,

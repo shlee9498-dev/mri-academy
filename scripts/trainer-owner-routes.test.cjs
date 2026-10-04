@@ -689,3 +689,35 @@ test("수강생 세션 — 세션의 디스코드가 지금 명부 연결과 다
   assert.equal(moved.status, 401);
   assert.equal(moved.json.error.code, "session_expired");
 });
+
+// ════════ 원장 홈 「최근 연결 처리」(계약 §9.32.3) ════════
+test("대시보드 — linkChanges: 트레이너 승인 · 원장 거절 · /연결승인 · 해제 · 옛 줄(역할 칸 없음) · 14일 밖 · 다른 행동은 안 섞인다", async () => {
+  const ago = (h) => new Date(Date.now() - h * 3600_000).toISOString();
+  db = { ...dashDb(), admin_audit: [
+    { id: 1, action: "student.link", actor_id: "u-ta", actor_name: "트레이너A", target: "student:10", created_at: ago(1),
+      detail: { discord_id: "x1", discord_src: "self_request", via: "linkreq:48", request_id: 48, student_id: 10, claimed_name: "가", dm: true,
+                role: "trainer", staff_id: 2 } },
+    { id: 2, action: "student.link_reject", actor_id: "u-o", actor_name: "owner(디스코드)", target: "linkreq:47", created_at: ago(2),
+      detail: { claimed_name: "모름", dm: true } },                                                       // 옛 줄 — role · request_id 없음
+    { id: 3, action: "student.link", actor_id: "u-o", actor_name: "owner(디스코드)", target: "student:11", created_at: ago(3),
+      detail: { discord_id: "x2", discord_src: "app_link", dm: true } },                                   // /연결승인 옛 줄 — 신청 없음
+    { id: 4, action: "student.unlink", actor_id: "u-o", actor_name: "owner(디스코드)", target: "student:12", created_at: ago(4),
+      detail: { prev_discord_id: "x3", role: "owner", staff_id: 4, student_id: 12 } },
+    { id: 5, action: "student.link", actor_id: "u-o", actor_name: "owner(디스코드)", target: "student:17", created_at: ago(24 * 20),
+      detail: {} },                                                                                       // 14일 지남
+    { id: 6, action: "student.pubg_name", actor_id: "u-ta", actor_name: "트레이너A", target: "student:10", created_at: ago(1),
+      detail: { to: "nick" } },                                                                           // 다른 행동
+  ] };
+  const r = await call(4, "/owner/dashboard?date=2025-01-08");
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.deepEqual(r.json.linkChanges.map((c) => [c.action, c.by.displayName, c.by.role, c.requestNo, c.student?.displayName ?? null, c.claimedName]), [
+    ["approve", "트레이너A", "trainer", 48, "가", "가"],
+    ["reject", "원장", "owner", 47, null, "모름"],
+    ["link", "원장", "owner", null, "나", null],
+    ["unlink", "원장", "owner", null, "다", null],
+  ]);
+  assert.deepEqual([r.json.linkChanges[0].by.trainerKey, r.json.linkChanges[0].student.id, r.json.linkChanges[3].by.trainerKey],
+    [T(2), portal.opaqueId("student", 10), T(4)]);
+  assert.equal(JSON.stringify(r.json.linkChanges).includes("x1"), false);                                 // 디스코드 id 는 안 나간다
+  assert.equal((await call(2, "/owner/dashboard")).status, 403);
+});

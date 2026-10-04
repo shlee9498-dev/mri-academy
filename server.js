@@ -34,6 +34,8 @@ const payreqIntake = require("./payreq-intake.cjs");
 const publicRows = require("./public-rows.cjs");
 // 수업 기록 행 판정 한 벌(판수 조정 · 봇 정정 · 0 이하 행은 수업이 아니다) — 원장 화면 · 공개 지표 · 예약 고아 감시가 같이 쓴다.
 const { isLessonRow, lessonRowsOf } = require("./ops-status.cjs");
+// 연결 신청 승인 · 거절 규칙(계약 §9.32) — 트레이너는 자기 담당만 · 먼저 누른 사람만. 카드 버튼 · /연결승인 이 같이 쓴다.
+const linkRules = require("./link-approve.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -1112,7 +1114,7 @@ if (process.env.DISCORD_TOKEN) {
   //   직접 치면 정확일치 1명일 때만 받는다(동명은 거부 → 목록에서 담당·#번호로 구분).
   const LINK_CMD = {
     name: "연결승인",
-    description: "[트레이너·오너] 디스코드 계정 ↔ 수강생 명부 연결 — 앱 로그인이 열립니다",
+    description: "[트레이너(내 담당만)·오너] 디스코드 계정 ↔ 수강생 명부 연결 — 앱 로그인이 열립니다",
     options: [
       { name: "대상", description: "연결할 디스코드 유저(수강생 본인 계정)", type: 6, required: true },
       { name: "수강생", description: "수강생 — 미연결만 자동완성, 목록에서 고르세요", type: 3, required: true, autocomplete: true },
@@ -2713,11 +2715,15 @@ if (process.env.DISCORD_TOKEN) {
     try {
       const focused = itx.options.getFocused(true);
       if (focused.name !== "수강생" || !hasSupabase()) return await itx.respond([]);
-      if (!(await linkActor(itx)).allowed) return await itx.respond([]);   // 권한 없으면 명단을 보여주지 않는다
+      const actor = await linkActor(itx);
+      if (!actor.allowed) return await itx.respond([]);   // 권한 없으면 명단을 보여주지 않는다
       const linked = itx.commandName === "연결해제";
+      if (linked && !actor.isOwner) return await itx.respond([]);   // 해제는 원장만(§9.32)
       // PostgREST 예약문자(, . ( ) *)는 검색어에서 뺀다 — 필터 문법이 깨지는 걸 막는다.
       const q = String(focused.value || "").trim().replace(/[,.()*]/g, "").slice(0, 40);
       let filter = `select=id,name,status,trainer_id&discord_id=${linked ? "not.is.null" : "is.null"}${NOT_MERGED}&order=status.asc,name.asc&limit=100`;
+      // 트레이너는 내 담당 · 진행 중만 보인다(§9.32 · 승인할 수 있는 것만)
+      if (!actor.isOwner) filter += `&trainer_id=eq.${actor.staffId}&status=in.(${linkRules.LIVE.join(",")})`;
       if (q) filter += `&name=ilike.*${encodeURIComponent(q)}*`;
       const [rows, staffById] = await Promise.all([sbSelect("students", filter), staffNameMap()]);
       await itx.respond(rows.slice(0, 25).map((s) => ({ name: linkChoiceName(s, staffById), value: String(s.id) })));
@@ -2874,6 +2880,10 @@ if (process.env.DISCORD_TOKEN) {
         return itx.editReply("❌ 같은 이름의 미연결 수강생이 여러 명이야. 자동완성 목록에서 담당·#번호를 보고 골라줘.");
       if (!picked.row) return itx.editReply("❌ 수강생을 찾을 수 없어. 자동완성 목록에서 골라줘.");
       const s = picked.row;
+      // 트레이너는 내 담당 · 진행 중 기록만(§9.32 · 오너 10/4 「대신 자기담당만」)
+      const scope = linkRules.commandScope(actor, s);
+      if (scope === "not_assigned") return itx.editReply(`❌ **${s.name}**(#${s.id})은 내 담당 수강생이 아니에요. 원장에게 알려 주세요`);
+      if (scope === "not_live") return itx.editReply(`❌ **${s.name}**(#${s.id})은 진행 중인 수강생이 아니에요. 원장에게 알려 주세요`);
       if (s.discord_id)
         return itx.editReply(`❌ **${s.name}**(#${s.id})은 이미 연결돼 있어. 재연결이 필요하면 오너가 \`/연결해제\`를 먼저 해야 해.`);
       // 1:1 강제 — 이 디스코드 계정이 이미 다른 학생에 걸려 있으면 거부. 앱 /exchange 가
@@ -2896,11 +2906,12 @@ if (process.env.DISCORD_TOKEN) {
       if (!updated.length)
         return itx.editReply(`❌ 그사이 **${s.name}**(#${s.id})이 다른 계정에 연결됐어. \`/연결현황\`으로 확인해줘.`);
 
-      const dmOk = await discordDM(target.id, "연결됐어요! 🎉 앱에서 다시 로그인하면 잔여 판수와 수업 기록이 바로 보여요 🔓");
+      const dmOk = await discordDM(target.id, linkRules.APPROVED_DM);
       try {
         await sbInsert("admin_audit", {
           actor_id: itx.user.id, actor_name: actor.label, action: "student.link",
-          target: `student:${s.id}`, detail: { discord_id: String(target.id), discord_src: "app_link", dm: dmOk },
+          target: `student:${s.id}`, detail: { discord_id: String(target.id), discord_src: "app_link", dm: dmOk,
+            student_id: s.id, role: actor.isOwner ? "owner" : "trainer", staff_id: actor.staffId ?? null },
         });
       } catch (e) { console.error("link_audit", e?.message); }
       await itx.editReply(
@@ -2932,7 +2943,8 @@ if (process.env.DISCORD_TOKEN) {
       try {
         await sbInsert("admin_audit", {
           actor_id: itx.user.id, actor_name: actor.label, action: "student.unlink",
-          target: `student:${s.id}`, detail: { prev_discord_id: String(s.discord_id) },
+          target: `student:${s.id}`, detail: { prev_discord_id: String(s.discord_id), student_id: s.id, role: "owner",
+            staff_id: actor.staffId ?? null },
         });
       } catch (e) { console.error("unlink_audit", e?.message); }
       await itx.editReply(`✅ 연결 해제 — **${s.name}**(#${s.id}). 재연결은 \`/연결승인\`으로.`);
@@ -3087,7 +3099,7 @@ if (process.env.DISCORD_TOKEN) {
   // 이름 유사도는 **Node 에서** 계산한다. pg_trgm 미설치라 SQL similarity() 를 못 쓰고,
   // 확장 설치는 DDL = 영구 Level 0 이라 그 게이트를 새로 열 이유가 없다.
   // 후보 모수가 미연결 70명 남짓이라 메모리 비교로 충분하다(요청당 1회).
-  const normName = (s) => String(s || "").toLowerCase().replace(/[\s\u200b_.\-·]/g, "");
+  const normName = linkRules.normName;   // 트레이너 승인 이름 판정(§9.32)과 같은 정규화 — 한 벌
   function editDistance(a, b) {
     if (a === b) return 0;
     if (!a.length || !b.length) return Math.max(a.length, b.length);
@@ -3180,7 +3192,8 @@ if (process.env.DISCORD_TOKEN) {
               + (c.via ? ` · 별칭 「${c.via}」 로 매칭` : "")).join("\n")
           : "· ⚠️ **후보 없음** — 입력한 이름이 명부와 맞지 않아요.\n"
             + "  본인 확인 후 `/연결승인` 으로 직접 지정하세요.")
-        + "\n\n승인 버튼을 누르면 그 수강생으로 **연결이 확정**되고 신청자에게 DM이 갑니다.",
+        + "\n\n승인 버튼을 누르면 그 수강생으로 **연결이 확정**되고 신청자에게 DM이 갑니다."
+        + "\n트레이너는 자기 담당 수강생이고 입력한 이름이 명부와 똑같은 한 명일 때만 승인 · 거절할 수 있어요",
       components: [new ActionRowBuilder().addComponents(btns)],   // 후보 3 + 거절 = 최대 4개(한 행 한도 5)
     };
     const chId = process.env.LINK_APPROVAL_CHANNEL_ID;
@@ -3468,139 +3481,84 @@ if (process.env.DISCORD_TOKEN) {
     }
   });
 
-  // ── /연결신청 승인·거절 버튼 — 처리 전 상태를 DB 에서 재확인(중복 클릭 방어, payreq 패턴) ──
-  //   권한은 채널이 아니라 **staff 명부**(linkActor)가 기준이라, 채널 카드에서도 DM 폴백 카드에서도
-  //   같은 규칙이 돈다. 승인 경로는 /연결승인 과 **동일한 경합 방어**를 쓴다:
-  //   조건부 PATCH(discord_id=is.null) + §11 부분 유니크 인덱스.
+  // ── /연결신청 승인·거절 버튼 — 판정 · 처리는 link-approve.cjs 한 벌(계약 §9.32 · 2026-10-04) ──
+  //   권한은 채널이 아니라 **staff 명부**(linkActor)가 기준이라, 채널 카드에서도 DM 폴백 카드에서도 같은 규칙이 돈다.
+  //   원장 = 후보 누구나 · 트레이너 = 자기 담당 · 입력 이름이 명부와 똑같은 한 명 · 미연결일 때만(거절도 같은 조건).
+  //   먼저 누른 사람만 — 신청을 「대기 → 승인/거절」로 먼저 잡고(조건부) 그다음 기록에 붙인다(조건부 + §11 부분 유니크).
+  //   트레이너가 못 누르는 버튼은 **카드를 그대로 두고** 누른 사람에게만 알린다(원장이 이어서 처리).
+  const linkApproval = linkRules.createLinkApproval({ sbSelect, sbPatch, sbInsert, discordDM });
+  const LINKREQ_TAG = { approved: "승인", rejected: "거절", cancelled: "취소" };
+  const LINKREQ_TRAINER_MSG = {
+    not_assigned: "내 담당 수강생 기록이 아니에요",
+    name_not_found: "입력한 이름과 똑같은 수강생 기록이 명부에 없어요",
+    name_ambiguous: "입력한 이름과 같은 이름이 명부에 여러 명이에요",
+    name_mismatch: "누른 후보가 입력한 이름과 똑같지 않아요",
+    not_live: "진행 중인 수강생이 아니에요",
+  };
   client.on("interactionCreate", async (itx) => {
     if (!itx.isButton()) return;
     const m = itx.customId.match(/^linkreq_(ok|no):(\d+)(?::(\d+))?$/);
     if (!m) return;
     // ↓ deferUpdate 이전이라 reply() 가 맞다(아직 아무 응답도 안 보냈다).
     if (!hasSupabase()) return itx.reply({ content: "DB 연동 준비 전이야.", ephemeral: true });
-    // 디스코드 상호작용은 **3초 안에 응답**하지 않으면 "상호작용에 실패했습니다"로 죽는다.
-    // 승인 경로는 update() 전에 staff 조회·신청 조회·학생 조회·중복 조회·PATCH 2회·DM·audit 으로
-    // 왕복이 8~9회다 — 한 번만 느려도 예산을 넘긴다. customId 가 확정된 뒤(다른 버튼 핸들러를
-    // 가로채지 않도록 반드시 매치 이후에) deferUpdate 로 먼저 확인 응답을 보내고,
-    // 이후 회신은 editReply(원 메시지 수정) · followUp(개인 안내)으로 나눈다.
+    // 디스코드 상호작용은 **3초 안에 응답**하지 않으면 "상호작용에 실패했습니다"로 죽는다 — 판정 · 처리 왕복이 여러 번이라
+    // customId 가 확정된 뒤(다른 버튼 핸들러를 가로채지 않도록 반드시 매치 이후에) deferUpdate 로 먼저 확인 응답을 보내고,
+    // 이후 회신은 editReply(원 메시지 수정) · followUp(누른 사람에게만)으로 나눈다.
     try { await itx.deferUpdate(); }
     catch (e) { console.error("linkreq_defer", e?.message); return; }
     const actor = await linkActor(itx);
     if (!actor.allowed) return itx.followUp({ content: LINK_DENY, ephemeral: true });
-
     const reqId = Number(m[2]);
-    let q;
-    try { q = (await sbSelect("student_link_requests", `select=*&id=eq.${reqId}&limit=1`))[0]; }
-    catch (e) { console.error("linkreq_fetch", e?.message); }
-    if (!q) return itx.editReply({ content: `#${reqId} 신청을 못 찾았어(DB 확인 필요).`, components: [] });
-    if (q.status !== "pending") {
-      const tag = { approved: "승인", rejected: "거절", cancelled: "취소" }[q.status] || q.status;
-      return itx.editReply({ content: `#${reqId}은 이미 처리됐어(${tag}).`, components: [] });
-    }
-
-    // ── 거절 ──
-    if (m[1] === "no") {
-      try {
-        await sbPatch("student_link_requests", `id=eq.${reqId}&status=eq.pending`,
-          { status: "rejected", decided_by: itx.user.id, decided_at: new Date().toISOString() });
-      } catch (e) {
-        console.error("linkreq_reject", e?.message);
-        return itx.followUp({ content: `#${reqId} 상태 갱신에 실패했어 — 버튼을 다시 눌러줘.`, ephemeral: true });
-      }
-      const dmOk = await discordDM(q.discord_id,
-        "그 이름으로는 수강생 기록을 못 찾았어요. 등록할 때 쓴 이름으로 `/연결신청`을 다시 해주시겠어요?\n"
-        + "막히면 담당 트레이너에게 편하게 물어보세요 💬");
-      try {
-        await sbInsert("admin_audit", {
-          actor_id: itx.user.id, actor_name: actor.label, action: "student.link_reject",
-          target: `linkreq:${reqId}`, detail: { claimed_name: q.claimed_name, dm: dmOk },
-        });
-      } catch (e) { console.error("linkreq_reject_audit", e?.message); }
-      return itx.editReply({
-        content: `❌ **#${reqId} 거절** — 입력한 이름 「${q.claimed_name}」 · 처리 ${actor.label || "운영진"}`
-          + (dmOk ? "" : "\n⚠️ 신청자에게 DM 을 못 보냈어(DM 차단?)."),
-        components: [],
-      });
-    }
-
-    // ── 승인 ──
-    const sid = Number(m[3]);
-    if (!sid)
-      return itx.followUp({ content: "이 버튼에는 수강생이 실려 있지 않아. `/연결승인` 으로 직접 지정해줘.", ephemeral: true });
+    const who = { ...actor, userId: itx.user.id };
+    const mine = (content) => itx.followUp({ content, ephemeral: true });
     try {
-      // ⚠️ 「이 후보를 못 쓴다」는 신청 자체의 실패가 아니다. 카드를 지우면(components: [])
-      //    신청은 pending 으로 남는데 §24 pending 유니크 때문에 그 수강생은 재신청도 못 하고
-      //    승인자는 다른 후보를 누를 카드도 잃는다 — 신청이 조용히 죽는 그 경로다.
-      //    그래서 이 분기들은 **카드를 그대로 두고** ephemeral 로만 알린다(다른 후보 클릭 가능).
-      const s = (await sbSelect("students", `select=id,name,status,discord_id&id=eq.${sid}&limit=1`))[0];
-      if (!s)
-        return itx.followUp({ content: `#${reqId} — 수강생 #${sid}을 명부에서 못 찾았어. 다른 후보나 \`/연결승인\` 으로.`, ephemeral: true });
-      if (s.discord_id)
-        return itx.followUp({
-          content: `⚠️ **${s.name}**(#${s.id})은 이미 연결돼 있어. 다른 후보를 누르거나, 재연결이면 오너가 \`/연결해제\` 먼저.`,
-          ephemeral: true,
-        });
-      // 1:1 강제 — 앱 /exchange 는 discord_id 정확일치 **1건**을 요구한다. 2행이 되는 순간 로그인이 막힌다.
-      // 이쪽은 후보를 바꿔도 안 되는 **종결 상태**다(신청자 계정이 이미 남에게 묶여 있다).
-      // pending 으로 방치하면 유니크에 걸려 영영 재신청이 안 되므로 cancelled 로 닫는다.
-      const dup = await sbSelect("students",
-        `select=id,name&discord_id=eq.${encodeURIComponent(q.discord_id)}&limit=1`);
-      if (dup.length) {
-        try {
-          await sbPatch("student_link_requests", `id=eq.${reqId}&status=eq.pending`,
-            { status: "cancelled", decided_by: itx.user.id, decided_at: new Date().toISOString() });
-        } catch (e) { console.error("linkreq_cancel_patch", e?.message); }
+      const r = m[1] === "no"
+        ? await linkApproval.reject({ actor: who, reqId })
+        : await linkApproval.approve({ actor: who, reqId, studentId: m[3] ? Number(m[3]) : null });
+      if (r.code === "not_found") return itx.editReply({ content: `#${reqId} 신청을 못 찾았어(DB 확인 필요).`, components: [] });
+      if (r.code === "already_done") {
+        if (r.lost) return mine(`#${reqId}은 이미 처리됐어요 — 방금 다른 사람이 먼저 눌렀어요`);
+        return itx.editReply({ content: `#${reqId}은 이미 처리됐어요(${LINKREQ_TAG[r.status] || r.status})`, components: [] });
+      }
+      if (LINKREQ_TRAINER_MSG[r.code]) return mine(`⚠️ #${reqId} — ${LINKREQ_TRAINER_MSG[r.code]}. 원장에게 알려 주세요`);
+      if (m[1] === "no") {
         return itx.editReply({
-          content: `⚠️ **#${reqId} 종료** — 신청자 계정은 이미 **${dup[0].name}**(#${dup[0].id})에 연결돼 있어.`
-            + " 한 계정은 한 명에게만 연결돼. 오연결이면 오너가 `/연결해제` 후 다시 신청받아줘.",
+          content: `❌ **#${reqId} 거절** — 입력한 이름 「${r.claimedName}」 · 처리 ${actor.label || "운영진"}`
+            + (r.dm ? "" : "\n⚠️ 신청자에게 DM 을 못 보냈어(DM 차단?)."),
           components: [],
         });
       }
-
-      let updated;
-      try {
-        updated = await sbPatch("students", `id=eq.${sid}&discord_id=is.null`,
-          { discord_id: String(q.discord_id), discord_src: "self_request" });
-      } catch (e) {
-        if (e?.status === 409 || /23505|idx_students_discord/.test(String(e?.body || "")))
-          return itx.editReply({
-            content: `⚠️ #${reqId} — 신청자 계정이 이미 다른 학생에 연결돼 있어(DB 유니크).`,
-            components: [],
-          });
-        throw e;
+      // ── 승인 쪽 결과 ──
+      // ⚠️ 「이 후보를 못 쓴다」는 신청 자체의 실패가 아니다. 카드를 지우면 신청은 대기로 남는데 계정당 대기 1건 규칙 때문에
+      //    재신청도 못 하고 승인자는 다른 후보를 누를 카드도 잃는다 — 그래서 이 분기들은 카드를 그대로 두고 누른 사람에게만 알린다.
+      if (r.code === "no_candidate") return mine("이 버튼에는 수강생이 실려 있지 않아. `/연결승인` 으로 직접 지정해줘.");
+      if (r.code === "student_not_found") return mine(`#${reqId} — 수강생 #${m[3]}을 명부에서 못 찾았어. 다른 후보나 \`/연결승인\` 으로.`);
+      if (r.code === "student_linked") {
+        return mine(actor.isOwner
+          ? `⚠️ **${r.student.name}**(#${r.student.id})은 이미 연결돼 있어. 다른 후보를 누르거나, 재연결이면 오너가 \`/연결해제\` 먼저.`
+          : `⚠️ **${r.student.name}**(#${r.student.id})은 이미 다른 계정이 연결돼 있어요. 바꾸는 건 원장만 할 수 있어요`);
       }
-      if (!updated.length)   // 경합 — 위와 같은 이유로 카드를 남긴다(다른 후보로 재시도 가능)
-        return itx.followUp({
-          content: `⚠️ 그사이 **${s.name}**(#${s.id})이 다른 계정에 연결됐어. 다른 후보를 누르거나 \`/연결현황\` 으로 확인해줘.`,
-          ephemeral: true,
+      if (r.code === "race_student_linked") {
+        return mine(`⚠️ 그사이 **${r.student.name}**(#${r.student.id})이 다른 계정에 연결됐어. 다른 후보를 누르거나 \`/연결현황\` 으로 확인해줘.`);
+      }
+      // 1:1 강제 — 신청자 계정이 이미 남에게 묶여 있다(종결 · 신청은 취소로 닫혔다)
+      if (r.code === "account_taken") {
+        return itx.editReply({
+          content: `⚠️ **#${reqId} 종료** — 신청자 계정은 이미 `
+            + (r.other ? `**${r.other.name}**(#${r.other.id})에 ` : "다른 학생에 ")
+            + "연결돼 있어. 한 계정은 한 명에게만 연결돼. 오연결이면 오너가 `/연결해제` 후 다시 신청받아줘.",
+          components: [],
         });
-
-      // 여기서부터는 **연결이 이미 성사**됐다. 아래가 실패해도 되돌리지 않는다 —
-      // 신청 상태가 뒤처지는 건 카드로 보이지만, 롤백하면 학생이 로그인을 잃는다.
-      try {
-        await sbPatch("student_link_requests", `id=eq.${reqId}`,
-          { status: "approved", student_id: sid, decided_by: itx.user.id, decided_at: new Date().toISOString() });
-      } catch (e) { console.error("linkreq_approve_patch", e?.message); }
-      const dmOk = await discordDM(q.discord_id,
-        "연결됐어요! 🎉 앱에서 다시 로그인하면 잔여 판수와 수업 기록이 바로 보여요 🔓");
-      try {
-        await sbInsert("admin_audit", {
-          actor_id: itx.user.id, actor_name: actor.label, action: "student.link",
-          target: `student:${sid}`,
-          detail: { discord_id: String(q.discord_id), discord_src: "self_request",
-                    via: `linkreq:${reqId}`, claimed_name: q.claimed_name, dm: dmOk },
-        });
-      } catch (e) { console.error("linkreq_approve_audit", e?.message); }
+      }
       await itx.editReply({
-        content: `✅ **#${reqId} 승인** — **${s.name}**(#${s.id}) ↔ <@${q.discord_id}> · 처리 ${actor.label || "운영진"}\n`
-          + (dmOk ? "📨 신청자에게 안내 DM을 보냈어(앱 재로그인 안내)."
+        content: `✅ **#${reqId} 승인** — **${r.student.name}**(#${r.student.id}) ↔ <@${r.applicant}> · 처리 ${actor.label || "운영진"}\n`
+          + (r.dm ? "📨 신청자에게 안내 DM을 보냈어(앱 재로그인 안내)."
                   : "⚠️ 안내 DM 을 못 보냈어(DM 차단?). 앱에서 다시 로그인하라고 직접 알려줘."),
         components: [],
       });
     } catch (e) {
-      console.error("linkreq_approve_failed", e?.status || e?.message);
-      try { await itx.followUp({ content: `#${reqId} 처리 중 오류가 났어 — 버튼을 다시 눌러줘.`, ephemeral: true }); }
-      catch (_) {}
+      console.error("linkreq_button_failed", e?.status || e?.message);
+      try { await mine(`#${reqId} 처리 중 오류가 났어 — 버튼을 다시 눌러줘.`); } catch (_) {}
     }
   });
 
