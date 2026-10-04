@@ -36,8 +36,36 @@ function weekOf(ymd) {
 function isLessonRow(r) {
   if (!(Number(r?.games) > 0)) return false;
   if (String(r.created_by || "").startsWith("adjreq:")) return false;
+  if (String(r.created_by || "").startsWith("void:")) return false;   // 취소 · 되살리기 반대 행(§9.29)
   if (String(r.memo || "").startsWith("정정:")) return false;
   return true;
+}
+// ── 수업 기록 취소(무효 표시 · 계약 §9.29) ── 옛 행은 지우지 않고 반대 행을 넣는다.
+//   취소 = 'void:<옛 id>'(판수 −N) · 되살리기 = 'void:<옛 id>:rev'(+N). 둘 다 수업이 아니다(장부 안쪽 행).
+//   옛 행이 지금 취소 상태 = 그 id 의 취소 행이 되살리기 행보다 많다(번갈아 할 수 있다).
+//   ⚠️ 판정에 쓰는 행 목록은 옛 행과 반대 행을 같이 담아야 한다 — 같은 수강생 · 트레이너 · 날짜라 같은 조회에 함께 온다.
+const VOID_RE = /^void:(\d+)(:rev)?$/;
+function voidRef(r) {
+  const m = String(r?.created_by || "").match(VOID_RE);
+  return m ? { id: Number(m[1]), restore: !!m[2] } : null;
+}
+// { voided: Set<옛 id>, voidedAt: Map<옛 id, 마지막 취소 시각> }
+function voidState(rows) {
+  const net = new Map(), lastAt = new Map();
+  for (const r of rows || []) {
+    const v = voidRef(r);
+    if (!v) continue;
+    net.set(v.id, (net.get(v.id) || 0) + (v.restore ? -1 : 1));
+    const at = r.created_at ? String(r.created_at) : null;
+    if (!v.restore && at && !(lastAt.get(v.id) > at)) lastAt.set(v.id, at);
+  }
+  const voided = new Set([...net].filter(([, n]) => n > 0).map(([id]) => id));
+  return { voided, voidedAt: new Map([...voided].map((id) => [id, lastAt.get(id) || null])) };
+}
+// 수업 기록 행만 — isLessonRow 에서 취소된 옛 행까지 뺀다(한 벌 · 수업 수 · 마지막 수업일 · 주간 판수 · 공개 지표)
+function lessonRowsOf(rows) {
+  const { voided } = voidState(rows);
+  return (rows || []).filter((r) => isLessonRow(r) && !voided.has(Number(r.id)));
 }
 // created_by → 입구. 'portal' = 앱(「완료」 · 수업 기록하기) · 숫자 = 봇 /수업등록(디스코드 id) · 그 밖 = 오너 SQL · 이관.
 function sourceOf(createdBy) {
@@ -133,8 +161,7 @@ function buildLessons({ slots = [], bookings = [], sessions = [], courseSessions
   }
 
   const groups = new Map();
-  for (const r of sessions) {
-    if (!isLessonRow(r)) continue;
+  for (const r of lessonRowsOf(sessions)) {                      // 취소된 기록 · 반대 행 빼고(§9.29)
     if (doneKeys.has(`${r.trainer_id}|${r.student_id}|${r.played_at}`)) continue;
     const k = `${r.trainer_id}|${r.played_at}|${r.created_at}`;
     if (!groups.has(k)) groups.set(k, []);
@@ -239,6 +266,7 @@ function buildPending(items, nowMs, th = THRESHOLDS) {
 function buildTrainerRows({ trainers, lessons, sessions, openSlots, assigned, review, today, nowMs, th = THRESHOLDS }) {
   const h72 = nowMs + th.slotsRedWindowHours * 3600_000;
   const d7 = nowMs + th.slotsYellowWindowDays * DAY_MS;
+  const live = lessonRowsOf(sessions);                           // 취소된 기록 · 반대 행 빼고(§9.29)
   return trainers.map((t) => {
     const mine = lessons.filter((l) => l.trainerId === t.id);
     const slotsMine = openSlots.filter((s) => s.trainer_id === t.id).map((s) => Date.parse(s.slot_start));
@@ -246,7 +274,7 @@ function buildTrainerRows({ trainers, lessons, sessions, openSlots, assigned, re
       id: t.id, name: t.name, isOwner: t.role === "owner",
       lessonsToday: mine.filter((l) => l.date === today).length,
       lessonsWeek: mine.length,
-      gamesWeek: sessions.filter((r) => r.trainer_id === t.id && isLessonRow(r)).reduce((n, r) => n + Number(r.games), 0),
+      gamesWeek: live.filter((r) => r.trainer_id === t.id).reduce((n, r) => n + Number(r.games), 0),
       openSlots72h: slotsMine.filter((ms) => ms >= nowMs && ms < h72).length,
       openSlots7d: slotsMine.filter((ms) => ms >= nowMs && ms < d7).length,
       assignedActive: assigned[t.id] || 0,
@@ -260,6 +288,6 @@ function buildTrainerRows({ trainers, lessons, sessions, openSlots, assigned, re
 
 module.exports = {
   THRESHOLDS, weekOf, kstDate, kstStartIso, addDays, isRealDate,
-  isLessonRow, sourceOf, worst, pendingColor, slotColor, trainerColor,
+  isLessonRow, voidRef, voidState, lessonRowsOf, sourceOf, worst, pendingColor, slotColor, trainerColor,
   buildLessons, buildPending, buildTrainerRows, PENDING_KINDS, buildCourseSummary, lowUnitsList,
 };

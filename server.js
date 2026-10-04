@@ -33,7 +33,7 @@ const payreqIntake = require("./payreq-intake.cjs");
 // 공개 API 응답에서 수강생 식별정보를 걷어내는 순수 함수(커뮤니티 작성자 ID · 공개 코칭 기록 본문 치환 · 9/30 개인정보 점검)
 const publicRows = require("./public-rows.cjs");
 // 수업 기록 행 판정 한 벌(판수 조정 · 봇 정정 · 0 이하 행은 수업이 아니다) — 원장 화면 · 공개 지표 · 예약 고아 감시가 같이 쓴다.
-const { isLessonRow } = require("./ops-status.cjs");
+const { isLessonRow, lessonRowsOf } = require("./ops-status.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -8357,6 +8357,7 @@ function onLevelTestDone(bookingId, staff) {
 
 require("./booking-api.cjs")(app, {
   sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,
+  recorder: lessonRecorder,                                         // §9.29 — 취소한 기록만 있는 날의 「완료」를 대신 기록
   onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 「완료」 · 예약(선차감) 직후
   onConsultDone: onLevelTestDone,                                  // 레벨 테스트 「완료」 → 상담 기록
   // 레벨 테스트 「완료」의 레벨(계약 §9.16) — 명부 레벨 칸 · 직강생이면 false(반 레벨이 따라간다)
@@ -9027,10 +9028,11 @@ async function runBookingOrphans() {
   let sess = [];
   try {
     sess = await sbSelect("lesson_sessions",
-      `select=student_id,trainer_id,played_at,games,created_by,memo&played_at=in.(${days.join(",")})&limit=1000`);
+      `select=id,student_id,trainer_id,played_at,games,created_by,memo&played_at=in.(${days.join(",")})&limit=1000`);
   } catch (e) { console.error("booking_orphan_sess", e?.message); return; }
   // 판수 조정 행은 수업 기록이 아니다 — 같은 날 조정만 있으면 여전히 고아다(§50b 「완료」 같은 날 판정과 같은 기준).
-  const has = new Set(sess.filter(isLessonRow).map((x) => `${x.student_id}|${x.trainer_id}|${x.played_at}`));
+  //   취소한 수업 기록(§9.29)도 기록이 아니다 — 예약은 끝났는데 기록을 취소했으면 고아로 보인다(원장이 알아야 한다).
+  const has = new Set(lessonRowsOf(sess).map((x) => `${x.student_id}|${x.trainer_id}|${x.played_at}`));
 
   const orphans = recent.filter((b) => !has.has(`${b.student_id}|${b.trainer_id}|${b.d}`));
   const key = orphans.map((b) => b.id).join(",");

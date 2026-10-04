@@ -19,6 +19,9 @@
 // ============================================================
 "use strict";
 
+const { gamesForMinutes } = require("./lesson-lengths.cjs");          // 개인 레슨 길이 → 판수 정본(§47 · 계산식 그대로)
+const { isLessonRow, voidState } = require("./ops-status.cjs");       // 수업 기록 판정 한 벌 — 조정 · 취소(§9.29) 행 빼기
+
 const TRAINER = "/api/trainer-portal";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const kstDate = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
@@ -38,6 +41,23 @@ const ADJ_REVERT_MS = 24 * 3600_000;                      // 바로 반영 뒤 �
 
 // ── 순수 함수(테스트: scripts/trainer-lessons.test.cjs) ─────────────────────────
 
+// 판수 고르기(§9.29.2) — 개인은 길이(durationMin)로 서버가 계산 · 그룹(관전형)은 진행한 판 수(games).
+//   personal: durationMin 또는 games 중 하나(둘 다면 같은 값일 때만) · group: games 만(durationMin 은 400).
+//   반환 { ok:true, games, durationMin } | { ok:false }
+function pickGames(kind, b) {
+  const hasDur = b.durationMin !== undefined && b.durationMin !== null;
+  const hasGames = b.games !== undefined && b.games !== null;
+  let games = b.games;
+  if (hasDur) {
+    if (kind !== "personal" || !Number.isInteger(b.durationMin)) return { ok: false };
+    const g = gamesForMinutes(b.durationMin);
+    if (g == null || (hasGames && b.games !== g)) return { ok: false };
+    games = g;
+  }
+  if (!Number.isInteger(games) || games < GAMES_MIN || games > GAMES_MAX) return { ok: false };
+  return { ok: true, games, durationMin: hasDur ? b.durationMin : null };
+}
+
 // POST /lessons 본문 판정. 반환 { ok:true, value } | { ok:false }. id 해석 · 범위는 라우트가 한다.
 function parseLessonBody(b, today) {
   if (!b || typeof b !== "object") return { ok: false };
@@ -47,11 +67,47 @@ function parseLessonBody(b, today) {
   if (!Array.isArray(ids) || ids.length < 1 || ids.length > LESSON_MAX_STUDENTS[kind]) return { ok: false };
   if (ids.some((x) => typeof x !== "string" || !x) || new Set(ids).size !== ids.length) return { ok: false };
   if (!isRealDate(b.playedAt) || b.playedAt > today || b.playedAt < addDays(today, -LESSON_BACK_DAYS)) return { ok: false };
-  if (!Number.isInteger(b.games) || b.games < GAMES_MIN || b.games > GAMES_MAX) return { ok: false };
+  const g = pickGames(kind, b);
+  if (!g.ok) return { ok: false };
   if (b.memo !== undefined && b.memo !== null && (typeof b.memo !== "string" || b.memo.length > MEMO_MAX)) return { ok: false };
   if (b.sameDayOk !== undefined && typeof b.sameDayOk !== "boolean") return { ok: false };
   const memo = typeof b.memo === "string" && b.memo.trim() ? b.memo.trim() : null;
-  return { ok: true, value: { kind, studentIds: ids, playedAt: b.playedAt, games: b.games, memo, sameDayOk: b.sameDayOk === true } };
+  return { ok: true, value: { kind, studentIds: ids, playedAt: b.playedAt, games: g.games, durationMin: g.durationMin,
+                              memo, sameDayOk: b.sameDayOk === true } };
+}
+
+// 고치기 · 취소 · 되살리기 사유(§9.29) — 앞뒤 공백을 떼고 2~200자.
+//   반환 null = 없음 · undefined = 모양이 틀림(문자열 아님 · 길이 밖) · 문자열 = 사유
+function readEditReason(v) {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  if (!t) return null;
+  const n = [...t].length;
+  return n >= 2 && n <= 200 ? t : undefined;
+}
+
+// POST /lessons/:id/correct 본문 판정(§9.29.4). 옛 기록 row 와 비교해 바뀌는 게 있어야 한다.
+//   날짜 = 미래 불가(잠긴 달은 라우트가 본다 · 날짜 창은 없다 — 결정 B「잠기기 전까지」).
+//   판수 = durationMin(개인 길이 → 서버 계산) 또는 games 1~50 · 둘 다면 같은 값일 때만.
+function parseCorrectBody(b, row, today) {
+  if (!b || typeof b !== "object") return { ok: false };
+  const hasDate = b.playedAt !== undefined && b.playedAt !== null;
+  const hasDur = b.durationMin !== undefined && b.durationMin !== null;
+  const hasGames = b.games !== undefined && b.games !== null;
+  if (!hasDate && !hasDur && !hasGames) return { ok: false };
+  if (hasDate && (!isRealDate(b.playedAt) || b.playedAt > today)) return { ok: false };
+  let games = Number(row.games), durationMin = null;
+  if (hasDur || hasGames) {
+    const g = pickGames(hasDur ? "personal" : "group", b);
+    if (!g.ok) return { ok: false };
+    games = g.games; durationMin = g.durationMin;
+  }
+  const reason = readEditReason(b.reason);
+  if (reason === undefined) return { ok: false };
+  const playedAt = hasDate ? b.playedAt : row.played_at;
+  if (playedAt === row.played_at && games === Number(row.games)) return { ok: false };   // 바뀌는 게 없다
+  return { ok: true, value: { playedAt, games, durationMin, reason } };
 }
 
 // POST /adjustments 본문 판정. 반환 { ok:true, value } | { ok:false }.
@@ -113,7 +169,7 @@ function sourceOf(row) {
 
 module.exports = function mountTrainerLessons(app, deps) {
   const { sbSelect, sbInsert, sbPatch, sbRpc, limit, recorder, trainer, portal } = deps;
-  const { requireTrainer, sendTrainer, scopedStudents } = trainer;
+  const { requireTrainer, sendTrainer, scopedStudents, oneScope } = trainer;
   const { opaqueId, readOpaqueId, fail } = portal;
   // 승인 카드(봇 블록이 채운다 · 봇이 없으면 false) — 요청은 그래도 저장한다(ownerNotified:false)
   const adjreqCard = typeof deps.adjreqCard === "function" ? deps.adjreqCard : async () => false;
@@ -157,7 +213,7 @@ module.exports = function mountTrainerLessons(app, deps) {
 
   // ════════════════ POST /lessons — 수업 기록하기(예약 없이) · 계약 §9.9 ════════════════
   app.post(`${TRAINER}/lessons`, rateLimit("trainerLessons", 30, 60_000),
-    bodyOnly(["kind", "studentIds", "playedAt", "games", "memo", "sameDayOk"]), requireTrainer, wrap(async (req, res) => {
+    bodyOnly(["kind", "studentIds", "playedAt", "games", "durationMin", "memo", "sameDayOk"]), requireTrainer, wrap(async (req, res) => {
       const today = kstDate(Date.now());
       const v = parseLessonBody(req.body, today);
       if (!v.ok) return fail(res, 400, "invalid_body");
@@ -192,7 +248,7 @@ module.exports = function mountTrainerLessons(app, deps) {
         await sbInsert("admin_audit", {
           actor_id: `staff:${req.staff.id}`, actor_name: req.staff.name,
           action: "session.app_record", target: `students:${sids.join(",")}`,
-          detail: { kind: v.value.kind, games, played_at: playedAt, same_day_ok: sameDayOk,
+          detail: { kind: v.value.kind, games, duration_min: v.value.durationMin, played_at: playedAt, same_day_ok: sameDayOk,
                     session_ids: out.inserted.map((r) => r.id), closed_bookings: out.closed || 0 },
         });
       } catch (e) { console.error("app_lesson_audit", e?.status || "fail"); }
@@ -206,7 +262,7 @@ module.exports = function mountTrainerLessons(app, deps) {
         recorded.push({
           student: { id: opaqueId("student", sid), displayName: scope.get(sid)?.name || null },
           sessionId: opaqueId("session", row.id),
-          games: Number(row.games), playedAt: row.played_at,
+          games: Number(row.games), durationMin: v.value.durationMin, playedAt: row.played_at,
           remainingAfter: rem, remainingWasShort: rem != null && rem < 0,
         });
       }
@@ -214,18 +270,173 @@ module.exports = function mountTrainerLessons(app, deps) {
     }));
 
   // ════════════════ GET /students/:id/lessons — 내 수업 기록 최근 20건 ════════════════
+  //   §9.29.3 — 취소 상태(voided · voidedAt) · 고칠 수 있는가(editable) · 잠긴 달(lockedPeriod)을 더한다.
+  //   취소 · 되살리기 반대 행(void:…)은 줄로 안 싣는다. 원장은 그 수강생의 모든 트레이너 기록을 본다.
   app.get(`${TRAINER}/students/:id/lessons`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
     const sid = readOpaqueId("student", req.params.id);
     if (sid == null) return fail(res, 400, "invalid_body");
-    const scope = await scopedStudents(req.staff.id);
-    if (!scope.has(sid)) return fail(res, 403, "scope_denied");
+    const owner = req.staff.role === "owner";
+    // 원장 = 명부 전원(수강생 상세 §9.15 와 같은 oneScope) · 트레이너 = 종전 범위(담당 ∪ 90일)
+    if (owner && oneScope) {
+      const one = await oneScope(req.staff, sid);
+      if (one.denied) return one.denied === 404 ? fail(res, 404, "not_found") : fail(res, 403, "scope_denied");
+    } else if (!(await scopedStudents(req.staff.id)).has(sid)) return fail(res, 403, "scope_denied");
+    // 반대 행이 사이사이 끼므로 넉넉히 읽고 수업 줄 20개에서 자른다(한 수강생 · 한 트레이너라 많지 않다)
     const rows = await sbSelect("lesson_sessions",
-      `select=id,played_at,games,created_by,memo&student_id=eq.${sid}&trainer_id=eq.${req.staff.id}`
-      + `&order=played_at.desc,id.desc&limit=20`);
-    sendTrainer(res, {
-      lessons: rows.map((r) => ({ sessionId: opaqueId("session", r.id), playedAt: r.played_at, games: Number(r.games), source: sourceOf(r) })),
-    });
+      `select=id,trainer_id,played_at,games,created_by,memo,created_at,settled_period&student_id=eq.${sid}`
+      + (owner ? "" : `&trainer_id=eq.${req.staff.id}`) + `&order=played_at.desc,id.desc&limit=200`);
+    const { voided, voidedAt } = voidState(rows);
+    // 원장 목록은 여러 트레이너 기록이 섞인다 — 줄마다 누구 기록인지(판수 조정 목록 §9.18 과 같은 모양)
+    const staffNames = {};
+    if (owner) (await sbSelect("staff", "select=id,name")).forEach((s) => { staffNames[s.id] = s.name; });
+    const lessons = [];
+    for (const r of rows) {
+      if (String(r.created_by || "").startsWith("void:")) continue;
+      if (lessons.length >= 20) break;
+      const lockedPeriod = r.settled_period || await periodLocked(r.played_at);
+      const off = voided.has(Number(r.id));
+      lessons.push({
+        sessionId: opaqueId("session", r.id), playedAt: r.played_at, games: Number(r.games), source: sourceOf(r),
+        ...(owner ? { trainer: { trainerKey: r.trainer_id == null ? null : opaqueId("trainer", r.trainer_id),
+                                 trainerName: staffNames[r.trainer_id] || "미배정" } } : {}),
+        voided: off, voidedAt: off ? voidedAt.get(Number(r.id)) || null : null,
+        editable: isLessonRow(r) && !lockedPeriod, lockedPeriod: lockedPeriod || null,
+      });
+    }
+    sendTrainer(res, { lessons });
   }));
+
+  // ════════════════ §9.29 수업 기록 고치기 · 취소 · 되살리기 ════════════════
+  //   옛 행은 지우지 않는다 — 취소 = 반대 행 'void:<id>'(−N) · 되살리기 = 'void:<id>:rev'(+N) · 고치기 = 취소 + 새 기록.
+  //   잔여(§41) · 등록 귀속 · 정산 엔진은 행 합이라 계산식을 안 바꿔도 맞는다(§9.18 되돌리기와 같은 방식).
+  //   누가 = 그 수업의 담당 트레이너(trainer_id) · 원장은 전부. 언제까지 = 그 달(고치기는 새 날짜의 달도)이 안 잠겼을 때 —
+  //   원장도 이 길로는 잠긴 달을 못 바꾼다(정산이 끝난 장부 · 원장 SQL · §9.18 조정으로).
+  //   같은 기록 요청은 한 서버 안에서 줄 세운다(두 번 눌러도 한 번).
+  const editChains = new Map();
+  const serial = (key, fn) => {
+    const run = (editChains.get(key) || Promise.resolve()).catch(() => {}).then(fn);
+    editChains.set(key, run);
+    run.catch(() => {}).finally(() => { if (editChains.get(key) === run) editChains.delete(key); });
+    return run;
+  };
+  // 쓰기 판정용 잠금 — 읽지 못하면 막는다(정산 끝난 장부를 건드리지 않는 쪽 · 기록하기의 periodLocked 와 반대)
+  async function lockedFor(ymd) {
+    const rows = await sbSelect("period_locks", "select=period&released_at=is.null");
+    const period = String(ymd).slice(0, 7);
+    return rows.some((r) => r.period === period) ? period : null;
+  }
+  // 고칠 기록을 읽고 권한 · 잠금 · 취소 상태를 본다. 반환 { row, voided } | { err:[status, code] } | { lock }
+  async function editTarget(req, id) {
+    const row = (await sbSelect("lesson_sessions",
+      `select=id,student_id,trainer_id,played_at,games,created_by,memo,settled_period,lesson_enrollment_id&id=eq.${id}&limit=1`))[0];
+    if (!row) return { err: [404, "not_found"] };
+    if (req.staff.role !== "owner" && Number(row.trainer_id) !== Number(req.staff.id)) return { err: [403, "scope_denied"] };
+    if (!isLessonRow(row)) return { err: [409, "not_editable"] };            // 판수 조정 · 정정 · 반대 행은 이 길이 아니다
+    if (row.settled_period) return { lock: row.settled_period };
+    const lock = await lockedFor(row.played_at);
+    if (lock) return { lock };
+    const marks = await sbSelect("lesson_sessions",
+      `select=id,created_by,created_at&created_by=in.(void:${id},void:${id}:rev)`);
+    return { row, voided: voidState(marks).voided.has(Number(id)) };
+  }
+  // 반대 행 한 줄 — 옛 행과 같은 수강생 · 트레이너 · 날짜 · 등록. 등록 칸이 없는 배포면 칸을 빼고 한 번 더(writeLessonRows 와 같다)
+  async function insertMark(row, createdBy, games) {
+    const base = { student_id: row.student_id, trainer_id: row.trainer_id, played_at: row.played_at, games, memo: null, created_by: createdBy };
+    try { return await sbInsert("lesson_sessions", { ...base, lesson_enrollment_id: row.lesson_enrollment_id ?? null }); }
+    catch (e) {
+      console.error("lesson_mark_insert", e?.status || e?.message);
+      return await sbInsert("lesson_sessions", base);
+    }
+  }
+  // 이력(누가 · 언제 · 사유 · 전 → 후) — admin_audit. 원장 홈 recordChanges(§9.29.7)가 이 줄을 읽는다.
+  async function auditEdit(staff, action, row, detail) {
+    try {
+      await sbInsert("admin_audit", { actor_id: `staff:${staff.id}`, actor_name: staff.name, action, target: `lesson_sessions:${row.id}`,
+        detail: { student_id: row.student_id, trainer_id: row.trainer_id, played_at: row.played_at, ...detail } });
+    } catch (e) { console.error("lesson_edit_audit", action, e?.status || "fail"); }
+  }
+  const sendEditErr = (res, t) => (t.lock ? failWith(res, 409, "period_locked", { period: t.lock }) : fail(res, t.err[0], t.err[1]));
+
+  // POST /lessons/:id/cancel — 취소(§9.29.5) · 사유 필수
+  app.post(`${TRAINER}/lessons/:id/cancel`, rateLimit("trainerLessonEdit", 20, 60_000), bodyOnly(["reason"]), requireTrainer,
+    wrap(async (req, res) => {
+      const id = readOpaqueId("session", req.params.id);
+      if (id == null) return fail(res, 400, "invalid_body");
+      const reason = readEditReason(req.body?.reason);
+      if (reason === undefined) return fail(res, 400, "invalid_body");
+      if (reason === null) return fail(res, 400, "reason_required");
+      await serial(id, async () => {
+        const t = await editTarget(req, id);
+        if (t.err || t.lock) return sendEditErr(res, t);
+        if (t.voided) return fail(res, 409, "already_voided");
+        const mark = await insertMark(t.row, `void:${id}`, -Number(t.row.games));
+        await auditEdit(req.staff, "session.cancel", t.row, { reason, mark_id: mark?.id ?? null,
+          games_before: Number(t.row.games), games_after: 0 });
+        onGamesChanged([t.row.student_id]);
+        const rem = await remainingFor(t.row.student_id, t.row.trainer_id);
+        sendTrainer(res, { sessionId: opaqueId("session", id), voided: true, voidedAt: mark?.created_at || new Date().toISOString(),
+                           games: Number(t.row.games), remainingAfter: rem });
+      });
+    }));
+
+  // POST /lessons/:id/restore — 되살리기(§9.29.6) · 사유 선택
+  app.post(`${TRAINER}/lessons/:id/restore`, rateLimit("trainerLessonEdit", 20, 60_000), bodyOnly(["reason"]), requireTrainer,
+    wrap(async (req, res) => {
+      const id = readOpaqueId("session", req.params.id);
+      if (id == null) return fail(res, 400, "invalid_body");
+      const reason = readEditReason(req.body?.reason);
+      if (reason === undefined) return fail(res, 400, "invalid_body");
+      await serial(id, async () => {
+        const t = await editTarget(req, id);
+        if (t.err || t.lock) return sendEditErr(res, t);
+        if (!t.voided) return fail(res, 409, "not_voided");
+        const mark = await insertMark(t.row, `void:${id}:rev`, Number(t.row.games));
+        await auditEdit(req.staff, "session.restore", t.row, { reason, mark_id: mark?.id ?? null,
+          games_before: 0, games_after: Number(t.row.games) });
+        onGamesChanged([t.row.student_id]);
+        const rem = await remainingFor(t.row.student_id, t.row.trainer_id);
+        sendTrainer(res, { sessionId: opaqueId("session", id), voided: false, games: Number(t.row.games),
+                           remainingAfter: rem, remainingWasShort: rem != null && rem < 0 });
+      });
+    }));
+
+  // POST /lessons/:id/correct — 고치기(§9.29.4) = 옛 기록 취소 표시 + 새 기록(같은 함수 writeLessonRows)
+  app.post(`${TRAINER}/lessons/:id/correct`, rateLimit("trainerLessonEdit", 20, 60_000),
+    bodyOnly(["playedAt", "durationMin", "games", "reason"]), requireTrainer, wrap(async (req, res) => {
+      const id = readOpaqueId("session", req.params.id);
+      if (id == null) return fail(res, 400, "invalid_body");
+      await serial(id, async () => {
+        const t = await editTarget(req, id);
+        if (t.err || t.lock) return sendEditErr(res, t);
+        const v = parseCorrectBody(req.body, t.row, kstDate(Date.now()));
+        if (!v.ok) return fail(res, 400, "invalid_body");
+        if (t.voided) return fail(res, 409, "already_voided");
+        const { playedAt, games, durationMin, reason } = v.value;
+        if (playedAt !== t.row.played_at) {
+          const lock = await lockedFor(playedAt);
+          if (lock) return failWith(res, 409, "period_locked", { period: lock });
+        }
+        const mark = await insertMark(t.row, `void:${id}`, -Number(t.row.games));
+        const out = await recorder.writeLessonRows({
+          trainerId: t.row.trainer_id, entries: [{ sid: t.row.student_id, games }], playedAt, memo: null, createdBy: "portal",
+        });
+        const row = out.inserted?.[0];
+        if (out.error || !row) {
+          // 새 기록이 안 들어갔다 — 취소 표시를 되돌려 고치기 전으로 둔다(판수가 한쪽만 움직이지 않게)
+          try { await insertMark(t.row, `void:${id}:rev`, Number(t.row.games)); }
+          catch (e) { console.error("lesson_correct_rollback", id, e?.status || e?.message); }
+          return fail(res, 503, "portal_unavailable");
+        }
+        await auditEdit(req.staff, "session.correct", t.row, { reason, mark_id: mark?.id ?? null, new_session_id: row.id,
+          games_before: Number(t.row.games), games_after: games, played_at_after: playedAt, duration_min: durationMin });
+        const rem = await remainingFor(t.row.student_id, t.row.trainer_id);
+        sendTrainer(res, {
+          voided: { sessionId: opaqueId("session", id), playedAt: t.row.played_at, games: Number(t.row.games) },
+          recorded: { sessionId: opaqueId("session", row.id), playedAt: row.played_at, games: Number(row.games), durationMin,
+                      remainingAfter: rem, remainingWasShort: rem != null && rem < 0 },
+        });
+      });
+    }));
 
   // ════════════════ POST /adjustments — 판수 조정 요청 · 계약 §9.10 ════════════════
   app.post(`${TRAINER}/adjustments`, rateLimit("trainerAdjust", 20, 60_000),
@@ -417,5 +628,5 @@ module.exports = function mountTrainerLessons(app, deps) {
   }));
 };
 
-module.exports._test = { parseLessonBody, parseAdjustBody, sourceOf, addDays, isRealDate, ADJ_LABEL,
+module.exports._test = { parseLessonBody, parseAdjustBody, parseCorrectBody, pickGames, readEditReason, sourceOf, addDays, isRealDate, ADJ_LABEL,
   isDirect, adjStatusOf, revertibleUntil, ADJ_DIRECT_MAX };

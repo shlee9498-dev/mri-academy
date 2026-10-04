@@ -329,3 +329,39 @@ test("§61 예약 · 출석 없는 직강 칸도 수업 줄(slot) — 오늘 · 
     assigned: {}, review: {}, today: "2026-10-01", nowMs: Date.parse("2026-10-01T00:00:00Z") });
   assert.deepEqual([rows[0].lessonsToday, rows[0].lessonsWeek], [1, 3]);
 });
+
+test("§9.29 취소 · 되살리기 — 반대 행은 수업이 아니다 · 취소된 기록은 빠지고 되살리면 다시 수업 · 몇 번이든 번갈아", () => {
+  assert.equal(ops.isLessonRow({ games: 5, created_by: "void:7:rev" }), false);              // 되살리기 반대 행(+N)도 수업이 아니다
+  assert.deepEqual([ops.voidRef({ created_by: "void:12" }), ops.voidRef({ created_by: "void:12:rev" }), ops.voidRef({ created_by: "portal" }),
+                    ops.voidRef({ created_by: "void:x" })],
+    [{ id: 12, restore: false }, { id: 12, restore: true }, null, null]);
+  const rows = [
+    { id: 1, games: 5, created_by: "portal" },
+    { id: 2, games: 8, created_by: "1234" },
+    { id: 3, games: -5, created_by: "void:1", created_at: "2026-10-04T01:00:00Z" },          // 1 취소
+    { id: 4, games: -8, created_by: "void:2", created_at: "2026-10-04T01:00:00Z" },          // 2 취소
+    { id: 5, games: 8, created_by: "void:2:rev", created_at: "2026-10-04T02:00:00Z" },       // 2 되살림
+    { id: 6, games: -8, created_by: "void:2", created_at: "2026-10-04T03:00:00Z" },          // 2 다시 취소
+    { id: 7, games: 3, created_by: "adjreq:9" },
+  ];
+  const st = ops.voidState(rows);
+  assert.deepEqual([...st.voided].sort(), [1, 2]);
+  assert.equal(st.voidedAt.get(2), "2026-10-04T03:00:00Z");                                   // 마지막 취소 시각
+  assert.deepEqual(ops.lessonRowsOf(rows).map((r) => r.id), []);
+  assert.deepEqual(ops.lessonRowsOf([...rows, { id: 8, games: 8, created_by: "void:2:rev", created_at: "2026-10-04T04:00:00Z" }]).map((r) => r.id), [2]);
+  assert.deepEqual(ops.lessonRowsOf(null), []);
+  assert.equal(rows.reduce((n, r) => n + r.games, 0), 3);                                    // 행 합 = 조정 3 뿐(취소 둘 다 상쇄)
+});
+
+test("§9.29 원장 대시보드 — 취소한 기록은 오늘 · 이번 주 수업과 판수 합에서 빠진다(반대 행 포함)", () => {
+  const sessions = [
+    { id: 1, student_id: 10, trainer_id: 2, played_at: "2025-01-08", games: 5, created_by: "portal", created_at: "2025-01-08T01:00:00Z", memo: null },
+    { id: 2, student_id: 11, trainer_id: 2, played_at: "2025-01-08", games: 8, created_by: "portal", created_at: "2025-01-08T01:00:00Z", memo: null },
+    { id: 3, student_id: 10, trainer_id: 2, played_at: "2025-01-08", games: -5, created_by: "void:1", created_at: "2025-01-08T02:00:00Z", memo: null },
+  ];
+  const lessons = ops.buildLessons({ ...FIX, sessions, bookings: [], courseSessions: [], attendance: [], slots: [] });
+  assert.deepEqual(lessons.filter((l) => l.kind === "record").map((l) => l.ref), [2]);
+  const rows = ops.buildTrainerRows({ trainers: [{ id: 2, name: "A", role: "trainer" }], lessons, sessions, today: "2025-01-08",
+    nowMs: Date.parse("2025-01-08T03:00:00Z"), openSlots: [], assigned: {}, review: {} });
+  assert.deepEqual([rows[0].lessonsToday, rows[0].gamesWeek], [1, 8]);
+});

@@ -9,6 +9,8 @@
 // ============================================================
 "use strict";
 
+const { voidRef, voidState } = require("./ops-status.cjs");   // 수업 기록 취소 판정 한 벌(§9.29)
+
 const HOLD_DAYS = 14;                                   // 기준일 다음 날부터 14일이 지나면 보류(= 기준일 + 15일째)
 const LEVELS = ["advanced", "intermediate", "beginner"];
 const COURSE_LEVEL = { "심화반": "advanced", "중급반": "intermediate", "초급반": "beginner" };
@@ -138,16 +140,21 @@ function ledgerRows({ carry = null, enrolls = [], sessions = [], holds = [], adj
   }
   const reverted = new Set();
   if (hideReverted) for (const s of sessions) { const ref = adjreqRef(s); if (ref?.revert) reverted.add(ref.id); }
+  // 취소한 수업 기록(§9.29) — 반대 행(void:…)은 줄로 안 싣고, 옛 줄은 0판 · voided 로 남긴다(등록 취소 줄과 같은 모양).
+  //   옛 행 +N 과 반대 행 −N 이 서로 지워지므로 잔액(balance)은 §41 잔여와 그대로 같다.
+  const { voided } = voidState(sessions);
   for (const s of sessions) {
+    if (voidRef(s)) continue;
     const ref = adjreqRef(s);
     if (ref && reverted.has(ref.id)) continue;
     const adjust = isAdjustRow(s);
+    const off = !adjust && voided.has(Number(s.id));
     let label = "수업";
     if (adjust) {
       label = ref?.revert ? "되돌림" : ref ? (ADJ_LABEL[adjKinds.get(ref.id)] || "조정") : "정정";
     }
-    rows.push({ at: s.played_at, kind: adjust ? "adjust" : "lesson", games: -Number(s.games || 0), tid: s.trainer_id,
-                label, voided: false, ord: s.id });
+    rows.push({ at: s.played_at, kind: adjust ? "adjust" : "lesson", games: off ? 0 : -Number(s.games || 0), tid: s.trainer_id,
+                label, voided: off, ord: s.id });
   }
   for (const h of holds) {
     if (!(Number(h.games_held) > 0)) continue;

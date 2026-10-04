@@ -85,16 +85,28 @@ test("기록 — 넣을 게 없으면 아무것도 안 한다", async () => {
 });
 
 test("중복 판정 — 봇은 앱 기록(portal)만 · 앱은 수업 기록 전부(조정 행 제외)", async () => {
-  const a = fakeDb({ sessionsOn: [{ student_id: 7 }] });
+  const a = fakeDb({ sessionsOn: [{ id: 1, student_id: 7, games: 5, created_by: "portal" }, { id: 2, student_id: 8, games: 5, created_by: "1234" }] });
   const s1 = await createRecorder(a.deps).appRecordedOn(2, [7, 8], "2026-10-01");
-  assert.deepEqual([...s1], [7]);
-  assert.match(a.log.lastSessionQuery, /created_by=eq\.portal/);
+  assert.deepEqual([...s1], [7]);                                        // 봇 기록(8)은 앱 기록이 아니다
+  assert.match(a.log.lastSessionQuery, /created_by\.eq\.portal/);
 
-  const b = fakeDb({ sessionsOn: [{ student_id: 7, created_by: "1234" }, { student_id: 8, created_by: "adjreq:3" }] });
+  const b = fakeDb({ sessionsOn: [{ id: 1, student_id: 7, games: 5, created_by: "1234" }, { id: 2, student_id: 8, games: 3, created_by: "adjreq:3" }] });
   const s2 = await createRecorder(b.deps).recordedOn(2, [7, 8], "2026-10-01");
   assert.deepEqual([...s2], [7]);                                        // 조정 행은 수업이 아니다
-  assert.match(b.log.lastSessionQuery, /games=gt\.0/);
   assert.match(b.log.lastSessionQuery, /trainer_id=eq\.2/);
+  assert.doesNotMatch(b.log.lastSessionQuery, /games=gt/);               // 취소 반대 행(음수)을 보려고 판수로 거르지 않는다(§9.29)
+});
+
+test("중복 판정 — 취소한 기록(§9.29)은 앱 · 봇 판정에서 빠진다 · 되살리면 다시 기록이다 · 0 이하 행은 수업이 아니다", async () => {
+  const rows = [
+    { id: 10, student_id: 7, games: 5, created_by: "portal" }, { id: 11, student_id: 7, games: -5, created_by: "void:10" },   // 취소
+    { id: 20, student_id: 8, games: 8, created_by: "portal" }, { id: 21, student_id: 8, games: -8, created_by: "void:20" },
+    { id: 22, student_id: 8, games: 8, created_by: "void:20:rev" },                                                            // 되살림
+    { id: 30, student_id: 9, games: -2, created_by: "owner_sql" },                                                              // 0 이하
+  ];
+  const r = createRecorder(fakeDb({ sessionsOn: rows }).deps);
+  assert.deepEqual([...(await r.recordedOn(2, [7, 8, 9], "2026-10-04"))], [8]);
+  assert.deepEqual([...(await r.appRecordedOn(2, [7, 8, 9], "2026-10-04"))], [8]);
 });
 
 test("수업 날짜 칸 — 여러 적는 법 · 비우면 오늘 · 이번 달(월초 1주는 지난달 끝)만", () => {
