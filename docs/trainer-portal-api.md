@@ -2968,3 +2968,267 @@ banned 「쓸 수 없는 말이 들어 있어요」 · 409 taken 「이미 누�
 - **수업 기록하기**: 개인은 길이 버튼(1시간 · 1시간 30분 · 2시간 · 2시간 30분 · 3시간) → `durationMin` 만 보낸다(판수는 서버). 그룹은 판 수 `games`.
 - **내 기록 목록**: `voided` 면 두 줄 긋기 · `editable` 이면 [고치기] [취소] (취소된 줄은 [되살리기]) · `lockedPeriod` 면 「정산 끝난 달 · 원장에게」.
 - **원장 홈**: `recordChanges[]` 를 「최근 기록 변경」 한 줄씩.
+
+## 9.30 공지 · 전달문 — 초안함 → 미리보기 → 보내기 · 앱 알림함 + 봇 DM (2026-10-04 · 오너 결정 · 지휘 주문 + 덧붙임) · **서버 반영(이 PR) · DDL §65 실행 뒤 켜짐**
+
+> 오너 원문(10/4): 「초급 중급 심화로 트레이너든 이무리든 다 나누고나서 초급반한테 공지 중급반한테 공지 심화반한테 공지할 수 있게 해주고
+> 공지하면 어플에도 알람가지만 봇 통해서도 다들 개인디엠으로 알람가게 … 시간공지나 특별공지나 전체공지면 다 알람가게」 ·
+> 「각자 수강생들에게 전체공지나 개별공지는 가능 모든 이무리직강포함 수강생 전체공지는 오너만」 ·
+> 덧붙임 「(트레이너)한테 봇으로 전달문보내자 내가보내는게 네가 앱통해 우리전달문을 보내는시스템 만들어봐」.
+> 학원 게시판이 아니라 **받는 사람이 정해진 글**이다 — 앱 알림함과 봇 DM 으로 같이 간다.
+> 지휘가 원장 화면에서 초안을 써 두고 보내기는 오너 한마디 뒤에 — **쓰기와 보내기를 나눈다.**
+
+| 오너 결정(10/4) | 서버 |
+|---|---|
+| 트레이너 = 내 수강생에게 전체 · 개별 공지를 바로(오너 확인 없이) | `audience.type` = `my_students` · `students`(내 범위 안만) · `slot`(내 칸 예약자) |
+| 원장만 = 반별(초급 · 중급 · 심화) · 수강생 전체(직강 포함) | `class` · `all` — 트레이너는 403 `owner_only` |
+| 종류 = 시간 공지 · 특별 공지 · 전체 공지 · 셋 다 앱 알림 + 봇 DM | `kind` = `time` · `special` · `general` |
+| (덧붙임) 원장만 = 트레이너에게 전달문 · 직원 명부에서 한 명 이상 · 앱 알림 + 봇 DM | `trainers` + `kind` = `message`(「전달문」 · 트레이너에게는 전달문만) |
+| (덧붙임) 초안함 — 저장 · 목록에서 다시 열어 고치기 · 보내기는 미리보기 뒤 따로 · 수강생 공지도 같은 초안함 | **모든 글이 초안으로 시작한다**(9.30.2) · 보내기 = 그 초안의 미리보기 토큰(9.30.3) |
+| (덧붙임) 긴 글 = 디스코드 한 메시지를 넘으면 나눠 보내되 순서 · 코드 블록 · 줄바꿈 그대로 | `dmParts[]`(9.30.8) |
+| (덧붙임) 트레이너가 앱에서 「확인했어요」 + 한 줄 답 · 원장 화면에서 보임 | `GET /inbox` · `POST /inbox/:id/ack`(9.30.6) · 원장 상세 `recipients[].reply` |
+| (덧붙임) 누가 초안을 썼고 누가 보내기를 눌렀는지 따로 | `draftedBy` · `sentBy`(+ `updatedBy` 마지막으로 고친 사람) |
+
+**0단계 실측(10/4 · 읽기만)**
+- 봇 DM 길 = `server.js` `discordDM()` — 성공 · 실패만 돌려주고 「DM 막힘」 · 「없는 사용자」를 가르지 못한다 → 공지용으로 사유를 돌려주는 발송 함수를 따로 둔다(`discordDMDetail` · 디스코드 오류 50007 = DM 막힘).
+- 앱 알림 표 = **없다**(OS 푸시 설비도 없다). 이 절의 「앱 알림」 = **앱 안 알림함 + 안 읽은 수**다. 휴대폰 푸시는 별도 일이다.
+- 수강생 ↔ 반 = 진행 중(active · paused) 강의의 `courses.level` · 수강생 ↔ 트레이너 = 범위(`scopedStudents` = 담당 ∪ 최근 90일 수업 · §9.12).
+- 앱 로그인도 `students.discord_id` 로 한다 → **앱 알림함 · DM 둘 다 디스코드 연결이 있어야 닿는다.** 진행 중 수강생 73명 중 연결 22명(10/4).
+  연결 없는 사람에게도 받는 사람 줄은 남겨 둔다 — 나중에 연결하면 앱 알림함에서 바로 보인다.
+- 직원 명부(10/4) = 일하는 직원 4명(원장 1 · 트레이너 2 · 직원 1) 중 디스코드 연결 3명. 연결 없는 직원은 DM 도 트레이너 앱도 닿지 않는다(앱 로그인 = 디스코드).
+- 트레이너 앱 주소는 이 저장소에 없다 → 트레이너 DM 은 **링크 줄 없이** 나간다. 주소를 주면 `server.js` `TRAINER_APP_URL` 한 줄(`{주소}/inbox/{id}`).
+
+### 9.30.1 받는 사람(`audience`)
+
+| `type` | 누가 보낼 수 있나 | 받는 사람 |
+|---|---|---|
+| `all` | 원장만 | 진행 중(active · paused) 수강생 전원(직강 포함 · 테스트 계정 뺌) |
+| `class` + `classLevel`(`beginner` · `intermediate` · `advanced`) | 원장만 | 그 반 진행 중(active · paused) 강의가 있는 수강생(테스트 계정 뺌) |
+| `my_students` | 트레이너 · 원장 | 쓴 사람의 범위(담당 ∪ 최근 90일 수업 · §9.12) 중 진행 중(테스트 계정 뺌) |
+| `students` + `studentIds[]`(1~50 · 수강생 목록 `id`) | 트레이너(내 범위 안만) · 원장(누구나) | 고른 사람(진행 중 · 테스트 계정도 고를 수 있다) |
+| `slot` + `slotId`(칸 목록 `id`) | 그 칸 트레이너 · 원장 | 그 칸 예약자(「예약됨」) — 시간 공지용 |
+| `trainers` + `trainerKeys[]`(1~50 · `GET /notices/staff` 의 `trainerKey`) | **원장만** | 고른 직원(일하는 사람만 · 원장 자신도 고를 수 있다 = 첫 발송 시험) · `kind` 는 `message` 만 |
+
+- 고른 사람 중 하나라도 내 범위 밖이면 403 `scope_denied` — **아무에게도 안 보낸다.** 받는 사람이 0명이면 미리보기 · 보내기에서 409 `no_recipients`.
+- 고른 사람이 그 사이 종료 · 합침 · 퇴사로 빠졌으면 409 `recipients_changed` → 초안을 고친다.
+- 종료 · 신청자(prospect) · 합친 행은 들어가지 않는다. 테스트 계정은 `students` 로 고를 때만 들어간다(오너 첫 발송 시험용).
+- `kind` 와 `type` 짝: `message`(전달문) ↔ `trainers` 만. 짝이 안 맞으면 400 `invalid_body`.
+- **시간 공지**: 예약 시간 자체를 바꾸는 일은 이 절 밖이다 — 미리보기 응답 `slotNote` = 「예약 시간은 슬롯에서 따로 바꿔 주세요」(시간 공지 · 칸 예약자일 때 · 아니면 `null`).
+
+```json
+GET /api/trainer-portal/notices/staff        (원장만 · 트레이너는 403 owner_only)
+→ { "staff": [ { "trainerKey": "…", "displayName": "…", "role": "trainer", "dm": "ready" } ] }
+```
+`role` = `owner` · `trainer` · `staff` · 순서 = 원장 → 트레이너 → 그 밖, 이름순. `dm` = `ready`(디스코드 연결 있음) · `no_discord`.
+
+### 9.30.2 초안함 — 쓰기 · 다시 열어 고치기 · 버리기 (**저장만으로는 아무에게도 안 나간다**)
+
+```json
+POST /api/trainer-portal/notices/drafts
+{ "kind": "message", "title": "10월 운영 전달", "body": "…", "audience": { "type": "trainers", "trainerKeys": ["…"] }, "requestKey": "c1f0…" }
+→ { "notice": { …9.30.5 한 줄 + 상세… }, "created": true }
+
+GET  /api/trainer-portal/notices/drafts          → { "drafts": [ { …9.30.5 한 줄(status "draft" · counts null)… } ] }
+GET  /api/trainer-portal/notices/:id             → { "notice": { …, "body": "…", "audience": { …, "slotId": null, "picked": [ { "id": "…", "displayName": "…" } ] } }, "recipients": [] }
+PUT  /api/trainer-portal/notices/:id             { "kind", "title", "body", "audience" }   → { "notice": { … } }
+POST /api/trainer-portal/notices/:id/discard     → { "notice": { …, "discardedAt": "…" } }
+```
+
+| 필드 | 뜻 |
+|---|---|
+| `kind` | `time`(시간 공지) · `special`(특별 공지) · `general`(전체 공지) · `message`(전달문 · 트레이너에게만) |
+| `title` · `body` | 1~60자 · 1~4,000자(앞뒤 공백은 지운다 · 디스코드 한 메시지를 넘으면 9.30.8 로 나눠 보낸다) |
+| `requestKey` | 앱이 만드는 1~64자(영문 · 숫자 · `-` · `_`) — 쓰기 화면 하나에 하나. 같은 키 두 번 = 처음 초안(`created: false`) |
+| `audience.picked[]` | 상세에서만 · `students` · `trainers` 의 고른 사람(초안을 다시 열 때 그대로 채운다 · `id` 를 `studentIds` · `trainerKeys` 로 다시 보낸다) |
+| `audience.slotId` | 상세에서만 · `slot` 의 칸 `id` |
+
+- **저장할 때도 권한 · 범위를 본다** — 트레이너가 반별 · 수강생 전체 · 전달문 · 남의 수강생 · 남의 칸으로 저장하면 403(아무것도 안 씀). 받는 사람이 지금 0명이어도 저장은 된다.
+- 초안함 = **내 초안만**(최근 고친 순 · 버린 것 빼고 · 50개). 남의 초안은 원장에게도 없는 것(404).
+- 고치기 · 미리보기 · 버리기는 초안에만 — 보낸 글 · 버린 초안은 409 `not_draft`. 버리기는 지우지 않고 표시만 · 두 번 눌러도 처음 시각.
+- **앱 밖에서 넣은 초안**(지휘 · 세션이 SQL 로 넣는 초안 · §65 아래 예시): 원장 초안함에 보이고 `draftedBy` = 넣을 때 적은 이름(예: 「지휘」).
+  보내기는 원장이 앱에서 미리보기 뒤에만 — 저장된 모양이 판정에 안 맞으면 미리보기 · 보내기가 409 `draft_invalid`.
+  지휘가 원장 계정으로 앱에서 직접 쓰면 서버는 원장이 쓴 것으로 남긴다(계정으로만 사람을 가른다).
+
+### 9.30.3 미리보기 → 보내기 (DM 은 되돌릴 수 없어서 두 단계)
+
+```json
+POST /api/trainer-portal/notices/:id/preview
+→ { "previewToken": "…", "expiresAt": "2026-10-04T07:10:00Z", "recipientCount": 3,
+    "recipients": [ { "id": "…", "displayName": "…", "pubgName": "…", "dm": "ready" } ],
+    "dmReadyCount": 2, "dmUnavailableCount": 1, "dmParts": [ "…봇 DM 이 이렇게 간다(조각 순서대로)…" ],
+    "slotNote": "예약 시간은 슬롯에서 따로 바꿔 주세요" }
+
+POST /api/trainer-portal/notices/:id/send   { "previewToken": "…" }
+→ { "notice": { …9.30.5 한 줄(status "sent")… }, "created": true }
+```
+
+| 필드 | 뜻 |
+|---|---|
+| `recipients[].dm` | `ready`(DM 갈 수 있음) · `no_discord`(디스코드 연결 없음 — 앱 알림함엔 남는다 · 연결하면 보인다). 전달문이면 `id` 는 `trainerKey` 와 같은 값 · `pubgName` 은 `null` |
+| `dmParts[]` | 실제로 나갈 DM — 한 사람에게 이 순서대로 · 보통 1개 |
+| `previewToken` | 그 초안의 **지금 내용 · 지금 받는 사람**과 묶인 서명 · 10분 |
+
+- **미리보기 없이는 못 보낸다**: 토큰이 없으면 400 `invalid_body` · 10분 지나면 409 `preview_expired` ·
+  미리보기 뒤 초안을 고쳤거나 받는 사람이 달라졌으면(누가 예약을 취소했다 등) 409 `preview_stale` → 다시 미리보기.
+- **두 번 나가지 않는다**: 보내기는 「초안 → 보냄」 한 번만 된다 — 같은 초안을 두 번(동시에 둘 포함) 눌러도 처음 결과(`created: false`) · DM 한 벌.
+- 받는 사람 줄을 적다가 실패하면 초안으로 되돌아간다(503 · DM 0) — 다시 누르면 그때 나간다.
+- 보내기는 응답을 먼저 돌려주고 **서버가 뒤에서 한 사람씩(1.2초 간격) DM** 을 보낸다 — 결과는 `GET /notices/:id`.
+  실패해도 **자동으로 다시 보내지 않는다** — 「못 보낸 사람」으로 남고, 보낸 사람이 「다시 보내기」(9.30.5)를 고를 수 있다.
+- 오류: 403 `owner_only` · `scope_denied` / 404 `not_found` / 409 `not_draft` · `draft_invalid` · `no_recipients` · `recipients_changed` · `preview_stale` · `preview_expired`.
+
+### 9.30.4 받는 사람 상태
+
+| `dmStatus` | 뜻 |
+|---|---|
+| `pending` | 보내는 중 |
+| `sent` | DM 감(나눈 글이면 조각 전부) |
+| `dm_blocked` | 그 사람이 DM 을 막아 둠 — 앱 알림함엔 남는다 |
+| `no_discord` | 디스코드 연결 없음 — 앱 알림함엔 남는다(연결하면 보인다) |
+| `failed` | 그 밖 실패 — `dmReason` = `bot_offline` · `unknown_user` · `partial`(나눈 글의 앞 조각만 감) · `withdrawn`(보내는 도중에 내림) · `interrupted`(10분 넘게 `pending` = 서버가 끊김) · `error` |
+
+`readAt` = 「확인했어요」를 누른 시각(안 눌렀으면 `null`) · `reply` · `repliedAt` = 트레이너의 한 줄 답(수강생 줄은 늘 `null`).
+
+### 9.30.5 보낸 글 — 이력 · 상세 · 다시 보내기 · 내림 (보낸 사람 · 원장)
+
+```json
+GET /api/trainer-portal/notices?limit=50
+→ { "notices": [ { "id": "…", "status": "sent", "kind": "time", "title": "…",
+                   "audience": { "type": "slot", "classLevel": null, "label": "10/4 19:00 칸 예약자" },
+                   "draftedBy": "트레이너A", "sentBy": "트레이너A", "createdAt": "…", "updatedAt": "…", "sentAt": "…",
+                   "withdrawnAt": null, "discardedAt": null,
+                   "counts": { "total": 3, "read": 1, "replied": 0, "sent": 2, "pending": 0, "dmBlocked": 0, "noLink": 1, "failed": 0 } } ] }
+GET /api/trainer-portal/notices/:id
+→ { "notice": { …위 한 줄…, "body": "…", "updatedBy": "트레이너A", "withdrawReason": null, "remindCount": 0, "lastRemindedAt": null,
+                "audience": { …, "slotId": "…", "picked": [] } },
+    "recipients": [ { "id": "…", "displayName": "…", "pubgName": "…", "dmStatus": "sent", "dmReason": null, "dmAt": "…",
+                      "readAt": null, "reply": null, "repliedAt": null } ] }
+POST /api/trainer-portal/notices/:id/remind   { "requestKey": "…" }  → { "reminded": 2, "skipped": 1, "repeated": false }
+POST /api/trainer-portal/notices/:id/withdraw { "reason": "날짜를 잘못 적었어요" } → { "notice": { …, "withdrawnAt": "…" } }
+```
+
+- `audience.label` = 「수강생 전체」 · 「초급반 전체」 · 「내 수강생 전체」(남이 쓴 글이면 「{이름} 수강생 전체」) · 「{첫 사람} 외 N명」 · 「10/4 19:00 칸 예약자」.
+- **쓴 사람 · 보낸 사람**: `draftedBy` = 초안을 처음 쓴 사람(앱 밖 초안이면 적어 둔 이름) · `sentBy` = 보내기를 누른 사람 · 상세 `updatedBy` = 마지막으로 고친 사람.
+- 이력 = 트레이너는 **내가 보낸 글**만 · 원장은 전부(최신순). 남이 보낸 글 상세 · 다시 보내기 · 내림은 트레이너에게 404.
+- **다시 보내기** = **안 읽은 사람 중 DM 이 갈 수 있는 사람에게만**(`no_discord` · `dm_blocked` 는 건너뛴다 · `skipped`) · 짧은 틀(9.30.8)로 한 번.
+  같은 `requestKey` 두 번 = 한 번 · 한 글에 10분에 한 번(409 `remind_too_soon`) · 내린 글은 409 `withdrawn` · 초안은 409 `not_sent`.
+- **내림** = 앱 알림함 · 트레이너 받은 함에서 빠진다 · 이력에는 `withdrawnAt` 과 함께 그대로 남는다(지우지 않는다) · 사유는 선택(200자) ·
+  **이미 간 DM 은 되돌릴 수 없다**(앱 문구에 같이 적는다) · 보내는 도중에 내리면 남은 사람에게는 안 간다(`withdrawn`). 두 번 내려도 처음 시각.
+
+### 9.30.6 트레이너 앱 — 받은 전달문 · 「확인했어요」 · 한 줄 답
+
+```json
+GET  /api/trainer-portal/inbox
+→ { "items": [ { "id": "…", "kind": "message", "title": "…", "body": "…", "fromName": "…", "sentAt": "…",
+                 "read": false, "readAt": null, "reply": null, "repliedAt": null } ], "unreadCount": 1 }
+POST /api/trainer-portal/inbox/:id/ack   { "reply": "확인했어요 오늘부터 앱으로 받을게요" }
+→ { "id": "…", "read": true, "readAt": "…", "reply": "확인했어요 오늘부터 앱으로 받을게요", "repliedAt": "…" }
+```
+
+- 내게 온 전달문만 · 최신순 50개 · 내린 글은 빠진다. 받는 사람이 아니면 404(원장 자신도 받는 사람으로 고르지 않았으면 404).
+- 「확인했어요」 시각은 **처음 그대로**. `reply` 는 선택 — 줄바꿈 없이 1~200자 · 다시 쓰면 새 답(`repliedAt` 도 새로) · 빈 답 · 생략 = 확인만(있던 답은 그대로) · 그 밖 400 `invalid_body`.
+- 원장 화면 = `GET /notices/:id` 의 `recipients[].readAt` · `reply` · `repliedAt` · `counts.read` · `counts.replied`.
+
+### 9.30.7 수강생 앱
+
+```json
+GET  /api/student-portal/notices
+→ { "items": [ { "id": "…", "kind": "special", "title": "…", "body": "…", "fromName": "트레이너A",
+                 "sentAt": "…", "read": false, "readAt": null } ], "unreadCount": 1 }
+POST /api/student-portal/notices/:id/read  → { "id": "…", "read": true, "readAt": "…" }
+```
+
+- 내게 온 공지만 · 최신순 50개 · 내린 공지는 빠진다 · `fromName` = 보낸 사람. 「확인했어요」는 두 번 눌러도 처음 시각 그대로.
+- 남에게 간 공지 · 없는 공지 · 내린 공지에 「확인했어요」는 404.
+
+### 9.30.8 봇 DM 문안 틀 — **오너 확인 대기**(사람에게 나가는 글)
+
+수강생(~요체):
+
+```
+📢 {종류} | {제목}
+
+{본문 — 줄바꿈 · 코드 블록 그대로}
+
+{보낸 사람} {트레이너가 | 원장이} 보냈어요
+앱에서 보고 「확인했어요」를 눌러 주세요
+{앱 링크 = https://app.mriacademy.gg/notices/{공지 id}}
+```
+
+트레이너 전달문(운영진 DM 이라 반말 · 기존 운영진 DM 과 같은 말투):
+
+```
+📢 전달문 | {제목}
+
+{본문 — 줄바꿈 · 코드 블록 그대로}
+
+{보낸 사람} 원장이 보냈어
+트레이너 앱에서 「확인했어요」를 누르고 한 줄 답도 남길 수 있어
+{트레이너 앱 링크 = {주소}/inbox/{id} — 주소를 받기 전까지 이 줄 없음}
+```
+
+**긴 글**(디스코드 한 메시지 2,000자 · 서버는 1,900자로 끊는다): 한 사람에게 순서대로 여러 개 —
+첫 조각 첫 줄 `📢 {종류} | {제목} (1/3)` · 다음 조각 첫 줄 `(2/3)` · 「보낸 사람」 줄과 링크는 마지막 조각에만.
+줄 단위로 나누고, 코드 블록 안에서 나뉘면 그 조각 끝에서 블록을 닫고 다음 조각 첫 줄에서 같은 언어 표시로 다시 연다.
+한 줄이 조각보다 길면 그 줄만 띄어쓰기 자리에서 자른다(이모지를 반으로 자르지 않는다). 앞 조각만 가고 끊기면 `failed` · `partial`.
+
+다시 보내기(9.30.5 · 한 메시지):
+
+```
+🔔 아직 확인 전인 공지예요 | {제목}          ← 트레이너: 🔔 아직 확인 전이야 | {제목}
+
+{본문 앞 300자}
+
+앱에서 보고 「확인했어요」를 눌러 주세요     ← 트레이너: 전달문 안내 줄
+{앱 링크}
+```
+
+- 종류 = 「시간 공지」 · 「특별 공지」 · 「전체 공지」 · 「전달문」. 이모지는 첫 줄 하나뿐 · 느낌표 없음.
+- 앱 링크의 `/notices/{id}`(수강생 앱) · `/inbox/{id}`(트레이너 앱) 화면은 각 앱(반장)이 만든다 — 다른 길을 쓰면 서버 상수 한 줄만 바꾼다.
+- 미리보기 `dmParts[]` 가 이 틀 그대로다 — 보내는 사람이 보내기 전에 실제 DM 을 본다.
+
+### 9.30.9 DDL §65 — `notices` · `notice_recipients` (A 구간 · 새 표 둘 · 더하기만 · `supabase_admin_panel.sql` §65)
+
+- 실행 전에는 이 절의 라우트만 503 `portal_unavailable`(다른 포털은 그대로) · 기동 점검에 경고 줄(`SCHEMA_OPTIONAL`) · 실행 뒤 1분 안에 재시작 없이 켜진다.
+- 되돌림 시험 끝(10/4 · 운영 DB · 한 DO 블록 안에서 만들고 줄 26개를 시험한 뒤 전부 롤백 · 남은 변화 0) — 결과는 §65 주석.
+- 실행 뒤 **첫 실제 발송은 오너가** — 수강생 공지는 테스트 계정 1명(`students`) · 전달문은 원장 자신(`trainers` + 원장)에게만. 운영 수강생 · 트레이너 DM 시험은 하지 않는다.
+
+### 9.30.10 시험 (`scripts/notices.test.cjs` · 발송부는 가짜 · 가짜 DB 는 §65 check · unique 를 그대로 흉내)
+
+- 트레이너가 반별 · 수강생 전체 · 전달문 · 남의 수강생 · 남의 칸을 초안으로도 못 쓴다(403 · 아무것도 안 씀 · DM 0) · 직원 명부는 원장만.
+- 초안 저장 · 같은 키(동시에 둘 포함) · 고치기 · 버리기 · 남의 초안 404 — 초안만으로는 DM · 받는 사람 줄 0.
+- 토큰 없이 · 위조 · 고친 뒤 옛 토큰 · 받는 사람이 바뀐 토큰 · 지난 토큰 · 토큰 확인과 잠그기 사이에 고친 경우 · 남의 초안 = 안 나간다.
+- 보내기 동시에 둘 · 다시 한 번 = 글 한 줄 · DM 한 벌 · 받는 사람 쓰기 실패 = 초안으로 되돌림.
+- DM 막힘 · 연결 없음 · 실패가 그 상태로 남고 자동으로 다시 안 나간다 · 다시 보내기는 안 읽은 사람 중 DM 갈 수 있는 사람만 · 도중에 내리면 남은 사람 안 감.
+- 전달문 — 받은 함 · 「확인했어요」 처음 시각 · 한 줄 답(줄바꿈 · 201자 400) · 원장 화면에 답 · 트레이너는 원장 글 상세 404.
+- 긴 글 — 조각 1,900자 이하 · 코드 블록 짝 · (k/n) · 꼬리는 마지막에만 · 한 사람에게 순서대로 · 앞 조각만 가면 `partial` · 무작위 글 300개.
+- 앱 밖 초안(쓴 사람 「지휘」) → 원장이 고쳐서 보냄 = `draftedBy` 「지휘」 · `updatedBy` · `sentBy` 「원장」 · 모양이 틀린 앱 밖 초안 409.
+- 시험 무력화 18가지(원장만 풀기 · 범위 확인 빼기 · 잠금 조건 빼기 · 토큰 무시 · 도중 내림 무시 · 답 줄바꿈 허용 · 받은 함 거르기 빼기 · DM 한도 · 블록 안 닫기 등)를 하나씩 넣으면 전부 깨진다.
+
+### 9.30.11 계약 한 줄 (반장)
+
+- **쓰기**: 종류 · 제목 · 본문 · 받는 사람 → [초안 저장] = `POST /notices/drafts`(화면마다 `requestKey` 하나) · 다시 저장은 `PUT /notices/:id`.
+  [미리보기] = `POST /notices/:id/preview` → 받는 사람 수 · 이름 · `dmParts` 를 보여 주고 [보내기] = `POST /notices/:id/send { previewToken }`.
+  `409 preview_stale` 이면 다시 미리보기. 시간 공지 · 칸 예약자면 `slotNote` 를 보여 준다.
+- **초안함**: `GET /notices/drafts` → 누르면 `GET /notices/:id` 로 열어 `audience.picked` 로 고른 사람을 채운다 · [버리기] `POST /notices/:id/discard`.
+- **전달문(원장)**: 받는 사람 「트레이너」 → `GET /notices/staff` 에서 고르기 · 종류는 「전달문」 고정.
+- **보낸 글**: `GET /notices` → 쓴 사람 · 보낸 사람 · 읽음 수 · 답 수 · 못 보낸 수 · [다시 보내기](안 읽은 사람만) · [내림](「이미 간 DM 은 되돌릴 수 없어요」) · 상세에 답장.
+- **트레이너 받은 함**: `GET /inbox` · `unreadCount` 배지 · [확인했어요] + 한 줄 답 → `POST /inbox/:id/ack`.
+- **수강생 앱**: `GET /notices` 알림함 · `unreadCount` 배지 · [확인했어요] → `POST /notices/:id/read`.
+
+## 9.31 지난 예약 휴강 · 취소 — 원장만 · 회차 · 판수 차감 없음 (2026-10-04 · 지휘 주문 · **계약만 · 서버는 공지 뒤**)
+
+> 배경(10/4): 10/2 09:00 직강 예약 #41 이 「확인 필요」로 남았는데 열리지 않은 수업이었다(오너 원문).
+> 앱에는 「출석 · 완료」 「노쇼」만 있다 — 노쇼는 회차는 안 빠지지만 「결석」으로 남아 휴강과 다르다.
+> 수강생 취소는 수업 3시간 전까지 · 칸 닫기는 「예약됨」만 취소해서 **지난 예약을 휴강으로 닫는 길이 없다.**
+> #41 은 세션이 SQL 로 상태만 `cancelled` 로 바꿨다(감사 #68 · 사유 「휴강 — 오너 확인 10/4」 · 회차 · 판수 · 결제 그대로).
+
+```json
+POST /api/trainer-portal/bookings/:id/cancel-past   { "reason": "휴강 — 원장 사정" }
+→ { "bookingId": "…", "status": "cancelled", "gamesRestored": 0 }
+```
+
+- **원장만**(트레이너 403 `owner_only`). 시작 시각이 지난 예약 중 「예약됨」 · 「확인 필요」만 → 「취소」. 그 밖(완료 · 노쇼 · 이미 취소)은 409 `not_cancellable` · 아직 안 지난 예약은 409 `not_past`(종전 칸 닫기 · 수강생 취소 길을 쓴다).
+- **회차 · 판수 차감 없음** — 직강 회차는 출석 기록으로만 빠지므로 그대로 · 레슨 예약의 선차감(`games_held`)은 풀린다(`gamesRestored` = 돌아온 판수).
+- 사유 **필수** 2~200자 · 이력 = `admin_audit` `booking.cancel`(누가 · 언제 · 사유 · 전 → 후). 예약 줄은 지우지 않는다.
+- 수강생 DM 은 보내지 않는다(지난 수업) — 알려야 하면 공지(§9.30) 개별 공지로.
+- 원장 홈 「완료 확인 필요」에서 빠진다.

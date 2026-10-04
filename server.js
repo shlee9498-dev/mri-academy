@@ -8377,6 +8377,14 @@ require("./trainer-lessons.cjs")(app, {
   ownerAlert: (a) => discordDM(process.env.MRI_OWNER_ID, adjustAlertText(a)),
   onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 바로 반영 · 되돌림 직후
 });
+// 공지 · 전달문(계약 §9.30 · 2026-10-04) — 초안함 → 미리보기 → 보내기 · 앱 알림함 + 봇 DM. §65 미실행이면 이 라우트군만 503.
+// TRAINER_APP_URL = 트레이너 전달문 DM 끝의 앱 링크(트레이너 앱은 다른 저장소 · 이 저장소에 주소가 없다 — 오너가 주면 적는다 ·
+//   비어 있으면 링크 줄 없이 나간다). 수강생 공지 링크는 STUDENT_APP_URL/notices/{id}.
+const TRAINER_APP_URL = "";
+require("./notices.cjs")(app, {
+  sbSelect, sbInsert, sbInsertMany, sbPatch, limit, portal: studentPortal, trainer: trainerPortal,
+  sendDM: discordDMDetail, appUrl: STUDENT_APP_URL, trainerAppUrl: TRAINER_APP_URL,
+});
 // 오너 알림 본문 — 승인 카드(adjreqPortalCard)와 같은 줄 모양. 운영진 DM 이라 반말이다.
 function adjustAlertText(a) {
   const n = Math.abs(Number(a.remainingDelta));
@@ -8451,6 +8459,18 @@ async function discordDM(discordId, msg) {
   if (!botClient || !discordId) return false;
   try { const u = await botClient.users.fetch(String(discordId)); await u.send(msg); return true; }
   catch (e) { console.error("discord_dm", String(discordId).slice(0, 4) + "…", e?.message); return false; }
+}
+// 공지 DM(계약 §9.30) — 성공 · 실패에 사유를 붙여 돌려준다. 50007 = 상대가 서버 멤버 DM 을 막음 · 10013 = 없는 사용자.
+//   discordDM 은 참 · 거짓만 돌려줘서 「DM 못 보냄」 사유를 가를 수 없다(10/4 실측) — 공지만 이 함수를 쓴다.
+async function discordDMDetail(discordId, msg) {
+  if (!discordId) return { ok: false, reason: "no_discord" };
+  if (!botClient) return { ok: false, reason: "bot_offline" };
+  try { const u = await botClient.users.fetch(String(discordId)); await u.send(msg); return { ok: true }; }
+  catch (e) {
+    const code = Number(e?.code) || null;
+    console.error("notice_dm", String(discordId).slice(0, 4) + "…", code || e?.message);
+    return { ok: false, reason: code === 50007 ? "dm_blocked" : code === 10013 ? "unknown_user" : "error" };
+  }
 }
 async function ownerDM(msg) {
   if (!botClient || !process.env.MRI_OWNER_ID) return;
@@ -8672,6 +8692,14 @@ const SCHEMA_OPTIONAL = {
   // 「판정 전」 0 으로 보인다(지급 안 함 쪽으로 실패). 판정을 넣기 시작하면 REQUIRED 로 올린다.
   staff_month_conditions: ["staff_id", "period", "condition_key", "met", "evidence", "memo", "decided_by", "decided_at"],
   lesson_sessions: ["lesson_enrollment_id"],
+  // §65 공지 · 전달문(계약 §9.30 · 2026-10-04) — 미실행이면 notices.cjs 라우트만 503(1분마다 다시 확인 · 실행 뒤 재시작 없이 켜진다).
+  //   공지를 쓰기 시작하면 REQUIRED 로 올린다.
+  notices: ["id", "status", "kind", "title", "body", "author_staff_id", "drafted_by", "drafted_label", "audience_type", "class_level",
+            "slot_id", "target_ids", "request_key", "created_at", "updated_at", "updated_by", "sent_at", "sent_by", "recipient_count",
+            "discarded_at", "discarded_by", "withdrawn_at", "withdrawn_by", "withdraw_reason", "last_reminded_at", "last_remind_key",
+            "remind_count"],
+  notice_recipients: ["id", "notice_id", "student_id", "staff_id", "dm_status", "dm_reason", "dm_at", "read_at", "reply", "replied_at",
+                      "reminded_at", "remind_count"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.

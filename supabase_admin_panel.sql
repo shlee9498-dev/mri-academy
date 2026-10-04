@@ -6589,3 +6589,115 @@ notify pgrst, 'reload schema';   -- 블록을 통째로 붙여 실행해도 Post
 --
 -- 되돌림: drop table if exists public.staff_month_conditions;   -- 판정 줄이 있으면 먼저 오너 확인
 -- ============================================================
+
+-- ============================================================
+-- 65) 공지 · 전달문 — 초안함 · 앱 알림함 + 봇 DM (2026-10-04 · 오너 결정 · 지휘 주문 · 계약 §9.30)
+--     오너 원문(10/4): 「초급반한테 공지 중급반한테 공지 심화반한테 공지 … 어플에도 알람가지만 봇 통해서도 다들 개인디엠으로」 ·
+--                     「각자 수강생들에게 전체공지나 개별공지는 가능 모든 이무리직강포함 수강생 전체공지는 오너만」 ·
+--                     「(트레이너)한테 봇으로 전달문보내자 … 네가 앱통해 우리전달문을 보내는시스템 만들어봐」.
+--     A 구간(새 표 둘 · 더하기만 · 기존 표 · 제약 · 함수 안 건드림). 10/4 실측: 두 표 모두 없음(이 절은 처음 실행된다).
+--     notices           = 글 한 줄. 모든 글이 초안(status 'draft')으로 시작하고, 미리보기 뒤 보내기를 누르면 'sent' 가 된다(한 번 · 조건부).
+--                         쓴 사람(drafted_by · 앱 밖에서 넣은 초안은 drafted_label) · 고친 사람(updated_by) · 보낸 사람(sent_by)을 따로 둔다.
+--                         지우지 않는다 — 초안은 버림(discarded_*) · 보낸 글은 내림(withdrawn_*).
+--                         전달문(kind 'message')은 트레이너(audience 'trainers' · 직원 명부에서 고른 사람)에게만 · 트레이너에게는 전달문만.
+--     notice_recipients = 받는 사람 한 줄 — 수강생(student_id) 또는 직원(staff_id) 하나. DM 상태 · 「확인했어요」 시각 ·
+--                         트레이너의 한 줄 답(reply · 직원 줄에만) · 다시 보내기 횟수. 앱 알림함 · 트레이너 받은 함은 이 표를 읽는다.
+--     실행 전에도 서버는 뜬다 — 공지 라우트만 503 · 기동 점검 SCHEMA_OPTIONAL 경고.
+--     첫 실제 발송은 오너가 테스트 계정(수강생 공지) · 원장 자신(전달문)에게만(계약 §9.30.7).
+-- ============================================================
+create table if not exists public.notices (
+  id               bigint generated always as identity primary key,
+  status           text   not null default 'draft' check (status in ('draft','sent')),
+  kind             text   not null check (kind in ('time','special','general','message')),   -- 시간 · 특별 · 전체 공지 · 전달문
+  title            text   not null check (char_length(title) between 1 and 60),
+  body             text   not null check (char_length(body) between 1 and 4000),          -- 디스코드 한 메시지보다 길면 나눠 보낸다
+  author_staff_id  bigint not null references public.staff(id),                           -- 초안함 주인 = 보낼 수 있는 사람
+  drafted_by       bigint references public.staff(id),                                    -- 초안을 쓴 직원(앱)
+  drafted_label    text   check (drafted_label is null or char_length(drafted_label) between 1 and 20),   -- 앱 밖에서 넣은 초안의 쓴 사람(예: 지휘)
+  audience_type    text   not null check (audience_type in ('all','class','my_students','students','slot','trainers')),
+  class_level      text   check (class_level is null or class_level in ('초급반','중급반','심화반')),
+  slot_id          bigint references public.trainer_slots(id) on delete set null,          -- 시간 공지 · 칸 예약자(칸을 지워도 글은 남는다)
+  target_ids       bigint[] check (target_ids is null or cardinality(target_ids) between 1 and 50),   -- students = 수강생 id · trainers = 직원 id
+  request_key      text   check (request_key is null or char_length(request_key) between 1 and 64),   -- 앱 초안 저장 — 같은 요청 두 번이면 한 줄
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  updated_by       bigint references public.staff(id),
+  sent_at          timestamptz,
+  sent_by          bigint references public.staff(id),                                    -- 보내기를 누른 직원
+  recipient_count  integer check (recipient_count is null or recipient_count >= 0),
+  discarded_at     timestamptz,
+  discarded_by     bigint references public.staff(id),
+  withdrawn_at     timestamptz,
+  withdrawn_by     bigint references public.staff(id),
+  withdraw_reason  text   check (withdraw_reason is null or char_length(withdraw_reason) <= 200),
+  last_reminded_at timestamptz,
+  last_remind_key  text   check (last_remind_key is null or char_length(last_remind_key) between 1 and 64),
+  remind_count     integer not null default 0 check (remind_count >= 0),
+  constraint uq_notices_request    unique (author_staff_id, request_key),
+  constraint chk_notices_drafter   check ((drafted_by is null) <> (drafted_label is null)),
+  constraint chk_notices_sent      check ((status = 'sent') = (sent_at is not null)
+                                          and (sent_at is null) = (sent_by is null)
+                                          and (sent_at is null) = (recipient_count is null)),
+  constraint chk_notices_message   check ((kind = 'message') = (audience_type = 'trainers')),
+  constraint chk_notices_class     check ((audience_type = 'class') = (class_level is not null)),
+  constraint chk_notices_targets   check ((audience_type in ('students','trainers')) = (target_ids is not null)),
+  constraint chk_notices_discarded check ((discarded_at is null) = (discarded_by is null) and (discarded_at is null or status = 'draft')),
+  constraint chk_notices_withdrawn check ((withdrawn_at is null) = (withdrawn_by is null) and (withdrawn_at is null or status = 'sent'))
+);
+create index if not exists idx_notices_author on public.notices (author_staff_id, status, updated_at desc);   -- 초안함 · 내 이력
+create index if not exists idx_notices_sent   on public.notices (sent_at desc) where status = 'sent';         -- 원장 이력
+alter table public.notices enable row level security;              -- service_role 만 통과
+
+create table if not exists public.notice_recipients (
+  id           bigint generated always as identity primary key,
+  notice_id    bigint not null references public.notices(id),
+  student_id   bigint references public.students(id),
+  staff_id     bigint references public.staff(id),
+  dm_status    text   not null default 'pending'
+               check (dm_status in ('pending','sent','dm_blocked','no_discord','failed')),
+  dm_reason    text   check (dm_reason is null or char_length(dm_reason) <= 40),   -- failed 사유(bot_offline · unknown_user · partial · withdrawn · error)
+  dm_at        timestamptz,                                         -- 마지막 DM 시도 시각
+  read_at      timestamptz,                                         -- 「확인했어요」 누른 시각(처음 그대로)
+  reply        text,                                                -- 트레이너 한 줄 답(직원 줄에만 · 줄바꿈 없이 200자)
+  replied_at   timestamptz,
+  reminded_at  timestamptz,
+  remind_count integer not null default 0 check (remind_count >= 0),
+  constraint chk_nr_one   check ((student_id is null) <> (staff_id is null)),
+  constraint chk_nr_reply check ((reply is null) = (replied_at is null)
+                                 and (reply is null or (staff_id is not null and read_at is not null
+                                      and char_length(reply) between 1 and 200
+                                      and strpos(reply, chr(10)) = 0 and strpos(reply, chr(13)) = 0))),
+  constraint uq_nr_student unique (notice_id, student_id),
+  constraint uq_nr_staff   unique (notice_id, staff_id)
+);
+create index if not exists idx_nr_student on public.notice_recipients (student_id, notice_id desc) where student_id is not null;   -- 수강생 앱 알림함
+create index if not exists idx_nr_staff   on public.notice_recipients (staff_id, notice_id desc) where staff_id is not null;       -- 트레이너 받은 함
+alter table public.notice_recipients enable row level security;   -- service_role 만 통과
+notify pgrst, 'reload schema';   -- 블록을 통째로 붙여 실행해도 PostgREST 새로고침이 빠지지 않게 실행 줄로 둔다
+--
+-- 실행 뒤 검증(세션 · 읽기만):
+--   select table_name, count(*) from information_schema.columns
+--    where table_schema='public' and table_name in ('notices','notice_recipients') group by 1 order by 1;   -- notice_recipients 12 · notices 27
+--   select conrelid::regclass, contype, count(*) from pg_constraint
+--    where conrelid in ('public.notices'::regclass, 'public.notice_recipients'::regclass) group by 1, 2 order by 1, 2;
+--     -- notice_recipients c 5 · f 3 · p 1 · u 2 / notices c 20 · f 7 · p 1 · u 1
+--   select indexname from pg_indexes where tablename in ('notices','notice_recipients') order by 1;               -- 9
+--
+--   ✅ 되돌림 시험 끝(10/4 · 운영 DB · 이 블록 그대로 + 줄 26개 시험을 한 DO 블록에서 실행하고 끝에서 일부러 오류를 내 전부 롤백 ·
+--      시험 뒤 notice% 이름 relation 0 = 남은 변화 없음): 칸 27 · 12 · 제약 위 숫자 · 인덱스 9 · RLS 둘 다 켜짐 /
+--      앱 초안 = draft · 같은 사람 같은 키 = unique · 키 없는 앱 밖 초안 둘 = 받음 / 쓴 사람 없음 · 둘 다 · 전달문을 수강생에게 ·
+--      트레이너에게 특별 공지 · 고른 사람 없음 · 빈 배열 · 반 없는 반별 · sent 인데 시각 없음 · 본문 4,001자 = 전부 check /
+--      4,000자 = 받음 · 보내기 → 되돌리기 → 보내기 = 받음 · 보낸 글 버리기 · 초안 내리기 = check / 받는 사람 같은 직원 · 같은 수강생 = unique ·
+--      둘 다 · 아무도 = check · 확인 전 답 · 줄바꿈 답 · 201자 답 · 수강생 줄 답 = check · 200자 답 = 받음.
+--   select relname, relrowsecurity from pg_class where relname in ('notices','notice_recipients');            -- 둘 다 true
+--   select (select count(*) from notices) as n, (select count(*) from notice_recipients) as r;                  -- 0 · 0
+--
+-- 앱 밖 초안 넣기(지휘 · 세션 — 아무에게도 안 나간다 · 보내기는 원장이 앱에서 미리보기 뒤에. 직원 id 는 명부 조회로):
+--   insert into notices (kind, title, body, author_staff_id, drafted_label, audience_type, target_ids)
+--   values ('message', '{제목}', '{본문}', {원장 staff id}, '지휘', 'trainers', array[{트레이너 staff id}]);
+--
+-- 되돌림(줄이 있으면 먼저 오너 확인 · 공지 이력이 사라진다):
+--   drop table if exists public.notice_recipients;
+--   drop table if exists public.notices;
+--   notify pgrst, 'reload schema';
+-- ============================================================
