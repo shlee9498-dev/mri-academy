@@ -19,7 +19,8 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // KST 날짜 — server.js kstToday() · booking-api kstDate() 와 같은 식(played_at 경계가 맞아야 한다).
 const kstDate = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
 const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
-const isRealDate = (s) => typeof s === "string" && DATE_RE.test(s) && addDays(s, 0) === s;
+// 없는 달(2026-13-01)은 Date.parse 가 NaN 이라 addDays 가 throw 한다 — 먼저 거른다(booking-api isRealDate 와 같은 판정 · §9.33 시험에서 503 으로 드러남)
+const isRealDate = (s) => typeof s === "string" && DATE_RE.test(s) && Number.isFinite(Date.parse(`${s}T00:00:00Z`)) && addDays(s, 0) === s;
 // 그 날 0시(KST)의 UTC ISO — trainer_slots.slot_start(timestamptz) 경계용.
 const kstStartIso = (ymd) => new Date(Date.parse(`${ymd}T00:00:00+09:00`)).toISOString();
 

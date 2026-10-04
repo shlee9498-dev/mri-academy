@@ -237,10 +237,10 @@ test("오너 — 전체 수강생(prospect · 합친 행 제외) · 필터 칩 �
   const r = await call(4, "/students");
   assert.equal(r.status, 200);
   assert.equal(r.json.scope, "all");
-  assert.deepEqual(r.json.trainers, [                                  // 색 키는 명부 번호에 고정(목록 순서와 무관)
-    { trainerKey: T(2), trainerName: "트레이너A", colorKey: "ink" },
-    { trainerKey: T(5), trainerName: "트레이너B", colorKey: "gold" },
-    { trainerKey: T(4), trainerName: "원장", colorKey: "grey" },
+  assert.deepEqual(r.json.trainers, [                                  // 색 키는 명부 번호에 고정(목록 순서와 무관) · 색 자리 §9.33.6
+    { trainerKey: T(2), trainerName: "트레이너A", colorKey: "ink", colorSlot: 2 },
+    { trainerKey: T(5), trainerName: "트레이너B", colorKey: "gold", colorSlot: 1 },
+    { trainerKey: T(4), trainerName: "원장", colorKey: "grey", colorSlot: 3 },
   ]);
   const rows = r.json.students;
   assert.deepEqual(rows.map((s) => s.displayName), ["가", "나", "다", "라", "사", "아", "자"]);   // 이름순 · 마(prospect) · 바(합침) 없음

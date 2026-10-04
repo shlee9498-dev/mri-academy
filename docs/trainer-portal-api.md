@@ -1424,6 +1424,7 @@ GET /api/student-portal/reviews → { "reviews": [ { …요약 §8.3…, "thumbU
   행은 `assignedTrainer.trainerKey` 로 `trainers[]` 에서 키를 찾아 칠한다(`null` = 담당 없음 색). 수강생 개별 색은 없다.
   **목록 순서로 칠하지 않는다** — 트레이너가 늘면 색이 한 칸씩 밀린다. `colorKey: null` = 아직 키가 없는 트레이너(앱 기본색).
   `/owner/dashboard` 의 `trainers[]` 도 같은 키를 싣는다.
+  트레이너가 10명까지 늘어도 가를 수 있게 **`colorSlot`(1~10)** 을 같이 싣는다(2026-10-04 · §9.33.6 · `colorKey` 는 그대로).
 - 레벨 묶음 순서는 앱이 정렬한다: `advanced` → `intermediate` → `beginner` → `null`(미분류).
 - 오너 행만 `packsByTrainer: [{ trainerKey, trainerName, size, remaining, total }]` — 트레이너별 지금 묶음.
   집합 · 순서는 `remainingByTrainer` 와 같다. 트레이너 칩을 고르면 그 트레이너 줄을, 「전체」면 `[0]` 을 쓴다.
@@ -3311,3 +3312,156 @@ POST /api/trainer-portal/bookings/:id/cancel-past   { "reason": "휴강 — 원�
 - 잡은 뒤 그사이 기록이 붙으면 신청을 놓는다(대기 → 다른 후보로 다시) · 신청자 계정이 이미 붙어 있으면 취소.
 - 원장 홈 `linkChanges` — 새 줄 · 옛 줄 · 14일 밖 · 다른 행동 안 섞임 · 디스코드 id 안 나감.
 - 일부러 망가뜨린 12가지(담당 확인 · 여러 명 · 진행 중 · 다른 후보 · 연결된 기록 · 잡기 조건 · 붙이기 조건 · 놓기 · 거절 범위 · 거절 조건 · 합친 행 세기 · 신청자 중복)를 하나씩 넣으면 전부 깨진다.
+
+## 9.33 규모 대비 — 이어 읽기(cursor) · 거르기 · 색 자리 (2026-10-04 · 오너 원문 · 지휘 주문 · 트레이너 앱 #55 표) · **서버 반영(DDL 없음)**
+
+> 오너 원문(10/4): 「권고 2개 실행 지금에안주하는게아닌 앞으로 많이들어올 수강생과 트레이너들의 발판을 만들고 참고할것」.
+> 기준 = 수강생 300 · 트레이너 10 · 하루 수업 50. 앱은 「20개씩 더 보기」로 바꿨고(트레이너 앱 #55 · 검수 30차 통과)
+> 이 절은 서버가 아직 한 번에 다 주던 자리를 고친다. **모두 더하기만** — cursor 없이 부르는 옛 앱은 아무것도 안 바꿔도 같은 응답을 받는다(키가 몇 개 늘 뿐).
+
+**0단계 실측(10/4 · 읽기만)**
+
+| 응답 | 한 번에 | 순서 |
+|---|---|---|
+| `GET /students` | 범위 전원(명부 94명 · 합친 행 제외) | 트레이너 = 담당 먼저 · 가나다 / 원장 = 가나다 |
+| `GET /reviews`(트레이너) | 최대 200 · 기간 30일(1~365) | 보낸 시각 최신 · 번호 역순 |
+| `GET /journals` | 최대 200 · 기간 30일(최대 180) | 고친 시각 최신(같은 시각의 순서는 정해져 있지 않았다) |
+| `GET /students/:id/lessons` | 20 | 날짜 최신 · 번호 역순 |
+| 「오늘 남긴 기록」 | 목록 없음 — 앱이 오늘 수업한 수강생마다 위 목록을 불러 모은다(10명씩) | — |
+| `GET /owner/dashboard` `lessons[]` | 한 주 전부 · 트레이너 전원 | 날짜 · 시작 시각(없으면 뒤) · 종류 · 번호 |
+| `colorKey` | 3가지 고정(명부 5 · 2 · 4번) · 표 밖 `null` | — |
+
+- DB: 보낸 복기 93 · 일기 0 · 하루 수업 행 최대 54(트레이너 한 명 29) · 보낸 시각이 같은 복기 0 · 직원 명부 5줄(트레이너 · 원장 3).
+- 수업 기록에는 **종류(개인 · 그룹) · 길이 칸이 없다.** 남는 흔적 = 앱 「수업 기록하기」 감사(`session.app_record` · 지금 0줄) ·
+  고치기 감사(`session.correct` · 5줄) · 예약 「완료」의 예약 칸. 기록 252행 중 봇 155 · SQL · 이관 96 · 앱 1 — 옛 기록은 대부분 종류를 모른다.
+
+### 9.33.1 공통 — 이어 읽기 규칙
+
+- 응답의 `nextCursor` 를 **그대로** 다음 요청의 `cursor` 로 보낸다. `null` = 끝.
+- 표지는 불투명하다(암호화 · 서명 · `page-cursor.cjs`). 고치거나, 다른 목록 · 다른 계정 · 다른 거르기(날짜 · 탭 · 찾기 · 기간 등)로 쓰면
+  400 `invalid_body` — 거르기를 바꾸면 cursor 없이 처음부터 부른다. `limit` 은 표지에 묶이지 않는다(쪽마다 바꿔도 된다).
+- 순서는 늘 같은 키로 끊는다(키셋) — 이어 읽는 사이 새 줄이 생겨도 **이미 받은 줄이 다시 오거나 빠지지 않는다.**
+  새로 생긴 줄은 처음부터 다시 읽으면 보인다(당겨서 새로고침).
+- 범위는 쪽마다 다시 본다 — 트레이너는 어느 쪽에서도 자기 범위(담당 ∪ 최근 90일) 밖 수강생을 받지 않는다.
+
+### 9.33.2 「내가 남긴 기록」 — `GET /lessons`(새 라우트) + 수업 기록 줄의 종류 · 길이
+
+```json
+GET /api/trainer-portal/lessons?date=2026-10-04&limit=20&cursor=…
+→ { "date": "2026-10-04",
+    "lessons": [ { "sessionId": "…", "student": { "id": "…", "displayName": "…", "pubgName": "…" },
+                   "playedAt": "2026-10-04", "games": 8, "kind": "personal", "durationMin": 90, "source": "app",
+                   "voided": false, "voidedAt": null, "editable": true, "lockedPeriod": null,
+                   "trainer": { "trainerKey": "…", "trainerName": "…" } } ],
+    "nextCursor": "…" }
+```
+
+| 쿼리 | 뜻 |
+|---|---|
+| `date` | 수업 날짜(`played_at` · KST) · 없으면 오늘 · 없는 날짜면 400 |
+| `trainerKey` | 원장만 — 그 트레이너 기록만. 트레이너가 보내면 무시한다(늘 내 기록) |
+| `limit` | 1~100 · 기본 20 |
+
+- **누구 기록** = 트레이너: 내 기록(`trainer_id` = 나) 중 **내 범위 수강생** 줄만 · 원장: 그날 모든 트레이너 기록 + 줄마다 `trainer`(트레이너 계정엔 이 칸이 없다).
+- **줄** = 수업 기록만 — 판수 조정 · `/판수정정` · 취소 반대 행 · 합친 옛 번호는 뺀다. 취소한 기록은 `voided: true` 로 남는다(되살리기).
+  고친 기록은 옛 줄(취소 표시) + 새 줄 둘 다 나온다(§9.29.4).
+- **순서** = 남긴 순서 최신 먼저(번호 역순). 줄 모양 = `GET /students/:id/lessons`(§9.29.3) + `student` · `kind` · `durationMin`.
+- 앱 「오늘 기록한 수업」은 이 하나로 바꾸면 된다 — 수강생마다 부르던 것 · 10명 끊기 · 사람 단위 「더 보기」가 필요 없다.
+
+**`kind` · `durationMin`** — `GET /lessons` 와 `GET /students/:id/lessons` 줄에 같이 싣는다(뒤 라우트는 더하기만).
+
+| 기록이 생긴 길 | `kind` | `durationMin` |
+|---|---|---|
+| 앱 「수업 기록하기」(§9.9) | 보낸 `kind` 그대로 | 개인 = 보낸 길이(판수로 보냈으면 `null`) · 그룹 `null` |
+| 예약 「완료」(§9.1) | 그 예약 칸 — 개인 → `personal` · 관전형 · 참여형 → `group` | 개인 = 예약 길이 |
+| 고치기(§9.29.4)로 생긴 새 기록 | 길이로 고쳤으면 `personal` · 아니면 옛 기록 것 | 길이로 고쳤으면 그 길이 · 날짜만 고쳤으면 옛 기록 것 · 판수를 숫자로 고쳤으면 `null` |
+| 봇 `/수업등록` · 오너 SQL · 옛 기록 | `null`(모름) | `null` |
+
+- 예약 「완료」는 같은 수강생 · 트레이너의 완료된 예약을 그날 → 전날(자정 넘김) → 다음 날 순서로 찾는다. 그날 완료 예약이 개인 · 그룹으로 섞이면 `null`.
+- `durationMin` 은 개인 레슨 길이표(60 · 90 · 120 · 150 · 180분 · `lesson-lengths.cjs`)에 있는 값만 싣는다 — 앱 길이 칩과 같은 값이어야 고른 칩으로 그린다.
+  예약 칸 단위(30분)는 수업 길이가 아니라 싣지 않는다(길이가 없는 옛 예약은 `null`).
+- 고친 기록을 또 고쳐도 처음 기록까지 거슬러 본다(5단계까지).
+- **앱이 할 일**: `kind: null` 이면 길이 칩 대신 **판수 입력**을 띄운다(고치기는 `games` 로 어느 종류든 받는다 · §9.29.4) —
+  검수 29차 「그룹 기록을 다시 열면 개인 길이 칩」이 이걸로 풀린다. `group` = 판수 · `personal` = 길이 칩(`durationMin` 을 고른 칩으로 · `null` 이면 고른 칩 없음).
+
+### 9.33.3 수강생 목록 — `GET /students` 거르기 · 탭 숫자 · 이어 읽기
+
+```json
+GET /api/trainer-portal/students?state=active&q=…&trainerKey=…&limit=20&cursor=…
+→ { "scope": "mine", "trainers": [ … ], "students": [ …종전 줄 그대로… ],
+    "nextCursor": "…", "counts": { "active": 41, "hold": 12, "done": 7 } }
+```
+
+| 쿼리 | 뜻 |
+|---|---|
+| `state` | 목록 탭(`listState`) `active` · `hold` · `done` — 쉼표로 여럿(`active,hold`) |
+| `level` | `advanced` · `intermediate` · `beginner` · `none`(미분류) — 쉼표로 여럿 |
+| `q` | 이름 · 배그 닉네임 일부(공백 · 대소문자 무시 · 40자까지) |
+| `trainerKey` | 담당 트레이너(`assignedTrainer`)가 그 사람인 줄만 — 원장 칩 거르기와 같은 뜻 |
+| `limit` | 1~100 · 기본 20 |
+
+- **쪽 나눔은 `state` · `limit` · `cursor` 중 하나라도 오면 켜진다.** 셋 다 없으면 종전처럼 전원(종전 순서 · `nextCursor: null`) —
+  찾기 · 레벨 · 트레이너 거르기만 보낸 경우도 전원이다.
+- 쪽 나눔 순서 = **목록 화면 순서**: 레벨 묶음(심화 → 중급 → 초급 → 미분류) → 묶음 안 테스트 계정은 맨 아래 → 가나다 → 번호.
+  줄의 `level` 이 바뀌는 곳에 묶음 머리를 그리면 된다. 묶음마다 따로 이어 읽으려면 `level=` 로 부른다.
+- `counts` = 탭별 숫자 — **찾기 · 트레이너 거르기를 적용하고 탭 · 레벨만 뺀** 수(찾는 중이면 그 결과가 탭마다 몇 명인지). 모든 응답에 온다(옛 호출 포함).
+- 범위는 종전 그대로 — 트레이너 = 담당 ∪ 최근 90일 · 원장 = 전체(테스트 계정은 `includeTest=1` 일 때만).
+- 판수 · 잔여 계산은 바뀌지 않는다 — 서버는 범위 전체로 계산한 뒤 자른다(탭 숫자가 맞으려면 전원의 탭을 알아야 한다). 줄어드는 것은 응답 크기다.
+
+### 9.33.4 받은 복기 · 수업 일기 — `GET /reviews` · `GET /journals` 이어 읽기
+
+- 쿼리 `cursor` · `limit`(1~200 · **기본 200 = 종전 한 번 크기**) → 응답에 `nextCursor`. 옛 호출은 종전과 같은 200건 + `nextCursor`(201번째가 있으면 값).
+- 순서: 복기 = 보낸 시각 최신 · 번호 역순(종전 그대로) / 일기 = 고친 시각 최신 · **같은 시각이면 번호 역순**(종전엔 같은 시각의 순서가 정해져 있지 않았다).
+- 표지는 기간(`days`)에 묶인다 — 기간을 바꾸면 처음부터. 복기는 범위(받는 사람 = 나 · 범위 안 수강생)를 쪽마다 다시 건다.
+- 앱의 「20개씩 그리기」는 `limit=20` 으로 서버 쪽 나눔과 맞출 수 있다.
+
+### 9.33.5 원장 홈 「전체 수업」 — 트레이너 거르기 · 날짜마다 쪽 나눔
+
+```json
+GET /api/trainer-portal/owner/dashboard?trainerKey=…&lessonsPerDay=10
+→ { …종전 그대로…, "lessons": [ …날짜마다 앞 10건… ],
+    "lessonDays": [ { "date": "2026-09-28", "total": 23, "nextCursor": "…" }, … 그 주 7일 ] }
+
+GET /api/trainer-portal/owner/dashboard/lessons?date=2026-09-28&trainerKey=…&limit=10&cursor=…
+→ { "date": "2026-09-28", "total": 23, "lessons": [ …lessons[] 와 같은 줄… ], "nextCursor": "…" }
+```
+
+- `trainerKey` → `lessons[]` · `lessonDays` 만 그 트레이너 수업으로. **카드 · 트레이너별 표 · 처리 대기는 그대로 전체.**
+- `lessonsPerDay`(1~50) → `lessons[]` 를 날짜마다 앞 N건만 · 그날 더 있으면 `lessonDays[].nextCursor`.
+- `lessonDays` 는 늘 온다(그 주 7일 · `total` = 거르기 뒤 그날 수). 둘 다 안 보내면 `lessons[]` 는 종전 그대로(한 주 전부 · 같은 순서) · `nextCursor` 는 전부 `null`.
+- **날짜 하나 이어 읽기** `GET /owner/dashboard/lessons` — 원장만(트레이너 403 `owner_only`). 대시보드를 다시 부르지 않고 그날 수업만 읽는다
+  (같은 조회 · 같은 판정 · 같은 줄 · 같은 순서). `lessonDays[].nextCursor` 로 이어도 되고 cursor 없이 부르면 그날 처음부터. `limit` 1~50 · 기본 10 · `date` 없으면 오늘.
+- 표지는 날짜 · 트레이너 거르기에 묶인다.
+
+### 9.33.6 트레이너 색 자리 — `colorSlot`
+
+- 트레이너 칩(`/students` `trainers[]` · 원장 홈 `trainers[]` · 상담 보드 칩)에 `colorSlot: 1~10 | null` 을 더한다. `colorKey`(`gold` · `ink` · `grey`)는 옛 앱을 위해 그대로.
+- 번호는 **명부 번호에 고정**: 지금 세 사람은 `colorKey` 와 같은 사람에 1 · 2 · 3(`gold` = 1 · `ink` = 2 · `grey` = 3) →
+  그 밖 트레이너 · 원장 계정은 명부 번호 순서로 4 · 5 · … 10. 쉬는 계정도 자리를 지킨다(다른 사람 색이 밀리지 않게). 10을 넘으면 `null`(앱 기본색 · 이름을 같이 쓴다).
+- 직원(staff) 역할은 자리가 없다. 직원이 트레이너로 바뀌면 그 뒤 번호가 한 칸씩 밀린다 — 그때는 서버 고정표(`TRAINER_COLOR_SLOTS`)에 넣어 고정한다.
+- **실제 색은 디자인(앱)이 정한다** — 서버는 번호만. 지금 명부(트레이너 · 원장 3명)는 1~3만 쓴다.
+
+### 9.33.7 이번에 안 한 것
+
+- 트레이너 앱 #55 표 6번 「직강 출석 한 번에 12명 한도」 — 지휘 주문 5개 밖이라 손대지 않았다. 반이 커지면 따로.
+- 수강생 앱 수업 이력 · 내 복기 — 앱이 20개씩 그리기로 고쳤고 서버 요청은 없었다.
+- DDL 없음 — 종류 · 길이 칸을 새로 만들지 않고 남은 흔적에서 찾는다. 정확한 칸이 필요해지면 그때 더하기만으로.
+
+### 9.33.8 시험 (`scripts/scale-paging.test.cjs` · `npm run test:deps`)
+
+- 가짜 DB 가 `order` · `or` · `and` · `detail->>칸` 을 진짜처럼 해석한다(다른 시험 파일의 가짜는 `or` 를 건너뛰어 이어 읽기를 못 본다).
+- 다섯 자리 모두: cursor 로 끝까지 읽으면 **빠짐 · 중복 없음** · 옛 호출(cursor 없음) = 종전 응답 · 담당 아닌 수강생(남의 담당 · 합친 옛 번호 · 범위 밖 옛 기록)이 어느 쪽에도 안 섞임 · 다른 사람 · 다른 거르기 · 고친 표지는 400.
+- 이어 읽는 사이 새 기록이 생겨도 받은 줄이 다시 오지 않는다 · 원장 홈 옛 `lessons[]` = 날짜마다 이어 읽은 것을 이은 것.
+- 종류 · 길이 = 앱 기록 · 고치기(길이 · 판수 · 날짜 · 두 번) · 취소 · 예약 완료(개인 · 참여형 · 섞임 · 자정 넘김) · 봇 기록을 진짜 라우트로 만들어 확인.
+- 일부러 망가뜨린 20가지(범위 · 표지 경계 · 트레이너 조건 · 자정 넘김 · 섞인 종류 · 길이 물려받기 · 표지 사람 묶음 · 탭 숫자 · 테스트 계정 순서 · 거르기 묶음 ·
+  같은 시각 번호 · 번호 정렬 · 복기 범위 · 하루 표지 경계 · 대시보드 거르기 · 날짜 묶음 · 직원 색 자리 · 10 상한 · 없는 달)를 하나씩 넣으면 전부 깨진다.
+- 같이 고친 것: 날짜 판정(`ops-status.cjs` · `trainer-lessons.cjs` `isRealDate`)이 없는 달(`2026-13-01`)에서 400 대신 503 이 나던 것 — `booking-api.cjs` 와 같은 판정으로.
+
+### 9.33.9 계약 한 줄 (반장)
+
+- `GET /lessons?date=&trainerKey=(원장)&limit=&cursor=` → `{ date, lessons:[{ sessionId, student:{id,displayName,pubgName}, playedAt, games, kind, durationMin, source, voided, voidedAt, editable, lockedPeriod, trainer?(원장) }], nextCursor }`
+- `GET /students/:id/lessons` 줄 + `kind` · `durationMin`
+- `GET /students?state=&level=&q=&trainerKey=&limit=&cursor=` → 종전 + `nextCursor` · `counts:{active,hold,done}`
+- `GET /reviews` · `GET /journals` `?limit=&cursor=` → 종전 + `nextCursor`
+- `GET /owner/dashboard?trainerKey=&lessonsPerDay=` → 종전 + `lessonDays:[{date,total,nextCursor}]` · `GET /owner/dashboard/lessons?date=&trainerKey=&limit=&cursor=` → `{ date, total, lessons, nextCursor }`
+- 트레이너 칩 + `colorSlot`(1~10 | `null`)
