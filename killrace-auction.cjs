@@ -467,8 +467,9 @@ function createAuctionApi({ store, isAdmin, register, saveBonus, onCreate, now =
       return send(res, 200, { ok: true, results });
     }
 
-    const fn = ADMIN[action];
-    if (!fn) return send(res, 400, { error: { code: "bad_action" } });
+    // 자기 키만 본다 — "constructor" 같은 물려받은 이름으로는 아무것도 부르지 않는다
+    const fn = Object.prototype.hasOwnProperty.call(ADMIN, action) ? ADMIN[action] : null;
+    if (typeof fn !== "function") return send(res, 400, { error: { code: "bad_action" } });
     const before = c.state.rev;
     const r = fn(c.state, body, t);
     if (c.state.rev !== before) await persist(c);

@@ -285,6 +285,7 @@ test("API: 진행자 키 · 팀장 토큰 · 만들기 · 중복 만들기 거�
   assert.deepEqual([me.me, me.tokens], ["C2", undefined]);
   assert.equal((await h.call(h.api.postBid, { headers: { authorization: "Bearer nope" }, body: { amount: 30 } })).code, 401);
   assert.equal((await h.admin({ action: "nothing" })).code, 400);
+  for (const bad of ["constructor", "__proto__", "toString", "hasOwnProperty"]) assert.deepEqual([(await h.admin({ action: bad })).code, (await h.admin({ action: bad })).body.error.code], [400, "bad_action"]);
 });
 
 test("API: 동시에 온 같은 금액 입찰은 하나만 200 · 초과 입찰 409 · 시간이 지나면 조회만으로 낙찰 처리", async () => {
