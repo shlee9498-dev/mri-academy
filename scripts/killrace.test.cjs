@@ -361,7 +361,10 @@ const HIDE = Date.parse("2026-10-08T13:20:00Z");      // 22:20
 const BOOST = Date.parse("2026-10-08T13:35:00Z");     // 22:35
 
 test("2회 · 배수: 소수점은 올림 · 배수 없으면 그대로 · 이탈은 −10 고정", () => {
-  assert.deepEqual([T.applyBoost(7, 1.5), T.applyBoost(8, 1.5), T.applyBoost(0, 1.5), T.applyBoost(-3, 1.5), T.applyBoost(1, 1.5)], [11, 12, 0, -4, 2]);
+  assert.deepEqual([T.applyBoost(7, 1.5), T.applyBoost(8, 1.5), T.applyBoost(0, 1.5), T.applyBoost(1, 1.5)], [11, 12, 0, 2]);
+  // 음수 판은 감점이 커진다(0 에서 멀어지는 쪽) — −3 → −4.5 → −5 · −4 → −6(딱 떨어지면 그대로) · −1 → −1.5 → −2
+  assert.deepEqual([T.applyBoost(-3, 1.5), T.applyBoost(-4, 1.5), T.applyBoost(-1, 1.5), T.applyBoost(-2, 1.5)], [-5, -6, -2, -3]);
+  assert.equal(Object.is(T.applyBoost(0, 1.5), 0), true);
   assert.deepEqual([T.applyBoost(7, null), T.applyBoost(7, 1), T.applyBoost(7, undefined)], [7, 7, 7]);
   assert.deepEqual([T.finalScore(7, false, 1.5), T.finalScore(7, true, 1.5), T.finalScore(7, false, null)], [11, -10, 7]);
   const members = [{ slot: 1, kills: 2, damage: 300 }, { slot: 2, kills: 1, damage: 250 }, { slot: 3, kills: 0, damage: 0 }, { slot: 4, kills: 0, damage: 0 }];
@@ -594,10 +597,10 @@ test("2회 · 블루칩: 살아나 끝까지 살면 감점 없음 · 살아났�
 
 test("2회 · 핵 사망 무효(진행자 표시): 그 사망만 감점에서 빠진다 · 다음 집계에도 유지 · 죽지 않은 슬롯은 거절", async () => {
   const A = accsOf("a");
-  const matches = [squadMatch("h1", BOOST + 60000, A, { kills: 5, dead: [1, 3] })];        // 22:36 배수 판 · 5 − 4 − 2 = −1 → ×1.5 = −1.5 → −1
+  const matches = [squadMatch("h1", BOOST + 60000, A, { kills: 5, dead: [1, 3] })];        // 22:36 배수 판 · 5 − 4 − 2 = −1 → ×1.5 = −1.5 → −2
   const w = fakeWorld({ cfgValue: { boostAt: "2026-10-08T13:35:00Z" }, matches, teamRows: [teamRow("불사조", "a")] });
   const g0 = (await w.bot.aggregate()).teams[0].games[0];
-  assert.deepEqual([g0.deadSlots, g0.base, g0.score], [[1, 3], -1, -1]);
+  assert.deepEqual([g0.deadSlots, g0.base, g0.score], [[1, 3], -1, -2]);
   const stored = savedRows(w).map((r) => ({ ...r, leave_flag: false }));
   const w2 = fakeWorld({ cfgValue: { boostAt: "2026-10-08T13:35:00Z" }, matches, teamRows: [teamRow("불사조", "a")], stored });
   await assert.rejects(() => w2.bot.setVoidDeath({ teamName: "불사조", seq: 1, slot: 2 }), /죽지 않았어요/);
@@ -610,7 +613,7 @@ test("2회 · 핵 사망 무효(진행자 표시): 그 사망만 감점에서 �
   assert.deepEqual([g1.deadSlots, g1.voidSlots, g1.score], [[3], [1], 5]);
   // 해제하면 원래대로
   const c = await w2.bot.setVoidDeath({ teamName: "불사조", seq: 1, slot: 1, clear: true });
-  assert.deepEqual([c.penalty, c.score], [6, -1]);
+  assert.deepEqual([c.penalty, c.score], [6, -2]);
   assert.deepEqual((await w2.bot.loadConfig(EV2.id)).voidDeaths, {});
 });
 
