@@ -27,6 +27,9 @@ const { PAY_CHANNELS, FEE_RATES, feeFor, netFor, hasRate } = require("./config/f
 const { parseIgnInput, sameIgn, compareIgn, ignChoices, ignGuardFilter, platLabel, ignLookupLine } = require("./pubg-name.cjs");
 // GmI 킬내기 집계(대승배 · 관제탑 2026-09-25 · GmI 소관 대행 · 1회성) — 명령 정의·판정·집계·DM (테스트 scripts/killrace.test.cjs)
 const killrace = require("./killrace.cjs");
+// GmI 킬내기 2회(2026-10-08) — 웹 경매 · 점수판(gmi-clancup auction.html · killnaegi-board.html). 시험 scripts/killrace-auction.test.cjs
+const killraceAuction = require("./killrace-auction.cjs");
+const killraceLive = require("./killrace-live.cjs");
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
 //   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
 const payreqIntake = require("./payreq-intake.cjs");
@@ -6913,7 +6916,7 @@ async function pubgMatch(platform, matchId, ttlMs){
   });
   const attr=(data.data&&data.data.attributes)||{};
   return { rosters, parts, mapName:attr.mapName||"", mode:attr.gameMode||"", matchType:attr.matchType||"",
-           createdAt:attr.createdAt||"", telemetryUrl };
+           createdAt:attr.createdAt||"", telemetryUrl, duration:Number(attr.duration)||0 };   // duration(초) = 킬내기 잠정 킬 정리용(판이 끝난 시각)
 }
 // [관리자] 매치에서 팀별 순위·킬 자동 추출
 app.get("/api/gdcup-match-pull", async (req,res)=>{
@@ -7004,6 +7007,69 @@ function gdcupAdmin(req) {
   if (!got || typeof got !== "string") return false;
   const a = Buffer.from(got), b = Buffer.from(k);
   return a.length === b.length && crypto.timingSafeEqual(a, b);  // 타이밍 안전 비교
+}
+
+// ═══ GmI 킬내기 2회 — 웹 경매 · 점수판 (2026-10-08 · 소관 GmI) ═══════════════════
+// 판정은 killrace-auction.cjs(경매) · killrace.cjs(점수)에 있고 여기는 연결만 한다.
+// 진행자 = gdcupAdmin(x-admin-key) · 팀장 = 진행자 화면이 나눠 주는 개인 링크의 토큰(Authorization: Bearer).
+// 저장 = ops_state 세 줄('killrace:auction:<id>' 경매 상태 · 'killrace:event:<id>' 배수 시각 · 보너스 · 핵 사망 무효 · 'killrace:live:<id>' 잠정 킬 · 집계 상태) — DDL · env 추가 없음.
+// 자동 집계 = killrace-live.cjs tick() 을 1분마다 부른다(대회 시간 밖 · 팀 없음 · PUBG 키 없음이면 조용히 넘어간다).
+// 경매 포인트는 이 행사용 가상 값이다. 카지노 코인 · 지갑 · gdcup_* 표는 읽지도 쓰지도 않는다.
+{
+  const kr = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch });
+  const auctionKey = (id) => `killrace:auction:${id}`;
+  const store = {
+    eventId: async () => (await kr.currentEvent()).id,
+    load: async (id) => {
+      const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(auctionKey(id))}&limit=1`);
+      return rows.length && rows[0].value && rows[0].value.v ? rows[0].value : null;
+    },
+    save: (id, state) => sbUpsert("ops_state", { key: auctionKey(id), value: state, updated_at: new Date().toISOString() }, "key"),
+    // 초기화는 줄을 지우지 않고 값만 비운다(리허설 → 본 경매 전환용 · 팀 등록과 판 기록은 건드리지 않는다)
+    clear: (id) => sbUpsert("ops_state", { key: auctionKey(id), value: {}, updated_at: new Date().toISOString() }, "key"),
+  };
+  // 경매 결과 → /킬내기팀등록 과 같은 함수로 등록(닉 → 계정 확인 포함). 한 팀이 실패해도 나머지는 계속한다
+  const register = async (plan) => {
+    const out = [];
+    for (const p of plan) {
+      if (!p.full) { out.push({ teamName: p.teamName, ok: false, code: "team_not_full" }); continue; }
+      if (!p.platform) { out.push({ teamName: p.teamName, ok: false, code: p.mixed ? "platform_mixed" : "platform_missing" }); continue; }
+      try {
+        const r = await kr.registerTeam({ teamName: p.teamName, platform: p.platform, igns: p.igns });
+        out.push({ teamName: p.teamName, ok: true, members: r.members.map((m) => m.ign) });
+      } catch (e) {
+        out.push({ teamName: p.teamName, ok: false, code: e && e.userMsg ? "rejected" : "failed", message: e && e.userMsg ? e.userMsg : null });
+      }
+    }
+    return out;
+  };
+  const api = killraceAuction.createAuctionApi({
+    store, isAdmin: gdcupAdmin, register,
+    saveBonus: (evId, bonus, teamSize) => kr.saveConfig(evId, { bonus, teamSize }),
+    saveRoster: (evId, players) => kr.saveRoster(evId, players),      // 회차 명단(티어 · 낙찰가 · 팀장) — 개인 기록에 붙인다
+    onCreate: async (evId) => {
+      const ev = await kr.currentEvent();
+      const patch = killraceAuction.defaultTimes(ev, await kr.loadConfig(evId));
+      if (Object.keys(patch).length) await kr.saveConfig(evId, patch);
+    },
+  });
+  // DB 가 없는 환경(CI 스모크 · 로컬)은 503 으로 닫는다 — 부팅은 그대로 된다
+  app.use("/api/killrace", (req, res, next) => (process.env.SUPABASE_URL ? next() : res.status(503).json({ error: { code: "db_disabled" } })));
+  api.mount(app);
+  const liveKey = (id) => `killrace:live:${id}`;
+  const live = killraceLive.createLive({
+    killrace: kr, isAdmin: gdcupAdmin,
+    ready: () => !!(process.env.SUPABASE_URL && process.env.PUBG_API_KEY),
+    store: {
+      load: async (id) => {
+        const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(liveKey(id))}&limit=1`);
+        return rows.length ? rows[0].value : null;
+      },
+      save: (id, state) => sbUpsert("ops_state", { key: liveKey(id), value: state, updated_at: new Date().toISOString() }, "key"),
+    },
+  });
+  live.mount(app);
+  if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { live.tick(); }, 60000).unref();
 }
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
 // ── 운영 응답용 members 정제 ──
