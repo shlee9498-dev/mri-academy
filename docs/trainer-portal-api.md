@@ -2785,3 +2785,186 @@ banned 「쓸 수 없는 말이 들어 있어요」 · 409 taken 「이미 누�
 
 **반장**: 수강생 앱 직강 카드는 `courses[]` 의 `unitsTotal` · `completedUnits` · `remainingUnits` · 🆕 `sessionMinutes` 를 그대로 「회」로 그린다(「판」 금지 · `attendanceKnown` 이 `false` 면 총 회차만).
 **사이트**: 공개 지표의 직강은 `directSessions30` · `directStudents30`(회)이고 레슨 `games30`(판)과 따로 그린다. `null` 이면 칸을 감춘다.
+
+---
+
+## 9.29 반 옮기기 · 길이로 판수 · 수업 기록 고치기 · 취소 · 되살리기 (2026-10-04 · 오너 결정 A · B · C · 지휘 주문) · **서버 반영(이 PR · DDL 없음)**
+
+> 오너 원문(10/4): 「중급 심화반 인원들 편하게 승급 혹은 강등하게 바꿔주고 트레이너들이 판수 어플에서 자유롭게 수업했으면 넣을 수 있도록(실수해도 편하게 바꿀 수 있도록)」
+> **원칙 — 장부에 지우개를 쓰지 않는다.** 고칠 때는 「두 줄 긋고 다시 쓰기」다. 옛 기록은 그대로 두고 **무효 표시**만 붙이고,
+> 판수는 서버가 **반대 행**으로 맞춘다(§9.18 되돌리기와 같은 방식). 행 삭제는 지금처럼 원장(오너) SQL 뿐이다.
+> 판수 · 결제 · 정산 계산식 · 지급률 · 가격은 바꾸지 않는다. 날짜 판정은 KST.
+
+| 오너 결정(10/4) | 내용 |
+|---|---|
+| A. 반 옮기기 | 남은 회수 그대로 · 돈(결제 기록 · 금액 · 회당 단가)은 건드리지 않음 |
+| B. 트레이너 정정 기간 | 그 수업이 속한 달이 **잠기기 전까지** · 횟수 제한 없음 · 잠긴 달은 불가(원장에게 알리기) |
+| C. 기록 취소 | 트레이너가 직접 · 실제 삭제 없이 무효 표시 + 이력 + 원장 화면 알림 · 「판수 삭제는 오너 직접」은 **행을 지우는 것**에만 남는다 |
+
+### 9.29.1 반 옮기기 — `PUT /api/trainer-portal/courses/:courseKey/level` (원장만 · 30회/분)
+
+```json
+{ "courseLevel": "advanced", "note": "실력 올라서 심화로" }
+```
+
+| 필드 | 필수 | 뜻 |
+|---|---|---|
+| `courseLevel` | 필수 | `beginner`(초급반) · `intermediate`(중급반) · `advanced`(심화반) |
+| `note` | 선택 | 200자까지 · 이력에만 남는다 |
+
+- `:courseKey` = 반 목록(§9.22.1) 명단의 `courses[].courseKey` · 넣기 409 의 `courses[].courseKey` 와 같은 불투명 id.
+- 대상 = **진행 중(active · paused) 강의** 중 반이 초급 · 중급 · 심화인 것. 그 밖(끝난 강의 · 개인강의 · 기타)은 409 `course_not_movable`.
+- 같은 반을 보내면 아무것도 안 바꾸고 200 `changed: false`(두 번 눌러도 안전).
+- **바뀌는 것은 그 강의의 반 하나뿐이다.** 남은 회수(`unitsTotal` · 출석 · 원장 확인 회차)와 결제 행 · 금액 · 회당 단가는 그대로다(결정 A).
+  수강생 레벨(§9.16)은 반을 따라 자동으로 바뀌고, 반 목록 · 예약할 수 있는 반 칸(등급 규칙)도 새 반 기준이 된다.
+- 이미 잡힌 반 칸 예약은 그대로 둔다 — 새 반 칸으로 바꾸려면 원장이 예약을 옮긴다(§9.19).
+- 동시에 두 화면이 옮기면 뒤 요청은 409 `level_changed`(다시 불러서 고른다).
+- **되돌리기 = 같은 길로 원래 반을 다시 보낸다.** 이력이 한 줄 더 쌓인다.
+- 이력 = `admin_audit`(`course.level_move` · 누가 · 언제 · 어디서 → 어디로 · 메모).
+
+**응답** (200)
+
+```json
+{ "courseKey": "…", "changed": true, "courseLevel": "advanced", "level": "심화반", "fromCourseLevel": "intermediate",
+  "unitsLeft": 7, "unitsTotal": 12,
+  "moves": [ { "fromCourseLevel": "intermediate", "toCourseLevel": "advanced", "at": "2026-10-04T05:10:00Z", "by": "원장", "note": "…" } ] }
+```
+
+- `unitsLeft` · `unitsTotal` = 옮긴 뒤 그 강의의 남은 · 총 회차(옮기기 전과 같다 — 화면에서 「남은 회수 그대로」 확인용).
+- `moves` = 그 강의의 반 이동 이력(최신순 · 최대 20).
+
+**GET /api/trainer-portal/courses/:courseKey/level-moves** (원장만) → `{ "courseKey": "…", "courseLevel": "advanced", "moves": [ … ] }` — 같은 이력.
+
+- 그 반에 **같은 날 시작한 다른 강의**가 이미 있으면 409 `course_duplicate`(같은 수강생 · 같은 반 · 같은 시작일 중복 막기 · 10/4 실측 0쌍).
+
+오류: 400 `invalid_body` · 403 `owner_only` · 404 `not_found` · 409 `course_not_movable` · `level_changed` · `course_duplicate`
+
+### 9.29.2 예약 없는 기록 — 길이로 판수 (§9.9 `POST /lessons` 더하기)
+
+`durationMin` 이 더해진다. **트레이너는 수강생 · 날짜 · 길이를 고르고, 판수는 서버가 계산한다.**
+
+```json
+{ "kind": "personal", "studentIds": ["…"], "playedAt": "2026-10-04", "durationMin": 90 }
+```
+
+| `kind` | 판수 | 보내는 값 |
+|---|---|---|
+| `personal`(개인 1:1) | 길이로 서버가 계산 — 1시간 5판 · 1시간 30분 8판 · 2시간 10판 · 2시간 30분 13판 · 3시간 15판(`lesson-lengths.cjs` 정본 · 계산식 그대로) | `durationMin` ∈ 60 · 90 · 120 · 150 · 180 |
+| `group`(그룹 · 관전형) | 진행한 판 수 = 판수(1판 = 1판) | `games` 1~50(종전 그대로) · `durationMin` 은 보내지 않는다(400) |
+
+- `personal` 은 `durationMin` 또는 `games` 중 하나면 된다(종전 앱 호환). 둘 다 보내면 계산한 판수와 같을 때만 받는다(다르면 400 `invalid_body`).
+- 응답 `recorded[]` 에 `durationMin`(보낸 값 · 없으면 `null`)이 더해진다.
+- 날짜 창(오늘 ~ 7일 전) · 같은 날 중복 확인 · 잠긴 달 거절 · 범위는 §9.9 그대로다.
+- **같은 날 · 같은 시각 중복**: 수업 기록은 날짜만 저장한다(시각 칸 없음). 그래서 확인은 **같은 날** 단위로 묻는다 — 같은 시각보다 넓게.
+  확인 값 = 409 `already_recorded_today` → 「오늘 이미 기록된 수업이 있어요 · 한 번 더 기록할까요」 → 확인하면 `sameDayOk: true`(§9.9 그대로).
+  취소한 기록은 이 판정에서 빠진다(잘못 넣고 취소한 뒤 다시 넣을 때 묻지 않는다).
+
+### 9.29.3 내 수업 기록 목록 — 상태가 더해진다 (§9.9 `GET /students/:id/lessons`)
+
+```json
+{ "lessons": [ { "sessionId": "…", "playedAt": "2026-10-04", "games": 8, "source": "app",
+                 "voided": false, "voidedAt": null, "editable": true, "lockedPeriod": null } ] }
+```
+
+| 키 | 뜻 |
+|---|---|
+| `voided` | `true` = 취소(무효 표시)된 기록. `games` 는 원래 판수 그대로 보여 준다(앱은 두 줄 긋기) |
+| `voidedAt` | 취소한 시각(ISO) · 아니면 `null` |
+| `editable` | 지금 이 기록을 고치기 · 취소 · 되살리기 할 수 있는가 — 내 기록(원장은 전부) · 안 잠긴 달 · 수업 기록(조정 행 아님) |
+| `lockedPeriod` | 잠긴 달이면 `"2026-09"` · 아니면 `null` — `editable: false` 의 이유 표시용 |
+
+- 취소 · 되살리기로 서버가 넣는 **반대 행은 목록에 안 나온다**(장부 안쪽 일이다). 판수 조정(`source: "adjustment"`)은 `editable: false`(조정은 §9.18 되돌리기로).
+- 원장(오너) 계정은 **명부의 모든 수강생**(수강생 상세 §9.15 와 같은 범위 · 없는 수강생 404)을 열 수 있고, 그 수강생의 **모든 트레이너** 기록을 본다.
+  여러 트레이너 기록이 섞이므로 원장 응답에만 줄마다 `trainer: { trainerKey, trainerName }` 이 붙는다(판수 조정 목록 §9.18 과 같은 모양).
+  트레이너는 종전처럼 내 범위(담당 ∪ 90일) · 내 기록만이고 `trainer` 키는 없다.
+
+### 9.29.4 고치기 — `POST /api/trainer-portal/lessons/:sessionId/correct` (결정 B · 20회/분)
+
+```json
+{ "playedAt": "2026-10-03", "durationMin": 120, "reason": "날짜를 잘못 골랐어요" }
+```
+
+| 필드 | 필수 | 뜻 |
+|---|---|---|
+| `playedAt` | 선택 | 바른 날짜(KST) · 미래 불가 · 잠긴 달 불가 |
+| `durationMin` | 선택 | 개인 — 바른 길이(판수는 서버 계산) |
+| `games` | 선택 | 바른 판수 1~50 — 그룹은 이것으로 · 개인은 `durationMin` 대신 써도 된다 |
+| `reason` | 선택 | 2~200자 · 이력에 남는다 |
+
+- 셋(`playedAt` · `durationMin` · `games`) 중 하나는 있어야 하고, 옛 기록과 **달라야** 한다(같으면 400 `invalid_body`).
+- 처리 = **옛 기록에 무효 표시**(취소와 같은 반대 행) + **새 기록 한 줄**(새 `sessionId`). 판수는 서버가 다시 맞춘다 — 옛 판수만큼 돌려받고 새 판수만큼 빠진다.
+  새 기록은 「수업 기록하기」와 같은 함수로 들어간다(등록 귀속 · 부족 점검). 같은 날 중복은 묻지 않는다(같은 수업을 고치는 것이다).
+- 수강생 · 트레이너는 못 바꾼다 — 사람이 틀렸으면 **취소 + 새로 기록**.
+- **누가**: 그 수업의 담당 트레이너(기록의 `trainer_id`)만 · 원장은 모든 기록. 남의 기록은 403 `scope_denied`.
+- **언제까지(결정 B)**: 옛 날짜의 달 · 새 날짜의 달이 **둘 다 안 잠겼을 때**까지 · 횟수 제한 없음(고친 기록을 또 고쳐도 된다).
+  잠긴 달이면 409 `period_locked` `{ "period": "2026-09" }` — 앱 문구 「정산이 끝난 달이라 여기서는 못 고쳐요. 원장에게 알려 주세요」.
+  원장 계정도 이 길로는 잠긴 달을 못 고친다(잠긴 달은 정산이 끝난 장부다 — 원장 SQL · §9.18 조정으로).
+- 이미 취소된 기록 409 `already_voided`(되살린 뒤 고치거나 새로 기록) · 판수 조정 행 409 `not_editable`.
+- ⚠️ 옛 기록에 붙은 **수강생 복기 · 수업 일기는 새 기록으로 옮기지 않는다**(이 PR 범위 밖 · 복기 다시 잇기는 이력이 남는 따로 된 길이 있다).
+  그래서 고친 수업에는 수강생 앱에 「복기 써 주세요」가 다시 뜰 수 있다. 실측(10/4): 일기 0건 · 수업에 붙은 복기 23건 전부 잠긴 달(07~09월)이라
+  지금 고칠 수 있는 기록에 붙은 것은 0건이다. 옮길지는 오너 결정 뒤 따로 한다.
+
+**응답** (200)
+
+```json
+{ "voided": { "sessionId": "…(옛)", "playedAt": "2026-10-04", "games": 8 },
+  "recorded": { "sessionId": "…(새)", "playedAt": "2026-10-03", "games": 10, "durationMin": 120,
+                "remainingAfter": 4, "remainingWasShort": false } }
+```
+
+### 9.29.5 취소 — `POST /api/trainer-portal/lessons/:sessionId/cancel` (결정 C · 20회/분)
+
+```json
+{ "reason": "다른 수강생 기록을 잘못 넣었어요" }
+```
+
+- `reason` **필수** 2~200자(없으면 400 `reason_required`).
+- **실제 삭제는 없다.** 옛 기록은 그대로 남고 무효 표시가 붙는다. 판수는 서버가 반대 행으로 돌려준다
+  (같은 날짜 · 같은 트레이너 · 같은 등록 — 그 트레이너 정산에서도 같은 판수만큼 빠진다).
+- 누가 · 언제까지 · 잠긴 달 · 조정 행 409 는 고치기(§9.29.4)와 같다. 이미 취소됨 409 `already_voided`.
+- 원장 화면에 알림 한 줄(§9.29.7).
+
+**응답** (200) `{ "sessionId": "…", "voided": true, "voidedAt": "2026-10-04T05:20:00Z", "games": 5, "remainingAfter": 12 }`
+
+### 9.29.6 되살리기 — `POST /api/trainer-portal/lessons/:sessionId/restore` (20회/분)
+
+- body `{ "reason": "…" }` 선택(2~200자).
+- 취소된 기록만(아니면 409 `not_voided`). 누가 · 언제까지는 취소와 같다.
+- 판수는 다시 빠진다(반대 행이 하나 더 들어간다). 같은 날 다른 기록이 있어도 묻지 않는다(원래 있던 수업이다).
+- 취소 · 되살리기는 몇 번이든 번갈아 할 수 있다(그때마다 이력 한 줄).
+
+**응답** (200) `{ "sessionId": "…", "voided": false, "games": 5, "remainingAfter": 7, "remainingWasShort": false }`
+
+### 9.29.7 원장 화면 알림 — `GET /owner/dashboard` → `recordChanges[]` 추가 키
+
+최근 14일 · 최신순 · 최대 20줄. 트레이너가 고치기 · 취소 · 되살리기를 하면 한 줄씩 쌓인다(원장 본인이 한 것도 같이 보인다).
+
+```json
+"recordChanges": [ { "at": "2026-10-04T05:20:00Z", "action": "cancel",
+  "trainer": { "trainerKey": "…", "trainerName": "트레이너A" }, "student": { "id": "…", "displayName": "에임장인" },
+  "playedAt": "2026-10-04", "gamesBefore": 5, "gamesAfter": 0, "reason": "다른 수강생 기록을 잘못 넣었어요" } ]
+```
+
+- `action` ∈ `cancel`(취소) · `restore`(되살리기) · `correct`(고치기 — `gamesBefore` → `gamesAfter` · 날짜가 바뀌면 `playedAt` 은 새 날짜 · `playedAtBefore` 에 옛 날짜).
+- 원장 할 일은 없다 — 보기만 하면 된다(이상하면 그 트레이너에게 묻는다).
+
+### 9.29.8 판수 · 정산은 어떻게 맞나 (서버 메모)
+
+- **취소** = 옛 행은 그대로 + 반대 행 하나(같은 수강생 · 트레이너 · 날짜 · 등록 · 판수 −N · `created_by` = `void:<옛 id>`).
+  **되살리기** = 반대의 반대(+N · `void:<옛 id>:rev`). **고치기** = 취소 + 새 기록.
+- 잔여(§41) · 등록 귀속 · 정산 엔진(진행 트레이너 귀속 · 음수 행 차감)은 **행 합**으로 계산하므로 계산식을 안 바꿔도 맞는다.
+  지급은 반대 행이 같은 트레이너 · 같은 판당 단가로 빠진다. 고칠 수 있는 기록은 안 잠긴 달(지금은 10월~)뿐이고, 그 기간은 70% 단일 요율
+  (`admin-panel.js` `RATE_FLAT_FROM` 2026-09-01~)이라 더하고 뺀 지급이 정확히 0이 된다. ⚠️ 구간 요율(기본 + 재결제 +5%p)이 다시 생기면
+  음수 행은 기본 요율로 빠지므로(엔진 종전 규칙) 재결제 구간 기록을 취소할 때 +5%p 만큼 차이가 남는다 — 그때 결제 트랙과 다시 본다.
+- 수업 수 · 마지막 수업일 · 이번 주 수업 · 공개 지표 · 판수 내역 · 수강생 앱 수업 목록은 **취소된 기록과 반대 행을 수업에서 뺀다**
+  (한 벌 판정 `ops-status.cjs` `lessonRowsOf` · `voidState` — 화면마다 따로 세지 않는다).
+  판수 내역(§7.4 · §9.15)에는 취소된 기록이 `voided: true` · 0판 줄로 남는다(등록 취소 줄과 같은 모양 — 두 줄 긋기).
+- 이력 = `admin_audit` — `session.cancel` · `session.restore` · `session.correct` · `course.level_move`(누가 · 언제 · 사유 · 전 → 후).
+- 같은 기록을 두 번 눌러도 한 번만 들어가게 서버가 같은 기록 요청을 줄 세운다(한 서버 안 · 배포가 겹치는 몇 초는 예외 — 이력으로 찾을 수 있다).
+
+### 9.29.9 계약 한 줄 (반장)
+
+- **원장 반 옮기기**: 반 목록 명단의 `courseKey` 로 `PUT /courses/:courseKey/level { courseLevel }` → `changed` · `unitsLeft`(그대로) · `moves`.
+- **수업 기록하기**: 개인은 길이 버튼(1시간 · 1시간 30분 · 2시간 · 2시간 30분 · 3시간) → `durationMin` 만 보낸다(판수는 서버). 그룹은 판 수 `games`.
+- **내 기록 목록**: `voided` 면 두 줄 긋기 · `editable` 이면 [고치기] [취소] (취소된 줄은 [되살리기]) · `lockedPeriod` 면 「정산 끝난 달 · 원장에게」.
+- **원장 홈**: `recordChanges[]` 를 「최근 기록 변경」 한 줄씩.

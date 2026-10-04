@@ -13,6 +13,8 @@
 // ============================================================
 "use strict";
 
+const { voidRef, voidState } = require("./ops-status.cjs");   // 수업 기록 취소(§9.29) 판정 한 벌
+
 // 수업 날짜 입력 해석(봇 /수업등록 「날짜」 칸 · 오너 지시 2026-09-30 「밀린 9월 수업은 실제 날짜로」).
 //   "9/12" · "9.12" · "9-12" · "9월 12일" · "2026-09-12" → "2026-09-12". 비우면 오늘.
 //   연도 없이 쓴 날짜가 오늘보다 뒤면 작년으로 본다(1월에 12/30 을 넣는 경우).
@@ -100,23 +102,28 @@ module.exports = function createLessonRecorder(deps) {
   // 그날 앱이 남긴 기록이 있는 수강생(봇 /수업등록 의 중복 건너뛰기 · §37).
   //   ⚠️ created_by = 'portal' 로 좁힌다 — 하루 두 타임을 봇으로 따로 등록하는 정상 운영을 막지 않으려고
   //   (server.js dualWriteSessions 주석 · 실측 2026-09-28 24건 · 55행). 실패는 호출자가 받는다.
+  //   취소한 앱 기록(§9.29)은 빼고 본다 — 반대 행(created_by 'void:…')을 같이 읽어 판정한다.
   async function appRecordedOn(trainerId, studentIds, playedAt) {
     const have = await sbSelect("lesson_sessions",
-      `select=student_id&trainer_id=eq.${trainerId}&played_at=eq.${playedAt}`
-      + `&created_by=eq.portal&student_id=in.(${studentIds.join(",")})`);
-    return new Set(have.map((r) => Number(r.student_id)));
+      `select=id,student_id,games,created_by,memo&trainer_id=eq.${trainerId}&played_at=eq.${playedAt}`
+      + `&or=(created_by.eq.portal,created_by.like.void:*)&student_id=in.(${studentIds.join(",")})`);
+    const { voided } = voidState(have);
+    return new Set(have.filter((r) => r.created_by === "portal" && !voided.has(Number(r.id))).map((r) => Number(r.student_id)));
   }
 
   // 그날 이 트레이너의 **수업 기록**이 있는 수강생 — 앱 「수업 기록하기」의 중복 판정(계약 §9.9).
   //   앱 · 봇 어느 쪽 기록이든 본다(전환기에 봇과 앱에 같은 수업을 두 번 넣는 것까지 막는다).
   //   판수 조정 행(created_by 'adjreq:…' · §46)과 판수가 0 이하인 정정 행은 수업이 아니라 뺀다.
+  //   취소한 기록(§9.29)도 뺀다 — 잘못 넣고 취소한 뒤 다시 넣을 때 묻지 않게. 반대 행이 음수라 판수로 거르지 않고 다 읽는다.
   //   막는 게 아니라 묻는 것이다 — 하루 두 타임이면 앱이 sameDayOk 로 다시 보낸다.
   async function recordedOn(trainerId, studentIds, playedAt) {
+    //   판정은 §50 같은 날 판정(DB 함수)과 같은 선 — 조정 행 · 0 이하 행 빼기 — 에 취소(반대 행 · 취소된 옛 행)만 더 뺀다.
     const have = await sbSelect("lesson_sessions",
-      `select=student_id,created_by&trainer_id=eq.${trainerId}&played_at=eq.${playedAt}&games=gt.0`
+      `select=id,student_id,games,created_by&trainer_id=eq.${trainerId}&played_at=eq.${playedAt}`
       + `&student_id=in.(${studentIds.join(",")})`);
-    return new Set(have.filter((r) => !String(r.created_by || "").startsWith("adjreq:"))
-      .map((r) => Number(r.student_id)));
+    const { voided } = voidState(have);
+    return new Set(have.filter((r) => Number(r.games) > 0 && !String(r.created_by || "").startsWith("adjreq:")
+      && !voidRef(r) && !voided.has(Number(r.id))).map((r) => Number(r.student_id)));
   }
 
   // 수업 기록 본체 — 봇 /수업등록 과 앱 「수업 기록하기」가 이 함수 하나로 쓴다.

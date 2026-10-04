@@ -116,3 +116,48 @@ test("조정 상태 · 되돌리기 마감 — 바로 반영만 24시간 · 승�
   assert.equal(T.revertibleUntil({ status: "approved", decided_by: "owner", decided_at: at }, now), null);
   assert.equal(T.revertibleUntil({ status: "reverted", decided_by: "direct", decided_at: at }, now), null);
 });
+
+// ════════ §9.29 길이로 판수 · 고치기 · 사유 ════════
+test("§9.29.2 길이로 판수 — 개인은 길이로 서버가 계산(정본 lesson-lengths) · 판수를 같이 보내면 같을 때만 · 그룹은 판 수만", () => {
+  const P = (o) => T.parseLessonBody(lesson({ games: undefined, ...o }), TODAY);
+  assert.deepEqual([60, 90, 120, 150, 180].map((m) => P({ durationMin: m }).value.games), [5, 8, 10, 13, 15]);
+  assert.equal(P({ durationMin: 90 }).value.durationMin, 90);
+  assert.equal(P({ durationMin: 90, games: 8 }).ok, true);
+  assert.equal(P({ durationMin: 90, games: 5 }).ok, false);                                 // 계산과 다른 판수
+  for (const m of [0, 30, 45, 100, 210, "90", 90.5]) assert.equal(P({ durationMin: m }).ok, false, String(m));
+  assert.equal(P({}).ok, false);                                                            // 길이도 판수도 없음
+  assert.equal(T.parseLessonBody(lesson(), TODAY).value.durationMin, null);                 // 종전 앱(판수만) 그대로
+  assert.equal(T.parseLessonBody(lesson({ kind: "group", durationMin: 60 }), TODAY).ok, false);
+  assert.deepEqual(T.pickGames("group", { games: 3 }), { ok: true, games: 3, durationMin: null });
+});
+
+test("§9.29.4 고치기 본문 — 날짜 · 길이 · 판수 중 하나 · 옛 기록과 달라야 · 미래 불가 · 사유 2~200자(선택)", () => {
+  const row = { played_at: "2026-09-29", games: 5 };
+  const C = (b) => T.parseCorrectBody(b, row, TODAY);
+  assert.deepEqual(C({ playedAt: "2026-09-28" }).value, { playedAt: "2026-09-28", games: 5, durationMin: null, reason: null });
+  assert.deepEqual(C({ durationMin: 120, reason: " 길이 틀림 " }).value, { playedAt: "2026-09-29", games: 10, durationMin: 120, reason: "길이 틀림" });
+  assert.equal(C({ games: 8 }).value.games, 8);
+  assert.equal(C({ playedAt: "2026-08-01" }).ok, true);                                     // 날짜 창 없음(잠긴 달은 라우트가 본다)
+  assert.equal(C({}).ok, false);                                                            // 바꿀 게 없다
+  assert.equal(C({ games: 5 }).ok, false);                                                  // 옛 기록과 같다
+  assert.equal(C({ playedAt: "2026-09-29", durationMin: 60 }).ok, false);                   // 60분 = 5판 = 같다
+  assert.equal(C({ playedAt: "2026-10-02" }).ok, false);                                    // 미래
+  assert.equal(C({ playedAt: "2026-09-31" }).ok, false);                                    // 없는 날
+  assert.equal(C({ games: 51 }).ok, false);
+  assert.equal(C({ durationMin: 90, games: 5 }).ok, false);                                 // 길이와 판수가 어긋남
+  assert.equal(C({ games: 8, reason: "x" }).ok, false);                                     // 사유 1자
+  assert.equal(C({ games: 8, reason: "x".repeat(201) }).ok, false);
+  assert.equal(C(null).ok, false);
+});
+
+test("§9.29 사유 — 없음 null · 공백만 null · 2~200자 · 문자열 아님 · 길이 밖은 undefined", () => {
+  assert.equal(T.readEditReason(undefined), null);
+  assert.equal(T.readEditReason(null), null);
+  assert.equal(T.readEditReason("   "), null);
+  assert.equal(T.readEditReason(" 잘못 넣음 "), "잘못 넣음");
+  assert.equal(T.readEditReason("또"), undefined);
+  assert.equal(T.readEditReason("가".repeat(200)), "가".repeat(200));
+  assert.equal(T.readEditReason("가".repeat(201)), undefined);
+  assert.equal(T.readEditReason(5), undefined);
+  assert.equal(T.readEditReason("👍👍"), "👍👍");                                             // 글자 수는 코드포인트로 센다
+});

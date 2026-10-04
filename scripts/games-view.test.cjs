@@ -116,3 +116,27 @@ test("조정 행 판별 · 요청 id · 주간 보류 대상", () => {
   ];
   assert.deepEqual(gv.newlyHeld(rows, "2026-10-15").map((r) => r.id), [1, 2]);                    // 오늘 포함 7일
 });
+
+test("§9.29 판수 내역 — 취소한 기록은 0판 · voided 줄(두 줄 긋기) · 반대 행은 줄이 없다 · 되살리면 다시 −N · 고치기 = 0판 줄 + 새 줄", () => {
+  const base = {
+    carry: null, enrolls: [{ id: 1, games_total: 30, started_on: "2026-10-01", trainer_id: 5, status: "active" }],
+    holds: [], adjKinds: new Map(), kstClock: () => ({ date: "2026-10-04", md: "10/4", hm: "20:00" }),
+  };
+  const L = (sessions) => gv.ledgerRows({ ...base, sessions });
+  const s10 = { id: 10, played_at: "2026-10-03", games: 5, trainer_id: 5, created_by: "portal", memo: null };
+  const cancel = { id: 11, played_at: "2026-10-03", games: -5, trainer_id: 5, created_by: "void:10", memo: null };
+  const restore = { id: 12, played_at: "2026-10-03", games: 5, trainer_id: 5, created_by: "void:10:rev", memo: null };
+  const fixed = { id: 13, played_at: "2026-10-02", games: 8, trainer_id: 5, created_by: "portal", memo: null };
+
+  const off = L([s10, cancel]);
+  assert.deepEqual(off.rows.map((r) => [r.kind, r.games, !!r.voided]), [["enroll", 30, false], ["lesson", 0, true]]);
+  assert.equal(off.remaining, 30);                                                           // 행 합(5 − 5)과 같다
+  const back = L([s10, cancel, restore]);
+  assert.deepEqual(back.rows.map((r) => [r.kind, r.games, !!r.voided]), [["enroll", 30, false], ["lesson", -5, false]]);
+  assert.equal(back.remaining, 25);
+  const corrected = L([s10, cancel, fixed]);
+  assert.deepEqual(corrected.rows.map((r) => [r.kind, r.games, !!r.voided]),
+    [["enroll", 30, false], ["lesson", -8, false], ["lesson", 0, true]]);
+  assert.equal(corrected.remaining, 30 - 8);
+  assert.equal(corrected.rows.at(-1).balance, corrected.remaining);
+});

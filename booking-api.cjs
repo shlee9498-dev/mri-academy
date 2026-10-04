@@ -48,6 +48,7 @@ const kstDate = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().
 //   반 키 ↔ DB 값 · 남은 회차 표시 · 강의 고르기 사본은 course-progress.cjs 한 벌이다(판정은 DB 함수가 한다).
 const courseProgress = require("./course-progress.cjs");
 const { COURSE_LEVEL_BY_KEY, COURSE_KEY_BY_LEVEL, pickCourse, CLASS_LEVELS } = courseProgress;
+const { voidRef, voidState } = require("./ops-status.cjs");   // 수업 기록 취소(§9.29) 판정 한 벌
 const COURSE_SPAN_DEFAULT = 180;     // 원장 강의 기본 길이(3시간)
 const COURSE_CAP_DEFAULT = 3;        // 기본 정원 — 원장이 「참여형」으로 열던 칸과 같은 값
 const ATTEND_MAX = 12;               // 출석 한 번에 받는 인원 상한(정원 상한 8 + 칸 없이 기록하는 날의 여유)
@@ -75,8 +76,12 @@ const unitsOf = (v) => (v === null || v === undefined || v === "" ? null : Numbe
 
 module.exports = function mountBookingApi(app, deps) {
   const { sbSelect, sbRpc, limit, discordDM, portal, trainer } = deps;
+  // 수업 기록 한 벌(lesson-record.cjs) — 「완료」가 취소한 기록만 있는 날을 기록으로 착각할 때 대신 기록한다(§9.29 · 아래)
+  const recorder = deps.recorder || null;
   // 회차 정정 기록(admin_audit) — 없는 배포(시험 등)에서는 기록만 건너뛴다.
   const sbInsert = typeof deps.sbInsert === "function" ? deps.sbInsert : null;
+  // 반 옮기기(§9.29.1)의 조건부 갱신 — 없는 배포면 그 라우트만 503
+  const sbPatch = typeof deps.sbPatch === "function" ? deps.sbPatch : null;
   // 판수가 움직인 뒤 부르는 훅(§45 판수 부족 알림 · server.js 가 준다) — 없으면 부르지 않는다(10분 점검이 대신 잡는다)
   const onGamesChanged = typeof deps.onGamesChanged === "function" ? deps.onGamesChanged : null;
   // 레벨 테스트(상담 예약) 「완료」 뒤 부르는 훅 — 상담 기록(consults) 자동 생성(server.js 가 준다 · 오너 OK 2026-09-30)
@@ -662,9 +667,11 @@ module.exports = function mountBookingApi(app, deps) {
       const dsids = [...new Set(doneBooks.map((b) => b.student_id))];
       try {
         const sess = await sbSelect("lesson_sessions",
-          `select=student_id,played_at&trainer_id=eq.${req.staff.id}`
+          `select=id,student_id,played_at,created_by&trainer_id=eq.${req.staff.id}`
           + `&student_id=in.(${dsids.join(",")})&played_at=in.(${dates.join(",")})`);
-        const have = new Set(sess.map((r) => `${r.student_id}|${r.played_at}`));
+        // 취소한 기록과 그 반대 행(§9.29)은 빼고 본다 — 기록을 취소했으면 「기록 없음」으로 다시 보인다(그 밖 판정은 종전 그대로)
+        const { voided } = voidState(sess);
+        const have = new Set(sess.filter((r) => !voidRef(r) && !voided.has(Number(r.id))).map((r) => `${r.student_id}|${r.played_at}`));
         for (const b of doneBooks)
           if (!have.has(`${b.student_id}|${kstDate(slotStart[b.slot_id])}`)) out.add(b.id);
       } catch (e) { console.error("booking_regcheck", e?.message); }   // 감지 실패는 플래그 생략으로
@@ -788,6 +795,32 @@ module.exports = function mountBookingApi(app, deps) {
     });
   }));
 
+  // 「완료」가 already:'session' 으로 닫혔는데 그날 이 트레이너 · 수강생의 수업 기록이 **취소한 기록뿐**이면(§9.29)
+  //   판수를 대신 기록한다 — 판수 = 보낸 games, 없으면 예약이 잡았던 선차감분. 진짜 기록이 있거나 취소 기록이 없으면 null(종전대로).
+  async function recordOverVoided(bookingId, playedAt, games, staff) {
+    if (!playedAt) return null;
+    const bk = (await sbSelect("slot_bookings", `select=student_id,games_held&id=eq.${bookingId}&limit=1`))[0];
+    if (!bk) return null;
+    const rows = await sbSelect("lesson_sessions",
+      `select=id,games,created_by&student_id=eq.${bk.student_id}&trainer_id=eq.${staff.id}&played_at=eq.${playedAt}`);
+    const { voided } = voidState(rows);
+    const live = rows.some((r) => Number(r.games) > 0 && !String(r.created_by || "").startsWith("adjreq:")
+      && !voidRef(r) && !voided.has(Number(r.id)));
+    if (live || !rows.some((r) => voided.has(Number(r.id)))) return null;
+    const g = Number.isInteger(games) ? games : Number(bk.games_held || 0);
+    if (!(g > 0)) return null;
+    const w = await recorder.writeLessonRows({
+      trainerId: staff.id, entries: [{ sid: bk.student_id, games: g }], playedAt, memo: null, createdBy: "portal",
+    });
+    if (w.error || !w.inserted?.length) return null;
+    console.log("[booking] 완료 — 취소한 기록만 있던 날이라 판수를 대신 기록", bookingId);
+    let rem = null;
+    try { const v = await sbRpc("portal_remaining_for_trainer", { p_student_id: bk.student_id, p_trainer_id: staff.id }); rem = v == null ? null : Number(v); }
+    catch { rem = null; }
+    return { resolved: true, status: "done", outcome: "recorded", games: g, playedAt,
+             remainingAfter: rem, remainingWasShort: rem != null && rem < 0 };
+  }
+
   // POST /bookings/:id/complete — 수업 기록의 정식 입구다(오너 지시 2026-09-28 「수업 기록 하나로」).
   //   종전(2026-09-04 판정)에는 상태만 바꿨고 판수는 봇 /수업등록 하나뿐이었다. 그런데
   //   portal_remaining_games 는 done 예약의 선차감을 **놓는다** — 그래서 「완료」만 누르고
@@ -881,6 +914,12 @@ module.exports = function mountBookingApi(app, deps) {
       });
       if (out?.error) return rpcFail(res, out.error);
       if (out?.already) {
+        // §9.29 — 그날 기록이 「취소한 기록」뿐인데 §50 함수가 그걸 기록으로 보고 판수 없이 닫은 경우(함수는 취소를 모른다 ·
+        //   함수 교체는 오너 OK 대기). 여기서 같은 기록 함수로 넣어 판수가 0회 빠지지 않게 한다 — 그 밖은 종전 그대로.
+        if (out.already === "session" && recorder) {
+          const fixed = await recordOverVoided(bookingId, out.playedAt, games, req.staff);
+          if (fixed) return sendTrainer(res, fixed);
+        }
         // already:'session' 은 예약을 닫는 일까지 했지만 판수는 안 넣었다 — 성공으로 답하지 않는다.
         return rpcFail(res, out.already === "session" || out.hasSession
           ? "already_recorded" : "registration_missing");
@@ -1115,6 +1154,74 @@ module.exports = function mountBookingApi(app, deps) {
         classes: sorted.filter((c) => c.levelKr === levelKr).map(classOut),
       })),
     });
+  }));
+
+  // ══════════════ 반 옮기기(원장만 · 계약 §9.29.1 · 오너 결정 A 10/4) ══════════════
+  //   바뀌는 것은 그 강의의 반(courses.level) 하나 — 남은 회차(units_total · 출석 · 원장 확인)와 결제 · 금액 · 회당 단가는 그대로.
+  //   진행 중(active · paused) · 반이 초급 · 중급 · 심화인 강의만. 같은 반이면 아무것도 안 하고 changed:false(두 번 눌러도 안전).
+  //   조건부 갱신(지금 반 = 읽은 반)이라 두 화면이 엇갈리면 뒤 요청은 409 level_changed. 이력 = admin_audit course.level_move.
+  //   되돌리기 = 같은 길로 원래 반을 보낸다. 이미 잡힌 반 칸 예약은 그대로 둔다(옮기려면 원장이 예약을 옮긴다).
+  const LEVEL_MOVE_MAX = 20;
+  async function levelMoves(courseId) {
+    if (!sbInsert) return [];
+    try {
+      const rows = await sbSelect("admin_audit", "select=actor_name,detail,created_at&action=eq.course.level_move"
+        + `&target=eq.courses:${courseId}&order=created_at.desc&limit=${LEVEL_MOVE_MAX}`);
+      return rows.map((a) => ({
+        fromCourseLevel: COURSE_KEY_BY_LEVEL[a.detail?.from] || null, toCourseLevel: COURSE_KEY_BY_LEVEL[a.detail?.to] || null,
+        at: a.created_at, by: a.actor_name || null, note: a.detail?.note || null,
+      }));
+    } catch (e) { console.error("course_level_moves", e?.status || e?.message); return []; }
+  }
+  async function courseUnits(studentId, courseId) {
+    const m = await courseProgress.loadCourseProgress(sbSelect, { studentIds: [studentId], withIds: true });
+    const c = (m.get(Number(studentId)) || []).find((x) => Number(x.courseId) === Number(courseId));
+    return c ? { unitsLeft: unitsOf(c.remainingUnits), unitsTotal: unitsOf(c.unitsTotal) } : { unitsLeft: null, unitsTotal: null };
+  }
+  app.put(`${TRAINER}/courses/:id/level`, rateLimit("trainerCourseLevel", 30, 60_000), bodyOnly(["courseLevel", "note"]),
+    requireTrainer, wrap(async (req, res) => {
+      if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
+      const courseId = readOpaqueId("course", req.params.id);
+      const to = typeof req.body?.courseLevel === "string" ? COURSE_LEVEL_BY_KEY[req.body.courseLevel] : undefined;
+      const note = req.body?.note;
+      if (courseId == null || !to) return fail(res, 400, "invalid_body");
+      if (note !== undefined && note !== null && (typeof note !== "string" || [...note].length > 200)) return fail(res, 400, "invalid_body");
+      if (!sbPatch) return fail(res, 503, "portal_unavailable");
+      const c = (await sbSelect("courses", `select=id,student_id,level,status&id=eq.${courseId}&limit=1`))[0];
+      if (!c) return fail(res, 404, "not_found");
+      if (!["active", "paused"].includes(c.status) || !CLASS_LEVELS.includes(c.level)) return fail(res, 409, "course_not_movable");
+      let changed = false;
+      if (c.level !== to) {
+        let got;
+        try {
+          got = await sbPatch("courses",
+            `id=eq.${courseId}&level=eq.${encodeURIComponent(c.level)}&status=in.(active,paused)`,
+            { level: to, updated_at: new Date().toISOString() });
+        } catch (e) {
+          // uq_courses_dup(같은 수강생 · 같은 반 · 같은 시작일) — 그 반에 같은 날 시작한 강의가 이미 있다(10/4 실측 0쌍 · 방어)
+          let code = null; try { code = JSON.parse(e?.body || "{}").code; } catch { /* 본문 없음 */ }
+          if (code === "23505") return fail(res, 409, "course_duplicate");
+          throw e;
+        }
+        if (!got?.length) return fail(res, 409, "level_changed");
+        changed = true;
+        await audit(req.staff, "course.level_move", `courses:${courseId}`, {
+          student_id: c.student_id, from: c.level, to, note: typeof note === "string" && note.trim() ? note.trim() : null });
+      }
+      const units = await courseUnits(c.student_id, courseId);
+      sendTrainer(res, {
+        courseKey: opaqueId("course", courseId), changed, courseLevel: COURSE_KEY_BY_LEVEL[to], level: to,
+        fromCourseLevel: COURSE_KEY_BY_LEVEL[c.level] || null, ...units, moves: await levelMoves(courseId),
+      });
+    }));
+  app.get(`${TRAINER}/courses/:id/level-moves`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
+    if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
+    const courseId = readOpaqueId("course", req.params.id);
+    if (courseId == null) return fail(res, 400, "invalid_body");
+    const c = (await sbSelect("courses", `select=id,level&id=eq.${courseId}&limit=1`))[0];
+    if (!c) return fail(res, 404, "not_found");
+    sendTrainer(res, { courseKey: opaqueId("course", courseId), courseLevel: COURSE_KEY_BY_LEVEL[c.level] || null,
+                       moves: await levelMoves(courseId) });
   }));
 
   // POST /course-attendance/corrections — 회차 정정 「출석 추가 · 보강」(원장만 · 사유 필수 · §59d · 계약 §9.22.2)

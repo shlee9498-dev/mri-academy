@@ -33,6 +33,11 @@ const ENROLL_STATUSES = ["active", "done", "paused"];
 // 담당 밖 수강생을 범위에 넣는 창. booking-api 의 isMyTrainer(MY_TRAINER_WINDOW_DAYS)와 같은 90일이다.
 const SCOPE_WINDOW_DAYS = 90;
 const JOURNAL_DAYS_DEFAULT = 30;
+// 원장 홈 「최근 기록 변경」(§9.29.7) — 수업 기록 고치기 · 취소 · 되살리기 이력(admin_audit · trainer-lessons.cjs 가 남긴다)
+const RECORD_CHANGE_DAYS = 14;
+const RECORD_CHANGE_MAX = 20;
+const RECORD_CHANGE_KIND = Object.freeze({ "session.cancel": "cancel", "session.restore": "restore", "session.correct": "correct" });
+const RECORD_CHANGE_ACTIONS = Object.keys(RECORD_CHANGE_KIND);
 const JOURNAL_DAYS_MAX = 180;
 const JOURNAL_LIMIT = 200;
 const FEEDBACK_MAX = 4000;      // journal_feedback_body_check 와 같은 값
@@ -346,12 +351,14 @@ module.exports = function mountTrainerPortal(app, deps) {
       a.lastEnrollAny = later(a.lastEnrollAny, e.started_on);
       if (e.trainer_id != null) a.lastEnrollByT.set(e.trainer_id, later(a.lastEnrollByT.get(e.trainer_id), e.started_on));
     }
+    // 마지막 수업일은 수업 기록 행만 — 조정 · 취소한 기록 · 취소 반대 행(§9.29) 빼고(판수 합은 반대 행으로 이미 맞는다)
+    const liveIds = new Set(ops.lessonRowsOf(sessions).map((r) => Number(r.id)));
     for (const r of sessions) {
       const a = A(r.student_id); const g = Number(r.games || 0); const adjust = gv.isAdjustRow(r);
       a.played += g;
       if (adjust) a.adj += g; else a.lesson += g;
       if (r.trainer_id != null) { const t = T(a, r.trainer_id); t.used += g; if (adjust) t.adj += g; else t.lesson += g; }
-      if (!adjust && g > 0) {
+      if (liveIds.has(Number(r.id))) {
         a.lastLessonAny = later(a.lastLessonAny, r.played_at);
         if (r.trainer_id != null) a.lastLessonByT.set(r.trainer_id, later(a.lastLessonByT.get(r.trainer_id), r.played_at));
       }
@@ -717,7 +724,8 @@ module.exports = function mountTrainerPortal(app, deps) {
 
     // ① 한 파동 — 「완료 확인 필요」가 최신이 되게 sweep 도 같이 돌린다(트레이너 칸 목록과 같다 · 실패해도 계속).
     //    예약은 sweep 이 끝난 ② 에서 읽는다.
-    const [book, weekSlots, openSlots, sessions, courseSessions, assignedRows, payreqs, adjreqs, linkreqs, activeCourses] = await Promise.all([
+    const changesSince = new Date(nowMs - RECORD_CHANGE_DAYS * 86400_000).toISOString();
+    const [book, weekSlots, openSlots, sessions, courseSessions, assignedRows, payreqs, adjreqs, linkreqs, activeCourses, recordChanges] = await Promise.all([
       staffBook(),
       // 칸은 30분 단위라 한 주에 수백 행이 된다 — 쪼개 읽는다(두 트레이너가 하루 12시간씩 열면 주 670행대)
       selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min,course_level"
@@ -737,6 +745,10 @@ module.exports = function mountTrainerPortal(app, deps) {
       sbSelect("student_link_requests", "select=created_at&status=eq.pending"),
       // 진행 중 직강생(원장 홈 「남은 회차 적은 직강생」 · 계약 §9.22) — 실패해도 대시보드는 내린다(목록만 빈다)
       sbSelect("courses", "select=student_id&status=eq.active").catch((e) => { console.error("dashboard_courses", e?.message); return []; }),
+      // 최근 수업 기록 고치기 · 취소 · 되살리기(§9.29.7) — 실패해도 대시보드는 내린다(목록만 빈다)
+      sbSelect("admin_audit", `select=action,detail,created_at&action=in.(${RECORD_CHANGE_ACTIONS.join(",")})`
+        + `&created_at=gte.${changesSince}&order=created_at.desc&limit=${RECORD_CHANGE_MAX}`)
+        .catch((e) => { console.error("dashboard_record_changes", e?.status || e?.message); return []; }),
       sbRpc ? sbRpc("sweep_pending_review", {}).catch((e) => console.error("dashboard_sweep", e?.message)) : null,
     ]);
 
@@ -797,7 +809,9 @@ module.exports = function mountTrainerPortal(app, deps) {
     const low = ops.lowUnitsList(courseProg, courseProgress.pickCourse);
 
     // 수업에 나오는 수강생 이름 — 한 번에(오너 화면이라 전원 볼 수 있다 · 합친 행도 이름은 보인다)
-    const sids = [...new Set([...lessons.flatMap((l) => l.studentIds), ...low.map((r) => r.studentId)])];
+    const changeRows = (recordChanges || []).filter((a) => a?.detail && a.detail.student_id != null).slice(0, RECORD_CHANGE_MAX);
+    const sids = [...new Set([...lessons.flatMap((l) => l.studentIds), ...low.map((r) => r.studentId),
+                              ...changeRows.map((a) => Number(a.detail.student_id))])];
     const stu = {};
     if (sids.length) for (const s of await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})`)) stu[s.id] = s;
     const KEY_KIND = { booking: "booking", record: "session", course: "course_session", slot: "slot" };
@@ -848,6 +862,20 @@ module.exports = function mountTrainerPortal(app, deps) {
           unitsLeft: r.unitsLeft, unitsTotal: r.unitsTotal,
         })),
       },
+      // 최근 수업 기록 변경(§9.29.7) — 트레이너가 고치기 · 취소 · 되살리기를 하면 한 줄씩 · 최근 14일 · 최대 20
+      recordChanges: changeRows.map((a) => {
+        const d = a.detail;
+        const correct = a.action === "session.correct";
+        return {
+          at: a.created_at, action: RECORD_CHANGE_KIND[a.action],
+          trainer: { trainerKey: d.trainer_id == null ? null : opaqueId("trainer", d.trainer_id),
+                     trainerName: d.trainer_id == null ? "미배정" : (book.names[d.trainer_id] || "미배정") },
+          student: { id: opaqueId("student", d.student_id), displayName: stu[d.student_id]?.name || "?" },
+          playedAt: correct ? (d.played_at_after || d.played_at || null) : (d.played_at || null),
+          ...(correct ? { playedAtBefore: d.played_at || null } : {}),
+          gamesBefore: d.games_before ?? null, gamesAfter: d.games_after ?? null, reason: d.reason || null,
+        };
+      }),
       thresholds: ops.THRESHOLDS,
     });
   }));
@@ -955,5 +983,5 @@ module.exports = function mountTrainerPortal(app, deps) {
 
   // booking-api.cjs 가 같은 판정·가드를 쓴다 — 두 벌이 되면 만료·회수·차단 규칙이 갈라진다.
   // 복기 트레이너 라우트(review-api.cjs mountTrainer · PR-3)도 같은 판정·범위·가드를 쓴다(복제 금지).
-  return { requireTrainer, sendTrainer, scrubTrainer, scopedStudents, holdDigestFor, setLevel, colorKeyOf };
+  return { requireTrainer, sendTrainer, scrubTrainer, scopedStudents, oneScope, holdDigestFor, setLevel, colorKeyOf };
 };

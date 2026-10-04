@@ -31,7 +31,7 @@
 "use strict";
 const crypto = require("crypto");
 // 수업 기록 행 판정 한 벌(판수 조정 · 봇 정정 · 0 이하 행은 수업이 아니다) — 원장 화면 · 공개 지표와 같다.
-const { isLessonRow } = require("./ops-status.cjs");
+const { lessonRowsOf } = require("./ops-status.cjs");   // 수업 기록 행 한 벌 — 조정 · 정정 · 취소(§9.29) 행 빼기
 // 직강 출석 회차 · 회차 번호 한 벌(§61 · 수강생 앱 /sessions · 원장 화면과 같은 함수)
 const courseProgress = require("./course-progress.cjs");
 
@@ -1027,14 +1027,14 @@ module.exports = function mountReviewApi(app, deps) {
     const since = kstDate(Date.now() - RECIPIENT_WINDOW_DAYS * 86400_000);
     const [stu, sess, attended, activeCourse, owner] = await Promise.all([
       sbSelect("students", `select=trainer_id&id=eq.${sub}&limit=1`),
-      sbSelect("lesson_sessions", `select=trainer_id,played_at,games,created_by,memo&student_id=eq.${sub}&played_at=gte.${since}&trainer_id=not.is.null&order=played_at.desc`),
+      sbSelect("lesson_sessions", `select=id,trainer_id,played_at,games,created_by,memo&student_id=eq.${sub}&played_at=gte.${since}&trainer_id=not.is.null&order=played_at.desc`),
       courseProgress.loadAttendedSessions(sbSelect, sub),
       sbSelect("courses", `select=id&student_id=eq.${sub}&status=eq.active&limit=1`).catch(() => []),
       ownerStaffId().catch(() => null),
     ]);
     const assigned = stu[0]?.trainer_id ?? null;
     const last = new Map();
-    for (const s of sess.filter(isLessonRow)) if (!last.has(s.trainer_id)) last.set(s.trainer_id, String(s.played_at).slice(0, 10));
+    for (const s of lessonRowsOf(sess)) if (!last.has(s.trainer_id)) last.set(s.trainer_id, String(s.played_at).slice(0, 10));
     const lastCourse = attended.find((c) => String(c.heldOn) >= since)?.heldOn ?? null;           // 최근부터 정렬돼 있다
     if (owner && lastCourse && !(String(last.get(owner) || "") >= String(lastCourse))) last.set(owner, String(lastCourse).slice(0, 10));
     const courseOnly = !!owner && last.size === 0 && activeCourse.length > 0;                      // 직강만 듣는다(수업 기록 없음)
@@ -1841,8 +1841,8 @@ module.exports = function mountReviewApi(app, deps) {
     if (!ready) return {};
     const today = kstDate(Date.now());
     // 판수 조정 행(노쇼 · 늦은 취소 · 보상 …)은 수업이 아니다 — 9/30 부터 트레이너가 바로 넣어서 같은 날 행이 흔해진다.
-    const sess = (await sbSelect("lesson_sessions",
-      `select=id,games,created_by,memo&student_id=eq.${sub}&played_at=eq.${today}`)).filter(isLessonRow);
+    const sess = lessonRowsOf(await sbSelect("lesson_sessions",
+      `select=id,games,created_by,memo&student_id=eq.${sub}&played_at=eq.${today}`));
     let due = false;
     if (sess.length) {
       const revs = await sbSelect("lesson_reviews",

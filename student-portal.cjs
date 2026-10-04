@@ -26,6 +26,7 @@ const courseProgress = require("./course-progress.cjs");
 const growthCalc = require("./growth.cjs");
 // 판수 조정 행 판별 · 지금 쓰는 묶음 · 판수 내역 — 트레이너 앱 §9.14~9.15 와 같은 함수(계약 §7.3 · §7.4 · 두 벌 금지).
 const gv = require("./games-view.cjs");
+const { voidRef, voidState } = require("./ops-status.cjs");   // 수업 기록 취소(§9.29) — 반대 행 · 취소된 옛 행 판정 한 벌
 
 // 신규 DDL(정본 4.2) 미실행 상태에서도 읽기 경로는 동작해야 한다 — 제목은 "미정",
 // 일기·피드백은 없음으로 degrade한다. 쓰기(PUT journal)만 503으로 막는다.
@@ -868,7 +869,9 @@ module.exports = function mountStudentPortal(app, deps) {
       ]);
       const written = new Set(journals.map((j) => j.session_id));
       // 판수 조정 행은 수업이 아니라 일기를 쓸 자리가 없다(/sessions 에서도 빠진다 · 계약 §7.4).
-      return sess.filter((x) => !isAdjReqRow(x) && !written.has(x.id)).length;
+      //   취소한 수업 기록 · 취소 반대 행(§9.29)도 같다.
+      const { voided } = voidState(sess);
+      return sess.filter((x) => !isAdjReqRow(x) && !voidRef(x) && !voided.has(Number(x.id)) && !written.has(x.id)).length;
     } catch (e) { console.error("summary_pending_journals", e?.message); return 0; }
   }
 
@@ -992,7 +995,9 @@ module.exports = function mountStudentPortal(app, deps) {
     // 판수 조정(노쇼 · 늦은 취소 · 보상 · 되돌림 · 계약 §7.4)은 수업이 아니다 — 판수 내역(/games-ledger)에서만 보인다.
     //   접기 전에 뺀다. 안 빼면 같은 날 보상(−3)이 그날 수업 판수를 깎아 보이게 한다.
     //   봇 /판수정정(memo '정정:')은 종전대로 그날 수업에 접힌다(2026-09-04 오너 판정 · 아래 foldCorrections).
-    const rows = foldCorrections(raw.filter((r) => !isAdjReqRow(r)));
+    //   취소한 수업 기록(§9.29)과 그 반대 행도 수업 목록에서 뺀다 — 판수 내역(/games-ledger)에는 취소 줄로 남는다.
+    const { voided } = voidState(raw);
+    const rows = foldCorrections(raw.filter((r) => !isAdjReqRow(r) && !voidRef(r) && !voided.has(Number(r.id))));
     if (!rows.length) return send(res, { sessions: [], courseSessions });   // 직강만 듣는 수강생도 회차는 보인다
 
     const ids = rows.map((r) => r.id);

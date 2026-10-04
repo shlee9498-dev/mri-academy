@@ -25,7 +25,7 @@
 //                    읽기에 실패하면 null(사이트는 칸을 감추거나 고정값을 둔다)
 // ============================================================
 "use strict";
-const { isLessonRow, kstDate, addDays } = require("./ops-status.cjs");
+const { lessonRowsOf, kstDate, addDays } = require("./ops-status.cjs");
 const { TEST_STUDENT_IDS } = require("./test-accounts.cjs");
 const { isImportSource } = require("./course-progress.cjs");
 
@@ -140,7 +140,8 @@ function computeMetrics({ sessions, payments, students, enrollTrainer, staff, di
     const s = students.get(sid);
     return !!s && s.merged_into == null && !TEST_STUDENT_IDS.has(sid);
   };
-  const lessonRows = sessions.filter((r) => counted(r.student_id) && r.played_at >= window.from && r.played_at <= window.to && isLessonRow(r));
+  // 수업 행 = 조정 · 정정 · 0 이하 행 · 취소한 기록과 그 반대 행(§9.29) 빼고(ops-status lessonRowsOf 한 벌)
+  const lessonRows = lessonRowsOf(sessions).filter((r) => counted(r.student_id) && r.played_at >= window.from && r.played_at <= window.to);
   const lessonKey = (r) => `${r.trainer_id}|${r.played_at}|${r.created_at}`;
   const sum = (rows) => ({
     students: new Set(rows.map((r) => r.student_id)).size,
