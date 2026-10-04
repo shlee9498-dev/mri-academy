@@ -309,3 +309,20 @@ test("§57 답 기다려요 — 받는 트레이너 · 답 없음 · 디스코�
   assert.equal(T.awaitingReplyOf({ source: "app" }, true, true), false);
   assert.equal(T.awaitingReplyOf({ source: "app" }, false, false), false);
 });
+
+test("피드 excerpt — 한 줄 · 80자(글자 단위) · 넘으면 79자 + … · 본문 먼저 · 비면 줄 글 · 글이 없으면 null(§8.13)", () => {
+  const { excerptOf, EXCERPT_MAX } = T;
+  assert.equal(EXCERPT_MAX, 80);
+  for (const empty of [null, undefined, "", "  \n\t ", 42]) assert.equal(excerptOf(empty), null);
+  assert.equal(excerptOf("첫 줄\r\n\n둘째   줄\t셋째"), "첫 줄 둘째 줄 셋째");
+  assert.equal(excerptOf("가".repeat(80)), "가".repeat(80));                          // 꼭 80자면 그대로(… 없음)
+  assert.equal(excerptOf("가".repeat(81)), `${"가".repeat(79)}…`);
+  assert.equal(excerptOf("👍".repeat(81)), `${"👍".repeat(79)}…`);                      // 이모지 1자 · 반쪽 글자 없음
+  const fam = "👨‍👩‍👧";
+  assert.equal(excerptOf(fam.repeat(90)), `${fam.repeat(79)}…`);                      // ZWJ 로 이은 이모지도 1자 · 안 쪼갠다
+  assert.equal(excerptOf(`${"가".repeat(78)}  나다`), `${"가".repeat(78)}…`);           // 자른 끝 공백은 지운다(80자 이하)
+  assert.equal(excerptOf("a​b﻿c⁠d"), "abcd");                          // 폭 없는 공백 · BOM
+  assert.equal(excerptOf("본문", ["줄 글"]), "본문");                                  // 본문이 먼저
+  assert.equal(excerptOf("  ", [" 줄 하나 ", "", null, 7, "줄\n둘"]), "줄 하나 줄 둘");  // 본문이 비면 줄 글 · 글자 아닌 값은 버린다
+  assert.equal(excerptOf(null, ["", "  "]), null);
+});
