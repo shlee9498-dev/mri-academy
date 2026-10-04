@@ -689,3 +689,41 @@ test("2회 · 딜 점수는 판마다 따로: 합계 199 는 +1 · 150 + 150 두
   const t = (await w.bot.aggregate()).teams[0];
   assert.deepEqual([t.games.map((g) => g.dmgPts), t.total, t.damage], [[1, 1], 2, 300]);
 });
+
+// ── 지휘 10/4 밤: 개인 기록(킬내기 티어표의 재료) ──
+test("2회 · 개인 기록: 개인 킬 합 = 팀 킬 · 무효 판과 이탈 판은 합계에서 빠진다 · 응답에 계정 id · 계좌가 없다", async () => {
+  const A = accsOf("a"); const B = accsOf("b");
+  const mk = (id, min, accs, kills, opt) => { const m = squadMatch(id, EV2.start + min * 60000, accs, opt); Object.values(m.parts).forEach((p, i) => { p.kills = kills[i]; p.damageDealt = kills[i] * 100 + 50; }); return m; };
+  const matches = [
+    mk("a1", 5, A, [3, 2, 1, 0], { rank: 1, dead: [2] }),       // 치킨 · 2번 사망
+    mk("a2", 30, A, [9, 9, 9, 9], { dead: [1, 2, 3, 4] }),      // 진행자가 무효로 돌릴 판(낙하 전 튕김)
+    mk("a3", 60, A, [1, 0, 4, 2], { dead: [1, 4] }),
+    mk("b1", 6, B, [5, 5, 0, 0], {}),                           // 이탈로 표시할 판
+    mk("b2", 40, B, [2, 1, 1, 0], { dead: [3] }),
+  ];
+  const cfgValue = { voidGames: { "불사조|a2": true } };
+  const w = fakeWorld({ cfgValue, matches, teamRows: [teamRow("불사조", "a"), teamRow("막판", "b")], stored: [{ team_name: "막판", match_id: "b1", seq: 1, leave_flag: true, flags: {}, deaths: null }] });
+  const res = await w.bot.aggregate();
+  const rows = savedRows(w).map((r) => ({ ...r, leave_flag: r.match_id === "b1" }));
+  // 무효 판도 선수 기록은 남긴다(티어표 재료) — 합계에서만 뺀다
+  const voidRow = rows.find((r) => r.match_id === "a2");
+  assert.deepEqual([voidRow.seq, voidRow.deaths.void, voidRow.deaths.members.map((m) => m.kills)], [null, true, [9, 9, 9, 9]]);
+  assert.deepEqual([rows.find((r) => r.match_id === "a1").deaths.chicken, rows.find((r) => r.match_id === "a3").deaths.chicken], [true, false]);
+  const roster = { players: [{ ign: "account.a1", tier: "T1", price: 40, captain: false }, { ign: "account.a4", tier: "팀장", price: null, captain: true }] };
+  const out = T.buildPlayers({ ev: EV2, teams: [teamRow("불사조", "a"), teamRow("막판", "b")].map(T.normTeam), cfg: T.normEventConfig(cfgValue), rows, roster, at: EV2.end });
+  const a = out.teams.find((t) => t.name === "불사조"); const b = out.teams.find((t) => t.name === "막판");
+  assert.deepEqual(a.players.map((x) => [x.slot, x.kills, x.damage, x.deaths, x.games, x.chickens]), [[1, 4, 500, 1, 2, 1], [2, 2, 300, 1, 2, 1], [3, 5, 600, 0, 2, 1], [4, 2, 300, 1, 2, 1]]);
+  assert.deepEqual(b.players.map((x) => [x.kills, x.games, x.deaths]), [[2, 1, 0], [1, 1, 0], [1, 1, 1], [0, 1, 0]]);          // 이탈 판(5 · 5)은 뺀다
+  for (const t of out.teams) {
+    assert.equal(t.players.reduce((n, x) => n + x.kills, 0), t.kills, `${t.name} 개인 킬 합 = 팀 킬`);
+    assert.equal(t.kills, res.teams.find((x) => x.team.name === t.name).kills - (t.name === "막판" ? 0 : 0));
+  }
+  assert.deepEqual([a.kills, b.kills, a.deaths], [13, 4, 3]);
+  assert.deepEqual(a.players.map((x) => [x.tier, x.price, x.captain]), [["T1", 40, false], [null, null, false], [null, null, false], ["팀장", null, true]]);
+  // 킬왕 · 딜왕 — 같은 값이면 같은 순위
+  assert.deepEqual(out.byKills.slice(0, 4).map((x) => [x.rank, x.ign, x.kills]), [[1, "account.a3", 5], [2, "account.a1", 4], [3, "account.a2", 2], [3, "account.a4", 2]]);
+  assert.equal(out.byDamage[0].ign, "account.a3");
+  const json = JSON.stringify(out);
+  assert.doesNotMatch(json, /accountId|"discord"|bank|accountNo|holder|liveToken/);
+  assert.equal(out.ended, true);
+});

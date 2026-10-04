@@ -356,3 +356,19 @@ test("경매를 만들 때 배수 시각 기본값: 끝 25분 전(21:00~23:00 �
   assert.deepEqual(a.defaultTimes(ev, { boostAt: 2 }), {});
 });
 
+
+test("회차 명단(개인 기록에 붙일 값): 팀 · 슬롯 · 티어 · 낙찰가 · 팀장 — 팀 등록으로 넘기는 순서 그대로", () => {
+  const s = make(12);
+  let t = T0;
+  const buy = (id, amount) => { T.openLot(s, {}, t); T.bid(s, { captainId: id, amount }, t); T.closeNow(s, t + 1); t += 10; };
+  buy("C1", 30); buy("C2", 40); buy("C3", 35);
+  T.finish(s, t);
+  const roster = T.rosterOf(s);
+  const plan = T.registerPlan(s);
+  assert.deepEqual(roster.filter((x) => x.team === plan[0].teamName).map((x) => [x.slot, x.ign]), plan[0].slots.map((m) => [m.slot, m.ign]));
+  const cap = roster.find((x) => x.captain && x.team === plan[0].teamName);
+  assert.deepEqual([cap.tier, cap.price, cap.slot], ["팀장", null, plan[0].igns.length]);
+  const pick = roster.find((x) => !x.captain && x.team === plan[0].teamName);
+  assert.deepEqual([pick.price, typeof pick.tier, pick.captain], [30, "string", false]);
+  assert.doesNotMatch(JSON.stringify(roster), /token|tok-/);
+});

@@ -338,6 +338,15 @@ function registerPlan(state) {
     };
   });
 }
+// 회차 명단 — 개인 기록(킬내기 티어표의 재료)에 붙일 값. 슬롯은 팀 등록으로 넘기는 순서 그대로
+function rosterOf(state) {
+  const lotByIgn = new Map(state.lots.map((l) => [l.ign, l]));
+  return state.captains.flatMap((c) => teamMembers(state, c).members.map((m, i) => {
+    const l = lotByIgn.get(m.ign) || {};
+    return { ign: m.ign, team: c.teamName, slot: i + 1, captain: !!m.captain, tier: m.captain ? "팀장" : l.tier || null, price: m.captain ? null : m.price,
+      gem: !!m.gem, platform: m.platform || null, kda: m.captain ? c.kda ?? null : l.kda ?? null, avgDmg: m.captain ? c.avgDmg ?? null : l.avgDmg ?? null };
+  }));
+}
 // 진행자가 슬롯 순서를 고친다 — 마감 뒤에만. order = 그 팀 전원의 닉을 1번부터 순서대로
 function setSlots(state, { captainId, order }, now) {
   if (state.phase !== "done") return fail("wrong_phase");
@@ -394,7 +403,7 @@ const captainByToken = (state, token) => {
 // store = { eventId(): Promise<id>, load(id): Promise<state|null>, save(id, state): Promise<void>, clear(id): Promise<void> }
 // register = async (plan[]) => 팀 등록 결과(없으면 register 동작은 503) · saveBonus = async (eventId, {팀명: 보너스}, teamSize) => void
 // onCreate = async (eventId) => void — 경매를 만들 때 한 번(이벤트 설정 기본값 채우기)
-function createAuctionApi({ store, isAdmin, register, saveBonus, onCreate, now = () => Date.now(), log = console, eventTtlMs = 30000 }) {
+function createAuctionApi({ store, isAdmin, register, saveBonus, saveRoster, onCreate, now = () => Date.now(), log = console, eventTtlMs = 30000 }) {
   let cache = null;                 // { eventId, state }
   let eventMemo = null;             // { id, at } — 화면이 1초마다 묻는다. 이벤트 id 는 잠깐 기억해 DB 를 매번 치지 않는다
   let chain = Promise.resolve();    // 요청을 한 줄로 세운다 — 입찰은 들어온 순서대로 하나씩
@@ -487,6 +496,7 @@ function createAuctionApi({ store, isAdmin, register, saveBonus, onCreate, now =
       const results = await register(plan);
       const okTeams = results.filter((x) => x.ok).map((x) => x.teamName);
       if (saveBonus) await saveBonus(c.eventId, Object.fromEntries(plan.map((p) => [p.teamName, p.bonus])), c.state.config.teamSize);
+      if (saveRoster) { try { await saveRoster(c.eventId, rosterOf(c.state)); } catch (e) { log.warn("[killrace-auction] roster_save_failed", String(e && e.message).slice(0, 60)); } }
       log.log(`[killrace-auction] register teams=${plan.length} ok=${okTeams.length}`);
       return send(res, 200, { ok: true, results });
     }
@@ -521,6 +531,6 @@ module.exports = {
   DEFAULT_CONFIG, createAuctionApi, defaultTimes,
   _test: {
     normConfig, teamPlan, createAuction, tick, openLot, bid, closeNow, undoLastSale, withdrawLot, addLot, startGems, gemPick, gemSkip,
-    gemRound, renameTeam, setSlots, teamMembers, finish, summary, registerPlan, publicView, adminView, captainByToken, remaining, slotsLeft, tierRank,
+    gemRound, renameTeam, setSlots, teamMembers, rosterOf, finish, summary, registerPlan, publicView, adminView, captainByToken, remaining, slotsLeft, tierRank,
   },
 };

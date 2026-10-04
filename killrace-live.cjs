@@ -10,7 +10,7 @@
 // 잠정 킬: 팀별 주소(토큰)에서 「+1킬」「-1」. 로그인 없음. 점수판에 회색 숫자로만 보이고 총점에는 더하지 않는다.
 //   그 팀의 판이 확정되면 그 판이 끝나기 전에 누른 것은 사라진다(= 0 으로 돌아간다). 다음 판에서 이미 누른 것은 남는다.
 // 저장: ops_state 'killrace:live:<event id>' 한 줄(DDL 없음) = { presses{팀:[시각…]}, ranks, gains, run }.
-// HTTP: GET /api/killrace/board(공개 · 진행자) · POST /api/killrace/board/admin(진행자) · POST /api/killrace/live(팀 주소 · delta 0 = 조회)
+// HTTP: GET /api/killrace/players(공개 · 개인 기록 화면) · GET /api/killrace/board(공개 · 진행자) · POST /api/killrace/board/admin(진행자) · POST /api/killrace/live(팀 주소 · delta 0 = 조회)
 
 const GRACE_MS = 45 * 60000;          // 23:00 전에 시작한 판이 끝나고 전적이 올라올 때까지
 const MAX_FAILS = 3;
@@ -110,6 +110,7 @@ function createLive(deps) {
   let chain = Promise.resolve();       // 상태 쓰기는 한 줄로
   const serial = (fn) => { const run = chain.then(fn, fn); chain = run.catch(() => {}); return run; };
   let boardCache = null;               // { at, body } — 공개 점수판만
+  let playersCache = null;             // { at, body } — 개인 기록(방송 전환 화면)
   let tokenCache = null;               // { at, evId, byToken: Map }
 
   async function stateFor(evId) {
@@ -133,7 +134,7 @@ function createLive(deps) {
         noteSuccess(state, { at: now(), source, ms: now() - t0, games: b.teams.reduce((n, t) => n + t.games, 0), warn: res.warn.length });
         await persist(ev.id);
       });
-      boardCache = null;
+      boardCache = null; playersCache = null;
       log.log(`[killrace-live] run_ok source=${source} ms=${now() - t0}`);
       return { ok: true, ms: now() - t0 };
     } catch (e) {
@@ -195,10 +196,21 @@ function createLive(deps) {
     res.json(body);
   });
 
+  // 개인 기록 — 확정된 판 기준. 계좌 · 디스코드 닉 · 계정 id 는 이 응답에 없다
+  const getPlayers = guard(async (req, res) => {
+    if (playersCache && now() - playersCache.at < 5000) return res.json({ ...playersCache.body, serverNow: now() });
+    let body;
+    try { body = await killrace.players(); }
+    catch (e) { if (e && e.userMsg) return res.status(404).json({ error: { code: "no_event" } }); throw e; }
+    if (cache && cache.state) body.run = cache.state.run;
+    playersCache = { at: now(), body };
+    res.json(body);
+  });
+
   const postAdmin = guard(async (req, res) => {
     if (!isAdmin(req)) return res.status(401).json({ error: { code: "unauthorized" } });
     const b = req.body || {}; const action = String(b.action || "");
-    const done = (extra) => { boardCache = null; tokenCache = null; log.log(`[killrace-live] admin ${action}`); return res.json({ ok: true, ...(extra || {}) }); };
+    const done = (extra) => { boardCache = null; playersCache = null; tokenCache = null; log.log(`[killrace-live] admin ${action}`); return res.json({ ok: true, ...(extra || {}) }); };
     if (action === "run") {                                    // 「지금 집계」
       if (!ready()) return res.status(503).json({ error: { code: "not_ready" } });
       const r = await run("manual");
@@ -250,10 +262,11 @@ function createLive(deps) {
 
   function mount(app) {
     app.get("/api/killrace/board", getBoard);
+    app.get("/api/killrace/players", getPlayers);
     app.post("/api/killrace/board/admin", postAdmin);
     app.post("/api/killrace/live", postLive);
   }
-  return { mount, tick, run, getBoard, postAdmin, postLive };
+  return { mount, tick, run, getBoard, getPlayers, postAdmin, postLive };
 }
 
 module.exports = {

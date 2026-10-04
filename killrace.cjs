@@ -35,6 +35,12 @@
 //   살아서 나간 흔적(deathType logout)은 flags.logout 에 남겨 진행자 화면에 힌트로만 보여 준다(튕김과 고의 이탈을 전적으로 구분할 수 없다).
 // · 핵 사망 무효: 진행자가 리플레이로 확인한 사망은 voidDeaths['팀명|matchId'] = [슬롯…] 에 적어 감점에서 뺀다(수동 표시).
 // · 자동 집계 · 잠정 킬 · 점수판 HTTP 는 killrace-live.cjs 가 맡는다. 여기는 집계와 점수 계산만.
+// · 개인 기록(지휘 10/4 밤 — 킬내기 티어표의 재료 · 전적 원본은 시간이 지나면 못 가져온다): DDL 없이 있는 자리에 쌓는다.
+//   판마다 선수별 = event_matches.deaths.members[{ slot, accountId, ign, kills, damage, deathType }] + verdict[{ slot, dead }] (1회부터 이 모양)
+//     + 2회부터 deaths.chicken · 진행자가 무효로 돌린 판도 deaths{ void:true, members } 로 남긴다(합계에서는 뺀다).
+//     부활 여부는 전적 요약으로는 알 수 없다(텔레메트리 판정을 켠 판만 추정 가능) — revived 는 null 로 둔다.
+//   회차마다 선수별 = ops_state 'killrace:roster:<event id>' = { players:[{ ign, team, slot, tier, price, captain, gem, platform, kda, avgDmg }] } (경매 → 팀 등록 때 저장)
+//   신청 당시 경쟁전 전적(티어 · 평딜 · KDA)은 신청 명단 줄('killrace:apply:r2')에 남아 있다.
 
 const SLOT_PENALTY = [4, 3, 2, 1];              // 1번(최상위 티어) 사망 = −4 … 4번 = −1 · 전원 = −10
 const LEAVE_SCORE = -10;                        // 이탈 판 고정 점수
@@ -538,6 +544,41 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
   };
 }
 
+// 개인 기록 — 확정된 판만 더한다(무효 판 · 이탈 판은 팀 합계와 똑같이 뺀다 → 개인 킬 합 = 팀 킬). 잠정 킬은 팀 단위라 여기 없다.
+// 응답에는 닉 · 슬롯 · 숫자만 싣는다(accountId · 디스코드 닉 · 계좌 없음). roster = 경매 결과(티어 · 낙찰가 · 팀장) — 없으면 비운다.
+function buildPlayers({ ev, teams, cfg, rows, roster, at }) {
+  const b = buildBoard({ ev, teams, cfg, rows, at, admin: false });
+  const meta = new Map(((roster && roster.players) || []).map((x) => [String(x.ign || "").toLowerCase(), x]));
+  const byTeam = new Map(teams.map((t) => [t.name, new Map(t.members.map((m) => [m.accountId, { slot: m.slot, ign: m.ign, kills: 0, damage: 0, deaths: 0, games: 0, chickens: 0 }]))]));
+  for (const r of rows || []) {
+    const pl = byTeam.get(r.team_name);
+    const d = r.deaths;
+    if (!pl || r.seq == null || r.leave_flag || !d || d.void || !Array.isArray(d.members)) continue;
+    const dead = new Set((d.verdict || []).filter((v) => v.dead).map((v) => v.slot));
+    for (const m of d.members) {
+      const cur = pl.get(m.accountId);
+      if (!cur) continue;                                  // 팀 구성이 바뀌기 전 기록은 순번(seq)이 비어 여기 오지 않는다
+      cur.kills += Number(m.kills) || 0; cur.damage += Number(m.damage) || 0; cur.games += 1;
+      if (dead.has(m.slot)) cur.deaths += 1;
+      if (Number(r.win_place) === 1) cur.chickens += 1;
+    }
+  }
+  const out = b.teams.map((t) => {
+    const players = [...byTeam.get(t.name).values()].sort((x, y) => x.slot - y.slot).map((x) => {
+      const mt = meta.get(String(x.ign || "").toLowerCase()) || {};
+      return { slot: x.slot, ign: x.ign, kills: x.kills, damage: Math.floor(x.damage), deaths: x.deaths, games: x.games, chickens: x.chickens,
+        tier: mt.tier || null, price: Number.isFinite(mt.price) ? mt.price : null, captain: !!mt.captain };
+    });
+    return { name: t.name, rank: t.rank, total: t.total, gameScore: t.gameScore, bonus: t.bonus, games: t.games, chickens: t.chickens,
+      kills: t.kills, damage: t.damage, deaths: players.reduce((n, x) => n + x.deaths, 0), players };
+  });
+  const all = out.flatMap((t) => t.players.map((x) => ({ team: t.name, ...x })));
+  const order = (key) => all.slice().sort((x, y) => y[key] - x[key] || y.kills - x.kills || y.damage - x.damage || x.deaths - y.deaths || x.ign.localeCompare(y.ign))
+    .map((x, i, arr) => ({ ...x, rank: i && arr[i - 1][key] === x[key] ? null : i + 1 }))
+    .map((x, i, arr) => { let j = i; while (arr[j].rank === null) j--; return { ...x, rank: arr[j].rank }; });
+  return { event: b.event, serverNow: at, updatedAt: b.updatedAt, run: null, ended: at >= ev.end, teams: out, byKills: order("kills"), byDamage: order("damage") };
+}
+
 function shortErr(e) {
   if (!e) return "unknown";
   if (e.name === "AbortError") return "timeout";
@@ -773,7 +814,7 @@ function createKillrace(deps) {
     }
 
     for (const rec of records) {
-      if (!rec.excluded && cfg.voidGames[voidKey(rec.teamName, rec.matchId)]) { rec.excluded = { ...VOID_GAME }; rec.members = []; rec.place = null; }
+      if (!rec.excluded && cfg.voidGames[voidKey(rec.teamName, rec.matchId)]) { rec.excluded = { ...VOID_GAME }; rec.voidMembers = rec.members; rec.members = []; rec.place = null; }
     }
 
     // 5) 텔레메트리 — 인정 판 중 저장된 추출 결과가 없는 판만 · 매치당 1회(조우 판은 두 팀 선수를 한 번에) · 순서대로
@@ -835,8 +876,9 @@ function createKillrace(deps) {
       created_at: Number.isFinite(rec.createdAtMs) ? new Date(rec.createdAtMs).toISOString() : null,
       damage_sum: rec.excluded ? null : rec.damage, kills: rec.excluded ? null : rec.kills,
       win_place: rec.excluded ? null : rec.place,
-      deaths: rec.excluded ? null : {
-        v: 1, used: rec.used, telemetryError: rec.telemetryError || null,
+      deaths: rec.excluded ? (rec.voidMembers && rec.voidMembers.length ? { v: 1, void: true,
+        members: rec.voidMembers.map((x) => ({ slot: x.slot, accountId: x.accountId, ign: x.ign, kills: x.kills, damage: x.damage, deathType: x.deathType })) } : null) : {
+        v: 1, chicken: Number(rec.place) === 1, revived: null, used: rec.used, telemetryError: rec.telemetryError || null,
         members: rec.members.map((x) => ({ slot: x.slot, accountId: x.accountId, ign: x.ign, regIgn: x.regIgn || null, kills: x.kills, damage: x.damage, deathType: x.deathType })),
         verdict: rec.members.map((x, i) => ({ slot: x.slot, dead: rec.verdict[i].dead, why: rec.verdict[i].why })),
         telemetry: rec.telemetry || null,
@@ -891,6 +933,25 @@ function createKillrace(deps) {
       sbSelect("event_matches", `select=team_name,match_id,seq,map,created_at,damage_sum,kills,win_place,penalty,leave_flag,score,flags,updated_at&event_id=eq.${ev.id}`),
     ]);
     return buildBoard({ ev, teams, cfg, rows, at: now(), admin, live: typeof live === "function" ? await live(ev) : live });
+  }
+
+  // ── 개인 기록(웹) — 저장된 판의 선수별 기록을 더한다(PUBG 조회 없음) · 회차 명단(티어 · 낙찰가)은 ops_state 'killrace:roster:<id>' ──
+  const rosterKey = (evId) => `killrace:roster:${evId}`;
+  async function loadRoster(evId) {
+    try {
+      const got = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(rosterKey(evId))}&limit=1`);
+      return got.length && got[0].value && typeof got[0].value === "object" ? got[0].value : null;
+    } catch (e) { log.warn("[killrace] roster_read_failed", logSafe(e)); return null; }
+  }
+  const saveRoster = (evId, players) => sbUpsert("ops_state", { key: rosterKey(evId), value: { v: 1, savedAt: new Date(now()).toISOString(), players }, updated_at: new Date(now()).toISOString() }, "key");
+  async function players() {
+    const ev = await currentEvent();
+    const [teams, cfg, rows, roster] = await Promise.all([
+      loadTeams(ev.id), loadConfig(ev.id),
+      sbSelect("event_matches", `select=team_name,match_id,seq,map,created_at,damage_sum,kills,win_place,penalty,leave_flag,score,flags,deaths,updated_at&event_id=eq.${ev.id}`),
+      loadRoster(ev.id),
+    ]);
+    return buildPlayers({ ev, teams, cfg, rows, roster, at: now() });
   }
 
   // ── 핵 사망 무효(진행자 수동 표시) — 설정에 적고 그 판 점수를 바로 다시 센다. 다음 집계도 같은 표시를 읽는다 ──
@@ -1106,13 +1167,13 @@ function createKillrace(deps) {
     }
   }
 
-  return { handle, registerTeam, aggregate, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board };
+  return { handle, registerTeam, aggregate, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
 }
 
 module.exports = {
   COMMANDS, createKillrace,
   _test: {
-    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, applyBoost, finalScore, boostTarget, normEventConfig, buildBoard, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
+    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, applyBoost, finalScore, boostTarget, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote,
   },

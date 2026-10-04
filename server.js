@@ -7045,6 +7045,7 @@ function gdcupAdmin(req) {
   const api = killraceAuction.createAuctionApi({
     store, isAdmin: gdcupAdmin, register,
     saveBonus: (evId, bonus, teamSize) => kr.saveConfig(evId, { bonus, teamSize }),
+    saveRoster: (evId, players) => kr.saveRoster(evId, players),      // 회차 명단(티어 · 낙찰가 · 팀장) — 개인 기록에 붙인다
     onCreate: async (evId) => {
       const ev = await kr.currentEvent();
       const patch = killraceAuction.defaultTimes(ev, await kr.loadConfig(evId));

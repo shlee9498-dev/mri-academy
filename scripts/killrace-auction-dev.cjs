@@ -108,6 +108,12 @@ const kr = {
     if (set.size) all[key] = [...set]; else delete all[key];
     cfgValue.voidDeaths = all; return rescore(r);
   },
+  players: async () => T.buildPlayers({ ev, teams, cfg: T.normEventConfig(cfgValue), at: Date.now(), roster: null,
+    rows: rows.map((r) => (r.seq == null ? r : { ...r, deaths: { ...r.deaths, members: teams.find((t) => t.name === r.team_name).members.map((m, i) => {
+      const share = [0.4, 0.3, 0.2, 0.1][i];        // 연습용: 팀 킬 · 딜을 4명에게 나눈다(킬은 합이 맞게 마지막 사람이 나머지)
+      const k = i < 3 ? Math.floor(r.kills * share) : r.kills - [0.4, 0.3, 0.2].reduce((n, s2) => n + Math.floor(r.kills * s2), 0);
+      return { slot: m.slot, accountId: m.accountId, ign: m.ign, kills: k, damage: r.damage_sum * share, deathType: "x" };
+    }) } })) }),
   setVoidGame: async ({ teamName, matchId, clear }) => {
     const r = rows.find((x) => x.team_name === teamName && x.match_id === matchId); if (!r) throw userErr("그 판을 못 찾았어요.");
     if (clear) { r.seq = seqOf(teamName); r.flags = { ...r.flags, excluded: null }; rescore(r); }
