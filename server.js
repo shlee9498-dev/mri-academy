@@ -114,6 +114,7 @@ function limit(name, max, windowMs, reject) {
 // env: DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, SUPABASE_URL,
 //      SUPABASE_SERVICE_ROLE_KEY, SESSION_SECRET, STAFF_DISCORD_IDS(선택, 쉼표구분)
 const crypto = require("crypto");
+const killraceApply = require("./killrace-apply.cjs");
 const OAUTH_REDIRECT = "https://mri-academy-production.up.railway.app/api/auth/callback";
 const STAFF_IDS = (process.env.STAFF_DISCORD_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
 const reviewsReady = () =>
@@ -7620,6 +7621,36 @@ app.post("/api/gdcup-solo", async (req, res) => {
     res.json({ ok: true, id: row && row.id });
   } catch (e) { console.error("solo_apply_error", e); res.status(500).json({ error: "server_error" }); }
 });
+// ── 킬내기 2회 솔로 신청(killrace-apply.cjs · GmI 소관) — 저장은 ops_state 두 줄(DDL 없음). 계좌는 오너 로그인으로만 내려간다 ──
+{
+  const applyKey = (suffix) => `killrace:${suffix}:${killraceApply.ROUND}`;
+  const opsGet = async (key) => {
+    const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`);
+    return rows.length ? rows[0].value : null;
+  };
+  const opsPut = (key, value) => sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key");
+  const api = killraceApply.createApplyApi({
+    store: {
+      load: () => opsGet(applyKey("apply")), save: (state) => opsPut(applyKey("apply"), state),
+      loadPay: () => opsGet(applyKey("applypay")), savePay: (pay) => opsPut(applyKey("applypay"), pay),
+    },
+    // 신청한 플랫폼에서 닉을 다시 확인하고 경매 명단에 쓸 값(경쟁전 티어 · 평딜 · KDA)을 같이 받아 둔다
+    lookup: async (platform, ign) => {
+      const r = await computeBPI(platform, ign, false);
+      const dmg = r.basis && r.basis.avgDamage != null ? r.basis.avgDamage : r.sample ? r.sample.avgDamage : null;
+      return { ign: r.nickname, ranked: r.rankedTier || null, grade: r.suggested ? r.suggested.tier : null,
+        avgDamage: dmg == null ? null : Number(dmg), kda: r.sample && r.sample.kda != null ? Number(r.sample.kda) : null };
+    },
+    isAdmin: gdcupAdmin, isOwner: gdcupIsOwner, rateLimited,
+    notify: async (embed) => {
+      if (!process.env.GDCUP_SOLO_WEBHOOK) return;
+      await fetch(process.env.GDCUP_SOLO_WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ embeds: [embed] }) });
+    },
+  });
+  app.use("/api/killrace/apply", (req, res, next) => (process.env.SUPABASE_URL ? next() : res.status(503).json({ error: "db_disabled" })));
+  api.mount(app);
+}
 app.get("/api/gdcup-solo-admin", async (req, res) => {
   try {
     if (!gdcupAdmin(req)) return res.status(401).json({ error: "unauthorized" });

@@ -318,6 +318,7 @@ function renderGdcup(unverified){
     ${isOwner ? `<div style="display:flex;gap:8px;margin-bottom:11px;flex-wrap:wrap">
       <button class="btn" onclick="toggleGdPayouts()">${GD_PAY ? "계좌 숨기기" : "💳 계좌 보기"}</button>
       <button class="btn" onclick="downloadGdCsv()">⬇️ 정산 CSV</button>
+      <button class="btn" onclick="downloadKillraceCsv()">⬇️ 킬내기 2회 계좌 CSV</button>
     </div>` : ""}
     ${rows}
   </section>`;
@@ -474,6 +475,19 @@ async function downloadGdCsv(){
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `gdcup-s${GD_SEASON}-payouts.csv`;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }catch(e){ alert("CSV 내려받기 실패: "+e.message+"\n(오너 계정만 가능해요)"); }
+}
+
+// 킬내기 2회 솔로 신청 계좌(/api/killrace/apply/payouts.csv · owner 전용) — 신청 폼에서 받은 계좌는 여기로만 나온다.
+async function downloadKillraceCsv(){
+  try{
+    const res = await fetch(API + "/api/killrace/apply/payouts.csv", { headers: authH() });
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(await res.blob());
+    a.download = "killrace-2-payouts.csv";
     document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }catch(e){ alert("CSV 내려받기 실패: "+e.message+"\n(오너 계정만 가능해요)"); }
