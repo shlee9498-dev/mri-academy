@@ -38,6 +38,9 @@ const RECORD_CHANGE_DAYS = 14;
 const RECORD_CHANGE_MAX = 20;
 const RECORD_CHANGE_KIND = Object.freeze({ "session.cancel": "cancel", "session.restore": "restore", "session.correct": "correct" });
 const RECORD_CHANGE_ACTIONS = Object.keys(RECORD_CHANGE_KIND);
+// 원장 홈 「최근 연결 처리」(§9.32.3) — 연결 신청 승인 · 거절 · /연결승인 · 해제(admin_audit · 봇이 남긴다) · 같은 14일 · 20줄
+const LINK_CHANGE_ACTIONS = ["student.link", "student.link_reject", "student.unlink"];
+const idOf = (s, prefix) => { const m = new RegExp(`^${prefix}:(\\d+)$`).exec(String(s || "")); return m ? Number(m[1]) : null; };
 const JOURNAL_DAYS_MAX = 180;
 const JOURNAL_LIMIT = 200;
 const FEEDBACK_MAX = 4000;      // journal_feedback_body_check 와 같은 값
@@ -54,6 +57,63 @@ const ops = require("./ops-status.cjs");
 const { isTestStudent } = require("./test-accounts.cjs");
 // 목록 탭 · 레벨 · 지금 묶음 · 판수 내역 판정 한 벌(계약 §9.14~9.17 · 수강생 앱 §7.3 · §7.4)
 const gv = require("./games-view.cjs");
+// 이어 읽기 표지 한 벌(계약 §9.33.1) — 목록마다 이름을 달리해 묶는다
+const { signPage, readPage, pageLimit } = require("./page-cursor.cjs");
+
+// ── 규모 대비(계약 §9.33 · 2026-10-04) ── 수강생 300 · 트레이너 10 · 하루 수업 50 에서도 한 번에 다 싣지 않게.
+const LIST_STATES = ["active", "hold", "done"];                       // 목록 탭(games-view listState)
+const LIST_LEVELS = ["advanced", "intermediate", "beginner", "none"];  // none = 레벨 없음(미분류)
+const STUDENT_PAGE = 20, STUDENT_PAGE_MAX = 100;
+const DAY_LESSON_PAGE = 10, DAY_LESSON_PAGE_MAX = 50;                  // 원장 홈 「전체 수업」 날짜마다(§9.33.5)
+// 이름 찾기 — 공백을 빼고 대소문자 없이 이름 · 배그 닉네임 일부
+const normQ = (s) => String(s ?? "").replace(/\s/g, "").toLowerCase();
+// GET /students 거르기 · 쪽 나눔(§9.33.3) — 반환 null = 400. state · level 은 쉼표로 여럿.
+//   쪽 나눔은 cursor · limit · state 중 하나라도 오면 켠다(아무것도 없으면 종전처럼 전원 · 종전 순서).
+function parseStudentQuery(q) {
+  const list = (v, allowed) => {
+    if (v === undefined) return null;
+    const parts = String(v).split(",").map((x) => x.trim()).filter(Boolean);
+    if (!parts.length || parts.some((x) => !allowed.includes(x))) return undefined;
+    return [...new Set(parts)].sort();
+  };
+  const states = list(q.state, LIST_STATES), levels = list(q.level, LIST_LEVELS);
+  const limit = pageLimit(q.limit, STUDENT_PAGE, STUDENT_PAGE_MAX);
+  const raw = q.q === undefined ? "" : String(q.q);
+  if (states === undefined || levels === undefined || limit == null || raw.length > 40) return null;
+  return { paged: q.cursor !== undefined || q.limit !== undefined || q.state !== undefined,
+           states, levels, query: normQ(raw), limit, trainerKey: q.trainerKey, cursor: q.cursor };
+}
+// 쪽 나눔 순서 = 목록 화면 순서 — 레벨 묶음(심화 → 중급 → 초급 → 미분류) · 묶음 안 테스트 계정은 맨 아래 · 가나다 · 번호
+const LEVEL_RANK = Object.freeze({ advanced: 0, intermediate: 1, beginner: 2 });
+const listKeyOf = (level, isTest, name, id) => [LEVEL_RANK[level] ?? 3, isTest ? 1 : 0, String(name ?? ""), Number(id)];
+const cmpListKey = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2].localeCompare(b[2], "ko") || a[3] - b[3];
+const isListKey = (k) => Array.isArray(k) && k.length === 4 && [0, 1, 2, 3].includes(k[0]) && [0, 1].includes(k[1])
+  && typeof k[2] === "string" && k[2].length <= 200 && Number.isInteger(k[3]) && k[3] > 0;
+// 원장 홈 수업 한 줄의 순서(§9.33.5) — 시작 시각(없으면 뒤) · 종류(예약 · 칸 → 직강 회차 → 기록) · 번호 · 종류 이름.
+//   ops.buildLessons 의 순서와 같고, 같은 자리에서 끊을 수 있게 마지막 두 칸으로 한 줄을 정한다.
+const LESSON_KIND_RANK = Object.freeze({ booking: 0, slot: 0, course: 1, record: 2 });
+const lessonKeyOf = (l) => {
+  const at = l.startAt ? Date.parse(l.startAt) : NaN;
+  return [Number.isNaN(at) ? 1 : 0, Number.isNaN(at) ? 0 : at, LESSON_KIND_RANK[l.kind] ?? 3, Number(l.ref), String(l.kind)];
+};
+const cmpLessonKey = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3] - b[3] || (a[4] < b[4] ? -1 : a[4] > b[4] ? 1 : 0);
+const isLessonKey = (k) => Array.isArray(k) && k.length === 5 && [0, 1].includes(k[0]) && Number.isFinite(k[1])
+  && Number.isInteger(k[2]) && Number.isInteger(k[3]) && typeof k[4] === "string" && k[4].length <= 20;
+// 트레이너 색 자리(§9.33.6) — 1~10. 지금 세 사람은 colorKey 와 같은 사람에 1 · 2 · 3 을 고정하고,
+//   그 밖 트레이너 · 원장 계정은 명부 번호 순서로 4 · 5 · … 10(쉬는 계정도 자리를 지킨다 — 남의 색이 밀리지 않게) · 넘치면 null.
+const TRAINER_COLOR_SLOTS = Object.freeze({ 5: 1, 2: 2, 4: 3 });
+const COLOR_SLOT_MAX = 10;
+function colorSlotsOf(staffRows) {
+  const out = new Map(Object.entries(TRAINER_COLOR_SLOTS).map(([id, n]) => [Number(id), n]));
+  let next = Math.max(...out.values()) + 1;
+  const coaches = (staffRows || []).filter((r) => (r.role === "trainer" || r.role === "owner") && !out.has(Number(r.id)))
+    .map((r) => Number(r.id)).sort((a, b) => a - b);
+  for (const id of coaches) {
+    if (next > COLOR_SLOT_MAX) break;
+    out.set(id, next++);
+  }
+  return out;
+}
 
 // 전 기간을 읽는 조회는 쪼개 읽는다 — PostgREST 는 max-rows(Supabase 기본 1,000)에서 **조용히** 자른다.
 // 오너 범위(전체 수강생)의 수업 행이 지금 249행이고 월 ~100행씩 는다. 잘리면 잔여가 틀린 채로 보인다.
@@ -232,7 +292,7 @@ module.exports = function mountTrainerPortal(app, deps) {
     const names = Object.fromEntries(rows.map((r) => [r.id, r.name]));
     const coaches = rows.filter((r) => r.active !== false && (r.role === "trainer" || r.role === "owner"))
       .sort((a, b) => (a.role === "owner") - (b.role === "owner") || String(a.name).localeCompare(String(b.name), "ko"));
-    return { names, coaches };
+    return { names, coaches, slots: colorSlotsOf(rows) };
   }
   const trainerRef = (names, tid) => ({ trainerKey: opaqueId("trainer", tid), trainerName: names[tid] || "미배정" });
   // 트레이너 고정 색 키(오너 지시 2026-10-01 · 계약 §9.12 · §9.13) — 명부 번호에 고정한다.
@@ -240,7 +300,8 @@ module.exports = function mountTrainerPortal(app, deps) {
   // 값은 이름표일 뿐이고 실제 색은 앱이 정한다. 표에 없는 트레이너는 null(앱 기본색).
   const TRAINER_COLOR_KEYS = Object.freeze({ 5: "gold", 2: "ink", 4: "grey" });   // 현태 · 준구 · 원장
   const colorKeyOf = (tid) => TRAINER_COLOR_KEYS[tid] || null;
-  const trainerChip = (names, tid) => ({ ...trainerRef(names, tid), colorKey: colorKeyOf(tid) });
+  // colorSlot(§9.33.6) — 10명까지 가르는 색 자리 번호. colorKey 는 옛 앱을 위해 그대로 둔다(같은 사람 = 같은 색).
+  const trainerChip = (book, tid) => ({ ...trainerRef(book.names, tid), colorKey: colorKeyOf(tid), colorSlot: book.slots.get(Number(tid)) ?? null });
 
   // ════════════════ POST /exchange ════════════════
   // Discord access token → /users/@me 재검증 → staff.discord_id 정확일치·active → scope trainer 세션.
@@ -484,22 +545,57 @@ module.exports = function mountTrainerPortal(app, deps) {
   // ════════════════ GET /students ════════════════
   //   원장 계정은 테스트 계정(test-accounts.cjs)을 기본으로 뺀다(2026-10-01 어플 · 원장 명부) — ?includeTest=1 이면 넣는다.
   //   트레이너 계정은 종전 그대로(행마다 isTest 를 실어 앱이 가린다).
+  //   §9.33.3 — 거르기(q · state · level · trainerKey) · 탭 숫자(counts) · 이어 읽기(cursor · limit). 아무것도 안 보내면 종전 그대로(전원 · 종전 순서).
   app.get(`${TRAINER}/students`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
     const owner = req.staff.role === "owner";
+    const pq = parseStudentQuery(req.query || {});
+    if (!pq) return fail(res, 400, "invalid_body");
+    let byTrainer = null;
+    if (pq.trainerKey !== undefined) {
+      byTrainer = readOpaqueId("trainer", String(pq.trainerKey));
+      if (byTrainer == null) return fail(res, 400, "invalid_body");
+    }
+    const includeTest = owner && req.query.includeTest === "1";
+    // 표지는 이 사람 · 이 거르기에 묶는다(다른 거르기로 이어 읽으면 400 — 처음부터 다시)
+    const fp = JSON.stringify([owner ? 1 : 0, pq.states, pq.levels, pq.query, byTrainer, includeTest ? 1 : 0]);
+    let after = null;
+    if (pq.cursor !== undefined) {
+      const c = readPage(process.env.SESSION_SECRET, "students", pq.cursor);
+      if (!c || c.v !== Number(req.staff.id) || c.f !== fp || !isListKey(c.k)) return fail(res, 400, "invalid_body");
+      after = c.k;
+    }
     const scope = owner ? await ownerScope(req.staff.id) : await scopedStudents(req.staff.id);
-    if (owner && req.query.includeTest !== "1") for (const id of [...scope.keys()]) if (isTestStudent(id)) scope.delete(id);
+    if (owner && !includeTest) for (const id of [...scope.keys()]) if (isTestStudent(id)) scope.delete(id);
     const head = { scope: owner ? "all" : "mine" };
     if (!scope.size) {
       const book = await staffBook();
-      return sendTrainer(res, { ...head, trainers: book.coaches.map((t) => trainerChip(book.names, t.id)), students: [] });
+      return sendTrainer(res, { ...head, trainers: book.coaches.map((t) => trainerChip(book, t.id)), students: [],
+        nextCursor: null, counts: { active: 0, hold: 0, done: 0 } });
     }
     const { book, rows } = await buildRows(req.staff, owner, scope);
-    const byName = (a, b) => String(a.s.name).localeCompare(String(b.s.name), "ko");
-    const students = rows
+    // 탭 숫자 = 검색 · 담당 트레이너를 적용하고 탭(state) · 레벨만 뺀 수(검색 중이면 그 결과의 탭별 수)
+    const found = rows.filter((r) => (!pq.query || normQ(r.s.name).includes(pq.query) || normQ(r.s.pubg_name).includes(pq.query))
+      && (byTrainer == null || Number(r.assigned) === byTrainer));
+    const counts = { active: 0, hold: 0, done: 0 };
+    for (const r of found) if (r.st.listState in counts) counts[r.st.listState]++;
+    let list = found.filter((r) => (!pq.states || pq.states.includes(r.st.listState))
+      && (!pq.levels || pq.levels.includes(r.lv.level ?? "none")));
+    let nextCursor = null;
+    if (pq.paged) {
+      const keyOf = (r) => listKeyOf(r.lv.level, isTestStudent(r.s.id), r.s.name, r.s.id);
+      list.sort((a, b) => cmpListKey(keyOf(a), keyOf(b)));
+      if (after) list = list.filter((r) => cmpListKey(keyOf(r), after) > 0);
+      if (list.length > pq.limit) {
+        list = list.slice(0, pq.limit);
+        nextCursor = signPage(process.env.SESSION_SECRET, "students", { v: Number(req.staff.id), f: fp, k: keyOf(list[list.length - 1]) });
+      }
+    } else {
+      const byName = (a, b) => String(a.s.name).localeCompare(String(b.s.name), "ko");
       // 트레이너: 담당 먼저 · 이름순(종전 그대로) · 오너: 이름순(전체라 담당 구분이 필터 칩으로 간다)
-      .sort(owner ? byName : (a, b) => (a.s.isPrimary === b.s.isPrimary ? byName(a, b) : a.s.isPrimary ? -1 : 1))
-      .map((r) => rowOut(r, owner, book));
-    sendTrainer(res, { ...head, trainers: book.coaches.map((t) => trainerChip(book.names, t.id)), students });
+      list.sort(owner ? byName : (a, b) => (a.s.isPrimary === b.s.isPrimary ? byName(a, b) : a.s.isPrimary ? -1 : 1));
+    }
+    sendTrainer(res, { ...head, trainers: book.coaches.map((t) => trainerChip(book, t.id)), students: list.map((r) => rowOut(r, owner, book)),
+      nextCursor, counts });
   }));
 
   // 상세 · 레벨 · 종료 · 내역이 쓰는 한 명 범위 — 트레이너 = 담당 ∪ 90일(밖 403) · 오너 = 전체(합친 명부 제외 · 없으면 404)
@@ -706,6 +802,61 @@ module.exports = function mountTrainerPortal(app, deps) {
       .filter((r) => !r.isTest);
   }
 
+  // ── 원장 홈 「전체 수업」 재료(§9.13 · §9.33.5) ── 대시보드(한 주)와 날짜 하나 이어 읽기가 **같은 조회**를 쓴다.
+  //   한쪽만 고치면 두 화면의 수업 줄이 갈린다. 예약 · 출석은 sweep 이 끝난 뒤에 읽는다(완료 확인 필요가 최신이 되게).
+  //   칸은 30분 단위라 한 주에 수백 행이 된다 — 쪼개 읽는다(두 트레이너가 하루 12시간씩 열면 주 670행대)
+  const lessonSlotsQ = (start, end) => "select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min,course_level"
+    + `&status=neq.cancelled&slot_start=gte.${start}&slot_start=lt.${end}`;
+  // memo 는 /판수정정 행을 거르는 데만 쓴다 — 응답에 싣지 않는다(가드가 memo 어간을 막는다)
+  const lessonSessionsQ = (from, to) => "select=id,student_id,trainer_id,played_at,games,created_by,created_at,memo"
+    + `&played_at=gte.${from}&played_at=lte.${to}`;
+  const courseSessionsQ = (from, to) => "select=id,held_on,start_time,duration_min,label,status,slot_id,trainer_id"
+    + `&held_on=gte.${from}&held_on=lte.${to}`;
+  // 예약(칸 시각으로 묶어 읽는다 — 칸이 수백 개면 in.() 주소가 길어진다) · 직강 출석 · 그 강의
+  async function lessonsTail(slots, courseSessions, start, end) {
+    const csIds = courseSessions.map((c) => c.id);
+    const [bookings, attendance] = await Promise.all([
+      slots.length
+        ? selectAll(sbSelect, "slot_bookings", "select=id,slot_id,student_id,status,span_head_id,duration_min,trainer_slots!inner(slot_start)"
+            + `&status=neq.cancelled&trainer_slots.slot_start=gte.${start}&trainer_slots.slot_start=lt.${end}`)
+        : [],
+      // status · units — 취소된 출석(§59d 회차 정정)은 수업 명단 · 출석 수에서 뺀다
+      csIds.length ? sbSelect("course_attendance", `select=session_id,course_id,status,units&session_id=in.(${csIds.join(",")})`) : [],
+    ]);
+    const cids = [...new Set(attendance.map((a) => a.course_id))];
+    const courses = cids.length
+      ? await sbSelect("courses", `select=id,student_id,trainer_id,level&id=in.(${cids.join(",")})`)
+      : [];
+    return { bookings, attendance, courses };
+  }
+  // 수업에 나오는 수강생 이름 — 한 번에(오너 화면이라 전원 볼 수 있다 · 합친 행도 이름은 보인다)
+  async function namesOf(sids) {
+    const stu = {};
+    if (sids.length) for (const s of await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})`)) stu[s.id] = s;
+    return stu;
+  }
+  // 수업 한 줄(§9.13 lessons[]) — 대시보드 · 날짜 하나 이어 읽기가 같은 모양을 낸다
+  const LESSON_KEY_KIND = { booking: "booking", record: "session", course: "course_session", slot: "slot" };
+  function lessonOut(l, book, stu) {
+    const base = {
+      key: opaqueId(LESSON_KEY_KIND[l.kind], l.ref), kind: l.kind, date: l.date, startAt: l.startAt, durationMin: l.durationMin,
+      trainerKey: l.trainerId == null ? null : opaqueId("trainer", l.trainerId),
+      trainerName: l.trainerId == null ? null : (book.names[l.trainerId] || "미배정"),
+      students: l.studentIds.map((id) => ({
+        id: opaqueId("student", id), displayName: stu[id]?.name || "?", pubgName: stu[id]?.pubg_name || null,
+      })),
+    };
+    if (l.kind === "booking") return { ...base, lessonType: l.lessonType, status: l.status,
+      ...(l.lessonType === "course" ? { courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[l.courseLevel] || null } : {}) };
+    if (l.kind === "record") return { ...base, lessonType: null, games: l.games, source: l.source };
+    // 예약 · 출석 없는 직강 칸(§61) — key 는 트레이너 칸 목록의 칸 id 와 같은 값 · status = 칸 상태(open · closed)
+    if (l.kind === "slot") return { ...base, lessonType: "course", status: l.status,
+      courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[l.courseLevel] || null };
+    return { ...base, label: l.label, status: l.status };
+  }
+  // trainerKey 쿼리 → staff id · 없으면 null · 못 풀면 undefined(400)
+  const trainerParam = (v) => (v === undefined ? null : readOpaqueId("trainer", String(v)) ?? undefined);
+
   // ════════════════ GET /owner/dashboard ════════════════
   // 원장 대시보드 최소판(계약 §9.13 · #385 설계의 최소판) — 오늘 · 이번 주 전체 수업 · 처리 대기 · 트레이너별 표 · 색.
   // **금액 · 정산은 없다**(그래서 트레이너 포털 · scrubTrainer 뒤에 둔다 — 금액 키가 섞이면 가드가 throw 한다).
@@ -714,6 +865,11 @@ module.exports = function mountTrainerPortal(app, deps) {
     if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
     const q = req.query.date;
     if (q !== undefined && !ops.isRealDate(q)) return fail(res, 400, "invalid_body");
+    // §9.33.5 — lessons[] 만 거른다(trainerKey) · 날짜마다 앞 N건(lessonsPerDay). 둘 다 없으면 종전 그대로(한 주 전부)
+    const byTrainer = trainerParam(req.query.trainerKey);
+    const perDayRaw = req.query.lessonsPerDay;
+    const perDay = perDayRaw === undefined ? null : pageLimit(perDayRaw, DAY_LESSON_PAGE, DAY_LESSON_PAGE_MAX);
+    if (byTrainer === undefined || (perDayRaw !== undefined && perDay == null)) return fail(res, 400, "invalid_body");
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
     const today = q || ops.kstDate(nowMs);
@@ -725,20 +881,16 @@ module.exports = function mountTrainerPortal(app, deps) {
     // ① 한 파동 — 「완료 확인 필요」가 최신이 되게 sweep 도 같이 돌린다(트레이너 칸 목록과 같다 · 실패해도 계속).
     //    예약은 sweep 이 끝난 ② 에서 읽는다.
     const changesSince = new Date(nowMs - RECORD_CHANGE_DAYS * 86400_000).toISOString();
-    const [book, weekSlots, openSlots, sessions, courseSessions, assignedRows, payreqs, adjreqs, linkreqs, activeCourses, recordChanges] = await Promise.all([
+    const [book, weekSlots, openSlots, sessions, courseSessions, assignedRows, payreqs, adjreqs, linkreqs, activeCourses, recordChanges,
+           linkAudit] = await Promise.all([
       staffBook(),
-      // 칸은 30분 단위라 한 주에 수백 행이 된다 — 쪼개 읽는다(두 트레이너가 하루 12시간씩 열면 주 670행대)
-      selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,lesson_type,capacity,status,duration_min,course_level"
-        + `&status=neq.cancelled&slot_start=gte.${weekStart}&slot_start=lt.${weekEnd}`),
+      selectAll(sbSelect, "trainer_slots", lessonSlotsQ(weekStart, weekEnd)),
       // 열린 칸 = 지금부터 7일 · status open · 상담(레벨 테스트) 칸 제외. 직강(원장 반 수업 · §59) 칸은 넣는다
       //   (§61 · 2026-10-01 오너 검수 「트레이너별 표 열린 칸에 직강 칸 포함」 — 원장 행 색은 종전대로 판정하지 않는다)
       selectAll(sbSelect, "trainer_slots", "select=id,trainer_id,slot_start,capacity"
         + `&status=eq.open&lesson_type=neq.consult&slot_start=gte.${nowIso}&slot_start=lt.${slotsUntil}`),
-      // memo 는 /판수정정 행을 거르는 데만 쓴다 — 응답에 싣지 않는다(가드가 memo 어간을 막는다)
-      selectAll(sbSelect, "lesson_sessions", "select=id,student_id,trainer_id,played_at,games,created_by,created_at,memo"
-        + `&played_at=gte.${week.from}&played_at=lte.${week.to}`),
-      sbSelect("course_sessions", "select=id,held_on,start_time,duration_min,label,status,slot_id,trainer_id"
-        + `&held_on=gte.${week.from}&held_on=lte.${week.to}`),
+      selectAll(sbSelect, "lesson_sessions", lessonSessionsQ(week.from, week.to)),
+      sbSelect("course_sessions", courseSessionsQ(week.from, week.to)),
       sbSelect("students", "select=trainer_id&status=eq.active&merged_into=is.null&trainer_id=not.is.null"),
       sbSelect("payment_requests", "select=created_at&status=eq.pending"),
       sbSelect("games_adjust_requests", "select=created_at&status=eq.pending"),
@@ -749,30 +901,23 @@ module.exports = function mountTrainerPortal(app, deps) {
       sbSelect("admin_audit", `select=action,detail,created_at&action=in.(${RECORD_CHANGE_ACTIONS.join(",")})`
         + `&created_at=gte.${changesSince}&order=created_at.desc&limit=${RECORD_CHANGE_MAX}`)
         .catch((e) => { console.error("dashboard_record_changes", e?.status || e?.message); return []; }),
+      // 최근 연결 처리(§9.32.3) — 트레이너도 승인 · 거절하게 된 뒤 원장이 한눈에 본다 · 실패해도 대시보드는 내린다(목록만 빈다)
+      sbSelect("admin_audit", `select=action,actor_name,target,detail,created_at&action=in.(${LINK_CHANGE_ACTIONS.join(",")})`
+        + `&created_at=gte.${changesSince}&order=created_at.desc&limit=${RECORD_CHANGE_MAX}`)
+        .catch((e) => { console.error("dashboard_link_changes", e?.status || e?.message); return []; }),
       sbRpc ? sbRpc("sweep_pending_review", {}).catch((e) => console.error("dashboard_sweep", e?.message)) : null,
     ]);
 
-    // ② 예약(이번 주 칸) · 완료 확인 필요 · 그룹 열린 칸의 남은 자리 · 직강 출석
-    //    이번 주 예약은 칸 id 목록 대신 칸 시각으로 묶어 읽는다(칸이 수백 개면 in.() 주소가 길어진다).
+    // ② 예약(이번 주 칸) · 완료 확인 필요 · 그룹 열린 칸의 남은 자리 · 직강 출석(lessonsTail — 날짜 하나 이어 읽기와 같은 조회)
     const groupOpen = openSlots.filter((s) => Number(s.capacity || 1) > 1).map((s) => s.id);
-    const csIds = courseSessions.map((c) => c.id);
     const courseSids = [...new Set(activeCourses.map((r) => r.student_id))].filter((id) => !isTestStudent(id));
-    const [bookings, reviewRows, groupTaken, attendance, courseProg] = await Promise.all([
-      weekSlots.length
-        ? selectAll(sbSelect, "slot_bookings", "select=id,slot_id,student_id,status,span_head_id,duration_min,trainer_slots!inner(slot_start)"
-            + `&status=neq.cancelled&trainer_slots.slot_start=gte.${weekStart}&trainer_slots.slot_start=lt.${weekEnd}`)
-        : [],
+    const [{ bookings, attendance, courses }, reviewRows, groupTaken, courseProg] = await Promise.all([
+      lessonsTail(weekSlots, courseSessions, weekStart, weekEnd),
       sbSelect("slot_bookings", "select=id,slot_id,duration_min,trainer_slots!inner(trainer_id,slot_start,duration_min,lesson_type)"
         + "&status=eq.pending_review&span_head_id=is.null"),
       groupOpen.length ? sbSelect("slot_bookings", `select=slot_id&status=eq.booked&slot_id=in.(${groupOpen.join(",")})`) : [],
-      // status · units — 취소된 출석(§59d 회차 정정)은 수업 명단 · 출석 수에서 뺀다
-      csIds.length ? sbSelect("course_attendance", `select=session_id,course_id,status,units&session_id=in.(${csIds.join(",")})`) : [],
       courseSids.length ? courseProgress.loadCourseProgress(sbSelect, { studentIds: courseSids, statuses: ["active"] }) : new Map(),
     ]);
-    const cids = [...new Set(attendance.map((a) => a.course_id))];
-    const courses = cids.length
-      ? await sbSelect("courses", `select=id,student_id,trainer_id,level&id=in.(${cids.join(",")})`)
-      : [];
 
     const lessons = ops.buildLessons({ slots: weekSlots, bookings, sessions, courseSessions, attendance, courses });
 
@@ -810,28 +955,39 @@ module.exports = function mountTrainerPortal(app, deps) {
 
     // 수업에 나오는 수강생 이름 — 한 번에(오너 화면이라 전원 볼 수 있다 · 합친 행도 이름은 보인다)
     const changeRows = (recordChanges || []).filter((a) => a?.detail && a.detail.student_id != null).slice(0, RECORD_CHANGE_MAX);
+    // 연결 처리 줄 — 붙인 기록(student:N) · 신청 번호(linkreq:N · detail.request_id · via) 를 꺼낸다(옛 줄은 detail 이 짧다)
+    const linkRows = (linkAudit || []).filter((a) => a && LINK_CHANGE_ACTIONS.includes(a.action))
+      .sort((x, y) => String(y.created_at).localeCompare(String(x.created_at))).slice(0, RECORD_CHANGE_MAX)
+      .map((a) => {
+        const d = a.detail && typeof a.detail === "object" ? a.detail : {};
+        const studentId = idOf(a.target, "student") ?? (d.student_id != null ? Number(d.student_id) : null);
+        const requestNo = d.request_id != null ? Number(d.request_id) : (idOf(a.target, "linkreq") ?? idOf(d.via, "linkreq"));
+        return { a, d, studentId, requestNo };
+      });
     const sids = [...new Set([...lessons.flatMap((l) => l.studentIds), ...low.map((r) => r.studentId),
-                              ...changeRows.map((a) => Number(a.detail.student_id))])];
-    const stu = {};
-    if (sids.length) for (const s of await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})`)) stu[s.id] = s;
-    const KEY_KIND = { booking: "booking", record: "session", course: "course_session", slot: "slot" };
-    const apiLesson = (l) => {
-      const base = {
-        key: opaqueId(KEY_KIND[l.kind], l.ref), kind: l.kind, date: l.date, startAt: l.startAt, durationMin: l.durationMin,
-        trainerKey: l.trainerId == null ? null : opaqueId("trainer", l.trainerId),
-        trainerName: l.trainerId == null ? null : (book.names[l.trainerId] || "미배정"),
-        students: l.studentIds.map((id) => ({
-          id: opaqueId("student", id), displayName: stu[id]?.name || "?", pubgName: stu[id]?.pubg_name || null,
-        })),
-      };
-      if (l.kind === "booking") return { ...base, lessonType: l.lessonType, status: l.status,
-        ...(l.lessonType === "course" ? { courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[l.courseLevel] || null } : {}) };
-      if (l.kind === "record") return { ...base, lessonType: null, games: l.games, source: l.source };
-      // 예약 · 출석 없는 직강 칸(§61) — key 는 트레이너 칸 목록의 칸 id 와 같은 값 · status = 칸 상태(open · closed)
-      if (l.kind === "slot") return { ...base, lessonType: "course", status: l.status,
-        courseLevel: courseProgress.COURSE_KEY_BY_LEVEL[l.courseLevel] || null };
-      return { ...base, label: l.label, status: l.status };
-    };
+                              ...changeRows.map((a) => Number(a.detail.student_id)),
+                              ...linkRows.map((r) => r.studentId).filter((x) => x != null)])];
+    const stu = await namesOf(sids);
+    const apiLesson = (l) => lessonOut(l, book, stu);
+    // 「전체 수업」 목록(§9.33.5) — trainerKey 면 그 트레이너 수업만 · lessonsPerDay 면 날짜마다 앞 N건 + 그날 이어 읽기 표지.
+    //   카드 · 트레이너별 표 · 처리 대기는 거르지 않는다(전체 숫자). 아무것도 없으면 lessons[] 는 종전 그대로(한 주 전부 · 같은 순서).
+    const listed = byTrainer == null ? lessons : lessons.filter((l) => Number(l.trainerId) === byTrainer);
+    const weekDays = Array.from({ length: 7 }, (_, i) => ops.addDays(week.from, i));
+    const lessonDays = [];
+    let shown = listed;
+    if (perDay != null) shown = [];
+    for (const d of weekDays) {
+      const day = listed.filter((l) => l.date === d);
+      let nextCursor = null;
+      if (perDay != null) {
+        day.sort((a, b) => cmpLessonKey(lessonKeyOf(a), lessonKeyOf(b)));
+        const head = day.slice(0, perDay);
+        shown.push(...head);
+        if (day.length > perDay) nextCursor = signPage(process.env.SESSION_SECRET, "day-lessons",
+          { v: Number(req.staff.id), f: `${d}|${byTrainer ?? "*"}`, k: lessonKeyOf(head[head.length - 1]) });
+      }
+      lessonDays.push({ date: d, total: day.length, nextCursor });
+    }
 
     sendTrainer(res, {
       asOf: nowIso,
@@ -844,10 +1000,11 @@ module.exports = function mountTrainerPortal(app, deps) {
         { key: "openSlots72h", label: "72시간 열린 칸", value: rows.reduce((n, r) => n + r.openSlots72h, 0),
           color: ops.worst(rows.map((r) => r.slotColor)) },
       ],
-      lessons: lessons.map(apiLesson),
+      lessons: shown.map(apiLesson),
+      lessonDays,
       pending,
       trainers: rows.map((r) => ({
-        ...trainerChip(book.names, r.id),
+        ...trainerChip(book, r.id),
         lessonsToday: r.lessonsToday, lessonsWeek: r.lessonsWeek, gamesWeek: r.gamesWeek,
         openSlots72h: r.openSlots72h, openSlots7d: r.openSlots7d,
         assignedActive: r.assignedActive, needsReview: r.needsReview, color: r.color,
@@ -876,23 +1033,94 @@ module.exports = function mountTrainerPortal(app, deps) {
           gamesBefore: d.games_before ?? null, gamesAfter: d.games_after ?? null, reason: d.reason || null,
         };
       }),
+      // 최근 연결 처리(§9.32.3) — 누가(원장 · 트레이너) · 언제 · 어느 신청을 · 어느 기록에 · 최근 14일 · 최대 20
+      linkChanges: linkRows.map(({ a, d, studentId, requestNo }) => {
+        const staffId = d.staff_id != null ? Number(d.staff_id) : null;
+        const role = d.role || (String(a.actor_name || "").startsWith("owner") ? "owner" : null);
+        return {
+          at: a.created_at,
+          action: a.action === "student.link_reject" ? "reject" : a.action === "student.unlink" ? "unlink"
+            : requestNo != null ? "approve" : "link",
+          by: { trainerKey: staffId == null ? null : opaqueId("trainer", staffId),
+                displayName: (staffId != null && book.names[staffId]) || (role === "owner" ? "원장" : (a.actor_name || "운영진")), role },
+          requestNo,
+          student: studentId == null ? null : { id: opaqueId("student", studentId), displayName: stu[studentId]?.name || "?" },
+          claimedName: d.claimed_name || null,
+        };
+      }),
       thresholds: ops.THRESHOLDS,
+    });
+  }));
+
+  // ════════════════ GET /owner/dashboard/lessons?date=&trainerKey=&cursor=&limit= — 「전체 수업」 날짜 하나 이어 읽기(§9.33.5) ════════════════
+  //   대시보드 전체를 다시 부르지 않고 그날 수업만 읽는다. 줄 모양 · 순서는 대시보드 lessons[] 와 같다(같은 조회 · 같은 판정).
+  //   대시보드 lessonDays[].nextCursor 로 이어 읽어도 되고, cursor 없이 부르면 그날 처음부터.
+  app.get(`${TRAINER}/owner/dashboard/lessons`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
+    if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
+    const q = req.query || {};
+    const date = q.date === undefined ? ops.kstDate(Date.now()) : String(q.date);
+    const lim = pageLimit(q.limit, DAY_LESSON_PAGE, DAY_LESSON_PAGE_MAX);
+    const byTrainer = trainerParam(q.trainerKey);
+    if (!ops.isRealDate(date) || lim == null || byTrainer === undefined) return fail(res, 400, "invalid_body");
+    const fp = `${date}|${byTrainer ?? "*"}`;
+    let after = null;
+    if (q.cursor !== undefined) {
+      const c = readPage(process.env.SESSION_SECRET, "day-lessons", q.cursor);
+      if (!c || c.v !== Number(req.staff.id) || c.f !== fp || !isLessonKey(c.k)) return fail(res, 400, "invalid_body");
+      after = c.k;
+    }
+    const start = ops.kstStartIso(date), end = ops.kstStartIso(ops.addDays(date, 1));
+    const [book, slots, sessions, courseSessions] = await Promise.all([
+      staffBook(),
+      selectAll(sbSelect, "trainer_slots", lessonSlotsQ(start, end)),
+      selectAll(sbSelect, "lesson_sessions", lessonSessionsQ(date, date)),
+      sbSelect("course_sessions", courseSessionsQ(date, date)),
+      sbRpc ? sbRpc("sweep_pending_review", {}).catch((e) => console.error("dashboard_sweep", e?.message)) : null,
+    ]);
+    const tail = await lessonsTail(slots, courseSessions, start, end);
+    let all = ops.buildLessons({ slots, sessions, courseSessions, ...tail }).filter((l) => l.date === date);
+    if (byTrainer != null) all = all.filter((l) => Number(l.trainerId) === byTrainer);
+    all.sort((a, b) => cmpLessonKey(lessonKeyOf(a), lessonKeyOf(b)));
+    const rest = after ? all.filter((l) => cmpLessonKey(lessonKeyOf(l), after) > 0) : all;
+    const page = rest.slice(0, lim);
+    const stu = await namesOf([...new Set(page.flatMap((l) => l.studentIds))]);
+    sendTrainer(res, {
+      date, total: all.length, lessons: page.map((l) => lessonOut(l, book, stu)),
+      nextCursor: rest.length > lim
+        ? signPage(process.env.SESSION_SECRET, "day-lessons", { v: Number(req.staff.id), f: fp, k: lessonKeyOf(page[page.length - 1]) })
+        : null,
     });
   }));
 
   // ════════════════ GET /journals?days=30 ════════════════
   // 범위 내 수강생이 쓴 일기(최근 갱신순). 어느 트레이너 세션의 일기든 담당이면 본다(병행수강).
+  //   §9.33.4 — cursor · limit(1~200 · 기본 200 = 종전 한 번 크기) → nextCursor. 순서 = 고친 시각 최신 · 같으면 번호 역순(종전엔 같은 시각 순서가 없었다).
   app.get(`${TRAINER}/journals`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
-    if (!tableReady.lesson_journals) return sendTrainer(res, { journals: [] });
+    const lim = pageLimit(req.query.limit, JOURNAL_LIMIT, JOURNAL_LIMIT);
+    if (lim == null) return fail(res, 400, "invalid_body");
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || JOURNAL_DAYS_DEFAULT, 1), JOURNAL_DAYS_MAX);
+    let cur = null;
+    if (req.query.cursor !== undefined) {
+      cur = readPage(process.env.SESSION_SECRET, "journals", req.query.cursor);
+      if (!cur || cur.v !== Number(req.staff.id) || cur.d !== days || typeof cur.at !== "string" || Number.isNaN(Date.parse(cur.at))
+        || !Number.isInteger(cur.id)) return fail(res, 400, "invalid_body");
+    }
+    if (!tableReady.lesson_journals) return sendTrainer(res, { journals: [], nextCursor: null });
     const scope = await scopedStudents(req.staff.id);
-    if (!scope.size) return sendTrainer(res, { journals: [] });
+    if (!scope.size) return sendTrainer(res, { journals: [], nextCursor: null });
     const sinceIso = new Date(Date.now() - days * 86400_000).toISOString();
 
-    const journals = await sbSelect("lesson_journals",
+    const rows = await sbSelect("lesson_journals",
       `select=id,session_id,student_id,body,updated_at&student_id=in.(${idList(scope)})`
-      + `&updated_at=gte.${sinceIso}&order=updated_at.desc&limit=${JOURNAL_LIMIT}`);
-    if (!journals.length) return sendTrainer(res, { journals: [] });
+      + `&updated_at=gte.${sinceIso}`
+      + (cur ? `&or=${encodeURIComponent(`(updated_at.lt."${cur.at}",and(updated_at.eq."${cur.at}",id.lt.${cur.id}))`)}` : "")
+      + `&order=updated_at.desc,id.desc&limit=${lim + 1}`);
+    const journals = rows.slice(0, lim);
+    if (!journals.length) return sendTrainer(res, { journals: [], nextCursor: null });
+    const tail = journals[journals.length - 1];
+    const nextCursor = rows.length > lim
+      ? signPage(process.env.SESSION_SECRET, "journals", { v: Number(req.staff.id), d: days, at: tail.updated_at, id: Number(tail.id) })
+      : null;
 
     const sids = [...new Set(journals.map((j) => j.session_id))];
     const jids = journals.map((j) => j.id);
@@ -924,6 +1152,7 @@ module.exports = function mountTrainerPortal(app, deps) {
         hasFeedback: fbAll.has(j.id),
         hasMyFeedback: fbMine.has(j.id),
       })),
+      nextCursor,
     });
   }));
 
@@ -983,5 +1212,5 @@ module.exports = function mountTrainerPortal(app, deps) {
 
   // booking-api.cjs 가 같은 판정·가드를 쓴다 — 두 벌이 되면 만료·회수·차단 규칙이 갈라진다.
   // 복기 트레이너 라우트(review-api.cjs mountTrainer · PR-3)도 같은 판정·범위·가드를 쓴다(복제 금지).
-  return { requireTrainer, sendTrainer, scrubTrainer, scopedStudents, oneScope, holdDigestFor, setLevel, colorKeyOf };
+  return { requireTrainer, sendTrainer, scrubTrainer, scopedStudents, oneScope, holdDigestFor, setLevel, colorKeyOf, colorSlotsOf };
 };

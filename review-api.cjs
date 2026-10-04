@@ -34,6 +34,8 @@ const crypto = require("crypto");
 const { lessonRowsOf } = require("./ops-status.cjs");   // 수업 기록 행 한 벌 — 조정 · 정정 · 취소(§9.29) 행 빼기
 // 직강 출석 회차 · 회차 번호 한 벌(§61 · 수강생 앱 /sessions · 원장 화면과 같은 함수)
 const courseProgress = require("./course-progress.cjs");
+// 이어 읽기 표지 한 벌(계약 §9.33.1 · 트레이너 받은 복기 목록) — 피드 커서(signCursor)와 따로 묶는다
+const { signPage, readPage, pageLimit } = require("./page-cursor.cjs");
 
 const REVIEW_EMOJIS = ["👍", "🔥", "💡", "🙌", "💪", "🎯"];                       // DDL review_reactions_emoji_check 와 같은 6개
 const MAPS = ["에란겔", "미라마", "태이고", "론도", "사녹", "비켄디", "데스턴", "파라모", "카라킨", "기타"];   // review_games.map check
@@ -2052,19 +2054,35 @@ module.exports = function mountReviewApi(app, deps) {
     }
 
     // GET /reviews?days=30&status=published — 담당·수신분(공유분은 /feed) · 보낸 복기만 · 숨김 제외 · 보낸 시각 최신순 · 최대 200
+    //   §9.33.4 — cursor · limit(1~200 · 기본 200 = 종전 한 번 크기) → nextCursor. 표지는 이 트레이너 · 이 기간(days)에 묶는다.
     app.get(`${T}/reviews`, readLimit, requireTrainer, needReady, wrap(async (req, res) => {
       const q = req.query || {};
       if (q.status !== undefined && q.status !== "published") return fail(res, 400, "invalid_body");   // 1차는 published 뿐
       const d = Number(q.days);
       const days = Number.isInteger(d) && d >= 1 && d <= 365 ? d : TRAINER_LIST_DAYS;
       const me = Number(req.staff.id);
+      const lim = pageLimit(q.limit, LIMITS.list, LIMITS.list);
+      if (lim == null) return fail(res, 400, "invalid_body");
+      let cur = null;
+      if (q.cursor !== undefined) {
+        cur = readPage(process.env.SESSION_SECRET, "t-reviews", q.cursor);
+        if (!cur || cur.v !== me || cur.d !== days || typeof cur.at !== "string" || Number.isNaN(Date.parse(cur.at))
+          || !Number.isInteger(cur.id)) return fail(res, 400, "invalid_body");
+      }
       const scope = [...(await scopedStudents(me)).keys()];
       const or = [`recipient_trainer_id.eq.${me}`, ...(scope.length ? [`student_id.in.(${scope.join(",")})`] : [])];
       const since = new Date(Date.now() - days * 86400_000).toISOString();
+      // 범위(받는 사람 · 범위 안 수강생)는 쪽마다 다시 건다 — 이어 읽기 조건은 그 안에서만 좁힌다
+      const logic = cur
+        ? `&and=${encodeURIComponent(`(or(${or.join(",")}),or(published_at.lt."${cur.at}",and(published_at.eq."${cur.at}",id.lt.${cur.id})))`)}`
+        : `&or=${encodeURIComponent(`(${or.join(",")})`)}`;
       const rows = await sbSelect("lesson_reviews",
         `select=${REVIEW_COLS}&status=eq.published&hidden_at=is.null&published_at=gte.${encodeURIComponent(since)}`
-        + `&or=${encodeURIComponent(`(${or.join(",")})`)}&order=published_at.desc,id.desc&limit=${LIMITS.list}`);
-      sendTrainer(res, { reviews: await trainerSummaries(req.staff, rows) });
+        + `${logic}&order=published_at.desc,id.desc&limit=${lim + 1}`);
+      const page = rows.slice(0, lim);
+      const tail = page[page.length - 1];
+      sendTrainer(res, { reviews: await trainerSummaries(req.staff, page),
+        nextCursor: rows.length > lim ? signPage(process.env.SESSION_SECRET, "t-reviews", { v: me, d: days, at: tail.published_at, id: Number(tail.id) }) : null });
     }));
 
     // GET /feed — 수강생과 같은 필터·커서 · 활성 트레이너 전원 · 작성자 = 이름 + authorPubgName

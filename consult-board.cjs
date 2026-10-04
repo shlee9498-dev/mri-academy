@@ -257,6 +257,8 @@ module.exports = function mountConsultBoard(app, deps) {
   const { opaqueId, readOpaqueId, fail } = portal;
   const { requireTrainer, sendTrainer, setLevel } = trainer;
   const colorKeyOf = typeof trainer.colorKeyOf === "function" ? trainer.colorKeyOf : () => null;
+  // 색 자리 1~10(계약 §9.33.6) — 목록 · 원장 홈 칩과 같은 번호(명부 전체로 정한다)
+  const colorSlotsOf = typeof trainer.colorSlotsOf === "function" ? trainer.colorSlotsOf : () => new Map();
   const dmEnrolled = deps.dmEnrolled || null;
   const nowMs = () => (typeof deps.now === "function" ? deps.now() : Date.now());
   const T = "/api/trainer-portal/consults";
@@ -409,7 +411,8 @@ module.exports = function mountConsultBoard(app, deps) {
     .sort((a, b) => (a.role === "owner") - (b.role === "owner") || String(a.name).localeCompare(String(b.name), "ko"));
   const chip = (staff, id) => {
     if (id == null) return null;
-    return { trainerKey: opaqueId("trainer", Number(id)), trainerName: staff.get(Number(id))?.name || "미배정", colorKey: colorKeyOf(Number(id)) };
+    return { trainerKey: opaqueId("trainer", Number(id)), trainerName: staff.get(Number(id))?.name || "미배정", colorKey: colorKeyOf(Number(id)),
+      colorSlot: colorSlotsOf([...staff.values()]).get(Number(id)) ?? null };
   };
   // 대상자 표시 이름 — 신청 카드(prospect)면 신청의 디스코드 표시 이름 · 그 밖은 명부 → 기록의 별칭 · 이름
   function displayOf(c, students) {

@@ -3,7 +3,8 @@
 //
 // 계약: docs/trainer-portal-api.md §9.9 · §9.10
 //   POST   /api/trainer-portal/lessons                 — 예약 없이 한 수업 기록(봇 /수업등록 과 같은 함수 · lesson-record.cjs)
-//   GET    /api/trainer-portal/students/:id/lessons    — 그 수강생의 내 수업 기록 최근 20건(정정 대상 고르기)
+//   GET    /api/trainer-portal/students/:id/lessons    — 그 수강생의 내 수업 기록 최근 20건(정정 대상 고르기 · 종류 · 길이 §9.33.2)
+//   GET    /api/trainer-portal/lessons?date=&cursor=   — 그날 내가 남긴 수업 기록(원장 = 모든 트레이너) · 이어 읽기(§9.33.2)
 //   POST   /api/trainer-portal/adjustments             — 판수 조정 요청 → 오너 디스코드 승인 카드
 //   GET    /api/trainer-portal/adjustments             — 내 요청 최근 30건
 //   DELETE /api/trainer-portal/adjustments/:id         — 대기 중인 내 요청 취소
@@ -19,14 +20,16 @@
 // ============================================================
 "use strict";
 
-const { gamesForMinutes } = require("./lesson-lengths.cjs");          // 개인 레슨 길이 → 판수 정본(§47 · 계산식 그대로)
-const { isLessonRow, voidState } = require("./ops-status.cjs");       // 수업 기록 판정 한 벌 — 조정 · 취소(§9.29) 행 빼기
+const { gamesForMinutes, PERSONAL_DURATIONS } = require("./lesson-lengths.cjs");   // 개인 레슨 길이 → 판수 정본(§47 · 계산식 그대로)
+const { isLessonRow, voidState, kstStartIso } = require("./ops-status.cjs");   // 수업 기록 판정 한 벌 — 조정 · 취소(§9.29) 행 빼기
+const { signPage, readPage, pageLimit } = require("./page-cursor.cjs");        // 이어 읽기 표지(§9.33.1)
 
 const TRAINER = "/api/trainer-portal";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const kstDate = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
 const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
-const isRealDate = (s) => typeof s === "string" && DATE_RE.test(s) && addDays(s, 0) === s;
+// 없는 달(2026-13-01)은 Date.parse 가 NaN 이라 addDays 가 throw 한다 — 먼저 거른다(booking-api isRealDate 와 같은 판정)
+const isRealDate = (s) => typeof s === "string" && DATE_RE.test(s) && Number.isFinite(Date.parse(`${s}T00:00:00Z`)) && addDays(s, 0) === s;
 
 const LESSON_MAX_STUDENTS = { personal: 1, group: 4 };   // 그룹 = 관전형 최대 4명(봇 LESSON_CAP 과 같다)
 const GAMES_MIN = 1, GAMES_MAX = 50;                     // 「완료」(§9.1)와 같다
@@ -167,6 +170,40 @@ function sourceOf(row) {
   return "bot";
 }
 
+// ── 수업 기록의 종류 · 개인 길이(계약 §9.33.2) ── lesson_sessions 에는 두 칸이 없어서 남은 흔적에서 찾는다.
+// 예약 칸 종류 → 기록 종류. 직강(course) · 상담(consult)은 판수 기록이 아니라 모름(null).
+const KIND_OF_SLOT = Object.freeze({ personal: "personal", spectate: "group", participate: "group" });
+const CORRECT_DEPTH = 5;                                   // 고친 기록을 또 고친 사슬 — 이만큼까지만 거슬러 본다
+const LESSON_PAGE = 20, LESSON_PAGE_MAX = 100;             // GET /lessons 쪽 크기(§9.33.2)
+// 순수 판정(시험 대상) — 흔적 셋을 받아 줄 id → { kind, durationMin }.
+//   corr: newId → { oldId, dur, same } (session.correct) · app: id → { kind, dur } (session.app_record)
+//   booked(r) → 예약 칸에서 찾은 { kind, dur } | null · rows: 대상 줄(옛 기록 포함 known 으로 찾는다)
+//   ① 고치기로 생긴 기록 = 고친 길이가 있으면 personal + 그 길이 · 없으면 옛 기록의 종류(판수가 그대로면 길이도)
+//   ② 앱 「수업 기록하기」 = 보낸 그대로 ③ 예약 「완료」('portal' · 감사 없음) = 예약 칸 ④ 그 밖 = 모름
+//   길이는 개인 레슨 길이표(60~180분 · lesson-lengths)에 있는 값만 — 앱 길이 칩과 같은 값이어야 고른 칩으로 그린다.
+function resolveKinds(ids, known, corr, app, booked) {
+  const memo = new Map();
+  const resolve = (id, depth) => {
+    if (memo.has(id)) return memo.get(id);
+    let v = null;
+    const c = corr.get(id);
+    if (c) {
+      const base = depth < CORRECT_DEPTH && known.has(c.oldId) ? resolve(c.oldId, depth + 1) : null;
+      v = c.dur != null ? { kind: "personal", dur: c.dur } : base ? { kind: base.kind, dur: c.same ? base.dur : null } : null;
+    } else if (app.has(id)) v = app.get(id);
+    else if (known.get(id)?.created_by === "portal") v = booked(known.get(id));
+    memo.set(id, v);
+    return v;
+  };
+  const out = new Map();
+  for (const id of ids) {
+    const v = resolve(Number(id), 0);
+    const kind = v?.kind === "personal" || v?.kind === "group" ? v.kind : null;
+    out.set(Number(id), { kind, durationMin: kind === "personal" && PERSONAL_DURATIONS.includes(v.dur) ? v.dur : null });
+  }
+  return out;
+}
+
 module.exports = function mountTrainerLessons(app, deps) {
   const { sbSelect, sbInsert, sbPatch, sbRpc, limit, recorder, trainer, portal } = deps;
   const { requireTrainer, sendTrainer, scopedStudents, oneScope } = trainer;
@@ -209,6 +246,79 @@ module.exports = function mountTrainerLessons(app, deps) {
     }
     const period = String(ymd).slice(0, 7);
     return lockCache.set.has(period) ? period : null;
+  }
+
+  // 수업 기록 줄 → { kind, durationMin }(계약 §9.33.2) — 흔적 읽기는 여기 · 판정은 resolveKinds(순수).
+  //   rows 는 id · student_id · trainer_id · played_at · games · created_by 를 담는다. 읽기 실패는 모름으로 둔다(목록이 본체다).
+  async function lessonKinds(rows) {
+    const known = new Map(rows.map((r) => [Number(r.id), r]));
+    const corr = new Map(), app = new Map(), byKey = new Map();
+    if (!rows.length) return new Map();
+    const quiet = (tag) => (e) => { console.error("lesson_kind_read", tag, e?.status || e?.message); return []; };
+    // ① 고치기 사슬 — 새 기록 id 로 감사를 찾고, 옛 기록이 목록 밖이면 읽어 와서 한 단계 더
+    let frontier = [...known.keys()];
+    for (let depth = 0; depth < CORRECT_DEPTH && frontier.length; depth++) {
+      const audits = await sbSelect("admin_audit", "select=target,detail&action=eq.session.correct"
+        + `&detail->>new_session_id=in.(${frontier.join(",")})`).catch(quiet("correct"));
+      const olds = [];
+      for (const a of audits) {
+        const d = a?.detail || {};
+        const nid = Number(d.new_session_id);
+        const m = /^lesson_sessions:(\d+)$/.exec(String(a?.target || ""));
+        if (!m || !known.has(nid) || corr.has(nid)) continue;
+        const oid = Number(m[1]);
+        corr.set(nid, { oldId: oid, dur: Number.isInteger(d.duration_min) ? d.duration_min : null,
+                        same: Number(d.games_after) === Number(d.games_before) });
+        if (!known.has(oid)) olds.push(oid);
+      }
+      frontier = [];
+      if (olds.length) {
+        const more = await sbSelect("lesson_sessions", "select=id,student_id,trainer_id,played_at,games,created_by"
+          + `&id=in.(${[...new Set(olds)].join(",")})`).catch(quiet("correct_old"));
+        for (const r of more) { known.set(Number(r.id), r); frontier.push(Number(r.id)); }
+      }
+    }
+    // ② 앱 「수업 기록하기」 — 그 날짜들의 감사(detail.played_at)에서 session_ids 로 찾는다
+    const dates = [...new Set([...known.values()].map((r) => r.played_at).filter(isRealDate))];
+    if (dates.length) {
+      const audits = await sbSelect("admin_audit", "select=detail&action=eq.session.app_record"
+        + `&detail->>played_at=in.(${dates.join(",")})`).catch(quiet("app_record"));
+      for (const a of audits) {
+        const d = a?.detail || {};
+        if (d.kind !== "personal" && d.kind !== "group") continue;
+        for (const id of Array.isArray(d.session_ids) ? d.session_ids : []) app.set(Number(id), { kind: d.kind, dur: d.duration_min ?? null });
+      }
+    }
+    // ③ 예약 「완료」 — 감사로 못 찾은 'portal' 줄만. 같은 수강생 · 트레이너의 완료된 예약(머리 칸) · 날짜 ±1일(자정 넘김)
+    const need = [...known.values()].filter((r) => r.created_by === "portal" && isRealDate(r.played_at)
+      && !corr.has(Number(r.id)) && !app.has(Number(r.id)));
+    if (need.length) {
+      const ds = need.map((r) => r.played_at).sort();
+      const from = kstStartIso(addDays(ds[0], -1)), to = kstStartIso(addDays(ds[ds.length - 1], 2));
+      const bs = await sbSelect("slot_bookings", "select=student_id,duration_min,trainer_slots!inner(trainer_id,slot_start,lesson_type)"
+        + `&status=eq.done&span_head_id=is.null&student_id=in.(${[...new Set(need.map((r) => r.student_id))].join(",")})`
+        + `&trainer_slots.slot_start=gte.${encodeURIComponent(from)}&trainer_slots.slot_start=lt.${encodeURIComponent(to)}`)
+        .catch(quiet("bookings"));
+      for (const b of bs) {
+        const s = b?.trainer_slots;
+        if (!s?.slot_start) continue;
+        const kind = KIND_OF_SLOT[s.lesson_type] || null;
+        const k = `${b.student_id}|${s.trainer_id}|${kstDate(Date.parse(s.slot_start))}`;
+        if (!byKey.has(k)) byKey.set(k, []);
+        byKey.get(k).push({ kind, dur: kind === "personal" ? Number(b.duration_min) || null : null });   // 칸 길이(30분 단위)는 수업 길이가 아니다
+      }
+    }
+    // 같은 날 먼저 · 없으면 전날 · 다음 날. 그날 완료 예약의 종류가 섞이면 모름 · 길이가 갈리면 길이만 모름
+    const booked = (r) => {
+      for (const day of [r.played_at, addDays(r.played_at, -1), addDays(r.played_at, 1)]) {
+        const hits = byKey.get(`${r.student_id}|${r.trainer_id}|${day}`);
+        if (!hits) continue;
+        if (new Set(hits.map((h) => h.kind)).size !== 1) return null;
+        return { kind: hits[0].kind, dur: new Set(hits.map((h) => h.dur)).size === 1 ? hits[0].dur : null };
+      }
+      return null;
+    };
+    return resolveKinds(rows.map((r) => r.id), known, corr, app, booked);
   }
 
   // ════════════════ POST /lessons — 수업 기록하기(예약 없이) · 계약 §9.9 ════════════════
@@ -289,10 +399,10 @@ module.exports = function mountTrainerLessons(app, deps) {
     // 원장 목록은 여러 트레이너 기록이 섞인다 — 줄마다 누구 기록인지(판수 조정 목록 §9.18 과 같은 모양)
     const staffNames = {};
     if (owner) (await sbSelect("staff", "select=id,name")).forEach((s) => { staffNames[s.id] = s.name; });
+    const picked = rows.filter((r) => !String(r.created_by || "").startsWith("void:")).slice(0, 20);
+    const kinds = await lessonKinds(picked.map((r) => ({ ...r, student_id: sid })));   // §9.33.2 종류 · 개인 길이
     const lessons = [];
-    for (const r of rows) {
-      if (String(r.created_by || "").startsWith("void:")) continue;
-      if (lessons.length >= 20) break;
+    for (const r of picked) {
       const lockedPeriod = r.settled_period || await periodLocked(r.played_at);
       const off = voided.has(Number(r.id));
       lessons.push({
@@ -301,9 +411,77 @@ module.exports = function mountTrainerLessons(app, deps) {
                                  trainerName: staffNames[r.trainer_id] || "미배정" } } : {}),
         voided: off, voidedAt: off ? voidedAt.get(Number(r.id)) || null : null,
         editable: isLessonRow(r) && !lockedPeriod, lockedPeriod: lockedPeriod || null,
+        ...kinds.get(Number(r.id)),
       });
     }
     sendTrainer(res, { lessons });
+  }));
+
+  // ════════════════ GET /lessons?date=&cursor=&limit= — 그날 수업 기록(「내가 오늘 남긴 기록」 · 계약 §9.33.2) ════════════════
+  //   트레이너 = 내 기록(trainer_id = 나) · 내 범위(담당 ∪ 90일) 수강생만 · 원장 = 그날 모든 트레이너 기록(+ trainer) · trainerKey 로 한 명.
+  //   줄 = 수업 기록만(조정 · 정정 · 반대 행 빼고 · 취소한 기록은 voided 로 남는다) · 최근에 남긴 것 먼저(id 역순) · 쪽 20.
+  //   하루치를 한 번에 읽고(반대 행이 같은 날짜로 같이 온다 · 실측 하루 최대 54행) 쪽은 id 로 끊는다.
+  app.get(`${TRAINER}/lessons`, rateLimit("trainerRead", 120, 60_000), requireTrainer, wrap(async (req, res) => {
+    const q = req.query || {};
+    const owner = req.staff.role === "owner";
+    const date = q.date === undefined ? kstDate(Date.now()) : String(q.date);
+    const lim = pageLimit(q.limit, LESSON_PAGE, LESSON_PAGE_MAX);
+    if (!isRealDate(date) || lim == null) return fail(res, 400, "invalid_body");
+    let tid = owner ? null : Number(req.staff.id);
+    if (owner && q.trainerKey !== undefined) {
+      tid = readOpaqueId("trainer", String(q.trainerKey));
+      if (tid == null) return fail(res, 400, "invalid_body");
+    }
+    const fp = `${date}|${tid ?? "*"}`;
+    let after = null;
+    if (q.cursor !== undefined) {
+      const c = readPage(process.env.SESSION_SECRET, "lessons", q.cursor);
+      if (!c || c.v !== Number(req.staff.id) || c.f !== fp || !Number.isInteger(c.id)) return fail(res, 400, "invalid_body");
+      after = c.id;
+    }
+    const day = [];
+    for (let offset = 0; ; offset += 1000) {             // PostgREST 는 1,000행에서 조용히 자른다 — 하루치라도 끝까지
+      const part = await sbSelect("lesson_sessions",
+        `select=id,student_id,trainer_id,played_at,games,created_by,memo,created_at,settled_period&played_at=eq.${date}`
+        + (tid == null ? "" : `&trainer_id=eq.${tid}`) + `&order=id.asc&limit=1000&offset=${offset}`);
+      day.push(...part);
+      if (part.length < 1000) break;
+    }
+    const { voided, voidedAt } = voidState(day);
+    let live = day.filter(isLessonRow);
+    // 범위 — 트레이너는 내 범위 수강생만 · 원장도 합친 명부(옛 번호)는 뺀다(목록 · 상세와 같은 규칙)
+    const scope = owner ? null : await scopedStudents(req.staff.id);
+    const sids = [...new Set(live.map((r) => Number(r.student_id)))];
+    const people = new Map();
+    if (sids.length) {
+      for (const s of await sbSelect("students", `select=id,name,pubg_name&id=in.(${sids.join(",")})&merged_into=is.null`)) people.set(Number(s.id), s);
+    }
+    live = live.filter((r) => people.has(Number(r.student_id)) && (!scope || scope.has(Number(r.student_id))))
+      .sort((a, b) => Number(b.id) - Number(a.id));
+    if (after != null) live = live.filter((r) => Number(r.id) < after);
+    const page = live.slice(0, lim);
+    const more = live.length > lim;
+    const staffNames = {};
+    if (owner && page.length) (await sbSelect("staff", "select=id,name")).forEach((s) => { staffNames[s.id] = s.name; });
+    const kinds = await lessonKinds(page);
+    const lessons = [];
+    for (const r of page) {
+      const lockedPeriod = r.settled_period || await periodLocked(r.played_at);
+      const off = voided.has(Number(r.id));
+      const p = people.get(Number(r.student_id));
+      lessons.push({
+        sessionId: opaqueId("session", r.id),
+        student: { id: opaqueId("student", r.student_id), displayName: p.name, pubgName: p.pubg_name || null },
+        playedAt: r.played_at, games: Number(r.games), ...kinds.get(Number(r.id)), source: sourceOf(r),
+        ...(owner ? { trainer: { trainerKey: r.trainer_id == null ? null : opaqueId("trainer", r.trainer_id),
+                                 trainerName: staffNames[r.trainer_id] || "미배정" } } : {}),
+        voided: off, voidedAt: off ? voidedAt.get(Number(r.id)) || null : null,
+        editable: !lockedPeriod, lockedPeriod: lockedPeriod || null,
+      });
+    }
+    const last = page[page.length - 1];
+    sendTrainer(res, { date, lessons,
+      nextCursor: more ? signPage(process.env.SESSION_SECRET, "lessons", { v: Number(req.staff.id), f: fp, id: Number(last.id) }) : null });
   }));
 
   // ════════════════ §9.29 수업 기록 고치기 · 취소 · 되살리기 ════════════════
@@ -629,4 +807,4 @@ module.exports = function mountTrainerLessons(app, deps) {
 };
 
 module.exports._test = { parseLessonBody, parseAdjustBody, parseCorrectBody, pickGames, readEditReason, sourceOf, addDays, isRealDate, ADJ_LABEL,
-  isDirect, adjStatusOf, revertibleUntil, ADJ_DIRECT_MAX };
+  isDirect, adjStatusOf, revertibleUntil, ADJ_DIRECT_MAX, resolveKinds, KIND_OF_SLOT };
