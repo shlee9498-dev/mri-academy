@@ -99,6 +99,7 @@ const shortErr = (e) => (e && e.userMsg ? e.userMsg : String(e && e.status ? `${
 
 // ═══════════════ HTTP · 자동 집계 ═══════════════
 // deps: killrace(createKillrace 결과) · store{ load(evId), save(evId, state) } · isAdmin(req) · ready()(PUBG 키 · DB 가 있나) · makeToken() · now() · log
+//       · decorate(body, ev)(선택 · 스샷 잠정 칸 — killrace-shot.cjs)
 function createLive(deps) {
   const { killrace, store, isAdmin } = deps;
   const ready = deps.ready || (() => true);
@@ -188,9 +189,12 @@ function createLive(deps) {
   const getBoard = guard(async (req, res) => {
     const admin = isAdmin(req);
     if (!admin && boardCache && now() - boardCache.at < BOARD_CACHE_MS) return res.json({ ...boardCache.body, serverNow: now() });
-    let body;
-    try { body = await killrace.board({ admin, live: (ev) => stateFor(ev.id) }); }
+    let body; let evSeen = null;
+    try { body = await killrace.board({ admin, live: (ev) => { evSeen = ev; return stateFor(ev.id); } }); }
     catch (e) { if (e && e.userMsg) return res.status(404).json({ error: { code: "no_event" } }); throw e; }
+    if (deps.decorate && evSeen) {             // 스샷 잠정(killrace-shot.cjs)을 팀마다 shot 칸으로 붙인다 — 총점 · 순위는 안 바뀐다 · 실패해도 점수판은 나간다
+      try { await deps.decorate(body, evSeen); } catch (e) { log.warn("[killrace-live] decorate_failed", shortErr(e)); }
+    }
     body.running = running;
     if (!admin) boardCache = { at: now(), body };
     res.json(body);

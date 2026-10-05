@@ -1,0 +1,204 @@
+"use strict";
+// killrace-shot.cjs 시험 — 결과 스샷 읽기 · 닉으로 팀 정하기 · 「잠정」 표시와 사라짐 · 다른 채널/결과 아닌 사진 무시. 가짜 값만 · npm run check 에 포함
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const shot = require("../killrace-shot.cjs");
+const T = shot._test;
+
+const MIN = 60000;
+const EV = { id: 2, name: "번외", start: Date.parse("2026-10-05T10:00:00Z"), end: Date.parse("2026-10-05T12:40:00Z") };
+const CH = shot.CHANNEL_ID;
+// 가짜 팀(닉은 지어낸 것)
+const TEAMS = [
+  { name: "해달팀", members: [{ slot: 1, ign: "SeaOtter_01" }, { slot: 2, ign: "kelp-bed" }, { slot: 3, ign: "Pebble77" }, { slot: 4, ign: "TideRunner" }] },
+  { name: "수달팀", members: [{ slot: 1, ign: "RiverOtter" }, { slot: 2, ign: "Willow_Root" }, { slot: 3, ign: "mossyStone" }, { slot: 4, ign: "Driftwood9" }] },
+];
+// 결과 화면 견본 — 읽는 쪽이 돌려줄 도구 입력 모양 그대로
+const RESULT = { is_result: true, rank: 25, teams: 29, players: [
+  { name: "SeaOtter_01", kills: 3, damage: 412, dead: true }, { name: "kelp-bed", kills: 2, damage: 250, dead: true },
+  { name: "Pebble77", kills: 1, damage: 98, dead: true }, { name: "TideRunner", kills: 1, damage: 52, dead: true }] };
+
+test("결과 화면 견본 → 팀 · 킬 · 딜 · 순위가 맞게 나온다", () => {
+  const r = T.parseReading(RESULT);
+  assert.equal(r.kind, "ok");
+  const m = T.matchTeam(r.players, TEAMS);
+  assert.equal(m.team, "해달팀"); assert.equal(m.matched, 4);
+  const e = T.makeEntry({ id: "m1:0", at: EV.start + 30 * MIN, reading: r, match: m, base: 0 });
+  assert.deepEqual([e.team, e.kills, e.damage, e.rank, e.teams, e.dead], ["해달팀", 7, 812, 25, 29, 4]);
+  assert.deepEqual(e.players.map((p) => [p.slot, p.kills, p.damage]), [[1, 3, 412], [2, 2, 250], [3, 1, 98], [4, 1, 52]]);
+  assert.equal(T.replyLine(e), "해달팀 25위 7킬 딜 812로 읽었어요 · 전적이 오면 확정돼요");
+});
+
+test("팀은 사진 속 닉으로만 정한다 — 대소문자 · 클랜 태그 · I/l/1 · O/0 헷갈림 · 한 글자 오독까지", () => {
+  const read = [{ name: "[GmI] seaotter_O1", kills: 0, damage: 0 }, { name: "KELP-BED", kills: 0, damage: 0 },
+    { name: "Pebb1e77", kills: 0, damage: 0 }, { name: "TideRunnr", kills: 0, damage: 0 }];
+  const m = T.matchTeam(read, TEAMS);
+  assert.equal(m.team, "해달팀"); assert.equal(m.matched, 4);
+  // 두 팀이 2명씩 맞으면 못 정한다 · 1명만 맞아도 못 정한다
+  assert.equal(T.matchTeam([{ name: "SeaOtter_01" }, { name: "kelp-bed" }, { name: "RiverOtter" }, { name: "Willow_Root" }], TEAMS), null);
+  assert.equal(T.matchTeam([{ name: "SeaOtter_01" }, { name: "stranger1" }, { name: "stranger2" }], TEAMS), null);
+  // 짧은 닉은 한 글자 차이를 봐주지 않는다(엉뚱한 사람과 맞는 것을 막는다)
+  assert.equal(T.within1("abcde", "abcdf"), true);
+  assert.equal(T.matchTeam([{ name: "kelp-bxd" }, { name: "Pebble7" }], TEAMS).matched, 2);
+  assert.equal(T.matchTeam([{ name: "zzzzz" }, { name: "Pebble77" }], TEAMS), null);
+});
+
+test("못 읽은 칸이 있으면 unreadable — 짐작한 값은 만들지 않는다", () => {
+  assert.equal(T.parseReading({ is_result: false, rank: null, teams: null, players: [] }).kind, "not_result");
+  assert.equal(T.parseReading(null).kind, "not_result");
+  const one = (p) => ({ ...RESULT, players: [{ ...RESULT.players[0], ...p }, ...RESULT.players.slice(1)] });
+  assert.equal(T.parseReading(one({ kills: null })).kind, "unreadable");
+  assert.equal(T.parseReading(one({ damage: null })).kind, "unreadable");
+  assert.equal(T.parseReading(one({ kills: 2.5 })).kind, "unreadable");
+  assert.equal(T.parseReading(one({ name: " " })).kind, "unreadable");
+  assert.equal(T.parseReading({ ...RESULT, rank: 30, teams: 29 }).kind, "unreadable");
+  assert.equal(T.parseReading({ ...RESULT, players: [] }).kind, "unreadable");
+  const noRank = T.parseReading({ ...RESULT, rank: null, teams: null });
+  assert.equal(noRank.kind, "ok");                         // 순위는 비어도 킬 · 딜이 다 있으면 받는다
+  assert.equal(T.replyLine(T.makeEntry({ id: "x", at: 0, reading: noRank, match: T.matchTeam(noRank.players, TEAMS), base: 0 })),
+    "해달팀 7킬 딜 812로 읽었어요 · 전적이 오면 확정돼요");
+});
+
+test("같은 사진은 한 번 · 같은 팀 같은 순위가 40분 안에 또 오면 바꿔 끼운다", () => {
+  const s = T.normState(null);
+  const e = (id, at, rank, kills) => ({ id, team: "해달팀", at, rank, kills, damage: 100, players: [] });
+  assert.equal(T.addShot(s, e("a:0", 1000, 25, 7)).added, true);
+  assert.equal(T.addShot(s, e("a:0", 1000, 25, 7)).code, "dup_message");
+  assert.equal(T.addShot(s, e("b:0", 1000 + 5 * MIN, 25, 8)).replaced, true);
+  assert.deepEqual(s.shots.map((x) => x.kills), [8]);
+  T.addShot(s, e("c:0", 1000 + 30 * MIN, 12, 3));        // 다른 판(순위 다름)은 따로 쌓인다
+  assert.equal(s.shots.length, 2);
+});
+
+test("점수판 「잠정」 — 총점 · 순위는 그대로 · 같은 판 전적이 오면 사라진다", () => {
+  const at0 = EV.start + 40 * MIN;
+  const g1 = { seq: 1, startedAt: EV.start + 2 * MIN, place: 10, score: 9 };
+  const body = () => ({ teams: [
+    { name: "해달팀", rank: 1, total: 9, gameScore: 9, rows: [g1] },
+    { name: "수달팀", rank: 2, total: 5, gameScore: 5, rows: [] }] });
+  const s = { shots: [{ id: "m:0", team: "해달팀", at: at0, rank: 25, teams: 29, kills: 7, damage: 812, dead: 4,
+    players: [{ ign: "SeaOtter_01", kills: 3, damage: 412, dead: true }], base: g1.startedAt }] };
+  const b = T.decorateBoard(body(), s, at0 + MIN);
+  assert.deepEqual([b.teams[0].total, b.teams[0].rank, b.teams[0].gameScore], [9, 1, 9]);
+  assert.deepEqual([b.teams[0].shot.kills, b.teams[0].shot.damage, b.teams[0].shot.rank, b.teams[0].shot.n], [7, 812, 25, 1]);
+  assert.equal(b.teams[1].shot, null);
+  // 그 판(순위 25 · 스샷 전에 시작) 전적이 붙으면 사라진다
+  const g2 = { seq: 2, startedAt: at0 - 12 * MIN, place: 25, score: 14 };
+  const b2 = T.decorateBoard({ teams: [{ name: "해달팀", rank: 1, total: 23, rows: [g1, g2] }] }, s, at0 + 20 * MIN);
+  assert.equal(b2.teams[0].shot, null);
+  assert.equal(b2.teams[0].total, 23);
+  // 순위가 다른 판이 붙으면(스샷 전 시작) 아직 남는다 · 스샷 뒤에 시작한 판이 붙으면 사라진다 · 60분이 지나면 사라진다
+  const other = { seq: 2, startedAt: at0 - 12 * MIN, place: 3 };
+  assert.notEqual(T.decorateBoard({ teams: [{ name: "해달팀", rows: [g1, other] }] }, s, at0 + 20 * MIN).teams[0].shot, null);
+  const later = { seq: 3, startedAt: at0 + 5 * MIN, place: 3 };
+  assert.equal(T.decorateBoard({ teams: [{ name: "해달팀", rows: [g1, later] }] }, s, at0 + 50 * MIN).teams[0].shot, null);
+  assert.equal(T.decorateBoard({ teams: [{ name: "해달팀", rows: [g1] }] }, s, at0 + T.SHOW_MS + 1).teams[0].shot, null);
+  // 스샷을 올릴 때 이미 있던 판(base 이하)은 순위가 같아도 지우지 않는다
+  const sameOld = { shots: [{ ...s.shots[0], rank: 10 }] };
+  assert.notEqual(T.decorateBoard({ teams: [{ name: "해달팀", rows: [g1] }] }, sameOld, at0 + MIN).teams[0].shot, null);
+  // 무효 판(순위 없음)이 새로 붙으면 그 판으로 본다
+  const voidRow = { seq: null, void: true, startedAt: at0 - 10 * MIN };
+  assert.equal(T.decorateBoard({ teams: [{ name: "해달팀", rows: [g1, voidRow] }] }, s, at0 + 20 * MIN).teams[0].shot, null);
+});
+
+// ── 메시지 처리 전체 — 가짜 디스코드 메시지 · 가짜 읽기 · 가짜 저장 ──
+function fakeMsg(over = {}) {
+  const atts = new Map((over.atts || [{ id: "a1", contentType: "image/png", name: "result.png", url: "https://cdn.example/r.png", width: 1280, height: 720 }]).map((a) => [a.id, a]));
+  const m = { id: over.id || "900", channelId: over.channelId || CH, guild: over.guild === undefined ? { id: "g" } : over.guild,
+    author: { bot: !!over.bot }, createdTimestamp: over.at || EV.start + 30 * MIN, attachments: atts, replies: [],
+    reply: async (o) => { m.replies.push(o); } };
+  return m;
+}
+function world(over = {}) {
+  const w = { saved: null, reads: 0, readOut: RESULT, rows: [], ...over };
+  const inst = shot.createShot({
+    killrace: {
+      currentEvent: async () => EV, loadTeams: async () => TEAMS,
+      board: async () => ({ teams: TEAMS.map((t) => ({ name: t.name, rows: t.name === "해달팀" ? w.rows : [] })) }),
+    },
+    store: { load: async () => w.saved, save: async (id, s) => { w.saved = JSON.parse(JSON.stringify(s)); } },
+    key: () => "test-key",
+    fetch: async () => ({ ok: true, headers: { get: () => "image/png" }, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }),
+    read: async () => { w.reads++; if (w.readOut instanceof Error) throw w.readOut; return { input: w.readOut, model: "fake" }; },
+    now: () => EV.start + 31 * MIN, log: { log() {}, warn() {}, error() {} },
+  });
+  return { w, inst };
+}
+
+test("팀배정 채널 결과 스샷 → 저장 · 한 줄 답", async () => {
+  const { w, inst } = world();
+  const msg = fakeMsg();
+  const r = await inst.onMessage(msg);
+  assert.equal(r.saved, 1);
+  assert.equal(w.saved.shots[0].team, "해달팀");
+  assert.equal(w.saved.shots[0].kills, 7);
+  assert.equal(msg.replies.length, 1);
+  assert.equal(msg.replies[0].content, "해달팀 25위 7킬 딜 812로 읽었어요 · 전적이 오면 확정돼요");
+  assert.deepEqual(msg.replies[0].allowedMentions, { parse: [], repliedUser: false });
+});
+
+test("다른 채널 · 봇 글 · DM · 사진 없는 글 · 대회 시간 밖은 읽지도 답하지도 않는다", async () => {
+  for (const msg of [fakeMsg({ channelId: "123" }), fakeMsg({ bot: true }), fakeMsg({ guild: null }), fakeMsg({ atts: [] }),
+    fakeMsg({ atts: [{ id: "a", contentType: "video/mp4", name: "clip.mp4", url: "x" }] }),
+    fakeMsg({ at: EV.start - MIN }), fakeMsg({ at: EV.end + T.GRACE_MS + MIN })]) {
+    const { w, inst } = world();
+    const r = await inst.onMessage(msg);
+    assert.equal(r.done, false);
+    assert.equal(w.reads, 0); assert.equal(msg.replies.length, 0); assert.equal(w.saved, null);
+  }
+});
+
+test("결과 화면이 아닌 사진은 답하지 않는다 · 결과인데 못 읽으면 「못 읽었어요」 만", async () => {
+  let { w, inst } = world({ readOut: { is_result: false, rank: null, teams: null, players: [] } });
+  let msg = fakeMsg();
+  assert.equal((await inst.onMessage(msg)).why, "not_result");
+  assert.equal(msg.replies.length, 0); assert.equal(w.saved, null);
+
+  ({ w, inst } = world({ readOut: { ...RESULT, players: [{ ...RESULT.players[0], damage: null }, ...RESULT.players.slice(1)] } }));
+  msg = fakeMsg();
+  await inst.onMessage(msg);
+  assert.equal(msg.replies[0].content, shot.UNREADABLE); assert.equal(w.saved, null);
+
+  ({ w, inst } = world({ readOut: { ...RESULT, players: RESULT.players.map((p, i) => ({ ...p, name: `nobody${i}xx` })) } }));
+  msg = fakeMsg();
+  await inst.onMessage(msg);
+  assert.equal(msg.replies[0].content, "못 읽었어요"); assert.equal(w.saved, null);   // 팀을 못 정해도 같은 답
+
+  ({ w, inst } = world({ readOut: new Error("read_529_overloaded_error") }));
+  msg = fakeMsg();
+  await inst.onMessage(msg);
+  assert.equal(w.reads, 1);                                // 실패해도 다시 부르지 않는다
+  assert.equal(msg.replies[0].content, "못 읽었어요"); assert.equal(w.saved, null);
+});
+
+test("늦게 올린 스샷 — 그 판 전적이 이미 와 있으면 점수판에 안 보인다(두 번 보이지 않게)", async () => {
+  const at = EV.start + 30 * MIN;
+  const { w, inst } = world({ rows: [{ seq: 1, startedAt: at - 20 * MIN, place: 25 }] });
+  await inst.onMessage(fakeMsg({ at }));
+  assert.equal(w.saved.shots[0].base, 0);
+  const b = T.decorateBoard({ teams: [{ name: "해달팀", total: 14, rows: w.rows }] }, w.saved, at + MIN);
+  assert.equal(b.teams[0].shot, null);
+  assert.equal(b.teams[0].total, 14);
+});
+
+test("읽기 요청 모양 — 사진은 base64 · 도구 하나로만 답 · 모델이 없으면 다음 모델로 한 번", async () => {
+  const calls = [];
+  const fetchImpl = async (url, opt) => {
+    const body = JSON.parse(opt.body); calls.push(body);
+    if (calls.length === 1) return { ok: false, status: 404, json: async () => ({ error: { type: "not_found_error" } }) };
+    return { ok: true, status: 200, json: async () => ({ content: [{ type: "tool_use", name: "report", input: RESULT }] }) };
+  };
+  const out = await T.readImage({ mediaType: "image/png", data: "AAAA" }, { key: "k", fetchImpl, models: ["m-a", "m-b"] });
+  assert.equal(out.model, "m-b"); assert.deepEqual(out.input, RESULT);
+  assert.deepEqual(calls.map((c) => c.model), ["m-a", "m-b"]);
+  assert.deepEqual(calls[1].tool_choice, { type: "tool", name: "report" });
+  assert.equal(calls[1].messages[0].content[0].source.type, "base64");
+  // 그 밖의 실패(과부하 등)는 다음 모델로 넘어가지 않고 바로 실패
+  const once = [];
+  await assert.rejects(T.readImage({ mediaType: "image/png", data: "A" }, { key: "k", models: ["m-a", "m-b"],
+    fetchImpl: async (u, o) => { once.push(1); return { ok: false, status: 529, json: async () => ({ error: { type: "overloaded_error" } }) }; } }));
+  assert.equal(once.length, 1);
+  // 큰 사진은 디스코드 미디어 주소로 줄인 사본을 받는다
+  assert.match(T.imageUrl({ url: "u", proxyURL: "https://media.example/a.png?ex=1", width: 3840, height: 2160 }), /&width=1568&height=882$/);
+  assert.equal(T.imageUrl({ url: "u", proxyURL: "p", width: 1280, height: 720 }), "u");
+});

@@ -30,6 +30,8 @@ const killrace = require("./killrace.cjs");
 // GmI 킬내기 2회(2026-10-08) — 웹 경매 · 점수판(gmi-clancup auction.html · killnaegi-board.html). 시험 scripts/killrace-auction.test.cjs
 const killraceAuction = require("./killrace-auction.cjs");
 const killraceLive = require("./killrace-live.cjs");
+const killraceShot = require("./killrace-shot.cjs");
+let killShot = null;   // 킬내기 결과 스샷 읽기 — 아래 킬내기 HTTP 블록에서 만들고 봇 messageCreate 가 쓴다
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
 //   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
 const payreqIntake = require("./payreq-intake.cjs");
@@ -1377,6 +1379,9 @@ if (process.env.DISCORD_TOKEN) {
   // pubgGet·pubgMatch·sb* 는 모듈 레벨 함수 선언이라 여기서 그대로 넘긴다.
   const killraceBot = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch });
   client.on("interactionCreate", (itx) => killraceBot.handle(itx).catch((e) => console.error("[killrace] handler", e?.message)));
+  // 결과 화면 스샷 → 점수판 「잠정」(killrace-shot.cjs · 팀배정 채널 사진만 · 확정 점수는 안 건드린다)
+  client.on("messageCreate", (msg) => { if (killShot) killShot.onMessage(msg).catch((e) => console.error("[killrace-shot] handler", e?.message)); });
+  client.once("ready", () => { if (killShot) killShot.checkChannel(client); });
 
   const isStaff = (id) => STAFF_IDS.includes(id);
 
@@ -6970,7 +6975,8 @@ function gdcupAdmin(req) {
 // ═══ GmI 킬내기 2회 — 웹 경매 · 점수판 (2026-10-08 · 소관 GmI) ═══════════════════
 // 판정은 killrace-auction.cjs(경매) · killrace.cjs(점수)에 있고 여기는 연결만 한다.
 // 진행자 = gdcupAdmin(x-admin-key) · 팀장 = 진행자 화면이 나눠 주는 개인 링크의 토큰(Authorization: Bearer).
-// 저장 = ops_state 세 줄('killrace:auction:<id>' 경매 상태 · 'killrace:event:<id>' 배수 시각 · 보너스 · 핵 사망 무효 · 'killrace:live:<id>' 잠정 킬 · 집계 상태) — DDL · env 추가 없음.
+// 저장 = ops_state 네 줄('killrace:auction:<id>' 경매 상태 · 'killrace:event:<id>' 배수 시각 · 보너스 · 핵 사망 무효 · 'killrace:live:<id>' 잠정 킬 · 집계 상태
+//        · 'killrace:shot:<id>' 결과 스샷 잠정) — DDL · env 추가 없음(스샷 읽기는 기존 CLAUDE_KEY).
 // 자동 집계 = killrace-live.cjs tick() 을 1분마다 부른다(대회 시간 밖 · 팀 없음 · PUBG 키 없음이면 조용히 넘어간다).
 // 경매 포인트는 이 행사용 가상 값이다. 카지노 코인 · 지갑 · gdcup_* 표는 읽지도 쓰지도 않는다.
 {
@@ -7015,8 +7021,20 @@ function gdcupAdmin(req) {
   app.use("/api/killrace", (req, res, next) => (process.env.SUPABASE_URL ? next() : res.status(503).json({ error: { code: "db_disabled" } })));
   api.mount(app);
   const liveKey = (id) => `killrace:live:${id}`;
+  const shotKey = (id) => `killrace:shot:${id}`;
+  killShot = killraceShot.createShot({
+    killrace: kr,
+    store: {
+      load: async (id) => {
+        const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(shotKey(id))}&limit=1`);
+        return rows.length ? rows[0].value : null;
+      },
+      save: (id, state) => sbUpsert("ops_state", { key: shotKey(id), value: state, updated_at: new Date().toISOString() }, "key"),
+    },
+  });
   const live = killraceLive.createLive({
     killrace: kr, isAdmin: gdcupAdmin,
+    decorate: (body, ev) => killShot.decorate(body, ev),
     ready: () => !!(process.env.SUPABASE_URL && process.env.PUBG_API_KEY),
     store: {
       load: async (id) => {
