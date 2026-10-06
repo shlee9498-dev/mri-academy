@@ -3,11 +3,13 @@
 // 그리기 = SVG 문자열 → PNG(@resvg/resvg-js · 브라우저를 띄우지 않는다). 글꼴 = fonts/Pretendard-*.otf(SIL OFL 1.1 · 저장소 동봉 ·
 //   파일 경로로 직접 넘긴다 · 시스템 글꼴 안 씀). sharp 는 복기 사진 쪽이 SVG 해독기를 프로세스 전체에서 막아 둬서(review-api.cjs) 쓰지 않는다.
 // 숫자는 전부 killrace.players()(개인 기록 화면 · 점수판과 같은 계산)에서 받는다 — 여기서 점수를 다시 세지 않는다.
+// 머리 오른쪽 위 GmI 로고(img/gmi-logo.png) · 맨 아래 「GmI 클랜 입단 안내」 띠 + 디스코드 QR(오너 10/6 · 계약 §1.9).
 // 닉은 인게임(스팀) 닉만 쓴다. 디스코드 닉 · 계정 번호 · 경매 가격 · 상금은 이 그림에 넣지 않는다.
 // 게시: 오너가 /킬내기포스터 켜기 로 채널을 고른 뒤에만, 창 끝 + 45분(막판 집계 끝)이 지난 회차를 한 번 올린다.
 //   설정 = ops_state 'killrace:poster' { on, channelId } · 회차 표시 = ops_state 'killrace:poster:<id>' { status, at, … } (env · DDL 없음).
 //   표시는 올리기 전에 삽입으로 잡는다(같은 키가 있으면 삽입이 실패 = 다른 인스턴스가 먼저 잡음) — 같은 회차를 두 번 올리지 않는다.
 //   그리기 · 올리기가 실패하면 표시를 failed 로 바꾸고 로그만 남긴다(다시 해 보지 않는다). 집계 · 점수판과는 따로 돈다.
+const fs = require("fs");
 const path = require("path");
 
 const W = 1080;
@@ -19,6 +21,60 @@ const FONT = "Pretendard";
 const TOP_N = 5;                 // 개인 킬 상위 — 5위 동점이면 같이 싣되 7줄까지
 const TOP_MAX_ROWS = 7;
 const DAYS = ["일", "월", "화", "수", "목", "금", "토"];
+
+// GmI 로고(오너 10/6 · img/gmi-logo.png · 480×429 · 배경 투명) — 그릴 때 한 번 읽어 data URI 로 넣는다. 파일이 없으면 로고 없이 그린다
+const LOGO_FILE = path.join(__dirname, "img", "gmi-logo.png");
+const LOGO_RATIO = 480 / 429;
+let logoUri;                     // undefined = 아직 안 읽음 · null = 못 읽음
+function logoDataUri() {
+  if (logoUri === undefined) {
+    try { logoUri = "data:image/png;base64," + fs.readFileSync(LOGO_FILE).toString("base64"); } catch (e) { logoUri = null; }
+  }
+  return logoUri;
+}
+// 마무리 칸 — GmI 클랜 입단 안내(오너 10/6). 기준 줄은 오너가 준 글 그대로만 싣는다(비어 있으면 제목 · 안내 · QR 만, 3줄까지).
+//   기준 · 안내 글 = 오너가 룰 영상 녹음에서 말한 세 줄(지휘 10/7 전달). 초대 주소는 만료 없는 초대(오너 10/7 확인)
+const RECRUIT = {
+  title: "GmI 클랜 입단 안내",
+  lines: ["마스터 · 평딜 200 이상 → 정식 클랜원", "다이아 · 평딜 170 이상 → 레슨생 트랙"],
+  cta: "QR 찍고 디스코드로 오세요",
+  link: "discord.gg/YfZD8d22wJ",
+};
+// GmI 디스코드 초대 QR(https://discord.gg/YfZD8d22wJ) — 버전 3 · 29×29 · 오류 정정 Q · 마스크 2 · 한 줄 = 한 행 · 1 = 검은 칸.
+//   저장소 밖에서 한 번 만들어 붙였다(node-qrcode 1.5.4 · 저장소 의존성 아님) · 다른 구현(jsQR 1.4.0)으로 되읽어 같은 주소인지 봤다.
+//   주소가 바뀌면 다시 만들어 붙이고 RECRUIT.link 도 같이 고친다
+const GMI_QR = [
+  "11111110100111111001101111111",
+  "10000010010101100110001000001",
+  "10111010010011011001001011101",
+  "10111010001111010100101011101",
+  "10111010101100010011101011101",
+  "10000010111110110100101000001",
+  "11111110101010101010101111111",
+  "00000000010001101000000000000",
+  "01111111010101010001100110001",
+  "01000101110011111011010111001",
+  "00010011000110111110011001100",
+  "00100101001111100001011000010",
+  "01110111010100110100010100111",
+  "01001001111101001111111011011",
+  "11110011111001110110000100000",
+  "01001100111101100010110011001",
+  "10001111111011110010110111100",
+  "11001100111001011111001111111",
+  "10011110100100100100001001100",
+  "10001101011011101000101111000",
+  "10010111100010000100111111001",
+  "00000000110000000100100011011",
+  "11111110100001110101101010000",
+  "10000010101110111111100011011",
+  "10111010100111011000111111101",
+  "10111010111000010011110100100",
+  "10111010100000011111111111010",
+  "10000010111001010010111011010",
+  "11111110001101010101010010100",
+];
+const QR_M = 6, QR_QUIET = 4;    // 칸 6px · 둘레 흰 칸 4개(QR 규격 최소 여백)
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const minus = (n) => (n < 0 ? "−" + Math.abs(n) : String(n));
@@ -77,9 +133,56 @@ function posterData(p) {
 const t = (x, y, size, weight, fill, body, extra = "") =>
   `<text x="${x}" y="${y}" font-family="${FONT}" font-size="${size}" font-weight="${weight}" fill="${fill}"${extra}>${body}</text>`;
 
-function posterSvg(d) {
+const PAD = 40;
+const logoImg = (x, y, h, uri) => `<image x="${x}" y="${y}" width="${Math.round(h * LOGO_RATIO)}" height="${h}" href="${uri}"/>`;
+// QR — 가로로 이어진 검은 칸을 한 조각으로 그린다(crispEdges · 칸 사이에 틈이 안 생기게)
+function qrPath(x0, y0, m, fill) {
+  let dd = "";
+  GMI_QR.forEach((row, r) => {
+    for (let c = 0; c < row.length;) {
+      if (row[c] !== "1") { c++; continue; }
+      let e = c;
+      while (e < row.length && row[e] === "1") e++;
+      dd += `M${x0 + c * m} ${y0 + r * m}h${(e - c) * m}v${m}h-${(e - c) * m}z`;
+      c = e;
+    }
+  });
+  return `<path d="${dd}" fill="${fill}" shape-rendering="crispEdges"/>`;
+}
+// 마무리 칸(남색 띠) — 왼쪽 글(제목 · 기준 줄 · 안내 · 주소) · 오른쪽 흰 카드에 QR. 띠 높이를 돌려준다
+function recruitBand(out, y0, rc) {
+  const card = (GMI_QR.length + QR_QUIET * 2) * QR_M;
+  const lines = (rc.lines || []).map((s) => String(s || "").trim()).filter(Boolean).slice(0, 3);
+  const n = lines.length;
+  const textH = 44 + 26 + n * 44 + (n ? 14 : 6) + 34 + 40;        // 제목 · 기준 줄 · 안내 · 주소 기준선 간격의 합
+  const BH = Math.max(card, textH) + 76;
+  out.push(`<rect x="0" y="${y0}" width="${W}" height="${BH}" fill="${C.ink}"/>`);
+  const cardX = W - PAD - card, cardY = y0 + Math.round((BH - card) / 2);
+  out.push(`<rect x="${cardX}" y="${cardY}" width="${card}" height="${card}" rx="14" fill="#FFFFFF"/>`,
+    qrPath(cardX + QR_QUIET * QR_M, cardY + QR_QUIET * QR_M, QR_M, C.ink));
+  const tx = PAD + 12, maxW = cardX - 40 - tx;
+  let ty = y0 + Math.round((BH - textH) / 2) + 35;
+  const hd = fit(rc.title, 44, maxW, 30);
+  out.push(t(tx, ty, hd.size, 800, "#FFFFFF", esc(hd.text)));
+  ty += 26;
+  for (const s of lines) {
+    ty += 44;
+    const f = fit(s, 28, maxW - 26, 22);
+    out.push(`<circle cx="${tx + 7}" cy="${ty - 10}" r="5" fill="${C.sun}"/>`, t(tx + 26, ty, f.size, 600, "#FFFFFF", esc(f.text)));
+  }
+  ty += (n ? 14 : 6) + 34;
+  const ca = fit(rc.cta, 26, maxW, 20);
+  out.push(t(tx, ty, ca.size, 600, "#C9D1DE", esc(ca.text)));
+  ty += 40;
+  const lk = fit(rc.link, 28, maxW, 20);
+  out.push(t(tx, ty, lk.size, 800, C.sun, esc(lk.text)));
+  return BH;
+}
+
+// opts 는 시험용(로고 없이 · 기준 줄 바꿔 그리기) — 게시 · 미리 보기는 기본값으로 그린다
+function posterSvg(d, { logo = logoDataUri(), recruit = RECRUIT } = {}) {
   const out = [];
-  const PAD = 40, CW = W - PAD * 2;
+  const CW = W - PAD * 2;
   // ── 머리 ──
   const HEAD = 290;
   out.push(`<rect x="0" y="0" width="${W}" height="${HEAD}" fill="${C.cream}"/>`, `<rect x="0" y="${HEAD - 2}" width="${W}" height="2" fill="${C.creamLine}"/>`);
@@ -88,6 +191,9 @@ function posterSvg(d) {
   out.push(t(PAD + 8, 170, 86, 800, C.ink, title));
   const nm = fit(d.name, 32, CW - 24, 24);
   out.push(t(PAD + 12, 238, nm.size, 600, C.inkDim, esc(nm.text)));
+  // 오른쪽 위 로고(190×170) — 날짜 · 제목 줄의 오른쪽 빈자리. 제목은 세 자리 회차여도 x ≈ 830 에서 끝나고(로고 850~), 대회 이름 줄(238) 위에서 끝난다
+  const LOGO_H = 170;
+  if (logo) out.push(logoImg(W - PAD - Math.round(LOGO_H * LOGO_RATIO), 30, LOGO_H, logo));
   // ── 팀 순위 ──
   let y = HEAD + 34;
   const ROW = 88, TH = 64;
@@ -146,7 +252,9 @@ function posterSvg(d) {
   } else out.push(t(RX + 30, y + 140, 28, 600, C.inkDim, d.mvpFew ? `${MVP_MIN_GAMES}판 이상 뛴 사람이 없어요` : "기록이 아직 없어요"));
   y += boxH + 44;
   out.push(t(W / 2, y, 24, 600, C.inkFaint, "점수는 킬내기 점수판과 같은 계산이에요", ` text-anchor="middle"`));
-  const H = y + 40;
+  y += 40;
+  // ── 마무리 — GmI 클랜 입단 안내 · 디스코드 QR ──
+  const H = y + recruitBand(out, y, recruit);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
     `<rect width="${W}" height="${H}" fill="${C.bg}"/>` + out.join("") + "</svg>";
 }
@@ -338,5 +446,6 @@ function createPoster(deps) {
 
 module.exports = {
   COMMANDS, createPoster, posterData, posterSvg, renderPng,
-  _test: { fit, units, dateLine, roundOf, minus, signed, mvpRating, MVP_MIN_GAMES, postText, GRACE_MS, LATE_MS, CFG_KEY, markKey, FONT_FILES },
+  _test: { fit, units, dateLine, roundOf, minus, signed, mvpRating, MVP_MIN_GAMES, postText, GRACE_MS, LATE_MS, CFG_KEY, markKey, FONT_FILES,
+    RECRUIT, GMI_QR, LOGO_FILE, logoDataUri },
 };
