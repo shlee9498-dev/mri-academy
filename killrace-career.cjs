@@ -2,7 +2,7 @@
 // 킬내기 개인 누적 지표(docs/killrace-api.md §1.11 · 소관 GmI · 카지노 트랙 휴면 중 MRIacademy 대행) — 사람을 닉이 아니라 계정으로 센다.
 // 닉을 바꿔도 같은 계정이면 한 사람으로 이어진다. 바깥에는 계정 번호 대신 불투명 키(key)만 낸다 — SESSION_SECRET 에서 이 용도로만 뽑은
 // 키로 만든 단방향 HMAC 이라 키에서 계정 번호를 되찾을 수 없다(포털 불투명 id · 이어 읽기 표지와 다른 키).
-// 재료 = event_match_players(§66 · 판 × 선수) + event_matches(인정 판인지: seq is not null and not leave_flag). 점수 계산식은 쓰지 않는다.
+// 재료 = event_match_players(§66 · 판 × 선수) + event_matches(인정 판인지: seq is not null and not leave_flag · 늦은 부활 −10 판 아님 · §1.14). 점수 계산식은 쓰지 않는다.
 // 지표: 누적 판 수 · 킬 · 딜 · 사망 · 판당 킬 · 판당 딜 · 팀 내 킬 1등 횟수(그 판 팀에서 킬이 가장 많았던 판 · 공동 포함 · 0킬 판은 안 센다).
 // 10판 미만은 sample "low"(표본 부족) — §1.3 팀장 추천이 이 표시를 본다.
 const crypto = require("crypto");
@@ -29,9 +29,12 @@ function keyMaker(secret) {
 
 const round = (n, d) => { const f = 10 ** d; return Math.round(n * f) / f; };
 
-// rows = event_match_players 줄 · matches = event_matches 줄(event_id · team_name · match_id · seq · leave_flag)
+// 늦은 블루칩 부활(§1.14)로 −10 이 된 판도 이탈 판처럼 뺀다 — killrace.cjs reviveOutOf 와 같은 식(flags.revive 만 읽는다)
+const reviveOut = (rv) => !!(rv && rv.state === "late" && rv.rule === "penalty");
+
+// rows = event_match_players 줄 · matches = event_matches 줄(event_id · team_name · match_id · seq · leave_flag · revive = flags->revive)
 function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES }) {
-  const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
+  const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const games = new Map();                       // 판(회차|팀|매치) → 그 판 우리 팀 선수 줄
   for (const r of rows || []) {
     const g = `${r.event_id}|${r.team_name}|${r.match_id}`;
@@ -94,7 +97,7 @@ function createCareer(deps) {
     const f = ids ? `&event_id=in.(${ids.join(",")})` : "";
     const [rows, matches] = await Promise.all([
       readAll("event_match_players", `select=event_id,team_name,match_id,account_id,ign,kills,damage,dead,started_at${f}&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc`),
-      readAll("event_matches", `select=event_id,team_name,match_id,seq,leave_flag${f}&order=event_id.asc,team_name.asc,match_id.asc`),
+      readAll("event_matches", `select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive${f}&order=event_id.asc,team_name.asc,match_id.asc`),
     ]);
     const players = buildCareer({ rows, matches, keyOf });
     const evs = ids || [...new Set(rows.map((r) => Number(r.event_id)))].sort((a, b) => a - b);

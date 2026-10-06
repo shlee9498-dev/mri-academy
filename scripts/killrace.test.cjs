@@ -276,8 +276,9 @@ test("스캐너: 어떤 조각 크기로 잘라도 원소가 원본과 같다(�
 test("수집기: 대상 선수의 KillV2(피해자)·로그아웃·로그인(성공만)·경기 시작만", () => {
   const col = T.makeTelemetryCollector(["account.a", "account.b"]);
   EVENTS.forEach((e) => col.onElement(JSON.stringify(e)));
-  assert.deepEqual(col.out.players["account.a"], { kills: ["2026-09-26T12:20:00.000Z"], logouts: [], logins: ["2026-09-26T12:13:10.000Z"] });
-  assert.deepEqual(col.out.players["account.b"], { kills: ["2026-09-26T12:25:00.000Z"], logouts: ["2026-09-26T12:22:00.000Z"], logins: [] });
+  assert.deepEqual(col.out.players["account.a"], { kills: ["2026-09-26T12:20:00.000Z"], logouts: [], logins: ["2026-09-26T12:13:10.000Z"], redeploys: [] });
+  assert.deepEqual(col.out.players["account.b"], { kills: ["2026-09-26T12:25:00.000Z"], logouts: ["2026-09-26T12:22:00.000Z"], logins: [], redeploys: [] });
+  assert.deepEqual(col.out.phases, []);
   assert.equal(col.out.matchStart, "2026-09-26T12:14:00.000Z");
   assert.equal(T.telemetryVerdict(col.out.players["account.b"], { deathType: "logout" }, 7).why, "after_logout");
 });
@@ -405,10 +406,10 @@ test("2회 · 치킨 판 사망 감점(1회 때 빠졌던 것): 죽은 사람은
 });
 
 test("2회 · 설정 읽기: 없으면 1회 동작 · 시각은 ISO/ms · 보너스는 정수만 · 가리는 시각은 읽지 않는다", () => {
-  assert.deepEqual(T.normEventConfig(null), { boostAt: null, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: {}, teamSize: null, modes: null, auto: true, voidDeaths: {}, voidGames: {}, liveTokens: {} });
+  assert.deepEqual(T.normEventConfig(null), { boostAt: null, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: {}, teamSize: null, modes: null, auto: true, voidDeaths: {}, voidGames: {}, liveTokens: {}, lateRevive: "off", revivePhase: 4 });
   const c = T.normEventConfig({ boostAt: "2026-10-08T13:35:00Z", hideAt: HIDE, published: true, bonus: { A: 3, B: "x", C: 1.5 }, teamSize: 4, boostMul: 9, modes: ["duo", "duo-fpp"],
     auto: false, voidDeaths: { "A|m1": [2, 9, "x"], "A|m2": [] }, voidGames: { "A|m3": true, "A|m4": "yes" }, liveTokens: { A: "tok", B: 5 } });
-  assert.deepEqual(c, { boostAt: BOOST, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: { A: 3 }, teamSize: 4, modes: ["duo", "duo-fpp"], auto: false, voidDeaths: { "A|m1": [2] }, voidGames: { "A|m3": true }, liveTokens: { A: "tok" } });
+  assert.deepEqual(c, { boostAt: BOOST, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: { A: 3 }, teamSize: 4, modes: ["duo", "duo-fpp"], auto: false, voidDeaths: { "A|m1": [2] }, voidGames: { "A|m3": true }, liveTokens: { A: "tok" }, lateRevive: "off", revivePhase: 4 });
   assert.equal(T.normEventConfig({ boostMul: 2 }).boostMul, 2);
 });
 
@@ -461,9 +462,10 @@ test("2회 · 점수판: 끝까지 공개 · 판별 내역 · 인원 미달 판�
 });
 
 // 가짜 DB · PUBG — 집계 전체를 돌려 배수 · 보너스 · 저장값을 본다
-function fakeWorld({ cfgValue, matches, teamRows, stored = [], failPlayers = null, clock = null, ev = EV2 }) {
+function fakeWorld({ cfgValue, matches, teamRows, stored = [], failPlayers = null, clock = null, ev = EV2, tel = null }) {
   const db = { upserts: [], patches: [], ops: cfgValue == null ? [] : [{ value: cfgValue }], playerTries: 0, warns: [] };
-  const matchCalls = {};
+  const matchCalls = {}; const telCalls = {};
+  const telUrl = (id) => `https://telemetry-cdn.pubg.com/bluehole-pubg/steam/fake/${id}.json`;
   const players = new Map();                 // accountId → 최근 매치 id(최신순)
   for (const m of matches) for (const p of Object.values(m.parts)) { if (!players.has(p.accountId)) players.set(p.accountId, []); players.get(p.accountId).unshift(m.id); }
   const deps = {
@@ -483,11 +485,16 @@ function fakeWorld({ cfgValue, matches, teamRows, stored = [], failPlayers = nul
       const ids = decodeURIComponent(path.split("=")[1]).split(",");
       return { data: ids.filter((id) => players.has(id)).map((id) => ({ id, attributes: { name: id }, relationships: { matches: { data: players.get(id).map((mid) => ({ id: mid })) } } })) };
     },
-    pubgMatch: async (platform, id) => { matchCalls[id] = (matchCalls[id] || 0) + 1; const m = matches.find((x) => x.id === id); return { duration: 1500, createdAt: new Date(m.at).toISOString(), mapName: "Baltic_Main", mode: m.mode || "squad", matchType: "official", telemetryUrl: "", rosters: m.rosters, parts: m.parts }; },
+    pubgMatch: async (platform, id) => { matchCalls[id] = (matchCalls[id] || 0) + 1; const m = matches.find((x) => x.id === id); return { duration: 1500, createdAt: new Date(m.at).toISOString(), mapName: "Baltic_Main", mode: m.mode || "squad", matchType: "official", telemetryUrl: tel && tel[id] !== undefined ? telUrl(id) : "", rosters: m.rosters, parts: m.parts }; },
+    fetchImpl: async (url) => {
+      const id = String(url).split("/").pop().replace(/\.json$/, ""); telCalls[id] = (telCalls[id] || 0) + 1;
+      if (!tel || tel[id] === undefined || tel[id] === "fail") return new Response("", { status: 404 });
+      return fakeFetch(new Uint8Array(zlib.gzipSync(Buffer.from(JSON.stringify(tel[id])))))();
+    },
     env: {}, now: clock ? () => clock.t : () => ev.end + 5 * 60000, sleep: async () => {}, playersGapMs: 0,
     log: { log() {}, warn: (...a) => db.warns.push(a.join(" ")), error() {} },
   };
-  return { db, matchCalls, bot: k.createKillrace(deps) };
+  return { db, matchCalls, telCalls, bot: k.createKillrace(deps) };
 }
 // 한 팀 4명이 한 로스터로 뛴 판 — kills = 1번 선수 킬, 나머지 0 · 딜 0 · 전원 생존
 function squadMatch(id, at, accs, { kills = 0, rank = 5, dead = [] } = {}) {
@@ -651,6 +658,200 @@ test("5회 · 판 무효(진행자)로 앞 판이 빠지면 순번이 당겨져 
   const w2 = fakeWorld({ ev: EV5, cfgValue: {}, matches: [], teamRows: [teamRow("불사조", "a")], stored });
   assert.equal((await w2.bot.setLeave({ teamName: "불사조", seq: 5, clear: false })).score, -10);
   assert.equal((await w2.bot.setLeave({ teamName: "불사조", seq: 5, clear: true })).score, 9);
+});
+
+// ── 늦은 블루칩 부활(§1.14 · 5회부터) ──
+// 지휘 실측 모양: 부활 비행기 241 · 391 · 541 · 691 · 841 · 991 · 1141 · 1291초(150초 간격) · 3페이즈 781초 · 4페이즈 961초
+const PLANES = [241, 391, 541, 691, 841, 991, 1141, 1291];
+function telFor(at, rides = [], { phases = [[1, 120], [2, 480], [3, 781], [4, 961], [5, 1141]], start = true } = {}) {
+  const iso = (sec) => new Date(at + sec * 1000).toISOString();
+  const evs = [
+    ...(start ? [{ _T: "LogMatchStart", _D: iso(0) }] : []),
+    { _T: "LogVehicleRide", character: { accountId: "account.a1", name: "a1" }, vehicle: { vehicleId: "DummyTransportAircraft_C" }, _D: iso(5) },   // 시작 비행기
+    ...phases.map(([phase, sec]) => ({ _T: "LogPhaseChange", phase, _D: iso(sec) })),
+    ...rides.map(([acc, sec, vid]) => ({ _T: "LogVehicleRide", character: { accountId: acc, name: acc }, vehicle: { vehicleId: vid || "RedeployAircraft_DihorOtok_C" }, seatIndex: 1, _D: iso(sec) })),
+  ];
+  return evs.sort((x, y) => x._D.localeCompare(y._D));
+}
+
+test("늦은 부활 · 수집기: 우리 선수의 부활 비행기 탑승(redeploy · 대소문자 무시)만 · 시작 비행기 · 다른 팀 · 다른 탈것은 무시 · 페이즈 시작은 전부", () => {
+  const at = Date.parse("2026-10-08T12:10:00Z");
+  const evs = [...telFor(at, [["account.a2", 991], ["account.zz", 991], ["account.a3", 841, "redeployAircraft_x"], ["account.a3", 1000, "Uaz_A_01_C"]])];
+  const col = T.makeTelemetryCollector(["account.a1", "account.a2", "account.a3"]);
+  evs.forEach((e) => col.onElement(JSON.stringify(e)));
+  assert.deepEqual(col.out.players["account.a1"].redeploys, []);
+  assert.deepEqual(col.out.players["account.a2"].redeploys, [new Date(at + 991000).toISOString()]);
+  assert.deepEqual(col.out.players["account.a3"].redeploys, [new Date(at + 841000).toISOString()]);
+  assert.deepEqual(col.out.phases.map((p) => p.phase), [1, 2, 3, 4, 5]);
+  assert.equal(col.out.matchStart, new Date(at).toISOString());
+});
+
+test("늦은 부활 · 판정: 다섯 번째 비행기(841초)는 허용 · 여섯 번째(991초)부터 위반 · 4페이즈 시작과 같은 시각도 위반 · 4페이즈 전에 끝난 판 · 못 읽음 · 기준 페이즈 바꾸기", () => {
+  const at = Date.parse("2026-10-08T12:10:00Z");
+  const members = [1, 2, 3, 4].map((n) => ({ slot: n, ign: `닉${n}`, accountId: `account.a${n}` }));
+  const extract = (rides, opt) => {
+    const col = T.makeTelemetryCollector(members.map((m) => m.accountId));
+    telFor(at, rides, opt).forEach((e) => col.onElement(JSON.stringify(e)));
+    return col.out;
+  };
+  // 다섯 번째 비행기까지 — 몇 명이 몇 번 타도 ok
+  const ok = T.lateReviveCheck(extract(PLANES.slice(0, 5).map((sec, i) => [`account.a${(i % 4) + 1}`, sec])), members);
+  assert.deepEqual(ok, { state: "ok", phase: 4, phaseAt: new Date(at + 961000).toISOString(), phaseSec: 961, rides: 5 });
+  // 여섯 번째(991초)에 2번이 탔다 → late · 누가 몇 초에
+  const late = T.lateReviveCheck(extract([["account.a3", 841], ["account.a2", 991]]), members);
+  assert.equal(late.state, "late");
+  assert.deepEqual(late.who, [{ slot: 2, ign: "닉2", at: new Date(at + 991000).toISOString(), sec: 991 }]);
+  assert.deepEqual([late.phaseSec, late.rides], [961, 2]);
+  assert.equal(T.reviveWho(late), "2번 닉2 991초 탑승 · 4페이즈 961초");
+  // 4페이즈 시작과 같은 시각 = 위반(같은 시각 포함)
+  assert.equal(T.lateReviveCheck(extract([["account.a1", 961]]), members).state, "late");
+  // 4페이즈가 오기 전에 끝난 판 = ok(기준 시각 없음)
+  const short = T.lateReviveCheck(extract([["account.a1", 691]], { phases: [[1, 120], [2, 480], [3, 781]] }), members);
+  assert.deepEqual([short.state, short.phaseAt, short.rides], ["ok", null, 1]);
+  // 못 읽음(텔레메트리 없음 · 페이즈를 안 담은 옛 추출) = unknown
+  assert.deepEqual(T.lateReviveCheck(null, members), { state: "unknown", phase: 4 });
+  assert.equal(T.lateReviveCheck({ players: {}, matchStart: null }, members).state, "unknown");
+  // 기준 페이즈 3 이면 841초도 위반
+  assert.equal(T.lateReviveCheck(extract([["account.a1", 841]]), members, 3).state, "late");
+  // 다른 팀 선수가 늦게 탄 것은 우리 판정과 무관
+  assert.equal(T.lateReviveCheck(extract([["account.zz", 1141]]), members).state, "ok");
+});
+
+test("늦은 부활 · 설정 읽기: 없으면 1 ~ 4회 off · 5회부터 penalty · 적힌 값이 먼저 · 기준 페이즈 2 ~ 9", () => {
+  assert.deepEqual([1, 2, 3, 4].map((id) => T.normEventConfig({}, id).lateRevive), ["off", "off", "off", "off"]);
+  assert.deepEqual([5, 6, 12].map((id) => T.normEventConfig({}, id).lateRevive), ["penalty", "penalty", "penalty"]);
+  assert.equal(T.normEventConfig({ lateRevive: "flag" }, 5).lateRevive, "flag");
+  assert.equal(T.normEventConfig({ lateRevive: "off" }, 5).lateRevive, "off");
+  assert.equal(T.normEventConfig({ lateRevive: "penalty" }, 4).lateRevive, "penalty");
+  assert.equal(T.normEventConfig({ lateRevive: "yes" }, 5).lateRevive, "penalty");
+  assert.deepEqual([{}, { revivePhase: 3 }, { revivePhase: 1 }, { revivePhase: 10 }, { revivePhase: "3" }].map((v) => T.normEventConfig(v, 5).revivePhase), [4, 3, 4, 4, 4]);
+  assert.equal(T.normEventConfig({}).lateRevive, "off");          // 회차를 모르면(옛 호출) off
+});
+
+test("늦은 부활 · 5회 집계: 여섯 번째 비행기 탑승 판 −10(버닝 판이면 배수 없이 지나감 · 순번은 차지) · 다섯 번째는 그대로 · 못 읽은 판은 점수 그대로 「확인 못 함」", async () => {
+  const A = accsOf("a");
+  const at = (min) => EV5.start + min * 60000;
+  const ms = [1, 2, 3, 4, 5, 6, 7].map((n) => at(n * 15));
+  const matches = ms.map((t, i) => squadMatch(`a${i + 1}`, t, A, { kills: i + 1 }));
+  const tel = {
+    a1: telFor(ms[0]), a2: telFor(ms[1]),
+    a3: telFor(ms[2], [["account.a2", 841]]),            // 다섯 번째 비행기 — 허용
+    a4: telFor(ms[3]),
+    a5: telFor(ms[4], [["account.a3", 991]]),            // 5번째 판(버닝) · 여섯 번째 비행기 → −10 · 버닝은 지나감
+    a6: "fail",                                         // 텔레메트리 못 읽음 → 위반 아님
+    a7: telFor(ms[6]),                                  // 7번째 판(버닝) → 7 × 1.5 = 10.5 → 11
+  };
+  const w = fakeWorld({ ev: EV5, cfgValue: {}, matches, teamRows: [teamRow("불사조", "a")], tel });
+  const res = await w.bot.aggregate();
+  assert.deepEqual([res.cfg.lateRevive, res.cfg.revivePhase], ["penalty", 4]);
+  const t = res.teams[0];
+  assert.deepEqual(t.games.map((g) => [g.matchId, g.seq, g.base, g.boost || null, g.score, g.revive.state, g.reviveOut]), [
+    ["a1", 1, 1, null, 1, "ok", false], ["a2", 2, 2, null, 2, "ok", false], ["a3", 3, 3, null, 3, "ok", false], ["a4", 4, 4, null, 4, "ok", false],
+    ["a5", 5, 5, 1.5, -10, "late", true], ["a6", 6, 6, null, 6, "unknown", false], ["a7", 7, 7, 1.5, 11, "ok", false]]);
+  // 동점 기준 킬 · 총점에서 위반 판은 이탈처럼 빠진다(킬 5 는 안 센다)
+  assert.deepEqual([t.total, t.kills], [1 + 2 + 3 + 4 - 10 + 6 + 11, 1 + 2 + 3 + 4 + 6 + 7]);
+  // 저장: flags.revive(위반 선수 · 초) · 텔레메트리 추출(페이즈 · 탑승)
+  const rows = savedRows(w); const row = (id) => rows.find((r) => r.match_id === id);
+  assert.deepEqual(row("a5").flags.revive.who, [{ slot: 3, ign: "account.a3", at: new Date(ms[4] + 991000).toISOString(), sec: 991 }]);
+  assert.deepEqual([row("a5").flags.revive.rule, row("a5").score, row("a5").flags.boost], ["penalty", -10, 1.5]);
+  assert.deepEqual(row("a3").flags.revive, { state: "ok", phase: 4, phaseAt: new Date(ms[2] + 961000).toISOString(), phaseSec: 961, rides: 1, rule: "penalty" });
+  assert.deepEqual([row("a6").flags.revive.state, row("a6").deaths.telemetryError, row("a6").score], ["unknown", "telemetry_http_404", 6]);
+  assert.equal(row("a5").deaths.telemetry.phases.length, 5);
+  assert.deepEqual(row("a5").deaths.telemetry.players["account.a3"].redeploys, [new Date(ms[4] + 991000).toISOString()]);
+  assert.deepEqual(row("a5").deaths.used, "deathType");                 // 사망 판정은 그대로 deathType
+  // 점수판 — 판 줄 사유 · 버닝 지나감 · 공개 응답에 계정 번호 없음
+  const teams = [teamRow("불사조", "a")].map(T.normTeam);
+  const board = T.buildBoard({ ev: EV5, teams, cfg: res.cfg, rows, at: EV5.end - 60000, admin: false });
+  assert.deepEqual([board.lateRevive, board.revivePhase], ["penalty", 4]);
+  const bt = board.teams[0];
+  assert.deepEqual(bt.boosts, [{ seq: 5, state: "passed", score: -10 }, { seq: 7, state: "applied", base: 7, score: 11 }]);
+  const r5 = bt.rows.find((r) => r.seq === 5);
+  assert.deepEqual([r5.reviveOut, r5.score, r5.revive], [true, -10, { state: "late", rule: "penalty", phase: 4, sec: 961, who: [{ slot: 3, ign: "account.a3", sec: 991 }] }]);
+  assert.deepEqual(bt.rows.map((r) => r.revive && r.revive.state), ["ok", "ok", "ok", "ok", "late", "unknown", "ok"]);
+  assert.deepEqual([bt.total, bt.kills], [t.total, t.kills]);
+  assert.doesNotMatch(JSON.stringify(board), /redeploys|phaseAt/);
+  // 오너 카드
+  const card = T.formatCard(t.games[4]);
+  assert.match(card, /늦은 부활 → -10 고정/);
+  assert.match(card, /1.5배 판\(늦은 부활이라 −10 그대로\)/);
+  assert.match(card, /늦은 부활\(3번 account\.a3 991초 탑승 · 4페이즈 961초\)/);
+  assert.match(T.formatCard(t.games[5]), /부활 확인 못 함/);
+  // 개인 기록 — 위반 판은 이탈 판처럼 뺀다(개인 킬 합 = 팀 킬)
+  const pl = T.buildPlayers({ ev: EV5, teams, cfg: res.cfg, rows, roster: null, at: EV5.end });
+  const kills = pl.teams ? pl.teams[0].players.reduce((n, x) => n + x.kills, 0) : null;
+  assert.equal(kills, t.kills);
+});
+
+test("늦은 부활 · flag(의심 표시만): 점수 그대로(버닝도 붙는다) · 줄에 표시 · 진행자가 이탈로 −10 처리", async () => {
+  const A = accsOf("a");
+  const at = (min) => EV5.start + min * 60000;
+  const ms = [1, 2, 3, 4, 5].map((n) => at(n * 15));
+  const matches = ms.map((t, i) => squadMatch(`a${i + 1}`, t, A, { kills: 2 }));
+  const tel = Object.fromEntries(ms.map((t, i) => [`a${i + 1}`, telFor(t, i === 4 ? [["account.a1", 1141]] : [])]));
+  const w = fakeWorld({ ev: EV5, cfgValue: { lateRevive: "flag" }, matches, teamRows: [teamRow("불사조", "a")], tel });
+  const g5 = (await w.bot.aggregate()).teams[0].games[4];
+  assert.deepEqual([g5.revive.state, g5.revive.rule, g5.reviveOut, g5.score], ["late", "flag", false, 3]);      // 2 × 1.5 = 3
+  assert.match(T.formatCard(g5), /늦은 부활 의심\(1번 account\.a1 1141초 탑승 · 4페이즈 961초\)/);
+  const rows = savedRows(w);
+  const board = T.buildBoard({ ev: EV5, teams: [teamRow("불사조", "a")].map(T.normTeam), cfg: T.normEventConfig({ lateRevive: "flag" }, 5), rows, at: EV5.end, admin: false });
+  assert.deepEqual(board.teams[0].rows[4].revive.rule, "flag");
+  assert.equal(board.teams[0].rows[4].reviveOut, false);
+  assert.deepEqual(board.teams[0].boosts[0], { seq: 5, state: "applied", base: 2, score: 3 });
+});
+
+test("늦은 부활 · 1 ~ 4회는 꺼짐: 텔레메트리를 안 받고 flags.revive 도 없다(지난 회차 점수 그대로)", async () => {
+  const A = accsOf("a");
+  const matches = [squadMatch("a1", EV2.start + 60000, A, { kills: 3 })];
+  const w = fakeWorld({ ev: { ...EV2, id: 4 }, cfgValue: {}, matches, teamRows: [teamRow("불사조", "a")], tel: { a1: telFor(EV2.start + 60000, [["account.a1", 1141]]) } });
+  const res = await w.bot.aggregate();
+  assert.equal(res.cfg.lateRevive, "off");
+  assert.deepEqual(w.telCalls, {});
+  const row = savedRows(w)[0];
+  assert.deepEqual([row.score, row.flags.revive, row.deaths.telemetry], [3, undefined, null]);
+  const board = T.buildBoard({ ev: EV2, teams: [teamRow("불사조", "a")].map(T.normTeam), cfg: res.cfg, rows: savedRows(w), at: EV2.end, admin: false });
+  assert.deepEqual([board.lateRevive, board.teams[0].rows[0].revive, board.teams[0].rows[0].reviveOut], ["off", null, false]);
+});
+
+test("늦은 부활 · 못 받은 판은 2분 쉬었다가 다시 받는다 · 한 번에 8판까지 · 받은 판은 다시 안 받는다(저장분)", async () => {
+  const A = accsOf("a");
+  const clock = { t: EV5.start + 3 * 3600000 };
+  const at = (min) => EV5.start + min * 60000;
+  const matches = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => squadMatch(`a${n}`, at(n * 10), A, { kills: 1 }));
+  const tel = Object.fromEntries(matches.map((m) => [m.id, telFor(m.at)]));
+  tel.a2 = "fail";
+  const w = fakeWorld({ ev: EV5, cfgValue: {}, matches, teamRows: [teamRow("불사조", "a")], tel, clock });
+  await w.bot.aggregate();
+  assert.equal(Object.keys(w.telCalls).length, 8);                       // 10판 중 8판(a1 ~ a8 · a2 실패 포함)
+  const rows1 = savedRows(w);
+  const byId = (rs) => [...rs].sort((x, y) => Number(x.match_id.slice(1)) - Number(y.match_id.slice(1)));
+  assert.deepEqual(byId(rows1).map((r) => [r.match_id, r.flags.revive.state]), [["a1", "ok"], ["a2", "unknown"], ["a3", "ok"], ["a4", "ok"], ["a5", "ok"],
+    ["a6", "ok"], ["a7", "ok"], ["a8", "ok"], ["a9", "unknown"], ["a10", "unknown"]]);       // 오래된 판부터 8판 · a2 는 못 받음
+  // 다음 집계(바로 · 저장분이 있는 판은 다시 안 받는다): a9 · a10 만 받고 a2 는 쉬는 중
+  const w2 = fakeWorld({ ev: EV5, cfgValue: {}, matches, teamRows: [teamRow("불사조", "a")], tel, clock, stored: rows1.map((r) => ({ ...r, leave_flag: false })) });
+  await w2.bot.aggregate();
+  assert.deepEqual(Object.keys(w2.telCalls).sort(), ["a10", "a2", "a9"]);   // 새 세상(재시작)이라 a2 도 한 번 다시 받는다
+  // 같은 세상에서 바로 다시 → a2 는 2분 쉬는 중이라 안 받는다 · 2분 뒤에는 받는다
+  const before = w2.telCalls.a2;
+  await w2.bot.aggregate();
+  assert.equal(w2.telCalls.a2, before);
+  clock.t += 2 * 60000;
+  await w2.bot.aggregate();
+  assert.equal(w2.telCalls.a2, before + 1);
+});
+
+test("늦은 부활 · 위반 판은 이탈을 풀어도 −10 · 핵 사망 무효로 다시 세도 −10", async () => {
+  const flags = { boost: 1.5, base: 6, deadSlots: [2], revive: { state: "late", rule: "penalty", phase: 4, phaseSec: 961, who: [{ slot: 1, ign: "x", sec: 991 }] } };
+  const stored = [{ match_id: "a5", seq: 5, map: "Baltic_Main", created_at: new Date(EV5.start + 75 * 60000).toISOString(), kills: 9, damage_sum: 0, win_place: 5, penalty: 3, score: -10, leave_flag: false, flags,
+    deaths: { verdict: [{ slot: 2, dead: true }] } }];
+  const w = fakeWorld({ ev: EV5, cfgValue: {}, matches: [], teamRows: [teamRow("불사조", "a")], stored });
+  const on = await w.bot.setLeave({ teamName: "불사조", seq: 5, clear: false });
+  const off = await w.bot.setLeave({ teamName: "불사조", seq: 5, clear: true });
+  assert.deepEqual([on.score, off.score, off.reviveOut], [-10, -10, true]);
+  const v = await w.bot.setVoidDeath({ teamName: "불사조", seq: 5, slot: 2, clear: false });
+  assert.equal(v.score, -10);
+  // flag 였던 판(위반 아님)은 이탈을 풀면 배수가 다시 붙는다
+  const w2 = fakeWorld({ ev: EV5, cfgValue: {}, matches: [], teamRows: [teamRow("불사조", "a")], stored: [{ ...stored[0], penalty: 0, flags: { ...flags, deadSlots: [], revive: { ...flags.revive, rule: "flag" } } }] });
+  assert.equal((await w2.bot.setLeave({ teamName: "불사조", seq: 5, clear: true })).score, 14);       // (9 + 0) × 1.5 = 13.5 → 14
 });
 
 test("5회 · 시각 방식 회차(2 · 3 · 4회 모양)는 판 순번 칸이 비어 있다 — boosts · nextBoost null · 옛 칸 그대로", () => {
@@ -1066,4 +1267,16 @@ test("창을 줄이면: 창 밖이 된 저장 인정 판은 다음 집계에서 
   assert.deepEqual(res.teams[0].games.map((g) => [g.matchId, g.source, g.score]), [["in1", "stored", -5]]);
   assert.deepEqual(w.db.patches.map(([t, f, p]) => [t, f.includes("match_id=eq.out1"), p.seq, p.score]), [["event_matches", true, null, null]]);
   assert.match(res.warn.join("\n"), /대회 시각이 바뀌어 창 밖이 된 저장 판 1개\(2판\)/);
+});
+
+test("늦은 부활 · 진단(오너 · 저장 안 함): 최근 판 하나에 규칙을 대 본 줄 — 탑승 시각 · 4페이즈 시작 · 위반 여부", async () => {
+  const at = Date.parse("2026-10-07T12:00:00Z");
+  const A = accsOf("a");
+  const m = squadMatch("d1", at, A, { kills: 2 });
+  const w = fakeWorld({ ev: EV5, cfgValue: {}, matches: [m], teamRows: [], tel: { d1: telFor(at, [["account.a2", 841], ["account.a4", 991]]) } });
+  const d = await w.bot.diagnose({ ign: "account.a1" });
+  const text = w.bot.formatDiagnosis(d).join("\n");
+  assert.match(text, /부활 비행기 account\.a2 14:01, account\.a4 16:31 · 4페이즈 시작 16:01 → 늦은 부활 위반/);
+  const w2 = fakeWorld({ ev: EV5, cfgValue: {}, matches: [m], teamRows: [], tel: { d1: telFor(at, [["account.a2", 841]]) } });
+  assert.match(w2.bot.formatDiagnosis(await w2.bot.diagnose({ ign: "account.a1" })).join("\n"), /→ 늦은 부활 아님/);
 });

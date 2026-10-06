@@ -321,7 +321,7 @@ function hostWorld() {
   const userErr = (m) => Object.assign(new Error(m), { userMsg: m });
   const norm = (v) => { const seq = !!(v && v.boostMode === "seq");      // killrace.normEventConfig 처럼 판 순번이면 boostAt 은 null
     return { boostAt: !seq && v && v.boostAt ? Date.parse(v.boostAt) : null, boostMul: 1.5, boostMode: seq ? "seq" : "time", boostSeqs: seq ? [5, 7] : [],
-      bonus: { ...((v && v.bonus) || {}) }, auto: !(v && v.auto === false), liveTokens: {} }; };
+      bonus: { ...((v && v.bonus) || {}) }, auto: !(v && v.auto === false), liveTokens: {}, lateRevive: (v && v.lateRevive) || "off" }; };
   const killrace = {
     currentEvent: async () => w.events[w.events.length - 1],
     eventById: async (id) => { const e = w.events.find((x) => x.id === id); if (!e) throw userErr("없음"); return { ...e }; },
@@ -445,4 +445,18 @@ test("팀별 보너스: 넣기 · 고치기 · 지우기 · 범위 밖 · 소수
   assert.equal((await put("가팀", null)).body.changed, true);                                         // 지우기
   assert.deepEqual(w.cfg[3].bonus, { 나팀: -3 });
   assert.deepEqual(w.logs[3].map((x) => [x.team, x.before, x.after]), [["가팀", null, 8], ["가팀", 8, -3], ["나팀", null, -3], ["가팀", -3, null]]);
+});
+
+test("진행자 늦은 부활 판정 방식(§1.14): 고르기 셋만 · 누가 없으면 거절 · 같으면 바뀐 게 없음 · 바꾸면 바꾼 기록 + 바로 한 번 집계 · 끝난 회차는 못 바꿈", async () => {
+  const { E3, w, host } = hostWorld();
+  assert.equal((await host({ action: "lateRevive", by: "오너", mode: "maybe" })).body.error.code, "bad_mode");
+  assert.equal((await host({ action: "lateRevive", mode: "flag" })).body.error.code, "need_by");
+  const same = await host({ action: "lateRevive", by: "오너", mode: "off" });
+  assert.deepEqual([same.body.changed, w.aggs.length, w.logs[3]], [false, 0, undefined]);
+  const r = await host({ action: "lateRevive", by: "오너", mode: "flag" });
+  assert.deepEqual([r.body.changed, r.body.lateRevive, r.body.rerun, w.cfg[3].lateRevive, w.aggs], [true, "flag", "ok", "flag", [3]]);
+  assert.deepEqual(w.logs[3].map((x) => [x.by, x.action, x.before, x.after]), [["오너", "lateRevive", "off", "flag"]]);
+  w.clock = E3.end + 46 * MIN;
+  assert.equal((await host({ action: "lateRevive", by: "오너", mode: "penalty" })).code, 403);
+  assert.equal(w.cfg[3].lateRevive, "flag");
 });

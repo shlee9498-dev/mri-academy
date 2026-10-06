@@ -92,3 +92,12 @@ test("회차 고르기 · 거절 · 이어 읽기(1000줄씩) · 캐시 · 표�
   const g = res(); await gone.get({ query: {} }, g);
   assert.deepEqual([g.r.code, g.r.body.error.code], [503, "table_missing"]);
 });
+
+test("인정 판만: 늦은 블루칩 부활로 −10 이 된 판(§1.14 · penalty)도 이탈 판처럼 뺀다 · 의심 표시(flag) · 확인 못 함은 센다", () => {
+  const rows = [row(5, "가팀", "h1", "A", "A", 3, 300), row(5, "가팀", "h2", "A", "A", 8, 800), row(5, "가팀", "h3", "A", "A", 5, 500), row(5, "가팀", "h4", "A", "A", 2, 200)];
+  const late = (rule) => ({ state: "late", rule, phase: 4, who: [{ slot: 1, ign: "A", sec: 991 }] });
+  const matches = [{ ...match(5, "가팀", "h1", 1), revive: { state: "ok", rule: "penalty" } }, { ...match(5, "가팀", "h2", 2), revive: late("penalty") },
+    { ...match(5, "가팀", "h3", 3), revive: late("flag") }, { ...match(5, "가팀", "h4", 4), revive: { state: "unknown", rule: "penalty" } }];
+  const a = C.buildCareer({ rows, matches, keyOf }).find((p) => p.key === keyOf("A"));
+  assert.deepEqual([a.games, a.kills], [3, 10]);
+});
