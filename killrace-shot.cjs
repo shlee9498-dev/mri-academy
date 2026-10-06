@@ -19,10 +19,12 @@ const DUP_MS = 40 * 60000;                       // 같은 팀 · 같은 순위 
 const MATCH_SPAN_MS = 40 * 60000;                // 한 판 길이 상한 — 스샷 판은 올린 시각보다 이만큼 안쪽에서 시작했다
 const KEEP = 80;                                 // 대회 하나에 남겨 두는 스샷 수
 const MAX_IMAGES = 4;                            // 메시지 하나에서 읽는 사진 수
-const IMAGE_MAX_BYTES = 3_500_000;               // 읽기 요청에 싣는 한 장 상한(줄인 사본 기준)
-const IMAGE_EDGE = 1568;                         // 긴 변 — 읽는 쪽이 어차피 이 크기로 줄인다
+const IMAGE_MAX_BYTES = 3_750_000;               // 읽기 요청에 싣는 한 장 상한(무거우면 줄인 사본으로 받는다)
+const IMAGE_EDGE = 2576;                         // 긴 변 — 읽는 모델이 받는 가장 큰 크기
 const READS_PER_10MIN = 40;                      // 잘못 붙은 반복 글로 읽기 비용이 새지 않게
-const MODELS = ["claude-sonnet-5-5", "claude-haiku-4-5-20251001"];   // 앞 모델이 없다고 하면 다음 모델
+// 읽는 모델 — 앞 모델이 없다는 답(404)이면 다음 모델. claude-opus-5-5 는 생각을 끌 수 없어 effort low 로 짧게 하고,
+// 거절이 나면 서버가 권장 모델로 그 자리에서 다시 돌린다(fallbacks "default"). 강제 도구 답(tool_choice tool)은 이 모델이 400 으로 막는다 → JSON 형식 답으로 받는다
+const MODELS = [{ id: "claude-opus-5-5", effort: "low", fallbacks: true }, { id: "claude-haiku-4-5" }];
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const UNREADABLE = "못 읽었어요";
 
@@ -173,34 +175,32 @@ function skipMessage(msg, channelId) {
   return null;
 }
 
-const READ_TOOL = {
-  name: "report",
-  description: "PUBG 한 판 결과 화면에서 읽은 값을 보고한다",
-  input_schema: {
-    type: "object",
-    properties: {
-      is_result: { type: "boolean", description: "PUBG 한 판이 끝난 뒤 나오는 팀 결과 화면(#순위/전체 와 팀원별 킬 · 피해량)이면 true. 그 밖의 사진은 false" },
-      rank: { type: ["integer", "null"], description: "팀 순위. #25/29 면 25. 안 보이면 null" },
-      teams: { type: ["integer", "null"], description: "전체 팀 수. #25/29 면 29. 안 보이면 null" },
-      players: {
-        type: "array", maxItems: 4, description: "화면에 나온 팀원 순서대로. 결과 화면이 아니면 빈 배열",
-        items: {
-          type: "object",
-          properties: {
-            name: { type: "string", description: "화면에 적힌 닉 그대로(대소문자 · 숫자 · _ · - 포함). 앞의 [클랜 태그]는 뺀다" },
-            kills: { type: ["integer", "null"], description: "킬(처치) 수. 확실하지 않으면 null" },
-            damage: { type: ["integer", "null"], description: "피해량(딜). 소수점 아래 버림. 확실하지 않으면 null" },
-            dead: { type: ["boolean", "null"], description: "사망 표시가 분명하면 true · 생존 표시가 분명하면 false · 모르면 null" },
-          },
-          required: ["name", "kills", "damage", "dead"],
+// 답 형식(JSON) — 형식 기능은 숫자 범위 · 배열 길이 조건을 받지 않는다. 그 검사는 parseReading 이 한다
+const orNull = (type, description) => ({ anyOf: [{ type }, { type: "null" }], description });
+const READ_SCHEMA = {
+  type: "object", additionalProperties: false,
+  properties: {
+    is_result: { type: "boolean", description: "PUBG 한 판이 끝난 뒤 나오는 팀 결과 화면(#순위/전체 와 팀원별 킬 · 피해량)이면 true. 그 밖의 사진은 false" },
+    rank: orNull("integer", "팀 순위. #25/29 면 25. 안 보이면 null"),
+    teams: orNull("integer", "전체 팀 수. #25/29 면 29. 안 보이면 null"),
+    players: {
+      type: "array", description: "화면에 나온 팀원 순서대로(최대 4명). 결과 화면이 아니면 빈 배열",
+      items: {
+        type: "object", additionalProperties: false,
+        properties: {
+          name: { type: "string", description: "화면에 적힌 닉 그대로(대소문자 · 숫자 · _ · - 포함). 앞의 [클랜 태그]는 뺀다" },
+          kills: orNull("integer", "킬(처치) 수. 확실하지 않으면 null"),
+          damage: orNull("integer", "피해량(딜). 소수점 아래 버림. 확실하지 않으면 null"),
+          dead: orNull("boolean", "사망 표시가 분명하면 true · 생존 표시가 분명하면 false · 모르면 null"),
         },
+        required: ["name", "kills", "damage", "dead"],
       },
     },
-    required: ["is_result", "rank", "teams", "players"],
   },
+  required: ["is_result", "rank", "teams", "players"],
 };
 const READ_SYSTEM = [
-  "너는 PUBG(배틀그라운드) 경기 결과 화면 판독기다. 사진 한 장을 보고 report 도구로만 답한다.",
+  "너는 PUBG(배틀그라운드) 경기 결과 화면 판독기다. 사진 한 장을 보고 정해진 JSON 형식으로만 답한다.",
   "- 한 판이 끝난 뒤 나오는 팀 결과 화면(큰 순위 표시 #순위/전체 와 팀원별 이름 · 킬 · 피해량)이 아니면 is_result=false, rank · teams 는 null, players 는 빈 배열.",
   "- 보이는 글자만 옮긴다. 흐리거나 가려지거나 잘려서 확실하지 않은 칸은 null 로 둔다. 짐작해서 채우지 않는다.",
   "- kills 는 킬(처치) 수다. 어시스트 · 기절시킨 수 · 부활 · 헤드샷과 헷갈리지 않는다. damage 는 피해량(딜)이다.",
@@ -208,14 +208,14 @@ const READ_SYSTEM = [
 ].join("\n");
 
 // ═══════════════ 읽기 · 디스코드 ═══════════════
-// 사진 내려받기 — 디스코드 미디어 주소에 크기를 붙여 줄인 사본을 받는다(원본 그대로가 상한을 넘을 때만 의미가 있다)
+// 사진 주소 — 크거나(긴 변 2576 초과) 무거우면(3.75MB 초과) 디스코드 미디어 주소로 줄인 webp 사본을 받는다. 그 밖에는 원본
 function imageUrl(a) {
-  const w = Number(a.width) || 0; const h = Number(a.height) || 0;
-  if (a.proxyURL && w > IMAGE_EDGE && h > 0) {
-    const sep = a.proxyURL.includes("?") ? "&" : "?";
-    return `${a.proxyURL}${sep}width=${IMAGE_EDGE}&height=${Math.max(1, Math.round((h * IMAGE_EDGE) / w))}`;
-  }
-  return a.url;
+  const w = Number(a.width) || 0; const h = Number(a.height) || 0; const size = Number(a.size) || 0;
+  const big = Math.max(w, h) > IMAGE_EDGE;
+  if (!a.proxyURL || (!big && size <= IMAGE_MAX_BYTES)) return a.url;
+  const q = ["format=webp"];
+  if (big) { const k = IMAGE_EDGE / Math.max(w, h); q.push(`width=${Math.round(w * k)}`, `height=${Math.round(h * k)}`); }
+  return `${a.proxyURL}${a.proxyURL.includes("?") ? "&" : "?"}${q.join("&")}`;
 }
 
 async function fetchImage(a, fetchImpl) {
@@ -231,31 +231,44 @@ async function fetchImage(a, fetchImpl) {
   } finally { clearTimeout(timer); }
 }
 
-// 사진 한 장 → 도구 입력(JSON). 모델이 없다는 답이면 다음 모델로 한 번 넘어간다. 그 밖의 실패는 다시 부르지 않는다
+function readRequest(m, image) {
+  const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
+  if (m.fallbacks) headers["anthropic-beta"] = "server-side-fallback-2026-07-01";
+  const body = {
+    model: m.id, max_tokens: 16000, system: READ_SYSTEM,
+    output_config: { ...(m.effort ? { effort: m.effort } : {}), format: { type: "json_schema", schema: READ_SCHEMA } },
+    ...(m.fallbacks ? { fallbacks: "default" } : {}),
+    messages: [{ role: "user", content: [
+      { type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } },
+      { type: "text", text: "이 사진을 읽어 정해진 JSON 형식으로 답해 줘." },
+    ] }],
+  };
+  return { headers, body };
+}
+
+// 사진 한 장 → 읽은 값(JSON). 모델이 없다는 답이면 다음 모델로 한 번 넘어간다. 그 밖의 실패(거절 · 과부하 · 시간 초과)는 다시 부르지 않는다
 async function readImage(image, { key, fetchImpl, models = MODELS }) {
   for (let i = 0; i < models.length; i++) {
-    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 45000);
+    const m = models[i];
+    const { headers, body } = readRequest(m, image);
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 60000);
     let r; let data;
     try {
       r = await fetchImpl("https://api.anthropic.com/v1/messages", {
-        method: "POST", signal: ctl.signal,
-        headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({
-          model: models[i], max_tokens: 800, system: READ_SYSTEM, tools: [READ_TOOL], tool_choice: { type: "tool", name: "report" },
-          messages: [{ role: "user", content: [
-            { type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } },
-            { type: "text", text: "이 사진을 읽어 report 로 답해 줘." },
-          ] }],
-        }),
+        method: "POST", signal: ctl.signal, headers: { ...headers, "x-api-key": key }, body: JSON.stringify(body),
       });
       data = await r.json().catch(() => null);
     } finally { clearTimeout(timer); }
     const errType = data && data.error && data.error.type;
     if (r.status === 404 || errType === "not_found_error") { if (i < models.length - 1) continue; }
     if (!r.ok) throw Object.assign(new Error(`read_${r.status}_${errType || "?"}`), { code: "read_http" });
-    const use = ((data && data.content) || []).find((b) => b.type === "tool_use" && b.name === "report");
-    if (!use) throw Object.assign(new Error("read_no_tool"), { code: "read_shape" });
-    return { input: use.input, model: models[i] };
+    if (data && (data.stop_reason === "refusal" || data.stop_reason === "max_tokens")) {
+      throw Object.assign(new Error(`read_stop_${data.stop_reason}`), { code: "read_stop" });
+    }
+    const text = ((data && data.content) || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+    let input;
+    try { input = JSON.parse(text); } catch (_) { throw Object.assign(new Error("read_not_json"), { code: "read_shape" }); }
+    return { input, model: m.id };
   }
   throw Object.assign(new Error("read_no_model"), { code: "read_model" });
 }
@@ -362,5 +375,5 @@ function createShot(deps) {
 module.exports = {
   createShot, CHANNEL_ID, UNREADABLE,
   _test: { parseReading, normIgn, within1, matchTeam, makeEntry, normState, addShot, isSettled, decorateBoard, replyLine, imageAttachments,
-    skipMessage, imageUrl, fetchImage, readImage, READ_TOOL, SHOW_MS, DUP_MS, MATCH_SPAN_MS, GRACE_MS, IMAGE_EDGE },
+    skipMessage, imageUrl, fetchImage, readImage, readRequest, READ_SCHEMA, MODELS, SHOW_MS, DUP_MS, MATCH_SPAN_MS, GRACE_MS, IMAGE_EDGE },
 };

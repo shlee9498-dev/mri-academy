@@ -181,24 +181,48 @@ test("늦게 올린 스샷 — 그 판 전적이 이미 와 있으면 점수판�
   assert.equal(b.teams[0].total, 14);
 });
 
-test("읽기 요청 모양 — 사진은 base64 · 도구 하나로만 답 · 모델이 없으면 다음 모델로 한 번", async () => {
+test("읽기 요청 모양 — 사진은 base64 · JSON 형식 답 · 강제 도구 답 없음 · 모델이 없으면 다음 모델로 한 번", async () => {
   const calls = [];
   const fetchImpl = async (url, opt) => {
-    const body = JSON.parse(opt.body); calls.push(body);
+    calls.push({ headers: opt.headers, body: JSON.parse(opt.body) });
     if (calls.length === 1) return { ok: false, status: 404, json: async () => ({ error: { type: "not_found_error" } }) };
-    return { ok: true, status: 200, json: async () => ({ content: [{ type: "tool_use", name: "report", input: RESULT }] }) };
+    return { ok: true, status: 200, json: async () => ({ stop_reason: "end_turn", content: [{ type: "thinking", thinking: "" }, { type: "text", text: JSON.stringify(RESULT) }] }) };
   };
-  const out = await T.readImage({ mediaType: "image/png", data: "AAAA" }, { key: "k", fetchImpl, models: ["m-a", "m-b"] });
+  const out = await T.readImage({ mediaType: "image/png", data: "AAAA" }, { key: "k", fetchImpl, models: [{ id: "m-a", effort: "low", fallbacks: true }, { id: "m-b" }] });
   assert.equal(out.model, "m-b"); assert.deepEqual(out.input, RESULT);
-  assert.deepEqual(calls.map((c) => c.model), ["m-a", "m-b"]);
-  assert.deepEqual(calls[1].tool_choice, { type: "tool", name: "report" });
-  assert.equal(calls[1].messages[0].content[0].source.type, "base64");
-  // 그 밖의 실패(과부하 등)는 다음 모델로 넘어가지 않고 바로 실패
-  const once = [];
-  await assert.rejects(T.readImage({ mediaType: "image/png", data: "A" }, { key: "k", models: ["m-a", "m-b"],
-    fetchImpl: async (u, o) => { once.push(1); return { ok: false, status: 529, json: async () => ({ error: { type: "overloaded_error" } }) }; } }));
-  assert.equal(once.length, 1);
-  // 큰 사진은 디스코드 미디어 주소로 줄인 사본을 받는다
-  assert.match(T.imageUrl({ url: "u", proxyURL: "https://media.example/a.png?ex=1", width: 3840, height: 2160 }), /&width=1568&height=882$/);
-  assert.equal(T.imageUrl({ url: "u", proxyURL: "p", width: 1280, height: 720 }), "u");
+  assert.deepEqual(calls.map((c) => c.body.model), ["m-a", "m-b"]);
+  const [a, b] = calls;
+  assert.equal(a.body.tool_choice, undefined); assert.equal(a.body.tools, undefined);
+  assert.equal(a.body.output_config.format.type, "json_schema");
+  assert.equal(a.body.output_config.effort, "low"); assert.equal(a.body.fallbacks, "default");
+  assert.equal(a.headers["anthropic-beta"], "server-side-fallback-2026-07-01");
+  assert.equal(b.body.output_config.effort, undefined); assert.equal(b.body.fallbacks, undefined); assert.equal(b.headers["anthropic-beta"], undefined);
+  assert.equal(b.body.temperature, undefined);
+  assert.equal(b.body.messages[0].content[0].source.type, "base64");
+  // 형식 기능이 받는 스키마인가 — 모든 객체에 additionalProperties:false · 숫자 범위 · 배열 길이 조건 없음
+  const walk = (x) => {
+    if (!x || typeof x !== "object") return;
+    if (x.type === "object") assert.equal(x.additionalProperties, false);
+    for (const bad of ["minimum", "maximum", "maxItems", "minItems", "minLength", "maxLength"]) assert.equal(x[bad], undefined, bad);
+    Object.values(x).forEach(walk);
+  };
+  walk(T.READ_SCHEMA);
+  assert.equal(T.MODELS[0].id, "claude-opus-5-5");
+  // 그 밖의 실패(과부하 · 거절 · JSON 아님)는 다음 모델로 넘어가지 않고 바로 실패 — 다시 부르지 않는다
+  for (const resp of [{ ok: false, status: 529, json: async () => ({ error: { type: "overloaded_error" } }) },
+    { ok: true, status: 200, json: async () => ({ stop_reason: "refusal", content: [] }) },
+    { ok: true, status: 200, json: async () => ({ stop_reason: "end_turn", content: [{ type: "text", text: "결과 화면이 아니에요" }] }) }]) {
+    const once = [];
+    await assert.rejects(T.readImage({ mediaType: "image/png", data: "A" }, { key: "k", models: [{ id: "m-a" }, { id: "m-b" }],
+      fetchImpl: async () => { once.push(1); return resp; } }));
+    assert.equal(once.length, 1);
+  }
+});
+
+test("사진 주소 — 크거나 무거우면 디스코드 미디어 주소로 줄인 webp 사본 · 그 밖에는 원본", () => {
+  const big = T.imageUrl({ url: "u", proxyURL: "https://media.example/a.png?ex=1", width: 3840, height: 2160, size: 9e6 });
+  assert.equal(big, "https://media.example/a.png?ex=1&format=webp&width=2576&height=1449");
+  assert.equal(T.imageUrl({ url: "u", proxyURL: "p", width: 1920, height: 1080, size: 2e6 }), "u");
+  assert.equal(T.imageUrl({ url: "u", proxyURL: "https://media.example/b.png", width: 1920, height: 1080, size: 5e6 }), "https://media.example/b.png?format=webp");
+  assert.equal(T.imageUrl({ url: "u", width: 3840, height: 2160, size: 9e6 }), "u");     // 미디어 주소가 없으면 원본(무거우면 내려받기에서 막힌다)
 });
