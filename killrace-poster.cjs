@@ -50,8 +50,13 @@ function fit(text, size, maxPx, minSize = size) {
   return { text: chars.join("") + "…", size: sz };
 }
 
-// players() 결과 → 그림에 들어갈 값만. MVP = 킬 + 딜 100당 1점(점수판과 같은 무게) 합계 1위 · 같으면 킬 · 딜 · 적은 사망 · 닉 순
-function mvpPoints(p) { return (Number(p.kills) || 0) + Math.floor((Number(p.damage) || 0) / 100); }
+// players() 결과 → 그림에 들어갈 값만.
+// MVP = 판당 킬 + 판당 딜 100당 1점 1위(지휘 10/7 — 많이 돈 팀이 유리한 합계 방식은 안 쓴다) · 그 회차에서 MVP_MIN_GAMES 판 이상 뛴 선수만 후보.
+//   같으면 판당 킬 · 판당 딜 · 판 수 많은 쪽 · 적은 사망 · 닉 순. 비교는 소수 넷째 자리까지 맞춰서 한다(부동소수 오차로 순서가 흔들리지 않게)
+const MVP_MIN_GAMES = 4;
+const per = (n, games) => (games > 0 ? (Number(n) || 0) / games : 0);
+function mvpRating(p) { const g = Number(p.games) || 0; return per((Number(p.kills) || 0) + (Number(p.damage) || 0) / 100, g); }
+const q4 = (x) => Math.round(x * 10000);
 function posterData(p) {
   const ev = (p && p.event) || {};
   const teams = ((p && p.teams) || []).map((t) => ({ rank: t.rank, name: t.name, total: Number(t.total) || 0, kills: Number(t.kills) || 0,
@@ -59,11 +64,14 @@ function posterData(p) {
   const all = ((p && p.byKills) || []).filter((x) => (Number(x.games) || 0) > 0);
   const top = all.filter((x) => x.rank <= TOP_N && x.kills > 0).slice(0, TOP_MAX_ROWS)
     .map((x) => ({ rank: x.rank, ign: x.ign, team: x.team, kills: x.kills }));
-  const best = all.slice().sort((a, b) => mvpPoints(b) - mvpPoints(a) || b.kills - a.kills || b.damage - a.damage || a.deaths - b.deaths || String(a.ign).localeCompare(String(b.ign)))[0];
-  const mvp = best && mvpPoints(best) > 0
-    ? { ign: best.ign, team: best.team, kills: best.kills, damage: best.damage, games: best.games, points: mvpPoints(best) } : null;
+  const cands = all.filter((x) => (Number(x.games) || 0) >= MVP_MIN_GAMES);
+  const best = cands.slice().sort((a, b) => q4(mvpRating(b)) - q4(mvpRating(a)) || q4(per(b.kills, b.games)) - q4(per(a.kills, a.games))
+    || q4(per(b.damage, b.games)) - q4(per(a.damage, a.games)) || b.games - a.games || a.deaths - b.deaths || String(a.ign).localeCompare(String(b.ign)))[0];
+  const mvp = best && mvpRating(best) > 0
+    ? { ign: best.ign, team: best.team, kills: best.kills, damage: best.damage, games: best.games,
+      perGame: Math.round(mvpRating(best) * 100) / 100, kpg: Math.round(per(best.kills, best.games) * 10) / 10, dpg: Math.round(per(best.damage, best.games)) } : null;
   return { name: ev.name || "", round: roundOf(ev.name), date: Number.isFinite(ev.start) && Number.isFinite(ev.end) ? dateLine(ev.start, ev.end) : "",
-    teams, top, mvp };
+    teams, top, mvp, mvpFew: !mvp && all.length > 0 && !cands.length };
 }
 
 const t = (x, y, size, weight, fill, body, extra = "") =>
@@ -109,7 +117,7 @@ function posterSvg(d) {
   const LW = 600, RX = PAD + LW + 20, RW = CW - LW - 20;
   const LROW = 56;
   const leftH = 92 + Math.max(1, d.top.length) * LROW + 20;
-  const boxH = Math.max(leftH, 420);
+  const boxH = Math.max(leftH, 460);
   out.push(`<rect x="${PAD}" y="${y}" width="${LW}" height="${boxH}" rx="24" fill="${C.card}" stroke="${C.line}" stroke-width="2"/>`);
   out.push(t(PAD + 32, y + 58, 34, 800, C.ink, "개인 킬 TOP 5"));
   d.top.forEach((p, i) => {
@@ -129,10 +137,13 @@ function posterSvg(d) {
     out.push(t(RX + 30, y + 138, mv.size, 800, C.ink, esc(mv.text)));
     const mt = fit(d.mvp.team, 28, RW - 60, 22);
     out.push(t(RX + 30, y + 180, mt.size, 600, C.accentInk, esc(mt.text)));
-    out.push(t(RX + 30, y + 290, 104, 800, C.accentInk, `${d.mvp.points}<tspan font-size="36" font-weight="600" fill="${C.inkDim}"> 점</tspan>`));
-    out.push(t(RX + 30, y + 344, 28, 600, C.ink, `킬 ${d.mvp.kills}  딜 ${comma(d.mvp.damage)}  ${d.mvp.games}판`));
-    out.push(t(RX + 30, y + 384, 22, 600, C.inkFaint, "킬 + 딜 100당 1점으로 셌어요"));
-  } else out.push(t(RX + 30, y + 140, 28, 600, C.inkDim, "기록이 아직 없어요"));
+    out.push(t(RX + 30, y + 290, 104, 800, C.accentInk, `${d.mvp.perGame.toFixed(2)}<tspan font-size="36" font-weight="600" fill="${C.inkDim}"> 점</tspan>`));
+    const st = fit(`판당 킬 ${d.mvp.kpg.toFixed(1)} · 판당 딜 ${comma(d.mvp.dpg)}`, 26, RW - 60, 20);
+    out.push(t(RX + 30, y + 338, st.size, 600, C.ink, esc(st.text)));
+    out.push(t(RX + 30, y + 374, 22, 600, C.inkDim, `킬 ${d.mvp.kills}  딜 ${comma(d.mvp.damage)}  ${d.mvp.games}판`));
+    out.push(t(RX + 30, y + 410, 20, 600, C.inkFaint, "판당 킬 + 판당 딜 100당 1점"));
+    out.push(t(RX + 30, y + 438, 20, 600, C.inkFaint, `${MVP_MIN_GAMES}판 이상 뛴 사람만 후보예요`));
+  } else out.push(t(RX + 30, y + 140, 28, 600, C.inkDim, d.mvpFew ? `${MVP_MIN_GAMES}판 이상 뛴 사람이 없어요` : "기록이 아직 없어요"));
   y += boxH + 44;
   out.push(t(W / 2, y, 24, 600, C.inkFaint, "점수는 킬내기 점수판과 같은 계산이에요", ` text-anchor="middle"`));
   const H = y + 40;
@@ -327,5 +338,5 @@ function createPoster(deps) {
 
 module.exports = {
   COMMANDS, createPoster, posterData, posterSvg, renderPng,
-  _test: { fit, units, dateLine, roundOf, minus, signed, mvpPoints, postText, GRACE_MS, LATE_MS, CFG_KEY, markKey, FONT_FILES },
+  _test: { fit, units, dateLine, roundOf, minus, signed, mvpRating, MVP_MIN_GAMES, postText, GRACE_MS, LATE_MS, CFG_KEY, markKey, FONT_FILES },
 };

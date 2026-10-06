@@ -22,19 +22,43 @@ function playersOf() {
     byKills: byKillsOf(all) };
 }
 
-test("포스터 값: 팀 순위 그대로 · 개인 킬 5위 동점은 같이 · 안 뛴 선수 빼기 · MVP = 킬 + 딜 100당 1점 · 날짜 줄", () => {
+test("포스터 값: 팀 순위 그대로 · 개인 킬 5위 동점은 같이 · 안 뛴 선수 빼기 · MVP = 판당 킬 + 판당 딜 100당 1점(4판 이상만) · 날짜 줄", () => {
   const d = P.posterData(playersOf());
   assert.deepEqual(d.teams.map((t) => [t.rank, t.name, t.total, t.kills, t.games, t.bonus]),
     [[1, "라팀", 91, 61, 7, 0], [2, "다팀", 78, 40, 6, 8], [3, "가팀", 46, 69, 12, -3], [4, "나팀", -20, 40, 12, 0]]);
   assert.deepEqual(d.top.map((x) => [x.rank, x.ign]), [[1, "Ace"], [2, "Bee"], [3, "Cat"], [4, "Dog"], [5, "Eel"], [5, "Fox"]]);
-  assert.deepEqual(d.mvp, { ign: "Ace", team: "가팀", kills: 28, damage: 4063, games: 12, points: 68 });
+  // 판당: Bee 6판 (21 + 32.08) / 6 = 8.85 > Cat 8.56 > Dog 8.06 > Eel 7.71 > Gnu 7.43 > Fox 6.59 > Ace 12판 5.72(합계 1위였던 사람)
+  assert.deepEqual(d.mvp, { ign: "Bee", team: "가팀", kills: 21, damage: 3208, games: 6, perGame: 8.85, kpg: 3.5, dpg: 535 });
+  assert.equal(d.mvpFew, false);
   assert.equal(d.round, "3회");
   assert.equal(d.date, "10/6(화) 19:50~21:50");
   assert.ok(!d.top.some((x) => x.ign === "Bench"));
-  // MVP 동점 — 킬이 많은 쪽
-  assert.equal(T.mvpPoints({ kills: 10, damage: 1999 }), 29);
+  assert.equal(Math.round(T.mvpRating({ kills: 18, damage: 2825, games: 6 }) * 10000), 77083);      // 3회 실제 1위 모양: 3.00 + 4.71
+  assert.deepEqual([T.mvpRating({ kills: 5, damage: 0, games: 0 }), T.MVP_MIN_GAMES], [0, 4]);
   const e = P.posterData({ event: {}, teams: [], byKills: [] });
-  assert.deepEqual([e.teams.length, e.top.length, e.mvp, e.date], [0, 0, null, ""]);
+  assert.deepEqual([e.teams.length, e.top.length, e.mvp, e.date, e.mvpFew], [0, 0, null, "", false]);
+});
+
+test("포스터 MVP: 4판 미만은 판당 값이 높아도 후보가 아니다 · 같으면 판당 킬 → 판당 딜 → 판 수 많은 쪽 · 아무도 4판이 안 되면 그 말을 쓴다", () => {
+  const base = playersOf();
+  // 3판에 15킬(판당 11.67)은 후보에서 빠지고 4판짜리가 1위
+  const few = [pl("Zed", "다팀", 15, 2000, 3, 3), pl("Ann", "나팀", 12, 1600, 4, 4), pl("Bob", "가팀", 10, 1000, 4, 4)];
+  const d1 = P.posterData({ ...base, byKills: byKillsOf(few) });
+  assert.deepEqual([d1.mvp.ign, d1.mvp.perGame, d1.mvp.games], ["Ann", 7, 4]);                       // (12 + 16) / 4 = 7
+  assert.deepEqual(d1.top.map((x) => x.ign), ["Zed", "Ann", "Bob"]);                                 // 킬 순위에는 그대로 나온다
+  // 판당 점수가 같으면(7.00) 판당 킬이 많은 쪽 → 그것도 같으면 판당 딜 → 그것도 같으면 판 수가 많은 쪽
+  const tie1 = [pl("Kil", "가팀", 20, 800, 4, 4), pl("Dmg", "나팀", 16, 1200, 4, 4)];                // 둘 다 (k + d/100)/4 = 7
+  assert.equal(P.posterData({ ...base, byKills: byKillsOf(tie1) }).mvp.ign, "Kil");
+  const tie2 = [pl("Six", "가팀", 18, 2400, 6, 6), pl("Four", "나팀", 12, 1600, 4, 4)];              // 판당 3킬 · 400딜 같음 → 6판
+  assert.equal(P.posterData({ ...base, byKills: byKillsOf(tie2) }).mvp.ign, "Six");
+  // 뛴 사람은 있는데 다 3판 이하 — MVP 칸에 「4판 이상 뛴 사람이 없어요」
+  const d3 = P.posterData({ ...base, byKills: byKillsOf([pl("Zed", "다팀", 15, 2000, 3, 3)]) });
+  assert.deepEqual([d3.mvp, d3.mvpFew], [null, true]);
+  assert.match(P.posterSvg(d3), /4판 이상 뛴 사람이 없어요/);
+  // 그림에는 판당 점수 · 판당 킬 · 판당 딜 · 합계 · 후보 기준이 같이 들어간다
+  const svg = P.posterSvg(P.posterData(base));
+  for (const re of [/>8\.85<tspan[^>]*> 점</, /판당 킬 3\.5 · 판당 딜 535/, /킬 21  딜 3,208  6판/, /판당 킬 \+ 판당 딜 100당 1점/, /4판 이상 뛴 사람만 후보예요/]) assert.match(svg, re);
+  assert.doesNotMatch(svg, /킬 \+ 딜 100당 1점으로 셌어요/);
 });
 
 test("포스터 SVG: 음수 총점은 − 와 빨강 · 시작 보너스 부호 · 글자 이스케이프 · 긴 이름은 「…」 · 가격 · 상금 글자 없음", () => {
