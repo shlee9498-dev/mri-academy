@@ -158,24 +158,27 @@ test("CSV: 수식으로 읽힐 값은 따옴표로 막는다", () => {
   assert.match(csv, /1,대기,'=cmd,"a,b",카카오,신한,"=""0012345678""",라마/);
 });
 
-// ── 선수 소개 4칸(계약 §1.15) ──
-const intro = (over = {}) => ({ position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "", ...over });
+// ── 선수 소개 4칸(계약 §1.15 · 10/7 정정: 주무기 없음 · 성향 · 포부) ──
+const intro = (over = {}) => ({ position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: "", ...over });
 
-test("소개 검사: 포지션은 넷 중 하나 · 주무기 · 한마디 필수 30자 · 카드 이름 선택 12자 · 넘치면 자르지 않고 거절 · 공백 · 제어 문자 정리", () => {
-  assert.deepEqual(T.normIntro(intro()).value, { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "" });
+test("소개 검사: 포지션 넷 · 성향 셋 중 하나 · 포부 필수 30자 · 카드 이름 선택 12자 · 넘치면 자르지 않고 거절 · 공백 · 제어 문자 정리 · 주무기는 받지 않는다", () => {
+  assert.deepEqual(T.normIntro(intro()).value, { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: "" });
   for (const p of a.POSITIONS) assert.equal(T.normIntro(intro({ position: p })).error, undefined, p);
+  for (const st of a.STYLES) assert.equal(T.normIntro(intro({ style: st })).error, undefined, st);
+  assert.deepEqual(a.STYLES, ["공격적", "밸런스", "안정적"]);
   assert.equal(T.normIntro(intro({ position: "탱커" })).error, "no_position");
   assert.equal(T.normIntro(intro({ position: "" })).error, "no_position");
-  assert.equal(T.normIntro(intro({ weapons: "  " })).error, "no_weapons");
-  assert.equal(T.normIntro(intro({ message: "\n\t" })).error, "no_message");
-  assert.equal(T.normIntro(intro({ weapons: "가".repeat(30) })).error, undefined);
-  assert.equal(T.normIntro(intro({ weapons: "가".repeat(31) })).error, "long_weapons");
-  assert.equal(T.normIntro(intro({ message: "a".repeat(31) })).error, "long_message");
+  assert.equal(T.normIntro(intro({ style: "수비적" })).error, "no_style");
+  assert.equal(T.normIntro(intro({ style: undefined })).error, "no_style");
+  assert.equal(T.normIntro(intro({ ambition: "\n\t" })).error, "no_ambition");
+  assert.equal(T.normIntro(intro({ ambition: "가".repeat(30) })).error, undefined);
+  assert.equal(T.normIntro(intro({ ambition: "가".repeat(31) })).error, "long_ambition");
   assert.equal(T.normIntro(intro({ cardName: "가".repeat(12) })).error, undefined);
   assert.equal(T.normIntro(intro({ cardName: "가".repeat(13) })).error, "long_card_name");
-  assert.equal(T.normIntro(intro({ message: "🎯".repeat(30) })).error, undefined);             // 글자 단위(이모지 하나 = 한 글자)
-  assert.deepEqual(T.normIntro(intro({ weapons: "  베릴\n+​  미니 ", message: "a\u0007b", cardName: " 짱 ‮" })).value,
-    { position: "돌격", weapons: "베릴 + 미니", message: "a b", cardName: "짱" });
+  assert.equal(T.normIntro(intro({ ambition: "🎯".repeat(30) })).error, undefined);           // 글자 단위(이모지 하나 = 한 글자)
+  assert.deepEqual(T.normIntro(intro({ ambition: "  오늘\n킬​  1등 ", cardName: " 짱 ‮" })).value,
+    { position: "돌격", style: "공격적", ambition: "오늘 킬 1등", cardName: "짱" });
+  assert.deepEqual(Object.keys(T.normIntro({ ...intro(), weapons: "베릴 + 미니", message: "옛 칸" }).value), ["position", "style", "ambition", "cardName"]);
   assert.equal(T.normIntro(null).error, "no_position");
   assert.equal(T.normIntro(["돌격"]).error, "no_position");
 });
@@ -184,16 +187,16 @@ test("새 신청 + 소개 4칸 → 진행자 조회에 그대로 · 공개 응�
   const { api, mem, call } = setup();
   const r = await call(api.apply, { body: { ...body(), intro: intro({ cardName: "짱돌" }) } });
   assert.equal(r.code, 200);
-  assert.deepEqual([r.body.done, r.body.intro], [true, { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "짱돌" }]);
+  assert.deepEqual([r.body.done, r.body.intro], [true, { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: "짱돌" }]);
   assert.deepEqual(mem.writes, ["pay", "intro", "apply"]);                               // 계좌 · 소개를 명단보다 먼저
   assert.deepEqual(Object.keys(mem.intro), ["id1"]);
-  assert.deepEqual(mem.intro.id1, { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "짱돌", at: mem.apply.list[0].at, saves: 1 });
+  assert.deepEqual(mem.intro.id1, { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: "짱돌", at: mem.apply.list[0].at, saves: 1 });
   const adm = (await call(api.list, { headers: { "x-admin-key": "k" } })).body;
-  assert.deepEqual(adm.list[0].intro, { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "짱돌", cardShown: "짱돌", at: mem.intro.id1.at, saves: 1 });
+  assert.deepEqual(adm.list[0].intro, { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: "짱돌", cardShown: "짱돌", at: mem.intro.id1.at, saves: 1 });
   assert.deepEqual([adm.introDone, adm.introMissing], [1, []]);
   const pub = (await call(api.list, {})).body;
-  assert.deepEqual(pub.list[0].intro, { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "짱돌" });
-  assert.deepEqual(pub.positions, ["오더", "돌격", "저격", "서포트"]);
+  assert.deepEqual(pub.list[0].intro, { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: "짱돌" });
+  assert.deepEqual([pub.positions, pub.styles], [["오더", "돌격", "저격", "서포트"], ["공격적", "밸런스", "안정적"]]);
   const text = JSON.stringify({ ...pub, banks: undefined });                             // banks = 고르기 칸 은행 이름 목록(계좌 아님)
   for (const s of ["tester_one", "id1", ...SECRET]) assert.ok(!text.includes(s), s);
   assert.ok(!("introMissing" in pub) && !("introDone" in pub));
@@ -201,15 +204,17 @@ test("새 신청 + 소개 4칸 → 진행자 조회에 그대로 · 공개 응�
 
 test("소개가 틀리면 신청도 저장하지 않는다 · intro 키가 아예 없는 옛 화면 요청은 받고 「안 채운 사람」에 남는다", async () => {
   const { api, mem, call } = setup();
-  const bad = await call(api.apply, { body: { ...body(), intro: intro({ position: "탱커" }) } });
-  assert.deepEqual([bad.code, bad.body.error], [400, "no_position"]);
+  for (const [bad, code] of [[intro({ position: "탱커" }), "no_position"], [intro({ style: "" }), "no_style"], [intro({ ambition: "" }), "no_ambition"]]) {
+    const r = await call(api.apply, { body: { ...body(), intro: bad } });
+    assert.deepEqual([r.code, r.body.error], [400, code]);
+  }
   assert.deepEqual([mem.apply, mem.pay, mem.intro], [null, null, null]);
   const old = await call(api.apply, { body: body() });
   assert.deepEqual([old.code, old.body.done, old.body.intro], [200, false, null]);
   assert.equal(mem.intro, null);
   const adm = (await call(api.list, { headers: { "x-admin-key": "k" } })).body;
   assert.equal(adm.list[0].intro, null);
-  assert.deepEqual([adm.introDone, adm.introMissing], [0, [{ order: 1, ign: "Fake_Nick1", discord: "tester_one", waiting: false, missing: ["position", "weapons", "message"] }]]);
+  assert.deepEqual([adm.introDone, adm.introMissing], [0, [{ order: 1, ign: "Fake_Nick1", discord: "tester_one", waiting: false, missing: ["position", "style", "ambition"] }]]);
 });
 
 test("기존 신청자 「내 신청」: 디스코드 닉 + 스팀 닉 둘 다 맞아야 열린다 · 소개 줄만 쓰고 명단 · 계좌 줄은 글자 하나 안 바뀐다 · 응답에 계좌 없음", async () => {
@@ -229,13 +234,13 @@ test("기존 신청자 「내 신청」: 디스코드 닉 + 스팀 닉 둘 다 �
     assert.deepEqual([s.code, s.body.error], [404, "not_found"]);
   }
   assert.deepEqual((await call(api.mine, { body: { discord: "", ign: "Fake_Nick1" } })).body.error, "no_discord");
-  assert.deepEqual((await call(api.saveIntro, { body: { ...who, intro: intro({ message: "" }) } })).body.error, "no_message");
+  assert.deepEqual((await call(api.saveIntro, { body: { ...who, intro: intro({ ambition: "" }) } })).body.error, "no_ambition");
   const s1 = await call(api.saveIntro, { body: { ...who, intro: intro() } });
   assert.equal(s1.code, 200);
   assert.deepEqual(s1.body, { ok: true, ign: "Fake_Nick1", tier: "Gold 3", order: 1, waiting: false, cap: 20,
-    intro: { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: null }, done: true });
-  const s2 = await call(api.saveIntro, { body: { ...who, intro: intro({ position: "오더", cardName: "카드닉" }) } });
-  assert.equal(s2.body.intro.position, "오더");
+    intro: { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: null }, done: true });
+  const s2 = await call(api.saveIntro, { body: { ...who, intro: intro({ position: "오더", style: "안정적", cardName: "카드닉" }) } });
+  assert.deepEqual([s2.body.intro.position, s2.body.intro.style], ["오더", "안정적"]);
   assert.deepEqual(mem.writes, ["intro", "intro"]);                                        // 소개 줄만 썼다
   assert.equal(JSON.stringify(mem.apply), applyBefore);
   assert.equal(JSON.stringify(mem.pay), payBefore);
@@ -259,7 +264,7 @@ test("카드 이름이 비면 진행자 조회는 디스코드 닉 · 공개 응
   const adm1 = (await call(api.list, { headers: { "x-admin-key": "k" } })).body;
   assert.deepEqual([adm1.introDone, adm1.introMissing], [1, []]);
   for (let i = 3; i <= 22; i++) await call(api.apply, { body: { ...body({ discord: `d${i}`, ign: `Nick${i}` }), intro: intro() } });
-  const w = await call(api.saveIntro, { body: { discord: "d22", ign: "Nick22", intro: intro({ message: "대기여도 써 둬요" }) } });
+  const w = await call(api.saveIntro, { body: { discord: "d22", ign: "Nick22", intro: intro({ ambition: "대기여도 써 둬요" }) } });
   assert.deepEqual([w.code, w.body.waiting, w.body.done], [200, true, true]);
 });
 
@@ -279,13 +284,13 @@ test("소개 저장도 마감 뒤에는 막힌다 · 「내 신청」 보기는 
   }
 });
 
-test("동시에 소개 두 번 저장 → 둘 다 들어가고 마지막 것이 남는다(한 줄로 세운다)", async () => {
+test("동시에 소개 두 번 저장 → 둘 다 들어가고 서로 덮어쓰지 않는다(한 줄로 세운다)", async () => {
   const { api, mem, call } = setup();
   await call(api.apply, { body: body() });
   await call(api.apply, { body: body({ discord: "second_one", ign: "Fake_Nick2" }) });
   await Promise.all([
-    call(api.saveIntro, { body: { discord: "tester_one", ign: "Fake_Nick1", intro: intro({ message: "첫째" }) } }),
-    call(api.saveIntro, { body: { discord: "second_one", ign: "Fake_Nick2", intro: intro({ message: "둘째" }) } }),
+    call(api.saveIntro, { body: { discord: "tester_one", ign: "Fake_Nick1", intro: intro({ ambition: "첫째" }) } }),
+    call(api.saveIntro, { body: { discord: "second_one", ign: "Fake_Nick2", intro: intro({ ambition: "둘째" }) } }),
   ]);
-  assert.deepEqual([mem.intro.id1.message, mem.intro.id2.message], ["첫째", "둘째"]);   // 서로 덮어쓰지 않는다
+  assert.deepEqual([mem.intro.id1.ambition, mem.intro.id2.ambition], ["첫째", "둘째"]);
 });

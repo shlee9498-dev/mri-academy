@@ -320,23 +320,25 @@
 
 오너 원문(10/7): 「신청링크를 좀 개선해서 받으면 안돼? 디엠넣는 거 말고」 · 「각 선수들을 소개해야하는데 … 신청서에 작성하도록 바꿔보든지」.
 경매(10/8 20:30) 선수 소개 카드 재료를 오너가 DM 으로 하나씩 받지 않게 신청서가 받아 온다. 대상 = 지금 신청서(`killrace-apply.cjs` · 화면 gmi-clancup `killnaegi.html` · 저장 줄 `r2`).
+**칸 정정(지휘 10/7 · 오너 「주무기는 빼고 주 포지션, 성향, 포부 뭐 이정도가 나을듯」)** — 주무기 칸은 두지 않고 성향 칸을 넣는다. 「팀장에게 한마디」는 「포부」로 이름만 바뀐다.
+배포 전에 바뀌어서 지울 칸 · 저장 값은 없다(표 칸이 아니라 JSON 줄이고 DDL 도 없다).
 
 - **칸**(더하기만 — 기존 칸 · 기존 신청 기록은 그대로)
 
   | 칸 | 키 | 규칙 |
   |---|---|---|
   | 주 포지션 | `position` | `오더` · `돌격` · `저격` · `서포트` 중 하나 · 필수 |
-  | 주무기 조합 | `weapons` | 1~30자 · 필수 · 예 「베릴 + 미니」 |
-  | 팀장에게 한마디 | `message` | 1~30자 · 필수 |
+  | 성향 | `style` | `공격적` · `밸런스` · `안정적` 중 하나 · 필수 |
+  | 포부 | `ambition` | 1~30자 · 필수 |
   | 소개 카드 이름 | `cardName` | 0~12자 · 선택 · 비우면 카드에 디스코드 닉 |
 
   - 스팀 닉은 지금 받는 인게임 닉 칸 그대로다. 티어 · 평딜 · K/D 는 묻지 않는다(신청 때 전적 조회 값 · `ranked` · `avgDamage` · `kda`).
   - 글자 수는 공백을 하나로 줄이고 앞뒤를 자른 뒤 글자 단위로 센다(줄바꿈 · 제어 문자는 공백). 넘치면 자르지 않고 거절한다.
-- **저장** — `ops_state` 새 줄 `killrace:applyintro:r2` = `{ [신청 id]: { position, weapons, message, cardName, at, saves } }`.
+- **저장** — `ops_state` 새 줄 `killrace:applyintro:r2` = `{ [신청 id]: { position, style, ambition, cardName, at, saves } }`.
   소개를 저장할 때 명단 줄(`killrace:apply:r2`)은 읽기만 하고 계좌 줄(`killrace:applypay:r2`)은 열지도 않는다 →
   **기존 신청자가 소개를 채워도 명단 · 계좌 값은 그대로다.** 표 · 칸을 새로 만들지 않아서 **DDL 이 없다**(SQL §69 불필요 · env 없음).
-- **새 신청** — `POST /api/killrace/apply` 에 `intro: { position, weapons, message, cardName }` 를 같이 보낸다. 4칸을 검사하고(틀리면 400 ·
-  `no_position` · `no_weapons` · `long_weapons` · `no_message` · `long_message` · `long_card_name` · 저장 안 함) 신청과 함께 저장한다.
+- **새 신청** — `POST /api/killrace/apply` 에 `intro: { position, style, ambition, cardName }` 를 같이 보낸다. 4칸을 검사하고(틀리면 400 ·
+  `no_position` · `no_style` · `no_ambition` · `long_ambition` · `long_card_name` · 저장 안 함) 신청과 함께 저장한다. 다른 키(옛 `weapons` 등)는 버린다.
   `intro` 키가 아예 없는 요청(배포 사이 몇 분 동안의 옛 화면)은 지금처럼 받고 「안 채운 사람」에 남는다 — 같은 링크의 「내 신청」에서 채우면 된다.
 - **이미 한 신청 — 같은 링크의 「내 신청」**
   - `POST /api/killrace/apply/mine` `{ discord, ign }` → `{ ok, ign, tier, order, waiting, cap, intro, done }`.
@@ -347,12 +349,12 @@
   - 소개는 마감(신청 마감과 같은 10/8 20:00 KST)까지 몇 번이고 고칠 수 있다. 마감 뒤 403 `closed`. 요청 한도는 신청과 같은 IP 한도.
   - ⚠️ 한계 — 본인 확인이 닉 두 개라서, 남의 디스코드 닉과 스팀 닉을 아는 사람은 그 사람 소개를 고칠 수 있다(지금 신청서와 같은 수준).
     그래서 진행자 조회에 마지막 저장 시각(`at`)과 저장 횟수(`saves`)를 보인다. 더 막으려면 「계좌번호 뒤 4자리」를 한 칸 더 묻는 방법이 있다(지휘 판단).
-- **진행자 조회** — `GET /api/killrace/apply` + 운영 키(`x-admin-key`). 줄마다 `intro: { position, weapons, message, cardName, cardShown, at, saves }`
+- **진행자 조회** — `GET /api/killrace/apply` + 운영 키(`x-admin-key`). 줄마다 `intro: { position, style, ambition, cardName, cardShown, at, saves }`
   (`cardShown` = 카드에 나갈 이름 · 카드 이름이 비었으면 디스코드 닉 · 소개가 없으면 `intro: null`) + 맨 위
   `introDone`(취소 안 된 신청 중 필수 3칸을 다 채운 사람 수) · `introMissing: [{ order, ign, discord, waiting, missing: ["position", …] }]`(안 채운 사람 · 취소한 건 빼고 · 대기 포함).
   화면 = gmi-clancup `killnaegi.html?host=1` 아래 「선수 소개 모아 보기」(운영 키 · 다른 킬내기 화면과 같은 `kn_host` 자리).
-- **공개 응답** — `GET /api/killrace/apply`(키 없음) 줄에 `intro: { position, weapons, message, cardName }` **네 칸만** 더한다
-  (카드 이름이 비었으면 `null` — 공개 응답에서는 디스코드 닉으로 채우지 않는다 · 소개가 없으면 `intro: null`). 맨 위에 `positions`(고를 수 있는 포지션 넷)도 더한다.
+- **공개 응답** — `GET /api/killrace/apply`(키 없음) 줄에 `intro: { position, style, ambition, cardName }` **네 칸만** 더한다
+  (카드 이름이 비었으면 `null` — 공개 응답에서는 디스코드 닉으로 채우지 않는다 · 소개가 없으면 `intro: null`). 맨 위에 `positions`(포지션 넷) · `styles`(성향 셋)도 더한다.
   디스코드 닉 · 계좌 · 신청 id 는 공개 응답 어디에도 없다(시험이 응답 글자 전체에서 찾는다).
   점수판(`/api/killrace/board`) · 개인 기록(`/players`)은 신청 줄을 읽지 않아서 이번에 바뀌지 않는다.
 - **디스코드 신청 카드 · 로그** — 카드는 그대로(디스코드 닉 · 인게임 닉 · 티어). 로그는 `[killrace-apply] intro_saved order=<n> saves=<n>` 한 줄(닉 · 글은 안 남긴다).

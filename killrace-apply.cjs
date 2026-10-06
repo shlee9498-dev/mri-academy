@@ -5,7 +5,7 @@
 // 저장: ops_state 두 줄(DDL 없음) — G드컵 표(gdcup_*)와 1회 기록(season 9)은 읽지도 쓰지도 않는다.
 //   'killrace:apply:r2'    = { list: [{ id, discord, ign, platform, ranked, grade, avgDamage, kda, verified, at, status }] }
 //   'killrace:applypay:r2' = { [id]: { bank, accountNo, holder } }      ← 계좌는 이 줄에만 있다
-//   'killrace:applyintro:r2' = { [id]: { position, weapons, message, cardName, at, saves } }   ← 선수 소개 4칸(계약 §1.15 · 10/7)
+//   'killrace:applyintro:r2' = { [id]: { position, style, ambition, cardName, at, saves } }   ← 선수 소개 4칸(계약 §1.15 · 10/7)
 // 선수 소개: 새 신청은 신청과 같이, 이미 한 신청은 같은 링크의 「내 신청」(디스코드 닉 + 스팀 닉이 둘 다 맞아야 함)으로 채운다.
 //   소개를 저장할 때 명단 줄은 읽기만 하고 계좌 줄은 열지 않는다 — 기존 신청 값은 그대로 남는다.
 // 계좌 경계: 계좌는 오너 로그인(JWT owner · gdcupIsOwner)으로만 내려간다. 공개 응답 · 진행자 키(x-admin-key) 응답 ·
@@ -27,27 +27,29 @@ const normState = (v) => (v && Array.isArray(v.list) ? { list: v.list } : emptyS
 const normPay = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 const normIntros = normPay;                                  // 소개 줄도 { [id]: … } 모양
 
-// ── 선수 소개 4칸(계약 §1.15) — 글자 수는 공백을 하나로 줄이고 앞뒤를 자른 뒤 글자 단위. 넘치면 자르지 않고 거절한다 ──
+// ── 선수 소개 4칸(계약 §1.15) — 주 포지션 · 성향(고르기) · 포부(30자) 필수 · 소개 카드 이름(12자) 선택.
+//    주무기 칸은 두지 않는다(지휘 10/7 정정 · 오너 「주무기는 빼고 주 포지션, 성향, 포부」).
+//    글자 수는 공백을 하나로 줄이고 앞뒤를 자른 뒤 글자 단위. 넘치면 자르지 않고 거절한다 ──
 const POSITIONS = ["오더", "돌격", "저격", "서포트"];
-const INTRO_MAX = { weapons: 30, message: 30, cardName: 12 };
-const INTRO_REQUIRED = ["position", "weapons", "message"];
+const STYLES = ["공격적", "밸런스", "안정적"];
+const INTRO_MAX = { ambition: 30, cardName: 12 };
+const INTRO_REQUIRED = ["position", "style", "ambition"];
 const tidy = (s) => String(s == null ? "" : s).replace(/\p{Cf}/gu, "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
 const charCount = (s) => [...s].length;
 function normIntro(raw) {
   const r = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-  const position = tidy(r.position), weapons = tidy(r.weapons), message = tidy(r.message), cardName = tidy(r.cardName);
+  const position = tidy(r.position), style = tidy(r.style), ambition = tidy(r.ambition), cardName = tidy(r.cardName);
   if (!POSITIONS.includes(position)) return { error: "no_position" };
-  if (!weapons) return { error: "no_weapons" };
-  if (charCount(weapons) > INTRO_MAX.weapons) return { error: "long_weapons" };
-  if (!message) return { error: "no_message" };
-  if (charCount(message) > INTRO_MAX.message) return { error: "long_message" };
+  if (!STYLES.includes(style)) return { error: "no_style" };
+  if (!ambition) return { error: "no_ambition" };
+  if (charCount(ambition) > INTRO_MAX.ambition) return { error: "long_ambition" };
   if (charCount(cardName) > INTRO_MAX.cardName) return { error: "long_card_name" };
-  return { value: { position, weapons, message, cardName } };
+  return { value: { position, style, ambition, cardName } };
 }
 const introMissing = (rec) => INTRO_REQUIRED.filter((k) => !(rec && typeof rec[k] === "string" && rec[k]));
 const introDone = (rec) => introMissing(rec).length === 0;
 // 공개 — 네 칸만(카드 이름이 비었으면 null · 디스코드 닉으로 채우지 않는다)
-const introPublic = (rec) => (rec ? { position: rec.position || null, weapons: rec.weapons || null, message: rec.message || null, cardName: rec.cardName || null } : null);
+const introPublic = (rec) => (rec ? { position: rec.position || null, style: rec.style || null, ambition: rec.ambition || null, cardName: rec.cardName || null } : null);
 // 진행자 — 카드에 나갈 이름(비었으면 디스코드 닉) · 마지막 저장 시각 · 저장 횟수까지
 const introAdmin = (rec, discord) => (rec ? { ...introPublic(rec), cardShown: rec.cardName || discord || null, at: rec.at || null, saves: Number(rec.saves) || 0 } : null);
 
@@ -130,7 +132,7 @@ function publicView(state, at, intros = {}) {
   const rows = seats(state);
   return {
     cap: CAP, count: Math.min(rows.length, CAP), waiting: Math.max(0, rows.length - CAP),
-    closed: at >= CLOSE_AT, closeAt: CLOSE_AT, banks: BANKS, positions: POSITIONS,
+    closed: at >= CLOSE_AT, closeAt: CLOSE_AT, banks: BANKS, positions: POSITIONS, styles: STYLES,
     list: rows.map((x) => ({ ign: x.ign, platform: x.platform, tier: tierText(x), waiting: x.waiting, intro: introPublic(intros[x.id]) })),
   };
 }
@@ -340,7 +342,7 @@ function createApplyApi(deps) {
 }
 
 module.exports = {
-  createApplyApi, ROUND, CAP, CLOSE_AT, BANKS, POSITIONS, INTRO_MAX,
+  createApplyApi, ROUND, CAP, CLOSE_AT, BANKS, POSITIONS, STYLES, INTRO_MAX,
   _test: { normApply, addEntry, setStatus, seats, findDup, findMine, publicView, adminView, mineView, payoutRows, payoutCsv, cardEmbed, normState, emptyState,
     normIntro, normWho, introDone, introMissing, introPublic, introAdmin },
 };
