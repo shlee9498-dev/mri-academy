@@ -804,3 +804,40 @@ test("교체 명령: 슬롯에 교체 선수 더하기 · 다른 팀 선수 거�
   assert.deepEqual(lineup([A[0], A[1], A[2], "account.z1"]), [A[0], A[1], A[2], "account.z1"]);
   assert.deepEqual(lineup(A), A);
 });
+
+// ── 여러 대회 동시 집계(docs/killrace-api.md §1.6) — 열린 대회 조회 · 고른 회차 집계 ──
+test("열린 대회: [시작, 끝 + 여유] 안인 대회 · 번호 큰 순 · 상한 5개(넘치면 로그) · 집계는 고른 회차를 센다(지금 대회와 별개)", async () => {
+  const queries = []; const warns = [];
+  const evRow = (id) => ({ id, name: `${id}회`, window_start: "2026-10-06T13:20:00Z", window_end: "2026-10-06T15:20:00Z" });
+  let open = [evRow(4), evRow(3)];
+  const bot = k.createKillrace({
+    sbSelect: async (table, q) => {
+      queries.push([table, q]);
+      if (table === "event_defs") return q.includes("window_start=lte.") ? open : q.includes("id=eq.") ? [evRow(Number(q.match(/id=eq\.(\d+)/)[1]))] : [evRow(9)];
+      return [];
+    },
+    sbUpsert: async () => {}, sbPatch: async () => {}, pubgGet: async () => ({ data: [] }), pubgMatch: async () => ({}),
+    env: {}, now: () => Date.parse("2026-10-06T13:25:00Z"), sleep: async () => {}, playersGapMs: 0, log: { log() {}, warn: (m) => warns.push(m), error() {} },
+  });
+  const at = Date.parse("2026-10-06T13:25:00Z");
+  assert.deepEqual((await bot.openEvents({ at, graceMs: 45 * 60000 })).map((e) => e.id), [4, 3]);
+  const q = queries.at(-1)[1];
+  assert.ok(q.includes(`window_start=lte.${encodeURIComponent("2026-10-06T13:25:00.000Z")}`));       // 시작 ≤ 지금
+  assert.ok(q.includes(`window_end=gte.${encodeURIComponent("2026-10-06T12:40:00.000Z")}`));          // 끝 ≥ 지금 − 45분 = 끝 + 45분 ≥ 지금
+  assert.ok(q.includes("order=id.desc") && q.includes(`limit=${T.OPEN_EVENTS_MAX + 1}`));
+  assert.equal(warns.length, 0);
+  open = [9, 8, 7, 6, 5, 4].map(evRow);
+  assert.deepEqual((await bot.openEvents({ at, graceMs: 0 })).map((e) => e.id), [9, 8, 7, 6, 5]);
+  assert.match(warns.join(" "), /open_events_capped shown=5/);
+  // 집계에 회차를 주면 그 번호로 읽는다(가장 큰 번호를 다시 고르지 않는다) — 팀이 없어서 거절되기 전까지의 조회로 확인
+  queries.length = 0;
+  await assert.rejects(bot.aggregate({ eventId: 3 }), /등록된 팀이 없어요/);
+  assert.ok(queries.some(([t, qq]) => t === "event_defs" && qq.includes("id=eq.3")));
+  assert.ok(!queries.some(([t, qq]) => t === "event_defs" && qq.includes("order=id.desc&limit=1")));
+  assert.ok(queries.some(([t, qq]) => t === "event_teams" && qq.includes("event_id=eq.3")));
+  // 회차를 안 주면 종전 그대로 지금 대회(가장 큰 번호)
+  queries.length = 0;
+  await assert.rejects(bot.aggregate(), /등록된 팀이 없어요/);
+  assert.ok(queries.some(([t, qq]) => t === "event_defs" && qq.includes("order=id.desc&limit=1")));
+  assert.ok(queries.some(([t, qq]) => t === "event_teams" && qq.includes("event_id=eq.9")));
+});

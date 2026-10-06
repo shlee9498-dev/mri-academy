@@ -4,6 +4,8 @@
 // 목표: 진행자가 숫자를 하나도 세지 않는다. 1회는 /킬내기집계 를 손으로 쳐야 점수가 나왔고 그 사이를 손으로 메웠다.
 //
 // 자동 집계: 서버가 1분마다 tick() → 대회 시간(시작 ~ 끝 + 45분) 안이고 팀이 등록돼 있으면 집계 한 번.
+//   · 열린 대회가 여럿이면 전부 돈다(docs/killrace-api.md §1.6 · 2026-10-06 3회 막판 집계와 4회 줄이 겹친 일) — 번호 큰 것부터 하나씩 차례로.
+//     자동 꺼짐 · 멈춤 · 실패 횟수 · 잠정 상태는 대회마다 따로다. 「지금 대회」(가장 큰 번호)는 점수판 기본 화면 · 팀 주소 · 진행자 동작에만 쓴다.
 //   · 실패하면 그 자리에서 다시 시도하지 않는다. 다음 1분 차례에 평소대로 한 번 돈다.
 //   · 연속 3번 실패하면 자동 집계를 멈추고 진행자 화면에 이유를 띄운다. 「지금 집계」 가 성공하면 다시 돈다.
 //   · 「지금 집계」(진행자) 는 언제든 한 번 돌린다. 도는 중이면 겹쳐 돌리지 않는다.
@@ -114,8 +116,10 @@ function createLive(deps) {
   const now = deps.now || (() => Date.now());
   const log = deps.log || console;
   const makeToken = deps.makeToken || (() => require("crypto").randomBytes(9).toString("hex"));
-  let cache = null;                    // { evId, state }
+  const states = new Map();            // event id → 잠정 상태 — 대회마다 한 벌(열린 대회 여럿 · §1.6)
+  const STATES_MAX = 8;
   let running = false;
+  let ticking = false;                 // 1분 차례가 1분을 넘겨도 겹쳐 돌지 않게
   let chain = Promise.resolve();       // 상태 쓰기는 한 줄로
   const serial = (fn) => { const run = chain.then(fn, fn); chain = run.catch(() => {}); return run; };
   let boardCache = null;               // { at, body } — 공개 점수판만
@@ -125,36 +129,43 @@ function createLive(deps) {
   let eventsCache = null;              // { at, body }
 
   async function stateFor(evId) {
-    if (!cache || cache.evId !== evId) cache = { evId, state: normLive(await store.load(evId)) };
-    return cache.state;
+    if (!states.has(evId)) {
+      const st = normLive(await store.load(evId));
+      if (!states.has(evId)) {                 // 읽는 사이에 다른 호출이 먼저 채웠으면 그것을 쓴다(잠정 킬이 사라지지 않게)
+        if (states.size >= STATES_MAX) states.delete(states.keys().next().value);
+        states.set(evId, st);
+      }
+    }
+    return states.get(evId);
   }
-  const persist = (evId) => store.save(evId, cache.state);
+  const persist = (evId, state) => store.save(evId, state);
 
-  async function run(source) {
+  // ev 를 주면 그 회차(열린 대회 · 진행자가 고른 회차), 없으면 지금 대회. 집계 · 점수판 · 저장이 모두 같은 회차를 본다
+  async function run(source, { ev: given = null } = {}) {
     if (running) return { ok: false, code: "busy" };
     running = true;
     const t0 = now();
-    let ev = null;
+    let ev = given;
     try {
-      ev = await killrace.currentEvent();
-      const res = await killrace.aggregate({ deathMode: "deathType" });
+      if (!ev) ev = await killrace.currentEvent();
+      const res = await killrace.aggregate({ deathMode: "deathType", eventId: ev.id });
       const state = await stateFor(ev.id);
-      const b = await killrace.board({ live: state });
+      const b = await killrace.board({ live: state, eventId: ev.id });
       await serial(async () => {
         afterRun(state, b.teams, now());
         noteSuccess(state, { at: now(), source, ms: now() - t0, games: b.teams.reduce((n, t) => n + t.games, 0), warn: res.warn.length });
-        await persist(ev.id);
+        await persist(ev.id, state);
       });
       boardCache = null; playersCache = null;
-      log.log(`[killrace-live] run_ok source=${source} ms=${now() - t0}`);
+      log.log(`[killrace-live] run_ok source=${source} event=${ev.id} ms=${now() - t0}`);
       return { ok: true, ms: now() - t0 };
     } catch (e) {
       const error = shortErr(e);
-      log.warn(`[killrace-live] run_failed source=${source} ${e && e.userMsg ? "user" : error}`);
+      log.warn(`[killrace-live] run_failed source=${source}${ev ? ` event=${ev.id}` : ""} ${e && e.userMsg ? "user" : error}`);
       if (ev) {
         try {
           const state = await stateFor(ev.id);
-          await serial(async () => { noteFailure(state, { at: now(), source, error, counted: !(e && e.userMsg) }); await persist(ev.id); });
+          await serial(async () => { noteFailure(state, { at: now(), source, error, counted: !(e && e.userMsg) }); await persist(ev.id, state); });
         } catch (_) { /* 상태 저장까지 실패하면 로그만 */ }
       }
       boardCache = null;
@@ -162,20 +173,33 @@ function createLive(deps) {
     } finally { running = false; }
   }
 
-  // 1분마다 서버가 부른다 — 조건이 안 맞으면 조용히 넘어간다. 실패해도 여기서 다시 부르지 않는다
+  // 1분마다 서버가 부른다 — 열린 대회를 번호 큰 것부터 하나씩. 조건이 안 맞는 대회는 조용히 넘어간다. 실패해도 여기서 다시 부르지 않는다.
+  // 반환: 열린 대회가 하나면 종전 값 그대로(ran · auto_off · paused · no_teams · failed · busy), 둘 이상이면 「4:ran 3:ran」.
+  // 열린 대회가 없으면 지금 대회 기준 before_start · after_end(종전 그대로)
   async function tick() {
+    if (ticking) return "skip";
+    ticking = true;
     try {
       if (!ready() || running) return "skip";
-      let ev;
-      try { ev = await killrace.currentEvent(); } catch (_) { return "no_event"; }
       const at = now();
-      if (at < ev.start || at > ev.end + GRACE_MS) return at < ev.start ? "before_start" : "after_end";
-      const [cfg, state, teams] = await Promise.all([killrace.loadConfig(ev.id), stateFor(ev.id), killrace.loadTeams(ev.id)]);
-      const why = skipReason({ ev, cfg, run: state.run, teamCount: teams.length, at });
-      if (why) return why;
-      const r = await run("auto");
-      return r.ok ? "ran" : r.code;
+      let open;
+      try { open = await killrace.openEvents({ at, graceMs: GRACE_MS }); } catch (_) { return "no_event"; }
+      if (!open.length) {
+        let ev;
+        try { ev = await killrace.currentEvent(); } catch (_) { return "no_event"; }
+        return at < ev.start ? "before_start" : "after_end";
+      }
+      const out = [];
+      for (const ev of open) {
+        const [cfg, state, teams] = await Promise.all([killrace.loadConfig(ev.id), stateFor(ev.id), killrace.loadTeams(ev.id)]);
+        const why = skipReason({ ev, cfg, run: state.run, teamCount: teams.length, at });
+        if (why) { out.push([ev.id, why]); continue; }
+        const r = await run("auto", { ev });
+        out.push([ev.id, r.ok ? "ran" : r.code]);
+      }
+      return out.length === 1 ? out[0][1] : out.map(([id, s]) => `${id}:${s}`).join(" ");
     } catch (e) { log.warn("[killrace-live] tick_failed", shortErr(e)); return "error"; }
+    finally { ticking = false; }
   }
 
   async function tokenMap() {
@@ -196,8 +220,8 @@ function createLive(deps) {
     }
   };
 
-  // 지난 회차 보기(읽기만) — 지금 대회가 아니면 진행자 칸 · 팀 주소 없이, 잠정 상태도 캐시(stateFor)를 건드리지 않고 따로 읽는다.
-  // stateFor 의 캐시는 지금 대회 한 벌이다 — 지난 회차로 바꿔 끼우면 그 사이 저장(persist)이 다른 회차 값을 쓸 수 있다
+  // 지난 회차 보기(읽기만) — 지금 대회가 아니면 진행자 칸 · 팀 주소 없이, 잠정 상태도 캐시(stateFor)를 건드리지 않고 저장소에서 따로 읽는다.
+  // 막판 집계 중인 앞 회차(§1.6)도 이 길로 본다 — 30초 캐시라 집계 값이 30초 안에 따라온다. 화면을 보는 것만으로 집계 상태 캐시가 늘지 않는다
   async function pastView(req) {
     const p = eventParam(req.query && req.query.event);
     if (!p.ok) return { bad: true };
@@ -246,10 +270,11 @@ function createLive(deps) {
     if (view.bad) return res.status(400).json({ error: { code: "bad_event" } });
     if (view.past) return sendPast(res, `players:${view.id}`, async () => ({ ...(await killrace.players({ eventId: view.id })), past: true, eventId: view.id }));
     if (playersCache && now() - playersCache.at < 5000) return res.json({ ...playersCache.body, serverNow: now() });
-    let body;
-    try { body = await killrace.players(); }
+    let body; let evCur;
+    try { evCur = await killrace.currentEvent(); body = await killrace.players({ eventId: evCur.id }); }
     catch (e) { if (e && e.userMsg) return res.status(404).json({ error: { code: "no_event" } }); throw e; }
-    if (cache && cache.state) body.run = cache.state.run;
+    const st = states.get(evCur.id);                          // 지금 대회의 집계 상태(열린 앞 회차 것이 섞이지 않게 번호로 고른다)
+    if (st) body.run = st.run;
     playersCache = { at: now(), body };
     res.json(body);
   });
@@ -267,9 +292,16 @@ function createLive(deps) {
     if (!isAdmin(req)) return res.status(401).json({ error: { code: "unauthorized" } });
     const b = req.body || {}; const action = String(b.action || "");
     const done = (extra) => { boardCache = null; playersCache = null; tokenCache = null; log.log(`[killrace-live] admin ${action}`); return res.json({ ok: true, ...(extra || {}) }); };
-    if (action === "run") {                                    // 「지금 집계」
+    if (action === "run") {                                    // 「지금 집계」 — event 를 주면 그 회차(막판 집계 중인 앞 회차 등 · §1.6), 없으면 지금 대회
       if (!ready()) return res.status(503).json({ error: { code: "not_ready" } });
-      const r = await run("manual");
+      const p = eventParam(b.event == null ? "" : String(b.event));
+      if (!p.ok) return res.status(400).json({ error: { code: "bad_event" } });
+      let evRun = null;
+      if (p.id) {
+        try { evRun = await killrace.eventById(p.id); }
+        catch (e) { if (e && e.userMsg) return res.status(404).json({ error: { code: "no_event" } }); throw e; }
+      }
+      const r = await run("manual", { ev: evRun });
       if (!r.ok) return res.status(r.code === "busy" ? 409 : 502).json({ error: { code: r.code, message: r.error || null } });
       return done({ ms: r.ms });
     }
@@ -309,7 +341,7 @@ function createLive(deps) {
     if (delta === 0) return res.json({ ok: true, team, event: tm.ev.name, count: (state.presses[team] || []).length });
     const out = await serial(async () => {
       const r = press(state, team, delta, now());
-      if (r.ok) await persist(tm.ev.id);
+      if (r.ok) await persist(tm.ev.id, state);
       return r;
     });
     if (!out.ok) return res.status(out.code === "bad_delta" ? 400 : 409).json({ error: { code: out.code }, count: out.count });
