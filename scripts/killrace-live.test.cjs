@@ -16,6 +16,9 @@ function world(over = {}) {
     teams: [{ name: "불사조" }, { name: "막판" }], totals: { 불사조: 10, 막판: 4 }, lastEnd: { 불사조: 0, 막판: 0 }, leaves: [], voids: [], voidGames: [], cfgSaves: [], ...over };
   const killrace = {
     currentEvent: async () => { if (w.noEvent) throw Object.assign(new Error("x"), { userMsg: "이벤트가 아직 없어요" }); return EV; },
+    // 열린 대회(§1.6) — 대회가 하나뿐인 세계: 창(시작 ~ 끝 + 여유) 안이면 그 대회 하나
+    openEvents: async ({ at, graceMs }) => { if (w.noEvent) return []; return at >= EV.start && at <= EV.end + graceMs ? [EV] : []; },
+    eventById: async () => EV,
     loadConfig: async () => w.cfg, loadTeams: async () => w.teams,
     saveConfig: async (id, patch) => { w.cfgSaves.push(patch); Object.assign(w.cfg, patch); return w.cfg; },
     aggregate: async () => {
@@ -214,4 +217,79 @@ test("지난 회차: ?event=2 는 그 회차를 읽기만 · 진행자 칸 없�
   assert.deepEqual([evs.body.currentId, evs.body.events.map((e) => e.id)], [3, [3, 2]]);
   assert.deepEqual(T.eventParam(undefined), { ok: true, id: null });
   assert.deepEqual(T.eventParam("-1"), { ok: false });
+});
+
+// ── 여러 대회 동시 집계(docs/killrace-api.md §1.6) — 10/6: 3회 막판 집계(21:50 + 45분) 중에 4회 줄(22:20 시작)을 만들면 3회 집계가 멈췄다 ──
+function twoEvents() {
+  const E3 = { id: 3, name: "3회", start: Date.parse("2026-10-06T10:50:00Z"), end: Date.parse("2026-10-06T12:50:00Z") };    // 19:50 ~ 21:50 KST
+  const E4 = { id: 4, name: "4회", start: Date.parse("2026-10-06T13:20:00Z"), end: Date.parse("2026-10-06T15:20:00Z") };    // 22:20 ~ 00:20 KST
+  const w = { clock: Date.parse("2026-10-06T13:25:00Z"), calls: [], boards: [], stores: {}, fail: {},                  // 22:25 KST — 둘 다 열림
+    cfg: { 3: { auto: true, liveTokens: {} }, 4: { auto: true, liveTokens: { 나팀: "tok-4" } } }, teams: { 3: [{ name: "가팀" }], 4: [{ name: "나팀" }] } };
+  const userErr = (m) => Object.assign(new Error(m), { userMsg: m });
+  const killrace = {
+    currentEvent: async () => E4,                                                     // 지금 대회 = 가장 큰 번호
+    eventById: async (id) => { const e = [E3, E4].find((x) => x.id === id); if (!e) throw userErr("없음"); return e; },
+    // 운영 DB 와 같은 거르기: 시작 ≤ 지금 · 끝 ≥ 지금 − 여유 · 번호 큰 순
+    openEvents: async ({ at, graceMs }) => [E3, E4].filter((e) => e.start <= at && e.end >= at - graceMs).sort((a, b) => b.id - a.id),
+    loadConfig: async (id) => w.cfg[id], loadTeams: async (id) => w.teams[id],
+    aggregate: async ({ eventId }) => { w.calls.push(eventId); if (w.fail[eventId]) throw new Error("503 pubg"); return { warn: [] }; },
+    board: async ({ eventId }) => { w.boards.push(eventId); return { teams: w.teams[eventId].map((t) => ({ name: t.name, rank: 1, total: eventId === 3 ? 91 : 6, games: 1, lastEnd: 0 })) }; },
+    players: async ({ eventId }) => ({ event: { name: `${eventId}회` }, teams: [] }),
+  };
+  const api = live.createLive({ killrace, isAdmin: (req) => req.headers["x-admin-key"] === "host", ready: () => true, now: () => w.clock,
+    store: { load: async (id) => w.stores[id] || null, save: async (id, st) => { w.stores[id] = JSON.parse(JSON.stringify(st)); } },
+    log: { log() {}, warn() {}, error() {} } });
+  const call = async (fn, req = {}) => { const res = fakeRes(); await fn({ headers: {}, body: {}, query: {}, method: "POST", ...req }, res); return res; };
+  return { E3, E4, w, api, call };
+}
+
+test("열린 대회 여럿: 막판 집계 중인 3회와 시작한 4회를 1분마다 둘 다 센다 · 번호 큰 것부터 · 상태는 대회마다 따로 저장", async () => {
+  const { w, api } = twoEvents();
+  assert.equal(await api.tick(), "4:ran 3:ran");
+  assert.deepEqual([w.calls, w.boards], [[4, 3], [4, 3]]);                             // 집계 · 점수판 · 저장이 같은 회차를 본다
+  assert.deepEqual([w.stores[3].run.ok, w.stores[3].ranks.totals, w.stores[4].run.ok, w.stores[4].ranks.totals], [true, { 가팀: 91 }, true, { 나팀: 6 }]);
+  // 22:36 KST — 3회는 끝 + 45분(22:35)이 지나 빠지고 4회만 돈다 · 하나뿐이면 종전 값 그대로 「ran」
+  w.calls.length = 0; w.clock = Date.parse("2026-10-06T13:36:00Z");
+  assert.equal(await api.tick(), "ran");
+  assert.deepEqual(w.calls, [4]);
+  // 둘 다 닫히면 지금 대회 기준(종전 그대로)
+  w.clock = Date.parse("2026-10-06T16:06:00Z");
+  assert.equal(await api.tick(), "after_end");
+});
+
+test("열린 대회 여럿: 한 대회 실패 · 자동 꺼짐 · 팀 없음은 그 대회에만 남는다 · 다른 대회는 그 차례에 돈다", async () => {
+  const { w, api } = twoEvents();
+  w.fail[3] = true;
+  assert.equal(await api.tick(), "4:ran 3:failed");
+  assert.deepEqual([w.stores[3].run.ok, w.stores[3].run.fails, w.stores[4].run.ok, w.stores[4].run.fails], [false, 1, true, 0]);
+  delete w.fail[3];
+  w.clock += 60000; w.cfg[3].auto = false;
+  assert.equal(await api.tick(), "4:ran 3:auto_off");
+  w.clock += 60000; w.cfg[3].auto = true; w.teams[4] = [];
+  assert.equal(await api.tick(), "4:no_teams 3:ran");
+  assert.equal(w.stores[3].run.fails, 0);                                            // 다음 차례 성공으로 3회 실패 횟수가 지워진다
+});
+
+test("열린 대회 여럿: 1분 차례는 겹쳐 돌지 않는다 · 「지금 집계」 는 event 로 회차를 고른다(없으면 지금 대회) · 개인 기록 기본은 지금 대회 상태", async () => {
+  const { w, api, call } = twoEvents();
+  const [a, b] = await Promise.all([api.tick(), api.tick()]);
+  assert.deepEqual([a, b], ["4:ran 3:ran", "skip"]);
+  const host = (body) => call(api.postAdmin, { headers: { "x-admin-key": "host" }, body });
+  w.calls.length = 0; w.clock += 60000;
+  assert.equal((await host({ action: "run", event: 3 })).code, 200);
+  assert.equal((await host({ action: "run" })).code, 200);
+  assert.deepEqual(w.calls, [3, 4]);
+  assert.equal(w.stores[3].run.source, "manual");
+  assert.equal((await host({ action: "run", event: "3x" })).code, 400);
+  assert.equal((await host({ action: "run", event: 9 })).code, 404);
+  assert.deepEqual(w.calls, [3, 4]);                                                 // 잘못된 번호는 집계를 부르지 않는다
+  // 개인 기록(번호 없음) = 4회 · 집계 상태도 4회 것(3회만 실패시켜 구분)
+  w.fail[3] = true; w.clock += 60000;
+  assert.equal(await api.tick(), "4:ran 3:failed");
+  w.clock += 6000;
+  const pl = await call(api.getPlayers, { method: "GET" });
+  assert.deepEqual([pl.body.event.name, pl.body.run.ok, pl.body.run.source], ["4회", true, "auto"]);
+  // 팀 주소 +1 은 지금 대회(4회) 줄에만 저장된다
+  assert.equal((await call(api.postLive, { body: { t: "tok-4", delta: 1 } })).body.count, 1);
+  assert.deepEqual([w.stores[4].presses.나팀.length, w.stores[3].presses.나팀], [1, undefined]);
 });

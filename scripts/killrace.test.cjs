@@ -461,8 +461,8 @@ test("2회 · 점수판: 끝까지 공개 · 판별 내역 · 인원 미달 판�
 });
 
 // 가짜 DB · PUBG — 집계 전체를 돌려 배수 · 보너스 · 저장값을 본다
-function fakeWorld({ cfgValue, matches, teamRows, stored = [] }) {
-  const db = { upserts: [], patches: [], ops: cfgValue == null ? [] : [{ value: cfgValue }] };
+function fakeWorld({ cfgValue, matches, teamRows, stored = [], failPlayers = null, clock = null }) {
+  const db = { upserts: [], patches: [], ops: cfgValue == null ? [] : [{ value: cfgValue }], playerTries: 0, warns: [] };
   const matchCalls = {};
   const players = new Map();                 // accountId → 최근 매치 id(최신순)
   for (const m of matches) for (const p of Object.values(m.parts)) { if (!players.has(p.accountId)) players.set(p.accountId, []); players.get(p.accountId).unshift(m.id); }
@@ -474,14 +474,18 @@ function fakeWorld({ cfgValue, matches, teamRows, stored = [] }) {
       if (table === "event_matches") return stored;
       return [];
     },
-    sbUpsert: async (table, row) => { db.upserts.push([table, row]); if (table === "ops_state") db.ops = [{ value: row.value }]; return row; },
+    sbUpsert: async (table, row) => {
+      if (table === "event_match_players" && failPlayers) { db.playerTries++; throw failPlayers; }     // §66 표가 없을 때 등(개인별 판 기록 시험)
+      db.upserts.push([table, row]); if (table === "ops_state") db.ops = [{ value: row.value }]; return row;
+    },
     sbPatch: async (table, filter, patch) => { db.patches.push([table, filter, patch]); },
     pubgGet: async (path) => {
       const ids = decodeURIComponent(path.split("=")[1]).split(",");
       return { data: ids.filter((id) => players.has(id)).map((id) => ({ id, attributes: { name: id }, relationships: { matches: { data: players.get(id).map((mid) => ({ id: mid })) } } })) };
     },
     pubgMatch: async (platform, id) => { matchCalls[id] = (matchCalls[id] || 0) + 1; const m = matches.find((x) => x.id === id); return { duration: 1500, createdAt: new Date(m.at).toISOString(), mapName: "Baltic_Main", mode: m.mode || "squad", matchType: "official", telemetryUrl: "", rosters: m.rosters, parts: m.parts }; },
-    env: {}, now: () => EV2.end + 5 * 60000, sleep: async () => {}, playersGapMs: 0, log: { log() {}, warn() {}, error() {} },
+    env: {}, now: clock ? () => clock.t : () => EV2.end + 5 * 60000, sleep: async () => {}, playersGapMs: 0,
+    log: { log() {}, warn: (...a) => db.warns.push(a.join(" ")), error() {} },
   };
   return { db, matchCalls, bot: k.createKillrace(deps) };
 }
@@ -732,6 +736,79 @@ test("2회 · 개인 기록: 개인 킬 합 = 팀 킬 · 무효 판과 이탈 �
 });
 
 // ── 대회 중 선수 교체(/킬내기교체 · 2026-10-06 3회) ──
+// ── 개인별 판 기록 표 event_match_players(docs/killrace-api.md §1.8 · DDL §66) ──
+test("개인별 판 기록 줄: 인정 판 · 판 무효 판만 · 사망은 감점 판정과 같은 값 · 교체 선수 표시 · 계정 번호 없는 선수는 뺀다", () => {
+  const teams = [{ name: "가팀", members: [{ slot: 1, ign: "A1", accountId: "account.a1" }, { slot: 2, ign: "A2", accountId: "account.a2" }],
+    subs: [{ slot: 2, ign: "S2", accountId: "account.s2" }] }];
+  const at = Date.parse("2026-10-06T11:00:00Z");
+  const records = [
+    // 인정 판 — 2번 자리를 교체 선수가 뛰었다 · 1번은 deathType 은 죽음인데 텔레메트리 판정은 「로그아웃 뒤 사망」(감점 없음) → dead false
+    { teamName: "가팀", matchId: "g1", createdAtMs: at, excluded: null, kills: 4,
+      members: [{ slot: 1, accountId: "account.a1", ign: "A1_new", regIgn: "A1", kills: 3, damage: 310.5, deathType: "byplayer" },
+        { slot: 2, accountId: "account.s2", ign: "S2", kills: 1, damage: 99.25, deathType: "alive" }],
+      verdict: [{ slot: 1, dead: false, why: "after_logout" }, { slot: 2, dead: false, why: "deathType" }] },
+    // 진행자가 판 무효로 돌린 판 — 선수 기록은 남긴다(합계에서 빼는 건 event_matches 쪽) · 판정이 없어 deathType 으로
+    { teamName: "가팀", matchId: "g2", createdAtMs: at + 60000, excluded: { code: "무효" }, members: [],
+      voidMembers: [{ slot: 1, accountId: "account.a1", ign: "A1", kills: 2, damage: 50, deathType: "byplayer" }] },
+    { teamName: "가팀", matchId: "g3", createdAtMs: at + 120000, excluded: { code: "인원" }, members: [] },          // 제외 판 → 줄 없음
+    { teamName: "가팀", matchId: "g4", createdAtMs: at + 180000, excluded: null, members: [{ slot: 1, accountId: "", kills: 9, damage: 0, deathType: "alive" }], verdict: [{ dead: false }] },
+  ];
+  const rows = T.playerRows(4, teams, records, "2026-10-06T14:00:00.000Z");
+  assert.deepEqual(rows.map((r) => [r.match_id, r.account_id, r.slot, r.sub, r.ign, r.reg_ign, r.kills, r.damage, r.death_type, r.dead]), [
+    ["g1", "account.a1", 1, false, "A1_new", "A1", 3, 310.5, "byplayer", false],
+    ["g1", "account.s2", 2, true, "S2", null, 1, 99.25, "alive", false],
+    ["g2", "account.a1", 1, false, "A1", null, 2, 50, "byplayer", true],
+  ]);
+  assert.ok(rows.every((r) => r.event_id === 4 && r.team_name === "가팀" && r.updated_at === "2026-10-06T14:00:00.000Z"));
+  assert.deepEqual([rows[0].started_at, rows[2].started_at], ["2026-10-06T11:00:00.000Z", "2026-10-06T11:01:00.000Z"]);
+  assert.equal(rows.filter((r) => r.match_id === "g1").reduce((n, r) => n + r.kills, 0), records[0].kills);   // 선수 킬 합 = 팀 킬
+});
+
+test("집계가 개인별 판 기록도 같이 쓴다 — 판 줄을 먼저 저장한 뒤 · 판마다 선수 킬 합 = 팀 kills · 딜 합 = damage_sum · 겹침 키는 판 × 계정", async () => {
+  const A = accsOf("a"); const B = accsOf("b");
+  const matches = [
+    squadMatch("a1", EV2.start + 5 * 60000, A, { kills: 6, dead: [1, 3] }),
+    squadMatch("a2", EV2.start + 40 * 60000, A, { kills: 2, rank: 1 }),
+    squadMatch("b1", EV2.start + 10 * 60000, B, { kills: 4, dead: [2] }),
+  ];
+  const w = fakeWorld({ cfgValue: null, matches, teamRows: [teamRow("불사조", "a"), teamRow("막판", "b")] });
+  const res = await w.bot.aggregate();
+  const order = w.db.upserts.map(([t]) => t);
+  assert.ok(order.indexOf("event_matches") < order.indexOf("event_match_players"));
+  const games = w.db.upserts.find(([t]) => t === "event_matches")[1];
+  const players = w.db.upserts.find(([t]) => t === "event_match_players")[1];
+  assert.equal(players.length, 12);                                                   // 3판 × 4명
+  for (const g of games) {
+    const mine = players.filter((p) => p.team_name === g.team_name && p.match_id === g.match_id);
+    assert.equal(mine.reduce((n, p) => n + p.kills, 0), g.kills);
+    assert.equal(mine.reduce((n, p) => n + p.damage, 0), g.damage_sum);
+    assert.deepEqual(mine.filter((p) => p.dead).map((p) => p.slot), g.flags.deadSlots);  // 사망 = 감점 슬롯
+  }
+  assert.deepEqual(res.playersWrite, { rows: 12 });
+});
+
+test("개인별 판 기록 표가 없을 때(§66 실행 전): 집계 · 점수는 그대로 저장 · 로그 한 줄 · 10분 쉬고 다시 · 다른 실패는 다음 집계에 바로 다시", async () => {
+  const clock = { t: EV2.end + 5 * 60000 };
+  const missing = Object.assign(new Error("supabase_upsert_404"), { status: 404, body: '{"code":"PGRST205","message":"Could not find the table"}' });
+  const w = fakeWorld({ cfgValue: null, matches: [squadMatch("a1", EV2.start + 5 * 60000, accsOf("a"), { kills: 3 })], teamRows: [teamRow("불사조", "a")], failPlayers: missing, clock });
+  const r1 = await w.bot.aggregate();
+  assert.deepEqual([r1.teams[0].total, r1.playersWrite], [3, { failed: true, missing: true }]);
+  assert.ok(w.db.upserts.some(([t]) => t === "event_matches"));                         // 점수는 저장됐다
+  assert.match(w.db.warns.join("\n"), /players_write_failed table_missing/);
+  clock.t += 60000;                                                                     // 1분 뒤 — 쉬는 중이라 쓰지 않는다
+  assert.deepEqual((await w.bot.aggregate()).playersWrite, { skipped: "paused" });
+  assert.equal(w.db.playerTries, 1);
+  clock.t += T.PLAYERS_TABLE_PAUSE_MS;                                                  // 10분이 지나면 다시 써 본다
+  await w.bot.aggregate();
+  assert.equal(w.db.playerTries, 2);
+  // 표는 있는데 잠깐 실패(500) — 쉬지 않고 다음 집계에 바로 다시(매번 전부 덮어쓰므로 빠진 줄이 남지 않는다)
+  const w2 = fakeWorld({ cfgValue: null, matches: [squadMatch("a1", EV2.start + 5 * 60000, accsOf("a"), { kills: 3 })], teamRows: [teamRow("불사조", "a")],
+    failPlayers: Object.assign(new Error("supabase_upsert_500"), { status: 500, body: "" }), clock: { t: EV2.end } });
+  assert.deepEqual((await w2.bot.aggregate()).playersWrite, { failed: true, missing: false });
+  await w2.bot.aggregate();
+  assert.equal(w2.db.playerTries, 2);
+});
+
 test("교체: 4판 중 2판은 주전, 2판은 교체 선수 → 네 판 모두 인정 · 감점 슬롯 물려받음 · 개인 기록은 계정별 · 교체 없는 팀은 종전 그대로", async () => {
   const A = accsOf("a"); const B = accsOf("b"); const SUB = "account.a9";
   const withSub = [A[0], A[1], A[2], SUB];
@@ -803,4 +880,41 @@ test("교체 명령: 슬롯에 교체 선수 더하기 · 다른 팀 선수 거�
   const lineup = (accs) => T.lineupFor({ parts: Object.fromEntries(accs.map((a, i) => [`p${i}`, { accountId: a }])) }, team).members.map((x) => x.accountId);
   assert.deepEqual(lineup([A[0], A[1], A[2], "account.z1"]), [A[0], A[1], A[2], "account.z1"]);
   assert.deepEqual(lineup(A), A);
+});
+
+// ── 여러 대회 동시 집계(docs/killrace-api.md §1.6) — 열린 대회 조회 · 고른 회차 집계 ──
+test("열린 대회: [시작, 끝 + 여유] 안인 대회 · 번호 큰 순 · 상한 5개(넘치면 로그) · 집계는 고른 회차를 센다(지금 대회와 별개)", async () => {
+  const queries = []; const warns = [];
+  const evRow = (id) => ({ id, name: `${id}회`, window_start: "2026-10-06T13:20:00Z", window_end: "2026-10-06T15:20:00Z" });
+  let open = [evRow(4), evRow(3)];
+  const bot = k.createKillrace({
+    sbSelect: async (table, q) => {
+      queries.push([table, q]);
+      if (table === "event_defs") return q.includes("window_start=lte.") ? open : q.includes("id=eq.") ? [evRow(Number(q.match(/id=eq\.(\d+)/)[1]))] : [evRow(9)];
+      return [];
+    },
+    sbUpsert: async () => {}, sbPatch: async () => {}, pubgGet: async () => ({ data: [] }), pubgMatch: async () => ({}),
+    env: {}, now: () => Date.parse("2026-10-06T13:25:00Z"), sleep: async () => {}, playersGapMs: 0, log: { log() {}, warn: (m) => warns.push(m), error() {} },
+  });
+  const at = Date.parse("2026-10-06T13:25:00Z");
+  assert.deepEqual((await bot.openEvents({ at, graceMs: 45 * 60000 })).map((e) => e.id), [4, 3]);
+  const q = queries.at(-1)[1];
+  assert.ok(q.includes(`window_start=lte.${encodeURIComponent("2026-10-06T13:25:00.000Z")}`));       // 시작 ≤ 지금
+  assert.ok(q.includes(`window_end=gte.${encodeURIComponent("2026-10-06T12:40:00.000Z")}`));          // 끝 ≥ 지금 − 45분 = 끝 + 45분 ≥ 지금
+  assert.ok(q.includes("order=id.desc") && q.includes(`limit=${T.OPEN_EVENTS_MAX + 1}`));
+  assert.equal(warns.length, 0);
+  open = [9, 8, 7, 6, 5, 4].map(evRow);
+  assert.deepEqual((await bot.openEvents({ at, graceMs: 0 })).map((e) => e.id), [9, 8, 7, 6, 5]);
+  assert.match(warns.join(" "), /open_events_capped shown=5/);
+  // 집계에 회차를 주면 그 번호로 읽는다(가장 큰 번호를 다시 고르지 않는다) — 팀이 없어서 거절되기 전까지의 조회로 확인
+  queries.length = 0;
+  await assert.rejects(bot.aggregate({ eventId: 3 }), /등록된 팀이 없어요/);
+  assert.ok(queries.some(([t, qq]) => t === "event_defs" && qq.includes("id=eq.3")));
+  assert.ok(!queries.some(([t, qq]) => t === "event_defs" && qq.includes("order=id.desc&limit=1")));
+  assert.ok(queries.some(([t, qq]) => t === "event_teams" && qq.includes("event_id=eq.3")));
+  // 회차를 안 주면 종전 그대로 지금 대회(가장 큰 번호)
+  queries.length = 0;
+  await assert.rejects(bot.aggregate(), /등록된 팀이 없어요/);
+  assert.ok(queries.some(([t, qq]) => t === "event_defs" && qq.includes("order=id.desc&limit=1")));
+  assert.ok(queries.some(([t, qq]) => t === "event_teams" && qq.includes("event_id=eq.9")));
 });

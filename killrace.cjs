@@ -39,6 +39,8 @@
 //   판마다 선수별 = event_matches.deaths.members[{ slot, accountId, ign, kills, damage, deathType }] + verdict[{ slot, dead }] (1회부터 이 모양)
 //     + 2회부터 deaths.chicken · 진행자가 무효로 돌린 판도 deaths{ void:true, members } 로 남긴다(합계에서는 뺀다).
 //     부활 여부는 전적 요약으로는 알 수 없다(텔레메트리 판정을 켠 판만 추정 가능) — revived 는 null 로 둔다.
+//   + 판 × 선수 한 줄 표 event_match_players(docs/killrace-api.md §1.8 · DDL §66 · 2026-10-06) — 집계가 event_matches 를 저장한 바로 뒤에 같이 쓴다.
+//     인정 판인지는 이 표에 적지 않는다(event_matches 의 seq · leave_flag 와 맞대어 본다). 표가 없거나 쓰기가 실패해도 집계 · 점수는 그대로다.
 //   회차마다 선수별 = ops_state 'killrace:roster:<event id>' = { players:[{ ign, team, slot, tier, price, captain, gem, platform, kda, avgDmg }] } (경매 → 팀 등록 때 저장)
 //   신청 당시 경쟁전 전적(티어 · 평딜 · KDA)은 신청 명단 줄('killrace:apply:r2')에 남아 있다.
 
@@ -49,9 +51,11 @@ const OK_MODES = new Set(["squad", "squad-fpp"]);
 const NEAR_MS = 30 * 60 * 1000;                 // 창 앞뒤 30분 안의 4인 판은 「시간 밖」 으로 보여 준다(노래방룰 시비 대비)
 const OLDER_STOP = 3;                           // 창 시작 30분 전보다 오래된 판이 연속 3개면 그 팀 훑기를 멈춘다(목록은 최신순)
 const MAX_FETCH_PER_TEAM = 80;                  // 한 팀에서 조회하는 매치 상한(최악의 경우 대비)
-const PLAYERS_GAP_MS = 6500;                    // /players 분당 10회 → 6.5초 간격
+const PLAYERS_GAP_MS = 6500;                    // /players 분당 10회 → 6.5초 간격(열린 대회가 여럿이어도 이 간격을 같이 쓴다)
+const OPEN_EVENTS_MAX = 5;                      // 한 차례에 집계하는 열린 대회 수 상한(번호 큰 순 · §1.6)
 const TELEMETRY_TIMEOUT_MS = 120000;
 const DM_LIMIT = 1900;                          // Discord 메시지 2000자 — 여유를 둔다
+const PLAYERS_TABLE_PAUSE_MS = 10 * 60000;      // 개인별 판 기록 표(§66)가 없으면 이만큼 쉬었다가 다시 써 본다(1분마다 같은 실패 로그가 쌓이지 않게)
 const MAP_KO = {
   Baltic_Main: "에란겔", Erangel_Main: "에란겔", Desert_Main: "미라마", Savage_Main: "사녹",
   DihorOtok_Main: "비켄디", Tiger_Main: "태이고", Kiki_Main: "데스턴", Neon_Main: "론도",
@@ -664,6 +668,31 @@ function buildPlayers({ ev, teams, cfg, rows, roster, at }) {
   return { event: b.event, serverNow: at, updatedAt: b.updatedAt, run: null, ended: at >= ev.end, teams: out, byKills: order("kills"), byDamage: order("damage") };
 }
 
+// 개인별 판 기록 줄(docs/killrace-api.md §1.8 · 표 event_match_players) — 선수 기록이 있는 판만(인정 판 · 진행자가 판 무효로 돌린 판).
+// 제외 판(인원 · 한 스쿼드 아님 · 모드 · 시간 밖)은 선수 기록이 없어 줄도 없다. 인정 판인지 · 이탈인지는 적지 않는다 — event_matches 와 맞대어 본다.
+// dead = 감점 판정과 같은 값(verdict) · 무효 판은 판정이 없어 deathType 으로 · sub = 그 판을 교체 선수로 뛰었다(물려받은 슬롯)
+function playerRows(evId, teams, records, stamp) {
+  const subsOf = new Map(teams.map((t) => [t.name, new Set((t.subs || []).map((s) => s.accountId))]));
+  const out = [];
+  for (const rec of records) {
+    const mem = rec.excluded ? rec.voidMembers || [] : rec.members || [];
+    if (!mem.length || !Number.isFinite(rec.createdAtMs)) continue;
+    const startedAt = new Date(rec.createdAtMs).toISOString();
+    const subs = subsOf.get(rec.teamName) || new Set();
+    mem.forEach((m, i) => {
+      if (!m || !m.accountId) return;
+      const v = !rec.excluded && rec.verdict ? rec.verdict[i] : null;
+      out.push({
+        event_id: evId, team_name: rec.teamName, match_id: rec.matchId, account_id: m.accountId,
+        slot: m.slot, sub: subs.has(m.accountId), ign: m.ign || "", reg_ign: m.regIgn || null,
+        kills: Number(m.kills) || 0, damage: Number(m.damage) || 0, death_type: m.deathType || "",
+        dead: v ? !!v.dead : deathTypeVerdict(m).dead, started_at: startedAt, updated_at: stamp,
+      });
+    });
+  }
+  return out;
+}
+
 function shortErr(e) {
   if (!e) return "unknown";
   if (e.name === "AbortError") return "timeout";
@@ -685,6 +714,24 @@ function createKillrace(deps) {
   // 매치 결과는 끝나면 안 바뀐다 — 1분마다 도는 자동 집계가 같은 판을 다시 받지 않게 기억해 둔다(실패한 조회는 기억하지 않는다)
   const matchKeep = new Map(); const MATCH_KEEP_MAX = 400;
   let aggChain = Promise.resolve();                      // 집계는 한 번에 하나(자동 · 「지금 집계」 · /킬내기집계 가 겹쳐도 차례로)
+  let playersPausedUntil = 0;                            // 개인별 판 기록 표(§66)가 없으면 잠깐 쉰다
+
+  // 개인별 판 기록(§1.8) — event_matches 를 저장한 뒤에 부른다. 실패해도 던지지 않는다(집계 · 점수는 이미 저장됐다).
+  // 표가 없으면(§66 실행 전 · 404 · PGRST205 · 42P01) 10분 쉬고, 그 밖의 실패는 다음 집계 때 다시 쓴다(매번 전부 덮어써서 빠진 줄이 남지 않는다)
+  async function savePlayerRows(ev, teams, records, stamp) {
+    if (now() < playersPausedUntil) return { skipped: "paused" };
+    const rows = playerRows(ev.id, teams, records, stamp);
+    if (!rows.length) return { rows: 0 };
+    try {
+      await sbUpsert("event_match_players", rows, "event_id,team_name,match_id,account_id");
+      return { rows: rows.length };
+    } catch (e) {
+      const missing = (e && e.status === 404) || /PGRST205|42P01/.test(String((e && e.body) || (e && e.message) || ""));
+      if (missing) playersPausedUntil = now() + PLAYERS_TABLE_PAUSE_MS;
+      log.warn(`[killrace] players_write_failed ${missing ? "table_missing" : logSafe(e)}`);
+      return { failed: true, missing };
+    }
+  }
 
   async function playersCall(path) {
     const wait = lastPlayersAt + gapMs - now();
@@ -731,6 +778,15 @@ function createKillrace(deps) {
     return evOf(rows[0]);
   }
   const listEvents = async () => (await sbSelect("event_defs", "select=id,name,window_start,window_end&order=id.desc&limit=50")).map(evOf);
+  // 열린 대회(docs/killrace-api.md §1.6) — 지금 시각이 [시작, 끝 + graceMs] 안인 대회 전부 · 번호 큰 순 limit 개까지.
+  // 자동 집계(killrace-live tick)가 이것을 돈다. 「지금 대회」(currentEvent = 가장 큰 번호)는 그대로다
+  async function openEvents({ at = now(), graceMs = 0, limit = OPEN_EVENTS_MAX } = {}) {
+    const iso = (ms) => encodeURIComponent(new Date(ms).toISOString());
+    const rows = await sbSelect("event_defs",
+      `select=id,name,window_start,window_end&window_start=lte.${iso(at)}&window_end=gte.${iso(at - graceMs)}&order=id.desc&limit=${limit + 1}`);
+    if (rows.length > limit) log.warn(`[killrace] open_events_capped shown=${limit}`);
+    return rows.slice(0, limit).map(evOf);
+  }
   // 이벤트 설정 — ops_state 한 줄. 읽기 실패 · 없음 = 전부 꺼짐(1회 동작)
   const cfgKey = (evId) => `killrace:event:${evId}`;
   async function loadConfigRaw(evId) {
@@ -792,9 +848,10 @@ function createKillrace(deps) {
     aggChain = run.catch(() => {});
     return run;
   }
-  async function aggregateOnce({ deathMode = "deathType", progress = () => {} } = {}) {
+  // eventId 를 주면 그 회차를 센다(열린 대회 여럿 · §1.6) — 없으면 지금 대회(종전 그대로 · /킬내기집계)
+  async function aggregateOnce({ deathMode = "deathType", progress = () => {}, eventId = null } = {}) {
     const t0 = now();
-    const ev = await currentEvent();
+    const ev = eventId ? await eventById(eventId) : await currentEvent();
     const teams = await loadTeams(ev.id);
     if (!teams.length) throw userErr("등록된 팀이 없어요. /킬내기팀등록 부터 해 주세요!");
     const cfg = await loadConfig(ev.id);
@@ -988,6 +1045,7 @@ function createKillrace(deps) {
       updated_at: stamp,
     }));
     if (rows.length) await sbUpsert("event_matches", rows, "event_id,team_name,match_id");
+    const playersWrite = await savePlayerRows(ev, teams, records, stamp);      // 개인별 판 기록(§1.8) — 판 줄이 먼저 있어야 한다(외래 키)
     for (const row of stale) {
       await sbPatch("event_matches",
         `event_id=eq.${ev.id}&team_name=eq.${encodeURIComponent(row.team_name)}&match_id=eq.${encodeURIComponent(row.match_id)}`,
@@ -1015,7 +1073,7 @@ function createKillrace(deps) {
       fallback: inGames.filter((r) => r.used === "deathType_fallback").length,
       stored: inGames.filter((r) => r.source === "stored").length,
     };
-    return { ev, cfg, deathMode, teams: summary, warn, stale: stale.length, stats, at: now(), ms: now() - t0 };
+    return { ev, cfg, deathMode, teams: summary, warn, stale: stale.length, stats, playersWrite, at: now(), ms: now() - t0 };
   }
 
   // ── 점수판(웹) — 마지막 집계 저장분을 그대로 읽는다(PUBG 조회 없음). admin = 진행자(제외 판 · 팀별 잠정 킬 주소까지) ──
@@ -1419,14 +1477,14 @@ function createKillrace(deps) {
     }
   }
 
-  return { handle, registerTeam, setSub, aggregate, history, eventById, listEvents, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
+  return { handle, registerTeam, setSub, aggregate, history, eventById, listEvents, openEvents, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
 }
 
 module.exports = {
   COMMANDS, createKillrace, scoring: { SLOT_PENALTY, baseScore, applyBoost },   // 점수식은 여기 한 벌 — 스샷 잠정(killrace-shot.cjs)이 같은 식을 쓴다
   _test: {
-    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, applyBoost, finalScore, boostTarget, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
+    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, baseScore, applyBoost, finalScore, boostTarget, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
-    splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory, lineupFor,
+    splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory, lineupFor, playerRows, PLAYERS_TABLE_PAUSE_MS,
   },
 };
