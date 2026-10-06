@@ -8773,6 +8773,10 @@ const SCHEMA_OPTIONAL = {
             "remind_count"],
   notice_recipients: ["id", "notice_id", "student_id", "staff_id", "dm_status", "dm_reason", "dm_at", "read_at", "reply", "replied_at",
                       "reminded_at", "remind_count"],
+  // §66 킬내기 개인별 판 기록(docs/killrace-api.md §1.8 · 2026-10-06 · 소관 GmI 대행) — 미실행이면 집계 · 점수는 그대로이고
+  //   이 표 쓰기만 10분에 한 번 실패 로그(players_write_failed table_missing). 티어 산정(§1.2)이 읽기 시작하면 REQUIRED 로 올린다.
+  event_match_players: ["event_id", "team_name", "match_id", "account_id", "slot", "sub", "ign", "reg_ign", "kills", "damage",
+                        "death_type", "dead", "started_at", "updated_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
