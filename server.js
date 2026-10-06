@@ -35,6 +35,8 @@ const killraceShot = require("./killrace-shot.cjs");
 const killracePoster = require("./killrace-poster.cjs");
 // 킬내기 개인 누적 지표(§1.11) — 계정 기준 · 불투명 키 · 회차 묶음. 시험 scripts/killrace-career.test.cjs
 const killraceCareer = require("./killrace-career.cjs");
+// 킬내기 판별 상세 기록 채우기(§1.12 · DDL §67) — 대회 시간 밖에 1분에 매치 하나. 시험 scripts/killrace-detail.test.cjs
+const killraceDetail = require("./killrace-detail.cjs");
 let killShot = null;   // 킬내기 결과 스샷 읽기 — 아래 킬내기 HTTP 블록에서 만들고 봇 messageCreate 가 쓴다
 let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP 블록에서 만들고 봇 interactionCreate(/킬내기포스터)가 쓴다
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
@@ -7058,6 +7060,9 @@ function gdcupAdmin(req) {
   if (process.env.SUPABASE_URL) setInterval(() => { killPoster.tick(); }, 60000).unref();
   // 개인 누적 지표(§1.11) — GET /api/killrace/career?events=2,3,4 · 닉 · 숫자 · 불투명 키만(계정 번호는 밖으로 안 나간다)
   killraceCareer.createCareer({ sbSelect, secret: process.env.SESSION_SECRET }).mount(app);
+  // 판별 상세 기록 채우기(§1.12 · §67) — 끝 + 45분이 지난 회차의 판을 1분에 매치 하나씩(대회 시간에는 쉰다 · 끄기 ops_state 'killrace:detail' { off: true })
+  const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
+  if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
 }
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
 // ── 운영 응답용 members 정제 ──

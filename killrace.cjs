@@ -554,9 +554,10 @@ function makeTelemetryCollector(accountIds) {
   return { out, onElement };
 }
 
-async function fetchTelemetry(url, accountIds, { fetchImpl = fetch, timeoutMs = TELEMETRY_TIMEOUT_MS } = {}) {
+// collector = { out, onElement } 를 주면 그것으로 뽑는다(판별 상세 기록 · killrace-detail.cjs) — 없으면 사망 판정용 수집기
+async function fetchTelemetry(url, accountIds, { fetchImpl = fetch, timeoutMs = TELEMETRY_TIMEOUT_MS, collector = null } = {}) {
   if (!/^https:\/\/[^/?#]+\.pubg\.com\//.test(String(url || ""))) throw new Error("telemetry_url_invalid");
-  const col = makeTelemetryCollector(accountIds);
+  const col = collector || makeTelemetryCollector(accountIds);
   const scanner = createTelemetryScanner(col.onElement);
   const t0 = Date.now();
   const ctrl = new AbortController();
@@ -1561,6 +1562,7 @@ function createKillrace(deps) {
 
 module.exports = {
   COMMANDS, createKillrace, scoring: { SLOT_PENALTY, baseScore, applyBoost },   // 점수식은 여기 한 벌 — 스샷 잠정(killrace-shot.cjs)이 같은 식을 쓴다
+  telemetry: { fetchTelemetry },                                                 // 텔레메트리 스트리밍 — 판별 상세 기록(killrace-detail.cjs)이 같은 해석기를 쓴다
   _test: {
     SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, baseScore, applyBoost, finalScore, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
