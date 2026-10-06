@@ -167,16 +167,24 @@ function lineupFor(m, team) {
 // 팀 구성 서명 — 저장된 판을 다시 쓸지 판단(구성·슬롯 순서가 바뀌면 옛 판정은 버린다)
 const teamSig = (team) => `${team.platform}:${team.members.map((x) => `${x.slot}=${x.accountId}`).join(",")}`;
 
-// 팀별 후보 = 등록 인원 중 (인원−1)명 이상의 최근 매치 목록에 같이 있는 matchId · 목록 앞(최신)부터.
+// 팀별 후보 = 등록 슬롯 중 (인원−1)개 이상이 최근 매치 목록에 같이 있는 matchId · 목록 앞(최신)부터.
 // 한 명 빠진 판도 후보로 잡아야 「인원」 제외 사유를 오너에게 보여 줄 수 있다(4인 팀이면 종전 3 과 같다).
+// 슬롯마다 그 슬롯을 뛸 수 있는 계정(주전 + 그 슬롯 교체 선수)의 목록을 합쳐 슬롯 하나로 센다 — 교체가 둘이어도
+// 그 판의 실제 출전 명단(주전 둘 + 교체 둘)으로 세어진다(검수 37차 보완 · 종전엔 주전만 세어 교체 2명 판이 조용히 빠졌다).
 function teamCandidates(team, matchesByAcc) {
   const minCount = Math.max(2, team.members.length - 1);
+  const bySlot = new Map(team.members.map((x) => [x.slot, [x.accountId]]));
+  for (const s of team.subs || []) if (bySlot.has(s.slot)) bySlot.get(s.slot).push(s.accountId);
   const count = new Map(); const order = new Map();
-  for (const mem of team.members) {
-    (matchesByAcc.get(mem.accountId) || []).forEach((id, i) => {
-      count.set(id, (count.get(id) || 0) + 1);
-      if (!order.has(id) || i < order.get(id)) order.set(id, i);
-    });
+  for (const accs of bySlot.values()) {
+    const seen = new Set();
+    for (const acc of accs) {
+      (matchesByAcc.get(acc) || []).forEach((id, i) => {
+        if (!order.has(id) || i < order.get(id)) order.set(id, i);
+        if (seen.has(id)) return;
+        seen.add(id); count.set(id, (count.get(id) || 0) + 1);
+      });
+    }
   }
   return [...count.entries()].filter(([, c]) => c >= minCount).map(([id]) => id).sort((a, b) => order.get(a) - order.get(b));
 }
@@ -703,6 +711,7 @@ const logSafe = (e) => shortErr(e).replace(/\?\S*/g, "?…");
 // ═══════════════ 봇·DB 연결 ═══════════════
 function createKillrace(deps) {
   const { pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch } = deps;
+  const sbInsert = deps.sbInsert || null;                // 진행자 화면 「새 대회 만들기」(§1.7)만 쓴다
   const fetchImpl = deps.fetchImpl || fetch;
   const env = deps.env || process.env;
   const now = deps.now || (() => Date.now());
@@ -787,6 +796,37 @@ function createKillrace(deps) {
     if (rows.length > limit) log.warn(`[killrace] open_events_capped shown=${limit}`);
     return rows.slice(0, limit).map(evOf);
   }
+  // ── 진행자 화면 「새 대회 만들기」 · 「시각 고치기」(docs/killrace-api.md §1.7) — 검사 · 확인 · 기록은 killrace-live postAdmin 이 한다 ──
+  async function createEvent({ name, start, end }) {
+    if (!sbInsert) throw new Error("no_sbInsert");
+    const row = await sbInsert("event_defs", { name, window_start: new Date(start).toISOString(), window_end: new Date(end).toISOString() });
+    if (!row || row.id == null) throw new Error("event_insert_failed");
+    return evOf(row);
+  }
+  async function updateEventTimes(evId, { start, end }) {
+    await sbPatch("event_defs", `id=eq.${Number(evId)}`, { window_start: new Date(start).toISOString(), window_end: new Date(end).toISOString() });
+    return eventById(evId);
+  }
+  // 창을 [start, end) 로 바꾸면 빠지는 인정 판(시작 시각이 창 밖) — 팀 · 순번 · 시작 시각 · 판 점수
+  async function droppedBy(evId, { start, end }) {
+    const rows = await sbSelect("event_matches", `select=team_name,seq,created_at,score&event_id=eq.${Number(evId)}&seq=not.is.null&order=created_at.asc`);
+    return rows.filter((r) => { const t = Date.parse(r.created_at); return !(Number.isFinite(t) && t >= start && t < end); })
+      .map((r) => ({ team: r.team_name, seq: r.seq, startedAt: Date.parse(r.created_at), score: r.score }));
+  }
+  // 바꾼 기록(§1.7) — ops_state 'killrace:hostlog:<id>' = { v, entries:[{ at, by, action, before, after, … }] } · 회차마다 최근 200줄
+  const hostLogKey = (evId) => `killrace:hostlog:${evId}`;
+  async function loadHostLog(evId) {
+    try {
+      const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(hostLogKey(evId))}&limit=1`);
+      const v = rows.length ? rows[0].value : null;
+      return v && Array.isArray(v.entries) ? v.entries : [];
+    } catch (e) { log.warn("[killrace] hostlog_read_failed", logSafe(e)); return []; }
+  }
+  async function appendHostLog(evId, entry) {
+    const entries = [...(await loadHostLog(evId)), { at: now(), ...entry }].slice(-200);
+    await sbUpsert("ops_state", { key: hostLogKey(evId), value: { v: 1, entries }, updated_at: new Date(now()).toISOString() }, "key");
+    return entries;
+  }
   // 이벤트 설정 — ops_state 한 줄. 읽기 실패 · 없음 = 전부 꺼짐(1회 동작)
   const cfgKey = (evId) => `killrace:event:${evId}`;
   async function loadConfigRaw(evId) {
@@ -861,13 +901,13 @@ function createKillrace(deps) {
     const stored = new Map(storedRows.map((r) => [`${r.team_name}|${r.match_id}`, r]));
     const warn = [];
     const slotName = new Map();
-    teams.forEach((t) => t.members.forEach((x) => slotName.set(x.accountId, `${t.name} ${x.slot}번 ${x.ign}`)));
+    teams.forEach((t) => [...t.members, ...(t.subs || [])].forEach((x) => slotName.set(x.accountId, `${t.name} ${x.slot}번 ${x.ign}`)));
 
     // 1) 선수별 최근 매치 목록 — /players 무캐시 · 플랫폼별 10명씩
     progress("선수별 최근 매치 목록을 보고 있어요…");
     const matchesByAcc = new Map();
     const byPlatform = new Map();
-    teams.forEach((t) => t.members.forEach((x) => {
+    teams.forEach((t) => [...t.members, ...(t.subs || [])].forEach((x) => {   // 교체 선수 계정도 최근 판을 본다(교체 2명이 같이 뛴 판도 후보에 들게)
       if (!byPlatform.has(t.platform)) byPlatform.set(t.platform, new Set());
       byPlatform.get(t.platform).add(x.accountId);
     }));
@@ -952,7 +992,10 @@ function createKillrace(deps) {
       if (seen.has(key)) continue;
       const team = teams.find((t) => t.name === row.team_name);
       const f = row.flags || {};
-      const reusable = team && row.seq != null && f.sig === teamSig(team) && row.deaths && Array.isArray(row.deaths.members);
+      // 창 안에서 시작한 판만 다시 쓴다 — 진행자가 창을 줄이면(§1.7) 창 밖이 된 저장 판은 PUBG 목록에서 다시 안 보여도 뺀다
+      const startedAt = Date.parse(row.created_at);
+      const inWindow = Number.isFinite(startedAt) && startedAt >= ev.start && startedAt < ev.end;
+      const reusable = team && inWindow && row.seq != null && f.sig === teamSig(team) && row.deaths && Array.isArray(row.deaths.members);
       if (reusable) {
         records.push({
           teamName: team.name, sig: f.sig, matchId: row.match_id, createdAtMs: Date.parse(row.created_at), endMs: Number(f.endMs) || null, map: row.map,
@@ -960,7 +1003,7 @@ function createKillrace(deps) {
           members: row.deaths.members, place: row.win_place, encounter: f.encounter || [],
           telemetry: row.deaths.telemetry || null, leave: !!row.leave_flag, source: "stored",
         });
-      } else if (row.seq != null) stale.push(row);
+      } else if (row.seq != null) stale.push({ ...row, why: inWindow ? "sig" : "window" });
     }
 
     for (const rec of records) {
@@ -1050,7 +1093,8 @@ function createKillrace(deps) {
       await sbPatch("event_matches",
         `event_id=eq.${ev.id}&team_name=eq.${encodeURIComponent(row.team_name)}&match_id=eq.${encodeURIComponent(row.match_id)}`,
         { seq: null, score: null, updated_at: stamp });
-      warn.push(`${row.team_name}: 팀 구성이 바뀌어 예전 저장 판 1개(${row.seq}판)는 빼고 순번을 비웠어요`);
+      warn.push(row.why === "window" ? `${row.team_name}: 대회 시각이 바뀌어 창 밖이 된 저장 판 1개(${row.seq}판)는 빼고 순번을 비웠어요`
+        : `${row.team_name}: 팀 구성이 바뀌어 예전 저장 판 1개(${row.seq}판)는 빼고 순번을 비웠어요`);
     }
 
     // 8) 팀 합계 · 순위
@@ -1477,11 +1521,11 @@ function createKillrace(deps) {
     }
   }
 
-  return { handle, registerTeam, setSub, aggregate, history, eventById, listEvents, openEvents, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
+  return { handle, registerTeam, setSub, aggregate, history, eventById, listEvents, openEvents, createEvent, updateEventTimes, droppedBy, loadHostLog, appendHostLog, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
 }
 
 module.exports = {
-  COMMANDS, createKillrace,
+  COMMANDS, createKillrace, scoring: { SLOT_PENALTY, baseScore, applyBoost },   // 점수식은 여기 한 벌 — 스샷 잠정(killrace-shot.cjs)이 같은 식을 쓴다
   _test: {
     SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, baseScore, applyBoost, finalScore, boostTarget, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,

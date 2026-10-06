@@ -31,6 +31,8 @@ const killrace = require("./killrace.cjs");
 const killraceAuction = require("./killrace-auction.cjs");
 const killraceLive = require("./killrace-live.cjs");
 const killraceShot = require("./killrace-shot.cjs");
+// 킬내기 개인 누적 지표(§1.11) — 계정 기준 · 불투명 키 · 회차 묶음. 시험 scripts/killrace-career.test.cjs
+const killraceCareer = require("./killrace-career.cjs");
 let killShot = null;   // 킬내기 결과 스샷 읽기 — 아래 킬내기 HTTP 블록에서 만들고 봇 messageCreate 가 쓴다
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
 //   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
@@ -1377,7 +1379,7 @@ if (process.env.DISCORD_TOKEN) {
   // ── GmI 킬내기 3종(/킬내기팀등록 · /킬내기집계 · /킬내기이탈) — 오너 전용 · 결과는 오너 DM ──
   // 소관 GmI(카지노 트랙 휴면 중 관제탑 승인 대행). 판정·집계·문구는 killrace.cjs 한 곳에 있다.
   // pubgGet·pubgMatch·sb* 는 모듈 레벨 함수 선언이라 여기서 그대로 넘긴다.
-  const killraceBot = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch });
+  const killraceBot = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch, sbInsert });
   client.on("interactionCreate", (itx) => killraceBot.handle(itx).catch((e) => console.error("[killrace] handler", e?.message)));
   // 결과 화면 스샷 → 점수판 「잠정」(killrace-shot.cjs · 팀배정 채널 사진만 · 확정 점수는 안 건드린다)
   client.on("messageCreate", (msg) => { if (killShot) killShot.onMessage(msg).catch((e) => console.error("[killrace-shot] handler", e?.message)); });
@@ -6980,7 +6982,7 @@ function gdcupAdmin(req) {
 // 자동 집계 = killrace-live.cjs tick() 을 1분마다 부른다(대회 시간 밖 · 팀 없음 · PUBG 키 없음이면 조용히 넘어간다).
 // 경매 포인트는 이 행사용 가상 값이다. 카지노 코인 · 지갑 · gdcup_* 표는 읽지도 쓰지도 않는다.
 {
-  const kr = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch });
+  const kr = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch, sbInsert });   // sbInsert = 진행자 화면 「새 대회 만들기」(§1.7)
   const auctionKey = (id) => `killrace:auction:${id}`;
   const store = {
     eventId: async () => (await kr.currentEvent()).id,
@@ -7046,6 +7048,8 @@ function gdcupAdmin(req) {
   });
   live.mount(app);
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { live.tick(); }, 60000).unref();
+  // 개인 누적 지표(§1.11) — GET /api/killrace/career?events=2,3,4 · 닉 · 숫자 · 불투명 키만(계정 번호는 밖으로 안 나간다)
+  killraceCareer.createCareer({ sbSelect, secret: process.env.SESSION_SECRET }).mount(app);
 }
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
 // ── 운영 응답용 members 정제 ──
@@ -8777,6 +8781,12 @@ const SCHEMA_OPTIONAL = {
   //   이 표 쓰기만 10분에 한 번 실패 로그(players_write_failed table_missing). 티어 산정(§1.2)이 읽기 시작하면 REQUIRED 로 올린다.
   event_match_players: ["event_id", "team_name", "match_id", "account_id", "slot", "sub", "ign", "reg_ign", "kills", "damage",
                         "death_type", "dead", "started_at", "updated_at"],
+  // §67 킬내기 판별 상세 기록(docs/killrace-api.md §1.12 · 2026-10-07 실행 · 소관 GmI 대행) — 채우는 코드가 쓰기 전까지 0행.
+  event_match_player_detail: ["event_id", "team_name", "match_id", "account_id", "dbnos", "assists", "headshot_kills", "longest_kill_m",
+                              "revives", "time_survived_s", "walk_m", "ride_m", "swim_m", "heals", "boosts", "team_kills", "kill_place",
+                              "fetched_at"],
+  event_match_telemetry: ["event_id", "team_name", "match_id", "match_start", "source_bytes", "source_events", "positions", "combat",
+                          "fetched_at"],
   // §68 킬내기 상금 적립 장부(docs/killrace-api.md §3 · 2026-10-07 · 소관 GmI 대행 · 초안) — 아직 읽고 쓰는 코드가 없다.
   //   실행 여부만 기동 로그에 남긴다(미실행이면 칸마다 한 줄씩 찍혀서 키 칸 넷만 본다). 적립 · 지급 명령이 붙으면 그 PR 에서 전체 칸으로 REQUIRED 로 올린다.
   event_reward_ledger: ["id", "account_id", "kind", "amount"],

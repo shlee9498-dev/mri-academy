@@ -105,6 +105,24 @@ function eventParam(q) {
   return /^\d{1,6}$/.test(raw) ? { ok: true, id: Number(raw) } : { ok: false };
 }
 
+// 진행자 화면 대회 설정(docs/killrace-api.md §1.7) — 누가 바꿨나(운영 키는 한 벌이라 이름을 적게 한다 · 1~20자)
+function hostBy(v) {
+  const s = String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+  return s && s.length <= 20 ? s : null;
+}
+// 시각 입력 — ISO 문자열 · ms. undefined = 지금 값 그대로 · null/"" = 비움(버닝만). 끝 > 시작 · 길이 6시간까지 · 버닝은 창 안
+const MAX_WINDOW_MS = 6 * 3600e3;
+const hostTime = (v) => (v == null || v === "" ? null : typeof v === "number" ? v : Date.parse(v));
+function hostTimes({ start, end, boostAt } = {}, cur = {}) {
+  const s = start === undefined ? cur.start : hostTime(start);
+  const e = end === undefined ? cur.end : hostTime(end);
+  const b = boostAt === undefined ? (cur.boostAt == null ? null : cur.boostAt) : hostTime(boostAt);
+  if (!Number.isFinite(s) || !Number.isFinite(e) || (b !== null && !Number.isFinite(b))) return { ok: false, code: "bad_time" };
+  if (e <= s || e - s > MAX_WINDOW_MS) return { ok: false, code: "bad_window" };
+  if (b !== null && (b < s || b > e)) return { ok: false, code: "bad_boost" };
+  return { ok: true, start: s, end: e, boostAt: b };
+}
+
 const shortErr = (e) => (e && e.userMsg ? e.userMsg : String(e && e.status ? `${e.status}` : (e && e.name === "AbortError") ? "timeout" : (e && e.message) || "error").replace(/\?\S*/g, "?…").slice(0, 60));
 
 // ═══════════════ HTTP · 자동 집계 ═══════════════
@@ -259,6 +277,10 @@ function createLive(deps) {
     if (deps.decorate && evSeen) {             // 스샷 잠정(killrace-shot.cjs)을 팀마다 shot 칸으로 붙인다 — 총점 · 순위는 안 바뀐다 · 실패해도 점수판은 나간다
       try { await deps.decorate(body, evSeen); } catch (e) { log.warn("[killrace-live] decorate_failed", shortErr(e)); }
     }
+    if (admin && evSeen) {                     // 진행자 화면 대회 설정(§1.7) — 바꾼 기록 최근 30줄 · 보너스 전체(등록 전 팀 이름 포함)
+      try { body.hostLog = (await killrace.loadHostLog(evSeen.id)).slice(-30); body.bonusAll = (await killrace.loadConfig(evSeen.id)).bonus; }
+      catch (e) { log.warn("[killrace-live] hostlog_failed", shortErr(e)); }
+    }
     body.running = running; body.past = false; body.eventId = evSeen ? evSeen.id : null;
     if (!admin) boardCache = { at: now(), body };
     res.json(body);
@@ -288,6 +310,74 @@ function createLive(deps) {
     res.json(body);
   });
 
+  // 기록이 실패해도 바꾼 값은 그대로 두고 로그만(기록 칸이 바뀐 값을 막지 않는다)
+  async function hostLog(evId, entry) {
+    try { await killrace.appendHostLog(evId, entry); } catch (e) { log.warn("[killrace-live] hostlog_write_failed", shortErr(e)); }
+  }
+  async function hostAction(action, b, res, done) {
+    const by = hostBy(b.by);
+    if (!by) return res.status(400).json({ error: { code: "need_by" } });
+    const at = now();
+    if (action === "eventCreate") {
+      const name = String(b.name == null ? "" : b.name).replace(/\s+/g, " ").trim();
+      if (!name || name.length > 40) return res.status(400).json({ error: { code: "bad_name" } });
+      const t = hostTimes({ start: b.start, end: b.end, boostAt: b.boostAt === undefined ? null : b.boostAt });
+      if (!t.ok) return res.status(400).json({ error: { code: t.code } });
+      // 지금 대회가 아직 열려 있으면(끝 + 45분 전) 한 번 더 묻는다 — 새 줄을 만드는 순간 점수판 기본 화면 · 팀 등록이 새 회차로 넘어간다
+      const cur = await killrace.currentEvent().catch(() => null);
+      if (cur && at <= cur.end + GRACE_MS && b.confirm !== true) {
+        return res.status(409).json({ error: { code: "event_open" }, current: { id: cur.id, name: cur.name, end: cur.end } });
+      }
+      const ev = await killrace.createEvent({ name, start: t.start, end: t.end });
+      if (t.boostAt !== null) await killrace.saveConfig(ev.id, { boostAt: new Date(t.boostAt).toISOString() });
+      await hostLog(ev.id, { by, action, before: null, after: { name, start: t.start, end: t.end, boostAt: t.boostAt } });
+      eventsCache = null;
+      return done({ event: { id: ev.id, name: ev.name, start: ev.start, end: ev.end, boostAt: t.boostAt } });
+    }
+    const p = eventParam(b.event == null ? "" : String(b.event));
+    if (!p.ok) return res.status(400).json({ error: { code: "bad_event" } });
+    let ev;
+    try { ev = p.id ? await killrace.eventById(p.id) : await killrace.currentEvent(); }
+    catch (e) { if (e && e.userMsg) return res.status(404).json({ error: { code: "no_event" } }); throw e; }
+    if (at > ev.end + GRACE_MS) return res.status(403).json({ error: { code: "event_closed" } });   // 끝난 회차(끝 + 45분 뒤)는 진행자 화면에서 못 바꾼다
+    const cfg = await killrace.loadConfig(ev.id);
+    if (action === "eventTimes") {
+      const t = hostTimes({ start: b.start, end: b.end, boostAt: b.boostAt }, { start: ev.start, end: ev.end, boostAt: cfg.boostAt });
+      if (!t.ok) return res.status(400).json({ error: { code: t.code } });
+      const windowChanged = t.start !== ev.start || t.end !== ev.end;
+      const boostChanged = t.boostAt !== cfg.boostAt;
+      if (!windowChanged && !boostChanged) return done({ changed: false });
+      // 창을 줄여 이미 인정된 판이 빠지면 먼저 알려 주고 한 번 더 묻는다(confirm: true 로 다시 보내야 바뀐다)
+      const drops = windowChanged ? await killrace.droppedBy(ev.id, t) : [];
+      if (drops.length && b.confirm !== true) return res.status(409).json({ error: { code: "would_drop" }, count: drops.length, games: drops.slice(0, 20) });
+      const before = {}; const after = {};                    // 전 → 후 는 쓰기 전에 잡는다
+      if (t.start !== ev.start) { before.start = ev.start; after.start = t.start; }
+      if (t.end !== ev.end) { before.end = ev.end; after.end = t.end; }
+      if (boostChanged) { before.boostAt = cfg.boostAt; after.boostAt = t.boostAt; }
+      if (windowChanged) await killrace.updateEventTimes(ev.id, t);
+      if (boostChanged) await killrace.saveConfig(ev.id, { boostAt: t.boostAt === null ? null : new Date(t.boostAt).toISOString() });
+      await hostLog(ev.id, { by, action, before, after, ...(drops.length ? { dropped: drops.length } : {}) });
+      eventsCache = null; pastCache.clear();
+      // 빠지는 판은 바로 한 번 집계해 뺀다(도는 중이면 다음 1분 차례 · 열린 대회일 때)
+      let rerun = null;
+      if (drops.length && ready()) { const r = await run("manual", { ev: await killrace.eventById(ev.id) }); rerun = r.ok ? "ok" : r.code; }
+      return done({ changed: true, dropped: drops.length, rerun });
+    }
+    // 팀별 보너스 — 정수 −100 ~ 100 · 비우면 지운다 · 등록 전 팀 이름도 받는다(등록되는 순간 붙는다 · 10/6 4회)
+    const team = String(b.team == null ? "" : b.team).trim();
+    if (!team || team.length > 30) return res.status(400).json({ error: { code: "bad_team" } });
+    const pts = b.points == null || b.points === "" ? null : Number(b.points);
+    if (pts !== null && !(Number.isInteger(pts) && pts >= -100 && pts <= 100)) return res.status(400).json({ error: { code: "bad_points" } });
+    const before = Object.prototype.hasOwnProperty.call(cfg.bonus, team) ? cfg.bonus[team] : null;
+    if (before === pts) return done({ changed: false });
+    const bonus = { ...cfg.bonus };
+    if (pts === null) delete bonus[team]; else bonus[team] = pts;
+    await killrace.saveConfig(ev.id, { bonus });
+    await hostLog(ev.id, { by, action, team, before, after: pts });
+    const teams = await killrace.loadTeams(ev.id);
+    return done({ changed: true, registered: teams.some((x) => x.name === team) });
+  }
+
   const postAdmin = guard(async (req, res) => {
     if (!isAdmin(req)) return res.status(401).json({ error: { code: "unauthorized" } });
     const b = req.body || {}; const action = String(b.action || "");
@@ -305,12 +395,16 @@ function createLive(deps) {
       if (!r.ok) return res.status(r.code === "busy" ? 409 : 502).json({ error: { code: r.code, message: r.error || null } });
       return done({ ms: r.ms });
     }
+    // ── 진행자 화면 대회 설정(§1.7) — 새 대회 만들기 · 시각 고치기 · 팀별 보너스. 누가(by) · 언제 · 전 → 후 를 회차마다 남긴다 ──
+    if (action === "eventCreate" || action === "eventTimes" || action === "bonus") return hostAction(action, b, res, done);
     const ev = await killrace.currentEvent();
     if (action === "auto") { await killrace.saveConfig(ev.id, { auto: b.on !== false }); return done({ auto: b.on !== false }); }
     if (action === "boostAt") {
       const t = b.boostAt == null || b.boostAt === "" ? null : Date.parse(b.boostAt);
       if (t !== null && !Number.isFinite(t)) return res.status(400).json({ error: { code: "bad_time" } });
+      const was = (await killrace.loadConfig(ev.id)).boostAt;
       await killrace.saveConfig(ev.id, { boostAt: t === null ? null : new Date(t).toISOString() });
+      await hostLog(ev.id, { by: hostBy(b.by) || "?", action, before: { boostAt: was }, after: { boostAt: t } });
       return done();
     }
     if (action === "leave") {                                  // 이탈 −10 표시 · 해제
@@ -360,5 +454,5 @@ function createLive(deps) {
 
 module.exports = {
   createLive, GRACE_MS, MAX_FAILS,
-  _test: { emptyLive, normLive, press, afterRun, skipReason, noteSuccess, noteFailure, eventParam, PRESS_GAP_MS, PRESS_MAX },
+  _test: { emptyLive, normLive, press, afterRun, skipReason, noteSuccess, noteFailure, eventParam, hostBy, hostTimes, MAX_WINDOW_MS, PRESS_GAP_MS, PRESS_MAX },
 };
