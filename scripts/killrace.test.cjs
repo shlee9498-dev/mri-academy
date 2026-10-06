@@ -944,3 +944,18 @@ test("열린 대회: [시작, 끝 + 여유] 안인 대회 · 번호 큰 순 · �
   assert.ok(queries.some(([t, qq]) => t === "event_defs" && qq.includes("order=id.desc&limit=1")));
   assert.ok(queries.some(([t, qq]) => t === "event_teams" && qq.includes("event_id=eq.9")));
 });
+
+// ── 진행자가 창을 줄이면(docs/killrace-api.md §1.7) 창 밖이 된 저장 판은 PUBG 목록에 다시 안 보여도 뺀다 ──
+test("창을 줄이면: 창 밖이 된 저장 인정 판은 다음 집계에서 순번을 비운다(창 시각 때문이라고 알림) · 창 안 저장 판은 그대로 다시 쓴다", async () => {
+  const sig = T.teamSig(T.normTeam(teamRow("불사조", "a")));
+  const members = accsOf("a").map((acc, i) => ({ slot: i + 1, accountId: acc, ign: acc, kills: i === 0 ? 5 : 0, damage: 0, deathType: "byplayer" }));
+  const deaths = { v: 1, members, verdict: members.map((m) => ({ slot: m.slot, dead: true, why: "deathType" })) };
+  const row = (id, at, seq) => ({ team_name: "불사조", match_id: id, seq, map: "Baltic_Main", created_at: new Date(at).toISOString(), damage_sum: 0, kills: 5,
+    win_place: 10, penalty: 10, score: -5, leave_flag: false, deaths, flags: { sig, deadSlots: [1, 2, 3, 4], endMs: at + 1500e3 } });
+  const stored = [row("in1", EV2.start + 10 * 60000, 1), row("out1", EV2.start - 2 * 3600e3, 2)];      // out1 = 창을 늦춘 뒤 창 밖(30분 넘게 앞)
+  const w = fakeWorld({ cfgValue: null, matches: [], teamRows: [teamRow("불사조", "a")], stored });
+  const res = await w.bot.aggregate();
+  assert.deepEqual(res.teams[0].games.map((g) => [g.matchId, g.source, g.score]), [["in1", "stored", -5]]);
+  assert.deepEqual(w.db.patches.map(([t, f, p]) => [t, f.includes("match_id=eq.out1"), p.seq, p.score]), [["event_matches", true, null, null]]);
+  assert.match(res.warn.join("\n"), /대회 시각이 바뀌어 창 밖이 된 저장 판 1개\(2판\)/);
+});
