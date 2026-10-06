@@ -302,3 +302,32 @@ test("점수판 잠정 칸: 미확정 스샷 판 점수 합 · 음수 그대로 
   const kb = T.decorateBoard({ boostAt, teams: [team()] }, { shots: [s1, { ...s2, rank: null }] }, boostAt + 46 * MIN).teams[0].shot;
   assert.deepEqual([kb.basis, kb.score, kb.penalty, kb.kills, kb.damage], ["kills", null, null, 9, 420]);
 });
+
+test("스샷 잠정 · 머지된 모양(검수 41차 ③): 진짜 buildBoard(5회 · 판 순번) → decorateBoard — 다음 판이 5번째 · 7번째인 팀(nextBoost)의 스샷에 ×1.5 · 6번째 팀은 그대로", () => {
+  const K = require("../killrace.cjs")._test;
+  const at0 = EV.start;
+  const EV5 = { id: 5, name: "5회 GmI 킬내기", start: at0, end: at0 + 120 * MIN };
+  const cfg = K.normEventConfig({}, 5);                                          // 5회 = 설정이 비어도 판 순번 5 · 7
+  const mkTeam = (name, p) => ({ team_name: name, platform: "steam", members: FOUR.map((m) => ({ slot: m.slot, ign: `${p}_${m.slot}`, accountId: `account.${p}${m.slot}` })) });
+  const teams = [mkTeam("해달팀", "a"), mkTeam("수달팀", "b"), mkTeam("물개팀", "c")].map(K.normTeam);
+  const game = (team, seq) => ({ team_name: team, match_id: `${team}-${seq}`, seq, map: "Baltic_Main", created_at: new Date(at0 + seq * 12 * MIN).toISOString(),
+    damage_sum: 300, kills: 2, win_place: 9, penalty: 10, leave_flag: false, score: -5, flags: { deadSlots: [1, 2, 3, 4], endMs: at0 + seq * 12 * MIN + 10 * MIN }, updated_at: new Date(at0).toISOString() });
+  const rows = [...[1, 2, 3, 4].map((n) => game("해달팀", n)), ...[1, 2, 3, 4, 5, 6].map((n) => game("수달팀", n)), ...[1, 2, 3, 4, 5].map((n) => game("물개팀", n))];
+  const at = at0 + 100 * MIN;
+  const body = K.buildBoard({ ev: EV5, teams, cfg, rows, at, admin: false });
+  const t = (name) => body.teams.find((x) => x.name === name);
+  assert.deepEqual([body.boostMode, body.boostSeqs, body.boostAt], ["seq", [5, 7], null]);
+  assert.deepEqual(["해달팀", "수달팀", "물개팀"].map((n) => [t(n).games, t(n).nextBoost]), [[4, true], [6, true], [5, false]]);
+  // 마지막 확정 판(endMs)이 끝난 뒤 올라온 스샷 하나씩 — 전멸 3킬(−7)
+  const lastStart = (n) => at0 + n * 12 * MIN;
+  const shots = [shotOf({ id: "s:a", team: "해달팀", at: at - 5 * MIN, base: lastStart(4), kills: 3 }),
+    shotOf({ id: "s:b", team: "수달팀", at: at - 5 * MIN, base: lastStart(6), kills: 3 }),
+    shotOf({ id: "s:c", team: "물개팀", at: at - 5 * MIN, base: lastStart(5), kills: 3 })];
+  T.decorateBoard(body, { shots }, at);
+  assert.deepEqual(["해달팀", "수달팀", "물개팀"].map((n) => [t(n).shot.basis, t(n).shot.score, t(n).shot.boost]),
+    [["full", -11, 1.5], ["full", -11, 1.5], ["full", -7, null]]);           // −7 × 1.5 = −10.5 → −11(0 에서 먼 쪽) · 6번째 판은 그대로
+  // 스샷 판 순번 판단 = 서버 nextBoost 와 같다(미확정 첫 스샷 = 확정 판 수 + 1번째 판)
+  for (const n of ["해달팀", "수달팀", "물개팀"]) assert.equal(t(n).shot.boost === 1.5, t(n).nextBoost === true, n);
+  // 총점 · 순위는 그대로(잠정 칸만 붙는다)
+  assert.deepEqual(body.teams.map((x) => x.total), [-20, -25, -30].sort((a, b) => b - a));
+});

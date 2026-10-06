@@ -20,6 +20,7 @@ exclude:
   - "*.cjs"
   - config
   - scripts
+  - fonts          # 킬내기 결과 포스터를 서버에서 그릴 때 쓰는 글꼴(killrace-poster.cjs) — 사이트는 안 부른다
   # 스키마 · 시드 SQL
   - "*.sql"
   # 패키지 · 도구 파일 · Cloudflare Pages 허용 목록(파일 이름만 있지만 사이트 파일이 아니다)
