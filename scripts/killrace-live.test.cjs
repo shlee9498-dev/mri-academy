@@ -157,14 +157,31 @@ test("진행자 동작: 자동 켜고 끄기 · 배수 시각 · 이탈 · 핵 �
   assert.deepEqual(w.leaves, [{ teamName: "불사조", seq: 2, clear: false }]);
   assert.deepEqual((await host({ action: "voidDeath", team: "불사조", seq: 2, slot: 1 })).body, { ok: true, score: 5, penalty: 2 });
   assert.deepEqual(w.voids, [{ teamName: "불사조", seq: 2, slot: 1, clear: false }]);
-  // 낙하 전 튕김 — 이 판 무효. 표시는 집계를 부르지 않고, 해제는 그 판을 되살리려고 바로 한 번 집계한다
+  // 낙하 전 튕김 — 이 판 무효. 표시 · 해제 모두 바로 한 번 집계한다(뒤 판 순번이 당겨져 판 순번 버닝이 옮겨 간다 · §1.13 ·
+  // 해제는 그 판을 되살린다). 대회가 끝나 1분 집계가 안 도는 때에도 순번 · 버닝이 바로 맞는다
   const n0 = w.aggCalls;
   assert.equal((await host({ action: "voidGame", team: "불사조", matchId: "m1" })).code, 200);
-  assert.equal(w.aggCalls, n0);
+  assert.equal(w.aggCalls, n0 + 1);
   await host({ action: "voidGame", team: "불사조", matchId: "m1", clear: true });
-  assert.deepEqual([w.voidGames, w.aggCalls], [[{ teamName: "불사조", matchId: "m1", clear: false }, { teamName: "불사조", matchId: "m1", clear: true }], n0 + 1]);
+  assert.deepEqual([w.voidGames, w.aggCalls], [[{ teamName: "불사조", matchId: "m1", clear: false }, { teamName: "불사조", matchId: "m1", clear: true }], n0 + 2]);
+  w.notReady = true;                                             // 집계기를 못 쓰는 때(키 없음)는 표시만 하고 집계는 부르지 않는다
+  assert.equal((await host({ action: "voidGame", team: "불사조", matchId: "m2" })).code, 200);
+  assert.equal(w.aggCalls, n0 + 2);
+  w.notReady = false;
   assert.equal((await host({ action: "tokens" })).body.made, 1);
   assert.equal((await host({ action: "constructor" })).code, 400);
+});
+
+test("진행자 동작: 판 순번 버닝 회차(5회부터 · §1.13)에는 버닝 시각을 받지 않는다 — 409 boost_by_seq · 설정은 그대로", async () => {
+  const { w, api, call } = world({ cfg: { auto: true, liveTokens: {}, boostMode: "seq", boostSeqs: [5, 7] } });
+  const host = (body) => call(api.postAdmin, { headers: { "x-admin-key": "host" }, body });
+  const r = await host({ action: "boostAt", boostAt: "2026-10-08T13:35:00Z" });
+  assert.deepEqual([r.code, r.body.error.code, w.cfgSaves.length], [409, "boost_by_seq", 0]);
+  assert.equal((await host({ action: "boostAt", boostAt: "어제" })).code, 400);      // 시각이 깨졌으면 그 전에 400
+  // 시각 방식 회차는 종전 그대로 저장한다
+  w.cfg.boostMode = "time";
+  assert.equal((await host({ action: "boostAt", boostAt: "2026-10-08T13:35:00Z" })).code, 200);
+  assert.deepEqual(w.cfgSaves.pop(), { boostAt: "2026-10-08T13:35:00.000Z" });
 });
 
 // ── 지난 회차 보기(읽기만) — ?event= · 회차 목록 · 지금 대회의 잠정 상태(캐시)를 건드리지 않는다 ──

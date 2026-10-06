@@ -310,6 +310,8 @@ function createLive(deps) {
     if (action === "boostAt") {
       const t = b.boostAt == null || b.boostAt === "" ? null : Date.parse(b.boostAt);
       if (t !== null && !Number.isFinite(t)) return res.status(400).json({ error: { code: "bad_time" } });
+      // 판 순번 버닝 회차(5회부터 · §1.13)는 시각을 쓰지 않는다 — 저장해도 안 쓰이는 값이라 받지 않고 알려 준다
+      if ((await killrace.loadConfig(ev.id)).boostMode === "seq") return res.status(409).json({ error: { code: "boost_by_seq" } });
       await killrace.saveConfig(ev.id, { boostAt: t === null ? null : new Date(t).toISOString() });
       return done();
     }
@@ -323,7 +325,8 @@ function createLive(deps) {
     }
     if (action === "voidGame") {                               // 낙하 전 튕김 — 이 판 무효 · 해제(해제하면 바로 한 번 집계해 그 판을 되살린다)
       await killrace.setVoidGame({ teamName: b.team, matchId: b.matchId, clear: !!b.clear });
-      if (b.clear && ready()) await run("manual");
+      // 무효로 돌려도 바로 한 번 센다 — 뒤 판들의 순번이 당겨져 판 순번 버닝(5 · 7번째)이 옮겨 가기 때문이다(§1.13 · 대회가 끝난 뒤에는 1분 집계가 안 돈다)
+      if (ready()) await run("manual");
       return done();
     }
     if (action === "tokens") { const r = await killrace.ensureLiveTokens(makeToken); return done({ made: r.made }); }
