@@ -143,11 +143,14 @@ function isSettled(shot, rows, at) {
 // 사망: 탈락 화면(순위 2 이상)은 팀 전원 사망이다 — 전적 판정과 같다(2 · 3 · 4회 탈락 91판 모두 전원 사망 · 10/7 실측).
 //       치킨(순위 1)은 사진의 사망 표시를 읽어야 한다 — 한 명이라도 못 읽었거나 죽은 사람의 슬롯을 모르면 「킬만 반영」.
 //       순위를 못 읽었으면 「킬만 반영」(짐작하지 않는다).
-// 버닝: 사진만으로는 판 시작 시각을 모른다 — 그 판이 버닝 시각 뒤에 시작한 게 확실할 때만 곱한다(스샷을 올릴 때 알던 마지막 판이
+// 버닝(시각 방식 · 2 · 3 · 4회): 사진만으로는 판 시작 시각을 모른다 — 그 판이 버닝 시각 뒤에 시작한 게 확실할 때만 곱한다(스샷을 올릴 때 알던 마지막 판이
 //       버닝 시각 뒤에 시작했으면 확실). 버닝 시각 전에 올린 스샷은 버닝 아님 · 그 사이는 "maybe"(곱하지 않고 「버닝?」 표시).
 //       그 팀이 버닝 판을 이미 썼거나(확정 판) 앞 스샷이 버닝 판이면 버닝 아님 · 앞 스샷이 "maybe" 면 이것도 "maybe".
-// lane = { used, maybe } — 같은 팀 미확정 스샷을 시간 순으로 넘기며 버닝 판 차례를 이어 본다
-function shotScore(shot, team, { boostAt = null, boostMul = 1.5 } = {}, lane = { used: false, maybe: false }) {
+// 버닝(판 순번 · 5회부터 · §1.13): 시각이 필요 없다 — 같은 팀 미확정 스샷 k번째 = 그 팀 「확정 판 수 + k」번째 판으로 보고,
+//       그 순번이 boostSeqs(5 · 7)에 들면 곱한다(「미정」 아님). 읽지 못한 스샷도 판 하나라서 순번은 하나 차지한다.
+// lane = { used, maybe, next } — 같은 팀 미확정 스샷을 시간 순으로 넘기며 버닝 판 차례를 이어 본다(next = 다음 스샷의 판 순번)
+function shotScore(shot, team, { boostAt = null, boostMul = 1.5, boostSeqs = null } = {}, lane = { used: false, maybe: false, next: null }) {
+  const nth = Array.isArray(boostSeqs) && Number.isInteger(lane.next) ? lane.next++ : null;
   if (!shot || shot.rank == null) return { basis: "kills" };
   const slots = ((team && team.members) || []).map((m) => Number(m.slot)).filter((x) => Number.isInteger(x) && x >= 1);
   if (!slots.length) return { basis: "kills" };
@@ -163,7 +166,8 @@ function shotScore(shot, team, { boostAt = null, boostMul = 1.5 } = {}, lane = {
   const penalty = deadSlots.reduce((n, s) => n + (scoring.SLOT_PENALTY[s - 1] || 0), 0);
   const base = scoring.baseScore(Number(shot.kills) || 0, Number(shot.damage) || 0, shot.rank, penalty);
   let boost = null;
-  if (Number.isFinite(boostAt) && !lane.used && shot.at >= boostAt) {
+  if (nth != null) { if (boostSeqs.includes(nth)) boost = boostMul; }
+  else if (Number.isFinite(boostAt) && !lane.used && shot.at >= boostAt) {
     if (lane.maybe) boost = "maybe";
     else if ((Number(shot.base) || 0) >= boostAt) { boost = boostMul; lane.used = true; }
     else { boost = "maybe"; lane.maybe = true; }
@@ -176,12 +180,14 @@ function shotScore(shot, team, { boostAt = null, boostMul = 1.5 } = {}, lane = {
 // 방송 화면이 쓰는 칸(n · kills · damage · rank · teams · dead · at · players)은 그대로 둔다
 function decorateBoard(body, state, at) {
   const shots = (state && state.shots) || [];
-  const opts = { boostAt: Number.isFinite(body && body.boostAt) ? body.boostAt : null, boostMul: Number(body && body.boostMul) || 1.5 };
+  const seqMode = !!(body && body.boostMode === "seq" && Array.isArray(body.boostSeqs));      // 판 순번 버닝 회차(5회부터 · §1.13)
+  const opts = { boostAt: Number.isFinite(body && body.boostAt) ? body.boostAt : null, boostMul: Number(body && body.boostMul) || 1.5,
+    boostSeqs: seqMode ? body.boostSeqs : null };
   for (const t of (body && body.teams) || []) {
     const open = shots.filter((s) => s.team === t.name && !isSettled(s, t.rows, at)).sort((a, b) => a.at - b.at);
     if (!open.length) { t.shot = null; continue; }
     const last = open[open.length - 1];
-    const lane = { used: !!t.boostUsed, maybe: false };
+    const lane = { used: !!t.boostUsed, maybe: false, next: seqMode ? (Number(t.games) || 0) + 1 : null };
     const each = open.map((s) => shotScore(s, t, opts, lane));
     const full = each.every((x) => x.basis === "full");
     const boosts = each.map((x) => x.boost).filter((b) => b != null);

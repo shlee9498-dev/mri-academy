@@ -263,6 +263,31 @@ test("스샷 잠정 점수: 버닝은 확실할 때만 곱한다 — 알던 마�
   assert.equal(T.shotScore(shotOf({ at: boostAt + 30 * MIN, base: boostAt + 2 * MIN }), { members: FOUR }, o, { used: true, maybe: false }).boost, null);
 });
 
+test("스샷 잠정 점수 · 판 순번 버닝(5회부터 · §1.13): 미확정 k번째 = 확정 판 수 + k번째 판 · 5 · 7번째면 ×1.5(「미정」 아님) · 못 읽은 스샷도 순번 하나 · 시각은 안 본다", () => {
+  const o = { boostMul: 1.5, boostSeqs: [5, 7] };
+  // 확정 4판 → 다음 스샷은 5번째 = ×1.5(−7 → −10.5 → −11) · 그다음은 6번째 = 그대로 · 그다음 7번째 = ×1.5
+  const lane = { used: false, maybe: false, next: 5 };
+  const r5 = T.shotScore(shotOf({ kills: 3 }), { members: FOUR }, o, lane);
+  const r6 = T.shotScore(shotOf({ kills: 3 }), { members: FOUR }, o, lane);
+  const r7 = T.shotScore(shotOf({ kills: 12, damage: 900, rank: 4 }), { members: FOUR }, o, lane);      // 12 + 9 − 10 = 11 → 16.5 → 17
+  assert.deepEqual([r5.score, r5.boost, r6.score, r6.boost, r7.base, r7.score, r7.boost, lane.next], [-11, 1.5, -7, null, 11, 17, 1.5, 8]);
+  // 순위를 못 읽은 스샷도 판 하나 — 순번은 넘어간다(그다음이 7번째)
+  const l2 = { used: false, maybe: false, next: 6 };
+  assert.deepEqual(T.shotScore(shotOf({ rank: null }), { members: FOUR }, o, l2), { basis: "kills" });
+  assert.deepEqual([T.shotScore(shotOf({}), { members: FOUR }, o, l2).boost, l2.next], [1.5, 8]);
+  // 시각이 같이 와도 판 순번이 먼저(시각 칸은 서버가 null 로 내지만 섞여 와도 안 본다)
+  assert.equal(T.shotScore(shotOf({ at: EV.start + 90 * MIN }), { members: FOUR }, { ...o, boostAt: EV.start }, { used: false, maybe: false, next: 3 }).boost, null);
+  // 점수판 칸: boostMode "seq" 면 teams[].games(확정 판 수)에서 이어 센다
+  const t = { name: "해달팀", rank: 1, total: 30, games: 4, members: FOUR, rows: [{ seq: 4, startedAt: EV.start + 30 * MIN, place: 9, score: 3 }] };
+  const s1 = shotOf({ id: "m:1", at: EV.start + 70 * MIN, base: EV.start + 30 * MIN, kills: 3 });      // 5번째 → −11
+  const s2 = shotOf({ id: "m:2", at: EV.start + 90 * MIN, base: EV.start + 30 * MIN, kills: 5 });      // 6번째 → 5 − 10 = −5
+  const b = T.decorateBoard({ boostMode: "seq", boostSeqs: [5, 7], boostAt: null, boostMul: 1.5, teams: [t] }, { shots: [s1, s2] }, EV.start + 91 * MIN);
+  assert.deepEqual([b.teams[0].shot.score, b.teams[0].shot.boost, b.teams[0].total], [-16, 1.5, 30]);
+  // 시각 방식 응답(boostMode 없음 = 2 · 3 · 4회 · 옛 서버)은 종전 규칙 그대로 — 버닝 시각이 없으면 버닝 없음
+  const old = T.decorateBoard({ boostAt: null, boostMul: 1.5, teams: [{ ...t }] }, { shots: [s1, s2] }, EV.start + 91 * MIN);
+  assert.deepEqual([old.teams[0].shot.score, old.teams[0].shot.boost], [-12, null]);
+});
+
 test("점수판 잠정 칸: 미확정 스샷 판 점수 합 · 음수 그대로 · 버닝 판은 팀마다 하나 · 하나라도 셀 수 없으면 킬만 반영 · 총점 · 순위는 그대로", () => {
   const boostAt = EV.start + 60 * MIN;
   const g1 = { seq: 1, startedAt: boostAt + 2 * MIN, place: 10, score: 9 };
