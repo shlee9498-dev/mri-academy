@@ -1396,6 +1396,13 @@ function createKillrace(deps) {
         ? `텔레메트리 ${num(Math.round(d.tel.bytes / 1024))}KB 전송 · 풀어서 ${num(Math.round(d.tel.chars / 1024))}KB · 이벤트 ${num(d.tel.events)}개 · ${(d.tel.ms / 1000).toFixed(1)}초 (시각은 경기 시작 기준 분:초)`
         : `텔레메트리 실패: ${d.telErr}`,
     ];
+    // 늦은 블루칩 부활(§1.14) 실측 — 이 판에 규칙을 대면 어떻게 나오나(저장 · 점수와 무관)
+    if (d.tel) {
+      const rv = lateReviveCheck(d.tel, d.mates.map((x, i) => ({ slot: i + 1, ign: x.name, accountId: x.accountId })), REVIVE_PHASE_DEFAULT);
+      const rides = d.mates.flatMap((x) => ((d.tel.players[x.accountId] || {}).redeploys || []).map((t) => `${x.name} ${rel(t)}`));
+      lines.push(`부활 비행기 ${rides.length ? rides.join(", ") : "없음"} · ${REVIVE_PHASE_DEFAULT}페이즈 시작 ${rv.phaseAt ? rel(rv.phaseAt) : "없음"}`
+        + ` → 늦은 부활 ${rv.state === "late" ? "위반" : rv.state === "ok" ? "아님" : "확인 못 함"}`);
+    }
     for (const x of d.mates) {
       const ev = d.tel ? d.tel.players[x.accountId] : null;
       const tv = d.tel ? telemetryVerdict(ev, { deathType: x.deathType }, place) : null;

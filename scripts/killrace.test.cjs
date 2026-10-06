@@ -1268,3 +1268,15 @@ test("창을 줄이면: 창 밖이 된 저장 인정 판은 다음 집계에서 
   assert.deepEqual(w.db.patches.map(([t, f, p]) => [t, f.includes("match_id=eq.out1"), p.seq, p.score]), [["event_matches", true, null, null]]);
   assert.match(res.warn.join("\n"), /대회 시각이 바뀌어 창 밖이 된 저장 판 1개\(2판\)/);
 });
+
+test("늦은 부활 · 진단(오너 · 저장 안 함): 최근 판 하나에 규칙을 대 본 줄 — 탑승 시각 · 4페이즈 시작 · 위반 여부", async () => {
+  const at = Date.parse("2026-10-07T12:00:00Z");
+  const A = accsOf("a");
+  const m = squadMatch("d1", at, A, { kills: 2 });
+  const w = fakeWorld({ ev: EV5, cfgValue: {}, matches: [m], teamRows: [], tel: { d1: telFor(at, [["account.a2", 841], ["account.a4", 991]]) } });
+  const d = await w.bot.diagnose({ ign: "account.a1" });
+  const text = w.bot.formatDiagnosis(d).join("\n");
+  assert.match(text, /부활 비행기 account\.a2 14:01, account\.a4 16:31 · 4페이즈 시작 16:01 → 늦은 부활 위반/);
+  const w2 = fakeWorld({ ev: EV5, cfgValue: {}, matches: [m], teamRows: [], tel: { d1: telFor(at, [["account.a2", 841]]) } });
+  assert.match(w2.bot.formatDiagnosis(await w2.bot.diagnose({ ign: "account.a1" })).join("\n"), /→ 늦은 부활 아님/);
+});
