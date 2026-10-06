@@ -1377,7 +1377,7 @@ if (process.env.DISCORD_TOKEN) {
   // ── GmI 킬내기 3종(/킬내기팀등록 · /킬내기집계 · /킬내기이탈) — 오너 전용 · 결과는 오너 DM ──
   // 소관 GmI(카지노 트랙 휴면 중 관제탑 승인 대행). 판정·집계·문구는 killrace.cjs 한 곳에 있다.
   // pubgGet·pubgMatch·sb* 는 모듈 레벨 함수 선언이라 여기서 그대로 넘긴다.
-  const killraceBot = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch });
+  const killraceBot = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch, sbInsert });
   client.on("interactionCreate", (itx) => killraceBot.handle(itx).catch((e) => console.error("[killrace] handler", e?.message)));
   // 결과 화면 스샷 → 점수판 「잠정」(killrace-shot.cjs · 팀배정 채널 사진만 · 확정 점수는 안 건드린다)
   client.on("messageCreate", (msg) => { if (killShot) killShot.onMessage(msg).catch((e) => console.error("[killrace-shot] handler", e?.message)); });
@@ -6980,7 +6980,7 @@ function gdcupAdmin(req) {
 // 자동 집계 = killrace-live.cjs tick() 을 1분마다 부른다(대회 시간 밖 · 팀 없음 · PUBG 키 없음이면 조용히 넘어간다).
 // 경매 포인트는 이 행사용 가상 값이다. 카지노 코인 · 지갑 · gdcup_* 표는 읽지도 쓰지도 않는다.
 {
-  const kr = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch });
+  const kr = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch, sbInsert });   // sbInsert = 진행자 화면 「새 대회 만들기」(§1.7)
   const auctionKey = (id) => `killrace:auction:${id}`;
   const store = {
     eventId: async () => (await kr.currentEvent()).id,

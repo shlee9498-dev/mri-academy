@@ -675,6 +675,7 @@ const logSafe = (e) => shortErr(e).replace(/\?\S*/g, "?…");
 // ═══════════════ 봇·DB 연결 ═══════════════
 function createKillrace(deps) {
   const { pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch } = deps;
+  const sbInsert = deps.sbInsert || null;                // 진행자 화면 「새 대회 만들기」(§1.7)만 쓴다
   const fetchImpl = deps.fetchImpl || fetch;
   const env = deps.env || process.env;
   const now = deps.now || (() => Date.now());
@@ -740,6 +741,37 @@ function createKillrace(deps) {
       `select=id,name,window_start,window_end&window_start=lte.${iso(at)}&window_end=gte.${iso(at - graceMs)}&order=id.desc&limit=${limit + 1}`);
     if (rows.length > limit) log.warn(`[killrace] open_events_capped shown=${limit}`);
     return rows.slice(0, limit).map(evOf);
+  }
+  // ── 진행자 화면 「새 대회 만들기」 · 「시각 고치기」(docs/killrace-api.md §1.7) — 검사 · 확인 · 기록은 killrace-live postAdmin 이 한다 ──
+  async function createEvent({ name, start, end }) {
+    if (!sbInsert) throw new Error("no_sbInsert");
+    const row = await sbInsert("event_defs", { name, window_start: new Date(start).toISOString(), window_end: new Date(end).toISOString() });
+    if (!row || row.id == null) throw new Error("event_insert_failed");
+    return evOf(row);
+  }
+  async function updateEventTimes(evId, { start, end }) {
+    await sbPatch("event_defs", `id=eq.${Number(evId)}`, { window_start: new Date(start).toISOString(), window_end: new Date(end).toISOString() });
+    return eventById(evId);
+  }
+  // 창을 [start, end) 로 바꾸면 빠지는 인정 판(시작 시각이 창 밖) — 팀 · 순번 · 시작 시각 · 판 점수
+  async function droppedBy(evId, { start, end }) {
+    const rows = await sbSelect("event_matches", `select=team_name,seq,created_at,score&event_id=eq.${Number(evId)}&seq=not.is.null&order=created_at.asc`);
+    return rows.filter((r) => { const t = Date.parse(r.created_at); return !(Number.isFinite(t) && t >= start && t < end); })
+      .map((r) => ({ team: r.team_name, seq: r.seq, startedAt: Date.parse(r.created_at), score: r.score }));
+  }
+  // 바꾼 기록(§1.7) — ops_state 'killrace:hostlog:<id>' = { v, entries:[{ at, by, action, before, after, … }] } · 회차마다 최근 200줄
+  const hostLogKey = (evId) => `killrace:hostlog:${evId}`;
+  async function loadHostLog(evId) {
+    try {
+      const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(hostLogKey(evId))}&limit=1`);
+      const v = rows.length ? rows[0].value : null;
+      return v && Array.isArray(v.entries) ? v.entries : [];
+    } catch (e) { log.warn("[killrace] hostlog_read_failed", logSafe(e)); return []; }
+  }
+  async function appendHostLog(evId, entry) {
+    const entries = [...(await loadHostLog(evId)), { at: now(), ...entry }].slice(-200);
+    await sbUpsert("ops_state", { key: hostLogKey(evId), value: { v: 1, entries }, updated_at: new Date(now()).toISOString() }, "key");
+    return entries;
   }
   // 이벤트 설정 — ops_state 한 줄. 읽기 실패 · 없음 = 전부 꺼짐(1회 동작)
   const cfgKey = (evId) => `killrace:event:${evId}`;
@@ -906,7 +938,10 @@ function createKillrace(deps) {
       if (seen.has(key)) continue;
       const team = teams.find((t) => t.name === row.team_name);
       const f = row.flags || {};
-      const reusable = team && row.seq != null && f.sig === teamSig(team) && row.deaths && Array.isArray(row.deaths.members);
+      // 창 안에서 시작한 판만 다시 쓴다 — 진행자가 창을 줄이면(§1.7) 창 밖이 된 저장 판은 PUBG 목록에서 다시 안 보여도 뺀다
+      const startedAt = Date.parse(row.created_at);
+      const inWindow = Number.isFinite(startedAt) && startedAt >= ev.start && startedAt < ev.end;
+      const reusable = team && inWindow && row.seq != null && f.sig === teamSig(team) && row.deaths && Array.isArray(row.deaths.members);
       if (reusable) {
         records.push({
           teamName: team.name, sig: f.sig, matchId: row.match_id, createdAtMs: Date.parse(row.created_at), endMs: Number(f.endMs) || null, map: row.map,
@@ -914,7 +949,7 @@ function createKillrace(deps) {
           members: row.deaths.members, place: row.win_place, encounter: f.encounter || [],
           telemetry: row.deaths.telemetry || null, leave: !!row.leave_flag, source: "stored",
         });
-      } else if (row.seq != null) stale.push(row);
+      } else if (row.seq != null) stale.push({ ...row, why: inWindow ? "sig" : "window" });
     }
 
     for (const rec of records) {
@@ -1003,7 +1038,8 @@ function createKillrace(deps) {
       await sbPatch("event_matches",
         `event_id=eq.${ev.id}&team_name=eq.${encodeURIComponent(row.team_name)}&match_id=eq.${encodeURIComponent(row.match_id)}`,
         { seq: null, score: null, updated_at: stamp });
-      warn.push(`${row.team_name}: 팀 구성이 바뀌어 예전 저장 판 1개(${row.seq}판)는 빼고 순번을 비웠어요`);
+      warn.push(row.why === "window" ? `${row.team_name}: 대회 시각이 바뀌어 창 밖이 된 저장 판 1개(${row.seq}판)는 빼고 순번을 비웠어요`
+        : `${row.team_name}: 팀 구성이 바뀌어 예전 저장 판 1개(${row.seq}판)는 빼고 순번을 비웠어요`);
     }
 
     // 8) 팀 합계 · 순위
@@ -1430,7 +1466,7 @@ function createKillrace(deps) {
     }
   }
 
-  return { handle, registerTeam, setSub, aggregate, history, eventById, listEvents, openEvents, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
+  return { handle, registerTeam, setSub, aggregate, history, eventById, listEvents, openEvents, createEvent, updateEventTimes, droppedBy, loadHostLog, appendHostLog, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
 }
 
 module.exports = {
