@@ -10,7 +10,7 @@
 // 잠정 킬: 팀별 주소(토큰)에서 「+1킬」「-1」. 로그인 없음. 점수판에 회색 숫자로만 보이고 총점에는 더하지 않는다.
 //   그 팀의 판이 확정되면 그 판이 끝나기 전에 누른 것은 사라진다(= 0 으로 돌아간다). 다음 판에서 이미 누른 것은 남는다.
 // 저장: ops_state 'killrace:live:<event id>' 한 줄(DDL 없음) = { presses{팀:[시각…]}, ranks, gains, run }.
-// HTTP: GET /api/killrace/players(공개 · 개인 기록 화면) · GET /api/killrace/board(공개 · 진행자) · POST /api/killrace/board/admin(진행자) · POST /api/killrace/live(팀 주소 · delta 0 = 조회)
+// HTTP: GET /api/killrace/players(공개 · 개인 기록 화면) · GET /api/killrace/board(공개 · 진행자) · ?event=<번호> 지난 회차(읽기만) · GET /api/killrace/events(회차 목록) · POST /api/killrace/board/admin(진행자) · POST /api/killrace/live(팀 주소 · delta 0 = 조회)
 
 const GRACE_MS = 45 * 60000;          // 23:00 전에 시작한 판이 끝나고 전적이 올라올 때까지
 const MAX_FAILS = 3;
@@ -18,6 +18,7 @@ const PRESS_GAP_MS = 250;             // 같은 팀 주소에서 연타로 두 �
 const PRESS_MAX = 60;                 // 한 판에 쌓일 수 있는 잠정 킬 상한(오입력 방지)
 const GAIN_KEEP = 30;
 const BOARD_CACHE_MS = 2000;
+const PAST_CACHE_MS = 30000;          // 지난 회차 화면 — 값이 더 안 바뀌니 30초씩 기억한다
 
 // ═══════════════ 순수 함수 (scripts/killrace-live.test.cjs) ═══════════════
 const emptyRun = () => ({ at: null, ok: null, source: null, ms: null, error: null, fails: 0, paused: false, games: null });
@@ -95,10 +96,18 @@ function noteFailure(state, { at, source, error, counted }) {
   state.run = { ...state.run, at, ok: false, source, error: String(error || "error").slice(0, 80), fails, paused: fails >= MAX_FAILS };
 }
 
+// ?event=<번호> — 비었으면 지금 대회(종전 그대로) · 숫자가 아니면 거절
+function eventParam(q) {
+  const raw = q == null ? "" : String(q);
+  if (!raw) return { ok: true, id: null };
+  return /^\d{1,6}$/.test(raw) ? { ok: true, id: Number(raw) } : { ok: false };
+}
+
 const shortErr = (e) => (e && e.userMsg ? e.userMsg : String(e && e.status ? `${e.status}` : (e && e.name === "AbortError") ? "timeout" : (e && e.message) || "error").replace(/\?\S*/g, "?…").slice(0, 60));
 
 // ═══════════════ HTTP · 자동 집계 ═══════════════
 // deps: killrace(createKillrace 결과) · store{ load(evId), save(evId, state) } · isAdmin(req) · ready()(PUBG 키 · DB 가 있나) · makeToken() · now() · log
+//       · decorate(body, ev)(선택 · 스샷 잠정 칸 — killrace-shot.cjs)
 function createLive(deps) {
   const { killrace, store, isAdmin } = deps;
   const ready = deps.ready || (() => true);
@@ -112,6 +121,8 @@ function createLive(deps) {
   let boardCache = null;               // { at, body } — 공개 점수판만
   let playersCache = null;             // { at, body } — 개인 기록(방송 전환 화면)
   let tokenCache = null;               // { at, evId, byToken: Map }
+  const pastCache = new Map();         // 'board:<id>' · 'players:<id>' → { at, body }
+  let eventsCache = null;              // { at, body }
 
   async function stateFor(evId) {
     if (!cache || cache.evId !== evId) cache = { evId, state: normLive(await store.load(evId)) };
@@ -185,25 +196,70 @@ function createLive(deps) {
     }
   };
 
+  // 지난 회차 보기(읽기만) — 지금 대회가 아니면 진행자 칸 · 팀 주소 없이, 잠정 상태도 캐시(stateFor)를 건드리지 않고 따로 읽는다.
+  // stateFor 의 캐시는 지금 대회 한 벌이다 — 지난 회차로 바꿔 끼우면 그 사이 저장(persist)이 다른 회차 값을 쓸 수 있다
+  async function pastView(req) {
+    const p = eventParam(req.query && req.query.event);
+    if (!p.ok) return { bad: true };
+    if (!p.id) return { past: false };
+    const cur = await killrace.currentEvent().catch(() => null);
+    return cur && cur.id === p.id ? { past: false } : { past: true, id: p.id };
+  }
+  async function sendPast(res, key, build) {
+    const hit = pastCache.get(key);
+    if (hit && now() - hit.at < PAST_CACHE_MS) return res.json({ ...hit.body, serverNow: now() });
+    let body;
+    try { body = await build(); }
+    catch (e) { if (e && e.userMsg) return res.status(404).json({ error: { code: "no_event" } }); throw e; }
+    if (pastCache.size >= 20) pastCache.clear();
+    pastCache.set(key, { at: now(), body });
+    res.json(body);
+  }
+
   const getBoard = guard(async (req, res) => {
+    const view = await pastView(req);
+    if (view.bad) return res.status(400).json({ error: { code: "bad_event" } });
+    if (view.past) return sendPast(res, `board:${view.id}`, async () => {
+      let evPast = null;
+      const body = await killrace.board({ admin: false, eventId: view.id, live: async (ev) => { evPast = ev; return normLive(await store.load(ev.id)); } });
+      if (deps.decorate && evPast) {
+        try { await deps.decorate(body, evPast); } catch (e) { log.warn("[killrace-live] decorate_failed", shortErr(e)); }
+      }
+      return { ...body, running: false, past: true, eventId: view.id };
+    });
     const admin = isAdmin(req);
     if (!admin && boardCache && now() - boardCache.at < BOARD_CACHE_MS) return res.json({ ...boardCache.body, serverNow: now() });
-    let body;
-    try { body = await killrace.board({ admin, live: (ev) => stateFor(ev.id) }); }
+    let body; let evSeen = null;
+    try { body = await killrace.board({ admin, live: (ev) => { evSeen = ev; return stateFor(ev.id); } }); }
     catch (e) { if (e && e.userMsg) return res.status(404).json({ error: { code: "no_event" } }); throw e; }
-    body.running = running;
+    if (deps.decorate && evSeen) {             // 스샷 잠정(killrace-shot.cjs)을 팀마다 shot 칸으로 붙인다 — 총점 · 순위는 안 바뀐다 · 실패해도 점수판은 나간다
+      try { await deps.decorate(body, evSeen); } catch (e) { log.warn("[killrace-live] decorate_failed", shortErr(e)); }
+    }
+    body.running = running; body.past = false; body.eventId = evSeen ? evSeen.id : null;
     if (!admin) boardCache = { at: now(), body };
     res.json(body);
   });
 
   // 개인 기록 — 확정된 판 기준. 계좌 · 디스코드 닉 · 계정 id 는 이 응답에 없다
   const getPlayers = guard(async (req, res) => {
+    const view = await pastView(req);
+    if (view.bad) return res.status(400).json({ error: { code: "bad_event" } });
+    if (view.past) return sendPast(res, `players:${view.id}`, async () => ({ ...(await killrace.players({ eventId: view.id })), past: true, eventId: view.id }));
     if (playersCache && now() - playersCache.at < 5000) return res.json({ ...playersCache.body, serverNow: now() });
     let body;
     try { body = await killrace.players(); }
     catch (e) { if (e && e.userMsg) return res.status(404).json({ error: { code: "no_event" } }); throw e; }
     if (cache && cache.state) body.run = cache.state.run;
     playersCache = { at: now(), body };
+    res.json(body);
+  });
+
+  // 회차 목록(최신순) — 화면의 회차 고르기. currentId = 가장 큰 번호(= 지금 대회)
+  const getEvents = guard(async (req, res) => {
+    if (eventsCache && now() - eventsCache.at < PAST_CACHE_MS) return res.json(eventsCache.body);
+    const list = await killrace.listEvents();
+    const body = { currentId: list.length ? list[0].id : null, events: list.map((e) => ({ id: e.id, name: e.name, start: e.start, end: e.end })) };
+    eventsCache = { at: now(), body };
     res.json(body);
   });
 
@@ -263,13 +319,14 @@ function createLive(deps) {
   function mount(app) {
     app.get("/api/killrace/board", getBoard);
     app.get("/api/killrace/players", getPlayers);
+    app.get("/api/killrace/events", getEvents);
     app.post("/api/killrace/board/admin", postAdmin);
     app.post("/api/killrace/live", postLive);
   }
-  return { mount, tick, run, getBoard, getPlayers, postAdmin, postLive };
+  return { mount, tick, run, getBoard, getPlayers, getEvents, postAdmin, postLive };
 }
 
 module.exports = {
   createLive, GRACE_MS, MAX_FAILS,
-  _test: { emptyLive, normLive, press, afterRun, skipReason, noteSuccess, noteFailure, PRESS_GAP_MS, PRESS_MAX },
+  _test: { emptyLive, normLive, press, afterRun, skipReason, noteSuccess, noteFailure, eventParam, PRESS_GAP_MS, PRESS_MAX },
 };
