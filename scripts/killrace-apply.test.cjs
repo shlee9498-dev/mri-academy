@@ -35,6 +35,8 @@ test("신청서 검사: 빠진 칸 · 계좌번호는 숫자만", () => {
   assert.equal(T.normApply(body({ ign: "" })).error, "no_ign");
   assert.equal(T.normApply(body({ ign: "two words" })).error, "no_ign");
   assert.equal(T.normApply(body({ platform: "xbox" })).error, "no_platform");
+  assert.equal(T.normApply(body({ platform: "" })).error, "no_platform");
+  assert.equal(T.normApply(body({ platform: "kakao" })).error, "steam_only");      // 스팀 전용(오너 10/4 밤)
   assert.equal(T.normApply(body({ bank: "없는은행" })).error, "no_bank");
   assert.equal(T.normApply(body({ accountNo: "12-34" })).error, "bad_account");
   assert.equal(T.normApply(body({ holder: "" })).error, "no_holder");
@@ -79,14 +81,17 @@ test("계좌는 오너만: 진행자 키로도 403 · 오너는 표와 CSV", asy
   assert.equal(csv.headers["Cache-Control"], "no-store");
 });
 
-test("중복: 같은 디스코드 닉 · 같은 인게임 닉(대소문자 무시) 거절, 플랫폼이 다르면 다른 계정", async () => {
+test("중복: 같은 디스코드 닉 · 같은 스팀 닉(대소문자 무시) 거절 · 카카오로 보낸 신청은 거절", async () => {
   const { api, call } = setup();
   await call(api.apply, { body: body() });
   const d1 = await call(api.apply, { body: body({ discord: " Tester_One ", ign: "Other_Nick" }) });
   assert.deepEqual([d1.code, d1.body.error], [409, "dup_discord"]);
   const d2 = await call(api.apply, { body: body({ discord: "someone_else", ign: "fake_nick1" }) });
   assert.deepEqual([d2.code, d2.body.error], [409, "dup_ign"]);
-  const ok = await call(api.apply, { body: body({ discord: "someone_else", ign: "Fake_Nick1", platform: "kakao" }) });
+  // 카카오로 보낸 신청은 받지 않는다(스팀 전용) — 저장도 전적 조회도 하지 않는다
+  const kk = await call(api.apply, { body: body({ discord: "someone_else", ign: "Kakao_Nick", platform: "kakao" }) });
+  assert.deepEqual([kk.code, kk.body.error], [400, "steam_only"]);
+  const ok = await call(api.apply, { body: body({ discord: "someone_else", ign: "Other_Nick2" }) });
   assert.equal(ok.code, 200);
 });
 

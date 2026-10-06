@@ -23,7 +23,7 @@
 //
 // ── 2회 대승배(2026-10-08 · 지휘 10/4) 추가분 — 설정이 없으면 1회와 똑같이 돈다 ──
 // 설정: ops_state 'killrace:event:<event id>' = { boostAt, boostMul, bonus{팀명:점}, teamSize, modes, auto, voidDeaths, liveTokens } (DDL 없음)
-// · 막판 1.5배: boostAt 이후 **처음 시작한 인정 판** 하나만 판 점수 × boostMul(소수점 올림). 팀별로 딱 한 판.
+// · 막판 1.5배: boostAt 이후 **처음 시작한 인정 판** 하나만 판 점수 × boostMul(소수점은 0 에서 멀어지는 쪽 · 음수 판은 감점이 커진다). 팀별로 딱 한 판.
 //   그 판이 이탈이면 −10 고정 그대로이고 배수 기회는 그 판에서 쓴 것으로 본다(다음 판으로 넘어가지 않는다).
 // · 점수판은 끝까지 공개한다(지휘 10/4 개정 — 오너: 「점수판 비공개 오바」). 가리는 장치는 뺐다.
 // · 경매 보너스: 팀 총점 = Σ판 + bonus[팀명](남은 포인트 10당 +1 · killrace-auction.cjs 가 저장).
@@ -207,8 +207,12 @@ const dmgPoints = (damage) => Math.floor(damage / 100 + 1e-9);
 const chickenPoints = (place) => (Number(place) === 1 ? CHICKEN_BONUS : 0);
 const baseScore = (kills, damage, place, penalty) => kills + dmgPoints(damage) + chickenPoints(place) - penalty;
 
-// 막판 배수 — 판 점수 × 배수, 소수점은 올림(음수도 올림: −3 × 1.5 = −4.5 → −4). 배수가 없으면 그대로
-const applyBoost = (score, mul) => (mul && mul !== 1 ? Math.ceil(score * mul - 1e-9) || 0 : score);      // || 0 = −0 을 0 으로
+// 막판 배수 — 판 점수 × 배수, 소수점은 0 에서 멀어지는 쪽으로(오너 10/4 밤: 음수 판은 감점이 커져야 한다). 10.5 → 11 · −4.5 → −5 · 딱 떨어지면 그대로(−6). 배수가 없으면 그대로
+function applyBoost(score, mul) {
+  if (!mul || mul === 1) return score;
+  const v = score * mul;
+  return (v >= 0 ? Math.ceil(v - 1e-9) : Math.floor(v + 1e-9)) || 0;      // || 0 = −0 을 0 으로
+}
 // 판 최종 점수 — 이탈은 −10 고정(배수 없음)
 const finalScore = (base, leave, boost) => (leave ? LEAVE_SCORE : applyBoost(base, boost));
 

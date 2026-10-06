@@ -1,7 +1,7 @@
 "use strict";
 // ═══════════════ GmI 킬내기 2회 — 솔로 신청 (지휘 2026-10-04 주문) ═══════════════
 // 소관: GmI(카지노 트랙) · 코드 소재만 mri-academy(killrace.cjs 와 같은 형태).
-// 받는 것: 디스코드 닉 · 인게임 닉 + 플랫폼 · 상금 계좌(은행 · 번호 · 예금주). 솔로만 받는다(팀은 경매로 짠다).
+// 받는 것: 디스코드 닉 · 스팀 닉 · 상금 계좌(은행 · 번호 · 예금주). 플랫폼은 스팀만(다른 값은 거절). 솔로만 받는다(팀은 경매로 짠다).
 // 저장: ops_state 두 줄(DDL 없음) — G드컵 표(gdcup_*)와 1회 기록(season 9)은 읽지도 쓰지도 않는다.
 //   'killrace:apply:r2'    = { list: [{ id, discord, ign, platform, ranked, grade, avgDamage, kda, verified, at, status }] }
 //   'killrace:applypay:r2' = { [id]: { bank, accountNo, holder } }      ← 계좌는 이 줄에만 있다
@@ -13,7 +13,7 @@
 const ROUND = "r2";
 const CAP = 20;                                              // 4인 5팀
 const CLOSE_AT = Date.parse("2026-10-08T11:00:00Z");         // 10/8(목) 20:00 KST — 집합 15분 전
-const PLATFORMS = ["steam", "kakao"];
+const PLATFORMS = ["steam"];                               // 2회는 스팀으로만 한다(오너 10/4 밤) — 카카오 닉은 받지 않는다
 const BANKS = ["국민", "신한", "우리", "하나", "농협", "기업", "카카오뱅크", "토스뱅크", "케이뱅크", "새마을", "우체국", "신협", "수협", "부산", "대구", "경남", "광주", "전북", "SC제일", "산업"];
 
 // ═══════════════ 순수 함수 (scripts/killrace-apply.test.cjs) ═══════════════
@@ -34,6 +34,7 @@ function normApply(body) {
   const holder = clean(b.holder, 20);
   if (!discord) return { error: "no_discord" };
   if (!ign || /\s/.test(ign)) return { error: "no_ign" };
+  if (platform === "kakao") return { error: "steam_only" };
   if (!PLATFORMS.includes(platform)) return { error: "no_platform" };
   if (!BANKS.includes(bank)) return { error: "no_bank" };
   if (accountNo.length < 8) return { error: "bad_account" };
