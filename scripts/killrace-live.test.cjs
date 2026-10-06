@@ -293,3 +293,115 @@ test("열린 대회 여럿: 1분 차례는 겹쳐 돌지 않는다 · 「지금 
   assert.equal((await call(api.postLive, { body: { t: "tok-4", delta: 1 } })).body.count, 1);
   assert.deepEqual([w.stores[4].presses.나팀.length, w.stores[3].presses.나팀], [1, undefined]);
 });
+
+// ── 진행자 화면 대회 설정(docs/killrace-api.md §1.7) — 새 대회 만들기 · 시각 고치기 · 팀별 보너스 · 바꾼 기록 ──
+function hostWorld() {
+  const iso = (ms) => new Date(ms).toISOString();
+  const E3 = { id: 3, name: "3회", start: Date.parse("2026-10-06T10:50:00Z"), end: Date.parse("2026-10-06T12:50:00Z") };   // 19:50 ~ 21:50 KST
+  const w = { clock: E3.start + 60 * MIN, events: [E3], cfg: { 3: { boostAt: "2026-10-06T12:25:00.000Z" } }, logs: {}, created: [], times: [], aggs: [],
+    teams: [{ name: "가팀" }],
+    games: [{ team_name: "가팀", seq: 1, created_at: iso(E3.start + 5 * MIN), score: 9 }, { team_name: "가팀", seq: 2, created_at: iso(E3.end - 20 * MIN), score: 4 }] };
+  const userErr = (m) => Object.assign(new Error(m), { userMsg: m });
+  const norm = (v) => ({ boostAt: v && v.boostAt ? Date.parse(v.boostAt) : null, boostMul: 1.5, bonus: { ...((v && v.bonus) || {}) }, auto: !(v && v.auto === false), liveTokens: {} });
+  const killrace = {
+    currentEvent: async () => w.events[w.events.length - 1],
+    eventById: async (id) => { const e = w.events.find((x) => x.id === id); if (!e) throw userErr("없음"); return { ...e }; },
+    openEvents: async ({ at, graceMs }) => w.events.filter((e) => e.start <= at && e.end >= at - graceMs).sort((a, b) => b.id - a.id),
+    loadConfig: async (id) => norm(w.cfg[id]),
+    saveConfig: async (id, patch) => { w.cfg[id] = { ...(w.cfg[id] || {}), ...patch }; return norm(w.cfg[id]); },
+    loadTeams: async () => w.teams,
+    createEvent: async ({ name, start, end }) => { const e = { id: Math.max(...w.events.map((x) => x.id)) + 1, name, start, end }; w.events.push(e); w.created.push(e); return { ...e }; },
+    updateEventTimes: async (id, { start, end }) => { const e = w.events.find((x) => x.id === id); e.start = start; e.end = end; w.times.push([id, start, end]); return { ...e }; },
+    droppedBy: async (id, { start, end }) => w.games.filter((g) => { const t = Date.parse(g.created_at); return !(t >= start && t < end); })
+      .map((g) => ({ team: g.team_name, seq: g.seq, startedAt: Date.parse(g.created_at), score: g.score })),
+    loadHostLog: async (id) => w.logs[id] || [],
+    appendHostLog: async (id, entry) => { (w.logs[id] = w.logs[id] || []).push({ at: w.clock, ...entry }); return w.logs[id]; },
+    aggregate: async ({ eventId }) => { w.aggs.push(eventId); return { warn: [] }; },
+    board: async ({ live: lv, eventId }) => {                       // 운영처럼 그 회차로 live 를 부른다(진행자 화면이 회차를 안다)
+      const ev = eventId ? await killrace.eventById(eventId) : await killrace.currentEvent();
+      if (typeof lv === "function") await lv(ev);
+      return { teams: [{ name: "가팀", rank: 1, total: 13, games: 2, lastEnd: 0 }] };
+    },
+  };
+  const api = live.createLive({ killrace, isAdmin: (req) => req.headers["x-admin-key"] === "host", ready: () => true, now: () => w.clock,
+    store: { load: async () => null, save: async () => {} }, log: { log() {}, warn() {}, error() {} } });
+  const call = async (fn, req = {}) => { const res = fakeRes(); await fn({ headers: {}, body: {}, query: {}, method: "POST", ...req }, res); return res; };
+  const host = (body) => call(api.postAdmin, { headers: { "x-admin-key": "host" }, body });
+  return { E3, w, api, call, host };
+}
+
+test("진행자 대회 설정: 운영 키 · 이름(누가) 없으면 거절 · 시각 검사(끝 > 시작 · 6시간까지 · 버닝은 창 안)", async () => {
+  const { w, call, host, api } = hostWorld();
+  const body = { action: "eventCreate", by: "오너", name: "4회 GmI 킬내기", start: "2026-10-06T13:45:00Z", end: "2026-10-06T15:45:00Z", boostAt: "2026-10-06T15:20:00Z" };
+  assert.equal((await call(api.postAdmin, { body })).code, 401);                                       // 운영 키 없음
+  assert.equal((await host({ ...body, by: "  " })).body.error.code, "need_by");
+  assert.equal((await host({ ...body, name: "" })).body.error.code, "bad_name");
+  assert.equal((await host({ ...body, end: body.start })).body.error.code, "bad_window");
+  assert.equal((await host({ ...body, end: "2026-10-06T20:00:00Z" })).body.error.code, "bad_window");   // 6시간 넘음
+  assert.equal((await host({ ...body, boostAt: "2026-10-06T16:00:00Z" })).body.error.code, "bad_boost");
+  assert.equal((await host({ ...body, start: "어제" })).body.error.code, "bad_time");
+  assert.equal(w.created.length, 0);
+  assert.deepEqual(T.hostTimes({ boostAt: null }, { start: 1, end: 2, boostAt: 2 }), { ok: true, start: 1, end: 2, boostAt: null });   // 버닝만 비우기
+  assert.equal(T.hostBy("x".repeat(21)), null);
+});
+
+test("새 대회 만들기: 지금 대회가 열려 있으면 한 번 더 묻는다(409) · 확인하면 만들고 버닝 시각까지 · 기록은 새 회차에 누가 · 언제 · 전(없음) → 후", async () => {
+  const { w, host } = hostWorld();
+  const body = { action: "eventCreate", by: "오너", name: "4회 GmI 킬내기", start: "2026-10-06T13:45:00Z", end: "2026-10-06T15:45:00Z", boostAt: "2026-10-06T15:20:00Z" };
+  const ask = await host(body);
+  assert.deepEqual([ask.code, ask.body.error.code, ask.body.current.id], [409, "event_open", 3]);
+  assert.equal(w.created.length, 0);
+  const ok = await host({ ...body, confirm: true });
+  assert.deepEqual([ok.code, ok.body.event.id, ok.body.event.boostAt], [200, 4, Date.parse(body.boostAt)]);
+  assert.equal(w.cfg[4].boostAt, "2026-10-06T15:20:00.000Z");
+  assert.deepEqual(w.logs[4].map((x) => [x.by, x.action, x.before, x.after.name, x.after.start, x.at]),
+    [["오너", "eventCreate", null, "4회 GmI 킬내기", Date.parse(body.start), w.clock]]);
+  // 지금 대회가 끝 + 45분이 지났으면 묻지 않고 만든다
+  w.clock = Date.parse("2026-10-07T00:00:00Z");
+  assert.equal((await host({ ...body, name: "5회", start: "2026-10-08T11:00:00Z", end: "2026-10-08T13:00:00Z", boostAt: undefined })).code, 200);
+});
+
+test("시각 고치기: 줄여서 인정 판이 빠지면 409 would_drop(몇 판 · 어느 판) → 확인하면 바뀌고 바로 한 번 집계 · 늘리기 · 버닝만 · 기록 전 → 후 · 끝난 회차는 403", async () => {
+  const { E3, w, host, call, api } = hostWorld();
+  const start0 = E3.start; const end0 = E3.end;                                                       // 가짜 저장소가 E3 를 고치므로 처음 값을 잡아 둔다
+  // 버닝(21:25)이 창 밖으로 나가게 끝을 당기면 400 — 버닝은 창 안이어야 한다
+  assert.equal((await host({ action: "eventTimes", by: "지휘", end: new Date(E3.end - 30 * MIN).toISOString() })).body.error.code, "bad_boost");
+  const newStart = new Date(E3.start + 10 * MIN).toISOString();                                      // 20:00 로 늦춤 → 19:55 시작 판(1판)이 빠진다
+  const ask = await host({ action: "eventTimes", by: "지휘", start: newStart });
+  assert.deepEqual([ask.code, ask.body.error.code, ask.body.count, ask.body.games[0].team, ask.body.games[0].seq], [409, "would_drop", 1, "가팀", 1]);
+  assert.equal(w.times.length, 0);
+  const ok = await host({ action: "eventTimes", by: "지휘", start: newStart, confirm: true });
+  assert.deepEqual([ok.code, ok.body.dropped, ok.body.rerun], [200, 1, "ok"]);
+  assert.deepEqual(w.times, [[3, Date.parse(newStart), end0]]);
+  assert.deepEqual(w.aggs, [3]);                                                                     // 빠진 판을 바로 뺀다
+  const lg = w.logs[3].at(-1);
+  assert.deepEqual([lg.by, lg.action, lg.before, lg.after, lg.dropped], ["지휘", "eventTimes", { start: start0 }, { start: Date.parse(newStart) }, 1]);
+  // 늘리기는 빠지는 판이 없어 바로 바뀐다 · 버닝만 바꾸기 · 같은 값이면 바뀐 것 없음
+  assert.equal((await host({ action: "eventTimes", by: "지휘", start: new Date(start0).toISOString() })).body.changed, true);
+  const bz = await host({ action: "eventTimes", by: "지휘", boostAt: "2026-10-06T12:30:00Z" });
+  assert.deepEqual([bz.body.changed, w.logs[3].at(-1).before, w.logs[3].at(-1).after], [true, { boostAt: Date.parse("2026-10-06T12:25:00Z") }, { boostAt: Date.parse("2026-10-06T12:30:00Z") }]);
+  assert.equal((await host({ action: "eventTimes", by: "지휘", boostAt: "2026-10-06T12:30:00Z" })).body.changed, false);
+  // 진행자 화면에 바꾼 기록 · 보너스 전체가 실린다(공개 화면에는 없다)
+  const hb = await call(api.getBoard, { method: "GET", headers: { "x-admin-key": "host" } });
+  assert.equal(hb.body.hostLog.length, 3);
+  const pub = await call(api.getBoard, { method: "GET" });
+  assert.equal(pub.body.hostLog, undefined);
+  // 끝 + 45분이 지난 회차는 진행자 화면에서 못 바꾼다
+  w.clock = E3.end + 46 * MIN;
+  assert.equal((await host({ action: "eventTimes", by: "지휘", boostAt: null })).code, 403);
+});
+
+test("팀별 보너스: 넣기 · 고치기 · 지우기 · 범위 밖 · 소수 거절 · 등록 전 팀 이름도 받는다(registered false) · 기록 전 → 후", async () => {
+  const { w, host } = hostWorld();
+  const put = (team, points) => host({ action: "bonus", by: "오너", team, points });
+  assert.deepEqual((await put("가팀", 8)).body, { ok: true, changed: true, registered: true });
+  assert.deepEqual((await put("가팀", -3)).body.changed, true);
+  assert.deepEqual((await put("나팀", -3)).body, { ok: true, changed: true, registered: false });        // 등록 전 — 이름이 같아야 붙는다
+  assert.equal((await put("가팀", 101)).body.error.code, "bad_points");
+  assert.equal((await put("가팀", 1.5)).body.error.code, "bad_points");
+  assert.equal((await put("", 3)).body.error.code, "bad_team");
+  assert.equal((await put("가팀", -3)).body.changed, false);                                          // 같은 값
+  assert.equal((await put("가팀", null)).body.changed, true);                                         // 지우기
+  assert.deepEqual(w.cfg[3].bonus, { 나팀: -3 });
+  assert.deepEqual(w.logs[3].map((x) => [x.team, x.before, x.after]), [["가팀", null, 8], ["가팀", 8, -3], ["나팀", null, -3], ["가팀", -3, null]]);
+});
