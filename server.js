@@ -8787,9 +8787,9 @@ const SCHEMA_OPTIONAL = {
                               "fetched_at"],
   event_match_telemetry: ["event_id", "team_name", "match_id", "match_start", "source_bytes", "source_events", "positions", "combat",
                           "fetched_at"],
-  // §68 킬내기 상금 적립 장부(docs/killrace-api.md §3 · 2026-10-07 · 소관 GmI 대행 · 초안) — 아직 읽고 쓰는 코드가 없다.
-  //   실행 여부만 기동 로그에 남긴다(미실행이면 칸마다 한 줄씩 찍혀서 키 칸 넷만 본다). 적립 · 지급 명령이 붙으면 그 PR 에서 전체 칸으로 REQUIRED 로 올린다.
-  event_reward_ledger: ["id", "account_id", "kind", "amount"],
+  // §68 킬내기 상금 장부 — 현금 · 포인트(docs/killrace-api.md §3 · 2026-10-07 · 소관 GmI 대행 · 초안) — 아직 읽고 쓰는 코드가 없다.
+  //   실행 여부만 기동 로그에 남긴다(미실행이면 칸마다 한 줄씩 찍혀서 키 칸 다섯만 본다). 적립 · 지급 명령이 붙으면 그 PR 에서 전체 칸으로 REQUIRED 로 올린다.
+  event_reward_ledger: ["id", "account_id", "currency", "kind", "amount"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
