@@ -8781,6 +8781,12 @@ const SCHEMA_OPTIONAL = {
   //   이 표 쓰기만 10분에 한 번 실패 로그(players_write_failed table_missing). 티어 산정(§1.2)이 읽기 시작하면 REQUIRED 로 올린다.
   event_match_players: ["event_id", "team_name", "match_id", "account_id", "slot", "sub", "ign", "reg_ign", "kills", "damage",
                         "death_type", "dead", "started_at", "updated_at"],
+  // §67 킬내기 판별 상세 기록(docs/killrace-api.md §1.12 · 2026-10-07 실행 · 소관 GmI 대행) — 채우는 코드가 쓰기 전까지 0행.
+  event_match_player_detail: ["event_id", "team_name", "match_id", "account_id", "dbnos", "assists", "headshot_kills", "longest_kill_m",
+                              "revives", "time_survived_s", "walk_m", "ride_m", "swim_m", "heals", "boosts", "team_kills", "kill_place",
+                              "fetched_at"],
+  event_match_telemetry: ["event_id", "team_name", "match_id", "match_start", "source_bytes", "source_events", "positions", "combat",
+                          "fetched_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
