@@ -6783,3 +6783,69 @@ on conflict (event_id, team_name, match_id, account_id) do nothing;
 --   drop table if exists public.event_match_players;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- 67) 킬내기 판별 상세 기록 — event_match_player_detail · event_match_telemetry (2026-10-07 · 지휘 주문 B · 계약 docs/killrace-api.md §1.12)
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행 · §31 · §66 과 같은 형태). A 구간(새 표 둘 · 더하기만 · 기존 표 · 칸 · 제약 · 함수 안 건드림).
+--   ✅ 실행 완료 2026-10-07 02:3x KST (세션 실행 · A 구간 · 지휘 「§67 진행」 · 67a 블록 그대로 · 블록 md5 378e0588cd974ae825695185c889c742).
+--      실행 전: 두 표 없음(null · null) · event_match_players 492행 · 2 · 3 · 4회 인정 팀 × 판 123 · 서로 다른 매치 105.
+--      실행 후: detail 18칸 · c 13 · f 1 · p 1 / telemetry 9칸 · c 2 · f 1 · p 1 · RLS 둘 다 켜짐 · 0행 · event_match_players 492행 그대로.
+--      채우기(§1.12 순서 2 · 3)는 아직 — 서버 코드가 들어간 뒤 한 판 실측 → 2회 → 3회 → 4회.
+--     PUBG 는 매치 · 텔레메트리를 14일 뒤 지운다 — 2회(10/5)는 10/19 저녁, 3 · 4회(10/6)는 10/20 저녁부터 사라진다. 채우기는 서버 오너 명령(§1.12 순서 2 · 3).
+-- ============================================================
+-- 67-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select to_regclass('public.event_match_player_detail'), to_regclass('public.event_match_telemetry');   -- 기대 null · null
+--   select count(*) from public.event_match_players;                                                     -- 10/7 실측 492
+-- 67a) 표 둘
+create table if not exists public.event_match_player_detail (       -- 선수 × 판 — 매치 참가자 통계(매치 조회 한 번)
+  event_id         bigint      not null,
+  team_name        text        not null,
+  match_id         text        not null,
+  account_id       text        not null,
+  dbnos            integer     check (dbnos >= 0),                 -- 기절시킨 수
+  assists          integer     check (assists >= 0),
+  headshot_kills   integer     check (headshot_kills >= 0),
+  longest_kill_m   numeric     check (longest_kill_m >= 0),
+  revives          integer     check (revives >= 0),
+  time_survived_s  integer     check (time_survived_s >= 0),
+  walk_m           numeric     check (walk_m >= 0),
+  ride_m           numeric     check (ride_m >= 0),
+  swim_m           numeric     check (swim_m >= 0),
+  heals            integer     check (heals >= 0),
+  boosts           integer     check (boosts >= 0),
+  team_kills       integer     check (team_kills >= 0),
+  kill_place       integer     check (kill_place >= 0),
+  fetched_at       timestamptz not null default now(),
+  primary key (event_id, team_name, match_id, account_id),
+  foreign key (event_id, team_name, match_id, account_id)
+    references public.event_match_players (event_id, team_name, match_id, account_id) on delete cascade
+);
+create table if not exists public.event_match_telemetry (           -- 팀 × 판 — 텔레메트리에서 우리 팀 선수 것만 추린 것
+  event_id       bigint      not null,
+  team_name      text        not null,
+  match_id       text        not null,
+  match_start    timestamptz,                                       -- LogMatchStart
+  source_bytes   integer     check (source_bytes >= 0),             -- 받은 원본 크기(압축)
+  source_events  integer     check (source_events >= 0),            -- 원본 사건 수
+  positions      jsonb       not null default '{}'::jsonb,          -- { "<계정>": [[초, x, y, z], …] } 10초 간격 · m 정수
+  combat         jsonb       not null default '[]'::jsonb,          -- [{ t, k: dmg|groggy|kill|revive, a, v, w, d, hs, dist }] 우리 선수가 주거나 받은 것만
+  fetched_at     timestamptz not null default now(),
+  primary key (event_id, team_name, match_id),
+  foreign key (event_id, team_name, match_id) references public.event_matches (event_id, team_name, match_id) on delete cascade
+);
+alter table public.event_match_player_detail enable row level security;   -- 정책 0 = service_role 만
+alter table public.event_match_telemetry enable row level security;
+notify pgrst, 'reload schema';
+--
+-- 67b) 67a 뒤 검증(세션 · 읽기만):
+--   select table_name, count(*) from information_schema.columns where table_schema = 'public'
+--      and table_name in ('event_match_player_detail', 'event_match_telemetry') group by 1 order by 1;   -- detail 18 · telemetry 9
+--   select conrelid::regclass, contype, count(*) from pg_constraint
+--    where conrelid in ('public.event_match_player_detail'::regclass, 'public.event_match_telemetry'::regclass) group by 1, 2 order by 1, 2;
+--     -- detail: c 13 · f 1 · p 1 / telemetry: c 2 · f 1 · p 1   (PG 17 — not null 은 pg_constraint 에 안 잡힌다)
+--   select relname, relrowsecurity from pg_class where relname in ('event_match_player_detail', 'event_match_telemetry');   -- true · true
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 상세 기록만 사라진다 — 점수 · event_matches · event_match_players 는 그대로):
+--   drop table if exists public.event_match_telemetry;
+--   drop table if exists public.event_match_player_detail;
+--   notify pgrst, 'reload schema';
+-- ============================================================
