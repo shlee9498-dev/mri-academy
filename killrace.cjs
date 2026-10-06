@@ -97,6 +97,15 @@ const COMMANDS = [
       { name: "해제", description: "true 면 이탈 표시를 푼다", type: 5, required: false },
     ],
   },
+  {
+    name: "킬내기기록",
+    description: "[오너] 지난 회차 개인 기록 다시 세기 → 오너 DM(읽기만 · 저장 안 함)",
+    options: [
+      { name: "회차", description: "대회 번호(event_defs id · 1 = 9/26 1회)", type: 4, required: true, min_value: 1, max_value: 9999 },
+      { name: "명단", description: "DB 에 팀이 없는 회차만: 1팀:닉,닉,닉 / 2팀:닉,닉,닉 (다른 닉 후보는 a|b)", type: 3, required: false, max_length: 3000 },
+      { name: "플랫폼", description: "명단의 플랫폼(기본 스팀)", type: 3, required: false, choices: PLATFORM_CHOICES },
+    ],
+  },
 ];
 const COMMAND_NAMES = new Set(COMMANDS.map((c) => c.name));
 
@@ -326,6 +335,52 @@ function splitMessages(blocks, limit = DM_LIMIT) {
     if (cur) { out.push(cur); cur = ""; }
   }
   return out;
+}
+
+// ── /킬내기기록(지난 회차 다시 세기 · 읽기만) ──
+// 명단 = 「1팀:닉,닉,닉 / 2팀:닉,닉,닉」(팀은 / · ; · 줄바꿈으로 나눈다). 닉 자리에 「a|b」 면 a 를 먼저 찾고 없으면 b.
+// 팀 이름을 안 적으면 「n팀」. 팀 인원 2~4 · 같은 닉 두 번은 거절. 비어 있으면 null(= DB 의 그 회차 팀을 쓴다)
+function parseRoster(text) {
+  const chunks = String(text || "").split(/[\n;/]+/).map((x) => x.trim()).filter(Boolean);
+  if (!chunks.length) return null;
+  const seen = new Set();
+  return chunks.map((chunk, i) => {
+    const c = chunk.search(/[:：]/);
+    const name = (c > 0 ? chunk.slice(0, c) : `${i + 1}팀`).trim();
+    const slots = (c > 0 ? chunk.slice(c + 1) : chunk).split(",")
+      .map((x) => x.split("|").map((y) => y.trim()).filter(Boolean)).filter((alts) => alts.length);
+    if (!name || name.length > 30) throw userErr("명단의 팀 이름은 1~30자로 적어 주세요. ✏️");
+    if (slots.length < 2 || slots.length > SLOT_PENALTY.length) throw userErr(`명단 「${name}」은 팀원이 ${slots.length}명이에요. 2~${SLOT_PENALTY.length}명으로 적어 주세요. ✏️`);
+    for (const alts of slots) for (const n of alts) {
+      if (seen.has(n.toLowerCase())) throw userErr("명단에 같은 닉이 두 번 있어요. 다시 한 번 볼까요? ✏️");
+      seen.add(n.toLowerCase());
+    }
+    return { name, slots };
+  });
+}
+
+// 다시 센 기록 → DM 줄. 「팀 / 닉 / 킬 / 딜 / 판수 / 데스」(지휘 회신 모양) · 팀 합계 · 빠진 판 · 못 찾은 닉
+const EX_KO = { 인원: "인원 모자람", split: "한 스쿼드 아님", mode: "공식 스쿼드 아님" };
+function formatHistory(res) {
+  const head = [
+    `📋 ${res.ev.name} — 다시 센 개인 기록(저장 안 함)`,
+    `🕒 ${kstMdHm(res.ev.start)}~${kstHm(res.ev.end)} 시작 판 · 팀 전원이 한 스쿼드로 들어간 판만 · 데스는 deathType 기준`,
+    "팀 / 닉 / 킬 / 딜 / 판수 / 데스",
+  ].join("\n");
+  const blocks = [head];
+  for (const t of res.teams) {
+    const lines = [];
+    if (t.skipped) lines.push(`${t.name} — 세지 않았어요(못 찾은 닉: ${t.skipped.join(", ")})`);
+    else {
+      lines.push(`${t.name} 합계 — ${t.games}판 · 킬 ${t.kills} · 딜 ${num(t.damage)}${t.chickens ? ` · 치킨 ${t.chickens}` : ""}`);
+      for (const m of t.members) lines.push(`${t.name} / ${m.ign} / ${m.kills} / ${num(m.damage)} / ${m.games} / ${m.deaths}`);
+      const ex = Object.entries(t.excluded).map(([code, n]) => `${EX_KO[code] || code} ${n}판`);
+      if (ex.length) lines.push(`${t.name} 빠진 판 — ${ex.join(" · ")}`);
+    }
+    blocks.push(lines.join("\n"));
+  }
+  if (res.warn.length) blocks.push(["⚠️ 확인할 것", ...res.warn.map((w) => `· ${w}`)].join("\n"));
+  return splitMessages(blocks);
 }
 
 const MEDAL = ["🥇", "🥈", "🥉"];
@@ -1095,6 +1150,115 @@ function createKillrace(deps) {
   }
 
   // ── 디스코드 명령 처리(오너 전용) ──
+  // ── /킬내기기록 — 지난 회차 개인 기록을 PUBG 에서 다시 센다. 저장하지 않는다(DB 에는 읽기만) ──
+  // 판 인정은 집계와 같다: 창 [시작, 끝) 에 시작한 판 · classify ok(등록 인원 전원이 한 로스터 · 공식 스쿼드).
+  // 집계(aggregateOnce)와 매치 기억(matchKeep)은 건드리지 않는다 — 이 실행 안에서만 쓰는 기억을 따로 둔다.
+  async function history({ eventId, rosterText = "", platform = "steam" }) {
+    const t0 = now();
+    const evRows = await sbSelect("event_defs", `select=id,name,window_start,window_end&id=eq.${Number(eventId)}&limit=1`);
+    if (!evRows.length) throw userErr(`${eventId}번 회차가 없어요. 번호를 다시 한 번 볼까요? ✏️`);
+    const e = evRows[0];
+    const ev = { id: e.id, name: e.name, start: Date.parse(e.window_start), end: Date.parse(e.window_end) };
+    const cfg = await loadConfig(ev.id);
+    const modes = cfg.modes ? new Set(cfg.modes) : OK_MODES;
+    const roster = parseRoster(rosterText);
+    if (roster && !PLATFORM_KO[platform]) throw userErr("플랫폼은 스팀·카카오 중에서 골라 주세요.");
+    const warn = [];
+    const matchesByAcc = new Map();
+    const remember = (list) => { for (const p of list || []) matchesByAcc.set(p.id, ((p.relationships && p.relationships.matches && p.relationships.matches.data) || []).map((x) => x.id)); };
+    const lookupChunked = async (plat, key, values) => {
+      const out = [];
+      for (let i = 0; i < values.length; i += 10) out.push(...(await lookupEach(plat, key, values.slice(i, i + 10))));
+      return out;
+    };
+    let teams;                                         // [{ name, platform, members[{slot, ign, accountId}], skipped? }]
+    if (!roster) {
+      teams = await loadTeams(ev.id);
+      if (!teams.length) throw userErr("이 회차는 DB 에 팀이 없어요. 명단을 같이 적어 주세요. ✏️");
+      for (const plat of new Set(teams.map((t) => t.platform))) {
+        const ids = [...new Set(teams.filter((t) => t.platform === plat).flatMap((t) => t.members.map((x) => x.accountId)))];
+        remember(await lookupChunked(plat, "playerIds", ids));
+      }
+    } else {
+      // 닉 → 계정: 명단의 닉(대소문자만 다른 것 포함) → 「a|b」 다음 후보 → 다른 회차 등록 명단의 같은 닉(닉을 바꾼 계정)
+      const names = [...new Set(roster.flatMap((t) => t.slots.flat()))];
+      const found = await lookupChunked(platform, "playerNames", names);
+      remember(found);
+      let registry = null;
+      const fromRegistry = async (n) => {
+        if (!registry) {
+          registry = new Map();
+          for (const row of await sbSelect("event_teams", "select=platform,members")) {
+            if (row.platform !== platform) continue;
+            for (const x of Array.isArray(row.members) ? row.members : []) if (x && x.ign && x.accountId) registry.set(String(x.ign).toLowerCase(), String(x.accountId));
+          }
+        }
+        return registry.get(String(n).toLowerCase()) || null;
+      };
+      teams = [];
+      const needIds = [];
+      for (const t of roster) {
+        const members = []; const skipped = [];
+        for (let i = 0; i < t.slots.length; i++) {
+          let acc = null; let ign = null;
+          for (const n of t.slots[i]) { const p = pickPlayer(found, n); if (p) { acc = p.id; ign = p.attributes.name; break; } }
+          if (!acc) for (const n of t.slots[i]) { const id = await fromRegistry(n); if (id) { acc = id; ign = n; needIds.push(id); break; } }
+          if (acc) members.push({ slot: i + 1, ign, accountId: acc });
+          else skipped.push(t.slots[i].join("|"));
+        }
+        teams.push({ name: t.name, platform, members, skipped: skipped.length ? skipped : null });
+      }
+      const ids = [...new Set(needIds)].filter((id) => !matchesByAcc.has(id));
+      if (ids.length) remember(await lookupChunked(platform, "playerIds", ids));
+      const accs = teams.flatMap((t) => t.members.map((x) => x.accountId));
+      if (new Set(accs).size !== accs.length) throw userErr("명단의 서로 다른 닉이 같은 계정으로 잡혔어요. 다시 한 번 볼까요? ✏️");
+    }
+
+    const keep = new Map();                            // 이 실행 안에서만 — 같은 판을 두 팀이 봐도 한 번만 받는다
+    const matchOf = (plat, id) => {
+      const k = `${plat}:${id}`;
+      if (!keep.has(k)) keep.set(k, pubgMatch(plat, id, 0).then((m) => ({ id, createdAtMs: Date.parse(m.createdAt), mode: m.mode, matchType: m.matchType,
+        rosters: m.rosters || [], parts: m.parts || {} })));
+      return keep.get(k);
+    };
+    let fetchedTotal = 0;
+    const out = [];
+    for (const team of teams) {
+      if (team.skipped) { out.push({ name: team.name, skipped: team.skipped }); continue; }
+      const tally = new Map(team.members.map((x) => [x.accountId, { slot: x.slot, ign: x.ign, kills: 0, damage: 0, games: 0, deaths: 0 }]));
+      const row = { name: team.name, games: 0, kills: 0, damage: 0, chickens: 0, excluded: {}, members: [] };
+      let older = 0; let fetched = 0;
+      for (const id of teamCandidates(team, matchesByAcc)) {
+        if (fetched >= MAX_FETCH_PER_TEAM) { warn.push(`${team.name}: 후보가 많아 최근 ${MAX_FETCH_PER_TEAM}판까지만 봤어요`); break; }
+        let m;
+        try { m = await matchOf(team.platform, id); fetched++; }
+        catch (err) { warn.push(`${team.name}: 매치 조회 실패 ${String(id).slice(0, 8)} (${logSafe(err)})`); continue; }
+        const t = m.createdAtMs;
+        if (!Number.isFinite(t)) continue;
+        if (t < ev.start - NEAR_MS) { if (++older >= OLDER_STOP) break; continue; }
+        older = 0;
+        if (t < ev.start || t >= ev.end) continue;
+        const cls = classify(m, team, modes);
+        if (cls.kind === "none") continue;
+        if (cls.kind === "excluded") { row.excluded[cls.code] = (row.excluded[cls.code] || 0) + 1; continue; }
+        row.games += 1;
+        if (cls.place === 1) row.chickens += 1;
+        for (const mem of cls.members) {
+          const cur = tally.get(mem.accountId);
+          cur.kills += mem.kills; cur.damage += mem.damage; cur.games += 1;
+          if (deathTypeVerdict(mem).dead) cur.deaths += 1;
+          cur.ign = mem.ign || cur.ign;                // 그 판의 인게임닉(닉을 바꿨으면 그때 닉)
+        }
+      }
+      fetchedTotal += fetched;
+      row.members = [...tally.values()].sort((a, b) => a.slot - b.slot).map((x) => ({ ...x, damage: Math.floor(x.damage) }));
+      row.kills = sum(row.members, (x) => x.kills);
+      row.damage = sum(row.members, (x) => x.damage);
+      out.push(row);
+    }
+    return { ev, teams: out, warn, fetched: fetchedTotal, ms: now() - t0 };
+  }
+
   async function handle(itx) {
     if (!itx || typeof itx.isChatInputCommand !== "function" || !itx.isChatInputCommand() || !COMMAND_NAMES.has(itx.commandName)) return;
     const ownerId = env.MRI_OWNER_ID;
@@ -1152,6 +1316,18 @@ function createKillrace(deps) {
           return itx.editReply({ content: `📊 DM으로 보냈어요! ${res.teams.length}팀 · 인정 ${games}판 · ${Math.round(res.ms / 1000)}초${posted}` });
         } finally { busy = false; }
       }
+      if (itx.commandName === "킬내기기록") {
+        await itx.editReply({ content: "🕒 지난 판을 다시 세고 있어요 — 끝나면 DM으로 보내요. 닉이 많으면 몇 분 걸릴 수 있어요." });
+        const res = await history({ eventId: itx.options.getInteger("회차"), rosterText: itx.options.getString("명단") || "", platform: itx.options.getString("플랫폼") || "steam" });
+        const parts = formatHistory(res);
+        let sent = 0;
+        try { for (const part of parts) { await itx.user.send({ content: part }); sent++; } }
+        catch (e) { log.error("[killrace] history_dm_failed", e && e.message); }
+        const games = sum(res.teams, (t) => t.games || 0);
+        log.log(`[killrace] history event#${res.ev.id} teams=${res.teams.length} games=${games} fetched=${res.fetched} warn=${res.warn.length} ms=${res.ms}`);
+        if (sent < parts.length) return itx.editReply({ content: `DM을 끝까지 못 보냈어요(${sent}/${parts.length}). 봇 DM이 막혀 있는지 확인해 주세요.` });
+        return itx.editReply({ content: `📋 DM으로 보냈어요! ${res.teams.length}팀 · 인정 ${games}판 · ${Math.round(res.ms / 1000)}초 · 저장은 안 했어요` });
+      }
       const r = await setLeave({ teamName: itx.options.getString("팀명"), seq: itx.options.getInteger("판번호"), clear: !!itx.options.getBoolean("해제") });
       const where = `${r.name} ${r.seq}판(${mapKo(r.row.map)} ${r.row.created_at ? kstHm(Date.parse(r.row.created_at)) : "?"})`;
       log.log(`[killrace] leave_${r.leave ? "set" : "clear"} event#${r.ev.id} seq=${r.seq}`);
@@ -1167,7 +1343,7 @@ function createKillrace(deps) {
     }
   }
 
-  return { handle, registerTeam, aggregate, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
+  return { handle, registerTeam, aggregate, history, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
 }
 
 module.exports = {
@@ -1175,6 +1351,6 @@ module.exports = {
   _test: {
     SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, applyBoost, finalScore, boostTarget, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
-    splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote,
+    splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory,
   },
 };

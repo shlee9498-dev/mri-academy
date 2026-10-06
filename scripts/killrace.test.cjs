@@ -313,8 +313,8 @@ test("닉 → 선수: 정확히 같은 닉 우선 · 대소문자만 다른 후�
   assert.equal(T.pickPlayer([], "abc"), null);
 });
 
-test("명령 3종: 이름·필수 옵션 먼저 · 오너 전용 표기 · 게시 옵션", () => {
-  assert.deepEqual(k.COMMANDS.map((c) => c.name), ["킬내기팀등록", "킬내기집계", "킬내기이탈"]);
+test("명령 4종: 이름·필수 옵션 먼저 · 오너 전용 표기 · 게시 옵션", () => {
+  assert.deepEqual(k.COMMANDS.map((c) => c.name), ["킬내기팀등록", "킬내기집계", "킬내기이탈", "킬내기기록"]);
   const post = k.COMMANDS.find((c) => c.name === "킬내기집계").options.find((o) => o.name === "게시");
   assert.deepEqual([post.type, !!post.required], [5, false], "게시 = 선택 boolean(기본 false)");
   for (const c of k.COMMANDS) {
