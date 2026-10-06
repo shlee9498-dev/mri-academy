@@ -163,3 +163,55 @@ test("진행자 동작: 자동 켜고 끄기 · 배수 시각 · 이탈 · 핵 �
   assert.equal((await host({ action: "tokens" })).body.made, 1);
   assert.equal((await host({ action: "constructor" })).code, 400);
 });
+
+// ── 지난 회차 보기(읽기만) — ?event= · 회차 목록 · 지금 대회의 잠정 상태(캐시)를 건드리지 않는다 ──
+test("지난 회차: ?event=2 는 그 회차를 읽기만 · 진행자 칸 없음 · 지금 대회 잠정 저장이 섞이지 않는다 · 잘못된 번호 거절", async () => {
+  const EVS = { 2: { id: 2, name: "2회", start: EV.start - 3 * 86400e3, end: EV.end - 3 * 86400e3 }, 3: { id: 3, name: "3회", start: EV.start, end: EV.end } };
+  const stores = { 2: { presses: { 불사조: [1, 2] }, ranks: {}, gains: [], run: {} }, 3: null };
+  const saves = []; const boards = [];
+  const userErr = (m) => Object.assign(new Error(m), { userMsg: m });
+  const killrace = {
+    currentEvent: async () => EVS[3],
+    eventById: async (id) => { if (!EVS[id]) throw userErr("없음"); return EVS[id]; },
+    listEvents: async () => [EVS[3], EVS[2]],
+    loadConfig: async () => ({ liveTokens: { 불사조: "tok-a" } }),
+    board: async ({ admin, live: lv, eventId }) => {
+      const ev = eventId ? await killrace.eventById(eventId) : EVS[3];
+      const state = await lv(ev);
+      boards.push({ admin, eventId: eventId || null, presses: (state.presses.불사조 || []).length });
+      return { event: { name: ev.name }, teams: [{ name: "불사조", rank: 1, total: ev.id === 2 ? 174 : 0, rows: [] }] };
+    },
+    players: async ({ eventId } = {}) => ({ event: { name: (eventId ? await killrace.eventById(eventId) : EVS[3]).name }, teams: [] }),
+  };
+  let clock = EV.start + 10 * MIN;
+  const api = live.createLive({ killrace, isAdmin: (req) => req.headers["x-admin-key"] === "host", now: () => clock,
+    store: { load: async (id) => stores[id], save: async (id, st) => { saves.push([id, JSON.parse(JSON.stringify(st))]); stores[id] = st; } },
+    log: { log() {}, warn() {}, error() {} } });
+  const call = async (fn, req = {}) => { const res = fakeRes(); await fn({ headers: {}, body: {}, query: {}, method: "GET", ...req }, res); return res; };
+
+  // 지금 대회(3회)에서 +1 하나 → 캐시는 3회
+  assert.equal((await call(api.postLive, { method: "POST", body: { t: "tok-a", delta: 1 } })).body.count, 1);
+  // 진행자 키를 들고 2회를 봐도 읽기 화면 · 2회 잠정은 저장소에서 따로 읽는다
+  const past = await call(api.getBoard, { headers: { "x-admin-key": "host" }, query: { event: "2" } });
+  assert.deepEqual([past.code, past.body.past, past.body.eventId, past.body.teams[0].total], [200, true, 2, 174]);
+  assert.deepEqual(boards.at(-1), { admin: false, eventId: 2, presses: 2 });
+  // 그 뒤 3회에 +1 → 3회 줄에 2개가 저장된다(2회 값이 섞이지 않는다)
+  clock += 1000;
+  assert.equal((await call(api.postLive, { method: "POST", body: { t: "tok-a", delta: 1 } })).body.count, 2);
+  assert.deepEqual(saves.map(([id, st]) => [id, st.presses.불사조.length]), [[3, 1], [3, 2]]);
+  assert.deepEqual(stores[2].presses.불사조, [1, 2]);                       // 2회 잠정은 그대로
+  // 지금 대회 번호를 주면 종전 그대로(진행자 화면) · 번호 없음도 같다
+  const cur = await call(api.getBoard, { headers: { "x-admin-key": "host" }, query: { event: "3" } });
+  assert.deepEqual([cur.body.past, cur.body.eventId, boards.at(-1).admin], [false, 3, true]);
+  // 잘못된 번호 400 · 없는 번호 404
+  assert.equal((await call(api.getBoard, { query: { event: "2x" } })).code, 400);
+  assert.equal((await call(api.getBoard, { query: { event: "9" } })).code, 404);
+  assert.equal((await call(api.getPlayers, { query: { event: "9" } })).code, 404);
+  // 개인 기록 · 회차 목록
+  const pl = await call(api.getPlayers, { query: { event: "2" } });
+  assert.deepEqual([pl.body.event.name, pl.body.past, pl.body.eventId], ["2회", true, 2]);
+  const evs = await call(api.getEvents);
+  assert.deepEqual([evs.body.currentId, evs.body.events.map((e) => e.id)], [3, [3, 2]]);
+  assert.deepEqual(T.eventParam(undefined), { ok: true, id: null });
+  assert.deepEqual(T.eventParam("-1"), { ok: false });
+});

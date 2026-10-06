@@ -693,6 +693,14 @@ function createKillrace(deps) {
     const e = rows[0];
     return { id: e.id, name: e.name, start: Date.parse(e.window_start), end: Date.parse(e.window_end) };
   }
+  // 지난 회차 보기(읽기만) — 번호로 한 회차 · 회차 목록(최신순). 「지금 대회」는 그대로 가장 큰 번호다
+  const evOf = (e) => ({ id: e.id, name: e.name, start: Date.parse(e.window_start), end: Date.parse(e.window_end) });
+  async function eventById(id) {
+    const rows = await sbSelect("event_defs", `select=id,name,window_start,window_end&id=eq.${Number(id)}&limit=1`);
+    if (!rows.length) throw userErr(`${id}번 회차가 없어요. 번호를 다시 한 번 볼까요? ✏️`);
+    return evOf(rows[0]);
+  }
+  const listEvents = async () => (await sbSelect("event_defs", "select=id,name,window_start,window_end&order=id.desc&limit=50")).map(evOf);
   // 이벤트 설정 — ops_state 한 줄. 읽기 실패 · 없음 = 전부 꺼짐(1회 동작)
   const cfgKey = (evId) => `killrace:event:${evId}`;
   async function loadConfigRaw(evId) {
@@ -981,8 +989,8 @@ function createKillrace(deps) {
   }
 
   // ── 점수판(웹) — 마지막 집계 저장분을 그대로 읽는다(PUBG 조회 없음). admin = 진행자(제외 판 · 팀별 잠정 킬 주소까지) ──
-  async function board({ admin = false, live = null } = {}) {
-    const ev = await currentEvent();
+  async function board({ admin = false, live = null, eventId = null } = {}) {
+    const ev = eventId ? await eventById(eventId) : await currentEvent();
     const [teams, cfg, rows] = await Promise.all([
       loadTeams(ev.id), loadConfig(ev.id),
       sbSelect("event_matches", `select=team_name,match_id,seq,map,created_at,damage_sum,kills,win_place,penalty,leave_flag,score,flags,updated_at&event_id=eq.${ev.id}`),
@@ -999,8 +1007,8 @@ function createKillrace(deps) {
     } catch (e) { log.warn("[killrace] roster_read_failed", logSafe(e)); return null; }
   }
   const saveRoster = (evId, players) => sbUpsert("ops_state", { key: rosterKey(evId), value: { v: 1, savedAt: new Date(now()).toISOString(), players }, updated_at: new Date(now()).toISOString() }, "key");
-  async function players() {
-    const ev = await currentEvent();
+  async function players({ eventId = null } = {}) {
+    const ev = eventId ? await eventById(eventId) : await currentEvent();
     const [teams, cfg, rows, roster] = await Promise.all([
       loadTeams(ev.id), loadConfig(ev.id),
       sbSelect("event_matches", `select=team_name,match_id,seq,map,created_at,damage_sum,kills,win_place,penalty,leave_flag,score,flags,deaths,updated_at&event_id=eq.${ev.id}`),
@@ -1155,10 +1163,7 @@ function createKillrace(deps) {
   // 집계(aggregateOnce)와 매치 기억(matchKeep)은 건드리지 않는다 — 이 실행 안에서만 쓰는 기억을 따로 둔다.
   async function history({ eventId, rosterText = "", platform = "steam" }) {
     const t0 = now();
-    const evRows = await sbSelect("event_defs", `select=id,name,window_start,window_end&id=eq.${Number(eventId)}&limit=1`);
-    if (!evRows.length) throw userErr(`${eventId}번 회차가 없어요. 번호를 다시 한 번 볼까요? ✏️`);
-    const e = evRows[0];
-    const ev = { id: e.id, name: e.name, start: Date.parse(e.window_start), end: Date.parse(e.window_end) };
+    const ev = await eventById(eventId);
     const cfg = await loadConfig(ev.id);
     const modes = cfg.modes ? new Set(cfg.modes) : OK_MODES;
     const roster = parseRoster(rosterText);
@@ -1343,7 +1348,7 @@ function createKillrace(deps) {
     }
   }
 
-  return { handle, registerTeam, aggregate, history, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
+  return { handle, registerTeam, aggregate, history, eventById, listEvents, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
 }
 
 module.exports = {
