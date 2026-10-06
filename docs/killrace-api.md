@@ -415,6 +415,16 @@
   (`cardShown` = 카드에 나갈 이름 · 카드 이름이 비었으면 디스코드 닉 · 소개가 없으면 `intro: null`) + 맨 위
   `introDone`(취소 안 된 신청 중 필수 3칸을 다 채운 사람 수) · `introMissing: [{ order, ign, discord, waiting, missing: ["position", …] }]`(안 채운 사람 · 취소한 건 빼고 · 대기 포함).
   화면 = gmi-clancup `killnaegi.html?host=1` 아래 「선수 소개 모아 보기」(운영 키 · 다른 킬내기 화면과 같은 `kn_host` 자리).
+- **진행자 고치기 · 비우기(검수 42차 보완 · 10/7)** — `POST /api/killrace/apply/admin` + 운영 키. 둘 다 **바꾸는 사람 `by`(1~20자 · 없으면 400 `need_by`)** 가 있어야 하고
+  **소개 줄만** 쓴다(명단 · 계좌 줄 그대로). 마감 뒤에도 된다(경매 직전 손보기). 없는 신청 id 는 404 `not_found`.
+  - `{ action: "introEdit", id, intro, by }` — 4칸 검사(본인 저장과 같은 오류 코드) 뒤 그 사람 소개를 바꾼다. 줄에 `by` 를 남기고 `saves` 를 1 올린다.
+    진행자 조회의 `intro.by` 로 「진행자 ○○ 님이 고침」이 보인다(공개 응답에는 없다). 본인이 나중에 다시 저장하면 `by` 는 사라진다.
+  - `{ action: "introClear", id, by }` — 그 사람 소개 줄을 지운다 → 「안 채운 사람」으로 돌아가고 본인이 「내 신청」에서 다시 채운다(마감 전까지). 이미 비어 있어도 200.
+  - 응답은 진행자 조회와 같은 모양(`adminView`). 로그 `[killrace-apply] intro_host_edit|intro_cleared order=<n>`(이름 · 글은 안 남긴다).
+  - 화면 = `killnaegi.html?host=1` 「선수 소개 모아 보기」 줄마다 「고치기」 · 「비우기」. 바꾸는 사람 이름은 점수판과 같은 자리(`kn_host_by` · 이 기기)에 기억한다.
+- **진행자 조회의 전적 줄** — 줄의 `tier`(경쟁전 티어 글자) · `avgDamage` · `kda` 를 그대로 보여 준다. **신청할 때 전적 조회(`computeBPI`)로 한 번 받아 둔 값**이라 새 조회 · env · 키가 없다.
+  기준 시즌 = 지금 시즌(기록이 없으면 지난 시즌) · 평딜 = 경쟁전 판 수가 넉넉하면 경쟁전 평딜, 아니면 일반전 평딜 · KDA = PUBG 시즌 통계의 KDA((킬 + 어시스트) ÷ 데스 — K/D 가 아니다).
+  K/D 가 꼭 필요하면 같은 조회 값(킬 · 판 · 승)에서 셀 수 있다(코드 몇 줄 · 새 키 없음).
 - **공개 응답** — `GET /api/killrace/apply`(키 없음) 줄에 `intro: { position, style, ambition, cardName }` **네 칸만** 더한다
   (카드 이름이 비었으면 `null` — 공개 응답에서는 디스코드 닉으로 채우지 않는다 · 소개가 없으면 `intro: null`). 맨 위에 `positions`(포지션 넷) · `styles`(성향 셋)도 더한다.
   디스코드 닉 · 계좌 · 신청 id 는 공개 응답 어디에도 없다(시험이 응답 글자 전체에서 찾는다).

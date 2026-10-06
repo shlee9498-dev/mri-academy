@@ -192,7 +192,7 @@ test("새 신청 + 소개 4칸 → 진행자 조회에 그대로 · 공개 응�
   assert.deepEqual(Object.keys(mem.intro), ["id1"]);
   assert.deepEqual(mem.intro.id1, { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: "짱돌", at: mem.apply.list[0].at, saves: 1 });
   const adm = (await call(api.list, { headers: { "x-admin-key": "k" } })).body;
-  assert.deepEqual(adm.list[0].intro, { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: "짱돌", cardShown: "짱돌", at: mem.intro.id1.at, saves: 1 });
+  assert.deepEqual(adm.list[0].intro, { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: "짱돌", cardShown: "짱돌", at: mem.intro.id1.at, saves: 1, by: null });
   assert.deepEqual([adm.introDone, adm.introMissing], [1, []]);
   const pub = (await call(api.list, {})).body;
   assert.deepEqual(pub.list[0].intro, { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: "짱돌" });
@@ -293,4 +293,45 @@ test("동시에 소개 두 번 저장 → 둘 다 들어가고 서로 덮어쓰�
     call(api.saveIntro, { body: { discord: "second_one", ign: "Fake_Nick2", intro: intro({ ambition: "둘째" }) } }),
   ]);
   assert.deepEqual([mem.intro.id1.ambition, mem.intro.id2.ambition], ["첫째", "둘째"]);
+});
+
+// ── 진행자 소개 비우기 · 고치기(검수 42차 보완 · 계약 §1.15) ──
+test("진행자 소개 고치기 · 비우기: 운영 키 · 바꾸는 사람 필수 · 소개 검사 · 없는 신청 404 · 소개 줄만 쓴다 · 마감 뒤에도 된다", async () => {
+  const { api, mem, call, setClock } = setup();
+  await call(api.apply, { body: { ...body(), intro: intro() } });
+  await call(api.apply, { body: body({ discord: "second_one", ign: "Fake_Nick2" }) });
+  const applyBefore = JSON.stringify(mem.apply), payBefore = JSON.stringify(mem.pay);
+  mem.writes.length = 0;
+  const key = { "x-admin-key": "k" };
+  const edit = (over = {}) => ({ action: "introEdit", id: "id2", by: "진행자A", intro: intro({ position: "저격", style: "안정적", ambition: "뒤에서 다 잡아요" }), ...over });
+  assert.equal((await call(api.admin, { body: edit() })).code, 401);
+  assert.deepEqual((await call(api.admin, { headers: key, body: edit({ by: " " }) })).body.error, "need_by");
+  assert.deepEqual((await call(api.admin, { headers: key, body: edit({ by: "가".repeat(21) }) })).body.error, "need_by");
+  assert.deepEqual((await call(api.admin, { headers: key, body: edit({ intro: intro({ style: "" }) }) })).body.error, "no_style");
+  const nf = await call(api.admin, { headers: key, body: edit({ id: "nope" }) });
+  assert.deepEqual([nf.code, nf.body.error], [404, "not_found"]);
+  assert.deepEqual(mem.writes, []);
+  setClock(a.CLOSE_AT + 60e3);                                                            // 마감 뒤(경매 직전 손보기)
+  const e1 = await call(api.admin, { headers: key, body: edit() });
+  assert.equal(e1.code, 200);
+  assert.deepEqual(mem.writes, ["intro"]);
+  assert.deepEqual({ ...mem.intro.id2, at: 0 }, { position: "저격", style: "안정적", ambition: "뒤에서 다 잡아요", cardName: "", at: 0, saves: 1, by: "진행자A" });
+  const row = e1.body.list.find((x) => x.id === "id2");
+  assert.deepEqual([row.intro.by, row.intro.cardShown, e1.body.introDone, e1.body.introMissing.length], ["진행자A", "second_one", 2, 0]);
+  const pub = (await call(api.list, {})).body;
+  assert.ok(!JSON.stringify(pub).includes("진행자A"), "공개 응답에 진행자 이름 없음");
+  assert.deepEqual(Object.keys(pub.list.find((x) => x.ign === "Fake_Nick2").intro), ["position", "style", "ambition", "cardName"]);
+  const c1 = await call(api.admin, { headers: key, body: { action: "introClear", id: "id1", by: "진행자A" } });
+  assert.equal(c1.code, 200);
+  assert.equal(mem.intro.id1, undefined);
+  assert.deepEqual([c1.body.introDone, c1.body.introMissing.map((x) => [x.ign, x.missing])], [1, [["Fake_Nick1", ["position", "style", "ambition"]]]]);
+  assert.equal(c1.body.list.find((x) => x.id === "id1").intro, null);
+  assert.equal((await call(api.admin, { headers: key, body: { action: "introClear", id: "id1", by: "진행자A" } })).code, 200);   // 다시 비워도 된다
+  assert.equal(JSON.stringify(mem.apply), applyBefore);
+  assert.equal(JSON.stringify(mem.pay), payBefore);
+  assert.deepEqual(mem.writes, ["intro", "intro", "intro"]);
+  setClock(a.CLOSE_AT - 60e3);                                                            // 마감 전이면 본인이 다시 채운다 — 진행자 이름은 사라진다
+  const again = await call(api.saveIntro, { body: { discord: "second_one", ign: "Fake_Nick2", intro: intro() } });
+  assert.equal(again.code, 200);
+  assert.deepEqual([mem.intro.id2.saves, mem.intro.id2.by], [2, undefined]);
 });

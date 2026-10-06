@@ -50,8 +50,13 @@ const introMissing = (rec) => INTRO_REQUIRED.filter((k) => !(rec && typeof rec[k
 const introDone = (rec) => introMissing(rec).length === 0;
 // 공개 — 네 칸만(카드 이름이 비었으면 null · 디스코드 닉으로 채우지 않는다)
 const introPublic = (rec) => (rec ? { position: rec.position || null, style: rec.style || null, ambition: rec.ambition || null, cardName: rec.cardName || null } : null);
-// 진행자 — 카드에 나갈 이름(비었으면 디스코드 닉) · 마지막 저장 시각 · 저장 횟수까지
-const introAdmin = (rec, discord) => (rec ? { ...introPublic(rec), cardShown: rec.cardName || discord || null, at: rec.at || null, saves: Number(rec.saves) || 0 } : null);
+// 진행자 — 카드에 나갈 이름(비었으면 디스코드 닉) · 마지막 저장 시각 · 저장 횟수 · 진행자가 고쳤으면 그 이름(by)까지
+const introAdmin = (rec, discord) => (rec ? { ...introPublic(rec), cardShown: rec.cardName || discord || null, at: rec.at || null, saves: Number(rec.saves) || 0, by: rec.by || null } : null);
+// 진행자 동작의 「바꾸는 사람」 — 운영 키가 한 벌이라 이름으로 남긴다(killrace-live hostBy 와 같은 규칙 · 1~20자)
+function hostBy(v) {
+  const t = String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+  return t && t.length <= 20 ? t : null;
+}
 
 // 「내 신청」 본인 확인 — 지금 신청서가 쓰는 값 그대로(디스코드 닉 + 스팀 닉). 둘 다 같은 한 건(취소 안 된 건)과 맞아야 한다
 function normWho(body) {
@@ -303,6 +308,7 @@ function createApplyApi(deps) {
   async function admin(req, res) {
     if (!isAdmin(req)) return fail(res, 401, "unauthorized");
     const b = req.body || {};
+    if (b.action === "introClear" || b.action === "introEdit") return introByHost(b, res);
     const status = b.action === "cancel" ? "cancelled" : b.action === "restore" ? "applied" : null;
     if (!status) return fail(res, 400, "bad_action");
     try {
@@ -315,6 +321,37 @@ function createApplyApi(deps) {
       log.log(`[killrace-apply] ${b.action}`);
       return res.json({ ok: true, ...adminView(out.state, now(), await loadIntros()) });
     } catch (e) { log.error("[killrace-apply] admin_failed", e && e.status ? e.status : "error"); return fail(res, 500, "server_error"); }
+  }
+  // 진행자 — 소개 비우기(본인이 다시 쓰게) · 소개 고치기(검수 42차 · 계약 §1.15). 운영 키 + 바꾸는 사람. 소개 줄만 쓴다(명단 · 계좌 줄 그대로).
+  //   마감 뒤에도 된다(경매 직전 손보기). 비우면 그 줄을 지운다 → 「안 채운 사람」으로 돌아가고 본인이 「내 신청」에서 다시 채운다
+  async function introByHost(b, res) {
+    const by = hostBy(b.by);
+    if (!by) return fail(res, 400, "need_by");
+    let value = null;
+    if (b.action === "introEdit") {
+      const iv = normIntro(b.intro);
+      if (iv.error) return fail(res, 400, iv.error);
+      value = iv.value;
+    }
+    try {
+      const out = await serial(async () => {
+        const state = await load();
+        const entry = state.list.find((x) => x.id === String(b.id || ""));
+        if (!entry) return { error: "not_found" };
+        const all = await loadIntros();
+        const next = { ...all };
+        if (value) {
+          const prev = all[entry.id];
+          next[entry.id] = { ...value, at: now(), saves: (prev ? Number(prev.saves) || 0 : 0) + 1, by };
+        } else delete next[entry.id];
+        await store.saveIntro(next);
+        return { state, intros: next, entry };
+      });
+      if (out.error) return fail(res, 404, out.error);
+      const seat = seats(out.state).find((x) => x.id === out.entry.id);
+      log.log(`[killrace-apply] ${value ? "intro_host_edit" : "intro_cleared"} order=${seat ? seat.order : "-"}`);
+      return res.json({ ok: true, ...adminView(out.state, now(), out.intros) });
+    } catch (e) { log.error("[killrace-apply] intro_host_failed", e && e.status ? e.status : "error"); return fail(res, 500, "server_error"); }
   }
   async function payouts(req, res) {
     if (!isOwner(req)) return fail(res, 403, "owner_only");
@@ -344,5 +381,5 @@ function createApplyApi(deps) {
 module.exports = {
   createApplyApi, ROUND, CAP, CLOSE_AT, BANKS, POSITIONS, STYLES, INTRO_MAX,
   _test: { normApply, addEntry, setStatus, seats, findDup, findMine, publicView, adminView, mineView, payoutRows, payoutCsv, cardEmbed, normState, emptyState,
-    normIntro, normWho, introDone, introMissing, introPublic, introAdmin },
+    normIntro, normWho, introDone, introMissing, introPublic, introAdmin, hostBy },
 };
