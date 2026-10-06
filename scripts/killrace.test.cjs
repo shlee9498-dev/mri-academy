@@ -949,6 +949,32 @@ test("교체: 4판 중 2판은 주전, 2판은 교체 선수 → 네 판 모두 
   assert.equal(t.games, 4);
 });
 
+test("교체 2명 동시(검수 37차 보완): 4인 팀에 2번 · 4번 교체가 같이 뛴 판도 후보로 잡아 인정 · 그 판 실제 출전 명단으로 센다 · 점수식은 그대로", async () => {
+  const A = accsOf("a"); const S2 = "account.a8"; const S4 = "account.a9";
+  const twoSubs = [A[0], S2, A[2], S4];                                                  // 주전 둘 + 교체 둘
+  const matches = [
+    squadMatch("a1", EV2.start + 5 * 60000, A, { kills: 4 }),
+    squadMatch("a2", EV2.start + 40 * 60000, twoSubs, { kills: 6, dead: [2] }),          // 교체 선수가 2번 자리에서 사망 → 2번 감점 3
+    squadMatch("a3", EV2.start + 70 * 60000, [A[0], S2, A[2]], { kills: 1 }),            // 3명만 뛴 판 → 「인원」 제외(조용히 빠지지 않는다)
+  ];
+  const base = teamRow("교체둘팀", "a");
+  const row = { ...base, members: [...base.members, { slot: 2, ign: S2, accountId: S2, sub: true }, { slot: 4, ign: S4, accountId: S4, sub: true }] };
+  const team = T.normTeam(row);
+  // 후보: 주전 목록만 보면 a2 · a3 은 2명뿐이라 빠졌다 — 슬롯(주전 + 그 슬롯 교체)으로 세면 a2 4슬롯 · a3 3슬롯
+  const lists = new Map([[A[0], ["a3", "a2", "a1"]], [A[1], ["a1"]], [A[2], ["a3", "a2", "a1"]], [A[3], ["a1"]], [S2, ["a3", "a2"]], [S4, ["a2"]]]);
+  assert.deepEqual(T.teamCandidates(team, lists), ["a3", "a2", "a1"]);
+  assert.deepEqual(T.teamCandidates({ ...team, subs: [] }, lists), ["a1"]);              // 종전(교체 없음)과 같은 계산
+  const w = fakeWorld({ cfgValue: {}, matches, teamRows: [row] });
+  const res = await w.bot.aggregate({ deathMode: "deathType" });
+  const saved = w.db.upserts.filter(([t]) => t === "event_matches").flatMap(([, rows]) => rows).filter((r) => r.team_name === "교체둘팀");
+  const ok = saved.filter((r) => r.seq != null).sort((x, y) => x.seq - y.seq);
+  assert.deepEqual(ok.map((r) => [r.match_id, r.seq, r.kills, r.penalty]), [["a1", 1, 4, 0], ["a2", 2, 6, 3]]);
+  assert.deepEqual(ok[1].deaths.members.map((m) => [m.slot, m.accountId]), [[1, A[0]], [2, S2], [3, A[2]], [4, S4]]);
+  const ex = saved.find((r) => r.match_id === "a3");
+  assert.ok(ex && ex.seq == null && ex.flags.excluded.code === "인원");
+  assert.equal(res.teams[0].total, 4 + 6 - 3);                                         // 점수식은 그대로(킬 − 사망 감점)
+});
+
 test("교체 명령: 슬롯에 교체 선수 더하기 · 다른 팀 선수 거절 · 없는 슬롯 · 해제", async () => {
   const A = accsOf("a"); const B = accsOf("b");
   const players = [...A, ...B, "account.z1"];
@@ -1025,4 +1051,19 @@ test("열린 대회: [시작, 끝 + 여유] 안인 대회 · 번호 큰 순 · �
   await assert.rejects(bot.aggregate(), /등록된 팀이 없어요/);
   assert.ok(queries.some(([t, qq]) => t === "event_defs" && qq.includes("order=id.desc&limit=1")));
   assert.ok(queries.some(([t, qq]) => t === "event_teams" && qq.includes("event_id=eq.9")));
+});
+
+// ── 진행자가 창을 줄이면(docs/killrace-api.md §1.7) 창 밖이 된 저장 판은 PUBG 목록에 다시 안 보여도 뺀다 ──
+test("창을 줄이면: 창 밖이 된 저장 인정 판은 다음 집계에서 순번을 비운다(창 시각 때문이라고 알림) · 창 안 저장 판은 그대로 다시 쓴다", async () => {
+  const sig = T.teamSig(T.normTeam(teamRow("불사조", "a")));
+  const members = accsOf("a").map((acc, i) => ({ slot: i + 1, accountId: acc, ign: acc, kills: i === 0 ? 5 : 0, damage: 0, deathType: "byplayer" }));
+  const deaths = { v: 1, members, verdict: members.map((m) => ({ slot: m.slot, dead: true, why: "deathType" })) };
+  const row = (id, at, seq) => ({ team_name: "불사조", match_id: id, seq, map: "Baltic_Main", created_at: new Date(at).toISOString(), damage_sum: 0, kills: 5,
+    win_place: 10, penalty: 10, score: -5, leave_flag: false, deaths, flags: { sig, deadSlots: [1, 2, 3, 4], endMs: at + 1500e3 } });
+  const stored = [row("in1", EV2.start + 10 * 60000, 1), row("out1", EV2.start - 2 * 3600e3, 2)];      // out1 = 창을 늦춘 뒤 창 밖(30분 넘게 앞)
+  const w = fakeWorld({ cfgValue: null, matches: [], teamRows: [teamRow("불사조", "a")], stored });
+  const res = await w.bot.aggregate();
+  assert.deepEqual(res.teams[0].games.map((g) => [g.matchId, g.source, g.score]), [["in1", "stored", -5]]);
+  assert.deepEqual(w.db.patches.map(([t, f, p]) => [t, f.includes("match_id=eq.out1"), p.seq, p.score]), [["event_matches", true, null, null]]);
+  assert.match(res.warn.join("\n"), /대회 시각이 바뀌어 창 밖이 된 저장 판 1개\(2판\)/);
 });
