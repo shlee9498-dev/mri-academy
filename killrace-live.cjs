@@ -321,7 +321,9 @@ function createLive(deps) {
     if (action === "eventCreate") {
       const name = String(b.name == null ? "" : b.name).replace(/\s+/g, " ").trim();
       if (!name || name.length > 40) return res.status(400).json({ error: { code: "bad_name" } });
-      const t = hostTimes({ start: b.start, end: b.end, boostAt: b.boostAt === undefined ? null : b.boostAt });
+      // 새 대회(5회부터)는 판 순번 버닝(§1.13 · 회차 번호 기본값) — 시각은 저장해도 안 쓰여서 받지 않는다(검수 41차 ②)
+      if (b.boostAt != null && b.boostAt !== "") return res.status(409).json({ error: { code: "boost_by_seq" } });
+      const t = hostTimes({ start: b.start, end: b.end, boostAt: null });
       if (!t.ok) return res.status(400).json({ error: { code: t.code } });
       // 지금 대회가 아직 열려 있으면(끝 + 45분 전) 한 번 더 묻는다 — 새 줄을 만드는 순간 점수판 기본 화면 · 팀 등록이 새 회차로 넘어간다
       const cur = await killrace.currentEvent().catch(() => null);
@@ -342,7 +344,10 @@ function createLive(deps) {
     if (at > ev.end + GRACE_MS) return res.status(403).json({ error: { code: "event_closed" } });   // 끝난 회차(끝 + 45분 뒤)는 진행자 화면에서 못 바꾼다
     const cfg = await killrace.loadConfig(ev.id);
     if (action === "eventTimes") {
-      const t = hostTimes({ start: b.start, end: b.end, boostAt: b.boostAt }, { start: ev.start, end: ev.end, boostAt: cfg.boostAt });
+      // 판 순번 회차는 버닝 시각을 받지 않는다(§1.13 · 검수 41차 ②) — 비어 오면 창만 고친다
+      const seqBoost = cfg.boostMode === "seq";
+      if (seqBoost && b.boostAt != null && b.boostAt !== "") return res.status(409).json({ error: { code: "boost_by_seq" } });
+      const t = hostTimes({ start: b.start, end: b.end, boostAt: seqBoost ? null : b.boostAt }, { start: ev.start, end: ev.end, boostAt: cfg.boostAt });
       if (!t.ok) return res.status(400).json({ error: { code: t.code } });
       const windowChanged = t.start !== ev.start || t.end !== ev.end;
       const boostChanged = t.boostAt !== cfg.boostAt;

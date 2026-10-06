@@ -319,7 +319,9 @@ function hostWorld() {
     teams: [{ name: "가팀" }],
     games: [{ team_name: "가팀", seq: 1, created_at: iso(E3.start + 5 * MIN), score: 9 }, { team_name: "가팀", seq: 2, created_at: iso(E3.end - 20 * MIN), score: 4 }] };
   const userErr = (m) => Object.assign(new Error(m), { userMsg: m });
-  const norm = (v) => ({ boostAt: v && v.boostAt ? Date.parse(v.boostAt) : null, boostMul: 1.5, bonus: { ...((v && v.bonus) || {}) }, auto: !(v && v.auto === false), liveTokens: {} });
+  const norm = (v) => { const seq = !!(v && v.boostMode === "seq");      // killrace.normEventConfig 처럼 판 순번이면 boostAt 은 null
+    return { boostAt: !seq && v && v.boostAt ? Date.parse(v.boostAt) : null, boostMul: 1.5, boostMode: seq ? "seq" : "time", boostSeqs: seq ? [5, 7] : [],
+      bonus: { ...((v && v.bonus) || {}) }, auto: !(v && v.auto === false), liveTokens: {} }; };
   const killrace = {
     currentEvent: async () => w.events[w.events.length - 1],
     eventById: async (id) => { const e = w.events.find((x) => x.id === id); if (!e) throw userErr("없음"); return { ...e }; },
@@ -347,30 +349,34 @@ function hostWorld() {
   return { E3, w, api, call, host };
 }
 
-test("진행자 대회 설정: 운영 키 · 이름(누가) 없으면 거절 · 시각 검사(끝 > 시작 · 6시간까지 · 버닝은 창 안)", async () => {
+test("진행자 대회 설정: 운영 키 · 이름(누가) 없으면 거절 · 시각 검사(끝 > 시작 · 6시간까지) · 새 대회는 버닝 시각을 받지 않는다(409 boost_by_seq)", async () => {
   const { w, call, host, api } = hostWorld();
-  const body = { action: "eventCreate", by: "오너", name: "4회 GmI 킬내기", start: "2026-10-06T13:45:00Z", end: "2026-10-06T15:45:00Z", boostAt: "2026-10-06T15:20:00Z" };
+  const body = { action: "eventCreate", by: "오너", name: "4회 GmI 킬내기", start: "2026-10-06T13:45:00Z", end: "2026-10-06T15:45:00Z" };
   assert.equal((await call(api.postAdmin, { body })).code, 401);                                       // 운영 키 없음
   assert.equal((await host({ ...body, by: "  " })).body.error.code, "need_by");
   assert.equal((await host({ ...body, name: "" })).body.error.code, "bad_name");
   assert.equal((await host({ ...body, end: body.start })).body.error.code, "bad_window");
   assert.equal((await host({ ...body, end: "2026-10-06T20:00:00Z" })).body.error.code, "bad_window");   // 6시간 넘음
-  assert.equal((await host({ ...body, boostAt: "2026-10-06T16:00:00Z" })).body.error.code, "bad_boost");
   assert.equal((await host({ ...body, start: "어제" })).body.error.code, "bad_time");
+  // 5회부터 새 대회는 판 순번 버닝(§1.13) — 시각을 넣으면 저장하지 않고 409(창 안이든 밖이든 · 검수 41차 ②)
+  for (const boostAt of ["2026-10-06T15:20:00Z", "2026-10-06T16:00:00Z"]) {
+    const r = await host({ ...body, boostAt, confirm: true });
+    assert.deepEqual([r.code, r.body.error.code], [409, "boost_by_seq"]);
+  }
   assert.equal(w.created.length, 0);
   assert.deepEqual(T.hostTimes({ boostAt: null }, { start: 1, end: 2, boostAt: 2 }), { ok: true, start: 1, end: 2, boostAt: null });   // 버닝만 비우기
   assert.equal(T.hostBy("x".repeat(21)), null);
 });
 
-test("새 대회 만들기: 지금 대회가 열려 있으면 한 번 더 묻는다(409) · 확인하면 만들고 버닝 시각까지 · 기록은 새 회차에 누가 · 언제 · 전(없음) → 후", async () => {
+test("새 대회 만들기: 지금 대회가 열려 있으면 한 번 더 묻는다(409) · 확인하면 만든다(버닝 시각 없음 — 판 순번) · 기록은 새 회차에 누가 · 언제 · 전(없음) → 후", async () => {
   const { w, host } = hostWorld();
-  const body = { action: "eventCreate", by: "오너", name: "4회 GmI 킬내기", start: "2026-10-06T13:45:00Z", end: "2026-10-06T15:45:00Z", boostAt: "2026-10-06T15:20:00Z" };
+  const body = { action: "eventCreate", by: "오너", name: "4회 GmI 킬내기", start: "2026-10-06T13:45:00Z", end: "2026-10-06T15:45:00Z" };
   const ask = await host(body);
   assert.deepEqual([ask.code, ask.body.error.code, ask.body.current.id], [409, "event_open", 3]);
   assert.equal(w.created.length, 0);
   const ok = await host({ ...body, confirm: true });
-  assert.deepEqual([ok.code, ok.body.event.id, ok.body.event.boostAt], [200, 4, Date.parse(body.boostAt)]);
-  assert.equal(w.cfg[4].boostAt, "2026-10-06T15:20:00.000Z");
+  assert.deepEqual([ok.code, ok.body.event.id, ok.body.event.boostAt], [200, 4, null]);
+  assert.equal(w.cfg[4], undefined);                                                                  // 설정 줄을 만들지 않는다(버닝은 회차 번호 기본값)
   assert.deepEqual(w.logs[4].map((x) => [x.by, x.action, x.before, x.after.name, x.after.start, x.at]),
     [["오너", "eventCreate", null, "4회 GmI 킬내기", Date.parse(body.start), w.clock]]);
   // 지금 대회가 끝 + 45분이 지났으면 묻지 않고 만든다
@@ -406,6 +412,24 @@ test("시각 고치기: 줄여서 인정 판이 빠지면 409 would_drop(몇 판
   // 끝 + 45분이 지난 회차는 진행자 화면에서 못 바꾼다
   w.clock = E3.end + 46 * MIN;
   assert.equal((await host({ action: "eventTimes", by: "지휘", boostAt: null })).code, 403);
+});
+
+test("시각 고치기 · 판 순번 회차(5회부터 · §1.13): 버닝 시각은 409 boost_by_seq · 비워 오면 창만 고친다 · 「버닝 시각」 따로 넣기도 409 · 기록에 버닝 없음", async () => {
+  const { w, host } = hostWorld();
+  const E5 = { id: 5, name: "5회", start: w.clock - 10 * MIN, end: w.clock + 110 * MIN };
+  w.events.push(E5); w.cfg[5] = { boostMode: "seq" }; w.games = [];                                   // 가짜 droppedBy 는 회차를 안 가려서 3회 판을 비운다
+  const r1 = await host({ action: "eventTimes", by: "지휘", event: 5, boostAt: new Date(E5.start + 60 * MIN).toISOString() });
+  assert.deepEqual([r1.code, r1.body.error.code, w.times.length, (w.logs[5] || []).length], [409, "boost_by_seq", 0, 0]);
+  // 화면이 빈 버닝 칸(null)을 같이 보내도 창은 고쳐진다
+  const end0 = E5.end;                                                                                // 가짜 저장소가 E5 를 고치므로 처음 값을 잡아 둔다
+  const r2 = await host({ action: "eventTimes", by: "지휘", event: 5, end: new Date(end0 + 10 * MIN).toISOString(), boostAt: null });
+  assert.deepEqual([r2.code, r2.body.changed, w.times.at(-1)[0]], [200, true, 5]);
+  assert.deepEqual([w.logs[5].at(-1).before, w.logs[5].at(-1).after], [{ end: end0 }, { end: end0 + 10 * MIN }]);
+  assert.equal(w.cfg[5].boostAt, undefined);
+  // 옛 「버닝 시각」 동작(지금 대회 = 5회)도 409 · 저장 · 기록 없음
+  const n = w.logs[5].length;
+  const r3 = await host({ action: "boostAt", by: "지휘", boostAt: new Date(E5.start + 60 * MIN).toISOString() });
+  assert.deepEqual([r3.code, r3.body.error.code, w.cfg[5].boostAt, w.logs[5].length], [409, "boost_by_seq", undefined, n]);
 });
 
 test("팀별 보너스: 넣기 · 고치기 · 지우기 · 범위 밖 · 소수 거절 · 등록 전 팀 이름도 받는다(registered false) · 기록 전 → 후", async () => {
