@@ -22,6 +22,69 @@ function playersOf() {
     byKills: byKillsOf(all) };
 }
 
+// 그림 속 글자만(로고 base64 를 뺀 SVG)
+function visible(svg) { return svg.replace(/href="data:image\/png;base64,[A-Za-z0-9+/=]*"/g, 'href=""'); }
+
+// QR 읽기(시험용 · 버전 3 · 오류 없음 가정) — 형식 정보 → 마스크 풀기 → 지그재그로 칸 읽기 → 두 블록 풀기 → 바이트 모드.
+// 오류 정정 계산은 안 한다(행렬이 망가졌으면 글자가 달라져서 시험이 실패한다)
+function readQr(m) {
+  const n = m.length, bit = (r, c) => m[r][c] === "1" ? 1 : 0;
+  let fmt = 0, fmt2 = 0;                                                        // 형식 정보 15비트 — 왼쪽 위 세로 · 가로 두 벌
+  for (let i = 0; i < 15; i++) {
+    fmt |= bit(i < 6 ? i : i < 8 ? i + 1 : n - 15 + i, 8) << i;
+    fmt2 |= bit(8, i < 8 ? n - 1 - i : i === 8 ? 7 : 14 - i) << i;
+  }
+  assert.equal(fmt, fmt2, "형식 정보 두 벌이 같다");
+  const v = fmt ^ 0x5412, data = v >> 10;
+  let rem = data << 10;
+  for (let b = 14; b >= 10; b--) if (rem & (1 << b)) rem ^= 0x537 << (b - 10);
+  assert.equal(v & 0x3ff, rem, "형식 정보 BCH");
+  assert.deepEqual([data >> 3, data & 7], [3, 2], "오류 정정 Q(3) · 마스크 2");
+  assert.equal(bit(n - 8, 8), 1, "고정 검은 칸");
+  const reserved = (r, c) => (r <= 8 && c <= 8) || (r <= 8 && c >= n - 8) || (r >= n - 8 && c <= 8) || r === 6 || c === 6
+    || (r >= n - 9 && r <= n - 5 && c >= n - 9 && c <= n - 5);               // 정렬 무늬(버전 3 · 가운데 22,22)
+  const bits = [];
+  let up = true;
+  for (let right = n - 1; right >= 1; right -= 2) {
+    if (right === 6) right = 5;
+    for (let k = 0; k < n; k++) {
+      const r = up ? n - 1 - k : k;
+      for (const c of [right, right - 1]) if (!reserved(r, c)) bits.push(bit(r, c) ^ (c % 3 === 0 ? 1 : 0));   // 마스크 2 = 열 % 3 === 0
+    }
+    up = !up;
+  }
+  const cw = [];
+  for (let i = 0; i + 8 <= bits.length && cw.length < 70; i += 8) cw.push(parseInt(bits.slice(i, i + 8).join(""), 2));
+  assert.equal(cw.length, 70);
+  // 버전 3-Q = 블록 둘(데이터 17 · 정정 18바이트), 두 블록이 한 바이트씩 번갈아 놓였다. 정정 바이트까지 다시 계산해 맞춰 본다(칸 하나만 바뀌어도 잡힌다)
+  const blocks = [0, 1].map((b) => ({ data: Array.from({ length: 17 }, (_, k) => cw[k * 2 + b]), ecc: Array.from({ length: 18 }, (_, k) => cw[34 + k * 2 + b]) }));
+  for (const [i, bl] of blocks.entries()) assert.deepEqual(bl.ecc, rsEcc(bl.data, 18), `블록 ${i} 정정 바이트`);
+  const s = blocks.flatMap((bl) => bl.data).map((x) => x.toString(2).padStart(8, "0")).join("");
+  assert.equal(s.slice(0, 4), "0100", "바이트 모드");
+  const len = parseInt(s.slice(4, 12), 2);
+  const bytes = Array.from({ length: len }, (_, i) => parseInt(s.slice(12 + i * 8, 20 + i * 8), 2));
+  const end = 12 + len * 8;
+  assert.equal(s.slice(end, end + 4), "0000", "끝 표시");
+  const pads = s.slice(end + 4).match(/.{8}/g).map((x) => parseInt(x, 2));
+  assert.ok(pads.every((x, i) => x === (i % 2 ? 0x11 : 0xec)), "채움 바이트");
+  return Buffer.from(bytes).toString("utf8");
+}
+// 리드-솔로몬 정정 바이트(GF(256) · 원시 다항식 0x11D) — QR 규격 그대로
+function rsEcc(data, n) {
+  const exp = [], log = [];
+  for (let i = 0, x = 1; i < 255; i++) { exp[i] = x; log[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11d; }
+  const mul = (a, b) => (a && b ? exp[(log[a] + log[b]) % 255] : 0);
+  let g = [1];
+  for (let i = 0; i < n; i++) {
+    const next = new Array(g.length + 1).fill(0);
+    g.forEach((c, j) => { next[j] ^= c; next[j + 1] ^= mul(c, exp[i]); });
+    g = next;
+  }
+  const rem = data.concat(new Array(n).fill(0));
+  for (let i = 0; i < data.length; i++) { const f = rem[i]; if (f) for (let j = 0; j < g.length; j++) rem[i + j] ^= mul(g[j], f); }
+  return rem.slice(data.length);
+}
+
 test("포스터 값: 팀 순위 그대로 · 개인 킬 5위 동점은 같이 · 안 뛴 선수 빼기 · MVP = 판당 킬 + 판당 딜 100당 1점(4판 이상만) · 날짜 줄", () => {
   const d = P.posterData(playersOf());
   assert.deepEqual(d.teams.map((t) => [t.rank, t.name, t.total, t.kills, t.games, t.bonus]),
@@ -72,9 +135,50 @@ test("포스터 SVG: 음수 총점은 − 와 빨강 · 시작 보너스 부호 
   assert.ok(svg.includes(">+8</text>") && svg.includes(">−3</text>"));
   assert.ok(svg.includes("…"));
   assert.ok(svg.includes("킬내기 <tspan") && svg.includes("3회</tspan> 최종 순위"));
-  for (const word of ["원", "상금", "가격", "₩", "포인트"]) assert.ok(!svg.includes(word), word);
-  assert.ok(!/\d\s*P\b/.test(svg));                                       // 경매 포인트(120P 꼴)도 없다
-  assert.ok(!/account\./.test(svg));
+  const text = visible(svg);                                                // 로고 그림(base64)은 글자가 아니다 — 빼고 본다
+  for (const word of ["원", "상금", "가격", "₩", "포인트"]) assert.ok(!text.includes(word), word);
+  assert.ok(!/\d\s*P\b/.test(text));                                      // 경매 포인트(120P 꼴)도 없다
+  assert.ok(!/account\./.test(text));
+});
+
+test("포스터 GmI 칸: 오른쪽 위 로고 · 마무리 띠(제목 · 안내 · 주소 · QR) · 기준 줄은 준 글 그대로(비면 안 그림 · 3줄까지 · 이스케이프) · 로고 파일이 없어도 그린다", () => {
+  const d = P.posterData(playersOf());
+  const svg = P.posterSvg(d);
+  const logo = /<image x="(\d+)" y="(\d+)" width="(\d+)" height="(\d+)" href="data:image\/png;base64,([A-Za-z0-9+/=]+)"\/>/.exec(svg);
+  assert.ok(logo, "로고");
+  assert.deepEqual(logo.slice(1, 5).map(Number), [850, 30, 190, 170]);
+  assert.deepEqual([...Buffer.from(logo[5], "base64").subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+  assert.equal(Buffer.from(logo[5], "base64").length, require("fs").statSync(T.LOGO_FILE).size);
+  assert.equal((svg.match(/<image /g) || []).length, 1);                    // 로고는 머리에 한 번만
+  for (const s of ["GmI 클랜 입단 안내", "QR 찍으면 GmI 디스코드로 바로 가요", "discord.gg/YfZD8d22wJ"]) assert.ok(svg.includes(`>${s}</text>`), s);
+  assert.deepEqual(T.RECRUIT.lines, []);                                   // 기준 줄은 오너 글이 오기 전까지 비어 있다(지어 넣지 않는다)
+  assert.ok(!svg.includes("<circle"));
+  assert.ok(svg.includes('shape-rendering="crispEdges"'));
+  const lined = P.posterSvg(d, { recruit: { ...T.RECRUIT, lines: ["<b>&기준", "", "  둘째  ", "셋째", "넷째"] } });
+  assert.equal((lined.match(/<circle /g) || []).length, 3);
+  assert.ok(lined.includes(">&lt;b&gt;&amp;기준</text>") && lined.includes(">둘째</text>") && lined.includes(">셋째</text>") && !lined.includes("넷째"));
+  const h = (s) => Number(/height="(\d+)"/.exec(s)[1]);
+  assert.ok(h(lined) > h(svg));
+  const bare = P.posterSvg(d, { logo: null });
+  assert.ok(!bare.includes("<image") && bare.includes(">GmI 클랜 입단 안내</text>"));
+  assert.equal(h(bare), h(svg));
+});
+
+test("QR 행렬: 29×29 · 찾기 무늬 · 형식 정보 = 오류 정정 Q · 마스크 2 · 정정 바이트까지 맞고 · 읽으면 마무리 띠의 주소와 같다", () => {
+  const m = T.GMI_QR;
+  assert.equal(m.length, 29);
+  assert.ok(m.every((r) => /^[01]{29}$/.test(r)));
+  const finder = ["1111111", "1000001", "1011101", "1011101", "1011101", "1000001", "1111111"];
+  for (const [r0, c0] of [[0, 0], [0, 22], [22, 0]]) assert.deepEqual(finder.map((_, i) => m[r0 + i].slice(c0, c0 + 7)), finder, `${r0},${c0}`);
+  assert.equal(readQr(m), "https://" + T.RECRUIT.link);
+});
+
+test("포스터 PNG: 로고 · QR 까지 그린다(resvg 가 설치돼 있을 때)", (t) => {
+  try { require.resolve("@resvg/resvg-js"); } catch { return t.skip("@resvg/resvg-js 없음 — npm ci 뒤에 본다"); }
+  const svg = P.posterSvg(P.posterData(playersOf()));
+  const png = P.renderPng(svg);
+  assert.equal(png.readUInt32BE(16), 1080);
+  assert.equal(png.readUInt32BE(20), Number(/height="(\d+)"/.exec(svg)[1]));
 });
 
 test("포스터 PNG: 동봉 글꼴로 그린다(resvg 가 설치돼 있을 때)", (t) => {
