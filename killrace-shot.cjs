@@ -72,7 +72,7 @@ function within1(a, b) {                          // 한 글자 다름(바꿈 ·
 // 팀 = 맞은 사람이 가장 많은 팀 · 2명 이상(팀 인원이 1명이면 1명) · 동점이면 못 정한다
 function matchTeam(players, teams) {
   const pool = [];
-  for (const t of teams || []) for (const m of t.members || []) pool.push({ team: t.name, slot: m.slot, ign: m.ign, key: normIgn(m.ign) });
+  for (const t of teams || []) for (const m of [...(t.members || []), ...(t.subs || [])]) pool.push({ team: t.name, slot: m.slot, ign: m.ign, key: normIgn(m.ign) });
   const hits = players.map((p) => {
     const key = normIgn(p.name);
     if (!key) return null;
