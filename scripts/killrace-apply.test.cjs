@@ -16,11 +16,12 @@ function fakeRes() {
     send(t) { this.body = t; return this; }, setHeader(k, v) { this.headers[k] = v; } };
 }
 function setup(over = {}) {
-  const mem = { apply: null, pay: null, cards: [] };
+  const mem = { apply: null, pay: null, intro: null, cards: [], writes: [] };
   let seq = 0; let clock = OPEN;
   const api = a.createApplyApi({
-    store: { load: async () => mem.apply, save: async (s) => { mem.apply = JSON.parse(JSON.stringify(s)); },
-      loadPay: async () => mem.pay, savePay: async (p) => { mem.pay = JSON.parse(JSON.stringify(p)); } },
+    store: { load: async () => mem.apply, save: async (s) => { mem.writes.push("apply"); mem.apply = JSON.parse(JSON.stringify(s)); },
+      loadPay: async () => mem.pay, savePay: async (p) => { mem.writes.push("pay"); mem.pay = JSON.parse(JSON.stringify(p)); },
+      loadIntro: async () => mem.intro, saveIntro: async (v) => { mem.writes.push("intro"); mem.intro = JSON.parse(JSON.stringify(v)); } },
     lookup: over.lookup || (async (platform, ign) => ({ ign, ranked: "Gold 3", grade: "B", avgDamage: 312.6, kda: 2.345 })),
     isAdmin: (req) => req.headers["x-admin-key"] === "k", isOwner: (req) => req.headers.authorization === "owner",
     notify: async (embed) => { mem.cards.push(embed); },
@@ -53,7 +54,7 @@ test("신청 → 공개 응답 · 진행자 응답 · 카드 어디에도 계좌
   assert.deepEqual({ ok: r.body.ok, waiting: r.body.waiting, order: r.body.order, count: r.body.count }, { ok: true, waiting: false, order: 1, count: 1 });
   assert.deepEqual(leaks(JSON.stringify(r.body)), []);
   const pub = await call(api.list, {});
-  assert.deepEqual(pub.body.list, [{ ign: "Fake_Nick1", platform: "steam", tier: "Gold 3", waiting: false }]);
+  assert.deepEqual(pub.body.list, [{ ign: "Fake_Nick1", platform: "steam", tier: "Gold 3", waiting: false, intro: null }]);
   assert.ok(!JSON.stringify(pub.body.list).includes("tester_one"), "공개 명단에 디스코드 닉을 싣지 않는다");
   assert.deepEqual(leaks(JSON.stringify(pub.body.list)), []);
   const adm = await call(api.list, { headers: { "x-admin-key": "k" } });
@@ -155,4 +156,136 @@ test("마감 뒤에는 받지 않는다", async () => {
 test("CSV: 수식으로 읽힐 값은 따옴표로 막는다", () => {
   const csv = T.payoutCsv([{ order: 1, waiting: true, discord: "=cmd", ign: "a,b", platform: "kakao", bank: "신한", accountNo: "0012345678", holder: "라마" }]);
   assert.match(csv, /1,대기,'=cmd,"a,b",카카오,신한,"=""0012345678""",라마/);
+});
+
+// ── 선수 소개 4칸(계약 §1.15) ──
+const intro = (over = {}) => ({ position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "", ...over });
+
+test("소개 검사: 포지션은 넷 중 하나 · 주무기 · 한마디 필수 30자 · 카드 이름 선택 12자 · 넘치면 자르지 않고 거절 · 공백 · 제어 문자 정리", () => {
+  assert.deepEqual(T.normIntro(intro()).value, { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "" });
+  for (const p of a.POSITIONS) assert.equal(T.normIntro(intro({ position: p })).error, undefined, p);
+  assert.equal(T.normIntro(intro({ position: "탱커" })).error, "no_position");
+  assert.equal(T.normIntro(intro({ position: "" })).error, "no_position");
+  assert.equal(T.normIntro(intro({ weapons: "  " })).error, "no_weapons");
+  assert.equal(T.normIntro(intro({ message: "\n\t" })).error, "no_message");
+  assert.equal(T.normIntro(intro({ weapons: "가".repeat(30) })).error, undefined);
+  assert.equal(T.normIntro(intro({ weapons: "가".repeat(31) })).error, "long_weapons");
+  assert.equal(T.normIntro(intro({ message: "a".repeat(31) })).error, "long_message");
+  assert.equal(T.normIntro(intro({ cardName: "가".repeat(12) })).error, undefined);
+  assert.equal(T.normIntro(intro({ cardName: "가".repeat(13) })).error, "long_card_name");
+  assert.equal(T.normIntro(intro({ message: "🎯".repeat(30) })).error, undefined);             // 글자 단위(이모지 하나 = 한 글자)
+  assert.deepEqual(T.normIntro(intro({ weapons: "  베릴\n+​  미니 ", message: "a\u0007b", cardName: " 짱 ‮" })).value,
+    { position: "돌격", weapons: "베릴 + 미니", message: "a b", cardName: "짱" });
+  assert.equal(T.normIntro(null).error, "no_position");
+  assert.equal(T.normIntro(["돌격"]).error, "no_position");
+});
+
+test("새 신청 + 소개 4칸 → 진행자 조회에 그대로 · 공개 응답은 네 칸만 · 디스코드 닉 · 계좌 · id 는 공개 응답 어디에도 없다", async () => {
+  const { api, mem, call } = setup();
+  const r = await call(api.apply, { body: { ...body(), intro: intro({ cardName: "짱돌" }) } });
+  assert.equal(r.code, 200);
+  assert.deepEqual([r.body.done, r.body.intro], [true, { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "짱돌" }]);
+  assert.deepEqual(mem.writes, ["pay", "intro", "apply"]);                               // 계좌 · 소개를 명단보다 먼저
+  assert.deepEqual(Object.keys(mem.intro), ["id1"]);
+  assert.deepEqual(mem.intro.id1, { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "짱돌", at: mem.apply.list[0].at, saves: 1 });
+  const adm = (await call(api.list, { headers: { "x-admin-key": "k" } })).body;
+  assert.deepEqual(adm.list[0].intro, { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "짱돌", cardShown: "짱돌", at: mem.intro.id1.at, saves: 1 });
+  assert.deepEqual([adm.introDone, adm.introMissing], [1, []]);
+  const pub = (await call(api.list, {})).body;
+  assert.deepEqual(pub.list[0].intro, { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: "짱돌" });
+  assert.deepEqual(pub.positions, ["오더", "돌격", "저격", "서포트"]);
+  const text = JSON.stringify({ ...pub, banks: undefined });                             // banks = 고르기 칸 은행 이름 목록(계좌 아님)
+  for (const s of ["tester_one", "id1", ...SECRET]) assert.ok(!text.includes(s), s);
+  assert.ok(!("introMissing" in pub) && !("introDone" in pub));
+});
+
+test("소개가 틀리면 신청도 저장하지 않는다 · intro 키가 아예 없는 옛 화면 요청은 받고 「안 채운 사람」에 남는다", async () => {
+  const { api, mem, call } = setup();
+  const bad = await call(api.apply, { body: { ...body(), intro: intro({ position: "탱커" }) } });
+  assert.deepEqual([bad.code, bad.body.error], [400, "no_position"]);
+  assert.deepEqual([mem.apply, mem.pay, mem.intro], [null, null, null]);
+  const old = await call(api.apply, { body: body() });
+  assert.deepEqual([old.code, old.body.done, old.body.intro], [200, false, null]);
+  assert.equal(mem.intro, null);
+  const adm = (await call(api.list, { headers: { "x-admin-key": "k" } })).body;
+  assert.equal(adm.list[0].intro, null);
+  assert.deepEqual([adm.introDone, adm.introMissing], [0, [{ order: 1, ign: "Fake_Nick1", discord: "tester_one", waiting: false, missing: ["position", "weapons", "message"] }]]);
+});
+
+test("기존 신청자 「내 신청」: 디스코드 닉 + 스팀 닉 둘 다 맞아야 열린다 · 소개 줄만 쓰고 명단 · 계좌 줄은 글자 하나 안 바뀐다 · 응답에 계좌 없음", async () => {
+  const { api, mem, call } = setup();
+  await call(api.apply, { body: body() });                                               // 소개 없이 들어온 옛 신청
+  await call(api.apply, { body: body({ discord: "second_one", ign: "Fake_Nick2" }) });
+  const applyBefore = JSON.stringify(mem.apply), payBefore = JSON.stringify(mem.pay);
+  mem.writes.length = 0;
+  const who = { discord: " TESTER_one ", ign: "fake_nick1" };                            // 대소문자 · 앞뒤 공백 무시
+  const m = await call(api.mine, { body: who });
+  assert.equal(m.code, 200);
+  assert.deepEqual(m.body, { ok: true, ign: "Fake_Nick1", tier: "Gold 3", order: 1, waiting: false, cap: 20, intro: null, done: false });
+  for (const wrong of [{ discord: "tester_one", ign: "Fake_Nick2" }, { discord: "second_one", ign: "Fake_Nick1" }, { discord: "nobody", ign: "Nobody1" }]) {
+    const r = await call(api.mine, { body: wrong });
+    assert.deepEqual([r.code, r.body.error], [404, "not_found"], JSON.stringify(wrong));
+    const s = await call(api.saveIntro, { body: { ...wrong, intro: intro() } });
+    assert.deepEqual([s.code, s.body.error], [404, "not_found"]);
+  }
+  assert.deepEqual((await call(api.mine, { body: { discord: "", ign: "Fake_Nick1" } })).body.error, "no_discord");
+  assert.deepEqual((await call(api.saveIntro, { body: { ...who, intro: intro({ message: "" }) } })).body.error, "no_message");
+  const s1 = await call(api.saveIntro, { body: { ...who, intro: intro() } });
+  assert.equal(s1.code, 200);
+  assert.deepEqual(s1.body, { ok: true, ign: "Fake_Nick1", tier: "Gold 3", order: 1, waiting: false, cap: 20,
+    intro: { position: "돌격", weapons: "베릴 + 미니", message: "앞에서 열어요", cardName: null }, done: true });
+  const s2 = await call(api.saveIntro, { body: { ...who, intro: intro({ position: "오더", cardName: "카드닉" }) } });
+  assert.equal(s2.body.intro.position, "오더");
+  assert.deepEqual(mem.writes, ["intro", "intro"]);                                        // 소개 줄만 썼다
+  assert.equal(JSON.stringify(mem.apply), applyBefore);
+  assert.equal(JSON.stringify(mem.pay), payBefore);
+  assert.equal(mem.intro.id1.saves, 2);
+  for (const r of [m, s1, s2]) for (const sec of [...SECRET, "id1", "tester_one"]) assert.ok(!JSON.stringify(r.body).includes(sec), sec);
+  const adm = (await call(api.list, { headers: { "x-admin-key": "k" } })).body;
+  assert.deepEqual([adm.introDone, adm.introMissing.map((x) => x.ign)], [1, ["Fake_Nick2"]]);
+  assert.deepEqual([adm.list[0].intro.cardShown, adm.list[0].intro.saves], ["카드닉", 2]);
+});
+
+test("카드 이름이 비면 진행자 조회는 디스코드 닉 · 공개 응답은 null · 취소한 신청은 「내 신청」도 「안 채운 사람」도 아니다 · 대기도 채운다", async () => {
+  const { api, call } = setup();
+  await call(api.apply, { body: { ...body(), intro: intro() } });
+  await call(api.apply, { body: body({ discord: "gone_one", ign: "Gone_Nick" }) });
+  const adm0 = (await call(api.list, { headers: { "x-admin-key": "k" } })).body;
+  assert.equal(adm0.list[0].intro.cardShown, "tester_one");
+  assert.equal((await call(api.list, {})).body.list[0].intro.cardName, null);
+  const gone = adm0.list.find((x) => x.ign === "Gone_Nick").id;
+  await call(api.admin, { headers: { "x-admin-key": "k" }, body: { action: "cancel", id: gone } });
+  assert.equal((await call(api.mine, { body: { discord: "gone_one", ign: "Gone_Nick" } })).code, 404);
+  const adm1 = (await call(api.list, { headers: { "x-admin-key": "k" } })).body;
+  assert.deepEqual([adm1.introDone, adm1.introMissing], [1, []]);
+  for (let i = 3; i <= 22; i++) await call(api.apply, { body: { ...body({ discord: `d${i}`, ign: `Nick${i}` }), intro: intro() } });
+  const w = await call(api.saveIntro, { body: { discord: "d22", ign: "Nick22", intro: intro({ message: "대기여도 써 둬요" }) } });
+  assert.deepEqual([w.code, w.body.waiting, w.body.done], [200, true, true]);
+});
+
+test("소개 저장도 마감 뒤에는 막힌다 · 「내 신청」 보기는 된다 · 요청이 몰리면 429", async () => {
+  const { api, call, setClock } = setup();
+  await call(api.apply, { body: body() });
+  setClock(a.CLOSE_AT);
+  const who = { discord: "tester_one", ign: "Fake_Nick1" };
+  const s = await call(api.saveIntro, { body: { ...who, intro: intro() } });
+  assert.deepEqual([s.code, s.body.error], [403, "closed"]);
+  assert.equal((await call(api.mine, { body: who })).code, 200);
+  const limited = a.createApplyApi({ store: { load: async () => null, save: async () => {}, loadPay: async () => null, savePay: async () => {} },
+    lookup: async () => ({}), isAdmin: () => false, isOwner: () => false, rateLimited: () => true, log: { log() {}, warn() {}, error() {} } });
+  for (const fn of [limited.mine, limited.saveIntro]) {
+    const res = fakeRes(); await fn({ headers: {}, body: who }, res);
+    assert.deepEqual([res.code, res.body.error], [429, "too_many_requests"]);
+  }
+});
+
+test("동시에 소개 두 번 저장 → 둘 다 들어가고 마지막 것이 남는다(한 줄로 세운다)", async () => {
+  const { api, mem, call } = setup();
+  await call(api.apply, { body: body() });
+  await call(api.apply, { body: body({ discord: "second_one", ign: "Fake_Nick2" }) });
+  await Promise.all([
+    call(api.saveIntro, { body: { discord: "tester_one", ign: "Fake_Nick1", intro: intro({ message: "첫째" }) } }),
+    call(api.saveIntro, { body: { discord: "second_one", ign: "Fake_Nick2", intro: intro({ message: "둘째" }) } }),
+  ]);
+  assert.deepEqual([mem.intro.id1.message, mem.intro.id2.message], ["첫째", "둘째"]);   // 서로 덮어쓰지 않는다
 });
