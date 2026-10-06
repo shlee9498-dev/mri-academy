@@ -8,10 +8,12 @@
 //   · 결과 화면이 아닌 사진 · 다른 채널 · 대회 시간 밖 · 봇 글은 조용히 넘어간다.
 //   · 결과 화면인데 숫자를 못 읽었거나 팀을 못 정하면 「못 읽었어요」 만 — 짐작한 값은 내보내지도 저장하지도 않는다.
 // 점수판: 팀마다 shot = { kills, damage, rank, … } 을 「잠정」 으로만 붙인다. 총점 · 순위에는 절대 더하지 않는다.
+//   + 잠정 판 점수 shot.score(사망 슬롯 감점 · 치킨 · 버닝까지 · 음수 그대로 · §1.10 · 10/7) — 셀 수 없으면 basis "kills"(킬만 반영).
 //   사라지는 때(같은 판 전적이 왔다고 보는 때): 스샷을 올린 뒤 그 팀에 새로 확정된 판 중
 //   ① 순위가 같은 판(순위를 못 읽었거나 무효 판이면 순위 없이) ② 스샷보다 뒤에 시작한 판 이 생기면. 또는 올린 지 60분이 지나면.
 // +1킬 버튼(killrace-live.cjs presses)은 그대로다 — 둘은 따로 보인다.
 
+const { scoring } = require("./killrace.cjs");   // 잠정 점수도 확정 점수와 같은 식(슬롯 감점 · 딜 100당 1 · 치킨 8 · 버닝 반올림)
 const CHANNEL_ID = "1513781226350055534";       // 킬내기-팀배정 (지휘 10/5 지정)
 const GRACE_MS = 45 * 60000;                     // killrace-live 와 같다 — 끝 시각 뒤에도 마지막 판 스샷은 받는다
 const SHOW_MS = 60 * 60000;                      // 이만큼 지나도 확정 판이 안 붙으면 화면에서 내린다
@@ -137,16 +139,58 @@ function isSettled(shot, rows, at) {
   return false;
 }
 
-// 점수판 응답에 「잠정」 칸을 붙인다 — total · rank · gameScore 는 읽지도 고치지도 않는다
+// 스샷 한 장의 잠정 판 점수(docs/killrace-api.md §1.10) — 점수식은 killrace.cjs 한 벌(scoring)을 그대로 쓴다.
+// 사망: 탈락 화면(순위 2 이상)은 팀 전원 사망이다 — 전적 판정과 같다(2 · 3 · 4회 탈락 91판 모두 전원 사망 · 10/7 실측).
+//       치킨(순위 1)은 사진의 사망 표시를 읽어야 한다 — 한 명이라도 못 읽었거나 죽은 사람의 슬롯을 모르면 「킬만 반영」.
+//       순위를 못 읽었으면 「킬만 반영」(짐작하지 않는다).
+// 버닝: 사진만으로는 판 시작 시각을 모른다 — 그 판이 버닝 시각 뒤에 시작한 게 확실할 때만 곱한다(스샷을 올릴 때 알던 마지막 판이
+//       버닝 시각 뒤에 시작했으면 확실). 버닝 시각 전에 올린 스샷은 버닝 아님 · 그 사이는 "maybe"(곱하지 않고 「버닝?」 표시).
+//       그 팀이 버닝 판을 이미 썼거나(확정 판) 앞 스샷이 버닝 판이면 버닝 아님 · 앞 스샷이 "maybe" 면 이것도 "maybe".
+// lane = { used, maybe } — 같은 팀 미확정 스샷을 시간 순으로 넘기며 버닝 판 차례를 이어 본다
+function shotScore(shot, team, { boostAt = null, boostMul = 1.5 } = {}, lane = { used: false, maybe: false }) {
+  if (!shot || shot.rank == null) return { basis: "kills" };
+  const slots = ((team && team.members) || []).map((m) => Number(m.slot)).filter((x) => Number.isInteger(x) && x >= 1);
+  if (!slots.length) return { basis: "kills" };
+  const chicken = shot.rank === 1;
+  let deadSlots = slots;
+  if (chicken) {
+    const players = Array.isArray(shot.players) ? shot.players : [];
+    if (!players.length || players.some((p) => typeof p.dead !== "boolean")) return { basis: "kills" };
+    const dead = players.filter((p) => p.dead);
+    if (dead.some((p) => !slots.includes(p.slot))) return { basis: "kills" };
+    deadSlots = [...new Set(dead.map((p) => p.slot))];
+  }
+  const penalty = deadSlots.reduce((n, s) => n + (scoring.SLOT_PENALTY[s - 1] || 0), 0);
+  const base = scoring.baseScore(Number(shot.kills) || 0, Number(shot.damage) || 0, shot.rank, penalty);
+  let boost = null;
+  if (Number.isFinite(boostAt) && !lane.used && shot.at >= boostAt) {
+    if (lane.maybe) boost = "maybe";
+    else if ((Number(shot.base) || 0) >= boostAt) { boost = boostMul; lane.used = true; }
+    else { boost = "maybe"; lane.maybe = true; }
+  }
+  return { basis: "full", score: typeof boost === "number" ? scoring.applyBoost(base, boost) : base, base, penalty, chicken, boost };
+}
+
+// 점수판 응답에 「잠정」 칸을 붙인다 — total · rank · gameScore 는 읽지도 고치지도 않는다.
+// shot.score = 미확정 스샷 판 점수 합(전부 셀 수 있을 때만 · 음수 그대로) · basis "kills" 면 킬만 반영(score null).
+// 방송 화면이 쓰는 칸(n · kills · damage · rank · teams · dead · at · players)은 그대로 둔다
 function decorateBoard(body, state, at) {
   const shots = (state && state.shots) || [];
+  const opts = { boostAt: Number.isFinite(body && body.boostAt) ? body.boostAt : null, boostMul: Number(body && body.boostMul) || 1.5 };
   for (const t of (body && body.teams) || []) {
     const open = shots.filter((s) => s.team === t.name && !isSettled(s, t.rows, at)).sort((a, b) => a.at - b.at);
     if (!open.length) { t.shot = null; continue; }
     const last = open[open.length - 1];
+    const lane = { used: !!t.boostUsed, maybe: false };
+    const each = open.map((s) => shotScore(s, t, opts, lane));
+    const full = each.every((x) => x.basis === "full");
+    const boosts = each.map((x) => x.boost).filter((b) => b != null);
     t.shot = { n: open.length, kills: open.reduce((n, s) => n + s.kills, 0), damage: open.reduce((n, s) => n + s.damage, 0),
       rank: last.rank, teams: last.teams, dead: last.dead, at: last.at,
-      players: last.players.map((p) => ({ ign: p.ign, kills: p.kills, damage: p.damage, dead: p.dead })) };
+      players: last.players.map((p) => ({ ign: p.ign, kills: p.kills, damage: p.damage, dead: p.dead })),
+      basis: full ? "full" : "kills", score: full ? each.reduce((n, x) => n + x.score, 0) : null,
+      penalty: full ? each.reduce((n, x) => n + x.penalty, 0) : null,
+      boost: boosts.includes("maybe") ? "maybe" : boosts.length ? boosts[0] : null };
   }
   return body;
 }
@@ -374,6 +418,6 @@ function createShot(deps) {
 
 module.exports = {
   createShot, CHANNEL_ID, UNREADABLE,
-  _test: { parseReading, normIgn, within1, matchTeam, makeEntry, normState, addShot, isSettled, decorateBoard, replyLine, imageAttachments,
+  _test: { parseReading, normIgn, within1, matchTeam, makeEntry, normState, addShot, isSettled, decorateBoard, shotScore, replyLine, imageAttachments,
     skipMessage, imageUrl, fetchImage, readImage, readRequest, READ_SCHEMA, MODELS, SHOW_MS, DUP_MS, MATCH_SPAN_MS, GRACE_MS, IMAGE_EDGE },
 };

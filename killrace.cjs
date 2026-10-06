@@ -1423,7 +1423,7 @@ function createKillrace(deps) {
 }
 
 module.exports = {
-  COMMANDS, createKillrace,
+  COMMANDS, createKillrace, scoring: { SLOT_PENALTY, baseScore, applyBoost },   // 점수식은 여기 한 벌 — 스샷 잠정(killrace-shot.cjs)이 같은 식을 쓴다
   _test: {
     SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, applyBoost, finalScore, boostTarget, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
