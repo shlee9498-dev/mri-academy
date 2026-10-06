@@ -167,16 +167,24 @@ function lineupFor(m, team) {
 // 팀 구성 서명 — 저장된 판을 다시 쓸지 판단(구성·슬롯 순서가 바뀌면 옛 판정은 버린다)
 const teamSig = (team) => `${team.platform}:${team.members.map((x) => `${x.slot}=${x.accountId}`).join(",")}`;
 
-// 팀별 후보 = 등록 인원 중 (인원−1)명 이상의 최근 매치 목록에 같이 있는 matchId · 목록 앞(최신)부터.
+// 팀별 후보 = 등록 슬롯 중 (인원−1)개 이상이 최근 매치 목록에 같이 있는 matchId · 목록 앞(최신)부터.
 // 한 명 빠진 판도 후보로 잡아야 「인원」 제외 사유를 오너에게 보여 줄 수 있다(4인 팀이면 종전 3 과 같다).
+// 슬롯마다 그 슬롯을 뛸 수 있는 계정(주전 + 그 슬롯 교체 선수)의 목록을 합쳐 슬롯 하나로 센다 — 교체가 둘이어도
+// 그 판의 실제 출전 명단(주전 둘 + 교체 둘)으로 세어진다(검수 37차 보완 · 종전엔 주전만 세어 교체 2명 판이 조용히 빠졌다).
 function teamCandidates(team, matchesByAcc) {
   const minCount = Math.max(2, team.members.length - 1);
+  const bySlot = new Map(team.members.map((x) => [x.slot, [x.accountId]]));
+  for (const s of team.subs || []) if (bySlot.has(s.slot)) bySlot.get(s.slot).push(s.accountId);
   const count = new Map(); const order = new Map();
-  for (const mem of team.members) {
-    (matchesByAcc.get(mem.accountId) || []).forEach((id, i) => {
-      count.set(id, (count.get(id) || 0) + 1);
-      if (!order.has(id) || i < order.get(id)) order.set(id, i);
-    });
+  for (const accs of bySlot.values()) {
+    const seen = new Set();
+    for (const acc of accs) {
+      (matchesByAcc.get(acc) || []).forEach((id, i) => {
+        if (!order.has(id) || i < order.get(id)) order.set(id, i);
+        if (seen.has(id)) return;
+        seen.add(id); count.set(id, (count.get(id) || 0) + 1);
+      });
+    }
   }
   return [...count.entries()].filter(([, c]) => c >= minCount).map(([id]) => id).sort((a, b) => order.get(a) - order.get(b));
 }
@@ -861,13 +869,13 @@ function createKillrace(deps) {
     const stored = new Map(storedRows.map((r) => [`${r.team_name}|${r.match_id}`, r]));
     const warn = [];
     const slotName = new Map();
-    teams.forEach((t) => t.members.forEach((x) => slotName.set(x.accountId, `${t.name} ${x.slot}번 ${x.ign}`)));
+    teams.forEach((t) => [...t.members, ...(t.subs || [])].forEach((x) => slotName.set(x.accountId, `${t.name} ${x.slot}번 ${x.ign}`)));
 
     // 1) 선수별 최근 매치 목록 — /players 무캐시 · 플랫폼별 10명씩
     progress("선수별 최근 매치 목록을 보고 있어요…");
     const matchesByAcc = new Map();
     const byPlatform = new Map();
-    teams.forEach((t) => t.members.forEach((x) => {
+    teams.forEach((t) => [...t.members, ...(t.subs || [])].forEach((x) => {   // 교체 선수 계정도 최근 판을 본다(교체 2명이 같이 뛴 판도 후보에 들게)
       if (!byPlatform.has(t.platform)) byPlatform.set(t.platform, new Set());
       byPlatform.get(t.platform).add(x.accountId);
     }));
