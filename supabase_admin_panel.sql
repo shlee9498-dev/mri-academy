@@ -6701,3 +6701,85 @@ notify pgrst, 'reload schema';   -- 블록을 통째로 붙여 실행해도 Post
 --   drop table if exists public.notices;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- 66) 킬내기 개인별 판 기록 — event_match_players (2026-10-06 · 지휘 주문 「킬내기 무인 운영 1단계」 조각 A · 계약 docs/killrace-api.md §1.8)
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행 · §31 과 같은 형태). A 구간(새 표 하나 · 더하기만 · 기존 표 · 칸 · 제약 · 함수 안 건드림).
+--     판 × 선수 한 줄. 집계(killrace.cjs aggregateOnce)가 event_matches 를 저장한 바로 뒤에 같은 판의 선수 줄을 덮어쓴다(upsert).
+--     「팀 내 킬 1등 · 평균 킬 · 평균 딜」(§1.2 티어 · §1.3 팀장)을 event_matches.deaths jsonb 를 풀지 않고 센다.
+--     인정 판인지는 이 표에 적지 않는다 — event_matches 와 맞대어 본다(seq is not null and not leave_flag).
+--     핵 사망 무효 슬롯은 event_matches.flags.voidSlots. (같은 사실을 두 곳에 두면 진행자 표시 뒤에 어긋난다.)
+--     ⚠️ 대회 시간(창 시작 ~ 끝 + 45분)에는 실행하지 않는다 — 10/6 4회는 01:30 KST(10/7)까지 금지 · 지휘에게 먼저 알리고
+--        66-0 스냅샷 → 66a 표 → 66c 검증 → 66b 과거 판 채우기 → 66d 검증 순서(66a 끝에 notify pgrst 실행 줄).
+--     실행 전에도 서버는 뜬다 — 집계 · 점수는 그대로이고 이 표 쓰기만 실패한다(10분에 한 번 로그 players_write_failed table_missing) ·
+--     기동 점검 SCHEMA_OPTIONAL 경고 1줄. 실행 뒤 재시작 없이 다음 집계부터 쓴다.
+-- ============================================================
+-- 66-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select to_regclass('public.event_match_players');                                        -- 기대 null(처음 실행)
+--   select event_id, count(*) filter (where seq is not null) as counted, count(*) as all_rows
+--     from public.event_matches group by 1 order by 1;                                        -- 10/6 실측 2회 38/39 · 3회 49/49 · 4회 진행 중
+-- 66a) 표
+create table if not exists public.event_match_players (
+  event_id    bigint      not null,
+  team_name   text        not null,
+  match_id    text        not null,
+  account_id  text        not null check (account_id <> ''),          -- PUBG 계정 번호(account.…) — 닉이 바뀌어도 같다
+  slot        smallint    not null check (slot between 1 and 4),      -- 그 판에서 맡은 감점 슬롯(교체 선수는 물려받은 슬롯)
+  sub         boolean     not null default false,                     -- 교체 선수로 뛴 판(/킬내기교체)
+  ign         text        not null default '',                        -- 그 판 인게임 닉
+  reg_ign     text,                                                   -- 등록 닉이 그 판 닉과 다르면 등록 닉
+  kills       integer     not null default 0 check (kills >= 0),
+  damage      numeric     not null default 0 check (damage >= 0),     -- damageDealt 그대로(소수)
+  death_type  text        not null default '',                        -- PUBG deathType 원문(alive · byplayer · logout …)
+  dead        boolean     not null,                                   -- 사망 판정 = 감점 판정과 같은 값(deaths.verdict · 무효 판은 deathType)
+  started_at  timestamptz not null,                                   -- 판 시작 = event_matches.created_at
+  updated_at  timestamptz not null default now(),
+  primary key (event_id, team_name, match_id, account_id),
+  foreign key (event_id, team_name, match_id) references public.event_matches (event_id, team_name, match_id) on delete cascade
+);
+create index if not exists idx_emp_account on public.event_match_players (account_id, started_at desc);   -- 선수 한 명의 판을 최근 순으로(§1.2)
+alter table public.event_match_players enable row level security;   -- 정책 0 = service_role 만
+notify pgrst, 'reload schema';   -- 블록을 통째로 붙여 실행해도 PostgREST 새로고침이 빠지지 않게 실행 줄로 둔다
+--
+-- 66b) 과거 판 채우기(66a 뒤 한 번 · 다시 돌려도 같다 — on conflict do nothing) — event_matches.deaths.members 를 편다(PUBG 조회 없음).
+--      2 · 3 · 4회 칸(킬 · 딜 · 사망 · 계정 번호)은 전부 DB 에 있어 배그 14일 기한과 무관하다. 1회(event 1)는 DB 에 판이 없어 0줄이다.
+--      진행 중인 회차가 있으면 그 회차 끝 + 45분 뒤에 돌린다(집계가 같은 줄을 덮어쓰고 있으면 이 줄은 건너뛴다).
+insert into public.event_match_players (event_id, team_name, match_id, account_id, slot, sub, ign, reg_ign, kills, damage, death_type, dead, started_at, updated_at)
+select m.event_id, m.team_name, m.match_id, e->>'accountId', (e->>'slot')::smallint,
+       exists (select 1 from public.event_teams t, jsonb_array_elements(t.members) tm
+                where t.event_id = m.event_id and t.team_name = m.team_name
+                  and coalesce((tm->>'sub')::boolean, false) and tm->>'accountId' = e->>'accountId'),
+       coalesce(e->>'ign', ''), nullif(e->>'regIgn', ''),
+       coalesce((e->>'kills')::int, 0), coalesce((e->>'damage')::numeric, 0), coalesce(e->>'deathType', ''),
+       coalesce((select (v->>'dead')::boolean from jsonb_array_elements(m.deaths->'verdict') v
+                  where (v->>'slot')::int = (e->>'slot')::int limit 1),
+                coalesce(e->>'deathType', '') <> 'alive'),
+       m.created_at, now()
+  from public.event_matches m
+ cross join lateral jsonb_array_elements(case when jsonb_typeof(m.deaths->'members') = 'array' then m.deaths->'members' else '[]'::jsonb end) e
+ where coalesce(e->>'accountId', '') <> ''
+   and m.created_at is not null
+on conflict (event_id, team_name, match_id, account_id) do nothing;
+--
+-- 66c) 66a 뒤 검증(세션 · 읽기만):
+--   select count(*) from information_schema.columns where table_schema='public' and table_name='event_match_players';   -- 14
+--   select contype, count(*) from pg_constraint where conrelid='public.event_match_players'::regclass group by 1 order by 1;
+--     -- c 4(account_id · slot · kills · damage) · f 1 · p 1   (PG 17 — not null 은 pg_constraint 에 안 잡힌다)
+--   select indexname from pg_indexes where tablename='event_match_players' order by 1;             -- event_match_players_pkey · idx_emp_account
+--   select relrowsecurity from pg_class where relname='event_match_players';                       -- true
+-- 66d) 66b 뒤 검증(세션 · 읽기만) — 인정 판마다 선수 줄 · 선수 킬 합 = 팀 kills · 선수 딜 합 = 팀 damage_sum:
+--   select m.event_id, count(*) as counted_games,
+--          count(*) filter (where p.n is null) as no_players,
+--          count(*) filter (where p.k <> m.kills) as kill_mismatch,
+--          count(*) filter (where abs(p.d - m.damage_sum) >= 0.01) as dmg_mismatch,
+--          sum(p.n) as player_rows
+--     from public.event_matches m
+--     left join (select event_id, team_name, match_id, count(*) as n, sum(kills) as k, sum(damage) as d
+--                  from public.event_match_players group by 1, 2, 3) p using (event_id, team_name, match_id)
+--    where m.seq is not null group by 1 order by 1;
+--   -- 기대(10/6 23:5x 실측 · 66b 의 select 를 읽기만으로 돌린 값): 2회 38 · 0 · 0 · 0 · 152 / 3회 49 · 0 · 0 · 0 · 196 / 4회 = 최종 인정 판 × 4 · 0 · 0 · 0
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 개인 기록 줄만 사라진다 — 점수 · event_matches 는 그대로):
+--   drop table if exists public.event_match_players;
+--   notify pgrst, 'reload schema';
+-- ============================================================
