@@ -136,7 +136,8 @@ test("포스터 SVG: 음수 총점은 − 와 빨강 · 시작 보너스 부호 
   assert.ok(svg.includes("…"));
   assert.ok(svg.includes("킬내기 <tspan") && svg.includes("3회</tspan> 최종 순위"));
   const text = visible(svg);                                                // 로고 그림(base64)은 글자가 아니다 — 빼고 본다
-  for (const word of ["원", "상금", "가격", "₩", "포인트"]) assert.ok(!text.includes(word), word);
+  for (const word of ["상금", "가격", "₩", "포인트"]) assert.ok(!text.includes(word), word);
+  assert.ok(!/\d[\d,.]*\s*(만|원)/.test(text), "금액(24만 · 240,000원 꼴)");      // 「클랜원」의 원은 금액이 아니다 — 숫자 뒤 원 · 만만 막는다
   assert.ok(!/\d\s*P\b/.test(text));                                      // 경매 포인트(120P 꼴)도 없다
   assert.ok(!/account\./.test(text));
 });
@@ -150,9 +151,11 @@ test("포스터 GmI 칸: 오른쪽 위 로고 · 마무리 띠(제목 · 안내 
   assert.deepEqual([...Buffer.from(logo[5], "base64").subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
   assert.equal(Buffer.from(logo[5], "base64").length, require("fs").statSync(T.LOGO_FILE).size);
   assert.equal((svg.match(/<image /g) || []).length, 1);                    // 로고는 머리에 한 번만
-  for (const s of ["GmI 클랜 입단 안내", "QR 찍으면 GmI 디스코드로 바로 가요", "discord.gg/YfZD8d22wJ"]) assert.ok(svg.includes(`>${s}</text>`), s);
-  assert.deepEqual(T.RECRUIT.lines, []);                                   // 기준 줄은 오너 글이 오기 전까지 비어 있다(지어 넣지 않는다)
-  assert.ok(!svg.includes("<circle"));
+  for (const s of ["GmI 클랜 입단 안내", "마스터 · 평딜 200 이상 → 정식 클랜원", "다이아 · 평딜 170 이상 → 레슨생 트랙", "QR 찍고 디스코드로 오세요", "discord.gg/YfZD8d22wJ"]) {
+    assert.ok(svg.includes(`>${s}</text>`), s);                             // 오너 글 그대로(지휘 10/7 전달)
+  }
+  assert.equal((svg.match(/<circle /g) || []).length, 2);
+  assert.ok(!P.posterSvg(d, { recruit: { ...T.RECRUIT, lines: [] } }).includes("<circle"));   // 기준 줄이 없으면 점도 없다
   assert.ok(svg.includes('shape-rendering="crispEdges"'));
   const lined = P.posterSvg(d, { recruit: { ...T.RECRUIT, lines: ["<b>&기준", "", "  둘째  ", "셋째", "넷째"] } });
   assert.equal((lined.match(/<circle /g) || []).length, 3);

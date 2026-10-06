@@ -32,8 +32,14 @@ function logoDataUri() {
   }
   return logoUri;
 }
-// 마무리 칸 — GmI 클랜 입단 안내(오너 10/6). 기준 줄은 오너가 준 글 그대로만 싣는다(비어 있으면 제목 · 안내 · QR 만, 3줄까지)
-const RECRUIT = { title: "GmI 클랜 입단 안내", lines: [], cta: "QR 찍으면 GmI 디스코드로 바로 가요", link: "discord.gg/YfZD8d22wJ" };
+// 마무리 칸 — GmI 클랜 입단 안내(오너 10/6). 기준 줄은 오너가 준 글 그대로만 싣는다(비어 있으면 제목 · 안내 · QR 만, 3줄까지).
+//   기준 · 안내 글 = 오너가 룰 영상 녹음에서 말한 세 줄(지휘 10/7 전달). 초대 주소는 만료 없는 초대(오너 10/7 확인)
+const RECRUIT = {
+  title: "GmI 클랜 입단 안내",
+  lines: ["마스터 · 평딜 200 이상 → 정식 클랜원", "다이아 · 평딜 170 이상 → 레슨생 트랙"],
+  cta: "QR 찍고 디스코드로 오세요",
+  link: "discord.gg/YfZD8d22wJ",
+};
 // GmI 디스코드 초대 QR(https://discord.gg/YfZD8d22wJ) — 버전 3 · 29×29 · 오류 정정 Q · 마스크 2 · 한 줄 = 한 행 · 1 = 검은 칸.
 //   저장소 밖에서 한 번 만들어 붙였다(node-qrcode 1.5.4 · 저장소 의존성 아님) · 다른 구현(jsQR 1.4.0)으로 되읽어 같은 주소인지 봤다.
 //   주소가 바뀌면 다시 만들어 붙이고 RECRUIT.link 도 같이 고친다
