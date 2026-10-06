@@ -368,6 +368,17 @@ function createLive(deps) {
       if (drops.length && ready()) { const r = await run("manual", { ev: await killrace.eventById(ev.id) }); rerun = r.ok ? "ok" : r.code; }
       return done({ changed: true, dropped: drops.length, rerun });
     }
+    // 늦은 블루칩 부활 판정 방식(§1.14) — penalty(−10) · flag(의심 표시만) · off. 바꾸면 바로 한 번 집계해 판 점수를 다시 센다
+    if (action === "lateRevive") {
+      const mode = String(b.mode == null ? "" : b.mode);
+      if (!["penalty", "flag", "off"].includes(mode)) return res.status(400).json({ error: { code: "bad_mode" } });
+      if (cfg.lateRevive === mode) return done({ changed: false, lateRevive: mode });
+      await killrace.saveConfig(ev.id, { lateRevive: mode });
+      await hostLog(ev.id, { by, action, before: cfg.lateRevive, after: mode });
+      let rerun = null;
+      if (ready()) { const r = await run("manual", { ev }); rerun = r.ok ? "ok" : r.code; }
+      return done({ changed: true, lateRevive: mode, rerun });
+    }
     // 팀별 보너스 — 정수 −100 ~ 100 · 비우면 지운다 · 등록 전 팀 이름도 받는다(등록되는 순간 붙는다 · 10/6 4회)
     const team = String(b.team == null ? "" : b.team).trim();
     if (!team || team.length > 30) return res.status(400).json({ error: { code: "bad_team" } });
@@ -400,8 +411,8 @@ function createLive(deps) {
       if (!r.ok) return res.status(r.code === "busy" ? 409 : 502).json({ error: { code: r.code, message: r.error || null } });
       return done({ ms: r.ms });
     }
-    // ── 진행자 화면 대회 설정(§1.7) — 새 대회 만들기 · 시각 고치기 · 팀별 보너스. 누가(by) · 언제 · 전 → 후 를 회차마다 남긴다 ──
-    if (action === "eventCreate" || action === "eventTimes" || action === "bonus") return hostAction(action, b, res, done);
+    // ── 진행자 화면 대회 설정(§1.7) — 새 대회 만들기 · 시각 고치기 · 팀별 보너스 · 늦은 부활 판정 방식(§1.14). 누가(by) · 언제 · 전 → 후 를 회차마다 남긴다 ──
+    if (action === "eventCreate" || action === "eventTimes" || action === "bonus" || action === "lateRevive") return hostAction(action, b, res, done);
     const ev = await killrace.currentEvent();
     if (action === "auto") { await killrace.saveConfig(ev.id, { auto: b.on !== false }); return done({ auto: b.on !== false }); }
     if (action === "boostAt") {
