@@ -31,6 +31,8 @@ const killrace = require("./killrace.cjs");
 const killraceAuction = require("./killrace-auction.cjs");
 const killraceLive = require("./killrace-live.cjs");
 const killraceShot = require("./killrace-shot.cjs");
+// 킬내기 개인 누적 지표(§1.11) — 계정 기준 · 불투명 키 · 회차 묶음. 시험 scripts/killrace-career.test.cjs
+const killraceCareer = require("./killrace-career.cjs");
 let killShot = null;   // 킬내기 결과 스샷 읽기 — 아래 킬내기 HTTP 블록에서 만들고 봇 messageCreate 가 쓴다
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
 //   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
@@ -7046,6 +7048,8 @@ function gdcupAdmin(req) {
   });
   live.mount(app);
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { live.tick(); }, 60000).unref();
+  // 개인 누적 지표(§1.11) — GET /api/killrace/career?events=2,3,4 · 닉 · 숫자 · 불투명 키만(계정 번호는 밖으로 안 나간다)
+  killraceCareer.createCareer({ sbSelect, secret: process.env.SESSION_SECRET }).mount(app);
 }
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
 // ── 운영 응답용 members 정제 ──
