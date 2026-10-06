@@ -31,9 +31,12 @@ const killrace = require("./killrace.cjs");
 const killraceAuction = require("./killrace-auction.cjs");
 const killraceLive = require("./killrace-live.cjs");
 const killraceShot = require("./killrace-shot.cjs");
+// 킬내기 결과 포스터(§1.9) — 최종 순위 한 장을 그려(SVG → PNG · @resvg/resvg-js) 오너가 고른 채널에 회차마다 한 번. 시험 scripts/killrace-poster.test.cjs
+const killracePoster = require("./killrace-poster.cjs");
 // 킬내기 개인 누적 지표(§1.11) — 계정 기준 · 불투명 키 · 회차 묶음. 시험 scripts/killrace-career.test.cjs
 const killraceCareer = require("./killrace-career.cjs");
 let killShot = null;   // 킬내기 결과 스샷 읽기 — 아래 킬내기 HTTP 블록에서 만들고 봇 messageCreate 가 쓴다
+let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP 블록에서 만들고 봇 interactionCreate(/킬내기포스터)가 쓴다
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
 //   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
 const payreqIntake = require("./payreq-intake.cjs");
@@ -1248,7 +1251,7 @@ if (process.env.DISCORD_TOKEN) {
       const payreqCmds = process.env.BOT_PAYREQ === "1" ? [PAYREQ_CMD] : [];
       // set() 은 이 길드 명령을 통째로 바꾼다 — 여기 없는 명령은 사라진다. 로그를 배열에서 뽑아 누락을 부팅 로그로 확인한다.
       // 킬내기 3종(GmI · 오너 전용)은 맨 뒤에 붙인다.
-      const list = [LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD, ...LINK_CMDS, ...payreqCmds, ...killrace.COMMANDS];
+      const list = [LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD, ...LINK_CMDS, ...payreqCmds, ...killrace.COMMANDS, ...killracePoster.COMMANDS];
       await client.application.commands.set(list, guildId);
       console.log(`${list.map((c) => "/" + c.name).join("·")} registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
     } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
@@ -1381,6 +1384,8 @@ if (process.env.DISCORD_TOKEN) {
   // pubgGet·pubgMatch·sb* 는 모듈 레벨 함수 선언이라 여기서 그대로 넘긴다.
   const killraceBot = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch, sbInsert });
   client.on("interactionCreate", (itx) => killraceBot.handle(itx).catch((e) => console.error("[killrace] handler", e?.message)));
+  // /킬내기포스터(오너 전용 · 미리 보기 · 켜기 · 끄기 · 게시) — killrace-poster.cjs
+  client.on("interactionCreate", (itx) => { if (killPoster) killPoster.handle(itx).catch((e) => console.error("[killrace-poster] handler", e?.message)); });
   // 결과 화면 스샷 → 점수판 「잠정」(killrace-shot.cjs · 팀배정 채널 사진만 · 확정 점수는 안 건드린다)
   client.on("messageCreate", (msg) => { if (killShot) killShot.onMessage(msg).catch((e) => console.error("[killrace-shot] handler", e?.message)); });
   client.once("ready", () => { if (killShot) killShot.checkChannel(client); });
@@ -7048,6 +7053,9 @@ function gdcupAdmin(req) {
   });
   live.mount(app);
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { live.tick(); }, 60000).unref();
+  // 결과 포스터(§1.9) — 집계 tick 과 따로 1분마다. 오너가 /킬내기포스터 켜기 로 채널을 고르기 전에는 설정 한 줄만 읽고 끝난다(배포 때 꺼짐)
+  killPoster = killracePoster.createPoster({ killrace: kr, sbSelect, sbInsert, sbUpsert, getClient: () => botClient });
+  if (process.env.SUPABASE_URL) setInterval(() => { killPoster.tick(); }, 60000).unref();
   // 개인 누적 지표(§1.11) — GET /api/killrace/career?events=2,3,4 · 닉 · 숫자 · 불투명 키만(계정 번호는 밖으로 안 나간다)
   killraceCareer.createCareer({ sbSelect, secret: process.env.SESSION_SECRET }).mount(app);
 }
