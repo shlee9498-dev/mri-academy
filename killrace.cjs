@@ -106,6 +106,16 @@ const COMMANDS = [
       { name: "플랫폼", description: "명단의 플랫폼(기본 스팀)", type: 3, required: false, choices: PLATFORM_CHOICES },
     ],
   },
+  {
+    name: "킬내기교체",
+    description: "[오너] 대회 중 선수 교체 — 그 슬롯 주전 대신 뛴 판을 교체 선수 몫으로 인정(지난 판은 그대로)",
+    options: [
+      { name: "팀명", description: "등록한 팀 이름 그대로", type: 3, required: true },
+      { name: "슬롯", description: "나가는 주전의 슬롯 번호(감점 슬롯을 그대로 물려받아요)", type: 4, required: true, min_value: 1, max_value: 4 },
+      { name: "닉", description: "들어오는 선수 인게임닉(해제할 때는 비워 두세요)", type: 3, required: false },
+      { name: "해제", description: "true 면 이 슬롯의 교체 기록을 지운다", type: 5, required: false },
+    ],
+  },
 ];
 const COMMAND_NAMES = new Set(COMMANDS.map((c) => c.name));
 
@@ -130,11 +140,25 @@ function pickPlayer(list, name) {
   return ci.length === 1 ? ci[0] : null;
 }
 
+// members jsonb 에 「sub: true」 줄 = 교체(예비) 선수 — 그 슬롯의 주전 대신 뛴 판에서 슬롯을 물려받는다(/킬내기교체 · 2026-10-06 3회).
+// members = 주전(슬롯마다 한 명) · subs = 교체 선수. 팀 구성 서명(teamSig)은 주전만 본다 — 교체를 적어도 저장된 판이 버려지지 않는다
 function normTeam(row) {
-  const members = (Array.isArray(row.members) ? row.members : [])
-    .map((x) => ({ slot: Number(x.slot), ign: String(x.ign || ""), accountId: String(x.accountId || "") }))
+  const all = (Array.isArray(row.members) ? row.members : [])
+    .map((x) => ({ slot: Number(x.slot), ign: String(x.ign || ""), accountId: String(x.accountId || ""), sub: !!(x && x.sub) }))
     .sort((a, b) => a.slot - b.slot);
-  return { name: row.team_name, platform: row.platform, members };
+  const strip = (x) => ({ slot: x.slot, ign: x.ign, accountId: x.accountId });
+  return { name: row.team_name, platform: row.platform, members: all.filter((x) => !x.sub).map(strip), subs: all.filter((x) => x.sub).map(strip) };
+}
+// 그 판의 출전 명단 — 슬롯마다 주전이 그 판에 있으면 주전, 없고 그 슬롯 교체 선수가 있으면 교체 선수(사망 감점 슬롯을 물려받는다)
+function lineupFor(m, team) {
+  if (!team.subs || !team.subs.length) return team;
+  const inMatch = new Set(Object.values((m && m.parts) || {}).map((p) => p && p.accountId).filter(Boolean));
+  const members = team.members.map((x) => {
+    if (inMatch.has(x.accountId)) return x;
+    const sub = team.subs.find((s) => s.slot === x.slot && inMatch.has(s.accountId));
+    return sub ? { slot: x.slot, ign: sub.ign, accountId: sub.accountId } : x;
+  });
+  return { ...team, members };
 }
 // 팀 구성 서명 — 저장된 판을 다시 쓸지 판단(구성·슬롯 순서가 바뀌면 옛 판정은 버린다)
 const teamSig = (team) => `${team.platform}:${team.members.map((x) => `${x.slot}=${x.accountId}`).join(",")}`;
@@ -608,7 +632,9 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
 function buildPlayers({ ev, teams, cfg, rows, roster, at }) {
   const b = buildBoard({ ev, teams, cfg, rows, at, admin: false });
   const meta = new Map(((roster && roster.players) || []).map((x) => [String(x.ign || "").toLowerCase(), x]));
-  const byTeam = new Map(teams.map((t) => [t.name, new Map(t.members.map((m) => [m.accountId, { slot: m.slot, ign: m.ign, kills: 0, damage: 0, deaths: 0, games: 0, chickens: 0 }]))]));
+  // 교체 선수도 계정별로 따로 쌓는다(뛴 판만큼) — 주전 · 교체가 같은 슬롯 번호를 갖는다
+  const byTeam = new Map(teams.map((t) => [t.name, new Map([...t.members, ...(t.subs || []).map((m) => ({ ...m, sub: true }))]
+    .map((m) => [m.accountId, { slot: m.slot, ign: m.ign, sub: !!m.sub, kills: 0, damage: 0, deaths: 0, games: 0, chickens: 0 }]))]));
   for (const r of rows || []) {
     const pl = byTeam.get(r.team_name);
     const d = r.deaths;
@@ -625,7 +651,7 @@ function buildPlayers({ ev, teams, cfg, rows, roster, at }) {
   const out = b.teams.map((t) => {
     const players = [...byTeam.get(t.name).values()].sort((x, y) => x.slot - y.slot).map((x) => {
       const mt = meta.get(String(x.ign || "").toLowerCase()) || {};
-      return { slot: x.slot, ign: x.ign, kills: x.kills, damage: Math.floor(x.damage), deaths: x.deaths, games: x.games, chickens: x.chickens,
+      return { slot: x.slot, ign: x.ign, ...(x.sub ? { sub: true } : {}), kills: x.kills, damage: Math.floor(x.damage), deaths: x.deaths, games: x.games, chickens: x.chickens,
         tier: mt.tier || null, price: Number.isFinite(mt.price) ? mt.price : null, captain: !!mt.captain };
     });
     return { name: t.name, rank: t.rank, total: t.total, gameScore: t.gameScore, bonus: t.bonus, games: t.games, chickens: t.chickens,
@@ -752,7 +778,7 @@ function createKillrace(deps) {
     const teams = await loadTeams(ev.id);
     for (const t of teams) {
       if (t.name === name) continue;
-      const dup = members.filter((m) => t.members.some((x) => x.accountId === m.accountId));
+      const dup = members.filter((m) => [...t.members, ...(t.subs || [])].some((x) => x.accountId === m.accountId));
       if (dup.length) throw userErr(`등록하지 않았어요 — ${dup.map((m) => m.ign).join(", ")} 은(는) 이미 「${t.name}」 팀에 있어요.`);
     }
     await sbUpsert("event_teams", { event_id: ev.id, team_name: name, platform, members }, "event_id,team_name");
@@ -829,7 +855,7 @@ function createKillrace(deps) {
         if (t < ev.start - NEAR_MS) { if (++older >= OLDER_STOP) break; continue; }
         older = 0;
         if (t >= ev.end + NEAR_MS) continue;
-        const cls = classify(m, team, modes);
+        const cls = classify(m, lineupFor(m, team), modes);
         if (cls.kind === "none") continue;
         if (t >= ev.start && t < ev.end) apiRecords.push({ team, m, cls });
         else if (cls.kind === "ok") {               // 4인 정상 판인데 시간만 밖 → 시비 대비로 보여 준다
@@ -1162,6 +1188,38 @@ function createKillrace(deps) {
   }
 
   // ── 디스코드 명령 처리(오너 전용) ──
+  // ── /킬내기교체 — 대회 중 선수 교체. 주전은 명단에 그대로 두고 교체 선수를 그 슬롯에 「sub」 로 더한다.
+  // 판마다 그 판에 실제로 뛴 사람으로 슬롯을 채운다(lineupFor) → 교체 전 판(주전) · 교체 뒤 판(교체 선수) 모두 인정 · 개인 기록은 계정별.
+  // 같은 팀명으로 /킬내기팀등록 을 다시 넣으면 팀 구성이 바뀐 것으로 보고 예전 판을 뺀다 — 대회 중 교체는 이 명령으로만.
+  async function setSub({ teamName, slot, ign, clear }) {
+    const ev = await currentEvent();
+    const teams = await loadTeams(ev.id);
+    const name = String(teamName || "").trim();
+    const team = teams.find((t) => t.name === name);
+    if (!team) throw userErr(`「${name}」 팀을 못 찾았어요. 등록한 팀 이름 그대로 적어 주세요. ✏️`);
+    const main = team.members.find((x) => x.slot === Number(slot));
+    if (!main) throw userErr(`「${name}」 팀에는 ${slot}번 슬롯이 없어요. ✏️`);
+    const rowOf = (subs) => [...team.members, ...subs.map((x) => ({ ...x, sub: true }))];
+    if (clear) {
+      const keep = (team.subs || []).filter((x) => x.slot !== main.slot);
+      await sbUpsert("event_teams", { event_id: ev.id, team_name: name, platform: team.platform, members: rowOf(keep) }, "event_id,team_name");
+      return { ev, name, slot: main.slot, main, sub: null, cleared: (team.subs || []).length - keep.length };
+    }
+    const want = String(ign || "").trim();
+    if (!want) throw userErr("들어오는 선수 닉을 적어 주세요. ✏️");
+    const p = pickPlayer(await lookupEach(team.platform, "playerNames", [want]), want);
+    if (!p) throw userErr(`「${want}」 을(를) ${PLATFORM_KO[team.platform] || team.platform}에서 못 찾았어요. 대소문자 · 특수문자까지 똑같은지 다시 한 번 볼까요? ✏️`);
+    for (const t of teams) {
+      const hit = [...t.members, ...(t.subs || [])].find((x) => x.accountId === p.id);
+      if (hit && !(t.name === name && (team.subs || []).some((x) => x.accountId === p.id && x.slot === main.slot))) {
+        throw userErr(`등록하지 않았어요 — ${p.attributes.name} 은(는) 이미 「${t.name}」 팀 ${hit.slot}번이에요.`);
+      }
+    }
+    const subs = (team.subs || []).filter((x) => x.accountId !== p.id).concat([{ slot: main.slot, ign: p.attributes.name, accountId: p.id }]);
+    await sbUpsert("event_teams", { event_id: ev.id, team_name: name, platform: team.platform, members: rowOf(subs) }, "event_id,team_name");
+    return { ev, name, slot: main.slot, main, sub: { ign: p.attributes.name, accountId: p.id }, cleared: 0 };
+  }
+
   // ── /킬내기기록 — 지난 회차 개인 기록을 PUBG 에서 다시 센다. 저장하지 않는다(DB 에는 읽기만) ──
   // 판 인정은 집계와 같다: 창 [시작, 끝) 에 시작한 판 · classify ok(등록 인원 전원이 한 로스터 · 공식 스쿼드).
   // 집계(aggregateOnce)와 매치 기억(matchKeep)은 건드리지 않는다 — 이 실행 안에서만 쓰는 기억을 따로 둔다.
@@ -1234,7 +1292,7 @@ function createKillrace(deps) {
     const out = [];
     for (const team of teams) {
       if (team.skipped) { out.push({ name: team.name, skipped: team.skipped }); continue; }
-      const tally = new Map(team.members.map((x) => [x.accountId, { slot: x.slot, ign: x.ign, kills: 0, damage: 0, games: 0, deaths: 0 }]));
+      const tally = new Map([...team.members, ...(team.subs || [])].map((x) => [x.accountId, { slot: x.slot, ign: x.ign, kills: 0, damage: 0, games: 0, deaths: 0 }]));
       const row = { name: team.name, games: 0, kills: 0, damage: 0, chickens: 0, excluded: {}, members: [] };
       let older = 0; let fetched = 0;
       for (const id of teamCandidates(team, matchesByAcc)) {
@@ -1247,7 +1305,7 @@ function createKillrace(deps) {
         if (t < ev.start - NEAR_MS) { if (++older >= OLDER_STOP) break; continue; }
         older = 0;
         if (t < ev.start || t >= ev.end) continue;
-        const cls = classify(m, team, modes);
+        const cls = classify(m, lineupFor(m, team), modes);
         if (cls.kind === "none") continue;
         if (cls.kind === "excluded") { row.excluded[cls.code] = (row.excluded[cls.code] || 0) + 1; continue; }
         row.games += 1;
@@ -1260,7 +1318,8 @@ function createKillrace(deps) {
         }
       }
       fetchedTotal += fetched;
-      row.members = [...tally.values()].sort((a, b) => a.slot - b.slot).map((x) => ({ ...x, damage: Math.floor(x.damage) }));
+      row.members = [...tally.values()].filter((x) => x.games || !(team.subs || []).some((s) => s.ign === x.ign && s.slot === x.slot))
+        .sort((a, b) => a.slot - b.slot).map((x) => ({ ...x, damage: Math.floor(x.damage) }));
       row.kills = sum(row.members, (x) => x.kills);
       row.damage = sum(row.members, (x) => x.damage);
       out.push(row);
@@ -1325,6 +1384,14 @@ function createKillrace(deps) {
           return itx.editReply({ content: `📊 DM으로 보냈어요! ${res.teams.length}팀 · 인정 ${games}판 · ${Math.round(res.ms / 1000)}초${posted}` });
         } finally { busy = false; }
       }
+      if (itx.commandName === "킬내기교체") {
+        const o = itx.options;
+        const r = await setSub({ teamName: o.getString("팀명"), slot: o.getInteger("슬롯"), ign: o.getString("닉"), clear: !!o.getBoolean("해제") });
+        log.log(`[killrace] sub_${r.sub ? "set" : "clear"} event#${r.ev.id} slot=${r.slot}`);
+        return itx.editReply({ content: r.sub
+          ? `🔁 교체 기록! ${r.name} ${r.slot}번 — ${r.main.ign} 대신 **${r.sub.ign}** 이(가) 뛴 판도 이 팀 판으로 잡혀요\n교체 전 판은 그대로 남고, 감점은 ${r.slot}번 슬롯을 그대로 물려받아요. 다음 집계(1분 안)부터 반영돼요`
+          : `교체 기록을 지웠어요 — ${r.name} ${r.slot}번(${r.cleared}명). 이미 잡힌 교체 선수 판은 다음 집계에서 빠져요` });
+      }
       if (itx.commandName === "킬내기기록") {
         await itx.editReply({ content: "🕒 지난 판을 다시 세고 있어요 — 끝나면 DM으로 보내요. 닉이 많으면 몇 분 걸릴 수 있어요." });
         const res = await history({ eventId: itx.options.getInteger("회차"), rosterText: itx.options.getString("명단") || "", platform: itx.options.getString("플랫폼") || "steam" });
@@ -1352,7 +1419,7 @@ function createKillrace(deps) {
     }
   }
 
-  return { handle, registerTeam, aggregate, history, eventById, listEvents, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
+  return { handle, registerTeam, setSub, aggregate, history, eventById, listEvents, setLeave, setVoidDeath, setVoidGame, ensureLiveTokens, diagnose, formatDiagnosis, currentEvent, loadConfig, saveConfig, loadTeams, board, players, saveRoster, loadRoster };
 }
 
 module.exports = {
@@ -1360,6 +1427,6 @@ module.exports = {
   _test: {
     SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, applyBoost, finalScore, boostTarget, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
-    splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory,
+    splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory, lineupFor,
   },
 };

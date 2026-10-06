@@ -313,8 +313,8 @@ test("닉 → 선수: 정확히 같은 닉 우선 · 대소문자만 다른 후�
   assert.equal(T.pickPlayer([], "abc"), null);
 });
 
-test("명령 4종: 이름·필수 옵션 먼저 · 오너 전용 표기 · 게시 옵션", () => {
-  assert.deepEqual(k.COMMANDS.map((c) => c.name), ["킬내기팀등록", "킬내기집계", "킬내기이탈", "킬내기기록"]);
+test("명령 5종: 이름·필수 옵션 먼저 · 오너 전용 표기 · 게시 옵션", () => {
+  assert.deepEqual(k.COMMANDS.map((c) => c.name), ["킬내기팀등록", "킬내기집계", "킬내기이탈", "킬내기기록", "킬내기교체"]);
   const post = k.COMMANDS.find((c) => c.name === "킬내기집계").options.find((o) => o.name === "게시");
   assert.deepEqual([post.type, !!post.required], [5, false], "게시 = 선택 boolean(기본 false)");
   for (const c of k.COMMANDS) {
@@ -729,4 +729,78 @@ test("2회 · 개인 기록: 개인 킬 합 = 팀 킬 · 무효 판과 이탈 �
   const json = JSON.stringify(out);
   assert.doesNotMatch(json, /accountId|"discord"|bank|accountNo|holder|liveToken/);
   assert.equal(out.ended, true);
+});
+
+// ── 대회 중 선수 교체(/킬내기교체 · 2026-10-06 3회) ──
+test("교체: 4판 중 2판은 주전, 2판은 교체 선수 → 네 판 모두 인정 · 감점 슬롯 물려받음 · 개인 기록은 계정별 · 교체 없는 팀은 종전 그대로", async () => {
+  const A = accsOf("a"); const B = accsOf("b"); const SUB = "account.a9";
+  const withSub = [A[0], A[1], A[2], SUB];
+  const matches = [
+    squadMatch("a1", EV2.start + 5 * 60000, A, { kills: 4 }),
+    squadMatch("a2", EV2.start + 30 * 60000, A, { kills: 2, dead: [4] }),            // 주전 4번 사망 → 4번 감점 1
+    squadMatch("a3", EV2.start + 55 * 60000, withSub, { kills: 3, dead: [4] }),      // 교체 선수가 4번 자리 · 사망 → 같은 감점 1
+    squadMatch("a4", EV2.start + 80 * 60000, withSub, { kills: 5 }),
+    squadMatch("b1", EV2.start + 10 * 60000, B, { kills: 6 }),
+  ];
+  const subRow = { ...teamRow("교체팀", "a"), members: [...teamRow("교체팀", "a").members, { slot: 4, ign: SUB, accountId: SUB, sub: true }] };
+  const w = fakeWorld({ cfgValue: {}, matches, teamRows: [subRow, teamRow("그대로팀", "b")] });
+  const res = await w.bot.aggregate({ deathMode: "deathType" });
+  const saved = w.db.upserts.filter(([t]) => t === "event_matches").flatMap(([, rows]) => rows);
+  const mine = saved.filter((r) => r.team_name === "교체팀").sort((x, y) => x.seq - y.seq);
+  assert.deepEqual(mine.map((r) => [r.match_id, r.seq]), [["a1", 1], ["a2", 2], ["a3", 3], ["a4", 4]]);
+  assert.deepEqual(mine.map((r) => r.penalty), [0, 1, 1, 0]);
+  assert.deepEqual(mine.map((r) => r.deaths.members.find((m) => m.slot === 4).accountId), [A[3], A[3], SUB, SUB]);
+  assert.equal(res.stale, 0);
+  // 교체 없는 팀은 종전 그대로
+  assert.deepEqual(saved.filter((r) => r.team_name === "그대로팀").map((r) => [r.match_id, r.seq, r.kills]), [["b1", 1, 6]]);
+  // 팀 구성 서명은 주전만 — 교체를 적어도 저장된 판을 버리지 않는다
+  assert.equal(T.teamSig(T.normTeam(subRow)), T.teamSig(T.normTeam(teamRow("교체팀", "a"))));
+  // 개인 기록 — 주전 4번 2판 · 교체 선수 2판 · 각자 사망 1
+  const teams = [T.normTeam(subRow), T.normTeam(teamRow("그대로팀", "b"))];
+  const pl = T.buildPlayers({ ev: EV2, teams, cfg: T.normEventConfig({}), rows: saved, roster: null, at: EV2.end });
+  const t = pl.teams.find((x) => x.name === "교체팀");
+  assert.deepEqual(t.players.map((p) => [p.ign, p.slot, p.games, p.deaths, !!p.sub]),
+    [[A[0], 1, 4, 0, false], [A[1], 2, 4, 0, false], [A[2], 3, 4, 0, false], [A[3], 4, 2, 1, false], [SUB, 4, 2, 1, true]]);
+  assert.equal(t.games, 4);
+});
+
+test("교체 명령: 슬롯에 교체 선수 더하기 · 다른 팀 선수 거절 · 없는 슬롯 · 해제", async () => {
+  const A = accsOf("a"); const B = accsOf("b");
+  const players = [...A, ...B, "account.z1"];
+  const db = { rows: [teamRow("교체팀", "a"), teamRow("다른팀", "b")], upserts: [] };
+  const bot = k.createKillrace({
+    sbSelect: async (table) => {
+      if (table === "event_defs") return [{ id: EV2.id, name: EV2.name, window_start: new Date(EV2.start).toISOString(), window_end: new Date(EV2.end).toISOString() }];
+      if (table === "event_teams") return db.rows;
+      return [];
+    },
+    sbUpsert: async (table, row) => { db.upserts.push(row); db.rows = db.rows.map((r) => (r.team_name === row.team_name ? { ...r, members: row.members } : r)); return row; },
+    sbPatch: async () => {},
+    pubgGet: async (path) => {
+      const names = decodeURIComponent(path.split("=")[1]).split(",");
+      const hit = names.filter((n) => players.includes(n));
+      if (!hit.length) throw Object.assign(new Error("nf"), { status: 404 });
+      return { data: hit.map((n) => ({ id: n, attributes: { name: n } })) };
+    },
+    pubgMatch: async () => { throw new Error("no"); },
+    env: {}, now: () => EV2.start, sleep: async () => {}, playersGapMs: 0, log: { log() {}, warn() {}, error() {} },
+  });
+  const r = await bot.setSub({ teamName: "교체팀", slot: 4, ign: "account.z1" });
+  assert.deepEqual([r.slot, r.main.accountId, r.sub.accountId], [4, A[3], "account.z1"]);
+  const row = db.upserts.at(-1).members;
+  assert.equal(row.length, 5);
+  assert.deepEqual(row.at(-1), { slot: 4, ign: "account.z1", accountId: "account.z1", sub: true });
+  assert.deepEqual(T.normTeam({ team_name: "교체팀", platform: "steam", members: row }).members.map((x) => x.accountId), A);   // 주전 그대로
+  await assert.rejects(bot.setSub({ teamName: "교체팀", slot: 4, ign: B[0] }), /다른팀/);
+  await assert.rejects(bot.setSub({ teamName: "교체팀", slot: 7, ign: "account.z1" }), /7번 슬롯이 없어요/);
+  await assert.rejects(bot.setSub({ teamName: "없는팀", slot: 1, ign: "account.z1" }), /못 찾았어요/);
+  await assert.rejects(bot.setSub({ teamName: "교체팀", slot: 4, ign: "nobody" }), /못 찾았어요/);
+  const c = await bot.setSub({ teamName: "교체팀", slot: 4, clear: true });
+  assert.equal(c.cleared, 1);
+  assert.equal(db.upserts.at(-1).members.length, 4);
+  // 판마다 출전 명단 — 주전이 있으면 주전, 없으면 그 슬롯 교체 선수
+  const team = T.normTeam({ team_name: "교체팀", platform: "steam", members: row });
+  const lineup = (accs) => T.lineupFor({ parts: Object.fromEntries(accs.map((a, i) => [`p${i}`, { accountId: a }])) }, team).members.map((x) => x.accountId);
+  assert.deepEqual(lineup([A[0], A[1], A[2], "account.z1"]), [A[0], A[1], A[2], "account.z1"]);
+  assert.deepEqual(lineup(A), A);
 });
