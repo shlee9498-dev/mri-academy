@@ -6783,3 +6783,100 @@ on conflict (event_id, team_name, match_id, account_id) do nothing;
 --   drop table if exists public.event_match_players;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- 68) 킬내기 상금 적립 장부 — event_reward_ledger · event_reward_balance (2026-10-07 · 지휘 주문 · 계약 docs/killrace-api.md §3)
+--     오너 원문(10/7 새벽): 「그리고 상금타는 걸 3만원 채우면 할 수 있도록 바꾸자」 — 사람별로 쌓고 3만 원(설정값)을 채우면 지급.
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행 · §31 · §66 과 같은 형태). A 구간(새 표 하나 · 보기 하나 · 방아쇠 함수 둘 · 더하기만).
+--     기존 표 · 칸 · 제약 · 함수는 안 건드린다. payments · payouts · 정산 표와 잇지 않는다(외래 키 · 공용 함수 없음). 계좌 칸 없음.
+--     ⚠️ 초안 — 실행하지 않는다. 오너가 배분을 확정하고 지휘가 실행을 주문한 뒤, 대회 시간 밖에 68-0 → 68a → 68b 순서(68a 끝에 notify 실행 줄).
+--     줄은 고치지도 지우지도 않는다(update · delete · truncate 를 방아쇠가 막는다 · service_role 포함). 틀린 줄은 adjust 줄로 바로잡는다.
+-- ============================================================
+-- 68-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select to_regclass('public.event_reward_ledger'), to_regclass('public.event_reward_balance');          -- 기대 null · null
+--   select count(*) from pg_proc where proname in ('event_reward_ledger_append_only', 'event_reward_ledger_guard');   -- 기대 0
+-- 68a) 표 · 막는 방아쇠 · 잔액 보기
+create table if not exists public.event_reward_ledger (
+  id          bigint      generated always as identity primary key,
+  platform    text        not null check (platform in ('steam', 'kakao')),
+  account_id  text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),      -- PUBG 계정 번호 = 사람 키(닉이 바뀌어도 같은 사람 · 10/7 실측 492줄 모두 이 모양)
+  ign         text        not null check (char_length(ign) between 1 and 40),             -- 적을 때의 인게임 닉(보이기용 · 키 아님)
+  kind        text        not null check (kind in ('accrue', 'payout', 'adjust')),        -- 적립 · 지급 · 정정
+  event_id    bigint      references public.event_defs (id) on delete restrict,           -- 적립 = 그 회차(필수) · 지급 · 정정은 비워도 된다
+  reason      text        not null check (char_length(reason) between 1 and 40),          -- 「1등」「2등」「MVP」 · 「10/12 이체」 · 정정 사유
+  amount      integer     not null check (amount <> 0 and amount between -10000000 and 10000000),   -- 원 · +적립 / −지급
+  memo        text        check (memo is null or char_length(memo) <= 200),
+  ref_id      bigint      references public.event_reward_ledger (id) on delete restrict,  -- 정정이 바로잡는 줄
+  entered_by  text        not null check (char_length(entered_by) between 1 and 40),      -- 「오너」「경비(세션)」 — 디스코드 id 는 적지 않는다
+  created_at  timestamptz not null default now(),
+  constraint event_reward_ledger_kind_shape check (
+       (kind = 'accrue' and amount > 0 and event_id is not null and ref_id is null)
+    or (kind = 'payout' and amount < 0 and ref_id is null)
+    or (kind = 'adjust' and ref_id is not null))
+);
+-- 같은 회차 · 같은 사람 · 같은 사유 적립은 한 줄(두 번 적는 사고 막기). 정정은 adjust 줄이라 걸리지 않는다
+create unique index if not exists uq_event_reward_accrue on public.event_reward_ledger (event_id, platform, account_id, reason) where kind = 'accrue';
+create index if not exists idx_event_reward_account on public.event_reward_ledger (platform, account_id, id);
+-- 고치기 · 지우기 · 비우기 막기
+create or replace function public.event_reward_ledger_append_only() returns trigger
+  language plpgsql set search_path = public as $$
+begin
+  raise exception 'event_reward_ledger 는 줄을 더하기만 해요(% 막음) — 바로잡을 때는 adjust 줄을 더해요', tg_op using errcode = 'P0001';
+end $$;
+create or replace trigger trg_event_reward_ledger_no_change before update or delete on public.event_reward_ledger
+  for each row execute function public.event_reward_ledger_append_only();
+create or replace trigger trg_event_reward_ledger_no_truncate before truncate on public.event_reward_ledger
+  for each statement execute function public.event_reward_ledger_append_only();
+-- 잔액이 0 밑으로 가는 줄 막기(지급 · 마이너스 정정) — 같은 사람 줄은 한 번에 하나씩(트랜잭션 잠금)
+create or replace function public.event_reward_ledger_guard() returns trigger
+  language plpgsql set search_path = public as $$
+declare bal bigint;
+begin
+  if new.kind = 'adjust' and not exists (select 1 from public.event_reward_ledger r
+       where r.id = new.ref_id and r.platform = new.platform and r.account_id = new.account_id) then
+    raise exception '정정 줄은 같은 사람의 줄을 가리켜야 해요(ref_id %)', new.ref_id using errcode = 'P0001';
+  end if;
+  if new.amount < 0 then
+    perform pg_advisory_xact_lock(hashtextextended('event_reward_ledger:' || new.platform || ':' || new.account_id, 0));
+    select coalesce(sum(amount), 0) into bal from public.event_reward_ledger where platform = new.platform and account_id = new.account_id;
+    if bal + new.amount < 0 then
+      raise exception '잔액(%)보다 많이 뺄 수 없어요(%)', bal, new.amount using errcode = 'P0001';
+    end if;
+  end if;
+  return new;
+end $$;
+create or replace trigger trg_event_reward_ledger_guard before insert on public.event_reward_ledger
+  for each row execute function public.event_reward_ledger_guard();
+alter table public.event_reward_ledger enable row level security;   -- 정책 0 = service_role 만
+-- 잔액 = 줄 합계(계정별). 보는 사람 권한으로 읽는다(security_invoker · 표 RLS 를 그대로 탄다)
+create or replace view public.event_reward_balance with (security_invoker = true) as
+  select platform, account_id,
+         (array_agg(ign order by id desc))[1]                                   as ign,          -- 가장 최근 줄의 닉
+         sum(amount)::integer                                                    as balance,
+         coalesce(sum(amount) filter (where kind = 'accrue'), 0)::integer         as accrued,
+         coalesce(-sum(amount) filter (where kind = 'payout'), 0)::integer        as paid,
+         coalesce(sum(amount) filter (where kind = 'adjust'), 0)::integer         as adjusted,
+         count(*) filter (where kind = 'accrue')                                 as accrue_rows,
+         max(created_at)                                                         as last_at
+    from public.event_reward_ledger
+   group by platform, account_id;
+notify pgrst, 'reload schema';
+--
+-- 68b) 68a 뒤 검증(세션 · 읽기만 · 줄을 넣어 보는 시험은 운영 DB 에서 하지 않는다 — PGlite 로 로컬에서 했다 · PR 본문):
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'event_reward_ledger';   -- 12
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'event_reward_balance';  -- 9
+--   select contype, count(*) from pg_constraint where conrelid = 'public.event_reward_ledger'::regclass group by 1 order by 1;
+--     -- c 9 · f 2 · p 1   (PG 17 — not null 은 pg_constraint 에 안 잡힌다)
+--   select indexname from pg_indexes where tablename = 'event_reward_ledger' order by 1;
+--     -- event_reward_ledger_pkey · idx_event_reward_account · uq_event_reward_accrue
+--   select tgname from pg_trigger where tgrelid = 'public.event_reward_ledger'::regclass and not tgisinternal order by 1;
+--     -- trg_event_reward_ledger_guard · trg_event_reward_ledger_no_change · trg_event_reward_ledger_no_truncate
+--   select relrowsecurity from pg_class where relname = 'event_reward_ledger';                                         -- true
+--   select count(*) from public.event_reward_ledger;                                                                    -- 0
+--
+-- 되돌림(줄이 있으면 먼저 지휘 · 오너 확인 — 장부가 통째로 사라진다. 비우기는 방아쇠가 막으니 표째 지운다):
+--   drop view if exists public.event_reward_balance;
+--   drop table if exists public.event_reward_ledger;
+--   drop function if exists public.event_reward_ledger_guard();
+--   drop function if exists public.event_reward_ledger_append_only();
+--   notify pgrst, 'reload schema';
+-- ============================================================
