@@ -7621,6 +7621,8 @@ app.post("/api/gdcup-solo", async (req, res) => {
     store: {
       load: () => opsGet(applyKey("apply")), save: (state) => opsPut(applyKey("apply"), state),
       loadPay: () => opsGet(applyKey("applypay")), savePay: (pay) => opsPut(applyKey("applypay"), pay),
+      // 선수 소개 4칸(계약 §1.15) — 따로 한 줄. 소개를 저장할 때 명단 · 계좌 줄은 쓰지 않는다
+      loadIntro: () => opsGet(applyKey("applyintro")), saveIntro: (intro) => opsPut(applyKey("applyintro"), intro),
     },
     // 신청한 플랫폼에서 닉을 다시 확인하고 경매 명단에 쓸 값(경쟁전 티어 · 평딜 · KDA)을 같이 받아 둔다
     lookup: async (platform, ign) => {
