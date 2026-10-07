@@ -4272,3 +4272,42 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - **직강 출석 뒤 칸 닫기**: `POST /slots/:id/attendance` · 직강 예약 `complete` 가 성공하면 그 칸이 **이미 끝났고 `open` 일 때만** `closed` 로 바꾼다(`status=eq.open` 조건부 · 실패해도 출석 응답은 그대로). 시작 전 칸은 건드리지 않는다.
   출석 함수(`record_course_attendance`) 본문은 바꾸지 않는다 — 서버가 뒤따라 닫으므로 **DDL 없음**.
 - **지난 188칸 일괄 닫기는 하지 않는다** — 기존 데이터 변경(B 등급)이고, `ended` 로 화면에서 이미 빠진다. 필요하면 오너 OK 뒤 따로.
+
+## 9.45 토스뱅크 입금 알림 → 열린 신청 짝 찾기 → 오너 DM (2026-10-28 · 지휘 주문 · 오너 「입금되면 나한테 상담하라고 지시 … 토스뱅크 알람연동도 자동화」 · 「수익화 모델 최우선」) · **계약 + 서버(Draft) · DDL §88(더하기만 · 실행 전) · 새 env `BANK_ALERT_SECRET`(오너)** · 설계 · 폰 설정 = `docs/bank-alerts.md` §9 · §10
+
+토스뱅크는 개인용 공개 API 가 없다 → 오너 안드로이드 폰의 토스 푸시 알림을 MacroDroid 가 서버로 넘긴다. 서버는 쌓고, 입금이면 짝 후보를 찾아 오너에게 알린다.
+**돈 기록은 자동으로 쓰지 않는다** — `payments` 행 · 결제 신청 승인 · 신청 상태 변경 없음. 확정은 지금처럼 회계 대조 · 오너(통장 1줄 = payments 1행).
+
+### 9.45.1 받는 주소 — `POST /hooks/bank-alert` (= `POST /api/bank-alerts` · 같은 처리)
+- 비밀 값: 머리글 **`X-Bank-Alert-Key`**(또는 본문 `key=`) ↔ env **`BANK_ALERT_SECRET`**(Railway · 서버 서비스 Variables · 24자 이상 · 오너가 넣는다). 없으면 503 `not_configured`. 주소 뒤 `?key=` 는 받지 않는다.
+- 본문(`text/plain`): `account=toss` · 선택 `posted=<기기 시각>` · `app=` · `test=1` → `---` 줄 → 알림 제목 · 내용. JSON `{ account, title, text, posted }` 도 받는다.
+- 응답: 200 `{ ok, saved: true, parse, match? }` · 200 `{ saved: false, duplicate: true }`(같은 알림 다시) · 200 `{ test: true }` · 400 · 401 · 429(분당 30) · 503 `table_missing`(§88 실행 전).
+- 시각 세 가지: 알림 글의 시각(`occurred_at` · KST 로 읽음) · 기기 시각(`posted_at`) · 서버가 받은 시각(`received_at`).
+
+### 9.45.2 저장 — `bank_alerts`(§88 · 새 표 하나 · 더하기만)
+- 뽑은 값: 입금/출금 · 금액(콤마 · 「원」) · 잔액 · 입금자 이름(입금 줄만 · 20자). 다 못 읽어도 줄은 남는다(`parse_status` `partial` · `unparsed`).
+- 원문은 **계좌 모양을 「[계좌]」로 가린 뒤** `raw_masked`(500자)에 저장 — 별표 낀 숫자 · 하이픈 숫자 묶음 · 쉼표 없는 8자리 넘는 숫자. 계좌 번호는 표 · 로그 · 문서 · 보고 어디에도 없다.
+- 같은 알림 두 번 = 한 줄(통장 이름표 + 알림 글 sha256 · 유일 색인). 로그에는 상태 · 번호만(금액 · 이름 없음).
+
+### 9.45.3 짝 규칙 (toss 통장 · 입금 · 금액 읽은 줄만)
+| 대상 | 열린 조건 | 금액 |
+|---|---|---|
+| 결제 신청 `payment_requests` | `status = pending` | `amount` |
+| 레벨 테스트 신청 `intake_applications` | `status` `booked` · `tested` · 입금 확인 전 | 레벨 테스트비(`config/payments.js` `levelTest`) |
+| 상담 `consults` | `paid_status = unpaid` | `fee` |
+- **금액 같음 + 이름 비슷 + 입금 시각 기준 48시간 안에 만든 신청**(입금보다 1시간 넘게 뒤에 만든 신청은 제외).
+- 이름 비슷: 공백 · 기호 빼고 같으면 2점, 한쪽이 다른 쪽을 품으면 1점(성 빠짐 · 「보호자(자녀)」 괄호 안). 이름 없는 입금은 짝으로 정하지 않는다.
+- 결과 `match_status`: `matched`(최고 점수 하나 → `match_kind` · `match_ref` 에 번호) · `multiple`(같은 점수 여럿) · `none`.
+
+### 9.45.4 오너 DM — 줄마다 한 통
+- `matched`: `💰 입금 확인 · 45,000원 · ○○○ · 10/28 15:00` / `짝: 결제 신청 #41 · 레슨` / `→ 상담 진행해 주세요` / `(결제 기록은 지금처럼 회계 대조 · 승인으로 확정)`
+- `multiple`: `짝 후보가 n개라 못 골랐어요: 결제 신청 #41, 상담 신청 #9` / `→ 통장 보고 맞는 신청을 골라 진행해 주세요`
+- `none`: `💰 짝 없는 입금 · …` / `48시간 안 열린 신청 중 금액 · 이름이 맞는 게 없어요` / (`참고 · 금액만 같은 신청: …` 3개까지) / `→ 누구 입금인지 확인해 주세요`
+- 출금 · 못 읽은 알림 · 취소 알림 · 킬내기 통장(`sabi`) = 저장만 · DM 없음.
+- **DM 폭탄 없음**: `notified_at` 을 조건부(`is null`)로 먼저 잡은 경우에만 보낸다 · 실패하면 `notify_failed_at` 만 남기고 다시 보내지 않는다 · 재시도 루프 없음 · 같은 알림 재전송은 저장 단계에서 끝난다.
+- 짝 찾기가 실패해도 받기 응답은 200 이고 줄은 저장돼 있다.
+
+### 9.45.5 순서 · 오너 할 일
+1. 이 PR(Draft) 검수 → 지휘 판단으로 §88 실행(스냅샷 → 실행 → 검증 → notify · 세션) → 실측 확인 뒤 Draft 해제 → 머지 · 배포 · 부팅(`[schema] OK (optional) bank_alerts.*`).
+2. 오너: env `BANK_ALERT_SECRET` 넣기 → 폰 설정(`docs/bank-alerts.md` §10) → `test=1` 시험 → 1원 입금으로 실측.
+- 종전 Draft #535(킬내기 통장 · DDL 초안 §69)는 이 PR 이 품는다 — §69 는 §88 로 옮겼다.
