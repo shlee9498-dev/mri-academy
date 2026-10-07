@@ -6908,3 +6908,72 @@ alter table public.killrace_member_links enable row level security;
 --   drop table if exists public.killrace_members;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- 71) 킬내기 앱 신청 · 상금 계좌 — killrace_entries · killrace_payout_accounts (2026-10-07 · 지휘 「킬내기 앱 1단계 착수」 · 앱 계약 docs/killrace-app-api.md §6 · §7 · §9)
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행). A 구간(새 표 둘 · 더하기만 · 기존 표 · 칸 · 제약 · 함수를 건드리지 않는다 · event_defs · §70 을 가리키기만 한다).
+--     ⚠️ 실행 전 — §70 다음에, 5회(10/8) 뒤 지휘 「진행」을 받고 세션이 71-0 → 71a → 71b → 71c 순서로 실행한다. 코드 PR 은 실행 확인 전까지 Draft.
+--     신청 순서 = 신청 시각(취소했다 다시 하면 줄 끝) · 참가 / 대기는 정원으로 계산한다(따로 저장하지 않는다 · 정원을 바꾸면 바로 따라온다).
+--     계좌는 신청 때 받지 않는다(10/7 확정 3) — 진행자(오너)가 상금 대상으로 고른 회원만 넣고, 오너 로그인으로만 읽는다. 지급하고 30일 뒤 지운다(매일 cron).
+--     회원이 탈퇴하면 신청 줄의 회원 칸은 비고(닉 · 계정 번호는 그 회차 기록으로 남는다) 상금 계좌는 같이 지워진다.
+-- ============================================================
+-- 71-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select to_regclass('public.killrace_entries'), to_regclass('public.killrace_payout_accounts'), to_regclass('public.killrace_members');   -- 기대 null · null · (§70 표)
+-- 71a) 표 둘
+create table if not exists public.killrace_entries (
+  id            bigint generated always as identity primary key,
+  event_id      bigint      not null references public.event_defs (id),
+  member_id     bigint      references public.killrace_members (id) on delete set null,
+  platform      text        not null check (platform in ('steam', 'kakao')),
+  account_id    text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),
+  ign           text        not null check (char_length(ign) between 1 and 40),
+  status        text        not null check (status in ('active', 'cancelled')),
+  applied_at    timestamptz not null,
+  cancelled_at  timestamptz,
+  intro         jsonb,                                                                             -- 선수 소개 4칸(killrace-api §1.15 규칙)
+  kind          text        check (kind in ('lesson', 'clan', 'external')),
+  kind_source   text        check (kind_source in ('auto', 'self', 'host')),
+  rule_ok       boolean     not null default false,                                                -- 진행자가 참가 규칙(참가비 · 보증금)을 확인했나
+  rule_by       text        check (rule_by is null or char_length(rule_by) between 1 and 20),
+  prize_target  boolean     not null default false,                                                -- 상금 대상(진행자 · 오너가 고른다)
+  stats         jsonb,                                                                             -- 신청 때 받은 전적(경쟁전 티어 · 평딜 · KDA · 경매 명단용)
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  constraint killrace_entries_cancel_shape check ((status = 'cancelled') = (cancelled_at is not null))
+);
+create unique index if not exists killrace_entries_member on public.killrace_entries (event_id, member_id) where member_id is not null;   -- 회차 × 회원 한 줄
+create unique index if not exists killrace_entries_account_active on public.killrace_entries (event_id, platform, account_id) where status = 'active';   -- 같은 계정 두 번 참가 불가
+create index if not exists idx_killrace_entries_event on public.killrace_entries (event_id, status, applied_at, id);
+create table if not exists public.killrace_payout_accounts (
+  id           bigint generated always as identity primary key,
+  event_id     bigint      not null references public.event_defs (id),
+  member_id    bigint      not null references public.killrace_members (id) on delete cascade,
+  bank         text        not null check (char_length(bank) between 1 and 12),
+  account_no   text        not null check (account_no ~ '^[0-9]{8,20}$'),
+  holder       text        not null check (char_length(holder) between 1 and 20),
+  created_at   timestamptz not null default now(),
+  paid_at      timestamptz,
+  purge_after  timestamptz,                                                                        -- 지급 + 30일 · 매일 cron 이 지난 줄을 지운다
+  constraint killrace_payout_accounts_one unique (event_id, member_id),
+  constraint killrace_payout_accounts_paid_shape check ((paid_at is null) = (purge_after is null))
+);
+alter table public.killrace_entries enable row level security;                                    -- 정책 0 = service_role 만
+alter table public.killrace_payout_accounts enable row level security;
+-- 71b) 71a 뒤 검증(세션 · 읽기만 · 운영 DB 에 시험 줄을 넣지 않는다 — 줄을 넣는 시험은 로컬 PGlite 에서 했다 · PR 본문):
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'killrace_entries';          -- 기대 18
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'killrace_payout_accounts';  -- 기대 9
+--   select conrelid::regclass, count(*) filter (where contype = 'c') c, count(*) filter (where contype = 'p') p,
+--          count(*) filter (where contype = 'f') f, count(*) filter (where contype = 'u') u
+--     from pg_constraint where conrelid in ('public.killrace_entries'::regclass, 'public.killrace_payout_accounts'::regclass) group by 1 order by 1;
+--     -- 기대 killrace_entries c 8 · p 1 · f 2 · u 0 / killrace_payout_accounts c 4 · p 1 · f 2 · u 1
+--   select indexname from pg_indexes where schemaname = 'public' and tablename in ('killrace_entries', 'killrace_payout_accounts') order by 1;
+--     -- 기대 idx_killrace_entries_event · killrace_entries_account_active · killrace_entries_member · killrace_entries_pkey ·
+--     --      killrace_payout_accounts_one · killrace_payout_accounts_pkey
+--   select relname, relrowsecurity from pg_class where relname in ('killrace_entries', 'killrace_payout_accounts');            -- 기대 둘 다 true
+--   select (select count(*) from public.killrace_entries), (select count(*) from public.killrace_payout_accounts);              -- 기대 0 · 0
+-- 71c) notify pgrst, 'reload schema';
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 앱 신청 · 상금 계좌만 사라진다 — 5회 신청 폼 · 대회 기록은 그대로):
+--   drop table if exists public.killrace_payout_accounts;
+--   drop table if exists public.killrace_entries;
+--   notify pgrst, 'reload schema';
+-- ============================================================

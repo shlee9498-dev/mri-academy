@@ -39,7 +39,10 @@ const killraceCareer = require("./killrace-career.cjs");
 const killraceDetail = require("./killrace-detail.cjs");
 // 킬내기 앱 회원(앱 계약 docs/killrace-app-api.md §2 ~ §5) — 로그인 표지 · 내 계정 · 동의 · 스팀 연결 · 탈퇴 · 구분 판정. 시험 scripts/killrace-members.test.cjs
 const killraceMembers = require("./killrace-members.cjs");
+// 킬내기 앱 신청(앱 계약 §6 · §7) — 회차 설정 · 신청 · 취소 · 소개 · 명단(경매 출처) · 상금 계좌(상금 대상만). 시험 scripts/killrace-entries.test.cjs
+const killraceEntries = require("./killrace-entries.cjs");
 let killShot = null;   // 킬내기 결과 스샷 읽기 — 아래 킬내기 HTTP 블록에서 만들고 봇 messageCreate 가 쓴다
+let krEntriesPurge = null; // 킬내기 앱 상금 계좌 지우기(지급 뒤 30일 · 앱 계약 §7) — 아래 킬내기 HTTP 블록에서 만들고 매일 cron 이 부른다
 let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP 블록에서 만들고 봇 interactionCreate(/킬내기포스터)가 쓴다
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
 //   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
@@ -7099,8 +7102,27 @@ async function gmiGuildMember(discordId) {
     keyOf: killraceCareer.keyMaker(process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex")),
     isStudent: async (id) => (await sbSelect("students", `select=id&discord_id=eq.${encodeURIComponent(id)}&status=in.(active,paused)${NOT_MERGED}&limit=1`)).length > 0,
     guildOf: gmiGuildMember,
+    // 조각 B(신청) — 열린 회차 신청이 있으면 연결 바꾸기 · 탈퇴를 막는다 · 내 신청 목록
+    hasOpenEntry: (memberId) => killEntries.hasOpenEntry(memberId),
+    applicationsOf: (memberId) => killEntries.applicationsOf(memberId),
   });
-  killMembers.mount(app, { limiter: limit("krMe", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
+  // 킬내기 앱 신청(앱 계약 §6 · §7) — 회차 설정은 ops_state killrace:app:event:<id> · 신청 · 상금 계좌는 §71 표 · 5회 신청 폼(r2)과 따로다
+  const killEntries = killraceEntries.createEntries({
+    sbSelect, sbInsert, sbPatch, sbDelete, sbUpsert, members: killMembers, consentVersion: killraceMembers.CONSENT_VERSION,
+    keyOf: killraceCareer.keyMaker(process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex")),
+    isAdmin: gdcupAdmin, isOwner: gdcupIsOwner, events: { byId: (id) => kr.eventById(id) },
+    // 경매 명단에 쓸 전적(경쟁전 티어 · 평딜 · KDA) — 5회 신청(killrace-apply)과 같은 조회 · 그 블록은 5회 동안 건드리지 않아 여기 한 벌 더 둔다
+    lookup: async (platform, ign) => {
+      const r = await computeBPI(platform, ign, false);
+      const dmg = r.basis && r.basis.avgDamage != null ? r.basis.avgDamage : r.sample ? r.sample.avgDamage : null;
+      return { ranked: r.rankedTier || null, grade: r.suggested ? r.suggested.tier : null,
+        avgDamage: dmg == null ? null : Number(dmg), kda: r.sample && r.sample.kda != null ? Number(r.sample.kda) : null };
+    },
+  });
+  const krLimiter = limit("krMe", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } }));
+  killMembers.mount(app, { limiter: krLimiter });
+  killEntries.mount(app, { limiter: krLimiter });
+  krEntriesPurge = () => killEntries.purgePayoutAccounts();
   // 판별 상세 기록 채우기(§1.12 · §67) — 끝 + 45분이 지난 회차의 판을 1분에 매치 하나씩(대회 시간에는 쉰다 · 끄기 ops_state 'killrace:detail' { off: true })
   const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
@@ -8852,6 +8874,10 @@ const SCHEMA_OPTIONAL = {
   killrace_members: ["id", "discord_id", "display_name", "platform", "account_id", "ign", "linked_at", "consent_version", "consented_at",
                      "last_seen_at", "created_at", "updated_at"],
   killrace_member_links: ["id", "member_id", "action", "platform", "account_id", "ign", "by_host", "created_at"],
+  // §71 킬내기 앱 신청 · 상금 계좌(앱 계약 §6 · §7) — 미실행이면 신청 · 명단 · 계좌 길만 503 table_missing.
+  killrace_entries: ["id", "event_id", "member_id", "platform", "account_id", "ign", "status", "applied_at", "cancelled_at", "intro", "kind",
+                     "kind_source", "rule_ok", "rule_by", "prize_target", "stats", "updated_at", "created_at"],
+  killrace_payout_accounts: ["id", "event_id", "member_id", "bank", "account_no", "holder", "created_at", "paid_at", "purge_after"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
@@ -9374,6 +9400,8 @@ async function cronTick() {
   // 복기 초안 사진 정리(§29 PR-2 · 설계 §3.7) — 크론 활성 시 항상. 모드는 함수가 env REVIEW_DRAFT_SWEEP 로 정한다
   // (미설정 = 드라이런 = 지울 목록만 review_purge_log 에 · delete 전환은 2주 드라이런 뒤 오너).
   await maybeRunDaily("reviewDraftSweep", "04:00", () => reviewApi.draftSweep(), "복기 초안 사진 정리");
+  // 킬내기 앱 상금 계좌(앱 계약 §7) — 지급하고 30일이 지난 줄을 지운다(§71 실행 전이면 조용히 넘어간다)
+  await maybeRunDaily("killracePayoutPurge", "04:20", async () => { if (krEntriesPurge) await krEntriesPurge(); }, "킬내기 상금 계좌 지우기");
   // 디스코드에서 옮긴 복기의 공개 대기 끝(§57 · 어플 9/30) — 매 틱. 7일 동안 범위를 안 고른 것만 「수강생 모두」로.
   await reviewApi.flipPublicDue().catch((e) => console.error("review_public_flip", e?.status || "", e?.message));
   // "fbPending"(미승인 피드백 리마인더 · 05:15)는 2026-09-26 오너 판정으로 **등록하지 않는다.**
