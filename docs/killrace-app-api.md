@@ -31,7 +31,7 @@
 - **시작** — `GET /api/auth/login?intent=killrace&nonce=<16~64자 · 영숫자 _ ->&return=<돌아갈 주소>`
   → 디스코드 동의(`identify` · 이메일 없음 · 동의 화면 이름은 사이트 로그인 앱 그대로 · 10/7 확정)
   → `<return>#token=<킬내기 토큰>&nonce=<같은 값>`.
-  - `return` 은 허용 출처(§1)만 받는다. 아니면 사이트 첫 화면으로 간다.
+  - `return` 은 **앱 주소 `https://shlee9498-dev.github.io/gmi-clancup/killrace/` 아래만** 받는다. 다른 출처 · 같은 출처의 다른 저장소 · `#` · 역슬래시 · 공백 · 위로 가는 길(`..`)이 섞이면 앱 첫 화면(그 주소)으로 간다. 300자까지.
   - `nonce` 는 화면이 만들어 `sessionStorage` 에 두고, 돌아와서 같은지 본다(로그인 CSRF 막기 · 신청 창구 `intent=apply` 와 같은 방식).
   - 화면은 받은 뒤 주소의 `#token=…` 을 지운다(`history.replaceState`).
 - **킬내기 토큰** — HS256 · 내용 `{ sub, name, aud: "killrace", exp }` · **7일**. 화면은 `localStorage` `kr_token` 에 둔다. 401 이면 지우고 다시 로그인.
