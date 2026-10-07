@@ -115,17 +115,19 @@ function world(opts = {}) {
       db.links = db.links.filter((x) => x.member_id !== id);
     },
   };
-  const pubg = { calls: 0, accounts: { FakeNick: ACC("a"), OtherNick: ACC("b"), ThirdNick: ACC("c") } };
+  const pubg = { calls: 0, accounts: { FakeNick: ACC("a"), OtherNick: ACC("b"), ThirdNick: ACC("c"), ...(opts.accounts || {}) } };
+  // exactCase = 진짜 PUBG 처럼 이름 조회가 대소문자를 가린다 · busy = 429
   const findPlayer = async (platform, ign) => {
     pubg.calls++;
-    const hit = Object.keys(pubg.accounts).find((n) => n.toLowerCase() === ign.toLowerCase());
+    if (opts.busy) throw Object.assign(new Error("한도"), { status: 429 });
+    const hit = Object.keys(pubg.accounts).find((n) => (opts.exactCase ? n === ign : n.toLowerCase() === ign.toLowerCase()));
     if (!hit) throw Object.assign(new Error("못 찾음"), { status: 404 });
     return { id: pubg.accounts[hit], attributes: { name: hit } };
   };
   const logs = [];
   const log = { log: (...a) => logs.push(a.join(" ")), warn: (...a) => logs.push(a.join(" ")), error: (...a) => logs.push(a.join(" ")) };
   let clock = Date.parse("2026-10-09T12:00:00Z");
-  const api = K.createMembers({ ...sb, verify: fakeVerify, findPlayer, keyOf: (a) => `key-${a.slice(-6)}`, isAdmin: (req) => req.headers["x-admin-key"] === "host",
+  const api = K.createMembers({ ...sb, verify: fakeVerify, findPlayer, knownNames: opts.known, keyOf: (a) => `key-${a.slice(-6)}`, isAdmin: (req) => req.headers["x-admin-key"] === "host",
     isStudent: async (id) => (opts.students || []).includes(id), guildOf: async (id) => (opts.guild ? opts.guild(id) : { member: true, roleNames: [] }),
     hasOpenEntry: opts.hasOpenEntry, now: () => clock, log });
   const call = async (fn, { token, body = {}, headers = {} } = {}) => {
@@ -181,6 +183,37 @@ test("스팀 연결 — 동의 먼저 · 닉 모양 · 못 찾음 · 정확한 �
   assert.equal(re.body.member.ign, "OtherNick");
   assert.deepEqual(w.db.links.map((l) => l.action), ["link", "relink"]);
   for (const l of w.logs) assert.ok(!l.includes(D1) && !l.includes("account."), `로그에 번호 없음: ${l}`);
+});
+
+test("스팀 연결 — 대소문자 무시 찾기(§4.2): 그대로 없으면 우리 기록의 표기로 다시 묻고 실제 표기로 저장 · 두 계정이면 409 · 못 찾음 · 한도 429", async () => {
+  const known = async (ign) => ["dwvXvwb", "DWVXVWB", "other"].filter((n) => n.toLowerCase() === ign.toLowerCase()).concat(["noise"]);
+  const w = world({ exactCase: true, accounts: { dwvXvwb: ACC("d") }, known });
+  await w.call(w.api.postConsent, { token: krTok(D1), body: consent });
+  const before = w.pubg.calls;
+  const r = await w.call(w.api.postLink, { token: krTok(D1), body: { ign: "dwvxvwb" } });
+  assert.equal(r.code, 200);
+  assert.equal(r.body.member.ign, "dwvXvwb", "실제 표기로 저장");
+  assert.equal(r.body.corrected, true);
+  assert.equal(w.pubg.calls - before, 3, "그대로 1번 + 후보 2개(KNOWN_TRY_MAX)까지만");
+  assert.deepEqual(w.db.links.map((l) => l.ign), ["dwvXvwb"]);
+  // 정확히 쓰면 corrected 없음(false)
+  const w2 = world({ exactCase: true, accounts: { dwvXvwb: ACC("d") }, known });
+  await w2.call(w2.api.postConsent, { token: krTok(D1), body: consent });
+  assert.equal((await w2.call(w2.api.postLink, { token: krTok(D1), body: { ign: "dwvXvwb" } })).body.corrected, false);
+  // 우리 기록에도 없으면 404 · 기록 조회가 터져도 404
+  const w3 = world({ exactCase: true, known: async () => { throw new Error("db"); } });
+  await w3.call(w3.api.postConsent, { token: krTok(D1), body: consent });
+  assert.equal((await w3.call(w3.api.postLink, { token: krTok(D1), body: { ign: "fakenick" } })).body.error.code, "ign_not_found");
+  // 표기만 다른 두 계정(이론상) — 고르지 않는다
+  const w4 = world({ exactCase: true, accounts: { AbC: ACC("e"), aBc: ACC("f") }, known: async () => ["AbC", "aBc"] });
+  await w4.call(w4.api.postConsent, { token: krTok(D1), body: consent });
+  const amb = await w4.call(w4.api.postLink, { token: krTok(D1), body: { ign: "abc" } });
+  assert.deepEqual([amb.code, amb.body.error.code], [409, "ign_ambiguous"]);
+  // PUBG 한도
+  const w5 = world({ exactCase: true, busy: true, known });
+  await w5.call(w5.api.postConsent, { token: krTok(D1), body: consent });
+  assert.equal((await w5.call(w5.api.postLink, { token: krTok(D1), body: { ign: "dwvxvwb" } })).body.error.code, "busy");
+  assert.equal(K._test.KNOWN_TRY_MAX, 2);
 });
 
 test("스팀 연결 — 같은 사람 10분 3번 · 전체 분당 4번(PUBG 조회 한도 나눠 쓰기) · 신청이 열려 있으면 바꾸기 409", async () => {
