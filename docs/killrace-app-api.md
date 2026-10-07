@@ -25,6 +25,8 @@
   디스코드 번호 · PUBG 계정 번호 · 계좌 · 실명은 어떤 응답에도 없다(본인 응답에도).
 - **숫자** — 점수 · 판 · 킬 · 딜은 서버 값만 쓴다. 점수식은 읽기만 한다(§8.2).
 - **빈도 제한** — 로그인한 길(§3 ~ §7)은 사람마다 분당 30번 · 스팀 연결은 §4.2.
+- **진행자 길** — `POST /api/killrace/app/admin`(§4.4 · §6 · §7) 하나에 `action` 으로 고른다. `x-admin-key` 가 없거나 틀리면 401 `admin_required` ·
+  `by`(진행자 이름 · 기록에 남는다)가 없으면 400 `need_by` · 모르는 `action` 은 400 `bad_action`.
 
 ## §2 로그인 — 사이트 디스코드 로그인 + 킬내기 표지 (조각 A)
 
@@ -130,11 +132,20 @@
 
 ### §6.3 명단 — 공개 · 진행자
 
-- `GET /api/killrace/app/entries?event=N` (공개) → `{ event, open, cap, closeAt, count, waiting, list: [{ key, ign, waiting, intro }] }`
-  — 구분 · 참가 규칙 확인 여부는 공개하지 않는다.
-- 같은 길 + `x-admin-key`(진행자) → 위에 더해 줄마다 `kind` · `kindSource`(`auto` · `self` · `host`) · `ruleOk`(진행자 확인) ·
-  전적(티어 · 평딜 · KDA — 지금 진행자 조회와 같은 값) · 취소한 줄. **경매 화면이 이 명단으로 매물을 만든다**(auction.html 의 명단 출처만 바꾼다).
-- `POST /api/killrace/app/admin { action: "entryKind" | "entryRuleOk" | "entryIntro", event, key, … , by }` — 구분 고치기 · 참가 규칙 확인 · 소개 고치기.
+- `GET /api/killrace/app/entries?event=N` (공개) →
+  `{ event: { id, name, start }, configured, open, cap, closeAt, entryRule, count, waiting, list: [{ key, ign, waiting, intro }] }`
+  - `configured` = 이 회차에 앱 신청 설정 줄(§6.1)이 있다. 없으면 `open: false` · 빈 명단이다(5회까지는 늘 `false`).
+  - `entryRule` 은 구분값만이다 — 화면은 이 값으로 문구 · 금액을 띄우지 않는다(오너 확인 전 · §6.1).
+  - 구분 · 참가 규칙 확인 여부 · 전적은 공개하지 않는다. `list` 는 산 신청만(참가 먼저 · 그다음 대기 · 신청 순).
+- 같은 길 + `x-admin-key`(진행자) → 위에 더해 `admin: true` 이고, `list` 줄마다
+  `{ key, ign, platform, status: "active" | "cancelled", order, waiting, appliedAt, intro, introDone, kind, kindSource: "auto" | "self" | "host", ruleOk, ruleBy, prizeTarget,
+     stats: null | { ranked, grade, avgDamage, kda } }` — 취소한 줄은 맨 뒤(`order` · `waiting` 은 `null`).
+  `stats` 는 신청 때 받아 둔 전적이다(5회 진행자 조회와 같은 값 · 평딜 정수 · KDA 소수 둘째 자리 · 못 받으면 `null`).
+- **경매 화면이 이 명단으로 매물을 만든다** — auction.html 의 명단 출처만 바꾼다:
+  지금 회차 응답이 `configured: true` 면 이 명단(`status: "active"` 이고 `waiting: false` 인 줄), 아니면 종전 신청 폼 길(`/api/killrace/apply`) 그대로.
+  빈 명단으로 고르지 않는다 — 앱 신청이 0명인 회차에 종전 폼으로 떨어지면 지난 회차 신청자가 섞인다.
+- `POST /api/killrace/app/admin { action, event, key, …, by }` (x-admin-key) — `entryKind { kind }` 구분 고치기(`kindSource` 가 `host` 가 된다) ·
+  `entryRuleOk { ok }` 참가 규칙 확인 · `entryIntro { intro }` 소개 고치기. 없는 줄 404 `not_found` · 값이 틀리면 400 `bad_kind` · `bad_ok` · 소개 코드.
 
 ### §6.4 내 신청 — `GET /api/killrace/me` 의 `applications`
 
