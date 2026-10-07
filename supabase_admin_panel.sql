@@ -6849,3 +6849,46 @@ notify pgrst, 'reload schema';
 --   drop table if exists public.event_match_player_detail;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- 69) 통장 입출금 알림 — bank_alerts (2026-10-07 · 지휘 주문 · 설계 docs/bank-alerts.md · 킬내기 통장 · 소관 GmI · MRIacademy 대행)
+--     오너 폰에 뜨는 은행 입출금 알림을 알림 전달 앱이 POST /api/bank-alerts 로 넘기면 서버가 한 줄씩 쌓는다. **참고 장부**다 —
+--     정본은 통장 거래내역이고, 이 표를 보고 돈 · 판수 · 신청 상태를 바꾸지 않는다. payments · 정산 · 잠금월과 외래 키 · 함수 · 방아쇠로 잇지 않는다.
+--     A 구간(새 표 하나 · 더하기만 · 기존 표 · 칸 · 제약 · 함수를 건드리지 않는다).
+--     ⚠️ 실행 전 — 5회(10/8) 뒤 지휘 「진행」을 받고 세션이 69-0 → 69a → 69b → 69c 순서로 실행한다. 코드 PR 은 실행 확인 전까지 Draft.
+--     저장하지 않는 것: 알림 글 원문 · 계좌 번호(어느 모양이든) · 출금 상대 이름. 입금자 이름은 입금 줄에만(20자 · 공개 응답 · 로그에 없음).
+-- ============================================================
+-- 69-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select to_regclass('public.bank_alerts');                                                   -- 기대 null
+-- 69a) 표 하나
+create table if not exists public.bank_alerts (
+  id            bigint generated always as identity primary key,
+  account_key   text        not null check (account_key ~ '^[a-z][a-z0-9_]{1,23}$'),        -- 통장 이름표(sabi 등) · 계좌 번호가 아니다
+  direction     text        check (direction in ('in', 'out')),                               -- 못 읽으면 null
+  amount        bigint      check (amount > 0 and amount <= 1000000000),
+  balance       bigint,                                                                        -- 알림에 잔액이 있을 때만
+  occurred_at   timestamptz,                                                                   -- 알림 글의 시각(없으면 null · 받은 시각은 received_at)
+  counterparty  text        check (counterparty is null or (char_length(counterparty) between 1 and 20 and direction = 'in')),   -- 입금자 이름 · 입금 줄만
+  parse_status  text        not null check (parse_status in ('ok', 'partial', 'unparsed')),
+  shape         text        check (shape is null or (parse_status <> 'ok' and char_length(shape) <= 300)),   -- 다 못 읽은 줄의 글자 모양(숫자 → 9 · 이름 → 가)
+  dedupe_key    text        not null check (dedupe_key ~ '^[0-9a-f]{64}$'),                   -- sha256(통장 이름표 + 알림 글) — 같은 알림 두 번 = 한 줄
+  source_app    text        check (source_app is null or char_length(source_app) <= 60),
+  posted_at     timestamptz,                                                                   -- 폰이 알림을 받은 시각(앱이 보내 줄 때만)
+  received_at   timestamptz not null default now()
+);
+create unique index if not exists bank_alerts_dedupe_key on public.bank_alerts (dedupe_key);
+create index if not exists idx_bank_alerts_account_received on public.bank_alerts (account_key, received_at desc);
+alter table public.bank_alerts enable row level security;                                        -- 정책 0 = service_role 만
+-- 69b) 69a 뒤 검증(세션 · 읽기만 · 운영 DB 에 시험 줄을 넣지 않는다 — 줄을 넣는 시험은 로컬 PGlite 에서 했다 · PR 본문):
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'bank_alerts';   -- 기대 13
+--   select count(*) filter (where contype = 'c') c, count(*) filter (where contype = 'p') p
+--     from pg_constraint where conrelid = 'public.bank_alerts'::regclass;                       -- 기대 c 8 · p 1
+--   select indexname from pg_indexes where schemaname = 'public' and tablename = 'bank_alerts' order by 1;
+--     -- 기대 bank_alerts_dedupe_key · bank_alerts_pkey · idx_bank_alerts_account_received
+--   select relrowsecurity from pg_class where oid = 'public.bank_alerts'::regclass;            -- 기대 true
+--   select count(*) from public.bank_alerts;                                                    -- 기대 0
+-- 69c) notify pgrst, 'reload schema';
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 알림 장부만 사라진다 — 다른 표는 그대로):
+--   drop table if exists public.bank_alerts;
+--   notify pgrst, 'reload schema';
+-- ============================================================
