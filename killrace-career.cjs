@@ -126,4 +126,5 @@ function createCareer(deps) {
   return { mount, get, career };
 }
 
-module.exports = { createCareer, buildCareer, _test: { eventsParam, keyMaker, MIN_GAMES, PAGE } };
+// keyMaker — 킬내기 앱 회원(killrace-members.cjs · 앱 계약 §3)이 같은 불투명 키를 내려고 쓴다(같은 SESSION_SECRET · 같은 키)
+module.exports = { createCareer, buildCareer, keyMaker, _test: { eventsParam, keyMaker, MIN_GAMES, PAGE } };

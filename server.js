@@ -37,6 +37,8 @@ const killracePoster = require("./killrace-poster.cjs");
 const killraceCareer = require("./killrace-career.cjs");
 // 킬내기 판별 상세 기록 채우기(§1.12 · DDL §67) — 대회 시간 밖에 1분에 매치 하나. 시험 scripts/killrace-detail.test.cjs
 const killraceDetail = require("./killrace-detail.cjs");
+// 킬내기 앱 회원(앱 계약 docs/killrace-app-api.md §2 ~ §5) — 로그인 표지 · 내 계정 · 동의 · 스팀 연결 · 탈퇴 · 구분 판정. 시험 scripts/killrace-members.test.cjs
+const killraceMembers = require("./killrace-members.cjs");
 let killShot = null;   // 킬내기 결과 스샷 읽기 — 아래 킬내기 HTTP 블록에서 만들고 봇 messageCreate 가 쓴다
 let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP 블록에서 만들고 봇 interactionCreate(/킬내기포스터)가 쓴다
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
@@ -157,6 +159,8 @@ function getUser(req) {
     const m = (req.headers.authorization || "").match(/^Bearer (.+)$/);
     if (!m) return null;
     const u = verifyJWT(m[1]);
+    // 표지(aud)가 있는 토큰 = 킬내기 앱 토큰(앱 계약 §2) — 사이트 · 패널 · 운영진 길은 받지 않는다(github.io 출처를 여러 화면이 같이 쓴다)
+    if (u.aud) return null;
     return { id: u.sub, name: u.name, isStaff: STAFF_IDS.includes(u.sub) };
   } catch { return null; }
 }
@@ -348,7 +352,12 @@ app.get("/api/auth/login", (req, res) => {
   if (!reviewsReady()) return res.status(503).send("reviews disabled");
   const ret = safeReturn(req.query.return || ALLOWED[0]);
   let scope = "identify", state = ret;
-  if (req.query.intent === "apply") {
+  if (req.query.intent === "killrace") {
+    // 킬내기 앱(앱 계약 §2) — scope 는 identify 그대로 · state 에 돌아갈 주소와 화면 nonce · 콜백이 표지 토큰을 준다
+    const nonce = String(req.query.nonce || "");
+    if (!killraceMembers.NONCE_RE.test(nonce)) return res.status(400).send("bad nonce");
+    state = killraceMembers.makeLoginState(ret, nonce);
+  } else if (req.query.intent === "apply") {
     const nonce = String(req.query.nonce || "");
     if (!NONCE_RE.test(nonce)) return res.status(400).send("bad nonce");
     scope = "identify guilds.join";
@@ -367,6 +376,8 @@ app.get("/api/auth/callback", async (req, res) => {
     if (!code) return res.status(400).send("no code");
     const apply = readApplyState(state);
     if (typeof state === "string" && state.startsWith(APPLY_STATE) && !apply) return res.status(400).send("bad state");
+    const krLogin = killraceMembers.readLoginState(state);
+    if (killraceMembers.isLoginState(state) && !krLogin) return res.status(400).send("bad state");
     const tok = await fetch("https://discord.com/api/oauth2/token", {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -379,6 +390,11 @@ app.get("/api/auth/callback", async (req, res) => {
       headers: { Authorization: `Bearer ${tok.access_token}` },
     }).then((r) => r.json());
     const name = me.global_name || me.username || "익명";
+    if (krLogin) {
+      // 킬내기 앱 — 표지(aud:"killrace") · 7일 토큰. 회원 줄은 여기서 만들지 않는다(동의할 때 · 앱 계약 §4.1)
+      const jwt = signJWT(killraceMembers.tokenClaims(me, name), killraceMembers.TOKEN_TTL_SEC);
+      return res.redirect(`${safeReturn(krLogin.ret)}#token=${jwt}&nonce=${encodeURIComponent(krLogin.nonce)}`);
+    }
     if (apply) {
       // gj = 서버 입장 결과(joined · already · failed) — 신청 행 guild_join 으로 가서 카드에 「DM 안 닿음」을 띄운다
       const gj = await joinMainGuild(me.id, tok.access_token);
@@ -6981,6 +6997,22 @@ function gdcupAdmin(req) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);  // 타이밍 안전 비교
 }
 
+// 킬내기 앱 구분 판정(앱 계약 §5)용 — GmI 길드(LESSON_GUILD_ID)에 있는지 · 역할 이름. 봇이 한 사람만 조회한다(특권 인텐트 없이 되는 길).
+//   모르면 null(봇 미기동 · 길드 못 찾음 · 그 밖 오류) — 그때 앱은 본인 선택 + 진행자 확인으로 떨어진다. 번호 · 이름은 로그에 남기지 않는다.
+async function gmiGuildMember(discordId) {
+  const gid = process.env.LESSON_GUILD_ID;
+  if (!botClient || !gid) return null;
+  const guild = botClient.guilds.cache.get(gid) || await botClient.guilds.fetch(gid).catch(() => null);
+  if (!guild) return null;
+  try {
+    const m = await guild.members.fetch(String(discordId));
+    return { member: true, roleNames: m.roles.cache.map((r) => r.name) };
+  } catch (e) {
+    if (e && (e.code === 10007 || e.code === 10013)) return { member: false, roleNames: [] };   // Unknown Member · Unknown User
+    return null;
+  }
+}
+
 // ═══ GmI 킬내기 2회 — 웹 경매 · 점수판 (2026-10-08 · 소관 GmI) ═══════════════════
 // 판정은 killrace-auction.cjs(경매) · killrace.cjs(점수)에 있고 여기는 연결만 한다.
 // 진행자 = gdcupAdmin(x-admin-key) · 팀장 = 진행자 화면이 나눠 주는 개인 링크의 토큰(Authorization: Bearer).
@@ -7060,6 +7092,15 @@ function gdcupAdmin(req) {
   if (process.env.SUPABASE_URL) setInterval(() => { killPoster.tick(); }, 60000).unref();
   // 개인 누적 지표(§1.11) — GET /api/killrace/career?events=2,3,4 · 닉 · 숫자 · 불투명 키만(계정 번호는 밖으로 안 나간다)
   killraceCareer.createCareer({ sbSelect, secret: process.env.SESSION_SECRET }).mount(app);
+  // 킬내기 앱 회원(앱 계약 §2 ~ §5) — /api/killrace/me · consent · link · leave · app/admin(unlink). 키는 개인 기록과 같은 불투명 키
+  const killMembers = killraceMembers.createMembers({
+    sbSelect, sbInsert, sbPatch, sbDelete, verify: verifyJWT, isAdmin: gdcupAdmin,
+    findPlayer: (platform, ign) => findPlayer(platform, ign, 600_000),
+    keyOf: killraceCareer.keyMaker(process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex")),
+    isStudent: async (id) => (await sbSelect("students", `select=id&discord_id=eq.${encodeURIComponent(id)}&status=in.(active,paused)${NOT_MERGED}&limit=1`)).length > 0,
+    guildOf: gmiGuildMember,
+  });
+  killMembers.mount(app, { limiter: limit("krMe", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
   // 판별 상세 기록 채우기(§1.12 · §67) — 끝 + 45분이 지난 회차의 판을 1분에 매치 하나씩(대회 시간에는 쉰다 · 끄기 ops_state 'killrace:detail' { off: true })
   const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
@@ -8806,6 +8847,11 @@ const SCHEMA_OPTIONAL = {
                               "fetched_at"],
   event_match_telemetry: ["event_id", "team_name", "match_id", "match_start", "source_bytes", "source_events", "positions", "combat",
                           "fetched_at"],
+  // §70 킬내기 앱 회원(docs/killrace-app-api.md §2 ~ §5 · 지휘 10/7) — 미실행이면 /api/killrace/me* 만 503 table_missing 이고 다른 기능은 그대로다.
+  //   앱이 열리면(6회 신청) REQUIRED 로 올린다.
+  killrace_members: ["id", "discord_id", "display_name", "platform", "account_id", "ign", "linked_at", "consent_version", "consented_at",
+                     "last_seen_at", "created_at", "updated_at"],
+  killrace_member_links: ["id", "member_id", "action", "platform", "account_id", "ign", "by_host", "created_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.

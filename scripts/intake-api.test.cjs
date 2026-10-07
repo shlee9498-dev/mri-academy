@@ -440,3 +440,9 @@ test("제출 닫힘(개인정보처리방침 시행 전) — POST 503 intake_clo
   assert.equal(o.accepting, false);
   assert.equal((await call("/api/applications/options")).json.accepting, true);
 });
+
+test("킬내기 앱 토큰(표지 aud)은 신청 창구에서 로그인 안 한 것으로 본다(docs/killrace-app-api.md §2)", async () => {
+  const tok = signJWT({ sub: "fake-kr", name: "x", aud: "killrace" });
+  assert.equal((await call("/api/applications", { method: "POST", token: tok, body: good() })).json.error.code, "login_required");
+  assert.equal((await call("/api/applications/me", { token: tok })).status, 401);
+});
