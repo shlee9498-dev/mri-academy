@@ -460,3 +460,64 @@ test("진행자 늦은 부활 판정 방식(§1.14): 고르기 셋만 · 누가 
   assert.equal((await host({ action: "lateRevive", by: "오너", mode: "penalty" })).code, 403);
   assert.equal(w.cfg[3].lateRevive, "flag");
 });
+
+// ── 앱 읽기(docs/killrace-app-api.md §8) — 회차 상태 · 룰 ──
+test("앱 §8.1 회차 상태 — 시작 전 upcoming · 시작 ~ 끝 + 45분 live · 그 뒤 ended · 시각을 모르면 null", () => {
+  assert.equal(live.eventStatus(EV, EV.start - 1), "upcoming");
+  assert.equal(live.eventStatus(EV, EV.start), "live");
+  assert.equal(live.eventStatus(EV, EV.end + live.GRACE_MS), "live");
+  assert.equal(live.eventStatus(EV, EV.end + live.GRACE_MS + 1), "ended");
+  assert.equal(live.eventStatus({ id: 1, start: NaN, end: 1 }, 0), null);
+});
+
+test("앱 §8.2 룰 — 점수 상수는 점수식과 같다 · 고르는 칸만 · 팀 주소 토큰 · 보너스 · 무효 표시 · 경매 명단은 안 나간다", () => {
+  const sc = require("../killrace.cjs").scoring;
+  assert.equal(sc.baseScore(0, 100, 9, 0) - sc.baseScore(0, 99, 9, 0), 1, "딜 100 = 1점");
+  assert.equal(sc.baseScore(0, 0, 1, 0) - sc.baseScore(0, 0, 2, 0), sc.CHICKEN_BONUS, "치킨 가산");
+  const cfg = { boostMode: "seq", boostSeqs: [5, 7], boostMul: 1.5, boostAt: null, lateRevive: "penalty", revivePhase: 4, teamSize: null,
+    liveTokens: { 불사조: "tok-secret" }, bonus: { 불사조: 9 }, voidDeaths: { x: [1] }, voidGames: { y: true } };
+  const auction = { teamSize: 4, budget: 100, startPrice: { T1: 30 }, bidSec: 20, minStep: 1, bonusPer: 10, players: [{ ign: "x" }], tokens: ["t"] };
+  const r = live.rulesOf(EV, cfg, auction, sc);
+  assert.deepEqual(r.score, { chicken: 8, damagePer: 100, slotPenalty: [4, 3, 2, 1], leave: -10 });
+  assert.deepEqual(r.boost, { mode: "seq", seqs: [5, 7], mul: 1.5, at: null });
+  assert.deepEqual(r.lateRevive, { rule: "penalty", phase: 4 });
+  assert.equal(r.teamSize, 4);
+  assert.deepEqual(r.auction, { teamSize: 4, budget: 100, startPrice: { T1: 30 }, bidSec: 20, minStep: 1, bonusPer: 10 });
+  const text = JSON.stringify(r);
+  for (const bad of ["tok-secret", "bonus\"", "voidDeaths", "voidGames", "players", "tokens"]) assert.ok(!text.includes(bad), bad);
+  assert.equal(live.rulesOf(EV, cfg, null, sc).auction, null);
+});
+
+test("앱 §8.2 룰 길 — 번호 없으면 지금 회차 · 잘못된 번호 400 · 없는 회차 404 · 30초 기억", async () => {
+  const userErr = (m) => Object.assign(new Error(m), { userMsg: m });
+  let cfgReads = 0;
+  const killrace = { currentEvent: async () => EV, eventById: async (id) => { if (id !== 2) throw userErr("없음"); return EV; },
+    loadConfig: async () => { cfgReads++; return { boostMode: "time", boostAt: EV.start + 60 * MIN, boostMul: 1.5, boostSeqs: [], lateRevive: "off", revivePhase: 4, liveTokens: { a: "tok-z" } }; } };
+  let clock = EV.start;
+  const api = live.createLive({ killrace, isAdmin: () => false, now: () => clock, scoring: require("../killrace.cjs").scoring,
+    loadAuctionConfig: async () => null, store: { load: async () => null, save: async () => {} }, log: { log() {}, warn() {}, error() {} } });
+  const call = async (q) => { const res = fakeRes(); await api.getRules({ headers: {}, query: q, method: "GET" }, res); return res; };
+  const a = await call({});
+  assert.deepEqual([a.code, a.body.event.id, a.body.boost.mode, a.body.boost.at, a.body.auction], [200, 2, "time", EV.start + 60 * MIN, null]);
+  assert.ok(!JSON.stringify(a.body).includes("tok-z"));
+  await call({ event: "2" });
+  assert.equal(cfgReads, 1, "30초 안에는 다시 읽지 않는다");
+  clock += 31000;
+  await call({ event: "2" });
+  assert.equal(cfgReads, 2);
+  assert.equal((await call({ event: "x" })).code, 400);
+  assert.equal((await call({ event: "9" })).code, 404);
+});
+
+test("앱 §8.1 회차 목록 — 상태는 응답 때 붙인다(목록을 30초 기억하는 동안 시작해도 바로 live)", async () => {
+  let clock = EV.start - 1000;
+  let reads = 0;
+  const killrace = { listEvents: async () => { reads++; return [EV]; } };
+  const api = live.createLive({ killrace, isAdmin: () => false, now: () => clock, store: { load: async () => null, save: async () => {} }, log: { log() {}, warn() {}, error() {} } });
+  const call = async () => { const res = fakeRes(); await api.getEvents({ headers: {}, query: {}, method: "GET" }, res); return res; };
+  const first = await call();
+  assert.deepEqual([first.body.currentId, first.body.events[0].status, first.body.events[0].name], [2, "upcoming", "2회"]);
+  clock += 2000;
+  assert.equal((await call()).body.events[0].status, "live");
+  assert.equal(reads, 1, "목록은 30초 기억");
+});

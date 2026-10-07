@@ -33,7 +33,8 @@ const round = (n, d) => { const f = 10 ** d; return Math.round(n * f) / f; };
 const reviveOut = (rv) => !!(rv && rv.state === "late" && rv.rule === "penalty");
 
 // rows = event_match_players 줄 · matches = event_matches 줄(event_id · team_name · match_id · seq · leave_flag · revive = flags->revive)
-function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES }) {
+//   withEvents = 회차별 줄(byEvent)까지 — 선수 한 명 길(앱 계약 docs/killrace-app-api.md §8.3)만 쓴다 · 목록 응답 모양은 그대로
+function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES, withEvents = false }) {
   const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const games = new Map();                       // 판(회차|팀|매치) → 그 판 우리 팀 선수 줄
   for (const r of rows || []) {
@@ -46,13 +47,20 @@ function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES }) {
   for (const list of games.values()) {
     const top = Math.max(0, ...list.map((r) => Number(r.kills) || 0));
     for (const r of list) {
-      if (!people.has(r.account_id)) people.set(r.account_id, { games: 0, kills: 0, damage: 0, deaths: 0, teamTop: 0, events: new Set(), ign: "", at: -Infinity });
+      if (!people.has(r.account_id)) people.set(r.account_id, { games: 0, kills: 0, damage: 0, deaths: 0, teamTop: 0, events: new Set(), ign: "", at: -Infinity, by: new Map() });
       const p = people.get(r.account_id);
       const kills = Number(r.kills) || 0;
       p.games += 1; p.kills += kills; p.damage += Number(r.damage) || 0;
       if (r.dead) p.deaths += 1;
       if (top > 0 && kills === top) p.teamTop += 1;
       p.events.add(Number(r.event_id));
+      if (withEvents) {                          // 회차 × 팀 — 교체로 두 팀을 뛰었으면 판이 많은 팀을 그 회차 팀으로
+        const ek = Number(r.event_id);
+        if (!p.by.has(ek)) p.by.set(ek, { games: 0, kills: 0, damage: 0, teams: new Map() });
+        const e = p.by.get(ek);
+        e.games += 1; e.kills += kills; e.damage += Number(r.damage) || 0;
+        e.teams.set(r.team_name, (e.teams.get(r.team_name) || 0) + 1);
+      }
       const at = Date.parse(r.started_at);
       if (Number.isFinite(at) && at >= p.at && r.ign) { p.at = at; p.ign = r.ign; }   // 닉은 가장 최근 판 것(바뀐 닉이 이어진다)
       else if (!p.ign && r.ign) p.ign = r.ign;
@@ -62,6 +70,9 @@ function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES }) {
     key: keyOf(acc), ign: p.ign, games: p.games, kills: p.kills, damage: Math.floor(p.damage), deaths: p.deaths,
     killsPerGame: round(p.kills / p.games, 2), damagePerGame: Math.round(p.damage / p.games), teamTopKills: p.teamTop,
     events: [...p.events].sort((a, b) => a - b), sample: p.games >= minGames ? "ok" : "low",
+    ...(withEvents ? { byEvent: [...p.by.entries()].sort((a, b) => a[0] - b[0]).map(([id, e]) => ({
+      id, team: [...e.teams.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0][0],
+      games: e.games, kills: e.kills, damage: Math.floor(e.damage) })) } : {}),
   }));
   // 표본이 충분한 사람 먼저 · 판당 킬 · 판당 딜 · 판 수 · 닉 순(같은 값이면 늘 같은 순서)
   out.sort((a, b) => (a.sample === b.sample ? 0 : a.sample === "ok" ? -1 : 1) || b.killsPerGame - a.killsPerGame
@@ -93,13 +104,13 @@ function createCareer(deps) {
     return out;
   }
 
-  async function career(ids) {
+  async function career(ids, opts = {}) {
     const f = ids ? `&event_id=in.(${ids.join(",")})` : "";
     const [rows, matches] = await Promise.all([
       readAll("event_match_players", `select=event_id,team_name,match_id,account_id,ign,kills,damage,dead,started_at${f}&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc`),
       readAll("event_matches", `select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive${f}&order=event_id.asc,team_name.asc,match_id.asc`),
     ]);
-    const players = buildCareer({ rows, matches, keyOf });
+    const players = buildCareer({ rows, matches, keyOf, withEvents: !!opts.withEvents });
     const evs = ids || [...new Set(rows.map((r) => Number(r.event_id)))].sort((a, b) => a - b);
     return { events: evs, minGames: MIN_GAMES, players, updatedAt: new Date(now()).toISOString() };
   }
@@ -122,8 +133,31 @@ function createCareer(deps) {
     }
   }
 
-  function mount(app) { app.get("/api/killrace/career", get); }
-  return { mount, get, career };
+  // 선수 한 명(앱 계약 docs/killrace-app-api.md §8.3) — 전체 회차로 센 같은 값 + 회차별 줄(byEvent · 회차 이름). 60초 기억 · 없는 키 404
+  const KEY_RE = /^[A-Za-z0-9_-]{16}$/;
+  let oneCache = null;                            // { at, body, byKey, names }
+  async function getOne(req, res) {
+    try {
+      const key = String((req.params && req.params.key) || "");
+      if (!KEY_RE.test(key)) return res.status(400).json({ error: { code: "bad_key" } });
+      if (!oneCache || now() - oneCache.at >= CACHE_MS) {
+        const [body, defs] = await Promise.all([career(null, { withEvents: true }),
+          sbSelect("event_defs", "select=id,name&order=id.asc&limit=500").catch(() => [])]);
+        oneCache = { at: now(), body, byKey: new Map(body.players.map((x) => [x.key, x])), names: new Map((defs || []).map((d) => [Number(d.id), d.name])) };
+      }
+      const p = oneCache.byKey.get(key);
+      if (!p) return res.status(404).json({ error: { code: "not_found" } });
+      const byEvent = p.byEvent.map((e) => ({ id: e.id, name: oneCache.names.get(e.id) || null, team: e.team, games: e.games, kills: e.kills, damage: e.damage }));
+      return res.json({ ...p, byEvent, minGames: MIN_GAMES, updatedAt: oneCache.body.updatedAt });
+    } catch (e) {
+      const code = e && (e.status === 404 || /PGRST205|42P01/.test(String(e.body || e.message || ""))) ? "table_missing" : "error";
+      log.warn("[killrace-career] one_failed", code, String((e && e.message) || e).slice(0, 80));
+      return res.status(code === "table_missing" ? 503 : 500).json({ error: { code } });
+    }
+  }
+
+  function mount(app) { app.get("/api/killrace/career", get); app.get("/api/killrace/career/:key", getOne); }
+  return { mount, get, getOne, career };
 }
 
 module.exports = { createCareer, buildCareer, _test: { eventsParam, keyMaker, MIN_GAMES, PAGE } };

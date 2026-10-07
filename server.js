@@ -7043,6 +7043,12 @@ function gdcupAdmin(req) {
   });
   const live = killraceLive.createLive({
     killrace: kr, isAdmin: gdcupAdmin,
+    // 룰 읽기(앱 계약 docs/killrace-app-api.md §8.2) — 점수 상수 · 그 회차 경매 설정(있으면)만 읽는다
+    scoring: killrace.scoring,
+    loadAuctionConfig: async (id) => {
+      const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(auctionKey(id))}&limit=1`);
+      return rows.length && rows[0].value && rows[0].value.config ? rows[0].value.config : null;
+    },
     decorate: (body, ev) => killShot.decorate(body, ev),
     ready: () => !!(process.env.SUPABASE_URL && process.env.PUBG_API_KEY),
     store: {

@@ -101,3 +101,38 @@ test("인정 판만: 늦은 블루칩 부활로 −10 이 된 판(§1.14 · pena
   const a = C.buildCareer({ rows, matches, keyOf }).find((p) => p.key === keyOf("A"));
   assert.deepEqual([a.games, a.kills], [3, 10]);
 });
+
+// ── 앱 §8.3 선수 한 명(docs/killrace-app-api.md) — 회차별 줄 · 목록 응답 모양은 그대로 ──
+test("앱 §8.3 선수 한 명 — 회차별 줄(교체로 두 팀이면 판이 많은 팀) · 회차 이름 · 목록에는 회차별 줄이 없다 · 400 · 404 · 계정 번호 없음", async () => {
+  const rows = [
+    row(2, "가팀", "m1", "account.a1", "OldNick", 3, 250.6, true, "2026-10-05T10:05:00Z"),
+    row(3, "나팀", "m7", "account.a1", "NewNick", 5, 400, false, "2026-10-06T11:00:00Z"),
+    row(3, "다팀", "m8", "account.a1", "NewNick", 1, 100, true, "2026-10-06T11:30:00Z"),
+    row(3, "나팀", "m9", "account.a1", "NewNick", 2, 200, true, "2026-10-06T12:00:00Z"),
+    row(3, "나팀", "m9", "account.b1", "Cat", 0, 50, true, "2026-10-06T12:00:00Z"),
+  ];
+  const matches = [match(2, "가팀", "m1", 1), match(3, "나팀", "m7", 1), match(3, "다팀", "m8", 2), match(3, "나팀", "m9", 2)];
+  const one = C.buildCareer({ rows, matches, keyOf, withEvents: true }).find((p) => p.key === keyOf("account.a1"));
+  assert.deepEqual(one.byEvent, [{ id: 2, team: "가팀", games: 1, kills: 3, damage: 250 }, { id: 3, team: "나팀", games: 3, kills: 8, damage: 700 }]);
+  assert.equal(C.buildCareer({ rows, matches, keyOf })[0].byEvent, undefined, "목록(§1.11) 모양은 그대로");
+
+  const sbSelect = async (table, q) => {
+    if (table === "event_defs") return [{ id: 2, name: "2회" }, { id: 3, name: "3회" }];
+    const off = Number(/offset=(\d+)/.exec(q)[1]);
+    return off ? [] : table === "event_match_players" ? rows : matches;
+  };
+  const api = C.createCareer({ sbSelect, secret: "test-secret", now: () => 0, log: { warn() {}, log() {} } });
+  const res = () => { const r = { code: 200, body: null }; return { r, status(c) { r.code = c; return this; }, json(b) { r.body = b; return this; } }; };
+  const a = res(); await api.getOne({ params: { key: keyOf("account.a1") } }, a);
+  assert.equal(a.r.code, 200);
+  assert.deepEqual([a.r.body.ign, a.r.body.games, a.r.body.events, a.r.body.minGames], ["NewNick", 4, [2, 3], 10]);
+  assert.deepEqual(a.r.body.byEvent, [{ id: 2, name: "2회", team: "가팀", games: 1, kills: 3, damage: 250 },
+    { id: 3, name: "3회", team: "나팀", games: 3, kills: 8, damage: 700 }]);
+  assert.ok(!JSON.stringify(a.r.body).includes("account."), "계정 번호가 없다");
+  const bad = res(); await api.getOne({ params: { key: "x;drop" } }, bad);
+  assert.deepEqual([bad.r.code, bad.r.body.error.code], [400, "bad_key"]);
+  const none = res(); await api.getOne({ params: { key: "AAAAAAAAAAAAAAAA" } }, none);
+  assert.deepEqual([none.r.code, none.r.body.error.code], [404, "not_found"]);
+  const list = res(); await api.get({ query: {} }, list);
+  assert.ok(list.r.body.players.every((p) => p.byEvent === undefined), "목록 응답에는 회차별 줄이 없다");
+});

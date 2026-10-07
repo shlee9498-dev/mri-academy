@@ -105,6 +105,33 @@ function eventParam(q) {
   return /^\d{1,6}$/.test(raw) ? { ok: true, id: Number(raw) } : { ok: false };
 }
 
+// 회차 상태(앱 계약 docs/killrace-app-api.md §8.1) — 시작 전 upcoming · 시작 ~ 끝 + 45분(막판 집계) live · 그 뒤 ended
+function eventStatus(ev, nowMs) {
+  if (!ev || !Number.isFinite(ev.start) || !Number.isFinite(ev.end)) return null;
+  return nowMs < ev.start ? "upcoming" : nowMs <= ev.end + GRACE_MS ? "live" : "ended";
+}
+
+// 룰(앱 계약 §8.2) — 코드 상수와 회차 설정 · 경매 설정을 읽어서 보여 주기만 한다(점수식은 바꾸지 않는다).
+//   회차 설정에서 고르는 칸만 싣는다 — 팀 주소 토큰(liveTokens) · 보너스 · 무효 표시 같은 운영 값은 내보내지 않는다
+const AUCTION_RULE_KEYS = ["teamSize", "maxTeams", "minTeams", "budget", "startPrice", "bidSec", "minStep", "bonusPer", "negativeMul", "tierBonus"];
+function rulesOf(ev, cfg, auction, scoring) {
+  const c = cfg || {};
+  let auc = null;
+  if (auction && typeof auction === "object") {
+    auc = {};
+    for (const k of AUCTION_RULE_KEYS) if (auction[k] !== undefined) auc[k] = auction[k];
+  }
+  return {
+    event: { id: ev.id, name: ev.name, start: ev.start, end: ev.end },
+    score: { chicken: scoring.CHICKEN_BONUS, damagePer: 100, slotPenalty: [...scoring.SLOT_PENALTY], leave: scoring.LEAVE_SCORE },
+    boost: { mode: c.boostMode || null, seqs: Array.isArray(c.boostSeqs) ? c.boostSeqs : [], mul: c.boostMul == null ? null : c.boostMul,
+      at: c.boostMode === "time" ? c.boostAt || null : null },
+    lateRevive: { rule: c.lateRevive || null, phase: c.revivePhase == null ? null : c.revivePhase },
+    teamSize: c.teamSize || (auc && auc.teamSize) || 4,
+    auction: auc,
+  };
+}
+
 // 진행자 화면 대회 설정(docs/killrace-api.md §1.7) — 누가 바꿨나(운영 키는 한 벌이라 이름을 적게 한다 · 1~20자)
 function hostBy(v) {
   const s = String(v == null ? "" : v).replace(/\s+/g, " ").trim();
@@ -302,11 +329,32 @@ function createLive(deps) {
   });
 
   // 회차 목록(최신순) — 화면의 회차 고르기. currentId = 가장 큰 번호(= 지금 대회)
+  //   상태(status · 앱 계약 §8.1)는 응답 때 붙인다 — 목록은 30초 기억해도 시작 · 끝 경계가 늦지 않게
   const getEvents = guard(async (req, res) => {
-    if (eventsCache && now() - eventsCache.at < PAST_CACHE_MS) return res.json(eventsCache.body);
-    const list = await killrace.listEvents();
-    const body = { currentId: list.length ? list[0].id : null, events: list.map((e) => ({ id: e.id, name: e.name, start: e.start, end: e.end })) };
-    eventsCache = { at: now(), body };
+    if (!eventsCache || now() - eventsCache.at >= PAST_CACHE_MS) {
+      const list = await killrace.listEvents();
+      eventsCache = { at: now(), list: list.map((e) => ({ id: e.id, name: e.name, start: e.start, end: e.end })) };
+    }
+    const t = now();
+    const list = eventsCache.list;
+    res.json({ currentId: list.length ? list[0].id : null, events: list.map((e) => ({ ...e, status: eventStatus(e, t) })) });
+  });
+
+  // 룰(앱 계약 §8.2) — ?event=<번호> · 없으면 지금 회차 · 30초 기억
+  const rulesCache = new Map();
+  const getRules = guard(async (req, res) => {
+    const p = eventParam(req.query && req.query.event);
+    if (!p.ok) return res.status(400).json({ error: { code: "bad_event" } });
+    let ev;
+    try { ev = p.id ? await killrace.eventById(p.id) : await killrace.currentEvent(); }
+    catch (e) { if (e && e.userMsg) return res.status(404).json({ error: { code: "no_event" } }); throw e; }
+    const hit = rulesCache.get(ev.id);
+    if (hit && now() - hit.at < PAST_CACHE_MS) return res.json(hit.body);
+    const cfg = await killrace.loadConfig(ev.id);
+    const auction = deps.loadAuctionConfig ? await deps.loadAuctionConfig(ev.id).catch(() => null) : null;
+    const body = rulesOf(ev, cfg, auction, deps.scoring || require("./killrace.cjs").scoring);
+    if (rulesCache.size > 20) rulesCache.clear();
+    rulesCache.set(ev.id, { at: now(), body });
     res.json(body);
   });
 
@@ -466,13 +514,14 @@ function createLive(deps) {
     app.get("/api/killrace/board", getBoard);
     app.get("/api/killrace/players", getPlayers);
     app.get("/api/killrace/events", getEvents);
+    app.get("/api/killrace/rules", getRules);
     app.post("/api/killrace/board/admin", postAdmin);
     app.post("/api/killrace/live", postLive);
   }
-  return { mount, tick, run, getBoard, getPlayers, getEvents, postAdmin, postLive };
+  return { mount, tick, run, getBoard, getPlayers, getEvents, getRules, postAdmin, postLive };
 }
 
 module.exports = {
-  createLive, GRACE_MS, MAX_FAILS,
+  createLive, GRACE_MS, MAX_FAILS, eventStatus, rulesOf,
   _test: { emptyLive, normLive, press, afterRun, skipReason, noteSuccess, noteFailure, eventParam, hostBy, hostTimes, MAX_WINDOW_MS, PRESS_GAP_MS, PRESS_MAX },
 };
