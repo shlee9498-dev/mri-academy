@@ -3465,3 +3465,66 @@ GET /api/trainer-portal/owner/dashboard/lessons?date=2026-09-28&trainerKey=…&l
 - `GET /reviews` · `GET /journals` `?limit=&cursor=` → 종전 + `nextCursor`
 - `GET /owner/dashboard?trainerKey=&lessonsPerDay=` → 종전 + `lessonDays:[{date,total,nextCursor}]` · `GET /owner/dashboard/lessons?date=&trainerKey=&limit=&cursor=` → `{ date, total, lessons, nextCursor }`
 - 트레이너 칩 + `colorSlot`(1~10 | `null`)
+
+## 9.34 닫지 않은 수업 — 끝난 시각부터 세기 · 아침 채널 알림 · 봇 잠금 건수 (2026-10-07 · 지휘 주문 · 경비 조사) · **서버 반영(DDL 없음 · 세기만)**
+
+> 수강생 제보(10/7 · 오너 전달): 「계산이 제때 안되는것 같아요 최근 업뎃이 안되었슴다」.
+> 경비 조사(읽기만 · 코드 · DB · 서버 로그): 10/1 뒤 레슨 예약 「완료」 0번 · 기록 쪽 실패 응답 0 · 끝난 예약 7건이 `booked` 로 열린 채
+> (참여형 · 판수를 미리 안 잡는 예약이라 잔여도 그대로). 길은 열려 있었는데 **끝난 수업을 알려 주는 게 없었다** —
+> 「완료 확인 필요」는 48시간 뒤(`sweep_pending_review`)에 앱 안에서만 떴다. 이 절은 **세기만** 더한다.
+
+- **정의** — 닫지 않은 수업 = 예약 상태 `booked` · `pending_review` 이고 **수업이 끝난 시각 ≤ 지금**.
+  끝난 시각 = 칸 시작 + 길이(예약 길이 → 칸 길이 → 30분). 여러 칸 개인 예약은 머리 줄 하나로 센다 · 테스트 계정(`test-accounts.cjs`) 제외 ·
+  직강 · 레벨 테스트 칸도 센다(닫는 버튼만 다르다 — 직강 = 출석 · 레벨 테스트 = 마침). 판정은 `unclosed-lessons.cjs` 한 벌(앱 · 채널이 같은 함수).
+- **안 바뀌는 것** — 예약 상태 · 판수 · 계산식 · 48시간 전이(`sweep_pending_review`) · DB 함수 · 표 · 칸. 열려 있는 예약은 손대지 않는다(트레이너가 닫는다).
+
+### 9.34.1 트레이너 앱 첫 화면 — `GET /slots` 에 `unclosed`
+
+- 응답 최상위에 더한다(옛 앱은 키 하나 늘 뿐 · 그 밖의 칸은 종전 그대로):
+  `unclosed: { count, lessons, oldestEndAt, items: [{ bookingId, slotId, startAt, endAt, lessonType, needsReview }] }`
+  - `count` = 닫지 않은 예약 수 · `lessons` = 그 예약이 걸린 칸 수(그룹 · 참여형은 칸 하나에 여럿) · `oldestEndAt` = 가장 오래된 끝난 시각(ISO · 없으면 `null`)
+  - `items` 는 끝난 순(오래된 것 먼저 · 같으면 예약 번호 순). `bookingId` · `slotId` 는 같은 응답의 `slots[].bookings[].id` · `slots[].id` 와 **같은 값** — 앱은 그 카드로 바로 보낸다
+  - `needsReview` = 이미 48시간이 지나 「완료 확인 필요」로 바뀐 것(기존 예약 배지와 같은 뜻) · 수강생은 싣지 않는다(카드에 이미 있다)
+- 범위 = 이 칸 목록과 같은 창(지난 14일 · `TRAINER_LOOKBACK_DAYS`) · 내 칸만. 그보다 오래된 것은 아침 알림(60일)이 잡는다.
+- 칸이 하나도 없으면 `unclosed: { count: 0, lessons: 0, oldestEndAt: null, items: [] }`.
+- 닫히면(완료 · 노쇼 · 출석 · 마침) 다음 `GET /slots` 에서 빠진다 — 따로 저장하는 것이 없다.
+
+### 9.34.2 아침 채널 알림 — 「어제까지 닫지 않은 수업」
+
+- 매일 **09:30 KST** 뒤 첫 틱(10분 틱 · `maybeRunDaily("unclosedLessons")`)에 한 번 · `/수업등록` 채널(`LESSON_CHANNEL_ID` · **새 env 없음** · 미설정이면 건너뜀).
+- 대상 = 위 정의 + **칸 시작 날짜(KST)가 오늘보다 앞**(자정을 넘겨 끝난 수업도 시작한 날 몫) · 지난 60일. 비면 보내지 않는다.
+- 한 통 = 트레이너별 줄 「이름 n건: #예약번호 M/D, …」 — **예약 #번호와 날짜만**(수강생 · 판수 · 금액 없음) · 30건 넘으면 「외 n건」 · 멘션 없음(`allowedMentions` 비움).
+  이름 = 직원 명부 표시 이름(없으면 「트레이너 #번호」).
+- 같은 날 두 번 보내지 않는다(`cron:unclosedLessons` 상태 줄) · 봇이 아직 안 떴으면 다음 틱에 한 번 더 · 두 번 실패하면 오너 DM(`maybeRunDaily` 공통).
+- 로그 = 건수만 `[cron] unclosed_lessons: n건 · 트레이너 k명 · 채널에 보냄` / `없음`.
+- 문구(요체 · 한 줄 마침표 없음 · 이모지 하나):
+
+```
+📅 어제까지 닫지 않은 수업 n건이에요
+트레이너 앱 예약 카드에서 「완료 · 기록하기」로 닫아 주세요
+
+(트레이너별 줄)
+
+수업을 안 했으면 오너에게 말해 주세요
+```
+
+- 05:30 오너 DM 「예약은 닫혔는데 수업 기록이 없습니다」(`runBookingOrphans`)는 그대로다 — 그쪽은 **닫힌** 개인 예약만 본다(이 절은 아예 안 닫힌 예약).
+
+### 9.34.3 봇 잠금 안내 건수 로그
+
+- `/수업등록` 잠금 안내(레슨 전부 · 진단상담 · 개인)와 `/판수정정` 잠금 안내가 나갈 때마다 로그 한 줄 `[lesson] bot_locked kind=lesson|consult|personal|adjust` — 이름 · 디스코드 id 없음.
+- 지금까지는 안내가 본인에게만 보여서 트레이너가 봇으로 왔다가 막힌 횟수를 셀 수 없었다(10/7 조사). 안내 문구는 그대로다.
+
+### 9.34.4 시험 (`scripts/unclosed-lessons.test.cjs` · `scripts/course-class.test.cjs`)
+
+- 판정: 끝난 시각(예약 길이 → 칸 길이 → 30분) · 상태(booked · pending_review 만) · 딸린 줄 · 테스트 계정 · 모르는 칸 · 끝나는 순간 포함 · 끝난 순.
+- 아침 대상: 10/6 22:00 두 시간 수업(10/7 00:00 끝)은 10/7 아침에 잡힌다 · 오늘 수업은 내일 몫 · 자정 넘긴 수업은 시작한 날 몫 · 60일 창.
+- 문구: 트레이너별 · 예약 #번호와 날짜만(수강생 번호 없음) · 이모지 하나 · 느낌표 · 마침표 없음 · 30건 상한 · 2,000자 안 · 비면 보내지 않음.
+- 진짜 라우트 `GET /slots`: 개인(예약 길이) · 참여형(테스트 계정 빼고 둘) · 직강 · 진행 중 · done · 「확인 필요」 · 남의 칸 · 0건 모양 ·
+  `bookingId` · `slotId` 가 같은 응답의 카드 id 와 같음 · **예약 표를 한 줄도 쓰지 않음**.
+
+### 9.34.5 계약 한 줄 (반장)
+
+- `GET /slots` → 종전 + `unclosed: { count, lessons, oldestEndAt, items:[{ bookingId, slotId, startAt, endAt, lessonType, needsReview }] }`
+- 첫 화면 맨 위 띠 「닫지 않은 수업 n건」(`count` 0 이면 그리지 않음) → 누르면 `items` 순서대로 그 예약 카드로 →
+  카드의 「완료 · 기록하기」(참여형 · 그룹은 판수 입력 · 직강은 출석 · 레벨 테스트는 마침)로 닫으면 다음 `GET /slots` 에서 빠진다.
