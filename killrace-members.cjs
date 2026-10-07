@@ -11,7 +11,9 @@ const { parseIgnInput } = require("./pubg-name.cjs");
 const CONSENT_VERSION = "2026-10-08";     // 동의 글 버전 — 글이 바뀌면 이 값을 바꾼다(모두 다시 동의)
 const AUD = "killrace";
 const TOKEN_TTL_SEC = 7 * 86400;          // 킬내기 토큰 7일
-const LOGIN_STATE = "kr1.";
+const KR_STATE = "kr1.";
+// 로그인 뒤 돌아갈 곳 — 킬내기 앱(gmi-clancup Pages killrace/) 아래만. 앞부분을 이 상수로 고정해 다른 곳으로 못 보낸다(앱 계약 §2)
+const APP_HOME = "https://shlee9498-dev.github.io/gmi-clancup/killrace/";
 const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 // 클랜원 판정(10/7 확정 4) — 비면 GmI 길드 가입만. 역할로 좁히려면 역할 이름을 여기 적는다(코드 한 줄).
 const CLAN_ROLE_NAMES = [];
@@ -26,16 +28,25 @@ const MEMBER_COLS = "id,platform,account_id,ign,linked_at,consent_version,consen
 // ═══════════════ 순수 함수 (scripts/killrace-members.test.cjs) ═══════════════
 const iso = (ms) => new Date(ms).toISOString();
 
-// 로그인 state — "kr1." + base64url({ r: 돌아갈 주소, n: 화면 nonce }) · 신청 창구(intake-api ap1.)와 같은 모양 · 다른 머리
-const makeLoginState = (ret, nonce) => LOGIN_STATE + Buffer.from(JSON.stringify({ r: ret, n: nonce })).toString("base64url");
-const isLoginState = (state) => typeof state === "string" && state.startsWith(LOGIN_STATE);
-function readLoginState(state) {
-  if (!isLoginState(state)) return null;
+// 로그인 state — "kr1." + base64url({ r: 돌아갈 주소, n: 화면 nonce }) · 신청 창구(intake-api ap1. makeApplyState)와 같은 모양 · 다른 머리
+const makeKrState = (ret, nonce) => KR_STATE + Buffer.from(JSON.stringify({ r: ret, n: nonce })).toString("base64url");
+const isKrState = (state) => typeof state === "string" && state.startsWith(KR_STATE);
+function readKrState(state) {
+  if (!isKrState(state)) return null;
   try {
-    const s = JSON.parse(Buffer.from(state.slice(LOGIN_STATE.length), "base64url").toString());
+    const s = JSON.parse(Buffer.from(state.slice(KR_STATE.length), "base64url").toString());
     if (typeof (s && s.r) !== "string" || !NONCE_RE.test(String((s && s.n) || ""))) return null;
     return { ret: s.r, nonce: s.n };
   } catch { return null; }
+}
+// 돌아갈 주소 — APP_HOME 으로 시작하면 그 아래 길만 이어 붙이고, 아니면(다른 출처 · 같은 출처 다른 저장소 · 빈 값) 앱 첫 화면.
+//   결과는 항상 APP_HOME 으로 시작한다 — 뒤에 무엇이 붙어도 주소의 출처는 바뀌지 않는다.
+//   공백 · 제어 문자 · # · 역슬래시 · 위로 올라가는 길(.. · %2e)이 섞이면 첫 화면.
+function returnTo(ret) {
+  const s = typeof ret === "string" ? ret : "";
+  const rest = s.startsWith(APP_HOME) ? s.slice(APP_HOME.length) : null;
+  if (rest === null || s.length > 300 || /[\s#\\\u0000-\u001f\u007f]|\.\.|%2e/i.test(rest)) return APP_HOME;
+  return APP_HOME + rest;
 }
 // 토큰 내용 — 표지가 있어야 킬내기 길이 받고, 표지가 있으면 사이트 길은 받지 않는다
 const tokenClaims = (me, name) => ({ sub: String(me.id), name: String(name || "").slice(0, 40) || null, aud: AUD });
@@ -283,6 +294,6 @@ function createMembers(deps) {
 
 module.exports = {
   CONSENT_VERSION, AUD, TOKEN_TTL_SEC, NONCE_RE, CLAN_ROLE_NAMES,
-  makeLoginState, readLoginState, isLoginState, tokenClaims, userOf, kindOf, memberView, createMembers,
+  APP_HOME, makeKrState, readKrState, isKrState, returnTo, tokenClaims, userOf, kindOf, memberView, createMembers,
   _test: { makeLimiter, hostBy, ACCOUNT_RE, LINK_GLOBAL_PER_MIN, LINK_PER_MEMBER },
 };
