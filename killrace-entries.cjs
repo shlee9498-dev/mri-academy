@@ -89,6 +89,14 @@ function normAccount(b) {
   if (!holder || [...holder].length > 20) return { error: "no_holder" };
   return { value: { bank, account_no: accountNo, holder } };
 }
+// 경매 명단에 쓸 전적 — 5회 신청(killrace-apply addEntry)과 같은 모양 · 평딜은 정수 · KDA 는 소수 둘째 자리 · 못 받은 값은 null
+function normStats(s) {
+  if (!s || typeof s !== "object") return null;
+  const word = (v) => (typeof v === "string" && v) || (Number.isFinite(v) ? v : null);
+  return { ranked: word(s.ranked), grade: word(s.grade),
+    avgDamage: Number.isFinite(s.avgDamage) ? Math.round(s.avgDamage) : null,
+    kda: Number.isFinite(s.kda) ? Math.round(s.kda * 100) / 100 : null };
+}
 const csvCell = (v) => {
   let s = String(v == null ? "" : v);
   if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;                    // 스프레드시트 수식 주입 방지
@@ -172,7 +180,7 @@ function createEntries(deps) {
     const at = iso(now());
     const cur = await myEntry(e.ev.id, who.m.id);
     if (cur && cur.status === "active") return fail(res, 409, "already");
-    const stats = deps.lookup ? await deps.lookup(who.m.platform, who.m.ign).catch(() => null) : null;   // 경매 명단에 쓸 전적(못 받으면 비움)
+    const stats = normStats(deps.lookup ? await deps.lookup(who.m.platform, who.m.ign).catch(() => null) : null);   // 경매 명단에 쓸 전적(못 받으면 비움)
     const row = { platform: who.m.platform, account_id: who.m.account_id, ign: who.m.ign, status: "active", applied_at: at, cancelled_at: null,
       intro: iv.value, kind, kind_source: kindSource, stats, updated_at: at };
     let saved;
@@ -383,6 +391,6 @@ function createEntries(deps) {
 }
 
 module.exports = {
-  createEntries, normCfg, cfgFromBody, ranked, publicList, hostList, normAccount, payoutCsv, cfgKey,
+  createEntries, normCfg, cfgFromBody, ranked, publicList, hostList, normAccount, normStats, payoutCsv, cfgKey,
   ENTRY_RULES, KINDS, CAP_DEFAULT, PURGE_AFTER_MS,
 };

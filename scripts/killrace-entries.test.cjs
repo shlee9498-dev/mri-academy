@@ -53,6 +53,13 @@ test("명단 — 공개는 key · 닉 · 대기 · 소개만(구분 · 규칙 �
   assert.ok(!JSON.stringify(host).includes("account."), "진행자 명단에도 계정 번호 없음");
 });
 
+test("전적 — 5회 신청과 같은 모양 · 평딜 정수 · KDA 소수 둘째 자리 · 못 받은 값 null", () => {
+  assert.deepEqual(E.normStats({ ranked: "Diamond 3", grade: "T1", avgDamage: 312.5, kda: 1.005 }), { ranked: "Diamond 3", grade: "T1", avgDamage: 313, kda: 1 });
+  assert.deepEqual(E.normStats({ ranked: null, avgDamage: NaN, kda: "2" }), { ranked: null, grade: null, avgDamage: null, kda: null });
+  assert.equal(E.normStats(null), null);
+  assert.equal(E.normStats("x"), null);
+});
+
 test("상금 계좌 입력 · CSV — 은행 목록 · 숫자 8 ~ 20자리 · 예금주 · 수식 주입 막기 · 엑셀 앞자리 0", () => {
   assert.equal(E.normAccount({ bank: "없는은행", accountNo: "12345678", holder: "가짜" }).error, "no_bank");
   assert.equal(E.normAccount({ bank: "국민", accountNo: "1234", holder: "가짜" }).error, "bad_account");
@@ -136,7 +143,7 @@ function world(opts = {}) {
   const userErr = (m) => Object.assign(new Error(m), { userMsg: m });
   const api = E.createEntries({ ...sb, members, consentVersion: "v1", keyOf, isAdmin: (req) => req.headers["x-admin-key"] === "host",
     isOwner: (req) => req.headers.owner === "yes", events: { byId: async (id) => { if (id !== 6) throw userErr("없음"); return EV6; } },
-    lookup: async () => ({ ranked: "Gold", grade: 2, avgDamage: 250, kda: 2.1 }), now: () => clock, log });
+    lookup: async () => ({ ranked: "Gold", grade: "T2", avgDamage: 250.567, kda: 2.1234 }), now: () => clock, log });
   const routes = [];
   api.mount({ post: (p) => routes.push(p), get: (p) => routes.push(p) });
   const res = () => ({ code: 200, body: null, headers: {}, status(c) { this.code = c; return this; }, json(o) { this.body = o; return this; }, setHeader(k, v) { this.headers[k] = v; }, send(b) { this.body = b; return this; } });
@@ -170,7 +177,7 @@ test("신청 — 닫힘 · 로그인 · 동의 · 연결 · 소개 · 열기 · 
   for (let m = 1; m <= 5; m++) { w.tick(1000); states.push((await w.call(w.api.postApply, { m, body: { event: 6, intro: INTRO } })).body); }
   assert.deepEqual(states.map((s) => [s.state, s.order]), [["joined", 1], ["joined", 2], ["joined", 3], ["joined", 4], ["waiting", 5]]);
   assert.equal((await w.call(w.api.postApply, { m: 1, body: { event: 6, intro: INTRO } })).body.error.code, "already");
-  assert.equal(w.db.entries[0].stats.ranked, "Gold", "경매 명단용 전적");
+  assert.deepEqual(w.db.entries[0].stats, { ranked: "Gold", grade: "T2", avgDamage: 251, kda: 2.12 }, "경매 명단용 전적 — 5회 신청과 같은 반올림");
   // 1번 취소 → 5번이 참가로
   w.tick(1000);
   assert.deepEqual((await w.call(w.api.postCancel, { m: 1, body: { event: 6 } })).body, { ok: true });
