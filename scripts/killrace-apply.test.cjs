@@ -57,7 +57,7 @@ test("신청 → 공개 응답 · 진행자 응답 · 카드 어디에도 계좌
   assert.deepEqual({ ok: r.body.ok, waiting: r.body.waiting, order: r.body.order, count: r.body.count }, { ok: true, waiting: false, order: 1, count: 1 });
   assert.deepEqual(leaks(JSON.stringify(r.body)), []);
   const pub = await call(api.list, {});
-  assert.deepEqual(pub.body.list, [{ ign: "Fake_Nick1", platform: "steam", tier: "Gold 3", waiting: false, intro: null, kind: null }]);
+  assert.deepEqual(pub.body.list, [{ ign: "Fake_Nick1", platform: "steam", tier: "Gold 3", waiting: false, intro: null }]);
   assert.ok(!JSON.stringify(pub.body.list).includes("tester_one"), "공개 명단에 디스코드 닉을 싣지 않는다");
   assert.deepEqual(leaks(JSON.stringify(pub.body.list)), []);
   const adm = await call(api.list, { headers: { "x-admin-key": "k" } });
@@ -382,17 +382,15 @@ test("새 신청 + 구분: 구분 줄을 명단보다 먼저 쓴다 · 카드에
   for (const c of mem.cards) assert.ok(!JSON.stringify(c).includes("10000") && !JSON.stringify(c).includes("paid"), "카드에 참가비 · 확인 여부 없음");
 });
 
-test("공개 응답: 구분 · 참가비 금액 · 입금 안내 문구만 · 확인 여부 · 진행자 이름 · 디스코드 닉 · 계좌 · id 는 없다", async () => {
+test("공개 응답: 참가비 금액 · 입금 안내 문구만 · 구분 · 확인 여부 · 진행자 이름 · 디스코드 닉 · 계좌 · id 는 없다", async () => {
   const { api, call } = setup({ info: { account: "가짜은행 000-0000 가짜이름" } });
   await call(api.apply, { body: { ...body(), kind: "external" } });
   await call(api.apply, { body: { ...body({ discord: "lesson_one", ign: "Lesson_Nick", accountNo: "999988887777" }), kind: "lesson" } });
   await call(api.admin, { headers: key, body: { action: "feeSet", id: "id1", paid: true, by: "진행자B" } });
   const pub = (await call(api.list, {})).body;
-  assert.deepEqual(pub.kinds, a.KINDS);
   assert.deepEqual(pub.fee, { external: 10000 });
   assert.deepEqual(pub.payInfo, { account: "가짜은행 000-0000 가짜이름" });
-  assert.deepEqual(pub.list.map((x) => Object.keys(x)), [["ign", "platform", "tier", "waiting", "intro", "kind"], ["ign", "platform", "tier", "waiting", "intro", "kind"]]);
-  assert.deepEqual(pub.list.map((x) => x.kind), ["external", "lesson"]);
+  assert.deepEqual(pub.list.map((x) => Object.keys(x)), [["ign", "platform", "tier", "waiting", "intro"], ["ign", "platform", "tier", "waiting", "intro"]]);
   const text = JSON.stringify({ ...pub, banks: undefined });
   for (const s of ["tester_one", "lesson_one", "id1", "id2", "진행자B", "paid", "feeUnpaid", "kindCounts", "kindBy", "999988887777", ...SECRET]) assert.ok(!text.includes(s), s);
   const noInfo = setup();
@@ -502,4 +500,22 @@ test("대기 순번의 외부 참가자도 미확인 목록에 대기 표시와 
   const after = (await call(api.admin, { headers: key, body: { action: "cancel", id: id2 } })).body;
   assert.deepEqual(after.feeUnpaid.map((x) => [x.ign, x.waiting]), [["Nick21", false]]);
   assert.deepEqual(after.kindCounts, { lesson: 0, clan: 19, external: 1, none: 0 });
+});
+
+test("공개 응답에는 참가 구분이 없다(검수 44차) — 줄마다 kind · 이름표 목록 · 구분 이름 글자 없음 · 진행자 응답 · 「내 신청」(본인)에만 있다", async () => {
+  const { api, call } = setup();
+  await call(api.apply, { body: { ...body({ discord: "d_one", ign: "Nick_A1" }), kind: "lesson" } });
+  await call(api.apply, { body: { ...body({ discord: "d_two", ign: "Nick_B2" }), kind: "clan" } });
+  await call(api.apply, { body: { ...body({ discord: "d_three", ign: "Nick_C3" }), kind: "external" } });
+  await call(api.apply, { body: body({ discord: "d_four", ign: "Nick_D4" }) });                      // 구분 안 고름
+  const pub = (await call(api.list, {})).body;
+  assert.equal(pub.list.length, 4);
+  for (const row of pub.list) assert.ok(!("kind" in row), JSON.stringify(row));
+  for (const k of ["kinds", "kindCounts", "feeUnpaid"]) assert.ok(!(k in pub), k);
+  const text = JSON.stringify(pub);
+  for (const s of ['"kind', "lesson", "clan", "레슨생", "클랜원", "외부 참가", "안 고름"]) assert.ok(!text.includes(s), s);
+  const adm = (await call(api.list, { headers: key })).body;                                         // 진행자 응답에는 그대로
+  assert.deepEqual(adm.list.map((x) => x.kind), ["lesson", "clan", "external", null]);
+  assert.deepEqual(adm.kindCounts, { lesson: 1, clan: 1, external: 1, none: 1 });
+  assert.equal((await call(api.mine, { body: { discord: "d_two", ign: "Nick_B2" } })).body.kind, "clan");   // 본인 확인을 거친 「내 신청」만
 });

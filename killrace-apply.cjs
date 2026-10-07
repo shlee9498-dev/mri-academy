@@ -152,14 +152,15 @@ function setStatus(state, id, status) {
 }
 
 const tierText = (x) => x.ranked || "경쟁전 기록 없음";
-// 공개 — 인원과 인게임 닉 · 티어 · 선수 소개 네 칸 · 참가 구분만(디스코드 닉 · 계좌 · 신청 id · 입금 여부 없음)
-function publicView(state, at, intros = {}, kinds = {}, info = null) {
+// 공개 — 인원과 인게임 닉 · 티어 · 선수 소개 네 칸만(디스코드 닉 · 계좌 · 신청 id · 입금 여부 · 참가 구분 없음).
+//   참가 구분은 「누가 레슨생인지」라서 진행자 응답에만 싣는다(검수 44차 · 10/7). 공개에는 참가비 금액 · 입금 안내 문구만
+function publicView(state, at, intros = {}, info = null) {
   const rows = seats(state);
   return {
     cap: CAP, count: Math.min(rows.length, CAP), waiting: Math.max(0, rows.length - CAP),
     closed: at >= CLOSE_AT, closeAt: CLOSE_AT, banks: BANKS, positions: POSITIONS, styles: STYLES,
-    kinds: KINDS, fee: { external: FEE_EXTERNAL }, payInfo: payInfo(info),
-    list: rows.map((x) => ({ ign: x.ign, platform: x.platform, tier: tierText(x), waiting: x.waiting, intro: introPublic(intros[x.id]), kind: kindOf(kinds, x.id) })),
+    fee: { external: FEE_EXTERNAL }, payInfo: payInfo(info),
+    list: rows.map((x) => ({ ign: x.ign, platform: x.platform, tier: tierText(x), waiting: x.waiting, intro: introPublic(intros[x.id]) })),
   };
 }
 // 진행자 — 경매 명단에 쓸 값 · 선수 소개 · 안 채운 사람 · 참가 구분 · 외부 참가비 확인까지(계좌 없음). 취소한 건도 보인다
@@ -170,7 +171,7 @@ function adminView(state, at, intros = {}, kinds = {}, fees = {}, info = null) {
   const kindCounts = { lesson: 0, clan: 0, external: 0, none: 0 };
   for (const x of seated) kindCounts[kindOf(kinds, x.id) || "none"] += 1;
   return {
-    ...publicView(state, at, intros, kinds, info),
+    ...publicView(state, at, intros, info),
     introDone: seated.filter((x) => introDone(intros[x.id])).length,
     introMissing: seated.filter((x) => !introDone(intros[x.id]))
       .map((x) => ({ order: x.order, ign: x.ign, discord: x.discord, waiting: x.waiting, missing: introMissing(intros[x.id]) })),
@@ -315,7 +316,7 @@ function createApplyApi(deps) {
       const state = await load();
       const intros = await loadIntros();
       return res.json(isAdmin(req) ? { admin: true, ...(await adminPayload(state, intros)) }
-        : publicView(state, now(), intros, await loadKinds(), await loadInfo()));
+        : publicView(state, now(), intros, await loadInfo()));
     } catch (e) { log.error("[killrace-apply] list_failed", e && e.status ? e.status : "error"); return fail(res, 500, "server_error"); }
   }
   // 「내 신청」 불러오기 — 디스코드 닉 + 스팀 닉(둘 다 맞아야 함). 어느 쪽이 틀렸는지는 알려 주지 않는다
