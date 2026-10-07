@@ -20,6 +20,7 @@ const CLAN_ROLE_NAMES = [];
 const LINK_GLOBAL_PER_MIN = 4;            // PUBG 조회(기본 분당 10번)를 집계 · 다른 기능과 나눠 쓴다
 const LINK_PER_MEMBER = 3;                // 같은 사람 10분에 3번
 const LINK_MEMBER_WINDOW_MS = 10 * 60_000;
+const KNOWN_TRY_MAX = 2;                  // 대소문자 다른 닉 후보를 PUBG 에 다시 물어보는 최대 횟수(분당 10번을 나눠 쓴다)
 const GUILD_CACHE_MS = 10 * 60_000;       // 길드 회원 조회 기억
 const SEEN_GAP_MS = 24 * 3600_000;        // 마지막 접속은 하루 한 번만 고쳐 적는다
 const ACCOUNT_RE = /^account\.[0-9a-f]{32}$/;
@@ -108,12 +109,37 @@ function makeLimiter(max, windowMs) {
 }
 
 // ═══════════════ HTTP ═══════════════
+// 닉 → PUBG 선수(앱 계약 §4.2) — 대소문자를 가리지 않는다(10/8 번외에서 「dwvxvwb」 ↔ 실제 「dwvXvwb」로 등록이 여러 번 튕겼다).
+//   ① 입력 그대로 — PUBG 이름 조회는 대소문자를 가린다(findPlayer 는 i · l · 1 · o · 0 처럼 생긴 글자만 함께 본다)
+//   ② 못 찾으면 우리 기록(knownNames — 클랜 등록계 · 지난 킬내기 판 · 앱 회원 · 수강생 계정)에서 대소문자만 다른 표기를
+//      모아 그 표기로 다시 묻는다(최대 KNOWN_TRY_MAX 번). 찾은 계정이 하나면 그 계정 · PUBG 의 실제 표기로 쓴다.
+//   → { player, corrected } · 다른 계정이 둘 이상이면 { error: "ign_ambiguous" } · 없으면 { error: "ign_not_found" } · 429 등은 그대로 던진다
+async function resolvePlayer({ findPlayer, knownNames }, platform, ign) {
+  const lower = ign.toLowerCase();
+  const nameOf = (p) => String((p && p.attributes && p.attributes.name) || "");
+  try { const p = await findPlayer(platform, ign); return { player: p, corrected: nameOf(p) !== ign }; }
+  catch (e) { if (!e || e.status !== 404) throw e; }
+  if (!knownNames) return { error: "ign_not_found" };
+  const seen = await knownNames(ign).catch(() => []);
+  const names = [...new Set((Array.isArray(seen) ? seen : []).filter((n) => typeof n === "string" && n !== ign && n.toLowerCase() === lower))]
+    .slice(0, KNOWN_TRY_MAX);
+  const found = new Map();
+  for (const n of names) {
+    try { const p = await findPlayer(platform, n); if (p && nameOf(p).toLowerCase() === lower) found.set(p.id, p); }
+    catch (e) { if (!e || e.status !== 404) throw e; }
+  }
+  if (found.size > 1) return { error: "ign_ambiguous" };
+  const [player] = found.values();
+  return player ? { player, corrected: true } : { error: "ign_not_found" };
+}
+
 // deps: sbSelect · sbInsert · sbPatch · sbDelete · verify(JWT 검증) · findPlayer(platform, ign) → PUBG player { id, attributes: { name } }
 //       keyOf(accountId) · isAdmin(req) · isStudent(discordId) → bool · guildOf(discordId) → { member, roleNames } | null
 //       hasOpenEntry(memberId) · beforeLeave(memberId) · applicationsOf(memberId) — 조각 B 가 채운다(없으면 비어 있음)
 //       now · log
 function createMembers(deps) {
   const { sbSelect, sbInsert, sbPatch, sbDelete, verify, findPlayer, keyOf, isAdmin } = deps;
+  const knownNames = deps.knownNames || null;            // 닉 → 우리 기록의 표기들(대소문자 무시 찾기 · §4.2)
   const isStudent = deps.isStudent || (async () => null);
   const guildOf = deps.guildOf || (async () => null);
   const hasOpenEntry = deps.hasOpenEntry || (async () => false);
@@ -212,19 +238,20 @@ function createMembers(deps) {
     const at = now();
     if (!linkMember(u.id, at)) return fail(res, 429, "too_many");
     if (!linkGlobal("*", at)) return fail(res, 429, "busy");
-    let player;
-    try { player = await findPlayer("steam", ign); }
+    let found;
+    try { found = await resolvePlayer({ findPlayer, knownNames }, "steam", ign); }
     catch (e) {
-      if (e && e.status === 404) return fail(res, 404, "ign_not_found");
       if (e && e.status === 429) return fail(res, 429, "busy");
       throw e;
     }
+    if (found.error) return fail(res, found.error === "ign_ambiguous" ? 409 : 404, found.error);
+    const player = found.player, corrected = found.corrected;                             // corrected = 실제 표기가 입력과 다르다(대소문자 · 비슷한 글자)
     const accountId = player && player.id;
     const exact = player && player.attributes && player.attributes.name;
     if (!ACCOUNT_RE.test(String(accountId || "")) || !exact) return fail(res, 404, "ign_not_found");
     if (row.account_id === accountId) {                                                   // 같은 계정 — 닉만 바뀌었다
       const [r2] = await sbPatch("killrace_members", `id=eq.${row.id}`, { ign: exact, updated_at: iso(at) });
-      return res.json({ member: memberView(r2 || { ...row, ign: exact }, keyOf, await kindFor(u.id)) });
+      return res.json({ member: memberView(r2 || { ...row, ign: exact }, keyOf, await kindFor(u.id)), corrected });
     }
     const taken = await sbSelect("killrace_members", `select=id&platform=eq.steam&account_id=eq.${enc(accountId)}&limit=1`);
     if (taken.length && taken[0].id !== row.id) return fail(res, 409, "account_taken");
@@ -240,7 +267,7 @@ function createMembers(deps) {
     await sbInsert("killrace_member_links", { member_id: row.id, action, platform: "steam", account_id: accountId, ign: exact })
       .catch((e) => log.warn("[killrace-members] link_history_failed", e && e.status ? e.status : "error"));
     log.log(`[killrace-members] ${action}`);
-    return res.json({ member: memberView(updated || { ...row, platform: "steam", account_id: accountId, ign: exact }, keyOf, await kindFor(u.id)) });
+    return res.json({ member: memberView(updated || { ...row, platform: "steam", account_id: accountId, ign: exact }, keyOf, await kindFor(u.id)), corrected });
   });
 
   // POST /api/killrace/me/leave (계약 §4.3) — 회원 줄을 지운다(연결 이력은 같이 지워진다 · 대회 기록의 닉 · 숫자는 남는다)
@@ -294,6 +321,6 @@ function createMembers(deps) {
 
 module.exports = {
   CONSENT_VERSION, AUD, TOKEN_TTL_SEC, NONCE_RE, CLAN_ROLE_NAMES,
-  APP_HOME, makeKrState, readKrState, isKrState, returnTo, tokenClaims, userOf, kindOf, memberView, createMembers,
-  _test: { makeLimiter, hostBy, ACCOUNT_RE, LINK_GLOBAL_PER_MIN, LINK_PER_MEMBER },
+  APP_HOME, makeKrState, readKrState, isKrState, returnTo, tokenClaims, userOf, kindOf, memberView, resolvePlayer, createMembers,
+  _test: { makeLimiter, hostBy, ACCOUNT_RE, LINK_GLOBAL_PER_MIN, LINK_PER_MEMBER, KNOWN_TRY_MAX },
 };

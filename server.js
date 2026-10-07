@@ -7099,6 +7099,14 @@ async function gmiGuildMember(discordId) {
   const killMembers = killraceMembers.createMembers({
     sbSelect, sbInsert, sbPatch, sbDelete, verify: verifyJWT, isAdmin: gdcupAdmin,
     findPlayer: (platform, ign) => findPlayer(platform, ign, 600_000),
+    // 닉 → 우리 기록의 표기들(대소문자 무시 찾기 · 앱 계약 §4.2) — 클랜 등록계 · 지난 킬내기 판 · 앱 회원 · 수강생 계정.
+    //   ilike 는 「_」 를 한 글자 아무거나로 읽어서 「\_」 로 막고, 결과는 resolvePlayer 가 소문자 같음으로 한 번 더 거른다. 표가 없으면 그 표만 빈다
+    knownNames: async (ign) => {
+      const pat = encodeURIComponent(String(ign).replace(/[\\%_*]/g, (c) => "\\" + c));
+      const pick = (table, col) => sbSelect(table, `select=${col}&${col}=ilike.${pat}&limit=5`).then((rows) => rows.map((r) => r[col])).catch(() => []);
+      return (await Promise.all([pick("clan_registry", "pubg_name"), pick("registry_history", "pubg_name"), pick("event_match_players", "ign"),
+        pick("killrace_members", "ign"), pick("student_accounts", "pubg_name")])).flat();
+    },
     keyOf: killraceCareer.keyMaker(process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex")),
     isStudent: async (id) => (await sbSelect("students", `select=id&discord_id=eq.${encodeURIComponent(id)}&status=in.(active,paused)${NOT_MERGED}&limit=1`)).length > 0,
     guildOf: gmiGuildMember,
