@@ -31,7 +31,8 @@ function normCfg(v, ev) {
   const cap = Number.isInteger(c.cap) && c.cap >= CAP_MIN && c.cap <= CAP_MAX ? c.cap : CAP_DEFAULT;
   const close = Number.isFinite(c.closeAt) ? c.closeAt : Number.isFinite(Date.parse(c.closeAt)) ? Date.parse(c.closeAt) : null;
   const closeAt = close != null ? close : ev && Number.isFinite(ev.start) ? ev.start - CLOSE_BEFORE_MS : null;
-  return { open: c.open === true, cap, closeAt, entryRule: ENTRY_RULES.includes(c.entryRule) ? c.entryRule : "free" };
+  // configured = 이 회차에 앱 신청 설정 줄이 있다(진행자가 한 번이라도 열었다). 경매 화면이 명단 출처를 고르는 표시다(5회 이전 = 종전 신청 폼)
+  return { configured: !!(v && typeof v === "object"), open: c.open === true, cap, closeAt, entryRule: ENTRY_RULES.includes(c.entryRule) ? c.entryRule : "free" };
 }
 // 진행자 입력 → 설정 줄(검사) · 오류면 { error }
 function cfgFromBody(b, ev) {
@@ -59,7 +60,7 @@ function publicList(rows, cfg, keyOf, ev) {
   const r = ranked(rows, cfg.cap);
   return {
     event: ev ? { id: ev.id, name: ev.name, start: ev.start } : null,
-    open: cfg.open, cap: cfg.cap, closeAt: Number.isFinite(cfg.closeAt) ? iso(cfg.closeAt) : null, entryRule: cfg.entryRule,
+    configured: cfg.configured, open: cfg.open, cap: cfg.cap, closeAt: Number.isFinite(cfg.closeAt) ? iso(cfg.closeAt) : null, entryRule: cfg.entryRule,
     count: Math.min(r.length, cfg.cap), waiting: Math.max(0, r.length - cfg.cap),
     list: r.map(({ row, waiting }) => ({ key: keyOf(row.account_id), ign: row.ign, waiting, intro: introPublic(row.intro) })),
   };

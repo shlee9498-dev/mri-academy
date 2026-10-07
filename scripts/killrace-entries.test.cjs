@@ -12,9 +12,10 @@ const INTRO = { position: "오더", style: "공격적", ambition: "치킨 두 �
 const keyOf = (a) => `k-${a.slice(-4)}`;
 
 test("회차 설정 — 줄이 없으면 닫힘 · 정원 기본 20 · 마감 기본 = 시작 15분 전 · 규칙 기본 free · 진행자 입력 검사", () => {
-  assert.deepEqual(E.normCfg(null, EV6), { open: false, cap: 20, closeAt: T0 - 15 * 60_000, entryRule: "free" });
+  assert.deepEqual(E.normCfg(null, EV6), { configured: false, open: false, cap: 20, closeAt: T0 - 15 * 60_000, entryRule: "free" });
   assert.deepEqual(E.normCfg({ open: true, cap: 8, closeAt: "2026-10-12T10:30:00Z", entryRule: "deposit" }, EV6),
-    { open: true, cap: 8, closeAt: Date.parse("2026-10-12T10:30:00Z"), entryRule: "deposit" });
+    { configured: true, open: true, cap: 8, closeAt: Date.parse("2026-10-12T10:30:00Z"), entryRule: "deposit" });
+  assert.equal(E.normCfg({ open: false }, EV6).configured, true, "닫아 둔 회차도 설정 줄은 있다");
   assert.equal(E.normCfg({ open: true, cap: 999 }, EV6).cap, 20);
   assert.equal(E.cfgFromBody({}, EV6).error, "bad_open");
   assert.equal(E.cfgFromBody({ open: true, cap: 3 }, EV6).error, "bad_cap");
@@ -43,7 +44,8 @@ test("명단 — 공개는 key · 닉 · 대기 · 소개만(구분 · 규칙 �
   const cfg = E.normCfg({ open: true, cap: 4 }, EV6);
   const pub = E.publicList(rows, cfg, keyOf, EV6);
   assert.deepEqual(pub.list, [{ key: "k-aaaa", ign: "FakeNick", waiting: false, intro: { position: "오더", style: "공격적", ambition: "치킨 두 번", cardName: null } }]);
-  assert.deepEqual([pub.count, pub.waiting, pub.cap, pub.open, pub.entryRule], [1, 0, 4, true, "free"]);
+  assert.deepEqual([pub.configured, pub.count, pub.waiting, pub.cap, pub.open, pub.entryRule], [true, 1, 0, 4, true, "free"]);
+  assert.equal(E.publicList([], E.normCfg(null, EV6), keyOf, EV6).configured, false, "설정 줄 없는 회차(5회 이전) — 경매는 종전 명단");
   const text = JSON.stringify(pub);
   for (const bad of ["external", "ruleOk", "Gold", "account."]) assert.ok(!text.includes(bad), bad);
   const host = E.hostList(rows, cfg, keyOf, EV6);
