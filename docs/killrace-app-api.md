@@ -9,7 +9,7 @@
 |---|---|---|---|
 | A | §2 ~ §5 | 로그인 표지 · 내 계정 · 동의 · 스팀 연결 · 탈퇴 · 참가 구분 판정 · 회원 표(§70) | 조각 A Draft |
 | B | §6 ~ §7 | 회차 신청 설정 · 앱 신청 · 취소 · 소개 · 명단 · 상금 계좌(상금 대상만) · 신청 표(§71) | 조각 B Draft |
-| C | §8 | 읽기 — 회차 상태 · 룰 · 선수 한 명 누적 | 조각 C Draft |
+| C | §8 | 읽기 — 회차 상태 · 룰 · 선수 한 명 누적 | #536 (Draft) |
 
 배포는 5회(10/8) 뒤다. 그 전에는 전부 Draft 로 쌓는다. DDL(§70 · §71)은 더하기만이고, 지휘 「진행」 뒤 세션이 스냅샷 → 실행 → 검증 순서로 실행한다.
 
@@ -160,15 +160,18 @@
 { event, score: { chicken: 8, damagePer: 100, slotPenalty: [4,3,2,1], leave: -10 },
   boost: { mode: "seq" | "time", seqs: [5,7], mul: 1.5 },
   lateRevive: { rule: "penalty" | "flag" | "off", phase: 4 },
-  teamSize: 4, auction: null | { budget, startPrice, bidSec, bonusPer, … } }
+  teamSize: 4, auction: null | { teamSize, maxTeams, minTeams, budget, startPrice, bidSec, minStep, bonusPer, negativeMul, tierBonus } }
 ```
 
 - 코드 상수와 회차 설정(`killrace:event:<id>` · 경매 설정)을 **읽어서 보여 주기만** 한다. 룰이 바뀌어도 앱을 고치지 않는다.
+- 고르는 칸만 싣는다 — 팀 주소 토큰 · 보너스 · 무효 표시 · 경매 명단은 내보내지 않는다. `boost.at` 은 시각 버닝(1 ~ 4회)일 때만. 30초 기억 · 400 `bad_event` · 404 `no_event`.
 
 ### §8.3 선수 한 명 — `GET /api/killrace/career/:key`
 
-- `{ key, ign, games, kills, damage, deaths, killsPerGame, damagePerGame, teamTopKills, sample, events: [{ id, name, team, games, kills, damage }] }`
-- 집계 방식 · 정렬 · 표본 부족 기준은 killrace-api §1.11 과 같다. 없는 키는 404 `not_found`.
+- `{ key, ign, games, kills, damage, deaths, killsPerGame, damagePerGame, teamTopKills, sample, events: [회차 번호…],
+    byEvent: [{ id, name, team, games, kills, damage }], minGames, updatedAt }`
+  — `events` 는 목록(§1.11)과 같은 회차 번호 목록, `byEvent` 는 회차별 줄(교체로 두 팀을 뛰었으면 판이 많은 팀).
+- 집계 방식 · 표본 부족 기준은 killrace-api §1.11 과 같다. 모양이 틀린 키는 400 `bad_key` · 없는 키는 404 `not_found` · 60초 기억.
 
 ## §9 저장 (DDL · 더하기만 · 지휘 「진행」 뒤 세션 실행)
 
