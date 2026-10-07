@@ -7614,7 +7614,7 @@ app.post("/api/gdcup-solo", async (req, res) => {
     res.json({ ok: true, id: row && row.id });
   } catch (e) { console.error("solo_apply_error", e); res.status(500).json({ error: "server_error" }); }
 });
-// ── 킬내기 2회 솔로 신청(killrace-apply.cjs · GmI 소관) — 저장은 ops_state 두 줄(DDL 없음). 계좌는 오너 로그인으로만 내려간다 ──
+// ── 킬내기 2회 솔로 신청(killrace-apply.cjs · GmI 소관) — 저장은 ops_state 줄들(DDL 없음). 계좌는 오너 로그인으로만 내려간다 ──
 {
   const applyKey = (suffix) => `killrace:${suffix}:${killraceApply.ROUND}`;
   const opsGet = async (key) => {
@@ -7628,6 +7628,10 @@ app.post("/api/gdcup-solo", async (req, res) => {
       loadPay: () => opsGet(applyKey("applypay")), savePay: (pay) => opsPut(applyKey("applypay"), pay),
       // 선수 소개 4칸(계약 §1.15) — 따로 한 줄. 소개를 저장할 때 명단 · 계좌 줄은 쓰지 않는다
       loadIntro: () => opsGet(applyKey("applyintro")), saveIntro: (intro) => opsPut(applyKey("applyintro"), intro),
+      // 참가 구분 · 외부 참가비 확인(계약 §1.16) — 각자 한 줄. 입금 안내 문구는 설정 줄(없으면 화면이 「디스코드에서 드려요」)
+      loadKind: () => opsGet(applyKey("applykind")), saveKind: (kind) => opsPut(applyKey("applykind"), kind),
+      loadFee: () => opsGet(applyKey("applyfee")), saveFee: (fee) => opsPut(applyKey("applyfee"), fee),
+      loadInfo: () => opsGet("killrace:applyinfo"),
     },
     // 신청한 플랫폼에서 닉을 다시 확인하고 경매 명단에 쓸 값(경쟁전 티어 · 평딜 · KDA)을 같이 받아 둔다
     lookup: async (platform, ign) => {

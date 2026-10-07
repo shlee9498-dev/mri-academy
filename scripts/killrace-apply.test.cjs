@@ -16,12 +16,15 @@ function fakeRes() {
     send(t) { this.body = t; return this; }, setHeader(k, v) { this.headers[k] = v; } };
 }
 function setup(over = {}) {
-  const mem = { apply: null, pay: null, intro: null, cards: [], writes: [] };
+  const mem = { apply: null, pay: null, intro: null, kind: null, fee: null, info: over.info || null, cards: [], writes: [] };
   let seq = 0; let clock = OPEN;
   const api = a.createApplyApi({
     store: { load: async () => mem.apply, save: async (s) => { mem.writes.push("apply"); mem.apply = JSON.parse(JSON.stringify(s)); },
       loadPay: async () => mem.pay, savePay: async (p) => { mem.writes.push("pay"); mem.pay = JSON.parse(JSON.stringify(p)); },
-      loadIntro: async () => mem.intro, saveIntro: async (v) => { mem.writes.push("intro"); mem.intro = JSON.parse(JSON.stringify(v)); } },
+      loadIntro: async () => mem.intro, saveIntro: async (v) => { mem.writes.push("intro"); mem.intro = JSON.parse(JSON.stringify(v)); },
+      loadKind: async () => mem.kind, saveKind: async (v) => { mem.writes.push("kind"); mem.kind = JSON.parse(JSON.stringify(v)); },
+      loadFee: async () => mem.fee, saveFee: async (v) => { mem.writes.push("fee"); mem.fee = JSON.parse(JSON.stringify(v)); },
+      loadInfo: async () => mem.info },
     lookup: over.lookup || (async (platform, ign) => ({ ign, ranked: "Gold 3", grade: "B", avgDamage: 312.6, kda: 2.345 })),
     isAdmin: (req) => req.headers["x-admin-key"] === "k", isOwner: (req) => req.headers.authorization === "owner",
     notify: async (embed) => { mem.cards.push(embed); },
@@ -64,7 +67,7 @@ test("신청 → 공개 응답 · 진행자 응답 · 카드 어디에도 계좌
   assert.deepEqual(leaks(JSON.stringify(adm.body.list)), []);
   await new Promise((r2) => setImmediate(r2));
   assert.equal(mem.cards.length, 1);
-  assert.deepEqual(mem.cards[0].fields.map((f) => f.name), ["디스코드", "인게임닉", "티어"]);
+  assert.deepEqual(mem.cards[0].fields.map((f) => [f.name, f.value]), [["디스코드", "tester_one"], ["인게임닉", "Fake_Nick1"], ["티어", "Gold 3"], ["구분", "안 고름"]]);
   assert.deepEqual(leaks(JSON.stringify(mem.cards[0])), []);
   assert.deepEqual(leaks(JSON.stringify(mem.apply)), [], "명단 줄에는 계좌가 없다");
   assert.deepEqual(mem.pay, { id1: { bank: "국민", accountNo: "123456789012", holder: "가나다" } });
@@ -226,7 +229,7 @@ test("기존 신청자 「내 신청」: 디스코드 닉 + 스팀 닉 둘 다 �
   const who = { discord: " TESTER_one ", ign: "fake_nick1" };                            // 대소문자 · 앞뒤 공백 무시
   const m = await call(api.mine, { body: who });
   assert.equal(m.code, 200);
-  assert.deepEqual(m.body, { ok: true, ign: "Fake_Nick1", tier: "Gold 3", order: 1, waiting: false, cap: 20, intro: null, done: false });
+  assert.deepEqual(m.body, { ok: true, ign: "Fake_Nick1", tier: "Gold 3", order: 1, waiting: false, cap: 20, intro: null, done: false, kind: null });
   for (const wrong of [{ discord: "tester_one", ign: "Fake_Nick2" }, { discord: "second_one", ign: "Fake_Nick1" }, { discord: "nobody", ign: "Nobody1" }]) {
     const r = await call(api.mine, { body: wrong });
     assert.deepEqual([r.code, r.body.error], [404, "not_found"], JSON.stringify(wrong));
@@ -238,7 +241,7 @@ test("기존 신청자 「내 신청」: 디스코드 닉 + 스팀 닉 둘 다 �
   const s1 = await call(api.saveIntro, { body: { ...who, intro: intro() } });
   assert.equal(s1.code, 200);
   assert.deepEqual(s1.body, { ok: true, ign: "Fake_Nick1", tier: "Gold 3", order: 1, waiting: false, cap: 20,
-    intro: { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: null }, done: true });
+    intro: { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: null }, done: true, kind: null });
   const s2 = await call(api.saveIntro, { body: { ...who, intro: intro({ position: "오더", style: "안정적", cardName: "카드닉" }) } });
   assert.deepEqual([s2.body.intro.position, s2.body.intro.style], ["오더", "안정적"]);
   assert.deepEqual(mem.writes, ["intro", "intro"]);                                        // 소개 줄만 썼다
@@ -334,4 +337,185 @@ test("진행자 소개 고치기 · 비우기: 운영 키 · 바꾸는 사람 �
   const again = await call(api.saveIntro, { body: { discord: "second_one", ign: "Fake_Nick2", intro: intro() } });
   assert.equal(again.code, 200);
   assert.deepEqual([mem.intro.id2.saves, mem.intro.id2.by], [2, undefined]);
+});
+
+// ── 참가 구분 · 외부 참가비 확인(계약 §1.16 · 지휘 10/7) ──
+const key = { "x-admin-key": "k" };
+
+test("구분 검사: 레슨생 · 클랜원 · 외부 참가 셋 중 하나 · 빈 값 · 다른 값은 no_kind · 저장된 값이 이상하면 「안 고름」", () => {
+  assert.deepEqual(a.KINDS, [{ key: "lesson", label: "레슨생" }, { key: "clan", label: "클랜원" }, { key: "external", label: "외부 참가" }]);
+  assert.equal(a.FEE_EXTERNAL, 10000);
+  for (const k of ["lesson", "clan", "external"]) assert.equal(T.normKind(k).value, k);
+  assert.equal(T.normKind(" clan ").value, "clan");
+  for (const bad of ["", " ", "vip", "외부 참가", null, undefined, ["clan"], { kind: "clan" }]) assert.equal(T.normKind(bad).error, "no_kind", JSON.stringify(bad));
+  assert.deepEqual(["lesson", "clan", "external", "x"].map(T.kindLabel), ["레슨생", "클랜원", "외부 참가", null]);
+  assert.equal(T.kindOf({ a: { kind: "external" } }, "a"), "external");
+  assert.equal(T.kindOf({ a: { kind: "vip" } }, "a"), null);
+  assert.equal(T.kindOf({}, "a"), null);
+  assert.equal(T.kindOf(null, "a"), null);
+});
+
+test("입금 안내 문구 설정 줄: 없거나 비거나 60자를 넘으면 null(화면은 「디스코드에서 드려요」) · 공백 · 제어 문자만 정리", () => {
+  for (const raw of [null, undefined, "문자열", ["x"], {}, { account: "" }, { account: " \n " }, { account: 123 }]) assert.deepEqual(T.payInfo(raw), { account: null }, JSON.stringify(raw));
+  assert.deepEqual(T.payInfo({ account: "  가짜은행\n000-00 ​ 예금주 " }), { account: "가짜은행 000-00 예금주" });
+  assert.deepEqual(T.payInfo({ account: "가".repeat(60) }), { account: "가".repeat(60) });
+  assert.deepEqual(T.payInfo({ account: "가".repeat(61) }), { account: null });
+});
+
+test("새 신청 + 구분: 구분 줄을 명단보다 먼저 쓴다 · 카드에 구분 · 틀린 구분이면 아무것도 저장 안 함 · kind 키가 없는 옛 화면 요청은 받고 「안 고름」", async () => {
+  const { api, mem, call } = setup();
+  for (const bad of ["", "vip"]) {
+    const r = await call(api.apply, { body: { ...body(), intro: intro(), kind: bad } });
+    assert.deepEqual([r.code, r.body.error], [400, "no_kind"], bad);
+  }
+  assert.deepEqual([mem.apply, mem.pay, mem.intro, mem.kind, mem.writes], [null, null, null, null, []]);
+  const r = await call(api.apply, { body: { ...body(), intro: intro(), kind: "external" } });
+  assert.equal(r.code, 200);
+  assert.equal(r.body.kind, "external");
+  assert.deepEqual(mem.writes, ["pay", "intro", "kind", "apply"]);
+  assert.deepEqual(mem.kind, { id1: { kind: "external", at: mem.apply.list[0].at, saves: 1 } });
+  const old = await call(api.apply, { body: body({ discord: "old_screen", ign: "Old_Nick" }) });
+  assert.deepEqual([old.code, old.body.kind], [200, null]);
+  assert.deepEqual(Object.keys(mem.kind), ["id1"]);
+  await new Promise((r2) => setImmediate(r2));
+  assert.deepEqual(mem.cards.map((c) => c.fields.find((f) => f.name === "구분").value), ["외부 참가", "안 고름"]);
+  for (const c of mem.cards) assert.ok(!JSON.stringify(c).includes("10000") && !JSON.stringify(c).includes("paid"), "카드에 참가비 · 확인 여부 없음");
+});
+
+test("공개 응답: 참가비 금액 · 입금 안내 문구만 · 구분 · 확인 여부 · 진행자 이름 · 디스코드 닉 · 계좌 · id 는 없다", async () => {
+  const { api, call } = setup({ info: { account: "가짜은행 000-0000 가짜이름" } });
+  await call(api.apply, { body: { ...body(), kind: "external" } });
+  await call(api.apply, { body: { ...body({ discord: "lesson_one", ign: "Lesson_Nick", accountNo: "999988887777" }), kind: "lesson" } });
+  await call(api.admin, { headers: key, body: { action: "feeSet", id: "id1", paid: true, by: "진행자B" } });
+  const pub = (await call(api.list, {})).body;
+  assert.deepEqual(pub.fee, { external: 10000 });
+  assert.deepEqual(pub.payInfo, { account: "가짜은행 000-0000 가짜이름" });
+  assert.deepEqual(pub.list.map((x) => Object.keys(x)), [["ign", "platform", "tier", "waiting", "intro"], ["ign", "platform", "tier", "waiting", "intro"]]);
+  const text = JSON.stringify({ ...pub, banks: undefined });
+  for (const s of ["tester_one", "lesson_one", "id1", "id2", "진행자B", "paid", "feeUnpaid", "kindCounts", "kindBy", "999988887777", ...SECRET]) assert.ok(!text.includes(s), s);
+  const noInfo = setup();
+  assert.deepEqual((await noInfo.call(noInfo.api.list, {})).body.payInfo, { account: null });
+});
+
+test("진행자 참가비 확인: 운영 키 · 바꾸는 사람 필수 · 외부 참가만 · paid 는 true/false 만 · 미확인 목록에서 빠지고 풀면 돌아온다 · 참가비 줄만 쓴다", async () => {
+  const { api, mem, call, setClock } = setup();
+  await call(api.apply, { body: { ...body(), kind: "external" } });
+  await call(api.apply, { body: { ...body({ discord: "clan_one", ign: "Clan_Nick" }), kind: "clan" } });
+  await call(api.apply, { body: { ...body({ discord: "ext_two", ign: "Ext_Nick2" }), kind: "external" } });
+  await call(api.apply, { body: body({ discord: "old_screen", ign: "Old_Nick" }) });
+  const before = JSON.stringify([mem.apply, mem.pay, mem.intro, mem.kind]);
+  mem.writes.length = 0;
+  const adm = (await call(api.list, { headers: key })).body;
+  assert.deepEqual(adm.kindCounts, { lesson: 0, clan: 1, external: 2, none: 1 });
+  assert.deepEqual(adm.feeUnpaid, [{ order: 1, ign: "Fake_Nick1", discord: "tester_one", waiting: false }, { order: 3, ign: "Ext_Nick2", discord: "ext_two", waiting: false }]);
+  assert.deepEqual(adm.list.map((x) => [x.ign, x.kind, x.fee]), [["Fake_Nick1", "external", { paid: false, at: null, by: null }], ["Clan_Nick", "clan", null],
+    ["Ext_Nick2", "external", { paid: false, at: null, by: null }], ["Old_Nick", null, null]]);
+  const fee = (over = {}) => ({ action: "feeSet", id: "id1", paid: true, by: "진행자B", ...over });
+  assert.equal((await call(api.admin, { body: fee() })).code, 401);
+  assert.deepEqual((await call(api.admin, { headers: key, body: fee({ by: "" }) })).body.error, "need_by");
+  for (const bad of ["true", 1, null, undefined]) assert.deepEqual((await call(api.admin, { headers: key, body: fee({ paid: bad }) })).body.error, "bad_paid", String(bad));
+  const nf = await call(api.admin, { headers: key, body: fee({ id: "nope" }) });
+  assert.deepEqual([nf.code, nf.body.error], [404, "not_found"]);
+  for (const id of ["id2", "id4"]) {                                                       // 클랜원 · 구분 안 고른 사람은 참가비 대상이 아니다
+    const r = await call(api.admin, { headers: key, body: fee({ id }) });
+    assert.deepEqual([r.code, r.body.error], [409, "not_external"], id);
+  }
+  assert.deepEqual(mem.writes, []);
+  setClock(a.CLOSE_AT + 60e3);                                                            // 마감 뒤에도 확인한다(경매 직전)
+  const p1 = await call(api.admin, { headers: key, body: fee() });
+  assert.equal(p1.code, 200);
+  assert.deepEqual(mem.writes, ["fee"]);
+  assert.deepEqual(Object.keys(mem.fee), ["id1"]);
+  assert.deepEqual([mem.fee.id1.paid, mem.fee.id1.by, typeof mem.fee.id1.at], [true, "진행자B", "number"]);
+  assert.deepEqual(p1.body.feeUnpaid.map((x) => x.ign), ["Ext_Nick2"]);
+  assert.deepEqual(p1.body.list.find((x) => x.id === "id1").fee, { paid: true, at: mem.fee.id1.at, by: "진행자B" });
+  const p0 = await call(api.admin, { headers: key, body: fee({ paid: false, by: "진행자C" }) });   // 「확인 풀기」
+  assert.deepEqual(p0.body.feeUnpaid.map((x) => x.ign), ["Fake_Nick1", "Ext_Nick2"]);
+  assert.deepEqual([mem.fee.id1.paid, mem.fee.id1.by], [false, "진행자C"]);
+  assert.deepEqual(mem.writes, ["fee", "fee"]);
+  assert.equal(JSON.stringify([mem.apply, mem.pay, mem.intro, mem.kind]), before, "명단 · 계좌 · 소개 · 구분 줄은 그대로");
+});
+
+test("진행자 구분 고르기(kindSet): 옛 화면 신청을 채운다 · 바꾸는 사람이 남는다 · 외부로 바꾸면 미확인에 들어간다 · 본인이 다시 고르면 진행자 이름은 사라지고 횟수가 남는다", async () => {
+  const { api, mem, call } = setup();
+  await call(api.apply, { body: body() });                                                  // 구분 없이 들어온 신청(옛 화면)
+  const before = JSON.stringify([mem.apply, mem.pay]);
+  mem.writes.length = 0;
+  const set = (over = {}) => ({ action: "kindSet", id: "id1", kind: "external", by: "진행자B", ...over });
+  assert.deepEqual((await call(api.admin, { headers: key, body: set({ kind: "vip" }) })).body.error, "no_kind");
+  assert.deepEqual((await call(api.admin, { headers: key, body: set({ by: " " }) })).body.error, "need_by");
+  assert.equal((await call(api.admin, { headers: key, body: set({ id: "nope" }) })).code, 404);
+  assert.deepEqual(mem.writes, []);
+  const r = await call(api.admin, { headers: key, body: set() });
+  assert.equal(r.code, 200);
+  assert.deepEqual(mem.writes, ["kind"]);
+  const row = r.body.list[0];
+  assert.deepEqual([row.kind, row.kindBy, row.kindSaves, row.fee], ["external", "진행자B", 1, { paid: false, at: null, by: null }]);
+  assert.deepEqual([r.body.kindCounts, r.body.feeUnpaid.map((x) => x.ign)], [{ lesson: 0, clan: 0, external: 1, none: 0 }, ["Fake_Nick1"]]);
+  await call(api.admin, { headers: key, body: { action: "feeSet", id: "id1", paid: true, by: "진행자B" } });
+  const self = await call(api.saveIntro, { body: { discord: "tester_one", ign: "Fake_Nick1", intro: intro(), kind: "clan" } });
+  assert.equal(self.body.kind, "clan");
+  const adm = (await call(api.list, { headers: key })).body;
+  assert.deepEqual([adm.list[0].kind, adm.list[0].kindBy, adm.list[0].kindSaves, adm.list[0].fee, adm.feeUnpaid], ["clan", null, 2, null, []]);
+  assert.equal(mem.fee.id1.paid, true, "참가비 줄은 지우지 않는다(다시 외부로 바꾸면 확인한 그대로 보인다)");
+  assert.equal(JSON.stringify([mem.apply, mem.pay]), before);
+});
+
+test("기존 신청자 「내 신청」으로 구분 채우기: 닉 · 계좌 · 소개 네 칸은 그대로 · 소개 · 구분 줄만 쓴다 · 틀린 구분이면 아무것도 안 쓴다 · kind 없이 저장하면 구분 줄은 안 건드린다", async () => {
+  const { api, mem, call } = setup();
+  await call(api.apply, { body: { ...body(), intro: intro({ cardName: "짱돌" }) } });     // 구분 없이 들어온 신청(소개는 있음)
+  await call(api.apply, { body: body({ discord: "second_one", ign: "Fake_Nick2" }) });
+  const applyBefore = JSON.stringify(mem.apply), payBefore = JSON.stringify(mem.pay);
+  const introBefore = JSON.parse(JSON.stringify(mem.intro.id1));
+  mem.writes.length = 0;
+  const who = { discord: "tester_one", ign: "Fake_Nick1" };
+  const m = (await call(api.mine, { body: who })).body;
+  assert.equal(m.kind, null);
+  const bad = await call(api.saveIntro, { body: { ...who, intro: { ...m.intro, cardName: "짱돌" }, kind: "vip" } });
+  assert.deepEqual([bad.code, bad.body.error], [400, "no_kind"]);
+  assert.deepEqual(mem.writes, []);
+  const s = await call(api.saveIntro, { body: { ...who, intro: { ...m.intro }, kind: "lesson" } });   // 화면은 불러온 소개를 그대로 같이 보낸다
+  assert.equal(s.code, 200);
+  assert.deepEqual([s.body.kind, s.body.intro, s.body.done], ["lesson", { position: "돌격", style: "공격적", ambition: "오늘 킬 1등 해요", cardName: "짱돌" }, true]);
+  assert.deepEqual(mem.writes, ["intro", "kind"]);
+  assert.equal(JSON.stringify(mem.apply), applyBefore, "명단 줄(닉 · 티어 · 전적) 그대로");
+  assert.equal(JSON.stringify(mem.pay), payBefore, "계좌 줄 그대로");
+  for (const k of ["position", "style", "ambition", "cardName"]) assert.equal(mem.intro.id1[k], introBefore[k], k);
+  assert.deepEqual({ ...mem.kind.id1, at: 0 }, { kind: "lesson", at: 0, saves: 1 });
+  assert.equal((await call(api.mine, { body: who })).body.kind, "lesson");
+  mem.writes.length = 0;
+  await call(api.saveIntro, { body: { ...who, intro: intro({ ambition: "옛 화면" }) } });   // kind 없이(옛 화면) — 구분 줄은 그대로
+  assert.deepEqual(mem.writes, ["intro"]);
+  assert.equal(mem.kind.id1.kind, "lesson");
+  for (const r of [m, s.body]) for (const sec of [...SECRET, "id1", "tester_one"]) assert.ok(!JSON.stringify(r).includes(sec), sec);
+});
+
+test("대기 순번의 외부 참가자도 미확인 목록에 대기 표시와 같이 나온다 · 취소한 사람은 빠진다", async () => {
+  const { api, call } = setup();
+  for (let i = 1; i <= 21; i++) await call(api.apply, { body: { ...body({ discord: `d${i}`, ign: `Nick${i}` }), kind: i === 2 || i === 21 ? "external" : "clan" } });
+  const adm = (await call(api.list, { headers: key })).body;
+  assert.deepEqual(adm.feeUnpaid.map((x) => [x.ign, x.waiting]), [["Nick2", false], ["Nick21", true]]);
+  assert.deepEqual(adm.kindCounts, { lesson: 0, clan: 19, external: 2, none: 0 });
+  const id2 = adm.list.find((x) => x.ign === "Nick2").id;
+  const after = (await call(api.admin, { headers: key, body: { action: "cancel", id: id2 } })).body;
+  assert.deepEqual(after.feeUnpaid.map((x) => [x.ign, x.waiting]), [["Nick21", false]]);
+  assert.deepEqual(after.kindCounts, { lesson: 0, clan: 19, external: 1, none: 0 });
+});
+
+test("공개 응답에는 참가 구분이 없다(검수 44차) — 줄마다 kind · 이름표 목록 · 구분 이름 글자 없음 · 진행자 응답 · 「내 신청」(본인)에만 있다", async () => {
+  const { api, call } = setup();
+  await call(api.apply, { body: { ...body({ discord: "d_one", ign: "Nick_A1" }), kind: "lesson" } });
+  await call(api.apply, { body: { ...body({ discord: "d_two", ign: "Nick_B2" }), kind: "clan" } });
+  await call(api.apply, { body: { ...body({ discord: "d_three", ign: "Nick_C3" }), kind: "external" } });
+  await call(api.apply, { body: body({ discord: "d_four", ign: "Nick_D4" }) });                      // 구분 안 고름
+  const pub = (await call(api.list, {})).body;
+  assert.equal(pub.list.length, 4);
+  for (const row of pub.list) assert.ok(!("kind" in row), JSON.stringify(row));
+  for (const k of ["kinds", "kindCounts", "feeUnpaid"]) assert.ok(!(k in pub), k);
+  const text = JSON.stringify(pub);
+  for (const s of ['"kind', "lesson", "clan", "레슨생", "클랜원", "외부 참가", "안 고름"]) assert.ok(!text.includes(s), s);
+  const adm = (await call(api.list, { headers: key })).body;                                         // 진행자 응답에는 그대로
+  assert.deepEqual(adm.list.map((x) => x.kind), ["lesson", "clan", "external", null]);
+  assert.deepEqual(adm.kindCounts, { lesson: 1, clan: 1, external: 1, none: 1 });
+  assert.equal((await call(api.mine, { body: { discord: "d_two", ign: "Nick_B2" } })).body.kind, "clan");   // 본인 확인을 거친 「내 신청」만
 });
