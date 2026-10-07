@@ -131,6 +131,7 @@ function limit(name, max, windowMs, reject) {
 //      SUPABASE_SERVICE_ROLE_KEY, SESSION_SECRET, STAFF_DISCORD_IDS(선택, 쉼표구분)
 const crypto = require("crypto");
 const killraceApply = require("./killrace-apply.cjs");
+const unclosedLessons = require("./unclosed-lessons.cjs");   // 닫지 않은 수업 — 세기만(계약 trainer-portal-api §9.34)
 const OAUTH_REDIRECT = "https://mri-academy-production.up.railway.app/api/auth/callback";
 const STAFF_IDS = (process.env.STAFF_DISCORD_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
 const reviewsReady = () =>
@@ -1633,21 +1634,18 @@ if (process.env.DISCORD_TOKEN) {
     // 유형을 안 고르면 개인이다(명령 정의의 기본값과 같다).
     const isPersonalLesson = guboon === "레슨" && (!lessonType || lessonType === "개인");
     if (!isMriOwner(itx)) {
+      // 잠금 안내는 본인에게만 보여서 트레이너가 봇으로 왔다가 막힌 횟수를 셀 길이 없었다(10/7 조사) —
+      //   나갈 때마다 건수 로그 한 줄(이름 · 디스코드 id 없음 · 계약 trainer-portal-api §9.34.3). 안내 문구는 그대로다.
+      const lockedReply = (kind, content) => { console.log(`[lesson] bot_locked kind=${kind}`); return itx.reply({ content, ephemeral: true }); };
       if (guboon === "레슨" && lessonLockedAll())            // 강의는 그대로(위 LESSON_LOCK_ALL_FROM 주석)
-        return itx.reply({
-          content: "수업 기록은 이제 앱에서 해줘. 예약이 있으면 예약 카드의 「완료 · 기록하기」, 예약 없이 한 수업은 「수업 기록하기」로 남기면 돼.",
-          ephemeral: true,
-        });
+        return lockedReply("lesson",
+          "수업 기록은 이제 앱에서 해줘. 예약이 있으면 예약 카드의 「완료 · 기록하기」, 예약 없이 한 수업은 「수업 기록하기」로 남기면 돼.");
       if (guboon === "진단상담" && consultLocked())
-        return itx.reply({
-          content: "레벨 테스트 기록은 앱에서 해줘. 예약 카드에서 「레벨 테스트 마침」을 누르면 상담 기록까지 남아. 예약 없이 한 테스트는 오너에게 말해줘.",
-          ephemeral: true,
-        });
+        return lockedReply("consult",
+          "레벨 테스트 기록은 앱에서 해줘. 예약 카드에서 「레벨 테스트 마침」을 누르면 상담 기록까지 남아. 예약 없이 한 테스트는 오너에게 말해줘.");
       if (isPersonalLesson && lessonLocked())
-        return itx.reply({
-          content: "개인 수업 기록은 이제 앱에서 해줘. 예약 카드에서 「완료 · 기록하기」를 누르면 판수까지 들어가. 그룹 수업은 당분간 여기서 그대로 하면 돼.",
-          ephemeral: true,
-        });
+        return lockedReply("personal",
+          "개인 수업 기록은 이제 앱에서 해줘. 예약 카드에서 「완료 · 기록하기」를 누르면 판수까지 들어가. 그룹 수업은 당분간 여기서 그대로 하면 돼.");
     }
 
     // 학생 파싱: 쉼표(반각/전각)·공백 구분, 트림, 중복·빈값 제거
@@ -1933,11 +1931,13 @@ if (process.env.DISCORD_TOKEN) {
     // 화면이 없어서, 트레이너가 잘못 넣은 판수는 오너에게 보내는 게 유일한 길이다.
     // **전부 잠그는 단계에서만** 잠근다 — 개인만 잠근 동안은 그룹을 여전히 /수업등록 으로 넣으니
     // 그 정정도 트레이너가 할 수 있어야 한다(오너 지시 2026-09-29 「안 되면 개인만 잠금」).
-    if (lessonLockedAll() && !isOwner)
+    if (lessonLockedAll() && !isOwner) {
+      console.log("[lesson] bot_locked kind=adjust");            // 건수만(§9.34.3) — 이름 · id 없음
       return itx.reply({
         content: "판수 정정은 앱의 「판수 조정 요청」으로 올려줘. 오너가 승인하면 반영돼.",
         ephemeral: true,
       });
+    }
     if (!process.env.SUPABASE_URL)
       return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
 
@@ -9208,6 +9208,34 @@ const DIRECT_STALE_DAYS = 7;   // 직강은 주 단위 운영 — 3일은 오탐
 // 판정식은 §37 의 v_has 와 **같다**(학생 · 진행 트레이너 · KST 날짜). 다르면 화면과 알림이 갈린다.
 // 고치는 건 사람이 한다 — /수업등록 으로 판수를 넣거나, 수업을 안 했으면 예약을 취소로 되돌린다.
 const BOOKING_ORPHAN_DAYS = Number(process.env.BOOKING_ORPHAN_DAYS || 14);
+// ── 닫지 않은 수업 아침 알림(계약 trainer-portal-api §9.34.2) — 세기만 한다(상태 · 판수 · 48시간 전이 안 바꿈) ──
+//   채널 = /수업등록 채널(LESSON_CHANNEL_ID · 새 env 없음 · 미설정이면 건너뜀). 대상이 비면 안 보낸다. 하루 한 번(maybeRunDaily).
+//   한 통 = 트레이너별 · 예약 #번호와 날짜만(수강생 · 판수 없음) · 멘션 없음. 로그에는 건수만 남긴다.
+async function runUnclosedLessonsAlert() {
+  if (!process.env.SUPABASE_URL) { console.log("[cron] unclosed_lessons: SUPABASE_URL 미설정 — 스킵"); return; }
+  const chId = process.env.LESSON_CHANNEL_ID;
+  if (!chId) { console.log("[cron] unclosed_lessons: LESSON_CHANNEL_ID 미설정 — 스킵"); return; }
+  if (!botClient) throw new Error("bot_not_ready");                // 다음 틱에 한 번 더(두 번 실패면 maybeRunDaily 가 오너 DM)
+  // 임베드 대신 2질의(runBookingOrphans 와 같은 이유 — 임베드 문법이 어긋나면 조용히 0건이 된다)
+  const books = await sbSelect("slot_bookings",
+    "select=id,slot_id,student_id,status,duration_min,span_head_id"
+    + "&status=in.(booked,pending_review)&span_head_id=is.null&order=id.asc&limit=1000");
+  const slotIds = [...new Set(books.map((b) => b.slot_id))];
+  const slots = slotIds.length
+    ? await sbSelect("trainer_slots", `select=id,trainer_id,slot_start,duration_min,lesson_type&id=in.(${slotIds.join(",")})`)
+    : [];
+  const now = Date.now();
+  const rows = unclosedLessons.alertRows(unclosedLessons.unclosedOf(books, new Map(slots.map((s) => [s.id, s])), now), now);
+  if (!rows.length) { console.log("[cron] unclosed_lessons: 없음"); return; }
+  const tids = [...new Set(rows.map((r) => r.trainerId))];
+  const staff = await sbSelect("staff", `select=id,name&id=in.(${tids.join(",")})`).catch(() => []);
+  const names = Object.fromEntries(staff.map((x) => [x.id, x.name]));
+  const ch = await botClient.channels.fetch(String(chId));
+  if (!ch?.isTextBased?.()) throw new Error("lesson_channel_not_text");
+  await ch.send({ content: unclosedLessons.alertText(rows, names), allowedMentions: { parse: [] } });
+  console.log(`[cron] unclosed_lessons: ${rows.length}건 · 트레이너 ${tids.length}명 · 채널에 보냄`);
+}
+
 async function runBookingOrphans() {
   if (!process.env.SUPABASE_URL) { console.log("[cron] booking_orphan: SUPABASE_URL 미설정 — 스킵"); return; }
   const { date } = kstNow();
@@ -9422,6 +9450,9 @@ async function cronTick() {
   await maybeRunDaily("directStale", "05:20", runDirectStale, "직강 기록 정체");
   // 예약 done 인데 그날 기록 없음 — 아무 코드도 못 고치는 짝이라 사람에게 올린다(오너 지시 2026-09-28).
   await maybeRunDaily("bookingOrphan", "05:30", runBookingOrphans, "예약 닫힘·기록 없음");
+  // 닫지 않은 수업(계약 trainer-portal-api §9.34.2 · 지휘 10/7) — 「어제까지」 끝났는데 열린 예약을 /수업등록 채널에 하루 한 통.
+  //   위 bookingOrphan 은 **닫힌** 예약만 본다 — 아예 안 닫힌 예약은 48시간 sweep 전까지 아무 데도 안 떴다(10월 기록 멈춤의 원인).
+  await maybeRunDaily("unclosedLessons", unclosedLessons.ALERT_AT, runUnclosedLessonsAlert, "닫지 않은 수업 알림");
   // 트레이너별 판수 부족 알림(§45) — 매 틱. 입금 승인 · 오너 SQL 처럼 코드가 직후 점검을 못 거는 변화도 여기서 잡는다.
   await gamesShort.run({ label: "tick" }).catch((e) => console.error("short_tick", e?.message));
   // 현금영수증 4일 미발급(계약 §9.5 · 오너 판정 9/30) — 낮에 한 번. 신청마다 한 통 · 한 번만.

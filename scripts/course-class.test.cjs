@@ -785,3 +785,49 @@ test("수강생 직강 카드 — 출석 이력(최근부터 · 종류 · 취소
   const body = JSON.stringify(r.json);
   for (const leak of ["courseId", "이관 메모"]) assert.equal(body.includes(leak), false, leak);
 });
+
+// ════════ 닫지 않은 수업(계약 trainer-portal-api §9.34 · 지휘 10/7) — GET /slots 의 unclosed ════════
+test("GET /slots unclosed — 끝난 시각이 지난 열린 예약만 · 개인(예약 길이) · 참여형 · 직강 · 진행 중 · done · 테스트 계정 · 남의 칸 · 상태는 안 바뀐다", async () => {
+  const now = Date.now();
+  const ago = (h) => at(grid(now - h * HOUR));
+  reset({
+    trainer_slots: [
+      slot(950, { slot_start: ago(30), lesson_type: "personal", duration_min: 30, course_level: null }),       // 개인 — 예약 길이 60
+      slot(951, { slot_start: ago(26), lesson_type: "participate", duration_min: 120, course_level: null }),   // 참여형 — 예약 셋(하나는 테스트 계정)
+      slot(952, { slot_start: ago(5) }),                                                                       // 직강(180분)
+      slot(953, { slot_start: at(grid(now - 1 * HOUR)), lesson_type: "participate", duration_min: 120, course_level: null }),  // 아직 진행 중
+      slot(954, { slot_start: ago(50), lesson_type: "personal", duration_min: 30, course_level: null }),       // 48시간 지나 「확인 필요」
+      slot(955, { trainer_id: 2, slot_start: ago(30), lesson_type: "personal", duration_min: 30, course_level: null }),  // 남의 칸
+    ],
+    slot_bookings: [
+      bk(70, 950, 12, "booked", { duration_min: 60 }),
+      bk(71, 951, 10), bk(72, 951, 12), bk(73, 951, 106),
+      bk(74, 952, 10),
+      bk(75, 953, 12),
+      bk(76, 954, 12, "pending_review"),
+      bk(77, 950, 10, "done"),
+      bk(78, 955, 12),
+    ],
+  });
+  const before = JSON.stringify(db.slot_bookings);
+  const r = await call(4, "/slots");
+  assert.equal(r.status, 200);
+  const u = r.json.unclosed;
+  assert.deepEqual(u.items.map((x) => x.bookingId), [B(76), B(70), B(71), B(72), B(74)]);      // 끝난 순 · 같으면 번호 순
+  assert.deepEqual([u.count, u.lessons], [5, 4]);
+  assert.equal(u.oldestEndAt, new Date(grid(now - 50 * HOUR) + 30 * 60_000).toISOString());
+  assert.deepEqual(u.items[1], { bookingId: B(70), slotId: SL(950), startAt: ago(30),
+    endAt: new Date(grid(now - 30 * HOUR) + 60 * 60_000).toISOString(), lessonType: "personal", needsReview: false });
+  assert.deepEqual([u.items[0].needsReview, u.items[4].lessonType], [true, "course"]);
+  // 같은 응답의 카드로 바로 간다 — id 가 칸 목록의 예약 · 칸 id 와 같다
+  const cards = new Set(r.json.slots.flatMap((s) => s.bookings.map((b) => `${s.id}|${b.id}`)));
+  for (const x of u.items) assert.ok(cards.has(`${x.slotId}|${x.bookingId}`), x.bookingId);
+  assert.ok(!JSON.stringify(u).includes(S(12)) && !JSON.stringify(u).includes("studentKey"), "수강생을 싣지 않는다");
+  // 세기만 한다 — 예약 표를 쓰지 않는다
+  assert.equal(JSON.stringify(db.slot_bookings), before);
+  assert.deepEqual(calls.write.filter(([, t]) => t === "slot_bookings"), []);
+  // 남의 칸은 그 트레이너에게만 · 칸이 없으면 0 모양
+  assert.deepEqual((await call(2, "/slots")).json.unclosed.items.map((x) => x.bookingId), [B(78)]);
+  reset();
+  assert.deepEqual((await call(2, "/slots")).json.unclosed, { count: 0, lessons: 0, oldestEndAt: null, items: [] });
+});
