@@ -65,6 +65,8 @@ const WEEKDAY_KR = ["일", "월", "화", "수", "목", "금", "토"];
 const kstHHMM = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(11, 16);
 const weekdayOf = (ymd) => new Date(`${ymd}T00:00:00Z`).getUTCDay();
 const { isTestStudent } = require("./test-accounts.cjs");
+// 닫지 않은 수업(계약 §9.34) — 끝난 시각이 지났는데 열린 예약을 세기만 한다(상태 · 판수 안 바꿈 · 아침 채널 알림과 같은 판정 한 벌)
+const unclosedLessons = require("./unclosed-lessons.cjs");
 // 달력에 있는 날짜인가(2026-02-30 · 2026-13-01 거절) — trainer-lessons.cjs isRealDate 와 같은 판정.
 const isRealDate = (s) => typeof s === "string" && DATE_RE.test(s)
   && Number.isFinite(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
@@ -636,7 +638,7 @@ module.exports = function mountBookingApi(app, deps) {
       levelTest: { lengths: LEVEL_TEST_LENGTHS, botRecordOpen: botRecordOpen() },
       intake: intakeNow(),
     };
-    if (!slots.length) return sendTrainer(res, { slots: [], ...lengths });
+    if (!slots.length) return sendTrainer(res, { slots: [], unclosed: unclosedLessons.trainerSummary([], opaqueId), ...lengths });
 
     const ids = slots.map((s) => s.id);
     // 직강 반 수업 칸(§59) — 출석 · 남은 회차를 싣고, 판수 기록과는 짝짓지 않는다.
@@ -776,7 +778,13 @@ module.exports = function mountBookingApi(app, deps) {
       return { taken: !!a, sessionKey: a ? opaqueId("course_session", a.sessionId) : null, count: students.length, students };
     };
 
+    // 닫지 않은 수업(§9.34.1) — 이 목록과 같은 창(지난 14일)에서 끝난 시각이 지난 열린 예약. 첫 화면 띠가 쓴다.
+    //   books 는 머리 줄만(span_head_id=is.null) · 상태 booked · pending_review 만 센다(done · no_show 는 함수가 거른다).
+    const unclosed = unclosedLessons.trainerSummary(
+      unclosedLessons.unclosedOf(books, new Map(slots.map((s) => [s.id, s])), Date.now()), opaqueId);
+
     sendTrainer(res, {
+      unclosed,
       slots: slots.map((s) => ({
         id: opaqueId("slot", s.id),
         startAt: s.slot_start, slotMinutes: SLOT_MIN,
