@@ -7,8 +7,8 @@
 
 | 조각 | 절 | 내용 | 서버 PR |
 |---|---|---|---|
-| A | §2 ~ §5 | 로그인 표지 · 내 계정 · 동의 · 스팀 연결 · 탈퇴 · 참가 구분 판정 · 회원 표(§70) | 조각 A Draft |
-| B | §6 ~ §7 | 회차 신청 설정 · 앱 신청 · 취소 · 소개 · 명단 · 상금 계좌(상금 대상만) · 신청 표(§71) | 조각 B Draft |
+| A | §2 ~ §5 | 로그인 표지 · 내 계정 · 동의 · 스팀 연결 · 탈퇴 · 참가 구분 판정 · 회원 표(§70) | #537 (Draft · §70 실행 전) |
+| B | §6 ~ §7 | 회차 신청 설정 · 앱 신청 · 취소 · 소개 · 명단 · 상금 계좌(상금 대상만) · 신청 표(§71) | #538 (Draft · #537 위 · §71 실행 전) |
 | C | §8 | 읽기 — 회차 상태 · 룰 · 선수 한 명 누적 | #536 (Draft) |
 
 배포는 5회(10/8) 뒤다. 그 전에는 전부 Draft 로 쌓는다. DDL(§70 · §71)은 더하기만이고, 지휘 「진행」 뒤 세션이 스냅샷 → 실행 → 검증 순서로 실행한다.
@@ -50,7 +50,7 @@
     platform: "steam", ign: "<스팀 닉>", key: "<불투명 키>",   // 연결 전에는 셋 다 null
     kind: "lesson" | "clan" | "external" | null,               // §5 · null = 판정 못 함
   },
-  applications: []                         // 조각 B — 내 신청(§6.4)
+  applications: []                         // 조각 B — 내 신청(§6.4) · 조각 B 전에는 늘 []
 }
 ```
 
@@ -118,13 +118,15 @@
 
 ### §6.2 신청 · 취소 · 소개 — 로그인
 
-- `POST /api/killrace/me/apply { event, intro, kind }` → 200 `{ state: "joined" | "waiting", order, entry }`
+- `POST /api/killrace/me/apply { event, intro, kind }` → 200 `{ state: "joined" | "waiting", order, entry: { event, intro, kind } }`
   - 동의 · 스팀 연결이 먼저(403 `consent_required` · `link_required`). 닫힌 회차 403 `closed`. 같은 계정은 회차에 한 번(409 `already`).
   - `intro` 선수 소개 4칸(killrace-api §1.15 규칙 그대로 · 주 포지션 · 성향 · 포부 30자 · 카드 이름 12자).
-  - `kind` 는 자동 판정(§5)이 `null` 일 때만 받는다(본인 선택 · 진행자 확인). 자동 판정이 있으면 무시한다.
+  - `kind` 는 자동 판정(§5)이 `null` 일 때만 받는다(본인 선택 · 진행자 확인 · 없으면 400 `need_kind`). 자동 판정이 있으면 무시한다.
+  - 잘못된 회차 번호 400 `bad_event` · 없는 회차 404 `no_event` · 소개 규칙 위반은 소개 코드(`no_position` · `no_style` · `no_ambition` · `long_ambition` · `long_card_name`).
   - 정원까지 「참가」, 그 뒤 「대기」. 순서 = 신청 시각.
-- `POST /api/killrace/me/cancel { event }` → 200 · 대기 맨 앞이 올라온다(지금 규칙 그대로). 마감 뒤 취소는 403 `closed`(진행자에게).
-- `POST /api/killrace/me/intro { event, intro }` → 소개만 고친다(마감 전).
+- `POST /api/killrace/me/cancel { event }` → 200 · 대기 맨 앞이 올라온다(지금 규칙 그대로). 마감 뒤 취소는 403 `closed`(진행자에게) · 산 신청이 없으면 404 `not_found`.
+- `POST /api/killrace/me/intro { event, intro }` → 200 `{ ok, intro, done }` · 소개만 고친다(마감 전).
+- 취소했다 다시 신청하면 줄 끝으로 간다. 경매 명단에 쓸 전적(경쟁전 티어 · 평딜 · KDA)은 신청 때 받아 둔다(못 받으면 비움).
 
 ### §6.3 명단 — 공개 · 진행자
 
@@ -136,15 +138,15 @@
 
 ### §6.4 내 신청 — `GET /api/killrace/me` 의 `applications`
 
-`[{ event, name, start, state: "joined" | "waiting" | "cancelled", order, introDone, kind }]` — 지난 회차는 최근 10개.
+`[{ event, name, start, state: "joined" | "waiting" | "cancelled", order, introDone, kind, prize: null | { target: true, accountGiven } }]` — 최근 10개.
 
 ## §7 상금 계좌 — 상금 대상이 됐을 때만 (조각 B · 10/7 확정 3)
 
 - 진행자(오너)가 회차가 끝난 뒤 상금 대상을 고른다: `POST /api/killrace/app/admin { action: "prizeTarget", event, key, on, by }`.
-- 대상이 된 회원만 `GET /api/killrace/me` 에 `prize: [{ event, needAccount: true }]` 가 뜨고, `POST /api/killrace/me/payout-account { event, bank, accountNo, holder }` 로 넣는다.
+- 대상이 된 회원은 `GET /api/killrace/me` 의 그 회차 `applications[].prize` 가 `{ target: true, accountGiven: false }` 로 뜨고, `POST /api/killrace/me/payout-account { event, bank, accountNo, holder }` 로 넣는다(대상이 아니면 403 `not_prize_target`).
   은행 · 번호 · 예금주 규칙은 지금 신청 폼과 같다. 응답에는 「받았어요」만 돌아가고 번호는 다시 내려가지 않는다.
-- 계좌는 **오너 로그인(JWT owner)으로만** 내려간다(`GET /api/killrace/app/payouts?event=N` · CSV). 진행자 키로는 안 보인다.
-- 지급 뒤 30일에 지운다(설계 §5.2 제안 · 지우는 장치는 조각 B 에 같이).
+- 계좌는 **오너 로그인(사이트 JWT owner)으로만** 내려간다 — `GET /api/killrace/app/payouts?event=N`(`&format=csv`) → `{ targets: [{ key, ign, accountGiven }], accounts: [{ key, ign, bank, accountNo, holder, paidAt }] }`. 진행자 키로는 403 `owner_only`.
+- 오너가 이체한 뒤 `POST /api/killrace/app/payouts/paid { event, key }` → 30일 뒤 지울 날이 적히고, 매일 04:20 cron 이 지난 줄을 지운다.
 - 지금 5회 신청 폼의 계좌 칸은 건드리지 않는다.
 
 ## §8 읽기 (조각 C · 로그인 없음)
@@ -152,7 +154,7 @@
 ### §8.1 회차 상태 — `GET /api/killrace/events` 칸 더하기
 
 - 종전 칸(`currentId` · `events[{ id, name, start, end }]`)은 그대로 두고 회차마다 `status`(`upcoming` · `live` · `ended` · 끝 + 45분까지 `live`)를 더한다.
-- 조각 B 가 들어가면 앱 신청이 열린 회차에 `apply: { open, cap, count, waiting, closeAt, entryRule }` 를 더한다.
+- 앱 신청 요약(열림 · 정원 · 수 · 대기 · 마감)은 §6.3 명단 길에서 읽는다(회차 목록은 그대로 가볍게 둔다).
 
 ### §8.2 룰 — `GET /api/killrace/rules?event=N` (없으면 지금 회차)
 
