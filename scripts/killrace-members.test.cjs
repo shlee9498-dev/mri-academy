@@ -17,13 +17,29 @@ const tok = (claims) => Buffer.from(JSON.stringify(claims)).toString("base64url"
 const krTok = (id, name = "가짜") => tok(K.tokenClaims({ id }, name));
 
 test("로그인 state — 만들기 · 읽기 · 머리 · nonce 모양 · 망가진 값은 null", () => {
-  const s = K.makeLoginState("https://shlee9498-dev.github.io/gmi-clancup/killrace/", "n".repeat(20));
-  assert.ok(K.isLoginState(s) && s.startsWith("kr1."));
-  assert.deepEqual(K.readLoginState(s), { ret: "https://shlee9498-dev.github.io/gmi-clancup/killrace/", nonce: "n".repeat(20) });
-  assert.equal(K.readLoginState(K.makeLoginState("x", "short")), null);
-  assert.equal(K.readLoginState("kr1.@@@"), null);
-  assert.equal(K.readLoginState("ap1.xxx"), null);
-  assert.equal(K.isLoginState("https://mriacademy.gg"), false);
+  const s = K.makeKrState("https://shlee9498-dev.github.io/gmi-clancup/killrace/", "n".repeat(20));
+  assert.ok(K.isKrState(s) && s.startsWith("kr1."));
+  assert.deepEqual(K.readKrState(s), { ret: "https://shlee9498-dev.github.io/gmi-clancup/killrace/", nonce: "n".repeat(20) });
+  assert.equal(K.readKrState(K.makeKrState("x", "short")), null);
+  assert.equal(K.readKrState("kr1.@@@"), null);
+  assert.equal(K.readKrState("ap1.xxx"), null);
+  assert.equal(K.isKrState("https://mriacademy.gg"), false);
+});
+
+test("돌아갈 주소 — 앱(gmi-clancup killrace/) 아래만 · 나머지는 앱 첫 화면 · 결과는 늘 앱 주소로 시작", () => {
+  const H = K.APP_HOME;
+  assert.equal(H, "https://shlee9498-dev.github.io/gmi-clancup/killrace/");
+  assert.equal(K.returnTo(H), H);
+  assert.equal(K.returnTo(H + "apply.html?event=6"), H + "apply.html?event=6");
+  assert.equal(K.returnTo(H + "me/"), H + "me/");
+  for (const bad of [
+    undefined, null, 42, ["a", "b"], "",
+    "https://mriacademy.gg/", "https://evil.example/" + H,
+    "https://shlee9498-dev.github.io/gmi-clancup/", "https://shlee9498-dev.github.io/other/killrace/",
+    "https://shlee9498-dev.github.io.evil.example/gmi-clancup/killrace/", "javascript:alert(1)//" + H,
+    H + "../../other/", H + "%2E%2e/x", H + "a#b", H + "a b", H + "a\\b", H + "a\u0000", H + "x".repeat(300),
+  ]) assert.equal(K.returnTo(bad), H, String(bad).slice(0, 80));
+  for (const v of [H + "x", H + "apply.html?event=6&tab=me"]) assert.ok(K.returnTo(v).startsWith(H));
 });
 
 test("토큰 — 표지 aud:killrace 가 있어야 킬내기 길 · 사이트 토큰 · 다른 표지 · 망가진 토큰 · 없음은 null · 7일", () => {

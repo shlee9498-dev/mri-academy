@@ -353,10 +353,10 @@ app.get("/api/auth/login", (req, res) => {
   const ret = safeReturn(req.query.return || ALLOWED[0]);
   let scope = "identify", state = ret;
   if (req.query.intent === "killrace") {
-    // 킬내기 앱(앱 계약 §2) — scope 는 identify 그대로 · state 에 돌아갈 주소와 화면 nonce · 콜백이 표지 토큰을 준다
+    // 킬내기 앱(앱 계약 §2) — scope 는 identify 그대로 · state 에 돌아갈 주소(앱 아래만)와 화면 nonce · 콜백이 표지 토큰을 준다
     const nonce = String(req.query.nonce || "");
     if (!killraceMembers.NONCE_RE.test(nonce)) return res.status(400).send("bad nonce");
-    state = killraceMembers.makeLoginState(ret, nonce);
+    state = killraceMembers.makeKrState(killraceMembers.returnTo(req.query.return), nonce);
   } else if (req.query.intent === "apply") {
     const nonce = String(req.query.nonce || "");
     if (!NONCE_RE.test(nonce)) return res.status(400).send("bad nonce");
@@ -376,8 +376,8 @@ app.get("/api/auth/callback", async (req, res) => {
     if (!code) return res.status(400).send("no code");
     const apply = readApplyState(state);
     if (typeof state === "string" && state.startsWith(APPLY_STATE) && !apply) return res.status(400).send("bad state");
-    const krLogin = killraceMembers.readLoginState(state);
-    if (killraceMembers.isLoginState(state) && !krLogin) return res.status(400).send("bad state");
+    const krLogin = killraceMembers.readKrState(state);
+    if (killraceMembers.isKrState(state) && !krLogin) return res.status(400).send("bad state");
     const tok = await fetch("https://discord.com/api/oauth2/token", {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -393,7 +393,7 @@ app.get("/api/auth/callback", async (req, res) => {
     if (krLogin) {
       // 킬내기 앱 — 표지(aud:"killrace") · 7일 토큰. 회원 줄은 여기서 만들지 않는다(동의할 때 · 앱 계약 §4.1)
       const jwt = signJWT(killraceMembers.tokenClaims(me, name), killraceMembers.TOKEN_TTL_SEC);
-      return res.redirect(`${safeReturn(krLogin.ret)}#token=${jwt}&nonce=${encodeURIComponent(krLogin.nonce)}`);
+      return res.redirect(`${killraceMembers.returnTo(krLogin.ret)}#token=${jwt}&nonce=${encodeURIComponent(krLogin.nonce)}`);
     }
     if (apply) {
       // gj = 서버 입장 결과(joined · already · failed) — 신청 행 guild_join 으로 가서 카드에 「DM 안 닿음」을 띄운다
