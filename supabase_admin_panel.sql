@@ -6908,3 +6908,31 @@ alter table public.killrace_member_links enable row level security;
 --   drop table if exists public.killrace_members;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §74  킬내기 상금 — 본인 확인 표시(진행자 확인 전에는 지급 요청이 잠긴다) (2026-10-09 · 지휘 결정 · 계약 docs/killrace-api.md §1.20)
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행). A 구간(새 표 하나 · 더하기만). **§70(killrace_members) 다음에 실행한다** — 외래 키가 그 표를 가리킨다.
+--   - 한 줄 = 「이 회원이 지금 연결한 이 계정은 본인이 맞다」를 진행자가 확인했다는 표시. 회원 · 계정 한 쌍으로 적는다 —
+--     회원이 다른 계정으로 다시 연결하면 줄의 계정과 달라져 저절로 다시 잠긴다(코드가 계정까지 같아야 확인으로 본다). 회원을 지우면 같이 지운다.
+--   - 디스코드 번호는 적지 않는다(회원 줄 번호로 잇는다). 확인한 사람은 진행자가 적은 이름(1 ~ 20자).
+--
+-- 74a) 실행 블록(멱등):
+create table if not exists public.killrace_prize_verifications (
+  member_id    bigint      primary key references public.killrace_members (id) on delete cascade,
+  platform     text        not null check (platform in ('steam', 'kakao')),
+  account_id   text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),
+  verified_by  text        not null check (char_length(verified_by) between 1 and 20),
+  verified_at  timestamptz not null default now()
+);
+alter table public.killrace_prize_verifications enable row level security;   -- 정책 0 = service_role 만
+notify pgrst, 'reload schema';
+--
+-- 74b) 74a 뒤 검증(세션 · 읽기만):
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'killrace_prize_verifications';   -- 5
+--   select contype, count(*) from pg_constraint where conrelid = 'public.killrace_prize_verifications'::regclass group by 1 order by 1;   -- c 3 · f 1 · p 1
+--   select relrowsecurity from pg_class where relname = 'killrace_prize_verifications';   -- true
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 확인 표시만 사라지고 지급 요청이 다시 잠긴다 — 원장은 그대로):
+--   drop table if exists public.killrace_prize_verifications;
+--   notify pgrst, 'reload schema';
+-- ============================================================

@@ -8,12 +8,13 @@
 
 const MIN_REQUEST = 30000;                 // 10/7 오너 「3만원 채우면」 — 잔액이 이 이상일 때만 요청이 열린다
 const LEDGER = "killrace_prize_ledger";
+const VERIFY = "killrace_prize_verifications";   // §74 — 회원 · 계정 한 쌍을 진행자가 확인했다는 표시
 const LEDGER_COLS = "id,kind,platform,account_id,ign,event_id,reason,amount,status,source,requested_at,request_notified_at,paid_at,paid_notified_at,cancelled_at,memo,created_at";
 const won = (n) => `${Number(n || 0).toLocaleString("en-US")}원`;
 
 // ═══════════════ 순수 함수 (scripts/killrace-prize.test.cjs) ═══════════════
 // 한 사람의 원장 줄 → 잔액 · 열린 요청 · 요청 가능 여부. 잔액 = 적립 합 − 지급완료 합(보기 killrace_prize_balance 와 같은 식)
-function summarize(rows, min = MIN_REQUEST) {
+function summarize(rows, min = MIN_REQUEST, verified = true) {
   let accrued = 0, paid = 0, open = null;
   for (const r of rows || []) {
     const a = Number(r.amount) || 0;
@@ -22,10 +23,12 @@ function summarize(rows, min = MIN_REQUEST) {
     else if (r.kind === "payout" && r.status === "requested") open = { id: r.id, amount: a, at: r.requested_at };
   }
   const balance = accrued - paid;
+  // 잠김 이유 하나 — 열린 요청 → 본인 확인 전 → 3만 원 미만 순(화면은 verified · short 로 둘 다 보일 수 있다)
   let reason = null;
   if (open) reason = "open_request";
+  else if (!verified) reason = "not_verified";
   else if (balance < min) reason = "below_min";
-  return { accrued, paid, balance, open, min, canRequest: !reason, reason, short: reason === "below_min" ? Math.max(0, min - balance) : 0 };
+  return { accrued, paid, balance, open, min, verified: !!verified, canRequest: !reason, reason, short: Math.max(0, min - balance) };
 }
 
 // 화면에 보일 줄 — 적립(회차 · 사유 · +금액) · 지급(요청 · 완료 · 취소 · 시각). 최근 것 먼저
@@ -57,6 +60,9 @@ function perEventOf(rows, eventNames = {}) {
 //       keyOf(accountId) · notifyOwner(text) · notifyUser(discordId, text) → Promise(true/false) · now · log
 function createPrize(deps) {
   const { sbSelect, sbInsert, sbPatch, userOf, memberOf, isOwner, keyOf } = deps;
+  const sbDelete = deps.sbDelete || (async () => []);
+  // 본인 확인을 누를 수 있는 사람 = 오너 · 진행자 키(지휘가 정한 관리자) — 진행자 키는 이름(by)을 같이 받는다
+  const isHost = deps.isHost || (() => false);
   const notifyOwner = deps.notifyOwner || (async () => false);
   const notifyUser = deps.notifyUser || (async () => false);
   const now = deps.now || (() => Date.now());
@@ -78,6 +84,13 @@ function createPrize(deps) {
   const rowsOf = (platform, accountId) =>
     sbSelect(LEDGER, `select=${LEDGER_COLS}&platform=eq.${enc(platform)}&account_id=eq.${enc(accountId)}&order=created_at.asc,id.asc&limit=500`);
 
+  // 회원 줄의 지금 연결 계정이 확인됐나 — 확인 줄의 계정까지 같아야 한다(다른 계정으로 다시 연결하면 다시 잠긴다)
+  async function verifiedOf(member) {
+    if (!member || !member.account_id) return false;
+    const v = await sbSelect(VERIFY, `select=member_id,platform,account_id&member_id=eq.${member.id}&limit=1`);
+    return !!(v[0] && v[0].platform === member.platform && v[0].account_id === member.account_id);
+  }
+
   // 로그인 선수 → 회원 줄(연결 계정). 없으면 { error }
   async function playerOf(req) {
     const u = userOf(req);
@@ -92,10 +105,10 @@ function createPrize(deps) {
   async function getMine(req, res) {
     try {
       const p = await playerOf(req);
-      if (p.code === "not_linked") return res.json({ linked: false, ign: null, ...summarize([]), canRequest: false, reason: "not_linked", lines: [] });
+      if (p.code === "not_linked") return res.json({ linked: false, ign: null, ...summarize([], MIN_REQUEST, false), canRequest: false, reason: "not_linked", lines: [] });
       if (p.code) return fail(res, p.status, p.code);
-      const [rows, names] = await Promise.all([rowsOf(p.member.platform, p.member.account_id), eventNames()]);
-      return res.json({ linked: true, ign: p.member.ign, key: keyOf(p.member.account_id), ...summarize(rows), lines: rows.map((r) => lineView(r, names)).sort(byAtDesc) });
+      const [rows, names, verified] = await Promise.all([rowsOf(p.member.platform, p.member.account_id), eventNames(), verifiedOf(p.member)]);
+      return res.json({ linked: true, ign: p.member.ign, key: keyOf(p.member.account_id), ...summarize(rows, MIN_REQUEST, verified), lines: rows.map((r) => lineView(r, names)).sort(byAtDesc) });
     } catch (e) { return failErr(res, e, "mine"); }
   }
 
@@ -105,8 +118,8 @@ function createPrize(deps) {
       const p = await playerOf(req);
       if (p.code) return fail(res, p.status, p.code);
       const { member } = p;
-      const [rows, names] = await Promise.all([rowsOf(member.platform, member.account_id), eventNames()]);
-      const s = summarize(rows);
+      const [rows, names, verified] = await Promise.all([rowsOf(member.platform, member.account_id), eventNames(), verifiedOf(member)]);
+      const s = summarize(rows, MIN_REQUEST, verified);
       if (!s.canRequest) return fail(res, 409, s.reason);
       const at = new Date(now()).toISOString();
       let row;
@@ -127,7 +140,12 @@ function createPrize(deps) {
   async function getAdmin(req, res) {
     if (!isOwner(req)) return fail(res, 403, "owner_only");
     try {
-      const [rows, names] = await Promise.all([sbSelect(LEDGER, `select=${LEDGER_COLS}&order=created_at.asc,id.asc&limit=5000`), eventNames()]);
+      const [rows, names, members, verifs] = await Promise.all([sbSelect(LEDGER, `select=${LEDGER_COLS}&order=created_at.asc,id.asc&limit=5000`), eventNames(),
+        sbSelect("killrace_members", "select=id,display_name,platform,account_id,ign,linked_at&account_id=not.is.null&limit=5000").catch(() => []),
+        sbSelect(VERIFY, "select=member_id,platform,account_id,verified_by,verified_at&limit=5000").catch(() => [])]);
+      const memberByAcc = new Map(members.map((m) => [`${m.platform}|${m.account_id}`, m]));
+      const verifByMember = new Map(verifs.map((v) => [Number(v.member_id), v]));
+      const verifyOf = (m) => { const v = m && verifByMember.get(Number(m.id)); return v && v.platform === m.platform && v.account_id === m.account_id ? v : null; };
       const people = new Map();
       for (const r of rows) {
         const k = `${r.platform}|${r.account_id}`;
@@ -141,7 +159,12 @@ function createPrize(deps) {
       });
       const recent = rows.filter((r) => r.kind === "payout" && r.status === "paid").sort((a, b) => String(b.paid_at).localeCompare(String(a.paid_at))).slice(0, 20)
         .map((r) => ({ id: r.id, ign: r.ign, key: keyOf(r.account_id), amount: Number(r.amount), paidAt: r.paid_at, source: r.source, notified: !!r.paid_notified_at, memo: r.memo || null }));
-      const players = [...people.values()].map((p) => ({ ign: p.ign, key: keyOf(p.account_id), ...summarize(p.rows) }))
+      const players = [...people.values()].map((p) => {
+        const m = memberByAcc.get(`${p.rows[0].platform}|${p.account_id}`) || null, v = verifyOf(m);
+        // member = 앱 회원 연결(디스코드 이름 · 연결 시각 — 오너가 본인인지 대조하는 재료) · 확인한 사람 · 시각
+        return { ign: p.ign, key: keyOf(p.account_id), member: m ? { name: m.display_name || null, linkedAt: m.linked_at, verifiedBy: v ? v.verified_by : null, verifiedAt: v ? v.verified_at : null } : null,
+          ...summarize(p.rows, MIN_REQUEST, !!v) };
+      })
         .map(({ open, ...x }) => ({ ...x, open: open ? { id: open.id, amount: open.amount } : null }))
         .sort((a, b) => b.balance - a.balance || String(a.ign).localeCompare(String(b.ign)));
       const sum = (f) => rows.filter(f).reduce((s, r) => s + (Number(r.amount) || 0), 0);
@@ -152,8 +175,9 @@ function createPrize(deps) {
 
   // POST /api/killrace/prize/admin { action: "paid" | "cancel", id, memo? } — 오너만 · 되돌리기 없음(잘못 눌렀으면 메모 정정 · 원장 §1.19)
   async function postAdmin(req, res) {
-    if (!isOwner(req)) return fail(res, 403, "owner_only");
     const b = (req && req.body) || {};
+    if (b.action === "verify" || b.action === "unverify") return postVerify(req, res, b);
+    if (!isOwner(req)) return fail(res, 403, "owner_only");
     const id = Number(b.id);
     if (!Number.isInteger(id) || id <= 0) return fail(res, 400, "bad_id");
     const memo = b.memo == null ? null : String(b.memo).trim().slice(0, 200) || null;
@@ -183,6 +207,33 @@ function createPrize(deps) {
     } catch (e) { return failErr(res, e, "admin_post"); }
   }
 
+  // POST /api/killrace/prize/admin { action: "verify" | "unverify", key, by? } — 오너 또는 진행자 키(+ by 이름)
+  //   key = 원장 선수의 불투명 키(오너 목록 players[].key). 그 계정을 지금 연결한 회원이 없으면 409 not_linked
+  async function postVerify(req, res, b) {
+    const owner = isOwner(req), host = !owner && isHost(req);
+    if (!owner && !host) return fail(res, 403, "host_only");
+    const by = owner ? "오너" : String(b.by || "").trim().slice(0, 20);
+    if (!by) return fail(res, 400, "need_by");
+    const key = String(b.key || "");
+    if (!/^[A-Za-z0-9_-]{16}$/.test(key)) return fail(res, 400, "bad_key");
+    try {
+      const members = await sbSelect("killrace_members", "select=id,platform,account_id,ign&account_id=not.is.null&limit=5000");
+      const m = members.find((x) => keyOf(x.account_id) === key);
+      if (!m) return fail(res, 409, "not_linked");
+      if (b.action === "unverify") {
+        await sbDelete(VERIFY, `member_id=eq.${m.id}`);
+        log.log(`[killrace-prize] unverify member=${m.id}`);
+        return res.json({ ok: true, key, verified: false });
+      }
+      const row = { member_id: m.id, platform: m.platform, account_id: m.account_id, verified_by: by, verified_at: new Date(now()).toISOString() };
+      // 같은 회원의 옛 확인(다른 계정)은 지우고 새로 적는다 — 한 회원 한 줄
+      await sbDelete(VERIFY, `member_id=eq.${m.id}`);
+      await sbInsert(VERIFY, row);
+      log.log(`[killrace-prize] verify member=${m.id}`);
+      return res.json({ ok: true, key, ign: m.ign, verified: true, by, at: row.verified_at });
+    } catch (e) { return failErr(res, e, "verify"); }
+  }
+
   function mount(app, { limiter } = {}) {
     const mw = limiter ? [limiter] : [];
     app.get("/api/killrace/me/prize", ...mw, getMine);
@@ -190,7 +241,7 @@ function createPrize(deps) {
     app.get("/api/killrace/prize/admin", ...mw, getAdmin);
     app.post("/api/killrace/prize/admin", ...mw, postAdmin);
   }
-  return { mount, getMine, postRequest, getAdmin, postAdmin };
+  return { mount, getMine, postRequest, getAdmin, postAdmin, postVerify };
 }
 
 module.exports = { createPrize, summarize, lineView, ownerRequestText, playerPaidText, perEventOf, MIN_REQUEST };

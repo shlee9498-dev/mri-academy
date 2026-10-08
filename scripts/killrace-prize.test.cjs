@@ -10,6 +10,10 @@ const acc = (account_id, ign, event_id, amount, reason) => ({ kind: "accrue", pl
 test("요청 가능 — 3만 원 이상 · 열린 요청 없음 · 미만이면 남은 금액", () => {
   assert.equal(MIN_REQUEST, 30000);
   assert.deepEqual(summarize([acc(A, "a", 2, 30000, "1등 팀"), acc(A, "a", 3, 25000, "1등 팀")]).canRequest, true);
+  // 본인 확인 전이면 잠김(열린 요청이 먼저 · 3만 원 미만보다 먼저)
+  const nv = summarize([acc(A, "a", 2, 80000, "x")], MIN_REQUEST, false);
+  assert.deepEqual([nv.canRequest, nv.reason, nv.verified], [false, "not_verified", false]);
+  assert.equal(summarize([acc(A, "a", 2, 10000, "x")], MIN_REQUEST, false).reason, "not_verified");
   const low = summarize([acc(B, "b", 6, 21250, "2등 팀 1번")]);
   assert.deepEqual([low.canRequest, low.reason, low.balance, low.short], [false, "below_min", 21250, 8750]);
   const paidOff = summarize([acc(C, "c", 2, 30000, "1등 팀"), { kind: "payout", amount: 30000, status: "paid" }]);
@@ -36,16 +40,21 @@ function fake() {
   const members = { "111": { id: 1, discord_id: "111", platform: "steam", account_id: A, ign: "PlayerA" }, "222": { id: 2, discord_id: "222", platform: "steam", account_id: B, ign: "PlayerB" },
     "333": { id: 3, discord_id: "333", platform: "steam", account_id: C, ign: "PlayerC" }, "444": { id: 4, discord_id: "444", platform: null, account_id: null, ign: null } };
   const dms = [];
-  const filt = (q) => Object.fromEntries([...q.matchAll(/(\w+)=(eq|is)\.([^&]+)/g)].map((m) => [m[1], [m[2], decodeURIComponent(m[3])]]));
-  const match = (r, f) => Object.entries(f).every(([k, [op, v]]) => op === "is" ? r[k] == null : String(r[k]) === v);
+  // §74 확인 표시 — A · C 는 확인됨, B 는 확인 전(그래도 3만 원 미만이라 같이 잠김)
+  const verifs = [{ member_id: 1, platform: "steam", account_id: A, verified_by: "오너" }, { member_id: 3, platform: "steam", account_id: C, verified_by: "오너" }];
+  const filt = (q) => Object.fromEntries([...q.matchAll(/(\w+)=(not\.is|eq|is)\.([^&]+)/g)].map((m) => [m[1], [m[2], decodeURIComponent(m[3])]]));
+  const match = (r, f) => Object.entries(f).every(([k, [op, v]]) => op === "is" ? r[k] == null : op === "not.is" ? r[k] != null : String(r[k]) === v);
   const db = {
-    ledger, dms,
+    ledger, dms, verifs, members,
     sbSelect: async (t, q) => {
       if (t === "event_defs") return [2, 3, 4, 6].map((id) => ({ id, name: `${id}회` }));
       if (t === "killrace_members") { const f = filt(q); return Object.values(members).filter((m) => match(m, f)); }
+      if (t === "killrace_prize_verifications") { const f = filt(q); return verifs.filter((v) => match(v, f)); }
       const f = filt(q); delete f.order; return ledger.filter((r) => match(r, f));
     },
+    sbDelete: async (t, q) => { const f = filt(q); for (let i = verifs.length - 1; i >= 0; i--) if (match(verifs[i], f)) verifs.splice(i, 1); return []; },
     sbInsert: async (t, row) => {
+      if (t === "killrace_prize_verifications") { verifs.push(row); return row; }
       if (row.kind === "payout" && row.status === "requested" && ledger.some((r) => r.account_id === row.account_id && r.kind === "payout" && r.status === "requested")) { const e = new Error("23505"); e.status = 409; throw e; }
       const r = { id: ledger.length + 1, created_at: row.requested_at, ...row }; ledger.push(r); return r;
     },
@@ -58,7 +67,7 @@ const res = () => { const r = { code: 200, body: null }; r.status = (c) => { r.c
 const silent = { log() {}, warn() {} };
 function make(db, opts = {}) {
   return createPrize({ ...db, userOf: (req) => (req.uid ? { id: req.uid, name: `name-${req.uid}` } : null), isOwner: (req) => req.owner === true,
-    keyOf: (a) => "k-" + a.slice(8, 12), notifyOwner: async (t) => { db.dms.push(["owner", t]); return opts.ownerDm !== false; },
+    isHost: (req) => req.host === true, keyOf: (a) => (a[8] + a[8]).repeat(8), notifyOwner: async (t) => { db.dms.push(["owner", t]); return opts.ownerDm !== false; },
     notifyUser: async (id, t) => { db.dms.push([id, t]); return true; }, now: () => Date.parse("2026-10-09T01:00:00Z"), log: silent });
 }
 
@@ -69,7 +78,7 @@ test("내 상금 — 줄 · 잔액 · 요청 가능 · 계정 번호 없음", as
   assert.equal(r.body.lines[0].eventName, "4회");
   assert.ok(!JSON.stringify(r.body).includes("account."));
   const r2 = res(); await p.getMine({ uid: "222" }, r2);
-  assert.deepEqual([r2.body.canRequest, r2.body.reason, r2.body.short], [false, "below_min", 8750]);
+  assert.deepEqual([r2.body.canRequest, r2.body.reason, r2.body.short, r2.body.verified], [false, "not_verified", 8750, false]);   // 확인 전 · 3만 원 미만(short 는 같이 싣는다)
   const r3 = res(); await p.getMine({ uid: "333" }, r3);
   assert.deepEqual([r3.body.balance, r3.body.canRequest, r3.body.lines[0].status], [0, false, "paid"]);
   const r4 = res(); await p.getMine({ uid: "444" }, r4); assert.deepEqual([r4.body.linked, r4.body.reason], [false, "not_linked"]);
@@ -85,7 +94,9 @@ test("지급 요청 — 잔액 전액 한 건 · 오너 알림 · 두 번째는 
   assert.deepEqual([row.source, row.amount, !!row.request_notified_at], ["app", 80000, true]);
   assert.equal(db.dms.length, 1); assert.match(db.dms[0][1], /PlayerA · 80,000원/);
   const again = res(); await p.postRequest({ uid: "111" }, again); assert.deepEqual([again.code, again.body.error.code], [409, "open_request"]);
-  const low = res(); await p.postRequest({ uid: "222" }, low); assert.deepEqual([low.code, low.body.error.code], [409, "below_min"]);
+  const low = res(); await p.postRequest({ uid: "222" }, low); assert.deepEqual([low.code, low.body.error.code], [409, "not_verified"]);
+  db.verifs.push({ member_id: 2, platform: "steam", account_id: B, verified_by: "오너" });
+  const low2 = res(); await p.postRequest({ uid: "222" }, low2); assert.deepEqual([low2.code, low2.body.error.code], [409, "below_min"]);
   const none = res(); await p.postRequest({ uid: "444" }, none); assert.deepEqual([none.code, none.body.error.code], [409, "not_linked"]);
   assert.equal(db.ledger.filter((x) => x.status === "requested").length, 1);
 });
@@ -106,7 +117,7 @@ test("오너 — 대기 목록 · 지급 완료(한 번만) · 선수 알림 · 
   assert.equal(a0.body.pending.length, 0);
   assert.deepEqual(a0.body.totals, { accrued: 131250, paid: 30000, requested: 0 });
   const pa = a0.body.players.find((x) => x.ign === "PlayerA"), pb = a0.body.players.find((x) => x.ign === "PlayerB");
-  assert.deepEqual([pa.canRequest, pb.canRequest, pb.reason], [true, false, "below_min"]);
+  assert.deepEqual([pa.canRequest, pb.canRequest, pb.reason, pa.member.verifiedBy], [true, false, "not_verified", "오너"]);
   assert.ok(!JSON.stringify(a0.body).includes("account."));
   await p.postRequest({ uid: "111" }, res());
   const a1 = res(); await p.getAdmin({ owner: true }, a1);
@@ -135,4 +146,29 @@ test("표가 없으면 503 table_missing", async () => {
     userOf: () => ({ id: "1" }), memberOf: async () => ({ platform: "steam", account_id: A, ign: "x" }), isOwner: () => true, keyOf: () => "k", log: silent });
   const r = res(); await p.getMine({}, r); assert.deepEqual([r.code, r.body.error.code], [503, "table_missing"]);
   const a = res(); await p.getAdmin({}, a); assert.equal(a.code, 503);
+});
+
+test("본인 확인 — 확인 전엔 잠김 · 오너 · 진행자(이름 필수)만 · 다른 계정으로 다시 연결하면 다시 잠김", async () => {
+  const db = fake(); const p = make(db);
+  db.ledger.push({ id: 60, kind: "accrue", platform: "steam", account_id: B, ign: "PlayerB", event_id: 6, reason: "y", amount: 20000, created_at: "2026-10-09T00:00:00Z" });
+  const before = res(); await p.getMine({ uid: "222" }, before);
+  assert.deepEqual([before.body.balance, before.body.verified, before.body.reason, before.body.canRequest], [41250, false, "not_verified", false]);
+  const r0 = res(); await p.postRequest({ uid: "222" }, r0); assert.deepEqual([r0.code, r0.body.error.code], [409, "not_verified"]);
+  const keyB = "bb".repeat(8);
+  const nobody = res(); await p.postAdmin({ uid: "222", body: { action: "verify", key: keyB } }, nobody); assert.equal(nobody.code, 403);
+  const noBy = res(); await p.postAdmin({ host: true, body: { action: "verify", key: keyB } }, noBy); assert.deepEqual([noBy.code, noBy.body.error.code], [400, "need_by"]);
+  const ok = res(); await p.postAdmin({ host: true, body: { action: "verify", key: keyB, by: "진행자A" } }, ok);
+  assert.deepEqual([ok.code, ok.body.verified, ok.body.by], [200, true, "진행자A"]);
+  const after = res(); await p.getMine({ uid: "222" }, after); assert.deepEqual([after.body.verified, after.body.canRequest], [true, true]);
+  const a = res(); await p.getAdmin({ owner: true }, a);
+  const pb = a.body.players.find((x) => x.ign === "PlayerB");
+  assert.deepEqual([pb.verified, pb.member.verifiedBy], [true, "진행자A"]);
+  // 다른 계정으로 다시 연결 → 확인 줄의 계정과 달라 다시 잠김
+  db.members["222"].account_id = A;
+  const relink = res(); await p.getMine({ uid: "222" }, relink); assert.equal(relink.body.verified, false);
+  db.members["222"].account_id = B;
+  const off = res(); await p.postAdmin({ owner: true, body: { action: "unverify", key: keyB } }, off); assert.equal(off.body.verified, false);
+  const locked = res(); await p.getMine({ uid: "222" }, locked); assert.equal(locked.body.reason, "not_verified");
+  const unknown = res(); await p.postAdmin({ owner: true, body: { action: "verify", key: "zz".repeat(8) } }, unknown); assert.deepEqual([unknown.code, unknown.body.error.code], [409, "not_linked"]);
+  const bad = res(); await p.postAdmin({ owner: true, body: { action: "verify", key: "x" } }, bad); assert.equal(bad.code, 400);
 });

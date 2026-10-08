@@ -7119,7 +7119,7 @@ async function gmiGuildMember(discordId) {
     try { const u = await botClient.users.fetch(String(discordId)); await u.send(text); return true; } catch (_) { return false; }
   };
   killracePrize.createPrize({
-    sbSelect, sbInsert, sbPatch, userOf: killMembers.userOf, memberOf: killMembers.memberOf, isOwner: krOwner,
+    sbSelect, sbInsert, sbPatch, sbDelete, userOf: killMembers.userOf, memberOf: killMembers.memberOf, isOwner: krOwner, isHost: gdcupAdmin,
     keyOf: killraceCareer.keyMaker(process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex")),
     notifyOwner: (text) => krDm(process.env.MRI_OWNER_ID, text), notifyUser: krDm,
   }).mount(app, { limiter: limit("krPrize", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });

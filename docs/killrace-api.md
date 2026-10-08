@@ -552,7 +552,8 @@
 - **누가 · 어디서** — 서버 = mri-academy(경비 · 이 절). 화면 = gmi-clancup `killrace/`(킬내기 앱 · 앱 설계 #534 확정 1).
   선수 = 킬내기 앱 토큰(앱 계약 §2 · `aud: "killrace"`) → 앱 회원 표(`killrace_members` · DDL §70 · 조각 A #537)의 **연결된 PUBG 계정**으로 원장 줄을 찾는다.
   오너 = `MRI_OWNER_ID`(사이트 로그인 토큰이든 킬내기 앱 토큰이든). **새 env 없음** — 알림은 이미 있는 봇 DM 이다.
-- **DDL** — 없음. 상태 · 알림 시각 칸은 §73 원장에 이미 있다(`status` requested · paid · cancelled · `request_notified_at` · `paid_notified_at`).
+- **DDL** — 상태 · 알림 시각 칸은 §73 원장에 이미 있다(`status` requested · paid · cancelled · `request_notified_at` · `paid_notified_at`).
+  본인 확인 표시만 **§74 `killrace_prize_verifications`**(새 표 하나 · 더하기만 · §70 다음에 실행)로 더한다.
 
 | 길 | 누구 | 하는 일 |
 |---|---|---|
@@ -560,12 +561,14 @@
 | `POST /api/killrace/me/prize/request` | 선수 | 잔액 **전액** 한 건 → `requested` 줄 · 오너 알림 → `{ ok, request{ id, amount, at }, notified }` |
 | `GET /api/killrace/prize/admin` | 오너 | `{ min, pending[], recent[], players[], totals{ accrued, paid, requested } }` |
 | `POST /api/killrace/prize/admin` | 오너 | `{ action: "paid" \| "cancel", id, memo? }` → `{ ok, id, status, at, notified }` |
+| `POST /api/killrace/prize/admin` | 오너 · 진행자 키 | `{ action: "verify" \| "unverify", key, by? }` → `{ ok, key, verified, by?, at? }` (본인 확인 · 아래) |
 
-- **요청이 열리는 조건**(`canRequest`) — 잔액 ≥ **30,000원**(10/7 오너) + 열린 요청 없음 + 계정 연결됨. 아니면 `reason`:
-  `below_min`(`short` = 3만 원까지 남은 돈) · `open_request` · `not_linked`. 요청 금액은 늘 그때 잔액 전부다.
+- **요청이 열리는 조건**(`canRequest`) — 계정 연결됨 + **본인 확인됨** + 열린 요청 없음 + 잔액 ≥ **30,000원**(10/7 오너). 아니면 `reason` 하나(이 순서로 먼저 걸리는 것):
+  `not_linked` → `open_request` → `not_verified` → `below_min`. `verified`(참 · 거짓)와 `short`(3만 원까지 남은 돈)는 늘 같이 실어서 화면이 둘 다 보일 수 있다. 요청 금액은 늘 그때 잔액 전부다.
   같은 사람의 열린 요청은 DB 유일 색인이 한 번 더 막는다(두 번 눌러도 한 줄 · 409 `open_request`).
 - **화면 문구(ui-copy · 돈 문구라 느낌표 · 이모지 없음 · 화면 주문 때 확정)**
   - 켜짐: 「지급 요청」 칩 · 잔액 표시. 미만: 「3만 원부터 요청할 수 있어요 (지금 21,250원)」. 요청 중: 버튼 대신 「요청 접수됐어요」.
+  - 본인 확인 전: 「본인 확인이 끝나면 요청할 수 있어요」(지휘 10/9 문구).
   - 연결 전: 「스팀 닉을 연결하면 내 상금이 보여요」(앱 내 계정 화면으로).
   - `lines[]` = 회차별 적립 줄(회차 이름 · 사유 · +금액) · 지급 줄(요청 · 완료 · 취소 · 시각) · 최근 것 먼저.
 - **오너 알림**(봇 DM · 오너에게만 · 운영진 말투) — 「[킬내기 상금] 지급 요청 · 닉 · 금액」 · 회차별 적립 · 요청한 디스코드 이름 · 「송금한 뒤 「지급 완료」를 눌러 줘」.
@@ -574,14 +577,26 @@
   바꾼 뒤 선수에게 DM 「킬내기 상금 n원 지급 완료됐어요. 기록은 킬내기 앱 「내 상금」에서 볼 수 있어요」 → `paid_notified_at`.
   **되돌리기 없음** — 잘못 눌렀으면 메모로만 바로잡는다(§73 방아쇠가 상태를 되돌리지 못하게 막는다). 취소(`cancel`)는 요청됨일 때만 · 잔액은 그대로라 다시 요청할 수 있다.
 - **오너 목록의 `players[]`** — 선수마다 선수 화면과 **같은 판정**(`balance` · `canRequest` · `reason` · `short`)을 싣는다. 선수로 로그인하지 않고도 화면 상태를 확인하는 실측 길이다.
-- **본인 확인 한계(지휘 판단)** — 앱의 스팀 연결은 닉으로 PUBG 계정을 찾아 **먼저 연결한 회원**에게 묶는다(앱 계약 §4 · 같은 계정은 한 회원만).
-  남의 닉을 먼저 연결하면 그 사람 상금을 요청할 수 있다. 돈은 오너가 아는 사람에게 직접 보내므로 잘못 나가지는 않지만, 오너 알림에 **요청한 디스코드 이름**을 실어
-  오너가 대조하게 한다. 더 막으려면 「상금 요청은 진행자가 연결을 확인한 회원만」 같은 문을 하나 더 둘 수 있다(지휘 결정 대기).
+- **본인 확인(지휘 10/9 결정)** — 앱의 스팀 연결은 닉으로 PUBG 계정을 찾아 먼저 연결한 회원에게 묶는다(앱 계약 §4). 남의 닉을 먼저 잡아 요청하는 일 자체를 막으려고,
+  **진행자가 「확인」을 누르기 전에는 지급 요청이 잠긴다**(돈 관련 기록이라 사람 손 한 번).
+  - 누가 누르나: 오너(`MRI_OWNER_ID`) 또는 진행자 키(`x-admin-key` · 지휘가 정한 관리자 · `by` 이름 필수 · 없으면 400 `need_by`). 그 밖은 403 `host_only`.
+  - 무엇을: 오너 목록 `players[].key` 로 고른 선수 — 그 계정을 **지금 연결한 회원**에게 확인 줄 하나(§74 · 회원 번호 + 플랫폼 + 계정 · 누가 · 언제).
+    연결한 회원이 없으면 409 `not_linked`. 같은 회원은 한 줄(다시 누르면 새로 적는다). `unverify` 는 그 줄을 지운다(다시 잠긴다).
+  - **확인은 회원 · 계정 한 쌍에 묶인다** — 회원이 다른 계정으로 다시 연결하면 줄의 계정과 달라져 저절로 다시 잠긴다. 회원을 지우면(탈퇴) 같이 지워진다.
+  - 판단 재료: 오너 목록 `players[].member` = `{ name(디스코드 표시 이름), linkedAt, verifiedBy, verifiedAt }`(디스코드 번호는 없다).
+    오너 알림에도 요청한 디스코드 이름이 실린다.
 - **응답 경계** — 계정 번호 · 디스코드 번호는 어디에도 없다(사람 = `key` · 스팀 닉). 표가 없으면 503 `table_missing`.
-- **먼저 있어야 하는 것** — ① 조각 A(#537) 머지 + DDL §70 실행(회원 표 · 로그인 표지) ② §73(✅ 10/9) ③ 화면 `killrace/`(아직 없다).
-  ①이 없으면 선수 길은 503, 오너 길(`prize/admin`)은 §73 만으로 돈다.
-- **실측(시험 줄을 운영 DB 에 넣지 않는다)** — 오너 목록의 `players[]` 로: 1위 선수(잔액 80,000) `canRequest: true` · 민준팀 1번(21,250) `below_min` · 지급 대기 0건 ·
-  잔액 0 인 선수(지급완료 이력 있음) `canRequest: false`.
+- **먼저 있어야 하는 것** — ① 조각 A(#537) 머지 + DDL §70 실행(회원 표 · 로그인 표지) ② DDL §74(본인 확인 · §70 바로 다음) ③ §73(✅ 10/9)
+  ④ 화면 `killrace/`(클랜CODE · 지휘 10/9). ①②가 없으면 선수 길은 503, 오너 목록(`GET prize/admin`)은 §73 만으로 돈다(회원 칸은 비어 나온다).
+- **클랜CODE 화면용 목록(이 절만 보면 된다)**
+  - 로그인 · 회원 · 연결 = 앱 계약 `docs/killrace-app-api.md` §2 ~ §5(`/api/auth/login?intent=killrace` · `GET /api/killrace/me` · `POST /me/consent` · `/me/link`).
+  - 선수 「내 상금」 = `GET /api/killrace/me/prize` → 줄 목록 + `canRequest` · `reason` · `verified` · `short` 로 칩 · 안내 문구를 고른다.
+  - 「지급 요청」 = `POST /api/killrace/me/prize/request`(몸 없음) → 409 면 `error.code` 가 위 `reason` 과 같은 값.
+  - 오너 「지급 대기」 = `GET /api/killrace/prize/admin`(`pending[]` · `recent[]` · `players[]` · `totals`) → 「지급 완료」 `POST prize/admin { action: "paid", id }` · 「요청 취소」 `{ action: "cancel", id }`.
+  - 진행자 「본인 확인」 = `POST prize/admin { action: "verify", key, by }`(진행자 키) · 오너는 `by` 없이.
+  - 공통 오류: 401 `login_required` · 403 `not_member` · `owner_only` · `host_only` · 409 위 이유들 · `not_requested` · 404 `not_found` · 503 `table_missing` · 429 `rate_limited`.
+- **실측(시험 줄을 운영 DB 에 넣지 않는다)** — 오너 목록의 `players[]` 로: 1위 선수(잔액 80,000) 본인 확인 뒤 `canRequest: true`(확인 전 `not_verified`) ·
+  민준팀 1번(21,250) `short: 8,750` · 지급 대기 0건 · 잔액 0 인 선수(지급완료 이력 있음) `canRequest: false`.
 
 ---
 
