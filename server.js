@@ -35,6 +35,8 @@ const killraceShot = require("./killrace-shot.cjs");
 const killracePoster = require("./killrace-poster.cjs");
 // 킬내기 개인 누적 지표(§1.11) — 계정 기준 · 불투명 키 · 회차 묶음. 시험 scripts/killrace-career.test.cjs
 const killraceCareer = require("./killrace-career.cjs");
+// 킬내기 주간 개인 리더보드(§1.18) — 1 ~ 10위 · 역할 묶음(1 / 2-4 / 5-10) · 순위 계산은 이 모듈 한 곳. 시험 scripts/killrace-leaderboard.test.cjs
+const killraceLeaderboard = require("./killrace-leaderboard.cjs");
 // 킬내기 판별 상세 기록 채우기(§1.12 · DDL §67) — 대회 시간 밖에 1분에 매치 하나. 시험 scripts/killrace-detail.test.cjs
 const killraceDetail = require("./killrace-detail.cjs");
 // 킬내기 앱 회원(앱 계약 docs/killrace-app-api.md §2 ~ §5) — 로그인 표지 · 내 계정 · 동의 · 스팀 연결 · 탈퇴 · 구분 판정. 시험 scripts/killrace-members.test.cjs
@@ -7109,6 +7111,11 @@ async function gmiGuildMember(discordId) {
     guildOf: gmiGuildMember,
   });
   killMembers.mount(app, { limiter: limit("krMe", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
+  // 주간 개인 리더보드(§1.18) — GET /api/killrace/leaderboard · 저장본 ops_state 'killrace:leaderboard' · 수요일 09:00 KST · 회차 끝 + 45분에 다시 계산
+  //   계정 번호는 진행자 키(x-admin-key)로 부를 때만 줄마다 붙는다(클랜CODE 역할 봇용 · 새 env 없음). 디스코드 역할은 이 서버가 건드리지 않는다
+  const killLeaderboard = killraceLeaderboard.createLeaderboard({ sbSelect, sbUpsert, isAdmin: gdcupAdmin, secret: process.env.SESSION_SECRET });
+  killLeaderboard.mount(app);
+  if (process.env.SUPABASE_URL) setInterval(() => { killLeaderboard.tick(); }, 60000).unref();
   // 판별 상세 기록 채우기(§1.12 · §67) — 끝 + 45분이 지난 회차의 판을 1분에 매치 하나씩(대회 시간에는 쉰다 · 끄기 ops_state 'killrace:detail' { off: true })
   const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
@@ -8860,6 +8867,9 @@ const SCHEMA_OPTIONAL = {
   killrace_members: ["id", "discord_id", "display_name", "platform", "account_id", "ign", "linked_at", "consent_version", "consented_at",
                      "last_seen_at", "created_at", "updated_at"],
   killrace_member_links: ["id", "member_id", "action", "platform", "account_id", "ign", "by_host", "created_at"],
+  // §73 킬내기 상금 원장(docs/killrace-api.md §1.19 · 2026-10-09 실행 · 소관 GmI 대행) — 적립 31 · 지급 2 줄(10/9 · 2 ~ 5회 적립 · 지급완료 2건). 지급 요청 화면은 별도 주문.
+  killrace_prize_ledger: ["id", "kind", "platform", "account_id", "ign", "event_id", "reason", "amount", "status", "source", "requested_at",
+                          "request_notified_at", "paid_at", "paid_notified_at", "cancelled_at", "memo", "entered_by", "created_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
