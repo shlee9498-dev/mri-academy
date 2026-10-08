@@ -48,6 +48,9 @@ const publicRows = require("./public-rows.cjs");
 const { isLessonRow, lessonRowsOf } = require("./ops-status.cjs");
 // 연결 신청 승인 · 거절 규칙(계약 §9.32) — 트레이너는 자기 담당만 · 먼저 누른 사람만. 카드 버튼 · /연결승인 이 같이 쓴다.
 const linkRules = require("./link-approve.cjs");
+// 통장 입출금 알림 받기(§69 · docs/bank-alerts.md · 지휘 10/7) — 오너 폰 알림 전달 앱이 보낸 은행 알림을 받아 쌓기만 한다(참고 장부).
+//   돈 · 판수 · 신청 상태를 바꾸지 않고 payments · 정산과 잇지 않는다. 시험 scripts/bank-alerts.test.cjs
+const bankAlerts = require("./bank-alerts.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -7064,6 +7067,10 @@ function gdcupAdmin(req) {
   const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
 }
+// 통장 입출금 알림 받기(§69 · docs/bank-alerts.md) — POST /api/bank-alerts · env BANK_ALERT_SECRET 이 없으면 503(닫힘).
+//   알림 글 원문 · 계좌 번호는 저장하지 않는다 · 같은 알림 두 번이면 한 줄(중복 키) · 분당 30번까지.
+bankAlerts.createBankAlerts({ insert: (row) => sbInsert("bank_alerts", row) })
+  .mount(app, { express, limiter: limit("bankAlerts", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
 // ── 운영 응답용 members 정제 ──
 // 계좌·실명은 gdcup_payouts(owner 전용)에만 존재해야 한다. 그런데 시즌2 레거시 행은
@@ -8806,6 +8813,10 @@ const SCHEMA_OPTIONAL = {
                               "fetched_at"],
   event_match_telemetry: ["event_id", "team_name", "match_id", "match_start", "source_bytes", "source_events", "positions", "combat",
                           "fetched_at"],
+  // §69 통장 입출금 알림(docs/bank-alerts.md · 지휘 10/7) — 받아서 쌓기만. 미실행이면 POST /api/bank-alerts 만 503 table_missing 이고
+  //   다른 기능은 그대로다. 읽는 화면(오너 목록 · 공개 합계)이 생기면 REQUIRED 로 올린다.
+  bank_alerts: ["id", "account_key", "direction", "amount", "balance", "occurred_at", "counterparty", "parse_status", "shape",
+                "dedupe_key", "source_app", "posted_at", "received_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
