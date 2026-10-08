@@ -946,7 +946,8 @@ function createKillrace(deps) {
 
   // ── /킬내기팀등록 ──
   async function registerTeam({ teamName, platform, igns }) {
-    const name = String(teamName || "").trim();
+    // 「팀이름:」 · 「팀명:」 꼬리표는 뗀다(10/8 「팀이름:현성팀」 사고 · §1.4a)
+    const name = String(teamName || "").trim().replace(/^(팀\s*이름|팀\s*명)\s*[:：]\s*/, "").trim();
     if (!name || name.length > 30) throw userErr("팀명은 1~30자로 적어 주세요. ✏️");
     if (!PLATFORM_KO[platform]) throw userErr("플랫폼은 스팀·카카오 중에서 골라 주세요.");
     // 슬롯3 · 4 는 선택이다. 뒤쪽 빈 칸을 걷어내 팀 크기(2~4)를 정하고, 중간이 비면 거부한다.

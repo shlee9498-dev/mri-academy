@@ -6999,7 +6999,13 @@ function gdcupAdmin(req) {
     },
     save: (id, state) => sbUpsert("ops_state", { key: auctionKey(id), value: state, updated_at: new Date().toISOString() }, "key"),
     // 초기화는 줄을 지우지 않고 값만 비운다(리허설 → 본 경매 전환용 · 팀 등록과 판 기록은 건드리지 않는다)
-    clear: (id) => sbUpsert("ops_state", { key: auctionKey(id), value: {}, updated_at: new Date().toISOString() }, "key"),
+    // 비우면서 직전 상태를 prev 로 한 벌 보관한다 — 「직전 경매 복원」(§1.4a · 10/8 RESET 한 번에 경매가 사라진 일)
+    clear: (id, prev) => sbUpsert("ops_state", { key: auctionKey(id), value: prev && prev.v ? { resetAt: new Date().toISOString(), prev } : {}, updated_at: new Date().toISOString() }, "key"),
+    loadPrev: async (id) => {
+      const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(auctionKey(id))}&limit=1`);
+      const v = rows.length && rows[0].value;
+      return v && !v.v && v.prev && v.prev.v ? v.prev : null;
+    },
   };
   // 경매 결과 → /킬내기팀등록 과 같은 함수로 등록(닉 → 계정 확인 포함). 한 팀이 실패해도 나머지는 계속한다
   const register = async (plan) => {

@@ -268,7 +268,7 @@ function harness(over = {}) {
   const mem = new Map(); const calls = { register: [], bonus: [], created: [] };
   let clock = T0;
   const api = a.createAuctionApi({
-    store: { eventId: async () => 2, load: async (id) => mem.get(id) || null, save: async (id, st) => { mem.set(id, JSON.parse(JSON.stringify(st))); }, clear: async (id) => { mem.delete(id); } },
+    store: { eventId: async () => 2, load: async (id) => mem.get(id) || null, save: async (id, st) => { mem.set(id, JSON.parse(JSON.stringify(st))); }, clear: async (id, prev) => { mem.delete(id); if (prev && prev.v) mem.set(`prev:${id}`, JSON.parse(JSON.stringify(prev))); }, loadPrev: async (id) => mem.get(`prev:${id}`) || null },
     isAdmin: (req) => req.headers["x-admin-key"] === "host",
     register: async (plan) => { calls.register.push(plan); return plan.map((p) => ({ teamName: p.teamName, ok: p.full })); },
     saveBonus: async (evId, bonus, teamSize) => { calls.bonus.push({ evId, bonus, teamSize }); },
@@ -376,7 +376,7 @@ test("회차 명단(개인 기록에 붙일 값): 팀 · 슬롯 · 티어 · 낙
 });
 
 // ═══ 5회 대승배 규칙(오너 10/8 · 기본 설정) — 1인 상한 40P · 티어표 시작가 · 유찰 강제 배정 + 빚 ×3 · 5P당 1점 · 7 · 8티어 가산 ═══
-function today() {
+function today(maxBid) {
   const ps = [
     { ign: "K1", platform: "steam", tier: "팀장" }, { ign: "K2", platform: "steam", tier: "팀장" }, { ign: "K3", platform: "steam", tier: "팀장" },
     { ign: "A", platform: "steam", tier: "1.5" }, { ign: "B", platform: "steam", tier: "1.5티어" }, { ign: "C", platform: "steam", tier: "T2" },
@@ -384,7 +384,7 @@ function today() {
     { ign: "G", platform: "steam", tier: "7" }, { ign: "H", platform: "steam", tier: "8" }, { ign: "I", platform: "steam", tier: "8" },
   ];
   let k = 0;
-  const r = T.createAuction({ eventId: 6, players: ps, captains: ["K1", "K2", "K3"], now: T0, token: () => `tok-${++k}` });
+  const r = T.createAuction({ eventId: 6, players: ps, captains: ["K1", "K2", "K3"], now: T0, token: () => `tok-${++k}`, config: maxBid ? { maxBid } : undefined });
   assert.equal(r.ok, true, r.code);
   return r.state;
 }
@@ -508,4 +508,146 @@ test("남은 0P 팀이 유찰 선수를 받으면 시작가 전체 ×3 빚 · �
   assert.deepEqual(T.gemPick(z, { captainId: "C1", lotId: z.lots.find((l) => l.ign === "E").id }, u), { ok: true, price: 10, charge: 30, debt: 30 });
   const zc = T.summary(z).teams[0];
   assert.deepEqual([zc.remaining, zc.pointBonus, zc.debt], [-30, -12, 30]);
+});
+
+// ═══ §1.4a 진행자가 말로 진행하는 경매 (10/8 지휘 주문) ═══
+test("§1.4a 타이머: 시간 다시 · 멈춤/계속(멈춘 동안 자동 낙찰 없음) · 길이 바꾸기 · 입찰하면 멈춤도 풀림", () => {
+  const s = today(); T.openLot(s, {}, T0);
+  assert.equal(T.timerReset(s, T0 + 15 * SEC).deadline, T0 + 35 * SEC);
+  assert.deepEqual(T.timerPause(s, T0 + 20 * SEC), { ok: true, left: 15 * SEC });
+  assert.equal(T.timerPause(s, T0 + 20 * SEC).code, "already_paused");
+  assert.equal(T.tick(s, T0 + 99 * SEC), false);                                    // 멈춘 동안은 시간이 지나도 안 닫힌다
+  assert.equal(T.timerResume(s, T0 + 100 * SEC).deadline, T0 + 115 * SEC);           // 멈춘 자리(15초)에서 다시
+  assert.equal(T.timerResume(s, T0 + 100 * SEC).code, "not_paused");
+  assert.equal(T.timerLength(s, { sec: 7.5 }, T0).code, "bad_sec");
+  assert.equal(T.timerLength(s, { sec: 10 }, T0 + 101 * SEC).ok, true);
+  assert.deepEqual([s.config.bidSec, s.live.deadline], [10, T0 + 111 * SEC]);        // 지금 매물도 새 길이로
+  T.timerPause(s, T0 + 102 * SEC);
+  assert.equal(T.bid(s, { captainId: "C1", amount: 25 }, T0 + 103 * SEC).ok, true);   // 입찰 = 멈춤 풀림 + 처음부터(10초)
+  assert.deepEqual([s.live.paused, s.live.deadline], [false, T0 + 113 * SEC]);
+  const v = T.publicView(s, T0 + 103 * SEC);
+  assert.deepEqual([v.live.paused, v.live.left, v.config.autoClose], [false, null, true]);
+  assert.equal(T.timerReset(today(), T0).code, "no_live_lot");
+});
+
+test("§1.4a 자동 낙찰 끄기: 0초에서 기다리고 진행자 낙찰(sell)로만 끝 · 다시 켜면 바로 닫힘", () => {
+  const s = today(); T.openLot(s, {}, T0);
+  T.setAutoClose(s, { on: false }, T0);
+  T.bid(s, { captainId: "C2", amount: 30 }, T0 + SEC);
+  assert.equal(T.tick(s, T0 + 60 * SEC), false);
+  assert.equal(s.live.high, 30);
+  assert.equal(T.bid(s, { captainId: "C3", amount: 31 }, T0 + 61 * SEC).ok, true);   // 0초여도 입찰은 받는다(말로 진행)
+  T.setAutoClose(s, { on: true }, T0 + 200 * SEC);                                    // 이미 지났으니 바로 낙찰
+  assert.deepEqual([s.live, s.lastSale.captainId, s.lastSale.price], [null, "C3", 31]);
+});
+
+test("§1.4a 즉시 낙찰(sell): 화면 값과 서버 최고가가 같을 때만 · 입찰 없으면 no_bid · 그 사이 입찰이면 bid_changed", () => {
+  const s = today(); T.openLot(s, {}, T0);
+  assert.equal(T.sell(s, {}, T0).code, "no_bid");
+  T.bid(s, { captainId: "C1", amount: 30 }, T0 + SEC);
+  T.bid(s, { captainId: "C2", amount: 35 }, T0 + 2 * SEC);
+  assert.deepEqual(T.sell(s, { captainId: "C1", amount: 30 }, T0 + 3 * SEC), { ok: false, code: "bid_changed", high: 35, captainId: "C2" });
+  assert.deepEqual(T.sell(s, { captainId: "C2", amount: 35 }, T0 + 3 * SEC), { ok: true, captainId: "C2", price: 35 });
+  assert.deepEqual([cap(s, "C2").spent, cap(s, "C2").picks.length, s.live], [35, 1, null]);
+  assert.equal(T.sell(s, {}, T0 + 4 * SEC).code, "no_live_lot");
+  // 자동 낙찰이 먼저 닫았으면(같은 팀) 성공으로 본다 — 진행자가 두 번 누른 셈
+  T.openLot(s, {}, T0 + 10 * SEC); T.bid(s, { captainId: "C3", amount: 25 }, T0 + 11 * SEC);
+  assert.deepEqual(T.sell(s, { captainId: "C3", amount: 25 }, T0 + 99 * SEC), { ok: true, already: true });
+});
+
+test("§1.4a 상한 동점 넘기기: 열린 매물은 그 팀으로 즉시 낙찰 · 방금 낙찰은 포인트를 옮김 · 상한이 아니면 거절", () => {
+  const s = today(50); T.openLot(s, {}, T0);
+  T.bid(s, { captainId: "C1", amount: 50 }, T0 + SEC);
+  assert.equal(T.bid(s, { captainId: "C2", amount: 51 }, T0 + 2 * SEC).code, "cap_reached");
+  assert.equal(T.tieGive(s, { captainId: "C1" }, T0 + 3 * SEC).code, "same_team");
+  assert.deepEqual(T.tieGive(s, { captainId: "C2" }, T0 + 3 * SEC), { ok: true, captainId: "C2", price: 50, from: "C1" });
+  assert.deepEqual([cap(s, "C1").spent, cap(s, "C2").spent, s.lastSale.captainId], [0, 50, "C2"]);
+  // 방금 낙찰(다음 매물 전) → C3 로
+  assert.deepEqual(T.tieGive(s, { captainId: "C3" }, T0 + 4 * SEC), { ok: true, captainId: "C3", price: 50, from: "C2" });
+  assert.deepEqual([cap(s, "C2").spent, cap(s, "C2").picks.length, cap(s, "C3").spent, cap(s, "C3").picks.length, s.lastSale.tieFrom], [0, 0, 50, 1, "C2"]);
+  T.openLot(s, {}, T0 + 5 * SEC); T.bid(s, { captainId: "C1", amount: 30 }, T0 + 6 * SEC);
+  assert.equal(T.tieGive(s, { captainId: "C2" }, T0 + 7 * SEC).code, "not_at_cap");
+});
+
+test("§1.4a 매물 고치기: 올리기 전 티어 · 시작가 · null 이면 티어표로 · 상한 넘는 시작가 거절 · 강제 배정도 고친 시작가", () => {
+  const s = today(50);
+  const L = s.lots.find((l) => l.ign === "E");                                       // 5티어 시작가 7
+  assert.deepEqual(T.editLot(s, { lotId: L.id, tier: "8티어" }, T0), { ok: true, tier: "8", start: 3 });
+  assert.deepEqual(T.editLot(s, { lotId: L.id, start: 12 }, T0), { ok: true, tier: "8", start: 12 });
+  assert.equal(T.editLot(s, { lotId: L.id, start: 51 }, T0).code, "bad_start");
+  assert.equal(T.editLot(s, { lotId: L.id, tier: "9" }, T0).code, "bad_tier");
+  T.openLot(s, { lotId: L.id }, T0); assert.equal(s.live.start, 12);
+  assert.equal(T.editLot(s, { lotId: L.id, start: 5 }, T0).code, "lot_not_editable");
+  T.closeNow(s, T0 + SEC);                                                            // 유찰
+  assert.equal(T.editLot(s, { lotId: L.id, start: null }, T0 + 2 * SEC).start, 3);  // 유찰 매물도 고칠 수 있다 · 티어표로 되돌림
+  assert.equal(T.publicView(s, T0).unsold[0].start, 3);
+});
+
+test("§1.4a 팀명 꼬리표: 「팀이름:」 · 「팀명 :」 은 떼고 저장", () => {
+  assert.deepEqual(["팀이름:현성팀", "팀명 : 동주팀", "팀 이름：민준팀", "현태팀"].map(T.cleanTeamName), ["현성팀", "동주팀", "민준팀", "현태팀"]);
+  const s = today();
+  assert.equal(T.renameTeam(s, { captainId: "C1", teamName: "팀이름:현성팀" }, T0).ok, true);
+  assert.equal(s.captains[0].teamName, "현성팀");
+});
+
+test("§1.4a API: RESET 은 직전 경매를 보관 · restore 로 되살림(열린 매물은 멈춘 채) · 경매가 있으면 거절 · 새 동작 키 없으면 401", async () => {
+  const h = harness();
+  const ps = players(16);
+  await h.admin({ action: "create", config: { ...LEGACY, maxBid: 50 }, players: ps, captains: ps.slice(0, 4).map((p) => p.ign) });
+  assert.equal((await h.admin({ action: "restore" })).body.error.code, "auction_exists");
+  await h.admin({ action: "open" });
+  await h.admin({ action: "bidFor", captainId: "C1", amount: 33 });
+  assert.equal((await h.call(h.api.postAdmin, { body: { action: "timerReset" } })).code, 401);
+  assert.equal((await h.admin({ action: "timerPause" })).code, 200);
+  assert.equal((await h.admin({ action: "reset", confirm: "RESET" })).code, 200);
+  assert.equal((await h.call(h.api.getState, { headers: h.host })).body.exists, false);
+  assert.equal((await h.admin({ action: "restore" })).code, 200);
+  const st = (await h.call(h.api.getState, { headers: h.host })).body;
+  assert.deepEqual([st.exists, st.config.maxBid, st.live.high, st.live.paused, st.live.left], [true, 50, 33, true, 20 * SEC]);
+  h.tick(600 * SEC);
+  assert.equal((await h.call(h.api.getState, { headers: h.host })).body.live.high, 33);   // 멈춘 채라 안 닫힌다
+  assert.equal((await h.admin({ action: "sell", captainId: "C1", amount: 33 })).code, 200);
+  // 보관본이 없으면
+  const h2 = harness();
+  assert.equal((await h2.admin({ action: "restore" })).body.error.code, "nothing_to_restore");
+});
+
+test("§1.4a 연습 경매 한 바퀴: 15명 + 팀장 5 · 상한 50 · 빠른 입찰 · 시간 다시 · 즉시 낙찰 · 동점 넘기기 · 유찰 강제 배정 · 빚 · 결과", async () => {
+  const h = harness();
+  const tiers = ["1.5", "1.5", "2", "2", "3", "4", "4", "5", "5", "5", "6", "6", "7", "7", "8"];
+  const ps = [...["K1", "K2", "K3", "K4", "K5"].map((ign) => ({ ign, platform: "steam" })), ...tiers.map((t, i) => ({ ign: `S${i + 1}`, platform: "steam", tier: t }))];
+  const made = await h.admin({ action: "create", config: { maxBid: 50, budget: 100, bonusPer: 5, debtMul: 3, negPer: 2 }, players: ps, captains: ["K1", "K2", "K3", "K4", "K5"] });
+  assert.equal(made.code, 200, JSON.stringify(made.body));
+  const st = async () => (await h.call(h.api.getState, { headers: h.host })).body;
+  const sellTo = async (bids, opts = {}) => {
+    await h.admin({ action: "open" });
+    for (const [c, amt] of bids) { const r = await h.admin({ action: "bidFor", captainId: c, amount: amt }); assert.equal(r.code, 200, `${c} ${amt} ${JSON.stringify(r.body)}`); h.tick(2 * SEC); }
+    if (opts.reset) assert.equal((await h.admin({ action: "timerReset" })).code, 200);
+    const s = await st();
+    if (!s.live.captainId) return h.admin({ action: "closeNow" });
+    if (opts.tie) return h.admin({ action: "tieGive", captainId: opts.tie });
+    return h.admin({ action: "sell", captainId: s.live.captainId, amount: s.live.high });
+  };
+  // 1.5티어 둘: 상한 50 동점 → 빈자리 많은 C2 에게 넘김
+  assert.equal((await sellTo([["C1", 25], ["C2", 30], ["C1", 50]], { tie: "C2" })).code, 200);
+  assert.equal((await sellTo([["C3", 25], ["C4", 40]], { reset: true })).code, 200);
+  for (const [c, a] of [["C5", 50], ["C1", 25], ["C3", 15], ["C5", 48], ["C1", 12], ["C4", 7], ["C3", 8]]) assert.equal((await sellTo([[c, a]])).code, 200);
+  for (let i = 0; i < 6; i++) assert.equal((await sellTo([])).code, 200);                // 5 · 6 · 6 · 7 · 7 · 8티어 유찰
+  const mid = await st();
+  assert.equal(mid.unsold.length, 6);
+  assert.equal((await h.admin({ action: "startGems" })).code, 200);
+  for (let guard = 0; guard < 10; guard++) {
+    const s = await st();
+    if (!s.gemTurn || !s.unsold.length) break;
+    assert.equal((await h.admin({ action: "gemFor", captainId: s.gemTurn, lotId: s.unsold[0].id })).code, 200);
+  }
+  assert.equal((await h.admin({ action: "finish" })).code, 200);
+  const end = await st();
+  const teams = end.summary.teams;
+  assert.equal(teams.every((t) => t.full), true);
+  assert.equal(teams.reduce((n, t) => n + t.members.length, 0), 15);
+  const c2 = teams.find((t) => t.captainId === "C2");
+  assert.deepEqual([c2.members[0].ign, c2.members[0].price], ["S1", 50]);                  // 동점 넘기기로 C2 가 S1 을 50 에
+  assert.equal(teams.some((t) => t.debt > 0), true);                                     // 남은 2P 팀이 유찰 선수를 받아 빚
+  if (process.env.SHOW_RUN) console.log(teams.map((t) => `${t.teamName}: ${t.members.map((m) => `${m.ign}(${m.tier}${m.forced ? " 배정" : ""} ${m.price})`).join(" ")} | 쓴 ${t.spent} · 남은 ${t.remaining} · 빚 ${t.debt} · 시작 ${t.bonus} (포인트 ${t.pointBonus} · 티어 ${t.tierBonus})`).join("\n"));
 });
