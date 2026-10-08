@@ -126,4 +126,4 @@ function createCareer(deps) {
   return { mount, get, career };
 }
 
-module.exports = { createCareer, buildCareer, _test: { eventsParam, keyMaker, MIN_GAMES, PAGE } };
+module.exports = { createCareer, buildCareer, keyMaker, reviveOut, _test: { eventsParam, keyMaker, MIN_GAMES, PAGE } };   // keyMaker · reviveOut = 리더보드(§1.18)가 같은 키 · 같은 인정 판 규칙을 쓴다
