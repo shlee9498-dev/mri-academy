@@ -238,19 +238,14 @@ a{color:inherit}
 .step .nm{font-size:22px;font-weight:800;margin-top:10px}
 .step .d{margin-top:6px;color:var(--mute);font-size:15px}
 
-/* 복기 */
-.maps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--gap);margin-top:24px}
-.map{background:var(--cell-2);border-radius:16px;overflow:hidden}
-.map svg{display:block;width:100%;height:auto}
-.map .cap{padding:12px 14px 16px}
-.map .sit{font-size:15px;font-weight:700}
-.map dl{margin-top:8px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px;font-size:14px}
-.map dt{color:var(--mute)}
-.map dd{margin:0}
-.legend{margin-top:14px;display:flex;flex-wrap:wrap;gap:6px 20px;font-size:13px;color:var(--mute);list-style:none}
-.legend li{display:flex;align-items:center;gap:8px}
-.legend svg{flex:none}
-.review-acts{margin-top:22px;display:inline-block}
+/* 수업 영상 — 16:9 유지 · 누르면 그 자리에서 재생 */
+.lv-frame{margin-top:24px;position:relative;aspect-ratio:16/9;max-width:100%;border-radius:16px;overflow:hidden;background:var(--cell-2)}
+.lv-play{all:unset;cursor:pointer;position:absolute;inset:0;display:block}
+.lv-play img{width:100%;height:100%;object-fit:cover;display:block}
+.lv-btn{position:absolute;left:50%;top:50%;width:72px;height:72px;margin:-36px 0 0 -36px;border-radius:50%;background:rgba(10,10,12,.72);border:1px solid var(--line)}
+.lv-btn::after{content:'';position:absolute;left:29px;top:22px;border-style:solid;border-width:14px 0 14px 22px;border-color:transparent transparent transparent var(--ink)}
+.lv-play:focus-visible{outline:2px solid var(--ink);outline-offset:-4px}
+.lv-frame iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
 .vid{display:flex;flex-direction:column;padding:0;text-decoration:none}
 .vid .th{flex:1;min-height:200px;background:var(--cell-2);position:relative}
 .vid .th::before{content:'YouTube';position:absolute;inset:0;display:grid;place-items:center;font:800 15px/1 var(--num);letter-spacing:.14em;color:var(--mute)}
@@ -336,6 +331,8 @@ footer p{margin-top:16px;font-size:13px}
   .feat .arr{display:none}
 }
 @media(max-width:820px){
+  /* 수업 영상 — 폰에선 칸 안쪽 여백을 넘어 화면 좌우 16px 까지 넓힌다 */
+  .lv-frame{max-width:none;margin-left:calc(-1 * clamp(22px,2.6vw,36px));margin-right:calc(-1 * clamp(22px,2.6vw,36px));border-radius:0}
   .wrap{padding:0 16px}
   .top-in{gap:16px;height:56px}
   .top .cta .p,.top .cta .dot{display:none}
@@ -354,10 +351,6 @@ footer p{margin-top:16px;font-size:13px}
   .steps{grid-template-columns:1fr 1fr}
   .step:nth-child(3){padding-left:0;border-left:0}
   .step:nth-child(n+3){border-top:1px solid var(--line)}
-  /* 지도 3장 — 가로 넘기기, 끝을 잘라 보여준다 */
-  .maps{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;margin-right:-22px;padding-right:22px;scrollbar-width:none}
-  .maps::-webkit-scrollbar{display:none}
-  .map{flex:0 0 78%;scroll-snap-align:start}
   .price-main,.cols{grid-template-columns:1fr;gap:28px}
   .cols{margin-top:40px}
   .rules{grid-template-columns:1fr}
@@ -532,56 +525,18 @@ html.vr-lock{overflow:hidden}
           </div>
         </article>
 
-        <!-- 복기 -->
-        <article class="cell s12 rise" id="review" aria-labelledby="revH">
-          <div class="eyebrow">Debrief</div>
-          <h2 id="revH">수업 뒤 남는 기록, 복기</h2>
-          <p class="lead">자기장이 줄어드는 장면마다 지도 한 장에 그때의 판단과 이유를 남겨요. 비슷한 상황이 다시 오면 꺼내 볼 수 있게 수강생 앱에 쌓여요</p>
-          <div class="maps">
-            <figure class="map">
-              <svg viewBox="0 0 200 130" role="img" aria-label="자기장이 남쪽으로 잡힌 판: 차량으로 안전 구역까지 이동하는 길">
-                <rect width="200" height="130" fill="#1b1b1e"/>
-                <path d="M0 92 C40 78 70 100 110 85 S170 68 200 80" fill="none" stroke="#2f2f35" stroke-width="1.4"/>
-                <path d="M0 112 C50 100 90 120 130 106 S180 96 200 102" fill="none" stroke="#2f2f35" stroke-width="1.4"/>
-                <circle cx="120" cy="58" r="50" fill="none" stroke="#918d85" stroke-width="1.6"/>
-                <circle cx="132" cy="52" r="28" fill="none" stroke="#f3f1ec" stroke-width="1.4" stroke-dasharray="4 4"/>
-                <path d="M30 116 C60 108 86 92 118 66" fill="none" stroke="#f3f1ec" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="1 6"/>
-                <circle cx="30" cy="116" r="4" fill="#f3f1ec"/>
-              </svg>
-              <figcaption class="cap"><div class="sit">자기장이 남쪽으로 잡힌 판</div><dl><dt>판단</dt><dd>도보 대신 차량 확보</dd><dt>근거</dt><dd>걸어가면 먼저 자리 잡은 팀에게 등 노출</dd></dl></figcaption>
-            </figure>
-            <figure class="map">
-              <svg viewBox="0 0 200 130" role="img" aria-label="다리를 건너야 하는 판: 연막 두 개를 깔고 다리를 건너는 길">
-                <rect width="200" height="130" fill="#1b1b1e"/>
-                <path d="M0 66 L200 66" stroke="#26262b" stroke-width="16"/>
-                <rect x="92" y="56" width="16" height="20" fill="#3a3a41"/>
-                <circle cx="104" cy="50" r="38" fill="none" stroke="#918d85" stroke-width="1.6"/>
-                <circle cx="96" cy="40" r="19" fill="none" stroke="#f3f1ec" stroke-width="1.4" stroke-dasharray="4 4"/>
-                <path d="M100 120 L100 50" fill="none" stroke="#f3f1ec" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="1 6"/>
-                <circle cx="100" cy="120" r="4" fill="#f3f1ec"/><circle cx="88" cy="86" r="6" fill="none" stroke="#918d85"/><circle cx="112" cy="86" r="6" fill="none" stroke="#918d85"/>
-              </svg>
-              <figcaption class="cap"><div class="sit">다리를 건너야 하는 판</div><dl><dt>판단</dt><dd>연막 두 개 후 진입</dd><dt>근거</dt><dd>다리 위는 엄폐물 없음</dd></dl></figcaption>
-            </figure>
-            <figure class="map">
-              <svg viewBox="0 0 200 130" role="img" aria-label="마지막 자기장: 집 대신 능선 끝 바위를 잡는 자리">
-                <rect width="200" height="130" fill="#1b1b1e"/>
-                <path d="M10 38 C60 28 120 48 190 32" fill="none" stroke="#2f2f35" stroke-width="1.4"/>
-                <rect x="120" y="66" width="22" height="18" fill="#3a3a41"/><rect x="146" y="74" width="16" height="14" fill="#3a3a41"/>
-                <circle cx="120" cy="72" r="32" fill="none" stroke="#918d85" stroke-width="1.6"/>
-                <circle cx="108" cy="80" r="15" fill="none" stroke="#f3f1ec" stroke-width="1.4" stroke-dasharray="4 4"/>
-                <ellipse cx="92" cy="86" rx="9" ry="6" fill="#4a4a52"/>
-                <path d="M40 116 C60 106 76 96 90 88" fill="none" stroke="#f3f1ec" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="1 6"/>
-                <circle cx="40" cy="116" r="4" fill="#f3f1ec"/>
-              </svg>
-              <figcaption class="cap"><div class="sit">마지막 자기장</div><dl><dt>판단</dt><dd>집 대신 능선 끝 바위</dd><dt>근거</dt><dd>집은 사방 포위, 바위는 한 방향만 방어</dd></dl></figcaption>
-            </figure>
-          </div>
-          <ul class="legend" aria-label="지도 읽는 법">
-            <li><svg width="22" height="14" viewBox="0 0 22 14" aria-hidden="true"><circle cx="11" cy="7" r="6" fill="none" stroke="#f3f1ec" stroke-width="1.4"/></svg>지금 안전 구역</li>
-            <li><svg width="22" height="14" viewBox="0 0 22 14" aria-hidden="true"><circle cx="11" cy="7" r="6" fill="none" stroke="#f3f1ec" stroke-width="1.4" stroke-dasharray="3 3"/></svg>다음 안전 구역</li>
-            <li><svg width="22" height="14" viewBox="0 0 22 14" aria-hidden="true"><circle cx="11" cy="7" r="4" fill="#f3f1ec"/></svg>우리 팀</li>
-          </ul>
-          <a class="link review-acts" href="https://app.mriacademy.gg/" rel="noopener">수강생 앱 열기</a>
+        <!-- 수업 영상 — 영상 주소는 아래 data-yt 한 곳에서만 바꾼다(유튜브 주소 또는 영상 ID).
+             비어 있으면 칸 전체가 화면에 안 나온다. 제목 · 설명 문구도 data-title · data-desc 에서 바꾼다.
+             처음엔 썸네일 + 재생 버튼만 보이고, 누르면 그 자리에서 재생한다(유튜브 플레이어는 누를 때만 불러옴).
+             이 자리에 있던 복기 칸은 오너 10/9 지시로 뺐다 — 되살릴 땐 #501 머지(1a9262f)의 index.html 에서 가져온다 -->
+        <article class="cell s12 rise" id="lessonVideo" aria-labelledby="lvH" hidden
+                 data-yt=""
+                 data-title=""
+                 data-desc="">
+          <div class="eyebrow">Lesson Video</div>
+          <h2 id="lvH"></h2>
+          <p class="lead" id="lvDesc"></p>
+          <div class="lv-frame"><button type="button" class="lv-play" aria-label="수업 영상 재생"><span class="lv-btn" aria-hidden="true"></span></button></div>
         </article>
 
       </div>
@@ -728,6 +683,32 @@ html.vr-lock{overflow:hidden}
 </footer>
 
 <script>
+// 수업 영상 칸 — data-yt 가 비었거나 형식이 틀리면 칸을 숨긴 채 둔다. 문구는 textContent 로만 넣는다
+(function(){
+  var box = document.getElementById("lessonVideo");
+  if (!box) return;
+  var raw = (box.getAttribute("data-yt") || "").trim();
+  var m = raw.match(/(?:youtu\.be\/|[?&]v=|\/embed\/|\/shorts\/|\/live\/)([A-Za-z0-9_-]{11})/) || raw.match(/^([A-Za-z0-9_-]{11})$/);
+  if (!m) return;
+  var id = m[1];
+  document.getElementById("lvH").textContent = box.getAttribute("data-title") || "수업 영상";
+  var desc = box.getAttribute("data-desc") || "";
+  var d = document.getElementById("lvDesc");
+  if (desc) d.textContent = desc; else d.remove();
+  var btn = box.querySelector(".lv-play");
+  var th = document.createElement("img"); th.alt = ""; th.width = 480; th.height = 360; th.loading = "lazy";
+  th.src = "https://i.ytimg.com/vi/" + id + "/hqdefault.jpg"; th.onerror = function(){ th.remove(); };
+  btn.prepend(th);
+  btn.addEventListener("click", function(){
+    var f = document.createElement("iframe");
+    f.src = "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1&rel=0&playsinline=1";
+    f.title = document.getElementById("lvH").textContent;
+    f.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
+    f.allowFullscreen = true;
+    btn.replaceWith(f);
+  });
+  box.hidden = false;
+})();
 // 성장 기록 칸 — GET /api/progress-public(전적 스냅샷 원장 · gmi-progress.html 과 같은 응답 · 상위 상승 순 · 닉은 서버가 「세**」로 가린다)
 // 숫자 · 닉은 서버 값만 쓴다(하드코딩 금지). 글자는 textContent 로만 넣는다.
 (function(){
