@@ -561,7 +561,7 @@ test("§1.4a 상한 동점 넘기기: 열린 매물은 그 팀으로 즉시 낙�
   assert.equal(T.bid(s, { captainId: "C2", amount: 51 }, T0 + 2 * SEC).code, "cap_reached");
   assert.equal(T.tieGive(s, { captainId: "C1" }, T0 + 3 * SEC).code, "same_team");
   assert.deepEqual(T.tieGive(s, { captainId: "C2" }, T0 + 3 * SEC), { ok: true, captainId: "C2", price: 50, from: "C1" });
-  assert.deepEqual([cap(s, "C1").spent, cap(s, "C2").spent, s.lastSale.captainId], [0, 50, "C2"]);
+  assert.deepEqual([cap(s, "C1").spent, cap(s, "C2").spent, s.lastSale.captainId, s.lastSale.tieFrom], [0, 50, "C2", "C1"]);
   // 방금 낙찰(다음 매물 전) → C3 로
   assert.deepEqual(T.tieGive(s, { captainId: "C3" }, T0 + 4 * SEC), { ok: true, captainId: "C3", price: 50, from: "C2" });
   assert.deepEqual([cap(s, "C2").spent, cap(s, "C2").picks.length, cap(s, "C3").spent, cap(s, "C3").picks.length, s.lastSale.tieFrom], [0, 0, 50, 1, "C2"]);

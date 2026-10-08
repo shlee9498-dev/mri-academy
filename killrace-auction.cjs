@@ -292,6 +292,7 @@ function tieGive(state, { captainId }, now) {
     live.bids.push({ captainId: cap.id, amount: price, at: now, tie: true });
     live.captainId = cap.id;
     settle(state, now);
+    state.lastSale.tieFrom = from;
   } else {
     const lot = lotOf(state, sale.lotId); const old = capOf(state, from);
     old.spent -= price; old.picks = old.picks.filter((id) => id !== lot.id);
