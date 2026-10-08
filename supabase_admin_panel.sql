@@ -6861,7 +6861,7 @@ notify pgrst, 'reload schema';
 --   - §68(event_reward_ledger · #520 초안 · 실행 전)과 겹친다 — 이 표가 실행본이고 §68 은 지휘 판단 전까지 실행하지 않는다(계약 §1.19).
 --   ✅ 실행 완료 2026-10-09 00:3x KST (세션 실행 · A 구간 · 지휘 주문). 73a 를 한 번에 보내면 MCP 가 60초에 끊겨(두 번 · DB 에는 아무것도 안 남음)
 --      두 번에 나눠 보냈다 — 줄 끝 주석과 새 표라 할 일이 없는 `drop trigger if exists` 두 줄을 뺐다. 함수 본문 md5 abdc4f1ecc89779d86ee09aac5fb2c57 = 정본 그대로.
---      73b 결과: 칸 18 · 보기 8 · c 11 · f 1 · p 1 · 색인 4 · 방아쇠 2 · RLS true · 정책 0. 뒤이어 지급 1줄 · 적립 23줄(계약 §1.19).
+--      73b 결과: 칸 18 · 보기 8 · c 11 · f 1 · p 1 · 색인 4 · 방아쇠 2 · RLS true · 정책 0. 뒤이어 지급 2줄 · 적립 23줄(계약 §1.19).
 --
 -- 73a) 실행 블록(멱등):
 create table if not exists public.killrace_prize_ledger (
