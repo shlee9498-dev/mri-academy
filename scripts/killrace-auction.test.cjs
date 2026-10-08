@@ -441,18 +441,19 @@ test("유찰 강제 배정: 한 바퀴 뒤에만 · 빈자리 많은 팀 → 남
   assert.deepEqual(s.gem.queue, []);
   T.finish(s, t);
   const sum = T.summary(s);
-  // C1 −15P → −3점 · C2 62P → 12 + 8티어 10 = 22 · C3 87P → 17 + 7티어 5 · 5 + 8티어 10 = 37
+  // C1 −15P → 5P 단위 3개 × −2 = −6점 · C2 62P → 12(유찰로 받은 8티어 I 는 가산 없음) · C3 87P → 17 + 경매로 산 7티어 5 · 5 + 8티어 10 = 37
   assert.deepEqual(sum.teams.map((x) => [x.remaining, x.pointBonus, x.tierBonus, x.bonus, x.debt, x.full]),
-    [[-15, -3, 0, -3, 15, true], [62, 12, 10, 22, 0, true], [87, 17, 20, 37, 0, true]]);
+    [[-15, -6, 0, -6, 15, true], [62, 12, 0, 12, 0, true], [87, 17, 20, 37, 0, true]]);
   const b = sum.teams[0].members.find((m) => m.ign === "B");
   assert.deepEqual([b.price, b.forced, b.debt], [25, true, 15]);
-  assert.deepEqual(T.registerPlan(s).map((p) => p.bonus), [-3, 22, 37]);
+  assert.deepEqual(T.registerPlan(s).map((p) => p.bonus), [-6, 12, 37]);
 });
 
-test("5P당 1점은 마이너스도 같은 방식(0 쪽으로 버림): 37 → 7 · 0 → 0 · −30 → −6(오너 예) · −18 → −3 · −4 → 0", () => {
-  const st = { config: { budget: 100, bonusPer: 5, tierBonus: {} }, lots: [] };
+test("시작 점수: 0 이상 5P당 +1(내림) · 마이너스 5P 단위마다 −2 · 자투리 없음 — 37 → 7 · 0 → 0 · −30 → −12 · −7 → −2 · −4 → 0", () => {
+  const st = { config: { budget: 100, bonusPer: 5, negPer: 2, tierBonus: {} }, lots: [] };
   const pts = (rem) => T.bonusOf(st, { spent: 100 - rem, picks: [] });
-  assert.deepEqual([37, 0, -30, -18, -4].map(pts), [7, 0, -6, -3, 0]);
+  assert.deepEqual([37, 0, -30, -7, -4, -15].map(pts), [7, 0, -12, -2, 0, -6]);
+  assert.equal(T.normConfig({}).negPer, 2);
   assert.equal(Object.is(pts(-4), -0), false);
   assert.deepEqual(["2티어", "T2", "1.5", "8", "9"].map((x) => T.tierKey(T.normConfig({}), x)), ["2", "2", "1.5", "8", "9"]);
 });
@@ -474,5 +475,37 @@ test("API: 오늘 설정으로 만들고 팀 등록하면 마이너스 · 티어
   }
   await h.admin({ action: "finish" });
   assert.equal((await h.admin({ action: "register" })).code, 200);
-  assert.deepEqual(h.calls.bonus, [{ evId: 2, bonus: { "K1 팀": -3, "K2 팀": 22, "K3 팀": 37 }, teamSize: 4 }]);
+  assert.deepEqual(h.calls.bonus, [{ evId: 2, bonus: { "K1 팀": -6, "K2 팀": 12, "K3 팀": 37 }, teamSize: 4 }]);
+});
+
+test("남은 0P 팀이 유찰 선수를 받으면 시작가 전체 ×3 빚 · 유찰로 받은 7 · 8티어는 팀 가산 없음 · 경매로 산 7 · 8티어는 가산", () => {
+  const s = today();
+  let t = T0;
+  const sell = (id, amount) => { T.openLot(s, {}, t); if (id) T.bid(s, { captainId: id, amount }, t); T.closeNow(s, t + 1); t += 10; };
+  sell("C1", 40); sell("C1", 40); sell("C1", 20);                       // A · B · C → C1 남은 0 · 다 참
+  sell(null); sell("C2", 40); sell("C3", 40); sell("C2", 40);            // D 유찰 · E → C2 · F(7) → C3 · G(7) → C2(남은 20 · 빈자리 1)
+  sell(null); sell(null);                                                // H · I(8) 유찰
+  // C3 남은 60 · 빈자리 2 → 먼저 · 그다음 C2(빈자리 1)
+  T.startGems(s, t);
+  assert.deepEqual(s.gem.queue, ["C3", "C2"]);
+  const L = (ign) => s.lots.find((l) => l.ign === ign).id;
+  T.gemPick(s, { captainId: "C3", lotId: L("H") }, t);                   // 8티어 3P 를 60 에서 낸다 · 빚 없음 · 가산 없음
+  assert.deepEqual(T.gemPick(s, { captainId: "C2", lotId: L("D") }, t), { ok: true, price: 15, charge: 15, debt: 0 });
+  T.gemPick(s, { captainId: "C3", lotId: L("I") }, t);
+  const sum = T.summary(s);
+  const c3 = sum.teams[2];
+  // C3: 경매로 산 F(7티어) +5 만 · 유찰로 받은 H · I(8티어)는 0 → 남은 54 → 10 + 5 = 15
+  assert.deepEqual([c3.remaining, c3.pointBonus, c3.tierBonus, c3.bonus], [54, 10, 5, 15]);
+  // C2: 경매로 산 G(7티어) +5 · 남은 5 → +1
+  assert.deepEqual([sum.teams[1].remaining, sum.teams[1].tierBonus, sum.teams[1].bonus], [5, 5, 6]);
+  // 남은 0P 팀(상한 40 이라 경매로는 못 만드는 모양 — 포인트만 0 으로 맞춘 상태)이 시작가 10 선수를 받으면 10 × 3 = 30 빚 → −30P → −12점
+  const z = today(); let u = T0;
+  const sz = (id, amount) => { T.openLot(z, {}, u); if (id) T.bid(z, { captainId: id, amount }, u); T.closeNow(z, u + 1); u += 10; };
+  for (let i = 0; i < 9; i++) sz(i === 0 ? "C2" : i === 1 ? "C3" : null, i < 2 ? 25 : 0);
+  z.captains[0].spent = 100;                                            // C1 남은 0 · 빈자리 3
+  T.startGems(z, u);
+  assert.equal(z.gem.queue[0], "C1");
+  assert.deepEqual(T.gemPick(z, { captainId: "C1", lotId: z.lots.find((l) => l.ign === "E").id }, u), { ok: true, price: 10, charge: 30, debt: 30 });
+  const zc = T.summary(z).teams[0];
+  assert.deepEqual([zc.remaining, zc.pointBonus, zc.debt], [-30, -12, 30]);
 });

@@ -27,7 +27,8 @@ const DEFAULT_CONFIG = Object.freeze({
   tierBonus: Object.freeze({ 7: 5, 8: 10 }),
   bidSec: 20,             // 입찰 타이머 — 입찰이 들어오면 다시 이만큼
   minStep: 1,             // 최소 올림 폭
-  bonusPer: 5,            // 남은 포인트 5당 1점(킬내기 시작 점수 · 오너 10/8) — 마이너스도 같은 방식(0 쪽으로 버림 · −30P → −6점)
+  bonusPer: 5,            // 남은 포인트 5당 +1점(킬내기 시작 점수 · 내림 · 오너 10/8)
+  negPer: 2,              // 마이너스는 5P 단위마다 −2점 · 자투리는 깎지 않음(오너 10/8 개정 · −30P → −12 · −7P → −2 · −4P → 0)
   maxBid: 40,             // 한 선수에 부를 수 있는 상한(오너 10/8 · 시작 포인트의 40%) — null 이면 상한 없음
   unsold: "forced",       // 유찰 처리 — "forced"(시작가 강제 배정 + 빚) · "gem"(무료 지명 · 옛 방식)
   debtMul: 3,             // 강제 배정 때 모자란 포인트에 곱하는 빚 배수(오너 10/8)
@@ -52,7 +53,7 @@ function normConfig(input = {}) {
   if (!tiers.length || tiers.some((t) => !int(c.startPrice[t], 0, c.budget))) return null;
   // 상한은 가장 비싼 시작가 이상 · 시작 포인트 이하(그보다 낮으면 그 티어는 아무도 못 산다)
   if (c.maxBid !== null && !int(c.maxBid, Math.max(...tiers.map((t) => c.startPrice[t])), c.budget)) return null;
-  if (!UNSOLD_MODES.has(c.unsold) || !int(c.debtMul, 1, 10)) return null;
+  if (!UNSOLD_MODES.has(c.unsold) || !int(c.debtMul, 1, 10) || !int(c.negPer, 1, 10)) return null;
   if (Object.keys(c.tierBonus).some((t) => !(t in c.startPrice) || !int(c.tierBonus[t], 0, 100))) return null;
   return c;
 }
@@ -347,10 +348,17 @@ function finish(state, now) {
 }
 
 // ── 결과 ── 팀별 구성 · 남은 포인트 · 보너스(남은 포인트 bonusPer 당 +1) · 교체 선수
-// 0 쪽으로 버림 — 37P → 7점 · −30P → −6점 · −18P → −3점(마이너스도 5P 묶음만 센다 · 오너 10/8 「똑같이 적용」) · −0 은 0
-const pointBonusOf = (state, c) => Math.trunc(remaining(state, c) / state.config.bonusPer) || 0;
-// 티어 가산 — 그 팀에 뽑힌 선수(강제 배정 포함)의 티어마다 tierBonus 를 더한다. 팀장은 매물이 아니라 빠진다
-const tierBonusOf = (state, c) => c.picks.reduce((sum, id) => sum + ((state.config.tierBonus || {})[(lotOf(state, id) || {}).tier] || 0), 0);
+// 남은 포인트 → 시작 점수. 0 이상 = bonusPer(5)P 당 +1(내림) · 마이너스 = 5P 단위마다 −negPer(2) · 자투리는 깎지 않음
+//   37P → +7 · −30P → −12 · −7P → −2 · −4P → 0(오너 10/8 개정). negPer 가 없는 옛 설정은 1(같은 비율)
+const pointBonusOf = (state, c) => {
+  const rem = remaining(state, c); const per = state.config.bonusPer;
+  return rem >= 0 ? Math.floor(rem / per) : -Math.floor(-rem / per) * (state.config.negPer || 1) || 0;
+};
+// 티어 가산 — 그 팀이 경매로 산 선수의 티어마다 tierBonus 를 더한다. 유찰로 강제 배정받은 선수 · 팀장은 빠진다(오너 10/8 개정)
+const tierBonusOf = (state, c) => c.picks.reduce((sum, id) => {
+  const l = lotOf(state, id) || {};
+  return l.forced ? sum : sum + ((state.config.tierBonus || {})[l.tier] || 0);
+}, 0);
 const bonusOf = (state, c) => pointBonusOf(state, c) + tierBonusOf(state, c);
 function summary(state) {
   const teams = state.captains.map((c) => ({
@@ -417,7 +425,7 @@ function publicView(state, now) {
   return {
     rev: state.rev, serverNow: now, phase: state.phase,
     config: { teamSize: state.config.teamSize, budget: state.config.budget, startPrice: state.config.startPrice, bidSec: state.config.bidSec, minStep: state.config.minStep, bonusPer: state.config.bonusPer,
-      maxBid: state.config.maxBid == null ? null : state.config.maxBid, unsold: state.config.unsold || "gem", debtMul: state.config.debtMul || null, tierBonus: state.config.tierBonus || {} },
+      maxBid: state.config.maxBid == null ? null : state.config.maxBid, unsold: state.config.unsold || "gem", debtMul: state.config.debtMul || null, negPer: state.config.negPer || 1, tierBonus: state.config.tierBonus || {} },
     captains: state.captains.map((c) => ({
       id: c.id, ign: c.ign, teamName: c.teamName, remaining: remaining(state, c), slotsLeft: slotsLeft(state, c), bonus: bonusOf(state, c),
       pointBonus: pointBonusOf(state, c), tierBonus: tierBonusOf(state, c), debt: c.picks.reduce((sum, id) => sum + ((lotOf(state, id) || {}).debt || 0), 0),
