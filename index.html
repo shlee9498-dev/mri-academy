@@ -690,7 +690,11 @@ html.vr-lock{overflow:hidden}
   var raw = (box.getAttribute("data-yt") || "").trim();
   var m = raw.match(/(?:youtu\.be\/|[?&]v=|\/embed\/|\/shorts\/|\/live\/)([A-Za-z0-9_-]{11})/) || raw.match(/^([A-Za-z0-9_-]{11})$/);
   if (!m) return;
-  var id = m[1];
+  // 영상 ID 는 허용 글자표(SAFE)에서 한 글자씩 다시 골라 만든다 — 주소에 들어가는 글자가 표 밖으로 나갈 수 없다
+  var SAFE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+  var id = "";
+  for (var i = 0; i < m[1].length; i++) { var k = SAFE.indexOf(m[1].charAt(i)); if (k < 0) return; id += SAFE.charAt(k); }
+  if (id.length !== 11) return;
   document.getElementById("lvH").textContent = box.getAttribute("data-title") || "수업 영상";
   var desc = box.getAttribute("data-desc") || "";
   var d = document.getElementById("lvDesc");
