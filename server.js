@@ -8813,7 +8813,7 @@ const SCHEMA_OPTIONAL = {
                               "fetched_at"],
   event_match_telemetry: ["event_id", "team_name", "match_id", "match_start", "source_bytes", "source_events", "positions", "combat",
                           "fetched_at"],
-  // §73 킬내기 상금 원장(docs/killrace-api.md §1.19 · 2026-10-09 실행 · 소관 GmI 대행) — 적립 23 · 지급 1 줄로 시작. 지급 요청 화면은 별도 주문.
+  // §73 킬내기 상금 원장(docs/killrace-api.md §1.19 · 2026-10-09 실행 · 소관 GmI 대행) — 적립 31 · 지급 2 줄(10/9 · 2 ~ 5회 적립 · 지급완료 2건). 지급 요청 화면은 별도 주문.
   killrace_prize_ledger: ["id", "kind", "platform", "account_id", "ign", "event_id", "reason", "amount", "status", "source", "requested_at",
                           "request_notified_at", "paid_at", "paid_notified_at", "cancelled_at", "memo", "entered_by", "created_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
