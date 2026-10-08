@@ -5,7 +5,11 @@
 // 그 표를 읽지도 쓰지도 않는다. 상태 저장은 ops_state 한 줄('killrace:auction:<event id>') — DDL 없음.
 //
 // 흐름: 만들기(create) → 매물 올리기(open) → 입찰(bid · 들어올 때마다 타이머 다시) → 시간이 다 되면 낙찰/유찰(tick)
-//       → 「숨은 보석 지명」(startGems · 유찰 선수를 남은 포인트가 적은 팀장부터 무료 지명) → 마감(finish)
+//       → 유찰 처리(startGems) — 두 방식(config.unsold):
+//         "forced"(기본 · 오너 10/8) = 한 바퀴를 다 돈 뒤 남은 선수를 빈자리가 많은 팀부터(같으면 남은 포인트가 많은 팀부터) 한 명씩
+//           시작가로 강제 배정. 남은 포인트로 못 내는 만큼은 ×debtMul(3) 을 빚으로 뺀다(남은 포인트가 마이너스가 될 수 있다)
+//         "gem"(옛 「숨은 보석 지명」) = 남은 포인트가 적은 팀장부터 무료 지명
+//       → 마감(finish)
 //       → 팀 등록(register · killrace.registerTeam 으로 그대로 넘김 = 손으로 다시 치지 않는다) + 남은 포인트 보너스 저장.
 // 팀 인원은 config.teamSize 다(4 고정 아님 — 다음 회차 듀오는 2).
 // 시각은 전부 서버 시각(ms)이다. 화면은 serverNow 와 deadline 의 차이로 남은 시간을 그린다.
@@ -17,11 +21,18 @@ const DEFAULT_CONFIG = Object.freeze({
   maxTeams: 5,            // 정원 = teamSize × maxTeams
   minTeams: 3,            // 최소 인원 = teamSize × minTeams
   budget: 100,            // 팀장마다 포인트
-  startPrice: Object.freeze({ T1: 30, T2: 10, T3: 5 }),
+  // 킬 · 딜 티어표 기준 시작가(오너 10/8 · 5회 대승배). 진행자는 티어 칸에 1.5 · 2 · … · 8(「2티어」 · 「T2」 도 받는다)을 적는다
+  startPrice: Object.freeze({ "1.5": 25, 2: 20, 3: 15, 4: 10, 5: 7, 6: 5, 7: 5, 8: 3 }),
+  // 팀 가산 — 그 티어 선수 한 명마다 팀 시작 점수에 더한다(지금 룰 · 7티어 +5 · 8티어 +10)
+  tierBonus: Object.freeze({ 7: 5, 8: 10 }),
   bidSec: 20,             // 입찰 타이머 — 입찰이 들어오면 다시 이만큼
   minStep: 1,             // 최소 올림 폭
-  bonusPer: 10,           // 남은 포인트 10당 +1점(킬내기 점수에 더한다)
+  bonusPer: 5,            // 남은 포인트 5당 1점(킬내기 시작 점수 · 오너 10/8) — 마이너스도 같은 방식(0 쪽으로 버림 · −30P → −6점)
+  maxBid: 40,             // 한 선수에 부를 수 있는 상한(오너 10/8 · 시작 포인트의 40%) — null 이면 상한 없음
+  unsold: "forced",       // 유찰 처리 — "forced"(시작가 강제 배정 + 빚) · "gem"(무료 지명 · 옛 방식)
+  debtMul: 3,             // 강제 배정 때 모자란 포인트에 곱하는 빚 배수(오너 10/8)
 });
+const UNSOLD_MODES = new Set(["forced", "gem"]);
 const PLATFORMS = new Set(["steam", "kakao"]);
 const MAX_PLAYERS = 60;
 
@@ -32,12 +43,17 @@ const numOrNull = (v) => { const n = Number(v); return v === "" || v == null || 
 
 // ── 설정 ──
 function normConfig(input = {}) {
-  const c = { ...DEFAULT_CONFIG, ...input, startPrice: { ...DEFAULT_CONFIG.startPrice, ...(input.startPrice || {}) } };
+  // 시작가 · 가산 표는 주면 통째로 바꾼다(옛 T1 · T2 · T3 표와 섞이지 않게)
+  const c = { ...DEFAULT_CONFIG, ...input, startPrice: { ...(input.startPrice || DEFAULT_CONFIG.startPrice) }, tierBonus: { ...(input.tierBonus || (input.startPrice ? {} : DEFAULT_CONFIG.tierBonus)) } };
   const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
   if (!int(c.teamSize, 2, 4) || !int(c.maxTeams, 2, 12) || !int(c.minTeams, 2, c.maxTeams)) return null;
   if (!int(c.budget, 1, 100000) || !int(c.bidSec, 5, 120) || !int(c.minStep, 1, 1000) || !int(c.bonusPer, 1, 100000)) return null;
   const tiers = Object.keys(c.startPrice);
   if (!tiers.length || tiers.some((t) => !int(c.startPrice[t], 0, c.budget))) return null;
+  // 상한은 가장 비싼 시작가 이상 · 시작 포인트 이하(그보다 낮으면 그 티어는 아무도 못 산다)
+  if (c.maxBid !== null && !int(c.maxBid, Math.max(...tiers.map((t) => c.startPrice[t])), c.budget)) return null;
+  if (!UNSOLD_MODES.has(c.unsold) || !int(c.debtMul, 1, 10)) return null;
+  if (Object.keys(c.tierBonus).some((t) => !(t in c.startPrice) || !int(c.tierBonus[t], 0, 100))) return null;
   return c;
 }
 // 시작가가 높은 티어가 앞(T1 → T2 → T3). 슬롯 순서(사망 감점 4·3·2·1)와 매물 순서가 이 순서를 쓴다
@@ -46,6 +62,14 @@ const tierRank = (config, tier) => {
   const i = order.indexOf(tier);
   return i < 0 ? order.length : i;
 };
+
+// 티어 칸 → 시작가 표의 키. 「2」 · 「2티어」 · 「T2」 · 「1.5」 모두 받는다(표에 그대로 있으면 그것이 먼저 · 옛 T1 표도 그대로)
+function tierKey(config, raw) {
+  const t = String(raw || "").trim().toUpperCase();
+  if (t in config.startPrice) return t;
+  const bare = t.replace(/\s*티어$/, "").replace(/^T(?=\d)/, "");
+  return bare in config.startPrice ? bare : t;
+}
 
 // 참가 인원 → 팀 수 · 교체 선수 수. 12명 3팀 · 16명 4팀 · 20명 5팀(4인 기준) · 남는 인원은 교체 선수
 function teamPlan(count, config = DEFAULT_CONFIG) {
@@ -56,7 +80,7 @@ function teamPlan(count, config = DEFAULT_CONFIG) {
 function normPlayer(p, config, { needTier }) {
   const ign = String((p && p.ign) || "").trim();
   if (!ign || ign.length > 30) return null;
-  const tier = String((p && p.tier) || "").trim().toUpperCase();
+  const tier = tierKey(config, p && p.tier);
   if (needTier && !(tier in config.startPrice)) return null;
   const platform = lower(p.platform);
   return {
@@ -160,8 +184,11 @@ function bid(state, { captainId, amount }, now) {
   if (slotsLeft(state, cap) <= 0) return fail("team_full");
   if (live.captainId === cap.id) return fail("already_high");
   const min = live.high == null ? live.start : live.high + state.config.minStep;
+  if (state.config.maxBid != null && live.high != null && min > state.config.maxBid) return fail("cap_reached", { max: state.config.maxBid });
   if (amount < min) return fail("low_bid", { min });
   if (amount > remaining(state, cap)) return fail("over_budget", { remaining: remaining(state, cap) });
+  const maxBid = state.config.maxBid == null ? null : state.config.maxBid;
+  if (maxBid !== null && amount > maxBid) return fail("over_cap", { max: maxBid });
   live.high = amount; live.captainId = cap.id; live.deadline = now + state.config.bidSec * 1000;
   live.bids.push({ captainId: cap.id, amount, at: now });
   touch(state, now);
@@ -205,12 +232,12 @@ function withdrawLot(state, { lotId }, now) {
   let refunded = 0;
   if (lot.status === "sold" || lot.status === "gem") {
     const cap = capOf(state, lot.captainId);
-    refunded = lot.price || 0;
+    refunded = lot.charge != null ? lot.charge : lot.price || 0;      // 강제 배정은 실제로 뺀 값(빚 포함)을 돌려준다
     cap.spent -= refunded;
     cap.picks = cap.picks.filter((id) => id !== lot.id);
     if (state.lastSale && state.lastSale.lotId === lot.id) state.lastSale = null;
   }
-  lot.status = "withdrawn"; lot.price = null; lot.captainId = null; lot.gem = false;
+  lot.status = "withdrawn"; lot.price = null; lot.captainId = null; lot.gem = false; delete lot.charge; delete lot.debt; delete lot.forced;
   if (state.phase === "gems") state.gem.queue = gemRound(state, state.gem.queue);
   touch(state, now);
   return ok({ refunded });
@@ -234,7 +261,8 @@ function addLot(state, { player }, now) {
   return ok({ lotId: lot.id });
 }
 
-// ── 숨은 보석 지명 ── 자리가 남은 팀장을 남은 포인트가 적은 순으로 한 바퀴. 다 돌면 다시 한 바퀴.
+// ── 유찰 처리 ── 자리가 남은 팀장을 한 바퀴. 다 돌면 다시 한 바퀴.
+//   forced: 빈자리가 많은 팀부터 · 같으면 남은 포인트가 많은 팀부터(오너 10/8) · gem: 남은 포인트가 적은 팀부터
 // keep = 이번 바퀴에 아직 차례가 남은 팀장(중간에 매물 · 자리가 바뀌면 그 안에서만 다시 거른다)
 function gemRound(state, keep) {
   if (!unsold(state).length) return [];
@@ -243,14 +271,18 @@ function gemRound(state, keep) {
   const list = pool.length ? pool : open;
   return list
     .map((c) => ({ c, i: state.captains.indexOf(c) }))
-    .sort((a, b) => remaining(state, a.c) - remaining(state, b.c) || a.c.picks.length - b.c.picks.length || a.i - b.i)
+    .sort(state.config.unsold === "forced"
+      ? (a, b) => slotsLeft(state, b.c) - slotsLeft(state, a.c) || remaining(state, b.c) - remaining(state, a.c) || a.i - b.i
+      : (a, b) => remaining(state, a.c) - remaining(state, b.c) || a.c.picks.length - b.c.picks.length || a.i - b.i)
     .map(({ c }) => c.id);
 }
 function startGems(state, now) {
   tick(state, now);
   if (state.phase !== "bidding") return fail("wrong_phase");
   if (state.live) return fail("lot_live");
-  for (const lot of queued(state)) lot.status = "unsold";       // 올리지 않은 매물도 지명 대상으로
+  // 강제 배정은 「한 바퀴 뒤에도 안 팔린 선수」만 — 아직 올리지 않은 매물이 있으면 먼저 다 올린다
+  if (state.config.unsold === "forced" && queued(state).length) return fail("queue_left", { left: queued(state).length });
+  for (const lot of queued(state)) lot.status = "unsold";       // 올리지 않은 매물도 지명 대상으로(gem 방식)
   state.phase = "gems"; state.lastSale = null;
   state.gem = { queue: gemRound(state, []) };
   touch(state, now);
@@ -263,16 +295,29 @@ function gemPick(state, { captainId, lotId }, now) {
   if (turn !== captainId) return fail("not_your_turn");
   const cap = capOf(state, captainId); const lot = lotOf(state, lotId);
   if (!lot || lot.status !== "unsold") return fail("lot_not_available");
-  lot.status = "gem"; lot.price = 0; lot.captainId = cap.id; lot.gem = true;
+  let extra = {};
+  if (state.config.unsold === "forced") {
+    // 시작가로 강제 배정 — 남은 포인트(0 아래면 0)로 낼 수 있는 만큼 내고, 모자란 만큼 × debtMul 을 빚으로 더 뺀다
+    const price = state.config.startPrice[lot.tier] || 0;
+    const pay = Math.min(price, Math.max(0, remaining(state, cap)));
+    const debt = (price - pay) * state.config.debtMul;
+    lot.price = price; lot.charge = pay + debt; lot.debt = debt; lot.forced = true;
+    cap.spent += pay + debt;
+    extra = { price, charge: pay + debt, debt };
+  } else {
+    lot.price = 0;
+  }
+  lot.status = "gem"; lot.captainId = cap.id; lot.gem = true;
   cap.picks.push(lot.id);
   const rest = state.gem.queue.slice(1);
   state.gem.queue = rest.length ? gemRound(state, rest) : gemRound(state, []);
   touch(state, now);
-  return ok();
+  return ok(extra);
 }
 // 차례 넘기기(진행자) — 자리에 없는 팀장. 이번 바퀴에서만 빠진다
 function gemSkip(state, now) {
   if (state.phase !== "gems") return fail("wrong_phase");
+  if (state.config.unsold === "forced") return fail("forced_no_skip");      // 강제 배정은 넘기지 않는다 — 자리에 없으면 진행자가 「대신 배정」
   if (!state.gem.queue.length) return fail("no_gem_turn");
   const rest = state.gem.queue.slice(1);
   state.gem.queue = rest.length ? gemRound(state, rest) : [];
@@ -302,12 +347,17 @@ function finish(state, now) {
 }
 
 // ── 결과 ── 팀별 구성 · 남은 포인트 · 보너스(남은 포인트 bonusPer 당 +1) · 교체 선수
-const bonusOf = (state, c) => Math.floor(remaining(state, c) / state.config.bonusPer);
+// 0 쪽으로 버림 — 37P → 7점 · −30P → −6점 · −18P → −3점(마이너스도 5P 묶음만 센다 · 오너 10/8 「똑같이 적용」) · −0 은 0
+const pointBonusOf = (state, c) => Math.trunc(remaining(state, c) / state.config.bonusPer) || 0;
+// 티어 가산 — 그 팀에 뽑힌 선수(강제 배정 포함)의 티어마다 tierBonus 를 더한다. 팀장은 매물이 아니라 빠진다
+const tierBonusOf = (state, c) => c.picks.reduce((sum, id) => sum + ((state.config.tierBonus || {})[(lotOf(state, id) || {}).tier] || 0), 0);
+const bonusOf = (state, c) => pointBonusOf(state, c) + tierBonusOf(state, c);
 function summary(state) {
   const teams = state.captains.map((c) => ({
     captainId: c.id, teamName: c.teamName, captain: c.ign,
-    members: c.picks.map((id) => lotOf(state, id)).map((l) => ({ ign: l.ign, tier: l.tier, price: l.price || 0, gem: !!l.gem })),
-    spent: c.spent, remaining: remaining(state, c), bonus: bonusOf(state, c), full: slotsLeft(state, c) === 0,
+    members: c.picks.map((id) => lotOf(state, id)).map((l) => ({ ign: l.ign, tier: l.tier, price: l.price || 0, gem: !!l.gem, forced: !!l.forced, debt: l.debt || 0 })),
+    spent: c.spent, remaining: remaining(state, c), bonus: bonusOf(state, c), pointBonus: pointBonusOf(state, c), tierBonus: tierBonusOf(state, c),
+    debt: c.picks.reduce((sum, id) => sum + ((lotOf(state, id) || {}).debt || 0), 0), full: slotsLeft(state, c) === 0,
   }));
   const bench = state.lots.filter((l) => l.status === "unsold" || l.status === "queued").sort((a, b) => a.order - b.order).map((l) => ({ ign: l.ign, tier: l.tier }));
   return { teams, bench };
@@ -366,10 +416,14 @@ function publicView(state, now) {
   const live = state.live;
   return {
     rev: state.rev, serverNow: now, phase: state.phase,
-    config: { teamSize: state.config.teamSize, budget: state.config.budget, startPrice: state.config.startPrice, bidSec: state.config.bidSec, minStep: state.config.minStep, bonusPer: state.config.bonusPer },
+    config: { teamSize: state.config.teamSize, budget: state.config.budget, startPrice: state.config.startPrice, bidSec: state.config.bidSec, minStep: state.config.minStep, bonusPer: state.config.bonusPer,
+      maxBid: state.config.maxBid == null ? null : state.config.maxBid, unsold: state.config.unsold || "gem", debtMul: state.config.debtMul || null, tierBonus: state.config.tierBonus || {} },
     captains: state.captains.map((c) => ({
       id: c.id, ign: c.ign, teamName: c.teamName, remaining: remaining(state, c), slotsLeft: slotsLeft(state, c), bonus: bonusOf(state, c),
-      picks: c.picks.map((id) => lotOf(state, id)).map((l) => ({ ign: l.ign, tier: l.tier, price: l.price || 0, gem: !!l.gem })),
+      pointBonus: pointBonusOf(state, c), tierBonus: tierBonusOf(state, c), debt: c.picks.reduce((sum, id) => sum + ((lotOf(state, id) || {}).debt || 0), 0),
+      // 지금 이 매물에 이 팀이 부를 수 있는 최대(상한 · 남은 포인트 중 작은 쪽) — 화면의 「최대」 표시 · 버튼 막기
+      maxNow: Math.max(0, Math.min(remaining(state, c), state.config.maxBid == null ? Infinity : state.config.maxBid)),
+      picks: c.picks.map((id) => lotOf(state, id)).map((l) => ({ ign: l.ign, tier: l.tier, price: l.price || 0, gem: !!l.gem, forced: !!l.forced, debt: l.debt || 0 })),
     })),
     live: live ? {
       lot: card(lotOf(state, live.lotId)), start: live.start, high: live.high, captainId: live.captainId, deadline: live.deadline,
@@ -531,6 +585,6 @@ module.exports = {
   DEFAULT_CONFIG, createAuctionApi, defaultTimes,
   _test: {
     normConfig, teamPlan, createAuction, tick, openLot, bid, closeNow, undoLastSale, withdrawLot, addLot, startGems, gemPick, gemSkip,
-    gemRound, renameTeam, setSlots, teamMembers, rosterOf, finish, summary, registerPlan, publicView, adminView, captainByToken, remaining, slotsLeft, tierRank,
+    gemRound, renameTeam, setSlots, teamMembers, rosterOf, finish, summary, registerPlan, publicView, adminView, captainByToken, remaining, slotsLeft, tierRank, tierKey, bonusOf,
   },
 };

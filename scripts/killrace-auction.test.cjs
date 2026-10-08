@@ -12,12 +12,14 @@ function players(n) {
   const tiers = ["T1", "T2", "T3"];
   return Array.from({ length: n }, (_, i) => ({ ign: `P${String(i + 1).padStart(2, "0")}`, platform: "steam", tier: tiers[i % 3], kda: 2 + i / 10, avgDmg: 200 + i, position: "돌격" }));
 }
+// 옛 규칙(T1 30 · T2 10 · T3 5 · 10P당 1점 · 상한 없음 · 무료 지명) — 아래 옛 시험들은 이 설정으로 그대로 돈다
+const LEGACY = { startPrice: { T1: 30, T2: 10, T3: 5 }, bonusPer: 10, maxBid: null, unsold: "gem" };
 function make(n = 16, over = {}) {
   const ps = over.players || players(n);
   const teams = T.teamPlan(ps.length).teams;
   const caps = over.captains || ps.slice(0, teams).map((p) => p.ign);
   let k = 0;
-  const r = T.createAuction({ eventId: 2, players: ps, captains: caps, now: T0, token: () => `tok-${++k}`, config: over.config });
+  const r = T.createAuction({ eventId: 2, players: ps, captains: caps, now: T0, token: () => `tok-${++k}`, config: over.config || LEGACY });
   assert.equal(r.ok, true, r.code);
   return r.state;
 }
@@ -47,7 +49,7 @@ test("만들기: 팀장 수 = 팀 수 · 팀장마다 100포인트 · 매물은 
 });
 
 test("만들기 거절: 인원 부족 · 팀장 수 틀림 · 닉 중복 · 티어 없는 매물 · 모르는 팀장", () => {
-  const mk = (ps, caps) => T.createAuction({ eventId: 1, players: ps, captains: caps, now: T0 });
+  const mk = (ps, caps) => T.createAuction({ eventId: 1, players: ps, captains: caps, now: T0, config: LEGACY });
   assert.deepEqual(mk(players(11), ["P01", "P02"]), { ok: false, code: "not_enough_players", need: 12, have: 11 });
   assert.equal(mk(players(16), ["P01", "P02", "P03"]).code, "captain_count");
   const dup = players(12); dup[5].ign = "p01";
@@ -284,10 +286,10 @@ test("API: 진행자 키 · 팀장 토큰 · 만들기 · 중복 만들기 거�
   assert.equal((await h.call(h.api.getState, { headers: h.host })).body.admin, true);      // 만들기 전에도 진행자 확인이 된다
   assert.equal((await h.call(h.api.postAdmin, { body: { action: "create" } })).code, 401);
   const ps = players(16);
-  const made = await h.admin({ action: "create", players: ps, captains: ps.slice(0, 4).map((p) => p.ign) });
+  const made = await h.admin({ action: "create", config: LEGACY, players: ps, captains: ps.slice(0, 4).map((p) => p.ign) });
   assert.deepEqual([made.code, made.body], [200, { ok: true }]);
   assert.deepEqual(h.calls.created, [2]);
-  assert.equal((await h.admin({ action: "create", players: ps, captains: ["P01", "P02", "P03", "P04"] })).body.error.code, "auction_exists");
+  assert.equal((await h.admin({ action: "create", config: LEGACY, players: ps, captains: ["P01", "P02", "P03", "P04"] })).body.error.code, "auction_exists");
   const pub = (await h.call(h.api.getState)).body;
   assert.deepEqual([pub.exists, pub.admin, pub.me, pub.tokens], [true, false, null, undefined]);
   const adm = (await h.call(h.api.getState, { headers: h.host })).body;
@@ -303,7 +305,7 @@ test("API: 진행자 키 · 팀장 토큰 · 만들기 · 중복 만들기 거�
 test("API: 동시에 온 같은 금액 입찰은 하나만 200 · 초과 입찰 409 · 시간이 지나면 조회만으로 낙찰 처리", async () => {
   const h = harness();
   const ps = players(16);
-  await h.admin({ action: "create", players: ps, captains: ps.slice(0, 4).map((p) => p.ign) });
+  await h.admin({ action: "create", config: LEGACY, players: ps, captains: ps.slice(0, 4).map((p) => p.ign) });
   const tokens = (await h.call(h.api.getState, { headers: h.host })).body.tokens.map((x) => x.token);
   const as = (i) => ({ authorization: `Bearer ${tokens[i]}` });
   await h.admin({ action: "open" });
@@ -330,7 +332,7 @@ test("API: 동시에 온 같은 금액 입찰은 하나만 200 · 초과 입찰 
 test("API: 마감 뒤 팀 등록으로 넘기고 보너스를 저장한다 · 초기화는 확인 문구가 있어야 한다", async () => {
   const h = harness();
   const ps = players(12);
-  await h.admin({ action: "create", players: ps, captains: ["P01", "P02", "P03"] });
+  await h.admin({ action: "create", config: LEGACY, players: ps, captains: ["P01", "P02", "P03"] });
   assert.equal((await h.admin({ action: "register" })).body.error.code, "wrong_phase");
   await h.admin({ action: "open" }); await h.admin({ action: "bidFor", captainId: "C1", amount: 64 }); await h.admin({ action: "closeNow" });
   await h.admin({ action: "startGems" });
@@ -371,4 +373,106 @@ test("회차 명단(개인 기록에 붙일 값): 팀 · 슬롯 · 티어 · 낙
   const pick = roster.find((x) => !x.captain && x.team === plan[0].teamName);
   assert.deepEqual([pick.price, typeof pick.tier, pick.captain], [30, "string", false]);
   assert.doesNotMatch(JSON.stringify(roster), /token|tok-/);
+});
+
+// ═══ 5회 대승배 규칙(오너 10/8 · 기본 설정) — 1인 상한 40P · 티어표 시작가 · 유찰 강제 배정 + 빚 ×3 · 5P당 1점 · 7 · 8티어 가산 ═══
+function today() {
+  const ps = [
+    { ign: "K1", platform: "steam", tier: "팀장" }, { ign: "K2", platform: "steam", tier: "팀장" }, { ign: "K3", platform: "steam", tier: "팀장" },
+    { ign: "A", platform: "steam", tier: "1.5" }, { ign: "B", platform: "steam", tier: "1.5티어" }, { ign: "C", platform: "steam", tier: "T2" },
+    { ign: "D", platform: "steam", tier: "3" }, { ign: "E", platform: "steam", tier: "4티어" }, { ign: "F", platform: "steam", tier: "7" },
+    { ign: "G", platform: "steam", tier: "7" }, { ign: "H", platform: "steam", tier: "8" }, { ign: "I", platform: "steam", tier: "8" },
+  ];
+  let k = 0;
+  const r = T.createAuction({ eventId: 6, players: ps, captains: ["K1", "K2", "K3"], now: T0, token: () => `tok-${++k}` });
+  assert.equal(r.ok, true, r.code);
+  return r.state;
+}
+
+test("오늘 설정: 100P · 티어표 시작가(1.5 25 … 8 3) · 「2티어」 「T2」 도 받는다 · 상한 40 · 5P당 1점 · 강제 배정", () => {
+  const s = today();
+  assert.deepEqual([s.config.budget, s.config.maxBid, s.config.bonusPer, s.config.unsold, s.config.debtMul], [100, 40, 5, "forced", 3]);
+  assert.deepEqual(s.lots.map((l) => [l.ign, l.tier]), [["A", "1.5"], ["B", "1.5"], ["C", "2"], ["D", "3"], ["E", "4"], ["F", "7"], ["G", "7"], ["H", "8"], ["I", "8"]]);
+  assert.deepEqual(T.publicView(s, T0).queue.map((l) => l.start), [25, 25, 20, 15, 10, 5, 5, 3, 3]);
+  assert.equal(T.normConfig({ maxBid: 20 }), null);                     // 가장 비싼 시작가(25)보다 낮은 상한은 거절
+  assert.equal(T.normConfig({ maxBid: 101 }), null);
+  assert.equal(T.normConfig({ unsold: "free" }), null);
+});
+
+test("1인 상한: 40 까지만 · 넘으면 over_cap · 40 이 걸리면 다른 팀은 cap_reached · 화면에 팀별 지금 최대", () => {
+  const s = today();
+  let t = T0;
+  T.openLot(s, {}, t);                                                   // A(1.5 · 25)
+  assert.deepEqual(T.bid(s, { captainId: "C1", amount: 41 }, t), { ok: false, code: "over_cap", max: 40 });
+  assert.equal(T.bid(s, { captainId: "C1", amount: 40 }, t).ok, true);
+  assert.deepEqual(T.bid(s, { captainId: "C2", amount: 41 }, t), { ok: false, code: "cap_reached", max: 40 });
+  T.closeNow(s, t + 1); t += 10;
+  T.openLot(s, {}, t); T.bid(s, { captainId: "C1", amount: 40 }, t); T.closeNow(s, t + 1); t += 10;
+  const v = T.publicView(s, t);
+  assert.deepEqual(v.captains.map((c) => [c.remaining, c.maxNow]), [[20, 20], [100, 40], [100, 40]]);
+  assert.deepEqual([v.config.maxBid, v.config.unsold, v.config.debtMul], [40, "forced", 3]);
+  T.openLot(s, {}, t);                                                   // C(2 · 20) — C1 은 남은 20 까지
+  assert.deepEqual(T.bid(s, { captainId: "C1", amount: 21 }, t), { ok: false, code: "over_budget", remaining: 20 });
+});
+
+test("유찰 강제 배정: 한 바퀴 뒤에만 · 빈자리 많은 팀 → 남은 P 많은 팀 · 시작가 · 모자란 만큼 ×3 빚 · 넘기기 없음 · 빼면 뺀 값 그대로 돌려줌", () => {
+  const s = today();
+  let t = T0;
+  const sell = (id, amount) => { T.openLot(s, {}, t); if (id) T.bid(s, { captainId: id, amount }, t); T.closeNow(s, t + 1); t += 10; };
+  sell(null); sell(null);                                                // A · B(1.5 · 25) 유찰
+  sell("C1", 40); sell("C1", 40);                                        // C · D → C1 남은 20 · 빈자리 1
+  sell("C2", 10);                                                        // E → C2 남은 90 · 빈자리 2
+  sell("C3", 5); sell("C3", 5); sell("C3", 3);                            // F · G · H → C3 남은 87 · 다 참
+  assert.deepEqual(T.startGems(s, t), { ok: false, code: "queue_left", left: 1 });   // I 를 아직 안 올렸다
+  sell(null);                                                            // I(8 · 3) 유찰
+  assert.equal(T.startGems(s, t).ok, true);
+  assert.deepEqual(s.gem.queue, ["C2", "C1"]);                          // 빈자리 2 인 C2 먼저
+  assert.equal(T.gemSkip(s, t).code, "forced_no_skip");
+  const L = (ign) => s.lots.find((l) => l.ign === ign).id;
+  assert.deepEqual(T.gemPick(s, { captainId: "C2", lotId: L("A") }, t), { ok: true, price: 25, charge: 25, debt: 0 });
+  // C1: 남은 20 으로 25 짜리 → 20 내고 모자란 5 × 3 = 15 빚 → 남은 −15
+  assert.deepEqual(T.gemPick(s, { captainId: "C1", lotId: L("B") }, t), { ok: true, price: 25, charge: 35, debt: 15 });
+  assert.equal(T.remaining(s, s.captains[0]), -15);
+  assert.deepEqual(s.gem.queue, ["C2"]);
+  const before = JSON.parse(JSON.stringify(s));
+  assert.deepEqual(T.withdrawLot(before, { lotId: L("B") }, t), { ok: true, refunded: 35 });
+  assert.equal(T.remaining(before, before.captains[0]), 20);
+  T.gemPick(s, { captainId: "C2", lotId: L("I") }, t);
+  assert.deepEqual(s.gem.queue, []);
+  T.finish(s, t);
+  const sum = T.summary(s);
+  // C1 −15P → −3점 · C2 62P → 12 + 8티어 10 = 22 · C3 87P → 17 + 7티어 5 · 5 + 8티어 10 = 37
+  assert.deepEqual(sum.teams.map((x) => [x.remaining, x.pointBonus, x.tierBonus, x.bonus, x.debt, x.full]),
+    [[-15, -3, 0, -3, 15, true], [62, 12, 10, 22, 0, true], [87, 17, 20, 37, 0, true]]);
+  const b = sum.teams[0].members.find((m) => m.ign === "B");
+  assert.deepEqual([b.price, b.forced, b.debt], [25, true, 15]);
+  assert.deepEqual(T.registerPlan(s).map((p) => p.bonus), [-3, 22, 37]);
+});
+
+test("5P당 1점은 마이너스도 같은 방식(0 쪽으로 버림): 37 → 7 · 0 → 0 · −30 → −6(오너 예) · −18 → −3 · −4 → 0", () => {
+  const st = { config: { budget: 100, bonusPer: 5, tierBonus: {} }, lots: [] };
+  const pts = (rem) => T.bonusOf(st, { spent: 100 - rem, picks: [] });
+  assert.deepEqual([37, 0, -30, -18, -4].map(pts), [7, 0, -6, -3, 0]);
+  assert.equal(Object.is(pts(-4), -0), false);
+  assert.deepEqual(["2티어", "T2", "1.5", "8", "9"].map((x) => T.tierKey(T.normConfig({}), x)), ["2", "2", "1.5", "8", "9"]);
+});
+
+test("API: 오늘 설정으로 만들고 팀 등록하면 마이너스 · 티어 가산 보너스를 그대로 저장한다", async () => {
+  const h = harness();
+  const ps = ["K1", "K2", "K3", "A", "B", "C", "D", "E", "F", "G", "H", "I"].map((ign, i) => ({ ign, platform: "steam", tier: ["팀장", "팀장", "팀장", "1.5", "1.5", "2", "3", "4", "7", "7", "8", "8"][i] }));
+  assert.equal((await h.admin({ action: "create", players: ps, captains: ["K1", "K2", "K3"] })).code, 200);
+  const sell = async (id, amount) => { await h.admin({ action: "open" }); if (id) await h.admin({ action: "bidFor", captainId: id, amount }); await h.admin({ action: "closeNow" }); };
+  await sell(null); await sell(null); await sell("C1", 40); await sell("C1", 40); await sell("C2", 10);
+  await sell("C3", 5); await sell("C3", 5); await sell("C3", 3); await sell(null);
+  const over = await h.admin({ action: "bidFor", captainId: "C1", amount: 41 });
+  assert.equal(over.code, 409);
+  assert.equal((await h.admin({ action: "startGems" })).code, 200);
+  for (let i = 0; i < 10; i++) {
+    const st = (await h.call(h.api.getState, { headers: h.host })).body;
+    if (!st.gemTurn) break;
+    await h.admin({ action: "gemFor", captainId: st.gemTurn, lotId: st.unsold[0].id });
+  }
+  await h.admin({ action: "finish" });
+  assert.equal((await h.admin({ action: "register" })).code, 200);
+  assert.deepEqual(h.calls.bonus, [{ evId: 2, bonus: { "K1 팀": -3, "K2 팀": 22, "K3 팀": 37 }, teamSize: 4 }]);
 });
