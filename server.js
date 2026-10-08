@@ -39,6 +39,8 @@ const killraceCareer = require("./killrace-career.cjs");
 const killraceDetail = require("./killrace-detail.cjs");
 // 킬내기 앱 회원(앱 계약 docs/killrace-app-api.md §2 ~ §5) — 로그인 표지 · 내 계정 · 동의 · 스팀 연결 · 탈퇴 · 구분 판정. 시험 scripts/killrace-members.test.cjs
 const killraceMembers = require("./killrace-members.cjs");
+// 킬내기 상금 — 내 상금 · 지급 요청 · 오너 지급 완료(docs/killrace-api.md §1.20). 시험 scripts/killrace-prize.test.cjs
+const killracePrize = require("./killrace-prize.cjs");
 let killShot = null;   // 킬내기 결과 스샷 읽기 — 아래 킬내기 HTTP 블록에서 만들고 봇 messageCreate 가 쓴다
 let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP 블록에서 만들고 봇 interactionCreate(/킬내기포스터)가 쓴다
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
@@ -7109,6 +7111,18 @@ async function gmiGuildMember(discordId) {
     guildOf: gmiGuildMember,
   });
   killMembers.mount(app, { limiter: limit("krMe", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
+  // 킬내기 상금(docs/killrace-api.md §1.20 · 원장 §1.19 · DDL §73) — 내 상금 · 지급 요청 · 오너 지급 완료. 돈은 움직이지 않는다(원장 줄과 알림만).
+  //   오너 = MRI_OWNER_ID(사이트 토큰이든 킬내기 앱 토큰이든). 알림 = 봇 DM(기존 env 만 · 새 env 없음) — 봇이 없으면 알림만 빠지고 기록은 남는다
+  const krOwner = (req) => { const oid = process.env.MRI_OWNER_ID; if (!oid) return false; const u = getUser(req) || killMembers.userOf(req); return !!(u && u.id === oid); };
+  const krDm = async (discordId, text) => {
+    if (!botClient || !discordId) return false;
+    try { const u = await botClient.users.fetch(String(discordId)); await u.send(text); return true; } catch (_) { return false; }
+  };
+  killracePrize.createPrize({
+    sbSelect, sbInsert, sbPatch, userOf: killMembers.userOf, memberOf: killMembers.memberOf, isOwner: krOwner,
+    keyOf: killraceCareer.keyMaker(process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex")),
+    notifyOwner: (text) => krDm(process.env.MRI_OWNER_ID, text), notifyUser: krDm,
+  }).mount(app, { limiter: limit("krPrize", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
   // 판별 상세 기록 채우기(§1.12 · §67) — 끝 + 45분이 지난 회차의 판을 1분에 매치 하나씩(대회 시간에는 쉰다 · 끄기 ops_state 'killrace:detail' { off: true })
   const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
