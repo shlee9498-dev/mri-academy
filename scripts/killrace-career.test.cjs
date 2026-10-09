@@ -101,3 +101,20 @@ test("인정 판만: 늦은 블루칩 부활로 −10 이 된 판(§1.14 · pena
   const a = C.buildCareer({ rows, matches, keyOf }).find((p) => p.key === keyOf("A"));
   assert.deepEqual([a.games, a.kills], [3, 10]);
 });
+
+test("§1.24 7회(event 8)부터 개인 킬 · 딜에서 봇(ai.*) 몫을 뺀다 · 텔레메트리 없는 판은 「집계 중」 · 6회 이전은 그대로", () => {
+  const { humanRows } = require("../killrace-detail.cjs");
+  const raw = [
+    row(7, "가팀", "x1", "A", "A", 5, 500),                                     // 6회 — 봇 교전이 있어도 그대로
+    row(8, "가팀", "y1", "A", "A", 5, 500),                                     // 7회 — 봇 킬 4 · 봇 딜 300 빼기
+    row(8, "가팀", "y2", "A", "A", 2, 200),                                     // 7회 — 텔레메트리 아직 없음
+  ];
+  const ai = (k, d) => ({ k, a: "A", v: "ai.9", ...(d ? { d } : {}) });
+  const tel = [
+    { event_id: 7, team_name: "가팀", match_id: "x1", combat: [ai("kill"), ai("kill")] },
+    { event_id: 8, team_name: "가팀", match_id: "y1", combat: [ai("kill"), ai("kill"), ai("kill"), ai("kill"), ai("dmg", 300), { k: "kill", a: "A", v: "account.p" }] },
+  ];
+  const matches = [match(7, "가팀", "x1", 1), match(8, "가팀", "y1", 1), match(8, "가팀", "y2", 2)];
+  const [a] = C.buildCareer({ rows: humanRows(raw, tel), matches, keyOf });
+  assert.deepEqual([a.games, a.kills, a.damage, a.pendingGames], [2, 6, 700, 1]);
+});

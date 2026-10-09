@@ -151,3 +151,21 @@ test("1분 차례: 대회 시간(시작 30분 전 ~ 끝 + 45분)에는 쉰다 ·
   assert.equal(await w.det.tick(), "idle");
   assert.equal(w.db.upserts.filter(([t]) => t === "event_match_telemetry").length, 1);
 });
+
+test("§1.24 humanStats — 봇(ai.*) 킬·딜만 빼고 사람 몫만 남긴다", () => {
+  const combat = [
+    { t: 1, k: "kill", a: "acc.me", v: "ai.1" },
+    { t: 2, k: "kill", a: "acc.me", v: "ai.2" },
+    { t: 3, k: "kill", a: "acc.me", v: "acc.human" },
+    { t: 4, k: "dmg", a: "acc.me", v: "ai.1", d: 100.5 },
+    { t: 5, k: "dmg", a: "acc.me", v: "acc.human", d: 80 },
+    { t: 6, k: "kill", a: "acc.other", v: "ai.3" },          // 남의 봇 킬은 안 뺀다
+    { t: 7, k: "groggy", a: "acc.me", v: "ai.4" },           // 기절은 개수에 안 들어간다
+    null,
+  ];
+  assert.deepEqual(T.humanStats({ kills: 3, damage: 180.5 }, combat, "acc.me"),
+    { kills: 1, damage: 80, botKills: 2, botDamage: 100.5 });
+  assert.equal(T.humanStats({ kills: 3, damage: 1 }, null, "acc.me"), null);          // 텔레메트리 없음 → 집계 중
+  assert.deepEqual(T.humanStats({ kills: 0, damage: 0 }, combat, "acc.me").kills, 0);  // 음수로 안 내려간다
+  assert.equal(T.BOT_STATS_FROM_EVENT, 8);
+});

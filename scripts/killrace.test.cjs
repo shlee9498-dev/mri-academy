@@ -1149,6 +1149,14 @@ test("교체: 4판 중 2판은 주전, 2판은 교체 선수 → 네 판 모두 
   assert.deepEqual(t.players.map((p) => [p.ign, p.slot, p.games, p.deaths, !!p.sub]),
     [[A[0], 1, 4, 0, false], [A[1], 2, 4, 0, false], [A[2], 3, 4, 0, false], [A[3], 4, 2, 1, false], [SUB, 4, 2, 1, true]]);
   assert.equal(t.games, 4);
+  // §1.24 — 텔레메트리가 아직 없으면 개인 판은 「집계 중」(판 수 0 · pendingGames) · 팀 합계는 공식 값 그대로
+  const pend = T.buildPlayers({ ev: EV2, teams, cfg: T.normEventConfig({}), rows: saved, roster: null, at: EV2.end, tel: new Map() }).teams.find((x) => x.name === "교체팀");
+  assert.deepEqual(pend.players.map((p) => [p.games, p.kills, p.pendingGames]), [[0, 0, 4], [0, 0, 4], [0, 0, 4], [0, 0, 2], [0, 0, 2]]);
+  assert.deepEqual([pend.games, pend.kills, pend.total], [t.games, t.kills, t.total]);
+  // 봇 교전이 없는 텔레메트리가 다 있으면 종전과 같다
+  const allTel = new Map(saved.map((r) => [`${r.team_name}|${r.match_id}`, []]));
+  const same = T.buildPlayers({ ev: EV2, teams, cfg: T.normEventConfig({}), rows: saved, roster: null, at: EV2.end, tel: allTel }).teams.find((x) => x.name === "교체팀");
+  assert.deepEqual(same.players, t.players);
 });
 
 test("교체 2명 동시(검수 37차 보완): 4인 팀에 2번 · 4번 교체가 같이 뛴 판도 후보로 잡아 인정 · 그 판 실제 출전 명단으로 센다 · 점수식은 그대로", async () => {

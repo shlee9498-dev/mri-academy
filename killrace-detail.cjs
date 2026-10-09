@@ -213,4 +213,33 @@ function createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry, fetchImpl =
   return { tick, nextJob, processJob, failed };
 }
 
-module.exports = { createDetail, _test: { detailRow, makeDetailCollector, pickJob, DETAIL_KEY, KEEP_MS, POS_STEP_S, GRACE_MS, BEFORE_MS } };
+// 개인 스텟에서 봇 빼기(§1.24 · 7회 = event 8 부터) — 공식 킬 · 딜에서 그 선수가 봇(계정이 "ai." 로 시작)에게 낸 킬 · 딜을 뺀다. 음수면 0.
+//   combat = event_match_telemetry.combat(배열). 없으면 null → 부르는 쪽이 「집계 중」으로 둔다
+const BOT_STATS_FROM_EVENT = 8;
+function humanStats(official, combat, accountId) {
+  if (!Array.isArray(combat)) return null;
+  let botKills = 0; let botDamage = 0;
+  for (const c of combat) {
+    if (!c || c.a !== accountId || typeof c.v !== "string" || !c.v.startsWith("ai.")) continue;
+    if (c.k === "kill") botKills += 1;
+    else if (c.k === "dmg") botDamage += Number(c.d) || 0;
+  }
+  const kills = Math.max(0, (Number(official && official.kills) || 0) - botKills);
+  const damage = Math.max(0, Math.round(((Number(official && official.damage) || 0) - botDamage) * 100) / 100);
+  return { kills, damage, botKills, botDamage: Math.round(botDamage * 100) / 100 };
+}
+
+// 판 × 선수 줄에 사람 몫만 남긴다(§1.24) — rows = event_match_players 줄 · tel = event_match_telemetry 줄(event_id · team_name · match_id · combat)
+// 7회(event 8) 전 줄은 그대로 · 텔레메트리가 아직 없는 판은 pendingBot(부르는 쪽이 판 수에서 빼고 「집계 중」으로 센다)
+function humanRows(rows, tel) {
+  const byKey = new Map((tel || []).map((t) => [`${t.event_id}|${t.team_name}|${t.match_id}`, t.combat]));
+  return (rows || []).map((r) => {
+    if (!(Number(r.event_id) >= BOT_STATS_FROM_EVENT)) return r;
+    const h = humanStats(r, byKey.get(`${r.event_id}|${r.team_name}|${r.match_id}`), r.account_id);
+    return h ? { ...r, kills: h.kills, damage: h.damage, botKills: h.botKills, botDamage: h.botDamage } : { ...r, pendingBot: true };
+  });
+}
+// 읽는 쪽이 같이 쓰는 텔레메트리 조회 조건(7회부터 · 교전만)
+const HUMAN_TEL_QUERY = `select=event_id,team_name,match_id,combat&event_id=gte.${BOT_STATS_FROM_EVENT}`;
+
+module.exports = { createDetail, _test: { detailRow, makeDetailCollector, pickJob, DETAIL_KEY, KEEP_MS, POS_STEP_S, GRACE_MS, BEFORE_MS, humanStats, BOT_STATS_FROM_EVENT }, humanStats, humanRows, HUMAN_TEL_QUERY, BOT_STATS_FROM_EVENT };
