@@ -113,3 +113,27 @@ test("배그가 막히면 — 직전 값이 있으면 stale 로, 없으면 429 /
   const live2 = createRankedLive(deps({ findPlayer: async () => { const e = new Error("no key"); e.status = 503; throw e; } }));
   const r2 = res(); await live2.get({ query: { ign: "GmI_mriacademy" } }, r2); assert.deepEqual([r2.code, r2.body.error.code], [503, "pubg_disabled"]);
 });
+
+test("검수 #547 ① — 배그 호출은 무캐시(ttl 0) · 기억은 모듈 것만(공용 캐시의 긴 항목을 주워 읽지 않는다)", async () => {
+  const ttls = [];
+  const d = deps({ findPlayer: async (pf, ign, ttl) => { ttls.push(["find", ttl]); return deps().findPlayer(); },
+    pubgGet: async (path, ttl) => { ttls.push(["ranked", ttl]); return deps().pubgGet(path); } });
+  const live = createRankedLive(d);
+  await live.get({ query: { ign: "GmI_mriacademy" } }, res());
+  assert.deepEqual(ttls, [["find", 0], ["ranked", 0]]);
+});
+
+test("검수 #547 ② — 같은 닉을 동시에 불러도 배그는 한 번 · 60초 뒤엔 다시", async () => {
+  let t = NOW; const d = deps({ now: () => t });
+  let release; const gate = new Promise((r) => { release = r; });
+  const orig = d.findPlayer; d.findPlayer = async (...a) => { await gate; return orig(...a); };
+  const live = createRankedLive(d);
+  const a = res(), b = res(), c = res();
+  const p = Promise.all([live.get({ query: { ign: "GmI_mriacademy" } }, a), live.get({ query: { ign: "GmI_mriacademy" } }, b),
+    live.get({ query: { ign: "GmI_mriacademy", since: String(NOW - 3600e3) } }, c)]);
+  release(); await p;
+  assert.equal(d.calls.find, 1); assert.equal(d.calls.ranked, 1);
+  assert.equal(a.body.now.rp, 3412); assert.deepEqual(b.body, a.body);
+  t += 61e3; await live.get({ query: { ign: "GmI_mriacademy" } }, res());
+  assert.equal(d.calls.find, 2);
+});

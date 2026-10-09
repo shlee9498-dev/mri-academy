@@ -3,7 +3,9 @@
 // 숫자(점수 · 판 결과 · 같이 한 사람)는 배그 공식 기록으로 자동이고, 시작 기준 시각(since) · 팀원 바꾸기는 오버레이(오너 화면)가 정한다.
 // 승 · 탑 · 패 판정은 오버레이가 winPlace 로 한다(서버는 winPlace 만 정확히). 경쟁전(matchType competitive)만 센다.
 // 아무 닉이나 조회하는 통로가 되지 않게 허용 목록의 닉만 받는다(코드 기본값 + ops_state 'ranked:live' { igns: [] }).
-// 배그 호출 한도: 선수 · 점수 조회는 60초 캐시(같은 닉이면 since 가 달라도 공유), 매치 상세는 matchId 로 계속 기억한다(끝난 판은 안 바뀐다).
+// 배그 호출 한도: 선수 · 점수 조회는 이 모듈 안에서 닉별 60초 기억(같은 닉이면 since 가 달라도 공유), 매치 상세는 matchId 로 계속 기억한다(끝난 판은 안 바뀐다).
+// ⚠️ 서버 공용 PUBG 캐시는 주소만 열쇠로 쓰고 읽는 쪽 유효시간을 안 본다 — 다른 기능이 같은 주소를 30분 ~ 6시간으로 넣어 두면 띠가 그동안 멈춘다.
+//    그래서 배그 호출은 전부 무캐시(ttl 0)로 하고 기억은 이 모듈 것만 쓴다(검수 #547). 같은 닉 계산이 겹치면 하나로 묶는다.
 
 const DEFAULT_IGNS = ["GmI_mriacademy"];
 const PLATFORM = "steam";
@@ -55,6 +57,9 @@ function createRankedLive(deps) {
   const readAllowed = deps.readAllowed || (async () => null);
   const matchCache = new Map();         // `${matchId}|${accountId}` → 요약(끝난 판이라 계속 둔다)
   const liveCache = new Map();          // `${ign}|${since}` → { at, body }
+  const baseCache = new Map();          // ign(소문자) → { at, base: { player, seasonId, rd } } — 선수 + 점수 60초 기억
+  const inflight = new Map();           // ign(소문자) → 진행 중인 선수 · 점수 조회(겹치면 같은 약속을 기다린다)
+  const building = new Map();           // `${ign}|${since}` → 진행 중인 응답 계산
   let allowCache = { at: 0, list: DEFAULT_IGNS };
 
   async function allowed() {
@@ -75,14 +80,31 @@ function createRankedLive(deps) {
     return s;
   }
 
+  // 선수(최근 매치 목록) + 이번 시즌 경쟁전 점수 — 배그는 무캐시(0)로 부르고 닉별 60초만 기억 · 같은 닉이 동시에 오면 한 번만 부른다
+  function baseOf(ign) {
+    const k = ign.toLowerCase();
+    const c = baseCache.get(k);
+    if (c && now() - c.at < LIVE_TTL) return Promise.resolve(c.base);
+    if (inflight.has(k)) return inflight.get(k);
+    const p = (async () => {
+      const player = await findPlayer(PLATFORM, ign, 0);
+      const seasonId = await currentSeasonId(PLATFORM);      // 시즌 목록은 하루 캐시라 그대로(시즌 id 만 쓴다)
+      let rd = null;
+      try { rd = await pubgGet(`/shards/${PLATFORM}/players/${player.id}/seasons/${seasonId}/ranked`, 0); }
+      catch (e) { if (e && e.status !== 404) throw e; }     // 이번 시즌 경쟁전 기록 없음 = 404
+      const base = { player, seasonId, rd };
+      baseCache.set(k, { at: now(), base });
+      if (baseCache.size > 20) baseCache.delete(baseCache.keys().next().value);
+      return base;
+    })().finally(() => inflight.delete(k));
+    inflight.set(k, p);
+    return p;
+  }
+
   async function build(ign, since) {
     const at = new Date(now()).toISOString();
-    const player = await findPlayer(PLATFORM, ign, LIVE_TTL);
+    const { player, seasonId, rd } = await baseOf(ign);
     const accountId = player.id;
-    const seasonId = await currentSeasonId(PLATFORM);
-    let rd = null;
-    try { rd = await pubgGet(`/shards/${PLATFORM}/players/${accountId}/seasons/${seasonId}/ranked`, LIVE_TTL); }
-    catch (e) { if (e && e.status !== 404) throw e; }     // 이번 시즌 경쟁전 기록 없음 = 404
     const ids = ((player.relationships && player.relationships.matches && player.relationships.matches.data) || []).map((d) => d.id).slice(0, MAX_SCAN);
     const list = [];
     let last = null;
@@ -119,7 +141,8 @@ function createRankedLive(deps) {
     const c = liveCache.get(key);
     if (c && now() - c.at < LIVE_TTL) return res.json(c.body);
     try {
-      const body = await build(hit, sp.since);
+      if (!building.has(key)) building.set(key, build(hit, sp.since).finally(() => building.delete(key)));
+      const body = await building.get(key);
       if (liveCache.size > 50) liveCache.clear();
       liveCache.set(key, { at: now(), body });
       return res.json(body);
