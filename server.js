@@ -8881,6 +8881,8 @@ const SCHEMA_OPTIONAL = {
   killrace_members: ["id", "discord_id", "display_name", "platform", "account_id", "ign", "linked_at", "consent_version", "consented_at",
                      "last_seen_at", "created_at", "updated_at"],
   killrace_member_links: ["id", "member_id", "action", "platform", "account_id", "ign", "by_host", "created_at"],
+  // §74 킬내기 상금 본인 확인(docs/killrace-api.md §1.20 · §70 바로 다음 실행) — 미실행이면 /api/killrace/prize* 가 503 table_missing 이다.
+  killrace_prize_verifications: ["member_id", "platform", "account_id", "verified_by", "verified_at"],
   // §73 킬내기 상금 원장(docs/killrace-api.md §1.19 · 2026-10-09 실행 · 소관 GmI 대행) — 적립 31 · 지급 2 줄(10/9 · 2 ~ 5회 적립 · 지급완료 2건). 지급 요청 화면은 별도 주문.
   killrace_prize_ledger: ["id", "kind", "platform", "account_id", "ign", "event_id", "reason", "amount", "status", "source", "requested_at",
                           "request_notified_at", "paid_at", "paid_notified_at", "cancelled_at", "memo", "entered_by", "created_at"],
