@@ -7694,7 +7694,8 @@ app.post("/api/gdcup-solo", async (req, res) => {
 });
 // ── 킬내기 2회 솔로 신청(killrace-apply.cjs · GmI 소관) — 저장은 ops_state 줄들(DDL 없음). 계좌는 오너 로그인으로만 내려간다 ──
 {
-  const applyKey = (suffix) => `killrace:${suffix}:${killraceApply.ROUND}`;
+  // 신청 줄 이름은 회차 설정(killrace:applycfg · §1.23)의 round — 모듈이 요청마다 넘긴다. 안 넘기면 코드 기본값
+  const applyKey = (suffix, round) => `killrace:${suffix}:${round || killraceApply.ROUND}`;
   const opsGet = async (key) => {
     const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`);
     return rows.length ? rows[0].value : null;
@@ -7702,14 +7703,15 @@ app.post("/api/gdcup-solo", async (req, res) => {
   const opsPut = (key, value) => sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key");
   const api = killraceApply.createApplyApi({
     store: {
-      load: () => opsGet(applyKey("apply")), save: (state) => opsPut(applyKey("apply"), state),
-      loadPay: () => opsGet(applyKey("applypay")), savePay: (pay) => opsPut(applyKey("applypay"), pay),
+      load: (r) => opsGet(applyKey("apply", r)), save: (state, r) => opsPut(applyKey("apply", r), state),
+      loadPay: (r) => opsGet(applyKey("applypay", r)), savePay: (pay, r) => opsPut(applyKey("applypay", r), pay),
       // 선수 소개 4칸(계약 §1.15) — 따로 한 줄. 소개를 저장할 때 명단 · 계좌 줄은 쓰지 않는다
-      loadIntro: () => opsGet(applyKey("applyintro")), saveIntro: (intro) => opsPut(applyKey("applyintro"), intro),
+      loadIntro: (r) => opsGet(applyKey("applyintro", r)), saveIntro: (intro, r) => opsPut(applyKey("applyintro", r), intro),
       // 참가 구분 · 외부 참가비 확인(계약 §1.16) — 각자 한 줄. 입금 안내 문구는 설정 줄(없으면 화면이 「디스코드에서 드려요」)
-      loadKind: () => opsGet(applyKey("applykind")), saveKind: (kind) => opsPut(applyKey("applykind"), kind),
-      loadFee: () => opsGet(applyKey("applyfee")), saveFee: (fee) => opsPut(applyKey("applyfee"), fee),
+      loadKind: (r) => opsGet(applyKey("applykind", r)), saveKind: (kind, r) => opsPut(applyKey("applykind", r), kind),
+      loadFee: (r) => opsGet(applyKey("applyfee", r)), saveFee: (fee, r) => opsPut(applyKey("applyfee", r), fee),
       loadInfo: () => opsGet("killrace:applyinfo"),
+      loadCfg: () => opsGet("killrace:applycfg"),      // 회차 설정(§1.23) — 없으면 코드 기본값(6회 값)
     },
     // 신청한 플랫폼에서 닉을 다시 확인하고 경매 명단에 쓸 값(경쟁전 티어 · 평딜 · KDA)을 같이 받아 둔다
     lookup: async (platform, ign) => {

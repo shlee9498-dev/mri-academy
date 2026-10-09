@@ -406,10 +406,10 @@ test("2회 · 치킨 판 사망 감점(1회 때 빠졌던 것): 죽은 사람은
 });
 
 test("2회 · 설정 읽기: 없으면 1회 동작 · 시각은 ISO/ms · 보너스는 정수만 · 가리는 시각은 읽지 않는다", () => {
-  assert.deepEqual(T.normEventConfig(null), { boostAt: null, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: {}, teamSize: null, modes: null, auto: true, voidDeaths: {}, voidGames: {}, liveTokens: {}, lateRevive: "off", revivePhase: 4 });
+  assert.deepEqual(T.normEventConfig(null), { boostAt: null, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: {}, teamSize: null, modes: null, auto: true, voidDeaths: {}, voidGames: {}, liveTokens: {}, lateRevive: "off", revivePhase: 4, penaltyBy: "slot", mode: null });
   const c = T.normEventConfig({ boostAt: "2026-10-08T13:35:00Z", hideAt: HIDE, published: true, bonus: { A: 3, B: "x", C: 1.5 }, teamSize: 4, boostMul: 9, modes: ["duo", "duo-fpp"],
     auto: false, voidDeaths: { "A|m1": [2, 9, "x"], "A|m2": [] }, voidGames: { "A|m3": true, "A|m4": "yes" }, liveTokens: { A: "tok", B: 5 } });
-  assert.deepEqual(c, { boostAt: BOOST, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: { A: 3 }, teamSize: 4, modes: ["duo", "duo-fpp"], auto: false, voidDeaths: { "A|m1": [2] }, voidGames: { "A|m3": true }, liveTokens: { A: "tok" }, lateRevive: "off", revivePhase: 4 });
+  assert.deepEqual(c, { boostAt: BOOST, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: { A: 3 }, teamSize: 4, modes: ["duo", "duo-fpp"], auto: false, voidDeaths: { "A|m1": [2] }, voidGames: { "A|m3": true }, liveTokens: { A: "tok" }, lateRevive: "off", revivePhase: 4, penaltyBy: "slot", mode: null });
   assert.equal(T.normEventConfig({ boostMul: 2 }).boostMul, 2);
 });
 
@@ -462,16 +462,17 @@ test("2회 · 점수판: 끝까지 공개 · 판별 내역 · 인원 미달 판�
 });
 
 // 가짜 DB · PUBG — 집계 전체를 돌려 배수 · 보너스 · 저장값을 본다
-function fakeWorld({ cfgValue, matches, teamRows, stored = [], failPlayers = null, clock = null, ev = EV2, tel = null }) {
+function fakeWorld({ cfgValue, matches, teamRows, stored = [], failPlayers = null, clock = null, ev = EV2, tel = null, tiers = null }) {
   const db = { upserts: [], patches: [], ops: cfgValue == null ? [] : [{ value: cfgValue }], playerTries: 0, warns: [] };
   const matchCalls = {}; const telCalls = {};
   const telUrl = (id) => `https://telemetry-cdn.pubg.com/bluehole-pubg/steam/fake/${id}.json`;
   const players = new Map();                 // accountId → 최근 매치 id(최신순)
   for (const m of matches) for (const p of Object.values(m.parts)) { if (!players.has(p.accountId)) players.set(p.accountId, []); players.get(p.accountId).unshift(m.id); }
   const deps = {
-    sbSelect: async (table) => {
+    sbSelect: async (table, q) => {
       if (table === "event_defs") return [{ id: ev.id, name: ev.name, window_start: new Date(ev.start).toISOString(), window_end: new Date(ev.end).toISOString() }];
       if (table === "event_teams") return teamRows;
+      if (table === "ops_state" && /killrace%3Atiers/.test(q || "")) return tiers ? [{ value: tiers }] : [];
       if (table === "ops_state") return db.ops;
       if (table === "event_matches") return stored;
       return [];
@@ -1279,4 +1280,42 @@ test("늦은 부활 · 진단(오너 · 저장 안 함): 최근 판 하나에 �
   assert.match(text, /부활 비행기 account\.a2 14:01, account\.a4 16:31 · 4페이즈 시작 16:01 → 늦은 부활 위반/);
   const w2 = fakeWorld({ ev: EV5, cfgValue: {}, matches: [m], teamRows: [], tel: { d1: telFor(at, [["account.a2", 841]]) } });
   assert.match(w2.bot.formatDiagnosis(await w2.bot.diagnose({ ign: "account.a1" })).join("\n"), /→ 늦은 부활 아님/);
+});
+
+test("§1.22 사망 감점 — 팀 안 티어 순서(7회 = event 8 부터) · 같은 티어는 전체 순위 · 티어 없는 사람이 있으면 슬롯 순서", () => {
+  const tiers = { list: { aa: { tier: 5, rank: 30 }, bb: { tier: 1, rank: 2 }, cc: { tier: 3, rank: 12 }, dd: { tier: 3, rank: 9 } } };
+  const mem = [{ slot: 1, ign: "AA", accountId: "a" }, { slot: 2, ign: "BB", accountId: "b" }, { slot: 3, ign: "CC", accountId: "c" }, { slot: 4, ign: "DD", accountId: "d" }];
+  // 본계정 1티어(BB)가 슬롯2 로 들어와도 −4 는 BB · 같은 3티어는 순위 9(DD) 가 12(CC) 위
+  assert.deepEqual(T.tierPenaltyMap(mem, tiers), { 2: 4, 4: 3, 3: 2, 1: 1 });
+  // 팀 줄의 tier 가 티어표보다 먼저(원장이 정한 신규 티어)
+  assert.deepEqual(T.tierPenaltyMap([{ slot: 1, ign: "new1", tier: 2 }, { slot: 2, ign: "AA" }], tiers), { 1: 4, 2: 3 });
+  // 한 명이라도 티어가 없으면 null → 슬롯 순서
+  assert.equal(T.tierPenaltyMap([...mem.slice(0, 3), { slot: 4, ign: "nobody", accountId: "z" }], tiers), null);
+  assert.equal(T.tierPenaltyMap(mem, null), null);
+  assert.equal(T.penaltyOf(2, { 2: 4 }), 4);
+  assert.equal(T.penaltyOf(2, null), 3);
+  // 회차 기본값: 6회(event 7)까지 slot · 7회(event 8)부터 tier · 설정이 먼저
+  assert.equal(T.normEventConfig({}, 7).penaltyBy, "slot");
+  assert.equal(T.normEventConfig({}, 8).penaltyBy, "tier");
+  assert.equal(T.normEventConfig({ penaltyBy: "slot" }, 8).penaltyBy, "slot");
+  assert.equal(T.normEventConfig({ mode: "low" }, 8).mode, "low");
+  assert.equal(T.normEventConfig({ mode: "mid" }, 8).mode, null);
+});
+
+test("§1.22 집계 — 7회(event 8): 1티어가 슬롯2 로 들어와 죽으면 −4 · 6회까지는 슬롯 번호 그대로", async () => {
+  const A = accsOf("t");
+  // 슬롯1 = 3티어, 슬롯2 = 1티어(본계정) · 치킨 판에서 슬롯2 만 사망 · 킬 6
+  const tiers = { list: { "account.t1": { tier: 3, rank: 12 }, "account.t2": { tier: 1, rank: 1 }, "account.t3": { tier: 4, rank: 20 }, "account.t4": { tier: 6, rank: 40 } } };
+  const run = async (ev) => {
+    const w = fakeWorld({ cfgValue: { teamSize: 4 }, ev, tiers, teamRows: [teamRow("티어팀", "t")],
+      matches: [squadMatch("t1", ev.start + 5 * 60000, A, { kills: 6, rank: 1, dead: [2] })] });
+    const res = await w.bot.aggregate();
+    const g = res.teams[0].games[0];
+    const row = w.db.upserts.find(([t]) => t === "event_matches")[1][0];
+    return { penalty: g.penalty, score: g.score, pen: row.flags.penBySlot || null };
+  };
+  const ev7 = { ...EV2, id: 8, name: "7회 GmI 킬내기" };
+  const ev6 = { ...EV2, id: 7, name: "6회 GmI 킬내기" };
+  assert.deepEqual(await run(ev7), { penalty: 4, score: 6 + 8 - 4, pen: { 2: 4, 1: 3, 3: 2, 4: 1 } });
+  assert.deepEqual(await run(ev6), { penalty: 3, score: 6 + 8 - 3, pen: null });
 });
