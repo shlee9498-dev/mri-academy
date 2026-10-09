@@ -20,6 +20,9 @@
 const ROUND = "r6";
 const CAP = 20;                                              // 4인 5팀
 const CLOSE_AT = Date.parse("2026-10-09T14:00:00Z");         // 10/9(금) 23:00 KST — 마감 → 경매 → 23:30 시작(오너 10/9 19:52 · 5회는 10/8 20:00 이었다)
+// 계좌를 받는가 — 6회는 상품이 MVP 치킨 기프티콘(디스코드 DM 전달)이라 받지 않는다(지휘 10/9 19:57 · 필요 없는 개인 정보는 모으지 않는다).
+//   false 면 은행 · 계좌번호 · 예금주 칸을 보지도 저장하지도 않는다(보내와도 버린다). 상금 회차로 돌아가면 true 로
+const NEED_ACCOUNT = false;
 const PLATFORMS = ["steam"];                               // 2회는 스팀으로만 한다(오너 10/4 밤) — 카카오 닉은 받지 않는다
 const BANKS = ["국민", "신한", "우리", "하나", "농협", "기업", "카카오뱅크", "토스뱅크", "케이뱅크", "새마을", "우체국", "신협", "수협", "부산", "대구", "경남", "광주", "전북", "SC제일", "산업"];
 
@@ -89,7 +92,7 @@ function normWho(body) {
 }
 
 // 신청서 검사 → { value } 또는 { error }. 계좌번호는 숫자만 남긴다
-function normApply(body) {
+function normApply(body, needAccount = NEED_ACCOUNT) {
   const b = body && typeof body === "object" ? body : {};
   const discord = clean(b.discord, 40);
   const ign = clean(b.ign, 40);
@@ -101,11 +104,13 @@ function normApply(body) {
   if (!ign || /\s/.test(ign)) return { error: "no_ign" };
   if (platform === "kakao") return { error: "steam_only" };
   if (!PLATFORMS.includes(platform)) return { error: "no_platform" };
-  if (!BANKS.includes(bank)) return { error: "no_bank" };
-  if (accountNo.length < 8) return { error: "bad_account" };
-  if (!holder) return { error: "no_holder" };
+  if (needAccount) {
+    if (!BANKS.includes(bank)) return { error: "no_bank" };
+    if (accountNo.length < 8) return { error: "bad_account" };
+    if (!holder) return { error: "no_holder" };
+  }
   if (b.agree !== true) return { error: "no_agree" };
-  return { value: { discord, ign, platform }, pay: { bank, accountNo, holder } };
+  return { value: { discord, ign, platform }, pay: needAccount ? { bank, accountNo, holder } : null };
 }
 
 const active = (state) => state.list.filter((x) => x.status !== "cancelled");
@@ -159,7 +164,7 @@ function publicView(state, at, intros = {}, info = null) {
   const rows = seats(state);
   return {
     cap: CAP, count: Math.min(rows.length, CAP), waiting: Math.max(0, rows.length - CAP),
-    closed: at >= CLOSE_AT, closeAt: CLOSE_AT, banks: BANKS, positions: POSITIONS, styles: STYLES,
+    closed: at >= CLOSE_AT, closeAt: CLOSE_AT, needAccount: NEED_ACCOUNT, banks: BANKS, positions: POSITIONS, styles: STYLES,
     fee: { external: FEE_EXTERNAL }, payInfo: payInfo(info),
     list: rows.map((x) => ({ ign: x.ign, platform: x.platform, tier: tierText(x), waiting: x.waiting, intro: introPublic(intros[x.id]) })),
   };
@@ -243,6 +248,7 @@ function createApplyApi(deps) {
   const now = deps.now || (() => Date.now());
   const newId = deps.newId || (() => require("crypto").randomBytes(6).toString("hex"));
   const log = deps.log || console;
+  const needAccount = deps.needAccount === undefined ? NEED_ACCOUNT : deps.needAccount === true;   // 시험은 true 로 옛 길도 본다
   let chain = Promise.resolve();                              // 쓰기는 한 줄로 세운다(같은 닉이 동시에 와도 한 건만)
   const serial = (fn) => { const run = chain.then(fn, fn); chain = run.catch(() => {}); return run; };
   const load = async () => normState(await store.load());
@@ -258,7 +264,7 @@ function createApplyApi(deps) {
   async function apply(req, res) {
     try {
       if (rateLimited(ipOf(req))) return fail(res, 429, "too_many_requests");
-      const n = normApply(req.body);
+      const n = normApply(req.body, needAccount);
       if (n.error) return fail(res, 400, n.error);
       // 선수 소개(§1.15) — 새 화면은 늘 보낸다. 키가 아예 없는 요청(배포 사이 옛 화면)은 받고 「안 채운 사람」으로 남긴다
       let intro = null;
@@ -288,8 +294,10 @@ function createApplyApi(deps) {
         const id = newId();
         const r = addEntry(state, n.value, info, id, now());
         if (r.error) return r;
-        const pay = normPay(await store.loadPay());
-        await store.savePay({ ...pay, [id]: n.pay });          // 계좌 먼저 — 명단 저장이 실패해도 주인 없는 계좌 한 줄만 남는다
+        if (n.pay) {                                           // 계좌를 받는 회차만
+          const pay = normPay(await store.loadPay());
+          await store.savePay({ ...pay, [id]: n.pay });        // 계좌 먼저 — 명단 저장이 실패해도 주인 없는 계좌 한 줄만 남는다
+        }
         if (intro) {                                           // 소개도 명단보다 먼저(같은 이유 · 주인 없는 소개 한 줄은 어디에도 안 보인다)
           const all = await loadIntros();
           await store.saveIntro({ ...all, [id]: { ...intro, at: r.entry.at, saves: 1 } });
@@ -477,7 +485,7 @@ function createApplyApi(deps) {
 }
 
 module.exports = {
-  createApplyApi, ROUND, CAP, CLOSE_AT, BANKS, POSITIONS, STYLES, INTRO_MAX, KINDS, FEE_EXTERNAL, INFO_MAX,
+  createApplyApi, ROUND, CAP, CLOSE_AT, NEED_ACCOUNT, BANKS, POSITIONS, STYLES, INTRO_MAX, KINDS, FEE_EXTERNAL, INFO_MAX,
   _test: { normApply, addEntry, setStatus, seats, findDup, findMine, publicView, adminView, mineView, payoutRows, payoutCsv, cardEmbed, normState, emptyState,
     normIntro, normWho, introDone, introMissing, introPublic, introAdmin, hostBy, normKind, kindOf, payInfo, kindLabel },
 };
