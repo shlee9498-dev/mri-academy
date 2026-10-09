@@ -35,8 +35,6 @@ const killraceShot = require("./killrace-shot.cjs");
 const killracePoster = require("./killrace-poster.cjs");
 // 킬내기 개인 누적 지표(§1.11) — 계정 기준 · 불투명 키 · 회차 묶음. 시험 scripts/killrace-career.test.cjs
 const killraceCareer = require("./killrace-career.cjs");
-// 킬내기 1회 개인 기록 살리기(일회용 · 진행자 키 · 더하기만) — 시험 scripts/killrace-backfill.test.cjs
-const killraceBackfill = require("./killrace-backfill.cjs");
 // 킬내기 주간 개인 리더보드(§1.18) — 1 ~ 10위 · 역할 묶음(1 / 2-4 / 5-10) · 순위 계산은 이 모듈 한 곳. 시험 scripts/killrace-leaderboard.test.cjs
 const killraceLeaderboard = require("./killrace-leaderboard.cjs");
 // 킬내기 판별 상세 기록 채우기(§1.12 · DDL §67) — 대회 시간 밖에 1분에 매치 하나. 시험 scripts/killrace-detail.test.cjs
@@ -7113,16 +7111,6 @@ async function gmiGuildMember(discordId) {
     guildOf: gmiGuildMember,
   });
   killMembers.mount(app, { limiter: limit("krMe", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
-  // 킬내기 1회(9/26) 개인 기록 살리기(§1.21 · 일회용) — POST /api/killrace/backfill/admin · 진행자 키 · 기본 미리 보기 · { dryRun: false } 일 때만 더하기(겹치는 줄 건너뜀)
-  killraceBackfill.createBackfill({
-    sbSelect, pubgGet, pubgMatch, isAdmin: gdcupAdmin,
-    insertIgnore: async (table, rows, onConflict) => {
-      const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?on_conflict=${onConflict}`, {
-        method: "POST", headers: sbHeaders({ Prefer: "resolution=ignore-duplicates,return=minimal" }), body: JSON.stringify(rows),
-      });
-      if (!r.ok) await sbThrow("insert", table, r);
-    },
-  }).mount(app);
   // 주간 개인 리더보드(§1.18) — GET /api/killrace/leaderboard · 저장본 ops_state 'killrace:leaderboard' · 수요일 09:00 KST · 회차 끝 + 45분에 다시 계산
   //   계정 번호는 진행자 키(x-admin-key)로 부를 때만 줄마다 붙는다(클랜CODE 역할 봇용 · 새 env 없음). 디스코드 역할은 이 서버가 건드리지 않는다
   const killLeaderboard = killraceLeaderboard.createLeaderboard({ sbSelect, sbUpsert, isAdmin: gdcupAdmin, secret: process.env.SESSION_SECRET });
