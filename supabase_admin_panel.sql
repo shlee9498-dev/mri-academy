@@ -6850,6 +6850,65 @@ notify pgrst, 'reload schema';
 --   notify pgrst, 'reload schema';
 -- ============================================================
 
+-- 70) 킬내기 앱 회원 — killrace_members · killrace_member_links (2026-10-07 · 지휘 「킬내기 앱 1단계 착수」 · 앱 계약 docs/killrace-app-api.md §2 ~ §5 · §9)
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행). A 구간(새 표 둘 · 더하기만 · 기존 표 · 칸 · 제약 · 함수를 건드리지 않는다).
+--     ⚠️ 실행 전 — 5회(10/8) 뒤 지휘 「진행」을 받고 세션이 70-0 → 70a → 70b → 70c 순서로 실행한다. 코드 PR 은 실행 확인 전까지 Draft.
+--     디스코드 계정 번호 ↔ PUBG 계정 대조표(10/7 확정 6) = 회원 표의 연결 칸 + 연결 이력. 응답 · 로그에는 번호를 내지 않는다.
+--     동의 전에는 줄을 만들지 않는다(동의 = 줄이 생기는 때). 탈퇴하면 회원 줄을 지우고 연결 이력도 같이 지운다(on delete cascade).
+-- ============================================================
+-- 70-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select to_regclass('public.killrace_members'), to_regclass('public.killrace_member_links');      -- 기대 null · null
+-- 70a) 표 둘
+create table if not exists public.killrace_members (
+  id               bigint generated always as identity primary key,
+  discord_id       text        not null check (discord_id ~ '^[0-9]{5,25}$'),                    -- 서버 안에서만 · 응답에 없다
+  display_name     text        check (display_name is null or char_length(display_name) <= 40),
+  platform         text        check (platform in ('steam', 'kakao')),
+  account_id       text        check (account_id ~ '^account\.[0-9a-f]{32}$'),                   -- PUBG 계정 번호 · 응답에는 불투명 키(key)만
+  ign              text        check (ign is null or char_length(ign) between 1 and 40),
+  linked_at        timestamptz,
+  consent_version  text        not null check (char_length(consent_version) between 1 and 20),
+  consented_at     timestamptz not null,
+  last_seen_at     timestamptz,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  constraint killrace_members_link_shape check (                                                   -- 연결 칸 넷은 함께 있거나 함께 없다
+    (platform is null and account_id is null and ign is null and linked_at is null)
+    or (platform is not null and account_id is not null and ign is not null and linked_at is not null))
+);
+create unique index if not exists killrace_members_discord on public.killrace_members (discord_id);                       -- 디스코드 계정 하나 = 회원 하나
+create unique index if not exists killrace_members_account on public.killrace_members (platform, account_id) where account_id is not null;   -- PUBG 계정 하나 = 회원 하나
+create table if not exists public.killrace_member_links (
+  id          bigint generated always as identity primary key,
+  member_id   bigint      not null references public.killrace_members (id) on delete cascade,
+  action      text        not null check (action in ('link', 'relink', 'host_unlink')),
+  platform    text        not null check (platform in ('steam', 'kakao')),
+  account_id  text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),
+  ign         text        not null check (char_length(ign) between 1 and 40),
+  by_host     text        check (by_host is null or char_length(by_host) between 1 and 20),       -- 진행자 해제일 때 누가(진행자가 적은 이름)
+  created_at  timestamptz not null default now()
+);
+create index if not exists idx_killrace_member_links_member on public.killrace_member_links (member_id, created_at desc);
+alter table public.killrace_members enable row level security;                                     -- 정책 0 = service_role 만
+alter table public.killrace_member_links enable row level security;
+-- 70b) 70a 뒤 검증(세션 · 읽기만 · 운영 DB 에 시험 줄을 넣지 않는다 — 줄을 넣는 시험은 로컬 PGlite 에서 했다 · PR 본문):
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'killrace_members';        -- 기대 12
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'killrace_member_links';   -- 기대 8
+--   select conrelid::regclass, count(*) filter (where contype = 'c') c, count(*) filter (where contype = 'p') p, count(*) filter (where contype = 'f') f
+--     from pg_constraint where conrelid in ('public.killrace_members'::regclass, 'public.killrace_member_links'::regclass) group by 1 order by 1;
+--     -- 기대 killrace_members c 7 · p 1 · f 0 / killrace_member_links c 5 · p 1 · f 1
+--   select indexname from pg_indexes where schemaname = 'public' and tablename in ('killrace_members', 'killrace_member_links') order by 1;
+--     -- 기대 idx_killrace_member_links_member · killrace_member_links_pkey · killrace_members_account · killrace_members_discord · killrace_members_pkey
+--   select relname, relrowsecurity from pg_class where relname in ('killrace_members', 'killrace_member_links');               -- 기대 둘 다 true
+--   select (select count(*) from public.killrace_members), (select count(*) from public.killrace_member_links);                -- 기대 0 · 0
+-- 70c) notify pgrst, 'reload schema';
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 회원 · 연결 이력만 사라진다 — 대회 기록은 그대로):
+--   drop table if exists public.killrace_member_links;
+--   drop table if exists public.killrace_members;
+--   notify pgrst, 'reload schema';
+-- ============================================================
+
 -- ============================================================
 -- §73  킬내기 상금 원장 — 적립(+) · 지급(−) 줄 · 지급 요청 → 지급완료 (2026-10-09 · 지휘 주문 · 오너 OK 10/9 · 계약 docs/killrace-api.md §1.19)
 --     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행 · §66 · §67 과 같은 형태). A 구간(새 표 하나 · 보기 하나 · 방아쇠 하나 · 더하기만 ·
@@ -6952,5 +7011,33 @@ notify pgrst, 'reload schema';
 --   drop view if exists public.killrace_prize_balance;
 --   drop table if exists public.killrace_prize_ledger;          -- 방아쇠도 같이 지워진다
 --   drop function if exists public.killrace_prize_ledger_guard();
+--   notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §74  킬내기 상금 — 본인 확인 표시(진행자 확인 전에는 지급 요청이 잠긴다) (2026-10-09 · 지휘 결정 · 계약 docs/killrace-api.md §1.20)
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행). A 구간(새 표 하나 · 더하기만). **§70(killrace_members) 다음에 실행한다** — 외래 키가 그 표를 가리킨다.
+--   - 한 줄 = 「이 회원이 지금 연결한 이 계정은 본인이 맞다」를 진행자가 확인했다는 표시. 회원 · 계정 한 쌍으로 적는다 —
+--     회원이 다른 계정으로 다시 연결하면 줄의 계정과 달라져 저절로 다시 잠긴다(코드가 계정까지 같아야 확인으로 본다). 회원을 지우면 같이 지운다.
+--   - 디스코드 번호는 적지 않는다(회원 줄 번호로 잇는다). 확인한 사람은 진행자가 적은 이름(1 ~ 20자).
+--
+-- 74a) 실행 블록(멱등):
+create table if not exists public.killrace_prize_verifications (
+  member_id    bigint      primary key references public.killrace_members (id) on delete cascade,
+  platform     text        not null check (platform in ('steam', 'kakao')),
+  account_id   text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),
+  verified_by  text        not null check (char_length(verified_by) between 1 and 20),
+  verified_at  timestamptz not null default now()
+);
+alter table public.killrace_prize_verifications enable row level security;   -- 정책 0 = service_role 만
+notify pgrst, 'reload schema';
+--
+-- 74b) 74a 뒤 검증(세션 · 읽기만):
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'killrace_prize_verifications';   -- 5
+--   select contype, count(*) from pg_constraint where conrelid = 'public.killrace_prize_verifications'::regclass group by 1 order by 1;   -- c 3 · f 1 · p 1
+--   select relrowsecurity from pg_class where relname = 'killrace_prize_verifications';   -- true
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 확인 표시만 사라지고 지급 요청이 다시 잠긴다 — 원장은 그대로):
+--   drop table if exists public.killrace_prize_verifications;
 --   notify pgrst, 'reload schema';
 -- ============================================================
