@@ -16,9 +16,10 @@
 // 정원: 먼저 온 20명이 참가, 그 뒤는 「대기」. 취소가 나오면 대기 맨 앞이 자동으로 올라온다(순서 = 신청 시각).
 // 중복: 같은 디스코드 닉 · 같은 인게임 닉(플랫폼까지 같을 때)은 한 번만 받는다(대소문자 · 앞뒤 공백 무시).
 
-const ROUND = "r2";
+// 신청 줄 이름 — 2회 ~ 5회는 r2(그 줄 20명은 그대로 남는다) · 6회(10/9 금 23:30 · event 7)부터 r6(오너 10/9 19:48)
+const ROUND = "r6";
 const CAP = 20;                                              // 4인 5팀
-const CLOSE_AT = Date.parse("2026-10-08T11:00:00Z");         // 10/8(목) 20:00 KST — 집합 15분 전
+const CLOSE_AT = Date.parse("2026-10-09T14:15:00Z");         // 10/9(금) 23:15 KST — 6회 시작 15분 전(오너 10/9 19:48 · 5회는 10/8 20:00 이었다)
 const PLATFORMS = ["steam"];                               // 2회는 스팀으로만 한다(오너 10/4 밤) — 카카오 닉은 받지 않는다
 const BANKS = ["국민", "신한", "우리", "하나", "농협", "기업", "카카오뱅크", "토스뱅크", "케이뱅크", "새마을", "우체국", "신협", "수협", "부산", "대구", "경남", "광주", "전북", "SC제일", "산업"];
 
@@ -221,7 +222,7 @@ function payoutCsv(rows) {
 // 디스코드 카드 — 디스코드 닉 · 인게임 닉 · 티어 · 참가 구분만
 function cardEmbed(entry, waiting, count, kind = null) {
   return {
-    title: waiting ? "킬내기 2회 신청 · 대기" : `킬내기 2회 신청 · ${count}/${CAP}`,
+    title: waiting ? "킬내기 6회 신청 · 대기" : `킬내기 6회 신청 · ${count}/${CAP}`,
     color: waiting ? 0x9aa3b2 : 0x2f6feb,
     fields: [
       { name: "디스코드", value: entry.discord || "-", inline: true },

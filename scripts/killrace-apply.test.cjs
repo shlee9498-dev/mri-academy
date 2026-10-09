@@ -519,3 +519,8 @@ test("공개 응답에는 참가 구분이 없다(검수 44차) — 줄마다 ki
   assert.deepEqual(adm.kindCounts, { lesson: 1, clan: 1, external: 1, none: 1 });
   assert.equal((await call(api.mine, { body: { discord: "d_two", ign: "Nick_B2" } })).body.kind, "clan");   // 본인 확인을 거친 「내 신청」만
 });
+
+test("6회 — 신청 줄 r6 · 마감 10/9(금) 23:15 KST(5회 r2 줄은 건드리지 않는다)", () => {
+  assert.equal(a.ROUND, "r6");
+  assert.equal(new Date(a.CLOSE_AT).toISOString(), "2026-10-09T14:15:00.000Z");
+});
