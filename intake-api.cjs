@@ -204,7 +204,7 @@ function mountIntake(app, deps) {
       const m = String(req.headers.authorization || "").match(/^Bearer (.+)$/);
       if (!m) return null;
       const u = verifyJWT(m[1]);
-      if (!u?.sub) return null;
+      if (!u?.sub || u.aud) return null;   // 표지(aud)가 있는 토큰 = 킬내기 앱 토큰 — 신청 창구는 받지 않는다(docs/killrace-app-api.md §2)
       const gj = ["joined", "already", "failed"].includes(u.gj) ? u.gj : null;
       return { id: String(u.sub), name: typeof u.name === "string" ? u.name.slice(0, 60) : null, gj };
     } catch { return null; }
