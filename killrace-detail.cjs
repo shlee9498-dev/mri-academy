@@ -94,6 +94,10 @@ function makeDetailCollector(accountIds) {
   return { out, onElement };
 }
 
+// 실패한 매치는 30분 뒤 다시 받는다(10/10 · 재시작 전까지 빈칸으로 남던 것) — 값이 { at } 가 아니면 이번 프로세스 동안 막는다
+const FAILED_RETRY_MS = 30 * 60 * 1000;
+const blocked = (f, at) => !!f && !(Number.isFinite(f.at) && at - f.at >= FAILED_RETRY_MS);
+
 // 다음에 받을 매치 — events = event_defs 줄(번호 순) · players = 그 회차 event_match_players 줄 · done = 이미 받은 팀 × 판 · failed = 이번 프로세스에서 실패한 매치
 // 반환 { eventId, matchId, startedAt, teams:[{ teamName, accounts:[…] }] } 또는 null
 function pickJob({ players, done, failed, at }) {
@@ -109,7 +113,7 @@ function pickJob({ players, done, failed, at }) {
     m.teams.get(r.team_name).add(r.account_id);
   }
   const todo = [...byMatch.values()]
-    .filter((m) => !failed.has(m.matchId) && [...m.teams.keys()].some((tn) => !done.has(`${m.eventId}|${tn}|${m.matchId}`)))
+    .filter((m) => !blocked(failed.get(m.matchId), at) && [...m.teams.keys()].some((tn) => !done.has(`${m.eventId}|${tn}|${m.matchId}`)))
     .sort((x, y) => x.eventId - y.eventId || x.startedAt - y.startedAt || String(x.matchId).localeCompare(String(y.matchId)));
   if (!todo.length) return null;
   const m = todo[0];
@@ -117,8 +121,8 @@ function pickJob({ players, done, failed, at }) {
     teams: [...m.teams].map(([teamName, set]) => ({ teamName, accounts: [...set].sort() })).sort((x, y) => x.teamName.localeCompare(y.teamName)) };
 }
 
-function createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry, fetchImpl = fetch, now = () => Date.now(), log = console }) {
-  const failed = new Map();                       // matchId → 이유(다음 재시작까지 다시 안 받는다)
+function createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch = null, fetchTelemetry, fetchImpl = fetch, now = () => Date.now(), log = console }) {
+  const failed = new Map();                       // matchId → { why, at }(30분 뒤 다시 받는다 · FAILED_RETRY_MS)
   let busy = false;
 
   // 대상 회차 = 끝 + 45분이 지난 회차. 지금 대회 시간에 걸친 회차가 있으면 null(쉰다)
@@ -174,8 +178,19 @@ function createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry, fetchImpl =
         positions, combat: col.out.combat.filter((c) => mine.has(c.a) || mine.has(c.v)) };
     });
     await sbUpsert("event_match_telemetry", rows, "event_id,team_name,match_id");
+    // ③ 개인 스텟 봇 몫(§1.24 · DDL §75) — 원래 kills · damage 는 그대로 두고 따로 적는다. 실패해도 텔레메트리는 이미 저장됐다(다음 채우기 SQL · 재계산으로 메운다)
+    let bots = 0;
+    if (sbPatch && job.eventId >= BOT_STATS_FROM_EVENT) {
+      try {
+        for (const [i, tm] of job.teams.entries()) for (const b of botPatches(rows[i], tm.accounts)) {
+          await sbPatch("event_match_players", `event_id=eq.${job.eventId}&team_name=eq.${encodeURIComponent(tm.teamName)}&match_id=eq.${encodeURIComponent(job.matchId)}&account_id=eq.${encodeURIComponent(b.account_id)}`,
+            { bot_kills: b.bot_kills, bot_dmg: b.bot_dmg });
+          bots += 1;
+        }
+      } catch (e) { log.warn(`[killrace-detail] bot_patch_failed event=${job.eventId} match=${String(job.matchId).slice(0, 8)} ${shortErr(e)}`); }
+    }
     return {
-      detail: detail.length, teams: rows.length, bytes: tel.bytes, events: tel.events, ms: tel.ms,
+      detail: detail.length, teams: rows.length, bots, bytes: tel.bytes, events: tel.events, ms: tel.ms,
       positions: rows.reduce((n, r) => n + Object.values(r.positions).reduce((k, p) => k + p.length, 0), 0),
       combat: rows.reduce((n, r) => n + r.combat.length, 0),
       jsonKB: Math.round(rows.reduce((n, r) => n + JSON.stringify(r.positions).length + JSON.stringify(r.combat).length, 0) / 1024),
@@ -196,11 +211,11 @@ function createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry, fetchImpl =
       const job = r.job;
       try {
         const got = await processJob(job);
-        log.log(`[killrace-detail] match_ok event=${job.eventId} match=${String(job.matchId).slice(0, 8)} teams=${got.teams} detail=${got.detail} ` +
+        log.log(`[killrace-detail] match_ok event=${job.eventId} match=${String(job.matchId).slice(0, 8)} teams=${got.teams} detail=${got.detail} bots=${got.bots} ` +
           `bytes=${got.bytes} events=${got.events} positions=${got.positions} combat=${got.combat} json=${got.jsonKB}KB ms=${got.ms}`);
         return "ok";
       } catch (e) {
-        failed.set(job.matchId, shortErr(e));
+        failed.set(job.matchId, { why: shortErr(e), at: now() });
         log.warn(`[killrace-detail] match_failed event=${job.eventId} match=${String(job.matchId).slice(0, 8)} ${shortErr(e)}`);
         return "failed";
       }
@@ -213,33 +228,40 @@ function createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry, fetchImpl =
   return { tick, nextJob, processJob, failed };
 }
 
-// 개인 스텟에서 봇 빼기(§1.24 · 7회 = event 8 부터) — 공식 킬 · 딜에서 그 선수가 봇(계정이 "ai." 로 시작)에게 낸 킬 · 딜을 뺀다. 음수면 0.
-//   combat = event_match_telemetry.combat(배열). 없으면 null → 부르는 쪽이 「집계 중」으로 둔다
-const BOT_STATS_FROM_EVENT = 8;
-function humanStats(official, combat, accountId) {
+// 개인 스텟에서 봇 빼기(§1.24 · 2회 = event 2 부터 소급 · 1회는 공식 값 그대로) — 그 선수가 봇(계정이 "ai." 로 시작)에게 낸 킬 · 딜.
+//   combat = event_match_telemetry.combat(배열). 없으면 null(아직 못 받은 판)
+const BOT_STATS_FROM_EVENT = 2;
+function botCounts(combat, accountId) {
   if (!Array.isArray(combat)) return null;
-  let botKills = 0; let botDamage = 0;
+  let kills = 0; let damage = 0;
   for (const c of combat) {
     if (!c || c.a !== accountId || typeof c.v !== "string" || !c.v.startsWith("ai.")) continue;
-    if (c.k === "kill") botKills += 1;
-    else if (c.k === "dmg") botDamage += Number(c.d) || 0;
+    if (c.k === "kill") kills += 1;
+    else if (c.k === "dmg") damage += Number(c.d) || 0;
   }
-  const kills = Math.max(0, (Number(official && official.kills) || 0) - botKills);
-  const damage = Math.max(0, Math.round(((Number(official && official.damage) || 0) - botDamage) * 100) / 100);
-  return { kills, damage, botKills, botDamage: Math.round(botDamage * 100) / 100 };
+  return { kills, damage: Math.round(damage * 100) / 100 };
 }
-
-// 판 × 선수 줄에 사람 몫만 남긴다(§1.24) — rows = event_match_players 줄 · tel = event_match_telemetry 줄(event_id · team_name · match_id · combat)
-// 7회(event 8) 전 줄은 그대로 · 텔레메트리가 아직 없는 판은 pendingBot(부르는 쪽이 판 수에서 빼고 「집계 중」으로 센다)
-function humanRows(rows, tel) {
-  const byKey = new Map((tel || []).map((t) => [`${t.event_id}|${t.team_name}|${t.match_id}`, t.combat]));
+// 공식 값 − 봇 몫(음수면 0) — bot = botCounts 결과 또는 { kills, damage }
+function humanStats(official, bot) {
+  if (!bot) return null;
+  return {
+    kills: Math.max(0, (Number(official && official.kills) || 0) - (Number(bot.kills) || 0)),
+    damage: Math.max(0, Math.round(((Number(official && official.damage) || 0) - (Number(bot.damage) || 0)) * 100) / 100),
+  };
+}
+// 판 × 선수 줄(event_match_players · bot_kills · bot_dmg 칸 포함)에 사람 몫만 남긴다. kills · damage 칸 원래 값은 DB 에서 안 바뀐다.
+// 1회 줄은 그대로 · bot_kills 가 아직 비어 있는 줄은 pendingBot(부르는 쪽이 판 수에서 빼고 「집계 중」으로 센다)
+function humanRows(rows) {
   return (rows || []).map((r) => {
     if (!(Number(r.event_id) >= BOT_STATS_FROM_EVENT)) return r;
-    const h = humanStats(r, byKey.get(`${r.event_id}|${r.team_name}|${r.match_id}`), r.account_id);
-    return h ? { ...r, kills: h.kills, damage: h.damage, botKills: h.botKills, botDamage: h.botDamage } : { ...r, pendingBot: true };
+    if (r.bot_kills == null) return { ...r, pendingBot: true };
+    const h = humanStats(r, { kills: r.bot_kills, damage: r.bot_dmg });
+    return { ...r, kills: h.kills, damage: h.damage };
   });
 }
-// 읽는 쪽이 같이 쓰는 텔레메트리 조회 조건(7회부터 · 교전만)
-const HUMAN_TEL_QUERY = `select=event_id,team_name,match_id,combat&event_id=gte.${BOT_STATS_FROM_EVENT}`;
+// 팀 × 판 텔레메트리 줄 하나로 그 판 선수별 봇 몫 칸(event_match_players.bot_kills · bot_dmg)을 만든다
+function botPatches(telRow, accounts) {
+  return accounts.map((a) => { const b = botCounts(telRow.combat, a); return { account_id: a, bot_kills: b.kills, bot_dmg: b.damage }; });
+}
 
-module.exports = { createDetail, _test: { detailRow, makeDetailCollector, pickJob, DETAIL_KEY, KEEP_MS, POS_STEP_S, GRACE_MS, BEFORE_MS, humanStats, BOT_STATS_FROM_EVENT }, humanStats, humanRows, HUMAN_TEL_QUERY, BOT_STATS_FROM_EVENT };
+module.exports = { createDetail, _test: { detailRow, makeDetailCollector, pickJob, DETAIL_KEY, KEEP_MS, POS_STEP_S, GRACE_MS, BEFORE_MS, botCounts, humanStats, botPatches, FAILED_RETRY_MS, BOT_STATS_FROM_EVENT }, humanStats, humanRows, BOT_STATS_FROM_EVENT };

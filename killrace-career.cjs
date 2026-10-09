@@ -6,7 +6,7 @@
 // 지표: 누적 판 수 · 킬 · 딜 · 사망 · 판당 킬 · 판당 딜 · 팀 내 킬 1등 횟수(그 판 팀에서 킬이 가장 많았던 판 · 공동 포함 · 0킬 판은 안 센다).
 // 10판 미만은 sample "low"(표본 부족) — §1.3 팀장 추천이 이 표시를 본다.
 const crypto = require("crypto");
-const { humanRows, HUMAN_TEL_QUERY } = require("./killrace-detail.cjs");   // §1.24 봇 킬 · 딜 빼기(7회부터)
+const { humanRows } = require("./killrace-detail.cjs");   // §1.24 봇 킬 · 딜 빼기(2회부터 소급 · 저장된 bot_kills · bot_dmg 칸)
 
 const MIN_GAMES = 10;
 const PAGE = 1000;                    // PostgREST 한 번에 1000줄 — 넘으면 offset 으로 이어 읽는다
@@ -99,12 +99,11 @@ function createCareer(deps) {
 
   async function career(ids) {
     const f = ids ? `&event_id=in.(${ids.join(",")})` : "";
-    const [raw, matches, tel] = await Promise.all([
-      readAll("event_match_players", `select=event_id,team_name,match_id,account_id,ign,kills,damage,dead,started_at${f}&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc`),
-      readAll("event_matches", `select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive${f}&order=event_id.asc,team_name.asc,match_id.asc`),
-      readAll("event_match_telemetry", `${HUMAN_TEL_QUERY}${f}&order=event_id.asc,team_name.asc,match_id.asc`),
+    const [raw, matches] = await Promise.all([
+      readAll("event_match_players", `select=event_id,team_name,match_id,account_id,ign,kills,damage,bot_kills,bot_dmg,dead,started_at${f}&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc`),
+      readAll("event_matches", `select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive${f}&order=event_id.asc,team_name.asc,match_id.asc`)
     ]);
-    const rows = humanRows(raw, tel);
+    const rows = humanRows(raw);
     const players = buildCareer({ rows, matches, keyOf });
     const evs = ids || [...new Set(rows.map((r) => Number(r.event_id)))].sort((a, b) => a - b);
     return { events: evs, minGames: MIN_GAMES, players, updatedAt: new Date(now()).toISOString() };

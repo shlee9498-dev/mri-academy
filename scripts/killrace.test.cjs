@@ -1150,13 +1150,18 @@ test("교체: 4판 중 2판은 주전, 2판은 교체 선수 → 네 판 모두 
     [[A[0], 1, 4, 0, false], [A[1], 2, 4, 0, false], [A[2], 3, 4, 0, false], [A[3], 4, 2, 1, false], [SUB, 4, 2, 1, true]]);
   assert.equal(t.games, 4);
   // §1.24 — 텔레메트리가 아직 없으면 개인 판은 「집계 중」(판 수 0 · pendingGames) · 팀 합계는 공식 값 그대로
-  const pend = T.buildPlayers({ ev: EV2, teams, cfg: T.normEventConfig({}), rows: saved, roster: null, at: EV2.end, tel: new Map() }).teams.find((x) => x.name === "교체팀");
+  const pend = T.buildPlayers({ ev: EV2, teams, cfg: T.normEventConfig({}), rows: saved, roster: null, at: EV2.end, bots: new Map() }).teams.find((x) => x.name === "교체팀");
   assert.deepEqual(pend.players.map((p) => [p.games, p.kills, p.pendingGames]), [[0, 0, 4], [0, 0, 4], [0, 0, 4], [0, 0, 2], [0, 0, 2]]);
   assert.deepEqual([pend.games, pend.kills, pend.total], [t.games, t.kills, t.total]);
   // 봇 교전이 없는 텔레메트리가 다 있으면 종전과 같다
-  const allTel = new Map(saved.map((r) => [`${r.team_name}|${r.match_id}`, []]));
-  const same = T.buildPlayers({ ev: EV2, teams, cfg: T.normEventConfig({}), rows: saved, roster: null, at: EV2.end, tel: allTel }).teams.find((x) => x.name === "교체팀");
+  const zero = new Map(saved.flatMap((r) => ((r.deaths && r.deaths.members) || []).map((m) => [`${r.team_name}|${r.match_id}|${m.accountId}`, { kills: 0, damage: 0 }])));
+  const same = T.buildPlayers({ ev: EV2, teams, cfg: T.normEventConfig({}), rows: saved, roster: null, at: EV2.end, bots: zero }).teams.find((x) => x.name === "교체팀");
   assert.deepEqual(same.players, t.players);
+  // 봇 몫이 있으면 그만큼 빠진다(음수는 0)
+  const big = new Map([...zero.keys()].map((k) => [k, { kills: 99, damage: 99999 }]));
+  const none = T.buildPlayers({ ev: EV2, teams, cfg: T.normEventConfig({}), rows: saved, roster: null, at: EV2.end, bots: big }).teams.find((x) => x.name === "교체팀");
+  assert.deepEqual(none.players.map((p) => [p.kills, p.damage, p.games]), t.players.map((p) => [0, 0, p.games]));
+  assert.equal(none.total, t.total);
 });
 
 test("교체 2명 동시(검수 37차 보완): 4인 팀에 2번 · 4번 교체가 같이 뛴 판도 후보로 잡아 인정 · 그 판 실제 출전 명단으로 센다 · 점수식은 그대로", async () => {

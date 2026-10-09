@@ -7139,7 +7139,7 @@ async function gmiGuildMember(discordId) {
   killLeaderboard.mount(app);
   if (process.env.SUPABASE_URL) setInterval(() => { killLeaderboard.tick(); }, 60000).unref();
   // 판별 상세 기록 채우기(§1.12 · §67) — 끝 + 45분이 지난 회차의 판을 1분에 매치 하나씩(대회 시간에는 쉰다 · 끄기 ops_state 'killrace:detail' { off: true })
-  const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
+  const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
 }
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
@@ -8878,8 +8878,9 @@ const SCHEMA_OPTIONAL = {
                       "reminded_at", "remind_count"],
   // §66 킬내기 개인별 판 기록(docs/killrace-api.md §1.8 · 2026-10-06 · 소관 GmI 대행) — 미실행이면 집계 · 점수는 그대로이고
   //   이 표 쓰기만 10분에 한 번 실패 로그(players_write_failed table_missing). 티어 산정(§1.2)이 읽기 시작하면 REQUIRED 로 올린다.
+  //   bot_kills · bot_dmg = §75 개인 스텟 봇 몫(§1.24 · 10/10) — 미실행이면 개인 누적 · 리더보드 읽기가 400 이니 머지 전에 실행한다.
   event_match_players: ["event_id", "team_name", "match_id", "account_id", "slot", "sub", "ign", "reg_ign", "kills", "damage",
-                        "death_type", "dead", "started_at", "updated_at"],
+                        "death_type", "dead", "started_at", "updated_at", "bot_kills", "bot_dmg"],
   // §67 킬내기 판별 상세 기록(docs/killrace-api.md §1.12 · 2026-10-07 실행 · 소관 GmI 대행) — 채우는 코드가 쓰기 전까지 0행.
   event_match_player_detail: ["event_id", "team_name", "match_id", "account_id", "dbnos", "assists", "headshot_kills", "longest_kill_m",
                               "revives", "time_survived_s", "walk_m", "ride_m", "swim_m", "heals", "boosts", "team_kills", "kill_place",

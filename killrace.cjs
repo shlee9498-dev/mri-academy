@@ -56,7 +56,7 @@
 const SLOT_PENALTY = [4, 3, 2, 1];              // 1번(최상위 티어) 사망 = −4 … 4번 = −1 · 전원 = −10
 // 사망 감점을 「팀 안 티어 순서」로 매기는 첫 회차(오너 10/10 · 7회 = event 8 부터 · 소급 없음 · §1.22) — 설정 penaltyBy 가 있으면 그것이 먼저
 const TIER_PENALTY_FROM_EVENT = 8;
-const { humanStats, BOT_STATS_FROM_EVENT } = require("./killrace-detail.cjs");   // §1.24 개인 스텟에서 봇 킬 · 딜 빼기(7회부터)
+const { humanStats, BOT_STATS_FROM_EVENT } = require("./killrace-detail.cjs");   // §1.24 개인 스텟에서 봇 킬 · 딜 빼기(2회부터 소급)
 const LEAVE_SCORE = -10;                        // 이탈 판 고정 점수
 const CHICKEN_BONUS = 8;                        // 팀 winPlace 1 판 가산(관제탑 2026-09-26)
 const OK_MODES = new Set(["squad", "squad-fpp"]);
@@ -771,8 +771,9 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
 
 // 개인 기록 — 확정된 판만 더한다(무효 판 · 이탈 판은 팀 합계와 똑같이 뺀다 → 개인 킬 합 = 팀 킬). 잠정 킬은 팀 단위라 여기 없다.
 // 응답에는 닉 · 슬롯 · 숫자만 싣는다(accountId · 디스코드 닉 · 계좌 없음). roster = 경매 결과(티어 · 낙찰가 · 팀장) — 없으면 비운다.
-// tel = 판(팀|매치) → 교전 배열 Map(§1.24 · 7회부터만 · 없으면 공식 값 그대로) — 판에 텔레메트리가 아직 없으면 그 선수 판은 「집계 중」(pending)
-function buildPlayers({ ev, teams, cfg, rows, roster, at, tel = null }) {
+// bots = 「팀|매치|계정」 → { kills, damage } 봇 몫 Map(§1.24 · event_match_players.bot_kills · bot_dmg · 2회부터) — null 이면 공식 값 그대로.
+//   Map 에 없는 선수 판은 아직 텔레메트리를 못 받은 것 → 「집계 중」(pending · 판 수에 안 넣는다)
+function buildPlayers({ ev, teams, cfg, rows, roster, at, bots = null }) {
   const b = buildBoard({ ev, teams, cfg, rows, at, admin: false });
   const meta = new Map(((roster && roster.players) || []).map((x) => [String(x.ign || "").toLowerCase(), x]));
   // 교체 선수도 계정별로 따로 쌓는다(뛴 판만큼) — 주전 · 교체가 같은 슬롯 번호를 갖는다
@@ -787,8 +788,8 @@ function buildPlayers({ ev, teams, cfg, rows, roster, at, tel = null }) {
       const cur = pl.get(m.accountId);
       if (!cur) continue;                                  // 팀 구성이 바뀌기 전 기록은 순번(seq)이 비어 여기 오지 않는다
       let own = m;
-      if (tel) {                                           // 개인 스텟만 사람 몫(봇 킬 · 딜 뺌) — 팀 합계(b)는 공식 값 그대로
-        own = humanStats(m, tel.get(`${r.team_name}|${r.match_id}`), m.accountId);
+      if (bots) {                                          // 개인 스텟만 사람 몫(봇 킬 · 딜 뺌) — 팀 합계(b)는 공식 값 그대로
+        own = humanStats(m, bots.get(`${r.team_name}|${r.match_id}|${m.accountId}`));
         if (!own) { cur.pending += 1; continue; }
       }
       cur.kills += Number(own.kills) || 0; cur.damage += Number(own.damage) || 0; cur.games += 1;
@@ -1316,12 +1317,14 @@ function createKillrace(deps) {
       sbSelect("event_matches", `select=team_name,match_id,seq,map,created_at,damage_sum,kills,win_place,penalty,leave_flag,score,flags,deaths,updated_at&event_id=eq.${ev.id}`),
       loadRoster(ev.id),
     ]);
-    let tel = null;                                        // §1.24 — 7회(event 8)부터 개인 스텟에서 봇 킬 · 딜을 뺀다
+    let bots = null;                                       // §1.24 — 2회(event 2)부터 개인 스텟에서 봇 킬 · 딜을 뺀다(저장된 봇 몫 칸)
     if (Number(ev.id) >= BOT_STATS_FROM_EVENT) {
-      const got = await sbSelect("event_match_telemetry", `select=team_name,match_id,combat&event_id=eq.${ev.id}`);
-      tel = new Map(got.map((t) => [`${t.team_name}|${t.match_id}`, t.combat]));
+      try {
+        const got = await sbSelect("event_match_players", `select=team_name,match_id,account_id,bot_kills,bot_dmg&event_id=eq.${ev.id}&bot_kills=not.is.null`);
+        bots = new Map(got.map((x) => [`${x.team_name}|${x.match_id}|${x.account_id}`, { kills: x.bot_kills, damage: x.bot_dmg }]));
+      } catch (e) { log.warn("[killrace] bot_stats_read_failed", logSafe(e)); }   // 칸이 없으면(§75 미실행) 공식 값 그대로
     }
-    return buildPlayers({ ev, teams, cfg, rows, roster, at: now(), tel });
+    return buildPlayers({ ev, teams, cfg, rows, roster, at: now(), bots });
   }
 
   // ── 핵 사망 무효(진행자 수동 표시) — 설정에 적고 그 판 점수를 바로 다시 센다. 다음 집계도 같은 표시를 읽는다 ──

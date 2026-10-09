@@ -7041,3 +7041,40 @@ notify pgrst, 'reload schema';
 --   drop table if exists public.killrace_prize_verifications;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §75  킬내기 개인 스텟 봇 몫 — event_match_players.bot_kills · bot_dmg (2026-10-10 · 지휘 D 정정 「2 ~ 6회 + 연습 회차 소급」 · 계약 docs/killrace-api.md §1.24)
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행). A 구간(칸 두 개 더하기 · 기존 칸 · 값은 안 바뀐다).
+--   - 판 × 선수 한 줄에 「그 선수가 봇(계정이 ai. 로 시작)에게 낸 킬 수 · 딜 합」을 따로 적는다. 공식 kills · damage 는 그대로 남는다.
+--   - 개인 스텟 = kills − bot_kills · damage − bot_dmg(음수면 0) — 계산은 서버가 읽을 때 한다(팀 점수 · 순위는 공식 값 그대로).
+--   - 비어 있음(null) = 아직 텔레메트리를 못 받은 판 → 개인 기록에서 「집계 중」. 1회(event 1)는 쓰지 않는다(공식 값 그대로).
+--   - 채우는 곳: 판별 상세 채우기(killrace-detail.cjs)가 텔레메트리를 저장한 바로 뒤 · 이미 저장된 판은 75c 한 번.
+--
+-- 75a) 실행 블록(멱등):
+alter table public.event_match_players add column if not exists bot_kills integer      check (bot_kills is null or bot_kills >= 0);
+alter table public.event_match_players add column if not exists bot_dmg   numeric(9,2) check (bot_dmg is null or bot_dmg >= 0);
+notify pgrst, 'reload schema';
+--
+-- 75b) 75a 뒤 검증(세션 · 읽기만):
+--   select column_name, data_type, is_nullable from information_schema.columns
+--    where table_schema = 'public' and table_name = 'event_match_players' and column_name in ('bot_kills', 'bot_dmg') order by 1;   -- bot_dmg numeric YES · bot_kills integer YES
+--
+-- 75c) 이미 저장된 텔레메트리로 채우기(세션 · 비어 있는 칸만 · event 2 이상 · 전후 스냅샷 · 줄 수 대조):
+--   with b as (
+--     select p.event_id, p.team_name, p.match_id, p.account_id,
+--            count(*) filter (where c->>'k' = 'kill') as k,
+--            coalesce(sum((c->>'d')::numeric) filter (where c->>'k' = 'dmg'), 0) as d
+--       from public.event_match_players p
+--       join public.event_match_telemetry t using (event_id, team_name, match_id)
+--       left join lateral jsonb_array_elements(t.combat) c
+--         on c->>'a' = p.account_id and c->>'v' like 'ai.%' and c->>'k' in ('kill', 'dmg')
+--      where p.event_id >= 2 and p.bot_kills is null
+--      group by 1, 2, 3, 4)
+--   update public.event_match_players p set bot_kills = b.k, bot_dmg = round(b.d, 2)
+--     from b where (p.event_id, p.team_name, p.match_id, p.account_id) = (b.event_id, b.team_name, b.match_id, b.account_id);
+--
+-- 되돌림(개인 스텟이 공식 값으로 돌아가지 않고 2회 이후 판이 전부 「집계 중」이 된다 — 코드도 같이 되돌릴 때만):
+--   alter table public.event_match_players drop column if exists bot_dmg;
+--   alter table public.event_match_players drop column if exists bot_kills;
+--   notify pgrst, 'reload schema';
+-- ============================================================

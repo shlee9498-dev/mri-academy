@@ -14,7 +14,7 @@ function person(id, ign, games, kills, dmg, lastDaysAgo = 1, ev = 2) {
   const rows = [], matches = [];
   for (let i = 0; i < games; i++) {
     const m = `m-${id}-${i}`;
-    rows.push({ event_id: ev, team_name: `t-${id}`, match_id: m, account_id: acc(id), ign, kills, damage: dmg, started_at: day(lastDaysAgo + i * 0.01) });
+    rows.push({ event_id: ev, team_name: `t-${id}`, match_id: m, account_id: acc(id), ign, kills, damage: dmg, bot_kills: 0, bot_dmg: 0, started_at: day(lastDaysAgo + i * 0.01) });
     matches.push({ event_id: ev, team_name: `t-${id}`, match_id: m, seq: i + 1, leave_flag: false, revive: null });
   }
   return { rows, matches };
