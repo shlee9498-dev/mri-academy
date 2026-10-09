@@ -58,6 +58,7 @@ const BODY = { eventId: 1, teams: [{ name: "1팀", anchors: ["AnchorOne"] }, { n
 
 test("요청 검사 — 회차 · 팀 이름 · 기준 선수 1~4 · 기본은 미리 보기", () => {
   assert.equal(parseBody({}).error, "bad_event");
+  assert.equal(parseBody({ ...BODY, eventId: 2 }).error, "bad_event", "1회만 — 2회부터 돌리면 같은 판이 다른 팀 이름으로 겹쳐 들어간다");
   assert.equal(parseBody({ eventId: 1, teams: [] }).error, "bad_teams");
   assert.equal(parseBody({ eventId: 1, teams: [{ name: "a", anchors: [] }] }).error, "bad_teams");
   assert.equal(parseBody({ eventId: 1, teams: [{ name: "a", anchors: ["x"] }, { name: "a", anchors: ["y"] }] }).error, "bad_teams");
@@ -103,4 +104,19 @@ test("쓰기 — 판 · 선수 줄 모양 · 점수 비움 · 이미 있는 판�
   assert.equal(P.length, 9);
   const a1 = P.find((x) => x.match_id === "m2" && x.account_id === "acc.a1");
   assert.deepEqual([a1.slot, a1.kills, a1.damage, a1.dead, a1.started_at], [1, 1, 150.5, true, M[0].created_at]);
+});
+
+test("빼기 목록 — 그 닉은 슬롯 · 선수 줄 · 팀 킬 합에서 빠진다 · 실패 응답에 원문 없음", async () => {
+  const d = deps(); const b = createBackfill(d);
+  const body = { eventId: 1, teams: [{ name: "1팀", anchors: ["AnchorOne"], exclude: ["matex"] }], dryRun: false };
+  const r = res(); await b.post({ admin: true, body }, r);
+  const t1 = r.body.teams[0];
+  assert.deepEqual(t1.roster.map((x) => x.ign), ["AnchorOne", "MateY"]);
+  assert.deepEqual(t1.excluded, ["MateX"]);
+  assert.ok(!d.written.event_match_players.some((x) => x.account_id === "acc.x"));
+  assert.equal(d.written.event_matches.find((x) => x.match_id === "m2").kills, 1);
+  const bad = createBackfill({ ...deps(), pubgGet: async () => { throw Object.assign(new Error("GET /shards/steam/players?filter[playerIds]=acc.secret 500"), { status: 500 }); } });
+  const r2 = res(); await bad.post({ admin: true, body: BODY }, r2);
+  assert.equal(r2.code, 500);
+  assert.ok(!JSON.stringify(r2.body).includes("acc.secret"));
 });

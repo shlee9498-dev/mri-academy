@@ -10,10 +10,10 @@ const OK_MODES = new Set(["squad", "squad-fpp"]);   // 집계와 같은 판 인�
 const PLATFORM = "steam";
 const MAX_TEAMS = 12;
 
-// 요청 { eventId, teams: [{ name, anchors: ["닉" | "닉|옛닉"] }], dryRun } 검사
+// 요청 { eventId, teams: [{ name, anchors: ["닉" | "닉|옛닉"], exclude: ["닉"] }], dryRun } 검사 · 회차는 1 만(2회부터는 팀 줄이 있어 다른 이름으로 겹쳐 들어간다)
 function parseBody(b) {
   const eventId = Number(b && b.eventId);
-  if (!Number.isInteger(eventId) || eventId <= 0) return { error: "bad_event" };
+  if (eventId !== 1) return { error: "bad_event" };
   const teams = Array.isArray(b.teams) ? b.teams : [];
   if (!teams.length || teams.length > MAX_TEAMS) return { error: "bad_teams" };
   const out = [];
@@ -21,9 +21,10 @@ function parseBody(b) {
   for (const t of teams) {
     const name = String((t && t.name) || "").trim();
     const anchors = (Array.isArray(t && t.anchors) ? t.anchors : []).map((a) => String(a).split("|").map((x) => x.trim()).filter(Boolean)).filter((a) => a.length);
-    if (!name || name.length > 30 || seen.has(name) || !anchors.length || anchors.length > 4) return { error: "bad_teams" };
+    const exclude = (Array.isArray(t && t.exclude) ? t.exclude : []).map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+    if (!name || name.length > 30 || seen.has(name) || !anchors.length || anchors.length > 4 || exclude.length > 4) return { error: "bad_teams" };
     seen.add(name);
-    out.push({ name, anchors });
+    out.push({ name, anchors, exclude: new Set(exclude) });
   }
   return { eventId, teams: out, dryRun: b.dryRun !== false };
 }
@@ -83,7 +84,7 @@ function createBackfill(deps) {
         const a = await accountOf(alts);
         if (a) anchors.push(a); else warn.push(`${t.name}: 기준 선수 「${alts.join("|")}」 계정을 DB 에서 못 찾았어요`);
       }
-      plan.push({ name: t.name, anchors });
+      plan.push({ name: t.name, anchors, exclude: t.exclude });
     }
     // 2) 계정 → 최근 매치 목록(배그는 14일 안 판만 준다 · 10명씩 한 번)
     const accs = [...new Set(plan.flatMap((t) => t.anchors.map((a) => a.accountId)))];
@@ -102,6 +103,7 @@ function createBackfill(deps) {
       const anchorAccs = t.anchors.map((a) => a.accountId);
       const ids = [...new Set(anchorAccs.flatMap((a) => matchesByAcc.get(a) || []))];
       const games = [];
+      const dropped = new Set();
       for (const id of ids) {
         let m;
         try { m = await matchOf(id); } catch (e) { warn.push(`${t.name}: 매치 조회 실패 ${String(id).slice(0, 8)} (${(e && e.status) || "?"})`); continue; }
@@ -111,7 +113,9 @@ function createBackfill(deps) {
         const tm = teamInMatch(m, anchorAccs);
         if (!tm) continue;
         if (tm.split) { warn.push(`${t.name}: 기준 선수가 서로 다른 팀으로 들어간 판 빼요 ${String(id).slice(0, 8)}`); continue; }
-        games.push({ id, at, map: m.mapName || null, mode: m.mode, matchType: m.matchType, ...tm });
+        // 빼기 목록 닉(대타 등)은 슬롯 · 선수 줄 · 팀 킬 · 딜 합에서 뺀다
+        const members = tm.members.filter((x) => { const out = t.exclude.has(String(x.ign || "").toLowerCase()); if (out) dropped.add(x.ign); return !out; });
+        games.push({ id, at, map: m.mapName || null, mode: m.mode, matchType: m.matchType, place: tm.place, members });
       }
       games.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1));
       // 슬롯 = 이 팀에서 처음 본 순서(기준 선수 먼저) · 최대 4
@@ -136,7 +140,7 @@ function createBackfill(deps) {
       });
       result.push({ team: t.name, anchors: t.anchors.map((a) => a.name), games: games.length, added,
         roster: [...slotOf.entries()].sort((a, b) => a[1] - b[1]).map(([acc, slot]) => ({ slot, ign: names.get(acc) || t.anchors.find((a) => a.accountId === acc)?.name || "?" })),
-        places: games.map((g) => g.place) });
+        places: games.map((g) => g.place), excluded: [...dropped] });
     }
     const body = { event: { id: ev.id, name: ev.name }, dryRun, teams: result, totals: { matches: rowsM.length, players: rowsP.length }, warn, ms: now() - t0 };
     if (!dryRun && rowsM.length) {
@@ -158,7 +162,8 @@ function createBackfill(deps) {
     catch (e) {
       const st = e && e.status;
       log.warn("[killrace-backfill] failed", st || "", String((e && e.message) || e).slice(0, 120));
-      return res.status(st === 429 ? 429 : st === 503 ? 503 : 500).json({ error: { code: st === 429 ? "rate_limit" : st === 503 ? "pubg_disabled" : "error", detail: String((e && e.message) || e).slice(0, 120) } });
+      // 원문(배그 주소에 계정 번호가 들어갈 수 있다)은 서버 로그에만 · 응답은 코드만
+      return res.status(st === 429 ? 429 : st === 503 ? 503 : 500).json({ error: { code: st === 429 ? "rate_limit" : st === 503 ? "pubg_disabled" : "error" } });
     } finally { running = false; }
   }
 
