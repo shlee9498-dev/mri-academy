@@ -7139,7 +7139,7 @@ async function gmiGuildMember(discordId) {
   killLeaderboard.mount(app);
   if (process.env.SUPABASE_URL) setInterval(() => { killLeaderboard.tick(); }, 60000).unref();
   // 판별 상세 기록 채우기(§1.12 · §67) — 끝 + 45분이 지난 회차의 판을 1분에 매치 하나씩(대회 시간에는 쉰다 · 끄기 ops_state 'killrace:detail' { off: true })
-  const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
+  const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
 }
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
@@ -7694,7 +7694,8 @@ app.post("/api/gdcup-solo", async (req, res) => {
 });
 // ── 킬내기 2회 솔로 신청(killrace-apply.cjs · GmI 소관) — 저장은 ops_state 줄들(DDL 없음). 계좌는 오너 로그인으로만 내려간다 ──
 {
-  const applyKey = (suffix) => `killrace:${suffix}:${killraceApply.ROUND}`;
+  // 신청 줄 이름은 회차 설정(killrace:applycfg · §1.23)의 round — 모듈이 요청마다 넘긴다. 안 넘기면 코드 기본값
+  const applyKey = (suffix, round) => `killrace:${suffix}:${round || killraceApply.ROUND}`;
   const opsGet = async (key) => {
     const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`);
     return rows.length ? rows[0].value : null;
@@ -7702,14 +7703,15 @@ app.post("/api/gdcup-solo", async (req, res) => {
   const opsPut = (key, value) => sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key");
   const api = killraceApply.createApplyApi({
     store: {
-      load: () => opsGet(applyKey("apply")), save: (state) => opsPut(applyKey("apply"), state),
-      loadPay: () => opsGet(applyKey("applypay")), savePay: (pay) => opsPut(applyKey("applypay"), pay),
+      load: (r) => opsGet(applyKey("apply", r)), save: (state, r) => opsPut(applyKey("apply", r), state),
+      loadPay: (r) => opsGet(applyKey("applypay", r)), savePay: (pay, r) => opsPut(applyKey("applypay", r), pay),
       // 선수 소개 4칸(계약 §1.15) — 따로 한 줄. 소개를 저장할 때 명단 · 계좌 줄은 쓰지 않는다
-      loadIntro: () => opsGet(applyKey("applyintro")), saveIntro: (intro) => opsPut(applyKey("applyintro"), intro),
+      loadIntro: (r) => opsGet(applyKey("applyintro", r)), saveIntro: (intro, r) => opsPut(applyKey("applyintro", r), intro),
       // 참가 구분 · 외부 참가비 확인(계약 §1.16) — 각자 한 줄. 입금 안내 문구는 설정 줄(없으면 화면이 「디스코드에서 드려요」)
-      loadKind: () => opsGet(applyKey("applykind")), saveKind: (kind) => opsPut(applyKey("applykind"), kind),
-      loadFee: () => opsGet(applyKey("applyfee")), saveFee: (fee) => opsPut(applyKey("applyfee"), fee),
+      loadKind: (r) => opsGet(applyKey("applykind", r)), saveKind: (kind, r) => opsPut(applyKey("applykind", r), kind),
+      loadFee: (r) => opsGet(applyKey("applyfee", r)), saveFee: (fee, r) => opsPut(applyKey("applyfee", r), fee),
       loadInfo: () => opsGet("killrace:applyinfo"),
+      loadCfg: () => opsGet("killrace:applycfg"),      // 회차 설정(§1.23) — 없으면 코드 기본값(6회 값)
     },
     // 신청한 플랫폼에서 닉을 다시 확인하고 경매 명단에 쓸 값(경쟁전 티어 · 평딜 · KDA)을 같이 받아 둔다
     lookup: async (platform, ign) => {
@@ -8876,8 +8878,9 @@ const SCHEMA_OPTIONAL = {
                       "reminded_at", "remind_count"],
   // §66 킬내기 개인별 판 기록(docs/killrace-api.md §1.8 · 2026-10-06 · 소관 GmI 대행) — 미실행이면 집계 · 점수는 그대로이고
   //   이 표 쓰기만 10분에 한 번 실패 로그(players_write_failed table_missing). 티어 산정(§1.2)이 읽기 시작하면 REQUIRED 로 올린다.
+  //   bot_kills · bot_dmg = §75 개인 스텟 봇 몫(§1.24 · 10/10) — 미실행이면 개인 누적 · 리더보드 읽기가 400 이니 머지 전에 실행한다.
   event_match_players: ["event_id", "team_name", "match_id", "account_id", "slot", "sub", "ign", "reg_ign", "kills", "damage",
-                        "death_type", "dead", "started_at", "updated_at"],
+                        "death_type", "dead", "started_at", "updated_at", "bot_kills", "bot_dmg"],
   // §67 킬내기 판별 상세 기록(docs/killrace-api.md §1.12 · 2026-10-07 실행 · 소관 GmI 대행) — 채우는 코드가 쓰기 전까지 0행.
   event_match_player_detail: ["event_id", "team_name", "match_id", "account_id", "dbnos", "assists", "headshot_kills", "longest_kill_m",
                               "revives", "time_survived_s", "walk_m", "ride_m", "swim_m", "heals", "boosts", "team_kills", "kill_place",

@@ -7,6 +7,7 @@
 // 갱신 = 수요일 09:00 KST · 회차 window_end + 45분 뒤 한 번. 결과는 ops_state 'killrace:leaderboard' 저장본으로 낸다.
 const { keyMaker, reviveOut } = require("./killrace-career.cjs");
 const crypto = require("crypto");
+const { humanRows } = require("./killrace-detail.cjs");   // §1.24 봇 킬 · 딜 빼기(2회부터 소급 · 저장된 bot_kills · bot_dmg 칸)
 
 const MIN_GAMES = 20;
 const RECENT_DAYS = 30;
@@ -60,7 +61,7 @@ function buildLeaderboard({ rows, matches, merge = {}, now, minGames = MIN_GAMES
   const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const people = new Map();
   for (const r of rows || []) {
-    if (!r.account_id || !counted.has(`${r.event_id}|${r.team_name}|${r.match_id}`)) continue;
+    if (!r.account_id || r.pendingBot || !counted.has(`${r.event_id}|${r.team_name}|${r.match_id}`)) continue;   // 「집계 중」 판은 판 수에 안 넣는다(§1.24)
     const acc = (merge && typeof merge[r.account_id] === "string" && merge[r.account_id]) || r.account_id;
     if (!people.has(acc)) people.set(acc, { games: 0, kills: 0, damage: 0, last: -Infinity, ign: "", ignAt: -Infinity });
     const p = people.get(acc);
@@ -119,11 +120,12 @@ function createLeaderboard(deps) {
 
   async function compute(basis) {
     const t = now();
-    const [rows, matches, people] = await Promise.all([
-      readAll("event_match_players", "select=event_id,team_name,match_id,account_id,ign,kills,damage,started_at&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc"),
+    const [raw, matches, people] = await Promise.all([
+      readAll("event_match_players", "select=event_id,team_name,match_id,account_id,ign,kills,damage,bot_kills,bot_dmg,started_at&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc"),
       readAll("event_matches", "select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive&order=event_id.asc,team_name.asc,match_id.asc"),
-      readState(PEOPLE_KEY),
+      readState(PEOPLE_KEY)
     ]);
+    const rows = humanRows(raw);
     const merge = people && people.merge && typeof people.merge === "object" ? people.merge : {};
     const built = buildLeaderboard({ rows, matches, merge, now: t });
     const state = { at: new Date(t).toISOString(), basis, rules: { minGames: MIN_GAMES, recentDays: RECENT_DAYS }, eligible: built.eligible, list: built.list };

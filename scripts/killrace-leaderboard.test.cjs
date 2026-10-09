@@ -14,7 +14,7 @@ function person(id, ign, games, kills, dmg, lastDaysAgo = 1, ev = 2) {
   const rows = [], matches = [];
   for (let i = 0; i < games; i++) {
     const m = `m-${id}-${i}`;
-    rows.push({ event_id: ev, team_name: `t-${id}`, match_id: m, account_id: acc(id), ign, kills, damage: dmg, started_at: day(lastDaysAgo + i * 0.01) });
+    rows.push({ event_id: ev, team_name: `t-${id}`, match_id: m, account_id: acc(id), ign, kills, damage: dmg, bot_kills: 0, bot_dmg: 0, started_at: day(lastDaysAgo + i * 0.01) });
     matches.push({ event_id: ev, team_name: `t-${id}`, match_id: m, seq: i + 1, leave_flag: false, revive: null });
   }
   return { rows, matches };
@@ -142,4 +142,13 @@ test("표가 없으면 503 table_missing", async () => {
   const lb = createLeaderboard({ sbSelect: async () => { const e = new Error("PGRST205"); e.status = 404; throw e; }, sbUpsert: async () => {}, secret: "s", log: silent });
   const r = res(); await lb.get({}, r);
   assert.equal(r.code, 503); assert.deepEqual(r.body, { error: { code: "table_missing" } });
+});
+
+test("§1.24 「집계 중」 판(pendingBot)은 판 수 · 킬에 안 넣는다", () => {
+  const p = person("e", "E", 20, 3, 300);
+  const base = buildLeaderboard({ ...join(p), now: NOW });
+  p.rows.push({ ...p.rows[0], match_id: "m-e-x", kills: 30, pendingBot: true });
+  p.matches.push({ ...p.matches[0], match_id: "m-e-x", seq: 99 });
+  const got = buildLeaderboard({ ...join(p), now: NOW });
+  assert.deepEqual(got.list.map((x) => [x.games, x.kpg]), base.list.map((x) => [x.games, x.kpg]));
 });

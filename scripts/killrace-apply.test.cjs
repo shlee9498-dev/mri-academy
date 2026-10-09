@@ -19,12 +19,13 @@ function setup(over = {}) {
   const mem = { apply: null, pay: null, intro: null, kind: null, fee: null, info: over.info || null, cards: [], writes: [] };
   let seq = 0; let clock = OPEN;
   const api = a.createApplyApi({
-    store: { load: async () => mem.apply, save: async (s) => { mem.writes.push("apply"); mem.apply = JSON.parse(JSON.stringify(s)); },
+    store: { load: async (r) => { (mem.rounds || []).push(r); return mem.apply; }, save: async (s, r) => { mem.writes.push("apply"); mem.saveRound = r; mem.apply = JSON.parse(JSON.stringify(s)); },
       loadPay: async () => mem.pay, savePay: async (p) => { mem.writes.push("pay"); mem.pay = JSON.parse(JSON.stringify(p)); },
       loadIntro: async () => mem.intro, saveIntro: async (v) => { mem.writes.push("intro"); mem.intro = JSON.parse(JSON.stringify(v)); },
       loadKind: async () => mem.kind, saveKind: async (v) => { mem.writes.push("kind"); mem.kind = JSON.parse(JSON.stringify(v)); },
       loadFee: async () => mem.fee, saveFee: async (v) => { mem.writes.push("fee"); mem.fee = JSON.parse(JSON.stringify(v)); },
-      loadInfo: async () => mem.info },
+      loadInfo: async () => mem.info, ...(over.cfg !== undefined ? { loadCfg: async () => over.cfg } : {}),
+      _rounds: mem.rounds = [] },
     lookup: over.lookup || (async (platform, ign) => ({ ign, ranked: "Gold 3", grade: "B", avgDamage: 312.6, kda: 2.345 })),
     isAdmin: (req) => req.headers["x-admin-key"] === "k", isOwner: (req) => req.headers.authorization === "owner",
     notify: async (embed) => { mem.cards.push(embed); },
@@ -539,4 +540,20 @@ test("6회 — 계좌를 받지 않는다: 은행 · 계좌 칸 없이 신청되
   assert.ok(!mem.writes.includes("pay"));
   assert.deepEqual(leaks(JSON.stringify(mem)), []);
   assert.equal((await call(api.list, {})).body.needAccount, false);
+});
+
+test("§1.23 회차 설정 — killrace:applycfg 의 round · 마감 · 이름 · 모드를 요청마다 읽는다(없으면 코드 기본값)", async () => {
+  const cfg = { round: "r8", closeAt: new Date(OPEN + 7200e3).toISOString(), label: "7회", mode: "low", needAccount: false };
+  const { api, mem, call, setClock } = setup({ cfg, needAccount: false });
+  const l = (await call(api.list, {})).body;
+  assert.deepEqual([l.closed, l.closeAt, l.label, l.mode, l.needAccount], [false, Date.parse(cfg.closeAt), "7회", "low", false]);
+  const r = await call(api.apply, { body: { discord: "tester_one", ign: "Fake_Nick1", platform: "steam", agree: true } });
+  assert.equal(r.code, 200);
+  assert.equal(mem.saveRound, "r8");
+  assert.ok(mem.rounds.every((x) => x === "r8"));
+  setClock(Date.parse(cfg.closeAt));
+  assert.equal((await call(api.apply, { body: { discord: "tester_two", ign: "Fake_Nick2", platform: "steam", agree: true } })).body.error, "closed");
+  // 깨진 값은 기본값으로
+  assert.deepEqual(a.normApplyCfg({ round: "x9", closeAt: "nope", label: "", mode: "mid" }), { round: a.ROUND, closeAt: a.CLOSE_AT, label: "6회", needAccount: a.NEED_ACCOUNT, mode: null });
+  assert.match(T.cardEmbed({ discord: "d", ign: "i", at: OPEN }, false, 3, null, "7회").title, /킬내기 7회 신청 · 3\/20/);
 });

@@ -93,6 +93,8 @@ function world({ evs, players, tels = [], off = false, failMatch = null, clock }
     return [];
   };
   const sbUpsert = async (table, rows) => { db.upserts.push([table, rows]); if (table === "event_match_telemetry") rows.forEach((r) => tels.push(r)); };
+  db.patches = [];
+  const sbPatch = async (table, filter, patch) => { db.patches.push([table, filter, patch]); return []; };
   const pubgGet = async (path) => {
     db.gets.push(path);
     const mid = path.split("/").pop();
@@ -106,7 +108,7 @@ function world({ evs, players, tels = [], off = false, failMatch = null, clock }
     ] };
   };
   const logs = [];
-  const det = D.createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry, fetchImpl: async () => gzResponse(events()), now: () => clock.t,
+  const det = D.createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch, fetchTelemetry, fetchImpl: async () => gzResponse(events()), now: () => clock.t,
     log: { log: (m) => logs.push(m), warn: (...a) => logs.push(a.join(" ")) } });
   return { db, det, logs, tels };
 }
@@ -123,6 +125,10 @@ test("1분 차례: 매치 하나 → 상세 줄(우리 선수만) · 텔레메�
   assert.deepEqual([t1, detail.map((r) => [r.team_name, r.account_id, r.dbnos, r.longest_kill_m, r.time_survived_s])],
     ["event_match_player_detail", [["가팀", A1, 1, 88.8, 1500], ["가팀", A2, 0, null, 900], ["나팀", B1, 2, null, 1200]]]);
   assert.equal(t2, "event_match_telemetry");
+  // §1.24 — 같은 판 선수마다 봇 몫 칸(bot_kills · bot_dmg)을 적는다(원래 kills · damage 는 안 건드린다)
+  assert.deepEqual(w.db.patches.map(([tb, f, p]) => [tb, decodeURIComponent(f).includes(`account_id=eq.${A1}`) || decodeURIComponent(f).includes(`account_id=eq.${A2}`) || decodeURIComponent(f).includes(`account_id=eq.${B1}`), Object.keys(p).sort().join(",")]),
+    [["event_match_players", true, "bot_dmg,bot_kills"], ["event_match_players", true, "bot_dmg,bot_kills"], ["event_match_players", true, "bot_dmg,bot_kills"]]);
+  assert.ok(w.db.patches.every(([, f]) => f.startsWith("event_id=eq.2&team_name=eq.") && f.includes("&match_id=eq.m1&")));
   const ga = tel.find((r) => r.team_name === "가팀"); const na = tel.find((r) => r.team_name === "나팀");
   assert.deepEqual([ga.match_start, ga.source_events, Object.keys(ga.positions), ga.positions[A1].length, ga.combat.length], [iso(0), events().length, [A1, A2], 2, 5]);
   assert.deepEqual([Object.keys(na.positions), na.combat], [[B1], [{ t: 341, k: "revive", a: B1, v: "account.zz" }]]);   // 나팀은 자기 선수(B1) 사건만
@@ -150,4 +156,33 @@ test("1분 차례: 대회 시간(시작 30분 전 ~ 끝 + 45분)에는 쉰다 ·
   assert.deepEqual(w.db.gets, ["/shards/steam/matches/m1", "/shards/steam/matches/m2"]);
   assert.equal(await w.det.tick(), "idle");
   assert.equal(w.db.upserts.filter(([t]) => t === "event_match_telemetry").length, 1);
+});
+
+test("§1.24 botCounts · humanStats · botPatches — 본인이 봇(ai.*)에게 낸 킬 · 딜만 센다", () => {
+  const combat = [
+    { t: 1, k: "kill", a: "acc.me", v: "ai.1" },
+    { t: 2, k: "kill", a: "acc.me", v: "ai.2" },
+    { t: 3, k: "kill", a: "acc.me", v: "acc.human" },
+    { t: 4, k: "dmg", a: "acc.me", v: "ai.1", d: 100.5 },
+    { t: 5, k: "dmg", a: "acc.me", v: "acc.human", d: 80 },
+    { t: 6, k: "kill", a: "acc.other", v: "ai.3" },          // 남의 봇 킬은 안 센다
+    { t: 7, k: "groggy", a: "acc.me", v: "ai.4" },           // 기절은 안 센다
+    { t: 8, k: "kill", a: "ai.5", v: "acc.me" },             // 봇이 나를 잡은 것도 안 센다
+    null,
+  ];
+  assert.deepEqual(T.botCounts(combat, "acc.me"), { kills: 2, damage: 100.5 });
+  assert.equal(T.botCounts(null, "acc.me"), null);
+  assert.deepEqual(T.humanStats({ kills: 3, damage: 180.5 }, T.botCounts(combat, "acc.me")), { kills: 1, damage: 80 });
+  assert.equal(T.humanStats({ kills: 3, damage: 1 }, null), null);
+  assert.deepEqual(T.humanStats({ kills: 0, damage: 0 }, { kills: 2, damage: 5 }), { kills: 0, damage: 0 });
+  assert.deepEqual(T.botPatches({ combat }, ["acc.me", "acc.other"]),
+    [{ account_id: "acc.me", bot_kills: 2, bot_dmg: 100.5 }, { account_id: "acc.other", bot_kills: 1, bot_dmg: 0 }]);
+  assert.equal(T.BOT_STATS_FROM_EVENT, 2);
+});
+
+test("실패한 매치는 30분 뒤 다시 고른다", () => {
+  const at = Date.parse("2026-10-10T00:00:00Z");
+  const players = [{ event_id: 2, team_name: "가팀", match_id: "m1", account_id: "a", started_at: new Date(at - 3600e3).toISOString() }];
+  assert.equal(T.pickJob({ players, done: new Set(), failed: new Map([["m1", { at: at - 10 * 60e3 }]]), at }), null);
+  assert.equal(T.pickJob({ players, done: new Set(), failed: new Map([["m1", { at: at - T.FAILED_RETRY_MS }]]), at }).matchId, "m1");
 });

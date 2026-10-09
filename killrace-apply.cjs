@@ -23,6 +23,22 @@ const CLOSE_AT = Date.parse("2026-10-09T14:00:00Z");         // 10/9(금) 23:00 
 // 계좌를 받는가 — 6회는 상품이 MVP 치킨 기프티콘(디스코드 DM 전달)이라 받지 않는다(지휘 10/9 19:57 · 필요 없는 개인 정보는 모으지 않는다).
 //   false 면 은행 · 계좌번호 · 예금주 칸을 보지도 저장하지도 않는다(보내와도 버린다). 상금 회차로 돌아가면 true 로
 const NEED_ACCOUNT = false;
+// 회차 설정(§1.23 · 지휘 10/10) — ops_state 'killrace:applycfg' = { round, closeAt, label, needAccount, mode }. 코드를 고치지 않고 회차를 바꾼다.
+//   없거나 깨진 칸은 위 상수(6회 값)로. round = 신청 줄 이름(r + 숫자 · 회차마다 새 줄) · closeAt = 마감(ISO) · label = 「7회」 같은 이름 ·
+//   mode = "low"(저티어 판) · "high"(고티어 판) · 없음. 바꾸면 다음 요청부터 그 값을 쓴다(서버 재시작 없음)
+function normApplyCfg(v) {
+  const o = v && typeof v === "object" ? v : {};
+  const at = typeof o.closeAt === "number" ? o.closeAt : Date.parse(o.closeAt);
+  const label = String(o.label || "").trim();
+  return {
+    round: typeof o.round === "string" && /^r\d{1,3}$/.test(o.round) ? o.round : ROUND,
+    closeAt: Number.isFinite(at) ? at : CLOSE_AT,
+    label: label && label.length <= 20 ? label : "6회",
+    needAccount: typeof o.needAccount === "boolean" ? o.needAccount : NEED_ACCOUNT,
+    mode: o.mode === "low" || o.mode === "high" ? o.mode : null,
+  };
+}
+const DEFAULT_CFG = normApplyCfg(null);
 const PLATFORMS = ["steam"];                               // 2회는 스팀으로만 한다(오너 10/4 밤) — 카카오 닉은 받지 않는다
 const BANKS = ["국민", "신한", "우리", "하나", "농협", "기업", "카카오뱅크", "토스뱅크", "케이뱅크", "새마을", "우체국", "신협", "수협", "부산", "대구", "경남", "광주", "전북", "SC제일", "산업"];
 
@@ -128,8 +144,8 @@ function findDup(state, value) {
 }
 const findMine = (state, who) => active(state).find((x) => keyOf(x.discord) === keyOf(who.discord) && keyOf(x.ign) === keyOf(who.ign)) || null;
 // 한 건 넣기 — 상태를 바꾸지 않고 새 상태를 돌려준다
-function addEntry(state, value, info, id, at) {
-  if (at >= CLOSE_AT) return { error: "closed" };
+function addEntry(state, value, info, id, at, closeAt = CLOSE_AT) {
+  if (at >= closeAt) return { error: "closed" };
   const dup = findDup(state, value);
   if (dup) return { error: dup };
   const i = info || {};
@@ -160,24 +176,24 @@ function setStatus(state, id, status) {
 const tierText = (x) => x.ranked || "경쟁전 기록 없음";
 // 공개 — 인원과 인게임 닉 · 티어 · 선수 소개 네 칸만(디스코드 닉 · 계좌 · 신청 id · 입금 여부 · 참가 구분 없음).
 //   참가 구분은 「누가 레슨생인지」라서 진행자 응답에만 싣는다(검수 44차 · 10/7). 공개에는 참가비 금액 · 입금 안내 문구만
-function publicView(state, at, intros = {}, info = null) {
+function publicView(state, at, intros = {}, info = null, c = DEFAULT_CFG) {
   const rows = seats(state);
   return {
     cap: CAP, count: Math.min(rows.length, CAP), waiting: Math.max(0, rows.length - CAP),
-    closed: at >= CLOSE_AT, closeAt: CLOSE_AT, needAccount: NEED_ACCOUNT, banks: BANKS, positions: POSITIONS, styles: STYLES,
+    closed: at >= c.closeAt, closeAt: c.closeAt, needAccount: c.needAccount, label: c.label, mode: c.mode, banks: BANKS, positions: POSITIONS, styles: STYLES,
     fee: { external: FEE_EXTERNAL }, payInfo: payInfo(info),
     list: rows.map((x) => ({ ign: x.ign, platform: x.platform, tier: tierText(x), waiting: x.waiting, intro: introPublic(intros[x.id]) })),
   };
 }
 // 진행자 — 경매 명단에 쓸 값 · 선수 소개 · 안 채운 사람 · 참가 구분 · 외부 참가비 확인까지(계좌 없음). 취소한 건도 보인다
 const paidOf = (fees, id) => !!(fees && fees[id] && fees[id].paid === true);
-function adminView(state, at, intros = {}, kinds = {}, fees = {}, info = null) {
+function adminView(state, at, intros = {}, kinds = {}, fees = {}, info = null, c = DEFAULT_CFG) {
   const seated = seats(state);
   const seat = new Map(seated.map((x) => [x.id, x]));
   const kindCounts = { lesson: 0, clan: 0, external: 0, none: 0 };
   for (const x of seated) kindCounts[kindOf(kinds, x.id) || "none"] += 1;
   return {
-    ...publicView(state, at, intros, info),
+    ...publicView(state, at, intros, info, c),
     introDone: seated.filter((x) => introDone(intros[x.id])).length,
     introMissing: seated.filter((x) => !introDone(intros[x.id]))
       .map((x) => ({ order: x.order, ign: x.ign, discord: x.discord, waiting: x.waiting, missing: introMissing(intros[x.id]) })),
@@ -225,9 +241,9 @@ function payoutCsv(rows) {
   return "\uFEFF" + [head.join(","), ...body].join("\r\n") + "\r\n";
 }
 // 디스코드 카드 — 디스코드 닉 · 인게임 닉 · 티어 · 참가 구분만
-function cardEmbed(entry, waiting, count, kind = null) {
+function cardEmbed(entry, waiting, count, kind = null, label = DEFAULT_CFG.label) {
   return {
-    title: waiting ? "킬내기 6회 신청 · 대기" : `킬내기 6회 신청 · ${count}/${CAP}`,
+    title: waiting ? `킬내기 ${label} 신청 · 대기` : `킬내기 ${label} 신청 · ${count}/${CAP}`,
     color: waiting ? 0x9aa3b2 : 0x2f6feb,
     fields: [
       { name: "디스코드", value: entry.discord || "-", inline: true },
@@ -248,23 +264,29 @@ function createApplyApi(deps) {
   const now = deps.now || (() => Date.now());
   const newId = deps.newId || (() => require("crypto").randomBytes(6).toString("hex"));
   const log = deps.log || console;
-  const needAccount = deps.needAccount === undefined ? NEED_ACCOUNT : deps.needAccount === true;   // 시험은 true 로 옛 길도 본다
+  let cur = DEFAULT_CFG;                                      // 지금 회차 설정 — 요청마다 처음에 다시 읽는다(refresh)
+  const refresh = async () => {
+    if (store.loadCfg) { try { cur = normApplyCfg(await store.loadCfg()); } catch (e) { log.warn("[killrace-apply] cfg_load_failed"); } }
+    return cur;
+  };
+  const needAccountOf = () => (deps.needAccount === undefined ? cur.needAccount : deps.needAccount === true);   // 시험은 true 로 옛 길도 본다
   let chain = Promise.resolve();                              // 쓰기는 한 줄로 세운다(같은 닉이 동시에 와도 한 건만)
   const serial = (fn) => { const run = chain.then(fn, fn); chain = run.catch(() => {}); return run; };
-  const load = async () => normState(await store.load());
-  const loadIntros = async () => normIntros(store.loadIntro ? await store.loadIntro() : null);
-  const loadKinds = async () => normPay(store.loadKind ? await store.loadKind() : null);   // 참가 구분 줄(계약 §1.16)
-  const loadFees = async () => normPay(store.loadFee ? await store.loadFee() : null);      // 외부 참가비 확인 줄(진행자만)
+  const load = async () => normState(await store.load(cur.round));
+  const loadIntros = async () => normIntros(store.loadIntro ? await store.loadIntro(cur.round) : null);
+  const loadKinds = async () => normPay(store.loadKind ? await store.loadKind(cur.round) : null);   // 참가 구분 줄(계약 §1.16)
+  const loadFees = async () => normPay(store.loadFee ? await store.loadFee(cur.round) : null);      // 외부 참가비 확인 줄(진행자만)
   const loadInfo = async () => (store.loadInfo ? await store.loadInfo() : null);           // 입금 안내 문구 설정 줄(없으면 null)
   const adminPayload = async (state, intros) =>
-    adminView(state, now(), intros || await loadIntros(), await loadKinds(), await loadFees(), await loadInfo());
+    adminView(state, now(), intros || await loadIntros(), await loadKinds(), await loadFees(), await loadInfo(), cur);
   const fail = (res, status, error) => res.status(status).json({ error });
   const ipOf = (req) => String((req.headers && req.headers["x-forwarded-for"]) || "").split(",")[0].trim() || req.ip || "";
 
   async function apply(req, res) {
     try {
+      await refresh();
       if (rateLimited(ipOf(req))) return fail(res, 429, "too_many_requests");
-      const n = normApply(req.body, needAccount);
+      const n = normApply(req.body, needAccountOf());
       if (n.error) return fail(res, 400, n.error);
       // 선수 소개(§1.15) — 새 화면은 늘 보낸다. 키가 아예 없는 요청(배포 사이 옛 화면)은 받고 「안 채운 사람」으로 남긴다
       let intro = null;
@@ -280,7 +302,7 @@ function createApplyApi(deps) {
         if (kv.error) return fail(res, 400, kv.error);
         kind = kv.value;
       }
-      if (now() >= CLOSE_AT) return fail(res, 403, "closed");
+      if (now() >= cur.closeAt) return fail(res, 403, "closed");
       const early = findDup(await load(), n.value);            // 전적 조회(PUBG 호출) 전에 먼저 거른다
       if (early) return fail(res, 409, early);
       let info = { verified: false };
@@ -292,27 +314,27 @@ function createApplyApi(deps) {
       const out = await serial(async () => {
         const state = await load();
         const id = newId();
-        const r = addEntry(state, n.value, info, id, now());
+        const r = addEntry(state, n.value, info, id, now(), cur.closeAt);
         if (r.error) return r;
         if (n.pay) {                                           // 계좌를 받는 회차만
-          const pay = normPay(await store.loadPay());
-          await store.savePay({ ...pay, [id]: n.pay });        // 계좌 먼저 — 명단 저장이 실패해도 주인 없는 계좌 한 줄만 남는다
+          const pay = normPay(await store.loadPay(cur.round));
+          await store.savePay({ ...pay, [id]: n.pay }, cur.round);        // 계좌 먼저 — 명단 저장이 실패해도 주인 없는 계좌 한 줄만 남는다
         }
         if (intro) {                                           // 소개도 명단보다 먼저(같은 이유 · 주인 없는 소개 한 줄은 어디에도 안 보인다)
           const all = await loadIntros();
-          await store.saveIntro({ ...all, [id]: { ...intro, at: r.entry.at, saves: 1 } });
+          await store.saveIntro({ ...all, [id]: { ...intro, at: r.entry.at, saves: 1 } }, cur.round);
         }
         if (kind) {                                            // 구분도 명단보다 먼저(같은 이유)
           const kinds = await loadKinds();
-          await store.saveKind({ ...kinds, [id]: { kind, at: r.entry.at, saves: 1 } });
+          await store.saveKind({ ...kinds, [id]: { kind, at: r.entry.at, saves: 1 } }, cur.round);
         }
-        await store.save(r.state);
+        await store.save(r.state, cur.round);
         return r;
       });
       if (out.error) return fail(res, out.error === "closed" ? 403 : 409, out.error);
       const count = Math.min(active(out.state).length, CAP);
       log.log(`[killrace-apply] applied order=${out.order} waiting=${out.waiting} verified=${out.entry.verified} intro=${intro ? 1 : 0} kind=${kind || "-"}`);
-      if (notify) Promise.resolve().then(() => notify(cardEmbed(out.entry, out.waiting, count, kind))).catch(() => log.warn("[killrace-apply] notify_failed"));
+      if (notify) Promise.resolve().then(() => notify(cardEmbed(out.entry, out.waiting, count, kind, cur.label))).catch(() => log.warn("[killrace-apply] notify_failed"));
       return res.json({ ok: true, waiting: out.waiting, order: out.order, count, cap: CAP, ign: out.entry.ign, tier: tierText(out.entry), verified: out.entry.verified,
         intro: introPublic(intro), done: introDone(intro), kind });
     } catch (e) {
@@ -322,15 +344,17 @@ function createApplyApi(deps) {
   }
   async function list(req, res) {
     try {
+      await refresh();
       const state = await load();
       const intros = await loadIntros();
       return res.json(isAdmin(req) ? { admin: true, ...(await adminPayload(state, intros)) }
-        : publicView(state, now(), intros, await loadInfo()));
+        : publicView(state, now(), intros, await loadInfo(), cur));
     } catch (e) { log.error("[killrace-apply] list_failed", e && e.status ? e.status : "error"); return fail(res, 500, "server_error"); }
   }
   // 「내 신청」 불러오기 — 디스코드 닉 + 스팀 닉(둘 다 맞아야 함). 어느 쪽이 틀렸는지는 알려 주지 않는다
   async function mine(req, res) {
     try {
+      await refresh();
       if (rateLimited(ipOf(req))) return fail(res, 429, "too_many_requests");
       const w = normWho(req.body);
       if (w.error) return fail(res, 400, w.error);
@@ -343,6 +367,7 @@ function createApplyApi(deps) {
   // 소개 저장 — 소개 줄만 쓴다(명단 줄은 읽기만 · 계좌 줄은 열지 않는다). 마감 뒤에는 막는다
   async function saveIntro(req, res) {
     try {
+      await refresh();
       if (rateLimited(ipOf(req))) return fail(res, 429, "too_many_requests");
       const w = normWho(req.body);
       if (w.error) return fail(res, 400, w.error);
@@ -355,7 +380,7 @@ function createApplyApi(deps) {
         if (kv.error) return fail(res, 400, kv.error);
         kind = kv.value;
       }
-      if (now() >= CLOSE_AT) return fail(res, 403, "closed");
+      if (now() >= cur.closeAt) return fail(res, 403, "closed");
       const out = await serial(async () => {
         const state = await load();
         const me = findMine(state, w.value);
@@ -363,12 +388,12 @@ function createApplyApi(deps) {
         const all = await loadIntros();
         const prev = all[me.id];
         const next = { ...all, [me.id]: { ...iv.value, at: now(), saves: (prev ? Number(prev.saves) || 0 : 0) + 1 } };
-        await store.saveIntro(next);
+        await store.saveIntro(next, cur.round);
         let kinds = await loadKinds();
         if (kind) {
           const pk = kinds[me.id];
           kinds = { ...kinds, [me.id]: { kind, at: now(), saves: (pk ? Number(pk.saves) || 0 : 0) + 1 } };
-          await store.saveKind(kinds);
+          await store.saveKind(kinds, cur.round);
         }
         return { view: mineView(state, next, me, kinds), saves: next[me.id].saves };
       });
@@ -379,6 +404,7 @@ function createApplyApi(deps) {
   }
   async function admin(req, res) {
     if (!isAdmin(req)) return fail(res, 401, "unauthorized");
+    await refresh();
     const b = req.body || {};
     if (b.action === "introClear" || b.action === "introEdit") return introByHost(b, res);
     if (b.action === "feeSet" || b.action === "kindSet") return joinByHost(b, res);
@@ -387,7 +413,7 @@ function createApplyApi(deps) {
     try {
       const out = await serial(async () => {
         const r = setStatus(await load(), String(b.id || ""), status);
-        if (!r.error) await store.save(r.state);
+        if (!r.error) await store.save(r.state, cur.round);
         return r;
       });
       if (out.error) return fail(res, out.error === "not_found" ? 404 : 409, out.error);
@@ -417,7 +443,7 @@ function createApplyApi(deps) {
           const prev = all[entry.id];
           next[entry.id] = { ...value, at: now(), saves: (prev ? Number(prev.saves) || 0 : 0) + 1, by };
         } else delete next[entry.id];
-        await store.saveIntro(next);
+        await store.saveIntro(next, cur.round);
         return { state, intros: next, entry };
       });
       if (out.error) return fail(res, 404, out.error);
@@ -445,12 +471,12 @@ function createApplyApi(deps) {
         const kinds = await loadKinds();
         if (kind) {
           const pk = kinds[entry.id];
-          await store.saveKind({ ...kinds, [entry.id]: { kind, at: now(), saves: (pk ? Number(pk.saves) || 0 : 0) + 1, by } });
+          await store.saveKind({ ...kinds, [entry.id]: { kind, at: now(), saves: (pk ? Number(pk.saves) || 0 : 0) + 1, by } }, cur.round);
           return { state, entry };
         }
         if (kindOf(kinds, entry.id) !== "external") return { error: "not_external", code: 409 };
         const fees = await loadFees();
-        await store.saveFee({ ...fees, [entry.id]: { paid: b.paid, at: now(), by } });
+        await store.saveFee({ ...fees, [entry.id]: { paid: b.paid, at: now(), by } }, cur.round);
         return { state, entry };
       });
       if (out.error) return fail(res, out.code, out.error);
@@ -461,8 +487,9 @@ function createApplyApi(deps) {
   }
   async function payouts(req, res) {
     if (!isOwner(req)) return fail(res, 403, "owner_only");
+    await refresh();
     try {
-      const rows = payoutRows(await load(), normPay(await store.loadPay()));
+      const rows = payoutRows(await load(), normPay(await store.loadPay(cur.round)));
       res.setHeader("Cache-Control", "no-store");
       if (req.path.endsWith(".csv")) {
         res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -485,7 +512,7 @@ function createApplyApi(deps) {
 }
 
 module.exports = {
-  createApplyApi, ROUND, CAP, CLOSE_AT, NEED_ACCOUNT, BANKS, POSITIONS, STYLES, INTRO_MAX, KINDS, FEE_EXTERNAL, INFO_MAX,
+  createApplyApi, normApplyCfg, ROUND, CAP, CLOSE_AT, NEED_ACCOUNT, BANKS, POSITIONS, STYLES, INTRO_MAX, KINDS, FEE_EXTERNAL, INFO_MAX,
   _test: { normApply, addEntry, setStatus, seats, findDup, findMine, publicView, adminView, mineView, payoutRows, payoutCsv, cardEmbed, normState, emptyState,
     normIntro, normWho, introDone, introMissing, introPublic, introAdmin, hostBy, normKind, kindOf, payInfo, kindLabel },
 };

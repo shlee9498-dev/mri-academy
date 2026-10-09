@@ -8,7 +8,7 @@ const T = C._test;
 
 const keyOf = T.keyMaker("test-secret");
 const row = (ev, team, mid, acc, ign, kills, damage, dead = true, at = "2026-10-05T10:00:00Z") =>
-  ({ event_id: ev, team_name: team, match_id: mid, account_id: acc, ign, kills, damage, dead, started_at: at });
+  ({ event_id: ev, team_name: team, match_id: mid, account_id: acc, ign, kills, damage, bot_kills: 0, bot_dmg: 0, dead, started_at: at });
 const match = (ev, team, mid, seq, leave = false) => ({ event_id: ev, team_name: team, match_id: mid, seq, leave_flag: leave });
 
 test("누적: 계정으로 센다 — 닉이 바뀌어도 한 사람(가장 최근 닉) · 회차를 넘어 합친다 · 판당 킬 · 딜 · 사망", () => {
@@ -100,4 +100,17 @@ test("인정 판만: 늦은 블루칩 부활로 −10 이 된 판(§1.14 · pena
     { ...match(5, "가팀", "h3", 3), revive: late("flag") }, { ...match(5, "가팀", "h4", 4), revive: { state: "unknown", rule: "penalty" } }];
   const a = C.buildCareer({ rows, matches, keyOf }).find((p) => p.key === keyOf("A"));
   assert.deepEqual([a.games, a.kills], [3, 10]);
+});
+
+test("§1.24 2회(event 2)부터 개인 킬 · 딜에서 저장된 봇 몫(bot_kills · bot_dmg)을 뺀다 · 아직 빈 판은 「집계 중」 · 1회는 그대로", () => {
+  const { humanRows } = require("../killrace-detail.cjs");
+  const raw = [
+    { ...row(1, "가팀", "x1", "A", "A", 5, 500), bot_kills: null, bot_dmg: null },   // 1회 — 그대로
+    { ...row(2, "가팀", "y1", "A", "A", 5, 500), bot_kills: 4, bot_dmg: 300 },        // 봇 킬 4 · 봇 딜 300 빼기
+    { ...row(2, "가팀", "y2", "A", "A", 2, 200), bot_kills: null, bot_dmg: null },   // 텔레메트리 아직 없음
+    { ...row(2, "가팀", "y3", "A", "A", 1, 50), bot_kills: 3, bot_dmg: 80 },          // 음수는 0
+  ];
+  const matches = [match(1, "가팀", "x1", 1), match(2, "가팀", "y1", 1), match(2, "가팀", "y2", 2), match(2, "가팀", "y3", 3)];
+  const [a] = C.buildCareer({ rows: humanRows(raw), matches, keyOf });
+  assert.deepEqual([a.games, a.kills, a.damage, a.pendingGames], [3, 6, 700, 1]);
 });
