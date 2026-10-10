@@ -60,7 +60,7 @@ function buildLeaderboard({ rows, matches, merge = {}, now, minGames = MIN_GAMES
   const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const people = new Map();
   for (const r of rows || []) {
-    if (!r.account_id || r.pendingBot || !counted.has(`${r.event_id}|${r.team_name}|${r.match_id}`)) continue;   // 「집계 중」 판은 판 수에 안 넣는다(§1.24)
+    if (!r.account_id || !counted.has(`${r.event_id}|${r.team_name}|${r.match_id}`)) continue;   // 봇 몫이 아직이면 공식 값이 잠정으로 들어간다(§1.24)
     const acc = (merge && typeof merge[r.account_id] === "string" && merge[r.account_id]) || r.account_id;
     if (!people.has(acc)) people.set(acc, { games: 0, kills: 0, damage: 0, last: -Infinity, ign: "", ignAt: -Infinity });
     const p = people.get(acc);

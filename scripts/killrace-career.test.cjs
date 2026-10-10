@@ -102,15 +102,15 @@ test("인정 판만: 늦은 블루칩 부활로 −10 이 된 판(§1.14 · pena
   assert.deepEqual([a.games, a.kills], [3, 10]);
 });
 
-test("§1.24 2회(event 2)부터 개인 킬 · 딜에서 저장된 봇 몫(bot_kills · bot_dmg)을 뺀다 · 아직 빈 판은 「집계 중」 · 1회는 그대로", () => {
+test("§1.24 2회(event 2)부터 개인 킬 · 딜에서 저장된 봇 몫(bot_kills · bot_dmg)을 뺀다 · 아직 빈 판은 공식 값 잠정 · 1회는 그대로", () => {
   const { humanRows } = require("../killrace-detail.cjs");
   const raw = [
     { ...row(1, "가팀", "x1", "A", "A", 5, 500), bot_kills: null, bot_dmg: null },   // 1회 — 그대로
     { ...row(2, "가팀", "y1", "A", "A", 5, 500), bot_kills: 4, bot_dmg: 300 },        // 봇 킬 4 · 봇 딜 300 빼기
-    { ...row(2, "가팀", "y2", "A", "A", 2, 200), bot_kills: null, bot_dmg: null },   // 텔레메트리 아직 없음
+    { ...row(2, "가팀", "y2", "A", "A", 2, 200), bot_kills: null, bot_dmg: null },   // 봇 몫 아직 — 공식 값 잠정
     { ...row(2, "가팀", "y3", "A", "A", 1, 50), bot_kills: 3, bot_dmg: 80 },          // 음수는 0
   ];
   const matches = [match(1, "가팀", "x1", 1), match(2, "가팀", "y1", 1), match(2, "가팀", "y2", 2), match(2, "가팀", "y3", 3)];
   const [a] = C.buildCareer({ rows: humanRows(raw), matches, keyOf });
-  assert.deepEqual([a.games, a.kills, a.damage, a.pendingGames], [3, 6, 700, 1]);
+  assert.deepEqual([a.games, a.kills, a.damage, a.pendingGames], [4, 8, 900, 1]);
 });
