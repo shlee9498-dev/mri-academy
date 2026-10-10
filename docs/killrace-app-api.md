@@ -177,7 +177,8 @@
 ### §8.2 룰 — `GET /api/killrace/rules?event=N` (없으면 지금 회차)
 
 ```
-{ event, score: { chicken: 8, damagePer: 100, slotPenalty: [4,3,2,1], leave: -10 },
+{ event, score: { chicken: 8, damagePer: 100, slotPenalty: [4,3,2,1], leave: -10, penaltyBy: "tier" | "slot" },
+  bots: { personal: true, team: false }, mode: "low" | "high" | null,
   boost: { mode: "seq" | "time", seqs: [5,7], mul: 1.5 },
   lateRevive: { rule: "penalty" | "flag" | "off", phase: 4 },
   teamSize: 4, auction: null | { teamSize, maxTeams, minTeams, budget, startPrice, bidSec, minStep, bonusPer, negativeMul, tierBonus } }
@@ -185,6 +186,9 @@
 
 - 코드 상수와 회차 설정(`killrace:event:<id>` · 경매 설정)을 **읽어서 보여 주기만** 한다. 룰이 바뀌어도 앱을 고치지 않는다.
 - 고르는 칸만 싣는다 — 팀 주소 토큰 · 보너스 · 무효 표시 · 경매 명단은 내보내지 않는다. `boost.at` 은 시각 버닝(1 ~ 4회)일 때만. 30초 기억 · 400 `bad_event` · 404 `no_event`.
+- (10/10 더함) `score.penaltyBy` — `"tier"` 면 감점이 팀 안 티어 순서(1등 −4 …)로 붙는다(killrace-api §1.22 · 7회부터), `"slot"` 이면 슬롯 번호 순.
+  `bots.personal` — 개인 기록에서 봇 킬 · 딜을 뺀다(§1.24 · 2회부터) · `bots.team` — 팀 점수에서도 뺀다(§1.25 · 회차 설정 `excludeBots`). `mode` — 저티어 · 고티어 판(§1.23).
+  경매는 드래프트로 바뀌어(10/10) 새 회차는 `auction: null` 이다(경매 설정 줄이 없다).
 
 ### §8.3 선수 한 명 — `GET /api/killrace/career/:key`
 
@@ -192,6 +196,8 @@
     byEvent: [{ id, name, team, games, kills, damage }], minGames, updatedAt }`
   — `events` 는 목록(§1.11)과 같은 회차 번호 목록, `byEvent` 는 회차별 줄(교체로 두 팀을 뛰었으면 판이 많은 팀).
 - 집계 방식 · 표본 부족 기준은 killrace-api §1.11 과 같다. 모양이 틀린 키는 400 `bad_key` · 없는 키는 404 `not_found` · 60초 기억.
+- (10/10 더함) 킬 · 딜은 봇 몫을 뺀 값이다(killrace-api §1.24 · 2회부터). 봇 몫을 아직 못 센 판은 공식 값으로 잠정 포함하고(#555 · §1.24)
+  그 판 수를 `pendingGames`(전체 · 회차별 줄)로 센다 — 0 이면 칸이 없다. 상세 채우기(§1.12)가 판이 끝나고 1 ~ 2분 뒤 채우면 사라진다.
 
 ## §9 저장 (DDL · 더하기만 · 지휘 「진행」 뒤 세션 실행)
 
