@@ -83,9 +83,15 @@ test("갱신 때 — 수요일 09:00 KST · 회차 끝 + 45분 · 저장본 없�
   assert.deepEqual(lastEventClose(evs, Date.parse("2026-10-08T14:44:00Z")), { at: Date.parse("2026-10-07T16:45:00Z"), eventId: 5 });
   assert.deepEqual(lastEventClose(evs, Date.parse("2026-10-08T14:45:00Z")), { at: Date.parse("2026-10-08T14:45:00Z"), eventId: 6 });
   assert.deepEqual(dueReason(null, evs, NOW), { reason: "first" });
-  assert.equal(dueReason({ at: "2026-10-08T15:00:00Z" }, evs, NOW), null);                             // 회차 마감 뒤 이미 갱신
-  assert.deepEqual(dueReason({ at: "2026-10-08T14:00:00Z" }, evs, NOW), { reason: "event", eventId: 6 });
-  assert.deepEqual(dueReason({ at: "2026-10-08T15:00:00Z" }, evs, Date.parse("2026-10-14T00:00:30Z")), { reason: "weekly" });
+  assert.equal(dueReason({ at: "2026-10-08T15:00:00Z", eventDone: 6 }, evs, NOW), null);              // 6회까지 넣고 이미 갱신
+  assert.deepEqual(dueReason({ at: "2026-10-08T14:00:00Z", eventDone: 5 }, evs, NOW), { reason: "event", eventId: 6 });
+  // 끝 + 45분 뒤 계산했어도 그 회차를 아직 안 넣었으면(eventDone 없음 · 옛 저장본) 다시 — 단 봇 몫이 다 찼을 때만(10/10)
+  assert.deepEqual(dueReason({ at: "2026-10-08T15:00:00Z" }, evs, NOW), { reason: "event", eventId: 6 });
+  assert.equal(dueReason({ at: "2026-10-08T15:00:00Z", eventDone: 5 }, evs, NOW, { ready: false }), null);
+  assert.deepEqual(dueReason({ at: "2026-10-08T15:00:00Z", eventDone: 6 }, evs, Date.parse("2026-10-14T00:00:30Z")), { reason: "weekly" });
+  // 수요일과 회차가 같이 걸리면 event(그 회차까지 다 들어간다) · 회차가 안 찼으면 weekly 먼저
+  assert.deepEqual(dueReason({ at: "2026-10-01T00:00:00Z", eventDone: 5 }, evs, NOW), { reason: "event", eventId: 6 });
+  assert.deepEqual(dueReason({ at: "2026-10-01T00:00:00Z", eventDone: 5 }, evs, NOW, { ready: false }), { reason: "weekly" });
 });
 
 // 가짜 저장소 — ops_state · event_* 표
@@ -98,6 +104,10 @@ function fakeDb(data) {
     sbSelect: async (table, q) => {
       if (table === "ops_state") { const k = decodeURIComponent(/key=eq\.([^&]+)/.exec(q)[1]); return store.has(k) ? [{ value: store.get(k) }] : []; }
       if (table === "event_defs") return data.events || [];
+      if (table === "event_match_players" && q.includes("bot_kills=is.null")) {
+        const id = Number(/event_id=eq\.(\d+)/.exec(q)[1]); const since = Date.parse(decodeURIComponent(/started_at=gte\.([^&]+)/.exec(q)[1]));
+        return data.rows.filter((r) => r.event_id === id && r.bot_kills == null && Date.parse(r.started_at) >= since);
+      }
       const off = Number((/offset=(\d+)/.exec(q) || [])[1] || 0);
       const src = table === "event_match_players" ? data.rows : data.matches;
       return src.slice(off, off + 1000);
@@ -136,6 +146,35 @@ test("tick — 갱신 때가 아니면 계산하지 않고, 회차 마감 뒤 �
   t += 40 * 60e3; await lb.tick(); assert.equal(db.calls.upsert, 2);   // 끝 + 50분 → event
   assert.deepEqual(db.store.get(STATE_KEY).basis, { reason: "event", eventId: 6 });
   t += 60e3; await lb.tick(); assert.equal(db.calls.upsert, 2);        // 한 번만
+});
+
+test("tick — 회차 끝 + 45분에 봇 몫이 비어 있으면 기다렸다가 다 차면 그때 계산 · 3시간 넘으면 그냥 계산(10/10)", async () => {
+  const d = join(person("a", "A", 20, 1, 100), person("b", "B", 20, 2, 200));
+  const end = "2026-10-08T14:00:00Z";
+  // 7회 판 2개 — 봇 몫이 아직 비어 있다(상세 채우기 전)
+  const fresh = (m, a) => ({ event_id: 8, team_name: "t-x", match_id: m, account_id: acc(a), ign: a.toUpperCase(), kills: 5, damage: 500, bot_kills: null, bot_dmg: null, started_at: "2026-10-08T12:30:00Z" });
+  d.rows.push(fresh("n1", "a"), fresh("n1", "b"));
+  d.matches.push({ event_id: 8, team_name: "t-x", match_id: "n1", seq: 1, leave_flag: false, revive: null });
+  let t = Date.parse(end) + 50 * 60e3;
+  const db = fakeDb({ ...d, events: [{ id: 8, window_end: end }] });
+  db.store.set(STATE_KEY, { at: "2026-10-08T13:00:00Z", basis: { reason: "weekly" }, eventDone: 7, list: [] });
+  const lb = createLeaderboard({ ...db, secret: "s", now: () => t, log: silent });
+  await lb.tick(); assert.equal(db.calls.upsert, 0, "봇 몫이 비어 있으면 기다린다");
+  d.rows.filter((r) => r.event_id === 8).forEach((r) => { r.bot_kills = 1; r.bot_dmg = 50; });
+  t += 60e3; await lb.tick(); assert.equal(db.calls.upsert, 1, "다 차면 바로 계산");
+  const st = db.store.get(STATE_KEY);
+  assert.deepEqual([st.basis, st.eventDone], [{ reason: "event", eventId: 8 }, 8]);
+  assert.equal(st.list.find((x) => x.ign === "A").games, 21, "7회 판이 들어갔다");
+  t += 60e3; await lb.tick(); assert.equal(db.calls.upsert, 1, "한 번만");
+  // 끝까지 안 차는 판이 있어도 끝 + 45분 + 3시간이면 계산
+  d.rows.filter((r) => r.event_id === 8)[0].bot_kills = null;
+  db.store.set(STATE_KEY, { at: "2026-10-08T13:00:00Z", basis: { reason: "weekly" }, eventDone: 7, list: [] });
+  t = Date.parse(end) + 45 * 60e3 + _test.READY_MAX_MS - 60e3; await lb.tick(); assert.equal(db.calls.upsert, 1);
+  t += 60e3; await lb.tick(); assert.equal(db.calls.upsert, 2);
+  assert.deepEqual(db.store.get(STATE_KEY).basis, { reason: "event", eventId: 8, pending: 1 });
+  // 수요일 갱신은 eventDone 을 이어받는다
+  t = Date.parse("2026-10-14T00:00:30Z"); await lb.tick(); assert.equal(db.calls.upsert, 3);
+  assert.deepEqual([db.store.get(STATE_KEY).basis, db.store.get(STATE_KEY).eventDone], [{ reason: "weekly" }, 8]);
 });
 
 test("표가 없으면 503 table_missing", async () => {

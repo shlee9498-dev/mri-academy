@@ -2,8 +2,11 @@
 // ═══════════════ 킬내기 판별 상세 기록 채우기 — 계약 docs/killrace-api.md §1.12 · DDL §67(10/7 실행) ═══════════════
 // 소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행 · killrace.cjs 와 같은 형태). 점수 계산과 무관하다 — 읽어서 새 표 둘에 더하기만 한다.
 //
-// 대상 = 끝 + 45분이 지난 회차의 판(event_match_players 줄이 있는 팀 × 판) · 회차 번호 → 시작 시각 순(2회 원본이 10/19 저녁 먼저 사라진다).
-// 1분마다 매치 하나(tick). 대회 시간(시작 30분 전 ~ 끝 + 45분)에 걸친 회차가 있으면 쉰다 — 자동 집계 · PUBG 조회와 겹치지 않게.
+// 대상 = 시작한 회차의 판(event_match_players 줄이 있는 팀 × 판 = 이미 끝난 판 — PUBG 는 판이 끝나야 전적에 올린다).
+//   순서 = 지금 대회 시간(시작 30분 전 ~ 끝 + 45분)인 회차 먼저 → 나머지는 회차 번호 → 시작 시각 순(2회 원본이 10/19 저녁 먼저 사라진다).
+// 대회 중에도 채운다(10/10 · §1.12) — 1분에 매치 하나. 대회 시간 밖에는 1분에 매치 최대 3개(45초 안에서).
+//   근거: /matches · 텔레메트리는 PUBG 분당 한도(10회 · /players 등)에 안 센다(PUBG 공식 문서 Rate Limits) — 자동 집계의 /players 간격(6.5초)과 겹치지 않는다.
+//   대회 중 1개로 묶는 건 서버 부담(텔레메트리 스트리밍 · 자동 집계도 늦은 부활용으로 받는다) 때문이다.
 //   ① 매치 조회(/matches · 분당 한도 밖 · 무캐시) → 우리 선수 참가자 통계 → event_match_player_detail(선수 × 판)
 //   ② 텔레메트리 스트리밍(killrace.cjs 해석기 · 원본은 버리고 우리 선수 것만) → event_match_telemetry(팀 × 판 · 위치 10초 · 교전)
 // 끝난 판 = event_match_telemetry 줄이 있는 팀 × 판(표가 진실 · 따로 상태를 두지 않는다 · 재시작해도 이어서 한다).
@@ -17,6 +20,9 @@ const GRACE_MS = 45 * 60000;                     // 끝 + 45분까지는 막판 
 const BEFORE_MS = 30 * 60000;                    // 시작 30분 전부터 쉰다(창 앞 판 · 경매 · 팀 등록)
 const KEEP_MS = 14 * 24 * 3600000;               // PUBG 가 매치 · 텔레메트리를 지우기 전까지(14일)
 const POS_STEP_S = 10;                           // 위치는 10초에 하나
+const LIVE_JOBS = 1;                             // 대회 시간 차례당 매치 수(서버 부담 · 자동 집계와 나눠 쓴다)
+const IDLE_JOBS = 3;                             // 대회 시간 밖 차례당 매치 수 — /matches · 텔레메트리는 PUBG 분당 한도 밖
+const TICK_BUDGET_MS = 45000;                    // 한 차례(1분)에 쓰는 시간 상한 — 다음 차례와 겹치지 않게
 
 const round1 = (n) => Math.round(n * 10) / 10;
 const meters = (cm) => (Number.isFinite(Number(cm)) ? Math.round(Number(cm) / 100) : null);   // 텔레메트리 좌표 · 거리 = cm
@@ -125,18 +131,20 @@ function createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch = null, fetchTeleme
   const failed = new Map();                       // matchId → { why, at }(30분 뒤 다시 받는다 · FAILED_RETRY_MS)
   let busy = false;
 
-  // 대상 회차 = 끝 + 45분이 지난 회차. 지금 대회 시간에 걸친 회차가 있으면 null(쉰다)
-  async function closedEvents(at) {
+  // 대상 회차 = 시작 30분 전이 지난 회차(아직 판이 없으면 고를 판도 없다). 지금 대회 시간인 회차 먼저 → 나머지 번호 순.
+  // 반환 { ids, live } — live = 대회 시간에 걸친 회차가 있다(차례당 매치 수를 줄인다)
+  async function targetEvents(at) {
     const evs = await sbSelect("event_defs", "select=id,window_start,window_end&order=id.asc");
-    const live = evs.some((e) => at >= Date.parse(e.window_start) - BEFORE_MS && at <= Date.parse(e.window_end) + GRACE_MS);
-    if (live) return null;
-    return evs.filter((e) => Date.parse(e.window_end) + GRACE_MS < at).map((e) => Number(e.id));
+    const isLive = (e) => at >= Date.parse(e.window_start) - BEFORE_MS && at <= Date.parse(e.window_end) + GRACE_MS;
+    const started = evs.filter((e) => Date.parse(e.window_start) - BEFORE_MS <= at);
+    const liveIds = started.filter(isLive).map((e) => Number(e.id));
+    const rest = started.filter((e) => !isLive(e)).map((e) => Number(e.id));
+    return { ids: [...liveIds, ...rest], live: liveIds.length > 0 };
   }
 
-  // 회차 하나씩(번호 순) 남은 판을 찾는다 — 한 회차 줄만 읽어 줄 수 제한(1000)에 안 걸리게
+  // 회차 하나씩(위 순서) 남은 판을 찾는다 — 한 회차 줄만 읽어 줄 수 제한(1000)에 안 걸리게
   async function nextJob(at) {
-    const ids = await closedEvents(at);
-    if (ids === null) return { live: true };
+    const { ids, live } = await targetEvents(at);
     for (const id of ids) {
       const [players, tels] = await Promise.all([
         sbSelect("event_match_players", `select=event_id,team_name,match_id,account_id,started_at&event_id=eq.${id}&order=started_at.asc`),
@@ -144,9 +152,9 @@ function createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch = null, fetchTeleme
       ]);
       const done = new Set(tels.map((r) => `${r.event_id}|${r.team_name}|${r.match_id}`));
       const job = pickJob({ players, done, failed, at });
-      if (job) return { job };
+      if (job) return { job, live };
     }
-    return { job: null };
+    return { job: null, live };
   }
 
   async function processJob(job) {
@@ -197,27 +205,34 @@ function createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch = null, fetchTeleme
     };
   }
 
-  // 1분마다 — 켜져 있고 대회 시간이 아니면 매치 하나
+  // 매치 하나 받기 → "ok" | "failed"
+  async function runJob(job) {
+    try {
+      const got = await processJob(job);
+      log.log(`[killrace-detail] match_ok event=${job.eventId} match=${String(job.matchId).slice(0, 8)} teams=${got.teams} detail=${got.detail} bots=${got.bots} ` +
+        `bytes=${got.bytes} events=${got.events} positions=${got.positions} combat=${got.combat} json=${got.jsonKB}KB ms=${got.ms}`);
+      return "ok";
+    } catch (e) {
+      failed.set(job.matchId, { why: shortErr(e), at: now() });
+      log.warn(`[killrace-detail] match_failed event=${job.eventId} match=${String(job.matchId).slice(0, 8)} ${shortErr(e)}`);
+      return "failed";
+    }
+  }
+
+  // 1분마다 — 켜져 있으면 대회 중 매치 하나 · 대회 밖 매치 최대 3개(45초 안). 반환 = 마지막 매치 결과(ok · failed) · 받을 게 없으면 idle
   async function tick() {
     if (busy) return "busy";
     busy = true;
     try {
       const sw = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(DETAIL_KEY)}&limit=1`);
       if (sw.length && sw[0].value && sw[0].value.off === true) return "off";
-      const at = now();
-      const r = await nextJob(at);
-      if (r.live) return "live";
-      if (!r.job) return "idle";
-      const job = r.job;
-      try {
-        const got = await processJob(job);
-        log.log(`[killrace-detail] match_ok event=${job.eventId} match=${String(job.matchId).slice(0, 8)} teams=${got.teams} detail=${got.detail} bots=${got.bots} ` +
-          `bytes=${got.bytes} events=${got.events} positions=${got.positions} combat=${got.combat} json=${got.jsonKB}KB ms=${got.ms}`);
-        return "ok";
-      } catch (e) {
-        failed.set(job.matchId, { why: shortErr(e), at: now() });
-        log.warn(`[killrace-detail] match_failed event=${job.eventId} match=${String(job.matchId).slice(0, 8)} ${shortErr(e)}`);
-        return "failed";
+      const t0 = now();
+      let last = "idle";
+      for (let n = 0; ; n++) {
+        const r = await nextJob(now());
+        if (!r.job) return last;
+        last = await runJob(r.job);
+        if (n + 1 >= (r.live ? LIVE_JOBS : IDLE_JOBS) || now() - t0 >= TICK_BUDGET_MS) return last;
       }
     } catch (e) {
       log.warn("[killrace-detail] tick_failed", shortErr(e));
@@ -264,4 +279,4 @@ function botPatches(telRow, accounts) {
   return accounts.map((a) => { const b = botCounts(telRow.combat, a); return { account_id: a, bot_kills: b.kills, bot_dmg: b.damage }; });
 }
 
-module.exports = { createDetail, _test: { detailRow, makeDetailCollector, pickJob, DETAIL_KEY, KEEP_MS, POS_STEP_S, GRACE_MS, BEFORE_MS, botCounts, humanStats, botPatches, FAILED_RETRY_MS, BOT_STATS_FROM_EVENT }, humanStats, humanRows, BOT_STATS_FROM_EVENT };
+module.exports = { createDetail, _test: { detailRow, makeDetailCollector, pickJob, DETAIL_KEY, KEEP_MS, POS_STEP_S, GRACE_MS, BEFORE_MS, LIVE_JOBS, IDLE_JOBS, TICK_BUDGET_MS, botCounts, humanStats, botPatches, FAILED_RETRY_MS, BOT_STATS_FROM_EVENT }, humanStats, humanRows, BOT_STATS_FROM_EVENT };

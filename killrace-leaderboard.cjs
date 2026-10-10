@@ -4,15 +4,18 @@
 // 재료 = §1.11 과 같은 인정 판(event_match_players + event_matches · seq 있음 · 이탈 아님 · 늦은 부활 −10 판 아님). 시간 밖 판은 seq 가 비어 저절로 빠진다.
 // 자격 = 20판 이상 + 기준 시각에서 30일 안에 1판 이상. 점수 = 자격자끼리 0.5 × z(판당 킬) + 0.5 × z(판당 딜)(모집단 표준편차).
 // 같은 사람 합치기 = ops_state 'killrace:people' { merge: { 옛 계정: 기준 계정 } } — 계정 번호는 그 설정 줄(DB)에만 있다.
-// 갱신 = 수요일 09:00 KST · 회차 window_end + 45분 뒤 한 번. 결과는 ops_state 'killrace:leaderboard' 저장본으로 낸다.
+// 갱신 = 수요일 09:00 KST · 회차 window_end + 45분 뒤 그 회차 봇 몫(bot_kills)이 다 채워지면 한 번(10/10 — 채우기 전에 계산하면 그 회차가 봇 몫을 안 뺀 공식 값(#555 잠정)으로 수요일까지 남는다).
+//   다 안 채워져도 끝 + 45분 + 3시간이면 계산한다(실패가 계속되는 판이 갱신을 막지 않게). 결과는 ops_state 'killrace:leaderboard' 저장본으로 낸다.
 const { keyMaker, reviveOut } = require("./killrace-career.cjs");
 const crypto = require("crypto");
-const { humanRows } = require("./killrace-detail.cjs");   // §1.24 봇 킬 · 딜 빼기(2회부터 소급 · 저장된 bot_kills · bot_dmg 칸)
+const { humanRows, BOT_STATS_FROM_EVENT } = require("./killrace-detail.cjs");   // §1.24 봇 킬 · 딜 빼기(2회부터 소급 · 저장된 bot_kills · bot_dmg 칸)
 
 const MIN_GAMES = 20;
 const RECENT_DAYS = 30;
 const TOP = 10;
 const SETTLE_MS = 45 * 60e3;                    // 회차 끝 + 45분 — 마지막 판 확정을 기다린다(§1.12 와 같은 여유)
+const READY_MAX_MS = 3 * 3600e3;               // 회차 끝 + 45분 뒤 봇 몫을 기다리는 상한 — 이 뒤엔 다 안 채워져도 계산한다
+const KEEP_MS = 14 * 86400e3;                   // PUBG 원본 보관(14일) — 이보다 오래된 판은 다시 못 채워서 기다리지 않는다
 const WEEK_MS = 7 * 86400e3;
 const STATE_KEY = "killrace:leaderboard";
 const PEOPLE_KEY = "killrace:people";
@@ -41,19 +44,15 @@ function lastEventClose(events, now) {
   return best;
 }
 
-// 다시 계산할 때인가 — 저장본이 없으면 "first", 저장본 뒤에 수요일 09:00 이나 회차 마감이 지났으면 그 이유. 둘 다면 늦은 쪽
-function dueReason(state, events, now) {
+// 다시 계산할 때인가 — 저장본이 없으면 "first", 저장본 뒤에 수요일 09:00 이 지났으면 "weekly",
+// 끝 + 45분이 지난 마지막 회차를 아직 넣지 않았고(state.eventDone) 그 회차 봇 몫이 다 찼으면(ready) "event". 둘 다면 event(그 회차까지 다 들어간다)
+function dueReason(state, events, now, { ready = true } = {}) {
   const at = state && Date.parse(state.at);
   if (!Number.isFinite(at)) return { reason: "first" };
-  const w = lastWeekly(now);
   const ev = lastEventClose(events, now);
-  const cands = [];
-  if (w > at) cands.push({ at: w, reason: "weekly" });
-  if (ev && ev.at > at) cands.push({ at: ev.at, reason: "event", eventId: ev.eventId });
-  if (!cands.length) return null;
-  cands.sort((a, b) => b.at - a.at);
-  const { reason, eventId } = cands[0];
-  return eventId ? { reason, eventId } : { reason };
+  if (ev && Number(state.eventDone) !== ev.eventId && ready) return { reason: "event", eventId: ev.eventId };
+  if (lastWeekly(now) > at) return { reason: "weekly" };
+  return null;
 }
 
 // rows = event_match_players 줄 · matches = event_matches 줄 · merge = { 옛 계정: 기준 계정 }
@@ -120,17 +119,21 @@ function createLeaderboard(deps) {
 
   async function compute(basis) {
     const t = now();
-    const [raw, matches, people] = await Promise.all([
+    const [raw, matches, people, prev] = await Promise.all([
       readAll("event_match_players", "select=event_id,team_name,match_id,account_id,ign,kills,damage,bot_kills,bot_dmg,started_at&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc"),
       readAll("event_matches", "select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive&order=event_id.asc,team_name.asc,match_id.asc"),
-      readState(PEOPLE_KEY)
+      readState(PEOPLE_KEY),
+      readState(STATE_KEY).catch(() => null)
     ]);
     const rows = humanRows(raw);
     const merge = people && people.merge && typeof people.merge === "object" ? people.merge : {};
     const built = buildLeaderboard({ rows, matches, merge, now: t });
-    const state = { at: new Date(t).toISOString(), basis, rules: { minGames: MIN_GAMES, recentDays: RECENT_DAYS }, eligible: built.eligible, list: built.list };
+    // eventDone = 봇 몫까지 넣고 계산한 마지막 회차(이 회차는 다시 「event」 로 계산하지 않는다) — 수요일 갱신은 앞 값을 이어받는다
+    const eventDone = basis.reason === "event" ? basis.eventId : prev && Number.isFinite(Number(prev.eventDone)) ? Number(prev.eventDone) : null;
+    const state = { at: new Date(t).toISOString(), basis, rules: { minGames: MIN_GAMES, recentDays: RECENT_DAYS }, eligible: built.eligible, list: built.list,
+      ...(eventDone != null ? { eventDone } : {}) };
     await sbUpsert("ops_state", { key: STATE_KEY, value: state, updated_at: state.at }, "key");
-    log.log(`[killrace-leaderboard] refreshed reason=${basis.reason}${basis.eventId ? ` event=${basis.eventId}` : ""} eligible=${built.eligible} top=${built.list.length}`);
+    log.log(`[killrace-leaderboard] refreshed reason=${basis.reason}${basis.eventId ? ` event=${basis.eventId}` : ""}${basis.pending ? ` pending=${basis.pending}` : ""} eligible=${built.eligible} top=${built.list.length}`);
     return state;
   }
   // 같은 때 두 번 계산하지 않게 하나로 묶는다
@@ -139,11 +142,26 @@ function createLeaderboard(deps) {
     return busy;
   }
 
+  // 그 회차 판 중 봇 몫(bot_kills)이 아직 빈 선수 줄 수 — 상세 채우기(killrace-detail.cjs)가 판마다 채운다. 1회(봇 몫 안 씀) · 14일 지난 판은 안 센다
+  async function pendingBots(eventId, t) {
+    if (!(eventId >= BOT_STATS_FROM_EVENT)) return 0;
+    const since = encodeURIComponent(new Date(t - KEEP_MS).toISOString());
+    const rows = await sbSelect("event_match_players", `select=match_id&event_id=eq.${eventId}&bot_kills=is.null&started_at=gte.${since}&limit=${PAGE}`);
+    return rows.length;
+  }
+
   async function tick() {
     try {
+      const t = now();
       const [state, events] = await Promise.all([readState(STATE_KEY), sbSelect("event_defs", "select=id,window_end&order=id.asc&limit=500")]);
-      const due = dueReason(state, events, now());
-      if (due) await refresh(due);
+      const ev = lastEventClose(events, t);
+      let ready = true; let pending = 0;
+      if (state && ev && Number(state.eventDone) !== ev.eventId) {
+        pending = await pendingBots(ev.eventId, t);
+        ready = pending === 0 || t - ev.at >= READY_MAX_MS;   // 다 찼거나 기다릴 만큼 기다렸다
+      }
+      const due = dueReason(state, events, t, { ready });
+      if (due) await refresh(due.reason === "event" && pending ? { ...due, pending } : due);
     } catch (e) { log.warn("[killrace-leaderboard] tick failed", String((e && e.message) || e).slice(0, 80)); }
   }
 
@@ -174,4 +192,4 @@ function createLeaderboard(deps) {
   return { mount, get, tick, refresh };
 }
 
-module.exports = { createLeaderboard, buildLeaderboard, _test: { lastWeekly, lastEventClose, dueReason, groupOf, MIN_GAMES, RECENT_DAYS, SETTLE_MS, STATE_KEY, PEOPLE_KEY } };
+module.exports = { createLeaderboard, buildLeaderboard, _test: { lastWeekly, lastEventClose, dueReason, groupOf, MIN_GAMES, RECENT_DAYS, SETTLE_MS, READY_MAX_MS, STATE_KEY, PEOPLE_KEY } };

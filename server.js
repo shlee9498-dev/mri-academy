@@ -39,7 +39,7 @@ const killraceCareer = require("./killrace-career.cjs");
 const rankedLive = require("./ranked-live.cjs");
 // 킬내기 주간 개인 리더보드(§1.18) — 1 ~ 10위 · 역할 묶음(1 / 2-4 / 5-10) · 순위 계산은 이 모듈 한 곳. 시험 scripts/killrace-leaderboard.test.cjs
 const killraceLeaderboard = require("./killrace-leaderboard.cjs");
-// 킬내기 판별 상세 기록 채우기(§1.12 · DDL §67) — 대회 시간 밖에 1분에 매치 하나. 시험 scripts/killrace-detail.test.cjs
+// 킬내기 판별 상세 기록 채우기(§1.12 · DDL §67) — 끝난 판을 대회 중에도 채운다(1분에 1개 · 대회 밖 3개). 시험 scripts/killrace-detail.test.cjs
 const killraceDetail = require("./killrace-detail.cjs");
 // 킬내기 앱 회원(앱 계약 docs/killrace-app-api.md §2 ~ §5) — 로그인 표지 · 내 계정 · 동의 · 스팀 연결 · 탈퇴 · 구분 판정. 시험 scripts/killrace-members.test.cjs
 const killraceMembers = require("./killrace-members.cjs");
@@ -7078,6 +7078,12 @@ async function gmiGuildMember(discordId) {
       },
       save: (id, state) => sbUpsert("ops_state", { key: shotKey(id), value: state, updated_at: new Date().toISOString() }, "key"),
     },
+    // 티어표(§1.22) — 7회부터 스샷 잠정 감점도 확정 집계와 같은 팀 안 티어 순서로(10/10)
+    loadTiers: async () => {
+      const rows = await sbSelect("ops_state", "select=value&key=eq.killrace%3Atiers&limit=1");
+      const v = rows[0] && rows[0].value;
+      return v && typeof v === "object" && v.list && typeof v.list === "object" ? v : null;
+    },
   });
   const live = killraceLive.createLive({
     killrace: kr, isAdmin: gdcupAdmin,
@@ -7133,12 +7139,12 @@ async function gmiGuildMember(discordId) {
     keyOf: killraceCareer.keyMaker(process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex")),
     notifyOwner: (text) => krDm(process.env.MRI_OWNER_ID, text), notifyUser: krDm,
   }).mount(app, { limiter: limit("krPrize", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
-  // 주간 개인 리더보드(§1.18) — GET /api/killrace/leaderboard · 저장본 ops_state 'killrace:leaderboard' · 수요일 09:00 KST · 회차 끝 + 45분에 다시 계산
+  // 주간 개인 리더보드(§1.18) — GET /api/killrace/leaderboard · 저장본 ops_state 'killrace:leaderboard' · 수요일 09:00 KST · 회차 끝 + 45분 뒤 봇 몫이 다 차면 다시 계산
   //   계정 번호는 진행자 키(x-admin-key)로 부를 때만 줄마다 붙는다(클랜CODE 역할 봇용 · 새 env 없음). 디스코드 역할은 이 서버가 건드리지 않는다
   const killLeaderboard = killraceLeaderboard.createLeaderboard({ sbSelect, sbUpsert, isAdmin: gdcupAdmin, secret: process.env.SESSION_SECRET });
   killLeaderboard.mount(app);
   if (process.env.SUPABASE_URL) setInterval(() => { killLeaderboard.tick(); }, 60000).unref();
-  // 판별 상세 기록 채우기(§1.12 · §67) — 끝 + 45분이 지난 회차의 판을 1분에 매치 하나씩(대회 시간에는 쉰다 · 끄기 ops_state 'killrace:detail' { off: true })
+  // 판별 상세 기록 채우기(§1.12 · §67) — 끝난 판을 대회 중에도 1분에 하나(대회 밖 최대 3개) · 지금 회차 먼저 · 끄기 ops_state 'killrace:detail' { off: true }
   const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
 }

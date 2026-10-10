@@ -113,7 +113,7 @@ function world({ evs, players, tels = [], off = false, failMatch = null, clock }
   return { db, det, logs, tels };
 }
 
-test("1분 차례: 매치 하나 → 상세 줄(우리 선수만) · 텔레메트리 줄(팀마다 자기 선수 위치 · 교전) · 다음 차례는 다음 매치 · 다 받으면 idle", async () => {
+test("1분 차례(대회 밖 · 매치 최대 3개): 매치 → 상세 줄(우리 선수만) · 텔레메트리 줄(팀마다 자기 선수 위치 · 교전) · 다음 차례는 다음 매치 · 다 받으면 idle", async () => {
   const clock = { t: Date.parse("2026-10-07T03:00:00Z") };
   const evs = [{ id: 2, window_start: "2026-10-05T10:30:00Z", window_end: "2026-10-05T12:30:00Z" }, { id: 3, window_start: "2026-10-06T10:50:00Z", window_end: "2026-10-06T12:50:00Z" }];
   const row = (ev, team, mid, acc, s) => ({ event_id: ev, team_name: team, match_id: mid, account_id: acc, started_at: s });
@@ -126,36 +126,62 @@ test("1분 차례: 매치 하나 → 상세 줄(우리 선수만) · 텔레메�
     ["event_match_player_detail", [["가팀", A1, 1, 88.8, 1500], ["가팀", A2, 0, null, 900], ["나팀", B1, 2, null, 1200]]]);
   assert.equal(t2, "event_match_telemetry");
   // §1.24 — 같은 판 선수마다 봇 몫 칸(bot_kills · bot_dmg)을 적는다(원래 kills · damage 는 안 건드린다)
-  assert.deepEqual(w.db.patches.map(([tb, f, p]) => [tb, decodeURIComponent(f).includes(`account_id=eq.${A1}`) || decodeURIComponent(f).includes(`account_id=eq.${A2}`) || decodeURIComponent(f).includes(`account_id=eq.${B1}`), Object.keys(p).sort().join(",")]),
+  const m1Patches = w.db.patches.filter(([, f]) => f.includes("&match_id=eq.m1&"));
+  assert.deepEqual(m1Patches.map(([tb, f, p]) => [tb, decodeURIComponent(f).includes(`account_id=eq.${A1}`) || decodeURIComponent(f).includes(`account_id=eq.${A2}`) || decodeURIComponent(f).includes(`account_id=eq.${B1}`), Object.keys(p).sort().join(",")]),
     [["event_match_players", true, "bot_dmg,bot_kills"], ["event_match_players", true, "bot_dmg,bot_kills"], ["event_match_players", true, "bot_dmg,bot_kills"]]);
-  assert.ok(w.db.patches.every(([, f]) => f.startsWith("event_id=eq.2&team_name=eq.") && f.includes("&match_id=eq.m1&")));
+  assert.ok(m1Patches.every(([, f]) => f.startsWith("event_id=eq.2&team_name=eq.")));
   const ga = tel.find((r) => r.team_name === "가팀"); const na = tel.find((r) => r.team_name === "나팀");
   assert.deepEqual([ga.match_start, ga.source_events, Object.keys(ga.positions), ga.positions[A1].length, ga.combat.length], [iso(0), events().length, [A1, A2], 2, 5]);
   assert.deepEqual([Object.keys(na.positions), na.combat], [[B1], [{ t: 341, k: "revive", a: B1, v: "account.zz" }]]);   // 나팀은 자기 선수(B1) 사건만
   assert.match(w.logs[0], /match_ok event=2 match=m1 teams=2 detail=3 .* positions=2 combat=6/);
-  assert.equal(await w.det.tick(), "ok");                                               // 다음 = 3회 m7
-  assert.equal(w.db.gets[1], "/shards/steam/matches/m7");
+  assert.deepEqual(w.db.gets, ["/shards/steam/matches/m1", "/shards/steam/matches/m7"]);   // 같은 차례에 다음 = 3회 m7 까지
   assert.equal(await w.det.tick(), "idle");
 });
 
-test("1분 차례: 대회 시간(시작 30분 전 ~ 끝 + 45분)에는 쉰다 · 끄기 스위치 · 실패한 매치는 건너뛰고 다음 매치(다음 재시작까지)", async () => {
-  const evs = [{ id: 2, window_start: "2026-10-05T10:30:00Z", window_end: "2026-10-05T12:30:00Z" }, { id: 5, window_start: "2026-10-08T12:00:00Z", window_end: "2026-10-08T14:00:00Z" }];
+test("1분 차례: 대회 중에도 끝난 판을 채운다(차례당 1개 · 지금 회차 먼저) · 대회 밖은 3개 · 끄기 스위치 · 실패한 매치는 건너뛰고 다음 매치", async () => {
+  const evs = [{ id: 2, window_start: "2026-10-05T10:30:00Z", window_end: "2026-10-05T12:30:00Z" }, { id: 5, window_start: "2026-10-08T12:00:00Z", window_end: "2026-10-08T14:00:00Z" },
+    { id: 6, window_start: "2026-10-09T12:00:00Z", window_end: "2026-10-09T14:00:00Z" }];
   const row = (ev, team, mid, acc, s) => ({ event_id: ev, team_name: team, match_id: mid, account_id: acc, started_at: s });
-  const players = [row(2, "가팀", "m1", A1, "2026-10-05T10:40:00Z"), row(2, "가팀", "m2", A1, "2026-10-05T11:10:00Z")];
-  for (const [t, want] of [["2026-10-08T11:31:00Z", "live"], ["2026-10-08T14:44:00Z", "live"], ["2026-10-08T11:29:00Z", "ok"]]) {
-    const w = world({ evs, players, clock: { t: Date.parse(t) } });
-    assert.equal(await w.det.tick(), want, t);
-  }
+  const players = [row(2, "가팀", "m1", A1, "2026-10-05T10:40:00Z"), row(2, "가팀", "m2", A1, "2026-10-05T11:10:00Z"),
+    row(5, "가팀", "m5", A1, "2026-10-08T12:10:00Z"), row(5, "나팀", "m6", B1, "2026-10-08T12:40:00Z")];
+  // 5회 대회 중(12:50) — 지금 회차 판(m5)부터 · 차례당 하나 · 아직 시작 전인 6회는 안 본다
+  const live = world({ evs, players, clock: { t: Date.parse("2026-10-08T12:50:00Z") } });
+  assert.equal(await live.det.tick(), "ok");
+  assert.deepEqual(live.db.gets, ["/shards/steam/matches/m5"]);
+  assert.equal(await live.det.tick(), "ok");
+  assert.deepEqual(live.db.gets.slice(1), ["/shards/steam/matches/m6"]);
+  assert.equal(await live.det.tick(), "ok");                                            // 지금 회차를 다 채우면 지난 회차 남은 판
+  assert.deepEqual(live.db.gets.slice(2), ["/shards/steam/matches/m1"]);
+  // 끝 + 45분 안(14:44)도 대회 시간 — 하나씩
+  const grace = world({ evs, players, clock: { t: Date.parse("2026-10-08T14:44:00Z") } });
+  assert.equal(await grace.det.tick(), "ok");
+  assert.equal(grace.db.gets.length, 1);
+  // 대회 밖 — 한 차례에 최대 3개(회차 번호 → 시작 시각 순)
+  const idle = world({ evs, players, clock: { t: Date.parse("2026-10-08T16:00:00Z") } });
+  assert.equal(await idle.det.tick(), "ok");
+  assert.deepEqual(idle.db.gets, ["/shards/steam/matches/m1", "/shards/steam/matches/m2", "/shards/steam/matches/m5"]);
+  assert.equal(await idle.det.tick(), "ok");
+  assert.equal(await idle.det.tick(), "idle");
   const off = world({ evs, players, off: true, clock: { t: Date.parse("2026-10-07T03:00:00Z") } });
   assert.equal(await off.det.tick(), "off");
   assert.equal(off.db.gets.length, 0);
-  const w = world({ evs, players, failMatch: "m1", clock: { t: Date.parse("2026-10-07T03:00:00Z") } });
-  assert.equal(await w.det.tick(), "failed");
+  const w = world({ evs, players: players.filter((r) => r.event_id === 2), failMatch: "m1", clock: { t: Date.parse("2026-10-07T03:00:00Z") } });
+  assert.equal(await w.det.tick(), "ok");                                               // m1 실패 → 같은 차례에 m2
   assert.match(w.logs[0], /match_failed event=2 match=m1 PUBG 404/);
-  assert.equal(await w.det.tick(), "ok");                                               // m1 은 건너뛰고 m2
   assert.deepEqual(w.db.gets, ["/shards/steam/matches/m1", "/shards/steam/matches/m2"]);
-  assert.equal(await w.det.tick(), "idle");
+  assert.equal(await w.det.tick(), "idle");                                             // m1 은 30분 뒤까지 안 고른다
   assert.equal(w.db.upserts.filter(([t]) => t === "event_match_telemetry").length, 1);
+});
+
+test("1분 차례: 한 차례 45초를 넘기면 남은 매치는 다음 차례로", async () => {
+  const evs = [{ id: 2, window_start: "2026-10-05T10:30:00Z", window_end: "2026-10-05T12:30:00Z" }];
+  const row = (mid, s) => ({ event_id: 2, team_name: "가팀", match_id: mid, account_id: A1, started_at: s });
+  const clock = { t: Date.parse("2026-10-07T03:00:00Z") };
+  const w = world({ evs, players: [row("m1", "2026-10-05T10:40:00Z"), row("m2", "2026-10-05T11:10:00Z"), row("m3", "2026-10-05T11:40:00Z")], clock });
+  const orig = w.db.gets.push.bind(w.db.gets);
+  w.db.gets.push = (x) => { clock.t += 50000; return orig(x); };                       // 매치 하나가 50초 걸린 셈
+  assert.equal(await w.det.tick(), "ok");
+  assert.equal(w.db.gets.length, 1);
 });
 
 test("§1.24 botCounts · humanStats · botPatches — 본인이 봇(ai.*)에게 낸 킬 · 딜만 센다", () => {

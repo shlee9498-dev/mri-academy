@@ -1763,3 +1763,5 @@ module.exports = {
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory, lineupFor, playerRows, PLAYERS_TABLE_PAUSE_MS,
   },
 };
+// 팀 안 티어 순서 감점표(§1.22) — 스샷 잠정(killrace-shot.cjs)이 확정 집계와 같은 표를 쓴다(10/10 · 잠정도 같은 함수)
+module.exports.tierPenaltyMap = tierPenaltyMap;
