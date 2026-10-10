@@ -250,11 +250,11 @@ function humanStats(official, bot) {
   };
 }
 // 판 × 선수 줄(event_match_players · bot_kills · bot_dmg 칸 포함)에 사람 몫만 남긴다. kills · damage 칸 원래 값은 DB 에서 안 바뀐다.
-// 1회 줄은 그대로 · bot_kills 가 아직 비어 있는 줄은 pendingBot(부르는 쪽이 판 수에서 빼고 「집계 중」으로 센다)
+// 1회 줄은 그대로 · bot_kills 가 아직 비어 있는 줄은 공식 값을 잠정으로 두고 pendingBot(채워지면 봇 뺀 값으로 바뀐다 · 10/10 지휘)
 function humanRows(rows) {
   return (rows || []).map((r) => {
     if (!(Number(r.event_id) >= BOT_STATS_FROM_EVENT)) return r;
-    if (r.bot_kills == null) return { ...r, pendingBot: true };
+    if (r.bot_kills == null) return { ...r, pendingBot: true };          // 잠정 — kills · damage 는 공식 값 그대로
     const h = humanStats(r, { kills: r.bot_kills, damage: r.bot_dmg });
     return { ...r, kills: h.kills, damage: h.damage };
   });

@@ -144,11 +144,11 @@ test("표가 없으면 503 table_missing", async () => {
   assert.equal(r.code, 503); assert.deepEqual(r.body, { error: { code: "table_missing" } });
 });
 
-test("§1.24 「집계 중」 판(pendingBot)은 판 수 · 킬에 안 넣는다", () => {
+test("§1.24 봇 몫이 아직인 판(pendingBot)은 공식 값을 잠정으로 센다", () => {
   const p = person("e", "E", 20, 3, 300);
   const base = buildLeaderboard({ ...join(p), now: NOW });
   p.rows.push({ ...p.rows[0], match_id: "m-e-x", kills: 30, pendingBot: true });
   p.matches.push({ ...p.matches[0], match_id: "m-e-x", seq: 99 });
   const got = buildLeaderboard({ ...join(p), now: NOW });
-  assert.deepEqual(got.list.map((x) => [x.games, x.kpg]), base.list.map((x) => [x.games, x.kpg]));
+  assert.deepEqual(got.list.map((x) => [x.games, x.kpg]), base.list.map((x) => [x.games + 1, Math.round(((x.kpg * x.games) + 30) / (x.games + 1) * 100) / 100]));
 });

@@ -1149,9 +1149,9 @@ test("교체: 4판 중 2판은 주전, 2판은 교체 선수 → 네 판 모두 
   assert.deepEqual(t.players.map((p) => [p.ign, p.slot, p.games, p.deaths, !!p.sub]),
     [[A[0], 1, 4, 0, false], [A[1], 2, 4, 0, false], [A[2], 3, 4, 0, false], [A[3], 4, 2, 1, false], [SUB, 4, 2, 1, true]]);
   assert.equal(t.games, 4);
-  // §1.24 — 텔레메트리가 아직 없으면 개인 판은 「집계 중」(판 수 0 · pendingGames) · 팀 합계는 공식 값 그대로
+  // §1.24 — 봇 몫이 아직 없으면 개인 판은 공식 값을 잠정으로(판 수 · 킬 그대로 · pendingGames = 잠정 판 수) · 팀 합계는 공식 값 그대로
   const pend = T.buildPlayers({ ev: EV2, teams, cfg: T.normEventConfig({}), rows: saved, roster: null, at: EV2.end, bots: new Map() }).teams.find((x) => x.name === "교체팀");
-  assert.deepEqual(pend.players.map((p) => [p.games, p.kills, p.pendingGames]), [[0, 0, 4], [0, 0, 4], [0, 0, 4], [0, 0, 2], [0, 0, 2]]);
+  assert.deepEqual(pend.players.map((p) => [p.games, p.kills, p.damage, p.pendingGames]), t.players.map((p) => [p.games, p.kills, p.damage, p.games]));
   assert.deepEqual([pend.games, pend.kills, pend.total], [t.games, t.kills, t.total]);
   // 봇 교전이 없는 텔레메트리가 다 있으면 종전과 같다
   const zero = new Map(saved.flatMap((r) => ((r.deaths && r.deaths.members) || []).map((m) => [`${r.team_name}|${r.match_id}|${m.accountId}`, { kills: 0, damage: 0 }])));
@@ -1259,12 +1259,12 @@ test("열린 대회: [시작, 끝 + 여유] 안인 대회 · 번호 큰 순 · �
   queries.length = 0;
   await assert.rejects(bot.aggregate({ eventId: 3 }), /등록된 팀이 없어요/);
   assert.ok(queries.some(([t, qq]) => t === "event_defs" && qq.includes("id=eq.3")));
-  assert.ok(!queries.some(([t, qq]) => t === "event_defs" && qq.includes("order=id.desc&limit=1")));
+  assert.ok(!queries.some(([t, qq]) => t === "event_defs" && qq.includes("order=id.desc&limit=50")));
   assert.ok(queries.some(([t, qq]) => t === "event_teams" && qq.includes("event_id=eq.3")));
-  // 회차를 안 주면 종전 그대로 지금 대회(가장 큰 번호)
+  // 회차를 안 주면 지금 대회(시간창 · 다음 · 마지막 — 여기는 한 줄뿐이라 9번)
   queries.length = 0;
   await assert.rejects(bot.aggregate(), /등록된 팀이 없어요/);
-  assert.ok(queries.some(([t, qq]) => t === "event_defs" && qq.includes("order=id.desc&limit=1")));
+  assert.ok(queries.some(([t, qq]) => t === "event_defs" && qq.includes("order=id.desc&limit=50")));
   assert.ok(queries.some(([t, qq]) => t === "event_teams" && qq.includes("event_id=eq.9")));
 });
 
@@ -1382,4 +1382,21 @@ test("§1.25 집계: excludeBots 회차는 판마다 텔레메트리로 봇 몫�
   // 꺼진 회차(기본) — 텔레메트리를 받아도 팀 킬은 공식 값
   const w2 = fakeWorld({ ev: EV5, cfgValue: { lateRevive: "flag" }, matches, teamRows: [teamRow("불사조", "a")], tel: { a1: tel.a1, a2: telFor(at(40)) } });
   assert.deepEqual((await w2.bot.aggregate()).teams[0].games.map((g) => g.kills), [10, 4]);
+});
+
+test("지금 대회(§1.6 · 10/10): 시간창 안(끝 + 2시간까지) → 다음에 오는 회차 → 마지막 — 연습 9번 · 정규 8번", () => {
+  const h = 3600e3; const D = (s) => Date.parse(s);
+  const evs = [
+    { id: 7, start: D("2026-10-09T14:48:00Z"), end: D("2026-10-09T16:48:00Z") },
+    { id: 8, start: D("2026-10-16T12:00:00Z"), end: D("2026-10-16T14:00:00Z") },     // 7회(정규)
+    { id: 9, start: D("2026-10-10T11:45:00Z"), end: D("2026-10-10T14:00:00Z") },     // 연습(번호가 더 크다)
+  ];
+  const pick = (iso) => T.pickCurrentEvent(evs, D(iso)).id;
+  assert.equal(pick("2026-10-10T09:00:00Z"), 9);           // 연습 전 — 다음에 오는 회차 = 연습
+  assert.equal(pick("2026-10-10T12:30:00Z"), 9);           // 연습 중
+  assert.equal(pick("2026-10-10T15:30:00Z"), 9);           // 끝 + 1.5시간 — 결과 · 포스터가 막 끝난 회차를 본다
+  assert.equal(pick("2026-10-10T16:30:00Z"), 8);           // 끝 + 2.5시간 — 다음 회차(7회)
+  assert.equal(pick("2026-10-16T12:30:00Z"), 8);           // 7회 날 — 9번이 커도 8번
+  assert.equal(pick("2026-10-20T00:00:00Z"), 8);           // 다 끝나면 마지막(가장 늦게 끝난 것)
+  assert.equal(T.CURRENT_GRACE_MS, 2 * h);
 });
