@@ -901,6 +901,22 @@ test("2회 · 23:00 전에 시작한 판까지 인정: 22:59:59 시작은 인정
   assert.equal(t.total, 3);
 });
 
+test("막판 인정 59초 유예(오너 10/9): 10/11 이후 끝나는 회차는 끝 + 58초 · + 59초 시작 판 인정 · + 60초는 시간 밖 · 지난 회차는 그대로", async () => {
+  const A = accsOf("a");
+  const EV7 = { id: 8, name: "7회 GmI 킬내기", start: Date.parse("2026-10-16T12:00:00Z"), end: Date.parse("2026-10-16T14:00:00Z") };   // 21:00~23:00 KST
+  const matches = [squadMatch("m0", EV7.end, A, { kills: 1 }), squadMatch("m58", EV7.end + 58000, A, { kills: 2 }),
+    squadMatch("m59", EV7.end + 59000, A, { kills: 4 }), squadMatch("m60", EV7.end + 60000, A, { kills: 50 })];
+  const w = fakeWorld({ cfgValue: {}, matches, teamRows: [teamRow("불사조", "a")], ev: EV7 });
+  const tm = (await w.bot.aggregate()).teams[0];
+  assert.deepEqual(tm.games.map((g) => g.matchId).sort(), ["m0", "m58", "m59"]);
+  assert.deepEqual(tm.excluded.map((g) => [g.matchId, g.excluded.code]), [["m60", "time"]]);
+  assert.equal(tm.total, 1 + 2 + 4);                                                       // 전원 생존 판이라 감점 0 · + 60초 판 50킬은 안 들어간다
+  // 순수 판정 — 지난 회차(10/11 전 끝)는 끝 정각 전까지만(소급 없음)
+  assert.equal(T.LATE_START_GRACE_MS, 59000);
+  assert.deepEqual([EV7.end - 1, EV7.end + 59999, EV7.end + 60000].map((x) => T.startsInWindow(x, EV7)), [true, true, false]);
+  assert.deepEqual([EV2.end - 1000, EV2.end, EV2.end + 58000].map((x) => T.startsInWindow(x, EV2)), [true, false, false]);
+});
+
 test("2회 · 블루칩: 살아나 끝까지 살면 감점 없음 · 살아났다 다시 죽어도 감점은 한 번", async () => {
   const A = accsOf("a");
   // 치킨 판 · 2번은 부활해 생존(alive) · 3번은 부활 뒤 재사망(전적상 사망 한 줄)
