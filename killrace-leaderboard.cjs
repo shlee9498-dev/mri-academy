@@ -4,7 +4,7 @@
 // 재료 = §1.11 과 같은 인정 판(event_match_players + event_matches · seq 있음 · 이탈 아님 · 늦은 부활 −10 판 아님). 시간 밖 판은 seq 가 비어 저절로 빠진다.
 // 자격 = 20판 이상 + 기준 시각에서 30일 안에 1판 이상. 점수 = 자격자끼리 0.5 × z(판당 킬) + 0.5 × z(판당 딜)(모집단 표준편차).
 // 같은 사람 합치기 = ops_state 'killrace:people' { merge: { 옛 계정: 기준 계정 } } — 계정 번호는 그 설정 줄(DB)에만 있다.
-// 갱신 = 수요일 09:00 KST · 회차 window_end + 45분 뒤 그 회차 봇 몫(bot_kills)이 다 채워지면 한 번(10/10 — 채우기 전에 계산해 그 회차 판이 통째로 빠지던 것).
+// 갱신 = 수요일 09:00 KST · 회차 window_end + 45분 뒤 그 회차 봇 몫(bot_kills)이 다 채워지면 한 번(10/10 — 채우기 전에 계산하면 그 회차가 봇 몫을 안 뺀 공식 값(#555 잠정)으로 수요일까지 남는다).
 //   다 안 채워져도 끝 + 45분 + 3시간이면 계산한다(실패가 계속되는 판이 갱신을 막지 않게). 결과는 ops_state 'killrace:leaderboard' 저장본으로 낸다.
 const { keyMaker, reviveOut } = require("./killrace-career.cjs");
 const crypto = require("crypto");
