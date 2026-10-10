@@ -314,8 +314,8 @@ test("닉 → 선수: 정확히 같은 닉 우선 · 대소문자만 다른 후�
   assert.equal(T.pickPlayer([], "abc"), null);
 });
 
-test("명령 5종: 이름·필수 옵션 먼저 · 오너 전용 표기 · 게시 옵션", () => {
-  assert.deepEqual(k.COMMANDS.map((c) => c.name), ["킬내기팀등록", "킬내기집계", "킬내기이탈", "킬내기기록", "킬내기교체"]);
+test("명령 6종: 이름·필수 옵션 먼저 · 오너 전용 표기 · 게시 옵션", () => {
+  assert.deepEqual(k.COMMANDS.map((c) => c.name), ["킬내기팀등록", "킬내기집계", "킬내기이탈", "킬내기기록", "킬내기팀교환", "킬내기교체"]);
   const post = k.COMMANDS.find((c) => c.name === "킬내기집계").options.find((o) => o.name === "게시");
   assert.deepEqual([post.type, !!post.required], [5, false], "게시 = 선택 boolean(기본 false)");
   for (const c of k.COMMANDS) {
@@ -1162,6 +1162,11 @@ test("교체: 4판 중 2판은 주전, 2판은 교체 선수 → 네 판 모두 
   const none = T.buildPlayers({ ev: EV2, teams, cfg: T.normEventConfig({}), rows: saved, roster: null, at: EV2.end, bots: big }).teams.find((x) => x.name === "교체팀");
   assert.deepEqual(none.players.map((p) => [p.kills, p.damage, p.games]), t.players.map((p) => [0, 0, p.games]));
   assert.equal(none.total, t.total);
+  // §1.26 — 봇 표가 아직 없어도 저장된 판의 텔레메트리 봇 몫(deaths.telemetry.players)으로 바로 뺀다 · 잠정으로 세지 않는다
+  const tagged = saved.map((r) => (r.deaths && r.deaths.members ? { ...r, deaths: { ...r.deaths, telemetry: { bots: true, players: Object.fromEntries(r.deaths.members.map((m) => [m.accountId, { botKills: 99, botDmg: 99999 }])) } } } : r));
+  const live = T.buildPlayers({ ev: EV2, teams, cfg: T.normEventConfig({}), rows: tagged, roster: null, at: EV2.end, bots: new Map() }).teams.find((x) => x.name === "교체팀");
+  assert.deepEqual(live.players.map((p) => [p.kills, p.damage, p.games, p.pendingGames || 0]), t.players.map((p) => [0, 0, p.games, 0]));
+  assert.equal(live.total, t.total);
 });
 
 test("교체 2명 동시(검수 37차 보완): 4인 팀에 2번 · 4번 교체가 같이 뛴 판도 후보로 잡아 인정 · 그 판 실제 출전 명단으로 센다 · 점수식은 그대로", async () => {
@@ -1229,6 +1234,45 @@ test("교체 명령: 슬롯에 교체 선수 더하기 · 다른 팀 선수 거�
   const lineup = (accs) => T.lineupFor({ parts: Object.fromEntries(accs.map((a, i) => [`p${i}`, { accountId: a }])) }, team).members.map((x) => x.accountId);
   assert.deepEqual(lineup([A[0], A[1], A[2], "account.z1"]), [A[0], A[1], A[2], "account.z1"]);
   assert.deepEqual(lineup(A), A);
+});
+
+test("팀 교환 명령(§1.26): 두 팀 주전 한 명씩 맞바꾼다 · 슬롯 그대로 · 교체 선수 유지 · 같은 팀 · 없는 선수 · 플랫폼 다름 거절", async () => {
+  const A = accsOf("a"); const B = accsOf("b");
+  const withSub = { ...teamRow("가팀", "a"), members: [...teamRow("가팀", "a").members, { slot: 4, ign: "account.z1", accountId: "account.z1", sub: true }] };
+  const kakao = { ...teamRow("카팀", "c"), platform: "kakao" };
+  withSub.members = withSub.members.map((x) => (x.accountId === A[1] ? { ...x, tier: 2 } : x));      // 원장이 정한 줄 티어
+  const db = { rows: [withSub, teamRow("나팀", "b"), kakao], upserts: [] };
+  const bot = k.createKillrace({
+    sbSelect: async (table) => {
+      if (table === "event_defs") return [{ id: EV2.id, name: EV2.name, window_start: new Date(EV2.start).toISOString(), window_end: new Date(EV2.end).toISOString() }];
+      if (table === "event_teams") return db.rows;
+      return [];
+    },
+    sbUpsert: async (table, row) => { db.upserts.push(row); db.rows = db.rows.map((r) => (r.team_name === row.team_name ? { ...r, members: row.members } : r)); return row; },
+    sbPatch: async () => {}, pubgGet: async () => { throw new Error("no"); }, pubgMatch: async () => { throw new Error("no"); },
+    env: {}, now: () => EV2.start, sleep: async () => {}, playersGapMs: 0, log: { log() {}, warn() {}, error() {} },
+  });
+  const r = await bot.swapPlayers({ team1: "가팀", ign1: A[1].toUpperCase(), team2: "나팀", ign2: B[2] });
+  assert.deepEqual([r.a.accountId, r.b.accountId], [A[1], B[2]]);
+  assert.equal(db.upserts.length, 2);
+  const ga = T.normTeam({ team_name: "가팀", platform: "steam", members: db.upserts[0].members });
+  const na = T.normTeam({ team_name: "나팀", platform: "steam", members: db.upserts[1].members });
+  assert.deepEqual(ga.members.map((x) => [x.slot, x.accountId]), [[1, A[0]], [2, B[2]], [3, A[2]], [4, A[3]]]);
+  assert.deepEqual(na.members.map((x) => [x.slot, x.accountId]), [[1, B[0]], [2, B[1]], [3, A[1]], [4, B[3]]]);
+  assert.deepEqual(ga.subs.map((x) => [x.slot, x.accountId]), [[2, A[1]], [4, "account.z1"]]);   // 나간 선수는 옛 슬롯 교체로 남는다
+  assert.deepEqual(na.subs.map((x) => [x.slot, x.accountId]), [[3, B[2]]]);
+  assert.deepEqual([na.members[2].tier, ga.subs[0].tier, ga.members[1].tier], [2, 2, undefined]);   // 줄 티어는 선수를 따라간다
+  // 바꾸기 전 판(옛 4명) · 바꾼 뒤 판(새 4명) 모두 그 판 출전 명단이 4명으로 맞는다
+  const lineup = (team, accs) => T.lineupFor({ parts: Object.fromEntries(accs.map((x, i) => [`p${i}`, { accountId: x }])) }, team).members.map((x) => x.accountId);
+  assert.deepEqual(lineup(ga, A), A);
+  assert.deepEqual(lineup(ga, [A[0], B[2], A[2], A[3]]), [A[0], B[2], A[2], A[3]]);
+  assert.deepEqual(lineup(na, B), B);
+  await assert.rejects(bot.swapPlayers({ team1: "가팀", ign1: A[0], team2: "가팀", ign2: A[2] }), /서로 다른 두 팀/);
+  await assert.rejects(bot.swapPlayers({ team1: "가팀", ign1: "nobody", team2: "나팀", ign2: B[0] }), /주전에서 못 찾았어요/);
+  await assert.rejects(bot.swapPlayers({ team1: "가팀", ign1: "account.z1", team2: "나팀", ign2: B[0] }), /주전에서 못 찾았어요/);   // 교체 선수는 맞교환 대상이 아니다
+  await assert.rejects(bot.swapPlayers({ team1: "없는팀", ign1: A[0], team2: "나팀", ign2: B[0] }), /없는팀/);
+  await assert.rejects(bot.swapPlayers({ team1: "가팀", ign1: A[0], team2: "카팀", ign2: "account.c1" }), /플랫폼이 달라서/);
+  assert.equal(db.upserts.length, 2);
 });
 
 // ── 여러 대회 동시 집계(docs/killrace-api.md §1.6) — 열린 대회 조회 · 고른 회차 집계 ──
@@ -1305,6 +1349,24 @@ test("§1.22 사망 감점 — 팀 안 티어 순서(7회 = event 8 부터) · �
   // 한 명이라도 티어가 없으면 null → 슬롯 순서
   assert.equal(T.tierPenaltyMap([...mem.slice(0, 3), { slot: 4, ign: "nobody", accountId: "z" }], tiers), null);
   assert.equal(T.tierPenaltyMap(mem, null), null);
+  // §1.26 부계 → 본계 티어: 옛 계정은 본계정 최근 닉의 티어 줄을 따른다(본계 닉이 표에 없으면 안 붙는다)
+  const list = { gmi_main: { ign: "GmI_Main", tier: 1.5, rank: 5 } };
+  const rowsMain = [{ account_id: "account.m", ign: "GmI_Main", started_at: "2026-10-10" }, { account_id: "account.m", ign: "OldNick", started_at: "2026-09-01" }, { account_id: "account.x", ign: "Nobody" }];
+  assert.deepEqual(T.tierRowsByMerge(list, { "account.alt": "account.m", "account.alt2": "account.x", "account.alt3": "account.none" }, rowsMain), { "account.alt": list.gmi_main, "account.m": list.gmi_main });
+  assert.deepEqual(T.tierPenaltyMap([{ slot: 1, ign: "HuDal", accountId: "account.alt" }, { slot: 2, ign: "AA" }],
+    { ...tiers, byAccount: T.tierRowsByMerge(list, { "account.alt": "account.m" }, rowsMain) }), T.tierPenaltyMap([{ slot: 1, ign: "GmI_Main" }, { slot: 2, ign: "AA" }], { ...tiers, list: { ...tiers.list, ...list } }));
+  // 검수 #558: 본계 계정으로 뛰어도 부계 쪽 티어를 찾는다(옛 계정 → 본계 한 방향만이 아니다) · 사슬 끝까지
+  const altOnly = { gmi_old: { ign: "GmI_Old", tier: 1, rank: 1 } };
+  const rowsChain = [{ account_id: "account.new", ign: "NewNick" }, { account_id: "account.old", ign: "GmI_Old" }, { account_id: "account.mid", ign: "MidNick" }];
+  assert.deepEqual(T.tierRowsByMerge(altOnly, { "account.old": "account.mid", "account.mid": "account.new" }, rowsChain),
+    { "account.old": altOnly.gmi_old, "account.mid": altOnly.gmi_old, "account.new": altOnly.gmi_old });
+  assert.deepEqual(T.tierPenaltyMap([{ slot: 1, ign: "AA" }, { slot: 2, ign: "NewNick", accountId: "account.new" }],
+    { ...tiers, byAccount: T.tierRowsByMerge(altOnly, { "account.old": "account.new" }, rowsChain) }), { 2: 4, 1: 3 });
+  // 둘 다 티어표에 있으면 본계(받는 쪽) 값 — 단 그 계정 자기 닉이 표에 있으면 그게 먼저(티어표 닉 찾기와 같다)
+  const both = { gmi_old: { ign: "GmI_Old", tier: 6, rank: 40 }, newnick: { ign: "NewNick", tier: 2, rank: 7 } };
+  const rb = T.tierRowsByMerge(both, { "account.old": "account.mid", "account.mid": "account.new" }, rowsChain);
+  assert.deepEqual([rb["account.mid"], rb["account.new"], rb["account.old"]], [both.newnick, both.newnick, both.gmi_old]);
+  assert.deepEqual(T.tierRowsByMerge(both, { "account.old": "account.mid", "account.mid": "account.new" }, rowsChain.filter((r) => r.account_id !== "account.old"))["account.old"], both.newnick);
   assert.equal(T.penaltyOf(2, { 2: 4 }), 4);
   assert.equal(T.penaltyOf(2, null), 3);
   // 회차 기본값: 6회(event 7)까지 slot · 7회(event 8)부터 tier · 설정이 먼저
