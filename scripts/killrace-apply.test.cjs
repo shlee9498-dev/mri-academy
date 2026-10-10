@@ -19,15 +19,17 @@ function setup(over = {}) {
   const mem = { apply: null, pay: null, intro: null, kind: null, fee: null, info: over.info || null, cards: [], writes: [] };
   let seq = 0; let clock = OPEN;
   const api = a.createApplyApi({
-    store: { load: async () => mem.apply, save: async (s) => { mem.writes.push("apply"); mem.apply = JSON.parse(JSON.stringify(s)); },
+    store: { load: async (r) => { (mem.rounds || []).push(r); return mem.apply; }, save: async (s, r) => { mem.writes.push("apply"); mem.saveRound = r; mem.apply = JSON.parse(JSON.stringify(s)); },
       loadPay: async () => mem.pay, savePay: async (p) => { mem.writes.push("pay"); mem.pay = JSON.parse(JSON.stringify(p)); },
       loadIntro: async () => mem.intro, saveIntro: async (v) => { mem.writes.push("intro"); mem.intro = JSON.parse(JSON.stringify(v)); },
       loadKind: async () => mem.kind, saveKind: async (v) => { mem.writes.push("kind"); mem.kind = JSON.parse(JSON.stringify(v)); },
       loadFee: async () => mem.fee, saveFee: async (v) => { mem.writes.push("fee"); mem.fee = JSON.parse(JSON.stringify(v)); },
-      loadInfo: async () => mem.info },
+      loadInfo: async () => mem.info, ...(over.cfg !== undefined ? { loadCfg: async () => over.cfg } : {}),
+      _rounds: mem.rounds = [] },
     lookup: over.lookup || (async (platform, ign) => ({ ign, ranked: "Gold 3", grade: "B", avgDamage: 312.6, kda: 2.345 })),
     isAdmin: (req) => req.headers["x-admin-key"] === "k", isOwner: (req) => req.headers.authorization === "owner",
     notify: async (embed) => { mem.cards.push(embed); },
+    needAccount: over.needAccount === undefined ? true : over.needAccount,
     newId: () => `id${++seq}`, now: () => clock++, log: { log() {}, warn() {}, error() {} },
   });
   const call = async (fn, req) => { const res = fakeRes(); await fn({ headers: {}, body: {}, path: "", ...req }, res); return res; };
@@ -41,11 +43,11 @@ test("신청서 검사: 빠진 칸 · 계좌번호는 숫자만", () => {
   assert.equal(T.normApply(body({ platform: "xbox" })).error, "no_platform");
   assert.equal(T.normApply(body({ platform: "" })).error, "no_platform");
   assert.equal(T.normApply(body({ platform: "kakao" })).error, "steam_only");      // 스팀 전용(오너 10/4 밤)
-  assert.equal(T.normApply(body({ bank: "없는은행" })).error, "no_bank");
-  assert.equal(T.normApply(body({ accountNo: "12-34" })).error, "bad_account");
-  assert.equal(T.normApply(body({ holder: "" })).error, "no_holder");
+  assert.equal(T.normApply(body({ bank: "없는은행" }), true).error, "no_bank");
+  assert.equal(T.normApply(body({ accountNo: "12-34" }), true).error, "bad_account");
+  assert.equal(T.normApply(body({ holder: "" }), true).error, "no_holder");
   assert.equal(T.normApply(body({ agree: "true" })).error, "no_agree");
-  const ok = T.normApply(body());
+  const ok = T.normApply(body(), true);
   assert.deepEqual(ok.value, { discord: "tester_one", ign: "Fake_Nick1", platform: "steam" });
   assert.deepEqual(ok.pay, { bank: "국민", accountNo: "123456789012", holder: "가나다" });
 });
@@ -518,4 +520,40 @@ test("공개 응답에는 참가 구분이 없다(검수 44차) — 줄마다 ki
   assert.deepEqual(adm.list.map((x) => x.kind), ["lesson", "clan", "external", null]);
   assert.deepEqual(adm.kindCounts, { lesson: 1, clan: 1, external: 1, none: 1 });
   assert.equal((await call(api.mine, { body: { discord: "d_two", ign: "Nick_B2" } })).body.kind, "clan");   // 본인 확인을 거친 「내 신청」만
+});
+
+test("6회 — 신청 줄 r6 · 마감 10/9(금) 23:00 KST(5회 r2 줄은 건드리지 않는다)", () => {
+  assert.equal(a.ROUND, "r6");
+  assert.equal(new Date(a.CLOSE_AT).toISOString(), "2026-10-09T14:00:00.000Z");
+});
+
+test("6회 — 계좌를 받지 않는다: 은행 · 계좌 칸 없이 신청되고 보내와도 저장하지 않는다", async () => {
+  assert.equal(a.NEED_ACCOUNT, false);
+  assert.equal(T.normApply({ discord: "tester_one", ign: "Fake_Nick1", platform: "steam", agree: true }).pay, null);
+  assert.equal(T.normApply({ discord: "tester_one", ign: "Fake_Nick1", platform: "steam" }).error, "no_agree");
+  const { api, mem, call } = setup({ needAccount: false });
+  const r = await call(api.apply, { body: { discord: "tester_one", ign: "Fake_Nick1", platform: "steam", agree: true } });
+  assert.equal(r.code, 200);
+  const r2 = await call(api.apply, { body: body({ discord: "tester_two", ign: "Fake_Nick2" }) });   // 계좌 칸을 보내와도
+  assert.equal(r2.code, 200);
+  assert.equal(mem.pay, null);
+  assert.ok(!mem.writes.includes("pay"));
+  assert.deepEqual(leaks(JSON.stringify(mem)), []);
+  assert.equal((await call(api.list, {})).body.needAccount, false);
+});
+
+test("§1.23 회차 설정 — killrace:applycfg 의 round · 마감 · 이름 · 모드를 요청마다 읽는다(없으면 코드 기본값)", async () => {
+  const cfg = { round: "r8", closeAt: new Date(OPEN + 7200e3).toISOString(), label: "7회", mode: "low", needAccount: false };
+  const { api, mem, call, setClock } = setup({ cfg, needAccount: false });
+  const l = (await call(api.list, {})).body;
+  assert.deepEqual([l.closed, l.closeAt, l.label, l.mode, l.needAccount], [false, Date.parse(cfg.closeAt), "7회", "low", false]);
+  const r = await call(api.apply, { body: { discord: "tester_one", ign: "Fake_Nick1", platform: "steam", agree: true } });
+  assert.equal(r.code, 200);
+  assert.equal(mem.saveRound, "r8");
+  assert.ok(mem.rounds.every((x) => x === "r8"));
+  setClock(Date.parse(cfg.closeAt));
+  assert.equal((await call(api.apply, { body: { discord: "tester_two", ign: "Fake_Nick2", platform: "steam", agree: true } })).body.error, "closed");
+  // 깨진 값은 기본값으로
+  assert.deepEqual(a.normApplyCfg({ round: "x9", closeAt: "nope", label: "", mode: "mid" }), { round: a.ROUND, closeAt: a.CLOSE_AT, label: "6회", needAccount: a.NEED_ACCOUNT, mode: null });
+  assert.match(T.cardEmbed({ discord: "d", ign: "i", at: OPEN }, false, 3, null, "7회").title, /킬내기 7회 신청 · 3\/20/);
 });

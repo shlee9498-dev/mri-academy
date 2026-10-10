@@ -35,8 +35,16 @@ const killraceShot = require("./killrace-shot.cjs");
 const killracePoster = require("./killrace-poster.cjs");
 // 킬내기 개인 누적 지표(§1.11) — 계정 기준 · 불투명 키 · 회차 묶음. 시험 scripts/killrace-career.test.cjs
 const killraceCareer = require("./killrace-career.cjs");
+// 방송용 경쟁전 현황(오너 방송 OBS 띠) — 읽기 전용 · 시험 scripts/ranked-live.test.cjs
+const rankedLive = require("./ranked-live.cjs");
+// 킬내기 주간 개인 리더보드(§1.18) — 1 ~ 10위 · 역할 묶음(1 / 2-4 / 5-10) · 순위 계산은 이 모듈 한 곳. 시험 scripts/killrace-leaderboard.test.cjs
+const killraceLeaderboard = require("./killrace-leaderboard.cjs");
 // 킬내기 판별 상세 기록 채우기(§1.12 · DDL §67) — 대회 시간 밖에 1분에 매치 하나. 시험 scripts/killrace-detail.test.cjs
 const killraceDetail = require("./killrace-detail.cjs");
+// 킬내기 앱 회원(앱 계약 docs/killrace-app-api.md §2 ~ §5) — 로그인 표지 · 내 계정 · 동의 · 스팀 연결 · 탈퇴 · 구분 판정. 시험 scripts/killrace-members.test.cjs
+const killraceMembers = require("./killrace-members.cjs");
+// 킬내기 상금 — 내 상금 · 지급 요청 · 오너 지급 완료(docs/killrace-api.md §1.20). 시험 scripts/killrace-prize.test.cjs
+const killracePrize = require("./killrace-prize.cjs");
 let killShot = null;   // 킬내기 결과 스샷 읽기 — 아래 킬내기 HTTP 블록에서 만들고 봇 messageCreate 가 쓴다
 let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP 블록에서 만들고 봇 interactionCreate(/킬내기포스터)가 쓴다
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
@@ -126,6 +134,7 @@ function limit(name, max, windowMs, reject) {
 //      SUPABASE_SERVICE_ROLE_KEY, SESSION_SECRET, STAFF_DISCORD_IDS(선택, 쉼표구분)
 const crypto = require("crypto");
 const killraceApply = require("./killrace-apply.cjs");
+const unclosedLessons = require("./unclosed-lessons.cjs");   // 닫지 않은 수업 — 세기만(계약 trainer-portal-api §9.34)
 const OAUTH_REDIRECT = "https://mri-academy-production.up.railway.app/api/auth/callback";
 const STAFF_IDS = (process.env.STAFF_DISCORD_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
 const reviewsReady = () =>
@@ -157,6 +166,8 @@ function getUser(req) {
     const m = (req.headers.authorization || "").match(/^Bearer (.+)$/);
     if (!m) return null;
     const u = verifyJWT(m[1]);
+    // 표지(aud)가 있는 토큰 = 킬내기 앱 토큰(앱 계약 §2) — 사이트 · 패널 · 운영진 길은 받지 않는다(github.io 출처를 여러 화면이 같이 쓴다)
+    if (u.aud) return null;
     return { id: u.sub, name: u.name, isStaff: STAFF_IDS.includes(u.sub) };
   } catch { return null; }
 }
@@ -348,7 +359,12 @@ app.get("/api/auth/login", (req, res) => {
   if (!reviewsReady()) return res.status(503).send("reviews disabled");
   const ret = safeReturn(req.query.return || ALLOWED[0]);
   let scope = "identify", state = ret;
-  if (req.query.intent === "apply") {
+  if (req.query.intent === "killrace") {
+    // 킬내기 앱(앱 계약 §2) — scope 는 identify 그대로 · state 에 돌아갈 주소(앱 아래만)와 화면 nonce · 콜백이 표지 토큰을 준다
+    const nonce = String(req.query.nonce || "");
+    if (!killraceMembers.NONCE_RE.test(nonce)) return res.status(400).send("bad nonce");
+    state = killraceMembers.makeKrState(killraceMembers.returnTo(req.query.return), nonce);
+  } else if (req.query.intent === "apply") {
     const nonce = String(req.query.nonce || "");
     if (!NONCE_RE.test(nonce)) return res.status(400).send("bad nonce");
     scope = "identify guilds.join";
@@ -367,6 +383,8 @@ app.get("/api/auth/callback", async (req, res) => {
     if (!code) return res.status(400).send("no code");
     const apply = readApplyState(state);
     if (typeof state === "string" && state.startsWith(APPLY_STATE) && !apply) return res.status(400).send("bad state");
+    const krLogin = killraceMembers.readKrState(state);
+    if (killraceMembers.isKrState(state) && !krLogin) return res.status(400).send("bad state");
     const tok = await fetch("https://discord.com/api/oauth2/token", {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -379,6 +397,11 @@ app.get("/api/auth/callback", async (req, res) => {
       headers: { Authorization: `Bearer ${tok.access_token}` },
     }).then((r) => r.json());
     const name = me.global_name || me.username || "익명";
+    if (krLogin) {
+      // 킬내기 앱 — 표지(aud:"killrace") · 7일 토큰. 회원 줄은 여기서 만들지 않는다(동의할 때 · 앱 계약 §4.1)
+      const jwt = signJWT(killraceMembers.tokenClaims(me, name), killraceMembers.TOKEN_TTL_SEC);
+      return res.redirect(`${killraceMembers.returnTo(krLogin.ret)}#token=${jwt}&nonce=${encodeURIComponent(krLogin.nonce)}`);
+    }
     if (apply) {
       // gj = 서버 입장 결과(joined · already · failed) — 신청 행 guild_join 으로 가서 카드에 「DM 안 닿음」을 띄운다
       const gj = await joinMainGuild(me.id, tok.access_token);
@@ -1614,21 +1637,18 @@ if (process.env.DISCORD_TOKEN) {
     // 유형을 안 고르면 개인이다(명령 정의의 기본값과 같다).
     const isPersonalLesson = guboon === "레슨" && (!lessonType || lessonType === "개인");
     if (!isMriOwner(itx)) {
+      // 잠금 안내는 본인에게만 보여서 트레이너가 봇으로 왔다가 막힌 횟수를 셀 길이 없었다(10/7 조사) —
+      //   나갈 때마다 건수 로그 한 줄(이름 · 디스코드 id 없음 · 계약 trainer-portal-api §9.34.3). 안내 문구는 그대로다.
+      const lockedReply = (kind, content) => { console.log(`[lesson] bot_locked kind=${kind}`); return itx.reply({ content, ephemeral: true }); };
       if (guboon === "레슨" && lessonLockedAll())            // 강의는 그대로(위 LESSON_LOCK_ALL_FROM 주석)
-        return itx.reply({
-          content: "수업 기록은 이제 앱에서 해줘. 예약이 있으면 예약 카드의 「완료 · 기록하기」, 예약 없이 한 수업은 「수업 기록하기」로 남기면 돼.",
-          ephemeral: true,
-        });
+        return lockedReply("lesson",
+          "수업 기록은 이제 앱에서 해줘. 예약이 있으면 예약 카드의 「완료 · 기록하기」, 예약 없이 한 수업은 「수업 기록하기」로 남기면 돼.");
       if (guboon === "진단상담" && consultLocked())
-        return itx.reply({
-          content: "레벨 테스트 기록은 앱에서 해줘. 예약 카드에서 「레벨 테스트 마침」을 누르면 상담 기록까지 남아. 예약 없이 한 테스트는 오너에게 말해줘.",
-          ephemeral: true,
-        });
+        return lockedReply("consult",
+          "레벨 테스트 기록은 앱에서 해줘. 예약 카드에서 「레벨 테스트 마침」을 누르면 상담 기록까지 남아. 예약 없이 한 테스트는 오너에게 말해줘.");
       if (isPersonalLesson && lessonLocked())
-        return itx.reply({
-          content: "개인 수업 기록은 이제 앱에서 해줘. 예약 카드에서 「완료 · 기록하기」를 누르면 판수까지 들어가. 그룹 수업은 당분간 여기서 그대로 하면 돼.",
-          ephemeral: true,
-        });
+        return lockedReply("personal",
+          "개인 수업 기록은 이제 앱에서 해줘. 예약 카드에서 「완료 · 기록하기」를 누르면 판수까지 들어가. 그룹 수업은 당분간 여기서 그대로 하면 돼.");
     }
 
     // 학생 파싱: 쉼표(반각/전각)·공백 구분, 트림, 중복·빈값 제거
@@ -1914,11 +1934,13 @@ if (process.env.DISCORD_TOKEN) {
     // 화면이 없어서, 트레이너가 잘못 넣은 판수는 오너에게 보내는 게 유일한 길이다.
     // **전부 잠그는 단계에서만** 잠근다 — 개인만 잠근 동안은 그룹을 여전히 /수업등록 으로 넣으니
     // 그 정정도 트레이너가 할 수 있어야 한다(오너 지시 2026-09-29 「안 되면 개인만 잠금」).
-    if (lessonLockedAll() && !isOwner)
+    if (lessonLockedAll() && !isOwner) {
+      console.log("[lesson] bot_locked kind=adjust");            // 건수만(§9.34.3) — 이름 · id 없음
       return itx.reply({
         content: "판수 정정은 앱의 「판수 조정 요청」으로 올려줘. 오너가 승인하면 반영돼.",
         ephemeral: true,
       });
+    }
     if (!process.env.SUPABASE_URL)
       return itx.reply({ content: "DB 연동 준비 전이야. 운영진에게 문의해줘.", ephemeral: true });
 
@@ -6981,6 +7003,22 @@ function gdcupAdmin(req) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);  // 타이밍 안전 비교
 }
 
+// 킬내기 앱 구분 판정(앱 계약 §5)용 — GmI 길드(LESSON_GUILD_ID)에 있는지 · 역할 이름. 봇이 한 사람만 조회한다(특권 인텐트 없이 되는 길).
+//   모르면 null(봇 미기동 · 길드 못 찾음 · 그 밖 오류) — 그때 앱은 본인 선택 + 진행자 확인으로 떨어진다. 번호 · 이름은 로그에 남기지 않는다.
+async function gmiGuildMember(discordId) {
+  const gid = process.env.LESSON_GUILD_ID;
+  if (!botClient || !gid) return null;
+  const guild = botClient.guilds.cache.get(gid) || await botClient.guilds.fetch(gid).catch(() => null);
+  if (!guild) return null;
+  try {
+    const m = await guild.members.fetch(String(discordId));
+    return { member: true, roleNames: m.roles.cache.map((r) => r.name) };
+  } catch (e) {
+    if (e && (e.code === 10007 || e.code === 10013)) return { member: false, roleNames: [] };   // Unknown Member · Unknown User
+    return null;
+  }
+}
+
 // ═══ GmI 킬내기 2회 — 웹 경매 · 점수판 (2026-10-08 · 소관 GmI) ═══════════════════
 // 판정은 killrace-auction.cjs(경매) · killrace.cjs(점수)에 있고 여기는 연결만 한다.
 // 진행자 = gdcupAdmin(x-admin-key) · 팀장 = 진행자 화면이 나눠 주는 개인 링크의 토큰(Authorization: Bearer).
@@ -7066,8 +7104,48 @@ function gdcupAdmin(req) {
   if (process.env.SUPABASE_URL) setInterval(() => { killPoster.tick(); }, 60000).unref();
   // 개인 누적 지표(§1.11) — GET /api/killrace/career?events=2,3,4 · 닉 · 숫자 · 불투명 키만(계정 번호는 밖으로 안 나간다)
   killraceCareer.createCareer({ sbSelect, secret: process.env.SESSION_SECRET }).mount(app);
+  // 방송용 경쟁전 현황(docs/ranked-live-api.md §1) — GET /api/ranked/live?ign=&since= · 읽기만 · 허용 닉만(기본 GmI_mriacademy · ops_state 'ranked:live' { igns })
+  //   배그 키는 기존 PUBG_API_KEY 그대로(새 env 없음) · 선수 · 점수 60초 캐시 · 매치 요약은 matchId 로 기억
+  rankedLive.createRankedLive({
+    findPlayer, pubgGet, currentSeasonId, pubgMatch,
+    readAllowed: async () => { const r = await sbSelect("ops_state", "select=value&key=eq.ranked%3Alive&limit=1"); return r[0] && r[0].value && r[0].value.igns; },
+  }).mount(app);
+  // 킬내기 앱 회원(앱 계약 §2 ~ §5) — /api/killrace/me · consent · link · leave · app/admin(unlink). 키는 개인 기록과 같은 불투명 키
+  const killMembers = killraceMembers.createMembers({
+    sbSelect, sbInsert, sbPatch, sbDelete, verify: verifyJWT, isAdmin: gdcupAdmin,
+    findPlayer: (platform, ign) => findPlayer(platform, ign, 600_000),
+    // 닉 → 우리 기록의 표기들(대소문자 무시 찾기 · 앱 계약 §4.2) — 클랜 등록계 · 지난 킬내기 판 · 앱 회원 · 수강생 계정.
+    //   ilike 는 「_」 를 한 글자 아무거나로 읽어서 「\_」 로 막고, 결과는 resolvePlayer 가 소문자 같음으로 한 번 더 거른다. 표가 없으면 그 표만 빈다
+    knownNames: async (ign) => {
+      const pat = encodeURIComponent(String(ign).replace(/[\\%_*]/g, (c) => "\\" + c));
+      const pick = (table, col) => sbSelect(table, `select=${col}&${col}=ilike.${pat}&limit=5`).then((rows) => rows.map((r) => r[col])).catch(() => []);
+      return (await Promise.all([pick("clan_registry", "pubg_name"), pick("registry_history", "pubg_name"), pick("event_match_players", "ign"),
+        pick("killrace_members", "ign"), pick("student_accounts", "pubg_name")])).flat();
+    },
+    keyOf: killraceCareer.keyMaker(process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex")),
+    isStudent: async (id) => (await sbSelect("students", `select=id&discord_id=eq.${encodeURIComponent(id)}&status=in.(active,paused)${NOT_MERGED}&limit=1`)).length > 0,
+    guildOf: gmiGuildMember,
+  });
+  killMembers.mount(app, { limiter: limit("krMe", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
+  // 킬내기 상금(docs/killrace-api.md §1.20 · 원장 §1.19 · DDL §73) — 내 상금 · 지급 요청 · 오너 지급 완료. 돈은 움직이지 않는다(원장 줄과 알림만).
+  //   오너 = MRI_OWNER_ID(사이트 토큰이든 킬내기 앱 토큰이든). 알림 = 봇 DM(기존 env 만 · 새 env 없음) — 봇이 없으면 알림만 빠지고 기록은 남는다
+  const krOwner = (req) => { const oid = process.env.MRI_OWNER_ID; if (!oid) return false; const u = getUser(req) || killMembers.userOf(req); return !!(u && u.id === oid); };
+  const krDm = async (discordId, text) => {
+    if (!botClient || !discordId) return false;
+    try { const u = await botClient.users.fetch(String(discordId)); await u.send(text); return true; } catch (_) { return false; }
+  };
+  killracePrize.createPrize({
+    sbSelect, sbInsert, sbPatch, sbDelete, userOf: killMembers.userOf, memberOf: killMembers.memberOf, isOwner: krOwner, isHost: gdcupAdmin,
+    keyOf: killraceCareer.keyMaker(process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex")),
+    notifyOwner: (text) => krDm(process.env.MRI_OWNER_ID, text), notifyUser: krDm,
+  }).mount(app, { limiter: limit("krPrize", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
+  // 주간 개인 리더보드(§1.18) — GET /api/killrace/leaderboard · 저장본 ops_state 'killrace:leaderboard' · 수요일 09:00 KST · 회차 끝 + 45분에 다시 계산
+  //   계정 번호는 진행자 키(x-admin-key)로 부를 때만 줄마다 붙는다(클랜CODE 역할 봇용 · 새 env 없음). 디스코드 역할은 이 서버가 건드리지 않는다
+  const killLeaderboard = killraceLeaderboard.createLeaderboard({ sbSelect, sbUpsert, isAdmin: gdcupAdmin, secret: process.env.SESSION_SECRET });
+  killLeaderboard.mount(app);
+  if (process.env.SUPABASE_URL) setInterval(() => { killLeaderboard.tick(); }, 60000).unref();
   // 판별 상세 기록 채우기(§1.12 · §67) — 끝 + 45분이 지난 회차의 판을 1분에 매치 하나씩(대회 시간에는 쉰다 · 끄기 ops_state 'killrace:detail' { off: true })
-  const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
+  const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
 }
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
@@ -7622,7 +7700,8 @@ app.post("/api/gdcup-solo", async (req, res) => {
 });
 // ── 킬내기 2회 솔로 신청(killrace-apply.cjs · GmI 소관) — 저장은 ops_state 줄들(DDL 없음). 계좌는 오너 로그인으로만 내려간다 ──
 {
-  const applyKey = (suffix) => `killrace:${suffix}:${killraceApply.ROUND}`;
+  // 신청 줄 이름은 회차 설정(killrace:applycfg · §1.23)의 round — 모듈이 요청마다 넘긴다. 안 넘기면 코드 기본값
+  const applyKey = (suffix, round) => `killrace:${suffix}:${round || killraceApply.ROUND}`;
   const opsGet = async (key) => {
     const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`);
     return rows.length ? rows[0].value : null;
@@ -7630,14 +7709,15 @@ app.post("/api/gdcup-solo", async (req, res) => {
   const opsPut = (key, value) => sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key");
   const api = killraceApply.createApplyApi({
     store: {
-      load: () => opsGet(applyKey("apply")), save: (state) => opsPut(applyKey("apply"), state),
-      loadPay: () => opsGet(applyKey("applypay")), savePay: (pay) => opsPut(applyKey("applypay"), pay),
+      load: (r) => opsGet(applyKey("apply", r)), save: (state, r) => opsPut(applyKey("apply", r), state),
+      loadPay: (r) => opsGet(applyKey("applypay", r)), savePay: (pay, r) => opsPut(applyKey("applypay", r), pay),
       // 선수 소개 4칸(계약 §1.15) — 따로 한 줄. 소개를 저장할 때 명단 · 계좌 줄은 쓰지 않는다
-      loadIntro: () => opsGet(applyKey("applyintro")), saveIntro: (intro) => opsPut(applyKey("applyintro"), intro),
+      loadIntro: (r) => opsGet(applyKey("applyintro", r)), saveIntro: (intro, r) => opsPut(applyKey("applyintro", r), intro),
       // 참가 구분 · 외부 참가비 확인(계약 §1.16) — 각자 한 줄. 입금 안내 문구는 설정 줄(없으면 화면이 「디스코드에서 드려요」)
-      loadKind: () => opsGet(applyKey("applykind")), saveKind: (kind) => opsPut(applyKey("applykind"), kind),
-      loadFee: () => opsGet(applyKey("applyfee")), saveFee: (fee) => opsPut(applyKey("applyfee"), fee),
+      loadKind: (r) => opsGet(applyKey("applykind", r)), saveKind: (kind, r) => opsPut(applyKey("applykind", r), kind),
+      loadFee: (r) => opsGet(applyKey("applyfee", r)), saveFee: (fee, r) => opsPut(applyKey("applyfee", r), fee),
       loadInfo: () => opsGet("killrace:applyinfo"),
+      loadCfg: () => opsGet("killrace:applycfg"),      // 회차 설정(§1.23) — 없으면 코드 기본값(6회 값)
     },
     // 신청한 플랫폼에서 닉을 다시 확인하고 경매 명단에 쓸 값(경쟁전 티어 · 평딜 · KDA)을 같이 받아 둔다
     lookup: async (platform, ign) => {
@@ -8804,14 +8884,25 @@ const SCHEMA_OPTIONAL = {
                       "reminded_at", "remind_count"],
   // §66 킬내기 개인별 판 기록(docs/killrace-api.md §1.8 · 2026-10-06 · 소관 GmI 대행) — 미실행이면 집계 · 점수는 그대로이고
   //   이 표 쓰기만 10분에 한 번 실패 로그(players_write_failed table_missing). 티어 산정(§1.2)이 읽기 시작하면 REQUIRED 로 올린다.
+  //   bot_kills · bot_dmg = §75 개인 스텟 봇 몫(§1.24 · 10/10) — 미실행이면 개인 누적 · 리더보드 읽기가 400 이니 머지 전에 실행한다.
   event_match_players: ["event_id", "team_name", "match_id", "account_id", "slot", "sub", "ign", "reg_ign", "kills", "damage",
-                        "death_type", "dead", "started_at", "updated_at"],
+                        "death_type", "dead", "started_at", "updated_at", "bot_kills", "bot_dmg"],
   // §67 킬내기 판별 상세 기록(docs/killrace-api.md §1.12 · 2026-10-07 실행 · 소관 GmI 대행) — 채우는 코드가 쓰기 전까지 0행.
   event_match_player_detail: ["event_id", "team_name", "match_id", "account_id", "dbnos", "assists", "headshot_kills", "longest_kill_m",
                               "revives", "time_survived_s", "walk_m", "ride_m", "swim_m", "heals", "boosts", "team_kills", "kill_place",
                               "fetched_at"],
   event_match_telemetry: ["event_id", "team_name", "match_id", "match_start", "source_bytes", "source_events", "positions", "combat",
                           "fetched_at"],
+  // §70 킬내기 앱 회원(docs/killrace-app-api.md §2 ~ §5 · 지휘 10/7) — 미실행이면 /api/killrace/me* 만 503 table_missing 이고 다른 기능은 그대로다.
+  //   앱이 열리면(6회 신청) REQUIRED 로 올린다.
+  killrace_members: ["id", "discord_id", "display_name", "platform", "account_id", "ign", "linked_at", "consent_version", "consented_at",
+                     "last_seen_at", "created_at", "updated_at"],
+  killrace_member_links: ["id", "member_id", "action", "platform", "account_id", "ign", "by_host", "created_at"],
+  // §74 킬내기 상금 본인 확인(docs/killrace-api.md §1.20 · §70 바로 다음 실행) — 미실행이면 /api/killrace/prize* 가 503 table_missing 이다.
+  killrace_prize_verifications: ["member_id", "platform", "account_id", "verified_by", "verified_at"],
+  // §73 킬내기 상금 원장(docs/killrace-api.md §1.19 · 2026-10-09 실행 · 소관 GmI 대행) — 적립 31 · 지급 2 줄(10/9 · 2 ~ 5회 적립 · 지급완료 2건). 지급 요청 화면은 별도 주문.
+  killrace_prize_ledger: ["id", "kind", "platform", "account_id", "ign", "event_id", "reason", "amount", "status", "source", "requested_at",
+                          "request_notified_at", "paid_at", "paid_notified_at", "cancelled_at", "memo", "entered_by", "created_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
@@ -9134,6 +9225,34 @@ const DIRECT_STALE_DAYS = 7;   // 직강은 주 단위 운영 — 3일은 오탐
 // 판정식은 §37 의 v_has 와 **같다**(학생 · 진행 트레이너 · KST 날짜). 다르면 화면과 알림이 갈린다.
 // 고치는 건 사람이 한다 — /수업등록 으로 판수를 넣거나, 수업을 안 했으면 예약을 취소로 되돌린다.
 const BOOKING_ORPHAN_DAYS = Number(process.env.BOOKING_ORPHAN_DAYS || 14);
+// ── 닫지 않은 수업 아침 알림(계약 trainer-portal-api §9.34.2) — 세기만 한다(상태 · 판수 · 48시간 전이 안 바꿈) ──
+//   채널 = /수업등록 채널(LESSON_CHANNEL_ID · 새 env 없음 · 미설정이면 건너뜀). 대상이 비면 안 보낸다. 하루 한 번(maybeRunDaily).
+//   한 통 = 트레이너별 · 예약 #번호와 날짜만(수강생 · 판수 없음) · 멘션 없음. 로그에는 건수만 남긴다.
+async function runUnclosedLessonsAlert() {
+  if (!process.env.SUPABASE_URL) { console.log("[cron] unclosed_lessons: SUPABASE_URL 미설정 — 스킵"); return; }
+  const chId = process.env.LESSON_CHANNEL_ID;
+  if (!chId) { console.log("[cron] unclosed_lessons: LESSON_CHANNEL_ID 미설정 — 스킵"); return; }
+  if (!botClient) throw new Error("bot_not_ready");                // 다음 틱에 한 번 더(두 번 실패면 maybeRunDaily 가 오너 DM)
+  // 임베드 대신 2질의(runBookingOrphans 와 같은 이유 — 임베드 문법이 어긋나면 조용히 0건이 된다)
+  const books = await sbSelect("slot_bookings",
+    "select=id,slot_id,student_id,status,duration_min,span_head_id"
+    + "&status=in.(booked,pending_review)&span_head_id=is.null&order=id.asc&limit=1000");
+  const slotIds = [...new Set(books.map((b) => b.slot_id))];
+  const slots = slotIds.length
+    ? await sbSelect("trainer_slots", `select=id,trainer_id,slot_start,duration_min,lesson_type&id=in.(${slotIds.join(",")})`)
+    : [];
+  const now = Date.now();
+  const rows = unclosedLessons.alertRows(unclosedLessons.unclosedOf(books, new Map(slots.map((s) => [s.id, s])), now), now);
+  if (!rows.length) { console.log("[cron] unclosed_lessons: 없음"); return; }
+  const tids = [...new Set(rows.map((r) => r.trainerId))];
+  const staff = await sbSelect("staff", `select=id,name&id=in.(${tids.join(",")})`).catch(() => []);
+  const names = Object.fromEntries(staff.map((x) => [x.id, x.name]));
+  const ch = await botClient.channels.fetch(String(chId));
+  if (!ch?.isTextBased?.()) throw new Error("lesson_channel_not_text");
+  await ch.send({ content: unclosedLessons.alertText(rows, names), allowedMentions: { parse: [] } });
+  console.log(`[cron] unclosed_lessons: ${rows.length}건 · 트레이너 ${tids.length}명 · 채널에 보냄`);
+}
+
 async function runBookingOrphans() {
   if (!process.env.SUPABASE_URL) { console.log("[cron] booking_orphan: SUPABASE_URL 미설정 — 스킵"); return; }
   const { date } = kstNow();
@@ -9346,6 +9465,9 @@ async function cronTick() {
   await maybeRunDaily("directStale", "05:20", runDirectStale, "직강 기록 정체");
   // 예약 done 인데 그날 기록 없음 — 아무 코드도 못 고치는 짝이라 사람에게 올린다(오너 지시 2026-09-28).
   await maybeRunDaily("bookingOrphan", "05:30", runBookingOrphans, "예약 닫힘·기록 없음");
+  // 닫지 않은 수업(계약 trainer-portal-api §9.34.2 · 지휘 10/7) — 「어제까지」 끝났는데 열린 예약을 /수업등록 채널에 하루 한 통.
+  //   위 bookingOrphan 은 **닫힌** 예약만 본다 — 아예 안 닫힌 예약은 48시간 sweep 전까지 아무 데도 안 떴다(10월 기록 멈춤의 원인).
+  await maybeRunDaily("unclosedLessons", unclosedLessons.ALERT_AT, runUnclosedLessonsAlert, "닫지 않은 수업 알림");
   // 트레이너별 판수 부족 알림(§45) — 매 틱. 입금 승인 · 오너 SQL 처럼 코드가 직후 점검을 못 거는 변화도 여기서 잡는다.
   await gamesShort.run({ label: "tick" }).catch((e) => console.error("short_tick", e?.message));
   // 현금영수증 4일 미발급(계약 §9.5 · 오너 판정 9/30) — 낮에 한 번. 신청마다 한 통 · 한 번만.

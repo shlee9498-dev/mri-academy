@@ -54,6 +54,9 @@
 //   신청 당시 경쟁전 전적(티어 · 평딜 · KDA)은 신청 명단 줄('killrace:apply:r2')에 남아 있다.
 
 const SLOT_PENALTY = [4, 3, 2, 1];              // 1번(최상위 티어) 사망 = −4 … 4번 = −1 · 전원 = −10
+// 사망 감점을 「팀 안 티어 순서」로 매기는 첫 회차(오너 10/10 · 7회 = event 8 부터 · 소급 없음 · §1.22) — 설정 penaltyBy 가 있으면 그것이 먼저
+const TIER_PENALTY_FROM_EVENT = 8;
+const { humanStats, BOT_STATS_FROM_EVENT } = require("./killrace-detail.cjs");   // §1.24 개인 스텟에서 봇 킬 · 딜 빼기(2회부터 소급)
 const LEAVE_SCORE = -10;                        // 이탈 판 고정 점수
 const CHICKEN_BONUS = 8;                        // 팀 winPlace 1 판 가산(관제탑 2026-09-26)
 const OK_MODES = new Set(["squad", "squad-fpp"]);
@@ -164,11 +167,35 @@ function pickPlayer(list, name) {
 // members = 주전(슬롯마다 한 명) · subs = 교체 선수. 팀 구성 서명(teamSig)은 주전만 본다 — 교체를 적어도 저장된 판이 버려지지 않는다
 function normTeam(row) {
   const all = (Array.isArray(row.members) ? row.members : [])
-    .map((x) => ({ slot: Number(x.slot), ign: String(x.ign || ""), accountId: String(x.accountId || ""), sub: !!(x && x.sub) }))
+    .map((x) => ({ slot: Number(x.slot), ign: String(x.ign || ""), accountId: String(x.accountId || ""), sub: !!(x && x.sub),
+      tier: Number.isFinite(Number(x && x.tier)) && x.tier !== null && x.tier !== "" ? Number(x.tier) : null }))
     .sort((a, b) => a.slot - b.slot);
-  const strip = (x) => ({ slot: x.slot, ign: x.ign, accountId: x.accountId });
+  const strip = (x) => (x.tier == null ? { slot: x.slot, ign: x.ign, accountId: x.accountId } : { slot: x.slot, ign: x.ign, accountId: x.accountId, tier: x.tier });
   return { name: row.team_name, platform: row.platform, members: all.filter((x) => !x.sub).map(strip), subs: all.filter((x) => x.sub).map(strip) };
 }
+// 팀 안 티어 순서 감점(§1.22) — 주전마다 티어(작을수록 위)를 찾아 줄 세우고 1등 −4 · 2등 −3 · 3등 −2 · 4등 −1 을 그 슬롯에 붙인다.
+//   티어 = 팀 등록 줄 members[].tier(원장이 그때 정한 값) → 티어표(ops_state 'killrace:tiers' · 닉 소문자 · 계정 합치기 merge 반영) 순.
+//   같은 티어면 전체 순위(rank · 작은 수가 위) → 그래도 같으면 슬롯 순. 한 명이라도 티어가 없으면 그 팀은 슬롯 순서(종전과 같다).
+//   교체 선수는 그 슬롯의 감점을 물려받는다(종전과 같다). 반환 = { 슬롯: 감점 } · tiers 가 없거나 비면 null(= 슬롯 순)
+function tierPenaltyMap(members, tiers) {
+  const list = tiers && tiers.list && typeof tiers.list === "object" ? tiers.list : null;
+  const byAcc = tiers && tiers.byAccount && typeof tiers.byAccount === "object" ? tiers.byAccount : {};
+  const ms = Array.isArray(members) ? members : [];
+  if (!ms.length || ms.length > SLOT_PENALTY.length) return null;
+  const rows = ms.map((m) => {
+    const hit = (list && list[String(m.ign || "").toLowerCase()]) || byAcc[m.accountId] || null;
+    const tier = m.tier != null && Number.isFinite(Number(m.tier)) ? Number(m.tier) : hit && Number.isFinite(Number(hit.tier)) ? Number(hit.tier) : null;
+    const rank = hit && Number.isFinite(Number(hit.rank)) ? Number(hit.rank) : Infinity;
+    return { slot: m.slot, tier, rank };
+  });
+  if (rows.some((r) => r.tier == null)) return null;
+  rows.sort((a, b) => a.tier - b.tier || a.rank - b.rank || a.slot - b.slot);
+  const out = {};
+  rows.forEach((r, i) => { out[r.slot] = SLOT_PENALTY[i]; });
+  return out;
+}
+const penaltyOf = (slot, penBySlot) => (penBySlot && Number.isInteger(penBySlot[slot]) ? penBySlot[slot] : SLOT_PENALTY[slot - 1] || 0);
+
 // 그 판의 출전 명단 — 슬롯마다 주전이 그 판에 있으면 주전, 없고 그 슬롯 교체 선수가 있으면 교체 선수(사망 감점 슬롯을 물려받는다)
 function lineupFor(m, team) {
   if (!team.subs || !team.subs.length) return team;
@@ -310,7 +337,7 @@ const finalScore = (base, leave, boost) => (leave ? LEAVE_SCORE : applyBoost(bas
 function scoreGame(g) {
   const kills = sum(g.members, (x) => x.kills);
   const damage = Math.round(sum(g.members, (x) => x.damage) * 100) / 100;
-  const penalty = sum(g.deadSlots || [], (slot) => SLOT_PENALTY[slot - 1] || 0);
+  const penalty = sum(g.deadSlots || [], (slot) => penaltyOf(slot, g.penBySlot));
   const base = baseScore(kills, damage, g.place, penalty);
   const out = { kills, damage, dmgPts: dmgPoints(damage), chicken: chickenPoints(g.place), penalty, base, score: finalScore(base, g.leave || g.reviveOut, g.boost) };
   if (g.boost && g.boost !== 1) out.boost = g.boost;      // 배수 판에만 싣는다(1회 저장분 · 시험과 모양이 같게)
@@ -363,12 +390,16 @@ function normEventConfig(value, evId) {
   const lateRevive = LATE_REVIVE_MODES.includes(v.lateRevive) ? v.lateRevive
     : Number.isInteger(Number(evId)) && Number(evId) >= LATE_REVIVE_FROM_EVENT ? "penalty" : "off";
   const revivePhase = Number.isInteger(v.revivePhase) && v.revivePhase >= 2 && v.revivePhase <= 9 ? v.revivePhase : REVIVE_PHASE_DEFAULT;
+  // 사망 감점 기준(§1.22) — "tier"(팀 안 티어 순서) · "slot"(슬롯 번호). 설정에 없으면 7회(event 8)부터 "tier"
+  const penaltyBy = v.penaltyBy === "tier" || v.penaltyBy === "slot" ? v.penaltyBy
+    : Number.isInteger(Number(evId)) && Number(evId) >= TIER_PENALTY_FROM_EVENT ? "tier" : "slot";
+  const mode = v.mode === "low" || v.mode === "high" ? v.mode : null;      // 판 모드(원장이 정함 · low 저티어 판 · high 고티어 판) — 화면 · 공지 표시용
   return {
     // 판 순번 버닝이면 boostAt 은 읽지 않는다(null) — 옛 화면이 「1.5배 판까지 N분」을 잘못 띄우지 않게
     boostAt: boostMode === "time" ? ms(v.boostAt) : null, boostMul: Number.isFinite(mul) && mul >= 1 && mul <= 3 ? mul : 1.5,
     boostMode, boostSeqs: boostMode === "seq" ? (seqs.length ? seqs : BOOST_SEQS_DEFAULT.slice()) : [],
     bonus, teamSize: Number.isInteger(v.teamSize) ? v.teamSize : null, modes,
-    auto: v.auto !== false, voidDeaths, voidGames, liveTokens, lateRevive, revivePhase,
+    auto: v.auto !== false, voidDeaths, voidGames, liveTokens, lateRevive, revivePhase, penaltyBy, mode,
   };
 }
 const voidKey = (teamName, matchId) => `${teamName}|${matchId}`;
@@ -402,7 +433,7 @@ function deadLine(g) {
   if (!slots.length) return "";
   const bySlot = new Map((g.members || []).map((m) => [m.slot, m]));
   return "   사망: " + slots.map((s) => {
-    const m = bySlot.get(s); const pen = SLOT_PENALTY[s - 1] || 0;
+    const m = bySlot.get(s); const pen = penaltyOf(s, g.penBySlot);
     return m && m.ign ? `${m.ign}(${s}번 −${pen})` : `${s}번 −${pen}`;
   }).join(" · ");
 }
@@ -724,7 +755,7 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
   return {
     event: { name: ev.name, start: ev.start, end: ev.end }, serverNow: at, admin: !!admin,
     boostAt: cfg.boostAt, boostMul: cfg.boostMul, boostMode: cfg.boostMode, boostSeqs: cfg.boostSeqs, auto: cfg.auto, updatedAt,
-    lateRevive: cfg.lateRevive, revivePhase: cfg.revivePhase,
+    lateRevive: cfg.lateRevive, revivePhase: cfg.revivePhase, penaltyBy: cfg.penaltyBy, mode: cfg.mode,
     run: lv.run || null, rankChangedAt: (lv.ranks && lv.ranks.at) || null,
     gains: (lv.gains || []).filter((g) => at - g.at < GAIN_SHOW_MS),
     teams: list.map((t) => ({
@@ -740,12 +771,14 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
 
 // 개인 기록 — 확정된 판만 더한다(무효 판 · 이탈 판은 팀 합계와 똑같이 뺀다 → 개인 킬 합 = 팀 킬). 잠정 킬은 팀 단위라 여기 없다.
 // 응답에는 닉 · 슬롯 · 숫자만 싣는다(accountId · 디스코드 닉 · 계좌 없음). roster = 경매 결과(티어 · 낙찰가 · 팀장) — 없으면 비운다.
-function buildPlayers({ ev, teams, cfg, rows, roster, at }) {
+// bots = 「팀|매치|계정」 → { kills, damage } 봇 몫 Map(§1.24 · event_match_players.bot_kills · bot_dmg · 2회부터) — null 이면 공식 값 그대로.
+//   Map 에 없는 선수 판은 아직 텔레메트리를 못 받은 것 → 「집계 중」(pending · 판 수에 안 넣는다)
+function buildPlayers({ ev, teams, cfg, rows, roster, at, bots = null }) {
   const b = buildBoard({ ev, teams, cfg, rows, at, admin: false });
   const meta = new Map(((roster && roster.players) || []).map((x) => [String(x.ign || "").toLowerCase(), x]));
   // 교체 선수도 계정별로 따로 쌓는다(뛴 판만큼) — 주전 · 교체가 같은 슬롯 번호를 갖는다
   const byTeam = new Map(teams.map((t) => [t.name, new Map([...t.members, ...(t.subs || []).map((m) => ({ ...m, sub: true }))]
-    .map((m) => [m.accountId, { slot: m.slot, ign: m.ign, sub: !!m.sub, kills: 0, damage: 0, deaths: 0, games: 0, chickens: 0 }]))]));
+    .map((m) => [m.accountId, { slot: m.slot, ign: m.ign, sub: !!m.sub, kills: 0, damage: 0, deaths: 0, games: 0, chickens: 0, pending: 0 }]))]));
   for (const r of rows || []) {
     const pl = byTeam.get(r.team_name);
     const d = r.deaths;
@@ -754,7 +787,12 @@ function buildPlayers({ ev, teams, cfg, rows, roster, at }) {
     for (const m of d.members) {
       const cur = pl.get(m.accountId);
       if (!cur) continue;                                  // 팀 구성이 바뀌기 전 기록은 순번(seq)이 비어 여기 오지 않는다
-      cur.kills += Number(m.kills) || 0; cur.damage += Number(m.damage) || 0; cur.games += 1;
+      let own = m;
+      if (bots) {                                          // 개인 스텟만 사람 몫(봇 킬 · 딜 뺌) — 팀 합계(b)는 공식 값 그대로
+        own = humanStats(m, bots.get(`${r.team_name}|${r.match_id}|${m.accountId}`));
+        if (!own) { cur.pending += 1; continue; }
+      }
+      cur.kills += Number(own.kills) || 0; cur.damage += Number(own.damage) || 0; cur.games += 1;
       if (dead.has(m.slot)) cur.deaths += 1;
       if (Number(r.win_place) === 1) cur.chickens += 1;
     }
@@ -763,7 +801,7 @@ function buildPlayers({ ev, teams, cfg, rows, roster, at }) {
     const players = [...byTeam.get(t.name).values()].sort((x, y) => x.slot - y.slot).map((x) => {
       const mt = meta.get(String(x.ign || "").toLowerCase()) || {};
       return { slot: x.slot, ign: x.ign, ...(x.sub ? { sub: true } : {}), kills: x.kills, damage: Math.floor(x.damage), deaths: x.deaths, games: x.games, chickens: x.chickens,
-        tier: mt.tier || null, price: Number.isFinite(mt.price) ? mt.price : null, captain: !!mt.captain };
+        ...(x.pending ? { pendingGames: x.pending } : {}), tier: mt.tier || null, price: Number.isFinite(mt.price) ? mt.price : null, captain: !!mt.captain };
     });
     return { name: t.name, rank: t.rank, total: t.total, gameScore: t.gameScore, bonus: t.bonus, games: t.games, chickens: t.chickens,
       kills: t.kills, damage: t.damage, deaths: players.reduce((n, x) => n + x.deaths, 0), players };
@@ -940,6 +978,14 @@ function createKillrace(deps) {
     const value = { ...(await loadConfigRaw(evId)), ...patch };
     await sbUpsert("ops_state", { key: cfgKey(evId), value, updated_at: new Date(now()).toISOString() }, "key");
     return normEventConfig(value, evId);
+  }
+  // 티어표(§1.22) — ops_state 'killrace:tiers' { list: { 닉소문자: { ign, tier, rank } } }. 없거나 깨졌으면 null(= 슬롯 순서)
+  async function loadTiers() {
+    try {
+      const rows = await sbSelect("ops_state", "select=value&key=eq.killrace%3Atiers&limit=1");
+      const v = rows[0] && rows[0].value;
+      return v && typeof v === "object" && v.list && typeof v.list === "object" ? v : null;
+    } catch (e) { log.warn("[killrace] tiers_load_failed", shortErr(e)); return null; }
   }
   const loadTeams = async (evId) =>
     (await sbSelect("event_teams", `select=team_name,platform,members&event_id=eq.${evId}&order=team_name.asc`)).map(normTeam);
@@ -1160,8 +1206,15 @@ function createKillrace(deps) {
       games.forEach((g, i) => { g.seq = i + 1; });
       for (const g of boostTargets(games, cfg)) g.boost = cfg.boostMul;
     }
+    // 사망 감점 기준(§1.22) — "tier" 면 팀마다 티어 순서 감점표를 한 번 만든다(티어표 · 팀 줄 tier). 못 만들면 그 팀은 슬롯 순서
+    const penByTeam = new Map();
+    if (cfg.penaltyBy === "tier") {
+      const tiers = await loadTiers();
+      for (const team of teams) penByTeam.set(team.name, tierPenaltyMap(team.members, tiers));
+    }
     for (const rec of records) {
       if (rec.excluded) continue;
+      rec.penBySlot = penByTeam.get(rec.teamName) || null;
       rec.used = deathMode === "deathType" ? "deathType" : rec.telemetry ? "telemetry" : "deathType_fallback";
       rec.verdict = rec.members.map((mm) => (rec.used === "telemetry"
         ? telemetryVerdict(rec.telemetry.players[mm.accountId], mm, rec.place)
@@ -1196,6 +1249,7 @@ function createKillrace(deps) {
       flags: {
         sig: rec.sig, mode: rec.mode || null, matchType: rec.matchType || null, tel: rec.telemetryUrl || null,
         encounter: rec.encounter || [], excluded: rec.excluded, deadSlots: rec.excluded ? [] : rec.deadSlots,
+        ...(rec.excluded || !rec.penBySlot ? {} : { penBySlot: rec.penBySlot }),
         source: rec.source, endMs: rec.endMs || null,
         ...(rec.excluded || !rec.voidSlots.length ? {} : { voidSlots: rec.voidSlots }),
         ...(rec.excluded ? {} : { logout: rec.members.filter((x) => x.deathType === "logout").map((x) => x.slot) }),
@@ -1263,7 +1317,14 @@ function createKillrace(deps) {
       sbSelect("event_matches", `select=team_name,match_id,seq,map,created_at,damage_sum,kills,win_place,penalty,leave_flag,score,flags,deaths,updated_at&event_id=eq.${ev.id}`),
       loadRoster(ev.id),
     ]);
-    return buildPlayers({ ev, teams, cfg, rows, roster, at: now() });
+    let bots = null;                                       // §1.24 — 2회(event 2)부터 개인 스텟에서 봇 킬 · 딜을 뺀다(저장된 봇 몫 칸)
+    if (Number(ev.id) >= BOT_STATS_FROM_EVENT) {
+      try {
+        const got = await sbSelect("event_match_players", `select=team_name,match_id,account_id,bot_kills,bot_dmg&event_id=eq.${ev.id}&bot_kills=not.is.null`);
+        bots = new Map(got.map((x) => [`${x.team_name}|${x.match_id}|${x.account_id}`, { kills: x.bot_kills, damage: x.bot_dmg }]));
+      } catch (e) { log.warn("[killrace] bot_stats_read_failed", logSafe(e)); }   // 칸이 없으면(§75 미실행) 공식 값 그대로
+    }
+    return buildPlayers({ ev, teams, cfg, rows, roster, at: now(), bots });
   }
 
   // ── 핵 사망 무효(진행자 수동 표시) — 설정에 적고 그 판 점수를 바로 다시 센다. 다음 집계도 같은 표시를 읽는다 ──
@@ -1285,7 +1346,7 @@ function createKillrace(deps) {
     if (set.size) all[key] = [...set].sort((a, b) => a - b); else delete all[key];
     await saveConfig(ev.id, { voidDeaths: all });
     const voidSlots = dead.filter((x) => set.has(x)); const deadSlots = dead.filter((x) => !set.has(x));
-    const penalty = sum(deadSlots, (x) => SLOT_PENALTY[x - 1] || 0);
+    const penalty = sum(deadSlots, (x) => penaltyOf(x, f.penBySlot));
     const base = baseScore(Number(row.kills) || 0, Number(row.damage_sum) || 0, row.win_place, penalty);
     const boost = Number(f.boost) > 1 ? Number(f.boost) : null;
     const score = finalScore(base, !!row.leave_flag || reviveOutOf(f), boost);
@@ -1653,7 +1714,7 @@ module.exports = {
   COMMANDS, createKillrace, scoring: { SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, baseScore, applyBoost },   // 점수식은 여기 한 벌 — 스샷 잠정(killrace-shot.cjs)이 같은 식을 쓴다 · 룰 화면(/rules)은 상수만 읽는다
   telemetry: { fetchTelemetry },                                                 // 텔레메트리 스트리밍 — 판별 상세 기록(killrace-detail.cjs)이 같은 해석기를 쓴다
   _test: {
-    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
+    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, tierPenaltyMap, penaltyOf, TIER_PENALTY_FROM_EVENT, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, lateReviveCheck, reviveOutOf, reviveWho, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory, lineupFor, playerRows, PLAYERS_TABLE_PAUSE_MS,
   },

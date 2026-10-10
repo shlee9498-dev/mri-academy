@@ -6849,3 +6849,232 @@ notify pgrst, 'reload schema';
 --   drop table if exists public.event_match_player_detail;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- 70) 킬내기 앱 회원 — killrace_members · killrace_member_links (2026-10-07 · 지휘 「킬내기 앱 1단계 착수」 · 앱 계약 docs/killrace-app-api.md §2 ~ §5 · §9)
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행). A 구간(새 표 둘 · 더하기만 · 기존 표 · 칸 · 제약 · 함수를 건드리지 않는다).
+--     ⚠️ 실행 전 — 5회(10/8) 뒤 지휘 「진행」을 받고 세션이 70-0 → 70a → 70b → 70c 순서로 실행한다. 코드 PR 은 실행 확인 전까지 Draft.
+--     디스코드 계정 번호 ↔ PUBG 계정 대조표(10/7 확정 6) = 회원 표의 연결 칸 + 연결 이력. 응답 · 로그에는 번호를 내지 않는다.
+--     동의 전에는 줄을 만들지 않는다(동의 = 줄이 생기는 때). 탈퇴하면 회원 줄을 지우고 연결 이력도 같이 지운다(on delete cascade).
+-- ============================================================
+-- 70-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select to_regclass('public.killrace_members'), to_regclass('public.killrace_member_links');      -- 기대 null · null
+-- 70a) 표 둘
+create table if not exists public.killrace_members (
+  id               bigint generated always as identity primary key,
+  discord_id       text        not null check (discord_id ~ '^[0-9]{5,25}$'),                    -- 서버 안에서만 · 응답에 없다
+  display_name     text        check (display_name is null or char_length(display_name) <= 40),
+  platform         text        check (platform in ('steam', 'kakao')),
+  account_id       text        check (account_id ~ '^account\.[0-9a-f]{32}$'),                   -- PUBG 계정 번호 · 응답에는 불투명 키(key)만
+  ign              text        check (ign is null or char_length(ign) between 1 and 40),
+  linked_at        timestamptz,
+  consent_version  text        not null check (char_length(consent_version) between 1 and 20),
+  consented_at     timestamptz not null,
+  last_seen_at     timestamptz,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  constraint killrace_members_link_shape check (                                                   -- 연결 칸 넷은 함께 있거나 함께 없다
+    (platform is null and account_id is null and ign is null and linked_at is null)
+    or (platform is not null and account_id is not null and ign is not null and linked_at is not null))
+);
+create unique index if not exists killrace_members_discord on public.killrace_members (discord_id);                       -- 디스코드 계정 하나 = 회원 하나
+create unique index if not exists killrace_members_account on public.killrace_members (platform, account_id) where account_id is not null;   -- PUBG 계정 하나 = 회원 하나
+create table if not exists public.killrace_member_links (
+  id          bigint generated always as identity primary key,
+  member_id   bigint      not null references public.killrace_members (id) on delete cascade,
+  action      text        not null check (action in ('link', 'relink', 'host_unlink')),
+  platform    text        not null check (platform in ('steam', 'kakao')),
+  account_id  text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),
+  ign         text        not null check (char_length(ign) between 1 and 40),
+  by_host     text        check (by_host is null or char_length(by_host) between 1 and 20),       -- 진행자 해제일 때 누가(진행자가 적은 이름)
+  created_at  timestamptz not null default now()
+);
+create index if not exists idx_killrace_member_links_member on public.killrace_member_links (member_id, created_at desc);
+alter table public.killrace_members enable row level security;                                     -- 정책 0 = service_role 만
+alter table public.killrace_member_links enable row level security;
+-- 70b) 70a 뒤 검증(세션 · 읽기만 · 운영 DB 에 시험 줄을 넣지 않는다 — 줄을 넣는 시험은 로컬 PGlite 에서 했다 · PR 본문):
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'killrace_members';        -- 기대 12
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'killrace_member_links';   -- 기대 8
+--   select conrelid::regclass, count(*) filter (where contype = 'c') c, count(*) filter (where contype = 'p') p, count(*) filter (where contype = 'f') f
+--     from pg_constraint where conrelid in ('public.killrace_members'::regclass, 'public.killrace_member_links'::regclass) group by 1 order by 1;
+--     -- 기대 killrace_members c 7 · p 1 · f 0 / killrace_member_links c 5 · p 1 · f 1
+--   select indexname from pg_indexes where schemaname = 'public' and tablename in ('killrace_members', 'killrace_member_links') order by 1;
+--     -- 기대 idx_killrace_member_links_member · killrace_member_links_pkey · killrace_members_account · killrace_members_discord · killrace_members_pkey
+--   select relname, relrowsecurity from pg_class where relname in ('killrace_members', 'killrace_member_links');               -- 기대 둘 다 true
+--   select (select count(*) from public.killrace_members), (select count(*) from public.killrace_member_links);                -- 기대 0 · 0
+-- 70c) notify pgrst, 'reload schema';
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 회원 · 연결 이력만 사라진다 — 대회 기록은 그대로):
+--   drop table if exists public.killrace_member_links;
+--   drop table if exists public.killrace_members;
+--   notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §73  킬내기 상금 원장 — 적립(+) · 지급(−) 줄 · 지급 요청 → 지급완료 (2026-10-09 · 지휘 주문 · 오너 OK 10/9 · 계약 docs/killrace-api.md §1.19)
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행 · §66 · §67 과 같은 형태). A 구간(새 표 하나 · 보기 하나 · 방아쇠 하나 · 더하기만 ·
+--     기존 표 · 칸 · 제약 · 함수 안 건드림).
+--   - 사람 키 = PUBG 계정 번호(닉이 바뀌어도 같은 사람). 계좌 · 실명 · 디스코드 id 는 이 표에 없다(송금은 오너가 앱 밖에서 한다).
+--   - 적립(accrue) = 회차별 + 줄(회차 · 사유 필수) · 지급(payout) = 요청됨(requested) → 지급완료(paid) 또는 요청 취소(cancelled).
+--   - 잔액 = 적립 합 − 지급완료 합(보기 killrace_prize_balance). 적립을 늦게 넣는 동안은 잔액이 0 밑일 수 있다(지난 지급을 먼저 적을 때).
+--   - 지우지 않는다. 고칠 수 있는 것은 「요청됨 → 지급완료 / 취소」 한 번과 알림 시각 · 메모뿐이다(방아쇠가 나머지를 막는다).
+--   - §68(event_reward_ledger · #520 초안 · 실행 전)과 겹친다 — 이 표가 실행본이고 §68 은 지휘 판단 전까지 실행하지 않는다(계약 §1.19).
+--   ✅ 실행 완료 2026-10-09 00:3x KST (세션 실행 · A 구간 · 지휘 주문). 73a 를 한 번에 보내면 MCP 가 60초에 끊겨(두 번 · DB 에는 아무것도 안 남음)
+--      두 번에 나눠 보냈다 — 줄 끝 주석과 새 표라 할 일이 없는 `drop trigger if exists` 두 줄을 뺐다. 함수 본문 md5 abdc4f1ecc89779d86ee09aac5fb2c57 = 정본 그대로.
+--      73b 결과: 칸 18 · 보기 8 · c 11 · f 1 · p 1 · 색인 4 · 방아쇠 2 · RLS true · 정책 0. 뒤이어 지급 2줄 · 적립 23줄(계약 §1.19).
+--
+-- 73a) 실행 블록(멱등):
+create table if not exists public.killrace_prize_ledger (
+  id                  bigint generated always as identity primary key,
+  kind                text        not null check (kind in ('accrue', 'payout')),
+  platform            text        not null default 'steam' check (platform in ('steam', 'kakao')),
+  account_id          text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),
+  ign                 text        check (ign is null or char_length(ign) between 1 and 40),            -- 적을 때의 닉 · 보이기용
+  event_id            bigint      references public.event_defs (id),                                   -- 적립은 필수 · 지급은 비워도 된다(여러 회차 적립분)
+  reason              text        check (reason is null or char_length(reason) between 1 and 40),     -- 적립 사유(「1등」「MVP」) · 적립은 필수
+  amount              integer     not null check (amount > 0 and amount <= 10000000),                -- 원 · 늘 양수(부호는 kind 가 정한다)
+  status              text        check (status in ('requested', 'paid', 'cancelled')),              -- 지급 줄만
+  source              text        check (source in ('app', 'owner')),                                 -- 지급 줄을 연 곳(선수 앱 요청 · 오너 직접)
+  requested_at        timestamptz,
+  request_notified_at timestamptz,                                                                    -- 오너에게 요청 알림을 보낸 시각
+  paid_at             timestamptz,
+  paid_notified_at    timestamptz,                                                                    -- 선수에게 지급완료 알림을 보낸 시각
+  cancelled_at        timestamptz,
+  memo                text        check (memo is null or char_length(memo) <= 200),
+  entered_by          text        check (entered_by is null or char_length(entered_by) between 1 and 20),   -- 「오너」「경비(세션)」 · 디스코드 id 안 적음
+  created_at          timestamptz not null default now(),
+  constraint killrace_prize_ledger_shape check (
+       (kind = 'accrue' and event_id is not null and reason is not null and status is null and source is null
+          and requested_at is null and paid_at is null and cancelled_at is null)
+    or (kind = 'payout' and status = 'requested' and source is not null and requested_at is not null and paid_at is null and cancelled_at is null)
+    or (kind = 'payout' and status = 'paid' and source is not null and paid_at is not null and cancelled_at is null)
+    or (kind = 'payout' and status = 'cancelled' and source is not null and requested_at is not null and paid_at is null and cancelled_at is not null)
+  )
+);
+-- 같은 회차 · 같은 사람 · 같은 사유 적립은 한 줄 · 열린 지급 요청은 사람마다 하나
+create unique index if not exists killrace_prize_ledger_accrue_once on public.killrace_prize_ledger (event_id, platform, account_id, reason) where kind = 'accrue';
+create unique index if not exists killrace_prize_ledger_open_request on public.killrace_prize_ledger (platform, account_id) where kind = 'payout' and status = 'requested';
+create index if not exists killrace_prize_ledger_person on public.killrace_prize_ledger (platform, account_id, created_at);
+alter table public.killrace_prize_ledger enable row level security;   -- 정책 0 = service_role 만
+
+-- 지우기 막기 · 고치기는 「요청됨 → 지급완료 / 취소」 한 번 + 알림 시각(빈 칸 → 시각 한 번) + 메모만
+create or replace function public.killrace_prize_ledger_guard() returns trigger language plpgsql as $$
+begin
+  if tg_op in ('DELETE', 'TRUNCATE') then
+    raise exception 'killrace_prize_ledger: % 금지 — 줄을 지우지 않는다', tg_op using errcode = 'P0001';
+  end if;
+  if (new.id, new.kind, new.platform, new.account_id, new.ign, new.event_id, new.reason, new.amount, new.source, new.requested_at, new.entered_by, new.created_at)
+     is distinct from (old.id, old.kind, old.platform, old.account_id, old.ign, old.event_id, old.reason, old.amount, old.source, old.requested_at, old.entered_by, old.created_at) then
+    raise exception 'killrace_prize_ledger: 고칠 수 없는 칸' using errcode = 'P0001';
+  end if;
+  if new.status is distinct from old.status and not (old.status = 'requested' and new.status in ('paid', 'cancelled')) then
+    raise exception 'killrace_prize_ledger: 상태는 요청됨 → 지급완료 / 취소 한 번만' using errcode = 'P0001';
+  end if;
+  if (old.paid_at is not null and new.paid_at is distinct from old.paid_at)
+     or (old.cancelled_at is not null and new.cancelled_at is distinct from old.cancelled_at)
+     or (old.request_notified_at is not null and new.request_notified_at is distinct from old.request_notified_at)
+     or (old.paid_notified_at is not null and new.paid_notified_at is distinct from old.paid_notified_at) then
+    raise exception 'killrace_prize_ledger: 적힌 시각은 바꾸지 않는다' using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+drop trigger if exists killrace_prize_ledger_guard_row on public.killrace_prize_ledger;
+create trigger killrace_prize_ledger_guard_row before update or delete on public.killrace_prize_ledger
+  for each row execute function public.killrace_prize_ledger_guard();
+drop trigger if exists killrace_prize_ledger_guard_truncate on public.killrace_prize_ledger;
+create trigger killrace_prize_ledger_guard_truncate before truncate on public.killrace_prize_ledger
+  for each statement execute function public.killrace_prize_ledger_guard();
+
+-- 선수별 잔액 = 적립 합 − 지급완료 합 · 열린 요청 금액 · 가장 최근 닉
+create or replace view public.killrace_prize_balance with (security_invoker = true) as
+select platform, account_id,
+       (array_agg(ign order by created_at desc) filter (where ign is not null))[1] as ign,
+       coalesce(sum(amount) filter (where kind = 'accrue'), 0)::bigint                         as accrued,
+       coalesce(sum(amount) filter (where kind = 'payout' and status = 'paid'), 0)::bigint     as paid,
+       coalesce(sum(amount) filter (where kind = 'payout' and status = 'requested'), 0)::bigint as requested,
+       (coalesce(sum(amount) filter (where kind = 'accrue'), 0)
+        - coalesce(sum(amount) filter (where kind = 'payout' and status = 'paid'), 0))::bigint as balance,
+       max(created_at) as last_at
+  from public.killrace_prize_ledger
+ group by platform, account_id;
+notify pgrst, 'reload schema';
+--
+-- 73b) 73a 뒤 검증(세션 · 읽기만):
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'killrace_prize_ledger';   -- 18
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'killrace_prize_balance';  -- 8
+--   select contype, count(*) from pg_constraint where conrelid = 'public.killrace_prize_ledger'::regclass group by 1 order by 1;
+--     -- c 11 · f 1 · p 1   (PG 17 — not null 은 pg_constraint 에 안 잡힌다 · PG 18 이면 n 6 이 더 보인다)
+--   select count(*) from pg_indexes where tablename = 'killrace_prize_ledger';   -- 4 (pkey · accrue_once · open_request · person)
+--   select tgname from pg_trigger where tgrelid = 'public.killrace_prize_ledger'::regclass and not tgisinternal order by 1;   -- guard_row · guard_truncate
+--   select relrowsecurity from pg_class where relname = 'killrace_prize_ledger';   -- true
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 상금 원장만 사라진다 — 점수 · 회차 · 다른 표는 그대로):
+--   drop view if exists public.killrace_prize_balance;
+--   drop table if exists public.killrace_prize_ledger;          -- 방아쇠도 같이 지워진다
+--   drop function if exists public.killrace_prize_ledger_guard();
+--   notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §74  킬내기 상금 — 본인 확인 표시(진행자 확인 전에는 지급 요청이 잠긴다) (2026-10-09 · 지휘 결정 · 계약 docs/killrace-api.md §1.20)
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행). A 구간(새 표 하나 · 더하기만). **§70(killrace_members) 다음에 실행한다** — 외래 키가 그 표를 가리킨다.
+--   - 한 줄 = 「이 회원이 지금 연결한 이 계정은 본인이 맞다」를 진행자가 확인했다는 표시. 회원 · 계정 한 쌍으로 적는다 —
+--     회원이 다른 계정으로 다시 연결하면 줄의 계정과 달라져 저절로 다시 잠긴다(코드가 계정까지 같아야 확인으로 본다). 회원을 지우면 같이 지운다.
+--   - 디스코드 번호는 적지 않는다(회원 줄 번호로 잇는다). 확인한 사람은 진행자가 적은 이름(1 ~ 20자).
+--
+-- 74a) 실행 블록(멱등):
+create table if not exists public.killrace_prize_verifications (
+  member_id    bigint      primary key references public.killrace_members (id) on delete cascade,
+  platform     text        not null check (platform in ('steam', 'kakao')),
+  account_id   text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),
+  verified_by  text        not null check (char_length(verified_by) between 1 and 20),
+  verified_at  timestamptz not null default now()
+);
+alter table public.killrace_prize_verifications enable row level security;   -- 정책 0 = service_role 만
+notify pgrst, 'reload schema';
+--
+-- 74b) 74a 뒤 검증(세션 · 읽기만):
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'killrace_prize_verifications';   -- 5
+--   select contype, count(*) from pg_constraint where conrelid = 'public.killrace_prize_verifications'::regclass group by 1 order by 1;   -- c 3 · f 1 · p 1
+--   select relrowsecurity from pg_class where relname = 'killrace_prize_verifications';   -- true
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 확인 표시만 사라지고 지급 요청이 다시 잠긴다 — 원장은 그대로):
+--   drop table if exists public.killrace_prize_verifications;
+--   notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §75  킬내기 개인 스텟 봇 몫 — event_match_players.bot_kills · bot_dmg (2026-10-10 · 지휘 D 정정 「2 ~ 6회 + 연습 회차 소급」 · 계약 docs/killrace-api.md §1.24)
+--     소관 GmI(카지노 트랙 휴면 중 MRIacademy 대행). A 구간(칸 두 개 더하기 · 기존 칸 · 값은 안 바뀐다).
+--   - 판 × 선수 한 줄에 「그 선수가 봇(계정이 ai. 로 시작)에게 낸 킬 수 · 딜 합」을 따로 적는다. 공식 kills · damage 는 그대로 남는다.
+--   - 개인 스텟 = kills − bot_kills · damage − bot_dmg(음수면 0) — 계산은 서버가 읽을 때 한다(팀 점수 · 순위는 공식 값 그대로).
+--   - 비어 있음(null) = 아직 텔레메트리를 못 받은 판 → 개인 기록에서 「집계 중」. 1회(event 1)는 쓰지 않는다(공식 값 그대로).
+--   - 채우는 곳: 판별 상세 채우기(killrace-detail.cjs)가 텔레메트리를 저장한 바로 뒤 · 이미 저장된 판은 75c 한 번.
+--
+-- 75a) 실행 블록(멱등):
+alter table public.event_match_players add column if not exists bot_kills integer      check (bot_kills is null or bot_kills >= 0);
+alter table public.event_match_players add column if not exists bot_dmg   numeric(9,2) check (bot_dmg is null or bot_dmg >= 0);
+notify pgrst, 'reload schema';
+--
+-- 75b) 75a 뒤 검증(세션 · 읽기만):
+--   select column_name, data_type, is_nullable from information_schema.columns
+--    where table_schema = 'public' and table_name = 'event_match_players' and column_name in ('bot_kills', 'bot_dmg') order by 1;   -- bot_dmg numeric YES · bot_kills integer YES
+--
+-- 75c) 이미 저장된 텔레메트리로 채우기(세션 · 비어 있는 칸만 · event 2 이상 · 전후 스냅샷 · 줄 수 대조):
+--   with b as (
+--     select p.event_id, p.team_name, p.match_id, p.account_id,
+--            count(*) filter (where c->>'k' = 'kill') as k,
+--            coalesce(sum((c->>'d')::numeric) filter (where c->>'k' = 'dmg'), 0) as d
+--       from public.event_match_players p
+--       join public.event_match_telemetry t using (event_id, team_name, match_id)
+--       left join lateral jsonb_array_elements(t.combat) c
+--         on c->>'a' = p.account_id and c->>'v' like 'ai.%' and c->>'k' in ('kill', 'dmg')
+--      where p.event_id >= 2 and p.bot_kills is null
+--      group by 1, 2, 3, 4)
+--   update public.event_match_players p set bot_kills = b.k, bot_dmg = round(b.d, 2)
+--     from b where (p.event_id, p.team_name, p.match_id, p.account_id) = (b.event_id, b.team_name, b.match_id, b.account_id);
+--
+-- 되돌림(개인 스텟이 공식 값으로 돌아가지 않고 2회 이후 판이 전부 「집계 중」이 된다 — 코드도 같이 되돌릴 때만):
+--   alter table public.event_match_players drop column if exists bot_dmg;
+--   alter table public.event_match_players drop column if exists bot_kills;
+--   notify pgrst, 'reload schema';
+-- ============================================================

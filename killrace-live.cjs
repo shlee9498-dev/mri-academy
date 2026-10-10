@@ -123,7 +123,11 @@ function rulesOf(ev, cfg, auction, scoring) {
   }
   return {
     event: { id: ev.id, name: ev.name, start: ev.start, end: ev.end },
-    score: { chicken: scoring.CHICKEN_BONUS, damagePer: 100, slotPenalty: [...scoring.SLOT_PENALTY], leave: scoring.LEAVE_SCORE },
+    // penaltyBy — "tier"(팀 안 티어 순서 · 7회부터 · §1.22) | "slot"(슬롯 번호). 감점 크기(slotPenalty)는 같고 붙는 사람이 다르다
+    score: { chicken: scoring.CHICKEN_BONUS, damagePer: 100, slotPenalty: [...scoring.SLOT_PENALTY], leave: scoring.LEAVE_SCORE, penaltyBy: c.penaltyBy === "tier" ? "tier" : "slot" },
+    // 봇 킬 · 딜(§1.24 · §1.25) — personal = 개인 기록에서 뺀다(2회부터) · team = 팀 점수에서도 뺀다(회차 설정 excludeBots)
+    bots: { personal: Number(ev.id) >= 2, team: c.excludeBots === true },
+    mode: c.mode || null,
     boost: { mode: c.boostMode || null, seqs: Array.isArray(c.boostSeqs) ? c.boostSeqs : [], mul: c.boostMul == null ? null : c.boostMul,
       at: c.boostMode === "time" ? c.boostAt || null : null },
     lateRevive: { rule: c.lateRevive || null, phase: c.revivePhase == null ? null : c.revivePhase },

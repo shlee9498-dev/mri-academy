@@ -478,7 +478,12 @@ test("앱 §8.2 룰 — 점수 상수는 점수식과 같다 · 고르는 칸만
     liveTokens: { 불사조: "tok-secret" }, bonus: { 불사조: 9 }, voidDeaths: { x: [1] }, voidGames: { y: true } };
   const auction = { teamSize: 4, budget: 100, startPrice: { T1: 30 }, bidSec: 20, minStep: 1, bonusPer: 10, players: [{ ign: "x" }], tokens: ["t"] };
   const r = live.rulesOf(EV, cfg, auction, sc);
-  assert.deepEqual(r.score, { chicken: 8, damagePer: 100, slotPenalty: [4, 3, 2, 1], leave: -10 });
+  assert.deepEqual(r.score, { chicken: 8, damagePer: 100, slotPenalty: [4, 3, 2, 1], leave: -10, penaltyBy: "slot" });
+  assert.deepEqual([r.bots, r.mode], [{ personal: true, team: false }, null]);
+  // 7회부터(§1.22 · §1.23 · §1.25) — 티어 순서 감점 · 판 모드 · 팀 점수 봇 빼기를 설정 그대로 보여 준다
+  const r7 = live.rulesOf({ ...EV, id: 8 }, { ...cfg, penaltyBy: "tier", mode: "low", excludeBots: true }, null, sc);
+  assert.deepEqual([r7.score.penaltyBy, r7.mode, r7.bots], ["tier", "low", { personal: true, team: true }]);
+  assert.equal(live.rulesOf({ ...EV, id: 1 }, cfg, null, sc).bots.personal, false, "1회는 공식 값 그대로");
   assert.deepEqual(r.boost, { mode: "seq", seqs: [5, 7], mul: 1.5, at: null });
   assert.deepEqual(r.lateRevive, { rule: "penalty", phase: 4 });
   assert.equal(r.teamSize, 4);

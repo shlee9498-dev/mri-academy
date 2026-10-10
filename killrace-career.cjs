@@ -6,6 +6,7 @@
 // 지표: 누적 판 수 · 킬 · 딜 · 사망 · 판당 킬 · 판당 딜 · 팀 내 킬 1등 횟수(그 판 팀에서 킬이 가장 많았던 판 · 공동 포함 · 0킬 판은 안 센다).
 // 10판 미만은 sample "low"(표본 부족) — §1.3 팀장 추천이 이 표시를 본다.
 const crypto = require("crypto");
+const { humanRows } = require("./killrace-detail.cjs");   // §1.24 봇 킬 · 딜 빼기(2회부터 소급 · 저장된 bot_kills · bot_dmg 칸)
 
 const MIN_GAMES = 10;
 const PAGE = 1000;                    // PostgREST 한 번에 1000줄 — 넘으면 offset 으로 이어 읽는다
@@ -32,14 +33,33 @@ const round = (n, d) => { const f = 10 ** d; return Math.round(n * f) / f; };
 // 늦은 블루칩 부활(§1.14)로 −10 이 된 판도 이탈 판처럼 뺀다 — killrace.cjs reviveOutOf 와 같은 식(flags.revive 만 읽는다)
 const reviveOut = (rv) => !!(rv && rv.state === "late" && rv.rule === "penalty");
 
+// 회차별 줄(선수 한 명 길) — 확정 판이 있는 회차 + 판이 전부 「집계 중」인 회차(games 0 · team null). pendingGames = 그 회차 집계 중 판 수(§1.24)
+function byEventOf(acc, by, pendingBy) {
+  const ids = new Set(by.keys());
+  for (const k of pendingBy.keys()) { const [a, id] = [k.slice(0, k.lastIndexOf("|")), Number(k.slice(k.lastIndexOf("|") + 1))]; if (a === acc) ids.add(id); }
+  return [...ids].sort((a, b) => a - b).map((id) => {
+    const e = by.get(id) || { games: 0, kills: 0, damage: 0, teams: new Map() };
+    const team = e.teams.size ? [...e.teams.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0][0] : null;
+    const pend = pendingBy.get(`${acc}|${id}`) || 0;
+    return { id, team, games: e.games, kills: e.kills, damage: Math.floor(e.damage), ...(pend ? { pendingGames: pend } : {}) };
+  });
+}
+
 // rows = event_match_players 줄 · matches = event_matches 줄(event_id · team_name · match_id · seq · leave_flag · revive = flags->revive)
 //   withEvents = 회차별 줄(byEvent)까지 — 선수 한 명 길(앱 계약 docs/killrace-app-api.md §8.3)만 쓴다 · 목록 응답 모양은 그대로
 function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES, withEvents = false }) {
   const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const games = new Map();                       // 판(회차|팀|매치) → 그 판 우리 팀 선수 줄
+  const pending = new Map();                     // 계정 → 텔레메트리를 기다리는 판 수(§1.24 「집계 중」 · 판 수에 안 넣는다)
+  const pendingBy = new Map();                   // 「계정|회차」 → 그 회차의 집계 중 판 수(선수 한 명 길의 byEvent 에만 싣는다)
   for (const r of rows || []) {
     const g = `${r.event_id}|${r.team_name}|${r.match_id}`;
     if (!counted.has(g) || !r.account_id) continue;
+    if (r.pendingBot) {
+      pending.set(r.account_id, (pending.get(r.account_id) || 0) + 1);
+      const pk = `${r.account_id}|${Number(r.event_id)}`; pendingBy.set(pk, (pendingBy.get(pk) || 0) + 1);
+      continue;
+    }
     if (!games.has(g)) games.set(g, []);
     games.get(g).push(r);
   }
@@ -70,9 +90,8 @@ function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES, withEvents = 
     key: keyOf(acc), ign: p.ign, games: p.games, kills: p.kills, damage: Math.floor(p.damage), deaths: p.deaths,
     killsPerGame: round(p.kills / p.games, 2), damagePerGame: Math.round(p.damage / p.games), teamTopKills: p.teamTop,
     events: [...p.events].sort((a, b) => a - b), sample: p.games >= minGames ? "ok" : "low",
-    ...(withEvents ? { byEvent: [...p.by.entries()].sort((a, b) => a[0] - b[0]).map(([id, e]) => ({
-      id, team: [...e.teams.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0][0],
-      games: e.games, kills: e.kills, damage: Math.floor(e.damage) })) } : {}),
+    ...(pending.get(acc) ? { pendingGames: pending.get(acc) } : {}),
+    ...(withEvents ? { byEvent: byEventOf(acc, p.by, pendingBy) } : {}),
   }));
   // 표본이 충분한 사람 먼저 · 판당 킬 · 판당 딜 · 판 수 · 닉 순(같은 값이면 늘 같은 순서)
   out.sort((a, b) => (a.sample === b.sample ? 0 : a.sample === "ok" ? -1 : 1) || b.killsPerGame - a.killsPerGame
@@ -106,10 +125,11 @@ function createCareer(deps) {
 
   async function career(ids, opts = {}) {
     const f = ids ? `&event_id=in.(${ids.join(",")})` : "";
-    const [rows, matches] = await Promise.all([
-      readAll("event_match_players", `select=event_id,team_name,match_id,account_id,ign,kills,damage,dead,started_at${f}&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc`),
-      readAll("event_matches", `select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive${f}&order=event_id.asc,team_name.asc,match_id.asc`),
+    const [raw, matches] = await Promise.all([
+      readAll("event_match_players", `select=event_id,team_name,match_id,account_id,ign,kills,damage,bot_kills,bot_dmg,dead,started_at${f}&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc`),
+      readAll("event_matches", `select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive${f}&order=event_id.asc,team_name.asc,match_id.asc`)
     ]);
+    const rows = humanRows(raw);
     const players = buildCareer({ rows, matches, keyOf, withEvents: !!opts.withEvents });
     const evs = ids || [...new Set(rows.map((r) => Number(r.event_id)))].sort((a, b) => a - b);
     return { events: evs, minGames: MIN_GAMES, players, updatedAt: new Date(now()).toISOString() };
@@ -147,7 +167,8 @@ function createCareer(deps) {
       }
       const p = oneCache.byKey.get(key);
       if (!p) return res.status(404).json({ error: { code: "not_found" } });
-      const byEvent = p.byEvent.map((e) => ({ id: e.id, name: oneCache.names.get(e.id) || null, team: e.team, games: e.games, kills: e.kills, damage: e.damage }));
+      const byEvent = p.byEvent.map((e) => ({ id: e.id, name: oneCache.names.get(e.id) || null, team: e.team, games: e.games, kills: e.kills, damage: e.damage,
+        ...(e.pendingGames ? { pendingGames: e.pendingGames } : {}) }));
       return res.json({ ...p, byEvent, minGames: MIN_GAMES, updatedAt: oneCache.body.updatedAt });
     } catch (e) {
       const code = e && (e.status === 404 || /PGRST205|42P01/.test(String(e.body || e.message || ""))) ? "table_missing" : "error";
@@ -160,4 +181,4 @@ function createCareer(deps) {
   return { mount, get, getOne, career };
 }
 
-module.exports = { createCareer, buildCareer, _test: { eventsParam, keyMaker, MIN_GAMES, PAGE } };
+module.exports = { createCareer, buildCareer, keyMaker, reviveOut, _test: { eventsParam, keyMaker, MIN_GAMES, PAGE } };   // keyMaker · reviveOut = 리더보드(§1.18)가 같은 키 · 같은 인정 판 규칙을 쓴다
