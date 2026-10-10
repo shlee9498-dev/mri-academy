@@ -3528,3 +3528,148 @@ GET /api/trainer-portal/owner/dashboard/lessons?date=2026-09-28&trainerKey=…&l
 - `GET /slots` → 종전 + `unclosed: { count, lessons, oldestEndAt, items:[{ bookingId, slotId, startAt, endAt, lessonType, needsReview }] }`
 - 첫 화면 맨 위 띠 「닫지 않은 수업 n건」(`count` 0 이면 그리지 않음) → 누르면 `items` 순서대로 그 예약 카드로 →
   카드의 「완료 · 기록하기」(참여형 · 그룹은 판수 입력 · 직강은 출석 · 레벨 테스트는 마침)로 닫으면 다음 `GET /slots` 에서 빠진다.
+
+## 9.35 사람 1명 = 1줄 — 레슨 방 · 클랜 방 (2026-10-10 · 오너 결정 「수강생 앱 하나에서 · 구분은 명확히 · 데이터는 하나로」 · 지휘 주문 · 설계 세션) · **계약만 · 서버 구현 전 · DDL 없음**
+
+> 근거 · 조사 · 사례 검증 = `docs/people-roles-design.md`. 이 절은 반장(수강생 앱)과 경비(서버)가 같은 번호로 붙는 정본이다.
+> **사람 = 디스코드 계정 번호 하나.** 수강생 명부(`students.discord_id` 유일) · 킬내기 회원(`killrace_members.discord_id` 유일) · 등록계(`clan_registry` 디스코드 × 시즌)를
+> 서버가 로그인한 번호로 한 번에 읽는다. 새 표 · 새 칸 · 새 env 가 없다. 클랜 등급은 DB 에 복사하지 않고 디스코드 역할을 읽을 때 본다.
+> 오너 원문(10/10): 「레슨생-> 클랜원되는경우도많고 클랜원 ->레슨생되는경우도있어서 구분만명확히하고 데이터는 좀 다 갖고가는거지」
+
+- **방 둘** — `lesson` = 수강생 명부에 줄이 있다 · `clan` = GmI 길드(`LESSON_GUILD_ID`)에서 역할 G · m · I 중 하나(`DISCORD_ROLE_G` · `DISCORD_ROLE_M` · `DISCORD_ROLE_I`).
+  **길드 가입만으로는 `clan` 이 아니다** — 레슨생도 GmI 길드에 있다. 등급 = 가진 역할 중 가장 높은 것(G > m > I).
+- **보이는 범위** — 판수 · 예약 · 복기 · 결제 · 직강 = 본인(레슨 방) · 운영진만. 클랜원끼리는 **킬내기 기록 · 티어 · 클랜 등급 · 스팀 닉**만(킬내기 동의한 사람만 목록에 오른다).
+  레슨생인지 아닌지는 클랜원끼리 보이지 않는다. 디스코드 번호 · PUBG 계정 번호 · 실명 · 계좌 · 수강생 #번호는 클랜 길 응답 어디에도 없다.
+- **봇이 못 보면**(재기동 직후 · 조회 실패) 클랜 여부는 「모름」이다 — 「아님」으로 읽지 않고, 기억하지 않고, 다음 요청에 다시 본다. 길드 조회는 사람마다 10분 기억(킬내기 `guildFor` 와 같다).
+
+### 9.35.1 로그인 — `POST /api/student-portal/exchange` 넓힘
+
+| 명부(디스코드 같은 줄) | 클랜 역할 | 결과 |
+|---|---|---|
+| 1줄 · prospect 아님 | 무관 | 200 `{ sid, scope: "student" }` — **종전 그대로**(키 `scope` 만 더함) |
+| 1줄 · prospect | 있음 | 200 `{ sid, scope: "member" }` — 클랜 방만 · 레슨 방은 「레벨 테스트가 끝나면 열려요」 |
+| 1줄 · prospect | 없음 · 모름 | 403 `application_pending` — 종전 |
+| 0줄 | 있음 | 200 `{ sid, scope: "member" }` — 🆕 클랜 방만 |
+| 0줄 | 없음 | 403 `account_link_pending` — 종전(`/pending`) |
+| 0줄 | 모름 | 503 🆕 `clan_check_unavailable` — 앱은 「잠깐 확인 중이에요」 + 다시 시도(연결 신청 화면으로 보내지 않는다) |
+
+- `member` 세션 = `{ provider: "discord", pid: <디스코드 번호>, sub: null, scope: "member" }` · 절대수명 24h(종전과 같다).
+- **방이 바뀌면 다시 로그인** — `member` 세션은 요청마다(30초 기억) ① 명부에 그 디스코드 줄이 생겼거나(연결 승인 · 등록) ② 클랜 역할이 없어졌으면(10분 기억) 401 `session_expired`.
+  앱은 종전처럼 다시 `/exchange` 를 부르고, 새 결과대로 세션을 받는다(`member` → `student` 로 올라간다). `student` 세션의 연결 확인(`linkMatches`)은 종전 그대로.
+- 킬내기 회원이어도 클랜 역할이 없으면(외부 참가자) 들어오지 않는다 — 외부 참가는 킬내기 앱(gmi-clancup · 10/7 B1)이 받는다.
+
+### 9.35.2 레슨 길 가드 — `member` 세션이 레슨 길을 부르면
+
+- 지금 레슨 길(`/summary` · `/sessions` · 예약 · 복기 · 결제 신청 · 판수 내역 …) 전부 `requireStudent` 를 지난다.
+  `scope: "member"` 면 403 🆕 **`lesson_required`**(종전에는 `account_link_pending` 이었다 — 그러면 앱이 `/pending` 으로 보내 클랜 방까지 닫힌다).
+- 앱 처리: `lesson_required` → 레슨 방 소개 화면(9.35.7 화면 7). `/pending` 으로 보내지 않는다.
+- `student` 세션의 레슨 길 응답 · 키는 **한 글자도 바뀌지 않는다.**
+
+### 9.35.3 `GET /api/student-portal/me` — 내 방 (두 세션 모두 · 60회/분)
+
+```jsonc
+{
+  "rooms": { "lesson": true, "clan": true },          // clan: true | false | null(모름 · 봇이 못 봄)
+  "lesson": {                                          // 늘 있다
+    "state": "active"                                  // active | paused | done | prospect | none | link_pending
+  },                                                   //   none = 명부 줄 없음 · link_pending = 연결 신청 대기 중(member 세션만)
+  "clan": null | {                                     // rooms.clan === true 일 때만 객체
+    "grade": "G",                                      // "G" | "m" | "I"
+    "killrace": { "member": true, "needsConsent": false, "linked": true, "ign": "<스팀 닉>", "key": "<불투명 키>" },
+                                                       //   member false 면 나머지는 false · null · 연결 전 ign · key = null
+    "registry": { "registered": true, "season": 42, "confirmed": true }   // 등록계 최신 시즌 · 없으면 registered false · season null · confirmed false
+  }
+}
+```
+
+- `lesson.state` 는 방 이름표용이다 — 판수 · 금액 · 담당은 싣지 않는다(레슨 방 화면이 종전 `/summary` 로 읽는다).
+- `killrace.key` 는 킬내기 개인 기록 길(`GET /api/killrace/career/:key` · 공개 · 종전)과 **같은 값**이다.
+- 이름은 싣지 않는다 — 레슨 방은 종전 `/summary` 의 활동명(§9.26), 클랜 방은 스팀 닉을 쓴다.
+
+### 9.35.4 `GET /api/student-portal/clan/home` — 클랜 홈 (클랜 역할 필수 · 60회/분)
+
+- 클랜 역할이 없으면 403 🆕 `clan_required` · 모르면 503 `clan_check_unavailable`. 세션 종류(`student` · `member`)는 묻지 않는다.
+
+```jsonc
+{
+  "grade": "G",
+  "tier": null | { "tier": "<티어표 값>", "rank": 3 },      // 킬내기 티어표(ops_state killrace:tiers · 스팀 닉 소문자 · 계정 합치기 반영) · 연결 전 · 표에 없으면 null
+  "career": null | { … },                                    // 킬내기 개인 누적 = GET /api/killrace/career/:key 의 그 사람 칸 그대로(같은 함수 · 키 이름 그대로) · 연결 전 null
+  "nextEvent": null | { "event": 9, "name": "<회차 이름>", "applyOpen": true, "applyUrl": "https://shlee9498-dev.github.io/gmi-clancup/killrace/" },
+                                                             // 신청이 열린 · 다가오는 회차 하나(킬내기 회차 설정 §1.23) · 신청은 킬내기 앱에서 한다
+  "registry": { "registered": true, "season": 42, "confirmed": true }
+}
+```
+
+- 숫자(점수 · 판 · 킬 · 딜 · 티어)는 서버 값만. 앱이 다시 세지 않는다.
+
+### 9.35.5 `GET /api/student-portal/clan/members?cursor=&limit=` — 클랜원 목록 (클랜 역할 필수 · 60회/분)
+
+- 오르는 사람 = **킬내기 회원(동의 · 스팀 연결) + 클랜 역할**. 동의하지 않은 클랜원은 목록에 없다(본인 화면은 열린다).
+  역할은 서버가 회원 번호 묶음(최대 100명씩)으로 길드에 묻고 사람마다 10분 기억한다. 길드 전원을 한꺼번에 읽지 않는다.
+- 이어 읽기 = §9.33.1 규칙 그대로(`limit` 기본 30 · 최대 50 · `nextCursor` · 커서가 깨졌으면 400 `invalid_cursor`).
+- 정렬 = 등급(G → m → I) → 티어 순위(없으면 뒤) → 스팀 닉.
+
+```jsonc
+{
+  "items": [
+    { "key": "<불투명 키>", "ign": "<스팀 닉>", "grade": "m", "tier": null | { "tier": "…", "rank": 7 }, "career": null | { … }, "me": false }
+  ],
+  "nextCursor": null | "…",
+  "unknown": 0                                              // 역할을 못 봐서 이번 쪽에서 뺀 사람 수(봇 조회 실패) · 앱은 0 보다 크면 「몇 명은 잠깐 확인 중이에요」
+}
+```
+
+- 한 줄에 실리는 키는 위 여섯 개뿐이다(서버 가드가 이 목록 밖 키를 떨어뜨린다 · `scrubClan`).
+
+### 9.35.6 클랜 방 안 킬내기 동의 · 스팀 연결 · 탈퇴 (클랜 역할 필수)
+
+| 길 | 몸통 | 같은 동작 |
+|---|---|---|
+| `POST /api/student-portal/clan/killrace/consent` | `{ version, age14 }` | 킬내기 앱 계약 `docs/killrace-app-api.md` §4.1 |
+| `POST /api/student-portal/clan/killrace/link` | `{ ign }` | 같은 문서 §4.2(대소문자 바로잡기 · `corrected` 포함) |
+| `POST /api/student-portal/clan/killrace/leave` | 없음 | 같은 문서 §4.3 |
+
+- 디스코드 번호는 **포털 세션의 `pid`** 에서만 얻는다(몸통에서 받지 않는다 · 몸통 허용 키 밖이면 400 `invalid_body`).
+- 서버는 `killrace-members.cjs` 의 같은 함수를 부른다 — 동의 버전 · 만 14세 · 빈도 제한 · 오류 코드(`consent_outdated` · `under_14` · `consent_required` ·
+  `ign_not_found` · `ign_ambiguous` · `account_taken` · `has_open_entry` · `busy` · `too_many`)가 킬내기 앱과 같다. 응답은 9.35.3 의 `clan.killrace` 모양.
+- 여기서 동의 · 연결하면 킬내기 앱에서도 같은 회원이다(디스코드 번호가 같다) — 반대도 같다.
+
+### 9.35.7 수강생 앱 화면 (반장 · 절 번호대로)
+
+| # | 화면 | 부르는 길 | 메모 |
+|---|---|---|---|
+| 1 | 앱 머리 **GmI · MRI ACADEMY** + 방 칩 「클랜」 「레슨」 | 9.35.3 `rooms` | 가진 방만 칩 · 하나뿐이면 칩 숨김 · 첫 화면 = 클랜만이면 클랜 · 레슨만이면 레슨 · 둘 다면 마지막에 본 방(기기 저장 · 실패해도 레슨) |
+| 2 | 로그인 · `/pending` 문구 | — | 클랜원도 들어온다는 말로(제안 아래) · 홈 화면 아이콘 이름 · 스토어 이름은 오너 확인 뒤 |
+| 3 | 클랜 홈 | 9.35.4 | 등급 · 티어 · 누적 · 다음 회차(신청 버튼 = 킬내기 앱으로) · 등록계 상태(미등록이면 「/등록계로 등록해 주세요」) |
+| 4 | 내 킬내기 기록 | `GET /api/killrace/career/:key`(종전 공개) | 키는 9.35.3 `clan.killrace.key` |
+| 5 | 클랜원 목록 | 9.35.5 | 이어 읽기 · `me` 줄 강조 · `unknown` 안내 |
+| 6 | 스팀 연결 · 동의 | 9.35.6 | 동의 글은 킬내기 앱과 같은 버전 · 연결 전 3 · 4 · 5 는 「스팀을 연결하면 기록이 보여요」 |
+| 7 | 클랜원 전용 사람의 레슨 방 | 9.35.3 `lesson.state` · 종전 `POST /link-request` | `none` → 「레슨은 레벨 테스트부터 시작해요」 + 신청 창구 · 「이미 레슨 받고 있어요」(연결 신청) · `link_pending` → 「연결을 확인하고 있어요」 · `prospect` → 「레벨 테스트가 끝나면 열려요」 |
+| 8 | 세션 쿠키 · 가드 | 9.35.1 `scope` | 쿠키에 `scope` 를 더해 레슨 화면 가드가 `member` 를 레슨 방 소개로 보낸다 · `lesson_required` · `clan_required` · `clan_check_unavailable` 처리 |
+
+- 레슨 방의 지금 화면(홈 · 수업 · 예약 · 복기 · 설정)은 그대로다. 클랜 방은 아래 칸을 「클랜 · 기록 · 클랜원 · 설정」으로 바꿔 끼운다(설정은 두 방이 같은 화면).
+- 클랜 방에는 판수 · 금액 · 결제 말이 한 줄도 없다. 클랜 방 색은 지금 앱 토큰 그대로(새 강조색 없음).
+- 문구 제안(반장이 ui-copy 로 최종 · 한 줄 마침표 없음 · 금지어 없음):
+  - 로그인 제목 「GmI · MRI」 · 한 줄 「디스코드로 들어오면 클랜 기록과 레슨이 한곳에 모여요」 · 버튼 「디스코드로 시작하기」
+  - `clan_check_unavailable` 「디스코드에서 클랜 정보를 확인하고 있어요」 · 버튼 「다시 확인하기」
+  - 레슨 방 소개(`none`) 「레슨은 레벨 테스트부터 시작해요」 · 칩 「레벨 테스트 신청하기」 · 「이미 레슨 받고 있어요」
+
+### 9.35.8 안 바뀌는 것
+
+- 레슨 길 응답 · 키 · 판수 · 금액 · 정산 · 계산식(`student` 세션) · 트레이너 앱 · 킬내기 앱(신청 · 경매 · 점수판 · 로그인 토큰) · 킬내기 참가 구분 판정(`kindOf`) · 등록계 명령.
+- DB 표 · 칸 · 제약 · 함수 · env. 2단계(한 사람 여러 PUBG 계정 표)는 설계 문서 §7 초안 · 실행 보류.
+
+### 9.35.9 시험 (경비 서버 PR · 가짜 DB · 가짜 길드)
+
+- `/exchange` 표 여섯 칸 전부 · `member` 세션이 명부 연결 뒤 401 → 다시 exchange 하면 `student` · 역할이 빠지면 401.
+- `member` 세션으로 레슨 길 전부 403 `lesson_required` · `student` 세션 레슨 길 응답이 이 PR 전과 같은지(스냅샷 비교).
+- 길드 가입만 · 역할 없음 = `clan: false` · 봇 실패 = `null` + 기억 안 함 · 등급 G > m > I.
+- 클랜 길 응답에 `discordId` · `accountId` · 수강생 id · 이름 · 판수 · 금액 키가 없다(키 목록 비교) · 목록은 동의 · 연결 + 역할인 사람만.
+- 클랜 방 동의 · 연결이 킬내기 회원 표 한 줄을 같이 쓴다(킬내기 앱으로 읽어도 같은 회원).
+
+### 9.35.10 계약 한 줄 (반장)
+
+- `POST /exchange` → `{ sid, scope }` · `scope: "member"` = 클랜 방만 · 레슨 길은 403 `lesson_required` · 새 오류 `clan_required` · `clan_check_unavailable`.
+- `GET /me` → `rooms` · `lesson.state` · `clan{ grade, killrace, registry }` · `GET /clan/home` · `GET /clan/members`(이어 읽기) · `POST /clan/killrace/consent|link|leave`.
+- 앱 머리 「GmI · MRI ACADEMY」 + 방 칩 · 클랜 방 아래 칸 「클랜 · 기록 · 클랜원 · 설정」 · 숫자는 서버 값만.
