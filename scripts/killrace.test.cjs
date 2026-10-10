@@ -1240,6 +1240,7 @@ test("팀 교환 명령(§1.26): 두 팀 주전 한 명씩 맞바꾼다 · 슬�
   const A = accsOf("a"); const B = accsOf("b");
   const withSub = { ...teamRow("가팀", "a"), members: [...teamRow("가팀", "a").members, { slot: 4, ign: "account.z1", accountId: "account.z1", sub: true }] };
   const kakao = { ...teamRow("카팀", "c"), platform: "kakao" };
+  withSub.members = withSub.members.map((x) => (x.accountId === A[1] ? { ...x, tier: 2 } : x));      // 원장이 정한 줄 티어
   const db = { rows: [withSub, teamRow("나팀", "b"), kakao], upserts: [] };
   const bot = k.createKillrace({
     sbSelect: async (table) => {
@@ -1260,6 +1261,7 @@ test("팀 교환 명령(§1.26): 두 팀 주전 한 명씩 맞바꾼다 · 슬�
   assert.deepEqual(na.members.map((x) => [x.slot, x.accountId]), [[1, B[0]], [2, B[1]], [3, A[1]], [4, B[3]]]);
   assert.deepEqual(ga.subs.map((x) => [x.slot, x.accountId]), [[2, A[1]], [4, "account.z1"]]);   // 나간 선수는 옛 슬롯 교체로 남는다
   assert.deepEqual(na.subs.map((x) => [x.slot, x.accountId]), [[3, B[2]]]);
+  assert.deepEqual([na.members[2].tier, ga.subs[0].tier, ga.members[1].tier], [2, 2, undefined]);   // 줄 티어는 선수를 따라간다
   // 바꾸기 전 판(옛 4명) · 바꾼 뒤 판(새 4명) 모두 그 판 출전 명단이 4명으로 맞는다
   const lineup = (team, accs) => T.lineupFor({ parts: Object.fromEntries(accs.map((x, i) => [`p${i}`, { accountId: x }])) }, team).members.map((x) => x.accountId);
   assert.deepEqual(lineup(ga, A), A);
@@ -1350,9 +1352,21 @@ test("§1.22 사망 감점 — 팀 안 티어 순서(7회 = event 8 부터) · �
   // §1.26 부계 → 본계 티어: 옛 계정은 본계정 최근 닉의 티어 줄을 따른다(본계 닉이 표에 없으면 안 붙는다)
   const list = { gmi_main: { ign: "GmI_Main", tier: 1.5, rank: 5 } };
   const rowsMain = [{ account_id: "account.m", ign: "GmI_Main", started_at: "2026-10-10" }, { account_id: "account.m", ign: "OldNick", started_at: "2026-09-01" }, { account_id: "account.x", ign: "Nobody" }];
-  assert.deepEqual(T.tierRowsByMerge(list, { "account.alt": "account.m", "account.alt2": "account.x", "account.alt3": "account.none" }, rowsMain), { "account.alt": list.gmi_main });
+  assert.deepEqual(T.tierRowsByMerge(list, { "account.alt": "account.m", "account.alt2": "account.x", "account.alt3": "account.none" }, rowsMain), { "account.alt": list.gmi_main, "account.m": list.gmi_main });
   assert.deepEqual(T.tierPenaltyMap([{ slot: 1, ign: "HuDal", accountId: "account.alt" }, { slot: 2, ign: "AA" }],
     { ...tiers, byAccount: T.tierRowsByMerge(list, { "account.alt": "account.m" }, rowsMain) }), T.tierPenaltyMap([{ slot: 1, ign: "GmI_Main" }, { slot: 2, ign: "AA" }], { ...tiers, list: { ...tiers.list, ...list } }));
+  // 검수 #558: 본계 계정으로 뛰어도 부계 쪽 티어를 찾는다(옛 계정 → 본계 한 방향만이 아니다) · 사슬 끝까지
+  const altOnly = { gmi_old: { ign: "GmI_Old", tier: 1, rank: 1 } };
+  const rowsChain = [{ account_id: "account.new", ign: "NewNick" }, { account_id: "account.old", ign: "GmI_Old" }, { account_id: "account.mid", ign: "MidNick" }];
+  assert.deepEqual(T.tierRowsByMerge(altOnly, { "account.old": "account.mid", "account.mid": "account.new" }, rowsChain),
+    { "account.old": altOnly.gmi_old, "account.mid": altOnly.gmi_old, "account.new": altOnly.gmi_old });
+  assert.deepEqual(T.tierPenaltyMap([{ slot: 1, ign: "AA" }, { slot: 2, ign: "NewNick", accountId: "account.new" }],
+    { ...tiers, byAccount: T.tierRowsByMerge(altOnly, { "account.old": "account.new" }, rowsChain) }), { 2: 4, 1: 3 });
+  // 둘 다 티어표에 있으면 본계(받는 쪽) 값 — 단 그 계정 자기 닉이 표에 있으면 그게 먼저(티어표 닉 찾기와 같다)
+  const both = { gmi_old: { ign: "GmI_Old", tier: 6, rank: 40 }, newnick: { ign: "NewNick", tier: 2, rank: 7 } };
+  const rb = T.tierRowsByMerge(both, { "account.old": "account.mid", "account.mid": "account.new" }, rowsChain);
+  assert.deepEqual([rb["account.mid"], rb["account.new"], rb["account.old"]], [both.newnick, both.newnick, both.gmi_old]);
+  assert.deepEqual(T.tierRowsByMerge(both, { "account.old": "account.mid", "account.mid": "account.new" }, rowsChain.filter((r) => r.account_id !== "account.old"))["account.old"], both.newnick);
   assert.equal(T.penaltyOf(2, { 2: 4 }), 4);
   assert.equal(T.penaltyOf(2, null), 3);
   // 회차 기본값: 6회(event 7)까지 slot · 7회(event 8)부터 tier · 설정이 먼저

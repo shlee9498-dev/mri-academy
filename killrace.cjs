@@ -818,13 +818,30 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
 // 응답에는 닉 · 슬롯 · 숫자만 싣는다(accountId · 디스코드 닉 · 계좌 없음). roster = 경매 결과(티어 · 낙찰가 · 팀장) — 없으면 비운다.
 // bots = 「팀|매치|계정」 → { kills, damage } 봇 몫 Map(§1.24 · event_match_players.bot_kills · bot_dmg · 2회부터) — null 이면 공식 값 그대로.
 //   Map 에 없는 선수 판은 아직 봇 몫을 못 받은 것 → 공식 값을 잠정으로 센다(pendingGames = 잠정 판 수 · 10/10 지휘)
-// 부계 → 본계 티어(§1.26) — 합치기 표(merge: 옛 계정 → 본계정)와 본계정의 최근 닉(최신순 행)으로
-// 티어표 줄(list[닉 소문자])을 옛 계정에도 붙인다. 본계 닉이 티어표에 없으면 붙이지 않는다
+// 같은 사람 계정끼리 티어 나누기(§1.26) — 합치기 표(merge: 옛 계정 → 본계정)를 양방향 · 사슬 끝까지 묶어 한 사람으로 보고,
+// 각 계정에 그 사람의 티어표 줄(list[닉 소문자])을 붙인다. 닉 = 계정마다 최근 닉(ignRows 최신순 첫 줄).
+// 고르는 순서: 그 계정 자기 최근 닉 → 본계(사슬 끝 받는 쪽) 닉 → 나머지 계정 닉(계정 id 순). 아무 닉도 표에 없으면 붙이지 않는다
 function tierRowsByMerge(list, merge, ignRows) {
   const ignOf = new Map();
   for (const r of ignRows || []) if (r.ign && !ignOf.has(r.account_id)) ignOf.set(r.account_id, String(r.ign).toLowerCase());
+  const edges = Object.entries(merge || {}).filter(([a, b]) => typeof a === "string" && typeof b === "string" && a && b && a !== b);
+  const parent = new Map();
+  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  for (const [a, b] of edges) for (const x of [a, b]) if (!parent.has(x)) parent.set(x, x);
+  for (const [a, b] of edges) { const ra = find(a); const rb = find(b); if (ra !== rb) parent.set(ra, rb); }
+  const groups = new Map();
+  for (const x of parent.keys()) { const r = find(x); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(x); }
+  const senders = new Set(edges.map(([a]) => a));
+  const hitOf = (acc) => (ignOf.has(acc) && list[ignOf.get(acc)]) || null;
   const out = {};
-  for (const [from, to] of Object.entries(merge || {})) { const hit = ignOf.has(to) && list[ignOf.get(to)]; if (hit) out[from] = hit; }
+  for (const accs of groups.values()) {
+    const mains = accs.filter((x) => !senders.has(x)).sort();              // 사슬 끝 = 아무에게도 합쳐지지 않는 계정(본계)
+    const rest = accs.filter((x) => senders.has(x)).sort();
+    for (const acc of accs) {
+      const hit = [acc, ...mains, ...rest].map(hitOf).find(Boolean);
+      if (hit) out[acc] = hit;
+    }
+  }
   return out;
 }
 
@@ -1052,7 +1069,7 @@ function createKillrace(deps) {
     try {
       const pr = await sbSelect("ops_state", "select=value&key=eq.killrace%3Apeople&limit=1");
       const merge = (pr[0] && pr[0].value && pr[0].value.merge) || {};
-      const targets = [...new Set(Object.values(merge).filter((a) => typeof a === "string" && /^account\.[0-9a-f]{32}$/.test(a)))];
+      const targets = [...new Set(Object.entries(merge).flat().filter((a) => typeof a === "string" && /^account\.[0-9a-f]{32}$/.test(a)))];
       if (!targets.length) return {};
       const igns = await sbSelect("event_match_players", `select=account_id,ign,started_at&account_id=in.(${targets.join(",")})&order=started_at.desc&limit=2000`);
       return tierRowsByMerge(list, merge, igns);
@@ -1570,10 +1587,11 @@ function createKillrace(deps) {
     const pick = (t, ign) => t.members.find((x) => String(x.ign || "").toLowerCase() === String(ign || "").trim().toLowerCase());
     const a = pick(t1, ign1); const b = pick(t2, ign2);
     if (!a || !b) throw userErr(`「${!a ? ign1 : ign2}」 을(를) 「${!a ? n1 : n2}」 팀 주전에서 못 찾았어요. 닉을 다시 한 번 볼까요? ✏️`);
-    const put = (t, out, inn) => t.members.map((x) => (x.accountId === out.accountId ? { slot: out.slot, ign: inn.ign, accountId: inn.accountId } : x));
+    const withTier = (x, base) => (x.tier != null ? { ...base, tier: x.tier } : base);       // 원장이 정한 줄 티어는 선수를 따라간다
+    const put = (t, out, inn) => t.members.map((x) => (x.accountId === out.accountId ? withTier(inn, { slot: out.slot, ign: inn.ign, accountId: inn.accountId }) : x));
     // 나간 선수는 자기 옛 슬롯의 교체 선수로 남긴다 — 바꾸기 전에 뛴 판이 다시 판정돼도 그 판 출전 명단(lineupFor)으로 그대로 맞는다
     // (팀 구성 서명이 바뀌어 저장 판을 다시 세는데, 남기지 않으면 지난 판이 전부 「인원」으로 빠진다)
-    const subsOf = (t, out, inn) => [...(t.subs || []).filter((x) => x.accountId !== inn.accountId && x.accountId !== out.accountId), { slot: out.slot, ign: out.ign, accountId: out.accountId }];
+    const subsOf = (t, out, inn) => [...(t.subs || []).filter((x) => x.accountId !== inn.accountId && x.accountId !== out.accountId), withTier(out, { slot: out.slot, ign: out.ign, accountId: out.accountId })];
     const rowOf = (members, subs) => [...members.map((x) => ({ slot: x.slot, ign: x.ign, accountId: x.accountId, ...(x.tier != null ? { tier: x.tier } : {}) })),
       ...subs.map((x) => ({ ...x, sub: true }))];
     const m1 = put(t1, a, b); const m2 = put(t2, b, a);
