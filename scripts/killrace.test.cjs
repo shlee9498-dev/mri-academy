@@ -276,8 +276,8 @@ test("스캐너: 어떤 조각 크기로 잘라도 원소가 원본과 같다(�
 test("수집기: 대상 선수의 KillV2(피해자)·로그아웃·로그인(성공만)·경기 시작만", () => {
   const col = T.makeTelemetryCollector(["account.a", "account.b"]);
   EVENTS.forEach((e) => col.onElement(JSON.stringify(e)));
-  assert.deepEqual(col.out.players["account.a"], { kills: ["2026-09-26T12:20:00.000Z"], logouts: [], logins: ["2026-09-26T12:13:10.000Z"], redeploys: [] });
-  assert.deepEqual(col.out.players["account.b"], { kills: ["2026-09-26T12:25:00.000Z"], logouts: ["2026-09-26T12:22:00.000Z"], logins: [], redeploys: [] });
+  assert.deepEqual(col.out.players["account.a"], { kills: ["2026-09-26T12:20:00.000Z"], logouts: [], logins: ["2026-09-26T12:13:10.000Z"], redeploys: [], botKills: 0, botDmg: 0 });
+  assert.deepEqual(col.out.players["account.b"], { kills: ["2026-09-26T12:25:00.000Z"], logouts: ["2026-09-26T12:22:00.000Z"], logins: [], redeploys: [], botKills: 0, botDmg: 0 });
   assert.deepEqual(col.out.phases, []);
   assert.equal(col.out.matchStart, "2026-09-26T12:14:00.000Z");
   assert.equal(T.telemetryVerdict(col.out.players["account.b"], { deathType: "logout" }, 7).why, "after_logout");
@@ -406,10 +406,10 @@ test("2회 · 치킨 판 사망 감점(1회 때 빠졌던 것): 죽은 사람은
 });
 
 test("2회 · 설정 읽기: 없으면 1회 동작 · 시각은 ISO/ms · 보너스는 정수만 · 가리는 시각은 읽지 않는다", () => {
-  assert.deepEqual(T.normEventConfig(null), { boostAt: null, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: {}, teamSize: null, modes: null, auto: true, voidDeaths: {}, voidGames: {}, liveTokens: {}, lateRevive: "off", revivePhase: 4, penaltyBy: "slot", mode: null });
+  assert.deepEqual(T.normEventConfig(null), { boostAt: null, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: {}, teamSize: null, modes: null, auto: true, voidDeaths: {}, voidGames: {}, liveTokens: {}, lateRevive: "off", revivePhase: 4, penaltyBy: "slot", mode: null, excludeBots: false });
   const c = T.normEventConfig({ boostAt: "2026-10-08T13:35:00Z", hideAt: HIDE, published: true, bonus: { A: 3, B: "x", C: 1.5 }, teamSize: 4, boostMul: 9, modes: ["duo", "duo-fpp"],
     auto: false, voidDeaths: { "A|m1": [2, 9, "x"], "A|m2": [] }, voidGames: { "A|m3": true, "A|m4": "yes" }, liveTokens: { A: "tok", B: 5 } });
-  assert.deepEqual(c, { boostAt: BOOST, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: { A: 3 }, teamSize: 4, modes: ["duo", "duo-fpp"], auto: false, voidDeaths: { "A|m1": [2] }, voidGames: { "A|m3": true }, liveTokens: { A: "tok" }, lateRevive: "off", revivePhase: 4, penaltyBy: "slot", mode: null });
+  assert.deepEqual(c, { boostAt: BOOST, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: { A: 3 }, teamSize: 4, modes: ["duo", "duo-fpp"], auto: false, voidDeaths: { "A|m1": [2] }, voidGames: { "A|m3": true }, liveTokens: { A: "tok" }, lateRevive: "off", revivePhase: 4, penaltyBy: "slot", mode: null, excludeBots: false });
   assert.equal(T.normEventConfig({ boostMul: 2 }).boostMul, 2);
 });
 
@@ -1331,4 +1331,55 @@ test("§1.22 집계 — 7회(event 8): 1티어가 슬롯2 로 들어와 죽으�
   const ev6 = { ...EV2, id: 7, name: "6회 GmI 킬내기" };
   assert.deepEqual(await run(ev7), { penalty: 4, score: 6 + 8 - 4, pen: { 2: 4, 1: 3, 3: 2, 4: 1 } });
   assert.deepEqual(await run(ev6), { penalty: 3, score: 6 + 8 - 3, pen: null });
+});
+
+// ═══ §1.25 팀 점수에서도 봇 빼기(회차 설정 excludeBots · 10/10 연습 회차) ═══
+test("§1.25 수집기: 우리 선수가 봇(ai.*)에게 낸 킬 · 딜만 센다 · 사람 킬 · 봇에게 죽은 것은 안 센다", () => {
+  const col = T.makeTelemetryCollector(["account.a", "account.b"]);
+  const ev = (o) => col.onElement(JSON.stringify(o));
+  ev({ _T: "LogPlayerKillV2", _D: "2026-10-10T12:10:00Z", killer: { accountId: "account.a" }, victim: { accountId: "ai.101" } });
+  ev({ _T: "LogPlayerKillV2", _D: "2026-10-10T12:11:00Z", killer: null, finisher: { accountId: "account.a" }, victim: { accountId: "ai.102" } });
+  ev({ _T: "LogPlayerKillV2", _D: "2026-10-10T12:12:00Z", killer: { accountId: "account.a" }, victim: { accountId: "account.zz" } });   // 사람 킬
+  ev({ _T: "LogPlayerKillV2", _D: "2026-10-10T12:13:00Z", killer: { accountId: "ai.103" }, victim: { accountId: "account.b" } });       // 봇에게 죽음
+  ev({ _T: "LogPlayerTakeDamage", _D: "2026-10-10T12:10:00Z", attacker: { accountId: "account.a" }, victim: { accountId: "ai.101" }, damage: 100.4 });
+  ev({ _T: "LogPlayerTakeDamage", _D: "2026-10-10T12:10:01Z", attacker: { accountId: "account.b" }, victim: { accountId: "ai.102" }, damage: 50 });
+  ev({ _T: "LogPlayerTakeDamage", _D: "2026-10-10T12:10:02Z", attacker: { accountId: "account.a" }, victim: { accountId: "account.zz" }, damage: 80 });
+  ev({ _T: "LogPlayerTakeDamage", _D: "2026-10-10T12:10:03Z", attacker: { accountId: "ai.103" }, victim: { accountId: "account.b" }, damage: 30 });
+  assert.deepEqual([col.out.players["account.a"].botKills, col.out.players["account.a"].botDmg, col.out.players["account.b"].botKills, col.out.players["account.b"].botDmg], [2, 100.4, 0, 50]);
+  assert.deepEqual(col.out.players["account.b"].kills, ["2026-10-10T12:13:00Z"]);   // 사망 판정용 기록은 그대로
+});
+
+test("§1.25 점수: 6회 현성팀 봇판 모양 — 팀 57킬 중 봇 56 → 1킬 · 딜도 봇 몫만 · 치킨 +8 · 감점 그대로 · 꺼져 있으면 종전 그대로", () => {
+  const members = [{ slot: 1, accountId: "a1", kills: 9, damage: 813.2 }, { slot: 2, accountId: "a2", kills: 17, damage: 1401.8 },
+    { slot: 3, accountId: "a3", kills: 24, damage: 2054.3 }, { slot: 4, accountId: "a4", kills: 7, damage: 696.1 }];
+  const tel = { bots: true, players: { a1: { botKills: 9, botDmg: 791.5 }, a2: { botKills: 16, botDmg: 1254.6 }, a3: { botKills: 24, botDmg: 2054 }, a4: { botKills: 7, botDmg: 696.1 } } };
+  const adj = T.botAdjOf(tel, members);
+  assert.deepEqual(adj, { kills: 56, damage: 4796.2 });
+  const on = T.scoreGame({ members, place: 1, deadSlots: [4], botAdj: adj });
+  const off = T.scoreGame({ members, place: 1, deadSlots: [4] });
+  assert.deepEqual([off.kills, on.kills, on.damage, on.chicken, on.penalty], [57, 1, 169.2, 8, 1]);
+  assert.equal(on.score, 1 + 1 + 8 - 1);                       // 킬 1 · 딜 169 → 1 · 치킨 8 · 4번 사망 −1
+  assert.deepEqual(on.botAdj, adj);
+  assert.equal(off.botAdj, undefined);
+  assert.equal(T.normEventConfig({ excludeBots: true }, 9).excludeBots, true);
+  assert.equal(T.normEventConfig({ excludeBots: "yes" }, 9).excludeBots, false);
+});
+
+test("§1.25 집계: excludeBots 회차는 판마다 텔레메트리로 봇 몫을 빼서 저장 · 못 받은 판은 공식 값 + botPending · 다음 집계에서 빠진다", async () => {
+  const A = accsOf("a");
+  const at = (min) => EV5.start + min * 60000;
+  const matches = [squadMatch("a1", at(10), A, { kills: 10, rank: 1 }), squadMatch("a2", at(40), A, { kills: 4 })];
+  const botKill = (t, n) => ({ _T: "LogPlayerKillV2", _D: new Date(t + n * 1000).toISOString(), killer: { accountId: "account.a1" }, victim: { accountId: `ai.${n}` } });
+  const tel = { a1: [...telFor(at(10)), ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => botKill(at(10), 100 + n))], a2: "fail" };
+  const w = fakeWorld({ ev: EV5, cfgValue: { excludeBots: true, lateRevive: "off" }, matches, teamRows: [teamRow("불사조", "a")], tel });
+  const t = (await w.bot.aggregate()).teams[0];
+  assert.deepEqual(t.games.map((g) => [g.kills, g.chicken, g.score]), [[1, 8, 9], [4, 0, 4]]);     // 10킬 중 봇 9 → 1 · 치킨 그대로
+  const rows = savedRows(w).sort((x, y) => String(x.match_id).localeCompare(String(y.match_id)));
+  assert.deepEqual(rows.map((r) => [r.match_id, r.kills, r.flags.botAdj || null, !!r.flags.botPending]), [["a1", 1, { kills: 9, damage: 0 }, false], ["a2", 4, null, true]]);
+  const board = T.buildBoard({ ev: EV5, teams: [teamRow("불사조", "a")].map(T.normTeam), cfg: T.normEventConfig({ excludeBots: true }, 5), rows, at: EV5.end, admin: false });
+  assert.equal(board.excludeBots, true);
+  assert.deepEqual([board.teams[0].rows[0].bots, board.teams[0].rows[1].botPending], [{ kills: 9, damage: 0 }, true]);
+  // 꺼진 회차(기본) — 텔레메트리를 받아도 팀 킬은 공식 값
+  const w2 = fakeWorld({ ev: EV5, cfgValue: { lateRevive: "flag" }, matches, teamRows: [teamRow("불사조", "a")], tel: { a1: tel.a1, a2: telFor(at(40)) } });
+  assert.deepEqual((await w2.bot.aggregate()).teams[0].games.map((g) => g.kills), [10, 4]);
 });
