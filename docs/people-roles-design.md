@@ -185,9 +185,13 @@ alter table public.person_accounts enable row level security;                   
 | 2 | #111 명부 대표 PUBG 계정 채우기 — 킬내기 팀 줄(2개 회차)의 같은 닉 계정 번호로 `students.pubg_platform`/`pubg_name`/`pubg_account_id` + `student_accounts` 현재 줄(`note` 「킬내기 기록 계정 · 10/10 확인」) | 금액 · 판수 안 바뀌는 연결 정정(지휘 판단 · 실측 후 보고) | §5 막힌 곳 1. 닉 일치만으로 넣지 말고 담당 트레이너 확인 한 번 |
 | 3 | #110 대기 중 연결 신청 줄의 `student_id` 가 대기 상태에서 채워진 경위 확인(읽기) | 조회 | §5 — 정상 흐름에서 생기지 않는 모양 |
 | 4 | #110 · #111 디스코드 연결 — #110 은 대기 신청 승인(담당 트레이너 · §9.32 버튼) · #111 은 신청부터(앱 `/pending` 「이미 레슨 받고 있어요」) | 승인 버튼 = 사람 | 두 사례가 앱에 들어오는 유일한 길 |
-| 5 | **서버 코드(계약 §9.35.1 ~ 9.35.6)** — `/exchange` 의 `member` 세션 · `GET /me` · `GET /clan/*` · 클랜 방 킬내기 동의 · 연결(기존 `killrace-members.cjs` 함수 재사용) · `requireStudent` 의 `lesson_required` · 시험 | 코드 PR(A) | 반장이 붙을 서버 길 |
+| 5 | **서버 코드(계약 §9.35.1 ~ 9.35.6a)** — `/exchange` 의 `member` 세션 · `GET /me` · `GET /clan/*` · 클랜 방 킬내기 동의 · 연결(기존 `killrace-members.cjs` 함수 재사용) · `requireStudent` 의 `lesson_required` · 시험 | 코드 PR(A) | 반장이 붙을 서버 길 |
 | 6 | (2단계 · 실행 보류) §7 `person_accounts` 초안 | 더하기만 DDL | 여러 계정 · 합치기를 표로 |
 
+- **경비가 구현할 때 볼 것**
+  - 개인 기록 길 `GET /api/killrace/career/:key` 는 **main 에 없다**(있는 건 전원 목록 `/api/killrace/career`) → 새 길로 만든다(계약 §9.35.6a).
+  - 클랜 등급은 **역할 id** 로 판정한다. `gmiGuildMember`(server.js)는 역할 이름만 돌려주니 반환에 `roleIds` 를 더하기만 한다(`roleNames` · `kindOf` 그대로).
+  - `requireStudent` 가 두 벌(`student-portal.cjs` · `booking-api.cjs`) — `lesson_required` 는 두 곳 모두.
 - **새 env 없음.** GmI 길드 = `LESSON_GUILD_ID` · 등급 역할 = `DISCORD_ROLE_G` · `DISCORD_ROLE_M` · `DISCORD_ROLE_I`(전부 이미 있다 · `/등록계현황`이 쓰는 이름).
   셋 중 하나라도 비어 있으면 클랜 방이 열리지 않는다 → 경비가 부팅 로그로 「있음/없음」만 확인(값은 싣지 않음).
 
@@ -198,7 +202,7 @@ alter table public.person_accounts enable row level security;                   
 | 1 | 앱 머리 「GmI · MRI」 + 방 칩 「클랜」 「레슨」(가진 방만) | `GET /me` → `rooms` |
 | 2 | 로그인 · `/pending` 문구 — 클랜원도 들어온다는 말로 | — |
 | 3 | 클랜 홈 — 내 등급 · 티어 · 최근 킬내기 · 다음 회차 · 등록계 상태 | `GET /clan/home` |
-| 4 | 내 킬내기 기록 — 회차별 판 · 킬 · 딜 · 점수 | `GET /api/killrace/career/:key`(공개 · 종전) |
+| 4 | 내 킬내기 기록 — 회차별 판 · 킬 · 딜 · 점수 | `GET /api/killrace/career/:key`(🆕 경비 구현 · 계약 §9.35.6a) |
 | 5 | 클랜원 목록 — 닉 · 등급 · 티어 · 누적(이어 읽기) | `GET /clan/members` |
 | 6 | 스팀 연결 · 킬내기 동의(클랜 방 안) | `POST /clan/killrace/consent` · `/clan/killrace/link` |
 | 7 | 클랜원 전용 사람의 레슨 방 — 「레슨은 레벨 테스트부터 시작해요」 + 신청 창구 · 「이미 레슨 받고 있어요」 연결 신청 | `GET /me` · `POST /link-request`(종전) |
@@ -208,7 +212,7 @@ alter table public.person_accounts enable row level security;                   
 
 1. **홈 화면 아이콘 · 플레이 스토어 이름** 「GmI · MRI」로 바꿀지(밖에 보이는 이름) — 오너 확인. 앱 안 머리는 그 전에 바꿔도 된다.
 2. **클랜 등급 이름** — 역할은 G · m · I 셋으로 읽었다(env 이름 · `/등록계검수` 정렬 실측). 화면 표기를 「G」 「m」 「I」 그대로 둘지, 다른 이름(예 등급명)이 있는지는 오너만 안다. 서버는 `"G" | "m" | "I"` 를 내리고 이름은 앱 상수로 둔다.
-3. **킬내기 앱(gmi-clancup · 10/7 확정 B1)과의 관계** — AI 판단: 킬내기 신청 · 경매 · 점수판은 **그대로 gmi-clancup** 에 둔다(외부 참가자 · 방송 · 대회 시간 배포가 수강생 앱에 걸리지 않게).
+3. **킬내기 앱(gmi-clancup · 10/7 확정 B1)과의 관계** — AI 판단: 킬내기 신청 · 드래프트 · 점수판은 **그대로 gmi-clancup** 에 둔다(외부 참가자 · 방송 · 대회 시간 배포가 수강생 앱에 걸리지 않게).
    수강생 앱 클랜 방은 같은 서버 · 같은 회원 표 · 같은 키를 **읽고**, 신청은 킬내기 앱으로 연결한다. 클랜 방에서 스팀 연결 · 동의를 하면 킬내기 앱에서도 같은 회원이다(디스코드 번호가 같다).
    나중에 신청까지 앱으로 옮길지는 v2 때 다시 본다.
 4. **클랜 방의 미성년** — 킬내기 동의는 만 14세 미만을 받지 않는다(앱 계약 §4.1 · 오너 결정 대기). 클랜 방 본인 화면(등급 · 등록계)은 동의 없이 열리고, 기록 공개 · 목록 등재만 동의 뒤다. 보호자 동의 길(§33)과 잇는 건 오너 결정 뒤.
