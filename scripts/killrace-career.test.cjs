@@ -137,20 +137,20 @@ test("앱 §8.3 선수 한 명 — 회차별 줄(교체로 두 팀이면 판이 
   assert.ok(list.r.body.players.every((p) => p.byEvent === undefined), "목록 응답에는 회차별 줄이 없다");
 });
 
-test("§1.24 2회(event 2)부터 개인 킬 · 딜에서 저장된 봇 몫(bot_kills · bot_dmg)을 뺀다 · 아직 빈 판은 「집계 중」 · 1회는 그대로", () => {
+test("§1.24 2회(event 2)부터 개인 킬 · 딜에서 저장된 봇 몫(bot_kills · bot_dmg)을 뺀다 · 아직 빈 판은 공식 값 잠정 · 1회는 그대로", () => {
   const { humanRows } = require("../killrace-detail.cjs");
   const raw = [
     { ...row(1, "가팀", "x1", "A", "A", 5, 500), bot_kills: null, bot_dmg: null },   // 1회 — 그대로
     { ...row(2, "가팀", "y1", "A", "A", 5, 500), bot_kills: 4, bot_dmg: 300 },        // 봇 킬 4 · 봇 딜 300 빼기
-    { ...row(2, "가팀", "y2", "A", "A", 2, 200), bot_kills: null, bot_dmg: null },   // 텔레메트리 아직 없음
+    { ...row(2, "가팀", "y2", "A", "A", 2, 200), bot_kills: null, bot_dmg: null },   // 봇 몫 아직 — 공식 값 잠정
     { ...row(2, "가팀", "y3", "A", "A", 1, 50), bot_kills: 3, bot_dmg: 80 },          // 음수는 0
   ];
   const matches = [match(1, "가팀", "x1", 1), match(2, "가팀", "y1", 1), match(2, "가팀", "y2", 2), match(2, "가팀", "y3", 3)];
   const [a] = C.buildCareer({ rows: humanRows(raw), matches, keyOf });
-  assert.deepEqual([a.games, a.kills, a.damage, a.pendingGames], [3, 6, 700, 1]);
+  assert.deepEqual([a.games, a.kills, a.damage, a.pendingGames], [4, 8, 900, 1]);
 });
 
-test("앱 §8.3 선수 한 명 · §1.24 — 회차별 줄도 봇 몫을 뺀 값 · 회차별 「집계 중」 판 수 · 판이 전부 집계 중인 회차도 줄(games 0 · team null)", async () => {
+test("앱 §8.3 선수 한 명 · §1.24 — 회차별 줄도 봇 몫을 뺀 값 · 못 센 판은 공식 값 잠정 + 회차별 pendingGames", async () => {
   const rows = [
     { ...row(5, "가팀", "p1", "account.a1", "Nick", 6, 600, false, "2026-10-08T12:10:00Z"), bot_kills: 2, bot_dmg: 150 },
     { ...row(5, "가팀", "p2", "account.a1", "Nick", 3, 300, true, "2026-10-08T12:40:00Z"), bot_kills: null, bot_dmg: null },
@@ -166,9 +166,9 @@ test("앱 §8.3 선수 한 명 · §1.24 — 회차별 줄도 봇 몫을 뺀 값
   const out = { code: 200, body: null };
   await api.getOne({ params: { key: keyOf("account.a1") } }, { status(c) { out.code = c; return this; }, json(b) { out.body = b; return this; } });
   assert.equal(out.code, 200);
-  assert.deepEqual([out.body.games, out.body.kills, out.body.damage, out.body.pendingGames], [1, 4, 450, 2]);
+  assert.deepEqual([out.body.games, out.body.kills, out.body.damage, out.body.pendingGames], [3, 11, 1150, 2]);
   assert.deepEqual(out.body.byEvent, [
-    { id: 5, name: "4회", team: "가팀", games: 1, kills: 4, damage: 450, pendingGames: 1 },
-    { id: 6, name: "5회", team: null, games: 0, kills: 0, damage: 0, pendingGames: 1 },
+    { id: 5, name: "4회", team: "가팀", games: 2, kills: 7, damage: 750, pendingGames: 1 },
+    { id: 6, name: "5회", team: "나팀", games: 1, kills: 4, damage: 400, pendingGames: 1 },
   ]);
 });

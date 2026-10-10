@@ -33,7 +33,7 @@ const round = (n, d) => { const f = 10 ** d; return Math.round(n * f) / f; };
 // 늦은 블루칩 부활(§1.14)로 −10 이 된 판도 이탈 판처럼 뺀다 — killrace.cjs reviveOutOf 와 같은 식(flags.revive 만 읽는다)
 const reviveOut = (rv) => !!(rv && rv.state === "late" && rv.rule === "penalty");
 
-// 회차별 줄(선수 한 명 길) — 확정 판이 있는 회차 + 판이 전부 「집계 중」인 회차(games 0 · team null). pendingGames = 그 회차 집계 중 판 수(§1.24)
+// 회차별 줄(선수 한 명 길) — pendingGames = 그 회차에서 봇 몫을 아직 못 센 판 수(§1.24 · 그 판은 공식 값으로 잠정 포함)
 function byEventOf(acc, by, pendingBy) {
   const ids = new Set(by.keys());
   for (const k of pendingBy.keys()) { const [a, id] = [k.slice(0, k.lastIndexOf("|")), Number(k.slice(k.lastIndexOf("|") + 1))]; if (a === acc) ids.add(id); }
@@ -50,15 +50,14 @@ function byEventOf(acc, by, pendingBy) {
 function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES, withEvents = false }) {
   const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const games = new Map();                       // 판(회차|팀|매치) → 그 판 우리 팀 선수 줄
-  const pending = new Map();                     // 계정 → 텔레메트리를 기다리는 판 수(§1.24 「집계 중」 · 판 수에 안 넣는다)
-  const pendingBy = new Map();                   // 「계정|회차」 → 그 회차의 집계 중 판 수(선수 한 명 길의 byEvent 에만 싣는다)
+  const pending = new Map();                     // 계정 → 봇 몫을 기다리는 판 수(§1.24 · 그 판은 공식 값을 잠정으로 센다)
+  const pendingBy = new Map();                   // 「계정|회차」 → 그 회차의 잠정 판 수(선수 한 명 길의 byEvent 에만 싣는다)
   for (const r of rows || []) {
     const g = `${r.event_id}|${r.team_name}|${r.match_id}`;
     if (!counted.has(g) || !r.account_id) continue;
     if (r.pendingBot) {
       pending.set(r.account_id, (pending.get(r.account_id) || 0) + 1);
       const pk = `${r.account_id}|${Number(r.event_id)}`; pendingBy.set(pk, (pendingBy.get(pk) || 0) + 1);
-      continue;
     }
     if (!games.has(g)) games.set(g, []);
     games.get(g).push(r);
