@@ -331,3 +331,43 @@ test("스샷 잠정 · 머지된 모양(검수 41차 ③): 진짜 buildBoard(5�
   // 총점 · 순위는 그대로(잠정 칸만 붙는다)
   assert.deepEqual(body.teams.map((x) => x.total), [-20, -25, -30].sort((a, b) => b - a));
 });
+
+// ── §1.22 · 10/10 — 7회부터 스샷 잠정 감점도 확정 집계와 같은 팀 안 티어 순서(tierPenaltyMap) ──
+test("스샷 잠정 · 티어 순서 감점(§1.22): 치킨 판 1티어가 슬롯 2 로 들어와 죽으면 −4(슬롯 순이면 −3) · 표가 없는 팀은 슬롯 순", () => {
+  const players = [{ slot: 1, kills: 2, damage: 300, dead: false }, { slot: 2, kills: 3, damage: 400, dead: true },
+    { slot: 3, kills: 1, damage: 100, dead: false }, { slot: 4, kills: 0, damage: 0, dead: false }];
+  const s = shotOf({ rank: 1, kills: 6, damage: 800, players });
+  const pen = { 2: 4, 1: 3, 3: 2, 4: 1 };                                                  // 슬롯 2 가 팀 안 1등
+  assert.deepEqual([T.shotScore(s, { members: FOUR }, { penBySlot: pen }).penalty, T.shotScore(s, { members: FOUR }).penalty], [4, 3]);
+  assert.equal(T.shotScore(s, { members: FOUR }, { penBySlot: pen }).score, 6 + 8 + 8 - 4);
+  // 전멸 판은 표와 상관없이 합이 같다(4 + 3 + 2 + 1)
+  assert.equal(T.shotScore(shotOf({ kills: 3 }), { members: FOUR }, { penBySlot: pen }).penalty, 10);
+  // decorateBoard — 팀마다 표 · 없는 팀(null)은 슬롯 순
+  const body = { penaltyBy: "tier", teams: [{ name: "해달팀", members: FOUR, rows: [] }, { name: "수달팀", members: FOUR, rows: [] }] };
+  const b = T.decorateBoard(body, { shots: [s, { ...s, id: "m:9", team: "수달팀" }] }, s.at + MIN, new Map([["해달팀", pen], ["수달팀", null]]));
+  assert.deepEqual(b.teams.map((t) => t.shot.penalty), [4, 3]);
+});
+
+test("스샷 잠정 · decorate: penaltyBy tier 면 팀 줄 tier · 티어표로 tierPenaltyMap(확정 집계와 같은 함수) · slot 회차 · 스샷 없으면 안 읽는다", async () => {
+  const tierTeams = [{ name: "해달팀", members: [{ slot: 1, ign: "Otter_1", accountId: "a1", tier: 2 }, { slot: 2, ign: "Otter_2", accountId: "a2", tier: 1 },
+    { slot: 3, ign: "Otter_3", accountId: "a3", tier: 3 }, { slot: 4, ign: "Otter_4", accountId: "a4" }] }];
+  let reads = 0;
+  const players = [{ slot: 1, kills: 0, damage: 0, dead: false }, { slot: 2, kills: 0, damage: 0, dead: true },
+    { slot: 3, kills: 0, damage: 0, dead: false }, { slot: 4, kills: 0, damage: 0, dead: false }];
+  const saved = { shots: [shotOf({ rank: 1, kills: 0, players, at: EV.start + 30 * MIN })] };
+  const make = (s) => shot.createShot({
+    killrace: { currentEvent: async () => EV, loadTeams: async () => { reads++; return tierTeams; }, board: async () => ({ teams: [] }) },
+    store: { load: async () => s, save: async () => {} },
+    loadTiers: async () => ({ list: { otter_4: { ign: "Otter_4", tier: 4, rank: 40 } } }),          // 4번은 팀 줄에 tier 가 없어 티어표에서
+    now: () => EV.start + 31 * MIN, log: { log() {}, warn() {}, error() {} },
+  });
+  const board = (penaltyBy) => ({ penaltyBy, teams: [{ name: "해달팀", members: FOUR, rows: [] }] });
+  const inst = make(saved);
+  assert.equal((await inst.decorate(board("tier"), EV)).teams[0].shot.penalty, 4);       // 슬롯 2 = 팀 안 1등
+  assert.equal((await inst.decorate(board("slot"), EV)).teams[0].shot.penalty, 3);       // 옛 회차 = 슬롯 순
+  await inst.decorate(board("tier"), EV);
+  assert.equal(reads, 1, "감점표는 60초 기억한다");
+  reads = 0;
+  await make({ shots: [] }).decorate(board("tier"), EV);
+  assert.equal(reads, 0, "스샷이 없으면 팀 줄을 안 읽는다");
+});

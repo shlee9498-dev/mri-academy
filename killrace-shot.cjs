@@ -13,7 +13,7 @@
 //   ① 순위가 같은 판(순위를 못 읽었거나 무효 판이면 순위 없이) ② 스샷보다 뒤에 시작한 판 이 생기면. 또는 올린 지 60분이 지나면.
 // +1킬 버튼(killrace-live.cjs presses)은 그대로다 — 둘은 따로 보인다.
 
-const { scoring } = require("./killrace.cjs");   // 잠정 점수도 확정 점수와 같은 식(슬롯 감점 · 딜 100당 1 · 치킨 8 · 버닝 반올림)
+const { scoring, tierPenaltyMap } = require("./killrace.cjs");   // 잠정 점수도 확정 점수와 같은 식(사망 감점 · 딜 100당 1 · 치킨 8 · 버닝 반올림) · 감점표도 같은 함수(§1.22)
 const CHANNEL_ID = "1513781226350055534";       // 킬내기-팀배정 (지휘 10/5 지정)
 const GRACE_MS = 45 * 60000;                     // killrace-live 와 같다 — 끝 시각 뒤에도 마지막 판 스샷은 받는다
 const SHOW_MS = 60 * 60000;                      // 이만큼 지나도 확정 판이 안 붙으면 화면에서 내린다
@@ -28,6 +28,7 @@ const READS_PER_10MIN = 40;                      // 잘못 붙은 반복 글로 
 // 거절이 나면 서버가 권장 모델로 그 자리에서 다시 돌린다(fallbacks "default"). 강제 도구 답(tool_choice tool)은 이 모델이 400 으로 막는다 → JSON 형식 답으로 받는다
 const MODELS = [{ id: "claude-opus-5-5", effort: "low", fallbacks: true }, { id: "claude-haiku-4-5" }];
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const PEN_CACHE_MS = 60000;                      // 티어 순서 감점표(팀 줄 · 티어표)를 이만큼 기억한다 — 점수판은 2초마다 다시 만든다
 const UNREADABLE = "못 읽었어요";
 
 // ═══════════════ 순수 함수 (scripts/killrace-shot.test.cjs) ═══════════════
@@ -143,13 +144,14 @@ function isSettled(shot, rows, at) {
 // 사망: 탈락 화면(순위 2 이상)은 팀 전원 사망이다 — 전적 판정과 같다(2 · 3 · 4회 탈락 91판 모두 전원 사망 · 10/7 실측).
 //       치킨(순위 1)은 사진의 사망 표시를 읽어야 한다 — 한 명이라도 못 읽었거나 죽은 사람의 슬롯을 모르면 「킬만 반영」.
 //       순위를 못 읽었으면 「킬만 반영」(짐작하지 않는다).
+// 감점: penBySlot(슬롯 → 감점 · §1.22 팀 안 티어 순서 · 7회부터)이 있으면 그 표 · 없으면 슬롯 순(1번 4 … 4번 1) — 확정 집계와 같다
 // 버닝(시각 방식 · 2 · 3 · 4회): 사진만으로는 판 시작 시각을 모른다 — 그 판이 버닝 시각 뒤에 시작한 게 확실할 때만 곱한다(스샷을 올릴 때 알던 마지막 판이
 //       버닝 시각 뒤에 시작했으면 확실). 버닝 시각 전에 올린 스샷은 버닝 아님 · 그 사이는 "maybe"(곱하지 않고 「버닝?」 표시).
 //       그 팀이 버닝 판을 이미 썼거나(확정 판) 앞 스샷이 버닝 판이면 버닝 아님 · 앞 스샷이 "maybe" 면 이것도 "maybe".
 // 버닝(판 순번 · 5회부터 · §1.13): 시각이 필요 없다 — 같은 팀 미확정 스샷 k번째 = 그 팀 「확정 판 수 + k」번째 판으로 보고,
 //       그 순번이 boostSeqs(5 · 7)에 들면 곱한다(「미정」 아님). 읽지 못한 스샷도 판 하나라서 순번은 하나 차지한다.
 // lane = { used, maybe, next } — 같은 팀 미확정 스샷을 시간 순으로 넘기며 버닝 판 차례를 이어 본다(next = 다음 스샷의 판 순번)
-function shotScore(shot, team, { boostAt = null, boostMul = 1.5, boostSeqs = null } = {}, lane = { used: false, maybe: false, next: null }) {
+function shotScore(shot, team, { boostAt = null, boostMul = 1.5, boostSeqs = null, penBySlot = null } = {}, lane = { used: false, maybe: false, next: null }) {
   const nth = Array.isArray(boostSeqs) && Number.isInteger(lane.next) ? lane.next++ : null;
   if (!shot || shot.rank == null) return { basis: "kills" };
   const slots = ((team && team.members) || []).map((m) => Number(m.slot)).filter((x) => Number.isInteger(x) && x >= 1);
@@ -163,7 +165,7 @@ function shotScore(shot, team, { boostAt = null, boostMul = 1.5, boostSeqs = nul
     if (dead.some((p) => !slots.includes(p.slot))) return { basis: "kills" };
     deadSlots = [...new Set(dead.map((p) => p.slot))];
   }
-  const penalty = deadSlots.reduce((n, s) => n + (scoring.SLOT_PENALTY[s - 1] || 0), 0);
+  const penalty = deadSlots.reduce((n, s) => n + (penBySlot && Number.isInteger(penBySlot[s]) ? penBySlot[s] : scoring.SLOT_PENALTY[s - 1] || 0), 0);
   const base = scoring.baseScore(Number(shot.kills) || 0, Number(shot.damage) || 0, shot.rank, penalty);
   let boost = null;
   if (nth != null) { if (boostSeqs.includes(nth)) boost = boostMul; }
@@ -178,7 +180,8 @@ function shotScore(shot, team, { boostAt = null, boostMul = 1.5, boostSeqs = nul
 // 점수판 응답에 「잠정」 칸을 붙인다 — total · rank · gameScore 는 읽지도 고치지도 않는다.
 // shot.score = 미확정 스샷 판 점수 합(전부 셀 수 있을 때만 · 음수 그대로) · basis "kills" 면 킬만 반영(score null).
 // 방송 화면이 쓰는 칸(n · kills · damage · rank · teams · dead · at · players)은 그대로 둔다
-function decorateBoard(body, state, at) {
+// penByTeam = Map(팀 이름 → 슬롯 → 감점) — 티어 순서 회차(board penaltyBy "tier")에서만 · 팀 값이 null 이면 그 팀은 슬롯 순
+function decorateBoard(body, state, at, penByTeam = null) {
   const shots = (state && state.shots) || [];
   const seqMode = !!(body && body.boostMode === "seq" && Array.isArray(body.boostSeqs));      // 판 순번 버닝 회차(5회부터 · §1.13)
   const opts = { boostAt: Number.isFinite(body && body.boostAt) ? body.boostAt : null, boostMul: Number(body && body.boostMul) || 1.5,
@@ -188,7 +191,8 @@ function decorateBoard(body, state, at) {
     if (!open.length) { t.shot = null; continue; }
     const last = open[open.length - 1];
     const lane = { used: !!t.boostUsed, maybe: false, next: seqMode ? (Number(t.games) || 0) + 1 : null };
-    const each = open.map((s) => shotScore(s, t, opts, lane));
+    const penBySlot = (penByTeam && penByTeam.get(t.name)) || null;
+    const each = open.map((s) => shotScore(s, t, { ...opts, penBySlot }, lane));
     const full = each.every((x) => x.basis === "full");
     const boosts = each.map((x) => x.boost).filter((b) => b != null);
     t.shot = { n: open.length, kills: open.reduce((n, s) => n + s.kills, 0), damage: open.reduce((n, s) => n + s.damage, 0),
@@ -324,8 +328,10 @@ async function readImage(image, { key, fetchImpl, models = MODELS }) {
 }
 
 // deps: killrace(currentEvent · loadTeams · board) · store{ load(evId), save(evId, state) } · key() · fetch · now() · log · channelId
+//       · loadTiers()(선택 · 티어표 ops_state 'killrace:tiers' — 없으면 팀 줄 tier 만으로 감점표를 만든다)
 function createShot(deps) {
   const { killrace, store } = deps;
+  const loadTiers = deps.loadTiers || (async () => null);
   const fetchImpl = deps.fetch || globalThis.fetch;
   const now = deps.now || (() => Date.now());
   const log = deps.log || console;
@@ -407,7 +413,24 @@ function createShot(deps) {
   }
 
   // 점수판(killrace-live getBoard)이 부른다 — 실패해도 점수판은 그대로 나간다(호출하는 쪽이 잡는다)
-  async function decorate(body, ev) { return decorateBoard(body, await loadState(ev.id), now()); }
+  // 티어 순서 회차(penaltyBy "tier" · §1.22)면 팀마다 확정 집계와 같은 감점표(tierPenaltyMap)를 만들어 잠정에도 쓴다. 스샷이 없으면 읽지 않는다
+  let penCache = null;                               // { evId, at, map }
+  async function penaltyMaps(evId) {
+    const t = now();
+    if (penCache && penCache.evId === evId && t - penCache.at < PEN_CACHE_MS) return penCache.map;
+    const [teams, tiers] = await Promise.all([killrace.loadTeams(evId), loadTiers().catch(() => null)]);
+    const map = new Map(teams.map((tm) => [tm.name, tierPenaltyMap(tm.members, tiers)]));
+    penCache = { evId, at: t, map };
+    return map;
+  }
+  async function decorate(body, ev) {
+    const state = await loadState(ev.id);
+    let pen = null;
+    if (body && body.penaltyBy === "tier" && state.shots.length) {
+      try { pen = await penaltyMaps(ev.id); } catch (e) { log.warn(`[killrace-shot] penalty_map_failed ${(e && e.message) || e}`); }   // 못 만들면 슬롯 순
+    }
+    return decorateBoard(body, state, now(), pen);
+  }
 
   // 기동 뒤 한 번 — 채널을 볼 수 있는지 · 읽기 · 답 권한을 로그로 남긴다(바꾸지 않는다)
   async function checkChannel(client) {
