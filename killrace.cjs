@@ -7,6 +7,7 @@
 // 명령(오너 전용 · GmI 길드 = LESSON_GUILD_ID): /킬내기팀등록 · /킬내기집계 · /킬내기이탈 — 결과는 오너 DM.
 //
 // 판 인정: createdAt ∈ [window_start, window_end)(노래방룰 = 끝 시각 전에 시작한 판까지)
+//   10/11 이후 끝나는 회차는 끝 + 59초까지 시작한 판도 인정(LATE_START_GRACE_MS · 오너 10/9 · §1.27)
 //          + 등록 4명이 같은 matchId 의 같은 roster + gameMode squad·squad-fpp + matchType official(일반).
 //          등록 인원이 다 안 뛴 판 = 불인정(「인원」) · 경쟁전·아케이드 등 = 「제외」.
 // 판 점수: Σ4인 kills + floor(Σ4인 damageDealt / 100) + (팀 winPlace 1 이면 치킨 +8) − Σ 사망 슬롯 감점
@@ -56,6 +57,12 @@
 const SLOT_PENALTY = [4, 3, 2, 1];              // 1번(최상위 티어) 사망 = −4 … 4번 = −1 · 전원 = −10
 // 사망 감점을 「팀 안 티어 순서」로 매기는 첫 회차(오너 10/10 · 7회 = event 8 부터 · 소급 없음 · §1.22) — 설정 penaltyBy 가 있으면 그것이 먼저
 const TIER_PENALTY_FROM_EVENT = 8;
+// 막판 인정 유예(오너 10/9 「매치 시작이 23:00:59까지인 판은 인정」) — 끝 정각 큐에 서버가 몇 초 늦게 열려도 그 판을 센다.
+// 끝 시각 + 59초 안(초 단위 · 끝 + 60초 전)에 시작한 판까지 인정. 10/11 이후 끝나는 회차부터(이미 끝난 회차 점수는 그대로 · 소급 없음)
+const LATE_START_GRACE_MS = 59000;
+const LATE_START_GRACE_FROM = Date.parse("2026-10-11T00:00:00+09:00");
+const startCutOf = (ev) => (ev.end >= LATE_START_GRACE_FROM ? ev.end + LATE_START_GRACE_MS + 1000 : ev.end);
+const startsInWindow = (t, ev) => t >= ev.start && t < startCutOf(ev);
 const { humanStats, BOT_STATS_FROM_EVENT } = require("./killrace-detail.cjs");   // §1.24 개인 스텟에서 봇 킬 · 딜 빼기(2회부터 소급)
 const LEAVE_SCORE = -10;                        // 이탈 판 고정 점수
 const CHICKEN_BONUS = 8;                        // 팀 winPlace 1 판 가산(관제탑 2026-09-26)
@@ -1136,7 +1143,7 @@ function createKillrace(deps) {
         if (t >= ev.end + NEAR_MS) continue;
         const cls = classify(m, lineupFor(m, team), modes);
         if (cls.kind === "none") continue;
-        if (t >= ev.start && t < ev.end) apiRecords.push({ team, m, cls });
+        if (startsInWindow(t, ev)) apiRecords.push({ team, m, cls });
         else if (cls.kind === "ok") {               // 4인 정상 판인데 시간만 밖 → 시비 대비로 보여 준다
           apiRecords.push({ team, m, cls: { kind: "excluded", code: "time",
             reason: t < ev.start ? `시간 밖(${kstHm(ev.start)} 전 시작)` : `시간 밖(${kstHm(ev.end)} 이후 시작)` } });
@@ -1176,7 +1183,7 @@ function createKillrace(deps) {
       const f = row.flags || {};
       // 창 안에서 시작한 판만 다시 쓴다 — 진행자가 창을 줄이면(§1.7) 창 밖이 된 저장 판은 PUBG 목록에서 다시 안 보여도 뺀다
       const startedAt = Date.parse(row.created_at);
-      const inWindow = Number.isFinite(startedAt) && startedAt >= ev.start && startedAt < ev.end;
+      const inWindow = Number.isFinite(startedAt) && startsInWindow(startedAt, ev);
       const reusable = team && inWindow && row.seq != null && f.sig === teamSig(team) && row.deaths && Array.isArray(row.deaths.members);
       if (reusable) {
         records.push({
@@ -1636,7 +1643,7 @@ function createKillrace(deps) {
         if (!Number.isFinite(t)) continue;
         if (t < ev.start - NEAR_MS) { if (++older >= OLDER_STOP) break; continue; }
         older = 0;
-        if (t < ev.start || t >= ev.end) continue;
+        if (!startsInWindow(t, ev)) continue;
         const cls = classify(m, lineupFor(m, team), modes);
         if (cls.kind === "none") continue;
         if (cls.kind === "excluded") { row.excluded[cls.code] = (row.excluded[cls.code] || 0) + 1; continue; }
@@ -1758,7 +1765,7 @@ module.exports = {
   COMMANDS, createKillrace, scoring: { SLOT_PENALTY, baseScore, applyBoost },   // 점수식은 여기 한 벌 — 스샷 잠정(killrace-shot.cjs)이 같은 식을 쓴다
   telemetry: { fetchTelemetry },                                                 // 텔레메트리 스트리밍 — 판별 상세 기록(killrace-detail.cjs)이 같은 해석기를 쓴다
   _test: {
-    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, tierPenaltyMap, penaltyOf, TIER_PENALTY_FROM_EVENT, botAdjOf, pickCurrentEvent, CURRENT_GRACE_MS, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
+    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, tierPenaltyMap, penaltyOf, TIER_PENALTY_FROM_EVENT, LATE_START_GRACE_MS, LATE_START_GRACE_FROM, startsInWindow, botAdjOf, pickCurrentEvent, CURRENT_GRACE_MS, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, lateReviveCheck, reviveOutOf, reviveWho, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory, lineupFor, playerRows, PLAYERS_TABLE_PAUSE_MS,
   },
