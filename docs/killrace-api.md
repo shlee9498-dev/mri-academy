@@ -882,15 +882,34 @@
 | 길 | 응답 · 동작 |
 |---|---|
 | `GET /clan/coin?cursor=` (60회/분) | `{ on, linked, balance, earned, spent, month: { key: "2026-10", cap, issued, left }, items: [{ id, kind, amount, at, event: { id, name } \| null, detail \| null, exchange: { id, item, status } \| null }], nextCursor }` · 줄은 최근 순 · 이어 읽기 §9.33.1 규칙 |
-| `GET /clan/coin/shop` (60회/분) | `{ on, items: [{ id, name, coinPrice, stock \| null }], open: { id, item, coinPrice, status, requestedAt } \| null, canExchange, lockedReason \| null }` · `krw_cost`(사비)는 싣지 않는다 |
-| `POST /clan/coin/exchange { itemId }` (10회/분) | 200 `{ exchange: { id, item, coinPrice, status: "requested" } , balance }` · 오너에게 승인 카드 |
+| `GET /clan/coin/shop` (60회/분) | `{ on, items: [{ id, name, coinPrice, delivery, stock \| null }], open: { id, item, coinPrice, status, requestedAt, delivery, ship } \| null, shipping: [{ id, item, coinPrice, status: "sent", requestedAt, delivery: "physical", ship }], canExchange, lockedReason \| null }` · `krw_cost`(사비)는 싣지 않는다 · `delivery` = `"gifticon"` \| `"physical"`(§1.28.11a 매점 표 칸 그대로) · `ship` 모양은 §1.28.6a |
+| `POST /clan/coin/exchange { itemId }` · 실물이면 `{ itemId, consent: true, name, address, phone }`(한 몸통 · 따로 감싸지 않는다 · §1.28.11b) (10회/분) | 200 `{ exchange: { id, item, coinPrice, status: "requested" } , balance }` · 오너에게 승인 카드 |
 | `POST /clan/coin/exchange/cancel` (10회/분) | 열린 신청이 `requested` 일 때만 → `cancelled` + 돌려받음 · 200 `{ balance }` |
 
 - **킬내기 앱(gmi-clancup)에서도 같은 길** — 위 네 길과 배송 길(§1.28.11b)을 `/api/killrace/me/coin` · `/me/coin/shop` · `/me/coin/exchange` · `/me/coin/exchange/cancel` · `/me/coin/exchange/:id/received|lost|address` 로도 연다(킬내기 앱 토큰 `aud: "killrace"` · 앱 계약 §2).
   같은 처리 함수 · 같은 응답 · 같은 오류 코드다. 클랜 역할 대신 **킬내기 회원 + 스팀 연결**이면 열린다(킬내기 앱은 외부 참가자도 쓰기 때문 · 코인은 연습판에 뛴 계정에만 쌓인다). 사람은 토큰의 디스코드 번호 → 회원 연결 계정.
-- **교환 잠김 이유**(`lockedReason`) — `shop_off`(스위치 `coin_shop` 꺼짐 · 화면 「지금은 쉬고 있어요」) · `budget_full`(이번 달 사비 예산 다 참 · 「이번 달 교환이 다 찼어요 · 다음 달 1일에 다시 열려요」) · `off`(코인 꺼짐) · `not_linked`(스팀 연결 전) · `not_verified`(진행자 본인 확인 전 · 상금 원장 §1.20 의 확인 표시 `killrace_prize_verifications` 를 같이 쓴다) · `open_request`(열린 신청 하나) · `under_balance`(잔액 모자람 · 경품별로 앱이 비교).
+- **교환 잠김 이유**(`lockedReason`) — `shop_off`(스위치 `coin_shop` 꺼짐 · 화면 「준비 중이에요」 · 10/11 지휘 정정) · `budget_full`(이번 달 사비 예산 다 참 · 「이번 달 교환이 다 찼어요 · 다음 달 1일에 다시 열려요」) · `off`(코인 꺼짐) · `not_linked`(스팀 연결 전) · `not_verified`(진행자 본인 확인 전 · 상금 원장 §1.20 의 확인 표시 `killrace_prize_verifications` 를 같이 쓴다) · `open_request`(열린 신청 하나) · `under_balance`(잔액 모자람 · 경품별로 앱이 비교).
 - 오류: 400 `invalid_body` · 403 `clan_required` · 404 `item_unavailable` · 409 `out_of_stock` / `insufficient_coin` / `open_request` / `not_verified` / `not_linked` / `switch_off` / `budget_full` · 423 `coin_off`.
+- **열린 신청(`open`) = `requested` · `approved` 하나뿐**(DB 유일 색인 `killrace_coin_exchanges_open` 과 같은 범위 · 10/11 확정). 택배로 보낸(`sent`) 실물 신청은 `open` 에서 빠지고 **`shipping` 배열**로 간다 — 배송 단계가 `requested`(재발송 주소 받음) · `shipped` · `reship_pending` 인 동안만. `received` · `expired` 가 되면 `shipping` 에서도 빠진다(지갑 장부에는 남음).
+  - 그래서 보낸 실물이 배송 중이어도 **새 교환은 막히지 않는다**(`open_request` 아님). 「받았어요」 · 「못 받았어요」 · 재발송 주소는 `shipping` 줄의 `id` 로 §1.28.11b 길을 부른다.
+  - 기프티콘 신청은 `sent` 가 되면 `open` 에서 빠지고 `shipping` 에도 안 들어간다(배송 단계가 없다).
 - **예산 판정(서버)** — 교환 신청 때 `이번 달 매점 교환 사비(거절 · 취소 뺀 krw_cost 합 · 앱 계약 §18.3) + 그 경품 krw_cost > monthly_budget_krw` 면 409 `budget_full` · 줄을 만들지 않는다. 판정과 신청은 같은 트랜잭션(교환 함수 안 · 동시에 눌러도 넘지 않게).
+
+#### §1.28.6a 응답 칸 정답표 — 반장 가정 6칸 메우기 (10/11 지휘 · 경비 #563 키 기준)
+
+세 앱(수강생 앱 · 킬내기 앱 · 서버)이 같은 키를 쓴다. 서버 #563 에 있던 키는 그대로 정답으로 두고, 서버에 없던 칸만 여기서 정한다.
+
+| 칸 | 정답 | 어디에 실리나 |
+|---|---|---|
+| `delivery` | `"gifticon"` \| `"physical"` · 매점 표 `killrace_coin_items.delivery` 그대로 | 매점 `items[]` · `open` · `shipping[]` · 기프티콘함 줄은 `kind` 로 같은 값 |
+| `ship` | `{ state, trackingNo }` \| `null` — **감싼 한 칸**(풀어 쓴 `shipState` · `trackingNo` 아님) | 실물 줄에만. 기프티콘 줄은 `null` |
+| `ship.state` | `requested` · `shipped` · `received` · `expired` · `reship_pending` (§1.28.11b 단계 그대로 · 내부 값 `closed` 는 응답에 안 냄 → 그 줄은 목록에서 빠짐) | |
+| `ship.trackingNo` | 가장 최근 송장번호 한 개 · 「발송함」 전엔 `null` · 재발송 기록 전체는 오너 화면만 | |
+| 실물 몸통 | `{ itemId, consent: true, name, address, phone }` 한 몸통 | `POST …/coin/exchange` · 받을 곳만 다시 줄 땐 `{ consent, name, address, phone }` |
+| 동작 응답 | `{ ok: true, shipState }` · 기프티콘함 받았어요는 `{ ok: true, state }` — 서버 #563 그대로 | `…/received` · `…/lost` · `…/address` |
+
+- **주소 · 이름 · 연락처는 어떤 응답에도 없다** — `ship` 에도 단계와 송장번호만. 본인 화면 문구는 「배송 정보 받았어요」 한 줄.
+- `ship: null` 인 실물 기프티콘함 줄 = 아직 받을 곳을 안 적음 → 화면은 「받는 곳 적기」.
 
 #### §1.28.7 교환 흐름 — 돈이 나가는 건 오너가 한 건씩
 
@@ -972,6 +991,9 @@
 - **운영 기준(오너 10/11)** — 분실 · 오배송이면 **주소를 다시 묻고 보낸다.** 지난 주소를 오너가 따로 적어 두거나 재사용하지 않는다.
 - **길(추가)** — `POST /api/student-portal/clan/coin/exchange/:id/received` · `/lost`(받은 사람 · 「발송함」 상태만 · 409 `not_shipped`) ·
   `POST /api/student-portal/clan/coin/exchange/:id/address { consent, name, address, phone }`(재발송 대기만) · 오너 `POST /api/killrace/coin/shipping/:exchangeId { action: "shipped", trackingNo }` · `{ action: "lost" }`.
+  - **재발송 「발송함」** — 재발송 주소를 받은 줄은 교환 신청이 이미 `sent` 이고 배송 단계만 `requested` 로 돌아온다. 오너 `shipped` 는 **교환 `approved` 또는 (`sent` + 배송 `requested`)** 둘 다 받는다(10/11 정정 · 첫 판은 `approved` 만 받아서 재발송을 보낼 길이 없었다).
+  - **기프티콘함 실물 줄도 같은 단계** — 받은 사람 `POST …/gifts/:id/received` · `POST …/gifts/:id/lost`(「발송함」 상태만 · 409 `not_shipped` · 세 칸 바로 비움 → `reship_pending`) · `POST …/gifts/:id/address`(처음 또는 재발송 대기).
+    오너 `POST /api/killrace/gifts/admin { action: "shipped", id, trackingNo }` · `{ action: "lost", id }` — 교환 줄의 배송 길과 같은 규칙 · 같은 알림 문구(10/11 추가 · 첫 판엔 기프티콘함 실물을 「발송함」으로 넘길 길이 없었다).
 - **보는 사람 = 오너만** — `GET /api/killrace/coin/shipping/:exchangeId`(사이트 · 킬내기 토큰 중 `MRI_OWNER_ID` · 아니면 403 `owner_only` · 진행자 키 안 됨). 비운 뒤에는 404 `purged`.
   - 앱 응답(선수 본인 포함) · 서버 로그 · 디스코드 카드 · 알림 · 세션 사이 전달문 · 저장소 어디에도 주소 · 연락처를 남기지 않는다. 본인 화면에는 「배송 정보 받았어요」 한 줄만.
   - 로그는 `[coin] ship_saved exchange=<id>` · `ship_purged exchange=<id>` 처럼 번호만.
@@ -1023,7 +1045,10 @@
   - 만료일을 필수로 두는 까닭: 실제 기프티콘은 전부 유효기간이 있고, 서버가 기본값을 짐작하는 것보다 오너가 넣을 때 한 칸 더 쓰는 쪽이 사고가 없다(지휘 10/11).
   - 사진은 비공개 저장소(Supabase Storage 비공개 버킷 `killrace-gifts`)에 · 코드는 표 칸에. 둘 다 **오너와 받는 사람 말고는 볼 수 없다.**
 - **여는 사람 = 받는 사람만** — 그 계정을 연결한 회원 + **본인 확인 표시**(§1.20 · §74 · 남이 먼저 닉을 잡아 받는 일 막기).
-  - `GET /api/killrace/me/gifts` → 함 목록(상품 · 회차 · 만료일 · 상태 · 코드 없음) · `POST /api/killrace/me/gifts/:id/open` → 그때만 코드 또는 사진 주소(1분짜리 서명 주소)를 돌려준다 · `opened_at`.
+  - `GET /api/killrace/me/gifts` → 함 목록(상품 · 회차 · 만료일 · 상태 · 코드 없음) ·
+    응답 `{ linked, verified, items: [{ id, kind, item, event: { id, name } \| null, reason \| null, expiresOn \| null, state, createdAt, openedAt \| null, receivedAt \| null, purged, ship }] }` —
+    `kind` = `"gifticon"` \| `"physical"` · `expiresOn` = `YYYY-MM-DD`(실물은 `null`) · `state` = `registered` · `opened` · `received` · `expired`(취소 줄은 목록에서 뺀다) · `purged` = 코드 · 사진을 지웠는지 · `ship` = §1.28.6a(실물만) · `verified` = 본인 확인 표시(늘 실린다 · 거짓이면 「열기」 전에 막는다) ·
+    열기 응답 `{ id, code \| null, imageUrl \| null, imageExpiresIn \| null, expiresOn }` (10/11 · 서버 #563 키 그대로 정답) · `POST /api/killrace/me/gifts/:id/open` → 그때만 코드 또는 사진 주소(1분짜리 서명 주소)를 돌려준다 · `opened_at`.
   - 열고 나면 「받았어요」 버튼 → `POST …/:id/received` → `received_at`. 실물이면 열기 대신 배송 동의 화면(§1.28.11b 그대로 · 만 14세 미만 실물 막음).
   - 수강생 앱 클랜 방에서도 같은 길(`/api/student-portal/clan/gifts*` · 같은 함수).
 - **알림** — 넣는 순간 봇이 받는 사람에게 DM 한 번 「기프티콘함에 선물이 도착했어요 · 앱에서 열어 주세요」 + 앱 주소. **코드 · 사진은 DM 에 넣지 않는다.**
@@ -1048,7 +1073,86 @@
 - 경비: 원장 칸 하나(`funding`) 더하기 · `killrace_gift_box` 표 · 비공개 버킷 · 넣기 · 열기 · 받았어요 · 취소 · 정리 · 적립 안내 · 함 알림 길 함수.
 - 클랜CODE: `/기프티콘넣기` 봇 명령(경비 함수 호출 · 별도 파일) · 앱 「기프티콘함」 · 「내 상금」 적립 안내 표시 · 오너 화면 미수령 목록.
 - 반장: 수강생 앱 클랜 방 「기프티콘함」(같은 길).
-- 시험: 기프티콘 만료일 없음 400 `need_expiry`(실물은 통과) · 오너 아닌 넣기 403 · 받는 사람 아닌 열기 403 · 본인 확인 전 열기 409 `not_verified` · 목록 응답에 코드 없음 · 열기만 코드 · 서명 주소 1분 · DM 본문에 코드 없음 · DM 실패 한 번만 · 받았어요 뒤 30일 · 만료 + 7일 정리 · 취소 즉시 지움 · 실물 만 14세 미만 403 · 원장 기존 줄 값 그대로.
+- 시험: 기프티콘 만료일 없음 400 `need_expiry`(실물은 통과) · 목록 · 매점 응답 키가 §1.28.6a 표와 같음 · `ship` 에 주소 · 연락처 칸 없음 · 보낸 실물이 `open` 아니라 `shipping` 에 · 재발송 「발송함」 통과 · 기프티콘함 실물 「발송함」 · 「못 받았어요」 · 오너 아닌 넣기 403 · 받는 사람 아닌 열기 403 · 본인 확인 전 열기 409 `not_verified` · 목록 응답에 코드 없음 · 열기만 코드 · 서명 주소 1분 · DM 본문에 코드 없음 · DM 실패 한 번만 · 받았어요 뒤 30일 · 만료 + 7일 정리 · 취소 즉시 지움 · 실물 만 14세 미만 403 · 원장 기존 줄 값 그대로.
+
+### §1.31 매점 투표 — 첫 품목을 클랜원 투표로 정한다 (10/11 오너 「투표를 받자 일단 넣지말고」 · 「어플에서 투표하도록 하는 건 어때?」) · **계약 · DDL 초안 · 서버 구현 전**
+
+> 매점(§1.28)의 첫 품목을 넣기 전에 클랜원에게 먼저 묻는다. 투표는 **킬내기 앱(gmi-clancup) 안에서만** 받는다(디스코드 투표 아님).
+> 결과는 **참고용**이다 — 품목 · 코인가 · 재고는 오너가 정한다(월 사비 예산 200,000 안 · 앱 계약 §18.3). 투표는 코인 원장 · 상금 원장 · 매점 품목 표(`killrace_coin_items`)를 건드리지 않는다.
+
+#### §1.31.1 일정 · 스위치
+
+- 첫 투표 `pollId = "shop-2026-10"` — **10/13(화) 오너가 스위치를 켜면 열림 → 10/15(목) 23:59:59 KST 마감** → 10/16(금) 8회 전 결과. 금요일은 배포하지 않는다.
+- 스위치 `shop_vote`(설정 줄 `killrace:switches` 의 새 키 · 앱 계약 §18.1 · 기본 `false` · 오너만). **`coin_shop` 과 무관하다** — 매점이 꺼져 있어도 투표는 열 수 있다.
+- 투표 설정은 `ops_state` `killrace:vote:shop-2026-10` 한 줄(env 없음 · DDL 없음):
+  `{ title: "매점에 뭐가 들어오면 좋을까요", options: [{ key, label, kind }], closesAt: "2026-10-15T23:59:59+09:00", suggestionMax: 40 }`
+  - 보기 넷: `chicken` 치킨 기프티콘 · `cvs` 편의점 기프티콘 · `coffee` 커피 기프티콘(셋 다 `kind: "gifticon"`) · `mousepad` GmI 마우스패드(`kind: "physical"`) + 자유 제안 한 줄.
+  - **보기에 코인가 · 원가 · 금액을 싣지 않는다.**
+- 상태(서버가 KST 로 판정): `off`(스위치 꺼짐) · `open`(켜짐 + 마감 전) · `closed`(마감 뒤 · 스위치와 상관없이 결과 공개).
+
+#### §1.31.2 누가 투표하나 — 계정 연결된 클랜원 · 사람당 1표
+
+- 킬내기 회원(동의 끝) + 스팀 연결 + 구분(§5)이 `clan` 또는 `lesson`(레슨생도 GmI 길드 회원 · §5 「둘 다면 lesson」). `external` 은 투표하지 않는다.
+- 구분이 `null`(봇이 못 봄)이면 「아님」으로 읽지 않는다 → 503 `clan_check_unavailable` · 앱은 「잠깐 확인 중이에요」 + 다시 시도.
+- **1표 = 한 사람** — 표의 키는 **본계 계정**(`killrace:people` 합치기를 사슬 끝까지 따라간 `platform` · `account_id`) · 같은 디스코드 번호도 한 표.
+  - 투표 뒤 합치기가 새로 생겨 한 사람에게 표가 둘이 되면, **셀 때 본계로 묶어 가장 최근에 고친 표 하나만** 센다(저장된 줄은 지우지 않는다).
+- **여러 개 고를 수 있다**(보기 0 ~ 4개) · 자유 제안만 써도 된다 · 둘 다 비면 400 `invalid_body`.
+- **마감 전엔 다시 고칠 수 있다** — 같은 길을 다시 부르면 덮어쓴다(`updated_at`). 마감 뒤엔 409 `vote_closed`.
+
+#### §1.31.3 길 (킬내기 앱 토큰 `aud: "killrace"` · 앱 계약 §2)
+
+| 길 | 응답 · 동작 |
+|---|---|
+| `GET /api/killrace/me/vote/:pollId` (60회/분) | `{ poll: { id, title, options: [{ key, label, kind }], closesAt, state }, canVote, lockedReason \| null, mine: { choices: [key], suggestion \| null, updatedAt } \| null, results }` · `results` 는 `state: "closed"` 일 때만 `{ voters, counts: [{ key, votes }], suggestions: n }`, 그 전엔 `null` |
+| `POST /api/killrace/me/vote/:pollId { choices: [key], suggestion? }` (10회/분) | 200 `{ mine }` · 처음이면 넣고 있으면 덮어쓴다 |
+| 오너 `GET /api/killrace/vote/:pollId/admin` | `MRI_OWNER_ID` 만(진행자 키 안 됨 · 아니면 403 `owner_only`) · `{ state, voters, counts: [{ key, votes }], suggestions: [{ text, at }] }` · **실시간** |
+
+- `lockedReason` — `off`(스위치 꺼짐) · `closed`(마감) · `not_member`(킬내기 동의 전) · `not_linked`(스팀 연결 전) · `not_clan`(외부 참가자).
+  `canVote` = `lockedReason` 이 없음. 비로그인은 401(종전 앱 규칙).
+- 오류 — 400 `invalid_body`(모르는 보기 · 같은 보기 두 번 · 제안 40자 넘음 · 둘 다 빔 · 제안에 링크) · 403 `not_clan` · 409 `switch_off` / `vote_closed` / `not_linked` / `not_member` · 404 `poll_not_found` · 503 `clan_check_unavailable`.
+- **득표 수는 마감 전 누구에게도 안 보인다**(본인 표 `mine` 만) — 오너 화면만 실시간. 참여 인원도 마감 전엔 숨긴다.
+- **자유 제안 글은 오너만 본다** — 마감 뒤 공개 결과에도 개수만. 오너 화면엔 글과 시각만(닉 · 계정 · 디스코드 번호 없음).
+  - 제안 글: 앞뒤 공백 · 줄바꿈 정리 · 1 ~ 40자 · `http` · `www.` · `discord.gg` 가 들어가면 400. 로그엔 글을 남기지 않는다(`[vote] saved poll=<id>` 처럼 번호만).
+
+#### §1.31.4 저장 — 새 표 `killrace_vote_ballots` (DDL §77 초안 · 더하기만 · 실행은 경비)
+
+```sql
+-- §77 매점 투표 표(killrace-api §1.31) — 더하기만
+create table if not exists public.killrace_vote_ballots (
+  id          bigserial primary key,
+  poll_id     text        not null,
+  platform    text        not null,
+  account_id  text        not null,                 -- 본계(합치기 사슬 끝)
+  discord_id  text        not null,
+  choices     text[]      not null default '{}',
+  suggestion  text        check (suggestion is null or char_length(suggestion) between 1 and 40),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  check (cardinality(choices) <= 4),
+  check (cardinality(choices) > 0 or suggestion is not null)
+);
+create unique index if not exists killrace_vote_ballots_person  on public.killrace_vote_ballots (poll_id, platform, account_id);
+create unique index if not exists killrace_vote_ballots_discord on public.killrace_vote_ballots (poll_id, discord_id);
+alter table public.killrace_vote_ballots enable row level security;   -- service_role 만
+notify pgrst, 'reload schema';
+```
+
+- 검증: 칸 9개 · 색인 3개(pkey · person · discord) · RLS 켜짐. 정본 `supabase_admin_panel.sql` §77 · 기동 점검 `REQUIRED_SCHEMA` 에 표 한 줄.
+- 디스코드 번호는 「한 사람 한 표」 판정에만 쓰고 어떤 응답에도 싣지 않는다.
+
+#### §1.31.5 화면 (클랜CODE · gmi-clancup `killrace/`)
+
+- **투표 카드** — 킬내기 앱 홈(또는 「내 코인」 위)에 스위치가 켜졌을 때만. 제목 · 보기 넷(체크) · 자유 제안 한 줄(40자 · 글자 수 표시) · 「투표하기」(이미 했으면 「고치기」) · 마감 시각(「10월 15일 밤 11시 59분까지」).
+  - 카드 아래 한 줄: 「코인은 킬내기 참여 보상이에요 · 돈으로 바꿀 수 없어요」. **코인가 · 원가 · 「1코인 = 1원」 같은 말은 어디에도 없다.**
+  - 「결과는 참고해서 오너가 매점 품목을 정해요」 한 줄.
+  - 투표 중엔 득표 막대 · 숫자 없음 · 「내가 고른 것」만 표시. 마감 뒤엔 보기별 득표와 「자유 제안 n개」.
+- **막힌 화면엔 창구** — `not_member` 「먼저 킬내기 동의가 필요해요」 + 「내 계정으로」 · `not_linked` 「스팀 닉을 연결하면 투표할 수 있어요」 + 「내 계정으로」 · `not_clan` 「클랜원 투표예요 · 궁금한 건 디스코드 운영진에게 물어봐 주세요」 · `clan_check_unavailable` 「잠깐 확인 중이에요」 + 「다시 확인하기」.
+- **오너 결과 화면** — 오너만(로그인 디스코드가 `MRI_OWNER_ID`) · 보기별 실시간 득표 · 참여 인원 · 자유 제안 목록(글 · 시각) · 마감까지 남은 시간.
+- 문구는 ui-copy · 화면당 느낌표 1개 · 이모지 0 ~ 1개.
+
+#### §1.31.6 시험 (경비 서버 PR)
+
+스위치 꺼짐 = 쓰기 409 `switch_off` · 읽기 `state: "off"` · 마감 뒤 409 `vote_closed`(KST 경계 23:59:59 / 00:00:00) · 외부 참가자 403 `not_clan` · 구분 `null` 503 · 스팀 연결 전 409 · 두 번 부르면 덮어쓰기(줄 하나) · 같은 디스코드 다른 계정 → 한 표 · 합치기 뒤 두 표 → 셀 때 하나 · 모르는 보기 · 중복 · 41자 · 링크 → 400 · 마감 전 `results: null`(득표 · 인원 없음) · 오너 아닌 admin 403 · 응답 · 로그에 디스코드 번호 · 제안 글(오너 admin 말고) 없음 · 코인 원장 · 매점 품목 표 줄 수 그대로.
 
 ## §2 1단계 순서 · 크기 (조각 A = §1.8 · 조각 B = §1.6 은 이 묶음에서)
 
