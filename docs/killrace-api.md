@@ -601,6 +601,18 @@
 - **실측(저장된 combat · 우리 선수가 낸 것)** — 회차당 봇 킬 1 ~ 10 · 봇 딜 100 ~ 980. 평소 영향은 작고 봇방이 잡힌 판에서 크다(6회 현성팀 봇판은 §1.21-부록대로 판 통째 무효).
 - **구현 위치** — 순수 함수 `botCounts(combat, accountId)` · `humanStats(official, bot)` · `humanRows(rows)`(killrace-detail.cjs)를 위 곳들이 같이 쓴다.
 
+### §1.28 공개 티어 읽기 · 개인 누적 계정 합치기 (10/11 지휘 · 검수 앱 v1 #111 지적 · 오너 「킬내기어플부터」)
+
+- **`GET /api/killrace/tiers`** — 공개 · 읽기만. 서버 표 하나(`ops_state 'killrace:tiers'`)를 그대로 낸다 — 앱 · 드래프트가 옛 표를 복사해 쓰지 않게.
+  응답 `{ list: [{ ign, tier, rank }], count, updatedAt }` · 순위 순 · 숫자 아닌 티어 줄은 뺀다. **닉 · 티어 · 순위만**(실명 · 디스코드 id · 계정 번호 없음). 캐시 2분.
+- **`GET /api/killrace/tiers?ign=닉`** — 닉 대소문자 무시. 표에 그 닉이 있으면 그 줄(`via: "self"`), 없으면 그 닉을 쓴 계정의 같은 사람 묶음(§1.26 `tierRowsByMerge` · 합치기 표 양방향 · 사슬 끝까지)에서 찾는다(`via: "merge"`).
+  응답 `{ ign, found, tier?, rank?, tierIgn?, via? }` · 못 찾으면 `{ ign, found: false }` · 빈 닉 · 40자 넘는 닉은 400 `bad_ign`.
+  예) `?ign=GmI_HuDal` → `{ found: true, tier: 1.5, rank: 5, tierIgn: "GmI_Hyun", via: "merge" }`(실데이터 10/11 확인).
+- **개인 누적(`/api/killrace/career` · §1.11) 합치기** — `killrace:people` merge 로 묶인 계정은 **한 사람 한 줄**(사슬 끝 = 본계 · 키도 본계 키). 부계 · 본계 어느 닉으로 찾아도 같은 숫자.
+  줄에 `accounts`(합친 계정 수 · 1 = 합친 것 없음) · `aka`(같은 사람의 다른 닉 · 대표 닉 `ign` 은 가장 최근 판 닉) 두 칸을 더한다.
+  주간 리더보드(§1.18)도 같은 묶기 함수(`mergeRootOf`)로 맞췄다 — 전에는 한 단계만 따라갔다(사슬이 없어 지금 숫자는 같다).
+- DDL · env 없음.
+
 ### §1.27 막판 인정 59초 유예 (10/9 오너 「매치 시작이 23:00:59까지인 판은 인정」 · 서버 상수)
 
 - **판 인정 범위** — 매치 시작이 `[회차 시작, 회차 끝 + 59초]`(초 단위 · 끝 + 60초 전)면 인정. 끝 정각에 큐를 잡았는데 서버가 몇 초 늦게 열린 판 때문이다.
