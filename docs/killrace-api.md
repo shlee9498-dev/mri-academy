@@ -612,7 +612,7 @@
   응답 `{ ign, found, tier?, rank?, tierIgn?, via? }` · 못 찾으면 `{ ign, found: false }` · 빈 닉 · 40자 넘는 닉은 400 `bad_ign`.
   예) `?ign=GmI_HuDal` → `{ found: true, tier: 1.5, rank: 5, tierIgn: "GmI_Hyun", via: "merge" }`(실데이터 10/11 확인).
 - **개인 누적(`/api/killrace/career` · §1.11) 합치기** — `killrace:people` merge 로 묶인 계정은 **한 사람 한 줄**(사슬 끝 = 본계 · 키도 본계 키). 부계 · 본계 어느 닉으로 찾아도 같은 숫자.
-  줄에 `accounts`(합친 계정 수 · 1 = 합친 것 없음) · `aka`(같은 사람의 다른 닉 · 대표 닉 `ign` 은 가장 최근 판 닉) 두 칸을 더한다.
+  줄에 `accounts`(합친 계정 수 · 1 = 합친 것 없음) · `aka`(같은 사람의 다른 닉 · 대표 닉 `ign` 은 **본계 계정**의 가장 최근 판 닉 · 본계 판이 없을 때만 전체에서 가장 최근 닉 · 리더보드와 같은 규칙 · 10/11 정정) 두 칸을 더한다.
   주간 리더보드(§1.18)도 같은 묶기 함수(`mergeRootOf`)로 맞췄다 — 전에는 한 단계만 따라갔다(사슬이 없어 지금 숫자는 같다).
 - DDL · env 없음.
 

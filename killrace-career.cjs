@@ -64,7 +64,7 @@ function buildCareer({ rows, matches, keyOf, merge = null, minGames = MIN_GAMES 
     const top = Math.max(0, ...list.map((r) => Number(r.kills) || 0));
     for (const r of list) {
       const who = rootOf(r.account_id);
-      if (!people.has(who)) people.set(who, { games: 0, kills: 0, damage: 0, deaths: 0, teamTop: 0, events: new Set(), ign: "", at: -Infinity, accs: new Set(), igns: new Set() });
+      if (!people.has(who)) people.set(who, { games: 0, kills: 0, damage: 0, deaths: 0, teamTop: 0, events: new Set(), ign: "", at: -Infinity, ownIgn: "", ownAt: -Infinity, accs: new Set(), igns: new Set() });
       const p = people.get(who);
       p.accs.add(r.account_id);
       if (r.ign) p.igns.add(String(r.ign));
@@ -76,8 +76,14 @@ function buildCareer({ rows, matches, keyOf, merge = null, minGames = MIN_GAMES 
       const at = Date.parse(r.started_at);
       if (Number.isFinite(at) && at >= p.at && r.ign) { p.at = at; p.ign = r.ign; }   // 닉은 가장 최근 판 것(바뀐 닉이 이어진다)
       else if (!p.ign && r.ign) p.ign = r.ign;
+      if (r.account_id === who && r.ign) {                                            // 본계 계정 줄만 따로 — 대표 닉은 본계 닉(합치기 방향 부계 → 본계)
+        if (Number.isFinite(at) && at >= p.ownAt) { p.ownAt = at; p.ownIgn = r.ign; }
+        else if (!p.ownIgn) p.ownIgn = r.ign;
+      }
     }
   }
+  // 대표 닉 = 본계 계정의 가장 최근 닉 · 본계 줄이 없을 때만 전체에서 가장 최근 닉(리더보드 §1.18 과 같은 규칙 · 10/11 지휘)
+  for (const p of people.values()) if (p.ownIgn) p.ign = p.ownIgn;
   const out = [...people.entries()].map(([acc, p]) => ({
     key: keyOf(acc), ign: p.ign, games: p.games, kills: p.kills, damage: Math.floor(p.damage), deaths: p.deaths,
     killsPerGame: round(p.kills / p.games, 2), damagePerGame: Math.round(p.damage / p.games), teamTopKills: p.teamTop,

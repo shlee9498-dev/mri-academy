@@ -127,8 +127,14 @@ test("합치기(§1.29): killrace:people merge 로 묶인 계정은 한 사람 �
   const out = C.buildCareer({ rows, matches, keyOf, merge });
   assert.equal(out.length, 2);
   const p = out.find((x) => x.key === keyOf("account.main"));
-  assert.deepEqual([p.ign, p.games, p.kills, p.damage, p.deaths, p.accounts, p.aka, p.events], ["GmI_HuDal", 3, 6, 886, 2, 3, ["GmI_Hyun", "HyunOld"], [3, 5, 8]]);
+  assert.deepEqual([p.ign, p.games, p.kills, p.damage, p.deaths, p.accounts, p.aka, p.events], ["GmI_Hyun", 3, 6, 886, 2, 3, ["GmI_HuDal", "HyunOld"], [3, 5, 8]]);   // 대표 닉 = 본계 닉(부계가 더 최근이어도 · 10/11 지휘)
   assert.deepEqual([out.find((x) => x.ign === "Zed").accounts, out.find((x) => x.ign === "Zed").aka], [1, []]);
+  // 본계 계정 판이 하나도 없으면 전체에서 가장 최근 닉
+  const noMain = C.buildCareer({ rows: rows.filter((r) => r.account_id !== "account.main"), matches, keyOf, merge });
+  assert.equal(noMain.find((x) => x.key === keyOf("account.main")).ign, "GmI_HuDal");
+  // 본계 안에서 닉이 바뀌었으면 본계의 가장 최근 닉
+  const renamed = C.buildCareer({ rows: [...rows, row(8, "가팀", "x1", "account.main", "GmI_HyunNew", 0, 0, false, "2026-10-10T12:02:00Z")], matches, keyOf, merge });
+  assert.equal(renamed.find((x) => x.key === keyOf("account.main")).ign, "GmI_HyunNew");
   // merge 없으면 종전 그대로(계정마다 한 줄)
   assert.equal(C.buildCareer({ rows, matches, keyOf }).length, 4);
   // 고리가 있어도 멈춘다
