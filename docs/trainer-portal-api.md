@@ -3555,6 +3555,11 @@ GET /api/trainer-portal/owner/dashboard/lessons?date=2026-09-28&trainerKey=…&l
 | 0줄 | 없음 | 403 `account_link_pending` — 종전(`/pending`) |
 | 0줄 | 모름 | 503 🆕 `clan_check_unavailable` — 앱은 「잠깐 확인 중이에요」 + 다시 시도(연결 신청 화면으로 보내지 않는다) |
 
+- **🆕 클랜 방 스위치 `clan_room` 이 켜진 뒤에만 위 표의 새 줄(🆕 · `scope: "member"` · 503)이 산다**(10/11 검수 지적 · 지휘). 스위치는 킬내기 앱 계약 §18.1 의 설정 줄 `killrace:switches` 다섯째 키 · 기본 `false` · 오너만 켠다.
+  - **꺼져 있으면 `/exchange` 는 종전 그대로** — 길드 조회를 하지 않는다 · 0줄은 클랜 역할과 상관없이 403 `account_link_pending`(`/pending`) · prospect 는 403 `application_pending` · `scope` 는 늘 `"student"`.
+    그래서 서버를 먼저 배포해도 신규 가입자가 503 `clan_check_unavailable` 을 받지 않는다(봇 재기동 직후 · 조회 실패가 연결 대기 화면을 가로막지 않음).
+  - 꺼져 있으면 클랜 길(`/api/student-portal/clan/*` · 코인 · 기프티콘함 포함)은 409 `switch_off` — 클랜 판정(403 `clan_required` · 503 `clan_check_unavailable`)보다 먼저 본다.
+  - 앱(수강생 앱)도 자기 플래그가 꺼져 있으면 `clan_check_unavailable` 을 연결 대기로 읽는다 — **서버 · 앱 양쪽 잠금**. 둘 중 하나만 켜져서는 클랜 방이 열리지 않는다.
 - `member` 세션 = `{ provider: "discord", pid: <디스코드 번호>, sub: null, scope: "member" }` · 절대수명 24h(종전과 같다).
 - **방이 바뀌면 다시 로그인** — `member` 세션은 요청마다(30초 기억) ① 명부에 그 디스코드 줄이 생겼거나(연결 승인 · 등록) ② 클랜 역할이 없어졌으면(10분 기억) 401 `session_expired`.
   앱은 종전처럼 다시 `/exchange` 를 부르고, 새 결과대로 세션을 받는다(`member` → `student` 로 올라간다). `student` 세션의 연결 확인(`linkMatches`)은 종전 그대로.
