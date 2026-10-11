@@ -6,8 +6,8 @@
 // ⚠️ 응답 · 로그 · 카드에 계정 번호 · 디스코드 번호 · 주소 · 연락처를 싣지 않는다. 사비(krw_cost)는 오너 길에만.
 
 const SWITCH_KEY = "killrace:switches";
-const SWITCH_DEFAULTS = Object.freeze({ coin_shop: false, casino_link: false, deposit: false, monthly_budget_krw: 200000 });
-const SWITCH_BOOL = ["coin_shop", "casino_link", "deposit"];
+const SWITCH_DEFAULTS = Object.freeze({ coin_shop: false, casino_link: false, deposit: false, shop_vote: false, monthly_budget_krw: 200000 });
+const SWITCH_BOOL = ["coin_shop", "casino_link", "deposit", "shop_vote"];
 const COIN_KEY = "killrace:coin";
 const COIN_DEFAULTS = Object.freeze({
   on: false,

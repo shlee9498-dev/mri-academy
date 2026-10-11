@@ -7374,3 +7374,30 @@ notify pgrst, 'reload schema';
 --   killrace_coin_exchanges · killrace_coin_items · drop function killrace_coin_request_exchange(text,text,text,bigint,text,integer,jsonb) ·
 --   killrace_coin_close_exchange(bigint,text,text,text) · killrace_coin_ledger_no_change() · killrace_coin_ledger_guard() · killrace_coin_exchanges_guard() ·
 --   killrace_gift_box_no_delete() · alter table killrace_prize_ledger drop column funding · delete from storage.buckets where id='killrace-gifts' · notify pgrst
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- §77  킬내기 앱 매점 투표 표 (2026-10-11 · 지휘 「10/13 오픈」 · 오너 「투표를 받자 일단 넣지말고」 · 더하기만)
+--   계약 docs/killrace-api.md §1.31 · 스위치 shop_vote(앱 계약 §18.1 · 기본 꺼짐) · 투표 설정은 ops_state killrace:vote:<id> 한 줄(DDL 아님)
+--   이 표는 투표만 담는다 — 코인 원장 · 상금 원장 · 매점 품목 표와 잇지 않는다. 디스코드 번호는 「한 사람 한 표」 판정에만 쓰고 응답에 싣지 않는다.
+-- 77-0) 스냅샷: select to_regclass('public.killrace_vote_ballots');   -- null
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+create table if not exists public.killrace_vote_ballots (
+  id          bigserial primary key,
+  poll_id     text        not null,
+  platform    text        not null,
+  account_id  text        not null,                 -- 본계(합치기 사슬 끝)
+  discord_id  text        not null,
+  choices     text[]      not null default '{}',
+  suggestion  text        check (suggestion is null or char_length(suggestion) between 1 and 40),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  check (cardinality(choices) <= 4),
+  check (cardinality(choices) > 0 or suggestion is not null)
+);
+create unique index if not exists killrace_vote_ballots_person  on public.killrace_vote_ballots (poll_id, platform, account_id);
+create unique index if not exists killrace_vote_ballots_discord on public.killrace_vote_ballots (poll_id, discord_id);
+alter table public.killrace_vote_ballots enable row level security;   -- service_role 만
+notify pgrst, 'reload schema';
+
+-- 77 검증(읽기만): 칸 9 · 색인 3(pkey · person · discord) · RLS true · 줄 0
+-- 되돌림(줄이 있으면 지휘 · 오너 확인 먼저): drop table killrace_vote_ballots · notify pgrst
