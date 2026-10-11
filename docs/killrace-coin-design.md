@@ -110,6 +110,43 @@ create table if not exists public.killrace_coin_items (
 -- alter table public.killrace_coin_shipping enable row level security;   -- 정책 0 = service_role 만 · 서버는 오너 길 · 받은 사람 본인 상태만
 -- (closed = 거절 · 취소로 비움. 지우기 = 줄은 남기고 세 칸만 null — delete 는 쓰지 않는다 · 14일 정리 = 매일 10:00 KST 한 번)
 
+-- 76a-3) 상금 · 기프티콘 앱 지급(계약 §1.29) — 더하기만
+-- alter table public.killrace_prize_ledger add column if not exists funding text check (funding is null or funding in ('owner', 'sponsor'));   -- 재원(비우면 사비)
+-- alter table public.killrace_prize_ledger add column if not exists accrue_notified_at timestamptz;                                          -- 적립 안내 DM 시각
+--   ⚠️ §73 방아쇠가 「고칠 수 있는 칸」을 정해 둔다 — accrue_notified_at 을 빈 칸 → 시각 한 번 채울 수 있게 방아쇠 함수에 한 줄 더해야 한다
+--      (함수 교체 = B 구간 · 오너 OK). 대안(A 구간): 안내 시각을 원장이 아니라 ops_state 'killrace:prize:notified' { 줄 id: 시각 } 에 둔다 → 설계 추천은 대안.
+-- create table if not exists public.killrace_gift_box (
+--   id               bigint      generated always as identity primary key,
+--   kind             text        not null check (kind in ('gifticon', 'physical')),
+--   platform         text        not null check (platform in ('steam', 'kakao')),
+--   account_id       text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),
+--   ign              text        check (ign is null or char_length(ign) between 1 and 40),
+--   event_id         bigint      references public.event_defs (id),
+--   reason           text        check (reason is null or char_length(reason) between 1 and 40),
+--   item_name        text        not null check (char_length(item_name) between 1 and 40),
+--   krw_value        integer     check (krw_value is null or krw_value between 0 and 1000000),   -- 모르면 비움(확인 필요)
+--   funding          text        not null default 'owner' check (funding in ('owner', 'sponsor')),
+--   code             text        check (code is null or char_length(code) <= 200),               -- 기프티콘 코드 · 지우는 때 null
+--   image_path       text        check (image_path is null or char_length(image_path) <= 200),   -- 비공개 버킷 경로 · 지우는 때 null
+--   expires_on       date,
+--   state            text        not null default 'registered' check (state in ('registered', 'opened', 'received', 'expired', 'cancelled')),
+--   notified_at      timestamptz,
+--   notify_failed_at timestamptz,
+--   opened_at        timestamptz,
+--   received_at      timestamptz,
+--   purged_at        timestamptz,                                                                  -- 코드 · 사진을 지운 시각
+--   cancel_reason    text        check (cancel_reason is null or char_length(cancel_reason) <= 100),
+--   created_by       text        not null check (char_length(created_by) between 1 and 20),         -- 「오너」
+--   created_at       timestamptz not null default now(),
+--   constraint killrace_gift_box_payload check (purged_at is not null or kind = 'physical' or code is not null or image_path is not null),
+--   constraint killrace_gift_box_purged  check (purged_at is null or (code is null and image_path is null))
+-- );
+-- create index if not exists killrace_gift_box_person on public.killrace_gift_box (platform, account_id, state);
+-- alter table public.killrace_gift_box enable row level security;   -- 정책 0 = service_role 만
+-- 배송 표(76a-2)는 교환 신청 말고 기프티콘함 실물도 받도록 칸 하나: gift_id bigint references killrace_gift_box(id) ·
+--   exchange_id 를 nullable 로 두고 check (num_nonnulls(exchange_id, gift_id) = 1) · 기본 키는 id identity 로(초안 수정)
+-- 비공개 버킷: storage 버킷 'killrace-gifts'(public = false) — 서버가 1분짜리 서명 주소만 낸다
+
 -- 76b) 교환 신청 — 신청됨 → 승인(발송 대기) → 보냄 / 거절 · 취소. 상태는 앞으로만 간다(방아쇠)
 create table if not exists public.killrace_coin_exchanges (
   id            bigint      generated always as identity primary key,
