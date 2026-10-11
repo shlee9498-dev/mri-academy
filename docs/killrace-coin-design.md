@@ -112,9 +112,8 @@ create table if not exists public.killrace_coin_items (
 
 -- 76a-3) 상금 · 기프티콘 앱 지급(계약 §1.29) — 더하기만
 -- alter table public.killrace_prize_ledger add column if not exists funding text check (funding is null or funding in ('owner', 'sponsor'));   -- 재원(비우면 사비)
--- alter table public.killrace_prize_ledger add column if not exists accrue_notified_at timestamptz;                                          -- 적립 안내 DM 시각
---   ⚠️ §73 방아쇠가 「고칠 수 있는 칸」을 정해 둔다 — accrue_notified_at 을 빈 칸 → 시각 한 번 채울 수 있게 방아쇠 함수에 한 줄 더해야 한다
---      (함수 교체 = B 구간 · 오너 OK). 대안(A 구간): 안내 시각을 원장이 아니라 ops_state 'killrace:prize:notified' { 줄 id: 시각 } 에 둔다 → 설계 추천은 대안.
+--   적립 안내 시각은 칸이 아니라 ops_state 'killrace:prize:notified' { 줄 id: 시각 } — §73 방아쇠가 고칠 칸을 정해 둬서 칸으로 두면 함수 교체(B 구간)가 든다.
+--   funding 은 적을 때만 넣고 고치지 않는다(방아쇠의 「고칠 수 없는 칸」 비교 목록에 없어도 insert 는 그대로 통과).
 -- create table if not exists public.killrace_gift_box (
 --   id               bigint      generated always as identity primary key,
 --   kind             text        not null check (kind in ('gifticon', 'physical')),
