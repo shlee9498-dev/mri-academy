@@ -89,6 +89,24 @@ create table if not exists public.killrace_coin_items (
   created_at  timestamptz not null default now()
 );
 
+-- 76a-2) 실물 배송 정보 — 동의 받은 실물 교환에만 · 「보냄」 · 거절 · 취소 때 세 칸을 비운다(계약 §1.28.11b)
+--   교환 신청 표 다음에 만든다(아래 76b 뒤로 옮겨 실행 · 외래 키 순서).
+-- create table if not exists public.killrace_coin_shipping (
+--   exchange_id      bigint      primary key references public.killrace_coin_exchanges (id),
+--   recipient_name   text        check (recipient_name is null or char_length(recipient_name) between 1 and 20),
+--   address          text        check (address is null or char_length(address) between 5 and 120),
+--   phone            text        check (phone is null or phone ~ '^[0-9-]{9,13}$'),
+--   consent_version  text        not null check (char_length(consent_version) between 1 and 20),
+--   consented_at     timestamptz not null,
+--   purged_at        timestamptz,
+--   created_at       timestamptz not null default now(),
+--   constraint killrace_coin_shipping_shape check (
+--     (purged_at is null and recipient_name is not null and address is not null and phone is not null)
+--     or (purged_at is not null and recipient_name is null and address is null and phone is null))
+-- );
+-- alter table public.killrace_coin_shipping enable row level security;   -- 정책 0 = service_role 만 · 서버는 오너 길에서만 읽는다
+-- (지우기 = 줄은 남기고 세 칸만 null — 「배송 완료 · 개인정보 삭제됨」 기록. delete 는 쓰지 않는다)
+
 -- 76b) 교환 신청 — 신청됨 → 승인(발송 대기) → 보냄 / 거절 · 취소. 상태는 앞으로만 간다(방아쇠)
 create table if not exists public.killrace_coin_exchanges (
   id            bigint      generated always as identity primary key,
@@ -312,6 +330,7 @@ notify pgrst, 'reload schema';
 | 4 | 교환 신청 확인 → 결과(「신청했어요 · 오너가 디스코드 DM 으로 보내 드려요」) · 열린 신청 하나면 「바꾸기」 잠금 · 신청 취소 | `POST …/clan/coin/exchange` · `POST …/clan/coin/exchange/cancel` |
 | 5 | 이번 달 남은 코인(운영진 참고 · 모두에게 보여도 됨) | 1 의 응답 `month` |
 
+- 실물 경품은 동의 체크박스(계약 §1.28.11b) 필수 · 만 14세 확인 없으면 실물만 막음 · 주소 · 연락처는 본인 화면에도 다시 보이지 않는다.
 - 코인 화면에는 **원 · 현금 · 충전 · 구매 · 환급**이라는 말을 쓰지 않는다(화면 문구 · 법적 검토 전). 「1코인 = 1원」도 화면에 안 쓴다(내부 환산용).
 - 숫자는 서버 값만.
 
