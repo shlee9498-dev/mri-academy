@@ -154,6 +154,16 @@ test("길: 꺼져 있으면 교환 423 coin_off · 매점 스위치 꺼짐 409 s
   assert.equal(w.rpc.length, 0);
 });
 
+test("길: 품목 0줄 · 스위치 꺼짐(배포 직후 모양) — 매점은 200 빈 목록 · 잠김 이유 off/shop_off · 지갑 200 · 교환은 쓰기 없이 막힘", async () => {
+  const w = world({ items: [] });
+  const s = await w.call("GET /api/killrace/me/coin/shop");
+  assert.deepEqual([s.code, s.body.on, s.body.items, s.body.open, s.body.canExchange, s.body.lockedReason], [200, false, [], null, false, "off"]);
+  assert.equal((await world({ items: [], coin: { on: true } }).call("GET /api/killrace/me/coin/shop")).body.lockedReason, "shop_off");
+  assert.equal((await w.call("GET /api/killrace/me/coin")).code, 200);
+  assert.equal((await w.call("POST /api/killrace/me/coin/exchange", { itemId: 1 })).body.error.code, "coin_off");
+  assert.deepEqual([w.rpc.length, w.writes.length], [0, 0]);
+});
+
 test("길: 켜지면 — 본인 확인 전 409 · 실물은 동의 없으면 400 · 기프티콘 교환은 예산 넘겨 DB 함수 한 번 · 응답에 사비 · 계정 번호 없음", async () => {
   const on = { switches: { coin_shop: true }, coin: { on: true } };
   assert.equal((await world({ ...on, verified: false }).call("POST /api/killrace/me/coin/exchange", { itemId: 1 })).body.error.code, "not_verified");
