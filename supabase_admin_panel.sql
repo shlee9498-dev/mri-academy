@@ -7085,6 +7085,7 @@ notify pgrst, 'reload schema';
 --   코인 = 상금 없는 연습판에서만 생긴다 · 매점 경품으로만 나간다(+ 카지노 한 방향 casino_out · 스위치 꺼짐).
 --   사기(buy) · 돈으로 바꾸기(cashout) · 주고받기(transfer) 종류가 없다(구조로 막는다). payments · payouts · 카지노 표와 잇지 않는다.
 --   §73 원장은 칸 하나(funding)만 더한다 — 기존 줄 · 제약 · 방아쇠 함수는 그대로(funding 을 고치지 않는 건 서버 약속).
+--   MCP(execute_sql) 실행 때는 drop trigger if exists 줄을 생략한다 — drop 이 든 문장은 확인 대기로 60초에 끊긴다(10/11 실측). 방아쇠가 없을 때만 결과가 정본과 같다.
 -- 76-0) 스냅샷: select to_regclass('public.killrace_coin_ledger'), to_regclass('public.killrace_coin_items'), to_regclass('public.killrace_coin_exchanges'),
 --                to_regclass('public.killrace_coin_shipping'), to_regclass('public.killrace_gift_box');   -- 전부 null
 --              select count(*) from information_schema.columns where table_schema='public' and table_name='killrace_prize_ledger';   -- 18
