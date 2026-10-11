@@ -5,7 +5,7 @@
 // 자격 = 20판 이상 + 기준 시각에서 30일 안에 1판 이상. 점수 = 자격자끼리 0.5 × z(판당 킬) + 0.5 × z(판당 딜)(모집단 표준편차).
 // 같은 사람 합치기 = ops_state 'killrace:people' { merge: { 옛 계정: 기준 계정 } } — 계정 번호는 그 설정 줄(DB)에만 있다.
 // 갱신 = 수요일 09:00 KST · 회차 window_end + 45분 뒤 한 번. 결과는 ops_state 'killrace:leaderboard' 저장본으로 낸다.
-const { keyMaker, reviveOut } = require("./killrace-career.cjs");
+const { keyMaker, reviveOut, mergeRootOf } = require("./killrace-career.cjs");
 const crypto = require("crypto");
 const { humanRows } = require("./killrace-detail.cjs");   // §1.24 봇 킬 · 딜 빼기(2회부터 소급 · 저장된 bot_kills · bot_dmg 칸)
 
@@ -60,9 +60,10 @@ function dueReason(state, events, now) {
 function buildLeaderboard({ rows, matches, merge = {}, now, minGames = MIN_GAMES, recentDays = RECENT_DAYS, top = TOP }) {
   const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const people = new Map();
+  const rootOf = mergeRootOf(merge);           // 개인 누적(career)과 같은 묶기 — 사슬 끝(본계)까지(§1.29)
   for (const r of rows || []) {
     if (!r.account_id || !counted.has(`${r.event_id}|${r.team_name}|${r.match_id}`)) continue;   // 봇 몫이 아직이면 공식 값이 잠정으로 들어간다(§1.24)
-    const acc = (merge && typeof merge[r.account_id] === "string" && merge[r.account_id]) || r.account_id;
+    const acc = rootOf(r.account_id);
     if (!people.has(acc)) people.set(acc, { games: 0, kills: 0, damage: 0, last: -Infinity, ign: "", ignAt: -Infinity });
     const p = people.get(acc);
     p.games += 1; p.kills += Number(r.kills) || 0; p.damage += Number(r.damage) || 0;

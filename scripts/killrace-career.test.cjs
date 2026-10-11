@@ -114,3 +114,23 @@ test("§1.24 2회(event 2)부터 개인 킬 · 딜에서 저장된 봇 몫(bot_k
   const [a] = C.buildCareer({ rows: humanRows(raw), matches, keyOf });
   assert.deepEqual([a.games, a.kills, a.damage, a.pendingGames], [4, 8, 900, 1]);
 });
+
+test("합치기(§1.29): killrace:people merge 로 묶인 계정은 한 사람 — 부계 · 본계 어느 닉으로 찾아도 같은 줄 · 사슬 끝(본계) 키 · 합친 계정 수 · 다른 닉", () => {
+  const rows = [
+    row(8, "가팀", "x1", "account.alt", "GmI_HuDal", 1, 286, true, "2026-10-10T12:02:00Z"),
+    row(5, "나팀", "x2", "account.main", "GmI_Hyun", 3, 500, true, "2026-10-08T12:10:00Z"),
+    row(3, "다팀", "x3", "account.old", "HyunOld", 2, 100, false, "2026-10-01T12:10:00Z"),
+    row(5, "나팀", "x2", "account.z", "Zed", 0, 10, true, "2026-10-08T12:10:00Z"),
+  ];
+  const matches = [match(8, "가팀", "x1", 1), match(5, "나팀", "x2", 1), match(3, "다팀", "x3", 1)];
+  const merge = { "account.old": "account.alt", "account.alt": "account.main" };       // 사슬: old → alt → main
+  const out = C.buildCareer({ rows, matches, keyOf, merge });
+  assert.equal(out.length, 2);
+  const p = out.find((x) => x.key === keyOf("account.main"));
+  assert.deepEqual([p.ign, p.games, p.kills, p.damage, p.deaths, p.accounts, p.aka, p.events], ["GmI_HuDal", 3, 6, 886, 2, 3, ["GmI_Hyun", "HyunOld"], [3, 5, 8]]);
+  assert.deepEqual([out.find((x) => x.ign === "Zed").accounts, out.find((x) => x.ign === "Zed").aka], [1, []]);
+  // merge 없으면 종전 그대로(계정마다 한 줄)
+  assert.equal(C.buildCareer({ rows, matches, keyOf }).length, 4);
+  // 고리가 있어도 멈춘다
+  assert.equal(C.mergeRootOf({ a: "b", b: "a" })("a"), "b");
+});
