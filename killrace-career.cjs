@@ -37,11 +37,11 @@ const reviveOut = (rv) => !!(rv && rv.state === "late" && rv.rule === "penalty")
 function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES }) {
   const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const games = new Map();                       // 판(회차|팀|매치) → 그 판 우리 팀 선수 줄
-  const pending = new Map();                     // 계정 → 텔레메트리를 기다리는 판 수(§1.24 「집계 중」 · 판 수에 안 넣는다)
+  const pending = new Map();                     // 계정 → 봇 몫을 기다리는 판 수(§1.24 · 그 판은 공식 값을 잠정으로 센다)
   for (const r of rows || []) {
     const g = `${r.event_id}|${r.team_name}|${r.match_id}`;
     if (!counted.has(g) || !r.account_id) continue;
-    if (r.pendingBot) { pending.set(r.account_id, (pending.get(r.account_id) || 0) + 1); continue; }
+    if (r.pendingBot) pending.set(r.account_id, (pending.get(r.account_id) || 0) + 1);
     if (!games.has(g)) games.set(g, []);
     games.get(g).push(r);
   }
