@@ -125,3 +125,62 @@ test("길: 실물 기프티콘함 — 열기 대신 배송 · 동의 없음 400 
   const ins = w.writes.find(([t]) => t === "killrace_coin_shipping")[1];
   assert.deepEqual([ins.gift_id, ins.consent_version], [7, C.SHIP_CONSENT_VERSION]);
 });
+
+// ── 켜기 전 고칠 것(검수 10/11 · §1.28.6a · §1.30.3 · §1.28.11b 기프티콘함 실물) ──
+function physWorld({ shipState = null, owner = false } = {}) {
+  const writes = [], dms = [];
+  const gift = { id: 8, kind: "physical", platform: "steam", account_id: A, item_name: "패드", code: null, image_path: null, expires_on: null, state: "registered", created_at: "2026-10-11", event_id: 9, reason: "1등 팀" };
+  const ship = shipState ? { id: 3, gift_id: 8, ship_state: shipState, tracking: shipState === "requested" ? [] : [{ no: "777777" }], address: "서울시 어딘가", phone: "010-1234-5678" } : null;
+  const sb = {
+    sbSelect: async (t, q) => {
+      if (t === "killrace_prize_verifications") return [{ platform: "steam", account_id: A }];
+      if (t === "killrace_gift_box") return [gift];
+      if (t === "killrace_coin_shipping") return ship ? [ship] : [];
+      if (t === "killrace_members") return [{ discord_id: "d9", account_id: A, ign: "Aaa", platform: "steam" }];
+      if (t === "event_defs") return [{ id: 9, name: "7회" }];
+      return [];
+    },
+    sbInsert: async (t, r) => { writes.push([t, r]); return { id: 5, ...r }; },
+    sbPatch: async (t, f, r) => { writes.push([t, r]); return [r]; },
+    sbUpsert: async (t, r) => r,
+  };
+  const coin = C.createCoin({ ...sb, sbRpc: async () => 1, userOf: () => ({ id: "d1" }), memberOf: async () => ({ id: 1, platform: "steam", account_id: A, ign: "Aaa" }), log: { log() {}, warn() {} } });
+  const api = G.createGift({ ...sb, isOwner: () => owner, personFromKillrace: coin.personFromKillrace, personFromPortal: coin.personFromPortal,
+    storageSign: async () => null, storageUpload: async () => {}, storageRemove: async () => {},
+    notifyUser: async (d, t) => { dms.push(t); return true; }, notifyOwner: async (t) => { dms.push(t); return true; }, log: { log() {}, warn() {} } });
+  return { api, coin, writes, dms };
+}
+
+test("기프티콘함 목록: { linked, verified, items } · 실물만 ship { state, trackingNo } · 주소 칸 없음 · 기프티콘은 ship null", async () => {
+  const w = physWorld({ shipState: "shipped" });
+  const l = await w.api.listMine(await w.coin.personOfDiscord("d1"));
+  assert.deepEqual(Object.keys(l), ["linked", "verified", "items"]);
+  assert.deepEqual(Object.keys(l.items[0]).sort(), ["createdAt", "event", "expiresOn", "id", "item", "kind", "openedAt", "purged", "reason", "receivedAt", "ship", "state"]);
+  assert.deepEqual(l.items[0].ship, { state: "shipped", trackingNo: "777777" });
+  assert.doesNotMatch(JSON.stringify(l), /서울|010-/);
+  assert.equal(G.giftView({ id: 1, kind: "gifticon", state: "registered" }, {}, { ship_state: "shipped" }).ship, null);
+  assert.equal((await physWorld().api.listMine(await physWorld().coin.personOfDiscord("d1"))).items[0].ship, null);   // 받을 곳 안 적음
+});
+
+test("기프티콘함 실물: 「못 받았어요」는 발송함만 · 세 칸 비움 → reship_pending · 오너 「발송함」(requested 만 · 송장) · 「분실」 · 오너 아니면 403", async () => {
+  assert.equal((await physWorld({ shipState: "requested" }).api.lost(await physWorld().coin.personOfDiscord("d1"), 8)).code, "not_shipped");
+  const w = physWorld({ shipState: "shipped" });
+  const r = await w.api.lost(await w.coin.personOfDiscord("d1"), 8);
+  assert.deepEqual(r.body, { ok: true, shipState: "reship_pending" });
+  const p = w.writes.find(([t]) => t === "killrace_coin_shipping")[1];
+  assert.deepEqual([p.recipient_name, p.address, p.phone, !!p.purged_at], [null, null, null, true]);
+  assert.equal(w.dms.length, 1);
+  const o = physWorld({ shipState: "requested" });
+  assert.equal((await o.api.shipGift(8, "shipped", { trackingNo: "x" })).code, "bad_tracking");
+  assert.deepEqual((await o.api.shipGift(8, "shipped", { trackingNo: "123456" })).body, { ok: true, shipState: "shipped" });
+  assert.doesNotMatch(o.dms.join(), /123456|서울/);
+  assert.equal((await physWorld({ shipState: "shipped" }).api.shipGift(8, "shipped", { trackingNo: "123456" })).code, "bad_state");
+  assert.equal((await physWorld().api.shipGift(8, "shipped", { trackingNo: "123456" })).code, "no_address");
+  assert.deepEqual((await physWorld({ shipState: "shipped" }).api.shipGift(8, "lost")).body, { ok: true, shipState: "reship_pending" });
+  const routes = {};
+  physWorld({ shipState: "requested" }).api.mount({ get: (pth, ...h) => { routes[`GET ${pth}`] = h.at(-1); }, post: (pth, ...h) => { routes[`POST ${pth}`] = h.at(-1); } }, { shipInput: C.shipInput });
+  let out; await routes["POST /api/killrace/gifts/admin"]({ body: { action: "shipped", id: 8, trackingNo: "123456" }, params: {}, query: {}, headers: {} },
+    { status(c) { this.c = c; return this; }, json(b) { out = { code: this.c || 200, body: b }; return this; } });
+  assert.equal(out.code, 403);
+  assert.ok(routes["POST /api/killrace/me/gifts/:id/lost"] && routes["POST /api/student-portal/clan/gifts/:id/lost"]);
+});
