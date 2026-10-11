@@ -10,10 +10,11 @@
 //   카드(오너 DM) — 매점 교환 승인 · 거절(사유) · 발송함(송장) · 기프티콘함 미수령 — 주소 · 연락처 · 코드는 싣지 않는다(받은 값이 있어도 버린다)
 //   받는 사람 DM 문구 두 개(§1.30.2 · §1.30.3) — 코드 없음 · 실패해도 다시 보내지 않는다(sendOnce)
 //
-// server.js 에 붙이는 한 줄은 경비가 한다(이 파일은 server.js 를 고치지 않는다):
-//   const coinBot = require("./killrace-coin-bot.cjs").createCoinBot({ env: process.env, switches, coin, gifts, exchanges, log: console });
-//   registerLessonCmd 의 목록에 ...require("./killrace-coin-bot.cjs").COMMANDS
-//   client.on("interactionCreate", (itx) => coinBot.handle(itx).catch((e) => console.error("[killrace-coin-bot] handler", e?.message)));
+// server.js(경비 #563)는 이 파일을 함수로 부른다 — require("./killrace-coin-bot.cjs")({ coin, gift, getClient, ownerId }).
+//   coin = killrace-coin.cjs createCoin() 의 반환(switches · setSwitch · budget · preview · pay · decide · shipAdmin · adminList · wallet)
+//   gift = killrace-gift.cjs createGift() 의 반환(addGift · adminList)
+//   붙이기(attach)가 아래 deps 모양으로 감싸고, 봇이 뜨면 interactionCreate 를 걸고 명령 셋을 LESSON_GUILD_ID 길드에 만든다(create — 다른 명령을 지우지 않는다).
+//   ⚠️ registerLessonCmd 의 commands.set(list) 은 길드 명령을 통째로 바꾼다 — 그 목록에 ...require("./killrace-coin-bot.cjs").COMMANDS 를 더하면 가장 깔끔하다(경비 한 줄).
 //
 // deps(경비 모듈이 채운다 · 없으면 그 명령은 「아직 서버 쪽이 안 붙었어」로 답한다 — 오류로 죽지 않는다)
 //   switches.read()                                   → { coin_shop, casino_link, deposit, monthly_budget_krw, budget?: { month, limit, used: { shop, prize }, left } }
@@ -21,7 +22,7 @@
 //   coin.preview({ eventId })                         → { event: { id, name }, people, total, limit, scale, top: [{ ign, coin }] }
 //   coin.pay({ eventId, by })                         → { event: { id, name }, status: "paid" | "skipped" | "already", rows, total, scale, left, reason? }
 //   coin.status()                                     → { month, issued, cap, left, openExchanges }
-//   gifts.add({ ign, item, expiresAt, code, image, funding, eventId, reason, amountKrw, by }) → { id, ign, item, expiresAt, notified }
+//   gifts.add({ ign, item, expiresAt, expiresOn, code, image, funding, eventId, reason, amountKrw, by }) → { id, ign, item, notified }
 //   exchanges.approve({ id, by }) · reject({ id, reason, by }) · ship({ id, trackingNo, by }) → { id, ign, item, status, notified }
 // 오류는 { userMsg } 또는 { code }(계약 코드)로 던진다 — 코드는 아래 ERR 로 반말 문구를 고른다.
 
@@ -51,6 +52,7 @@ const COMMANDS = [
       { type: 1, name: "지급", description: "확정 조건을 보고 그 연습판 코인을 줘(소급용 · 한 번만)",
         options: [{ name: "회차", description: "대회 번호", type: 4, required: true, min_value: 1, max_value: 9999 }] },
       { type: 1, name: "현황", description: "이번 달 발행 · 남은 한도 · 열린 교환 신청 수" },
+      { type: 1, name: "교환", description: "승인 대기 · 보낼 차례 교환 신청 — 카드 버튼으로 승인 · 거절 · 보냄" },
     ],
   },
   {
@@ -119,6 +121,7 @@ function switchesText(sw) {
 
 function previewText(p) {
   if (!p) return "계산할 게 없어";
+  if (p.skipped) return `${(p.event && p.event.name) || "회차"} 은 코인 대상이 아니야 — ${PAY_REASON[p.skipped] || p.skipped}`;
   const head = `${(p.event && p.event.name) || "회차"} 코인 미리보기(쓰지 않았어)`;
   const sum = `사람 ${num(p.people)}명 · 합 ${num(p.total)}코인 · 한도 ${num(p.limit)}${p.scale != null && p.scale < 1 ? ` · 한도 때문에 ${Math.floor(p.scale * 100)}%로 줄여` : ""}`;
   const top = (p.top || []).slice(0, 10).map((x, i) => `${i + 1}. ${x.ign} ${num(x.coin)}`).join("\n");
@@ -159,10 +162,10 @@ function exchangeCard(ex) {
   ].filter(Boolean);
   const buttons = [];
   if (e.status === "requested" || !e.status) {
-    buttons.push({ type: 2, style: 3, label: "승인", custom_id: `kcoin_ok:${e.id}` });
-    buttons.push({ type: 2, style: 4, label: "거절", custom_id: `kcoin_no:${e.id}` });
+    buttons.push({ type: 2, style: 3, label: `#${e.id} 승인`, custom_id: `kcoin_ok:${e.id}` });
+    buttons.push({ type: 2, style: 4, label: `#${e.id} 거절`, custom_id: `kcoin_no:${e.id}` });
   } else if (e.status === "approved") {
-    buttons.push({ type: 2, style: 1, label: physical ? "발송함(송장)" : "보냄", custom_id: `kcoin_ship:${e.id}` });
+    buttons.push({ type: 2, style: 1, label: physical ? `#${e.id} 발송함(송장)` : `#${e.id} 보냄`, custom_id: `kcoin_ship:${e.id}` });
   }
   return { content: lines.join("\n"), components: buttons.length ? [{ type: 1, components: buttons }] : [] };
 }
@@ -208,6 +211,15 @@ const ERR = {
   need_tracking: "송장번호를 적어줘",
   need_reason: "거절 사유를 한 줄 적어줘",
   table_missing: "서버 표가 아직 없어(DDL 실행 전)",
+  bad_state: "지금 단계에서는 못 해. 카드 상태를 다시 봐줘",
+  use_shipping: "실물이라 송장번호를 같이 적어줘",
+  bad_tracking: "송장번호는 숫자 · 영문 · 하이픈 6 ~ 30자로 적어줘",
+  ambiguous: "그 닉을 쓴 계정이 둘 이상이야. 정확한 닉으로 다시 해줘",
+  need_payload: "사진이나 코드 중 하나는 넣어줘",
+  already_expired: "이미 지난 날짜야",
+  bad_image: "사진은 png · jpg · webp 3MB까지만 받아",
+  invalid_body: "칸 값이 맞지 않아. 상품 이름은 40자까지야",
+  bad_value: "값이 맞지 않아", bad_key: "모르는 스위치야",
 };
 const errText = (e, fallback) => (e && e.userMsg) || ERR[e && e.code] || fallback;
 
@@ -241,6 +253,14 @@ function createCoinBot(deps = {}) {
       if (!has(deps.coin, "pay")) return itx.editReply({ content: notReady });
       return itx.editReply({ content: payText(await deps.coin.pay({ eventId: itx.options.getInteger("회차"), by: itx.user.id })) });
     }
+    if (sub === "교환") {
+      if (!has(deps.exchanges, "list")) return itx.editReply({ content: notReady });
+      const list = (await deps.exchanges.list()).filter((e) => e.status === "requested" || e.status === "approved");
+      if (!list.length) return itx.editReply({ content: "승인 대기 · 보낼 차례 교환 신청이 없어" });
+      const shown = list.slice(0, 5);                 // 디스코드 한 답에 버튼 줄은 5개까지
+      return itx.editReply({ content: shown.map((e) => exchangeCard(e).content).join("\n\n") + (list.length > 5 ? `\n\n그 밖에 ${list.length - 5}건 더 있어` : ""),
+        components: shown.map((e) => exchangeCard(e).components[0]).filter(Boolean) });
+    }
     if (sub === "현황") {
       if (!has(deps.coin, "status")) return itx.editReply({ content: notReady });
       return itx.editReply({ content: statusText(await deps.coin.status()) });
@@ -259,6 +279,7 @@ function createCoinBot(deps = {}) {
       ign: itx.options.getString("닉").trim(),
       item: itx.options.getString("상품").trim(),
       expiresAt: exp.value,
+      expiresOn: exp.day,
       code: code || null,
       image: att ? { url: att.url, contentType: att.contentType, name: att.name, size: att.size } : null,
       funding: itx.options.getString("재원") || "owner",
@@ -268,7 +289,7 @@ function createCoinBot(deps = {}) {
       by: itx.user.id,
     });
     // 답에 코드 · 사진을 다시 싣지 않는다 — 넣은 사실과 알림 여부만
-    return itx.editReply({ content: `${r.ign} 기프티콘함에 「${r.item}」 넣었어 · 만료 ${exp.day} · ${att ? "사진" : "코드"} 받음\n받는 사람 알림 ${r.notified ? "보냄" : "못 보냄(다시 안 보내 · 직접 알려줘)"}` });
+    return itx.editReply({ content: `${r.ign || itx.options.getString("닉").trim()} 기프티콘함에 「${r.item || itx.options.getString("상품").trim()}」 넣었어 · 만료 ${exp.day} · ${att ? "사진" : "코드"} 받음\n받는 사람 알림 ${r.notified ? "보냄" : "못 보냄(다시 안 보내 · 직접 알려줘)"}` });
   }
 
   // 카드 버튼 · 모달 — 승인 · 거절(사유 모달) · 발송함(송장 모달)
@@ -330,9 +351,118 @@ function createCoinBot(deps = {}) {
   return { handle };
 }
 
-module.exports = {
-  COMMANDS, createCoinBot,
+// ── 경비 모듈 → 봇 deps(§ 머리 주석 모양) — 결과 { status, code } 는 { code } 로 던진다 ──
+function unwrap(r) {
+  if (r && r.code && r.status) { const e = new Error(r.code); e.code = r.code; throw e; }
+  if (r && r.error) { const e = new Error(r.error); e.code = r.error; throw e; }
+  return r && r.body ? r.body : r;
+}
+// 디스코드 첨부 사진 → { base64, type }(경비 addGift 가 비공개 버킷에 올린다 · 3MB 까지)
+async function attachmentImage(image, fetchFn) {
+  if (!image || !image.url) return null;
+  const type = ["image/png", "image/jpeg", "image/webp"].includes(image.contentType) ? image.contentType : null;
+  if (!type || (image.size && image.size > 3 * 1024 * 1024)) { const e = new Error("bad_image"); e.code = "bad_image"; throw e; }
+  const r = await fetchFn(image.url);
+  if (!r.ok) { const e = new Error("bad_image"); e.code = "bad_image"; throw e; }
+  const buf = Buffer.from(await r.arrayBuffer());
+  return { base64: buf.toString("base64"), type };
+}
+function adapt({ coin, gift, fetchFn = globalThis.fetch }) {
+  const deps = {};
+  if (coin && typeof coin.switches === "function") {
+    deps.switches = {
+      read: async () => { const sw = await coin.switches(); return { ...sw, budget: typeof coin.budget === "function" ? await coin.budget(sw).catch(() => null) : null }; },
+      write: async ({ key, value, by }) => {
+        const r = await coin.setSwitch(key, value, by ? `오너(봇)` : "오너(봇)");
+        const sw = r.switches;
+        return { ...sw, budget: typeof coin.budget === "function" ? await coin.budget(sw).catch(() => null) : null };
+      },
+    };
+  }
+  if (coin && typeof coin.preview === "function") {
+    const toView = (p) => ({ event: { id: p.ev.id, name: p.ev.name }, people: p.rows.length, total: p.total, limit: p.limit, scale: p.scale,
+      top: p.rows.slice().sort((a, b) => b.amount - a.amount).map((r) => ({ ign: r.ign, coin: r.amount })) });
+    const REASON = { not_practice: "prize_event", bot_pending: "bot_pending" };
+    deps.coin = {
+      preview: async ({ eventId }) => {
+        if (!eventId) { const e = new Error("need_event"); e.userMsg = "회차 번호를 같이 적어줘"; throw e; }
+        const p = await coin.preview(eventId);
+        if (p.error === "not_found") { const e = new Error("not_found"); e.userMsg = "그 회차를 못 찾았어"; throw e; }
+        if (p.error) return { event: p.ev ? { id: p.ev.id, name: p.ev.name } : { id: eventId, name: `${eventId}번` }, people: 0, total: 0, limit: 0, scale: 1, top: [], skipped: REASON[p.error] || p.error };
+        return toView(p);
+      },
+      pay: async ({ eventId, by }) => {
+        const p = await coin.pay(eventId, { by: "오너(봇)" });
+        if (p.error === "not_found") { const e = new Error("not_found"); e.userMsg = "그 회차를 못 찾았어"; throw e; }
+        if (p.error) return { event: p.ev ? { id: p.ev.id, name: p.ev.name } : { id: eventId, name: `${eventId}번` }, status: "skipped", reason: REASON[p.error] || p.error };
+        if (p.rows.length && !p.wrote) return { event: { id: p.ev.id, name: p.ev.name }, status: "already" };
+        if (!p.rows.length) return { event: { id: p.ev.id, name: p.ev.name }, status: "skipped", reason: p.reason || "month_full" };
+        const sw = await coin.switches();
+        const cap = p.cfg && p.cfg.monthCap != null ? p.cfg.monthCap : sw.monthly_budget_krw;
+        return { event: { id: p.ev.id, name: p.ev.name }, status: "paid", rows: p.rows.length, total: p.total, scale: p.scale, left: Math.max(0, cap - p.issued - p.total) };
+      },
+      status: async () => {
+        const w = typeof coin.wallet === "function" ? await coin.wallet({ linked: false }) : null;
+        const a = typeof coin.adminList === "function" ? await coin.adminList() : null;
+        const m = (w && w.month) || {};
+        return { month: m.key, issued: m.issued, cap: m.cap, left: m.left,
+          openExchanges: a ? a.exchanges.filter((e) => e.status === "requested" || e.status === "approved").length : 0 };
+      },
+    };
+  }
+  if (coin && typeof coin.decide === "function") {
+    deps.exchanges = {
+      list: async () => (await coin.adminList()).exchanges.map((e) => ({ ...e, delivery: e.ship ? "physical" : "gifticon", monthEarned: null })),
+      approve: async ({ id }) => unwrap(await coin.decide(id, "approve")),
+      reject: async ({ id, reason }) => unwrap(await coin.decide(id, "reject", reason)),
+      ship: async ({ id, trackingNo }) => unwrap(trackingNo ? await coin.shipAdmin(id, "shipped", { trackingNo }) : await coin.decide(id, "sent")),
+    };
+  }
+  if (gift && typeof gift.addGift === "function") {
+    deps.gifts = {
+      add: async (x) => {
+        const image = await attachmentImage(x.image, fetchFn);
+        const body = unwrap(await gift.addGift({ ign: x.ign, kind: "gifticon", itemName: x.item, expiresOn: x.expiresOn, code: x.code || null, image,
+          funding: x.funding, eventId: x.eventId, reason: x.reason, krwValue: x.amountKrw == null ? null : x.amountKrw }, { by: "오너(봇)" }));
+        return { id: body.id, ign: x.ign, item: x.item, notified: !!body.notified };
+      },
+    };
+  }
+  return deps;
+}
+
+// server.js(#563)가 부르는 붙이기 — 봇이 뜰 때까지 기다렸다가 한 번만 붙인다
+function attach({ coin, gift, getClient, ownerId, env = process.env, log = console, fetchFn } = {}) {
+  const deps = adapt({ coin, gift, fetchFn });
+  const bot = createCoinBot({ ...deps, env: { MRI_OWNER_ID: typeof ownerId === "function" ? ownerId() : env.MRI_OWNER_ID }, log });
+  let done = false;
+  const tryAttach = () => {
+    const client = typeof getClient === "function" ? getClient() : null;
+    if (done || !client) return false;
+    done = true;
+    client.on("interactionCreate", (itx) => bot.handle(itx).catch((e) => log.error("[killrace-coin-bot] handler", e && e.message)));
+    const register = async () => {
+      const gid = env.LESSON_GUILD_ID;
+      if (!gid || !client.application) return;
+      try {
+        const have = await client.application.commands.fetch({ guildId: gid });
+        const names = new Set([...have.values()].map((c) => c.name));
+        for (const c of COMMANDS) if (!names.has(c.name)) await client.application.commands.create(c, gid);
+        log.log(`[killrace-coin-bot] commands ${COMMANDS.map((c) => "/" + c.name).join("·")} ready`);
+      } catch (e) { log.warn("[killrace-coin-bot] register_failed", String((e && e.message) || e).slice(0, 80)); }
+    };
+    // registerLessonCmd(set)가 먼저 돌게 잠깐 기다린 뒤 빠진 것만 만든다
+    if (typeof client.isReady === "function" && client.isReady()) setTimeout(register, 15000).unref?.();
+    else client.once("ready", () => setTimeout(register, 15000).unref?.());
+    return true;
+  };
+  if (!tryAttach()) { const t = setInterval(() => { if (tryAttach()) clearInterval(t); }, 5000); if (t.unref) t.unref(); }
+  return { bot, deps };
+}
+
+module.exports = Object.assign(attach, {
+  attach, adapt, COMMANDS, createCoinBot,
   parseSwitchValue, parseExpiry, switchesText, previewText, payText, statusText,
   exchangeCard, giftCard, giftArrivedDm, prizeAccruedDm, exchangeResultDm, sendOnce,
   _test: { SWITCH_KEYS, BUDGET_MAX, APP_GIFTS_URL, APP_PRIZE_URL },
-};
+});

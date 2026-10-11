@@ -35,7 +35,7 @@ test("명령 정의 — 셋 · 이름 · 기프티콘 만료일 필수 · 사진
   const g = bot.COMMANDS[2].options;
   assert.equal(g.find((o) => o.name === "만료일").required, true);
   assert.equal(g.find((o) => o.name === "사진").type, 11);
-  assert.deepEqual(bot.COMMANDS[1].options.map((o) => o.name), ["미리보기", "지급", "현황"]);
+  assert.deepEqual(bot.COMMANDS[1].options.map((o) => o.name), ["미리보기", "지급", "현황", "교환"]);
 });
 
 test("스위치 값 — 켬 · 끔 · 예산 숫자 · 잘못된 값", () => {
@@ -139,7 +139,7 @@ test("카드 — 주소 · 연락처 · 코드를 넘겨도 싣지 않음 · 단
   assert.match(c.content, /실물 · 배송 정보 있음/);
   assert.deepEqual(c.components[0].components.map((x) => x.custom_id), ["kcoin_ok:3", "kcoin_no:3"]);
   const ap = bot.exchangeCard({ ...ex, status: "approved" });
-  assert.deepEqual(ap.components[0].components.map((x) => [x.custom_id, x.label]), [["kcoin_ship:3", "발송함(송장)"]]);
+  assert.deepEqual(ap.components[0].components.map((x) => [x.custom_id, x.label]), [["kcoin_ship:3", "#3 발송함(송장)"]]);
   assert.deepEqual(bot.exchangeCard({ ...ex, status: "sent" }).components, []);
   const g = bot.giftCard({ id: 7, ign: "NickA", item: "치킨", expiresAt: "2026-12-31T14:59:59Z", funding: "sponsor", code: "SECRET", imageUrl: "https://x" });
   assert.doesNotMatch(g, /SECRET|https/); assert.match(g, /후원 · 알림 안 감/);
@@ -186,4 +186,89 @@ test("경비 오류 코드 → 반말 문구", async () => {
   const f = fakeItx({ cmd: "킬내기스위치", opts: { 키: "deposit", 값: "켬" } });
   await b.handle(f.itx);
   assert.equal(f.out.edits[0].content, "오너만 바꿀 수 있어");
+});
+
+// ── 경비 #563 모듈 모양(createCoin · createGift 반환)에 붙이기 ──
+function fakeCoin() {
+  const sw = { coin_shop: false, casino_link: false, deposit: false, monthly_budget_krw: 200000 };
+  const calls = [];
+  const ex = [{ id: 7, ign: "NickA", item: "커피 기프티콘", coinPrice: 5000, krwCost: 5000, status: "requested", ship: null },
+              { id: 8, ign: "NickB", item: "마우스패드", coinPrice: 20000, krwCost: 20000, status: "approved", ship: { state: "requested", tracking: [] } },
+              { id: 9, ign: "NickC", item: "치킨", coinPrice: 20000, status: "sent", ship: null }];
+  return { sw, calls, ex,
+    switches: async () => ({ ...sw }),
+    budget: async (s) => ({ month: "2026-10", limit: s.monthly_budget_krw, used: { shop: 25000, prize: 0 }, left: s.monthly_budget_krw - 25000 }),
+    setSwitch: async (key, value, by) => { calls.push(["setSwitch", key, value, by]); const before = sw[key]; sw[key] = value; return { before, switches: { ...sw } }; },
+    preview: async (id) => (id === 9 ? { error: "not_practice", ev: { id: 9, name: "GmI 킬내기 7회" } } : id === 99 ? { error: "not_found" }
+      : { ev: { id, name: "연습 킬내기 10/18" }, month: "2026-10", cfg: { monthCap: null }, rows: [{ ign: "A", amount: 3000 }, { ign: "B", amount: 8600 }], total: 11600, limit: 120000, scale: 1, issued: 0 }),
+    pay: async (id) => ({ ev: { id, name: "연습 킬내기 10/18" }, month: "2026-10", cfg: { monthCap: null }, rows: [{ ign: "A", amount: 3000 }], total: 3000, scale: 1, issued: 0, wrote: id === 12 ? 1 : 0 }),
+    wallet: async () => ({ month: { key: "2026-10", cap: 200000, issued: 3000, left: 197000 } }),
+    adminList: async () => ({ exchanges: ex }),
+    decide: async (id, action, memo) => { calls.push(["decide", id, action, memo]); return action === "sent" && id === 8 ? { status: 409, code: "use_shipping" } : { body: { ok: true, id, action, notified: true } }; },
+    shipAdmin: async (id, action, b) => { calls.push(["shipAdmin", id, action, b.trackingNo]); return { body: { ok: true, shipState: "shipped" } }; },
+  };
+}
+
+test("붙이기 — 모듈 자체가 함수 · 경비 #563 모양으로 스위치 · 미리보기 · 지급 · 현황", async () => {
+  assert.equal(typeof bot, "function");
+  const coin = fakeCoin();
+  const { bot: b } = bot({ coin, gift: null, getClient: () => null, ownerId: () => OWNER, log: { warn() {}, log() {}, error() {} } });
+  let f = fakeItx({ cmd: "킬내기스위치", opts: { 키: "coin_shop", 값: "켬" } }); await b.handle(f.itx);
+  assert.match(f.out.edits[0].content, /^매점 교환 끔 → 켬/); assert.deepEqual(coin.calls[0], ["setSwitch", "coin_shop", true, "오너(봇)"]);
+  assert.match(f.out.edits[0].content, /매점 사비 25,000원 · 남은 175,000원/);
+  f = fakeItx({ cmd: "킬내기코인", sub: "미리보기", opts: { 회차: 12 } }); await b.handle(f.itx);
+  assert.match(f.out.edits[0].content, /사람 2명 · 합 11,600/); assert.match(f.out.edits[0].content, /1\. B 8,600/);
+  f = fakeItx({ cmd: "킬내기코인", sub: "미리보기", opts: { 회차: 9 } }); await b.handle(f.itx);
+  assert.match(f.out.edits[0].content, /코인 대상이 아니야 — 정식 회차라/);
+  f = fakeItx({ cmd: "킬내기코인", sub: "미리보기" }); await b.handle(f.itx);
+  assert.equal(f.out.edits[0].content, "회차 번호를 같이 적어줘");
+  f = fakeItx({ cmd: "킬내기코인", sub: "지급", opts: { 회차: 12 } }); await b.handle(f.itx);
+  assert.match(f.out.edits[0].content, /1명 · 합 3,000 · 이번 달 남은 197,000/);
+  f = fakeItx({ cmd: "킬내기코인", sub: "지급", opts: { 회차: 13 } }); await b.handle(f.itx);
+  assert.match(f.out.edits[0].content, /이미 줬어/);
+  f = fakeItx({ cmd: "킬내기코인", sub: "현황" }); await b.handle(f.itx);
+  assert.match(f.out.edits[0].content, /2026-10 발행 3,000 \/ 한도 200,000 · 남은 197,000 · 열린 교환 신청 2건/);
+});
+
+test("붙이기 — /킬내기코인 교환 카드 버튼 · 기프티콘은 보냄 · 실물은 송장 없으면 막힘", async () => {
+  const coin = fakeCoin();
+  const { bot: b } = bot({ coin, getClient: () => null, ownerId: () => OWNER, log: { warn() {}, log() {}, error() {} } });
+  let f = fakeItx({ cmd: "킬내기코인", sub: "교환" }); await b.handle(f.itx);
+  assert.match(f.out.edits[0].content, /#7/); assert.match(f.out.edits[0].content, /#8/); assert.doesNotMatch(f.out.edits[0].content, /#9/);
+  assert.deepEqual(f.out.edits[0].components.map((r) => r.components.map((x) => x.custom_id)), [["kcoin_ok:7", "kcoin_no:7"], ["kcoin_ship:8"]]);
+  f = fakeItx({ modal: "kcoin_nom:7", fields: { r: "수량 소진" } }); await b.handle(f.itx);
+  assert.deepEqual(coin.calls.at(-1), ["decide", 7, "reject", "수량 소진"]);
+  f = fakeItx({ modal: "kcoin_shipm:8", fields: { t: "" } }); await b.handle(f.itx);
+  assert.match(f.out.edits[0].content, /실물이라 송장번호를 같이 적어줘/);
+  f = fakeItx({ modal: "kcoin_shipm:8", fields: { t: "612345678901" } }); await b.handle(f.itx);
+  assert.deepEqual(coin.calls.at(-1), ["shipAdmin", 8, "shipped", "612345678901"]);
+});
+
+test("붙이기 — /기프티콘넣기 → 경비 addGift 몸통(itemName · expiresOn · image base64) · 답에 코드 없음", async () => {
+  const got = [];
+  const gift = { addGift: async (body, opt) => { got.push([body, opt]); return body.ign === "Nobody" ? { status: 404, code: "not_found" } : { body: { ok: true, id: 3, notified: false } }; } };
+  const fetchFn = async () => ({ ok: true, arrayBuffer: async () => Uint8Array.from([1, 2, 3]).buffer });
+  const { bot: b } = bot({ gift, fetchFn, getClient: () => null, ownerId: () => OWNER, log: { warn() {}, log() {}, error() {} } });
+  let f = fakeItx({ cmd: "기프티콘넣기", opts: { 닉: "NickA", 상품: "치킨 기프티콘", 만료일: "2099-12-31", 코드: "SECRET-9", 재원: "sponsor", 회차: 9, 금액: 20000 } });
+  await b.handle(f.itx);
+  assert.deepEqual(got[0][0], { ign: "NickA", kind: "gifticon", itemName: "치킨 기프티콘", expiresOn: "2099-12-31", code: "SECRET-9", image: null, funding: "sponsor", eventId: 9, reason: null, krwValue: 20000 });
+  assert.match(f.out.edits[0].content, /NickA 기프티콘함에 「치킨 기프티콘」 넣었어 · 만료 2099-12-31 · 코드 받음/);
+  assert.match(f.out.edits[0].content, /알림 못 보냄/); assert.doesNotMatch(f.out.edits[0].content, /SECRET/);
+  f = fakeItx({ cmd: "기프티콘넣기", opts: { 닉: "NickB", 상품: "커피", 만료일: "2099-12-31", 사진: { url: "https://cdn/x.png", contentType: "image/png", size: 3 } } });
+  await b.handle(f.itx);
+  assert.deepEqual(got[1][0].image, { base64: "AQID", type: "image/png" });
+  f = fakeItx({ cmd: "기프티콘넣기", opts: { 닉: "Nobody", 상품: "커피", 만료일: "2099-12-31", 코드: "X" } });
+  await b.handle(f.itx);
+  assert.match(f.out.edits[0].content, /받을 사람을 못 찾았어/);
+});
+
+test("붙이기 — 봇이 늦게 떠도 한 번만 붙고 · 빠진 명령만 만든다", async () => {
+  let client = null; const handlers = []; const created = [];
+  const mk = () => ({ on: (ev, fn) => handlers.push(ev), once: () => {}, isReady: () => false,
+    application: { commands: { fetch: async () => new Map([["a", { name: "킬내기코인" }]]), create: async (c, g) => created.push([c.name, g]) } } });
+  const r = bot({ getClient: () => client, ownerId: () => OWNER, env: { LESSON_GUILD_ID: "g1" }, log: { warn() {}, log() {}, error() {} } });
+  assert.ok(r.bot); assert.equal(handlers.length, 0);
+  client = mk();
+  await new Promise((res) => setTimeout(res, 5200));
+  assert.deepEqual(handlers, ["interactionCreate"]);
 });
