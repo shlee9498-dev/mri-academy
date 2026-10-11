@@ -49,6 +49,7 @@ const killracePrize = require("./killrace-prize.cjs");
 // 킬내기 코인 · 매점 · 배송 · 스위치(§1.28 · 앱 계약 §18 · DDL §76) · 기프티콘함 · 상금 적립 안내(§1.30) — 스위치는 전부 꺼진 채 배포. 시험 scripts/killrace-coin.test.cjs · killrace-gift.test.cjs
 const killraceCoin = require("./killrace-coin.cjs");
 const killraceGift = require("./killrace-gift.cjs");
+const killraceVote = require("./killrace-vote.cjs");
 let killShot = null;   // 킬내기 결과 스샷 읽기 — 아래 킬내기 HTTP 블록에서 만들고 봇 messageCreate 가 쓴다
 let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP 블록에서 만들고 봇 interactionCreate(/킬내기포스터)가 쓴다
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
@@ -7173,6 +7174,12 @@ async function gmiGuildMember(discordId) {
     notifyOwner: krNotifyOwner, notifyUser: krDm,
   });
   killGift.mount(app, { limiter: krLimiter, shipInput: killraceCoin.shipInput });
+  // 매점 투표(§1.31) — 킬내기 앱 토큰 · 스위치 shop_vote(오너만 · 꺼진 채 배포) · 결과는 참고용(품목은 오너가 넣는다)
+  const killVote = killraceVote.createVote({
+    sbSelect, sbInsert, sbPatch, isOwner: krOwner, userOf: killMembers.userOf, memberOf: killMembers.memberOf, kindFor: killMembers.kindFor,
+    switches: killCoin.switches,
+  });
+  killVote.mount(app, { limiter: krLimiter, writeLimiter: limit("krVote", 10, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
   if (process.env.SUPABASE_URL) setInterval(() => { killCoin.tick(); killGift.tick(); }, 60000).unref();
   // 클랜CODE 봇 파일(/킬내기코인 · /킬내기스위치 · /기프티콘넣기) — 파일이 들어오면 붙는다(없으면 조용히 넘어간다)
   try { require("./killrace-coin-bot.cjs")({ coin: killCoin, gift: killGift, getClient: () => botClient, ownerId: () => process.env.MRI_OWNER_ID }); } catch (e) { if (e && e.code !== "MODULE_NOT_FOUND") console.warn("[coin-bot] load_failed", String(e.message || e).slice(0, 80)); }
@@ -8946,6 +8953,8 @@ const SCHEMA_OPTIONAL = {
   killrace_gift_box: ["id", "kind", "platform", "account_id", "ign", "event_id", "reason", "item_name", "krw_value", "funding", "code", "image_path", "expires_on", "state",
                       "notified_at", "notify_failed_at", "opened_at", "received_at", "purged_at", "cancel_reason", "created_by", "created_at"],
   killrace_coin_shipping: ["id", "exchange_id", "gift_id", "ship_state", "recipient_name", "address", "phone", "tracking", "shipped_at", "consent_version", "consented_at", "purged_at", "created_at"],
+  // §77 매점 투표(docs/killrace-api.md §1.31) — 미실행이면 투표 길만 503 table_missing(스위치는 꺼진 채)
+  killrace_vote_ballots: ["id", "poll_id", "platform", "account_id", "discord_id", "choices", "suggestion", "created_at", "updated_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.

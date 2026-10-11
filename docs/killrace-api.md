@@ -1109,7 +1109,7 @@
 
 - `lockedReason` — `off`(스위치 꺼짐) · `closed`(마감) · `not_member`(킬내기 동의 전) · `not_linked`(스팀 연결 전) · `not_clan`(외부 참가자).
   `canVote` = `lockedReason` 이 없음. 비로그인은 401(종전 앱 규칙).
-- 오류 — 400 `invalid_body`(모르는 보기 · 같은 보기 두 번 · 제안 40자 넘음 · 둘 다 빔 · 제안에 링크) · 403 `not_clan` · 409 `switch_off` / `vote_closed` / `not_linked` / `not_member` · 404 `poll_not_found` · 503 `clan_check_unavailable`.
+- 오류 — 400 `invalid_body`(모르는 보기 · 같은 보기 두 번 · 제안 40자 넘음 · 둘 다 빔 · 제안에 링크) · 403 `not_clan` · 409 `switch_off` / `vote_closed` / `not_linked` / `not_member` / `already_voted`(다른 디스코드가 같은 본계로 먼저 냄 · 10/11 검수) · 404 `poll_not_found` · 503 `clan_check_unavailable`.
 - **득표 수는 마감 전 누구에게도 안 보인다**(본인 표 `mine` 만) — 오너 화면만 실시간. 참여 인원도 마감 전엔 숨긴다.
 - **자유 제안 글은 오너만 본다** — 마감 뒤 공개 결과에도 개수만. 오너 화면엔 글과 시각만(닉 · 계정 · 디스코드 번호 없음).
   - 제안 글: 앞뒤 공백 · 줄바꿈 정리 · 1 ~ 40자 · `http` · `www.` · `discord.gg` 가 들어가면 400. 로그엔 글을 남기지 않는다(`[vote] saved poll=<id>` 처럼 번호만).
