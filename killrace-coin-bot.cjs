@@ -26,8 +26,8 @@
 //   exchanges.approve({ id, by }) · reject({ id, reason, by }) · ship({ id, trackingNo, by }) → { id, ign, item, status, notified }
 // 오류는 { userMsg } 또는 { code }(계약 코드)로 던진다 — 코드는 아래 ERR 로 반말 문구를 고른다.
 
-const SWITCH_KEYS = ["coin_shop", "casino_link", "deposit", "monthly_budget_krw"];
-const SWITCH_KO = { coin_shop: "매점 교환", casino_link: "카지노 연동", deposit: "외부 보증금", monthly_budget_krw: "월 사비 예산" };
+const SWITCH_KEYS = ["coin_shop", "shop_vote", "clan_room", "casino_link", "deposit", "monthly_budget_krw"];   // 앱 계약 §18.1 · shop_vote(§1.31) · clan_room(#564)
+const SWITCH_KO = { coin_shop: "매점 교환", shop_vote: "매점 투표", clan_room: "클랜 방", casino_link: "카지노 연동", deposit: "외부 보증금", monthly_budget_krw: "월 사비 예산" };
 const BUDGET_MAX = 10000000;                     // 예산 한 칸 상한(1천만 원) — 손가락 실수로 0 하나 더 붙는 것 막기
 const FUNDING_CHOICES = [{ name: "오너 사비", value: "owner" }, { name: "후원", value: "sponsor" }];
 const APP_GIFTS_URL = "https://shlee9498-dev.github.io/gmi-clancup/killrace/gifts.html";
@@ -108,12 +108,8 @@ function parseExpiry(raw, now = Date.now()) {
 function switchesText(sw) {
   if (!sw || typeof sw !== "object") return "스위치를 못 읽었어";
   const onoff = (v) => (v === true ? "켬" : "끔");
-  const lines = [
-    `· ${SWITCH_KO.coin_shop} (coin_shop) — ${onoff(sw.coin_shop)}`,
-    `· ${SWITCH_KO.casino_link} (casino_link) — ${onoff(sw.casino_link)}`,
-    `· ${SWITCH_KO.deposit} (deposit) — ${onoff(sw.deposit)}`,
-    `· ${SWITCH_KO.monthly_budget_krw} (monthly_budget_krw) — ${won(sw.monthly_budget_krw)}`,
-  ];
+  // 서버가 아는 키만 줄로 낸다(서버가 아직 모르는 새 키는 빠진다 — 바꾸려 하면 서버가 bad_key)
+  const lines = SWITCH_KEYS.filter((k) => k in sw).map((k) => `· ${SWITCH_KO[k]} (${k}) — ${k === "monthly_budget_krw" ? won(sw[k]) : onoff(sw[k])}`);
   const b = sw.budget;
   if (b && b.used) lines.push(`이번 달(${b.month || "?"}) 매점 사비 ${won(b.used.shop)} · 남은 ${won(b.left)} · 상금 적립 ${won(b.used.prize)}(예산 밖 · 보기만)`);
   return lines.join("\n");
@@ -219,7 +215,7 @@ const ERR = {
   already_expired: "이미 지난 날짜야",
   bad_image: "사진은 png · jpg · webp 3MB까지만 받아",
   invalid_body: "칸 값이 맞지 않아. 상품 이름은 40자까지야",
-  bad_value: "값이 맞지 않아", bad_key: "모르는 스위치야",
+  bad_value: "값이 맞지 않아", bad_key: "서버가 아직 이 스위치를 몰라. 경비 배포 뒤에 다시 해줘",
 };
 const errText = (e, fallback) => (e && e.userMsg) || ERR[e && e.code] || fallback;
 

@@ -272,3 +272,14 @@ test("붙이기 — 봇이 늦게 떠도 한 번만 붙고 · 빠진 명령만 �
   await new Promise((res) => setTimeout(res, 5200));
   assert.deepEqual(handlers, ["interactionCreate"]);
 });
+
+test("스위치 — 서버가 아는 키만 보이고 · shop_vote 켜기 · 서버가 모르는 키는 bad_key 문구", async () => {
+  assert.ok(bot.COMMANDS[0].options[0].choices.some((c) => c.value === "shop_vote"));
+  assert.ok(bot.COMMANDS[0].options[0].choices.some((c) => c.value === "clan_room"));
+  assert.doesNotMatch(bot.switchesText({ coin_shop: false, deposit: false, casino_link: false, monthly_budget_krw: 1 }), /shop_vote/);
+  assert.match(bot.switchesText({ coin_shop: false, shop_vote: true, monthly_budget_krw: 1 }), /매점 투표 \(shop_vote\) — 켬/);
+  const b = bot.createCoinBot({ env: { MRI_OWNER_ID: OWNER }, switches: { read: async () => ({ coin_shop: false }), write: async () => { throw { code: "bad_key" }; } }, log: { warn() {} } });
+  const f = fakeItx({ cmd: "킬내기스위치", opts: { 키: "shop_vote", 값: "켬" } });
+  await b.handle(f.itx);
+  assert.match(f.out.edits[0].content, /서버가 아직 이 스위치를 몰라/);
+});
