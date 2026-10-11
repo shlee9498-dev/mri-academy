@@ -872,6 +872,8 @@
 | `POST /clan/coin/exchange { itemId }` (10회/분) | 200 `{ exchange: { id, item, coinPrice, status: "requested" } , balance }` · 오너에게 승인 카드 |
 | `POST /clan/coin/exchange/cancel` (10회/분) | 열린 신청이 `requested` 일 때만 → `cancelled` + 돌려받음 · 200 `{ balance }` |
 
+- **킬내기 앱(gmi-clancup)에서도 같은 길** — 위 네 길과 배송 길(§1.28.11b)을 `/api/killrace/me/coin` · `/me/coin/shop` · `/me/coin/exchange` · `/me/coin/exchange/cancel` · `/me/coin/exchange/:id/received|lost|address` 로도 연다(킬내기 앱 토큰 `aud: "killrace"` · 앱 계약 §2).
+  같은 처리 함수 · 같은 응답 · 같은 오류 코드다. 클랜 역할 대신 **킬내기 회원 + 스팀 연결**이면 열린다(킬내기 앱은 외부 참가자도 쓰기 때문 · 코인은 연습판에 뛴 계정에만 쌓인다). 사람은 토큰의 디스코드 번호 → 회원 연결 계정.
 - **교환 잠김 이유**(`lockedReason`) — `shop_off`(스위치 `coin_shop` 꺼짐 · 화면 「지금은 쉬고 있어요」) · `budget_full`(이번 달 사비 예산 다 참 · 「이번 달 교환이 다 찼어요 · 다음 달 1일에 다시 열려요」) · `off`(코인 꺼짐) · `not_linked`(스팀 연결 전) · `not_verified`(진행자 본인 확인 전 · 상금 원장 §1.20 의 확인 표시 `killrace_prize_verifications` 를 같이 쓴다) · `open_request`(열린 신청 하나) · `under_balance`(잔액 모자람 · 경품별로 앱이 비교).
 - 오류: 400 `invalid_body` · 403 `clan_required` · 404 `item_unavailable` · 409 `out_of_stock` / `insufficient_coin` / `open_request` / `not_verified` / `not_linked` / `switch_off` / `budget_full` · 423 `coin_off`.
 - **예산 판정(서버)** — 교환 신청 때 `이번 달 매점 교환 사비(거절 · 취소 뺀 krw_cost 합 · 앱 계약 §18.3) + 그 경품 krw_cost > monthly_budget_krw` 면 409 `budget_full` · 줄을 만들지 않는다. 판정과 신청은 같은 트랜잭션(교환 함수 안 · 동시에 눌러도 넘지 않게).
