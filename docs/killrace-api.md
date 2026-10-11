@@ -1050,6 +1050,85 @@
 - 반장: 수강생 앱 클랜 방 「기프티콘함」(같은 길).
 - 시험: 기프티콘 만료일 없음 400 `need_expiry`(실물은 통과) · 오너 아닌 넣기 403 · 받는 사람 아닌 열기 403 · 본인 확인 전 열기 409 `not_verified` · 목록 응답에 코드 없음 · 열기만 코드 · 서명 주소 1분 · DM 본문에 코드 없음 · DM 실패 한 번만 · 받았어요 뒤 30일 · 만료 + 7일 정리 · 취소 즉시 지움 · 실물 만 14세 미만 403 · 원장 기존 줄 값 그대로.
 
+### §1.31 매점 투표 — 첫 품목을 클랜원 투표로 정한다 (10/11 오너 「투표를 받자 일단 넣지말고」 · 「어플에서 투표하도록 하는 건 어때?」) · **계약 · DDL 초안 · 서버 구현 전**
+
+> 매점(§1.28)의 첫 품목을 넣기 전에 클랜원에게 먼저 묻는다. 투표는 **킬내기 앱(gmi-clancup) 안에서만** 받는다(디스코드 투표 아님).
+> 결과는 **참고용**이다 — 품목 · 코인가 · 재고는 오너가 정한다(월 사비 예산 200,000 안 · 앱 계약 §18.3). 투표는 코인 원장 · 상금 원장 · 매점 품목 표(`killrace_coin_items`)를 건드리지 않는다.
+
+#### §1.31.1 일정 · 스위치
+
+- 첫 투표 `pollId = "shop-2026-10"` — **10/13(화) 오너가 스위치를 켜면 열림 → 10/15(목) 23:59:59 KST 마감** → 10/16(금) 8회 전 결과. 금요일은 배포하지 않는다.
+- 스위치 `shop_vote`(설정 줄 `killrace:switches` 의 새 키 · 앱 계약 §18.1 · 기본 `false` · 오너만). **`coin_shop` 과 무관하다** — 매점이 꺼져 있어도 투표는 열 수 있다.
+- 투표 설정은 `ops_state` `killrace:vote:shop-2026-10` 한 줄(env 없음 · DDL 없음):
+  `{ title: "매점에 뭐가 들어오면 좋을까요", options: [{ key, label, kind }], closesAt: "2026-10-15T23:59:59+09:00", suggestionMax: 40 }`
+  - 보기 넷: `chicken` 치킨 기프티콘 · `cvs` 편의점 기프티콘 · `coffee` 커피 기프티콘(셋 다 `kind: "gifticon"`) · `mousepad` GmI 마우스패드(`kind: "physical"`) + 자유 제안 한 줄.
+  - **보기에 코인가 · 원가 · 금액을 싣지 않는다.**
+- 상태(서버가 KST 로 판정): `off`(스위치 꺼짐) · `open`(켜짐 + 마감 전) · `closed`(마감 뒤 · 스위치와 상관없이 결과 공개).
+
+#### §1.31.2 누가 투표하나 — 계정 연결된 클랜원 · 사람당 1표
+
+- 킬내기 회원(동의 끝) + 스팀 연결 + 구분(§5)이 `clan` 또는 `lesson`(레슨생도 GmI 길드 회원 · §5 「둘 다면 lesson」). `external` 은 투표하지 않는다.
+- 구분이 `null`(봇이 못 봄)이면 「아님」으로 읽지 않는다 → 503 `clan_check_unavailable` · 앱은 「잠깐 확인 중이에요」 + 다시 시도.
+- **1표 = 한 사람** — 표의 키는 **본계 계정**(`killrace:people` 합치기를 사슬 끝까지 따라간 `platform` · `account_id`) · 같은 디스코드 번호도 한 표.
+  - 투표 뒤 합치기가 새로 생겨 한 사람에게 표가 둘이 되면, **셀 때 본계로 묶어 가장 최근에 고친 표 하나만** 센다(저장된 줄은 지우지 않는다).
+- **여러 개 고를 수 있다**(보기 0 ~ 4개) · 자유 제안만 써도 된다 · 둘 다 비면 400 `invalid_body`.
+- **마감 전엔 다시 고칠 수 있다** — 같은 길을 다시 부르면 덮어쓴다(`updated_at`). 마감 뒤엔 409 `vote_closed`.
+
+#### §1.31.3 길 (킬내기 앱 토큰 `aud: "killrace"` · 앱 계약 §2)
+
+| 길 | 응답 · 동작 |
+|---|---|
+| `GET /api/killrace/me/vote/:pollId` (60회/분) | `{ poll: { id, title, options: [{ key, label, kind }], closesAt, state }, canVote, lockedReason \| null, mine: { choices: [key], suggestion \| null, updatedAt } \| null, results }` · `results` 는 `state: "closed"` 일 때만 `{ voters, counts: [{ key, votes }], suggestions: n }`, 그 전엔 `null` |
+| `POST /api/killrace/me/vote/:pollId { choices: [key], suggestion? }` (10회/분) | 200 `{ mine }` · 처음이면 넣고 있으면 덮어쓴다 |
+| 오너 `GET /api/killrace/vote/:pollId/admin` | `MRI_OWNER_ID` 만(진행자 키 안 됨 · 아니면 403 `owner_only`) · `{ state, voters, counts: [{ key, votes }], suggestions: [{ text, at }] }` · **실시간** |
+
+- `lockedReason` — `off`(스위치 꺼짐) · `closed`(마감) · `not_member`(킬내기 동의 전) · `not_linked`(스팀 연결 전) · `not_clan`(외부 참가자).
+  `canVote` = `lockedReason` 이 없음. 비로그인은 401(종전 앱 규칙).
+- 오류 — 400 `invalid_body`(모르는 보기 · 같은 보기 두 번 · 제안 40자 넘음 · 둘 다 빔 · 제안에 링크) · 403 `not_clan` · 409 `switch_off` / `vote_closed` / `not_linked` / `not_member` · 404 `poll_not_found` · 503 `clan_check_unavailable`.
+- **득표 수는 마감 전 누구에게도 안 보인다**(본인 표 `mine` 만) — 오너 화면만 실시간. 참여 인원도 마감 전엔 숨긴다.
+- **자유 제안 글은 오너만 본다** — 마감 뒤 공개 결과에도 개수만. 오너 화면엔 글과 시각만(닉 · 계정 · 디스코드 번호 없음).
+  - 제안 글: 앞뒤 공백 · 줄바꿈 정리 · 1 ~ 40자 · `http` · `www.` · `discord.gg` 가 들어가면 400. 로그엔 글을 남기지 않는다(`[vote] saved poll=<id>` 처럼 번호만).
+
+#### §1.31.4 저장 — 새 표 `killrace_vote_ballots` (DDL §77 초안 · 더하기만 · 실행은 경비)
+
+```sql
+-- §77 매점 투표 표(killrace-api §1.31) — 더하기만
+create table if not exists public.killrace_vote_ballots (
+  id          bigserial primary key,
+  poll_id     text        not null,
+  platform    text        not null,
+  account_id  text        not null,                 -- 본계(합치기 사슬 끝)
+  discord_id  text        not null,
+  choices     text[]      not null default '{}',
+  suggestion  text        check (suggestion is null or char_length(suggestion) between 1 and 40),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  check (cardinality(choices) <= 4),
+  check (cardinality(choices) > 0 or suggestion is not null)
+);
+create unique index if not exists killrace_vote_ballots_person  on public.killrace_vote_ballots (poll_id, platform, account_id);
+create unique index if not exists killrace_vote_ballots_discord on public.killrace_vote_ballots (poll_id, discord_id);
+alter table public.killrace_vote_ballots enable row level security;   -- service_role 만
+notify pgrst, 'reload schema';
+```
+
+- 검증: 칸 9개 · 색인 3개(pkey · person · discord) · RLS 켜짐. 정본 `supabase_admin_panel.sql` §77 · 기동 점검 `REQUIRED_SCHEMA` 에 표 한 줄.
+- 디스코드 번호는 「한 사람 한 표」 판정에만 쓰고 어떤 응답에도 싣지 않는다.
+
+#### §1.31.5 화면 (클랜CODE · gmi-clancup `killrace/`)
+
+- **투표 카드** — 킬내기 앱 홈(또는 「내 코인」 위)에 스위치가 켜졌을 때만. 제목 · 보기 넷(체크) · 자유 제안 한 줄(40자 · 글자 수 표시) · 「투표하기」(이미 했으면 「고치기」) · 마감 시각(「10월 15일 밤 11시 59분까지」).
+  - 카드 아래 한 줄: 「코인은 킬내기 참여 보상이에요 · 돈으로 바꿀 수 없어요」. **코인가 · 원가 · 「1코인 = 1원」 같은 말은 어디에도 없다.**
+  - 「결과는 참고해서 오너가 매점 품목을 정해요」 한 줄.
+  - 투표 중엔 득표 막대 · 숫자 없음 · 「내가 고른 것」만 표시. 마감 뒤엔 보기별 득표와 「자유 제안 n개」.
+- **막힌 화면엔 창구** — `not_member` 「먼저 킬내기 동의가 필요해요」 + 「내 계정으로」 · `not_linked` 「스팀 닉을 연결하면 투표할 수 있어요」 + 「내 계정으로」 · `not_clan` 「클랜원 투표예요 · 궁금한 건 디스코드 운영진에게 물어봐 주세요」 · `clan_check_unavailable` 「잠깐 확인 중이에요」 + 「다시 확인하기」.
+- **오너 결과 화면** — 오너만(로그인 디스코드가 `MRI_OWNER_ID`) · 보기별 실시간 득표 · 참여 인원 · 자유 제안 목록(글 · 시각) · 마감까지 남은 시간.
+- 문구는 ui-copy · 화면당 느낌표 1개 · 이모지 0 ~ 1개.
+
+#### §1.31.6 시험 (경비 서버 PR)
+
+스위치 꺼짐 = 쓰기 409 `switch_off` · 읽기 `state: "off"` · 마감 뒤 409 `vote_closed`(KST 경계 23:59:59 / 00:00:00) · 외부 참가자 403 `not_clan` · 구분 `null` 503 · 스팀 연결 전 409 · 두 번 부르면 덮어쓰기(줄 하나) · 같은 디스코드 다른 계정 → 한 표 · 합치기 뒤 두 표 → 셀 때 하나 · 모르는 보기 · 중복 · 41자 · 링크 → 400 · 마감 전 `results: null`(득표 · 인원 없음) · 오너 아닌 admin 403 · 응답 · 로그에 디스코드 번호 · 제안 글(오너 admin 말고) 없음 · 코인 원장 · 매점 품목 표 줄 수 그대로.
+
 ## §2 1단계 순서 · 크기 (조각 A = §1.8 · 조각 B = §1.6 은 이 묶음에서)
 
 | 순서 | 절 | 크기 | 왜 이 순서 |
