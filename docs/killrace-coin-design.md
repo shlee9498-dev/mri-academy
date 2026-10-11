@@ -15,7 +15,8 @@
 - **코인은 오락실 티켓이다.** 연습판에서 뛰고 잡은 만큼 티켓이 나오고, 티켓은 매점 경품으로만 바꾼다.
   돈으로 사지 못하고, 돈으로 바꾸지 못하고, 남에게 주지 못한다. 그 세 길은 **장부에 칸이 없어서 막힌다**(규칙이 아니라 구조).
 - **상금 원장(§73)과 섞지 않는다.** 상금 있는 정식 회차 = 현금 원장(§73 · 이미 운영 중) · 상금 없는 연습판 = 코인 장부(새 표). 둘 사이 바꾸는 길이 없다.
-- **사비 한도 월 50만.** 한 달에 나오는 코인 총량이 50만을 넘지 않게 회차마다 남은 한도 안에서 줄여 준다. 1코인 = 1원 상당이라 「다 바꿔 가도 50만」이 상한이다.
+- **사비 한도 = 월 사비 예산(첫 달 20만 · 10/11 · 종전 50만).** 한 달에 나오는 코인 총량이 예산을 넘지 않게 회차마다 남은 한도 안에서 줄여 주고, 매점 교환 사비가 예산을 넘으면 교환이 막힌다. 1코인 = 1원 상당이라 「다 바꿔 가도 예산 안」이 상한이다.
+- **다 만들고 스위치로 켠다(10/11).** 매점 `coin_shop` · 카지노 `casino_link` 는 기본 꺼짐(앱 계약 §18). 원칙 3줄(참가자는 아무것도 걸지 않음 · 재원은 사비 · 후원만 · 회비 · 보증금과 코인을 잇지 않음)은 스위치와 상관없이 지킨다.
 - **오늘(10/10) 연습판부터 기록이 남는다.** 코인은 장부가 생긴 뒤 회차 번호로 소급해서 줄 수 있다(같은 회차 두 번 지급은 DB 가 막는다).
 
 ## 2. #520 은 왜 닫나 · 무엇을 옮겼나
@@ -54,12 +55,12 @@
 
 **읽은 것**
 - 한 판(회차)에 **6만 ~ 12.7만 · 평균 약 9.7만**이 나온다. 지휘 예상 「7만」보다 **약 40% 많다.** 가장 크게 흔들리는 칸은 **치킨**(4천 ~ 3.6만)이다 — 치킨 한 번에 4명 × 1,000.
-- 연습판을 **한 달 5번** 열면 약 48만 → 월 한도 50만에 거의 닿는다. **6번 이상이면 뒤 회차가 줄어든다.**
+- (10/11 예산 20만 기준) 연습판 **두 판 남짓**이면 월 한도에 닿는다. 세 번째 판부터는 비율로 줄어든다. (종전 50만 기준이면 5번)
 - 1인 한 판 최고 약 8,600(+MVP 3,000). 치킨 기프티콘을 2만 원으로 잡으면 잘하는 사람이 **2 ~ 3판**, 평균인 사람(약 4,800)은 **4판 남짓**에 한 장이다.
 
 **AI 판단 — 기준값은 지휘 초안 그대로 두고, 아래 두 개만 더한다**(전부 설정 칸 · 코드 상수도 같은 값)
 1. **회차 한도 `eventCap` 12만** — 한 판이 그달 한도를 먹어 버리지 않게. 넘으면 그 회차만 비율로 줄인다(2회 같은 판이 12.7만 → 12만).
-2. **월 한도 `monthCap` 50만 · 먼저 연 판부터** — 회차 지급 때 「그달 남은 한도」와 회차 한도 중 작은 값 안에서 지급한다. 이미 준 앞 회차는 건드리지 않는다(더하기만).
+2. **월 한도 `monthCap` = 월 사비 예산(첫 달 20만) · 먼저 연 판부터** — 회차 지급 때 「그달 남은 한도」와 회차 한도 중 작은 값 안에서 지급한다. 이미 준 앞 회차는 건드리지 않는다(더하기만).
    - 「그달 발행을 비율로 줄임」을 **지난 회차까지 거슬러 줄이면** 이미 준 코인을 빼앗는 줄이 생긴다 → 받은 사람 입장에서 깎인 느낌 · 장부도 지저분해진다. 그래서 「남은 한도 안에서 이번 판만 비율」로 정했다.
    - 대신 월말에 연 판이 손해를 볼 수 있다 → 지갑 화면에 「이번 달 남은 코인 n」을 보여서 운영진이 연습판 횟수를 조절한다(§1.28.6).
 
@@ -80,6 +81,7 @@ create table if not exists public.killrace_coin_items (
   name        text        not null check (char_length(name) between 1 and 40),           -- 「치킨 기프티콘」
   coin_price  integer     not null check (coin_price between 1 and 10000000),              -- 바꾸는 데 드는 코인
   krw_cost    integer     not null check (krw_cost between 0 and 1000000),                 -- 오너 사비(원) · 예산 대조용 · 화면엔 안 보인다
+  delivery    text        not null default 'gifticon' check (delivery in ('gifticon', 'physical')),   -- 실물은 받는 곳을 저장하지 않는다(오너가 DM 으로)
   stock       integer     check (stock is null or stock >= 0),                              -- null = 제한 없음
   active      boolean     not null default true,
   sort        integer     not null default 0,
@@ -109,13 +111,14 @@ create unique index if not exists killrace_coin_exchanges_open on public.killrac
 -- 76c) 장부 — 한 줄 = 코인이 들고 나는 일 하나. 더하기만
 create table if not exists public.killrace_coin_ledger (
   id           bigint      generated always as identity primary key,
-  kind         text        not null check (kind in ('earn', 'spend', 'refund', 'adjust', 'expire')),
+  kind         text        not null check (kind in ('earn', 'spend', 'refund', 'adjust', 'expire', 'casino_out')),   -- casino_out = 코인 → 카지노 한 방향(스위치 casino_link)
   platform     text        not null check (platform in ('steam', 'kakao')),
   account_id   text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),           -- 사람 키 = PUBG 계정(§73 과 같다 · 앱 회원이 아니어도 적립된다)
   ign          text        check (ign is null or char_length(ign) between 1 and 40),
   event_id     bigint      references public.event_defs (id),                                 -- earn 필수
   exchange_id  bigint      references public.killrace_coin_exchanges (id),                    -- spend · refund 필수
   ref_id       bigint      references public.killrace_coin_ledger (id),                       -- adjust 가 바로잡는 줄(선택)
+  casino_ref   text        check (casino_ref is null or char_length(casino_ref) between 1 and 80),   -- 카지노 쪽 받은 표시(casino_out 만)
   month        text        not null check (month ~ '^[0-9]{4}-[0-9]{2}$'),                    -- 발행 월(KST) · earn = 회차 창 시작의 KST 달 · 나머지 = 적은 날 KST 달
   amount       integer     not null check (amount <> 0 and amount between -10000000 and 10000000),
   detail       jsonb,                                                                          -- earn 내역 { games, kills, dmg100, chickens, mvpSlot, raw, scale, rule }
@@ -127,11 +130,13 @@ create table if not exists public.killrace_coin_ledger (
     or (kind = 'spend'  and amount < 0 and event_id is null     and exchange_id is not null and ref_id is null)
     or (kind = 'refund' and amount > 0 and event_id is null     and exchange_id is not null and ref_id is null)
     or (kind = 'adjust'                and exchange_id is null                         and memo is not null)   -- ref_id 는 있으면 같은 사람 줄 · 본계정 옮기기(옛 − · 새 +)는 ref 없이 메모로
-    or (kind = 'expire' and amount < 0 and event_id is null     and exchange_id is null     and ref_id is null and memo is not null))
+    or (kind = 'expire' and amount < 0 and event_id is null     and exchange_id is null     and ref_id is null and memo is not null)
+    or (kind = 'casino_out' and amount < 0 and event_id is null and exchange_id is null and ref_id is null and casino_ref is not null))
 );
 create unique index if not exists killrace_coin_earn_once   on public.killrace_coin_ledger (event_id, platform, account_id) where kind = 'earn';     -- 한 회차 한 사람 한 줄(소급 · 재실행 안전)
 create unique index if not exists killrace_coin_spend_once  on public.killrace_coin_ledger (exchange_id) where kind = 'spend';
 create unique index if not exists killrace_coin_refund_once on public.killrace_coin_ledger (exchange_id) where kind = 'refund';
+create unique index if not exists killrace_coin_casino_once on public.killrace_coin_ledger (casino_ref) where kind = 'casino_out';
 create index if not exists killrace_coin_person on public.killrace_coin_ledger (platform, account_id, id);
 create index if not exists killrace_coin_month  on public.killrace_coin_ledger (month) where kind = 'earn';
 
@@ -257,7 +262,7 @@ alter table public.killrace_coin_exchanges enable row level security;
 alter table public.killrace_coin_ledger    enable row level security;
 notify pgrst, 'reload schema';
 
--- 76b 검증(읽기만): 칸 items 9 · exchanges 14 · ledger 14 · balance 10 · 방아쇠 ledger 3(guard · no_change · no_truncate) · exchanges 2 · 함수 5 · RLS 셋 true · 줄 0
+-- 76b 검증(읽기만): 칸 items 10 · exchanges 14 · ledger 15 · balance 10 · 방아쇠 ledger 3(guard · no_change · no_truncate) · exchanges 2 · 함수 5 · RLS 셋 true · 줄 0
 -- 되돌림(줄이 있으면 지휘 · 오너 확인 먼저): drop view killrace_coin_balance · drop table killrace_coin_ledger · killrace_coin_exchanges · killrace_coin_items ·
 --   drop function killrace_coin_request_exchange(text,text,text,bigint,text) · killrace_coin_close_exchange(bigint,text,text,text) ·
 --   killrace_coin_ledger_no_change() · killrace_coin_ledger_guard() · killrace_coin_exchanges_guard() · notify pgrst
@@ -268,7 +273,7 @@ notify pgrst, 'reload schema';
 2. 코인을 **돈으로** 바꾸는 줄 — 종류에 없다(`cashout` 없음). `spend` 는 교환 신청(경품)을 가리켜야만 들어간다.
 3. 코인을 **남에게** 주는 줄 — 종류에 없다(`transfer` 없음). 앱 · 선수 길에는 `adjust` 를 만드는 길이 없다 — 정정은 오너 명령 · 세션만, 메모 필수.
    같은 사람의 본계정이 바뀐 경우만 `adjust` 두 줄(옛 계정 − · 새 계정 +)로 옮긴다(오너 OK · 메모로 서로 가리킴 · 상금 원장 §1.19 6번과 같은 방식).
-4. **카지노 코인** — 칸 · 외래 키 · 호출 없음.
+4. **카지노** — 코인 → 카지노 한 방향(`casino_out`)만 · 돌아오는 종류 없음 · 스위치 `casino_link` 꺼짐이면 서버 길이 막는다.
 5. 같은 회차 **두 번 지급** — `killrace_coin_earn_once`.
 6. 거절 · 취소 신청 **두 번 돌려주기** — `killrace_coin_refund_once` + 쓴 만큼만.
 
@@ -279,7 +284,7 @@ notify pgrst, 'reload schema';
   1. 무료 참가 · 성적 기반 포인트를 경품으로 바꿔 주는 것이 사행성 · 게임물 관련 규제에 걸리는지(우리는 게임 제공자가 아니고 배그 성적만 쓴다).
   2. 경품 금액에 따른 세금(기타소득 원천징수) 의무가 생기는 금액 기준.
   3. 코인을 **돈으로 파는** 길을 열면 무엇이 바뀌는지(선불 · 전자지급수단 성격) — 2단계 판단 근거.
-  4. 카지노 코인과 잇는 경우의 문제(카지노 트랙 · 이번엔 자리만).
+  4. 카지노 재화와 잇는 경우의 문제(코인 → 카지노 한 방향 · 길은 만들고 스위치 `casino_link` 꺼둠 · 계약 §1.28.12).
 - 검토 결과가 나오기 전에는 `buy` · `cashout` · `transfer` 를 더하지 않는다(종류 추가 = 제약 교체 = B 구간 · 오너 OK).
 
 ## 6. 넘길 목록
@@ -292,7 +297,7 @@ notify pgrst, 'reload schema';
 | 2 | 회차 설정 `killrace:event:<id>` 에 `prize: true | false` 칸 — 연습판 = `false`(자율 판 `kind: "casual"` 은 `prize` 와 상관없이 코인 없음 · 앱 계약 §12). 지금 회차 9(「연습 킬내기 10/10」)는 `false` · 2 ~ 8 은 `true` | 설정 줄(DB 표 아님) · 금액 안 바뀜 |
 | 3 | 코인 설정 `killrace:coin` 줄 넣기(계약 §1.28.2 값 · `on: false` 로 시작) | 설정 줄 |
 | 4 | 코드: 회차 확정 판정 · 적립 계산(순수 함수) · 지급 · 지갑 · 매점 · 교환 신청 · 오너 승인 카드 · 시험(계약 §1.28.3 ~ 1.25.8) | 코드 PR(A) |
-| 5 | 매점 첫 목록 — **오너가 정한 뒤**(경품 이름 · 코인 값 · 사비) | 오너 결정 뒤 |
+| 5 | 매점 첫 목록 — 계약 §1.28.11a 초안(4종 · 20만)을 설정으로 넣는다 · 오너 확인 뒤 값만 바꾼다 | 설정 · 금액 안 바뀜 |
 | 6 | 소급 — 장부가 생긴 뒤 회차 9(10/10) 부터 연습판을 차례로 지급(같은 함수 · 미리보기 → 지급) | 장부 실행 뒤 |
 
 - **새 env 없음.** 오너 알림은 지금 상금 지급 알림(§1.20)과 같은 길을 쓴다.
@@ -312,8 +317,8 @@ notify pgrst, 'reload schema';
 
 ## 7. 확인 못 한 것 · 오너 결정
 
-1. **매점 경품 목록 · 코인 값** — 예) 치킨 기프티콘을 몇 코인에 둘지. 위 표대로면 2만 코인 = 평균 4판 남짓.
-2. **연습판 횟수(월)** — 5번이면 한도 근처, 6번부터 뒤 회차가 줄어든다(§3). 횟수를 정하면 회차 한도를 50만 ÷ 횟수로 맞춰 주는 게 공평하다.
+1. **매점 경품 목록 · 코인 값** — 10/11 지휘 초안(치킨 4 · 편의점 5 · 커피 6 · 마우스패드 2 · 합 20만 · 코인 값 = 사비) 계약 §1.28.11a · 오너 확인 전 임시값.
+2. **연습판 횟수(월)** — 예산 20만이면 두 판 남짓에서 한도에 닿는다(§3). 횟수를 정하면 회차 한도를 예산 ÷ 횟수로 맞춰 주는 게 공평하다(예: 월 4판이면 회차 5만).
 3. **11월 뒤 코인** — 예산은 11월까지다. 12월에 남은 코인을 어떻게 할지(그대로 둠 · 기한 공지 뒤 소멸 `expire` 줄 · 연장). 소멸이면 **공지가 먼저**다.
 4. **정식 회차(상금 있는 날)에도 참가 코인을 줄지** — 이번 계약은 연습판만(오너 원문 그대로).
 5. 법적 검토 결과(§5).
