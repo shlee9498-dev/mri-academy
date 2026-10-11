@@ -61,11 +61,12 @@ test("applyCaps: 회차 한도 · 월 한도(스위치 예산) · 남은 한도 
 });
 
 test("스위치: 기본값 전부 꺼짐 · 예산 200,000 · 문자 \"true\" 는 꺼짐 · 값 검사", () => {
-  assert.deepEqual(C.normSwitches(null), { coin_shop: false, casino_link: false, deposit: false, clan_room: false, monthly_budget_krw: 200000 });
-  assert.deepEqual(C.normSwitches({ coin_shop: "true", deposit: true, monthly_budget_krw: -1 }), { coin_shop: false, casino_link: false, deposit: true, clan_room: false, monthly_budget_krw: 200000 });
+  assert.deepEqual(C.normSwitches(null), { coin_shop: false, casino_link: false, deposit: false, clan_room: false, shop_vote: false, monthly_budget_krw: 200000 });
+  assert.deepEqual(C.normSwitches({ coin_shop: "true", deposit: true, monthly_budget_krw: -1 }), { coin_shop: false, casino_link: false, deposit: true, clan_room: false, shop_vote: false, monthly_budget_krw: 200000 });
   assert.deepEqual(C.switchValue("coin_shop", true), { ok: true, value: true });
   assert.deepEqual(C.switchValue("coin_shop", 1), { error: "bad_value" });
   assert.deepEqual(C.switchValue("monthly_budget_krw", 300000), { ok: true, value: 300000 });
+  assert.deepEqual(C.switchValue("shop_vote", true), { ok: true, value: true });
   assert.deepEqual(C.switchValue("cashout", true), { error: "bad_key" });
   assert.equal(C.normCoin(null).on, false);
 });
