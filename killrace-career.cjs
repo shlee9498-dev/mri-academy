@@ -33,15 +33,29 @@ const round = (n, d) => { const f = 10 ** d; return Math.round(n * f) / f; };
 // 늦은 블루칩 부활(§1.14)로 −10 이 된 판도 이탈 판처럼 뺀다 — killrace.cjs reviveOutOf 와 같은 식(flags.revive 만 읽는다)
 const reviveOut = (rv) => !!(rv && rv.state === "late" && rv.rule === "penalty");
 
+// 같은 사람 합치기(§1.29 · killrace:people merge = { 옛 계정: 기준 계정 }) — 계정 → 사슬 끝(본계). 고리가 있으면 거기서 멈춘다
+function mergeRootOf(merge) {
+  const m = merge && typeof merge === "object" ? merge : {};
+  const memo = new Map();
+  return (acc) => {
+    if (memo.has(acc)) return memo.get(acc);
+    let cur = acc; const seen = new Set([cur]);
+    while (typeof m[cur] === "string" && m[cur] && !seen.has(m[cur])) { cur = m[cur]; seen.add(cur); }
+    memo.set(acc, cur);
+    return cur;
+  };
+}
+
 // rows = event_match_players 줄 · matches = event_matches 줄(event_id · team_name · match_id · seq · leave_flag · revive = flags->revive)
-function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES }) {
+function buildCareer({ rows, matches, keyOf, merge = null, minGames = MIN_GAMES }) {
+  const rootOf = mergeRootOf(merge);                // 부계 · 옛 계정 줄은 본계 한 사람으로 센다(주간 리더보드와 같은 묶기 · 사슬 끝까지)
   const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const games = new Map();                       // 판(회차|팀|매치) → 그 판 우리 팀 선수 줄
   const pending = new Map();                     // 계정 → 봇 몫을 기다리는 판 수(§1.24 · 그 판은 공식 값을 잠정으로 센다)
   for (const r of rows || []) {
     const g = `${r.event_id}|${r.team_name}|${r.match_id}`;
     if (!counted.has(g) || !r.account_id) continue;
-    if (r.pendingBot) pending.set(r.account_id, (pending.get(r.account_id) || 0) + 1);
+    if (r.pendingBot) pending.set(rootOf(r.account_id), (pending.get(rootOf(r.account_id)) || 0) + 1);
     if (!games.has(g)) games.set(g, []);
     games.get(g).push(r);
   }
@@ -49,8 +63,11 @@ function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES }) {
   for (const list of games.values()) {
     const top = Math.max(0, ...list.map((r) => Number(r.kills) || 0));
     for (const r of list) {
-      if (!people.has(r.account_id)) people.set(r.account_id, { games: 0, kills: 0, damage: 0, deaths: 0, teamTop: 0, events: new Set(), ign: "", at: -Infinity });
-      const p = people.get(r.account_id);
+      const who = rootOf(r.account_id);
+      if (!people.has(who)) people.set(who, { games: 0, kills: 0, damage: 0, deaths: 0, teamTop: 0, events: new Set(), ign: "", at: -Infinity, accs: new Set(), igns: new Set() });
+      const p = people.get(who);
+      p.accs.add(r.account_id);
+      if (r.ign) p.igns.add(String(r.ign));
       const kills = Number(r.kills) || 0;
       p.games += 1; p.kills += kills; p.damage += Number(r.damage) || 0;
       if (r.dead) p.deaths += 1;
@@ -65,6 +82,8 @@ function buildCareer({ rows, matches, keyOf, minGames = MIN_GAMES }) {
     key: keyOf(acc), ign: p.ign, games: p.games, kills: p.kills, damage: Math.floor(p.damage), deaths: p.deaths,
     killsPerGame: round(p.kills / p.games, 2), damagePerGame: Math.round(p.damage / p.games), teamTopKills: p.teamTop,
     events: [...p.events].sort((a, b) => a - b), sample: p.games >= minGames ? "ok" : "low",
+    accounts: p.accs.size,                                                                 // 합친 계정 수(1 = 합친 것 없음)
+    aka: [...p.igns].filter((n) => n !== p.ign).sort((a, b) => a.localeCompare(b)),        // 같은 사람의 다른 닉(부계 · 옛 닉) — 어느 닉으로 찾아도 이 줄
     ...(pending.get(acc) ? { pendingGames: pending.get(acc) } : {}),
   }));
   // 표본이 충분한 사람 먼저 · 판당 킬 · 판당 딜 · 판 수 · 닉 순(같은 값이면 늘 같은 순서)
@@ -99,12 +118,14 @@ function createCareer(deps) {
 
   async function career(ids) {
     const f = ids ? `&event_id=in.(${ids.join(",")})` : "";
-    const [raw, matches] = await Promise.all([
+    const [raw, matches, people] = await Promise.all([
       readAll("event_match_players", `select=event_id,team_name,match_id,account_id,ign,kills,damage,bot_kills,bot_dmg,dead,started_at${f}&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc`),
-      readAll("event_matches", `select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive${f}&order=event_id.asc,team_name.asc,match_id.asc`)
+      readAll("event_matches", `select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive${f}&order=event_id.asc,team_name.asc,match_id.asc`),
+      sbSelect("ops_state", "select=value&key=eq.killrace%3Apeople&limit=1").catch(() => [])
     ]);
     const rows = humanRows(raw);
-    const players = buildCareer({ rows, matches, keyOf });
+    const v = people && people[0] && people[0].value;
+    const players = buildCareer({ rows, matches, keyOf, merge: v && v.merge });
     const evs = ids || [...new Set(rows.map((r) => Number(r.event_id)))].sort((a, b) => a - b);
     return { events: evs, minGames: MIN_GAMES, players, updatedAt: new Date(now()).toISOString() };
   }
@@ -131,4 +152,4 @@ function createCareer(deps) {
   return { mount, get, career };
 }
 
-module.exports = { createCareer, buildCareer, keyMaker, reviveOut, _test: { eventsParam, keyMaker, MIN_GAMES, PAGE } };   // keyMaker · reviveOut = 리더보드(§1.18)가 같은 키 · 같은 인정 판 규칙을 쓴다
+module.exports = { createCareer, buildCareer, keyMaker, reviveOut, mergeRootOf, _test: { eventsParam, keyMaker, MIN_GAMES, PAGE } };   // keyMaker · reviveOut = 리더보드(§1.18)가 같은 키 · 같은 인정 판 규칙을 쓴다

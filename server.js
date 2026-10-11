@@ -35,6 +35,7 @@ const killraceShot = require("./killrace-shot.cjs");
 const killracePoster = require("./killrace-poster.cjs");
 // 킬내기 개인 누적 지표(§1.11) — 계정 기준 · 불투명 키 · 회차 묶음. 시험 scripts/killrace-career.test.cjs
 const killraceCareer = require("./killrace-career.cjs");
+const killraceTiers = require("./killrace-tiers.cjs");       // 공개 티어 읽기(§1.29) — 서버 표 하나(killrace:tiers)를 그대로
 // 방송용 경쟁전 현황(오너 방송 OBS 띠) — 읽기 전용 · 시험 scripts/ranked-live.test.cjs
 const rankedLive = require("./ranked-live.cjs");
 // 킬내기 주간 개인 리더보드(§1.18) — 1 ~ 10위 · 역할 묶음(1 / 2-4 / 5-10) · 순위 계산은 이 모듈 한 곳. 시험 scripts/killrace-leaderboard.test.cjs
@@ -7098,6 +7099,8 @@ async function gmiGuildMember(discordId) {
   if (process.env.SUPABASE_URL) setInterval(() => { killPoster.tick(); }, 60000).unref();
   // 개인 누적 지표(§1.11) — GET /api/killrace/career?events=2,3,4 · 닉 · 숫자 · 불투명 키만(계정 번호는 밖으로 안 나간다)
   killraceCareer.createCareer({ sbSelect, secret: process.env.SESSION_SECRET }).mount(app);
+  // 공개 티어 읽기(§1.29) — GET /api/killrace/tiers · ?ign= 은 부계 닉도 본계 줄로(§1.26 묶기) · 닉 · 티어 · 순위만
+  killraceTiers.createTiers({ sbSelect }).mount(app);
   // 방송용 경쟁전 현황(docs/ranked-live-api.md §1) — GET /api/ranked/live?ign=&since= · 읽기만 · 허용 닉만(기본 GmI_mriacademy · ops_state 'ranked:live' { igns })
   //   배그 키는 기존 PUBG_API_KEY 그대로(새 env 없음) · 선수 · 점수 60초 캐시 · 매치 요약은 matchId 로 기억
   rankedLive.createRankedLive({
