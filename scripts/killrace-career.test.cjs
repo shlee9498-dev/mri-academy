@@ -115,7 +115,7 @@ test("§1.24 2회(event 2)부터 개인 킬 · 딜에서 저장된 봇 몫(bot_k
   assert.deepEqual([a.games, a.kills, a.damage, a.pendingGames], [4, 8, 900, 1]);
 });
 
-test("합치기(§1.28): killrace:people merge 로 묶인 계정은 한 사람 — 부계 · 본계 어느 닉으로 찾아도 같은 줄 · 사슬 끝(본계) 키 · 합친 계정 수 · 다른 닉", () => {
+test("합치기(§1.29): killrace:people merge 로 묶인 계정은 한 사람 — 부계 · 본계 어느 닉으로 찾아도 같은 줄 · 사슬 끝(본계) 키 · 합친 계정 수 · 다른 닉", () => {
   const rows = [
     row(8, "가팀", "x1", "account.alt", "GmI_HuDal", 1, 286, true, "2026-10-10T12:02:00Z"),
     row(5, "나팀", "x2", "account.main", "GmI_Hyun", 3, 500, true, "2026-10-08T12:10:00Z"),

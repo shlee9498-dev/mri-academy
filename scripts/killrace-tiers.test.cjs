@@ -1,5 +1,5 @@
 "use strict";
-// 킬내기 공개 티어 읽기(killrace-tiers.cjs · 계약 §1.28) — 표 그대로 · 닉 · 티어 · 순위만 · 부계 닉도 본계 줄 · 가짜 DB 만 쓴다.
+// 킬내기 공개 티어 읽기(killrace-tiers.cjs · 계약 §1.29) — 표 그대로 · 닉 · 티어 · 순위만 · 부계 닉도 본계 줄 · 가짜 DB 만 쓴다.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const K = require("../killrace-tiers.cjs");

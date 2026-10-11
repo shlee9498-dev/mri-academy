@@ -1,5 +1,5 @@
 "use strict";
-// 킬내기 공개 티어 읽기(docs/killrace-api.md §1.28 · 소관 GmI · 카지노 트랙 휴면 중 MRIacademy 대행) — 서버 표 하나(ops_state 'killrace:tiers')를 그대로 보여 준다.
+// 킬내기 공개 티어 읽기(docs/killrace-api.md §1.29 · 소관 GmI · 카지노 트랙 휴면 중 MRIacademy 대행) — 서버 표 하나(ops_state 'killrace:tiers')를 그대로 보여 준다.
 // 앱 · 드래프트가 옛 표를 복사해 쓰지 않게 하는 길. 읽기만 · 닉 · 티어 · 순위만(실명 · 디스코드 id · 계정 번호 없음).
 //   GET /api/killrace/tiers            → { list: [{ ign, tier, rank }](순위 순), count, updatedAt }
 //   GET /api/killrace/tiers?ign=닉      → { ign, found, tier?, rank?, tierIgn?, via? } — 닉 대소문자 무시.

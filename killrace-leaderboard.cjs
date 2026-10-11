@@ -60,7 +60,7 @@ function dueReason(state, events, now) {
 function buildLeaderboard({ rows, matches, merge = {}, now, minGames = MIN_GAMES, recentDays = RECENT_DAYS, top = TOP }) {
   const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const people = new Map();
-  const rootOf = mergeRootOf(merge);           // 개인 누적(career)과 같은 묶기 — 사슬 끝(본계)까지(§1.28)
+  const rootOf = mergeRootOf(merge);           // 개인 누적(career)과 같은 묶기 — 사슬 끝(본계)까지(§1.29)
   for (const r of rows || []) {
     if (!r.account_id || !counted.has(`${r.event_id}|${r.team_name}|${r.match_id}`)) continue;   // 봇 몫이 아직이면 공식 값이 잠정으로 들어간다(§1.24)
     const acc = rootOf(r.account_id);

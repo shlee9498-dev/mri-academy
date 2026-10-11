@@ -33,7 +33,7 @@ const round = (n, d) => { const f = 10 ** d; return Math.round(n * f) / f; };
 // 늦은 블루칩 부활(§1.14)로 −10 이 된 판도 이탈 판처럼 뺀다 — killrace.cjs reviveOutOf 와 같은 식(flags.revive 만 읽는다)
 const reviveOut = (rv) => !!(rv && rv.state === "late" && rv.rule === "penalty");
 
-// 같은 사람 합치기(§1.28 · killrace:people merge = { 옛 계정: 기준 계정 }) — 계정 → 사슬 끝(본계). 고리가 있으면 거기서 멈춘다
+// 같은 사람 합치기(§1.29 · killrace:people merge = { 옛 계정: 기준 계정 }) — 계정 → 사슬 끝(본계). 고리가 있으면 거기서 멈춘다
 function mergeRootOf(merge) {
   const m = merge && typeof merge === "object" ? merge : {};
   const memo = new Map();
