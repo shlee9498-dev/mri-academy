@@ -110,7 +110,7 @@ create table if not exists public.killrace_coin_items (
 -- alter table public.killrace_coin_shipping enable row level security;   -- 정책 0 = service_role 만 · 서버는 오너 길 · 받은 사람 본인 상태만
 -- (closed = 거절 · 취소로 비움. 지우기 = 줄은 남기고 세 칸만 null — delete 는 쓰지 않는다 · 14일 정리 = 매일 10:00 KST 한 번)
 
--- 76a-3) 상금 · 기프티콘 앱 지급(계약 §1.29) — 더하기만
+-- 76a-3) 상금 · 기프티콘 앱 지급(계약 §1.30) — 더하기만
 -- alter table public.killrace_prize_ledger add column if not exists funding text check (funding is null or funding in ('owner', 'sponsor'));   -- 재원(비우면 사비)
 --   적립 안내 시각은 칸이 아니라 ops_state 'killrace:prize:notified' { 줄 id: 시각 } — §73 방아쇠가 고칠 칸을 정해 둬서 칸으로 두면 함수 교체(B 구간)가 든다.
 --   funding 은 적을 때만 넣고 고치지 않는다(방아쇠의 「고칠 수 없는 칸」 비교 목록에 없어도 insert 는 그대로 통과).
