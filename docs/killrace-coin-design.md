@@ -89,23 +89,26 @@ create table if not exists public.killrace_coin_items (
   created_at  timestamptz not null default now()
 );
 
--- 76a-2) 실물 배송 정보 — 동의 받은 실물 교환에만 · 「보냄」 · 거절 · 취소 때 세 칸을 비운다(계약 §1.28.11b)
+-- 76a-2) 실물 배송 정보 — 동의 받은 실물 교환에만 · 단계 requested → shipped → received / expired · 분실이면 reship_pending(계약 §1.28.11b)
 --   교환 신청 표 다음에 만든다(아래 76b 뒤로 옮겨 실행 · 외래 키 순서).
 -- create table if not exists public.killrace_coin_shipping (
 --   exchange_id      bigint      primary key references public.killrace_coin_exchanges (id),
+--   ship_state       text        not null default 'requested' check (ship_state in ('requested', 'shipped', 'received', 'expired', 'reship_pending', 'closed')),
 --   recipient_name   text        check (recipient_name is null or char_length(recipient_name) between 1 and 20),
 --   address          text        check (address is null or char_length(address) between 5 and 120),
 --   phone            text        check (phone is null or phone ~ '^[0-9-]{9,13}$'),
+--   tracking         jsonb       not null default '[]'::jsonb,        -- [{ no, at }] 송장번호(재발송이면 여러 개) · 주소 아님 · 지우지 않는다
+--   shipped_at       timestamptz,                                      -- 마지막 발송 시각(14일 정리 기준)
 --   consent_version  text        not null check (char_length(consent_version) between 1 and 20),
---   consented_at     timestamptz not null,
+--   consented_at     timestamptz not null,                             -- 마지막 동의(재발송 때 새로 적는다)
 --   purged_at        timestamptz,
 --   created_at       timestamptz not null default now(),
 --   constraint killrace_coin_shipping_shape check (
---     (purged_at is null and recipient_name is not null and address is not null and phone is not null)
---     or (purged_at is not null and recipient_name is null and address is null and phone is null))
+--     (ship_state in ('requested', 'shipped') and recipient_name is not null and address is not null and phone is not null)
+--     or (ship_state in ('received', 'expired', 'reship_pending', 'closed') and recipient_name is null and address is null and phone is null and purged_at is not null))
 -- );
--- alter table public.killrace_coin_shipping enable row level security;   -- 정책 0 = service_role 만 · 서버는 오너 길에서만 읽는다
--- (지우기 = 줄은 남기고 세 칸만 null — 「배송 완료 · 개인정보 삭제됨」 기록. delete 는 쓰지 않는다)
+-- alter table public.killrace_coin_shipping enable row level security;   -- 정책 0 = service_role 만 · 서버는 오너 길 · 받은 사람 본인 상태만
+-- (closed = 거절 · 취소로 비움. 지우기 = 줄은 남기고 세 칸만 null — delete 는 쓰지 않는다 · 14일 정리 = 매일 10:00 KST 한 번)
 
 -- 76b) 교환 신청 — 신청됨 → 승인(발송 대기) → 보냄 / 거절 · 취소. 상태는 앞으로만 간다(방아쇠)
 create table if not exists public.killrace_coin_exchanges (
