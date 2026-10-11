@@ -102,6 +102,7 @@ function createVote(deps) {
   const log = deps.log || console;
   const enc = encodeURIComponent;
   const fail = (res, status, code) => res.status(status).json({ error: { code } });
+  const isDup = (e) => !!e && (e.status === 409 || /23505/.test(String(e.body || e.message || "")));
   const isMissing = (e) => !!e && (e.status === 404 || /PGRST205|42P01/.test(String(e.body || e.message || "")));
   const failErr = (res, e, where) => {
     if (isMissing(e)) return fail(res, 503, "table_missing");
@@ -134,7 +135,7 @@ function createVote(deps) {
     const byDiscord = await sbSelect(TABLE, `select=id,choices,suggestion,updated_at&poll_id=eq.${enc(pollId)}&discord_id=eq.${enc(p.discordId)}&limit=1`);
     if (byDiscord[0]) return byDiscord[0];
     if (!p.linked) return null;
-    const byPerson = await sbSelect(TABLE, `select=id,choices,suggestion,updated_at&poll_id=eq.${enc(pollId)}&platform=eq.${enc(p.platform)}&account_id=eq.${enc(p.accountId)}&limit=1`);
+    const byPerson = await sbSelect(TABLE, `select=id,discord_id,choices,suggestion,updated_at&poll_id=eq.${enc(pollId)}&platform=eq.${enc(p.platform)}&account_id=eq.${enc(p.accountId)}&limit=1`);
     return byPerson[0] || null;
   }
 
@@ -173,11 +174,19 @@ function createVote(deps) {
     if (inp.error) return { status: 400, code: inp.error };
     const at = new Date(now()).toISOString();
     const prev = await myBallot(poll.id, p);
+    // 다른 디스코드가 같은 본계로 이미 투표했으면 그 표를 가져오지 않는다 — 한 사람 한 표(409 · 기존 표 그대로)
+    if (prev && prev.discord_id && prev.discord_id !== p.discordId) return { status: 409, code: "already_voted" };
     let row;
-    if (prev) {
-      [row] = await sbPatch(TABLE, `id=eq.${prev.id}`, { platform: p.platform, account_id: p.accountId, discord_id: p.discordId, choices: inp.choices, suggestion: inp.suggestion, updated_at: at });
-    } else {
-      row = await sbInsert(TABLE, { poll_id: poll.id, platform: p.platform, account_id: p.accountId, discord_id: p.discordId, choices: inp.choices, suggestion: inp.suggestion, created_at: at, updated_at: at });
+    try {
+      if (prev) {
+        [row] = await sbPatch(TABLE, `id=eq.${prev.id}`, { platform: p.platform, account_id: p.accountId, discord_id: p.discordId, choices: inp.choices, suggestion: inp.suggestion, updated_at: at });
+      } else {
+        row = await sbInsert(TABLE, { poll_id: poll.id, platform: p.platform, account_id: p.accountId, discord_id: p.discordId, choices: inp.choices, suggestion: inp.suggestion, created_at: at, updated_at: at });
+      }
+    } catch (e) {
+      // 유일 색인 충돌(합치기로 두 디스코드가 같은 본계가 된 뒤 고치기 · 동시 첫 투표) — 500 이 아니라 409
+      if (isDup(e)) return { status: 409, code: "already_voted" };
+      throw e;
     }
     log.log(`[vote] saved poll=${poll.id}`);
     return { body: { mine: mineView(row || { choices: inp.choices, suggestion: inp.suggestion, updated_at: at }) } };

@@ -6,8 +6,8 @@
 // ⚠️ 응답 · 로그 · 카드에 계정 번호 · 디스코드 번호 · 주소 · 연락처를 싣지 않는다. 사비(krw_cost)는 오너 길에만.
 
 const SWITCH_KEY = "killrace:switches";
-const SWITCH_DEFAULTS = Object.freeze({ coin_shop: false, casino_link: false, deposit: false, shop_vote: false, monthly_budget_krw: 200000 });
-const SWITCH_BOOL = ["coin_shop", "casino_link", "deposit", "shop_vote"];
+const SWITCH_DEFAULTS = Object.freeze({ coin_shop: false, casino_link: false, deposit: false, clan_room: false, shop_vote: false, monthly_budget_krw: 200000 });
+const SWITCH_BOOL = ["coin_shop", "casino_link", "deposit", "clan_room", "shop_vote"];
 const COIN_KEY = "killrace:coin";
 const COIN_DEFAULTS = Object.freeze({
   on: false,
@@ -163,6 +163,14 @@ function ownerExchangeText({ id, ign, item, coin, monthEarned, physical }) {
     "승인 · 거절은 앱 오너 화면 또는 /킬내기코인 에서"].join("\n");
 }
 
+// 배송 칸(§1.28.6a) — { state, trackingNo } 감싼 한 칸 · 주소 · 이름 · 연락처 없음 · 내부 값 closed 는 null(목록에서 빠짐)
+const SHIP_STATES = ["requested", "shipped", "received", "expired", "reship_pending"];
+function shipOut(sh) {
+  if (!sh || !SHIP_STATES.includes(sh.ship_state)) return null;
+  const t = Array.isArray(sh.tracking) && sh.tracking.length ? sh.tracking[sh.tracking.length - 1] : null;
+  return { state: sh.ship_state, trackingNo: t && t.no ? String(t.no) : null };
+}
+
 // ═══════════════ 서버 ═══════════════
 // deps: sbSelect · sbInsert · sbPatch · sbUpsert · sbRpc · isOwner(req) · userOf(req)(킬내기 토큰) · memberOf(discordId) · keyOf(acc)
 //       portalSession(req) → { pid } | null · clanOf(discordId) → "clan" | 그 밖 | null(모름) · notifyOwner(text) · notifyUser(discordId, text) · now · log
@@ -248,7 +256,9 @@ function createCoin(deps) {
     if (!u) return { status: 401, code: "login_required" };
     return personOfDiscord(u.id);
   }
+  // 클랜 방 길은 스위치 clan_room 이 먼저(계약 §18.1 · trainer-portal-api §9.35.1) — 꺼져 있으면 세션 · 길드 조회 전에 409
   async function personFromPortal(req) {
+    if (!(await switches()).clan_room) return { status: 409, code: "switch_off" };
     const s = portalSession(req);
     if (!s || !s.pid) return { status: 401, code: "session_expired" };
     const k = await clanOf(String(s.pid)).catch(() => null);
@@ -272,6 +282,10 @@ function createCoin(deps) {
   async function itemNames() {
     const r = await sbSelect(ITEMS, "select=id,name&limit=500").catch(() => []);
     return Object.fromEntries(r.map((x) => [Number(x.id), x.name]));
+  }
+  async function itemDeliveries() {
+    const r = await sbSelect(ITEMS, "select=id,delivery&limit=500").catch(() => []);
+    return Object.fromEntries(r.map((x) => [Number(x.id), x.delivery]));
   }
 
   // GET …/coin — 지갑(§1.28.6)
@@ -311,14 +325,23 @@ function createCoin(deps) {
     const items = await sbSelect(ITEMS, "select=id,name,coin_price,krw_cost,delivery,stock&active=eq.true&order=sort.asc,id.asc&limit=100");
     const bud = await budget(sw);
     const open = p.linked ? await openExchangeOf(p) : null;
-    const names = Object.fromEntries(items.map((x) => [Number(x.id), x.name]));
+    const names = await itemNames();
+    const delivOf = await itemDeliveries();
+    const sent = p.linked ? await sbSelect(EXCH, `select=id,item_id,coin_price,status,requested_at&platform=eq.${enc(p.platform)}&account_id=eq.${enc(p.accountId)}&status=eq.sent&order=id.desc&limit=50`).catch(() => []) : [];
+    const shipIds = [...(open ? [open.id] : []), ...sent.map((r) => r.id)];
+    const ships = shipIds.length ? await sbSelect(SHIP, `select=exchange_id,ship_state,tracking&exchange_id=in.(${shipIds.map(Number).join(",")})`).catch(() => []) : [];
+    const shipOf = Object.fromEntries(ships.map((s) => [Number(s.exchange_id), s]));
     const affordable = items.filter((x) => x.stock == null || x.stock > 0).map((x) => Number(x.krw_cost));
     const lockedReason = lockedReasonOf({ coinOn: cfg.on, shopOn: sw.coin_shop, linked: p.linked, verified: p.verified, open: !!open,
       budgetLeft: bud.left, cheapest: affordable.length ? Math.min(...affordable) : null });
     return {
       on: cfg.on && sw.coin_shop,
       items: items.map((x) => ({ id: Number(x.id), name: x.name, coinPrice: x.coin_price, delivery: x.delivery, stock: x.stock == null ? null : x.stock })),
-      open: open ? { id: Number(open.id), item: names[Number(open.item_id)] || null, coinPrice: open.coin_price, status: open.status, requestedAt: open.requested_at } : null,
+      open: open ? { id: Number(open.id), item: names[Number(open.item_id)] || null, coinPrice: open.coin_price, status: open.status, requestedAt: open.requested_at,
+        delivery: delivOf[Number(open.item_id)] || "gifticon", ship: shipOut(shipOf[Number(open.id)]) } : null,
+      // 보낸 실물 — 배송 단계 requested(재발송 주소 받음) · shipped · reship_pending 인 동안만(§1.28.6 · 10/11 확정)
+      shipping: sent.filter((r) => shipOf[Number(r.id)] && ["requested", "shipped", "reship_pending"].includes(shipOf[Number(r.id)].ship_state))
+        .map((r) => ({ id: Number(r.id), item: names[Number(r.item_id)] || null, coinPrice: r.coin_price, status: "sent", requestedAt: r.requested_at, delivery: "physical", ship: shipOut(shipOf[Number(r.id)]) })),
       canExchange: !lockedReason, lockedReason,
     };
   }
@@ -459,7 +482,8 @@ function createCoin(deps) {
       const no = String((body && body.trackingNo) || "").trim();
       if (!/^[0-9A-Za-z-]{6,30}$/.test(no)) return { status: 400, code: "bad_tracking" };
       const ex = (await sbSelect(EXCH, `select=id,status&id=eq.${sh.exchange_id}&limit=1`))[0];
-      if (!ex || ex.status !== "approved" || sh.ship_state !== "requested") return { status: 409, code: "bad_state" };
+      // 첫 발송 = 교환 approved · 재발송 = 이미 sent + 배송 단계가 requested 로 돌아온 줄(§1.28.11b · 10/11 정정)
+      if (!ex || !["approved", "sent"].includes(ex.status) || sh.ship_state !== "requested") return { status: 409, code: "bad_state" };
       const at = new Date(now()).toISOString();
       await sbPatch(SHIP, `id=eq.${sh.id}&ship_state=eq.requested`, { ship_state: "shipped", shipped_at: at, tracking: [...(sh.tracking || []), { no, at }] });
       await sbPatch(EXCH, `id=eq.${ex.id}&status=eq.approved`, { status: "sent", sent_at: at }).catch(() => {});
@@ -598,6 +622,7 @@ function createCoin(deps) {
 }
 
 module.exports = {
+  shipOut, SHIP_STATES,
   createCoin, coinEarn, applyCaps, normSwitches, switchValue, normCoin, isCoinEvent, lockedReasonOf, shipInput, rpcCode, ownerExchangeText, kstMonth,
   SWITCH_KEY, SWITCH_DEFAULTS, COIN_DEFAULTS, SHIP_CONSENT_VERSION,
 };

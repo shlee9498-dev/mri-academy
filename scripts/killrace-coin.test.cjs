@@ -61,8 +61,8 @@ test("applyCaps: 회차 한도 · 월 한도(스위치 예산) · 남은 한도 
 });
 
 test("스위치: 기본값 전부 꺼짐 · 예산 200,000 · 문자 \"true\" 는 꺼짐 · 값 검사", () => {
-  assert.deepEqual(C.normSwitches(null), { coin_shop: false, casino_link: false, deposit: false, shop_vote: false, monthly_budget_krw: 200000 });
-  assert.deepEqual(C.normSwitches({ coin_shop: "true", deposit: true, monthly_budget_krw: -1 }), { coin_shop: false, casino_link: false, deposit: true, shop_vote: false, monthly_budget_krw: 200000 });
+  assert.deepEqual(C.normSwitches(null), { coin_shop: false, casino_link: false, deposit: false, clan_room: false, shop_vote: false, monthly_budget_krw: 200000 });
+  assert.deepEqual(C.normSwitches({ coin_shop: "true", deposit: true, monthly_budget_krw: -1 }), { coin_shop: false, casino_link: false, deposit: true, clan_room: false, shop_vote: false, monthly_budget_krw: 200000 });
   assert.deepEqual(C.switchValue("coin_shop", true), { ok: true, value: true });
   assert.deepEqual(C.switchValue("coin_shop", 1), { error: "bad_value" });
   assert.deepEqual(C.switchValue("monthly_budget_krw", 300000), { ok: true, value: 300000 });
@@ -194,14 +194,19 @@ test("길: 연결 전이면 지갑 0 · 교환 409 not_linked · 오너 길은 �
   assert.equal((await w.call("GET /api/killrace/coin/shipping/:id", {}, { id: 1 })).code, 403);
 });
 
-test("길: 수강생 앱 클랜 방 — 클랜 역할 없으면 403 · 모르면 503", async () => {
-  const mk = (clan) => {
+let asked = 0;
+test("길: 수강생 앱 클랜 방 — 스위치 clan_room 꺼지면 409 switch_off(길드 조회 전) · 켜지면 클랜 역할 없으면 403 · 모르면 503", async () => {
+  const mk = (clan, room = true) => {
     const routes = {};
-    const api = C.createCoin({ sbSelect: async () => [], sbInsert: async () => ({}), sbPatch: async () => [], sbUpsert: async () => ({}), sbRpc: async () => 1,
-      portalSession: () => ({ pid: "d1" }), clanOf: async () => clan, memberOf: async () => null, log: { log() {}, warn() {} } });
+    const sel = async (t, q) => (t === "ops_state" && /killrace%3Aswitches|killrace:switches/.test(q) && room ? [{ value: { clan_room: true } }] : []);
+    const api = C.createCoin({ sbSelect: sel, sbInsert: async () => ({}), sbPatch: async () => [], sbUpsert: async () => ({}), sbRpc: async () => 1,
+      portalSession: () => ({ pid: "d1" }), clanOf: async () => { asked++; return clan; }, memberOf: async () => null, log: { log() {}, warn() {} } });
     api.mount({ get: (p, ...h) => { routes[`GET ${p}`] = h.at(-1); }, post: (p, ...h) => { routes[`POST ${p}`] = h.at(-1); } });
     return async () => { let out; await routes["GET /api/student-portal/clan/coin"]({ query: {}, headers: {} }, { status(c) { this.c = c; return this; }, json(b) { out = { code: this.c || 200, body: b }; return this; } }); return out; };
   };
+  asked = 0;
+  assert.deepEqual(await mk("clan", false)().then((r) => [r.code, r.body.error.code]), [409, "switch_off"]);
+  assert.equal(asked, 0);
   assert.deepEqual(await mk("external")().then((r) => [r.code, r.body.error.code]), [403, "clan_required"]);
   assert.deepEqual(await mk(null)().then((r) => [r.code, r.body.error.code]), [503, "clan_check_unavailable"]);
   assert.equal((await mk("clan")()).code, 200);
@@ -212,4 +217,72 @@ test("연습판 판정: prize false 이고 자율 판 아님만 · 칸 없으면
   assert.equal(C.isCoinEvent({ prize: false, kind: "casual" }), false);
   assert.equal(C.isCoinEvent({}), false);
   assert.equal(C.isCoinEvent({ prize: true }), false);
+});
+
+// ── 켜기 전 고칠 것(검수 10/11 · 계약 §1.28.6 · §1.28.6a · §1.28.11b) ──
+function shipWorld({ exchanges = [], ships = [] } = {}) {
+  const writes = [];
+  const items = [{ id: 1, name: "커피", coin_price: 5000, krw_cost: 5000, delivery: "gifticon", stock: 6, active: true },
+    { id: 2, name: "마우스패드", coin_price: 20000, krw_cost: 20000, delivery: "physical", stock: 2, active: true }];
+  const pick = (q, k) => { const m = q.match(new RegExp(`(?:^|&)${k}=eq\\.([^&]+)`)); return m ? decodeURIComponent(m[1]) : null; };
+  const sb = {
+    sbSelect: async (t, q) => {
+      if (t === "ops_state") return [{ value: { coin_shop: true, on: true } }];
+      if (t === "killrace_prize_verifications") return [{ platform: "steam", account_id: A }];
+      if (t === "killrace_coin_items") return items;
+      if (t === "killrace_coin_exchanges") {
+        let r = exchanges;
+        if (pick(q, "id")) r = r.filter((x) => x.id === Number(pick(q, "id")));
+        if (pick(q, "status")) r = r.filter((x) => x.status === pick(q, "status"));
+        if (/status=in\.\(requested,approved\)/.test(q)) r = r.filter((x) => ["requested", "approved"].includes(x.status));
+        return r;
+      }
+      if (t === "killrace_coin_shipping") {
+        const m = q.match(/exchange_id=(?:eq\.(\d+)|in\.\(([\d,]+)\))/);
+        if (!m) return ships;
+        const ids = (m[1] || m[2]).split(",").map(Number);
+        return ships.filter((s) => ids.includes(s.exchange_id));
+      }
+      return [];
+    },
+    sbInsert: async (t, r) => { writes.push([t, r]); return { id: 1, ...r }; },
+    sbPatch: async (t, f, r) => { writes.push([t, f, r]); return [r]; },
+    sbUpsert: async () => ({}), sbRpc: async () => 1,
+  };
+  const api = C.createCoin({ ...sb, userOf: () => ({ id: "d1" }), memberOf: async () => ({ id: 1, platform: "steam", account_id: A, ign: "Aaa" }), log: { log() {}, warn() {} } });
+  return { api, writes };
+}
+
+test("매점: open = requested · approved 만 + delivery · ship · 보낸 실물은 shipping 배열(requested · shipped · reship_pending) · 주소 칸 없음", async () => {
+  const exchanges = [
+    { id: 10, platform: "steam", account_id: A, item_id: 2, coin_price: 20000, status: "approved", requested_at: "t1" },
+    { id: 11, platform: "steam", account_id: A, item_id: 2, coin_price: 20000, status: "sent", requested_at: "t0" },
+    { id: 12, platform: "steam", account_id: A, item_id: 2, coin_price: 20000, status: "sent", requested_at: "t-1" },
+    { id: 13, platform: "steam", account_id: A, item_id: 1, coin_price: 5000, status: "sent", requested_at: "t-2" },
+  ];
+  const ships = [
+    { exchange_id: 10, ship_state: "requested", tracking: [], address: "서울시 어딘가", phone: "010-1111-2222" },
+    { exchange_id: 11, ship_state: "shipped", tracking: [{ no: "111111" }, { no: "222222" }] },
+    { exchange_id: 12, ship_state: "received", tracking: [{ no: "333333" }] },
+  ];
+  const { api } = shipWorld({ exchanges, ships });
+  const p = await api.personOfDiscord("d1");
+  const s = await api.shop(p);
+  assert.deepEqual(s.items.map((x) => x.delivery), ["gifticon", "physical"]);
+  assert.deepEqual([s.open.id, s.open.delivery, s.open.ship], [10, "physical", { state: "requested", trackingNo: null }]);
+  assert.deepEqual(s.shipping, [{ id: 11, item: "마우스패드", coinPrice: 20000, status: "sent", requestedAt: "t0", delivery: "physical", ship: { state: "shipped", trackingNo: "222222" } }]);
+  assert.doesNotMatch(JSON.stringify(s), /서울|010-/);
+  assert.equal(C.shipOut({ ship_state: "closed" }), null);
+});
+
+test("재발송 「발송함」: 교환 sent + 배송 requested 도 통과 · 첫 발송(approved)도 통과 · requested 교환은 409", async () => {
+  const re = shipWorld({ exchanges: [{ id: 11, platform: "steam", account_id: A, status: "sent" }], ships: [{ id: 5, exchange_id: 11, ship_state: "requested", tracking: [{ no: "111111" }] }] });
+  const r = await re.api.shipAdmin(11, "shipped", { trackingNo: "999999" });
+  assert.deepEqual(r.body, { ok: true, shipState: "shipped" });
+  const patch = re.writes.find(([t]) => t === "killrace_coin_shipping")[2];
+  assert.deepEqual(patch.tracking.map((x) => x.no), ["111111", "999999"]);
+  const first = shipWorld({ exchanges: [{ id: 10, platform: "steam", account_id: A, status: "approved" }], ships: [{ id: 4, exchange_id: 10, ship_state: "requested", tracking: [] }] });
+  assert.equal((await first.api.shipAdmin(10, "shipped", { trackingNo: "123456" })).body.shipState, "shipped");
+  const early = shipWorld({ exchanges: [{ id: 9, platform: "steam", account_id: A, status: "requested" }], ships: [{ id: 3, exchange_id: 9, ship_state: "requested", tracking: [] }] });
+  assert.equal((await early.api.shipAdmin(9, "shipped", { trackingNo: "123456" })).code, "bad_state");
 });

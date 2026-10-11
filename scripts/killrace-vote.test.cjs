@@ -156,3 +156,14 @@ test("길: 오너 admin 실시간(득표 · 인원 · 제안 글 · 시각) · �
   await w.call(POST, { body: { choices: ["chicken"] } });
   assert.deepEqual([...new Set(w.writes.map(([t]) => t))], [V.TABLE]);
 });
+
+test("길: 서로 다른 디스코드 둘이 같은 본계로 묶이면 409 already_voted(500 아님 · 먼저 낸 표 그대로) · 색인 충돌도 409", async () => {
+  const ballots = [{ id: 1, poll_id: "shop-2026-10", platform: "steam", account_id: A, discord_id: "d2", choices: ["coffee"], suggestion: null, updated_at: "x" }];
+  const w = world({ ballots });   // d1 의 연결 계정도 A(본계) — d2 가 먼저 냄
+  assert.deepEqual(err(await w.call(POST, { body: { choices: ["chicken"] } })), [409, "already_voted"]);
+  assert.deepEqual([w.writes.length, w.rows[0].discord_id, w.rows[0].choices], [0, "d2", ["coffee"]]);
+  const api = V.createVote({ sbSelect: async (t, q) => (t === "ops_state" && /vote/.test(q) ? [{ value: POLL }] : []),
+    sbInsert: async () => { throw Object.assign(new Error("23505 duplicate key"), { status: 409 }); }, sbPatch: async () => [],
+    memberOf: async () => ({ id: 1, platform: "steam", account_id: A }), kindFor: async () => "clan", switches: async () => ({ shop_vote: true }), now: () => OPEN_AT, log: { log() {}, warn() {} } });
+  assert.deepEqual(await api.cast("d1", "shop-2026-10", { choices: ["chicken"] }), { status: 409, code: "already_voted" });
+});

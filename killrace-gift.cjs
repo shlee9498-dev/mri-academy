@@ -13,6 +13,7 @@ const SIGN_SECONDS = 60;
 const KEEP_AFTER_RECEIVED_MS = 30 * 86400e3;
 const KEEP_AFTER_EXPIRY_MS = 7 * 86400e3;
 const { APP_HOME: APP_URL } = require("./killrace-members.cjs");   // 킬내기 앱 주소 정본
+const { shipOut } = require("./killrace-coin.cjs");                 // 배송 칸 { state, trackingNo } 정본(§1.28.6a)
 
 const kstDay = (ms) => new Date(Number(ms) + 9 * 3600e3).toISOString().slice(0, 10);
 const kstHour = (ms) => new Date(Number(ms) + 9 * 3600e3).getUTCHours();
@@ -46,11 +47,11 @@ function giftInput(b, today) {
   return { ok: true, row: { kind, item_name: itemName, funding, krw_value: krw, reason, event_id: eventId, code: kind === "gifticon" ? code : null, expires_on: expiresOn }, hasImage: kind === "gifticon" && hasImage };
 }
 
-// 목록 한 줄(받는 사람 · 오너 공통) — 코드 · 사진 주소 없음
-function giftView(r, eventNames = {}) {
+// 목록 한 줄(받는 사람 · 오너 공통) — 코드 · 사진 주소 없음 · 실물만 ship(§1.28.6a · 주소 · 연락처 없음)
+function giftView(r, eventNames = {}, sh = null) {
   return { id: Number(r.id), kind: r.kind, item: r.item_name, event: r.event_id ? { id: Number(r.event_id), name: eventNames[Number(r.event_id)] || null } : null,
     reason: r.reason || null, expiresOn: r.expires_on || null, state: r.state, createdAt: r.created_at, openedAt: r.opened_at || null,
-    receivedAt: r.received_at || null, purged: !!r.purged_at };
+    receivedAt: r.received_at || null, purged: !!r.purged_at, ship: r.kind === "physical" ? shipOut(sh) : null };
 }
 
 // 정리 대상 — 받았어요 + 30일 · 만료일 + 7일(안 받았으면 expired) · 이미 비운 줄은 빼고
@@ -184,9 +185,13 @@ function createGift(deps) {
     return { row: r };
   }
   async function listMine(p) {
-    if (!p.linked) return { linked: false, items: [] };
+    if (!p.linked) return { linked: false, verified: false, items: [] };
     const [rows, names] = await Promise.all([sbSelect(GIFT, `select=${GIFT_COLS}&platform=eq.${enc(p.platform)}&account_id=eq.${enc(p.accountId)}&order=id.desc&limit=100`), eventNames()]);
-    return { linked: true, verified: !!p.verified, items: rows.filter((r) => r.state !== "cancelled").map((r) => giftView(r, names)) };
+    const live = rows.filter((r) => r.state !== "cancelled");
+    const phys = live.filter((r) => r.kind === "physical").map((r) => Number(r.id));
+    const ships = phys.length ? await sbSelect(SHIP, `select=gift_id,ship_state,tracking&gift_id=in.(${phys.join(",")})`).catch(() => []) : [];
+    const shipOf = Object.fromEntries(ships.map((x) => [Number(x.gift_id), x]));
+    return { linked: true, verified: !!p.verified, items: live.map((r) => giftView(r, names, shipOf[Number(r.id)])) };
   }
   async function open(p, id) {
     const g = await myGift(p, id);
@@ -218,6 +223,46 @@ function createGift(deps) {
     await sbPatch(GIFT, `id=eq.${r.id}&state=eq.opened`, { state: "received", received_at: new Date(now()).toISOString() });
     return { body: { ok: true, state: "received" } };
   }
+  // 실물 「못 받았어요」 — 「발송함」 상태만 · 세 칸 바로 비움 → reship_pending · 오너에게 알림(교환 줄과 같은 규칙 · §1.28.11b)
+  async function lost(p, id) {
+    const g = await myGift(p, id);
+    if (g.code) return g;
+    if (g.row.kind !== "physical") return { status: 409, code: "not_physical" };
+    const sh = (await sbSelect(SHIP, `select=id,ship_state&gift_id=eq.${g.row.id}&limit=1`))[0];
+    if (!sh || sh.ship_state !== "shipped") return { status: 409, code: "not_shipped" };
+    await sbPatch(SHIP, `id=eq.${sh.id}&ship_state=eq.shipped`, { ship_state: "reship_pending", recipient_name: null, address: null, phone: null, purged_at: new Date(now()).toISOString() });
+    log.log(`[coin] ship_purged gift=${g.row.id} · lost`);
+    await notifyOwner(`[기프티콘함] 실물 #${g.row.id} 을(를) 못 받았다는 신고가 왔어 · 받는 사람이 새 주소를 넣으면 다시 보내 줘`).catch(() => false);
+    return { body: { ok: true, shipState: "reship_pending" } };
+  }
+  // 오너 — 실물 「발송함」(첫 발송 · 재발송 모두 배송 단계 requested 일 때) · 「분실」(발송함 → reship_pending)
+  async function shipGift(id, action, body) {
+    const r = (await sbSelect(GIFT, `select=id,kind,state,platform,account_id&id=eq.${Number(id)}&limit=1`))[0];
+    if (!r) return { status: 404, code: "not_found" };
+    if (r.kind !== "physical") return { status: 409, code: "not_physical" };
+    if (r.state === "cancelled") return { status: 409, code: "bad_state" };
+    const sh = (await sbSelect(SHIP, `select=id,ship_state,tracking&gift_id=eq.${r.id}&limit=1`))[0];
+    if (!sh) return { status: 409, code: "no_address" };
+    const at = new Date(now()).toISOString();
+    if (action === "shipped") {
+      const no = String((body && body.trackingNo) || "").trim();
+      if (!/^[0-9A-Za-z-]{6,30}$/.test(no)) return { status: 400, code: "bad_tracking" };
+      if (sh.ship_state !== "requested") return { status: 409, code: "bad_state" };
+      await sbPatch(SHIP, `id=eq.${sh.id}&ship_state=eq.requested`, { ship_state: "shipped", shipped_at: at, tracking: [...(sh.tracking || []), { no, at }] });
+      log.log(`[coin] ship_shipped gift=${r.id}`);
+      const did = await discordOf(r.platform, r.account_id);
+      if (did) await notifyUser(did, "기프티콘함 선물을 택배로 보냈어요. 받으면 앱에서 「받았어요」를 눌러 주세요").catch(() => false);
+      return { body: { ok: true, shipState: "shipped" } };
+    }
+    if (action === "lost") {
+      if (sh.ship_state !== "shipped") return { status: 409, code: "not_shipped" };
+      await sbPatch(SHIP, `id=eq.${sh.id}&ship_state=eq.shipped`, { ship_state: "reship_pending", recipient_name: null, address: null, phone: null, purged_at: at });
+      log.log(`[coin] ship_purged gift=${r.id} · lost`);
+      return { body: { ok: true, shipState: "reship_pending" } };
+    }
+    return { status: 400, code: "bad_action" };
+  }
+
   // 실물 받는 곳(§1.28.11b 와 같은 규칙 · 만 14세 미만 막음)
   async function address(p, id, body, shipInput) {
     const g = await myGift(p, id);
@@ -291,6 +336,7 @@ function createGift(deps) {
       app.get(`${prefix}/gifts`, ...m, w(async (req, res, p) => res.json(await listMine(p))));
       app.post(`${prefix}/gifts/:id/open`, ...m, w(async (req, res, p) => send(res, await open(p, req.params.id))));
       app.post(`${prefix}/gifts/:id/received`, ...m, w(async (req, res, p) => send(res, await received(p, req.params.id))));
+      app.post(`${prefix}/gifts/:id/lost`, ...m, w(async (req, res, p) => send(res, await lost(p, req.params.id))));
       app.post(`${prefix}/gifts/:id/address`, ...m, w(async (req, res, p) => send(res, await address(p, req.params.id, req.body, shipInput))));
     }
     const owner = (fn) => async (req, res) => { try { if (!isOwner(req)) return fail(res, 403, "owner_only"); return await fn(req, res); } catch (e) { return failErr(res, e, "admin"); } };
@@ -299,10 +345,11 @@ function createGift(deps) {
       const b = req.body || {};
       if (b.action === "add") return send(res, await addGift(b));
       if (b.action === "cancel") return send(res, await cancelGift(b.id, b.reason));
+      if (b.action === "shipped" || b.action === "lost") return send(res, await shipGift(b.id, b.action, b));
       return fail(res, 400, "bad_action");
     }));
   }
-  return { mount, tick, daily, addGift, cancelGift, adminList, notifyAccruals, recipientOf, listMine, open, received };
+  return { mount, tick, daily, addGift, cancelGift, shipGift, adminList, notifyAccruals, recipientOf, listMine, open, received, lost };
 }
 
 module.exports = { createGift, giftInput, giftView, purgeDue, notifyTargets, accrueText, arrivedText, NOTIFIED_KEY, PENDING_KEY, BUCKET, SIGN_SECONDS };
