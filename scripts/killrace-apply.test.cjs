@@ -31,6 +31,7 @@ function setup(over = {}) {
     notify: async (embed) => { mem.cards.push(embed); },
     needAccount: over.needAccount === undefined ? true : over.needAccount,
     newId: () => `id${++seq}`, now: () => clock++, log: { log() {}, warn() {}, error() {} },
+    ...(over.depositOn !== undefined ? { depositOn: async () => over.depositOn, notifyOwner: async (t) => { mem.ownerDms = [...(mem.ownerDms || []), t]; return true; } } : {}),
   });
   const call = async (fn, req) => { const res = fakeRes(); await fn({ headers: {}, body: {}, path: "", ...req }, res); return res; };
   return { api, mem, call, setClock: (t) => { clock = t; } };
@@ -410,8 +411,8 @@ test("진행자 참가비 확인: 운영 키 · 바꾸는 사람 필수 · 외�
   const adm = (await call(api.list, { headers: key })).body;
   assert.deepEqual(adm.kindCounts, { lesson: 0, clan: 1, external: 2, none: 1 });
   assert.deepEqual(adm.feeUnpaid, [{ order: 1, ign: "Fake_Nick1", discord: "tester_one", waiting: false }, { order: 3, ign: "Ext_Nick2", discord: "ext_two", waiting: false }]);
-  assert.deepEqual(adm.list.map((x) => [x.ign, x.kind, x.fee]), [["Fake_Nick1", "external", { paid: false, at: null, by: null }], ["Clan_Nick", "clan", null],
-    ["Ext_Nick2", "external", { paid: false, at: null, by: null }], ["Old_Nick", null, null]]);
+  assert.deepEqual(adm.list.map((x) => [x.ign, x.kind, x.fee]), [["Fake_Nick1", "external", { paid: false, at: null, by: null, state: null, returnedAt: null, forfeit: null }], ["Clan_Nick", "clan", null],
+    ["Ext_Nick2", "external", { paid: false, at: null, by: null, state: null, returnedAt: null, forfeit: null }], ["Old_Nick", null, null]]);
   const fee = (over = {}) => ({ action: "feeSet", id: "id1", paid: true, by: "진행자B", ...over });
   assert.equal((await call(api.admin, { body: fee() })).code, 401);
   assert.deepEqual((await call(api.admin, { headers: key, body: fee({ by: "" }) })).body.error, "need_by");
@@ -430,7 +431,7 @@ test("진행자 참가비 확인: 운영 키 · 바꾸는 사람 필수 · 외�
   assert.deepEqual(Object.keys(mem.fee), ["id1"]);
   assert.deepEqual([mem.fee.id1.paid, mem.fee.id1.by, typeof mem.fee.id1.at], [true, "진행자B", "number"]);
   assert.deepEqual(p1.body.feeUnpaid.map((x) => x.ign), ["Ext_Nick2"]);
-  assert.deepEqual(p1.body.list.find((x) => x.id === "id1").fee, { paid: true, at: mem.fee.id1.at, by: "진행자B" });
+  assert.deepEqual(p1.body.list.find((x) => x.id === "id1").fee, { paid: true, at: mem.fee.id1.at, by: "진행자B", state: "held", returnedAt: null, forfeit: null });
   const p0 = await call(api.admin, { headers: key, body: fee({ paid: false, by: "진행자C" }) });   // 「확인 풀기」
   assert.deepEqual(p0.body.feeUnpaid.map((x) => x.ign), ["Fake_Nick1", "Ext_Nick2"]);
   assert.deepEqual([mem.fee.id1.paid, mem.fee.id1.by], [false, "진행자C"]);
@@ -452,7 +453,7 @@ test("진행자 구분 고르기(kindSet): 옛 화면 신청을 채운다 · 바
   assert.equal(r.code, 200);
   assert.deepEqual(mem.writes, ["kind"]);
   const row = r.body.list[0];
-  assert.deepEqual([row.kind, row.kindBy, row.kindSaves, row.fee], ["external", "진행자B", 1, { paid: false, at: null, by: null }]);
+  assert.deepEqual([row.kind, row.kindBy, row.kindSaves, row.fee], ["external", "진행자B", 1, { paid: false, at: null, by: null, state: null, returnedAt: null, forfeit: null }]);
   assert.deepEqual([r.body.kindCounts, r.body.feeUnpaid.map((x) => x.ign)], [{ lesson: 0, clan: 0, external: 1, none: 0 }, ["Fake_Nick1"]]);
   await call(api.admin, { headers: key, body: { action: "feeSet", id: "id1", paid: true, by: "진행자B" } });
   const self = await call(api.saveIntro, { body: { discord: "tester_one", ign: "Fake_Nick1", intro: intro(), kind: "clan" } });
@@ -554,6 +555,53 @@ test("§1.23 회차 설정 — killrace:applycfg 의 round · 마감 · 이름 �
   setClock(Date.parse(cfg.closeAt));
   assert.equal((await call(api.apply, { body: { discord: "tester_two", ign: "Fake_Nick2", platform: "steam", agree: true } })).body.error, "closed");
   // 깨진 값은 기본값으로
-  assert.deepEqual(a.normApplyCfg({ round: "x9", closeAt: "nope", label: "", mode: "mid" }), { round: a.ROUND, closeAt: a.CLOSE_AT, label: "6회", needAccount: a.NEED_ACCOUNT, mode: null });
+  assert.deepEqual(a.normApplyCfg({ round: "x9", closeAt: "nope", label: "", mode: "mid" }), { round: a.ROUND, closeAt: a.CLOSE_AT, label: "6회", needAccount: a.NEED_ACCOUNT, mode: null,
+    deposit: { external: 10000 }, endAt: a.CLOSE_AT + 4 * 3600e3, depositOn: false });
   assert.match(T.cardEmbed({ discord: "d", ign: "i", at: OPEN }, false, 3, null, "7회").title, /킬내기 7회 신청 · 3\/20/);
+});
+
+// ── 외부 참가 보증금(앱 계약 §17) — 스위치 deposit 이 켜졌을 때만 · 돈은 오너가 통장으로 · 여기는 기록만 ──
+test("보증금: 스위치 꺼짐이면 공개는 종전 fee · 돌려줌 · 몰수 409 switch_off", async () => {
+  const { api, call } = setup({ depositOn: false });
+  await call(api.apply, { body: { ...body(), kind: "external" } });
+  const pub = (await call(api.list, {})).body;
+  assert.deepEqual([pub.fee, pub.deposit], [{ external: 10000 }, undefined]);
+  await call(api.admin, { headers: key, body: { action: "depositSet", id: "id1", paid: true, by: "진행자B" } });
+  const r = await call(api.admin, { headers: key, body: { action: "depositReturn", id: "id1", by: "진행자B" } });
+  assert.deepEqual([r.code, r.body.error], [409, "switch_off"]);
+});
+
+test("보증금: 켜지면 공개 deposit · 받음 → 돌려줌(한 번만) · 몰수는 사유 필수 · 되돌리기는 오너만 · 내 신청에 상태 한 칸", async () => {
+  const { api, mem, call } = setup({ depositOn: true });
+  await call(api.apply, { body: { ...body(), kind: "external" } });
+  await call(api.apply, { body: { ...body({ discord: "ext_two", ign: "Ext_Nick2" }), kind: "external" } });
+  const pub = (await call(api.list, {})).body;
+  assert.deepEqual([pub.deposit, pub.fee], [{ external: 10000 }, undefined]);
+  const act = (o) => call(api.admin, { headers: key, body: { id: "id1", by: "진행자B", ...o } });
+  assert.deepEqual((await act({ action: "depositReturn" })).body.error, "not_held");               // 받기 전
+  assert.equal((await act({ action: "depositSet", paid: true })).code, 200);
+  const held = (await call(api.list, { headers: key })).body;
+  assert.deepEqual(held.depositHeld.map((x) => [x.ign, typeof x.dueAt, typeof x.daysLeft]), [["Fake_Nick1", "number", "number"]]);
+  assert.deepEqual(held.depositUnpaid.map((x) => x.ign), ["Ext_Nick2"]);
+  assert.deepEqual((await act({ action: "depositForfeit", code: "no_show" })).body.error, "need_reason");
+  assert.deepEqual((await act({ action: "depositForfeit", code: "rich", memo: "x" })).body.error, "need_reason");
+  const ret = await act({ action: "depositReturn" });
+  assert.equal(ret.code, 200);
+  assert.deepEqual([mem.fee.id1.state, mem.fee.id1.returnedBy], ["returned", "진행자B"]);
+  assert.deepEqual((await act({ action: "depositReturn" })).body.error, "not_held");              // 한 번만
+  const undoHost = await act({ action: "depositUndo", memo: "잘못 누름" });
+  assert.deepEqual([undoHost.code, undoHost.body.error], [403, "owner_only"]);
+  const undo = await call(api.admin, { headers: { ...key, authorization: "owner" }, body: { id: "id1", action: "depositUndo", memo: "잘못 누름" } });
+  assert.equal(undo.code, 200);
+  assert.equal(mem.fee.id1.state, "held");
+  const f = await act({ action: "depositForfeit", code: "left", memo: "3판에 나감" });
+  assert.equal(f.code, 200);
+  assert.deepEqual([mem.fee.id1.state, mem.fee.id1.forfeit.code], ["forfeited", "left"]);
+  const mine = await call(api.mine, { body: { discord: "tester_one", ign: "Fake_Nick1" } });
+  assert.deepEqual([mine.code, mine.body.deposit], [200, { amount: 10000, state: "forfeited" }]);
+});
+
+test("보증금 반환 기한 = 회차 끝 다음 날부터 3일 안(끝난 날 + 3일 23:59:59 KST)", () => {
+  const end = Date.parse("2026-10-16T14:00:00Z");                                           // 10/16 23:00 KST
+  assert.equal(new Date(T.depositDueAt(end)).toISOString(), "2026-10-19T14:59:59.000Z");     // 10/19 23:59:59 KST
 });

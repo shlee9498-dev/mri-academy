@@ -23,6 +23,7 @@ const CLOSE_AT = Date.parse("2026-10-09T14:00:00Z");         // 10/9(금) 23:00 
 // 계좌를 받는가 — 6회는 상품이 MVP 치킨 기프티콘(디스코드 DM 전달)이라 받지 않는다(지휘 10/9 19:57 · 필요 없는 개인 정보는 모으지 않는다).
 //   false 면 은행 · 계좌번호 · 예금주 칸을 보지도 저장하지도 않는다(보내와도 버린다). 상금 회차로 돌아가면 true 로
 const NEED_ACCOUNT = false;
+const FEE_EXTERNAL = 10000;
 // 회차 설정(§1.23 · 지휘 10/10) — ops_state 'killrace:applycfg' = { round, closeAt, label, needAccount, mode }. 코드를 고치지 않고 회차를 바꾼다.
 //   없거나 깨진 칸은 위 상수(6회 값)로. round = 신청 줄 이름(r + 숫자 · 회차마다 새 줄) · closeAt = 마감(ISO) · label = 「7회」 같은 이름 ·
 //   mode = "low"(저티어 판) · "high"(고티어 판) · 없음. 바꾸면 다음 요청부터 그 값을 쓴다(서버 재시작 없음)
@@ -36,6 +37,10 @@ function normApplyCfg(v) {
     label: label && label.length <= 20 ? label : "6회",
     needAccount: typeof o.needAccount === "boolean" ? o.needAccount : NEED_ACCOUNT,
     mode: o.mode === "low" || o.mode === "high" ? o.mode : null,
+    // 외부 참가 보증금(앱 계약 §17 · 스위치 deposit) — 금액 · 회차 끝(반환 기한 계산용 · 없으면 마감 + 4시간으로 본다)
+    deposit: { external: Number.isInteger(o.deposit && o.deposit.external) && o.deposit.external >= 0 && o.deposit.external <= 1000000 ? o.deposit.external : FEE_EXTERNAL },
+    endAt: Number.isFinite(Date.parse(o.endAt)) ? Date.parse(o.endAt) : (Number.isFinite(at) ? at : CLOSE_AT) + 4 * 3600e3,
+    depositOn: false,                                          // 요청마다 스위치(killrace:switches.deposit)로 채운다 — 설정 줄로는 못 켠다
   };
 }
 const DEFAULT_CFG = normApplyCfg(null);
@@ -80,7 +85,6 @@ const introAdmin = (rec, discord) => (rec ? { ...introPublic(rec), cardShown: re
 const KINDS = [{ key: "lesson", label: "레슨생" }, { key: "clan", label: "클랜원" }, { key: "external", label: "외부 참가" }];
 const KIND_KEYS = KINDS.map((k) => k.key);
 const kindLabel = (k) => (KINDS.find((x) => x.key === k) || {}).label || null;
-const FEE_EXTERNAL = 10000;
 const INFO_MAX = 60;                                         // 입금 안내 문구(설정 줄) 글자 수 상한
 function normKind(v) {
   const k = typeof v === "string" ? v.trim() : "";           // 글자만 받는다(["clan"] 같은 배열이 글자로 바뀌어 통과하지 않게)
@@ -181,12 +185,20 @@ function publicView(state, at, intros = {}, info = null, c = DEFAULT_CFG) {
   return {
     cap: CAP, count: Math.min(rows.length, CAP), waiting: Math.max(0, rows.length - CAP),
     closed: at >= c.closeAt, closeAt: c.closeAt, needAccount: c.needAccount, label: c.label, mode: c.mode, banks: BANKS, positions: POSITIONS, styles: STYLES,
-    fee: { external: FEE_EXTERNAL }, payInfo: payInfo(info),
+    ...(c.depositOn ? { deposit: { external: c.deposit.external } } : { fee: { external: FEE_EXTERNAL } }), payInfo: payInfo(info),
     list: rows.map((x) => ({ ign: x.ign, platform: x.platform, tier: tierText(x), waiting: x.waiting, intro: introPublic(intros[x.id]) })),
   };
 }
 // 진행자 — 경매 명단에 쓸 값 · 선수 소개 · 안 채운 사람 · 참가 구분 · 외부 참가비 확인까지(계좌 없음). 취소한 건도 보인다
 const paidOf = (fees, id) => !!(fees && fees[id] && fees[id].paid === true);
+// 보증금 상태(앱 계약 §17.4) — 옛 줄(state 없음)은 paid: true → held · 받기 전은 null
+const depositStateOf = (fees, id) => { const f = fees && fees[id]; if (!f) return null; if (["held", "returned", "forfeited"].includes(f.state)) return f.state; return f.paid === true ? "held" : null; };
+const FORFEIT_CODES = ["no_show", "left", "cheat", "shared"];
+// 반환 기한 — 회차가 끝난 다음 날부터 3일 안(KST) = 끝난 날 + 3일의 23:59:59 KST
+function depositDueAt(endAt) {
+  const d = new Date(Number(endAt) + 9 * 3600e3);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 3, 23, 59, 59) - 9 * 3600e3;
+}
 function adminView(state, at, intros = {}, kinds = {}, fees = {}, info = null, c = DEFAULT_CFG) {
   const seated = seats(state);
   const seat = new Map(seated.map((x) => [x.id, x]));
@@ -200,6 +212,12 @@ function adminView(state, at, intros = {}, kinds = {}, fees = {}, info = null, c
     kindCounts,
     feeUnpaid: seated.filter((x) => kindOf(kinds, x.id) === "external" && !paidOf(fees, x.id))
       .map((x) => ({ order: x.order, ign: x.ign, discord: x.discord, waiting: x.waiting })),
+    // 보증금(§17.4) — 받았는데 아직 안 돌려준 줄(기한순) · 받기 전 줄(= feeUnpaid)
+    depositHeld: state.list.filter((x) => kindOf(kinds, x.id) === "external" && depositStateOf(fees, x.id) === "held")
+      .map((x) => { const due = depositDueAt(c.endAt); return { id: x.id, ign: x.ign, discord: x.discord, heldAt: fees[x.id].at || null, dueAt: due,
+        daysLeft: Math.ceil((due - at) / 86400e3) }; }).sort((a, b) => a.dueAt - b.dueAt || String(a.ign).localeCompare(String(b.ign))),
+    depositUnpaid: seated.filter((x) => kindOf(kinds, x.id) === "external" && !depositStateOf(fees, x.id))
+      .map((x) => ({ order: x.order, ign: x.ign, discord: x.discord, waiting: x.waiting })),
     list: state.list.slice().sort((a, b) => a.at - b.at).map((x) => {
       const s = seat.get(x.id);
       const kind = kindOf(kinds, x.id), f = fees[x.id];
@@ -208,16 +226,20 @@ function adminView(state, at, intros = {}, kinds = {}, fees = {}, info = null, c
         order: s ? s.order : null, waiting: s ? s.waiting : false, intro: introAdmin(intros[x.id], x.discord),
         // kindSaves — 신청 때 1. 2 이상이면 나중에 다시 고른 것(외부 → 무료로 바꾸면 미확인 목록에서 빠지니 진행자가 보게 한다)
         kind, kindBy: kind && kinds[x.id].by ? kinds[x.id].by : null, kindSaves: kind ? Number(kinds[x.id].saves) || 0 : 0,
-        fee: kind === "external" ? { paid: paidOf(fees, x.id), at: f && f.at ? f.at : null, by: f && f.by ? f.by : null } : null };
+        fee: kind === "external" ? { paid: paidOf(fees, x.id), at: f && f.at ? f.at : null, by: f && f.by ? f.by : null,
+          state: depositStateOf(fees, x.id), returnedAt: (f && f.returnedAt) || null, forfeit: (f && f.forfeit) || null } : null };
     }),
   };
 }
 // 「내 신청」 — 본인이 다시 열었을 때 보는 값(계좌 · 디스코드 닉 · 신청 id 없음)
-function mineView(state, intros, me, kinds = {}) {
+function mineView(state, intros, me, kinds = {}, fees = {}, c = DEFAULT_CFG) {
   const s = seats(state).find((x) => x.id === me.id);
   const rec = intros[me.id];
+  const kind = kindOf(kinds, me.id);
   return { ok: true, ign: me.ign, tier: tierText(me), order: s ? s.order : null, waiting: s ? s.waiting : false, cap: CAP,
-    intro: introPublic(rec), done: introDone(rec), kind: kindOf(kinds, me.id) };
+    intro: introPublic(rec), done: introDone(rec), kind,
+    // 보증금(§17.4) — 본인 「내 신청」에만 한 칸(받음 held · 돌려줌 returned · 몰수 forfeited · 확인 전 null)
+    ...(c.depositOn && kind === "external" ? { deposit: { amount: c.deposit.external, state: depositStateOf(fees, me.id) } } : {}) };
 }
 // 오너 — 계좌 표(취소한 건은 뺀다)
 function payoutRows(state, pay) {
@@ -267,6 +289,7 @@ function createApplyApi(deps) {
   let cur = DEFAULT_CFG;                                      // 지금 회차 설정 — 요청마다 처음에 다시 읽는다(refresh)
   const refresh = async () => {
     if (store.loadCfg) { try { cur = normApplyCfg(await store.loadCfg()); } catch (e) { log.warn("[killrace-apply] cfg_load_failed"); } }
+    if (deps.depositOn) { try { cur = { ...cur, depositOn: (await deps.depositOn()) === true }; } catch (_) { cur = { ...cur, depositOn: false }; } }
     return cur;
   };
   const needAccountOf = () => (deps.needAccount === undefined ? cur.needAccount : deps.needAccount === true);   // 시험은 true 로 옛 길도 본다
@@ -361,7 +384,7 @@ function createApplyApi(deps) {
       const state = await load();
       const me = findMine(state, w.value);
       if (!me) return fail(res, 404, "not_found");
-      return res.json(mineView(state, await loadIntros(), me, await loadKinds()));
+      return res.json(mineView(state, await loadIntros(), me, await loadKinds(), await loadFees(), cur));
     } catch (e) { log.error("[killrace-apply] mine_failed", e && e.status ? e.status : "error"); return fail(res, 500, "server_error"); }
   }
   // 소개 저장 — 소개 줄만 쓴다(명단 줄은 읽기만 · 계좌 줄은 열지 않는다). 마감 뒤에는 막는다
@@ -395,7 +418,7 @@ function createApplyApi(deps) {
           kinds = { ...kinds, [me.id]: { kind, at: now(), saves: (pk ? Number(pk.saves) || 0 : 0) + 1 } };
           await store.saveKind(kinds, cur.round);
         }
-        return { view: mineView(state, next, me, kinds), saves: next[me.id].saves };
+        return { view: mineView(state, next, me, kinds, await loadFees(), cur), saves: next[me.id].saves };
       });
       if (out.error) return fail(res, 404, out.error);
       log.log(`[killrace-apply] intro_saved order=${out.view.order} saves=${out.saves} kind=${kind || "-"}`);
@@ -408,6 +431,8 @@ function createApplyApi(deps) {
     const b = req.body || {};
     if (b.action === "introClear" || b.action === "introEdit") return introByHost(b, res);
     if (b.action === "feeSet" || b.action === "kindSet") return joinByHost(b, res);
+    if (b.action === "depositSet") return joinByHost({ ...b, action: "feeSet" }, res);         // 받음 확인(종전 feeSet 과 같은 일)
+    if (["depositReturn", "depositForfeit", "depositUndo"].includes(b.action)) return depositByHost(req, b, res);
     const status = b.action === "cancel" ? "cancelled" : b.action === "restore" ? "applied" : null;
     if (!status) return fail(res, 400, "bad_action");
     try {
@@ -485,6 +510,59 @@ function createApplyApi(deps) {
       return res.json({ ok: true, ...(await adminPayload(out.state)) });
     } catch (e) { log.error("[killrace-apply] join_host_failed", e && e.status ? e.status : "error"); return fail(res, 500, "server_error"); }
   }
+  // 진행자 — 보증금 돌려줌 · 몰수(사유 필수) · 되돌리기(오너만 · 메모 필수) · 앱 계약 §17.4. 돈은 오너가 통장으로 직접 — 여기는 기록만
+  async function depositByHost(req, b, res) {
+    if (!cur.depositOn) return fail(res, 409, "switch_off");
+    const owner = !!isOwner(req);
+    const by = owner && !b.by ? "오너" : hostBy(b.by);
+    if (!by) return fail(res, 400, "need_by");
+    if (b.action === "depositForfeit" && (!FORFEIT_CODES.includes(b.code) || !String(b.memo || "").trim())) return fail(res, 400, "need_reason");
+    if (b.action === "depositUndo" && (!owner || !String(b.memo || "").trim())) return fail(res, owner ? 400 : 403, owner ? "need_memo" : "owner_only");
+    try {
+      const out = await serial(async () => {
+        const state = await load();
+        const entry = state.list.find((x) => x.id === String(b.id || ""));
+        if (!entry) return { error: "not_found", code: 404 };
+        const kinds = await loadKinds();
+        if (kindOf(kinds, entry.id) !== "external") return { error: "not_external", code: 409 };
+        const fees = await loadFees();
+        const f = fees[entry.id] || {};
+        const st = depositStateOf(fees, entry.id);
+        let next;
+        if (b.action === "depositUndo") {
+          if (st !== "returned" && st !== "forfeited") return { error: "not_closed", code: 409 };
+          next = { paid: true, at: f.at || now(), by: f.by || by, state: "held", undo: { from: st, memo: String(b.memo).trim().slice(0, 100), at: now(), by } };
+        } else {
+          if (st !== "held") return { error: "not_held", code: 409 };
+          next = b.action === "depositReturn" ? { ...f, paid: true, state: "returned", returnedAt: now(), returnedBy: by }
+            : { ...f, paid: true, state: "forfeited", forfeit: { code: b.code, memo: String(b.memo).trim().slice(0, 100), at: now(), by } };
+        }
+        await store.saveFee({ ...fees, [entry.id]: next }, cur.round);
+        return { state, entry };
+      });
+      if (out.error) return fail(res, out.code, out.error);
+      log.log(`[killrace-apply] ${b.action}`);
+      return res.json({ ok: true, ...(await adminPayload(out.state)) });
+    } catch (e) { log.error("[killrace-apply] deposit_failed", e && e.status ? e.status : "error"); return fail(res, 500, "server_error"); }
+  }
+  // 반환 기한 하루 전 오너 DM 「돌려줄 보증금 n건이 남았어요」 — 서버가 1분마다 부르고 하루 한 번(10:00 KST)만 보낸다
+  let reminded = null;
+  async function depositReminder() {
+    await refresh();
+    if (!cur.depositOn || !deps.notifyOwner) return { sent: false };
+    const t = now(); const k = new Date(t + 9 * 3600e3);
+    const day = k.toISOString().slice(0, 10);
+    if (k.getUTCHours() !== 10 || reminded === day) return { sent: false };
+    reminded = day;
+    const due = depositDueAt(cur.endAt);
+    const left = Math.ceil((due - t) / 86400e3);
+    if (left !== 1) return { sent: false };
+    const state = await load(); const kinds = await loadKinds(); const fees = await loadFees();
+    const n = state.list.filter((x) => kindOf(kinds, x.id) === "external" && depositStateOf(fees, x.id) === "held").length;
+    if (!n) return { sent: false };
+    const ok = await deps.notifyOwner(`[킬내기 ${cur.label}] 돌려줄 보증금 ${n}건이 남았어요 · 기한은 내일까지예요`).catch(() => false);
+    return { sent: !!ok, n };
+  }
   async function payouts(req, res) {
     if (!isOwner(req)) return fail(res, 403, "owner_only");
     await refresh();
@@ -508,11 +586,11 @@ function createApplyApi(deps) {
     app.get("/api/killrace/apply/payouts", payouts);
     app.get("/api/killrace/apply/payouts.csv", payouts);
   }
-  return { mount, apply, list, mine, saveIntro, admin, payouts };
+  return { mount, apply, list, mine, saveIntro, admin, payouts, depositReminder };
 }
 
 module.exports = {
   createApplyApi, normApplyCfg, ROUND, CAP, CLOSE_AT, NEED_ACCOUNT, BANKS, POSITIONS, STYLES, INTRO_MAX, KINDS, FEE_EXTERNAL, INFO_MAX,
   _test: { normApply, addEntry, setStatus, seats, findDup, findMine, publicView, adminView, mineView, payoutRows, payoutCsv, cardEmbed, normState, emptyState,
-    normIntro, normWho, introDone, introMissing, introPublic, introAdmin, hostBy, normKind, kindOf, payInfo, kindLabel },
+    normIntro, normWho, introDone, introMissing, introPublic, introAdmin, hostBy, normKind, kindOf, payInfo, kindLabel, depositStateOf, depositDueAt, FORFEIT_CODES },
 };

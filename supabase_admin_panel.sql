@@ -7078,3 +7078,298 @@ notify pgrst, 'reload schema';
 --   alter table public.event_match_players drop column if exists bot_kills;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- §76  킬내기 코인 · 매점 · 교환 · 배송 · 기프티콘함 + 상금 원장 재원 칸 (2026-10-11 · 지휘 주문 · 오너 「바로 진행」 · 더하기만)
+--   계약 docs/killrace-api.md §1.28(코인) · §1.30(상금 · 기프티콘함) · 설계 docs/killrace-coin-design.md §4 · 앱 계약 docs/killrace-app-api.md §18(스위치 · 예산)
+--   코인 = 상금 없는 연습판에서만 생긴다 · 매점 경품으로만 나간다(+ 카지노 한 방향 casino_out · 스위치 꺼짐).
+--   사기(buy) · 돈으로 바꾸기(cashout) · 주고받기(transfer) 종류가 없다(구조로 막는다). payments · payouts · 카지노 표와 잇지 않는다.
+--   §73 원장은 칸 하나(funding)만 더한다 — 기존 줄 · 제약 · 방아쇠 함수는 그대로(funding 을 고치지 않는 건 서버 약속).
+-- 76-0) 스냅샷: select to_regclass('public.killrace_coin_ledger'), to_regclass('public.killrace_coin_items'), to_regclass('public.killrace_coin_exchanges'),
+--                to_regclass('public.killrace_coin_shipping'), to_regclass('public.killrace_gift_box');   -- 전부 null
+--              select count(*) from information_schema.columns where table_schema='public' and table_name='killrace_prize_ledger';   -- 18
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+-- 76a) 매점 경품 목록
+create table if not exists public.killrace_coin_items (
+  id          bigint      generated always as identity primary key,
+  name        text        not null check (char_length(name) between 1 and 40),
+  coin_price  integer     not null check (coin_price between 1 and 10000000),
+  krw_cost    integer     not null check (krw_cost between 0 and 1000000),                 -- 오너 사비(원) · 예산 대조용 · 화면엔 안 보인다
+  delivery    text        not null default 'gifticon' check (delivery in ('gifticon', 'physical')),
+  stock       integer     check (stock is null or stock >= 0),                              -- null = 제한 없음
+  active      boolean     not null default true,
+  sort        integer     not null default 0,
+  memo        text        check (memo is null or char_length(memo) <= 200),
+  created_at  timestamptz not null default now()
+);
+
+-- 76b) 교환 신청 — requested → approved → sent / requested · approved → rejected / requested → cancelled. 상태는 앞으로만
+create table if not exists public.killrace_coin_exchanges (
+  id            bigint      generated always as identity primary key,
+  platform      text        not null check (platform in ('steam', 'kakao')),
+  account_id    text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),
+  ign           text        check (ign is null or char_length(ign) between 1 and 40),
+  item_id       bigint      not null references public.killrace_coin_items (id),
+  coin_price    integer     not null check (coin_price > 0),
+  krw_cost      integer     not null check (krw_cost >= 0),
+  status        text        not null default 'requested' check (status in ('requested', 'approved', 'sent', 'rejected', 'cancelled')),
+  requested_at  timestamptz not null default now(),
+  decided_at    timestamptz,
+  sent_at       timestamptz,
+  notified_at   timestamptz,
+  decided_by    text        check (decided_by is null or char_length(decided_by) between 1 and 20),
+  memo          text        check (memo is null or char_length(memo) <= 200)
+);
+create unique index if not exists killrace_coin_exchanges_open on public.killrace_coin_exchanges (platform, account_id) where status in ('requested', 'approved');
+create index if not exists killrace_coin_exchanges_month on public.killrace_coin_exchanges (requested_at) where status not in ('rejected', 'cancelled');
+
+-- 76c) 코인 장부 — 한 줄 = 코인이 들고 나는 일 하나 · 더하기만
+create table if not exists public.killrace_coin_ledger (
+  id           bigint      generated always as identity primary key,
+  kind         text        not null check (kind in ('earn', 'spend', 'refund', 'adjust', 'expire', 'casino_out')),
+  platform     text        not null check (platform in ('steam', 'kakao')),
+  account_id   text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),
+  ign          text        check (ign is null or char_length(ign) between 1 and 40),
+  event_id     bigint      references public.event_defs (id),
+  exchange_id  bigint      references public.killrace_coin_exchanges (id),
+  ref_id       bigint      references public.killrace_coin_ledger (id),
+  casino_ref   text        check (casino_ref is null or char_length(casino_ref) between 1 and 80),
+  month        text        not null check (month ~ '^[0-9]{4}-[0-9]{2}$'),
+  amount       integer     not null check (amount <> 0 and amount between -10000000 and 10000000),
+  detail       jsonb,
+  memo         text        check (memo is null or char_length(memo) <= 200),
+  entered_by   text        not null check (char_length(entered_by) between 1 and 20),
+  created_at   timestamptz not null default now(),
+  constraint killrace_coin_ledger_shape check (
+       (kind = 'earn'   and amount > 0 and event_id is not null and exchange_id is null     and ref_id is null and casino_ref is null)
+    or (kind = 'spend'  and amount < 0 and event_id is null     and exchange_id is not null and ref_id is null and casino_ref is null)
+    or (kind = 'refund' and amount > 0 and event_id is null     and exchange_id is not null and ref_id is null and casino_ref is null)
+    or (kind = 'adjust'                and exchange_id is null  and casino_ref is null      and memo is not null)
+    or (kind = 'expire' and amount < 0 and event_id is null     and exchange_id is null     and ref_id is null and casino_ref is null and memo is not null)
+    or (kind = 'casino_out' and amount < 0 and event_id is null and exchange_id is null     and ref_id is null and casino_ref is not null))
+);
+create unique index if not exists killrace_coin_earn_once   on public.killrace_coin_ledger (event_id, platform, account_id) where kind = 'earn';
+create unique index if not exists killrace_coin_spend_once  on public.killrace_coin_ledger (exchange_id) where kind = 'spend';
+create unique index if not exists killrace_coin_refund_once on public.killrace_coin_ledger (exchange_id) where kind = 'refund';
+create unique index if not exists killrace_coin_casino_once on public.killrace_coin_ledger (casino_ref) where kind = 'casino_out';
+create index if not exists killrace_coin_person on public.killrace_coin_ledger (platform, account_id, id);
+create index if not exists killrace_coin_month  on public.killrace_coin_ledger (month) where kind = 'earn';
+
+create or replace function public.killrace_coin_ledger_no_change() returns trigger language plpgsql set search_path = public as $$
+begin
+  raise exception 'killrace_coin_ledger 는 줄을 더하기만 해요(% 막음) — 바로잡을 때는 adjust 줄을 더해요', tg_op using errcode = 'P0001';
+end $$;
+drop trigger if exists killrace_coin_ledger_no_change_row on public.killrace_coin_ledger;
+create trigger killrace_coin_ledger_no_change_row before update or delete on public.killrace_coin_ledger
+  for each row execute function public.killrace_coin_ledger_no_change();
+drop trigger if exists killrace_coin_ledger_no_truncate on public.killrace_coin_ledger;
+create trigger killrace_coin_ledger_no_truncate before truncate on public.killrace_coin_ledger
+  for each statement execute function public.killrace_coin_ledger_no_change();
+
+-- 넣기 전 확인 — 빠지는 줄은 사람 잠금 + 잔액 · spend 는 신청 값 · refund 는 거절 · 취소된 신청의 쓴 만큼 · adjust 는 같은 사람
+create or replace function public.killrace_coin_ledger_guard() returns trigger language plpgsql set search_path = public as $$
+declare bal bigint; ex public.killrace_coin_exchanges%rowtype; sp integer; src public.killrace_coin_ledger%rowtype;
+begin
+  if new.exchange_id is not null then
+    select * into ex from public.killrace_coin_exchanges where id = new.exchange_id;
+    if ex.platform <> new.platform or ex.account_id <> new.account_id then
+      raise exception '교환 신청과 같은 사람이어야 해요(exchange %)', new.exchange_id using errcode = 'P0001';
+    end if;
+    if new.kind = 'spend' and new.amount <> -ex.coin_price then
+      raise exception '교환 코인은 신청 값(%)과 같아야 해요', ex.coin_price using errcode = 'P0001';
+    end if;
+    if new.kind = 'refund' then
+      select amount into sp from public.killrace_coin_ledger where exchange_id = new.exchange_id and kind = 'spend';
+      if sp is null or new.amount <> -sp or ex.status not in ('rejected', 'cancelled') then
+        raise exception '돌려주기는 거절 · 취소된 신청의 쓴 코인만큼만 돼요(exchange %)', new.exchange_id using errcode = 'P0001';
+      end if;
+    end if;
+  end if;
+  if new.ref_id is not null then
+    select * into src from public.killrace_coin_ledger where id = new.ref_id;
+    if not found or src.platform <> new.platform or src.account_id <> new.account_id then
+      raise exception '정정 줄은 같은 사람의 줄을 가리켜야 해요(ref %)', new.ref_id using errcode = 'P0001';
+    end if;
+  end if;
+  if new.amount < 0 then
+    perform pg_advisory_xact_lock(hashtextextended('killrace_coin:' || new.platform || ':' || new.account_id, 0));
+    select coalesce(sum(amount), 0) into bal from public.killrace_coin_ledger where platform = new.platform and account_id = new.account_id;
+    if bal + new.amount < 0 then
+      raise exception 'insufficient_coin' using errcode = 'P0001', detail = format('잔액 %s · 빼려는 값 %s', bal, new.amount);
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists killrace_coin_ledger_guard_row on public.killrace_coin_ledger;
+create trigger killrace_coin_ledger_guard_row before insert on public.killrace_coin_ledger
+  for each row execute function public.killrace_coin_ledger_guard();
+
+create or replace function public.killrace_coin_exchanges_guard() returns trigger language plpgsql set search_path = public as $$
+begin
+  if tg_op in ('DELETE', 'TRUNCATE') then
+    raise exception 'killrace_coin_exchanges: % 금지', tg_op using errcode = 'P0001';
+  end if;
+  if (new.id, new.platform, new.account_id, new.item_id, new.coin_price, new.krw_cost, new.requested_at)
+     is distinct from (old.id, old.platform, old.account_id, old.item_id, old.coin_price, old.krw_cost, old.requested_at) then
+    raise exception 'killrace_coin_exchanges: 고칠 수 없는 칸' using errcode = 'P0001';
+  end if;
+  if new.status is distinct from old.status and not (
+       (old.status = 'requested' and new.status in ('approved', 'rejected', 'cancelled'))
+    or (old.status = 'approved'  and new.status in ('sent', 'rejected'))) then
+    raise exception 'killrace_coin_exchanges: 상태는 앞으로만 가요(% → %)', old.status, new.status using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+drop trigger if exists killrace_coin_exchanges_guard_row on public.killrace_coin_exchanges;
+create trigger killrace_coin_exchanges_guard_row before update or delete on public.killrace_coin_exchanges
+  for each row execute function public.killrace_coin_exchanges_guard();
+drop trigger if exists killrace_coin_exchanges_guard_truncate on public.killrace_coin_exchanges;
+create trigger killrace_coin_exchanges_guard_truncate before truncate on public.killrace_coin_exchanges
+  for each statement execute function public.killrace_coin_exchanges_guard();
+
+-- 76d) 기프티콘함 — 오너가 넣고 받는 사람만 연다(계약 §1.30.3) · 코드 · 사진은 정리 때 비운다 · 줄은 지우지 않는다
+create table if not exists public.killrace_gift_box (
+  id               bigint      generated always as identity primary key,
+  kind             text        not null check (kind in ('gifticon', 'physical')),
+  platform         text        not null check (platform in ('steam', 'kakao')),
+  account_id       text        not null check (account_id ~ '^account\.[0-9a-f]{32}$'),
+  ign              text        check (ign is null or char_length(ign) between 1 and 40),
+  event_id         bigint      references public.event_defs (id),
+  reason           text        check (reason is null or char_length(reason) between 1 and 40),
+  item_name        text        not null check (char_length(item_name) between 1 and 40),
+  krw_value        integer     check (krw_value is null or krw_value between 0 and 1000000),
+  funding          text        not null default 'owner' check (funding in ('owner', 'sponsor')),
+  code             text        check (code is null or char_length(code) <= 200),
+  image_path       text        check (image_path is null or char_length(image_path) <= 200),
+  expires_on       date,
+  state            text        not null default 'registered' check (state in ('registered', 'opened', 'received', 'expired', 'cancelled')),
+  notified_at      timestamptz,
+  notify_failed_at timestamptz,
+  opened_at        timestamptz,
+  received_at      timestamptz,
+  purged_at        timestamptz,
+  cancel_reason    text        check (cancel_reason is null or char_length(cancel_reason) <= 100),
+  created_by       text        not null check (char_length(created_by) between 1 and 20),
+  created_at       timestamptz not null default now(),
+  constraint killrace_gift_box_payload check (purged_at is not null or kind = 'physical' or code is not null or image_path is not null),
+  constraint killrace_gift_box_expiry  check (kind <> 'gifticon' or expires_on is not null),
+  constraint killrace_gift_box_purged  check (purged_at is null or (code is null and image_path is null))
+);
+create index if not exists killrace_gift_box_person on public.killrace_gift_box (platform, account_id, state);
+create or replace function public.killrace_gift_box_no_delete() returns trigger language plpgsql set search_path = public as $$
+begin
+  raise exception 'killrace_gift_box 는 줄을 지우지 않아요(% 막음) — 취소 · 정리는 칸만 비워요', tg_op using errcode = 'P0001';
+end $$;
+drop trigger if exists killrace_gift_box_no_delete_row on public.killrace_gift_box;
+create trigger killrace_gift_box_no_delete_row before delete on public.killrace_gift_box
+  for each row execute function public.killrace_gift_box_no_delete();
+drop trigger if exists killrace_gift_box_no_truncate on public.killrace_gift_box;
+create trigger killrace_gift_box_no_truncate before truncate on public.killrace_gift_box
+  for each statement execute function public.killrace_gift_box_no_delete();
+
+-- 76e) 실물 배송 — 교환 신청 또는 기프티콘함 실물 한 줄(둘 중 하나) · 주소 · 연락처는 정리 때 비운다(계약 §1.28.11b)
+create table if not exists public.killrace_coin_shipping (
+  id               bigint      generated always as identity primary key,
+  exchange_id      bigint      references public.killrace_coin_exchanges (id),
+  gift_id          bigint      references public.killrace_gift_box (id),
+  ship_state       text        not null default 'requested' check (ship_state in ('requested', 'shipped', 'received', 'expired', 'reship_pending', 'closed')),
+  recipient_name   text        check (recipient_name is null or char_length(recipient_name) between 1 and 20),
+  address          text        check (address is null or char_length(address) between 5 and 120),
+  phone            text        check (phone is null or phone ~ '^[0-9-]{9,13}$'),
+  tracking         jsonb       not null default '[]'::jsonb,
+  shipped_at       timestamptz,
+  consent_version  text        not null check (char_length(consent_version) between 1 and 20),
+  consented_at     timestamptz not null,
+  purged_at        timestamptz,
+  created_at       timestamptz not null default now(),
+  constraint killrace_coin_shipping_one check (num_nonnulls(exchange_id, gift_id) = 1),
+  constraint killrace_coin_shipping_shape check (
+    (ship_state in ('requested', 'shipped') and recipient_name is not null and address is not null and phone is not null)
+    or (ship_state in ('received', 'expired', 'reship_pending', 'closed') and recipient_name is null and address is null and phone is null and purged_at is not null))
+);
+create unique index if not exists killrace_coin_shipping_exchange on public.killrace_coin_shipping (exchange_id) where exchange_id is not null;
+create unique index if not exists killrace_coin_shipping_gift     on public.killrace_coin_shipping (gift_id) where gift_id is not null;
+create index if not exists killrace_coin_shipping_shipped on public.killrace_coin_shipping (shipped_at) where ship_state = 'shipped';
+
+-- 76f) 교환 함수 — 한 번 = 한 트랜잭션(신청 줄 · 수량 · 쓴 코인 · 예산 판정 · 실물이면 배송 줄이 따로 놀지 않게)
+--   p_budget = 그달 매점 사비 예산(스위치 monthly_budget_krw · 서버가 넘긴다) · null 이면 판정 안 함
+--   p_ship = 실물 경품이면 { name, address, phone, consent_version } 필수(없으면 consent_required) · 기프티콘이면 무시
+create or replace function public.killrace_coin_request_exchange(p_platform text, p_account_id text, p_ign text, p_item_id bigint, p_by text,
+    p_budget integer default null, p_ship jsonb default null)
+  returns bigint language plpgsql set search_path = public as $$
+declare it public.killrace_coin_items%rowtype; ex_id bigint; mon text := to_char(now() at time zone 'Asia/Seoul', 'YYYY-MM'); used bigint;
+begin
+  select * into it from public.killrace_coin_items where id = p_item_id and active for update;
+  if not found then raise exception 'item_unavailable' using errcode = 'P0001'; end if;
+  if it.stock is not null and it.stock <= 0 then raise exception 'out_of_stock' using errcode = 'P0001'; end if;
+  if it.delivery = 'physical' and (p_ship is null or coalesce(p_ship->>'consent_version', '') = '') then
+    raise exception 'consent_required' using errcode = 'P0001';
+  end if;
+  if p_budget is not null then
+    perform pg_advisory_xact_lock(hashtextextended('killrace_coin_budget:' || mon, 0));
+    select coalesce(sum(krw_cost), 0) into used from public.killrace_coin_exchanges
+     where status not in ('rejected', 'cancelled') and to_char(requested_at at time zone 'Asia/Seoul', 'YYYY-MM') = mon;
+    if used + it.krw_cost > p_budget then raise exception 'budget_full' using errcode = 'P0001'; end if;
+  end if;
+  insert into public.killrace_coin_exchanges (platform, account_id, ign, item_id, coin_price, krw_cost)
+    values (p_platform, p_account_id, p_ign, it.id, it.coin_price, it.krw_cost) returning id into ex_id;
+  if it.stock is not null then update public.killrace_coin_items set stock = stock - 1 where id = it.id; end if;
+  insert into public.killrace_coin_ledger (kind, platform, account_id, ign, exchange_id, month, amount, entered_by)
+    values ('spend', p_platform, p_account_id, p_ign, ex_id, mon, -it.coin_price, p_by);
+  if it.delivery = 'physical' then
+    insert into public.killrace_coin_shipping (exchange_id, recipient_name, address, phone, consent_version, consented_at)
+      values (ex_id, p_ship->>'name', p_ship->>'address', p_ship->>'phone', p_ship->>'consent_version', now());
+  end if;
+  return ex_id;
+end $$;
+
+-- 닫기(거절 · 취소) — 상태 → 쓴 코인 돌려줌 → 수량 되돌림 → 배송 정보 비움. 승인 · 보냄은 상태만 바꾸면 돼서 함수가 없다
+create or replace function public.killrace_coin_close_exchange(p_id bigint, p_status text, p_by text, p_memo text default null)
+  returns void language plpgsql set search_path = public as $$
+declare ex public.killrace_coin_exchanges%rowtype;
+begin
+  if p_status not in ('rejected', 'cancelled') then raise exception 'bad_status' using errcode = 'P0001'; end if;
+  update public.killrace_coin_exchanges set status = p_status, decided_at = now(), decided_by = p_by, memo = coalesce(p_memo, memo)
+   where id = p_id returning * into ex;
+  if not found then raise exception 'not_found' using errcode = 'P0001'; end if;
+  insert into public.killrace_coin_ledger (kind, platform, account_id, ign, exchange_id, month, amount, entered_by)
+    values ('refund', ex.platform, ex.account_id, ex.ign, ex.id, to_char(now() at time zone 'Asia/Seoul', 'YYYY-MM'), ex.coin_price, p_by);
+  update public.killrace_coin_items set stock = stock + 1 where id = ex.item_id and stock is not null;
+  update public.killrace_coin_shipping set ship_state = 'closed', recipient_name = null, address = null, phone = null, purged_at = now()
+   where exchange_id = ex.id and purged_at is null;
+end $$;
+
+-- 76g) 잔액 보기(사람별 · 줄 합계)
+create or replace view public.killrace_coin_balance with (security_invoker = true) as
+select platform, account_id,
+       (array_agg(ign order by id desc) filter (where ign is not null))[1]         as ign,
+       coalesce(sum(amount), 0)::bigint                                             as balance,
+       coalesce(sum(amount) filter (where kind = 'earn'), 0)::bigint                as earned,
+       coalesce(-sum(amount) filter (where kind = 'spend'), 0)::bigint              as spent,
+       coalesce(sum(amount) filter (where kind = 'refund'), 0)::bigint              as refunded,
+       coalesce(sum(amount) filter (where kind = 'adjust'), 0)::bigint              as adjusted,
+       coalesce(-sum(amount) filter (where kind = 'expire'), 0)::bigint             as expired,
+       max(created_at)                                                              as last_at
+  from public.killrace_coin_ledger group by platform, account_id;
+
+-- 76h) 상금 원장 재원 칸(§73 · 더하기만) — owner 사비 · sponsor 후원 · 비우면 사비로 읽음 · 적을 때만 넣고 고치지 않는다(서버 약속)
+alter table public.killrace_prize_ledger add column if not exists funding text check (funding is null or funding in ('owner', 'sponsor'));
+
+alter table public.killrace_coin_items     enable row level security;   -- 정책 0 = service_role 만
+alter table public.killrace_coin_exchanges enable row level security;
+alter table public.killrace_coin_ledger    enable row level security;
+alter table public.killrace_gift_box       enable row level security;
+alter table public.killrace_coin_shipping  enable row level security;
+
+-- 76i) 비공개 버킷 — 기프티콘 사진(오너 · 받는 사람만 · 서버가 1분짜리 서명 주소만 낸다)
+insert into storage.buckets (id, name, public) values ('killrace-gifts', 'killrace-gifts', false) on conflict (id) do nothing;
+notify pgrst, 'reload schema';
+
+-- 76 검증(읽기만): 칸 items 10 · exchanges 14 · ledger 15 · balance 10 · gift_box 22 · shipping 13 · prize_ledger 19(funding)
+--   방아쇠 ledger 3 · exchanges 2 · gift_box 2 · 함수 7(no_change · guard · exchanges_guard · gift_box_no_delete · request_exchange · close_exchange) · RLS 다섯 true
+--   §73 원장 기존 18칸 값 지문 그대로(funding 은 전부 null) · 버킷 killrace-gifts public=false · 새 표 줄 0
+-- 되돌림(줄이 있으면 지휘 · 오너 확인 먼저): drop view killrace_coin_balance · drop table killrace_coin_shipping · killrace_gift_box · killrace_coin_ledger ·
+--   killrace_coin_exchanges · killrace_coin_items · drop function killrace_coin_request_exchange(text,text,text,bigint,text,integer,jsonb) ·
+--   killrace_coin_close_exchange(bigint,text,text,text) · killrace_coin_ledger_no_change() · killrace_coin_ledger_guard() · killrace_coin_exchanges_guard() ·
+--   killrace_gift_box_no_delete() · alter table killrace_prize_ledger drop column funding · delete from storage.buckets where id='killrace-gifts' · notify pgrst

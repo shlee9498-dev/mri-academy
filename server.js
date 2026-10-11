@@ -46,6 +46,9 @@ const killraceDetail = require("./killrace-detail.cjs");
 const killraceMembers = require("./killrace-members.cjs");
 // 킬내기 상금 — 내 상금 · 지급 요청 · 오너 지급 완료(docs/killrace-api.md §1.20). 시험 scripts/killrace-prize.test.cjs
 const killracePrize = require("./killrace-prize.cjs");
+// 킬내기 코인 · 매점 · 배송 · 스위치(§1.28 · 앱 계약 §18 · DDL §76) · 기프티콘함 · 상금 적립 안내(§1.30) — 스위치는 전부 꺼진 채 배포. 시험 scripts/killrace-coin.test.cjs · killrace-gift.test.cjs
+const killraceCoin = require("./killrace-coin.cjs");
+const killraceGift = require("./killrace-gift.cjs");
 let killShot = null;   // 킬내기 결과 스샷 읽기 — 아래 킬내기 HTTP 블록에서 만들고 봇 messageCreate 가 쓴다
 let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP 블록에서 만들고 봇 interactionCreate(/킬내기포스터)가 쓴다
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
@@ -7141,6 +7144,38 @@ async function gmiGuildMember(discordId) {
   const killLeaderboard = killraceLeaderboard.createLeaderboard({ sbSelect, sbUpsert, isAdmin: gdcupAdmin, secret: process.env.SESSION_SECRET });
   killLeaderboard.mount(app);
   if (process.env.SUPABASE_URL) setInterval(() => { killLeaderboard.tick(); }, 60000).unref();
+  // 코인 · 매점 · 배송 · 스위치(§1.28 · 앱 계약 §18) — 오너 = krOwner · 알림 = krDm(기존 봇 DM · 새 env 없음). 클랜 방 길은 수강생 앱 세션 + GmI 길드(클랜 역할)
+  const krNotifyOwner = (text) => krDm(process.env.MRI_OWNER_ID, text);
+  const krLimiter = limit("krCoin", 60, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } }));
+  const killCoin = killraceCoin.createCoin({
+    sbSelect, sbInsert, sbPatch, sbUpsert, sbRpc, isOwner: krOwner, userOf: killMembers.userOf, memberOf: killMembers.memberOf,
+    portalSession: (req) => { try { return studentPortal.readSession(req.headers["x-portal-session"]); } catch (_) { return null; } },   // 수강생 앱 모듈은 아래에서 만든다(요청 때 읽는다)
+    clanOf: async (discordId) => { const g = await gmiGuildMember(discordId); return g == null ? null : g.member ? "clan" : "external"; },
+    notifyOwner: krNotifyOwner, notifyUser: krDm,
+  });
+  killCoin.mount(app, { limiter: krLimiter });
+  // 기프티콘함 · 상금 적립 안내(§1.30) — 사진은 비공개 버킷 killrace-gifts(1분 서명 주소) · 코드는 받는 사람 「열기」 응답에만
+  const storageBase = () => `${process.env.SUPABASE_URL}/storage/v1`;
+  const storagePath = (path) => String(path).split("/").map(encodeURIComponent).join("/");
+  const killGift = killraceGift.createGift({
+    sbSelect, sbInsert, sbPatch, sbUpsert, isOwner: krOwner, personFromKillrace: killCoin.personFromKillrace, personFromPortal: killCoin.personFromPortal,
+    storageUpload: async (path, buf, type) => {
+      const r = await fetch(`${storageBase()}/object/${killraceGift.BUCKET}/${storagePath(path)}`, { method: "POST", headers: { ...sbHeaders({ "Content-Type": type }), "x-upsert": "false" }, body: buf });
+      if (!r.ok) throw Object.assign(new Error(`storage_upload_${r.status}`), { status: r.status });
+    },
+    storageSign: async (path, seconds) => {
+      const r = await fetch(`${storageBase()}/object/sign/${killraceGift.BUCKET}/${storagePath(path)}`, { method: "POST", headers: sbHeaders(), body: JSON.stringify({ expiresIn: seconds }) });
+      if (!r.ok) return null;
+      const j = await r.json();
+      return j && (j.signedURL || j.signedUrl) ? `${storageBase()}${j.signedURL || j.signedUrl}` : null;
+    },
+    storageRemove: async (path) => { await fetch(`${storageBase()}/object/${killraceGift.BUCKET}/${storagePath(path)}`, { method: "DELETE", headers: sbHeaders() }); },
+    notifyOwner: krNotifyOwner, notifyUser: krDm,
+  });
+  killGift.mount(app, { limiter: krLimiter, shipInput: killraceCoin.shipInput });
+  if (process.env.SUPABASE_URL) setInterval(() => { killCoin.tick(); killGift.tick(); }, 60000).unref();
+  // 클랜CODE 봇 파일(/킬내기코인 · /킬내기스위치 · /기프티콘넣기) — 파일이 들어오면 붙는다(없으면 조용히 넘어간다)
+  try { require("./killrace-coin-bot.cjs")({ coin: killCoin, gift: killGift, getClient: () => botClient, ownerId: () => process.env.MRI_OWNER_ID }); } catch (e) { if (e && e.code !== "MODULE_NOT_FOUND") console.warn("[coin-bot] load_failed", String(e.message || e).slice(0, 80)); }
   // 판별 상세 기록 채우기(§1.12 · §67) — 끝 + 45분이 지난 회차의 판을 1분에 매치 하나씩(대회 시간에는 쉰다 · 끄기 ops_state 'killrace:detail' { off: true })
   const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
@@ -7716,6 +7751,9 @@ app.post("/api/gdcup-solo", async (req, res) => {
       loadInfo: () => opsGet("killrace:applyinfo"),
       loadCfg: () => opsGet("killrace:applycfg"),      // 회차 설정(§1.23) — 없으면 코드 기본값(6회 값)
     },
+    // 외부 참가 보증금(앱 계약 §17) — 스위치 killrace:switches.deposit(기본 꺼짐 · 오너만 켬)
+    depositOn: async () => killraceCoin.normSwitches(await opsGet(killraceCoin.SWITCH_KEY)).deposit,
+    notifyOwner: async (text) => { const oid = process.env.MRI_OWNER_ID; if (!botClient || !oid) return false; try { const u = await botClient.users.fetch(String(oid)); await u.send(text); return true; } catch (_) { return false; } },
     // 신청한 플랫폼에서 닉을 다시 확인하고 경매 명단에 쓸 값(경쟁전 티어 · 평딜 · KDA)을 같이 받아 둔다
     lookup: async (platform, ign) => {
       const r = await computeBPI(platform, ign, false);
@@ -7732,6 +7770,7 @@ app.post("/api/gdcup-solo", async (req, res) => {
   });
   app.use("/api/killrace/apply", (req, res, next) => (process.env.SUPABASE_URL ? next() : res.status(503).json({ error: "db_disabled" })));
   api.mount(app);
+  if (process.env.SUPABASE_URL) setInterval(() => { api.depositReminder().catch(() => {}); }, 60000).unref();
 }
 app.get("/api/gdcup-solo-admin", async (req, res) => {
   try {
@@ -8899,7 +8938,14 @@ const SCHEMA_OPTIONAL = {
   killrace_prize_verifications: ["member_id", "platform", "account_id", "verified_by", "verified_at"],
   // §73 킬내기 상금 원장(docs/killrace-api.md §1.19 · 2026-10-09 실행 · 소관 GmI 대행) — 적립 31 · 지급 2 줄(10/9 · 2 ~ 5회 적립 · 지급완료 2건). 지급 요청 화면은 별도 주문.
   killrace_prize_ledger: ["id", "kind", "platform", "account_id", "ign", "event_id", "reason", "amount", "status", "source", "requested_at",
-                          "request_notified_at", "paid_at", "paid_notified_at", "cancelled_at", "memo", "entered_by", "created_at"],
+                          "request_notified_at", "paid_at", "paid_notified_at", "cancelled_at", "memo", "entered_by", "created_at", "funding"],
+  // §76 킬내기 코인 · 매점 · 배송 · 기프티콘함(docs/killrace-api.md §1.28 · §1.30) — 미실행이면 코인 · 기프티콘 길만 503 table_missing(스위치는 꺼진 채)
+  killrace_coin_items: ["id", "name", "coin_price", "krw_cost", "delivery", "stock", "active", "sort", "memo", "created_at"],
+  killrace_coin_exchanges: ["id", "platform", "account_id", "ign", "item_id", "coin_price", "krw_cost", "status", "requested_at", "decided_at", "sent_at", "notified_at", "decided_by", "memo"],
+  killrace_coin_ledger: ["id", "kind", "platform", "account_id", "ign", "event_id", "exchange_id", "ref_id", "casino_ref", "month", "amount", "detail", "memo", "entered_by", "created_at"],
+  killrace_gift_box: ["id", "kind", "platform", "account_id", "ign", "event_id", "reason", "item_name", "krw_value", "funding", "code", "image_path", "expires_on", "state",
+                      "notified_at", "notify_failed_at", "opened_at", "received_at", "purged_at", "cancel_reason", "created_by", "created_at"],
+  killrace_coin_shipping: ["id", "exchange_id", "gift_id", "ship_state", "recipient_name", "address", "phone", "tracking", "shipped_at", "consent_version", "consented_at", "purged_at", "created_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
