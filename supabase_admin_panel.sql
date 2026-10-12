@@ -7446,3 +7446,36 @@ notify pgrst, 'reload schema';
 
 -- 80 검증(읽기만): 제약 1(convalidated = false) · 원장 줄 수 · 적립 합계 실행 전과 같음 · 5만 원 넘는 적립 줄 2(id 32 · 33) 그대로
 -- 되돌림: alter table killrace_prize_ledger drop constraint killrace_prize_ledger_accrue_cap
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- §81  킬내기 상금 스폰서 — 간이 확약 · 입금 확인 (2026-10-12 · 변호사 2차 답 · 오너 결정 · 지휘 주문 · 더하기만)
+--   계약 docs/killrace-api.md §1.36 · 서버 killrace-sponsor.cjs
+--   스폰서 돈 = 예수금(상금으로 전달하는 돈 · 매출 아님). 받는 곳 = 오너 사업자 카카오뱅크(숨고 정산용) — 계좌번호는 어디에도 적지 않는다.
+--   받지 않는 것: 주민번호 · 계좌 · 연락처 · 실명(표시 이름만). 링크 토큰은 sha256 해시만. 지우는 길 없음.
+-- 81-0) 스냅샷: select to_regclass('public.killrace_sponsors');   -- null
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+create table if not exists public.killrace_sponsors (
+  id                   bigint      generated always as identity primary key,
+  event_id             bigint      not null references public.event_defs (id),
+  display_name         text        not null check (char_length(display_name) between 1 and 40),
+  amount               integer     not null check (amount > 0 and amount <= 10000000),   -- 원 · 스폰서가 그 회차 상금으로 맡긴 돈
+  token_hash           text        not null unique check (token_hash ~ '^[0-9a-f]{64}$'),
+  show_name            boolean,                                                         -- 이름 공개 동의(확약 때)
+  agreed_at            timestamptz,
+  agree_terms_version  text,
+  agree_pure           boolean,                                                         -- ① 순수 상금 목적 · 결과와 무관하게 반환 없음
+  agree_carry          boolean,                                                         -- ② 남으면 다음 회차 이월 동의
+  agree_not_player     boolean,                                                         -- ③ 그 회차 선수로 뛰지 않음
+  deposit_confirmed_at timestamptz,                                                     -- 오너가 통장을 보고 누름
+  deposit_confirmed_by text        check (deposit_confirmed_by is null or char_length(deposit_confirmed_by) <= 20),
+  memo                 text        check (memo is null or char_length(memo) <= 200),
+  created_at           timestamptz not null default now(),
+  created_by           text        check (created_by is null or char_length(created_by) <= 20),
+  constraint killrace_sponsors_agree_shape check (agreed_at is null or (agree_pure and agree_carry and agree_not_player and show_name is not null and agree_terms_version is not null))
+);
+create index if not exists killrace_sponsors_event on public.killrace_sponsors (event_id);
+alter table public.killrace_sponsors enable row level security;   -- service_role 만
+notify pgrst, 'reload schema';
+
+-- 81 검증(읽기만): 칸 16 · 색인 3(pkey · token_hash unique · event) · RLS true · 줄 0
+-- 되돌림(줄이 있으면 지휘 · 오너 확인 먼저): drop table killrace_sponsors · notify pgrst
