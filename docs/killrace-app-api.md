@@ -249,7 +249,8 @@
   ✅ 역할은 오너가 만들어 5명(오너 + 오너가 고른 4명 · 트레이너 2 · 클랜원 2)에게 붙였다(10/11 · 오너 원문 「킬내기 역할군: 1558719441057874021」).
 - **더해서 티어표 값 2 이하(1 · 1.5 · 2티어)인 앱 회원도 연다**(10/12 오너 「2티어부터 킬내기 열 수 있도록」 · killrace-api §1.33.4). 역할 기준은 그대로 두고 더하기만 한다.
   티어 찾기 = §19 와 같다(부계 → 본계 줄 · 티어표에 없으면 티어로는 못 연다). 서버 상수 `CASUAL_TIER_MAX = 2` · 화면 판정 = `GET /api/killrace/me/standing` 의 `casualByTier`.
-  판 여는 길(§12.6)은 구현 전이다 — 구현 때 「역할 · 오너 · 티어 2 이하」 셋 중 하나면 연다.
+  **판 열기는 구현됐다(§12.6a · 10/12)** — 오너 → 티어 2 이하 → 역할 순으로 보고 하나면 연다. 셋 다 아니면 403 `not_opener`(화면 「2티어부터 판을 열 수 있어요」).
+  티어가 2 넘고 봇이 역할을 못 보면 503 `role_check_unavailable`(「잠시 뒤 다시 해볼까요?」 · 아님으로 읽지 않는다).
 - 판정은 **역할 id 로만** 한다(이름은 바뀔 수 있다 · #554 §9.35 와 같은 규칙). 길드 조회 함수(`gmiGuildMember`)가 돌려주는 `roleIds` 를 쓴다(§9.35 에서 더하기로 한 칸).
 - **id 보관 = 설정 줄 + 코드 기본값 두 곳(env 아님 · 오너 손 없음)**
   - 설정 줄 `ops_state` `killrace:casual` 의 `openerRoleIds: ["1558719441057874021"]` — 역할을 새로 만들어 id 가 바뀌면 이 줄만 고친다(배포 없음).
@@ -264,7 +265,7 @@
 
 | 칸 | 자율 판 | 정식 회차(지금) |
 |---|---|---|
-| `event_defs` 한 줄 | 판을 열면 서버가 만든다 | 오너 · 세션이 만든다 |
+| `event_defs` 한 줄 | **팀 확정(⑥) 때** 서버가 만든다(10/12 정정 — 열 때 만들면 「지금 대회」 기본값 · 자동 집계가 빈 자율 판을 집을 수 있다) · 열 때는 `killrace_casual` 줄만 | 오너 · 세션이 만든다 |
 | 회차 설정 `killrace:event:<id>` | `kind: "casual"` · `prize: false` · `excludeBots: true` · `teamSize: 4` · `penaltyBy: "tier"` · `boostMode`·`lateRevive` = 코드 기본값 | `kind` 없음(= 정식) |
 | 상금 · 코인 · 보증금 | **없음**(오너 10/8 확정 3) — 상금 원장 · 코인 장부 · 계좌 어디에도 줄을 만들지 않는다. 코인 절의 「연습판 코인」 조건에 `kind !== "casual"` 이 들어간다(#557 쪽에 같은 줄) | 회차마다 오너 결정 |
 | 경매 전용 룰(남은 포인트 가산 · 티어 가산 · 시작 보너스) | **쓰지 않는다**(확정 4) · 시작 점수 0 | 경매 회차만 |
@@ -301,7 +302,11 @@
 - 드래프트 중 진행자가 나가도 상태는 서버에 있다 — 같은 판을 다시 열면 이어서 누른다(다른 진행자 · 오너도 이어서 누를 수 있다).
 - ⑥ 전에 21:00 이 되면 서버가 진행자 · 오너에게 DM 「팀 확정이 안 됐어요」 한 번(판은 그대로 · 확정하는 순간부터 집계).
 
-### §12.5 상태 줄 — `ops_state` `killrace:casual:<id>` (DDL 없음)
+### §12.5 상태 줄 — 표 `killrace_casual` 한 줄(DDL §79 · 10/12 정정)
+
+> **10/12 정정** — 처음엔 `ops_state` `killrace:casual:<id>` 로 적었으나, 판 번호 · 「연 사람 · 시각 기록 · 지우기 없음」(지휘 주문) · 동시 열기 판정 때문에
+> 표 하나로 바꿨다(더하기만 · 지휘 OK). 칸: `id · play_date · mode · state · opened_by(회원 번호) · opened_name(표시 이름) · opened_via(owner · role · tier) · opened_tier · event_id(⑥ 때) · detail(jsonb · 아래 entries · slots · draft) · log(jsonb) · created_at · updated_at`.
+> 아래 모양은 `detail` · `log` 칸에 그대로 들어간다(다음 단계 구현 때).
 
 ```jsonc
 {
@@ -335,6 +340,23 @@
 
 - 「진행자」 = §12.1 판정을 **요청마다** 다시 본다(10분 기억 · 역할을 떼면 10분 안에 막힌다). 그 판을 연 사람이 아니어도 진행자면 손볼 수 있다.
 - 응답 어디에도 디스코드 번호 · PUBG 계정 번호가 없다(사람 = `key` · 스팀 닉 · 진행자는 디스코드 표시 이름).
+
+### §12.6a 지금 있는 길 (10/12 · `killrace-casual.cjs` · 사람마다 분당 30)
+
+| 길 | 응답 |
+|---|---|
+| `GET /api/killrace/casual` | `{ config: { startHHMM: "21:00", endHHMM: "23:00", applyCloseHHMM: "20:30", todayCutoffHHMM: "20:00", maxPerDay: 3, openDays: 7 }, me: null \| { canOpen, via: "owner" \| "role" \| "tier" \| null, reason: null \| "not_opener" \| "consent_required" \| "role_check_unavailable" }, list: [판 요약] }` — 오늘 ~ 7일 뒤 · 취소 뺌 · 날짜 순 |
+| `POST /api/killrace/casual { date: "YYYY-MM-DD", mode?: "low" \| "high" }` | 200 `{ casual: 판 요약 }` · `mode` 없으면 `low`. 거절 401 `login_required` · 403 `consent_required` · `not_opener` · 400 `bad_date` · `bad_mode` · 409 `friday_reserved` · `too_late_today` · `overlaps_official` · `too_many_casual` · `opener_busy` · 503 `role_check_unavailable` · `table_missing` |
+| `GET /api/killrace/casual/:id` | `{ casual: { …판 요약, log: [{ at, by, action }] } }` · 404 `not_found` |
+| `POST /api/killrace/casual/:id/cancel` | 연 사람(팀 확정 전) · 오너 · 진행자 키(`x-admin-key` + `by`) → `{ casual }`(`state: "cancelled"`). 403 `not_allowed` · 409 `already_cancelled` · `already_registered` · `stale`(다른 사람이 먼저 바꿈) · 400 `need_by` |
+
+- **판 요약** = `{ id, date, mode, state, count, teams, openedBy: { name }, openedAt }` — `count` · `teams` 는 신청 단계 전이라 지금은 0.
+- **판정 순서**(열기) — 로그인 → 회원(동의) → 날짜(모양 · 오늘 ~ 7일 · 금요일 · 오늘은 20:00 전) → 여는 사람(오너 · 티어 2 이하 · 역할) → (한 줄로 세워서) 정해진 회차 겹침(그날 21:00 ~ 23:00 과 `event_defs` 창) → 같은 날 3개 → 한 사람 열린 판 하나(오늘 이후 · 취소 아닌 판).
+- **기록** — 연 사람 회원 번호 · 표시 이름 · 경로 · 그때 티어 · 시각이 줄에 남는다. **지우는 길은 없다** — 취소도 `state` 만 바꾸고 `log` 에 한 줄 더한다.
+- **상금 · 코인 · 보증금 줄을 만들지 않는다**(§12.2). 집계 · 「지금 대회」 · 판수 계산은 이 길과 무관하다(열 때 `event_defs` 를 만들지 않는다).
+- **아직 없는 길** — 신청(`join` · `leave`) · 마감 · 칸 나누기 · 드래프트 · 팀 확정(⑥ · `event_defs` 생성) · 21:00 미확정 DM. 「팀 3개 이상만 티어 반영」(§12.2 · §12.8)은 기록 단계 규칙이라 그대로 둔다.
+- **화면(클랜CODE)** — 「판 열기」 버튼은 `GET /casual` 의 `me.canOpen` 이 `true` 일 때만. 날짜 고르기 = 오늘 ~ 7일(금요일 · 20:00 뒤 오늘은 흐리게) · 판 종류(저티어 / 고티어) · 열기 → 목록에 바로.
+  `not_opener` 면 「2티어부터 판을 열 수 있어요」 · `consent_required` 면 동의 화면 · `friday_reserved` 「금요일은 정규 회차 날이라 열 수 없어요」 · `overlaps_official` 「그날은 정규 회차가 있어요」 · `too_many_casual` 「그날은 판이 다 찼어요」 · `opener_busy` 「이미 연 판이 있어요」 · `too_late_today` 「오늘 판은 20시 전까지 열 수 있어요」.
 
 ### §12.7 핀볼은 서버가 정한다
 

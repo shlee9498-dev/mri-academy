@@ -7430,6 +7430,34 @@ notify pgrst, 'reload schema';
 -- 되돌림(줄이 있으면 지휘 · 오너 확인 먼저): drop table killrace_feedback · notify pgrst
 
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- §79  킬내기 자율 판 (2026-10-12 · 지휘 주문 · 오너 「2티어부터 킬내기 열 수 있도록」 · 더하기만)
+--   계약 docs/killrace-app-api.md §12 · docs/killrace-api.md §1.33.4 · 서버 killrace-casual.cjs
+--   판 하나 = 한 줄. 연 사람(회원 번호) · 표시 이름 · 경로(owner · role · tier) · 시각이 남고 지우는 길은 없다(취소는 state 만).
+--   상금 · 코인 · 보증금 표와 잇지 않는다. event_id 는 팀 확정(⑥) 때 채운다(열 때는 비어 있다).
+-- 79-0) 스냅샷: select to_regclass('public.killrace_casual');   -- null
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+create table if not exists public.killrace_casual (
+  id           bigint      generated always as identity primary key,
+  play_date    date        not null,                                                     -- KST 판 날짜
+  mode         text        not null check (mode in ('low', 'high')),
+  state        text        not null default 'open' check (state in ('open', 'slotted', 'drafting', 'registered', 'cancelled')),
+  opened_by    bigint      not null references public.killrace_members (id),
+  opened_name  text        check (opened_name is null or char_length(opened_name) <= 40),   -- 디스코드 표시 이름(번호 아님)
+  opened_via   text        not null check (opened_via in ('owner', 'role', 'tier')),
+  opened_tier  numeric(3,1),                                                             -- via = tier 일 때 그때 티어
+  event_id     bigint      references public.event_defs (id),
+  detail       jsonb       not null default '{}'::jsonb,                                 -- 신청 · 칸 · 드래프트(다음 단계)
+  log          jsonb       not null default '[]'::jsonb,                                 -- [{ at, by, action }]
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+create index if not exists killrace_casual_day    on public.killrace_casual (play_date, state);
+create index if not exists killrace_casual_opener on public.killrace_casual (opened_by, play_date);
+alter table public.killrace_casual enable row level security;   -- service_role 만
+notify pgrst, 'reload schema';
+
+-- 79 검증(읽기만): 칸 13 · 색인 3(pkey · day · opener) · RLS true · 줄 0
+-- 되돌림(줄이 있으면 지휘 · 오너 확인 먼저): drop table killrace_casual · notify pgrst
 -- §80  킬내기 상금 1건 5만 원 상한 (2026-10-12 · 변호사 검토 · 오너 「상금들은 다 5만원 이하로」 · 지휘 주문 · 제약 더하기만)
 --   계약 docs/killrace-api.md §1.34 · 서버 killrace-prize.cjs accrueCheck(같은 선 · 400 prize_cap)
 --   적립 줄(kind = 'accrue' · 1인 · 1회차 · 1사유 = 한 줄)은 50,000원 이하. NOT VALID — 이미 있는 줄(5회 대승배 2줄 · 100,000 · 70,000)은 검사하지 않고
