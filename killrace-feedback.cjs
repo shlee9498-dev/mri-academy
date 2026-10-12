@@ -20,10 +20,11 @@ function deriveKey(secret) {
 // 지문 — 그냥 sha256 이면 좁은 디스코드 번호 공간에서 거꾸로 풀린다. 키를 모르면 못 만든다
 const fingerprint = (key, s) => crypto.createHmac("sha256", key).update(String(s)).digest("hex");
 
-// 본문 정리 — 앞뒤 공백 · 줄 끝 공백 · 빈 줄 3개 이상 → 2개 · 글자 수는 코드 포인트
+// 본문 정리 — 제어 문자 지움(줄바꿈 · 탭은 남김 · \u0000 은 DB 가 거부해 500) · 앞뒤 공백 · 줄 끝 공백 · 빈 줄 3개 이상 → 2개 · 글자 수는 코드 포인트
+const CONTROL_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
 function cleanBody(v) {
   if (typeof v !== "string") return null;
-  const s = v.replace(/\r\n?/g, "\n").split("\n").map((l) => l.replace(/[ \t]+$/g, "")).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  const s = v.replace(/\r\n?/g, "\n").replace(CONTROL_RE, "").split("\n").map((l) => l.replace(/[ \t]+$/g, "")).join("\n").replace(/\n{3,}/g, "\n\n").trim();
   const n = Array.from(s).length;
   return n >= BODY_MIN && n <= BODY_MAX ? s : null;
 }
@@ -94,6 +95,18 @@ function createFeedback(deps) {
     return r.length;
   }
 
+  // 지문별 차례 줄 — 같은 지문 요청은 앞 요청(세기 → 넣기)이 끝나야 시작한다(하루 3건 경쟁 조건 · 서버 한 대 기준)
+  const lanes = new Map();
+  async function inLanes(keys, fn) {
+    const ks = [...new Set(keys.filter(Boolean))].sort();   // 순서를 정해 두 지문을 잡을 때 서로 기다리지 않게
+    const prev = ks.map((k) => lanes.get(k) || Promise.resolve());
+    let release;
+    const mine = new Promise((r) => { release = r; });
+    for (const k of ks) lanes.set(k, mine);
+    try { await Promise.all(prev); return await fn(); }
+    finally { release(); for (const k of ks) if (lanes.get(k) === mine) lanes.delete(k); }
+  }
+
   // POST /api/killrace/feedback
   async function submit(discordId, body) {
     const sw = await switches();
@@ -106,11 +119,13 @@ function createFeedback(deps) {
       if (!ev[0]) return { status: 404, code: "event_not_found" };
     }
     const fp = await prints(discordId);
-    const used = await todayCount(fp);
-    if (used >= DAILY_MAX) return { status: 429, code: "daily_limit" };
-    const row = await sbInsert(TABLE, { author_fp: fp.author, account_fp: fp.account, category: inp.category, event_id: inp.eventId, body: inp.body });
-    log.log(`[feedback] saved id=${row && row.id}`);
-    return { body: { ok: true, id: Number(row.id), createdAt: row.created_at || new Date(now()).toISOString(), todayLeft: Math.max(0, DAILY_MAX - used - 1) } };
+    return inLanes([fp.author, fp.account], async () => {
+      const used = await todayCount(fp);
+      if (used >= DAILY_MAX) return { status: 429, code: "daily_limit" };
+      const row = await sbInsert(TABLE, { author_fp: fp.author, account_fp: fp.account, category: inp.category, event_id: inp.eventId, body: inp.body });
+      log.log(`[feedback] saved id=${row && row.id}`);
+      return { body: { ok: true, id: Number(row.id), createdAt: row.created_at || new Date(now()).toISOString(), todayLeft: Math.max(0, DAILY_MAX - used - 1) } };
+    });
   }
 
   // GET /api/killrace/feedback/mine — 내 지문 글만

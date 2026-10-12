@@ -28,7 +28,7 @@ test("몸통: 종류 다섯 · 10 ~ 500자(코드 포인트) · 빈 줄 정리 �
 });
 
 // ── 길(가짜 DB) ──
-function world({ shared = null, on = true, owner = false, member = { id: 1, platform: "steam", account_id: A }, merge = {}, rows = [], at = NOON, secret = "s3cr3t", events = [9] } = {}) {
+function world({ slowInsert = false, shared = null, on = true, owner = false, member = { id: 1, platform: "steam", account_id: A }, merge = {}, rows = [], at = NOON, secret = "s3cr3t", events = [9] } = {}) {
   const store = shared || rows.map((r) => ({ ...r }));
   const writes = [], logs = [];
   let nextId = 100;
@@ -49,7 +49,7 @@ function world({ shared = null, on = true, owner = false, member = { id: 1, plat
       const st = q.match(/status=in\.\(([^)]+)\)/); if (st) r = r.filter((x) => st[1].split(",").includes(x.status));
       return [...r].sort((a, b) => b.id - a.id);
     },
-    sbInsert: async (t, r) => { writes.push([t, "insert", r]); const row = { id: nextId++, status: "new", created_at: new Date(at).toISOString(), ...r }; store.push(row); return row; },
+    sbInsert: async (t, r) => { if (slowInsert) await new Promise((res) => setTimeout(res, 5)); writes.push([t, "insert", r]); const row = { id: nextId++, status: "new", created_at: new Date(at).toISOString(), ...r }; store.push(row); return row; },
     sbPatch: async (t, f, r) => { writes.push([t, "patch", r]); const row = store.find((x) => x.id === Number(f.split(".")[1])); Object.assign(row, r); return [row]; },
   };
   const api = F.createFeedback({ ...sb, secret, isOwner: () => owner, userOf: (req) => (req.headers.auth ? { id: req.headers.auth } : null),
@@ -133,4 +133,31 @@ test("오너: 403 · 기본은 숨김 뺌 · 거르기 · 묶음 번호는 응�
   const routes = []; o.api.mount({ get: (p) => routes.push(`GET ${p}`), post: (p) => routes.push(`POST ${p}`), delete: (p) => routes.push(`DELETE ${p}`) });
   assert.equal(routes.filter((r) => r.startsWith("DELETE")).length, 0);
   assert.deepEqual([...new Set(o.writes.map(([t]) => t))], [F.TABLE]);
+});
+
+test("하루 3건 경쟁 조건: 같은 사람 동시 6건 → 200 3 + 429 3 · 다른 사람은 서로 기다리지 않음", async () => {
+  const w = world({ slowInsert: true });
+  const rs = await Promise.all(Array.from({ length: 6 }, () => w.call(POST, { body: ok })));
+  assert.deepEqual(rs.map((r) => r.code).sort(), [200, 200, 200, 429, 429, 429]);
+  assert.equal(w.store.length, 3);
+  // 다른 디스코드 · 연결 없음 → 다른 줄 · 둘 다 들어감
+  const v = world({ slowInsert: true, member: null });
+  const both = await Promise.all([v.call(POST, { body: ok }), v.call(POST, { body: ok, auth: DID2 })]);
+  assert.deepEqual(both.map((r) => r.code), [200, 200]);
+});
+
+test("제어 문자: \\u0000 등은 지우고 줄바꿈 · 탭은 남김 · 지운 뒤 10자 미만 400", async () => {
+  assert.equal(F.cleanBody("자기장이\u0000 너무\u0007 빨라요\t정말요\n다음 줄"), "자기장이 너무 빨라요\t정말요\n다음 줄");
+  assert.equal(F.cleanBody("짧\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000아"), null);
+  const w = world();
+  assert.deepEqual(err(await w.call(POST, { body: { ...ok, body: "가나다\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007" } })), [400, "invalid_body"]);
+  const r = await w.call(POST, { body: { ...ok, body: "널 문자\u0000가 섞인 건의예요 확인 부탁" } });
+  assert.equal(r.code, 200);
+  assert.doesNotMatch(w.store[0].body, /\u0000/);
+});
+
+test("봇 /킬내기스위치 선택지에 건의함(feedback)", () => {
+  const bot = require("../killrace-coin-bot.cjs");
+  const c = bot.COMMANDS[0].options[0].choices.find((x) => x.value === "feedback");
+  assert.equal(c && c.name, "건의함 (feedback)");
 });
