@@ -215,7 +215,7 @@ const ERR = {
   already_expired: "이미 지난 날짜야",
   bad_image: "사진은 png · jpg · webp 3MB까지만 받아",
   invalid_body: "칸 값이 맞지 않아. 상품 이름은 40자까지야",
-  bad_value: "값이 맞지 않아", bad_key: "서버가 아직 이 스위치를 몰라. 경비 배포 뒤에 다시 해줘",
+  bad_value: "값이 맞지 않아", casino_link_disabled: "카지노 연동은 쓰지 않아(변호사 답 · 계약 §1.34.2) — 끄기만 돼", bad_key: "서버가 아직 이 스위치를 몰라. 경비 배포 뒤에 다시 해줘",
 };
 const errText = (e, fallback) => (e && e.userMsg) || ERR[e && e.code] || fallback;
 

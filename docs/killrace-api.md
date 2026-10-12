@@ -1326,14 +1326,15 @@ notify pgrst, 'reload schema';
 
 - 코인 절 §1.28.12(코인 → 카지노 한 방향)는 **§1.34.1 의 3번에 걸린다** — 스위치는 꺼진 채(기본값 `false`) 두고 **켜지 않는다.**
 - 코드 · 장부 칸(`casino_out`)은 **지우지 않는다** — 지우기 · 고치기는 오너 결정 뒤(카지노 봇 코드도 같다 · 지금 손대지 않는다).
-- `/킬내기스위치 casino_link true` 를 오너가 눌러도 막을지는 오너 결정 대기 — 지금은 문서로만 막는다(지휘 · 오너 OK 뒤 서버에서 막는 한 줄을 더한다).
+- **서버가 막는다(10/12 · 변호사 결론 「카지노 칩 ↔ 코인 ↔ 경품 연결 금지」)** — `casino_link` 를 **켜는** 요청은 앱 길(`POST /api/killrace/switches`)이든 봇 `/킬내기스위치` 든
+  **409 `casino_link_disabled` 「카지노 연동은 쓰지 않아요」**로 거절하고 아무것도 쓰지 않는다(`killrace-coin.cjs` `switchValue`). **끄기는 그대로 된다.** 코드 · 칸은 지우지 않는다.
 
 #### §1.34.3 상금 1건 5만 원 상한 — 넘으면 거절 (DDL §80 · 서버 `accrueCheck`)
 
 - **이유** — 현금 상금은 기타소득이라 1건 5만 원을 넘으면 원천징수 · 주민번호 받기 · 신고 의무가 붙는다. 오너 결정: 앞으로 상금은 **1인 1건 5만 원 이하로만** 적립한다.
 - **1건** = 상금 원장(§1.19) 적립 한 줄 = 1인 · 1회차 · 1사유(같은 회차 · 같은 사람 · 같은 사유는 원래 한 줄 · `killrace_prize_ledger_accrue_once`).
 - **막는 곳 두 겹**
-  - 서버 `killrace-prize.cjs` `accrueCheck(amount)` — 50,000 넘으면 **400 `prize_cap` 「상금은 1인 1건 5만 원까지예요」**(돈 문구라 느낌표 없음). 적립을 넣는 길은 이 함수를 먼저 부른다.
+  - 서버 `killrace-prize.cjs` `accrueCheck(amount)` — 50,000 넘으면 **400 `prize_cap` 「상금은 1인 1건 5만 원까지예요」**(돈 문구라 느낌표 없음). 적립을 넣는 길은 이 함수를 먼저 부른다. **적립 HTTP 길이 생기면 그 PR 에 「50,001 → 400 `prize_cap`」 시험을 같이 넣는다**(10/12 지휘 · 지금은 적립 HTTP 길이 없다).
     지금 적립은 서버 길이 아니라 오너 · 세션 SQL 로 넣는다 → 그래서 아래 DB 제약이 실제로 막는다.
   - DB 제약 `killrace_prize_ledger_accrue_cap` — `kind <> 'accrue' or amount <= 50000` · **NOT VALID**(이미 있는 줄은 검사하지 않는다 · 새 줄부터).
 - **팀 상금 나누기와 상한** — 팀 안 10 : 7 : 5 : 2(§1.33.6)로 나눴을 때 한 사람 몫이 5만 원을 넘으면 그 줄은 들어가지 않는다. 회차 상금을 정할 때 「1번 몫 ≤ 5만 원」이 되게 정한다
@@ -1472,7 +1473,7 @@ notify pgrst, 'reload schema';
 | 길 | 하는 일 |
 |---|---|
 | `GET /api/killrace/evidence/:id` | 그 회차 묶음 JSON — `{ generatedAt, event, notice, participants[], scoreboard[], prizes[], payouts[], sponsors[], sponsorReconcile }` |
-| `GET /api/killrace/evidence/:id?format=csv` | 같은 내용 CSV 한 파일(`section` 칸 · 엑셀용 BOM · `= + - @` 로 시작하는 글은 앞에 `'`) · `killrace-evidence-<id>.csv` |
+| `GET /api/killrace/evidence/:id?format=csv` | 같은 내용 CSV 한 파일(`section` 칸 · 엑셀용 BOM · **글**이 `= + - @` · 탭 · CR 로 시작하면 앞에 `'` · **숫자는 그대로**(음수가 글자로 안 바뀜 · 10/12 검수)) · `killrace-evidence-<id>.csv` |
 | `POST /api/killrace/evidence/:id/notice { url?, text? }` | 그 회차 공지를 붙인다 — 디스코드 메시지 링크(`https://` 만) · 글(2,000자). 덮어쓰기 · `ops_state` `killrace:evidence:<id>` |
 
 - **들어가는 것** — 공지(붙인 링크 · 글) · 참가자 명단(등록 팀 · 슬롯 · 닉) · 최종 점수표(순위 · 팀 · 총점 · 판 · 치킨 · 킬 · 딜) · 상금(그 회차 적립 줄 · 사유 · 금액 · 재원 · 적립 시각 · 과세최저한 표시) ·
