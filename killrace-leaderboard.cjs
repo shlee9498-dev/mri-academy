@@ -43,6 +43,30 @@ const activeSeason = (v, now) => { const s = parseSeason(v); return s && s.start
 const seasonTag = (s) => (s ? `${s.number}|${s.start}|${s.end}` : null);
 const seasonPublic = (s) => (s ? { number: s.number, start: s.start, end: s.end } : null);
 
+// 시즌 표(코드 · 더하기만 · 10/13 오너 확정) — 오너가 알려 준 시즌만 한 줄씩 넣는다. 표 마지막 시즌 뒤는 「앞 시즌 end + 1일부터 60일」로 자동(42시즌만 3개월 예외였다)
+//   ops_state 'killrace:season' 설정 줄이 있고 지금 그 안이면 그 줄이 먼저(진행자 키로 바로 고치는 길 · §1.33.2) · 없으면 이 표
+const SEASON_DAYS = 60;
+const SEASONS = Object.freeze([
+  Object.freeze({ number: 43, start: "2026-09-10", end: "2026-11-09" }),
+]);
+const addDays = (day, n) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86400e3).toISOString().slice(0, 10);
+// 표 + 60일 규칙으로 지금 시즌 — 표 첫 시즌 전이거나 표 사이 빈 날이면 null(= 최근 30일 기준)
+function seasonFromTable(now, table = SEASONS) {
+  const list = (table || []).map(parseSeason).filter(Boolean).sort((a, b) => a.startMs - b.startMs);
+  if (!list.length || now < list[0].startMs) return null;
+  for (const s of list) if (s.startMs <= now && now < s.endMs) return s;
+  let cur = list[list.length - 1];
+  for (let i = 0; i < 1000 && now >= cur.endMs; i++) {
+    const start = addDays(cur.end, 1);
+    cur = parseSeason({ number: cur.number + 1, start, end: addDays(start, SEASON_DAYS - 1) });
+  }
+  return cur && cur.startMs <= now && now < cur.endMs ? cur : null;
+}
+// 쓰는 시즌 = 설정 줄(지금 그 안일 때) → 시즌 표 순서
+const seasonAt = (row, now, table = SEASONS) => activeSeason(row, now) || seasonFromTable(now, table);
+// 남은 날 — 오늘(KST)부터 끝날까지. 끝날 당일 0
+const daysLeftOf = (end, now) => Math.max(0, Math.round(Date.parse(`${end}T00:00:00Z`) / 86400e3) - Math.floor((now + 9 * 3600e3) / 86400e3));
+
 // 기준 시각 이하에서 가장 최근의 수요일 09:00 KST(= 수요일 00:00 UTC)
 function lastWeekly(now) {
   const d = new Date(now);
@@ -127,6 +151,7 @@ function createLeaderboard(deps) {
   const { sbSelect, sbUpsert } = deps;
   const isAdmin = deps.isAdmin || (() => false);
   const now = deps.now || Date.now;
+  const seasons = deps.seasons || SEASONS;          // 시험에서 표를 바꿔 끼울 수 있게(운영은 SEASONS)
   const log = deps.log || console;
   let secret = deps.secret;
   if (!secret) { secret = crypto.randomBytes(32).toString("hex"); log.warn("[killrace-leaderboard] SESSION_SECRET 없음 — 이번 실행 동안만 쓰는 키로 만든다"); }
@@ -156,7 +181,7 @@ function createLeaderboard(deps) {
       readState(PEOPLE_KEY),
       readState(SEASON_KEY)
     ]);
-    const season = activeSeason(seasonRow, t);
+    const season = seasonAt(seasonRow, t, seasons);
     const rows = humanRows(raw);
     const merge = people && people.merge && typeof people.merge === "object" ? people.merge : {};
     const built = buildLeaderboard({ rows, matches, merge, now: t, season });
@@ -175,12 +200,14 @@ function createLeaderboard(deps) {
   async function tick() {
     try {
       const [state, events, seasonRow] = await Promise.all([readState(STATE_KEY), sbSelect("event_defs", "select=id,window_end&order=id.asc&limit=500"), readState(SEASON_KEY)]);
-      const due = dueReason(state, events, now(), activeSeason(seasonRow, now()));
+      const due = dueReason(state, events, now(), seasonAt(seasonRow, now(), seasons));
       if (due) await refresh(due);
     } catch (e) { log.warn("[killrace-leaderboard] tick failed", String((e && e.message) || e).slice(0, 80)); }
   }
 
-  const publicRules = (r) => ({ minGames: (r && r.minGames) || MIN_GAMES, recentDays: r && "recentDays" in r ? r.recentDays : RECENT_DAYS, season: (r && r.season) || null });
+  // 시즌 칸 = { no, number, start, end, daysLeft } — no 는 number 와 같은 값(화면 주문 이름) · daysLeft 는 부를 때 계산(저장본에 넣지 않는다)
+  const seasonView = (x) => (x && x.end ? { no: x.number, number: x.number, start: x.start, end: x.end, daysLeft: daysLeftOf(x.end, now()) } : null);
+  const publicRules = (r) => ({ minGames: (r && r.minGames) || MIN_GAMES, recentDays: r && "recentDays" in r ? r.recentDays : RECENT_DAYS, season: seasonView(r && r.season) });
   function view(state, admin) {
     return {
       at: state.at, basis: state.basis, rules: publicRules(state.rules), eligible: state.eligible,
@@ -240,4 +267,4 @@ function createLeaderboard(deps) {
   return { mount, get, tick, refresh, standingOf, setSeason };
 }
 
-module.exports = { createLeaderboard, buildLeaderboard, LABELS, parseSeason, activeSeason, labelOf, _test: { lastWeekly, lastEventClose, dueReason, groupOf, seasonTag, SEASON_KEY, MIN_GAMES, RECENT_DAYS, SETTLE_MS, STATE_KEY, PEOPLE_KEY } };
+module.exports = { createLeaderboard, buildLeaderboard, LABELS, parseSeason, activeSeason, seasonFromTable, seasonAt, daysLeftOf, SEASONS, SEASON_DAYS, labelOf, _test: { lastWeekly, lastEventClose, dueReason, groupOf, seasonTag, SEASON_KEY, MIN_GAMES, RECENT_DAYS, SETTLE_MS, STATE_KEY, PEOPLE_KEY } };
