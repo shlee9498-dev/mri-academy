@@ -50,6 +50,8 @@ const killraceMembers = require("./killrace-members.cjs");
 const killracePrize = require("./killrace-prize.cjs");
 // 킬내기 상금 스폰서 간이 확약 · 오너 목록(docs/killrace-api.md §1.36 · DDL §81) — 돈은 움직이지 않는다(예수금 표시 · 확약 · 입금 확인 도장만). 시험 scripts/killrace-sponsor.test.cjs
 const killraceSponsor = require("./killrace-sponsor.cjs");
+// 킬내기 회차별 증빙 묶음(§1.37 · 세무사 답) — 오너만 · 공지 · 참가자 · 점수표 · 상금 · 스폰서 확약 · JSON/CSV. 시험 scripts/killrace-evidence.test.cjs
+const killraceEvidence = require("./killrace-evidence.cjs");
 // 킬내기 코인 · 매점 · 배송 · 스위치(§1.28 · 앱 계약 §18 · DDL §76) · 기프티콘함 · 상금 적립 안내(§1.30) — 스위치는 전부 꺼진 채 배포. 시험 scripts/killrace-coin.test.cjs · killrace-gift.test.cjs
 const killraceCoin = require("./killrace-coin.cjs");
 const killraceGift = require("./killrace-gift.cjs");
@@ -7150,6 +7152,9 @@ async function gmiGuildMember(discordId) {
   // 상금 스폰서(§1.36) — 확약 링크(로그인 없음 · 토큰 해시만 저장) · 오너 목록 · 입금 확인. 주민번호 · 계좌 · 연락처 칸 없음
   killraceSponsor.createSponsor({ sbSelect, sbInsert, sbPatch, isOwner: krOwner })
     .mount(app, { limiter: limit("krSponsor", 20, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
+  // 회차별 증빙 묶음(§1.37) — 오너만 · 주민번호 · 계좌 · 디스코드 번호 · 계정 번호 없음 · 공지 붙이기만 쓴다
+  killraceEvidence.createEvidence({ sbSelect, sbUpsert, isOwner: krOwner, board: (id) => kr.board({ eventId: id }), eventById: (id) => kr.eventById(id) })
+    .mount(app, { limiter: limit("krEvidence", 20, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
   // 주간 개인 리더보드(§1.18) — GET /api/killrace/leaderboard · 저장본 ops_state 'killrace:leaderboard' · 수요일 09:00 KST · 회차 끝 + 45분에 다시 계산
   //   계정 번호는 진행자 키(x-admin-key)로 부를 때만 줄마다 붙는다(클랜CODE 역할 봇용 · 새 env 없음). 디스코드 역할은 이 서버가 건드리지 않는다
   const killLeaderboard = killraceLeaderboard.createLeaderboard({ sbSelect, sbUpsert, isAdmin: gdcupAdmin, secret: process.env.SESSION_SECRET });
@@ -8984,7 +8989,7 @@ const SCHEMA_OPTIONAL = {
   // §78 익명 건의함(docs/killrace-api.md §1.32) — 미실행이면 건의함 길만 503 table_missing(스위치는 꺼진 채)
   killrace_feedback: ["id", "author_fp", "account_fp", "category", "event_id", "body", "status", "status_at", "created_at"],
   // §81 상금 스폰서(docs/killrace-api.md §1.36) — 미실행이면 스폰서 길만 503 table_missing
-  killrace_sponsors: ["id", "event_id", "display_name", "amount", "token_hash", "show_name", "agreed_at", "agree_terms_version", "agree_pure", "agree_carry", "agree_not_player", "deposit_confirmed_at", "deposit_confirmed_by", "memo", "created_at", "created_by"],
+  killrace_sponsors: ["id", "event_id", "display_name", "amount", "token_hash", "show_name", "agreed_at", "agree_terms_version", "agree_pure", "agree_carry", "agree_not_player", "deposit_confirmed_at", "deposit_confirmed_by", "memo", "created_at", "created_by", "carry_from_event"],   // carry_from_event = §82
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.

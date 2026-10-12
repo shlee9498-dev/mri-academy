@@ -7479,3 +7479,16 @@ notify pgrst, 'reload schema';
 
 -- 81 검증(읽기만): 칸 16 · 색인 3(pkey · token_hash unique · event) · RLS true · 줄 0
 -- 되돌림(줄이 있으면 지휘 · 오너 확인 먼저): drop table killrace_sponsors · notify pgrst
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- §82  킬내기 스폰서 이월 칸 (2026-10-12 · 세무사 답 · 「입금과 지급 1원까지 일치」 · 지휘 주문 · 더하기만)
+--   계약 docs/killrace-api.md §1.37 · 서버 killrace-sponsor.cjs action "carry"
+--   남은 스폰서 상금을 다음 회차로 넘길 때 다음 회차에 「이월」 줄 하나 — carry_from_event = 넘겨준 회차. 1원 맞추기:
+--   회차 들어온 돈(입금 확인 + 이월 받음) = 상금 적립(funding='sponsor') + 이월 보냄.
+-- 82-0) 스냅샷: select count(*) from information_schema.columns where table_name = 'killrace_sponsors' and column_name = 'carry_from_event';   -- 0
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+alter table public.killrace_sponsors add column if not exists carry_from_event bigint references public.event_defs (id);
+notify pgrst, 'reload schema';
+
+-- 82 검증(읽기만): killrace_sponsors 칸 17 · 줄 수 실행 전과 같음
+-- 되돌림: alter table killrace_sponsors drop column carry_from_event · notify pgrst
