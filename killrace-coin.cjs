@@ -31,6 +31,7 @@ function normSwitches(v) {
   const o = v && typeof v === "object" ? v : {};
   const out = {};
   for (const k of SWITCH_BOOL) out[k] = o[k] === true;
+  out.casino_link = false;                                   // §1.34.2 이중 잠금 — 저장값이 true 여도 읽을 때 꺼진 것으로 본다(켜기는 switchValue 가 막는다)
   out.monthly_budget_krw = int(o.monthly_budget_krw, 0, 10000000, SWITCH_DEFAULTS.monthly_budget_krw);
   return out;
 }

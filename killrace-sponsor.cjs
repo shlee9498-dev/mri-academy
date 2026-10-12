@@ -11,6 +11,8 @@ const TERMS_VERSION = "2026-10-12";
 const COLS = "id,event_id,display_name,amount,show_name,agreed_at,agree_terms_version,deposit_confirmed_at,deposit_confirmed_by,memo,created_at,created_by,carry_from_event";
 const TOKEN_RE = /^[A-Za-z0-9_-]{32}$/;
 const NAME_MAX = 40;
+// 표시 이름 = 한글 · 영문 · 숫자 · 공백만(10/12 지휘 검수 · §1.36.3) — . / : @ 같은 글자가 들어가면 링크 · 계정 안내(광고 대가)가 될 수 있어 막는다. 화면(clancup #121)과 같은 규칙
+const NAME_RE = /^[가-힣ㄱ-ㅎㅏ-ㅣA-Za-z0-9 ]+$/;
 const AMOUNT_MAX = 10000000;
 
 // ── 순수 함수 (scripts/killrace-sponsor.test.cjs) ──
@@ -21,7 +23,7 @@ function createCheck(b) {
   const name = String((b && b.displayName) || "").trim();
   const amount = Number(b && b.amount);
   if (!Number.isInteger(eventId) || eventId < 1) return { status: 400, code: "bad_event" };
-  if (!name || name.length > NAME_MAX || /[\u0000-\u001f\u007f]/.test(name)) return { status: 400, code: "bad_name" };
+  if (!name || name.length > NAME_MAX || !NAME_RE.test(name)) return { status: 400, code: "bad_name" };
   if (!Number.isInteger(amount) || amount <= 0 || amount > AMOUNT_MAX) return { status: 400, code: "bad_amount" };
   return null;
 }
@@ -181,4 +183,4 @@ function createSponsor(deps) {
   return { mount, getOne, postAgree, getAdmin, postAdmin };
 }
 
-module.exports = { createSponsor, createCheck, agreeCheck, ownerList, hashToken, newToken, TERMS_VERSION };
+module.exports = { createSponsor, createCheck, NAME_RE, agreeCheck, ownerList, hashToken, newToken, TERMS_VERSION };
