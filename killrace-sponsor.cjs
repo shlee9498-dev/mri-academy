@@ -8,7 +8,7 @@ const crypto = require("crypto");
 const TABLE = "killrace_sponsors";
 const LEDGER = "killrace_prize_ledger";
 const TERMS_VERSION = "2026-10-12";
-const COLS = "id,event_id,display_name,amount,show_name,agreed_at,agree_terms_version,deposit_confirmed_at,deposit_confirmed_by,memo,created_at,created_by";
+const COLS = "id,event_id,display_name,amount,show_name,agreed_at,agree_terms_version,deposit_confirmed_at,deposit_confirmed_by,memo,created_at,created_by,carry_from_event";
 const TOKEN_RE = /^[A-Za-z0-9_-]{32}$/;
 const NAME_MAX = 40;
 const AMOUNT_MAX = 10000000;
@@ -33,22 +33,29 @@ function agreeCheck(b) {
   if (x.version !== TERMS_VERSION) return { status: 409, code: "terms_outdated" };
   return null;
 }
-// 오너 목록 — 회차별 스폰서 합(입금 확인된 것) · 상금으로 나간 금액(원장 적립 funding='sponsor') · 잔액
+// 오너 목록 — 회차별 스폰서 합(입금 확인된 것) · 상금으로 나간 금액(원장 적립 funding='sponsor') · 이월 · 잔액
+//   1원 맞추기(§1.37) — 들어온 돈(입금 확인 + 이월 받음) = 상금 적립 + 이월 보냄 이면 matched. 차이는 diff(원)
 function ownerList(sponsors, ledgerRows, names = {}) {
   const paidByEvent = new Map();
   for (const r of ledgerRows || []) if (r.kind === "accrue" && r.funding === "sponsor") paidByEvent.set(Number(r.event_id), (paidByEvent.get(Number(r.event_id)) || 0) + (Number(r.amount) || 0));
+  const carriedOut = new Map();
+  for (const s of sponsors || []) if (s.carry_from_event != null) carriedOut.set(Number(s.carry_from_event), (carriedOut.get(Number(s.carry_from_event)) || 0) + (Number(s.amount) || 0));
   const byEvent = new Map();
+  const ensure = (ev) => { if (!byEvent.has(ev)) byEvent.set(ev, { event: ev, eventName: names[ev] || null, sponsored: 0, confirmed: 0, deposits: 0, carryIn: 0, paidOut: paidByEvent.get(ev) || 0, carryOut: carriedOut.get(ev) || 0, sponsors: [] }); return byEvent.get(ev); };
+  for (const ev of carriedOut.keys()) ensure(ev);
   for (const s of sponsors || []) {
     const ev = Number(s.event_id);
-    if (!byEvent.has(ev)) byEvent.set(ev, { event: ev, eventName: names[ev] || null, sponsored: 0, confirmed: 0, paidOut: paidByEvent.get(ev) || 0, sponsors: [] });
-    const g = byEvent.get(ev);
+    const g = ensure(ev);
     g.sponsored += Number(s.amount) || 0;
-    if (s.deposit_confirmed_at) g.confirmed += Number(s.amount) || 0;
+    if (s.deposit_confirmed_at) { g.confirmed += Number(s.amount) || 0; if (s.carry_from_event != null) g.carryIn += Number(s.amount) || 0; else g.deposits += Number(s.amount) || 0; }
     g.sponsors.push({ id: s.id, displayName: s.display_name, amount: Number(s.amount), showName: s.show_name == null ? null : !!s.show_name,
       agreed: !!s.agreed_at, agreedAt: s.agreed_at || null, depositConfirmed: !!s.deposit_confirmed_at, depositConfirmedAt: s.deposit_confirmed_at || null,
-      memo: s.memo || null, createdAt: s.created_at });
+      memo: s.memo || null, createdAt: s.created_at, carryFrom: s.carry_from_event == null ? null : Number(s.carry_from_event) });
   }
-  return [...byEvent.values()].map((g) => ({ ...g, balance: g.confirmed - g.paidOut })).sort((a, b) => b.event - a.event);
+  return [...byEvent.values()].map((g) => {
+    const balance = g.confirmed - g.paidOut - g.carryOut;
+    return { ...g, balance, reconcile: { in: g.confirmed, out: g.paidOut + g.carryOut, diff: balance, matched: balance === 0 } };
+  }).sort((a, b) => b.event - a.event);
 }
 
 // deps: sbSelect · sbInsert · sbPatch · isOwner(req) · now · log
@@ -139,6 +146,21 @@ function createSponsor(deps) {
       const got = await sbPatch(TABLE, `id=eq.${id}&agreed_at=is.null`, { token_hash: hashToken(token) });
       if (!got.length) return fail(res, 409, "already_agreed");
       return res.json({ id, token });
+    }
+    if (b.action === "carry") {                  // 남은 돈 이월(확약 ② 동의) — 다음 회차에 「이월」 줄 하나(입금 확인 = 이월 시각). 남은 돈 넘게는 못 넘긴다
+      const to = Number(b.toEventId), amount = Number(b.amount), from = Number(rows[0].event_id);
+      if (!Number.isInteger(to) || to < 1 || to === from) return fail(res, 400, "bad_event");
+      if (!Number.isInteger(amount) || amount <= 0) return fail(res, 400, "bad_amount");
+      const ev = await sbSelect("event_defs", `select=id&id=eq.${to}&limit=1`);
+      if (!ev.length) return fail(res, 404, "no_event");
+      const [all, ledger] = await Promise.all([sbSelect(TABLE, `select=${COLS}&limit=2000`), sbSelect(LEDGER, `select=kind,event_id,amount,funding&kind=eq.accrue&funding=eq.sponsor&event_id=eq.${from}&limit=5000`).catch(() => [])]);
+      const g = ownerList(all, ledger).find((x) => x.event === from);
+      if (!g || amount > g.balance) return fail(res, 409, "over_balance");
+      const name = `이월(${from}번 회차)`;
+      const row = await sbInsert(TABLE, { event_id: to, display_name: name, amount, token_hash: hashToken(newToken()), created_by: "오너", carry_from_event: from,
+        deposit_confirmed_at: at, deposit_confirmed_by: "이월", memo: `${from}번 회차 남은 상금 이월 · 스폰서 확약 ② 동의` });
+      log.log(`[killrace-sponsor] carry from=${from} to=${to} amount=${amount}`);
+      return res.json({ ok: true, id: row.id });
     }
     if (b.action === "memo") {
       const memo = String(b.memo || "").trim();

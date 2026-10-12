@@ -13,7 +13,8 @@ const LEDGER_COLS = "id,kind,platform,account_id,ign,event_id,reason,amount,stat
 const won = (n) => `${Number(n || 0).toLocaleString("en-US")}원`;
 // 상금 1건 상한(§1.34 · 10/12 변호사 검토 · 오너 「상금들은 다 5만원 이하로」) — 1인 · 1회차 · 1사유 적립 한 줄이 이 값을 넘으면 거절.
 //   5만 원 넘는 기타소득은 원천징수 · 주민번호 · 신고가 붙는다. DB 제약 killrace_prize_ledger_accrue_cap(§80 · NOT VALID)이 같은 선을 한 번 더 막는다.
-//   그 전에 쌓인 넘는 줄(5회 대승배 2줄)은 그대로 두고 「세금 처리 필요(오너 확인)」 표시만 한다(금액 수정은 오너 결정 대기).
+//   그 전에 쌓인 넘는 줄(5회 대승배 2줄)은 그대로 두고 「과세최저한 적용」 표시만 한다(10/12 세무사 답 · 오너 「한 번에 전액 + 증빙 보관」 · §1.37) —
+//   대회 상금은 80% 필요경비라 10만 원 상금의 소득금액 2만 원 = 건별 5만 원 과세최저한 이하. 금액 그대로 · 나눠 보내지 않는다(1건 = 한 번에 송금).
 const ACCRUE_MAX = 50000;
 const CAP_MESSAGE = "상금은 1인 1건 5만 원까지예요";
 // 적립 한 줄 넣기 전 검사 — 통과 null · 아니면 { status: 400, code, message }. 적립을 넣는 길(지금은 오너 · 세션 SQL 뿐)은 이 함수를 먼저 부른다
@@ -23,8 +24,9 @@ function accrueCheck(amount) {
   if (a > ACCRUE_MAX) return { status: 400, code: "prize_cap", message: CAP_MESSAGE };
   return null;
 }
-// 상한 전에 쌓인 넘는 적립 줄 — 지우거나 고치지 않고 표시만
+// 상한 전에 쌓인 넘는 적립 줄 — 지우거나 고치지 않고 표시만(§1.37 과세최저한 적용 · 전액 한 번에)
 const needsTax = (r) => !!r && r.kind === "accrue" && (Number(r.amount) || 0) > ACCRUE_MAX;
+const TAX_NOTE = Object.freeze({ code: "below_threshold", label: "과세최저한 적용(대회 상금 80% 필요경비) · 전액 지급" });
 
 // ═══════════════ 순수 함수 (scripts/killrace-prize.test.cjs) ═══════════════
 // 한 사람의 원장 줄 → 잔액 · 열린 요청 · 요청 가능 여부. 잔액 = 적립 합 − 지급완료 합(보기 killrace_prize_balance 와 같은 식)
@@ -49,7 +51,7 @@ function summarize(rows, min = MIN_REQUEST, verified = true) {
 function lineView(r, eventNames = {}) {
   const ev = r.event_id == null ? null : Number(r.event_id);
   const base = { kind: r.kind, amount: Number(r.amount) || 0, event: ev, eventName: ev != null ? eventNames[ev] || null : null, at: r.paid_at || r.cancelled_at || r.requested_at || r.created_at };
-  if (r.kind === "accrue") return needsTax(r) ? { ...base, reason: r.reason || null, taxCheck: true } : { ...base, reason: r.reason || null };
+  if (r.kind === "accrue") return needsTax(r) ? { ...base, reason: r.reason || null, taxNote: TAX_NOTE } : { ...base, reason: r.reason || null };
   return { ...base, status: r.status, requestedAt: r.requested_at || null, paidAt: r.paid_at || null };
 }
 const byAtDesc = (a, b) => String(b.at).localeCompare(String(a.at));
@@ -122,7 +124,7 @@ function createPrize(deps) {
       if (p.code === "not_linked") return res.json({ linked: false, ign: null, ...summarize([], MIN_REQUEST, false), canRequest: false, reason: "not_linked", lines: [] });
       if (p.code) return fail(res, p.status, p.code);
       const [rows, names, verified] = await Promise.all([rowsOf(p.member.platform, p.member.account_id), eventNames(), verifiedOf(p.member)]);
-      return res.json({ linked: true, ign: p.member.ign, key: keyOf(p.member.account_id), ...summarize(rows, MIN_REQUEST, verified), taxCheck: rows.some(needsTax), cap: ACCRUE_MAX,
+      return res.json({ linked: true, ign: p.member.ign, key: keyOf(p.member.account_id), ...summarize(rows, MIN_REQUEST, verified), taxNote: rows.some(needsTax) ? TAX_NOTE : null, cap: ACCRUE_MAX,
         lines: rows.map((r) => lineView(r, names)).sort(byAtDesc) });
     } catch (e) { return failErr(res, e, "mine"); }
   }
@@ -170,7 +172,7 @@ function createPrize(deps) {
       const pending = rows.filter((r) => r.kind === "payout" && r.status === "requested").map((r) => {
         const p = people.get(`${r.platform}|${r.account_id}`);
         return { id: r.id, ign: r.ign, key: keyOf(r.account_id), amount: Number(r.amount), requestedAt: r.requested_at, notified: !!r.request_notified_at,
-          perEvent: perEventOf(p.rows, names), taxCheck: p.rows.some(needsTax) };
+          perEvent: perEventOf(p.rows, names), taxNote: p.rows.some(needsTax) ? TAX_NOTE : null };
       });
       const recent = rows.filter((r) => r.kind === "payout" && r.status === "paid").sort((a, b) => String(b.paid_at).localeCompare(String(a.paid_at))).slice(0, 20)
         .map((r) => ({ id: r.id, ign: r.ign, key: keyOf(r.account_id), amount: Number(r.amount), paidAt: r.paid_at, source: r.source, notified: !!r.paid_notified_at, memo: r.memo || null }));
@@ -178,14 +180,14 @@ function createPrize(deps) {
         const m = memberByAcc.get(`${p.rows[0].platform}|${p.account_id}`) || null, v = verifyOf(m);
         // member = 앱 회원 연결(디스코드 이름 · 연결 시각 — 오너가 본인인지 대조하는 재료) · 확인한 사람 · 시각
         return { ign: p.ign, key: keyOf(p.account_id), member: m ? { name: m.display_name || null, linkedAt: m.linked_at, verifiedBy: v ? v.verified_by : null, verifiedAt: v ? v.verified_at : null } : null,
-          ...summarize(p.rows, MIN_REQUEST, !!v), taxCheck: p.rows.some(needsTax) };
+          ...summarize(p.rows, MIN_REQUEST, !!v), taxNote: p.rows.some(needsTax) ? TAX_NOTE : null };
       })
         .map(({ open, ...x }) => ({ ...x, open: open ? { id: open.id, amount: open.amount } : null }))
         .sort((a, b) => b.balance - a.balance || String(a.ign).localeCompare(String(b.ign)));
       const sum = (f) => rows.filter(f).reduce((s, r) => s + (Number(r.amount) || 0), 0);
-      // 상한(5만 원) 넘는 적립 줄 — 「세금 처리 필요(오너 확인)」 목록(금액은 그대로)
-      const taxCheck = rows.filter(needsTax).map((r) => ({ id: r.id, ign: r.ign, key: keyOf(r.account_id), event: Number(r.event_id), eventName: names[Number(r.event_id)] || null, reason: r.reason || null, amount: Number(r.amount) }));
-      return res.json({ min: MIN_REQUEST, cap: ACCRUE_MAX, taxCheck, pending, recent, players,
+      // 상한(5만 원) 넘는 옛 적립 줄 — 「과세최저한 적용 · 전액 지급」 목록(금액은 그대로 · §1.37)
+      const taxNotes = rows.filter(needsTax).map((r) => ({ id: r.id, ign: r.ign, key: keyOf(r.account_id), event: Number(r.event_id), eventName: names[Number(r.event_id)] || null, reason: r.reason || null, amount: Number(r.amount), ...TAX_NOTE }));
+      return res.json({ min: MIN_REQUEST, cap: ACCRUE_MAX, taxNotes, pending, recent, players,
         totals: { accrued: sum((r) => r.kind === "accrue"), paid: sum((r) => r.kind === "payout" && r.status === "paid"), requested: sum((r) => r.kind === "payout" && r.status === "requested") } });
     } catch (e) { return failErr(res, e, "admin"); }
   }
@@ -261,4 +263,4 @@ function createPrize(deps) {
   return { mount, getMine, postRequest, getAdmin, postAdmin, postVerify };
 }
 
-module.exports = { createPrize, summarize, lineView, ownerRequestText, playerPaidText, perEventOf, accrueCheck, needsTax, MIN_REQUEST, ACCRUE_MAX, CAP_MESSAGE };
+module.exports = { createPrize, summarize, lineView, ownerRequestText, playerPaidText, perEventOf, accrueCheck, needsTax, TAX_NOTE, MIN_REQUEST, ACCRUE_MAX, CAP_MESSAGE };

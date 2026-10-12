@@ -88,3 +88,23 @@ test("오너 목록 — 회차별 스폰서 합 · 입금 확인 합 · 상금�
   assert.ok(!JSON.stringify(r.body).includes("token"), "목록에 토큰 · 해시 없음");
   assert.equal((await call(s.getAdmin, {})).code, 403);
 });
+
+test("§1.37 이월 · 1원 맞추기 — 남은 돈만큼만 넘김 · 다음 회차 들어온 돈에 더함 · 들어온 돈 = 적립 + 이월 이면 맞음", async () => {
+  const db = fake(); const s = make(db);
+  await call(s.postAdmin, { owner: true, body: { action: "create", eventId: 12, displayName: "a", amount: 100000 } });
+  await call(s.postAdmin, { owner: true, body: { action: "deposit", id: 1 } });
+  // 12회: 입금 100,000 · 스폰서 적립 85,000 → 남은 15,000
+  assert.equal((await call(s.postAdmin, { owner: true, body: { action: "carry", id: 1, toEventId: 11, amount: 15001 } })).body.error.code, "over_balance");
+  assert.equal((await call(s.postAdmin, { owner: true, body: { action: "carry", id: 1, toEventId: 12, amount: 1 } })).body.error.code, "bad_event", "같은 회차로는 못 넘김");
+  assert.equal((await call(s.postAdmin, { owner: true, body: { action: "carry", id: 1, toEventId: 99, amount: 1 } })).body.error.code, "no_event");
+  const c = await call(s.postAdmin, { owner: true, body: { action: "carry", id: 1, toEventId: 11, amount: 15000 } });
+  assert.equal(c.body.ok, true);
+  const carried = db.rows.find((r) => r.carry_from_event === 12);
+  assert.deepEqual([carried.event_id, carried.amount, !!carried.deposit_confirmed_at, carried.display_name], [11, 15000, true, "이월(12번 회차)"]);
+  const r = await call(s.getAdmin, { owner: true });
+  const e12 = r.body.events.find((e) => e.event === 12), e11 = r.body.events.find((e) => e.event === 11);
+  assert.deepEqual(e12.reconcile, { in: 100000, out: 100000, diff: 0, matched: true });
+  assert.deepEqual([e11.carryIn, e11.deposits, e11.reconcile.in], [15000, 0, 15000]);
+  assert.equal(e11.reconcile.matched, false, "11회는 아직 상금으로 안 나감");
+  assert.equal((await call(s.postAdmin, { owner: true, body: { action: "carry", id: 1, toEventId: 11, amount: 1 } })).body.error.code, "over_balance", "다 넘겼으면 더 못 넘김");
+});
