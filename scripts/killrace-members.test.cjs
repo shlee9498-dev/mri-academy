@@ -55,10 +55,10 @@ test("새 도메인 kill.mriacademy.gg — 돌아갈 주소는 그 앱 아래도
   ]) assert.equal(K.returnTo(bad), H, bad.slice(0, 80));
   const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "server.js"), "utf8");
   const m = /const ALLOWED = \[([^\]]*)\]/.exec(src);
-  const allowed = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
-  assert.ok(allowed.includes("https://kill.mriacademy.gg"));
-  assert.ok(allowed.includes("https://shlee9498-dev.github.io"));
-  for (const o of ["https://evil.example", "http://kill.mriacademy.gg", "https://kill.mriacademy.gg.evil.example", "https://mriacademy.gg.evil.example"]) assert.ok(!allowed.includes(o), o);
+  const allowed = new Set([...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]));   // Set — 문자열 부분 일치가 아니라 통째로 같은지만 본다
+  assert.ok(allowed.has("https://kill.mriacademy.gg"));
+  assert.ok(allowed.has("https://shlee9498-dev.github.io"));
+  for (const o of ["https://evil.example", "http://kill.mriacademy.gg", "https://kill.mriacademy.gg.evil.example", "https://mriacademy.gg.evil.example"]) assert.ok(!allowed.has(o), o);
   assert.match(src, /if \(ALLOWED\.includes\(o\)\) res\.setHeader\("Access-Control-Allow-Origin", o\)/);   // 목록과 똑같은 출처만 · 앞부분 일치로 넓히지 않는다
 });
 
