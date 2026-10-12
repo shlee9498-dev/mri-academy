@@ -286,3 +286,15 @@ test("재발송 「발송함」: 교환 sent + 배송 requested 도 통과 · �
   const early = shipWorld({ exchanges: [{ id: 9, platform: "steam", account_id: A, status: "requested" }], ships: [{ id: 3, exchange_id: 9, ship_state: "requested", tracking: [] }] });
   assert.equal((await early.api.shipAdmin(9, "shipped", { trackingNo: "123456" })).code, "bad_state");
 });
+
+test("§1.34.2 casino_link 켜기 막힘 — 앱 길 409 「카지노 연동은 쓰지 않아요」 · 봇 길(setSwitch)도 거절 · 끄기는 됨 · 값 그대로", async () => {
+  const o = world({ owner: true });
+  const before = o.writes.length;
+  const r = await o.call("POST /api/killrace/switches", { key: "casino_link", value: true });
+  assert.deepEqual([r.code, r.body.error.code, r.body.error.message], [409, "casino_link_disabled", "카지노 연동은 쓰지 않아요"]);
+  assert.equal(o.writes.length, before, "아무것도 쓰지 않는다");
+  await assert.rejects(() => o.coinApi.setSwitch("casino_link", true, "오너(봇)"), (e) => e.code === "casino_link_disabled");
+  const off = await o.call("POST /api/killrace/switches", { key: "casino_link", value: false });
+  assert.deepEqual([off.code, off.body.value], [200, false]);
+  assert.equal((await o.call("GET /api/killrace/switches")).body.casino_link, false);
+});

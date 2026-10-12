@@ -63,3 +63,14 @@ test("길 — 오너만 · 없는 회차 404 · JSON · CSV 내려받기 · 공�
   r = mk(); await e.get({ owner: true, params: { id: "6" }, query: { format: "csv" } }, r);
   assert.match(r.headers["Content-Type"], /text\/csv/); assert.match(r.headers["Content-Disposition"], /killrace-evidence-6\.csv/); assert.ok(r.text.includes("notice,"));
 });
+
+test("CSV 수식 막기 넓힘 — 글이 = + - @ 탭 · CR 로 시작하면 ' · 숫자(음수 포함)는 그대로", () => {
+  const b = { generatedAt: "t", event: { id: 6, name: "\t=cmd", start: null, end: null }, notice: { url: null, text: "\rboom", savedAt: null }, participants: [{ team: "-팀", slot: 1, ign: "@x" }],
+    scoreboard: [{ rank: 1, team: "+a", total: -3, games: 0, chickens: 0, kills: 0, damage: -12.5 }], prizes: [], payouts: [], sponsors: [], sponsorReconcile: { in: 0, out: 3, diff: -3, matched: false } };
+  const csv = toCsv(b);
+  assert.ok(csv.includes(",'\t=cmd,"), "탭 시작");
+  assert.ok(csv.includes("'\rboom"), "CR 시작");
+  assert.ok(csv.includes("participant,'-팀,1,'@x"));
+  assert.ok(csv.includes("score,1,'+a,-3,0,0,0,-12.5"), "숫자 음수는 글자로 안 바뀐다");
+  assert.ok(csv.includes("sponsor_reconcile,0,3,-3,안 맞음"));
+});

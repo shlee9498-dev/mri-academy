@@ -31,11 +31,13 @@ function buildBundle({ eventId, ev, board, notice, ledger, sponsors, names = {},
     sponsorReconcile: sp ? { ...sp.reconcile, deposits: sp.deposits, carryIn: sp.carryIn, paidOut: sp.paidOut, carryOut: sp.carryOut } : null,
   };
 }
-// CSV — section 칸으로 한 파일에. 따옴표 · 쉼표 · 줄바꿈은 따옴표로 감싼다. = + - @ 로 시작하는 글은 앞에 ' (스프레드시트 수식 막기)
+// CSV — section 칸으로 한 파일에. 따옴표 · 쉼표 · 줄바꿈은 따옴표로 감싼다.
+//   글(string)이 = + - @ 탭 · CR 로 시작하면 앞에 ' (스프레드시트 수식 막기 · OWASP CSV injection). 숫자(number)는 그대로 — -3 같은 음수가 글자로 바뀌지 않게
 const cell = (v) => {
   if (v == null) return "";
+  if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
   let s = String(v);
-  if (/^[=+\-@]/.test(s)) s = "'" + s;
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 function toCsv(b) {

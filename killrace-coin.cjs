@@ -35,7 +35,10 @@ function normSwitches(v) {
   return out;
 }
 // 스위치 하나 바꾸기 값 검사 — { key, value } → { ok, value } | { error }
+//   casino_link 는 켜지 않는다(docs/killrace-api.md §1.34.2 · 10/12 변호사 답 「카지노 칩 ↔ 코인 ↔ 경품 연결 금지」) — 켜기만 막고 끄기는 그대로
+const CASINO_LINK_MSG = "카지노 연동은 쓰지 않아요";
 function switchValue(key, value) {
+  if (key === "casino_link" && value === true) return { error: "casino_link_disabled" };
   if (SWITCH_BOOL.includes(key)) return typeof value === "boolean" ? { ok: true, value } : { error: "bad_value" };
   if (key === "monthly_budget_krw") { const n = int(value, 0, 10000000, null); return n == null ? { error: "bad_value" } : { ok: true, value: n }; }
   return { error: "bad_key" };
@@ -230,6 +233,7 @@ function createCoin(deps) {
       if (!isOwner(req)) return fail(res, 403, "owner_only");
       const b = req.body || {};
       const v = switchValue(b.key, b.value);
+      if (v.error === "casino_link_disabled") return res.status(409).json({ error: { code: v.error, message: CASINO_LINK_MSG } });
       if (v.error) return fail(res, 400, v.error);
       const r = await setSwitch(b.key, v.value, "오너(앱)");
       return res.json({ ok: true, key: b.key, value: v.value, before: r.before, switches: r.switches });
