@@ -72,6 +72,33 @@ function createTiers({ sbSelect, now = Date.now, log = console }) {
     return lookup({ ign: q, list: t.list, merge, accountsOfIgn, ignRows });
   }
 
+  // 계정 하나로 찾기 — 「내 티어」(앱 계약 §19). 앱 회원의 연결 계정 + 지금 스팀 닉.
+  //   ① 지금 닉이 표에 있으면 그 줄(self) ② 같은 사람 묶음(본계 우선 · tierRowsByMerge) ③ 그 계정이 판에서 쓴 가장 최근 닉의 줄 ④ 없음
+  async function lookupAccount(accountId, ign) {
+    const t = await readTable();
+    const q = String(ign || "").trim();
+    if (q && t.list[q.toLowerCase()]) return lookup({ ign: q, list: t.list });
+    if (!/^account\.[0-9a-f]{32}$/.test(String(accountId || ""))) return { ign: q || null, found: false };
+    const people = await sbSelect("ops_state", "select=value&key=eq.killrace%3Apeople&limit=1").catch(() => []);
+    const merge = (people[0] && people[0].value && people[0].value.merge) || {};
+    const group = new Set([accountId]);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const [a, b] of Object.entries(merge)) {
+        if (group.has(a) && !group.has(b)) { group.add(b); grew = true; }
+        if (group.has(b) && !group.has(a)) { group.add(a); grew = true; }
+      }
+    }
+    const accs = [...group].filter((a) => /^account\.[0-9a-f]{32}$/.test(a));
+    const ignRows = await sbSelect("event_match_players", `select=account_id,ign,started_at&account_id=in.(${accs.join(",")})&order=started_at.desc&limit=2000`);
+    const by = tierRowsByMerge(t.list, merge, ignRows);
+    const out = (r, via) => ({ ign: q || null, found: true, tier: Number(r.tier), rank: Number.isFinite(Number(r.rank)) ? Number(r.rank) : null, tierIgn: String(r.ign || ""), via });
+    if (by[accountId]) return out(by[accountId], "merge");
+    const own = ignRows.find((r) => r.account_id === accountId && r.ign && t.list[String(r.ign).toLowerCase()]);
+    if (own) return out(t.list[String(own.ign).toLowerCase()], "self");
+    return { ign: q || null, found: false };
+  }
+
   async function get(req, res) {
     try {
       const ign = req.query && req.query.ign != null ? String(req.query.ign).trim() : null;
@@ -94,7 +121,7 @@ function createTiers({ sbSelect, now = Date.now, log = console }) {
   }
 
   function mount(app) { app.get("/api/killrace/tiers", get); }
-  return { mount, get, lookupIgn };
+  return { mount, get, lookupIgn, lookupAccount };
 }
 
 module.exports = { createTiers, publicList, lookup, _test: { CACHE_MS, MAX_IGN } };

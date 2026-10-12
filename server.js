@@ -40,6 +40,8 @@ const killraceTiers = require("./killrace-tiers.cjs");       // 공개 티어 �
 const rankedLive = require("./ranked-live.cjs");
 // 킬내기 주간 개인 리더보드(§1.18) — 1 ~ 10위 · 역할 묶음(1 / 2-4 / 5-10) · 순위 계산은 이 모듈 한 곳. 시험 scripts/killrace-leaderboard.test.cjs
 const killraceLeaderboard = require("./killrace-leaderboard.cjs");
+// 킬내기 앱 「내 티어 · 내 리더보드 자리」(앱 계약 §19 · §1.33) — 읽기만. 시험 scripts/killrace-standing.test.cjs
+const killraceStanding = require("./killrace-standing.cjs");
 // 킬내기 판별 상세 기록 채우기(§1.12 · DDL §67) — 대회 시간 밖에 1분에 매치 하나. 시험 scripts/killrace-detail.test.cjs
 const killraceDetail = require("./killrace-detail.cjs");
 // 킬내기 앱 회원(앱 계약 docs/killrace-app-api.md §2 ~ §5) — 로그인 표지 · 내 계정 · 동의 · 스팀 연결 · 탈퇴 · 구분 판정. 시험 scripts/killrace-members.test.cjs
@@ -7106,7 +7108,8 @@ async function gmiGuildMember(discordId) {
   // 개인 누적 지표(§1.11) — GET /api/killrace/career?events=2,3,4 · 닉 · 숫자 · 불투명 키만(계정 번호는 밖으로 안 나간다)
   killraceCareer.createCareer({ sbSelect, secret: process.env.SESSION_SECRET }).mount(app);
   // 공개 티어 읽기(§1.29) — GET /api/killrace/tiers · ?ign= 은 부계 닉도 본계 줄로(§1.26 묶기) · 닉 · 티어 · 순위만
-  killraceTiers.createTiers({ sbSelect }).mount(app);
+  const killTiers = killraceTiers.createTiers({ sbSelect });
+  killTiers.mount(app);
   // 방송용 경쟁전 현황(docs/ranked-live-api.md §1) — GET /api/ranked/live?ign=&since= · 읽기만 · 허용 닉만(기본 GmI_mriacademy · ops_state 'ranked:live' { igns })
   //   배그 키는 기존 PUBG_API_KEY 그대로(새 env 없음) · 선수 · 점수 60초 캐시 · 매치 요약은 matchId 로 기억
   rankedLive.createRankedLive({
@@ -7147,6 +7150,17 @@ async function gmiGuildMember(discordId) {
   const killLeaderboard = killraceLeaderboard.createLeaderboard({ sbSelect, sbUpsert, isAdmin: gdcupAdmin, secret: process.env.SESSION_SECRET });
   killLeaderboard.mount(app);
   if (process.env.SUPABASE_URL) setInterval(() => { killLeaderboard.tick(); }, 60000).unref();
+  // 시즌 설정(§1.33) — 진행자 키 app/admin { action: "season", number, start, end, by } · { clear: true } 면 최근 30일로. 바로 다시 계산
+  killMembers.addAdminAction("season", async (req, res, b) => {
+    const r = await killLeaderboard.setSeason(b);
+    if (r.error) return res.status(400).json({ error: { code: r.error } });
+    return res.json(r);
+  });
+  // 내 티어 · 내 리더보드 자리(앱 계약 §19 · §1.33) — GET /api/killrace/me/standing · 킬내기 앱 토큰 · 읽기만
+  killraceStanding.createStanding({
+    userOf: killMembers.userOf, memberOf: killMembers.memberOf,
+    tierOf: killTiers.lookupAccount, standingOf: killLeaderboard.standingOf,
+  }).mount(app, { limiter: limit("krStanding", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
   // 코인 · 매점 · 배송 · 스위치(§1.28 · 앱 계약 §18) — 오너 = krOwner · 알림 = krDm(기존 봇 DM · 새 env 없음). 클랜 방 길은 수강생 앱 세션 + GmI 길드(클랜 역할)
   const krNotifyOwner = (text) => krDm(process.env.MRI_OWNER_ID, text);
   const krLimiter = limit("krCoin", 60, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } }));

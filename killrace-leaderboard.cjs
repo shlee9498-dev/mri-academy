@@ -2,7 +2,8 @@
 // 킬내기 주간 개인 리더보드(docs/killrace-api.md §1.18 · 소관 GmI · 카지노 트랙 휴면 중 MRIacademy 대행) — 순위 계산은 이 파일 한 곳에서만 한다.
 // 디스코드 역할 붙이기는 클랜CODE 봇이 GET 응답을 읽어서 한다(이 서버는 역할을 건드리지 않는다).
 // 재료 = §1.11 과 같은 인정 판(event_match_players + event_matches · seq 있음 · 이탈 아님 · 늦은 부활 −10 판 아님). 시간 밖 판은 seq 가 비어 저절로 빠진다.
-// 자격 = 20판 이상 + 기준 시각에서 30일 안에 1판 이상. 점수 = 자격자끼리 0.5 × z(판당 킬) + 0.5 × z(판당 딜)(모집단 표준편차).
+// 자격 = 20판 이상 + 기준 시각에서 30일 안에 1판 이상. 시즌 설정(ops_state 'killrace:season')이 있고 지금이 그 시즌이면
+//   그 시즌 시작일부터의 판만 세고 「30일 안」 조건은 뺀다(§1.33 · 배그 시즌마다 새로 시작). 이름표 = 1위 UNTOUCHABLE · 2 ~ 4위 CHALLENGER · 5 ~ 10위 MASTER(권위만 · 돈 없음). 점수 = 자격자끼리 0.5 × z(판당 킬) + 0.5 × z(판당 딜)(모집단 표준편차).
 // 같은 사람 합치기 = ops_state 'killrace:people' { merge: { 옛 계정: 기준 계정 } } — 계정 번호는 그 설정 줄(DB)에만 있다.
 // 갱신 = 수요일 09:00 KST · 회차 window_end + 45분 뒤 한 번. 결과는 ops_state 'killrace:leaderboard' 저장본으로 낸다.
 const { keyMaker, reviveOut, mergeRootOf } = require("./killrace-career.cjs");
@@ -16,11 +17,31 @@ const SETTLE_MS = 45 * 60e3;                    // 회차 끝 + 45분 — 마지
 const WEEK_MS = 7 * 86400e3;
 const STATE_KEY = "killrace:leaderboard";
 const PEOPLE_KEY = "killrace:people";
+const SEASON_KEY = "killrace:season";
+const LABELS = Object.freeze({ "1": "UNTOUCHABLE", "2-4": "CHALLENGER", "5-10": "MASTER" });   // §1.33 · 오너 10/12
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const PAGE = 1000;
 const MAX_PAGES = 50;
 
 const round = (n, d) => { const f = 10 ** d; return Math.round(n * f) / f; };
 const groupOf = (rank) => (rank === 1 ? "1" : rank <= 4 ? "2-4" : "5-10");
+const labelOf = (rank) => (rank >= 1 && rank <= TOP ? LABELS[groupOf(rank)] : null);
+
+// 시즌 설정 줄 → { number, start, end, startMs, endMs } · 틀리면 null. 날짜는 KST 날짜 · 끝날은 그날 하루를 다 넣는다(다음 날 00:00 KST 전까지)
+function parseSeason(v) {
+  if (!v || typeof v !== "object") return null;
+  const number = Number(v.number);
+  if (!Number.isInteger(number) || number < 1 || number > 999) return null;
+  if (!DAY_RE.test(String(v.start || "")) || !DAY_RE.test(String(v.end || ""))) return null;
+  const startMs = Date.parse(`${v.start}T00:00:00+09:00`);
+  const endMs = Date.parse(`${v.end}T00:00:00+09:00`) + 86400e3;
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  return { number, start: v.start, end: v.end, startMs, endMs };
+}
+// 지금 쓰는 시즌 — 설정이 맞고 지금이 그 안이면 그 시즌, 아니면 null(= 최근 30일 기준)
+const activeSeason = (v, now) => { const s = parseSeason(v); return s && s.startMs <= now && now < s.endMs ? s : null; };
+const seasonTag = (s) => (s ? `${s.number}|${s.start}|${s.end}` : null);
+const seasonPublic = (s) => (s ? { number: s.number, start: s.start, end: s.end } : null);
 
 // 기준 시각 이하에서 가장 최근의 수요일 09:00 KST(= 수요일 00:00 UTC)
 function lastWeekly(now) {
@@ -41,10 +62,12 @@ function lastEventClose(events, now) {
   return best;
 }
 
-// 다시 계산할 때인가 — 저장본이 없으면 "first", 저장본 뒤에 수요일 09:00 이나 회차 마감이 지났으면 그 이유. 둘 다면 늦은 쪽
-function dueReason(state, events, now) {
+// 다시 계산할 때인가 — 저장본이 없으면 "first", 쓰는 시즌이 저장본과 다르면 "season", 저장본 뒤에 수요일 09:00 이나 회차 마감이 지났으면 그 이유. 둘 다면 늦은 쪽
+function dueReason(state, events, now, season = null) {
   const at = state && Date.parse(state.at);
   if (!Number.isFinite(at)) return { reason: "first" };
+  if (!state.standing) return { reason: "first" };          // 사람별 칸(§1.33)이 생기기 전 저장본 — 배포 뒤 첫 tick 에 한 번 다시 만든다
+  if (((state.rules && state.rules.seasonTag) || null) !== seasonTag(season)) return { reason: "season" };
   const w = lastWeekly(now);
   const ev = lastEventClose(events, now);
   const cands = [];
@@ -57,12 +80,14 @@ function dueReason(state, events, now) {
 }
 
 // rows = event_match_players 줄 · matches = event_matches 줄 · merge = { 옛 계정: 기준 계정 }
-function buildLeaderboard({ rows, matches, merge = {}, now, minGames = MIN_GAMES, recentDays = RECENT_DAYS, top = TOP }) {
+// season = activeSeason(…) 결과 — 있으면 그 시즌 안 판만 · 「30일 안」 조건 없음
+function buildLeaderboard({ rows, matches, merge = {}, now, minGames = MIN_GAMES, recentDays = RECENT_DAYS, top = TOP, season = null }) {
   const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const people = new Map();
   const rootOf = mergeRootOf(merge);           // 개인 누적(career)과 같은 묶기 — 사슬 끝(본계)까지(§1.29)
   for (const r of rows || []) {
     if (!r.account_id || !counted.has(`${r.event_id}|${r.team_name}|${r.match_id}`)) continue;   // 봇 몫이 아직이면 공식 값이 잠정으로 들어간다(§1.24)
+    if (season) { const t = Date.parse(r.started_at); if (!(t >= season.startMs && t < season.endMs)) continue; }
     const acc = rootOf(r.account_id);
     if (!people.has(acc)) people.set(acc, { games: 0, kills: 0, damage: 0, last: -Infinity, ign: "", ignAt: -Infinity });
     const p = people.get(acc);
@@ -74,7 +99,7 @@ function buildLeaderboard({ rows, matches, merge = {}, now, minGames = MIN_GAMES
     if (r.ign && ((own && Number.isFinite(at) && at >= p.ignAt) || !p.ign)) { p.ign = r.ign; if (own && Number.isFinite(at)) p.ignAt = at; }
   }
   const since = now - recentDays * 86400e3;
-  const elig = [...people.entries()].filter(([, p]) => p.games >= minGames && p.last >= since)
+  const elig = [...people.entries()].filter(([, p]) => p.games >= minGames && (season || p.last >= since))
     .map(([acc, p]) => ({ account_id: acc, ign: p.ign, games: p.games, kpgRaw: p.kills / p.games, dpgRaw: p.damage / p.games }));
   const stat = (key) => {
     const n = elig.length || 1;
@@ -87,10 +112,14 @@ function buildLeaderboard({ rows, matches, merge = {}, now, minGames = MIN_GAMES
   elig.sort((a, b) => b.raw - a.raw || b.games - a.games || b.kpgRaw - a.kpgRaw
     || String(a.ign).localeCompare(String(b.ign)) || (a.account_id < b.account_id ? -1 : 1));
   const list = elig.slice(0, top).map((x, i) => ({
-    rank: i + 1, group: groupOf(i + 1), account_id: x.account_id, ign: x.ign, games: x.games,
+    rank: i + 1, group: groupOf(i + 1), label: labelOf(i + 1), account_id: x.account_id, ign: x.ign, games: x.games,
     kpg: round(x.kpgRaw, 2), dpg: Math.round(x.dpgRaw), score: round(x.raw, 3),
   }));
-  return { eligible: elig.length, list };
+  // 사람마다 판 수 · 마지막 판 · 순위(자격자만) — 「내 순위」(§1.33 · 앱 계약 §19) 가 읽는다. 저장본에만 두고 공개 응답에는 싣지 않는다
+  const rankOf = new Map(elig.map((x, i) => [x.account_id, i + 1]));
+  const standing = {};
+  for (const [acc, p] of people) standing[acc] = { games: p.games, last: Number.isFinite(p.last) ? new Date(p.last).toISOString() : null, rank: rankOf.get(acc) || null };
+  return { eligible: elig.length, list, standing };
 }
 
 // deps: sbSelect · sbUpsert · isAdmin(req) · secret(SESSION_SECRET) · now · log
@@ -121,15 +150,18 @@ function createLeaderboard(deps) {
 
   async function compute(basis) {
     const t = now();
-    const [raw, matches, people] = await Promise.all([
+    const [raw, matches, people, seasonRow] = await Promise.all([
       readAll("event_match_players", "select=event_id,team_name,match_id,account_id,ign,kills,damage,bot_kills,bot_dmg,started_at&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc"),
       readAll("event_matches", "select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive&order=event_id.asc,team_name.asc,match_id.asc"),
-      readState(PEOPLE_KEY)
+      readState(PEOPLE_KEY),
+      readState(SEASON_KEY)
     ]);
+    const season = activeSeason(seasonRow, t);
     const rows = humanRows(raw);
     const merge = people && people.merge && typeof people.merge === "object" ? people.merge : {};
-    const built = buildLeaderboard({ rows, matches, merge, now: t });
-    const state = { at: new Date(t).toISOString(), basis, rules: { minGames: MIN_GAMES, recentDays: RECENT_DAYS }, eligible: built.eligible, list: built.list };
+    const built = buildLeaderboard({ rows, matches, merge, now: t, season });
+    const rules = { minGames: MIN_GAMES, recentDays: season ? null : RECENT_DAYS, season: seasonPublic(season), seasonTag: seasonTag(season) };
+    const state = { at: new Date(t).toISOString(), basis, rules, eligible: built.eligible, list: built.list, standing: built.standing };
     await sbUpsert("ops_state", { key: STATE_KEY, value: state, updated_at: state.at }, "key");
     log.log(`[killrace-leaderboard] refreshed reason=${basis.reason}${basis.eventId ? ` event=${basis.eventId}` : ""} eligible=${built.eligible} top=${built.list.length}`);
     return state;
@@ -142,17 +174,18 @@ function createLeaderboard(deps) {
 
   async function tick() {
     try {
-      const [state, events] = await Promise.all([readState(STATE_KEY), sbSelect("event_defs", "select=id,window_end&order=id.asc&limit=500")]);
-      const due = dueReason(state, events, now());
+      const [state, events, seasonRow] = await Promise.all([readState(STATE_KEY), sbSelect("event_defs", "select=id,window_end&order=id.asc&limit=500"), readState(SEASON_KEY)]);
+      const due = dueReason(state, events, now(), activeSeason(seasonRow, now()));
       if (due) await refresh(due);
     } catch (e) { log.warn("[killrace-leaderboard] tick failed", String((e && e.message) || e).slice(0, 80)); }
   }
 
+  const publicRules = (r) => ({ minGames: (r && r.minGames) || MIN_GAMES, recentDays: r && "recentDays" in r ? r.recentDays : RECENT_DAYS, season: (r && r.season) || null });
   function view(state, admin) {
     return {
-      at: state.at, basis: state.basis, rules: state.rules, eligible: state.eligible,
+      at: state.at, basis: state.basis, rules: publicRules(state.rules), eligible: state.eligible,
       list: (state.list || []).map((x) => {
-        const o = { rank: x.rank, group: x.group, key: keyOf(x.account_id), ign: x.ign, games: x.games, kpg: x.kpg, dpg: x.dpg, score: x.score };
+        const o = { rank: x.rank, group: x.group, label: x.label || labelOf(x.rank), key: keyOf(x.account_id), ign: x.ign, games: x.games, kpg: x.kpg, dpg: x.dpg, score: x.score };
         if (admin) o.account_id = x.account_id;   // 계정 번호는 진행자 키로 부를 때만(공개 응답에 싣지 않는다 · §1.11 과 같은 경계)
         return o;
       }),
@@ -171,8 +204,40 @@ function createLeaderboard(deps) {
     }
   }
 
+  // 한 사람의 리더보드 자리 — 「내 순위」(앱 계약 §19). 부계 계정이 와도 본계(합치기 사슬 끝)로 읽는다. 저장본에서만 읽는다(다시 계산하지 않는다)
+  async function standingOf(account) {
+    const people = await readState(PEOPLE_KEY);
+    const rootAccount = account ? mergeRootOf((people && people.merge) || {})(account) : null;
+    let state = await readState(STATE_KEY);
+    if (!state || !Array.isArray(state.list)) state = await refresh({ reason: "first" });
+    const rules = publicRules(state.rules);
+    const me = (rootAccount && state.standing && state.standing[rootAccount]) || null;
+    const games = me ? Number(me.games) || 0 : 0;
+    const rank = me && me.rank ? Number(me.rank) : null;
+    const recentOk = rules.season ? true : !!(me && me.last && Date.parse(me.last) >= Date.parse(state.at) - (rules.recentDays || RECENT_DAYS) * 86400e3);
+    return {
+      at: state.at, season: rules.season, basis: rules.season ? "season" : "recent",
+      rank, label: rank ? labelOf(rank) : null, eligible: state.eligible,
+      games, minGames: rules.minGames, needGames: Math.max(0, rules.minGames - games), recentOk,
+      standingKnown: !!state.standing,      // 이 칸이 생기기 전 저장본이면 false — 다음 갱신(수요일 · 회차 끝 · 시즌 설정)부터 채워진다
+    };
+  }
+  // 시즌 설정(진행자 키 · app/admin action "season") — { number, start, end } 또는 { clear: true }. 저장 뒤 바로 다시 계산
+  async function setSeason(b) {
+    let value;
+    if (b && b.clear === true) value = {};
+    else {
+      const s = parseSeason(b);
+      if (!s) return { error: "bad_season" };
+      value = { number: s.number, start: s.start, end: s.end };
+    }
+    await sbUpsert("ops_state", { key: SEASON_KEY, value, updated_at: new Date(now()).toISOString() }, "key");
+    const state = await refresh({ reason: "season" });
+    return { ok: true, season: publicRules(state.rules).season };
+  }
+
   function mount(app) { app.get("/api/killrace/leaderboard", get); }
-  return { mount, get, tick, refresh };
+  return { mount, get, tick, refresh, standingOf, setSeason };
 }
 
-module.exports = { createLeaderboard, buildLeaderboard, _test: { lastWeekly, lastEventClose, dueReason, groupOf, MIN_GAMES, RECENT_DAYS, SETTLE_MS, STATE_KEY, PEOPLE_KEY } };
+module.exports = { createLeaderboard, buildLeaderboard, LABELS, parseSeason, activeSeason, labelOf, _test: { lastWeekly, lastEventClose, dueReason, groupOf, seasonTag, SEASON_KEY, MIN_GAMES, RECENT_DAYS, SETTLE_MS, STATE_KEY, PEOPLE_KEY } };
