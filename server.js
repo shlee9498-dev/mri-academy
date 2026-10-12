@@ -42,6 +42,8 @@ const rankedLive = require("./ranked-live.cjs");
 const killraceLeaderboard = require("./killrace-leaderboard.cjs");
 // 킬내기 앱 「내 티어 · 내 리더보드 자리」(앱 계약 §19 · §1.33) — 읽기만. 시험 scripts/killrace-standing.test.cjs
 const killraceStanding = require("./killrace-standing.cjs");
+// 킬내기 자율 판 열기 · 목록 · 취소(앱 계약 §12 · §1.33.4 · DDL §79) — 여는 사람 = 오너 · 진행가능자 역할 · 티어 2 이하. 시험 scripts/killrace-casual.test.cjs
+const killraceCasual = require("./killrace-casual.cjs");
 // 킬내기 판별 상세 기록 채우기(§1.12 · DDL §67) — 대회 시간 밖에 1분에 매치 하나. 시험 scripts/killrace-detail.test.cjs
 const killraceDetail = require("./killrace-detail.cjs");
 // 킬내기 앱 회원(앱 계약 docs/killrace-app-api.md §2 ~ §5) — 로그인 표지 · 내 계정 · 동의 · 스팀 연결 · 탈퇴 · 구분 판정. 시험 scripts/killrace-members.test.cjs
@@ -7025,9 +7027,9 @@ async function gmiGuildMember(discordId) {
   if (!guild) return null;
   try {
     const m = await guild.members.fetch(String(discordId));
-    return { member: true, roleNames: m.roles.cache.map((r) => r.name) };
+    return { member: true, roleNames: m.roles.cache.map((r) => r.name), roleIds: m.roles.cache.map((r) => r.id) };   // roleIds = 자율 판 여는 역할(앱 계약 §12.1 · 이름은 바뀔 수 있어 id 로)
   } catch (e) {
-    if (e && (e.code === 10007 || e.code === 10013)) return { member: false, roleNames: [] };   // Unknown Member · Unknown User
+    if (e && (e.code === 10007 || e.code === 10013)) return { member: false, roleNames: [], roleIds: [] };   // Unknown Member · Unknown User
     return null;
   }
 }
@@ -7171,6 +7173,12 @@ async function gmiGuildMember(discordId) {
     userOf: killMembers.userOf, memberOf: killMembers.memberOf,
     tierOf: killTiers.lookupAccount, standingOf: killLeaderboard.standingOf,
   }).mount(app, { limiter: limit("krStanding", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
+  // 자율 판 열기(앱 계약 §12.6 · §1.33.4) — 열기는 killrace_casual 한 줄만(event_defs 는 팀 확정 때 · 「지금 대회」 · 집계 그대로). 상금 · 코인 · 보증금 줄 없음
+  killraceCasual.createCasual({
+    sbSelect, sbInsert, sbPatch, userOf: killMembers.userOf, memberOf: killMembers.memberOf, tierOf: killTiers.lookupAccount,
+    roleIdsOf: async (discordId) => { const g = await gmiGuildMember(discordId); return g == null ? null : g.roleIds || []; },
+    ownerId: () => process.env.MRI_OWNER_ID || null, isAdmin: gdcupAdmin,
+  }).mount(app, { limiter: limit("krCasual", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
   // 코인 · 매점 · 배송 · 스위치(§1.28 · 앱 계약 §18) — 오너 = krOwner · 알림 = krDm(기존 봇 DM · 새 env 없음). 클랜 방 길은 수강생 앱 세션 + GmI 길드(클랜 역할)
   const krNotifyOwner = (text) => krDm(process.env.MRI_OWNER_ID, text);
   const krLimiter = limit("krCoin", 60, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } }));
@@ -8990,6 +8998,8 @@ const SCHEMA_OPTIONAL = {
   killrace_feedback: ["id", "author_fp", "account_fp", "category", "event_id", "body", "status", "status_at", "created_at"],
   // §81 상금 스폰서(docs/killrace-api.md §1.36) — 미실행이면 스폰서 길만 503 table_missing
   killrace_sponsors: ["id", "event_id", "display_name", "amount", "token_hash", "show_name", "agreed_at", "agree_terms_version", "agree_pure", "agree_carry", "agree_not_player", "deposit_confirmed_at", "deposit_confirmed_by", "memo", "created_at", "created_by", "carry_from_event"],   // carry_from_event = §82
+  // §79 자율 판(앱 계약 §12 · killrace-api §1.33.4) — 미실행이면 자율 판 길만 503 table_missing
+  killrace_casual: ["id", "play_date", "mode", "state", "opened_by", "opened_name", "opened_via", "opened_tier", "event_id", "detail", "log", "created_at", "updated_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
