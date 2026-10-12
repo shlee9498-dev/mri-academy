@@ -34,6 +34,9 @@ test("입력 검사 — 회차 · 표시 이름(40자 · 제어 문자) · 금�
   assert.equal(S.createCheck({ eventId: 12, displayName: "", amount: 1 }).code, "bad_name");
   assert.equal(S.createCheck({ eventId: 12, displayName: "x".repeat(41), amount: 1 }).code, "bad_name");
   assert.equal(S.createCheck({ eventId: 12, displayName: "a\u0000", amount: 1 }).code, "bad_name");
+  // 표시 이름 허용 목록(10/12 지휘 검수) — 한글 · 영문 · 숫자 · 공백만. 링크 · 계정처럼 보이는 글자는 거절
+  for (const n of ["bit.ly/x", "t.me/abc", "abc.shop", "@gmi", "hxxp://a", "a_b", "a-b", "이름!", "a\tb"]) assert.equal(S.createCheck({ eventId: 12, displayName: n, amount: 1 }).code, "bad_name", n);
+  for (const n of ["예시스폰서", "GmI 홍길동", "응원단 2", "ㅋㅋ팀"]) assert.equal(S.createCheck({ eventId: 12, displayName: n, amount: 1 }), null, n);
   for (const a of [0, -1, 1.5, 10000001, "x"]) assert.equal(S.createCheck({ eventId: 12, displayName: "a", amount: a }).code, "bad_amount", String(a));
   const ok = { pure: true, carry: true, notPlayer: true, showName: false, version: S.TERMS_VERSION };
   assert.equal(S.agreeCheck(ok), null);
