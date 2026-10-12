@@ -7428,3 +7428,21 @@ notify pgrst, 'reload schema';
 
 -- 78 검증(읽기만): 칸 9 · 색인 5(pkey · recent · status · author · account) · RLS true · 줄 0
 -- 되돌림(줄이 있으면 지휘 · 오너 확인 먼저): drop table killrace_feedback · notify pgrst
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- §80  킬내기 상금 1건 5만 원 상한 (2026-10-12 · 변호사 검토 · 오너 「상금들은 다 5만원 이하로」 · 지휘 주문 · 제약 더하기만)
+--   계약 docs/killrace-api.md §1.34 · 서버 killrace-prize.cjs accrueCheck(같은 선 · 400 prize_cap)
+--   적립 줄(kind = 'accrue' · 1인 · 1회차 · 1사유 = 한 줄)은 50,000원 이하. NOT VALID — 이미 있는 줄(5회 대승배 2줄 · 100,000 · 70,000)은 검사하지 않고
+--   그대로 둔다(금액 수정은 오너 결정 대기). 새 줄부터 막는다. ⚠️ 옛 2줄을 UPDATE 하면(메모 고치기 포함) 새 줄 버전이 검사돼 거절된다 —
+--   그 2줄은 오너 결정(금액 · 처리 방법) 때 함께 손본다(§1.34).
+-- 80-0) 스냅샷: select conname from pg_constraint where conname = 'killrace_prize_ledger_accrue_cap';   -- 0줄
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'killrace_prize_ledger_accrue_cap') then
+    alter table public.killrace_prize_ledger add constraint killrace_prize_ledger_accrue_cap check (kind <> 'accrue' or amount <= 50000) not valid;
+  end if;
+end $$;
+notify pgrst, 'reload schema';
+
+-- 80 검증(읽기만): 제약 1(convalidated = false) · 원장 줄 수 · 적립 합계 실행 전과 같음 · 5만 원 넘는 적립 줄 2(id 32 · 33) 그대로
+-- 되돌림: alter table killrace_prize_ledger drop constraint killrace_prize_ledger_accrue_cap
