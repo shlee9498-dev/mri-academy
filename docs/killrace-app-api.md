@@ -525,7 +525,7 @@
   ign: "<스팀 닉>",
   tier: null | { tier: 1.5, rank: 4, tierIgn: "<티어표의 닉>", via: "self" | "merge" },   // 티어표(§1.29) 값 그대로 · 작을수록 높다
   leaderboard: {
-    at, basis: "season" | "recent", season: null | { number, start, end },
+    at, basis: "season" | "recent", season: null | { no, number, start, end, daysLeft },
     rank: null | 3, label: null | "UNTOUCHABLE" | "CHALLENGER" | "MASTER",    // 10위 밖 자격자는 rank 11 ~ · label null
     eligible: 16, games: 31, minGames: 20, needGames: 0, recentOk: true, standingKnown: true },
   casualByTier: true }                                                          // 티어 2 이하 = 자율 판을 티어로 열 수 있다(§12.1)
