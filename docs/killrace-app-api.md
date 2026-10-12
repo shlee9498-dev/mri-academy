@@ -21,7 +21,9 @@
 ## §1 공통
 
 - **주소 바탕** — 화면 상수 `API = "https://mri-academy-production.up.railway.app"`(기존 킬내기 화면과 같다).
-- **출처(CORS)** — `https://shlee9498-dev.github.io` 는 이미 허용돼 있다. 새 출처 · 새 env 가 없다.
+- **출처(CORS)** — 앱 주소는 **`https://kill.mriacademy.gg/killrace/`**(gmi-clancup Pages 사용자 도메인 · 10/12)다.
+  출처 `https://kill.mriacademy.gg` 와 옛 `https://shlee9498-dev.github.io` 를 둘 다 허용한다(목록과 똑같은 출처만 · 코드 `server.js` `ALLOWED` · env 아님).
+  옛 주소는 도메인을 옮긴 뒤에도 지우지 않는다 — Pages 가 옛 주소를 새 주소로 넘기는 동안 옛 화면이 열려 있을 수 있다.
 - **로그인 토큰** — `Authorization: Bearer <킬내기 토큰>`(§2). 토큰이 없거나 틀리면 401 `login_required`.
 - **오류 모양** — `{ error: { code } }`. 화면은 `code` 로 문구를 고른다(서버 문구를 그대로 띄우지 않는다).
 - **사람을 가리키는 값** — 응답에는 `key`(계약 killrace-api §1.11 불투명 키) · 스팀 닉 · 소개 4칸만 나간다.
@@ -36,7 +38,10 @@
 - **시작** — `GET /api/auth/login?intent=killrace&nonce=<16~64자 · 영숫자 _ ->&return=<돌아갈 주소>`
   → 디스코드 동의(`identify` · 이메일 없음 · 동의 화면 이름은 사이트 로그인 앱 그대로 · 10/7 확정)
   → `<return>#token=<킬내기 토큰>&nonce=<같은 값>`.
-  - `return` 은 **앱 주소 `https://shlee9498-dev.github.io/gmi-clancup/killrace/` 아래만** 받는다. 다른 출처 · 같은 출처의 다른 저장소 · `#` · 역슬래시 · 공백 · 위로 가는 길(`..`)이 섞이면 앱 첫 화면(그 주소)으로 간다. 300자까지.
+  - `return` 은 **앱 주소 두 곳 아래만** 받는다 — `https://kill.mriacademy.gg/killrace/`(새) · `https://shlee9498-dev.github.io/gmi-clancup/killrace/`(옛).
+    다른 출처 · 같은 출처의 다른 길(새 도메인의 `killrace/` 밖 포함) · `#` · 역슬래시 · 공백 · 위로 가는 길(`..`)이 섞이면 앱 첫 화면(옛 주소 · Pages 가 새 주소로 넘긴다)으로 간다. 300자까지.
+  - 디스코드 개발자 포털의 Redirect URI 는 앱이 아니라 서버 콜백(`/api/auth/callback`)이다 — 앱 도메인이 바뀌어도 고칠 것이 없다.
+  - 토큰은 출처별 `localStorage` 라서, 새 도메인에서는 한 번 다시 로그인한다.
   - `nonce` 는 화면이 만들어 `sessionStorage` 에 두고, 돌아와서 같은지 본다(로그인 CSRF 막기 · 신청 창구 `intent=apply` 와 같은 방식).
   - 화면은 받은 뒤 주소의 `#token=…` 을 지운다(`history.replaceState`).
 - **킬내기 토큰** — HS256 · 내용 `{ sub, name, aud: "killrace", exp }` · **7일**. 화면은 `localStorage` `kr_token` 에 둔다. 401 이면 지우고 다시 로그인.
