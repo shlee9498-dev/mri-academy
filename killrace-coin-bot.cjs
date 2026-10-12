@@ -26,8 +26,8 @@
 //   exchanges.approve({ id, by }) · reject({ id, reason, by }) · ship({ id, trackingNo, by }) → { id, ign, item, status, notified }
 // 오류는 { userMsg } 또는 { code }(계약 코드)로 던진다 — 코드는 아래 ERR 로 반말 문구를 고른다.
 
-const SWITCH_KEYS = ["coin_shop", "shop_vote", "clan_room", "casino_link", "deposit", "monthly_budget_krw"];   // 앱 계약 §18.1 · shop_vote(§1.31) · clan_room(#564)
-const SWITCH_KO = { coin_shop: "매점 교환", shop_vote: "매점 투표", clan_room: "클랜 방", casino_link: "카지노 연동", deposit: "외부 보증금", monthly_budget_krw: "월 사비 예산" };
+const SWITCH_KEYS = ["coin_shop", "shop_vote", "feedback", "clan_room", "casino_link", "deposit", "monthly_budget_krw"];   // 앱 계약 §18.1 · shop_vote(§1.31) · feedback(§1.32) · clan_room(#564)
+const SWITCH_KO = { coin_shop: "매점 교환", shop_vote: "매점 투표", feedback: "건의함", clan_room: "클랜 방", casino_link: "카지노 연동", deposit: "외부 보증금", monthly_budget_krw: "월 사비 예산" };
 const BUDGET_MAX = 10000000;                     // 예산 한 칸 상한(1천만 원) — 손가락 실수로 0 하나 더 붙는 것 막기
 const FUNDING_CHOICES = [{ name: "오너 사비", value: "owner" }, { name: "후원", value: "sponsor" }];
 const APP_GIFTS_URL = "https://shlee9498-dev.github.io/gmi-clancup/killrace/gifts.html";

@@ -7401,3 +7401,30 @@ notify pgrst, 'reload schema';
 
 -- 77 검증(읽기만): 칸 9 · 색인 3(pkey · person · discord) · RLS true · 줄 0
 -- 되돌림(줄이 있으면 지휘 · 오너 확인 먼저): drop table killrace_vote_ballots · notify pgrst
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- §78  킬내기 앱 익명 건의함 (2026-10-12 · 지휘 주문 · 오너 「익명으로 좀 건의할수있도록」 · 더하기만)
+--   계약 docs/killrace-api.md §1.32 · 스위치 feedback(앱 계약 §18.1 · 기본 꺼짐)
+--   글쓴이는 키 건 지문(HMAC)만 — 디스코드 번호 · 계정 번호 · 닉 칸이 없다. 지우기 없음(숨김만). 코인 · 기프티콘 · 투표 표와 잇지 않는다.
+-- 78-0) 스냅샷: select to_regclass('public.killrace_feedback');   -- null
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+create table if not exists public.killrace_feedback (
+  id          bigint      generated always as identity primary key,
+  author_fp   text        not null check (author_fp ~ '^[0-9a-f]{64}$'),           -- HMAC(키, 디스코드 번호)
+  account_fp  text        check (account_fp is null or account_fp ~ '^[0-9a-f]{64}$'),  -- HMAC(키, 본계 계정) · 스팀 연결 없으면 null
+  category    text        not null check (category in ('rule', 'balance', 'match', 'app', 'etc')),
+  event_id    bigint      references public.event_defs (id),
+  body        text        not null check (char_length(body) between 10 and 500),
+  status      text        not null default 'new' check (status in ('new', 'read', 'applied', 'held', 'hidden')),
+  status_at   timestamptz,
+  created_at  timestamptz not null default now()
+);
+create index if not exists killrace_feedback_recent  on public.killrace_feedback (created_at desc, id desc);
+create index if not exists killrace_feedback_status  on public.killrace_feedback (status, created_at desc);
+create index if not exists killrace_feedback_author  on public.killrace_feedback (author_fp, created_at);
+create index if not exists killrace_feedback_account on public.killrace_feedback (account_fp, created_at) where account_fp is not null;
+alter table public.killrace_feedback enable row level security;   -- service_role 만
+notify pgrst, 'reload schema';
+
+-- 78 검증(읽기만): 칸 9 · 색인 5(pkey · recent · status · author · account) · RLS true · 줄 0
+-- 되돌림(줄이 있으면 지휘 · 오너 확인 먼저): drop table killrace_feedback · notify pgrst
