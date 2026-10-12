@@ -2,7 +2,7 @@
 // 킬내기 상금(§1.20) — 가짜 저장소로 확인한다(운영 DB 에 시험 줄을 넣지 않는다).
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createPrize, summarize, ownerRequestText, playerPaidText, MIN_REQUEST } = require("../killrace-prize.cjs");
+const { createPrize, summarize, ownerRequestText, playerPaidText, accrueCheck, needsTax, lineView, MIN_REQUEST, ACCRUE_MAX, CAP_MESSAGE } = require("../killrace-prize.cjs");
 
 const A = "account." + "a".repeat(32), B = "account." + "b".repeat(32), C = "account." + "c".repeat(32);
 const acc = (account_id, ign, event_id, amount, reason) => ({ kind: "accrue", platform: "steam", account_id, ign, event_id, reason, amount, status: null, created_at: `2026-10-0${event_id}T00:00:00Z` });
@@ -171,4 +171,38 @@ test("본인 확인 — 확인 전엔 잠김 · 오너 · 진행자(이름 필�
   const locked = res(); await p.getMine({ uid: "222" }, locked); assert.equal(locked.body.reason, "not_verified");
   const unknown = res(); await p.postAdmin({ owner: true, body: { action: "verify", key: "zz".repeat(8) } }, unknown); assert.deepEqual([unknown.code, unknown.body.error.code], [409, "not_linked"]);
   const bad = res(); await p.postAdmin({ owner: true, body: { action: "verify", key: "x" } }, bad); assert.equal(bad.code, 400);
+});
+
+// ── §1.34 상금 1건 5만 원 상한 · 넘는 옛 줄은 표시만 ──
+test("§1.34 상한 — 50,000 까지 통과 · 50,001 은 400 prize_cap 「상금은 1인 1건 5만 원까지예요」 · 0 · 소수 · 글자 400", () => {
+  assert.equal(ACCRUE_MAX, 50000);
+  assert.equal(accrueCheck(50000), null); assert.equal(accrueCheck(1), null);
+  assert.deepEqual(accrueCheck(50001), { status: 400, code: "prize_cap", message: "상금은 1인 1건 5만 원까지예요" });
+  assert.deepEqual(accrueCheck(100000), { status: 400, code: "prize_cap", message: CAP_MESSAGE });
+  for (const bad of [0, -1, 1.5, "x", null]) assert.equal(accrueCheck(bad).code, "bad_amount", String(bad));
+  assert.ok(!/[!！]/.test(CAP_MESSAGE), "돈 문구라 느낌표 없음");
+});
+
+test("§1.34 넘는 옛 적립 줄 — 금액 그대로 · 「세금 처리 필요」 표시만(내 상금 · 오너 화면) · 요청 흐름은 그대로", async () => {
+  assert.equal(needsTax({ kind: "accrue", amount: 100000 }), true);
+  assert.equal(needsTax({ kind: "accrue", amount: 50000 }), false);
+  assert.equal(needsTax({ kind: "payout", amount: 100000, status: "paid" }), false, "지급 줄은 표시 안 함");
+  assert.equal(lineView({ kind: "accrue", amount: 70000, event_id: 6, reason: "1등 팀 2번" }).taxCheck, true);
+  assert.equal("taxCheck" in lineView({ kind: "accrue", amount: 25000, event_id: 6, reason: "1등 팀 4번" }), false);
+  const db = fake();
+  db.ledger.push({ id: 90, ...acc(A, "PlayerA", 6, 100000, "1등 팀 1번") });
+  const p = make(db);
+  const r = res(); await p.getMine({ uid: "111" }, r);
+  assert.equal(r.body.taxCheck, true); assert.equal(r.body.cap, 50000);
+  assert.equal(r.body.balance, 180000, "금액은 그대로 더한다");
+  assert.equal(r.body.lines.find((x) => x.amount === 100000).taxCheck, true);
+  assert.equal(r.body.canRequest, true, "요청 흐름은 바꾸지 않는다(오너 결정 대기)");
+  const r2 = res(); await p.getMine({ uid: "222" }, r2); assert.equal(r2.body.taxCheck, false);
+  const a = res(); await p.getAdmin({ owner: true }, a);
+  assert.deepEqual(a.body.taxCheck, [{ id: 90, ign: "PlayerA", key: a.body.taxCheck[0].key, event: 6, eventName: "6회", reason: "1등 팀 1번", amount: 100000 }]);
+  assert.equal(a.body.cap, 50000);
+  assert.equal(a.body.players.find((x) => x.ign === "PlayerA").taxCheck, true);
+  assert.equal(a.body.players.find((x) => x.ign === "PlayerB").taxCheck, false);
+  assert.ok(!JSON.stringify(a.body.taxCheck).includes("account."));
+  assert.equal(db.ledger.find((x) => x.id === 90).amount, 100000, "줄을 고치지 않는다");
 });
