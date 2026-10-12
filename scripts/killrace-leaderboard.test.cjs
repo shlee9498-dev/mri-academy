@@ -2,8 +2,8 @@
 // 킬내기 주간 개인 리더보드(§1.18) — 운영 DB 없이 가짜 줄로 확인한다.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildLeaderboard, createLeaderboard, _test } = require("../killrace-leaderboard.cjs");
-const { lastWeekly, lastEventClose, dueReason, groupOf, STATE_KEY, PEOPLE_KEY } = _test;
+const { buildLeaderboard, createLeaderboard, parseSeason, activeSeason, labelOf, LABELS, _test } = require("../killrace-leaderboard.cjs");
+const { lastWeekly, lastEventClose, dueReason, groupOf, STATE_KEY, PEOPLE_KEY, SEASON_KEY } = _test;
 
 const NOW = Date.parse("2026-10-09T03:00:00Z");          // 10/9(목) 12:00 KST
 const acc = (c) => "account." + c.repeat(32);
@@ -83,9 +83,9 @@ test("갱신 때 — 수요일 09:00 KST · 회차 끝 + 45분 · 저장본 없�
   assert.deepEqual(lastEventClose(evs, Date.parse("2026-10-08T14:44:00Z")), { at: Date.parse("2026-10-07T16:45:00Z"), eventId: 5 });
   assert.deepEqual(lastEventClose(evs, Date.parse("2026-10-08T14:45:00Z")), { at: Date.parse("2026-10-08T14:45:00Z"), eventId: 6 });
   assert.deepEqual(dueReason(null, evs, NOW), { reason: "first" });
-  assert.equal(dueReason({ at: "2026-10-08T15:00:00Z" }, evs, NOW), null);                             // 회차 마감 뒤 이미 갱신
-  assert.deepEqual(dueReason({ at: "2026-10-08T14:00:00Z" }, evs, NOW), { reason: "event", eventId: 6 });
-  assert.deepEqual(dueReason({ at: "2026-10-08T15:00:00Z" }, evs, Date.parse("2026-10-14T00:00:30Z")), { reason: "weekly" });
+  assert.equal(dueReason({ standing: {}, at: "2026-10-08T15:00:00Z" }, evs, NOW), null);                             // 회차 마감 뒤 이미 갱신
+  assert.deepEqual(dueReason({ standing: {}, at: "2026-10-08T14:00:00Z" }, evs, NOW), { reason: "event", eventId: 6 });
+  assert.deepEqual(dueReason({ standing: {}, at: "2026-10-08T15:00:00Z" }, evs, Date.parse("2026-10-14T00:00:30Z")), { reason: "weekly" });
 });
 
 // 가짜 저장소 — ops_state · event_* 표
@@ -116,7 +116,9 @@ test("응답 — 공개는 계정 번호 없음 · 진행자 키면 줄마다 ac
   assert.equal(r1.code, 200);
   assert.equal(db.calls.upsert, 1);
   assert.equal(r1.body.basis.reason, "first");
-  assert.deepEqual(r1.body.rules, { minGames: 20, recentDays: 30 });
+  assert.deepEqual(r1.body.rules, { minGames: 20, recentDays: 30, season: null });
+  assert.equal(r1.body.list[0].label, "UNTOUCHABLE");
+  assert.ok(!("standing" in r1.body), "사람별 판 수 · 계정은 공개 응답에 없다");
   assert.equal(r1.body.list[0].ign, "C");
   assert.match(r1.body.list[0].key, /^[A-Za-z0-9_-]{16}$/);
   assert.ok(!JSON.stringify(r1.body).includes("account."), "공개 응답에 계정 번호가 없다");
@@ -151,4 +153,89 @@ test("§1.24 봇 몫이 아직인 판(pendingBot)은 공식 값을 잠정으로 
   p.matches.push({ ...p.matches[0], match_id: "m-e-x", seq: 99 });
   const got = buildLeaderboard({ ...join(p), now: NOW });
   assert.deepEqual(got.list.map((x) => [x.games, x.kpg]), base.list.map((x) => [x.games + 1, Math.round(((x.kpg * x.games) + 30) / (x.games + 1) * 100) / 100]));
+});
+
+// ── §1.33 이름표 · 시즌 기준 · 내 자리 ──
+test("§1.33 이름표 — 1위 UNTOUCHABLE · 2 ~ 4위 CHALLENGER · 5 ~ 10위 MASTER · 11위부터 없음", () => {
+  assert.deepEqual(LABELS, { "1": "UNTOUCHABLE", "2-4": "CHALLENGER", "5-10": "MASTER" });
+  assert.deepEqual([1, 2, 4, 5, 10, 11, 0].map(labelOf), ["UNTOUCHABLE", "CHALLENGER", "CHALLENGER", "MASTER", "MASTER", null, null]);
+  const ps = []; for (let i = 0; i < 12; i++) ps.push(person("0123456789abcdef"[i], `p${i}`, 20, i, 100 * i));
+  const { list, standing } = buildLeaderboard({ ...join(...ps), now: NOW });
+  assert.deepEqual(list.map((x) => x.label), ["UNTOUCHABLE", "CHALLENGER", "CHALLENGER", "CHALLENGER", "MASTER", "MASTER", "MASTER", "MASTER", "MASTER", "MASTER"]);
+  assert.equal(standing[acc("0")].rank, 12, "10위 밖 자격자도 순위가 있다");
+  assert.equal(standing[acc("0")].games, 20);
+});
+
+test("§1.33 시즌 설정 읽기 — 숫자 · KST 날짜 · 끝날 하루 포함 · 틀리면 null · 지금이 밖이면 쓰지 않는다", () => {
+  const s = parseSeason({ number: 43, start: "2026-10-01", end: "2026-11-29" });
+  assert.equal(s.startMs, Date.parse("2026-09-30T15:00:00Z"));
+  assert.equal(s.endMs, Date.parse("2026-11-29T15:00:00Z"));
+  for (const bad of [null, {}, { number: 0, start: "2026-10-01", end: "2026-11-29" }, { number: 43.5, start: "2026-10-01", end: "2026-11-29" },
+    { number: 43, start: "2026/10/01", end: "2026-11-29" }, { number: 43, start: "2026-10-01", end: "2026-09-01" }, { number: "x", start: "2026-10-01", end: "2026-11-29" }])
+    assert.equal(parseSeason(bad), null, JSON.stringify(bad));
+  assert.equal(activeSeason({ number: 43, start: "2026-10-01", end: "2026-11-29" }, NOW).number, 43);
+  assert.equal(activeSeason({ number: 44, start: "2026-11-30", end: "2027-01-28" }, NOW), null, "아직 안 시작");
+  assert.equal(activeSeason({ number: 42, start: "2026-08-01", end: "2026-09-30" }, NOW), null, "끝남");
+  assert.equal(activeSeason({}, NOW), null, "비어 있음 = 최근 30일");
+});
+
+test("§1.33 시즌 기준 — 시즌 시작 전 판은 안 세고 · 30일 조건 없음 · 20판 자격 그대로", () => {
+  const season = activeSeason({ number: 43, start: "2026-10-01", end: "2026-11-29" }, NOW);   // NOW = 10/9 · 시작 = 10/1 00:00 KST
+  const inSeason = person("a", "A", 20, 2, 200, 1);           // 10/8 쯤 20판
+  const split = person("b", "B", 25, 3, 300, 1);              // 25판 중 10판을 시즌 전으로 옮긴다
+  for (let i = 0; i < 10; i++) split.rows[i].started_at = "2026-09-20T12:00:00Z";
+  const before = person("c", "C", 30, 9, 900, 12);           // 9/27 쯤 — 시즌 전(30일 안이지만 시즌 기준이면 빠진다)
+  const d = join(inSeason, split, before);
+  const recent = buildLeaderboard({ ...d, now: NOW });
+  assert.equal(recent.eligible, 3, "최근 30일 기준이면 셋 다");
+  const s = buildLeaderboard({ ...d, now: NOW, season });
+  assert.equal(s.eligible, 1, "시즌 기준이면 A 만(B 는 시즌 안 15판 · C 는 0판)");
+  assert.equal(s.list[0].ign, "A");
+  assert.equal(s.standing[acc("b")].games, 15);
+  assert.equal(s.standing[acc("c")], undefined);
+  const old = person("d", "D", 20, 1, 100, 1); for (const r of old.rows) r.started_at = "2026-10-01T00:00:00Z";   // 시즌 안 · 30일 조건과 무관
+  assert.equal(buildLeaderboard({ ...join(old), now: Date.parse("2026-11-20T00:00:00Z"), season: activeSeason({ number: 43, start: "2026-10-01", end: "2026-11-29" }, Date.parse("2026-11-20T00:00:00Z")) }).eligible, 1, "시즌 안이면 50일 전 판도 자격");
+});
+
+test("§1.33 시즌 설정이 바뀌면 다시 계산 · standingOf 는 본계 자리 · 판 모자람 · 시즌 설정 길", async () => {
+  const d = join(person("a", "A", 20, 1, 100), person("b", "B", 12, 2, 200));
+  const db = fakeDb({ ...d, events: [] });
+  let t = NOW;
+  const lb = createLeaderboard({ ...db, secret: "s", now: () => t, log: silent });
+  await lb.tick(); assert.equal(db.calls.upsert, 1);
+  const a = await lb.standingOf(acc("a"));
+  assert.deepEqual({ rank: a.rank, label: a.label, games: a.games, needGames: a.needGames, basis: a.basis, season: a.season, recentOk: a.recentOk },
+    { rank: 1, label: "UNTOUCHABLE", games: 20, needGames: 0, basis: "recent", season: null, recentOk: true });
+  const b = await lb.standingOf(acc("b"));
+  assert.deepEqual({ rank: b.rank, label: b.label, games: b.games, needGames: b.needGames }, { rank: null, label: null, games: 12, needGames: 8 });
+  db.store.set(PEOPLE_KEY, { merge: { [acc("e")]: acc("a") } });
+  assert.equal((await lb.standingOf(acc("e"))).rank, 1, "부계 계정은 본계 자리로");
+  const nobody = await lb.standingOf(acc("f"));
+  assert.deepEqual({ rank: nobody.rank, games: nobody.games, needGames: nobody.needGames }, { rank: null, games: 0, needGames: 20 });
+  assert.deepEqual(await lb.setSeason({ number: 43, start: "2026/10/01", end: "x" }), { error: "bad_season" });
+  assert.equal(db.calls.upsert, 1, "틀린 값은 저장 안 함");
+  const ok = await lb.setSeason({ number: 43, start: "2026-10-01", end: "2026-11-29" });
+  assert.deepEqual(ok, { ok: true, season: { number: 43, start: "2026-10-01", end: "2026-11-29" } });
+  assert.deepEqual(db.store.get(SEASON_KEY), { number: 43, start: "2026-10-01", end: "2026-11-29" });
+  assert.equal(db.store.get(STATE_KEY).basis.reason, "season");
+  assert.equal(db.store.get(STATE_KEY).rules.recentDays, null);
+  const n = db.calls.upsert;
+  t += 60e3; await lb.tick(); assert.equal(db.calls.upsert, n, "같은 시즌이면 다시 계산 안 함");
+  db.store.set(SEASON_KEY, {});                     // 설정을 비우면(시즌 끝 · 오너가 지움) 다음 tick 에 최근 30일로 돌아간다
+  t += 60e3; await lb.tick(); assert.equal(db.calls.upsert, n + 1);
+  assert.equal(db.store.get(STATE_KEY).rules.season, null);
+  await lb.setSeason({ clear: true });
+  assert.deepEqual(db.store.get(SEASON_KEY), {});
+});
+
+test("§1.33 옛 저장본(standing 칸 없음)도 깨지지 않는다 — standingKnown false", async () => {
+  const db = fakeDb({ rows: [], matches: [], events: [] });
+  db.store.set(STATE_KEY, { at: new Date(NOW).toISOString(), basis: { reason: "first" }, rules: { minGames: 20, recentDays: 30 }, eligible: 0, list: [] });
+  const lb = createLeaderboard({ ...db, secret: "s", now: () => NOW, log: silent });
+  const r = await lb.standingOf(acc("a"));
+  assert.equal(r.standingKnown, false); assert.equal(r.needGames, 20); assert.equal(r.season, null);
+  assert.deepEqual(dueReason(db.store.get(STATE_KEY), [], NOW, null), { reason: "first" }, "옛 저장본은 배포 뒤 첫 tick 에 한 번 다시 만든다");
+  await lb.tick();
+  assert.equal(db.calls.upsert, 1); assert.ok(db.store.get(STATE_KEY).standing);
+  await lb.tick(); assert.equal(db.calls.upsert, 1, "한 번만");
 });

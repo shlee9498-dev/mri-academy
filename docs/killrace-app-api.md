@@ -247,6 +247,9 @@
 
 - 판을 여는 사람 = GmI 길드(`LESSON_GUILD_ID`)에서 **「킬내기 진행가능자」 역할(id `1558719441057874021`)**을 가진 로그인 회원 + 오너(`MRI_OWNER_ID`).
   ✅ 역할은 오너가 만들어 5명(오너 + 오너가 고른 4명 · 트레이너 2 · 클랜원 2)에게 붙였다(10/11 · 오너 원문 「킬내기 역할군: 1558719441057874021」).
+- **더해서 티어표 값 2 이하(1 · 1.5 · 2티어)인 앱 회원도 연다**(10/12 오너 「2티어부터 킬내기 열 수 있도록」 · killrace-api §1.33.4). 역할 기준은 그대로 두고 더하기만 한다.
+  티어 찾기 = §19 와 같다(부계 → 본계 줄 · 티어표에 없으면 티어로는 못 연다). 서버 상수 `CASUAL_TIER_MAX = 2` · 화면 판정 = `GET /api/killrace/me/standing` 의 `casualByTier`.
+  판 여는 길(§12.6)은 구현 전이다 — 구현 때 「역할 · 오너 · 티어 2 이하」 셋 중 하나면 연다.
 - 판정은 **역할 id 로만** 한다(이름은 바뀔 수 있다 · #554 §9.35 와 같은 규칙). 길드 조회 함수(`gmiGuildMember`)가 돌려주는 `roleIds` 를 쓴다(§9.35 에서 더하기로 한 칸).
 - **id 보관 = 설정 줄 + 코드 기본값 두 곳(env 아님 · 오너 손 없음)**
   - 설정 줄 `ops_state` `killrace:casual` 의 `openerRoleIds: ["1558719441057874021"]` — 역할을 새로 만들어 id 가 바뀌면 이 줄만 고친다(배포 없음).
@@ -385,7 +388,7 @@
 2. `gmiGuildMember` 에 `roleIds` 더하기(#554 와 같은 줄 · 한 번만).
 3. `killrace-casual.cjs`(새 모듈) — §12.3 시간 판정 · §12.4 단계 · §12.5 조건부 쓰기 · §12.6 길 · §12.7 서버 핀볼 · 칸 나누기(지금 draft 화면의 규칙을 순수 함수로 옮김) · 21:00 미확정 DM · 시험.
 4. 집계 쪽 — 「지금 대회」에서 `kind: "casual"` 빼기 · `byEvent` 에 `kind` · `tierCounted` · 취소된 판 빼기.
-5. `GET /me` 에 `roles.opener` · 설정 줄 `killrace:casual` 넣기(`openerRoleIds: ["1558719441057874021"]`) · 코드 상수 `CASUAL_OPENER_ROLE_IDS` 같은 값.
+5. `GET /me` 에 `roles.opener`(역할 · 오너 · **티어 2 이하** 중 하나 · §12.1 · 10/12) · 설정 줄 `killrace:casual` 넣기(`openerRoleIds: ["1558719441057874021"]`) · 코드 상수 `CASUAL_OPENER_ROLE_IDS` 같은 값.
 6. 시험 — 금요일 · 정식 회차 겹침 · 20:00 뒤 오늘 판 · 하루 3개 · 진행자 1개 · 8명 미만 취소 · 칸 나누기(대기 = 늦게 신청한 순) · 동시 누르기 409 · 핀볼 재굴림 없음 · 등록 모양 = `/킬내기팀등록` 과 같음 · 응답에 번호 없음 · 자율 판에 상금 · 코인 줄 0.
 - **새 env 없음 · DDL 없음.**
 
@@ -490,3 +493,28 @@
 - **코인 발행 한도**(코인 절 `monthCap`)는 기본값을 **이 예산과 같은 값**으로 맞춘다(1코인 = 1원 상당 · 다 바꿔 가도 예산 안).
 - 읽기: `GET /api/killrace/switches` 의 `budget: { month: "2026-10", limit: 200000, used: { shop, prize }, left }`(`left` = 한도 − `shop`).
 - 첫 달 숫자로 보는 것 — 연습판 한 판 평균 약 9.7만 코인(#557 시뮬레이션)이라 월 20만이면 연습판 **두 판 남짓**이 그달 발행 한도다. 매점 첫 목록(코인 절 §1.28.11a)도 합 20만이다.
+
+## §19 내 티어 · 내 리더보드 자리 — `GET /api/killrace/me/standing` (10/12 오너 「난 몇티어 이렇게뜨게」 · killrace-api §1.33)
+
+킬내기 앱 토큰(§2) · 읽기만 · 사람마다 분당 30번. 앱 홈 「나는 몇 티어 · 리더보드 몇 위」 칸이 이 길 하나만 읽는다.
+
+```
+{ linked: true,
+  ign: "<스팀 닉>",
+  tier: null | { tier: 1.5, rank: 4, tierIgn: "<티어표의 닉>", via: "self" | "merge" },   // 티어표(§1.29) 값 그대로 · 작을수록 높다
+  leaderboard: {
+    at, basis: "season" | "recent", season: null | { number, start, end },
+    rank: null | 3, label: null | "UNTOUCHABLE" | "CHALLENGER" | "MASTER",    // 10위 밖 자격자는 rank 11 ~ · label null
+    eligible: 16, games: 31, minGames: 20, needGames: 0, recentOk: true, standingKnown: true },
+  casualByTier: true }                                                          // 티어 2 이하 = 자율 판을 티어로 열 수 있다(§12.1)
+```
+
+- 로그인 없음 401 `login_required` · 회원 줄이 없거나 스팀 연결 전이면 `{ linked: false, tier: null, leaderboard: null, casualByTier: false }`.
+- **부계는 본계로** — `tier.via: "merge"` 면 같은 사람으로 묶인 본계 줄의 티어다(`tierIgn` = 그 줄의 닉). 리더보드 자리도 본계 자리.
+- `tier: null` = 티어표에 없음(「티어 미정」). `rank: null` 이고 `needGames > 0` 이면 「20판까지 n판」 · `needGames: 0` 인데 `recentOk: false` 면 「최근 30일 안에 한 판 뛰면 올라가요」(시즌 기준이면 늘 `true`).
+- `standingKnown: false` = 이 칸이 생기기 전 저장본 — 다음 갱신(수요일 09:00 · 회차 끝 + 45분 · 시즌 설정) 뒤 채워진다. 화면은 「다음 갱신 뒤 보여요」.
+- 판 수 · 순위는 리더보드 저장본 기준이다 — 판이 끝나자마자 늘지 않아도 정상(갱신 때 맞춰진다). 응답에 계정 번호 · 디스코드 번호는 없다.
+- 표가 없으면 503 `table_missing` · 그 밖 500 `error`.
+
+**화면(클랜CODE)** — 홈 카드 한 장: 티어(`1.5티어` · 없으면 「티어 미정」) · 리더보드(`3위 · CHALLENGER` · 자격 전이면 「20판까지 n판」) · 기준(`43시즌` 또는 「최근 30일」).
+리더보드 화면은 `GET /api/killrace/leaderboard` 의 `label` 을 그대로 쓴다. 룰 화면은 killrace-api §1.33.5 표(팀장 · 맵 4개 순서 · 낙하지 맵당 3곳)와 §1.33.6 예시를 절 번호와 함께 보인다.
