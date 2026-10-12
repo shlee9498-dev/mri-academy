@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<!-- mriacademy.gg/kill — 킬내기 앱(gmi-clancup)으로 넘긴다. discord.html 과 같은 넘김 페이지다(지휘 10/12 · 공지용 짧은 주소).
+     폴더(kill/index.html)로 둔 까닭: GitHub Pages 는 /kill 을 /kill/ 로 넘겨 이 파일을 열어 주므로 /kill · /kill/ 둘 다 산다.
+     주소 뒤 해시(#gift 등)는 스크립트가 그대로 붙여 넘긴다. 메타 새로고침은 스크립트가 꺼진 브라우저용 예비다(해시는 못 넘긴다).
+     Cloudflare Pages 로 옮기면 _redirects 의 /kill 302 가 같은 일을 하고, 이 파일은 허용 목록(site-files.txt)에 없어 올라가지 않는다.
+     앱 주소가 바뀌면 grep -rn killnaegi-app.html 로 이 파일 · _redirects 를 같이 고친다. 넘김 주소라 sitemap.xml 에는 넣지 않는다 -->
+<script>
+  var KILL_APP = "https://shlee9498-dev.github.io/gmi-clancup/killnaegi-app.html";
+  location.replace(KILL_APP + location.hash);
+</script>
+<meta http-equiv="refresh" content="1; url=https://shlee9498-dev.github.io/gmi-clancup/killnaegi-app.html">
+<title>킬내기 앱으로 이동 · MRI ACADEMY</title>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  :root{--bg:#0a0a0c;--surface-1:#15151a;--line:#26262b;--gold:#f5c518;--ink:#f4f4f5;--ink-dim:#c6c6cd;--ink-faint:#9b9ba4}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg);color:var(--ink);font-family:'Pretendard Variable',Pretendard,-apple-system,system-ui,sans-serif}
+  .box{width:100%;max-width:400px;background:var(--surface-1);border:1px solid var(--line);border-radius:16px;padding:32px 24px;text-align:center}
+  .mark{font-family:'Saira Condensed','Pretendard Variable',sans-serif;font-weight:700;font-size:12px;letter-spacing:.18em;color:var(--ink-faint);margin-bottom:16px}
+  h1{font-size:24px;margin:0 0 8px}
+  p{color:var(--ink-dim);font-size:15px;line-height:1.7;margin:0}
+  .btn{display:inline-block;margin-top:20px;background:var(--gold);color:var(--bg);text-decoration:none;font-weight:800;padding:13px 26px;border-radius:9px;font-size:15px}
+</style>
+</head>
+<body>
+<main class="box">
+  <div class="mark">MRI ACADEMY</div>
+  <h1>킬내기 앱으로 가는 중이에요</h1>
+  <p>화면이 그대로면 아래 버튼을 눌러 주세요</p>
+  <a class="btn" id="go" href="https://shlee9498-dev.github.io/gmi-clancup/killnaegi-app.html">킬내기 앱 열기</a>
+</main>
+<script>document.getElementById("go").href = KILL_APP + location.hash;</script>
+</body>
+</html>

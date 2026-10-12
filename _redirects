@@ -6,3 +6,8 @@
 # 9RjqdSKw = 만료 없음 · 횟수 제한 없음(오너 확인 10/1). 사이트 · 신청 페이지 · 챗봇 안내도 같은 초대다.
 # GitHub Pages 동안은 discord.html 이 같은 일을 한다(이 파일은 Cloudflare 만 읽는다). 초대가 바뀌면 `grep -rn 9RjqdSKw` 로 전부 같이 고친다.
 /discord  https://discord.gg/9RjqdSKw  302
+
+# 킬내기 앱 — 공지용 짧은 주소 mriacademy.gg/kill(지휘 10/12). GitHub Pages 동안은 kill/index.html 이 같은 일을 한다.
+# 브라우저가 주소 뒤 해시(#gift 등)를 넘긴 쪽에 다시 붙인다. 앱 주소가 바뀌면 grep -rn killnaegi-app.html 로 같이 고친다.
+/kill   https://shlee9498-dev.github.io/gmi-clancup/killnaegi-app.html  302
+/kill/  https://shlee9498-dev.github.io/gmi-clancup/killnaegi-app.html  302
