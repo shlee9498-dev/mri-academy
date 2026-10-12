@@ -21,7 +21,7 @@
 ## §1 공통
 
 - **주소 바탕** — 화면 상수 `API = "https://mri-academy-production.up.railway.app"`(기존 킬내기 화면과 같다).
-- **출처(CORS)** — 앱 주소는 **`https://kill.mriacademy.gg/killrace/`**(gmi-clancup Pages 사용자 도메인 · 10/12)다.
+- **출처(CORS)** — 앱 주소는 **`https://kill.mriacademy.gg/killnaegi-app.html`**(메인 앱 · 첫 화면 `/` 도 앱으로 보낸다) · `https://kill.mriacademy.gg/killrace/`(gmi-clancup Pages 사용자 도메인 · 10/12)다.
   출처 `https://kill.mriacademy.gg` 와 옛 `https://shlee9498-dev.github.io` 를 둘 다 허용한다(목록과 똑같은 출처만 · 코드 `server.js` `ALLOWED` · env 아님).
   옛 주소는 도메인을 옮긴 뒤에도 지우지 않는다 — Pages 가 옛 주소를 새 주소로 넘기는 동안 옛 화면이 열려 있을 수 있다.
 - **로그인 토큰** — `Authorization: Bearer <킬내기 토큰>`(§2). 토큰이 없거나 틀리면 401 `login_required`.
@@ -39,6 +39,8 @@
   → 디스코드 동의(`identify` · 이메일 없음 · 동의 화면 이름은 사이트 로그인 앱 그대로 · 10/7 확정)
   → `<return>#token=<킬내기 토큰>&nonce=<같은 값>`.
   - `return` 은 **앱 주소 두 곳 아래만** 받는다 — `https://kill.mriacademy.gg/killrace/`(새) · `https://shlee9498-dev.github.io/gmi-clancup/killrace/`(옛).
+    더해서 새 도메인의 **메인 앱 `https://kill.mriacademy.gg/killnaegi-app.html` 과 첫 화면 `https://kill.mriacademy.gg/`** 은 **정확히 그 주소**만 받는다(10/12).
+    뒤에는 `?쿼리` 만 이어 붙고 `#해시` 는 떼어 낸다(돌아올 때 붙는 `#token=` 과 겹치지 않게). 같은 도메인의 다른 파일 · 비슷한 주소(`kill.mriacademy.gg.evil.com`)는 앱 첫 화면으로 간다.
     다른 출처 · 같은 출처의 다른 길(새 도메인의 `killrace/` 밖 포함) · `#` · 역슬래시 · 공백 · 위로 가는 길(`..`)이 섞이면 앱 첫 화면(옛 주소 · Pages 가 새 주소로 넘긴다)으로 간다. 300자까지.
   - 디스코드 개발자 포털의 Redirect URI 는 앱이 아니라 서버 콜백(`/api/auth/callback`)이다 — 앱 도메인이 바뀌어도 고칠 것이 없다.
   - 토큰은 출처별 `localStorage` 라서, 새 도메인에서는 한 번 다시 로그인한다.

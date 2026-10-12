@@ -17,6 +17,8 @@ const APP_HOME = "https://shlee9498-dev.github.io/gmi-clancup/killrace/";
 // 앱이 받는 주소 전부 — 옛 github.io 와 새 도메인(kill.mriacademy.gg = gmi-clancup Pages 사용자 도메인 · 10/12). 앞부분이 이 중 하나로 고정된다.
 //   첫 화면(빈 값 · 틀린 값의 행선지)은 APP_HOME 그대로 — 도메인을 옮기면 Pages 가 옛 주소를 새 주소로 넘긴다.
 const APP_HOMES = Object.freeze([APP_HOME, "https://kill.mriacademy.gg/killrace/"]);
+// 새 도메인의 메인 앱 · 첫 화면(10/12 지휘) — 이 두 주소는 「정확히 그 주소」만 받는다. 뒤에는 ?쿼리 · #해시만(해시는 떼어 낸다 · 토큰 해시와 겹치지 않게).
+const APP_EXACT = Object.freeze(["https://kill.mriacademy.gg/killnaegi-app.html", "https://kill.mriacademy.gg/"]);
 const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 // 클랜원 판정(10/7 확정 4) — 비면 GmI 길드 가입만. 역할로 좁히려면 역할 이름을 여기 적는다(코드 한 줄).
 const CLAN_ROLE_NAMES = [];
@@ -46,8 +48,15 @@ function readKrState(state) {
 // 돌아갈 주소 — APP_HOMES 중 하나로 시작하면 그 아래 길만 이어 붙이고, 아니면(다른 출처 · 같은 출처 다른 저장소 · 빈 값) 앱 첫 화면.
 //   결과는 항상 APP_HOMES 중 하나로 시작한다 — 뒤에 무엇이 붙어도 주소의 출처는 바뀌지 않는다.
 //   공백 · 제어 문자 · # · 역슬래시 · 위로 올라가는 길(.. · %2e)이 섞이면 첫 화면.
+//   APP_EXACT 두 주소는 그 주소 + ?쿼리(+#해시는 떼어 냄)만 — 같은 도메인의 다른 파일(gdcup-* 등)로는 못 보낸다.
 function returnTo(ret) {
   const s = typeof ret === "string" ? ret : "";
+  const exact = APP_EXACT.find((e) => s.startsWith(e) && /^(?:$|[?#])/.test(s.slice(e.length)));
+  if (exact) {
+    const q = s.slice(exact.length).split("#")[0];
+    if (s.length > 300 || /[\s\\\u0000-\u001f\u007f]|\.\.|%2e/i.test(q)) return APP_HOME;
+    return exact + q;
+  }
   const home = APP_HOMES.find((h) => s.startsWith(h));
   const rest = home ? s.slice(home.length) : null;
   if (rest === null || s.length > 300 || /[\s#\\\u0000-\u001f\u007f]|\.\.|%2e/i.test(rest)) return APP_HOME;
@@ -325,6 +334,6 @@ function createMembers(deps) {
 
 module.exports = {
   CONSENT_VERSION, AUD, TOKEN_TTL_SEC, NONCE_RE, CLAN_ROLE_NAMES,
-  APP_HOME, APP_HOMES, makeKrState, readKrState, isKrState, returnTo, tokenClaims, userOf, kindOf, memberView, resolvePlayer, createMembers,
+  APP_HOME, APP_HOMES, APP_EXACT, makeKrState, readKrState, isKrState, returnTo, tokenClaims, userOf, kindOf, memberView, resolvePlayer, createMembers,
   _test: { makeLimiter, hostBy, ACCOUNT_RE, LINK_GLOBAL_PER_MIN, LINK_PER_MEMBER, KNOWN_TRY_MAX },
 };
