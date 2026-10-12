@@ -14,6 +14,9 @@ const TOKEN_TTL_SEC = 7 * 86400;          // 킬내기 토큰 7일
 const KR_STATE = "kr1.";
 // 로그인 뒤 돌아갈 곳 — 킬내기 앱(gmi-clancup Pages killrace/) 아래만. 앞부분을 이 상수로 고정해 다른 곳으로 못 보낸다(앱 계약 §2)
 const APP_HOME = "https://shlee9498-dev.github.io/gmi-clancup/killrace/";
+// 앱이 받는 주소 전부 — 옛 github.io 와 새 도메인(kill.mriacademy.gg = gmi-clancup Pages 사용자 도메인 · 10/12). 앞부분이 이 중 하나로 고정된다.
+//   첫 화면(빈 값 · 틀린 값의 행선지)은 APP_HOME 그대로 — 도메인을 옮기면 Pages 가 옛 주소를 새 주소로 넘긴다.
+const APP_HOMES = Object.freeze([APP_HOME, "https://kill.mriacademy.gg/killrace/"]);
 const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 // 클랜원 판정(10/7 확정 4) — 비면 GmI 길드 가입만. 역할로 좁히려면 역할 이름을 여기 적는다(코드 한 줄).
 const CLAN_ROLE_NAMES = [];
@@ -40,14 +43,15 @@ function readKrState(state) {
     return { ret: s.r, nonce: s.n };
   } catch { return null; }
 }
-// 돌아갈 주소 — APP_HOME 으로 시작하면 그 아래 길만 이어 붙이고, 아니면(다른 출처 · 같은 출처 다른 저장소 · 빈 값) 앱 첫 화면.
-//   결과는 항상 APP_HOME 으로 시작한다 — 뒤에 무엇이 붙어도 주소의 출처는 바뀌지 않는다.
+// 돌아갈 주소 — APP_HOMES 중 하나로 시작하면 그 아래 길만 이어 붙이고, 아니면(다른 출처 · 같은 출처 다른 저장소 · 빈 값) 앱 첫 화면.
+//   결과는 항상 APP_HOMES 중 하나로 시작한다 — 뒤에 무엇이 붙어도 주소의 출처는 바뀌지 않는다.
 //   공백 · 제어 문자 · # · 역슬래시 · 위로 올라가는 길(.. · %2e)이 섞이면 첫 화면.
 function returnTo(ret) {
   const s = typeof ret === "string" ? ret : "";
-  const rest = s.startsWith(APP_HOME) ? s.slice(APP_HOME.length) : null;
+  const home = APP_HOMES.find((h) => s.startsWith(h));
+  const rest = home ? s.slice(home.length) : null;
   if (rest === null || s.length > 300 || /[\s#\\\u0000-\u001f\u007f]|\.\.|%2e/i.test(rest)) return APP_HOME;
-  return APP_HOME + rest;
+  return home + rest;
 }
 // 토큰 내용 — 표지가 있어야 킬내기 길이 받고, 표지가 있으면 사이트 길은 받지 않는다
 const tokenClaims = (me, name) => ({ sub: String(me.id), name: String(name || "").slice(0, 40) || null, aud: AUD });
@@ -321,6 +325,6 @@ function createMembers(deps) {
 
 module.exports = {
   CONSENT_VERSION, AUD, TOKEN_TTL_SEC, NONCE_RE, CLAN_ROLE_NAMES,
-  APP_HOME, makeKrState, readKrState, isKrState, returnTo, tokenClaims, userOf, kindOf, memberView, resolvePlayer, createMembers,
+  APP_HOME, APP_HOMES, makeKrState, readKrState, isKrState, returnTo, tokenClaims, userOf, kindOf, memberView, resolvePlayer, createMembers,
   _test: { makeLimiter, hostBy, ACCOUNT_RE, LINK_GLOBAL_PER_MIN, LINK_PER_MEMBER, KNOWN_TRY_MAX },
 };

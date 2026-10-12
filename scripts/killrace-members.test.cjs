@@ -42,6 +42,26 @@ test("돌아갈 주소 — 앱(gmi-clancup killrace/) 아래만 · 나머지는 
   for (const v of [H + "x", H + "apply.html?event=6&tab=me"]) assert.ok(K.returnTo(v).startsWith(H));
 });
 
+test("새 도메인 kill.mriacademy.gg — 돌아갈 주소는 그 앱 아래도 받고 · 다른 길 · 비슷한 출처는 첫 화면 · CORS 목록에 새 출처와 옛 github.io 둘 다", () => {
+  const H = K.APP_HOME, N = "https://kill.mriacademy.gg/killrace/";
+  assert.deepEqual(K.APP_HOMES, [H, N]);
+  assert.equal(K.returnTo(N), N);
+  assert.equal(K.returnTo(N + "gifts.html"), N + "gifts.html");
+  assert.equal(K.returnTo(H + "gifts.html"), H + "gifts.html");
+  for (const bad of [
+    "https://kill.mriacademy.gg/", "https://kill.mriacademy.gg/gdcup-admin.html", "http://kill.mriacademy.gg/killrace/",
+    "https://kill.mriacademy.gg.evil.example/killrace/", "https://evil.kill.mriacademy.gg/killrace/", "https://mriacademy.gg/killrace/",
+    N + "../index.html", N + "%2e%2e/x", N + "a#b", N + "a b", N + "x".repeat(300),
+  ]) assert.equal(K.returnTo(bad), H, bad.slice(0, 80));
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "server.js"), "utf8");
+  const m = /const ALLOWED = \[([^\]]*)\]/.exec(src);
+  const allowed = new Set([...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]));   // Set — 문자열 부분 일치가 아니라 통째로 같은지만 본다
+  assert.ok(allowed.has("https://kill.mriacademy.gg"));
+  assert.ok(allowed.has("https://shlee9498-dev.github.io"));
+  for (const o of ["https://evil.example", "http://kill.mriacademy.gg", "https://kill.mriacademy.gg.evil.example", "https://mriacademy.gg.evil.example"]) assert.ok(!allowed.has(o), o);
+  assert.match(src, /if \(ALLOWED\.includes\(o\)\) res\.setHeader\("Access-Control-Allow-Origin", o\)/);   // 목록과 똑같은 출처만 · 앞부분 일치로 넓히지 않는다
+});
+
 test("토큰 — 표지 aud:killrace 가 있어야 킬내기 길 · 사이트 토큰 · 다른 표지 · 망가진 토큰 · 없음은 null · 7일", () => {
   assert.deepEqual(K.tokenClaims({ id: 42 }, "가짜이름"), { sub: "42", name: "가짜이름", aud: "killrace" });
   assert.equal(K.TOKEN_TTL_SEC, 7 * 86400);

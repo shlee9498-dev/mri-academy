@@ -70,6 +70,7 @@ app.use(express.json({ limit: "256kb" }));
 const ALLOWED = [
   "https://shlee9498-dev.github.io",
   "https://mriacademy.gg",
+  "https://kill.mriacademy.gg",      // 킬내기 앱 새 도메인(gmi-clancup Pages · 10/12) — 옛 github.io 와 함께 둔다
   "https://www.mriacademy.gg",
 ];
 app.use((req, res, next) => {
