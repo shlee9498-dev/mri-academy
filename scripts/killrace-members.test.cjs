@@ -49,7 +49,7 @@ test("새 도메인 kill.mriacademy.gg — 돌아갈 주소는 그 앱 아래도
   assert.equal(K.returnTo(N + "gifts.html"), N + "gifts.html");
   assert.equal(K.returnTo(H + "gifts.html"), H + "gifts.html");
   for (const bad of [
-    "https://kill.mriacademy.gg/", "https://kill.mriacademy.gg/gdcup-admin.html", "http://kill.mriacademy.gg/killrace/",
+    "https://kill.mriacademy.gg/gdcup-admin.html", "http://kill.mriacademy.gg/killrace/",
     "https://kill.mriacademy.gg.evil.example/killrace/", "https://evil.kill.mriacademy.gg/killrace/", "https://mriacademy.gg/killrace/",
     N + "../index.html", N + "%2e%2e/x", N + "a#b", N + "a b", N + "x".repeat(300),
   ]) assert.equal(K.returnTo(bad), H, bad.slice(0, 80));
@@ -60,6 +60,24 @@ test("새 도메인 kill.mriacademy.gg — 돌아갈 주소는 그 앱 아래도
   assert.ok(allowed.has("https://shlee9498-dev.github.io"));
   for (const o of ["https://evil.example", "http://kill.mriacademy.gg", "https://kill.mriacademy.gg.evil.example", "https://mriacademy.gg.evil.example"]) assert.ok(!allowed.has(o), o);
   assert.match(src, /if \(ALLOWED\.includes\(o\)\) res\.setHeader\("Access-Control-Allow-Origin", o\)/);   // 목록과 똑같은 출처만 · 앞부분 일치로 넓히지 않는다
+});
+
+test("새 도메인 메인 앱 · 첫 화면 — 정확히 그 두 주소 + ?쿼리만 · #해시는 떼어 냄 · 비슷한 주소 · 다른 파일은 옛 첫 화면", () => {
+  const H = K.APP_HOME, A = "https://kill.mriacademy.gg/killnaegi-app.html", R = "https://kill.mriacademy.gg/";
+  assert.deepEqual(K.APP_EXACT, [A, R]);
+  assert.equal(K.returnTo(A), A);
+  assert.equal(K.returnTo(R), R);
+  assert.equal(K.returnTo(A + "?tab=board&event=6"), A + "?tab=board&event=6");
+  assert.equal(K.returnTo(R + "?x=1"), R + "?x=1");
+  assert.equal(K.returnTo(A + "#me"), A);
+  assert.equal(K.returnTo(A + "?tab=me#top"), A + "?tab=me");
+  assert.equal(K.returnTo(R + "#a"), R);
+  for (const bad of [
+    "https://kill.mriacademy.gg", "https://kill.mriacademy.gg.evil.com/", "https://kill.mriacademy.gg.evil.com/killnaegi-app.html",
+    "https://evil.com/https://kill.mriacademy.gg/", "https://kill.mriacademy.gg@evil.com/", "http://kill.mriacademy.gg/killnaegi-app.html",
+    "https://evil.kill.mriacademy.gg/", A + "x", A + "/", A + ".evil", R + "gdcup-admin.html", R + "killnaegi-app.htm", R + "/evil.com",
+    R + "?a b", A + "?a\\b", A + "?x=../../", A + "?x=%2e%2e", A + "?\u0000", A + "?" + "x".repeat(300),
+  ]) assert.equal(K.returnTo(bad), H, bad.slice(0, 80));
 });
 
 test("토큰 — 표지 aud:killrace 가 있어야 킬내기 길 · 사이트 토큰 · 다른 표지 · 망가진 토큰 · 없음은 null · 7일", () => {
