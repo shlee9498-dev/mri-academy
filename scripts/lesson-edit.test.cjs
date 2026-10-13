@@ -469,3 +469,23 @@ test("정산 엔진 — 취소 반대 행은 지급 · 미정산 판수에서 �
   const other = [...kept, row(8, "2026-10-03", "1234", 5), row(-8, "2026-10-03", "void:3", 5)];
   assert.deepEqual(pay(other), pay(kept));
 });
+
+// ════════ §9.36 이전 기록 정리 줄 표지(bulk) ════════
+test("§9.36 수업 목록 bulk — seed 줄 · 10판 넘는 줄만 true · 10판 · 5판은 false · 판수 · 잔여 그대로 · created_by · memo 는 응답에 없음", async () => {
+  db = fixture();
+  db.lesson_sessions.push(
+    ls(110, 10, 2, "2026-09-10", 21, { created_by: "owner_sql", memo: "일괄" }),   // 몰아 적은 줄
+    ls(111, 10, 2, "2026-09-19", 10, { created_by: "portal" }),                    // 개인 2시간 = 10판(한 번 수업 가능)
+    ls(112, 10, 2, "2026-07-19", 5, { created_by: "seed" }));                      // 시트 이관 개시잔액(작아도 seed)
+  const before = (await callStudent(10, "/games-ledger")).json.rows.at(-1).balance;
+  const sess = await callStudent(10, "/sessions");
+  assert.equal(sess.status, 200, JSON.stringify(sess.json));
+  const by = Object.fromEntries(sess.json.sessions.map((s) => [s.playedAt, [s.games, s.bulk]]));
+  assert.deepEqual(by["2026-09-10"], [21, true]);
+  assert.deepEqual(by["2026-09-19"], [10, false]);
+  assert.deepEqual(by["2026-07-19"], [5, true]);
+  assert.equal(by[LOCKED_DAY][1], false);
+  assert.ok(sess.json.sessions.every((s) => typeof s.bulk === "boolean"));
+  assert.ok(!/createdBy|created_by|memo|owner_sql|seed/.test(JSON.stringify(sess.json)), "원문은 싣지 않는다");
+  assert.equal((await callStudent(10, "/games-ledger")).json.rows.at(-1).balance, before, "잔여 그대로(표지만)");
+});
