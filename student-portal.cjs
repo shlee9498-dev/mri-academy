@@ -934,6 +934,10 @@ module.exports = function mountStudentPortal(app, deps) {
   //     이 경우 목록 합이 잔여와 그만큼 어긋난다 — 의도된 선택이다(오너 판정).
   // 판수 조정 요청 행 — 승인 · 바로 반영(created_by 'adjreq:<id>')과 그 되돌림('adjreq:<id>:rev')
   const isAdjReqRow = (r) => String(r?.created_by || "").startsWith("adjreq:");
+  // 이전 기록 정리 줄(계약 §9.36) — 시트 이관 개시잔액(created_by 'seed') · 한 번 수업으로 불가능한 크기(10판 초과 · 개인 2시간 = 10판이 상한).
+  //   표시용 표지만 — 판수 · 잔여 · 합계 · 정렬은 그대로다. 판정은 접기 전 원래 줄 값으로(같은 날 정정이 판수를 줄여도 표지는 그대로)
+  const BULK_GAMES_OVER = 10;
+  const isBulkRow = (r) => String(r?.created_by || "") === "seed" || Number(r?.games || 0) > BULK_GAMES_OVER;
   function foldCorrections(rows) {
     const norm = rows.map((r) => ({ ...r, games: Number(r.games || 0) }));
     const byDay = new Map();                       // "학생일자" → 같은 날 행들
@@ -998,6 +1002,7 @@ module.exports = function mountStudentPortal(app, deps) {
     //   취소한 수업 기록(§9.29)과 그 반대 행도 수업 목록에서 뺀다 — 판수 내역(/games-ledger)에는 취소 줄로 남는다.
     const { voided } = voidState(raw);
     const rows = foldCorrections(raw.filter((r) => !isAdjReqRow(r) && !voidRef(r) && !voided.has(Number(r.id))));
+    const bulkIds = new Set(raw.filter(isBulkRow).map((r) => Number(r.id)));   // 접기 전 원래 줄로 판정(§9.36)
     if (!rows.length) return send(res, { sessions: [], courseSessions });   // 직강만 듣는 수강생도 회차는 보인다
 
     const ids = rows.map((r) => r.id);
@@ -1044,6 +1049,7 @@ module.exports = function mountStudentPortal(app, deps) {
         id: opaqueId("session", r.id),
         playedAt: r.played_at,
         games: r.games,
+        bulk: bulkIds.has(Number(r.id)),       // §9.36 이전 기록 정리 줄 — 회색 칩 「이전 기록 정리」 · 복기 쓰기 숨김(판수는 그대로)
         title: titles[r.id] ?? null,          // null → 화면 "미정"
         trainerDisplayName: names[r.trainer_id] || "미배정",
         hasJournal: journaled.has(r.id),
