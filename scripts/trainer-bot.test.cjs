@@ -175,6 +175,36 @@ test("A — 대신 넣기가 실패하면 연 칸을 닫고 다시 보내지 않
   assert.equal(fp.writes().length, 6);
 });
 
+test("A — 2시간 넣기 실패 → 그 4칸 모두 닫힘 · 범위 밖 · 예약 찬 칸 · 남의 칸은 안 닫힘 · 못 닫은 칸은 번호 + 원장 알림 (계약 §9.37.1 ③)", async () => {
+  // GET /slots 는 그 트레이너 칸만 준다 — 남의 칸은 애초에 목록에 없다. firstId 와 무관한 id 로 닫는지 본다
+  let opened = false;
+  const T = (h, m = 0) => new Date(Date.parse(`2026-10-16T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00+09:00`)).toISOString();
+  const mineNew = [[21, 0, "n1"], [21, 30, "n2"], [22, 0, "n3"], [22, 30, "n4"]].map(([h, m, id]) => ({ id, startAt: T(h, m), durationMin: 30, status: "open", lessonType: "personal" }));
+  const others = [
+    { id: "before", startAt: T(20, 30), durationMin: 30, status: "open", lessonType: "personal" },     // 범위 밖
+    { id: "after", startAt: T(23, 0), durationMin: 30, status: "open", lessonType: "personal" },       // 범위 밖
+  ];
+  const deleted = [];
+  const over = {
+    "POST /slots": () => { opened = true; return { status: 200, body: { created: 4, firstId: "slot-op", durationMin: 120 } }; },
+    "POST /slots/:id/bookings": () => ({ status: 409, body: { error: { code: "slot_taken" } } }),
+    "GET /slots": () => ({ status: 200, body: { personalLengths: LENGTHS, slots: opened ? [...others, ...mineNew] : others } }),
+    "DELETE /slots/:id": (_b, calls) => { const id = calls[calls.length - 1].path.split("/").pop(); deleted.push(id);
+      return id === "n3" ? { status: 503, body: { error: { code: "portal_unavailable" } } } : { status: 200, body: { cancelled: true } }; },
+  };
+  const alerts = [];
+  const { bot } = makeBot({ portal: over });
+  const msg = { ...(await bot.prepare(STAFF, { text: "금 21:00 길동 2시간", discordId: "d5" })) };
+  bot._deps.ownerAlert = async (t) => { alerts.push(t); return true; };
+  bot._deps.slotNo = (op) => ({ n3: 903 })[op] ?? null;
+  await bot.handle(press(ids(msg)[0], msg).itx);
+  assert.deepEqual(deleted, ["n1", "n2", "n3", "n4"]);                  // 다시 찾은 4칸만 · slot-op 로 이어 세지 않음
+  assert.ok(!deleted.includes("slot-op") && !deleted.includes("before") && !deleted.includes("after"));
+  assert.match(msg.content, /닫지 못한 빈 칸이 남았어요\(#903 22:00\)/);
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0], /#903 22:00/);
+});
+
 test("A — 같은 이름 여럿이면 고르기 · 못 찾으면 안내", async () => {
   const two = [{ ...GILDONG }, { ...GILDONG, id: "stu-2", pubgName: "Gil2" }];
   const { bot, fp } = makeBot({ portal: { students: two } });

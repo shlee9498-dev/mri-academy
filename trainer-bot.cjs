@@ -223,17 +223,40 @@ function createTrainerBot(deps) {
       return { ok: true, text: `저장했어요 · ${cardWhen(c.startAt, c.durationMin)} · ${c.student.displayName}님 · ${held}판 잡혔고${rem2 == null ? "" : ` 남은 판수 ${rem2}판`}` };
     }
     // ③ 실패 — 방금 연 칸을 닫는다(빈 개인 칸이 수강생 앱에 「예약 가능」으로 남지 않게)
-    await closeOpened(staff, startMs, endMs, days);
-    return { ok: false, text: errText(bk.body?.error?.code) };
+    const closed = await closeOpened(staff, startMs, endMs, days);
+    const extra = closed.left === null || closed.left.length ? `\n${await reportLeft(staff, c, closed.left)}` : "";
+    return { ok: false, text: errText(bk.body?.error?.code) + extra };
   }
+  // 방금 연 칸 전부 닫기(계약 §9.37.1 ③) — firstId 부터 번호를 이어 세지 않는다(칸 번호는 전 트레이너 공용).
+  //   그 트레이너(GET /slots = 내 칸만) · 그 시작~끝 범위의 예약 없는 개인 칸(open)을 다시 찾아 하나씩 닫는다.
+  //   못 닫은 칸이 남으면 번호를 돌려준다 — 카드에 적고 원장에게 알린다(자동 재시도 없음).
   async function closeOpened(staff, startMs, endMs, days) {
+    let mine = [];
     try {
       const sl = await deps.portalCall(staff, "GET", `/slots?days=${days}`);
-      const mine = (sl.body?.slots || []).filter((s) => s.status === "open" && s.lessonType === "personal"
+      if (sl.status !== 200) throw new Error(`slots_${sl.status}`);
+      mine = (sl.body?.slots || []).filter((s) => s.status === "open" && s.lessonType === "personal"
         && Date.parse(s.startAt) >= startMs && Date.parse(s.startAt) < endMs);
-      for (const s of mine) await deps.portalCall(staff, "DELETE", `/slots/${s.id}`);
-      log.log(`[trainer-bot] 저장 실패 — 연 칸 ${mine.length}개 닫음`);
-    } catch (e) { log.error("[trainer-bot] close_opened", e?.message); }
+    } catch (e) {
+      log.error("[trainer-bot] close_opened_list", e?.message);
+      return { left: null };                                   // 무엇이 열렸는지 못 봤다 — 원장이 앱에서 본다
+    }
+    const left = [];
+    for (const s of mine) {
+      const r = await deps.portalCall(staff, "DELETE", `/slots/${s.id}`).catch(() => ({ status: 0 }));
+      if (r.status !== 200) left.push(s);
+    }
+    log.log(`[trainer-bot] 저장 실패 — 연 칸 ${mine.length - left.length}/${mine.length}개 닫음`);
+    return { left: left.map((s) => ({ no: deps.slotNo ? deps.slotNo(s.id) : null, startAt: s.startAt })) };
+  }
+  // 못 닫은 칸 — 카드 한 줄 + 원장 알림(운영진 DM · 반말)
+  async function reportLeft(staff, c, left) {
+    const hm = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(11, 16);
+    const list = left === null ? "확인 못 함" : left.map((x) => `${x.no == null ? "" : `#${x.no} `}${hm(x.startAt)}`).join(", ");
+    await deps.ownerAlert?.(`[트레이너봇] 한 줄 예약 실패 뒤 닫지 못한 빈 개인 칸 — ${staff.name} · ${cardWhen(c.startAt, c.durationMin)} · 칸 ${list}`)
+      .catch?.(() => {});
+    return left === null ? "방금 연 칸을 다 닫았는지 확인하지 못했어요. 원장에게 알렸어요"
+      : `닫지 못한 빈 칸이 남았어요(${list}). 원장에게 알렸어요`;
   }
 
   // ── 벨 — 계약 §9.37.2 ──────────────────────────────────────
@@ -412,7 +435,7 @@ function createTrainerBot(deps) {
     return false;
   }
 
-  return { handle, onMessage, bellTick, prepare, save, cards, _bellView: bellView };
+  return { handle, onMessage, bellTick, prepare, save, cards, _bellView: bellView, _deps: deps };
 }
 
 function missingText(missing) {
@@ -475,6 +498,8 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
       return { status: r.status, body: j };
     },
     opaqueBooking: (id) => portal.opaqueId("booking", id),
+    slotNo: (op) => portal.readOpaqueId("slot", op),
+    ownerAlert: async () => false,
     staffByDiscord: async (did) => {
       const rows = await sbSelect("staff", `select=id,name,role,active,discord_id&discord_id=eq.${encodeURIComponent(did)}&limit=2`);
       return rows.length === 1 && rows[0].active !== false ? rows[0] : null;
@@ -492,6 +517,11 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
     const client = typeof getClient === "function" ? getClient() : null;
     if (done || !client) return false;
     done = true;
+    deps.ownerAlert = async (text) => {
+      if (!env.MRI_OWNER_ID) return false;
+      try { const u = await client.users.fetch(env.MRI_OWNER_ID); await u.send({ content: text, allowedMentions: { parse: [] } }); return true; }
+      catch (e) { log.warn("[trainer-bot] owner_alert_failed", e?.code || ""); return false; }
+    };
     deps.sendDM = async (did, payload) => {
       try { const u = await client.users.fetch(did); await u.send(payload); return true; }
       catch (e) { log.warn("[trainer-bot] dm_failed", e?.code || ""); return false; }
