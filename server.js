@@ -3542,6 +3542,7 @@ if (process.env.DISCORD_TOKEN) {
   //   먼저 누른 사람만 — 신청을 「대기 → 승인/거절」로 먼저 잡고(조건부) 그다음 기록에 붙인다(조건부 + §11 부분 유니크).
   //   트레이너가 못 누르는 버튼은 **카드를 그대로 두고** 누른 사람에게만 알린다(원장이 이어서 처리).
   const linkApproval = linkRules.createLinkApproval({ sbSelect, sbPatch, sbInsert, discordDM });
+  const welcomeGuide = require("./welcome-guide.cjs").createWelcome({ sbSelect, sbInsert, opsGet: opsStateGet, opsSet: opsStateSet, discordDM });
   const LINKREQ_TAG = { approved: "승인", rejected: "거절", cancelled: "취소" };
   const LINKREQ_TRAINER_MSG = {
     not_assigned: "내 담당 수강생 기록이 아니에요",
@@ -4015,6 +4016,11 @@ if (process.env.DISCORD_TOKEN) {
     } else {
       await itx.update({ content: `❌ **#${reqId} 반려** — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원`, components: [] });
     }
+    // 신규 자동 안내(§9.37.3) — 승인 직후 · 앱 미연결 수강생에게 한 번(못 찾으면 담당 트레이너 몫). 실패해도 승인은 그대로다.
+    if (approve && target && q.kind !== "상담")
+      welcomeGuide.run({ studentId: target.id, trainerId: q.trainer_id, requestedBy: q.requested_by, kind: q.kind })
+        .then((r) => console.log(`[welcome] #${reqId} student #${target.id} ${r.status}${r.route ? ` ${r.route} ok=${r.ok}` : ` ${r.reason}`}`))
+        .catch((e) => console.error("welcome_dm", e?.message));
     // 앱 입금 신청(계약 §9.5·§9.6)은 신청자가 **수강생**이다 — requested_by = "app:<명부 id>".
     //   아래 트레이너용 반말 통보를 그대로 보내면 수강생이 「결제 신청 #N 승인」 반말을 받는다.
     //   수강생에게는 ui-copy 요체로, 돈 문구라 이모지 없이 보낸다(§2).
