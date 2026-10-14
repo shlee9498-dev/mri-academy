@@ -3549,6 +3549,11 @@ if (process.env.DISCORD_TOKEN) {
   //   먼저 누른 사람만 — 신청을 「대기 → 승인/거절」로 먼저 잡고(조건부) 그다음 기록에 붙인다(조건부 + §11 부분 유니크).
   //   트레이너가 못 누르는 버튼은 **카드를 그대로 두고** 누른 사람에게만 알린다(원장이 이어서 처리).
   const linkApproval = linkRules.createLinkApproval({ sbSelect, sbPatch, sbInsert, discordDM });
+  const welcomeGuide = require("./welcome-guide.cjs").createWelcome({
+    sbSelect, sbInsert, opsSet: opsStateSet, discordDM,
+    // opsStateGet 은 읽기 실패도 null 로 삼킨다 — 여기서는 실패를 throw 로 넘겨야 발송 기록을 덮어쓰지 않는다
+    opsGet: async (key) => (await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`))[0]?.value || null,
+  });
   // 명부보다 먼저 온 신청 다시 잡기(§9.32.6) — 10분마다 대기 신청을 보고, 신청 뒤에 생긴 명부에 이름이 똑같은 미연결 한 명이 있으면
   //   승인 버튼을 붙인 카드를 한 번 다시 올린다. 다시 올린 신청 번호는 ops_state 'linkreq:reposted' 에 남겨 두 번 올리지 않는다.
   const LINKREQ_REPOSTED_KEY = "linkreq:reposted";
@@ -4051,6 +4056,11 @@ if (process.env.DISCORD_TOKEN) {
     } else {
       await itx.update({ content: `❌ **#${reqId} 반려** — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원`, components: [] });
     }
+    // 신규 자동 안내(§9.37.3) — 승인 직후 · 앱 미연결 수강생에게 한 번(못 찾으면 담당 트레이너 몫). 실패해도 승인은 그대로다.
+    if (approve && target && q.kind !== "상담")
+      welcomeGuide.run({ studentId: target.id, trainerId: q.trainer_id, requestedBy: q.requested_by, kind: q.kind })
+        .then((r) => console.log(`[welcome] #${reqId} student #${target.id} ${r.status}${r.route ? ` ${r.route} ok=${r.ok}` : ` ${r.reason}`}`))
+        .catch((e) => console.error("welcome_dm", e?.message));
     // 앱 입금 신청(계약 §9.5·§9.6)은 신청자가 **수강생**이다 — requested_by = "app:<명부 id>".
     //   아래 트레이너용 반말 통보를 그대로 보내면 수강생이 「결제 신청 #N 승인」 반말을 받는다.
     //   수강생에게는 ui-copy 요체로, 돈 문구라 이모지 없이 보낸다(§2).
