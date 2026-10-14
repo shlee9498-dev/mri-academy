@@ -7520,3 +7520,103 @@ notify pgrst, 'reload schema';
 
 -- 82 검증(읽기만): killrace_sponsors 칸 17 · 줄 수 실행 전과 같음
 -- 되돌림: alter table killrace_sponsors drop column carry_from_event · notify pgrst
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- §83  트레이너 한 줄 예약 — 시작 시각까지 받는 대신 넣기 함수 (2026-10-14 · 계약 §9.37.1 · 지휘 판단 「시작 시각까지」 · 더하기만)
+--   book_slot(§59b · 마지막 정의)과 **마감 한 줄만 다른 사본**이다 — 3시간 → 시작 시각. 선차감 · 차감표 · 잔여 게이트 ·
+--   연속 칸 묶기 · 정원 · 직강 거절은 글자 그대로 같다(scripts/trainer-bot.test.cjs 가 두 본문을 대조한다 · 한쪽만 고치면 시험이 깨진다).
+--   부르는 곳: booking-api.cjs POST /api/trainer-portal/slots/:id/bookings 의 `untilStart: true`(트레이너봇만 보낸다) 하나.
+--   수강생 본인 예약 · 앱의 대신 넣기는 종전대로 book_slot(3시간 마감).
+--   새 표 · 칸 · 제약 없음. 판수 · 금액 계산식 변경 없음.
+-- 83-0) 스냅샷: select count(*) from pg_proc where proname = 'book_slot_trainer';   -- 0
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+create or replace function public.book_slot_trainer(
+  p_student_id  bigint,
+  p_slot_id     bigint,
+  p_duration_min int default null
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_slot      trainer_slots%rowtype;
+  v_games     int;
+  v_need      int;
+  v_remaining int;
+  v_booked    int;
+  v_head      bigint;
+  v_ids       bigint[];
+begin
+  select * into v_slot from trainer_slots where id = p_slot_id for update;
+  if not found                     then return jsonb_build_object('error','slot_not_found'); end if;
+  if v_slot.status <> 'open'       then return jsonb_build_object('error','slot_taken');     end if;
+  -- §59 직강 반 수업 칸은 book_course_slot 만 탄다(판수가 아니라 남은 회차를 본다).
+  if v_slot.lesson_type = 'course' then return jsonb_build_object('error','course_slot');    end if;
+  -- §83 트레이너 한 줄 예약(계약 §9.37.1) — 마감 = **시작 시각**(지휘 판단 10/14). 3시간 마감은 수강생 본인 예약(book_slot) 그대로.
+  if v_slot.slot_start <= now() then
+    return jsonb_build_object('error','booking_closed');
+  end if;
+
+  -- ⬇ §41 — **그 칸 트레이너의** 잔여를 본다. 합계로 보면 준구에게 산 판수로 현태 수업을
+  --    예약할 수 있다(실측 9명이 두 트레이너를 함께 쓴다).
+  v_remaining := portal_remaining_for_trainer(p_student_id, v_slot.trainer_id);
+
+  if v_slot.lesson_type = 'personal' then
+    if p_duration_min is null then return jsonb_build_object('error','invalid_body'); end if;
+    -- 차감표(§47 · 오너 2026-09-30 최대 3시간) — lesson-lengths.cjs PERSONAL_LENGTHS 와 글자 그대로 같은 값이어야 한다.
+    v_games := case p_duration_min when 60 then 5 when 90 then 8 when 120 then 10
+                                   when 150 then 13 when 180 then 15 else null end;
+    if v_games is null then return jsonb_build_object('error','invalid_body'); end if;
+    if v_remaining < v_games then return jsonb_build_object('error','insufficient_games'); end if;
+    v_need := p_duration_min / 30;
+
+    select array_agg(id order by slot_start) into v_ids from (
+      select id, slot_start from trainer_slots
+       where trainer_id  = v_slot.trainer_id
+         and lesson_type = 'personal'
+         and status      = 'open'
+         and slot_start >= v_slot.slot_start
+         and slot_start <  v_slot.slot_start + make_interval(mins => p_duration_min)
+       order by slot_start
+       for update
+    ) s;
+    if v_ids is null or array_length(v_ids, 1) <> v_need then
+      return jsonb_build_object('error','slot_taken');
+    end if;
+
+    insert into slot_bookings (slot_id, student_id, games_held, duration_min, status)
+      values (v_slot.id, p_student_id, v_games, p_duration_min, 'booked')
+      returning id into v_head;
+    insert into slot_bookings (slot_id, student_id, games_held, status, span_head_id)
+      select x, p_student_id, 0, 'booked', v_head from unnest(v_ids) x where x <> v_slot.id;
+    update trainer_slots set status = 'closed' where id = any(v_ids);
+
+    return jsonb_build_object('bookingId', v_head, 'gamesHeld', v_games, 'slotsHeld', v_need);
+  end if;
+
+  -- 그룹(관전형·참여형) · 상담(consult): 선차감 없음.
+  if p_duration_min is not null then return jsonb_build_object('error','invalid_body'); end if;
+  -- 잔여 판수 게이트. **상담은 제외** — 판수를 쓰는 예약이 아니고 결제(상담료)는 앱 밖이라,
+  -- 잔여 0·음수인 신규·재등록 대기 수강생도 상담은 잡을 수 있어야 한다(오너 지시 2026-09-10).
+  if v_slot.lesson_type <> 'consult' and v_remaining < 1 then
+    return jsonb_build_object('error','insufficient_games');
+  end if;
+  select count(*) into v_booked from slot_bookings where slot_id = v_slot.id and status = 'booked';
+  if v_booked >= v_slot.capacity then return jsonb_build_object('error','slot_full'); end if;
+
+  insert into slot_bookings (slot_id, student_id, games_held, status)
+    values (v_slot.id, p_student_id, 0, 'booked')
+    returning id into v_head;
+  return jsonb_build_object('bookingId', v_head, 'gamesHeld', 0, 'slotsHeld', 1);
+
+exception
+  when unique_violation then return jsonb_build_object('error','slot_taken');
+end;
+$$;
+-- 서버(service_role)만 부른다 — 앱 공개 키로 직접 부르는 길을 처음부터 닫는다(security definer 라 열려 있으면 마감 예외가 밖으로 샌다)
+revoke all on function public.book_slot_trainer(bigint, bigint, int) from public, anon, authenticated;
+grant execute on function public.book_slot_trainer(bigint, bigint, int) to service_role;
+notify pgrst, 'reload schema';
+
+-- 83 검증(읽기만): select proname, length(replace(prosrc, E'\r', '')) from pg_proc where proname in ('book_slot','book_slot_trainer');
+--   두 길이 차이 = 마감 줄 차이만 · 빈 인자 호출 select book_slot_trainer(null, null, null) → {"error":"slot_not_found"}(쓰는 것 없음)
+-- 되돌림: drop function if exists public.book_slot_trainer(bigint, bigint, int); notify pgrst, 'reload schema';
+--   (되돌리면 트레이너봇은 3시간 안 수업을 칸을 열기 전에 막는다 — 서버 · 봇 코드는 그대로 둬도 된다)
