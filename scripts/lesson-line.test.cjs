@@ -35,6 +35,10 @@ test("표시 없는 1~11시 — 오후가 먼저 · 오전은 바꿀 후보로",
   assert.equal(r.altStartAt, at("2026-10-16T09:00:00+09:00"));
   assert.equal(P("금 오후 9시 길동 2시간", NOW).ambiguousHour, false);
   assert.equal(P("금 21:00 길동 2시간", NOW).ambiguousHour, false);
+  // 오전 쪽이 이미 지났어도 묻는다(짐작해 저장하지 않는다 · 계약 §9.37.1) — 지난 쪽은 봇이 기록 카드로 돌린다
+  const today = P("오늘 9시 길동 1시간", NOW);
+  assert.equal(today.ambiguousHour, true);
+  assert.equal(today.altStartAt, at("2026-10-14T09:00:00+09:00"));
 });
 
 test("요일만 말했는데 오늘 그 시각이 지났으면 다음 주", () => {

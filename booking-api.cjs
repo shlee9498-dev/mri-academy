@@ -549,8 +549,10 @@ module.exports = function mountBookingApi(app, deps) {
   //   잔여 부족은 **여기서는 막는다**(「완료」와 반대) — 아직 안 한 수업이라 막아도 기록이 사라지지 않는다.
   //   범위: 내 칸 + 내 수강생(로스터와 같은 scopedStudents — 담당 + 최근 90일 진행).
   //   ⚠️ 레벨 테스트 신규(prospect)는 로스터 범위 밖이라 여기로 못 넣는다 — 본인이 앱에서 잡는다.
+  //   untilStart(§83 · 계약 §9.37.1) — 트레이너봇 한 줄 예약만 보낸다(앱은 보내지 않는다). true 면 개인 칸에 한해 마감이
+  //   3시간 전 → **시작 시각**인 book_slot_trainer 를 탄다(그 밖 규칙은 글자 그대로 같은 사본). §83 미실행이면 409 booking_closed.
   app.post(`${TRAINER}/slots/:id/bookings`, rateLimit("trainerAssign", 20, 60_000),
-    bodyOnly(["studentId", "durationMin", "courseKey"]), requireTrainer, wrap(async (req, res) => {
+    bodyOnly(["studentId", "durationMin", "courseKey", "untilStart"]), requireTrainer, wrap(async (req, res) => {
       const slotId = readOpaqueId("slot", req.params.id);
       const studentId = readOpaqueId("student", req.body?.studentId);
       if (slotId == null || studentId == null) return fail(res, 400, "invalid_body");
@@ -559,10 +561,13 @@ module.exports = function mountBookingApi(app, deps) {
       const courseKey = req.body?.courseKey;
       const courseId = courseKey === undefined ? null : typeof courseKey === "string" ? readOpaqueId("course", courseKey) : null;
       if (courseKey !== undefined && courseId == null) return fail(res, 400, "invalid_body");
+      const untilStart = req.body?.untilStart;
+      if (untilStart !== undefined && untilStart !== true) return fail(res, 400, "invalid_body");
 
       const [slot] = await sbSelect("trainer_slots", `select=id,trainer_id,lesson_type,course_level&id=eq.${slotId}`);
       if (!slot) return fail(res, 404, "slot_not_found");
       if (slot.trainer_id !== req.staff.id) return fail(res, 403, "scope_denied");
+      if (untilStart && slot.lesson_type !== "personal") return fail(res, 400, "invalid_body");   // 마감 예외는 개인 칸만
       if (courseKey !== undefined && slot.lesson_type !== "course") return fail(res, 400, "invalid_body");   // 강의 고르기는 직강 칸만
 
       // 직강 반 수업 칸(§59 · 계약 §9.21) — 판수 대신 강의의 남은 회차로 넣는다(선차감 없음).
@@ -593,9 +598,19 @@ module.exports = function mountBookingApi(app, deps) {
 
       // 개인은 durationMin 이 있어야 한다(선차감 판수가 길이로 정해진다). 그룹·상담에 오면 book_slot 이
       // invalid_body 로 돌려보낸다 — 판정을 여기서 한 번 더 하지 않는다.
-      const out = await sbRpc("book_slot", {
-        p_student_id: studentId, p_slot_id: slotId, p_duration_min: d ?? null,
-      });
+      let out;
+      if (untilStart) {
+        try {
+          out = await sbRpc("book_slot_trainer", { p_student_id: studentId, p_slot_id: slotId, p_duration_min: d ?? null });
+        } catch (e) {
+          console.error("book_slot_trainer", e?.status || e?.message);   // §83 미실행 — 3시간 마감 그대로인 것과 같게 답한다
+          return fail(res, 409, "booking_closed");
+        }
+      } else {
+        out = await sbRpc("book_slot", {
+          p_student_id: studentId, p_slot_id: slotId, p_duration_min: d ?? null,
+        });
+      }
       if (out?.error) return rpcFail(res, out.error);
 
       // 넣은 뒤 **내 판수 기준** 잔여(§41). §41 미실행 배포면 null — 예약 자체는 끝났다.

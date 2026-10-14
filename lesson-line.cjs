@@ -145,7 +145,8 @@ function parseLessonLine(text, nowMs) {
   // 표시 없는 시각 — 오후가 이미 지났고 오전이 안 지났을 일은 없다(오전이 먼저다) · 오후 우선 그대로
   const pick = cands[0];
   if (pick.ms <= nowMs) return { ok: false, missing: ["in_past"], partial };
-  const alt = cands[1] && cands[1].ms > nowMs ? cands[1] : null;
+  // 오전 후보는 지났어도 남긴다 — 표시 없는 시각은 늘 묻는다(계약 §9.37.1 「짐작해 저장하지 않는다」)
+  const alt = cands[1] || null;
   // 「밤 12시」(1440분)는 다음 날 0시 — 표시용 날짜 · 분도 그 날로 옮긴다
   const startYmd = kstYmd(pick.ms);
   return {

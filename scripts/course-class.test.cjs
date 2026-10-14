@@ -831,3 +831,28 @@ test("GET /slots unclosed — 끝난 시각이 지난 열린 예약만 · 개인
   reset();
   assert.deepEqual((await call(2, "/slots")).json.unclosed, { count: 0, lessons: 0, oldestEndAt: null, items: [] });
 });
+
+// ════════ 트레이너봇 한 줄 예약의 마감 예외(§83 · 계약 §9.37.1) ════════
+test("대신 넣기 untilStart — 개인 칸만 book_slot_trainer · 함수 없으면 409 booking_closed · 앱(플래그 없음)은 book_slot 그대로", async () => {
+  const personal = slot(910, { trainer_id: 2, lesson_type: "personal", capacity: 1, duration_min: null, course_level: null,
+    slot_start: at(grid(Date.now() + HOUR)) });
+  const group = slot(911, { trainer_id: 2, lesson_type: "participate", course_level: null, duration_min: 60 });
+  reset({ trainer_slots: [personal, group] });
+  rpcOut.book_slot_trainer = () => ({ bookingId: 60, gamesHeld: 5, slotsHeld: 2 });
+  rpcOut.book_slot = () => ({ error: "booking_closed" });
+  const ok = await call(2, `/slots/${SL(910)}/bookings`, "POST", { studentId: S(10), durationMin: 60, untilStart: true });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.bookingId, B(60));
+  assert.deepEqual(argsOf("book_slot_trainer")[0], { p_student_id: 10, p_slot_id: 910, p_duration_min: 60 });
+  assert.deepEqual(argsOf("book_slot"), []);
+  // 플래그 없음 = 종전 길(3시간 마감)
+  assert.deepEqual(await call(2, `/slots/${SL(910)}/bookings`, "POST", { studentId: S(10), durationMin: 60 }),
+    { status: 409, json: { error: { code: "booking_closed" } } });
+  // 값은 true 만 · 개인 칸만
+  assert.equal((await call(2, `/slots/${SL(910)}/bookings`, "POST", { studentId: S(10), durationMin: 60, untilStart: false })).status, 400);
+  assert.equal((await call(2, `/slots/${SL(911)}/bookings`, "POST", { studentId: S(10), untilStart: true })).status, 400);
+  // §83 미실행(PostgREST 404 → throw) — 3시간 마감과 같게 답한다
+  rpcOut.book_slot_trainer = () => { throw new Error("PGRST202"); };
+  assert.deepEqual(await call(2, `/slots/${SL(910)}/bookings`, "POST", { studentId: S(10), durationMin: 60, untilStart: true }),
+    { status: 409, json: { error: { code: "booking_closed" } } });
+});

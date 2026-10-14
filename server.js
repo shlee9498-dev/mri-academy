@@ -8641,6 +8641,9 @@ require("./trainer-lessons.cjs")(app, {
   ownerAlert: (a) => discordDM(process.env.MRI_OWNER_ID, adjustAlertText(a)),
   onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 바로 반영 · 되돌림 직후
 });
+// 트레이너봇(계약 §9.37.1 · §9.37.2) — /수업잡기 한 줄 예약 · 끝났나요 벨. 쓰기는 위 트레이너 앱 라우트를 같은 프로세스에서 부른다.
+//   TRAINER_BOOK_CHANNEL_ID(선택) 가 있으면 그 채널 한 줄도 받는다.
+if (process.env.DISCORD_TOKEN) require("./trainer-bot.cjs")({ getClient: () => botClient, sbSelect, sbUpsert, sbRpc, portal: studentPortal, port: PORT });
 // 공지 · 전달문(계약 §9.30 · 2026-10-04) — 초안함 → 미리보기 → 보내기 · 앱 알림함 + 봇 DM. §65 미실행이면 이 라우트군만 503.
 // TRAINER_APP_URL = 트레이너 전달문 DM 끝의 앱 링크(트레이너 앱은 다른 저장소 · 이 저장소에 주소가 없다 — 오너가 주면 적는다 ·
 //   비어 있으면 링크 줄 없이 나간다). 수강생 공지 링크는 STUDENT_APP_URL/notices/{id}.
