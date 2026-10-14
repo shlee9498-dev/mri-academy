@@ -4,14 +4,14 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const W = require("../welcome-guide.cjs");
 
-function harness({ students = [], intakes = [], links = [], staff = [], dmOk = () => true } = {}) {
+function harness({ students = [], intakes = [], links = [], staff = [], dmOk = () => true, opsFail = false } = {}) {
   const ops = {}; const dms = []; const audit = [];
   const filt = (rows, q) => rows.filter((r) => [...q.matchAll(/(\w+)=(eq|not\.is)\.([^&]+)/g)].every(([, k, op, v]) =>
     op === "eq" ? String(r[k]) === decodeURIComponent(v) : r[k] != null));
   const api = W.createWelcome({
     sbSelect: async (t, q) => filt({ students, intake_applications: intakes, student_link_requests: links, staff }[t] || [], q),
     sbInsert: async (t, row) => { audit.push(row); return row; },
-    opsGet: async (k) => ops[k] || null, opsSet: async (k, v) => { ops[k] = JSON.parse(JSON.stringify(v)); },
+    opsGet: async (k) => { if (opsFail) throw new Error("db down"); return ops[k] || null; }, opsSet: async (k, v) => { ops[k] = JSON.parse(JSON.stringify(v)); },
     discordDM: async (to, text) => { dms.push({ to, text }); return dmOk(to); },
     now: () => new Date("2026-10-14T12:00:00Z"), log: { error() {} },
   });
@@ -69,4 +69,13 @@ test("run — 계정 못 찾으면 담당 트레이너에게 붙여넣기용 · 
   const h4 = harness({ students: [stu(5, "자차", { trainer_id: null })] });
   assert.deepEqual(await h4.api.run({ studentId: 5, trainerId: null, requestedBy: "app:5", kind: "판수" }), { status: "sent", route: null, ok: false });
   assert.equal(h4.dms.length, 0, "보낼 곳이 없으면 아무에게도 안 보냄 · 기록은 남김");
+});
+
+test("run — 발송 기록을 못 읽으면 보내지도 덮어쓰지도 않음(state_unavailable)", async () => {
+  const h = harness({ students: [stu(114, "가나")], intakes: [{ student_id: 114, discord_id: "111111111111111111" }], opsFail: true });
+  h.ops["welcome:sent"] = { 7: { at: "x", route: "dm", ok: true } };
+  const r = await h.api.run({ studentId: 114, trainerId: 5, kind: "레슨" });
+  assert.deepEqual(r, { status: "skipped", reason: "state_unavailable" });
+  assert.equal(h.dms.length, 0); assert.equal(h.audit.length, 0);
+  assert.deepEqual(h.ops["welcome:sent"], { 7: { at: "x", route: "dm", ok: true } });
 });

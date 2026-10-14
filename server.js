@@ -2962,15 +2962,21 @@ if (process.env.DISCORD_TOKEN) {
         return itx.editReply(`❌ 그사이 **${s.name}**(#${s.id})이 다른 계정에 연결됐어. \`/연결현황\`으로 확인해줘.`);
 
       const dmOk = await discordDM(target.id, linkRules.APPROVED_DM);
+      // 같은 계정의 대기 신청은 승인으로 닫는다(§9.32.6) — 안 닫으면 처리 대기에 「연결 신청」이 계속 남는다(10/14 #50)
+      let closedReqs = [];
+      try { closedReqs = await linkApproval.closePendingFor({ discordId: target.id, studentId: s.id, actorId: itx.user.id }); }
+      catch (e) { console.error("linkreq_close_on_command", e?.message); }
       try {
         await sbInsert("admin_audit", {
           actor_id: itx.user.id, actor_name: actor.label, action: "student.link",
           target: `student:${s.id}`, detail: { discord_id: String(target.id), discord_src: "app_link", dm: dmOk,
-            student_id: s.id, role: actor.isOwner ? "owner" : "trainer", staff_id: actor.staffId ?? null },
+            student_id: s.id, role: actor.isOwner ? "owner" : "trainer", staff_id: actor.staffId ?? null,
+            ...(closedReqs.length ? { request_id: closedReqs[0], closed_requests: closedReqs } : {}) },
         });
       } catch (e) { console.error("link_audit", e?.message); }
       await itx.editReply(
         `✅ 연결 완료 — **${s.name}**(#${s.id}) ↔ <@${target.id}>\n`
+        + (closedReqs.length ? `🔗 대기 중이던 연결 신청 #${closedReqs.join(" · #")} 도 승인으로 닫았어.\n` : "")
         + (dmOk ? "📨 본인에게 안내 DM을 보냈어(앱 재로그인 안내)."
                 : "⚠️ 안내 DM을 못 보냈어(DM 차단?). 앱에서 다시 로그인하라고 직접 알려줘."));
     } catch (e) {
@@ -3227,7 +3233,7 @@ if (process.env.DISCORD_TOKEN) {
     if (tied > 1) out.push(`⚠️ 같은 점수 후보가 ${tied}명이에요 — 디스코드 이름 · 배그 닉으로 누구인지 확인하세요`);
     return out;
   }
-  async function postLinkReqCard(req, user, cands) {
+  async function postLinkReqCard(req, user, cands, note = null) {
     const btns = cands.map((c) =>
       new ButtonBuilder().setCustomId(`linkreq_ok:${req.id}:${c.s.id}`)
         .setLabel(`✅ ${c.s.name} #${c.s.id}`.slice(0, 80)).setStyle(ButtonStyle.Success));
@@ -3235,7 +3241,8 @@ if (process.env.DISCORD_TOKEN) {
       .setLabel("❌ 거절").setStyle(ButtonStyle.Danger));
     const payload = {
       content:
-        `🔗 **계정 연결 신청 #${req.id}**\n`
+        (note ? `${note}\n` : "")
+        + `🔗 **계정 연결 신청 #${req.id}**\n`
         + `· 신청자: <@${user.id}> · 디스코드 이름 \`${user.username || req.discord_tag || "?"}\`\n`
         + `· 입력한 이름: **${req.claimed_name}**\n`
         + linkReqWarnings(req.claimed_name, cands).map((w) => `${w}\n`).join("")
@@ -3542,7 +3549,40 @@ if (process.env.DISCORD_TOKEN) {
   //   먼저 누른 사람만 — 신청을 「대기 → 승인/거절」로 먼저 잡고(조건부) 그다음 기록에 붙인다(조건부 + §11 부분 유니크).
   //   트레이너가 못 누르는 버튼은 **카드를 그대로 두고** 누른 사람에게만 알린다(원장이 이어서 처리).
   const linkApproval = linkRules.createLinkApproval({ sbSelect, sbPatch, sbInsert, discordDM });
-  const welcomeGuide = require("./welcome-guide.cjs").createWelcome({ sbSelect, sbInsert, opsGet: opsStateGet, opsSet: opsStateSet, discordDM });
+  const welcomeGuide = require("./welcome-guide.cjs").createWelcome({
+    sbSelect, sbInsert, opsSet: opsStateSet, discordDM,
+    // opsStateGet 은 읽기 실패도 null 로 삼킨다 — 여기서는 실패를 throw 로 넘겨야 발송 기록을 덮어쓰지 않는다
+    opsGet: async (key) => (await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`))[0]?.value || null,
+  });
+  // 명부보다 먼저 온 신청 다시 잡기(§9.32.6) — 10분마다 대기 신청을 보고, 신청 뒤에 생긴 명부에 이름이 똑같은 미연결 한 명이 있으면
+  //   승인 버튼을 붙인 카드를 한 번 다시 올린다. 다시 올린 신청 번호는 ops_state 'linkreq:reposted' 에 남겨 두 번 올리지 않는다.
+  const LINKREQ_REPOSTED_KEY = "linkreq:reposted";
+  async function linkReqRecover() {
+    if (!hasSupabase()) return;
+    try {
+      const pending = await sbSelect("student_link_requests",
+        "select=id,status,discord_id,discord_tag,claimed_name,created_at&status=eq.pending&order=id.asc&limit=50");
+      if (!pending.length) return;
+      const [roster, saved] = await Promise.all([
+        sbSelect("students", `select=id,name,status,trainer_id,pubg_name,discord_id,merged_into,created_at&discord_id=is.null${NOT_MERGED}&status=neq.done&limit=1000`),
+        opsStateGet(LINKREQ_REPOSTED_KEY),
+      ]);
+      const done = saved && typeof saved === "object" ? { ...saved } : {};
+      const picks = linkRules.recoverPicks(pending, roster, done);
+      if (!picks.length) return;
+      const staffById = await staffNameMap();
+      for (const { req, student } of picks) {
+        let user = { id: String(req.discord_id), username: req.discord_tag || null };
+        try { user = await client.users.fetch(String(req.discord_id)); } catch (_) {}
+        const cand = { s: student, score: 1, via: null, trainer: staffById[student.trainer_id] || "담당없음" };
+        const posted = await postLinkReqCard(req, user, [cand], "🔁 **다시 올린 카드** — 신청 뒤에 명부가 생겨서 승인 버튼을 붙였어요");
+        console.log(`[linkreq] recover #${req.id} → student #${student.id} posted=${posted}`);
+        if (posted) done[String(req.id)] = { studentId: student.id, at: new Date().toISOString() };
+      }
+      await opsStateSet(LINKREQ_REPOSTED_KEY, done);
+    } catch (e) { console.error("linkreq_recover", e?.message); }
+  }
+  setInterval(() => { linkReqRecover(); }, 10 * 60 * 1000).unref();
   const LINKREQ_TAG = { approved: "승인", rejected: "거절", cancelled: "취소" };
   const LINKREQ_TRAINER_MSG = {
     not_assigned: "내 담당 수강생 기록이 아니에요",

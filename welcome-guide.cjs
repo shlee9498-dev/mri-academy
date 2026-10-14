@@ -47,7 +47,7 @@ function pickDiscord({ student, intakes, pendingLinks }) {
   return null;
 }
 
-// deps: sbSelect · sbInsert · opsGet(key) · opsSet(key, value) · discordDM(id, text) → bool · now
+// deps: sbSelect · sbInsert · opsGet(key — 읽기 실패면 throw · 없으면 null) · opsSet(key, value) · discordDM(id, text) → bool · now
 function createWelcome(deps) {
   const { sbSelect, sbInsert, opsGet, opsSet } = deps;
   const discordDM = typeof deps.discordDM === "function" ? deps.discordDM : async () => false;
@@ -62,7 +62,12 @@ function createWelcome(deps) {
     const student = (await sbSelect("students", `select=id,name,discord_id,trainer_id&id=eq.${sid}&limit=1`))[0];
     if (!student) return { status: "skipped", reason: "no_student" };
     if (student.discord_id) return { status: "skipped", reason: "linked" };
-    const sent = (await opsGet(SENT_KEY).catch(() => null)) || {};
+    // 발송 기록을 못 읽으면 보내지 않는다 — 빈 기록으로 보고 덮어쓰면 기존 발송 기록이 통째로 사라지고 중복 DM 이 나간다.
+    let raw;
+    try { raw = await opsGet(SENT_KEY); }
+    catch (e) { log.error("welcome_state", e?.message); return { status: "skipped", reason: "state_unavailable" }; }
+    if (raw != null && (typeof raw !== "object" || Array.isArray(raw))) return { status: "skipped", reason: "state_unavailable" };
+    const sent = raw ? { ...raw } : {};
     if (sent[String(sid)]) return { status: "skipped", reason: "already_sent" };
 
     const [intakes, pendingLinks] = await Promise.all([

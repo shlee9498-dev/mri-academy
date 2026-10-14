@@ -273,7 +273,7 @@ test("오너 — 전체 수강생(prospect · 합친 행 제외) · 필터 칩 �
   assert.deepEqual(rows.map((s) => [s.displayName, s.listState, s.holdSince]), [
     ["가", "hold", daysAgo(5)],        // 마지막 수업 20일 전 → 15일째(5일 전)부터 보류
     ["나", "active", null],            // 잡힌 예약
-    ["다", "active", null],            // 진행 중 직강(쉬는 중 포함)
+    ["다", "hold", "2025-01-16"],      // 멈춘 직강만(paused) — 진행 중으로 붙잡지 않는다(10/14) · 명부 등록일 기준 보류
     ["라", "active", null],            // 마지막 수업 10일 전
     ["사", "active", null],            // 진행 중 직강
     ["아", "active", null],            // 3일 전 등록

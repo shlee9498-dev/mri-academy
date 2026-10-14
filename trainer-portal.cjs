@@ -473,7 +473,7 @@ module.exports = function mountTrainerPortal(app, deps) {
         const ends = endedBy.get(s.id);
         const allEnded = rel.size > 0 && ends && [...rel].every((tid) => ends.has(tid));
         st = gv.listState({ today, lastLessonOn: lastClassAny, lastEnrollOn: a.lastEnrollAny, createdOn,
-          hasUpcoming: !!a.upAny, inCourse: courses.length > 0,
+          hasUpcoming: !!a.upAny, inCourse: courses.some((c) => c.status === "active"),   // 멈춘 직강(paused)은 진행 중으로 세지 않는다(§9.14 · 10/14 지휘 판단)
           endedOn: allEnded ? [...rel].map((tid) => ends.get(tid)).sort().at(-1) : null });
       }
       const lv = gv.effectiveLevel(x.level ?? null, courses);
