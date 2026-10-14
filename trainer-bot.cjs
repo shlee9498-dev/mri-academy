@@ -49,6 +49,7 @@ const ERR_TEXT = {
   not_staff: "트레이너 명부에 없는 계정이에요. 원장에게 말해 주세요",
   already_recorded_today: "그날 기록이 이미 있어요. 앱에서 확인해 주세요",
   in_past: "이미 시작한 수업이에요",
+  lead_crossed: "저장하는 사이에 시작 3시간 안으로 들어왔어요. 앱에서 확인해 주세요",
 };
 const errText = (code) => ERR_TEXT[code] || "지금은 저장하지 못했어요. 앱에서 확인해 주세요";
 
@@ -199,7 +200,10 @@ function createTrainerBot(deps) {
     const startMs = Date.parse(c.startAt), endMs = startMs + c.durationMin * 60_000;
     // ① 확인 — 마감(시작 전) · 겹치는 칸 · 그 트레이너 잔여(§41). 막히면 칸을 열지 않는다
     if (startMs <= now()) return { ok: false, text: errText("in_past") };
-    if (startMs - now() < LEAD_MS && !(await deps.trainerLeadReady?.())) return { ok: false, text: errText("booking_closed") };
+    // 마감 예외(§83)가 DB 에 있으면 시작 시각과 상관없이 늘 트레이너 길(untilStart)로 넣는다 —
+    //   확인 때는 3시간 밖이었다가 넣는 순간 3시간 안이 되는 경계가 아예 생기지 않는다(검수 메모 10/15).
+    const leadReady = !!(await deps.trainerLeadReady?.());
+    if (startMs - now() < LEAD_MS && !leadReady) return { ok: false, text: errText("booking_closed") };
     const days = Math.min(60, Math.max(1, Math.ceil((endMs - now()) / 86400_000) + 1));
     const sl = await deps.portalCall(staff, "GET", `/slots?days=${days}`);
     if (sl.status !== 200) return { ok: false, text: errText(sl.body?.error?.code) };
@@ -217,7 +221,7 @@ function createTrainerBot(deps) {
     const op = await deps.portalCall(staff, "POST", "/slots", { startAt: c.startAt, durationMin: c.durationMin, lessonType: "personal" });
     if (op.status !== 200) return { ok: false, text: errText(op.body?.error?.code) };
     const bk = await deps.portalCall(staff, "POST", `/slots/${op.body.firstId}/bookings`,
-      { studentId: c.student.id, durationMin: c.durationMin, ...(startMs - now() < LEAD_MS ? { untilStart: true } : {}) });
+      { studentId: c.student.id, durationMin: c.durationMin, ...(leadReady ? { untilStart: true } : {}) });
     if (bk.status === 200) {
       const held = Number(bk.body?.gamesHeld || 0), rem2 = bk.body?.remainingAfter;
       return { ok: true, text: `저장했어요 · ${cardWhen(c.startAt, c.durationMin)} · ${c.student.displayName}님 · ${held}판 잡혔고${rem2 == null ? "" : ` 남은 판수 ${rem2}판`}` };
@@ -225,7 +229,10 @@ function createTrainerBot(deps) {
     // ③ 실패 — 방금 연 칸을 닫는다(빈 개인 칸이 수강생 앱에 「예약 가능」으로 남지 않게)
     const closed = await closeOpened(staff, startMs, endMs, days);
     const extra = closed.left === null || closed.left.length ? `\n${await reportLeft(staff, c, closed.left)}` : "";
-    return { ok: false, text: errText(bk.body?.error?.code) + extra };
+    // §83 없이 3시간 마감 쪽 길로 넣었는데 그 사이 3시간 안으로 넘어간 경우 — 「서버 준비」가 아니라 시각 문제다
+    const code = bk.body?.error?.code;
+    const msg = code === "booking_closed" && !leadReady ? ERR_TEXT.lead_crossed : errText(code);
+    return { ok: false, text: msg + extra };
   }
   // 방금 연 칸 전부 닫기(계약 §9.37.1 ③) — firstId 부터 번호를 이어 세지 않는다(칸 번호는 전 트레이너 공용).
   //   그 트레이너(GET /slots = 내 칸만) · 그 시작~끝 범위의 예약 없는 개인 칸(open)을 다시 찾아 하나씩 닫는다.
@@ -266,11 +273,18 @@ function createTrainerBot(deps) {
                      btn(`${PREFIX}ns:${t.bookingId}`, "노쇼", 4))],
   });
 
-  async function bellTick() {
+  // 벨 기록(ops_state 한 줄)을 읽고 쓰는 일은 하나씩만 — 틱이 DM 을 보내는 동안 버튼 답이 끼면
+  //   틱이 옛 값을 통째로 덮어써 「답함」이 사라졌다. 같은 프로세스 안이라 약속 줄 하나로 충분하다.
+  let stateQueue = Promise.resolve();
+  const withState = (fn) => { const p = stateQueue.then(fn, fn); stateQueue = p.catch(() => {}); return p; };
+
+  const bellTick = () => withState(bellTickInner);
+  async function bellTickInner() {
     const t0 = now();
     let st = (await deps.stateGet(BELL_KEY)) || null;
     if (!st || !st.since) {                       // 처음 — 지금보다 먼저 끝난 수업은 묻지 않는다(배포 첫 틱에 쏟아지지 않게)
       await deps.stateSet(BELL_KEY, { since: new Date(t0).toISOString(), items: {} });
+      log.log("[trainer-bot] bell 기준 시각 적음 — 이보다 먼저 끝난 수업은 묻지 않아요");
       return { sent: 0, init: true };
     }
     const items = st.items || {};
@@ -295,12 +309,12 @@ function createTrainerBot(deps) {
     if (changed) await deps.stateSet(BELL_KEY, { since: st.since, items });
     return { sent };
   }
-  async function markAnswered(bookingId) {
+  const markAnswered = (bookingId) => withState(async () => {
     const st = await deps.stateGet(BELL_KEY);
     if (!st?.items?.[bookingId]) return;
     st.items[bookingId].answered = new Date(now()).toISOString();
     await deps.stateSet(BELL_KEY, st);
-  }
+  });
 
   // ── 상호작용 ───────────────────────────────────────────────
   async function onCommand(itx) {
@@ -415,7 +429,7 @@ function createTrainerBot(deps) {
     } catch (e) { log.error("[trainer-bot] bell", e?.message); r = { status: 0, body: null }; }
     if (act === "len" && r?.badLength) r = { status: 0, body: null };
     const out = bellOutcome(r.status, act === "nsok" && r.status === 200 ? { status: "no_show" } : r.body);
-    if (out.done) await markAnswered(bookingId).catch(() => {});
+    if (out.done) markAnswered(bookingId).catch(() => {});        // 기다리지 않는다 — 틱이 DM 을 보내는 중이어도 카드는 바로 바뀐다
     inflight.delete(lock);
     await itx.editReply({ content: `${head}\n${out.text}`, components: [] });
     return true;
@@ -528,15 +542,20 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
     };
     client.on("interactionCreate", (itx) => bot.handle(itx).catch((e) => log.error("[trainer-bot] handler", e && e.message)));
     client.on("messageCreate", (msg) => bot.onMessage(msg).catch((e) => log.error("[trainer-bot] message", e && e.message)));
+    // 등록 서버 — MRI ACADEMY(GUILD_ID · 수강생 · 트레이너가 있는 곳) + GmI(LESSON_GUILD_ID · 트레이너 운영 채널).
+    //   두 곳 다 server.js 가 기동 때 commands.set(목록 통째)으로 갈아 끼우므로 15초 뒤 「빠진 것만」 만든다.
     const register = async () => {
-      const gid = env.LESSON_GUILD_ID;
-      if (!gid || !client.application) return;
-      try {
-        const have = await client.application.commands.fetch({ guildId: gid });
-        const names = new Set([...have.values()].map((c) => c.name));
-        for (const c of COMMANDS) if (!names.has(c.name)) await client.application.commands.create(c, gid);
-        log.log(`[trainer-bot] /${COMMAND_NAME} ready · 채널 한 줄 ${env.TRAINER_BOOK_CHANNEL_ID ? "켜짐" : "꺼짐(TRAINER_BOOK_CHANNEL_ID 없음)"}`);
-      } catch (e) { log.warn("[trainer-bot] register_failed", String((e && e.message) || e).slice(0, 80)); }
+      if (!client.application) return;
+      const done = [];
+      for (const gid of guildTargets(env)) {
+        try {
+          const have = await client.application.commands.fetch({ guildId: gid });
+          const names = new Set([...have.values()].map((c) => c.name));
+          for (const c of COMMANDS) if (!names.has(c.name)) await client.application.commands.create(c, gid);
+          done.push(`${client.guilds?.cache?.get(gid)?.name || "?"}(${gid})`);
+        } catch (e) { log.warn("[trainer-bot] register_failed", gid, String((e && e.message) || e).slice(0, 80)); }
+      }
+      log.log(`[trainer-bot] /${COMMAND_NAME} ready · ${done.join(" · ") || "등록 서버 없음"} · 채널 한 줄 ${env.TRAINER_BOOK_CHANNEL_ID ? "켜짐" : "꺼짐(TRAINER_BOOK_CHANNEL_ID 없음)"}`);
     };
     const start = () => {
       setTimeout(register, 15000).unref?.();
@@ -549,6 +568,11 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
   };
   if (!tryAttach()) { const t = setInterval(() => { if (tryAttach()) clearInterval(t); }, 5000); t.unref?.(); }
   return { bot, deps };
+}
+
+// /수업잡기 를 둘 서버 — MRI ACADEMY(GUILD_ID) 먼저 · GmI(LESSON_GUILD_ID) · 같은 값이면 한 번
+function guildTargets(env) {
+  return [...new Set([env.GUILD_ID, env.LESSON_GUILD_ID].filter(Boolean).map(String))];
 }
 
 // 벨 대상(읽기만) — 개인 레슨 머리 예약 · booked/pending_review · 시작이 이틀 안 · 트레이너 디스코드 있음
@@ -584,4 +608,4 @@ async function leadReady(sbRpc) {
   return ok;
 }
 
-module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, COMMANDS, COMMAND_NAME, BELL_KEY });
+module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, guildTargets, COMMANDS, COMMAND_NAME, BELL_KEY });

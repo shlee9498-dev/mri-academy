@@ -5,7 +5,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { createTrainerBot, bellOutcome } = require("../trainer-bot.cjs");
+const { createTrainerBot, bellOutcome, guildTargets } = require("../trainer-bot.cjs");
 
 const T0 = Date.parse("2026-10-14T15:00:00+09:00");
 const iso = (s) => new Date(Date.parse(s)).toISOString();
@@ -113,7 +113,7 @@ test("A — [저장]: 확인 → 칸 열기 → 대신 넣기 · 두 번 눌러�
   const w = fp.writes();
   assert.deepEqual(w.map((c) => `${c.method} ${c.path}`), ["POST /slots", "POST /slots/slot-op/bookings"]);
   assert.deepEqual(w[0].body, { startAt: iso("2026-10-16T21:00:00+09:00"), durationMin: 120, lessonType: "personal" });
-  assert.deepEqual(w[1].body, { studentId: "stu-1", durationMin: 120 });           // 3시간 밖 = 종전 함수
+  assert.deepEqual(w[1].body, { studentId: "stu-1", durationMin: 120, untilStart: true });   // §83 있으면 늘 트레이너 길(경계 없음)
 });
 
 test("A — 다른 트레이너는 카드를 못 누른다", async () => {
@@ -314,4 +314,47 @@ test("문구 — 금지어 없음 · 한 줄 끝 마침표 없음 · !! ~~ 없�
   for (const w of ["확실하게", "완벽하게", "체계적으로", "특별한", "최고의", "함께 성장", "여러분의", "!!", "~~"])
     assert.ok(!strings.some((s) => s.includes(w)), w);
   assert.ok(!strings.some((s) => /[가-힣]\.$/.test(s)), strings.filter((s) => /[가-힣]\.$/.test(s)).join(" | "));
+});
+
+test("A — §83 없을 때 3시간 경계: 확인 땐 밖 · 넣을 땐 안이면 「3시간 안으로 들어왔어요」(서버 준비 문구 아님) · 플래그 없음", async () => {
+  const over = { "POST /slots/:id/bookings": () => ({ status: 409, body: { error: { code: "booking_closed" } } }) };
+  const { bot, fp } = makeBot({ leadReady: false, portal: over });
+  const msg = { ...(await bot.prepare(STAFF, { text: "오늘 18:00 길동 1시간", discordId: "d5" })) };   // 15:00 → 3시간 딱
+  await bot.handle(press(ids(msg).find((x) => x.startsWith("tbot_save:")), msg).itx);
+  assert.deepEqual(fp.writes()[1].body, { studentId: "stu-1", durationMin: 60 });
+  assert.match(msg.content, /저장하는 사이에 시작 3시간 안으로 들어왔어요/);
+  assert.doesNotMatch(msg.content, /서버 준비/);
+});
+
+test("B — 틱이 DM 을 보내는 사이 버튼 답이 와도 「답함」이 남는다(한 줄로 세우기)", async () => {
+  const at = (s) => Date.parse(s);
+  const t77 = { bookingId: 77, trainerDiscordId: "d5", studentName: "길동", startAt: iso("2026-10-14T20:00:00+09:00"), durationMin: 60 };
+  const t78 = { ...t77, bookingId: 78, startAt: iso("2026-10-14T21:00:00+09:00") };
+  const state = new Map([["trainer-bell", { since: iso("2026-10-14T00:00:00+09:00"), items: { 77: { first: iso("2026-10-14T21:10:00+09:00"), ok: true } } }]]);
+  let release;
+  const slow = new Promise((r) => { release = r; });
+  const h = makeBot({ targets: [t77, t78], state, now: at("2026-10-14T22:10:00+09:00") });
+  h.bot._deps.sendDM = async () => { await slow; return true; };      // 78 첫 벨 DM 이 늦게 끝난다
+  const tick = h.bot.bellTick();
+  await new Promise((r) => setImmediate(r));
+  const msg = { content: "🔔 x", components: [] };
+  await h.bot.handle(press("tbot_done:77", msg).itx);                  // 그 사이 77 [끝났어요]
+  release();
+  await tick;
+  await new Promise((r) => setImmediate(r));
+  await h.bot.bellTick();                                              // 줄 끝까지 비우기
+  const st = h.state.get("trainer-bell");
+  assert.ok(st.items[77].answered, "답함이 남아야 한다");
+  assert.ok(st.items[78].first, "78 첫 벨 기록");
+  h.setNow(at("2026-10-15T00:20:00+09:00"));                           // 77 첫 벨 3시간 뒤 — 답했으니 다시 묻지 않는다
+  h.bot._deps.sendDM = async (did, p) => { h.dms.push({ did, payload: p }); return true; };
+  await h.bot.bellTick();
+  assert.ok(!h.dms.some((d) => /길동님 1시간 수업/.test(d.payload.content) && d.payload.components[0].components[0].custom_id === "tbot_done:77"));
+});
+
+test("등록 서버 — MRI ACADEMY(GUILD_ID) · GmI(LESSON_GUILD_ID) 둘 다 · 같은 값이면 한 번 · 없으면 뺀다", () => {
+  assert.deepEqual(guildTargets({ GUILD_ID: "111", LESSON_GUILD_ID: "222" }), ["111", "222"]);
+  assert.deepEqual(guildTargets({ GUILD_ID: "111", LESSON_GUILD_ID: "111" }), ["111"]);
+  assert.deepEqual(guildTargets({ LESSON_GUILD_ID: "222" }), ["222"]);
+  assert.deepEqual(guildTargets({}), []);
 });
