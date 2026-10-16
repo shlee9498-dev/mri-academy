@@ -660,6 +660,7 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
         } catch (e) { log.warn("[trainer-bot] register_failed", gid, String((e && e.message) || e).slice(0, 80)); }
       }
       log.log(`[trainer-bot] /${COMMAND_NAME} ready · ${done.join(" · ") || "등록 서버 없음"} · 채널 한 줄 ${env.TRAINER_BOOK_CHANNEL_ID ? "켜짐" : "꺼짐(TRAINER_BOOK_CHANNEL_ID 없음)"}`);
+      if (env.TRAINER_BOOK_CHANNEL_ID) log.log(`[trainer-bot] ${await channelCheck(client, env.TRAINER_BOOK_CHANNEL_ID)}`);
     };
     const start = () => {
       setTimeout(register, 15000).unref?.();
@@ -672,6 +673,20 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
   };
   if (!tryAttach()) { const t = setInterval(() => { if (tryAttach()) clearInterval(t); }, 5000); t.unref?.(); }
   return { bot, deps };
+}
+
+// 한 줄 채널 점검(부팅 한 번) — 채널을 찾았는지 · 봇에게 모자란 권한 이름(디스코드 설정 화면 이름 그대로).
+//   한 줄을 읽으려면 「채널 보기」 · 답 카드를 달려면 「메시지 보내기」 · 원문에 답으로 다는 데 「메시지 기록 보기」가 든다.
+const CHANNEL_PERMS = [["ViewChannel", "채널 보기"], ["SendMessages", "메시지 보내기"], ["ReadMessageHistory", "메시지 기록 보기"]];
+async function channelCheck(client, id) {
+  let ch;
+  try { ch = await client.channels.fetch(id); }
+  catch (e) { return `채널 한 줄 · 채널을 못 찾음(code ${e?.code ?? "?"} · 50001 = 봇이 그 채널을 못 봄 · 10003 = 없는 채널 id)`; }
+  if (!ch || typeof ch.permissionsFor !== "function") return "채널 한 줄 · 글 채널이 아님";
+  const me = ch.guild?.members?.me || (ch.guild ? await ch.guild.members.fetchMe().catch(() => null) : null);
+  const perms = me ? ch.permissionsFor(me) : null;
+  const missing = perms ? CHANNEL_PERMS.filter(([k]) => !perms.has(k)).map(([, label]) => label) : ["(권한을 읽지 못함)"];
+  return `채널 한 줄 · #${ch.name} (${ch.guild?.name || "?"}) · ${missing.length ? `권한 부족: ${missing.join(" · ")}` : "권한 OK"}`;
 }
 
 // 등록된 명령과 정의가 다른가 — 설명 · 칸 이름 목록만 본다(칸 이름이 바뀌면 고쳐 쓴다)
@@ -718,4 +733,4 @@ async function leadReady(sbRpc) {
   return ok;
 }
 
-module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, guildTargets, commandChanged, COMMANDS, COMMAND_NAME, BELL_KEY });
+module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, guildTargets, commandChanged, channelCheck, COMMANDS, COMMAND_NAME, BELL_KEY });
