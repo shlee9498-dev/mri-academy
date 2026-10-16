@@ -25,19 +25,11 @@ const BELL_LOOKBACK_MS = 2 * 86400_000;       // 대상 창 — 시작이 이틀
 const CARD_TTL_MS = 30 * 60_000;              // 확인 카드 유효 30분
 const LEAD_MS = 3 * 3600_000;                 // 수강생 본인 예약 마감(3시간) — 트레이너 길 예외는 서버가 판정한다
 const MAX_PICK = 5;
+const COURSE_MIN = 180;                       // 직강 반 기본 길이(booking-api COURSE_SPAN_DEFAULT 와 같다)
 
-const COMMANDS = [{
-  name: COMMAND_NAME,
-  description: "DM 으로 맞춘 수업을 한 줄로 저장해요",
-  options: [
-    { type: 3, name: "한줄", description: "예: 금 9시 길동 2시간", required: false, max_length: 100 },
-    { type: 3, name: "수강생", description: "내 수강생에서 골라요", required: false, autocomplete: true },
-    { type: 3, name: "날짜", description: "예: 10/17 · 금 · 내일", required: false, max_length: 20 },
-    { type: 3, name: "시각", description: "예: 21:00 · 밤 9시", required: false, max_length: 20 },
-    { type: 4, name: "길이", description: "수업 길이", required: false,
-      choices: PERSONAL_DURATIONS.map((m) => ({ name: durationLabel(m), value: m })) },
-  ],
-}];
+// 명령은 칸이 없다 — 실행하면 본인만 보는 카드에서 클릭으로 고른다(오너 실사용 10/16 「너무 불편」 · 지휘 「타이핑 0」).
+//   한 줄 입력은 채널(TRAINER_BOOK_CHANNEL_ID)에만 남긴다.
+const COMMANDS = [{ name: COMMAND_NAME, description: "수업을 클릭으로 잡아요 · 본인에게만 보여요", options: [] }];
 
 // ── 문구(수강생 쪽이 아니라 트레이너 업무 카드 · 「~요」체 · 한 줄 마침표 없음 · 카드당 이모지 1개) ──
 const ERR_TEXT = {
@@ -49,6 +41,10 @@ const ERR_TEXT = {
   not_staff: "트레이너 명부에 없는 계정이에요. 원장에게 말해 주세요",
   already_recorded_today: "그날 기록이 이미 있어요. 앱에서 확인해 주세요",
   in_past: "이미 시작한 수업이에요",
+  owner_only: "직강 칸은 원장만 열 수 있어요",
+  no_course: "진행 중인 직강이 없는 수강생이에요. 앱에서 확인해 주세요",
+  no_units_left: "직강 남은 회차가 없어요. 원장에게 말해 주세요",
+  already_booked: "그 직강 칸에 이미 넣었어요",
   lead_crossed: "저장하는 사이에 시작 3시간 안으로 들어왔어요. 앱에서 확인해 주세요",
 };
 const errText = (code) => ERR_TEXT[code] || "지금은 저장하지 못했어요. 앱에서 확인해 주세요";
@@ -159,7 +155,7 @@ function createTrainerBot(deps) {
       const f = await findStudents(staff, name);
       if (f.error) return { content: errText(f.error) };
       candidates = f.list;
-      if (!candidates.length) return { content: `「${name}」 수강생을 내 명단에서 못 찾았어요. /${COMMAND_NAME} 의 수강생 칸에서 골라 주세요` };
+      if (!candidates.length) return { content: `「${name}」 수강생을 내 명단에서 못 찾았어요. /${COMMAND_NAME} 로 골라 주세요` };
       if (candidates.length === 1) student = candidates[0];
     }
     const pastRecord = !p.ok;           // in_past → 기록 카드(계약 §9.37.1 · §9.9)
@@ -317,33 +313,107 @@ function createTrainerBot(deps) {
   });
 
   // ── 상호작용 ───────────────────────────────────────────────
+  // ── 클릭 카드(/수업잡기) — 수강생 · 날짜 · 시각 · 길이를 고르면 줄이 채워지고 [저장] 이 켜진다 ──
   async function onCommand(itx) {
     const staff = await deps.staffByDiscord(itx.user.id);
     if (!staff) return itx.reply({ content: errText("not_staff"), ephemeral: true });
-    const o = itx.options;
-    const line = o.getString("한줄");
-    const sKey = o.getString("수강생");
-    const date = o.getString("날짜"), time = o.getString("시각"), len = o.getInteger("길이");
     await itx.deferReply({ ephemeral: true });
-    let payload;
-    if (line) payload = await prepare(staff, { text: line, discordId: itx.user.id });
-    else if (sKey && date && time && len) {
-      const p = parseLessonLine(`${date} ${time} 수강생 ${len}분`, now());
-      const f = await deps.portalCall(staff, "GET", "/students");
-      const s = (f.body?.students || []).find((x) => x.id === sKey);
-      if (!s) payload = { content: errText("scope_denied") };
-      else payload = await prepare(staff, { parsed: p, student: s, discordId: itx.user.id });
-    } else payload = { content: `한 줄로 적어 주세요 · 예: /${COMMAND_NAME} 한줄:금 9시 길동 2시간\n못 읽으면 수강생 · 날짜 · 시각 · 길이 칸을 채워 주세요` };
-    return itx.editReply(payload);
+    return itx.editReply(await openPickCard(staff, itx.user.id));
   }
 
-  async function onAutocomplete(itx) {
-    const staff = await deps.staffByDiscord(itx.user.id);
-    if (!staff) return itx.respond([]);
-    const q = String(itx.options.getFocused() || "").trim();
-    const r = await deps.portalCall(staff, "GET", `/students${q ? `?q=${encodeURIComponent(q)}` : ""}`).catch(() => null);
-    const list = (r?.body?.students || []).filter((s) => s.inMyScope !== false).slice(0, 25);
-    return itx.respond(list.map((s) => ({ name: `${s.displayName}${s.pubgName ? ` (${s.pubgName})` : ""}`.slice(0, 100), value: s.id })));
+  // 고를 수강생 — 내 범위(원장은 직강 진행 중인 사람 포함) · 최근 수업 순 · 25명(드롭다운 한도)
+  async function pickStudents(staff) {
+    const r = await deps.portalCall(staff, "GET", "/students");
+    if (r.status !== 200) return { error: r.body?.error?.code || "unavailable" };
+    const owner = staff.role === "owner";
+    const list = (r.body?.students || []).filter((x) => !x.isTest || owner)
+      .map((x) => ({ ...x, course: owner && x.courseState === "active" }))
+      .filter((x) => x.inMyScope !== false || x.course)
+      .sort((a, b) => String(b.lastLessonOn || "").localeCompare(String(a.lastLessonOn || ""))
+        || String(a.displayName).localeCompare(String(b.displayName), "ko"));
+    return { list: list.slice(0, 25), more: Math.max(0, list.length - 25) };
+  }
+
+  async function openPickCard(staff, discordId) {
+    const f = await pickStudents(staff);
+    if (f.error) return { content: errText(f.error) };
+    if (!f.list.length) return { content: "고를 수강생이 없어요. 담당 수강생이 생기면 여기에 떠요" };
+    const sl = await deps.portalCall(staff, "GET", "/slots?days=1").catch(() => null);
+    const c = newCard({ mode: "form", staffId: staff.id, discordId, students: f.list, more: f.more,
+      lengths: sl?.body?.personalLengths || [], sel: { half: 0 } });
+    return formView(c);
+  }
+
+  // 날짜 14일 · 시각 10시~다음날 새벽 2시(시 단위 + 정각/30분 버튼) — 드롭다운 25개 한도 안
+  const DAY_COUNT = 14;
+  const HOURS = Array.from({ length: 17 }, (_, i) => 10 + i);      // 10 … 26(= 다음날 2시)
+  const hourLabel = (h) => (h < 12 ? `오전 ${h}시` : h === 12 ? "낮 12시" : h < 24 ? `오후 ${h - 12}시`
+    : h === 24 ? "밤 12시 (다음날 0시)" : `새벽 ${h - 24}시 (다음날)`);
+  function dayOptions() {
+    const today = kstYmd(now());
+    return Array.from({ length: DAY_COUNT }, (_, i) => {
+      const ymd = new Date(Date.parse(`${today}T00:00:00Z`) + i * 86400_000).toISOString().slice(0, 10);
+      const md = cardWhen(new Date(Date.parse(`${ymd}T12:00:00+09:00`)).toISOString(), 30).split(" ")[0];
+      return { value: ymd, label: i === 0 ? `오늘 ${md}` : i === 1 ? `내일 ${md}` : md };
+    });
+  }
+  const selStart = (sel) => (sel.ymd && sel.hour != null
+    ? new Date(Date.parse(`${sel.ymd}T00:00:00+09:00`) + (sel.hour * 60 + (sel.half || 0)) * 60_000).toISOString() : null);
+  const select = (custom_id, placeholder, options) => ({ type: 1, components: [{ type: 3, custom_id, placeholder, min_values: 1, max_values: 1, options }] });
+
+  function formView(c) {
+    const sel = c.sel, stu = c.students.find((x) => x.id === sel.studentId) || null;
+    const course = !!stu?.course;
+    const dur = course ? COURSE_MIN : sel.durationMin;
+    const startAt = selStart(sel);
+    const ready = !!(stu && startAt && dur);
+    let line;
+    if (ready) {
+      const g = c.lengths.find((l) => Number(l.min) === dur);
+      const tail = course ? "직강 · 회차는 출석 때 빠져요" : `${durationLabel(dur)}${g ? `(${g.games}판)` : ""}`;
+      line = `${cardWhen(startAt, dur)} · ${stu.displayName}님 · ${tail}`;
+    } else {
+      const need = [!stu && "수강생", !sel.ymd && "날짜", sel.hour == null && "시각", !dur && "길이"].filter(Boolean);
+      line = `${need.join(" · ")}${eulReul(need[need.length - 1])} 골라 주세요`;
+    }
+    const lenRow = { type: 1, components: PERSONAL_DURATIONS.map((m) =>
+      btn(`${PREFIX}flen:${c.id}:${m}`, durationLabel(m), m === dur ? 1 : 2, course)) };
+    return {
+      content: `📅 수업 잡기 · 본인에게만 보여요\n${line}${c.more ? `\n(최근 수업 순 25명까지 보여요 · 나머지 ${c.more}명은 앱에서)` : ""}`,
+      components: [
+        select(`${PREFIX}fstu:${c.id}`, "수강생", c.students.map((x) => ({
+          label: `${x.displayName}${x.pubgName ? ` (${x.pubgName})` : ""}`.slice(0, 100), value: x.id,
+          description: x.course ? "직강" : x.remainingMine != null ? `남은 판수 ${x.remainingMine}판` : undefined,
+          default: x.id === sel.studentId }))),
+        select(`${PREFIX}fday:${c.id}`, "날짜", dayOptions().map((o) => ({ ...o, default: o.value === sel.ymd }))),
+        select(`${PREFIX}fhour:${c.id}`, "시각", HOURS.map((h) => ({ label: hourLabel(h), value: String(h), default: h === sel.hour }))),
+        lenRow,
+        row(btn(`${PREFIX}fmin:${c.id}:0`, "정각", sel.half ? 2 : 1), btn(`${PREFIX}fmin:${c.id}:30`, "30분", sel.half ? 1 : 2),
+            btn(`${PREFIX}save:${c.id}`, "저장", 3, !ready), btn(`${PREFIX}cancel:${c.id}`, "취소")),
+      ],
+    };
+  }
+
+  // 직강 저장 — 그 시각 내 직강 칸에 넣는다(없으면 연다 · 원장만 · 넣기 실패하면 방금 연 칸만 닫는다)
+  async function saveCourse(staff, c) {
+    const startMs = Date.parse(c.startAt);
+    const sl = await deps.portalCall(staff, "GET", "/slots?days=15");
+    if (sl.status !== 200) return { ok: false, text: errText(sl.body?.error?.code) };
+    let slot = (sl.body?.slots || []).find((x) => x.lessonType === "course" && x.status === "open" && Date.parse(x.startAt) === startMs);
+    let opened = null;
+    if (!slot) {
+      const op = await deps.portalCall(staff, "POST", "/slots", { startAt: c.startAt, durationMin: COURSE_MIN, lessonType: "course" });
+      if (op.status !== 200) return { ok: false, text: errText(op.body?.error?.code) };
+      opened = op.body.firstId; slot = { id: opened };
+    }
+    const bk = await deps.portalCall(staff, "POST", `/slots/${slot.id}/bookings`, { studentId: c.student.id });
+    if (bk.status === 200) {
+      const u = bk.body?.unitsLeft;
+      return { ok: true, text: `저장했어요 · ${cardWhen(c.startAt, COURSE_MIN)} · ${c.student.displayName}님 · 직강${u == null ? "" : ` · 남은 회차 ${u}회`}` };
+    }
+    if (opened) await deps.portalCall(staff, "DELETE", `/slots/${opened}`).catch(() => null);
+    const code = bk.body?.error?.code;
+    return { ok: false, text: code === "course_choice_needed" ? "진행 중인 직강이 둘이에요. 앱에서 강의를 골라 넣어 주세요" : errText(code) };
   }
 
   async function onMessage(msg) {
@@ -359,7 +429,7 @@ function createTrainerBot(deps) {
   }
 
   async function onButton(itx) {
-    const m = /^tbot_(save|edit|cancel|ampm|pick|done|chg|ns|nsok|len):([^:]+)(?::(\d+))?$/.exec(itx.customId || "");
+    const m = /^tbot_(save|edit|cancel|ampm|pick|done|chg|ns|nsok|len|fstu|fday|fhour|flen|fmin):([^:]+)(?::(\d+))?$/.exec(itx.customId || "");
     if (!m) return false;
     const [, act, key, arg] = m;
     const staff = await deps.staffByDiscord(itx.user.id);
@@ -374,6 +444,16 @@ function createTrainerBot(deps) {
     if (c.state !== "open") { await itx.reply({ content: c.state === "done" ? "이미 저장했어요" : "이 카드는 끝났어요. 다시 하려면 새로 띄워 주세요", ephemeral: true }); return true; }
 
     if (act === "cancel") { c.state = "closed"; return itx.update({ content: "취소했어요", components: [] }); }
+    // 클릭 카드 고르기 — 고를 때마다 줄을 다시 그린다(쓰기 없음)
+    if (c.mode === "form" && ["fstu", "fday", "fhour", "flen", "fmin"].includes(act)) {
+      const v = itx.values?.[0];
+      if (act === "fstu" && c.students.some((x) => x.id === v)) c.sel.studentId = v;
+      if (act === "fday" && /^\d{4}-\d{2}-\d{2}$/.test(v || "")) c.sel.ymd = v;
+      if (act === "fhour" && HOURS.includes(Number(v))) c.sel.hour = Number(v);
+      if (act === "flen" && PERSONAL_DURATIONS.includes(Number(arg))) c.sel.durationMin = Number(arg);
+      if (act === "fmin") c.sel.half = Number(arg) === 30 ? 30 : 0;
+      return itx.update(formView(c));
+    }
     if (act === "edit") { c.state = "closed"; return itx.update({ content: `고쳐서 다시 보내 주세요 · /${COMMAND_NAME}`, components: [] }); }
     if (act === "ampm") {
       const o = c.options[Number(arg)];
@@ -395,11 +475,26 @@ function createTrainerBot(deps) {
     }
     // save — 한 번만. 누르는 순간 버튼을 걷고, 실패해도 다시 보내지 않는다
     if (inflight.has(c.id)) { await itx.reply({ content: "저장 중이에요", ephemeral: true }); return true; }
+    if (c.mode === "form") {
+      const stu = c.students.find((x) => x.id === c.sel.studentId);
+      const startAt = selStart(c.sel);
+      const dur = stu?.course ? COURSE_MIN : c.sel.durationMin;
+      if (!stu || !startAt || !dur) { await itx.reply({ content: "아직 다 고르지 않았어요", ephemeral: true }); return true; }
+      c.student = stu; c.startAt = startAt; c.durationMin = dur;
+      c.course = !!stu.course;
+      if (Date.parse(startAt) <= now()) {
+        if (c.course) { await itx.reply({ content: "지난 직강은 앱에서 출석으로 넣어 주세요", ephemeral: true }); return true; }
+        c.mode = "record"; c.playedAt = kstYmd(Date.parse(startAt));
+        c.gamesLabel = (c.lengths.find((l) => Number(l.min) === dur)?.games ?? null) != null ? `${c.lengths.find((l) => Number(l.min) === dur).games}판` : null;
+        return itx.update(cardView(c));                       // 지난 시각 → 기록 카드(한 번 더 확인)
+      }
+      c.mode = "confirm";
+    }
     inflight.add(c.id);
     c.state = "saving";
     await itx.update({ content: `${cardView(c).content}\n저장 중이에요`, components: [] });
     let out;
-    try { out = await save(staff, c); } catch (e) { log.error("[trainer-bot] save", e?.message); out = { ok: false, text: errText() }; }
+    try { out = c.course ? await saveCourse(staff, c) : await save(staff, c); } catch (e) { log.error("[trainer-bot] save", e?.message); out = { ok: false, text: errText() }; }
     c.state = out.ok ? "done" : "failed";
     inflight.delete(c.id);
     await itx.editReply({ content: out.ok ? out.text : `${cardView(c).content.split("\n").pop()}\n${out.text}`, components: [] });
@@ -443,13 +538,19 @@ function createTrainerBot(deps) {
   }
 
   async function handle(itx) {
-    if (itx.isAutocomplete?.() && itx.commandName === COMMAND_NAME) return onAutocomplete(itx);
     if (itx.isChatInputCommand?.() && itx.commandName === COMMAND_NAME) return onCommand(itx);
-    if (itx.isButton?.() && String(itx.customId || "").startsWith(PREFIX)) return onButton(itx);
+    if ((itx.isButton?.() || itx.isStringSelectMenu?.()) && String(itx.customId || "").startsWith(PREFIX)) return onButton(itx);
     return false;
   }
 
-  return { handle, onMessage, bellTick, prepare, save, cards, _bellView: bellView, _deps: deps };
+  return { handle, onMessage, bellTick, prepare, save, cards, openPickCard, _bellView: bellView, _deps: deps };
+}
+
+// 을/를 — 마지막 글자 받침으로 고른다(「길이를」 · 「시각을」)
+function eulReul(word) {
+  const ch = String(word || "").slice(-1);
+  const code = ch.charCodeAt(0) - 0xac00;
+  return code >= 0 && code < 11172 && code % 28 === 0 ? "를" : "을";
 }
 
 function missingText(missing) {
@@ -457,7 +558,7 @@ function missingText(missing) {
   if (missing.includes("duration_not_allowed")) return "길이는 1시간 · 1시간 30분 · 2시간 · 2시간 30분 · 3시간 중 하나예요";
   if (missing.includes("invalid")) return "날짜나 시각을 못 읽었어요. 예: 금 9시 길동 2시간";
   const m = missing.map((k) => name[k]).filter(Boolean);
-  return `${m.join(" · ")}을 못 읽었어요. 예: 금 9시 길동 2시간\n/${COMMAND_NAME} 의 칸을 채워도 돼요`;
+  return `${m.join(" · ")}${eulReul(m[m.length - 1])} 못 읽었어요. 예: 금 9시 길동 2시간\n/${COMMAND_NAME} 로 골라도 돼요`;
 }
 // 「10/16(금) 오후 9:00」 — 요일만 쓴 줄은 오전 쪽이 다음 주로 넘어갈 수 있어 날짜까지 보인다
 const ampmLabel = (iso) => {
@@ -550,8 +651,11 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
       for (const gid of guildTargets(env)) {
         try {
           const have = await client.application.commands.fetch({ guildId: gid });
-          const names = new Set([...have.values()].map((c) => c.name));
-          for (const c of COMMANDS) if (!names.has(c.name)) await client.application.commands.create(c, gid);
+          for (const c of COMMANDS) {
+            const cur = [...have.values()].find((x) => x.name === c.name);
+            if (!cur) await client.application.commands.create(c, gid);
+            else if (commandChanged(cur, c)) await client.application.commands.edit(cur.id, c, gid);
+          }
           done.push(`${client.guilds?.cache?.get(gid)?.name || "?"}(${gid})`);
         } catch (e) { log.warn("[trainer-bot] register_failed", gid, String((e && e.message) || e).slice(0, 80)); }
       }
@@ -568,6 +672,12 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
   };
   if (!tryAttach()) { const t = setInterval(() => { if (tryAttach()) clearInterval(t); }, 5000); t.unref?.(); }
   return { bot, deps };
+}
+
+// 등록된 명령과 정의가 다른가 — 설명 · 칸 이름 목록만 본다(칸 이름이 바뀌면 고쳐 쓴다)
+function commandChanged(cur, def) {
+  const names = (o) => (o || []).map((x) => x.name).join(",");
+  return cur.description !== def.description || names(cur.options) !== names(def.options);
 }
 
 // /수업잡기 를 둘 서버 — MRI ACADEMY(GUILD_ID) 먼저 · GmI(LESSON_GUILD_ID) · 같은 값이면 한 번
@@ -608,4 +718,4 @@ async function leadReady(sbRpc) {
   return ok;
 }
 
-module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, guildTargets, COMMANDS, COMMAND_NAME, BELL_KEY });
+module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, guildTargets, commandChanged, COMMANDS, COMMAND_NAME, BELL_KEY });
