@@ -499,3 +499,133 @@ test("한 줄 채널 점검 — 못 찾음 · 권한 부족 이름 · OK", async
   assert.equal(await channelCheck(client(mk(["ViewChannel", "SendMessages", "ReadMessageHistory"])), "1"), "채널 한 줄 · #수업잡기 (MRI ACADEMY) · 권한 OK · 메시지 내용 인텐트 OK");
   assert.match(await channelCheck(client(mk(["ViewChannel", "SendMessages", "ReadMessageHistory"])), "1", "앱 예약 안내판"), /^앱 예약 안내판 · #수업잡기 /);
 });
+
+// ── /수업변경 · /수업취소(계약 §9.38) ──
+const CH_SLOTS = [
+  { id: "sl-p", startAt: iso("2026-10-14T13:00:00+09:00"), lessonType: "personal", status: "closed", durationMin: 30,
+    bookings: [{ id: "bk-past", studentDisplayName: "지난", status: "booked", durationMin: 60 }] },
+  { id: "sl-b", startAt: iso("2026-10-14T17:00:00+09:00"), lessonType: "personal", status: "closed", durationMin: 30,
+    bookings: [{ id: "bk-B", studentDisplayName: "철수", status: "booked", durationMin: 60 }] },
+  { id: "sl-a", startAt: iso("2026-10-17T21:00:00+09:00"), lessonType: "personal", status: "closed", durationMin: 30,
+    bookings: [{ id: "bk-A", studentDisplayName: "길동", status: "booked", durationMin: 120 }] },
+  { id: "sl-g", startAt: iso("2026-10-16T20:00:00+09:00"), lessonType: "spectate", status: "open", durationMin: 90,
+    bookings: [{ id: "bk-G", studentDisplayName: "그룹", status: "booked", durationMin: null }] },
+  { id: "sl-c", startAt: iso("2026-10-18T13:00:00+09:00"), lessonType: "course", status: "open", durationMin: 180,
+    bookings: [{ id: "bk-C", studentDisplayName: "직강생", status: "booked", durationMin: null }, { id: "bk-X", studentDisplayName: "취소", status: "cancelled" }] },
+];
+const goBtn = (msg, label) => msg.components.flatMap((r) => r.components).find((c) => c.label === label);
+
+test("바꾸기 · 취소 — 명령 둘 · 칸 없음 · 내 다가오는 예약(개인 · 직강 · 시작 전 · 예약됨)만 빠른 순", async () => {
+  const { COMMANDS, CHANGE_KIND } = require("../trainer-bot.cjs");
+  assert.deepEqual(COMMANDS.map((c) => c.name), ["수업잡기", "수업변경", "수업취소"]);
+  for (const c of COMMANDS) assert.deepEqual(c.options, []);
+  assert.deepEqual(CHANGE_KIND, { 수업변경: "move", 수업취소: "cancel" });
+  const { bot, fp } = makeBot({ portal: { slots: CH_SLOTS } });
+  const msg = { ...(await bot.openChangeCard(STAFF, "d5", "cancel")) };
+  const opts = msg.components[0].components[0].options;
+  assert.deepEqual(opts.map((o) => o.label), ["10/14(수) 17:00~18:00 · 철수님", "10/17(토) 21:00~23:00 · 길동님", "10/18(일) 13:00~16:00 · 직강생님"]);
+  assert.deepEqual(opts.map((o) => o.description), ["개인 · 1시간", "개인 · 2시간", "직강"]);
+  assert.equal(fp.writes().length, 0);
+  const none = makeBot({ portal: { slots: [] } });
+  assert.equal((await none.bot.openChangeCard(STAFF, "d5", "move")).content, "다가오는 예약이 없어요");
+});
+
+test("취소 — 3시간 밖: [취소하기] 한 번 · 사유 없음 · 두 번 눌러도 한 번 · 판수 돌아옴 문구", async () => {
+  const { bot, fp } = makeBot({ portal: { slots: CH_SLOTS, "POST /bookings/:id/cancel": () => ({ status: 200, body: { cancelled: true, gamesRestored: 10, late: null, lateCharged: 0 } }) } });
+  const msg = { ...(await bot.openChangeCard(STAFF, "d5", "cancel")) };
+  await bot.handle(pick(idOf(msg, "tbot_cpick:"), msg, ["1"]).itx);
+  assert.equal(msg.content, "🗑️ 10/17(토) 21:00~23:00 · 길동님 · 2시간(10판) 수업을 취소할까요?");
+  assert.deepEqual(labels(msg), ["취소하기", "그만두기"]);
+  assert.equal(fp.writes().length, 0);
+  const id = goBtn(msg, "취소하기").custom_id;
+  await bot.handle(press(id, msg).itx);
+  const again = press(id, msg); await bot.handle(again.itx);
+  assert.deepEqual(fp.writes().map((c) => `${c.method} ${c.path}`), ["POST /bookings/bk-A/cancel"]);
+  assert.deepEqual(fp.writes()[0].body, {});
+  assert.equal(msg.content, "취소했어요 · 10/17(토) 21:00 · 길동님 · 10판 돌아왔어요");
+  assert.equal(again.out.replies.length, 1);
+});
+
+test("취소 — 3시간 안(개인): 두 사유 버튼 · 수강생 사정이면 late:student · 3판 문구 / 사전 합의면 agreed", async () => {
+  for (const [label, late, tail] of [["수강생 사정 · 3판", "student", " · 늦은 취소 3판 빠졌어요"], ["사전 합의 · 차감 없음", "agreed", ""]]) {
+    const { bot, fp } = makeBot({ portal: { slots: CH_SLOTS, "POST /bookings/:id/cancel": (b) => ({ status: 200, body: { cancelled: true, gamesRestored: 5, late: b.late, lateCharged: b.late === "student" ? 3 : 0 } }) } });
+    const msg = { ...(await bot.openChangeCard(STAFF, "d5", "cancel")) };
+    await bot.handle(pick(idOf(msg, "tbot_cpick:"), msg, ["0"]).itx);
+    assert.match(msg.content, /시작 3시간 안이에요. 어느 쪽인지 골라 주세요$/);
+    assert.deepEqual(labels(msg), ["사전 합의 · 차감 없음", "수강생 사정 · 3판", "그만두기"]);
+    await bot.handle(press(goBtn(msg, label).custom_id, msg).itx);
+    assert.deepEqual(fp.writes()[0].body, { late });
+    assert.equal(msg.content, `취소했어요 · 10/14(수) 17:00 · 철수님 · 5판 돌아왔어요${tail}`);
+  }
+});
+
+test("바꾸기 — 원래 값이 골라져 있음 · 바뀐 게 없으면 [바꾸기] 꺼짐 · 고르는 동안 쓰기 0 · 30분 미루기 · 길이 바꾸기", async () => {
+  const { bot, fp } = makeBot({ portal: { slots: CH_SLOTS, "POST /bookings/:id/move": () => ({ status: 200, body: { bookingId: "bk-new", gamesHeld: 13, lateCharged: 0 } }) } });
+  const msg = { ...(await bot.openChangeCard(STAFF, "d5", "move")) };
+  await bot.handle(pick(idOf(msg, "tbot_cpick:"), msg, ["1"]).itx);
+  assert.equal(msg.components.length, 4);   // 날짜 · 시각 · 길이 · 정각/30분 + 버튼
+  assert.equal(msg.content.split("\n")[1], "10/17(토) 21:00~23:00 · 길동님 · 바꿀 날짜나 시각을 골라 주세요");
+  assert.equal(goBtn(msg, "바꾸기").disabled, true);
+  assert.equal(msg.components[0].components[0].options.find((o) => o.default).value, "2026-10-17");
+  assert.equal(msg.components[1].components[0].options.find((o) => o.default).value, "21");
+  await bot.handle(press(idOf(msg, "tbot_cmin:").replace(/:0$/, ":30"), msg).itx);
+  await bot.handle(press(msg.components[2].components[3].custom_id, msg).itx);       // 2시간 30분
+  assert.equal(msg.content.split("\n")[1], "10/17(토) 21:00 → 10/17(토) 21:30~다음 날 00:00 · 길동님 · 2시간 30분(13판)");
+  assert.equal(fp.writes().length, 0);
+  await bot.handle(press(goBtn(msg, "바꾸기").custom_id, msg).itx);
+  assert.deepEqual(fp.writes().map((c) => `${c.method} ${c.path}`), ["POST /bookings/bk-A/move"]);
+  assert.deepEqual(fp.writes()[0].body, { startAt: iso("2026-10-17T21:30:00+09:00"), durationMin: 150 });
+  assert.equal(msg.content, "바꿨어요 · 10/17(토) 21:00 → 10/17(토) 21:30~다음 날 00:00 · 길동님");
+});
+
+test("바꾸기 — 실패는 그대로 · 재시도 없음 · 카드 띄운 뒤 3시간 선을 넘으면 사유 버튼 카드로 다시", async () => {
+  let n = 0;
+  const { bot, fp } = makeBot({ portal: { slots: CH_SLOTS, "POST /bookings/:id/move": (b) => (++n === 1
+    ? { status: 400, body: { error: { code: "late_reason_required" } } }
+    : { status: 409, body: { error: { code: "insufficient_games" } } }) } });
+  const msg = { ...(await bot.openChangeCard(STAFF, "d5", "move")) };
+  await bot.handle(pick(idOf(msg, "tbot_cpick:"), msg, ["1"]).itx);
+  await bot.handle(pick(idOf(msg, "tbot_cday:"), msg, ["2026-10-18"]).itx);
+  await bot.handle(press(goBtn(msg, "바꾸기").custom_id, msg).itx);
+  assert.match(msg.content, /그 사이 시작 3시간 안으로 들어왔어요$/);
+  assert.deepEqual(labels(msg).slice(-3), ["사전 합의 · 차감 없음", "수강생 사정 · 3판", "그만두기"]);
+  await bot.handle(press(goBtn(msg, "수강생 사정 · 3판").custom_id, msg).itx);
+  assert.equal(fp.writes().length, 2);
+  assert.deepEqual(fp.writes()[1].body.late, "student");
+  assert.match(msg.content, /남은 판수가 모자라요/);
+  assert.equal(msg.components.length, 0);
+});
+
+test("바꾸기 — 직강: 길이 잠김 · 사유 없음 · 새 시각 칸 없으면 열고 실패면 그 칸만 닫기 · 지난 시각 막기", async () => {
+  const { bot, fp } = makeBot({ portal: { slots: CH_SLOTS, "POST /bookings/:id/move": () => ({ status: 409, body: { error: { code: "no_units_left" } } }) } });
+  const msg = { ...(await bot.openChangeCard(OWNER, "d5", "move")) };
+  await bot.handle(pick(idOf(msg, "tbot_cpick:"), msg, ["2"]).itx);
+  assert.ok(msg.components[2].components.every((b) => b.disabled));
+  assert.equal(goBtn(msg, "수강생 사정 · 3판"), undefined);
+  await bot.handle(pick(idOf(msg, "tbot_cday:"), msg, ["2026-10-19"]).itx);
+  assert.match(msg.content.split("\n")[1], /10\/18\(일\) 13:00 → 10\/19\(월\) 13:00~16:00 · 직강생님 · 직강/);
+  await bot.handle(press(goBtn(msg, "바꾸기").custom_id, msg).itx);
+  assert.deepEqual(fp.writes().map((c) => `${c.method} ${c.path}`), ["POST /slots", "POST /bookings/bk-C/move", "DELETE /slots/slot-op"]);
+  assert.deepEqual(fp.writes()[1].body, { startAt: iso("2026-10-19T13:00:00+09:00") });
+  assert.match(msg.content, /직강 남은 회차가 없어요/);
+
+  const b2 = makeBot({ portal: { slots: CH_SLOTS } });
+  const m2 = { ...(await b2.bot.openChangeCard(STAFF, "d5", "move")) };
+  await b2.bot.handle(pick(idOf(m2, "tbot_cpick:"), m2, ["1"]).itx);
+  await b2.bot.handle(pick(idOf(m2, "tbot_cday:"), m2, ["2026-10-14"]).itx);
+  await b2.bot.handle(pick(idOf(m2, "tbot_chour:"), m2, ["10"]).itx);
+  const r = press(goBtn(m2, "바꾸기").custom_id, m2); await b2.bot.handle(r.itx);
+  assert.equal(r.out.replies[0].content, "지난 시각이에요. 다시 골라 주세요");
+  assert.equal(b2.fp.writes().length, 0);
+});
+
+test("바꾸기 · 취소 — [그만두기] 는 쓰기 0 · 남의 카드는 못 누른다", async () => {
+  const { bot, fp } = makeBot({ portal: { slots: CH_SLOTS } });
+  const msg = { ...(await bot.openChangeCard(STAFF, "d5", "cancel")) };
+  await bot.handle(pick(idOf(msg, "tbot_cpick:"), msg, ["1"]).itx);
+  const other = press(goBtn(msg, "취소하기").custom_id, msg, "d9"); await bot.handle(other.itx);
+  assert.equal(other.out.replies.length, 1);
+  await bot.handle(press(goBtn(msg, "그만두기").custom_id, msg).itx);
+  assert.equal(msg.content, "그만뒀어요 · 아무것도 바뀌지 않았어요");
+  assert.equal(fp.writes().length, 0);
+});

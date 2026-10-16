@@ -30,7 +30,13 @@ const COURSE_MIN = 180;                       // 직강 반 기본 길이(bookin
 
 // 명령은 칸이 없다 — 실행하면 본인만 보는 카드에서 클릭으로 고른다(오너 실사용 10/16 「너무 불편」 · 지휘 「타이핑 0」).
 //   한 줄 입력은 채널(TRAINER_BOOK_CHANNEL_ID)에만 남긴다.
-const COMMANDS = [{ name: COMMAND_NAME, description: "수업을 클릭으로 잡아요 · 본인에게만 보여요", options: [] }];
+const COMMANDS = [
+  { name: COMMAND_NAME, description: "수업을 클릭으로 잡아요 · 본인에게만 보여요", options: [] },
+  // 예약 한 건 바꾸기 · 취소(계약 §9.38) — 내 다가오는 예약에서 고른다
+  { name: "수업변경", description: "내 예약 한 건을 다른 시간으로 옮겨요 · 본인에게만 보여요", options: [] },
+  { name: "수업취소", description: "내 예약 한 건을 취소해요 · 본인에게만 보여요", options: [] },
+];
+const CHANGE_KIND = { 수업변경: "move", 수업취소: "cancel" };
 
 // ── 문구(수강생 쪽이 아니라 트레이너 업무 카드 · 「~요」체 · 한 줄 마침표 없음 · 카드당 이모지 1개) ──
 const ERR_TEXT = {
@@ -47,6 +53,13 @@ const ERR_TEXT = {
   no_units_left: "직강 남은 회차가 없어요. 원장에게 말해 주세요",
   already_booked: "그 직강 칸에 이미 넣었어요",
   lead_crossed: "저장하는 사이에 시작 3시간 안으로 들어왔어요. 앱에서 확인해 주세요",
+  // 바꾸기 · 취소(§9.38)
+  not_found: "이미 바뀌었거나 취소된 예약이에요. 앱에서 확인해 주세요",
+  already_started: "이미 시작한 수업이에요",
+  same_time: "바뀐 게 없어요. 다른 날짜나 시각을 골라 주세요",
+  no_course_slot: "그 시각에 직강 칸이 없어요. 앱에서 칸을 먼저 열어 주세요",
+  request_pending: "같은 날 늦은 취소 요청이 이미 있어요. 앱에서 확인해 주세요",
+  slot_not_found: "그 칸을 찾지 못했어요. 앱에서 확인해 주세요",
 };
 const errText = (code) => ERR_TEXT[code] || "지금은 저장하지 못했어요. 앱에서 확인해 주세요";
 
@@ -430,7 +443,7 @@ function createTrainerBot(deps) {
   }
 
   async function onButton(itx) {
-    const m = /^tbot_(save|edit|cancel|ampm|pick|done|chg|ns|nsok|len|fstu|fday|fhour|flen|fmin):([^:]+)(?::(\d+))?$/.exec(itx.customId || "");
+    const m = /^tbot_(save|edit|cancel|ampm|pick|done|chg|ns|nsok|len|fstu|fday|fhour|flen|fmin|cpick|cday|chour|clen|cmin|cgo):([^:]+)(?::(\d+))?$/.exec(itx.customId || "");
     if (!m) return false;
     const [, act, key, arg] = m;
     const staff = await deps.staffByDiscord(itx.user.id);
@@ -444,7 +457,8 @@ function createTrainerBot(deps) {
     if (c.discordId !== itx.user.id) { await itx.reply({ content: "카드를 띄운 트레이너만 누를 수 있어요", ephemeral: true }); return true; }
     if (c.state !== "open") { await itx.reply({ content: c.state === "done" ? "이미 저장했어요" : "이 카드는 끝났어요. 다시 하려면 새로 띄워 주세요", ephemeral: true }); return true; }
 
-    if (act === "cancel") { c.state = "closed"; return itx.update({ content: "취소했어요", components: [] }); }
+    if (act === "cancel") { c.state = "closed"; return itx.update({ content: c.kind ? "그만뒀어요 · 아무것도 바뀌지 않았어요" : "취소했어요", components: [] }); }
+    if (c.kind) return onChange(itx, staff, c, act, arg);
     // 클릭 카드 고르기 — 고를 때마다 줄을 다시 그린다(쓰기 없음)
     if (c.mode === "form" && ["fstu", "fday", "fhour", "flen", "fmin"].includes(act)) {
       const v = itx.values?.[0];
@@ -540,11 +554,171 @@ function createTrainerBot(deps) {
 
   async function handle(itx) {
     if (itx.isChatInputCommand?.() && itx.commandName === COMMAND_NAME) return onCommand(itx);
+    if (itx.isChatInputCommand?.() && CHANGE_KIND[itx.commandName]) return onChangeCommand(itx, CHANGE_KIND[itx.commandName]);
     if ((itx.isButton?.() || itx.isStringSelectMenu?.()) && String(itx.customId || "").startsWith(PREFIX)) return onButton(itx);
     return false;
   }
 
-  return { handle, onMessage, bellTick, prepare, save, cards, openPickCard, _bellView: bellView, _deps: deps };
+  // ── 바꾸기 · 취소(/수업변경 · /수업취소 · 계약 §9.38) — 내 다가오는 예약 고르기 → 카드 → 서버 한 번(재시도 없음) ──
+  async function onChangeCommand(itx, kind) {
+    const staff = await deps.staffByDiscord(itx.user.id);
+    if (!staff) return itx.reply({ content: errText("not_staff"), ephemeral: true });
+    await itx.deferReply({ ephemeral: true });
+    return itx.editReply(await openChangeCard(staff, itx.user.id, kind));
+  }
+
+  // 내 다가오는 예약 — GET /slots(내 칸만)의 머리 줄 · 예약됨 · 시작 전 · 개인 · 직강 · 빠른 순 25건
+  async function myUpcoming(staff) {
+    const r = await deps.portalCall(staff, "GET", "/slots?days=15");
+    if (r.status !== 200) return { error: r.body?.error?.code || "unavailable" };
+    const t = now(), list = [];
+    for (const s of r.body?.slots || []) {
+      if (!["personal", "course"].includes(s.lessonType) || Date.parse(s.startAt) <= t) continue;
+      const course = s.lessonType === "course";
+      for (const b of s.bookings || []) {
+        if (b.status !== "booked") continue;
+        list.push({ id: b.id, startAt: s.startAt, course, name: b.studentDisplayName || "?",
+          durationMin: course ? Number(s.durationMin) || COURSE_MIN : Number(b.durationMin) || Number(s.durationMin) || 60 });
+      }
+    }
+    list.sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
+    return { list: list.slice(0, 25), more: Math.max(0, list.length - 25), lengths: r.body?.personalLengths || [] };
+  }
+
+  async function openChangeCard(staff, discordId, kind) {
+    const f = await myUpcoming(staff);
+    if (f.error) return { content: errText(f.error) };
+    if (!f.list.length) return { content: "다가오는 예약이 없어요" };
+    const c = newCard({ mode: "clist", kind, staffId: staff.id, discordId, list: f.list, more: f.more, lengths: f.lengths, sel: { half: 0 } });
+    return changeView(c);
+  }
+
+  const gamesOf = (c, min) => c.lengths.find((l) => Number(l.min) === Number(min))?.games ?? null;
+  const lenText = (c, bk, min) => (bk.course ? "직강" : `${durationLabel(min)}${gamesOf(c, min) != null ? `(${gamesOf(c, min)}판)` : ""}`);
+  const startText = (iso) => cardWhen(iso, 30).split("~")[0];
+  const inLate = (c) => !c.bk.course && (c.lateForce || Date.parse(c.bk.startAt) - now() < LEAD_MS);
+  const lateButtons = (c) => [btn(`${PREFIX}cgo:${c.id}:1`, "사전 합의 · 차감 없음", 1), btn(`${PREFIX}cgo:${c.id}:2`, "수강생 사정 · 3판", 4)];
+  const LATE_LINE = "시작 3시간 안이에요. 어느 쪽인지 골라 주세요";
+
+  function changeView(c) {
+    const move = c.kind === "move";
+    if (c.mode === "clist") {
+      return {
+        content: `${move ? "✏️ 바꿀" : "🗑️ 취소할"} 수업을 골라 주세요 · 본인에게만 보여요${c.more ? `\n(빠른 순 25건까지 보여요 · 나머지 ${c.more}건은 앱에서)` : ""}`,
+        components: [
+          select(`${PREFIX}cpick:${c.id}`, "내 다가오는 예약", c.list.map((b, i) => ({
+            label: `${cardWhen(b.startAt, b.durationMin)} · ${b.name}님`.slice(0, 100), value: String(i),
+            description: b.course ? "직강" : `개인 · ${durationLabel(b.durationMin)}` }))),
+          row(btn(`${PREFIX}cancel:${c.id}`, "그만두기")),
+        ],
+      };
+    }
+    const bk = c.bk, late = inLate(c);
+    if (!move) {
+      return {
+        content: `🗑️ ${cardWhen(bk.startAt, bk.durationMin)} · ${bk.name}님 · ${lenText(c, bk, bk.durationMin)} 수업을 취소할까요?${late ? `\n${LATE_LINE}` : ""}`,
+        components: [row(...(late ? lateButtons(c) : [btn(`${PREFIX}cgo:${c.id}:0`, "취소하기", 4)]), btn(`${PREFIX}cancel:${c.id}`, "그만두기"))],
+      };
+    }
+    const sel = c.sel, dur = bk.course ? bk.durationMin : sel.durationMin;
+    const ns = selStart(sel);
+    const same = ns === new Date(Date.parse(bk.startAt)).toISOString() && dur === bk.durationMin;
+    const line = same ? `${cardWhen(bk.startAt, bk.durationMin)} · ${bk.name}님 · 바꿀 날짜나 시각을 골라 주세요`
+      : `${startText(bk.startAt)} → ${cardWhen(ns, dur)} · ${bk.name}님 · ${lenText(c, bk, dur)}`;
+    return {
+      content: `✏️ 수업 바꾸기 · 본인에게만 보여요\n${line}${late ? `\n${LATE_LINE}` : ""}`,
+      components: [
+        select(`${PREFIX}cday:${c.id}`, "날짜", dayOptions().map((o) => ({ ...o, default: o.value === sel.ymd }))),
+        select(`${PREFIX}chour:${c.id}`, "시각", HOURS.map((h) => ({ label: hourLabel(h), value: String(h), default: h === sel.hour }))),
+        { type: 1, components: PERSONAL_DURATIONS.map((m) => btn(`${PREFIX}clen:${c.id}:${m}`, durationLabel(m), m === dur ? 1 : 2, bk.course)) },
+        row(btn(`${PREFIX}cmin:${c.id}:0`, "정각", sel.half ? 2 : 1), btn(`${PREFIX}cmin:${c.id}:30`, "30분", sel.half ? 1 : 2),
+            ...(late ? lateButtons(c).map((b) => ({ ...b, disabled: same })) : [btn(`${PREFIX}cgo:${c.id}:0`, "바꾸기", 3, same)]),
+            btn(`${PREFIX}cancel:${c.id}`, "그만두기")),
+      ],
+    };
+  }
+
+  async function onChange(itx, staff, c, act, arg) {
+    if (act === "cpick" && c.mode === "clist") {
+      const bk = c.list[Number(itx.values?.[0])];
+      if (!bk) return true;
+      c.bk = bk; c.mode = "cform";
+      const k = new Date(Date.parse(bk.startAt) + 9 * 3600_000);
+      const h = k.getUTCHours();
+      c.sel = { ymd: k.toISOString().slice(0, 10), hour: h <= 2 ? h + 24 : h, half: k.getUTCMinutes() >= 30 ? 30 : 0, durationMin: bk.durationMin };
+      if (h <= 2) c.sel.ymd = new Date(Date.parse(`${c.sel.ymd}T00:00:00Z`) - 86400_000).toISOString().slice(0, 10);   // 새벽은 전날 「새벽 N시 (다음날)」
+      return itx.update(changeView(c));
+    }
+    if (c.mode !== "cform") return true;
+    if (c.kind === "move" && ["cday", "chour", "clen", "cmin"].includes(act)) {
+      const v = itx.values?.[0];
+      if (act === "cday" && /^\d{4}-\d{2}-\d{2}$/.test(v || "")) c.sel.ymd = v;
+      if (act === "chour" && HOURS.includes(Number(v))) c.sel.hour = Number(v);
+      if (act === "clen" && !c.bk.course && PERSONAL_DURATIONS.includes(Number(arg))) c.sel.durationMin = Number(arg);
+      if (act === "cmin") c.sel.half = Number(arg) === 30 ? 30 : 0;
+      return itx.update(changeView(c));
+    }
+    if (act !== "cgo") return true;
+    const late = Number(arg) === 1 ? "agreed" : Number(arg) === 2 ? "student" : null;
+    let newStart = null, dur = c.bk.durationMin;
+    if (c.kind === "move") {
+      newStart = selStart(c.sel); dur = c.bk.course ? c.bk.durationMin : c.sel.durationMin;
+      if (!newStart || Date.parse(newStart) <= now()) { await itx.reply({ content: "지난 시각이에요. 다시 골라 주세요", ephemeral: true }); return true; }
+    }
+    if (inflight.has(c.id)) { await itx.reply({ content: "처리 중이에요", ephemeral: true }); return true; }
+    inflight.add(c.id);
+    c.state = "saving";
+    const head = changeView(c).content.split("\n").filter((l) => l !== LATE_LINE).pop();
+    await itx.update({ content: `${head}\n처리 중이에요`, components: [] });
+    let out;
+    try { out = c.kind === "move" ? await doMove(staff, c, newStart, dur, late) : await doCancel(staff, c, late); }
+    catch (e) { log.error("[trainer-bot] change", e?.message); out = { ok: false, text: "지금은 바꾸지 못했어요. 앱에서 확인해 주세요" }; }
+    inflight.delete(c.id);
+    if (out.lateCrossed) {                                   // 카드를 띄운 뒤 3시간 선을 넘었다 — 사유 버튼 카드로 다시
+      c.state = "open"; c.lateForce = true;
+      await itx.editReply({ ...changeView(c), content: `${changeView(c).content}\n그 사이 시작 3시간 안으로 들어왔어요` });
+      return true;
+    }
+    c.state = out.ok ? "done" : "failed";
+    await itx.editReply({ content: out.ok ? out.text : `${head}\n${out.text}`, components: [] });
+    return true;
+  }
+
+  const lateTail = (r, word) => (Number(r.body?.lateCharged) ? ` · 늦은 ${word} 3판 빠졌어요` : "");
+  async function doCancel(staff, c, late) {
+    const r = await deps.portalCall(staff, "POST", `/bookings/${c.bk.id}/cancel`, late ? { late } : {});
+    if (r.status !== 200) return failOut(r);
+    const g = Number(r.body?.gamesRestored || 0);
+    const back = c.bk.course ? " · 회차는 그대로예요" : g > 0 ? ` · ${g}판 돌아왔어요` : "";
+    return { ok: true, text: `취소했어요 · ${startText(c.bk.startAt)} · ${c.bk.name}님${back}${lateTail(r, "취소")}` };
+  }
+  async function doMove(staff, c, newStart, dur, late) {
+    let opened = null;
+    if (c.bk.course) {                                       // 직강 — 새 시각에 내 직강 칸이 없으면 먼저 연다(§9.37.1a saveCourse 와 같다)
+      const sl = await deps.portalCall(staff, "GET", "/slots?days=15");
+      if (sl.status !== 200) return failOut(sl);
+      const has = (sl.body?.slots || []).some((x) => x.lessonType === "course" && x.status === "open" && Date.parse(x.startAt) === Date.parse(newStart));
+      if (!has) {
+        const op = await deps.portalCall(staff, "POST", "/slots", { startAt: newStart, durationMin: COURSE_MIN, lessonType: "course" });
+        if (op.status !== 200) return failOut(op);
+        opened = op.body?.firstId || null;
+      }
+    }
+    const body = { startAt: newStart, ...(c.bk.course ? {} : { durationMin: dur }), ...(late ? { late } : {}) };
+    const r = await deps.portalCall(staff, "POST", `/bookings/${c.bk.id}/move`, body);
+    if (r.status !== 200) {
+      if (opened) await deps.portalCall(staff, "DELETE", `/slots/${opened}`).catch(() => null);   // 방금 연 그 칸만 닫는다
+      return failOut(r);
+    }
+    return { ok: true, text: `바꿨어요 · ${startText(c.bk.startAt)} → ${cardWhen(newStart, dur)} · ${c.bk.name}님${lateTail(r, "변경")}` };
+  }
+  function failOut(r) {
+    const code = r.body?.error?.code;
+    if (code === "late_reason_required") return { ok: false, lateCrossed: true };
+    return { ok: false, text: errText(code) };
+  }
+
+  return { handle, onMessage, bellTick, prepare, save, cards, openPickCard, openChangeCard, _bellView: bellView, _deps: deps };
 }
 
 // 을/를 — 마지막 글자 받침으로 고른다(「길이를」 · 「시각을」)
@@ -663,7 +837,7 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
           done.push(`${client.guilds?.cache?.get(gid)?.name || "?"}(${gid})`);
         } catch (e) { log.warn("[trainer-bot] register_failed", gid, String((e && e.message) || e).slice(0, 80)); }
       }
-      log.log(`[trainer-bot] /${COMMAND_NAME} ready · ${done.join(" · ") || "등록 서버 없음"} · 채널 한 줄 ${env.TRAINER_BOOK_CHANNEL_ID ? "켜짐" : "꺼짐(TRAINER_BOOK_CHANNEL_ID 없음)"}`);
+      log.log(`[trainer-bot] ${COMMANDS.map((x) => `/${x.name}`).join(" · ")} ready · ${done.join(" · ") || "등록 서버 없음"} · 채널 한 줄 ${env.TRAINER_BOOK_CHANNEL_ID ? "켜짐" : "꺼짐(TRAINER_BOOK_CHANNEL_ID 없음)"}`);
       if (env.TRAINER_BOOK_CHANNEL_ID) log.log(`[trainer-bot] ${await channelCheck(client, env.TRAINER_BOOK_CHANNEL_ID)}`);
       log.log(`[book-guide] ${env.STUDENT_BOOK_GUIDE_CHANNEL_ID ? await channelCheck(client, env.STUDENT_BOOK_GUIDE_CHANNEL_ID, "앱 예약 안내판") : "앱 예약 안내판 꺼짐(STUDENT_BOOK_GUIDE_CHANNEL_ID 없음)"}`);
     };
@@ -740,4 +914,4 @@ async function leadReady(sbRpc) {
   return ok;
 }
 
-module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, guildTargets, commandChanged, channelCheck, COMMANDS, COMMAND_NAME, BELL_KEY });
+module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, guildTargets, commandChanged, channelCheck, COMMANDS, COMMAND_NAME, CHANGE_KIND, BELL_KEY });
