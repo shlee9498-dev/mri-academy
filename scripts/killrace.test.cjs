@@ -406,10 +406,10 @@ test("2회 · 치킨 판 사망 감점(1회 때 빠졌던 것): 죽은 사람은
 });
 
 test("2회 · 설정 읽기: 없으면 1회 동작 · 시각은 ISO/ms · 보너스는 정수만 · 가리는 시각은 읽지 않는다", () => {
-  assert.deepEqual(T.normEventConfig(null), { boostAt: null, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: {}, teamSize: null, modes: null, auto: true, voidDeaths: {}, voidGames: {}, liveTokens: {}, lateRevive: "off", revivePhase: 4, penaltyBy: "slot", mode: null, excludeBots: false });
+  assert.deepEqual(T.normEventConfig(null), { boostAt: null, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: {}, teamSize: null, modes: null, auto: true, voidDeaths: {}, voidGames: {}, liveTokens: {}, lateRevive: "off", revivePhase: 4, penaltyBy: "slot", mode: null, excludeBots: false, scoring: "classic", race: null });
   const c = T.normEventConfig({ boostAt: "2026-10-08T13:35:00Z", hideAt: HIDE, published: true, bonus: { A: 3, B: "x", C: 1.5 }, teamSize: 4, boostMul: 9, modes: ["duo", "duo-fpp"],
     auto: false, voidDeaths: { "A|m1": [2, 9, "x"], "A|m2": [] }, voidGames: { "A|m3": true, "A|m4": "yes" }, liveTokens: { A: "tok", B: 5 } });
-  assert.deepEqual(c, { boostAt: BOOST, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: { A: 3 }, teamSize: 4, modes: ["duo", "duo-fpp"], auto: false, voidDeaths: { "A|m1": [2] }, voidGames: { "A|m3": true }, liveTokens: { A: "tok" }, lateRevive: "off", revivePhase: 4, penaltyBy: "slot", mode: null, excludeBots: false });
+  assert.deepEqual(c, { boostAt: BOOST, boostMul: 1.5, boostMode: "time", boostSeqs: [], bonus: { A: 3 }, teamSize: 4, modes: ["duo", "duo-fpp"], auto: false, voidDeaths: { "A|m1": [2] }, voidGames: { "A|m3": true }, liveTokens: { A: "tok" }, lateRevive: "off", revivePhase: 4, penaltyBy: "slot", mode: null, excludeBots: false, scoring: "classic", race: null });
   assert.equal(T.normEventConfig({ boostMul: 2 }).boostMul, 2);
 });
 
