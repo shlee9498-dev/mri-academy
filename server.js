@@ -6964,7 +6964,7 @@ async function pubgMatch(platform, matchId, ttlMs){
   // createdAt·telemetryUrl 은 킬내기 집계용으로 덧붙인 것(G드컵 응답에는 실리지 않는다).
   inc.forEach(it=>{
     if(it.type==="participant"){ const s=(it.attributes&&it.attributes.stats)||{}; parts[it.id]={ name:s.name||"", kills:Number(s.kills)||0, winPlace:Number(s.winPlace)||0,
-      accountId:s.playerId||"", damageDealt:Number(s.damageDealt)||0, deathType:s.deathType||"" }; }
+      accountId:s.playerId||"", damageDealt:Number(s.damageDealt)||0, deathType:s.deathType||"", timeSurvived:Number(s.timeSurvived)||0 }; }
     else if(it.type==="roster"){ const s=(it.attributes&&it.attributes.stats)||{}; const pd=(it.relationships&&it.relationships.participants&&it.relationships.participants.data)||[]; rosters.push({ rank:Number(s.rank)||0, pids:pd.map(p=>p.id),
       won:String(it.attributes&&it.attributes.won)==="true" }); }
     else if(it.type==="asset" && !telemetryUrl && it.attributes && it.attributes.URL){ telemetryUrl = String(it.attributes.URL); }

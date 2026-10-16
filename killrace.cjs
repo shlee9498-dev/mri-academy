@@ -168,6 +168,12 @@ function kstParts(ms) {
 }
 const kstHm = (ms) => kstParts(ms).hm;
 const kstMdHm = (ms) => { const p = kstParts(ms); return `${p.md} ${p.hm}`; };
+const kstHms = (ms) => { const d = new Date(ms + 9 * 3600e3); return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`; };
+// 팀 판 종료(§1.38 · 오너 10/17 「점수 확정 순」) = 판 시작 + 그 팀 선수 생존 시간 최댓값(치킨이면 판 끝과 같다). 판 전체 끝(endMs)은 마지막 생존 팀 기준이라 쓰지 않는다
+const teamEndOf = (startMs, survivedSecs) => {
+  const max = Math.max(0, ...(survivedSecs || []).map((x) => Number(x) || 0));
+  return Number.isFinite(startMs) && max > 0 ? startMs + max * 1000 : null;
+};
 const mapKo = (name) => MAP_KO[name] || name || "맵?";
 const num = (n) => Number(n).toLocaleString("ko-KR");
 const sum = (arr, f) => arr.reduce((s, x) => s + f(x), 0);
@@ -283,6 +289,7 @@ function classify(m, team, modes = OK_MODES) {
     const cur = p.name || x.ign;
     const mem = { slot: x.slot, accountId: x.accountId, ign: cur, kills: Number(p.kills) || 0,
       damage: Number(p.damageDealt) || 0, deathType: String(p.deathType || "") };
+    if (Number(p.timeSurvived) > 0) mem.survived = Number(p.timeSurvived);      // 팀 판 종료(§1.38) 재료 — 판 줄 flags.teamEndMs 로만 남긴다
     if (x.ign && cur && cur !== x.ign) mem.regIgn = x.ign;
     return mem;
   });
@@ -473,13 +480,18 @@ function raceScore(kills, damage, place, penalty, out, race) {
   if (out) return LEAVE_SCORE;
   return baseScore(kills, damage, place, race && race.penalty === "stored" ? penalty : 0);
 }
-// 레이스 순위(§1.34) — 목표에 도착한 팀 먼저(도착 판 시작 시각이 이른 순) · 못 한 팀은 목표 대비 비율 순 → 총점 → 킬 → 치킨 → 딜 → 팀명.
+// 판 확정 시각 — 팀 판 종료가 있으면 그것 · 없으면 판 시작으로 대신하고 표시(doneEstimated)
+const doneOf = (teamEndMs, startedAt) => (teamEndMs ? { doneAt: teamEndMs } : { doneAt: startedAt, doneEstimated: true });
+// 레이스 순위(§1.34) — 목표에 도착한 팀 먼저(도착 판이 **끝나 점수가 확정된** 시각이 이른 순 · 오너 10/17) · 못 한 팀은 목표 대비 비율 순 → 총점 → 킬 → 치킨 → 딜 → 팀명.
 // 팀 목표 = teamGoals[팀명] → 없으면 회차 목표. 도착 판 = 판 번호(seq) 순으로 더해 처음 목표 이상이 된 판(보너스는 도착 판정에 넣지 않는다)
 function rankRace(list, race) {
   for (const t of list) {
     t.goal = race.teamGoals[t.team.name] || race.goal;
-    let cum = 0; t.reachedAt = null;
-    for (const g of t.games) { cum += g.score; if (t.reachedAt === null && cum >= t.goal) t.reachedAt = g.startedAt || 0; }
+    let cum = 0; t.reachedAt = null; t.reachedSeq = null; t.reachedEstimated = false;
+    for (const g of t.games) {
+      cum += g.score;
+      if (t.reachedAt === null && cum >= t.goal) { t.reachedAt = g.doneAt || g.startedAt || 0; t.reachedSeq = g.seq; t.reachedEstimated = !!g.doneEstimated; }
+    }
     t.progress = Math.round((t.total / t.goal) * 1000) / 1000;
   }
   const cmp = (a, b) => {
@@ -518,9 +530,10 @@ function deadLine(g) {
   }).join(" · ");
 }
 
-function formatCard(g) {
-  const head = `${g.seq}판 ${mapKo(g.map)} ${kstHm(g.createdAtMs)}`;
+function formatCard(g, race = null) {
+  const head = `${g.seq}판 ${mapKo(g.map)} ${kstHm(g.createdAtMs)}${race && g.doneAt ? ` → ${kstHms(g.doneAt)} 확정${g.doneEstimated ? "(종료 시각 없음 · 시작으로 대신)" : ""}` : ""}`;
   const place = g.place === 1 ? "🍗1위" : `${g.place || "?"}위`;
+  const noPen = !!(race && race.penalty === "none");      // 레이스 · 감점 없음 회차(§1.38)는 감점 줄 · 사망 줄을 빼고 판 점수만
   const pen = g.penalty ? `-${g.penalty}(${g.deadSlots.join("·")}번)` : "0";
   const chick = g.chicken ? ` · 🐔 +${g.chicken}` : "";
   const out = g.leave || g.reviveOut; const outWhy = g.leave ? "이탈" : "늦은 부활";
@@ -528,7 +541,9 @@ function formatCard(g) {
     ? `${outWhy} → ${LEAVE_SCORE} 고정 (원래 ${g.kills}킬 · 딜 ${num(Math.floor(g.damage))}${chick} · 감점 ${pen} → ${g.base})`
     : g.boost && g.boost !== 1
       ? `${g.kills}킬 +${g.kills} · 딜 ${num(Math.floor(g.damage))} +${g.dmgPts}${chick} · 감점 ${pen} → ${g.base} ×${g.boost} → ${g.score}`
-      : `${g.kills}킬 +${g.kills} · 딜 ${num(Math.floor(g.damage))} +${g.dmgPts}${chick} · 감점 ${pen} → ${g.score}`;
+      : noPen
+        ? `${g.kills}킬 +${g.kills} · 딜 ${num(Math.floor(g.damage))} +${g.dmgPts}${chick} → ${g.score}`
+        : `${g.kills}킬 +${g.kills} · 딜 ${num(Math.floor(g.damage))} +${g.dmgPts}${chick} · 감점 ${pen} → ${g.score}`;
   const marks = [];
   if (g.boost && g.boost !== 1 && out) marks.push(`${g.boost}배 판(${outWhy}이라 −10 그대로)`);
   if (g.revive && g.revive.state === "late") marks.push(`${g.reviveOut ? "늦은 부활" : "늦은 부활 의심"}(${reviveWho(g.revive)})`);
@@ -539,7 +554,7 @@ function formatCard(g) {
   if (g.source === "stored") marks.push("저장분");
   const nick = (g.members || []).filter((m) => m.regIgn && m.regIgn !== m.ign).map((m) => `${m.regIgn} → ${m.ign}`);
   if (nick.length) marks.push(`닉 변경: ${nick.join(", ")}`);
-  const dead = deadLine(g);
+  const dead = noPen ? "" : deadLine(g);
   return `${head} · ${place} · ${body}${marks.length ? " · " + marks.join(" · ") : ""}${dead ? "\n" + dead : ""}`;
 }
 const formatExcluded = (g) => `제외 · ${kstHm(g.createdAtMs)} ${mapKo(g.map)} · ${g.excluded.reason}`;
@@ -613,16 +628,17 @@ function formatReport(res) {
   const head = [
     `📊 ${ev.name} — 집계`,
     `🕒 ${kstMdHm(ev.start)}~${kstHm(ev.end)} 시작 판 · 판정 ${res.deathMode === "deathType" ? "deathType" : "텔레메트리"} · ${kstMdHm(res.at)} 실행 · ${Math.round(res.ms / 1000)}초`,
-    ...teams.map((t) => `${t.rank}위 ${t.team.name} ${t.total}점 (${t.games.length}판 · 🍗${t.chickens} · ${t.kills}킬 · 딜 ${num(Math.floor(t.damage))}${bonusNote(t)})`),
+    ...(res.race ? [raceRule(res.race)] : []),
+    ...teams.map((t) => `${t.rank}위 ${t.team.name} ${t.total}점${res.race ? ` ${raceNote(t)}` : ""} (${t.games.length}판 · 🍗${t.chickens} · ${t.kills}킬 · 딜 ${num(Math.floor(t.damage))}${bonusNote(t)})`),
     `인정 ${games}판 · 텔레메트리 ${res.stats.telemetry}판 · 대체 ${res.stats.fallback}판 · 저장분 ${res.stats.stored}판 · 제외 ${sum(teams, (t) => t.excluded.length)}판`,
     ...(res.warn.length ? ["참고:", ...res.warn.map((w) => `· ${w}`)] : []),
   ].join("\n");
   const blocks = [head];
   for (const t of teams) {
     blocks.push([
-      `【${t.rank}위】 ${t.team.name} — ${t.total}점 · ${t.games.length}판 · 🍗${t.chickens} · ${t.kills}킬 · 딜 ${num(Math.floor(t.damage))}${bonusNote(t)}`,
+      `【${t.rank}위】 ${t.team.name} — ${t.total}점${res.race ? ` ${raceNote(t)}` : ""} · ${t.games.length}판 · 🍗${t.chickens} · ${t.kills}킬 · 딜 ${num(Math.floor(t.damage))}${bonusNote(t)}`,
       `${t.team.members.map((x) => `${x.slot}번 ${x.ign}`).join(" · ")} (${PLATFORM_KO[t.team.platform] || t.team.platform})`,
-      ...(t.games.length ? t.games.map(formatCard) : ["인정된 판이 없어요."]),
+      ...(t.games.length ? t.games.map((g) => formatCard(g, res.race || null)) : ["인정된 판이 없어요."]),
       ...t.excluded.map(formatExcluded),
     ].join("\n"));
   }
@@ -630,11 +646,17 @@ function formatReport(res) {
   return splitMessages(blocks);
 }
 
-const rankLines = (res) => res.teams.map((t) => `${t.rank <= 3 ? MEDAL[t.rank - 1] + " " : ""}${t.rank}위 ${t.team.name} — ${t.total}점`);
+// 레이스 회차(§1.38) 줄 — 「목표 150점 · 도착 10판째 23:24:50 확정」 / 「목표 150점 · 미도달 82%」
+const raceRule = (race) => `🏁 ${race.goal}점 먼저 도착한 팀이 우승 · 도착 = 그 판이 끝나 점수가 확정된 시각${race.penalty === "none" ? " · 사망 감점 없음" : ""}`;
+const raceNote = (t) => (t.reachedAt != null
+  ? `· 목표 ${t.goal}점 · 도착 ${t.reachedSeq}판째 ${kstHms(t.reachedAt)} 확정${t.reachedEstimated ? "(시작 시각으로 대신)" : ""}`
+  : `· 목표 ${t.goal}점 · 미도달 ${Math.round((t.progress || 0) * 100)}%`);
+const rankLines = (res) => res.teams.map((t) => `${t.rank <= 3 ? MEDAL[t.rank - 1] + " " : ""}${t.rank}위 ${t.team.name} — ${t.total}점${res.race ? ` ${raceNote(t)}` : ""}`);
 function publicBody(res) {
-  const tie = res.teams.some((t) => t.tieBroken);
+  const tie = !res.race && res.teams.some((t) => t.tieBroken);
   return [
     `🏆 ${res.ev.name} 결과`,
+    ...(res.race ? [raceRule(res.race)] : []),
     ...rankLines(res),
     ...(tie ? ["(동점은 총 킬 → 치킨 수 순으로 정했어요)"] : []),
     "참가해 주신 모든 분, 정말 수고 많으셨어요! 🎉",
@@ -784,7 +806,7 @@ function seqBoosts(games, cfg) {
     nextBoost: cfg.boostSeqs.includes(games.length + 1),
   };
 }
-function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
+function buildBoard({ ev, teams, cfg, rows, at, admin, live, teamEnds = null }) {
   const lv = live || {};
   const raceOn = cfg.scoring === "race" && !!cfg.race;
   const byTeam = new Map(teams.map((t) => [t.name, { games: [], voids: [], other: [], lastEnd: 0, boostUsed: false }]));
@@ -819,6 +841,7 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
       ...(f.botAdj ? { bots: { kills: Number(f.botAdj.kills) || 0, damage: Math.floor(Number(f.botAdj.damage) || 0) } } : {}),   // §1.25 뺀 봇 몫
       ...(f.botPending ? { botPending: true } : {}),                                                                              // 봇 몫 집계 중(공식 값)
       base: baseScore(kills, damage, r.win_place, penalty), score: raceOn ? raceScore(kills, damage, r.win_place, penalty, leave || reviveOutOf(f), cfg.race) : Number(r.score) || 0,
+      ...(raceOn ? doneOf(Number(f.teamEndMs) || (teamEnds && teamEnds.get(`${r.team_name}|${r.match_id}`)) || null, startedAt) : {}),
       ...(admin ? { matchId: r.match_id, logout: Array.isArray(f.logout) ? f.logout : [] } : {}),
     });
     if (endMs > b.lastEnd) b.lastEnd = endMs;
@@ -856,7 +879,7 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
     teams: list.map((t) => ({
       name: t.team.name, rank: t.rank, prevRank: Number.isInteger(prev[t.team.name]) ? prev[t.team.name] : null,
       total: t.total, gameScore: t.gameScore, bonus: t.bonus, games: t.games.length,
-      ...(raceOn ? { goal: t.goal, reachedAt: t.reachedAt, progress: t.progress } : {}),
+      ...(raceOn ? { goal: t.goal, reachedAt: t.reachedAt, reachedSeq: t.reachedSeq, reachedEstimated: t.reachedEstimated, progress: t.progress } : {}),
       chickens: t.chickens, kills: t.kills, damage: t.damage, provisional: t.provisional, boostUsed: t.boostUsed, lastEnd: t.lastEnd,
       boosts: t.boosts, nextBoost: t.nextBoost,
       chase: t.chase, members: t.members, rows: t.rows,
@@ -896,8 +919,8 @@ function tierRowsByMerge(list, merge, ignRows) {
   return out;
 }
 
-function buildPlayers({ ev, teams, cfg, rows, roster, at, bots = null }) {
-  const b = buildBoard({ ev, teams, cfg, rows, at, admin: false });
+function buildPlayers({ ev, teams, cfg, rows, roster, at, bots = null, teamEnds = null }) {
+  const b = buildBoard({ ev, teams, cfg, rows, at, admin: false, teamEnds });
   const meta = new Map(((roster && roster.players) || []).map((x) => [String(x.ign || "").toLowerCase(), x]));
   // 교체 선수도 계정별로 따로 쌓는다(뛴 판만큼) — 주전 · 교체가 같은 슬롯 번호를 갖는다
   const byTeam = new Map(teams.map((t) => [t.name, new Map([...t.members, ...(t.subs || []).map((m) => ({ ...m, sub: true }))]
@@ -1266,6 +1289,7 @@ function createKillrace(deps) {
       const prevOk = prev && prev.flags && prev.flags.sig === teamSig(r.team) && prev.deaths;
       records.push({
         teamName: r.team.name, sig: teamSig(r.team), matchId: r.m.id, createdAtMs: r.m.createdAtMs, endMs: r.m.endMs || null, map: r.m.map,
+        teamEndMs: r.cls.kind === "ok" ? teamEndOf(r.m.createdAtMs, r.cls.members.map((x) => x.survived)) || (prev && prev.flags && Number(prev.flags.teamEndMs)) || null : null,
         mode: r.m.mode, matchType: r.m.matchType, telemetryUrl: r.m.telemetryUrl,
         excluded: r.cls.kind === "excluded" ? { code: r.cls.code, reason: r.cls.reason } : null,
         members: r.cls.kind === "ok" ? r.cls.members : [], place: r.cls.kind === "ok" ? r.cls.place : null,
@@ -1284,6 +1308,7 @@ function createKillrace(deps) {
       if (reusable) {
         records.push({
           teamName: team.name, sig: f.sig, matchId: row.match_id, createdAtMs: Date.parse(row.created_at), endMs: Number(f.endMs) || null, map: row.map,
+          teamEndMs: Number(f.teamEndMs) || null,
           mode: f.mode, matchType: f.matchType, telemetryUrl: f.tel || "", excluded: null,
           members: row.deaths.members, place: row.win_place, encounter: f.encounter || [],
           telemetry: row.deaths.telemetry || null, leave: !!row.leave_flag, source: "stored",
@@ -1395,7 +1420,7 @@ function createKillrace(deps) {
         sig: rec.sig, mode: rec.mode || null, matchType: rec.matchType || null, tel: rec.telemetryUrl || null,
         encounter: rec.encounter || [], excluded: rec.excluded, deadSlots: rec.excluded ? [] : rec.deadSlots,
         ...(rec.excluded || !rec.penBySlot ? {} : { penBySlot: rec.penBySlot }),
-        source: rec.source, endMs: rec.endMs || null,
+        source: rec.source, endMs: rec.endMs || null, ...(rec.teamEndMs ? { teamEndMs: rec.teamEndMs } : {}),
         ...(rec.excluded || !rec.voidSlots.length ? {} : { voidSlots: rec.voidSlots }),
         ...(rec.excluded ? {} : { logout: rec.members.filter((x) => x.deathType === "logout").map((x) => x.slot) }),
         ...(rec.excluded || !rec.boost ? {} : { boost: rec.boost, base: rec.base }),
@@ -1427,7 +1452,18 @@ function createKillrace(deps) {
         kills: sum(counted, (g) => g.kills), damage: sum(counted, (g) => g.damage),
       };
     });
-    rankTeams(summary);
+    if (cfg.scoring === "race" && cfg.race) {
+      // 레이스 회차(§1.38) — 저장은 위에서 끝났다(판 줄 score 는 옛 방식 그대로). 보고 · 발표만 레이스 점수 · 도착 순으로
+      const ends = await teamEndsOf(ev.id);
+      for (const t of summary) {
+        for (const g of t.games) {
+          g.score = raceScore(g.kills, g.damage, g.place, g.penalty, g.leave || g.reviveOut, cfg.race);
+          Object.assign(g, doneOf(g.teamEndMs || ends.get(`${g.teamName}|${g.matchId}`) || null, g.createdAtMs));
+        }
+        t.total = sum(t.games, (g) => g.score) + t.bonus;
+      }
+      rankRace(summary, cfg.race);
+    } else rankTeams(summary);
     const inGames = records.filter((r) => !r.excluded);
     const stats = {
       fetched: fetchedTotal,
@@ -1435,7 +1471,8 @@ function createKillrace(deps) {
       fallback: inGames.filter((r) => r.used === "deathType_fallback").length,
       stored: inGames.filter((r) => r.source === "stored").length,
     };
-    return { ev, cfg, deathMode, teams: summary, warn, stale: stale.length, stats, playersWrite, at: now(), ms: now() - t0 };
+    return { ev, cfg, deathMode, teams: summary, warn, stale: stale.length, stats, playersWrite, at: now(), ms: now() - t0,
+      ...(cfg.scoring === "race" && cfg.race ? { race: cfg.race } : {}) };
   }
 
   // ── 점수판(웹) — 마지막 집계 저장분을 그대로 읽는다(PUBG 조회 없음). admin = 진행자(제외 판 · 팀별 잠정 킬 주소까지) ──
@@ -1445,7 +1482,23 @@ function createKillrace(deps) {
       loadTeams(ev.id), loadConfig(ev.id),
       sbSelect("event_matches", `select=team_name,match_id,seq,map,created_at,damage_sum,kills,win_place,penalty,leave_flag,score,flags,updated_at&event_id=eq.${ev.id}`),
     ]);
-    return buildBoard({ ev, teams, cfg, rows, at: now(), admin, live: typeof live === "function" ? await live(ev) : live });
+    const teamEnds = cfg.scoring === "race" ? await teamEndsOf(ev.id) : null;
+    return buildBoard({ ev, teams, cfg, rows, at: now(), admin, live: typeof live === "function" ? await live(ev) : live, teamEnds });
+  }
+  // 팀 판 종료(§1.38) 대체 재료 — 판별 상세(event_match_player_detail · §67)의 선수 생존 시간 최댓값. 판 줄에 teamEndMs 가 없는 옛 판만 쓴다. 실패하면 빈 값(판 시작으로 대체)
+  async function teamEndsOf(evId) {
+    const out = new Map();
+    try {
+      const [det, ms] = await Promise.all([
+        sbSelect("event_match_player_detail", `select=team_name,match_id,time_survived_s&event_id=eq.${Number(evId)}&limit=5000`),
+        sbSelect("event_matches", `select=team_name,match_id,created_at&event_id=eq.${Number(evId)}&limit=2000`),
+      ]);
+      const start = new Map(ms.map((m) => [`${m.team_name}|${m.match_id}`, Date.parse(m.created_at)]));
+      const secs = new Map();
+      for (const d of det) { const k = `${d.team_name}|${d.match_id}`; if (!secs.has(k)) secs.set(k, []); secs.get(k).push(d.time_survived_s); }
+      for (const [k, arr] of secs) { const e = teamEndOf(start.get(k), arr); if (e) out.set(k, e); }
+    } catch (e) { log.warn("[killrace] team_end_read_failed", logSafe(e)); }
+    return out;
   }
 
   // ── 개인 기록(웹) — 저장된 판의 선수별 기록을 더한다(PUBG 조회 없음) · 회차 명단(티어 · 낙찰가)은 ops_state 'killrace:roster:<id>' ──
@@ -1471,7 +1524,8 @@ function createKillrace(deps) {
         bots = new Map(got.map((x) => [`${x.team_name}|${x.match_id}|${x.account_id}`, { kills: x.bot_kills, damage: x.bot_dmg }]));
       } catch (e) { log.warn("[killrace] bot_stats_read_failed", logSafe(e)); }   // 칸이 없으면(§75 미실행) 공식 값 그대로
     }
-    return buildPlayers({ ev, teams, cfg, rows, roster, at: now(), bots });
+    const teamEnds = cfg.scoring === "race" ? await teamEndsOf(ev.id) : null;
+    return buildPlayers({ ev, teams, cfg, rows, roster, at: now(), bots, teamEnds });
   }
 
   // ── 핵 사망 무효(진행자 수동 표시) — 설정에 적고 그 판 점수를 바로 다시 센다. 다음 집계도 같은 표시를 읽는다 ──
@@ -1896,7 +1950,7 @@ module.exports = {
   telemetry: { fetchTelemetry },                                                 // 텔레메트리 스트리밍 — 판별 상세 기록(killrace-detail.cjs)이 같은 해석기를 쓴다
   tiers: { tierRowsByMerge },                                                    // 같은 사람 계정끼리 티어 나누기(§1.26) — 공개 티어 읽기(killrace-tiers.cjs · §1.29)가 같은 묶기를 쓴다
   _test: {
-    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, tierPenaltyMap, penaltyOf, TIER_PENALTY_FROM_EVENT, LATE_START_GRACE_MS, LATE_START_GRACE_FROM, startsInWindow, botAdjOf, pickCurrentEvent, CURRENT_GRACE_MS, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, raceScore, rankRace, RACE_GOAL_DEFAULT, tierRowsByMerge, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
+    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, tierPenaltyMap, penaltyOf, TIER_PENALTY_FROM_EVENT, LATE_START_GRACE_MS, LATE_START_GRACE_FROM, startsInWindow, botAdjOf, pickCurrentEvent, CURRENT_GRACE_MS, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, raceScore, rankRace, RACE_GOAL_DEFAULT, teamEndOf, formatChannelPost, formatReport, tierRowsByMerge, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, lateReviveCheck, reviveOutOf, reviveWho, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory, lineupFor, playerRows, PLAYERS_TABLE_PAUSE_MS,
   },
