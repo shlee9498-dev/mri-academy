@@ -1,4 +1,4 @@
-// node --test scripts/killrace-race.test.cjs — 레이스 점수 방식(§1.34) · 개인 기록 제외 회차(§1.35) · 가짜 데이터(운영 DB 안 씀)
+// node --test scripts/killrace-race.test.cjs — 레이스 점수 방식(§1.38.1) · 개인 기록 제외 회차(§1.38.2) · 가짜 데이터(운영 DB 안 씀)
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -48,7 +48,7 @@ test("8회 모양 — 목표 먼저 도착한 팀이 1등(총점이 낮아도) �
   assert.equal(byName.A.rank, 1);
 });
 
-test("개인 기록 제외(§1.35) — 키 값 두 모양 · 리더보드 · 커리어 둘 다 그 회차 판을 안 센다", () => {
+test("개인 기록 제외(§1.38.2) — 키 값 두 모양 · 리더보드 · 커리어 둘 다 그 회차 판을 안 센다", () => {
   assert.deepEqual([...C.statsExcludeOf({ events: [8, "9", "x", -1] })], [8, 9]);
   assert.deepEqual([...C.statsExcludeOf([8])], [8]);
   assert.equal(C.statsExcludeOf(null).size, 0);

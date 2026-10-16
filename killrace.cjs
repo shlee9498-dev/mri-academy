@@ -77,7 +77,7 @@ const DM_LIMIT = 1900;                          // Discord 메시지 2000자 —
 const PLAYERS_TABLE_PAUSE_MS = 10 * 60000;      // 개인별 판 기록 표(§66)가 없으면 이만큼 쉬었다가 다시 써 본다(1분마다 같은 실패 로그가 쌓이지 않게)
 const BOOST_SEQ_FROM_EVENT = 5;                 // 판 순번 버닝을 기본으로 쓰는 첫 회차(오너 10/7 · 5회 10/8부터) — 설정에 boostMode 가 있으면 그것이 먼저
 const BOOST_SEQS_DEFAULT = [5, 7];              // 판 순번 버닝 기본 순번(오너 10/7: 「5판, 7판 두 판만」)
-const RACE_GOAL_DEFAULT = 150;                  // 레이스 회차(§1.34) 목표 점수 기본값 — 8회(10/16) 150점 선착
+const RACE_GOAL_DEFAULT = 150;                  // 레이스 회차(§1.38.1) 목표 점수 기본값 — 8회(10/16) 150점 선착
 const LATE_REVIVE_FROM_EVENT = 5;               // 늦은 블루칩 부활 −10 을 기본으로 켜는 첫 회차(오너 10/7 · §1.14) — 설정에 lateRevive 가 있으면 그것이 먼저
 const LATE_REVIVE_MODES = ["penalty", "flag", "off"];
 const REVIVE_PHASE_DEFAULT = 4;                 // 이 페이즈가 시작된 뒤 부활 비행기에 타면 위반(오너: 「3페이지까지만」)
@@ -440,7 +440,7 @@ function normEventConfig(value, evId) {
   const penaltyBy = v.penaltyBy === "tier" || v.penaltyBy === "slot" ? v.penaltyBy
     : Number.isInteger(Number(evId)) && Number(evId) >= TIER_PENALTY_FROM_EVENT ? "tier" : "slot";
   const mode = v.mode === "low" || v.mode === "high" ? v.mode : null;      // 판 모드(원장이 정함 · low 저티어 판 · high 고티어 판) — 화면 · 공지 표시용
-  // 점수 방식(§1.34 · 오너 10/16 「목표 점수 먼저 도착」) — "classic"(지금까지 · 총점 순) | "race"(감점 방식을 따로 · 목표 도착 판 순).
+  // 점수 방식(§1.38.1 · 오너 10/16 「목표 점수 먼저 도착」) — "classic"(지금까지 · 총점 순) | "race"(감점 방식을 따로 · 목표 도착 판 순).
   // 설정에 없으면 "classic" — 지난 회차 점수는 그대로다. race 일 때만 raceGoal · racePenalty · teamGoals 를 읽는다
   const scoring = v.scoring === "race" ? "race" : "classic";
   const goalOf = (x) => (Number.isInteger(x) && x >= 10 && x <= 10000 ? x : null);
@@ -475,14 +475,14 @@ function rankTeams(list) {
   return list;
 }
 
-// 레이스 판 점수(§1.34) — 킬 + 딜/100(내림) + 치킨 8 − 감점(racePenalty "none" 이면 0 · "stored" 면 저장된 감점) · 이탈 · 늦은 부활은 −10 그대로 · 버닝 없음
+// 레이스 판 점수(§1.38.1) — 킬 + 딜/100(내림) + 치킨 8 − 감점(racePenalty "none" 이면 0 · "stored" 면 저장된 감점) · 이탈 · 늦은 부활은 −10 그대로 · 버닝 없음
 function raceScore(kills, damage, place, penalty, out, race) {
   if (out) return LEAVE_SCORE;
   return baseScore(kills, damage, place, race && race.penalty === "stored" ? penalty : 0);
 }
 // 판 확정 시각 — 팀 판 종료가 있으면 그것 · 없으면 판 시작으로 대신하고 표시(doneEstimated)
 const doneOf = (teamEndMs, startedAt) => (teamEndMs ? { doneAt: teamEndMs } : { doneAt: startedAt, doneEstimated: true });
-// 레이스 순위(§1.34) — 목표에 도착한 팀 먼저(도착 판이 **끝나 점수가 확정된** 시각이 이른 순 · 오너 10/17) · 못 한 팀은 목표 대비 비율 순 → 총점 → 킬 → 치킨 → 딜 → 팀명.
+// 레이스 순위(§1.38.1) — 목표에 도착한 팀 먼저(도착 판이 **끝나 점수가 확정된** 시각이 이른 순 · 오너 10/17) · 못 한 팀은 목표 대비 비율 순 → 총점 → 킬 → 치킨 → 딜 → 팀명.
 // 팀 목표 = teamGoals[팀명] → 없으면 회차 목표. 도착 판 = 판 번호(seq) 순으로 더해 처음 목표 이상이 된 판(보너스는 도착 판정에 넣지 않는다)
 function rankRace(list, race) {
   for (const t of list) {

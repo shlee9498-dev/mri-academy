@@ -33,7 +33,7 @@ const round = (n, d) => { const f = 10 ** d; return Math.round(n * f) / f; };
 // 늦은 블루칩 부활(§1.14)로 −10 이 된 판도 이탈 판처럼 뺀다 — killrace.cjs reviveOutOf 와 같은 식(flags.revive 만 읽는다)
 const reviveOut = (rv) => !!(rv && rv.state === "late" && rv.rule === "penalty");
 
-// 개인 기록에서 뺄 회차(§1.35 · 오너 10/16 「이번 건 테스트라 개인 스텟에 포함은 안 시킬거야」) — ops_state 'killrace:stats_exclude' = { events: [8] } 또는 [8].
+// 개인 기록에서 뺄 회차(§1.38.2 · 오너 10/16 「이번 건 테스트라 개인 스텟에 포함은 안 시킬거야」) — ops_state 'killrace:stats_exclude' = { events: [8] } 또는 [8].
 // 커리어 · 리더보드(→ 내 순위 · 선수 판수)가 같은 목록을 쓴다. 회차 점수판 · 상금은 그대로다
 const STATS_EXCLUDE_KEY = "killrace:stats_exclude";
 function statsExcludeOf(value) {

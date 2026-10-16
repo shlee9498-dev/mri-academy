@@ -106,7 +106,7 @@ function dueReason(state, events, now, season = null) {
 // rows = event_match_players 줄 · matches = event_matches 줄 · merge = { 옛 계정: 기준 계정 }
 // season = activeSeason(…) 결과 — 있으면 그 시즌 안 판만 · 「30일 안」 조건 없음
 function buildLeaderboard({ rows, matches, merge = {}, now, minGames = MIN_GAMES, recentDays = RECENT_DAYS, top = TOP, season = null, exclude = null }) {
-  const skip = exclude instanceof Set ? exclude : new Set();     // §1.35 개인 기록에서 뺀 회차(테스트 회차)
+  const skip = exclude instanceof Set ? exclude : new Set();     // §1.38.2 개인 기록에서 뺀 회차(테스트 회차)
   const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive) && !skip.has(Number(m.event_id))).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const people = new Map();
   const rootOf = mergeRootOf(merge);           // 개인 누적(career)과 같은 묶기 — 사슬 끝(본계)까지(§1.29)
@@ -204,7 +204,7 @@ function createLeaderboard(deps) {
     try {
       const [state, events, seasonRow, exRow] = await Promise.all([readState(STATE_KEY), sbSelect("event_defs", "select=id,window_end&order=id.asc&limit=500"), readState(SEASON_KEY),
         sbSelect("ops_state", `select=updated_at&key=eq.${encodeURIComponent(STATS_EXCLUDE_KEY)}&limit=1`).catch(() => [])]);
-      // §1.35 제외 회차 목록이 저장본보다 나중에 바뀌었으면 바로 다시 계산(수요일 · 회차 끝까지 기다리지 않는다)
+      // §1.38.2 제외 회차 목록이 저장본보다 나중에 바뀌었으면 바로 다시 계산(수요일 · 회차 끝까지 기다리지 않는다)
       const exAt = exRow && exRow[0] && Date.parse(exRow[0].updated_at);
       const due = dueReason(state, events, now(), seasonAt(seasonRow, now(), seasons))
         || (state && Number.isFinite(exAt) && exAt > Date.parse(state.at) ? { reason: "exclude" } : null);

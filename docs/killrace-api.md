@@ -1530,7 +1530,7 @@ CSV(BOM · 수식 막기 · 쉼표 감싸기) · 오너만 · 없는 회차 404 
 - 늦은 부활(§1.14)은 회차 설정 `lateRevive` 를 그대로 따른다 — `flag`(표시만)면 점수 인정 · `penalty` 일 때만 −10. 8회는 `flag`(오너 10/17 「이번엔 표시만」).
 - **/킬내기집계 DM · 공개 발표 · 결과 채널 글**: race 회차면 규칙 줄(「N점 먼저 도착한 팀이 우승 · 도착 = 그 판이 끝나 점수가 확정된 시각」) · 팀마다 「목표 N점 · 도착 K판째 HH:MM:SS 확정」 또는 「미도달 P%」 ·
   판 카드에 확정 시각. `racePenalty: "none"` 이면 감점 · 사망 줄을 뺀다. classic 회차는 종전 그대로. 판 줄 `score` 칸(DB)은 옛 방식으로 그대로 저장한다 — 레이스 값은 읽을 때 계산한다.
-- 응답(`/board` · `/players` · 결과 화면): 위쪽에 `scoring` · `race: { goal, penalty }`, 팀마다 `goal` · `reachedAt`(확정 시각 ms · 못 했으면 null) · `reachedSeq` · `reachedEstimated` · `progress`, 판마다 `doneAt`(확정 시각 · 대신이면 `doneEstimated`). `total` · `gameScore` · 판별 `rows[].score` 는 race 값이다. classic 회차 응답은 종전과 같다(칸 추가 없음).
+- 응답(`/board` · `/players` · 결과 화면): 위쪽에 `scoring` · `race: { goal, penalty }`, 팀마다 `goal` · `reachedAt`(확정 시각 ms · 못 했으면 null) · `reachedSeq` · `reachedEstimated` · `progress`, 판마다 `doneAt`(확정 시각 · 대신이면 `doneEstimated`). `total` · `gameScore` · 판별 `rows[].score` 는 race 값이다. classic 회차 응답에도 `scoring: "classic"` 한 칸이 붙는다(그 밖은 종전과 같다 · 화면은 이 칸으로 레이스 표시를 고른다).
 - 8회 설정: `{ scoring: "race", raceGoal: 150, racePenalty: "none" }` · 버닝 없음(`boostMul: 1` 그대로).
 
 #### §1.38.2 개인 기록 제외 회차 — ops_state `killrace:stats_exclude` = `{ events: [8] }`
