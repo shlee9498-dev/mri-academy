@@ -77,6 +77,7 @@ const DM_LIMIT = 1900;                          // Discord 메시지 2000자 —
 const PLAYERS_TABLE_PAUSE_MS = 10 * 60000;      // 개인별 판 기록 표(§66)가 없으면 이만큼 쉬었다가 다시 써 본다(1분마다 같은 실패 로그가 쌓이지 않게)
 const BOOST_SEQ_FROM_EVENT = 5;                 // 판 순번 버닝을 기본으로 쓰는 첫 회차(오너 10/7 · 5회 10/8부터) — 설정에 boostMode 가 있으면 그것이 먼저
 const BOOST_SEQS_DEFAULT = [5, 7];              // 판 순번 버닝 기본 순번(오너 10/7: 「5판, 7판 두 판만」)
+const RACE_GOAL_DEFAULT = 150;                  // 레이스 회차(§1.34) 목표 점수 기본값 — 8회(10/16) 150점 선착
 const LATE_REVIVE_FROM_EVENT = 5;               // 늦은 블루칩 부활 −10 을 기본으로 켜는 첫 회차(오너 10/7 · §1.14) — 설정에 lateRevive 가 있으면 그것이 먼저
 const LATE_REVIVE_MODES = ["penalty", "flag", "off"];
 const REVIVE_PHASE_DEFAULT = 4;                 // 이 페이즈가 시작된 뒤 부활 비행기에 타면 위반(오너: 「3페이지까지만」)
@@ -432,6 +433,15 @@ function normEventConfig(value, evId) {
   const penaltyBy = v.penaltyBy === "tier" || v.penaltyBy === "slot" ? v.penaltyBy
     : Number.isInteger(Number(evId)) && Number(evId) >= TIER_PENALTY_FROM_EVENT ? "tier" : "slot";
   const mode = v.mode === "low" || v.mode === "high" ? v.mode : null;      // 판 모드(원장이 정함 · low 저티어 판 · high 고티어 판) — 화면 · 공지 표시용
+  // 점수 방식(§1.34 · 오너 10/16 「목표 점수 먼저 도착」) — "classic"(지금까지 · 총점 순) | "race"(감점 방식을 따로 · 목표 도착 판 순).
+  // 설정에 없으면 "classic" — 지난 회차 점수는 그대로다. race 일 때만 raceGoal · racePenalty · teamGoals 를 읽는다
+  const scoring = v.scoring === "race" ? "race" : "classic";
+  const goalOf = (x) => (Number.isInteger(x) && x >= 10 && x <= 10000 ? x : null);
+  const teamGoals = {};
+  if (scoring === "race" && v.teamGoals && typeof v.teamGoals === "object") for (const [k2, n2] of Object.entries(v.teamGoals)) if (goalOf(n2)) teamGoals[k2] = n2;
+  const race = scoring === "race"
+    ? { goal: goalOf(v.raceGoal) || RACE_GOAL_DEFAULT, penalty: v.racePenalty === "stored" ? "stored" : "none", teamGoals }
+    : null;
   return {
     // 판 순번 버닝이면 boostAt 은 읽지 않는다(null) — 옛 화면이 「1.5배 판까지 N분」을 잘못 띄우지 않게
     boostAt: boostMode === "time" ? ms(v.boostAt) : null, boostMul: Number.isFinite(mul) && mul >= 1 && mul <= 3 ? mul : 1.5,
@@ -439,6 +449,7 @@ function normEventConfig(value, evId) {
     bonus, teamSize: Number.isInteger(v.teamSize) ? v.teamSize : null, modes,
     auto: v.auto !== false, voidDeaths, voidGames, liveTokens, lateRevive, revivePhase, penaltyBy, mode,
     excludeBots: v.excludeBots === true,   // §1.25 팀 점수에서도 봇(ai.*) 킬 · 딜 빼기(기본 꺼짐 · 치킨 · 감점은 그대로)
+    scoring, race,
   };
 }
 const voidKey = (teamName, matchId) => `${teamName}|${matchId}`;
@@ -453,6 +464,36 @@ function rankTeams(list) {
     const prev = list[i - 1];
     t.rank = prev && key(prev).join("|") === key(t).join("|") ? prev.rank : i + 1;
     t.tieBroken = !!(prev && prev.total === t.total) || !!(list[i + 1] && list[i + 1].total === t.total);
+  });
+  return list;
+}
+
+// 레이스 판 점수(§1.34) — 킬 + 딜/100(내림) + 치킨 8 − 감점(racePenalty "none" 이면 0 · "stored" 면 저장된 감점) · 이탈 · 늦은 부활은 −10 그대로 · 버닝 없음
+function raceScore(kills, damage, place, penalty, out, race) {
+  if (out) return LEAVE_SCORE;
+  return baseScore(kills, damage, place, race && race.penalty === "stored" ? penalty : 0);
+}
+// 레이스 순위(§1.34) — 목표에 도착한 팀 먼저(도착 판 시작 시각이 이른 순) · 못 한 팀은 목표 대비 비율 순 → 총점 → 킬 → 치킨 → 딜 → 팀명.
+// 팀 목표 = teamGoals[팀명] → 없으면 회차 목표. 도착 판 = 판 번호(seq) 순으로 더해 처음 목표 이상이 된 판(보너스는 도착 판정에 넣지 않는다)
+function rankRace(list, race) {
+  for (const t of list) {
+    t.goal = race.teamGoals[t.team.name] || race.goal;
+    let cum = 0; t.reachedAt = null;
+    for (const g of t.games) { cum += g.score; if (t.reachedAt === null && cum >= t.goal) t.reachedAt = g.startedAt || 0; }
+    t.progress = Math.round((t.total / t.goal) * 1000) / 1000;
+  }
+  const cmp = (a, b) => {
+    if (a.reachedAt !== null || b.reachedAt !== null) {
+      if (a.reachedAt === null) return 1; if (b.reachedAt === null) return -1;
+      if (a.reachedAt !== b.reachedAt) return a.reachedAt - b.reachedAt;
+    }
+    return b.progress - a.progress || b.total - a.total || b.kills - a.kills || b.chickens - a.chickens || b.damage - a.damage;
+  };
+  list.sort((a, b) => cmp(a, b) || a.team.name.localeCompare(b.team.name));
+  list.forEach((t, i) => {
+    const prev = list[i - 1];
+    t.rank = prev && cmp(prev, t) === 0 ? prev.rank : i + 1;
+    t.tieBroken = false;
   });
   return list;
 }
@@ -745,6 +786,7 @@ function seqBoosts(games, cfg) {
 }
 function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
   const lv = live || {};
+  const raceOn = cfg.scoring === "race" && !!cfg.race;
   const byTeam = new Map(teams.map((t) => [t.name, { games: [], voids: [], other: [], lastEnd: 0, boostUsed: false }]));
   let updatedAt = null;
   for (const r of rows || []) {
@@ -776,7 +818,7 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
       reviveOut: reviveOutOf(f),
       ...(f.botAdj ? { bots: { kills: Number(f.botAdj.kills) || 0, damage: Math.floor(Number(f.botAdj.damage) || 0) } } : {}),   // §1.25 뺀 봇 몫
       ...(f.botPending ? { botPending: true } : {}),                                                                              // 봇 몫 집계 중(공식 값)
-      base: baseScore(kills, damage, r.win_place, penalty), score: Number(r.score) || 0,
+      base: baseScore(kills, damage, r.win_place, penalty), score: raceOn ? raceScore(kills, damage, r.win_place, penalty, leave || reviveOutOf(f), cfg.race) : Number(r.score) || 0,
       ...(admin ? { matchId: r.match_id, logout: Array.isArray(f.logout) ? f.logout : [] } : {}),
     });
     if (endMs > b.lastEnd) b.lastEnd = endMs;
@@ -794,7 +836,7 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
       chickens: counted.filter((g) => g.place === 1).length, kills: sum(counted, (g) => g.kills), damage: sum(counted, (g) => g.damage),
       provisional: presses.filter((ts) => ts > b.lastEnd).length, boostUsed: b.boostUsed, lastEnd: b.lastEnd, ...seqBoosts(games, cfg) };
   });
-  rankTeams(list);
+  if (raceOn) rankRace(list, cfg.race); else rankTeams(list);
   // 역전까지 — 1등 총점을 넘기려면 몇 점이 더 필요한가(서버가 계산해 내려준다). 치킨 한 번(+8)을 넣으면 남는 점수 = 킬(또는 딜 100)로 채울 몫
   const top = list[0];
   list.forEach((t, i) => {
@@ -808,11 +850,13 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live }) {
     event: { name: ev.name, start: ev.start, end: ev.end }, serverNow: at, admin: !!admin,
     boostAt: cfg.boostAt, boostMul: cfg.boostMul, boostMode: cfg.boostMode, boostSeqs: cfg.boostSeqs, auto: cfg.auto, updatedAt,
     lateRevive: cfg.lateRevive, revivePhase: cfg.revivePhase, penaltyBy: cfg.penaltyBy, mode: cfg.mode, excludeBots: !!cfg.excludeBots,
+    scoring: raceOn ? "race" : "classic", ...(raceOn ? { race: { goal: cfg.race.goal, penalty: cfg.race.penalty } } : {}),
     run: lv.run || null, rankChangedAt: (lv.ranks && lv.ranks.at) || null,
     gains: (lv.gains || []).filter((g) => at - g.at < GAIN_SHOW_MS),
     teams: list.map((t) => ({
       name: t.team.name, rank: t.rank, prevRank: Number.isInteger(prev[t.team.name]) ? prev[t.team.name] : null,
       total: t.total, gameScore: t.gameScore, bonus: t.bonus, games: t.games.length,
+      ...(raceOn ? { goal: t.goal, reachedAt: t.reachedAt, progress: t.progress } : {}),
       chickens: t.chickens, kills: t.kills, damage: t.damage, provisional: t.provisional, boostUsed: t.boostUsed, lastEnd: t.lastEnd,
       boosts: t.boosts, nextBoost: t.nextBoost,
       chase: t.chase, members: t.members, rows: t.rows,
@@ -1852,7 +1896,7 @@ module.exports = {
   telemetry: { fetchTelemetry },                                                 // 텔레메트리 스트리밍 — 판별 상세 기록(killrace-detail.cjs)이 같은 해석기를 쓴다
   tiers: { tierRowsByMerge },                                                    // 같은 사람 계정끼리 티어 나누기(§1.26) — 공개 티어 읽기(killrace-tiers.cjs · §1.29)가 같은 묶기를 쓴다
   _test: {
-    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, tierPenaltyMap, penaltyOf, TIER_PENALTY_FROM_EVENT, LATE_START_GRACE_MS, LATE_START_GRACE_FROM, startsInWindow, botAdjOf, pickCurrentEvent, CURRENT_GRACE_MS, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, tierRowsByMerge, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
+    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, tierPenaltyMap, penaltyOf, TIER_PENALTY_FROM_EVENT, LATE_START_GRACE_MS, LATE_START_GRACE_FROM, startsInWindow, botAdjOf, pickCurrentEvent, CURRENT_GRACE_MS, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, raceScore, rankRace, RACE_GOAL_DEFAULT, tierRowsByMerge, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, lateReviveCheck, reviveOutOf, reviveWho, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory, lineupFor, playerRows, PLAYERS_TABLE_PAUSE_MS,
   },

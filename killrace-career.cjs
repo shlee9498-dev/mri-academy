@@ -33,6 +33,14 @@ const round = (n, d) => { const f = 10 ** d; return Math.round(n * f) / f; };
 // 늦은 블루칩 부활(§1.14)로 −10 이 된 판도 이탈 판처럼 뺀다 — killrace.cjs reviveOutOf 와 같은 식(flags.revive 만 읽는다)
 const reviveOut = (rv) => !!(rv && rv.state === "late" && rv.rule === "penalty");
 
+// 개인 기록에서 뺄 회차(§1.35 · 오너 10/16 「이번 건 테스트라 개인 스텟에 포함은 안 시킬거야」) — ops_state 'killrace:stats_exclude' = { events: [8] } 또는 [8].
+// 커리어 · 리더보드(→ 내 순위 · 선수 판수)가 같은 목록을 쓴다. 회차 점수판 · 상금은 그대로다
+const STATS_EXCLUDE_KEY = "killrace:stats_exclude";
+function statsExcludeOf(value) {
+  const arr = Array.isArray(value) ? value : value && typeof value === "object" && Array.isArray(value.events) ? value.events : [];
+  return new Set(arr.map(Number).filter((n) => Number.isInteger(n) && n > 0));
+}
+
 // 같은 사람 합치기(§1.29 · killrace:people merge = { 옛 계정: 기준 계정 }) — 계정 → 사슬 끝(본계). 고리가 있으면 거기서 멈춘다
 function mergeRootOf(merge) {
   const m = merge && typeof merge === "object" ? merge : {};
@@ -47,9 +55,10 @@ function mergeRootOf(merge) {
 }
 
 // rows = event_match_players 줄 · matches = event_matches 줄(event_id · team_name · match_id · seq · leave_flag · revive = flags->revive)
-function buildCareer({ rows, matches, keyOf, merge = null, minGames = MIN_GAMES }) {
+function buildCareer({ rows, matches, keyOf, merge = null, minGames = MIN_GAMES, exclude = null }) {
   const rootOf = mergeRootOf(merge);                // 부계 · 옛 계정 줄은 본계 한 사람으로 센다(주간 리더보드와 같은 묶기 · 사슬 끝까지)
-  const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
+  const skip = exclude instanceof Set ? exclude : new Set();
+  const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive) && !skip.has(Number(m.event_id))).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const games = new Map();                       // 판(회차|팀|매치) → 그 판 우리 팀 선수 줄
   const pending = new Map();                     // 계정 → 봇 몫을 기다리는 판 수(§1.24 · 그 판은 공식 값을 잠정으로 센다)
   for (const r of rows || []) {
@@ -124,15 +133,17 @@ function createCareer(deps) {
 
   async function career(ids) {
     const f = ids ? `&event_id=in.(${ids.join(",")})` : "";
-    const [raw, matches, people] = await Promise.all([
+    const [raw, matches, people, ex] = await Promise.all([
       readAll("event_match_players", `select=event_id,team_name,match_id,account_id,ign,kills,damage,bot_kills,bot_dmg,dead,started_at${f}&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc`),
       readAll("event_matches", `select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive${f}&order=event_id.asc,team_name.asc,match_id.asc`),
-      sbSelect("ops_state", "select=value&key=eq.killrace%3Apeople&limit=1").catch(() => [])
+      sbSelect("ops_state", "select=value&key=eq.killrace%3Apeople&limit=1").catch(() => []),
+      sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(STATS_EXCLUDE_KEY)}&limit=1`).catch(() => [])
     ]);
     const rows = humanRows(raw);
     const v = people && people[0] && people[0].value;
-    const players = buildCareer({ rows, matches, keyOf, merge: v && v.merge });
-    const evs = ids || [...new Set(rows.map((r) => Number(r.event_id)))].sort((a, b) => a - b);
+    const exclude = statsExcludeOf(ex && ex[0] && ex[0].value);
+    const players = buildCareer({ rows, matches, keyOf, merge: v && v.merge, exclude });
+    const evs = (ids || [...new Set(rows.map((r) => Number(r.event_id)))].sort((a, b) => a - b)).filter((id) => !exclude.has(id));
     return { events: evs, minGames: MIN_GAMES, players, updatedAt: new Date(now()).toISOString() };
   }
 
@@ -158,4 +169,4 @@ function createCareer(deps) {
   return { mount, get, career };
 }
 
-module.exports = { createCareer, buildCareer, keyMaker, reviveOut, mergeRootOf, _test: { eventsParam, keyMaker, MIN_GAMES, PAGE } };   // keyMaker · reviveOut = 리더보드(§1.18)가 같은 키 · 같은 인정 판 규칙을 쓴다
+module.exports = { createCareer, buildCareer, keyMaker, reviveOut, mergeRootOf, statsExcludeOf, STATS_EXCLUDE_KEY, _test: { eventsParam, keyMaker, MIN_GAMES, PAGE } };   // keyMaker · reviveOut = 리더보드(§1.18)가 같은 키 · 같은 인정 판 규칙을 쓴다

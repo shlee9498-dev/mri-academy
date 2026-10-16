@@ -6,7 +6,7 @@
 //   그 시즌 시작일부터의 판만 세고 「30일 안」 조건은 뺀다(§1.33 · 배그 시즌마다 새로 시작). 이름표 = 1위 UNTOUCHABLE · 2 ~ 4위 CHALLENGER · 5 ~ 10위 MASTER(권위만 · 돈 없음). 점수 = 자격자끼리 0.5 × z(판당 킬) + 0.5 × z(판당 딜)(모집단 표준편차).
 // 같은 사람 합치기 = ops_state 'killrace:people' { merge: { 옛 계정: 기준 계정 } } — 계정 번호는 그 설정 줄(DB)에만 있다.
 // 갱신 = 수요일 09:00 KST · 회차 window_end + 45분 뒤 한 번. 결과는 ops_state 'killrace:leaderboard' 저장본으로 낸다.
-const { keyMaker, reviveOut, mergeRootOf } = require("./killrace-career.cjs");
+const { keyMaker, reviveOut, mergeRootOf, statsExcludeOf, STATS_EXCLUDE_KEY } = require("./killrace-career.cjs");
 const crypto = require("crypto");
 const { humanRows } = require("./killrace-detail.cjs");   // §1.24 봇 킬 · 딜 빼기(2회부터 소급 · 저장된 bot_kills · bot_dmg 칸)
 
@@ -105,8 +105,9 @@ function dueReason(state, events, now, season = null) {
 
 // rows = event_match_players 줄 · matches = event_matches 줄 · merge = { 옛 계정: 기준 계정 }
 // season = activeSeason(…) 결과 — 있으면 그 시즌 안 판만 · 「30일 안」 조건 없음
-function buildLeaderboard({ rows, matches, merge = {}, now, minGames = MIN_GAMES, recentDays = RECENT_DAYS, top = TOP, season = null }) {
-  const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive)).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
+function buildLeaderboard({ rows, matches, merge = {}, now, minGames = MIN_GAMES, recentDays = RECENT_DAYS, top = TOP, season = null, exclude = null }) {
+  const skip = exclude instanceof Set ? exclude : new Set();     // §1.35 개인 기록에서 뺀 회차(테스트 회차)
+  const counted = new Set((matches || []).filter((m) => m.seq != null && !m.leave_flag && !reviveOut(m.revive) && !skip.has(Number(m.event_id))).map((m) => `${m.event_id}|${m.team_name}|${m.match_id}`));
   const people = new Map();
   const rootOf = mergeRootOf(merge);           // 개인 누적(career)과 같은 묶기 — 사슬 끝(본계)까지(§1.29)
   for (const r of rows || []) {
@@ -175,16 +176,18 @@ function createLeaderboard(deps) {
 
   async function compute(basis) {
     const t = now();
-    const [raw, matches, people, seasonRow] = await Promise.all([
+    const [raw, matches, people, seasonRow, exRow] = await Promise.all([
       readAll("event_match_players", "select=event_id,team_name,match_id,account_id,ign,kills,damage,bot_kills,bot_dmg,started_at&order=event_id.asc,team_name.asc,match_id.asc,account_id.asc"),
       readAll("event_matches", "select=event_id,team_name,match_id,seq,leave_flag,revive:flags->revive&order=event_id.asc,team_name.asc,match_id.asc"),
       readState(PEOPLE_KEY),
-      readState(SEASON_KEY)
+      readState(SEASON_KEY),
+      sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(STATS_EXCLUDE_KEY)}&limit=1`).catch(() => [])
     ]);
     const season = seasonAt(seasonRow, t, seasons);
     const rows = humanRows(raw);
     const merge = people && people.merge && typeof people.merge === "object" ? people.merge : {};
-    const built = buildLeaderboard({ rows, matches, merge, now: t, season });
+    const exclude = statsExcludeOf(exRow && exRow[0] && exRow[0].value);
+    const built = buildLeaderboard({ rows, matches, merge, now: t, season, exclude });
     const rules = { minGames: MIN_GAMES, recentDays: season ? null : RECENT_DAYS, season: seasonPublic(season), seasonTag: seasonTag(season) };
     const state = { at: new Date(t).toISOString(), basis, rules, eligible: built.eligible, list: built.list, standing: built.standing };
     await sbUpsert("ops_state", { key: STATE_KEY, value: state, updated_at: state.at }, "key");
@@ -199,8 +202,12 @@ function createLeaderboard(deps) {
 
   async function tick() {
     try {
-      const [state, events, seasonRow] = await Promise.all([readState(STATE_KEY), sbSelect("event_defs", "select=id,window_end&order=id.asc&limit=500"), readState(SEASON_KEY)]);
-      const due = dueReason(state, events, now(), seasonAt(seasonRow, now(), seasons));
+      const [state, events, seasonRow, exRow] = await Promise.all([readState(STATE_KEY), sbSelect("event_defs", "select=id,window_end&order=id.asc&limit=500"), readState(SEASON_KEY),
+        sbSelect("ops_state", `select=updated_at&key=eq.${encodeURIComponent(STATS_EXCLUDE_KEY)}&limit=1`).catch(() => [])]);
+      // §1.35 제외 회차 목록이 저장본보다 나중에 바뀌었으면 바로 다시 계산(수요일 · 회차 끝까지 기다리지 않는다)
+      const exAt = exRow && exRow[0] && Date.parse(exRow[0].updated_at);
+      const due = dueReason(state, events, now(), seasonAt(seasonRow, now(), seasons))
+        || (state && Number.isFinite(exAt) && exAt > Date.parse(state.at) ? { reason: "exclude" } : null);
       if (due) await refresh(due);
     } catch (e) { log.warn("[killrace-leaderboard] tick failed", String((e && e.message) || e).slice(0, 80)); }
   }
