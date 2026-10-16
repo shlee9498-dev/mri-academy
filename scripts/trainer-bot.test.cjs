@@ -5,7 +5,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { createTrainerBot, bellOutcome } = require("../trainer-bot.cjs");
+const { createTrainerBot, bellOutcome, guildTargets } = require("../trainer-bot.cjs");
 
 const T0 = Date.parse("2026-10-14T15:00:00+09:00");
 const iso = (s) => new Date(Date.parse(s)).toISOString();
@@ -113,7 +113,7 @@ test("A — [저장]: 확인 → 칸 열기 → 대신 넣기 · 두 번 눌러�
   const w = fp.writes();
   assert.deepEqual(w.map((c) => `${c.method} ${c.path}`), ["POST /slots", "POST /slots/slot-op/bookings"]);
   assert.deepEqual(w[0].body, { startAt: iso("2026-10-16T21:00:00+09:00"), durationMin: 120, lessonType: "personal" });
-  assert.deepEqual(w[1].body, { studentId: "stu-1", durationMin: 120 });           // 3시간 밖 = 종전 함수
+  assert.deepEqual(w[1].body, { studentId: "stu-1", durationMin: 120, untilStart: true });   // §83 있으면 늘 트레이너 길(경계 없음)
 });
 
 test("A — 다른 트레이너는 카드를 못 누른다", async () => {
@@ -314,4 +314,187 @@ test("문구 — 금지어 없음 · 한 줄 끝 마침표 없음 · !! ~~ 없�
   for (const w of ["확실하게", "완벽하게", "체계적으로", "특별한", "최고의", "함께 성장", "여러분의", "!!", "~~"])
     assert.ok(!strings.some((s) => s.includes(w)), w);
   assert.ok(!strings.some((s) => /[가-힣]\.$/.test(s)), strings.filter((s) => /[가-힣]\.$/.test(s)).join(" | "));
+});
+
+test("A — §83 없을 때 3시간 경계: 확인 땐 밖 · 넣을 땐 안이면 「3시간 안으로 들어왔어요」(서버 준비 문구 아님) · 플래그 없음", async () => {
+  const over = { "POST /slots/:id/bookings": () => ({ status: 409, body: { error: { code: "booking_closed" } } }) };
+  const { bot, fp } = makeBot({ leadReady: false, portal: over });
+  const msg = { ...(await bot.prepare(STAFF, { text: "오늘 18:00 길동 1시간", discordId: "d5" })) };   // 15:00 → 3시간 딱
+  await bot.handle(press(ids(msg).find((x) => x.startsWith("tbot_save:")), msg).itx);
+  assert.deepEqual(fp.writes()[1].body, { studentId: "stu-1", durationMin: 60 });
+  assert.match(msg.content, /저장하는 사이에 시작 3시간 안으로 들어왔어요/);
+  assert.doesNotMatch(msg.content, /서버 준비/);
+});
+
+test("B — 틱이 DM 을 보내는 사이 버튼 답이 와도 「답함」이 남는다(한 줄로 세우기)", async () => {
+  const at = (s) => Date.parse(s);
+  const t77 = { bookingId: 77, trainerDiscordId: "d5", studentName: "길동", startAt: iso("2026-10-14T20:00:00+09:00"), durationMin: 60 };
+  const t78 = { ...t77, bookingId: 78, startAt: iso("2026-10-14T21:00:00+09:00") };
+  const state = new Map([["trainer-bell", { since: iso("2026-10-14T00:00:00+09:00"), items: { 77: { first: iso("2026-10-14T21:10:00+09:00"), ok: true } } }]]);
+  let release;
+  const slow = new Promise((r) => { release = r; });
+  const h = makeBot({ targets: [t77, t78], state, now: at("2026-10-14T22:10:00+09:00") });
+  h.bot._deps.sendDM = async () => { await slow; return true; };      // 78 첫 벨 DM 이 늦게 끝난다
+  const tick = h.bot.bellTick();
+  await new Promise((r) => setImmediate(r));
+  const msg = { content: "🔔 x", components: [] };
+  await h.bot.handle(press("tbot_done:77", msg).itx);                  // 그 사이 77 [끝났어요]
+  release();
+  await tick;
+  await new Promise((r) => setImmediate(r));
+  await h.bot.bellTick();                                              // 줄 끝까지 비우기
+  const st = h.state.get("trainer-bell");
+  assert.ok(st.items[77].answered, "답함이 남아야 한다");
+  assert.ok(st.items[78].first, "78 첫 벨 기록");
+  h.setNow(at("2026-10-15T00:20:00+09:00"));                           // 77 첫 벨 3시간 뒤 — 답했으니 다시 묻지 않는다
+  h.bot._deps.sendDM = async (did, p) => { h.dms.push({ did, payload: p }); return true; };
+  await h.bot.bellTick();
+  assert.ok(!h.dms.some((d) => /길동님 1시간 수업/.test(d.payload.content) && d.payload.components[0].components[0].custom_id === "tbot_done:77"));
+});
+
+test("등록 서버 — MRI ACADEMY(GUILD_ID) · GmI(LESSON_GUILD_ID) 둘 다 · 같은 값이면 한 번 · 없으면 뺀다", () => {
+  assert.deepEqual(guildTargets({ GUILD_ID: "111", LESSON_GUILD_ID: "222" }), ["111", "222"]);
+  assert.deepEqual(guildTargets({ GUILD_ID: "111", LESSON_GUILD_ID: "111" }), ["111"]);
+  assert.deepEqual(guildTargets({ LESSON_GUILD_ID: "222" }), ["222"]);
+  assert.deepEqual(guildTargets({}), []);
+});
+
+// ── 클릭 카드(/수업잡기 · 오너 실사용 10/16 → 「타이핑 0」) ──
+const pick = (customId, msg, values, user = "d5") => {
+  const p = press(customId, msg, user);
+  p.itx.values = values; p.itx.isButton = () => false; p.itx.isStringSelectMenu = () => true;
+  return p;
+};
+const idOf = (msg, prefix) => msg.components.flatMap((r) => r.components).find((c) => c.custom_id.startsWith(prefix)).custom_id;
+const saveBtn = (msg) => msg.components.flatMap((r) => r.components).find((c) => c.custom_id.startsWith("tbot_save:"));
+const OWNER = { id: 4, name: "원장", role: "owner", discord_id: "d5" };
+
+test("클릭 카드 — 칸 없는 명령 · 다섯 줄 · 드롭다운 25개 안 · 다 고르기 전엔 [저장] 꺼짐 · 고르는 동안 쓰기 0", async () => {
+  const many = Array.from({ length: 30 }, (_, i) => ({ ...GILDONG, id: `s${i}`, displayName: `학생${i}`, lastLessonOn: `2026-10-${String(1 + (i % 14)).padStart(2, "0")}` }));
+  const { bot, fp } = makeBot({ portal: { students: many } });
+  const msg = { ...(await bot.openPickCard(STAFF, "d5")) };
+  assert.equal(msg.components.length, 5);
+  for (const r of msg.components) for (const c of r.components) if (c.type === 3) assert.ok(c.options.length <= 25 && c.options.length > 0);
+  assert.equal(msg.components[0].components[0].options[0].label.startsWith("학생13"), true);   // 최근 수업 순
+  assert.match(msg.content, /나머지 5명은 앱에서/);
+  assert.equal(saveBtn(msg).disabled, true);
+  assert.match(msg.content, /수강생 · 날짜 · 시각 · 길이를 골라 주세요/);
+  await bot.handle(pick(idOf(msg, "tbot_fstu:"), msg, ["s3"]).itx);
+  await bot.handle(pick(idOf(msg, "tbot_fday:"), msg, ["2026-10-20"]).itx);
+  assert.match(msg.content, /시각 · 길이를 골라 주세요/);
+  await bot.handle(pick(idOf(msg, "tbot_fhour:"), msg, ["13"]).itx);
+  await bot.handle(press(msg.components[3].components[4].custom_id, msg).itx);          // 3시간
+  assert.equal(msg.content.split("\n")[1], "10/20(화) 13:00~16:00 · 학생3님 · 3시간(15판)");
+  await bot.handle(press(idOf(msg, "tbot_fmin:") .replace(/:0$/, ":30"), msg).itx);     // 30분
+  assert.equal(msg.content.split("\n")[1], "10/20(화) 13:30~16:30 · 학생3님 · 3시간(15판)");
+  assert.equal(saveBtn(msg).disabled, false);
+  assert.equal(fp.writes().length, 0);
+  await bot.handle(press(saveBtn(msg).custom_id, msg).itx);
+  assert.deepEqual(fp.writes().map((c) => `${c.method} ${c.path}`), ["POST /slots", "POST /slots/slot-op/bookings"]);
+  assert.deepEqual(fp.writes()[0].body, { startAt: iso("2026-10-20T13:30:00+09:00"), durationMin: 180, lessonType: "personal" });
+  assert.match(msg.content, /^저장했어요 · 10\/20\(화\) 13:30~16:30 · 학생3님/);
+});
+
+test("클릭 카드 — 새벽 시각은 다음날 · 날짜 14일 · 시각 17개(10시~새벽 2시)", async () => {
+  const { bot } = makeBot();
+  const msg = { ...(await bot.openPickCard(STAFF, "d5")) };
+  const days = msg.components[1].components[0].options, hours = msg.components[2].components[0].options;
+  assert.equal(days.length, 14);
+  assert.equal(days[0].label, "오늘 10/14(수)");
+  assert.equal(days[1].label, "내일 10/15(목)");
+  assert.equal(hours.length, 17);
+  assert.deepEqual([hours[0].label, hours[2].label, hours[3].label, hours[14].label, hours[15].label], ["오전 10시", "낮 12시", "오후 1시", "밤 12시 (다음날 0시)", "새벽 1시 (다음날)"]);
+  await bot.handle(pick(idOf(msg, "tbot_fstu:"), msg, ["stu-1"]).itx);
+  await bot.handle(pick(idOf(msg, "tbot_fday:"), msg, ["2026-10-16"]).itx);
+  await bot.handle(pick(idOf(msg, "tbot_fhour:"), msg, ["25"]).itx);
+  await bot.handle(press(msg.components[3].components[0].custom_id, msg).itx);
+  assert.equal(msg.content.split("\n")[1], "10/17(토) 01:00~02:00 · 길동님 · 1시간(5판)");
+});
+
+test("클릭 카드 — 원장 · 직강 수강생: 길이 3시간 고정 · 회차 표기 · 그 시각 직강 칸에 넣기(없으면 열고 · 실패면 연 칸만 닫기)", async () => {
+  const course = { ...GILDONG, id: "c-1", displayName: "직강생", inMyScope: false, courseState: "active", lastLessonOn: "2026-10-13" };
+  const outsider = { ...GILDONG, id: "x-1", displayName: "남의학생", inMyScope: false, courseState: null };
+  const opened = [];
+  const over = {
+    students: [course, outsider],
+    "POST /slots": (b) => { opened.push(b); return { status: 200, body: { firstId: "course-op" } }; },
+    "POST /slots/:id/bookings": () => ({ status: 200, body: { bookingId: "b", gamesHeld: 0, unitsLeft: 5 } }),
+  };
+  const { bot, fp } = makeBot({ portal: over });
+  bot._deps.staffByDiscord = async () => OWNER;
+  const msg = { ...(await bot.openPickCard(OWNER, "d5")) };
+  assert.deepEqual(msg.components[0].components[0].options.map((o) => o.label), ["직강생 (Gil)"]);   // 남의 학생 빠짐
+  assert.equal(msg.components[0].components[0].options[0].description, "직강");
+  await bot.handle(pick(idOf(msg, "tbot_fstu:"), msg, ["c-1"]).itx);
+  await bot.handle(pick(idOf(msg, "tbot_fday:"), msg, ["2026-10-20"]).itx);
+  await bot.handle(pick(idOf(msg, "tbot_fhour:"), msg, ["13"]).itx);
+  assert.ok(msg.components[3].components.every((b) => b.disabled));
+  assert.equal(msg.content.split("\n")[1], "10/20(화) 13:00~16:00 · 직강생님 · 직강 · 회차는 출석 때 빠져요");
+  await bot.handle(press(saveBtn(msg).custom_id, msg).itx);
+  assert.deepEqual(opened, [{ startAt: iso("2026-10-20T13:00:00+09:00"), durationMin: 180, lessonType: "course" }]);
+  assert.deepEqual(fp.writes()[1], { method: "POST", path: "/slots/course-op/bookings", body: { studentId: "c-1" } });
+  assert.match(msg.content, /^저장했어요 · 10\/20\(화\) 13:00~16:00 · 직강생님 · 직강 · 남은 회차 5회/);
+
+  // 이미 열린 직강 칸이 있으면 그 칸에 넣는다 · 넣기 실패면 (연 칸이 없으니) 닫지 않는다
+  const slot = { id: "cs-9", startAt: iso("2026-10-21T13:00:00+09:00"), durationMin: 180, status: "open", lessonType: "course" };
+  const b2 = makeBot({ portal: { students: [course], slots: [slot], "POST /slots/:id/bookings": () => ({ status: 409, body: { error: { code: "no_units_left" } } }) } });
+  b2.bot._deps.staffByDiscord = async () => OWNER;
+  const m2 = { ...(await b2.bot.openPickCard(OWNER, "d5")) };
+  await b2.bot.handle(pick(idOf(m2, "tbot_fstu:"), m2, ["c-1"]).itx);
+  await b2.bot.handle(pick(idOf(m2, "tbot_fday:"), m2, ["2026-10-21"]).itx);
+  await b2.bot.handle(pick(idOf(m2, "tbot_fhour:"), m2, ["13"]).itx);
+  await b2.bot.handle(press(saveBtn(m2).custom_id, m2).itx);
+  assert.deepEqual(b2.fp.writes().map((c) => `${c.method} ${c.path}`), ["POST /slots/cs-9/bookings"]);
+  assert.match(m2.content, /직강 남은 회차가 없어요/);
+
+  // 새로 연 직강 칸에 넣기가 실패하면 그 칸만 닫는다
+  const b3 = makeBot({ portal: { students: [course], "POST /slots": () => ({ status: 200, body: { firstId: "new-c" } }),
+    "POST /slots/:id/bookings": () => ({ status: 409, body: { error: { code: "course_choice_needed" } } }) } });
+  b3.bot._deps.staffByDiscord = async () => OWNER;
+  const m3 = { ...(await b3.bot.openPickCard(OWNER, "d5")) };
+  await b3.bot.handle(pick(idOf(m3, "tbot_fstu:"), m3, ["c-1"]).itx);
+  await b3.bot.handle(pick(idOf(m3, "tbot_fday:"), m3, ["2026-10-22"]).itx);
+  await b3.bot.handle(pick(idOf(m3, "tbot_fhour:"), m3, ["13"]).itx);
+  await b3.bot.handle(press(saveBtn(m3).custom_id, m3).itx);
+  assert.deepEqual(b3.fp.writes().map((c) => `${c.method} ${c.path}`), ["POST /slots", "POST /slots/new-c/bookings", "DELETE /slots/new-c"]);
+  assert.match(m3.content, /진행 중인 직강이 둘이에요/);
+});
+
+test("클릭 카드 — 지난 시각은 기록 카드로 한 번 더 묻는다 · 남의 카드는 못 누른다", async () => {
+  const { bot, fp } = makeBot();
+  const msg = { ...(await bot.openPickCard(STAFF, "d5")) };
+  await bot.handle(pick(idOf(msg, "tbot_fstu:"), msg, ["stu-1"]).itx);
+  const other = pick(idOf(msg, "tbot_fday:"), msg, ["2026-10-14"], "d9");
+  await bot.handle(other.itx);
+  assert.equal(fp.writes().length, 0);
+  await bot.handle(pick(idOf(msg, "tbot_fday:"), msg, ["2026-10-14"]).itx);
+  await bot.handle(pick(idOf(msg, "tbot_fhour:"), msg, ["13"]).itx);
+  await bot.handle(press(msg.components[3].components[0].custom_id, msg).itx);
+  await bot.handle(press(saveBtn(msg).custom_id, msg).itx);
+  assert.equal(fp.writes().length, 0);
+  assert.match(msg.content, /📝 지난 수업이에요 · 기록으로 넣을게요/);
+  await bot.handle(press(saveBtn(msg).custom_id, msg).itx);
+  assert.deepEqual(fp.writes()[0].path, "/lessons");
+});
+
+test("명령 정의 — 칸 없음 · 등록된 옛 칸 5개면 고쳐 쓴다 · 조사 을/를", () => {
+  const { COMMANDS, commandChanged } = require("../trainer-bot.cjs");
+  assert.deepEqual(COMMANDS[0].options, []);
+  assert.equal(commandChanged({ description: "DM 으로 맞춘 수업을 한 줄로 저장해요", options: [{ name: "한줄" }, { name: "수강생" }] }, COMMANDS[0]), true);
+  assert.equal(commandChanged({ description: COMMANDS[0].description, options: [] }, COMMANDS[0]), false);
+});
+
+test("한 줄 못 읽음 문구 — 「길이를」 · 「시각을」", async () => {
+  const { bot } = makeBot();
+  assert.match((await bot.prepare(STAFF, { text: "금 9시 길동", discordId: "d5" })).content, /^길이를 못 읽었어요/);
+  assert.match((await bot.prepare(STAFF, { text: "금 길동 2시간", discordId: "d5" })).content, /^시각을 못 읽었어요/);
+});
+
+test("한 줄 채널 점검 — 못 찾음 · 권한 부족 이름 · OK", async () => {
+  const { channelCheck } = require("../trainer-bot.cjs");
+  const client = (ch, err) => ({ options: { intents: { has: (k) => k === "MessageContent" } }, channels: { fetch: async () => { if (err) throw err; return ch; } } });
+  assert.match(await channelCheck(client(null, Object.assign(new Error("x"), { code: 50001 })), "1"), /못 찾음\(code 50001/);
+  const mk = (have) => ({ name: "수업잡기", guild: { name: "MRI ACADEMY", members: { me: {} } }, permissionsFor: () => ({ has: (k) => have.includes(k) }) });
+  assert.equal(await channelCheck(client(mk(["ViewChannel"])), "1"), "채널 한 줄 · #수업잡기 (MRI ACADEMY) · 권한 부족: 메시지 보내기 · 메시지 기록 보기 · 메시지 내용 인텐트 OK");
+  assert.equal(await channelCheck(client(mk(["ViewChannel", "SendMessages", "ReadMessageHistory"])), "1"), "채널 한 줄 · #수업잡기 (MRI ACADEMY) · 권한 OK · 메시지 내용 인텐트 OK");
 });

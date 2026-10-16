@@ -123,6 +123,11 @@ function parseLessonLine(text, nowMs) {
   const d1 = takeDuration(s); s = d1.rest;
   const t1 = takeTime(s); s = t1.rest;
   const dt = takeDate(s, today); s = dt.rest;
+  // 남은 군더더기 — 날짜를 읽었으면 요일 낱말(「화요일」) · 끝 시각(「~ 오후 4시」) · 물결을 이름에서 뺀다(오너 실사용 10/16)
+  if (dt.date) s = s.replace(/(?:^|\s)[월화수목금토일]요일(?=\s|$)/g, " ");
+  s = s.replace(/[~〜∼]/g, " ");
+  for (let i = 0; i < 3 && t1.time; i++) { const more = takeTime(s); if (!more.time) break; s = more.rest; }
+  s = s.replace(/(?:^|\s)-+(?=\s|$)/g, " ");
   const name = takeName(s);
 
   const missing = [];
