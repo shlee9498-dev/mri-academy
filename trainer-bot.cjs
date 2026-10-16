@@ -14,6 +14,7 @@
 
 const { parseLessonLine, cardWhen, durationLabel, kstYmd } = require("./lesson-line.cjs");
 const { PERSONAL_DURATIONS } = require("./lesson-lengths.cjs");
+const { createBookGuide } = require("./book-guide.cjs");
 
 const COMMAND_NAME = "수업잡기";
 const PREFIX = "tbot_";
@@ -643,6 +644,9 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
     };
     client.on("interactionCreate", (itx) => bot.handle(itx).catch((e) => log.error("[trainer-bot] handler", e && e.message)));
     client.on("messageCreate", (msg) => bot.onMessage(msg).catch((e) => log.error("[trainer-bot] message", e && e.message)));
+    // 앱 예약 안내판(§9.37.5) — 수강생 채널 글에 답글 한 번 · env 없으면 꺼짐
+    const guide = createBookGuide({ env, staffByDiscord: deps.staffByDiscord, log });
+    client.on("messageCreate", (msg) => guide.onMessage(msg).catch((e) => log.error("[book-guide] message", e && e.message)));
     // 등록 서버 — MRI ACADEMY(GUILD_ID · 수강생 · 트레이너가 있는 곳) + GmI(LESSON_GUILD_ID · 트레이너 운영 채널).
     //   두 곳 다 server.js 가 기동 때 commands.set(목록 통째)으로 갈아 끼우므로 15초 뒤 「빠진 것만」 만든다.
     const register = async () => {
@@ -661,6 +665,7 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
       }
       log.log(`[trainer-bot] /${COMMAND_NAME} ready · ${done.join(" · ") || "등록 서버 없음"} · 채널 한 줄 ${env.TRAINER_BOOK_CHANNEL_ID ? "켜짐" : "꺼짐(TRAINER_BOOK_CHANNEL_ID 없음)"}`);
       if (env.TRAINER_BOOK_CHANNEL_ID) log.log(`[trainer-bot] ${await channelCheck(client, env.TRAINER_BOOK_CHANNEL_ID)}`);
+      log.log(`[book-guide] ${env.STUDENT_BOOK_GUIDE_CHANNEL_ID ? await channelCheck(client, env.STUDENT_BOOK_GUIDE_CHANNEL_ID, "앱 예약 안내판") : "앱 예약 안내판 꺼짐(STUDENT_BOOK_GUIDE_CHANNEL_ID 없음)"}`);
     };
     const start = () => {
       setTimeout(register, 15000).unref?.();
@@ -678,17 +683,17 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
 // 한 줄 채널 점검(부팅 한 번) — 채널을 찾았는지 · 봇에게 모자란 권한 이름(디스코드 설정 화면 이름 그대로).
 //   한 줄을 읽으려면 「채널 보기」 · 답 카드를 달려면 「메시지 보내기」 · 원문에 답으로 다는 데 「메시지 기록 보기」가 든다.
 const CHANNEL_PERMS = [["ViewChannel", "채널 보기"], ["SendMessages", "메시지 보내기"], ["ReadMessageHistory", "메시지 기록 보기"]];
-async function channelCheck(client, id) {
+async function channelCheck(client, id, label = "채널 한 줄") {
   let ch;
   try { ch = await client.channels.fetch(id); }
-  catch (e) { return `채널 한 줄 · 채널을 못 찾음(code ${e?.code ?? "?"} · 50001 = 봇이 그 채널을 못 봄 · 10003 = 없는 채널 id)`; }
-  if (!ch || typeof ch.permissionsFor !== "function") return "채널 한 줄 · 글 채널이 아님";
+  catch (e) { return `${label} · 채널을 못 찾음(code ${e?.code ?? "?"} · 50001 = 봇이 그 채널을 못 봄 · 10003 = 없는 채널 id)`; }
+  if (!ch || typeof ch.permissionsFor !== "function") return `${label} · 글 채널이 아님`;
   const me = ch.guild?.members?.me || (ch.guild ? await ch.guild.members.fetchMe().catch(() => null) : null);
   const perms = me ? ch.permissionsFor(me) : null;
   const missing = perms ? CHANNEL_PERMS.filter(([k]) => !perms.has(k)).map(([, label]) => label) : ["(권한을 읽지 못함)"];
   // 메시지 내용 인텐트 — 봇이 이 인텐트를 달고 로그인했다면 개발자 포털에서 켜져 있다(꺼져 있으면 로그인 자체가 4014 로 실패)
   const intent = client.options?.intents?.has?.("MessageContent") ? "메시지 내용 인텐트 OK" : "메시지 내용 인텐트 없음(개발자 포털에서 켜야 함)";
-  return `채널 한 줄 · #${ch.name} (${ch.guild?.name || "?"}) · ${missing.length ? `권한 부족: ${missing.join(" · ")}` : "권한 OK"} · ${intent}`;
+  return `${label} · #${ch.name} (${ch.guild?.name || "?"}) · ${missing.length ? `권한 부족: ${missing.join(" · ")}` : "권한 OK"} · ${intent}`;
 }
 
 // 등록된 명령과 정의가 다른가 — 설명 · 칸 이름 목록만 본다(칸 이름이 바뀌면 고쳐 쓴다)
