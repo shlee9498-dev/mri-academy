@@ -686,7 +686,9 @@ async function channelCheck(client, id) {
   const me = ch.guild?.members?.me || (ch.guild ? await ch.guild.members.fetchMe().catch(() => null) : null);
   const perms = me ? ch.permissionsFor(me) : null;
   const missing = perms ? CHANNEL_PERMS.filter(([k]) => !perms.has(k)).map(([, label]) => label) : ["(권한을 읽지 못함)"];
-  return `채널 한 줄 · #${ch.name} (${ch.guild?.name || "?"}) · ${missing.length ? `권한 부족: ${missing.join(" · ")}` : "권한 OK"}`;
+  // 메시지 내용 인텐트 — 봇이 이 인텐트를 달고 로그인했다면 개발자 포털에서 켜져 있다(꺼져 있으면 로그인 자체가 4014 로 실패)
+  const intent = client.options?.intents?.has?.("MessageContent") ? "메시지 내용 인텐트 OK" : "메시지 내용 인텐트 없음(개발자 포털에서 켜야 함)";
+  return `채널 한 줄 · #${ch.name} (${ch.guild?.name || "?"}) · ${missing.length ? `권한 부족: ${missing.join(" · ")}` : "권한 OK"} · ${intent}`;
 }
 
 // 등록된 명령과 정의가 다른가 — 설명 · 칸 이름 목록만 본다(칸 이름이 바뀌면 고쳐 쓴다)

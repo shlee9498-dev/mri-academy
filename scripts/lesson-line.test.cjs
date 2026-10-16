@@ -88,9 +88,9 @@ test("다음주 — 다음 달력 주(월요일 시작)", () => {
 });
 
 test("오너 실사용 한 줄(10/16) — 요일 낱말 · 끝 시각 · 물결은 이름이 아니다", () => {
-  const r = P("천대현 10월 20일 화요일 오후 1시 ~ 오후 4시 3시간", NOW);
+  const r = P("홍길순 10월 20일 화요일 오후 1시 ~ 오후 4시 3시간", NOW);
   assert.equal(r.ok, true, JSON.stringify(r));
-  assert.equal(r.name, "천대현");
+  assert.equal(r.name, "홍길순");
   assert.equal(r.startAt, at("2026-10-20T13:00:00+09:00"));
   assert.equal(r.durationMin, 180);
   assert.equal(P("길동 10/20 21:00-23:00 2시간", NOW).name, "길동");

@@ -492,9 +492,9 @@ test("한 줄 못 읽음 문구 — 「길이를」 · 「시각을」", async (
 
 test("한 줄 채널 점검 — 못 찾음 · 권한 부족 이름 · OK", async () => {
   const { channelCheck } = require("../trainer-bot.cjs");
-  const client = (ch, err) => ({ channels: { fetch: async () => { if (err) throw err; return ch; } } });
+  const client = (ch, err) => ({ options: { intents: { has: (k) => k === "MessageContent" } }, channels: { fetch: async () => { if (err) throw err; return ch; } } });
   assert.match(await channelCheck(client(null, Object.assign(new Error("x"), { code: 50001 })), "1"), /못 찾음\(code 50001/);
   const mk = (have) => ({ name: "수업잡기", guild: { name: "MRI ACADEMY", members: { me: {} } }, permissionsFor: () => ({ has: (k) => have.includes(k) }) });
-  assert.equal(await channelCheck(client(mk(["ViewChannel"])), "1"), "채널 한 줄 · #수업잡기 (MRI ACADEMY) · 권한 부족: 메시지 보내기 · 메시지 기록 보기");
-  assert.equal(await channelCheck(client(mk(["ViewChannel", "SendMessages", "ReadMessageHistory"])), "1"), "채널 한 줄 · #수업잡기 (MRI ACADEMY) · 권한 OK");
+  assert.equal(await channelCheck(client(mk(["ViewChannel"])), "1"), "채널 한 줄 · #수업잡기 (MRI ACADEMY) · 권한 부족: 메시지 보내기 · 메시지 기록 보기 · 메시지 내용 인텐트 OK");
+  assert.equal(await channelCheck(client(mk(["ViewChannel", "SendMessages", "ReadMessageHistory"])), "1"), "채널 한 줄 · #수업잡기 (MRI ACADEMY) · 권한 OK · 메시지 내용 인텐트 OK");
 });
