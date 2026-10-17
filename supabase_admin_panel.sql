@@ -7620,3 +7620,199 @@ notify pgrst, 'reload schema';
 --   두 길이 차이 = 마감 줄 차이만 · 빈 인자 호출 select book_slot_trainer(null, null, null) → {"error":"slot_not_found"}(쓰는 것 없음)
 -- 되돌림: drop function if exists public.book_slot_trainer(bigint, bigint, int); notify pgrst, 'reload schema';
 --   (되돌리면 트레이너봇은 3시간 안 수업을 칸을 열기 전에 막는다 — 서버 · 봇 코드는 그대로 둬도 된다)
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- §84  트레이너 예약 한 건 바꾸기 · 취소 — /수업변경 · /수업취소 (2026-10-16 · 오너 OK 10/16 · 계약 §9.38 · 더하기만)
+--   예약 한 건(머리 줄)을 옮기거나 취소한다. 닫기 · 새 칸 열기 · 새 예약 · 늦은 변경 −3 이 **한 함수 안에서** 같이 되거나 같이 안 된다.
+--   안쪽 블록에서 하나라도 오류면 raise → 블록 전체 되돌림 → 그 코드를 돌려준다(옛 예약 그대로).
+--   부르는 곳: booking-api.cjs POST /api/trainer-portal/bookings/:id/cancel · /move (트레이너봇만 부른다).
+--   p_late: 3시간 안(개인)일 때만 'agreed'(사전 합의 · 차감 없음) | 'student'(수강생 사정 · 늦은 취소 −3 · §9.18 고정값). 직강은 null 만.
+--   새 표 · 칸 · 제약 없음 · 기존 함수 변경 없음(부르기만: open_trainer_slots · book_slot_trainer · book_course_slot · decide_games_adjustment).
+-- 84-0) 스냅샷: select proname from pg_proc where proname in ('trainer_cancel_booking','trainer_move_booking');   -- 0행
+--        §83 이 먼저 있어야 한다: select count(*) from pg_proc where proname = 'book_slot_trainer';                 -- 1
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+-- 공통 판정 + 닫기(내부용) — 머리 줄 잠금 · 내 칸 · booked · 시작 전 · 개인/직강 · 3시간 사유 판정 → 닫기.
+--   반환 {student_id, slot_id, slot_start, lesson_type, duration_min, course_id, games_held, late_window} 또는 {error}.
+--   닫기: 개인 = 머리 · 꼬리 cancelled · 쓰던 30분 칸 cancelled / 직강 = 그 줄만 cancelled · 칸이 비고 출석이 없으면 칸도 cancelled.
+create or replace function public.trainer_close_booking_(
+  p_trainer_id bigint, p_booking_id bigint, p_late text
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_b    slot_bookings%rowtype;
+  v_s    trainer_slots%rowtype;
+  v_win  boolean;
+  v_ids  bigint[];
+begin
+  if p_trainer_id is null or p_booking_id is null then return jsonb_build_object('error','invalid_body'); end if;
+  if p_late is not null and p_late not in ('agreed','student') then return jsonb_build_object('error','invalid_body'); end if;
+  select * into v_b from slot_bookings where id = p_booking_id for update;
+  if not found or v_b.span_head_id is not null or v_b.status <> 'booked' then return jsonb_build_object('error','not_found'); end if;
+  select * into v_s from trainer_slots where id = v_b.slot_id for update;
+  if not found or v_s.trainer_id is distinct from p_trainer_id then return jsonb_build_object('error','not_found'); end if;
+  if v_s.lesson_type not in ('personal','course') then return jsonb_build_object('error','not_found'); end if;
+  if v_s.slot_start <= now() then return jsonb_build_object('error','already_started'); end if;
+
+  v_win := v_s.slot_start - now() < interval '3 hours';
+  if v_s.lesson_type = 'course' then
+    if p_late is not null then return jsonb_build_object('error','invalid_body'); end if;   -- 직강은 사유 없음(회차 · −3 없음)
+  elsif v_win and p_late is null then
+    return jsonb_build_object('error','late_reason_required');
+  elsif not v_win and p_late is not null then
+    return jsonb_build_object('error','late_not_allowed');
+  end if;
+
+  if v_s.lesson_type = 'personal' then
+    select array_agg(slot_id) into v_ids from slot_bookings where id = v_b.id or span_head_id = v_b.id;
+    update slot_bookings set status = 'cancelled', cancelled_at = now(), games_held = 0
+     where id = v_b.id or span_head_id = v_b.id;
+    -- 다시 열지 않는다 — 열어 두면 수강생 앱에 빈 칸으로 뜬다(다시 열기는 앱 · 계약 §9.38.3)
+    update trainer_slots set status = 'cancelled' where id = any(v_ids) and status <> 'cancelled';
+  else
+    update slot_bookings set status = 'cancelled', cancelled_at = now() where id = v_b.id;
+    if not exists (select 1 from slot_bookings where slot_id = v_s.id and status = 'booked')
+       and not exists (select 1 from course_sessions where slot_id = v_s.id and status <> 'cancelled') then
+      update trainer_slots set status = 'cancelled' where id = v_s.id;
+    end if;
+  end if;
+
+  return jsonb_build_object('student_id', v_b.student_id, 'slot_id', v_s.id, 'slot_start', v_s.slot_start,
+    'lesson_type', v_s.lesson_type, 'duration_min', coalesce(v_b.duration_min, v_s.duration_min),
+    'course_id', v_b.course_id, 'games_held', v_b.games_held, 'late_window', v_win);
+end;
+$$;
+
+-- 늦은 변경 −3(내부용) — §9.18 late_cancel 고정값을 바로 반영(decide_games_adjustment direct · 요청 줄 = 기록).
+--   played_at = 원래 수업 KST 날짜와 오늘 KST 중 이른 날(미래 날짜 판수 줄을 만들지 않는다).
+create or replace function public.trainer_late_charge_(
+  p_trainer_id bigint, p_student_id bigint, p_slot_start timestamptz, p_reason text
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_req bigint;
+  v_out jsonb;
+begin
+  insert into games_adjust_requests (student_id, trainer_id, kind, remaining_delta, reason, played_at)
+  values (p_student_id, p_trainer_id, 'late_cancel', -3, p_reason,
+          least((p_slot_start at time zone 'Asia/Seoul')::date, (now() at time zone 'Asia/Seoul')::date))
+  returning id into v_req;
+  v_out := decide_games_adjustment(v_req, true, 'direct');
+  if coalesce((v_out->>'ok')::boolean, false) is not true then
+    return jsonb_build_object('error', coalesce(v_out->>'error', 'adjust_failed'));
+  end if;
+  return jsonb_build_object('requestId', v_req, 'remainingAfter', v_out->'remainingAfter');
+exception
+  when unique_violation then return jsonb_build_object('error','request_pending');
+end;
+$$;
+
+create or replace function public.trainer_cancel_booking(
+  p_trainer_id bigint, p_booking_id bigint, p_late text default null
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_c   jsonb;
+  v_l   jsonb := null;
+begin
+  begin
+    v_c := trainer_close_booking_(p_trainer_id, p_booking_id, p_late);
+    if v_c ? 'error' then raise exception using errcode = 'P0001', message = v_c->>'error'; end if;
+    if p_late = 'student' then
+      v_l := trainer_late_charge_(p_trainer_id, (v_c->>'student_id')::bigint, (v_c->>'slot_start')::timestamptz, '늦은 취소(트레이너봇)');
+      if v_l ? 'error' then raise exception using errcode = 'P0001', message = v_l->>'error'; end if;
+    end if;
+  exception when sqlstate 'P0001' then
+    return jsonb_build_object('error', sqlerrm);
+  end;
+  return jsonb_build_object('cancelled', true, 'gamesRestored', (v_c->>'games_held')::int,
+    'studentId', (v_c->>'student_id')::bigint, 'slotStart', v_c->'slot_start', 'lessonType', v_c->>'lesson_type',
+    'durationMin', (v_c->>'duration_min')::int, 'lateWindow', (v_c->>'late_window')::boolean,
+    'late', p_late, 'lateCharged', case when v_l is null then 0 else 3 end,
+    'lateRequestId', v_l->'requestId', 'remainingAfter', v_l->'remainingAfter');
+end;
+$$;
+
+create or replace function public.trainer_move_booking(
+  p_trainer_id bigint, p_booking_id bigint, p_new_start timestamptz, p_duration_min int default null, p_late text default null
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_b    slot_bookings%rowtype;
+  v_s    trainer_slots%rowtype;
+  v_dur  int;
+  v_c    jsonb;
+  v_o    jsonb;
+  v_n    jsonb;
+  v_l    jsonb := null;
+  v_new  bigint;
+begin
+  if p_trainer_id is null or p_booking_id is null or p_new_start is null then return jsonb_build_object('error','invalid_body'); end if;
+  -- 바뀌는 게 있는가 — 잠그기 전 가벼운 판정(잠근 뒤 trainer_close_booking_ 이 다시 본다)
+  select * into v_b from slot_bookings where id = p_booking_id;
+  if not found then return jsonb_build_object('error','not_found'); end if;
+  select * into v_s from trainer_slots where id = v_b.slot_id;
+  if not found then return jsonb_build_object('error','not_found'); end if;
+  if v_s.lesson_type = 'course' and p_duration_min is not null then return jsonb_build_object('error','invalid_body'); end if;
+  v_dur := coalesce(p_duration_min, v_b.duration_min, v_s.duration_min);
+  if v_s.slot_start = p_new_start and (v_s.lesson_type = 'course' or v_dur = v_b.duration_min) then
+    return jsonb_build_object('error','same_time');
+  end if;
+
+  begin
+    v_c := trainer_close_booking_(p_trainer_id, p_booking_id, p_late);
+    if v_c ? 'error' then raise exception using errcode = 'P0001', message = v_c->>'error'; end if;
+
+    if v_c->>'lesson_type' = 'personal' then
+      -- 옛 칸을 닫은 뒤에 연다 — 30분만 미루는 이동도 옛 칸과 겹치지 않는다
+      v_o := open_trainer_slots(p_trainer_id, p_new_start, v_dur, 'personal', 1);
+      if v_o ? 'error' then raise exception using errcode = 'P0001', message = v_o->>'error'; end if;
+      v_n := book_slot_trainer((v_c->>'student_id')::bigint, (v_o->>'firstId')::bigint, v_dur);
+    else
+      select id into v_new from trainer_slots
+       where trainer_id = p_trainer_id and lesson_type = 'course' and status = 'open' and slot_start = p_new_start
+       limit 1;
+      if v_new is null then raise exception using errcode = 'P0001', message = 'no_course_slot'; end if;
+      v_n := book_course_slot((v_c->>'student_id')::bigint, v_new, p_trainer_id, (v_c->>'course_id')::bigint);
+    end if;
+    if v_n ? 'error' then raise exception using errcode = 'P0001', message = v_n->>'error'; end if;
+
+    if p_late = 'student' then
+      v_l := trainer_late_charge_(p_trainer_id, (v_c->>'student_id')::bigint, (v_c->>'slot_start')::timestamptz, '늦은 변경(트레이너봇)');
+      if v_l ? 'error' then raise exception using errcode = 'P0001', message = v_l->>'error'; end if;
+    end if;
+  exception when sqlstate 'P0001' then
+    return jsonb_build_object('error', sqlerrm);
+  end;
+
+  return jsonb_build_object('bookingId', (v_n->>'bookingId')::bigint, 'gamesHeld', coalesce((v_n->>'gamesHeld')::int, 0),
+    'unitsLeft', v_n->'unitsLeft', 'studentId', (v_c->>'student_id')::bigint,
+    'oldStart', v_c->'slot_start', 'oldDurationMin', (v_c->>'duration_min')::int,
+    'newStart', p_new_start, 'durationMin', case when v_c->>'lesson_type' = 'course' then null else v_dur end,
+    'lessonType', v_c->>'lesson_type', 'lateWindow', (v_c->>'late_window')::boolean,
+    'late', p_late, 'lateCharged', case when v_l is null then 0 else 3 end,
+    'lateRequestId', v_l->'requestId', 'remainingAfter', v_l->'remainingAfter');
+end;
+$$;
+
+-- 서버(service_role)만 부른다 — 판수를 넣는 길이 섞여 있다(늦은 변경 −3)
+revoke all on function public.trainer_close_booking_(bigint, bigint, text) from public, anon, authenticated;
+revoke all on function public.trainer_late_charge_(bigint, bigint, timestamptz, text) from public, anon, authenticated;
+revoke all on function public.trainer_cancel_booking(bigint, bigint, text) from public, anon, authenticated;
+revoke all on function public.trainer_move_booking(bigint, bigint, timestamptz, int, text) from public, anon, authenticated;
+grant execute on function public.trainer_close_booking_(bigint, bigint, text) to service_role;
+grant execute on function public.trainer_late_charge_(bigint, bigint, timestamptz, text) to service_role;
+grant execute on function public.trainer_cancel_booking(bigint, bigint, text) to service_role;
+grant execute on function public.trainer_move_booking(bigint, bigint, timestamptz, int, text) to service_role;
+notify pgrst, 'reload schema';
+
+-- 84 검증(읽기만 · 쓰는 것 없음):
+--   select proname, pg_get_function_identity_arguments(oid) from pg_proc
+--    where proname in ('trainer_close_booking_','trainer_late_charge_','trainer_cancel_booking','trainer_move_booking') order by 1;   -- 4행
+--   select trainer_cancel_booking(null, null, null);                    -- {"error":"invalid_body"}
+--   select trainer_move_booking(null, null, null, null, null);          -- {"error":"invalid_body"}
+--   select has_function_privilege('anon', 'public.trainer_move_booking(bigint,bigint,timestamptz,int,text)', 'execute');   -- false
+-- 되돌림: drop function if exists public.trainer_move_booking(bigint, bigint, timestamptz, int, text);
+--         drop function if exists public.trainer_cancel_booking(bigint, bigint, text);
+--         drop function if exists public.trainer_late_charge_(bigint, bigint, timestamptz, text);
+--         drop function if exists public.trainer_close_booking_(bigint, bigint, text);  notify pgrst, 'reload schema';
