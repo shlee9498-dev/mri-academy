@@ -409,11 +409,14 @@ function createTrainerBot(deps) {
   }
   const anyView = (c) => (c.sel.groupType ? groupView(c) : formView(c));
 
-  // 그룹 저장 — 막히는 건 칸을 열기 전에(지난 시각 · 3시간 안 · 겹침 · 판수 0) → 칸 하나 열기 → 한 명씩 넣기(재시도 없음).
+  // 그룹 저장 — 막히는 건 칸을 열기 전에(지난 시각 · 겹침 · 판수 0) → 칸 하나 열기 → 한 명씩 넣기(재시도 없음).
+  //   3시간 안도 넣는다(오너 10/17 「트레이너는 열기」) — 개인과 같이 마감 예외(§83)가 있으면 늘 untilStart 로 넣고, 없으면 3시간 안은 칸을 열기 전에 막는다.
   //   아무도 못 넣었으면 방금 연 그 칸만 닫는다(예약 0 이라 수강생 DM 없음). 일부만 들어가면 칸을 두고 못 넣은 사람만 알린다.
   async function saveGroup(staff, c) {
     const startMs = Date.parse(c.startAt), endMs = startMs + c.durationMin * 60_000;
-    if (startMs - now() < LEAD_MS) return { ok: false, text: "시작 3시간 안 그룹 수업은 아직 여기서 못 잡아요. 원장에게 말해 주세요" };
+    if (startMs <= now()) return { ok: false, text: "지난 그룹 수업은 앱에서 기록해 주세요" };
+    const leadReady = !!(await deps.trainerLeadReady?.());
+    if (startMs - now() < LEAD_MS && !leadReady) return { ok: false, text: errText("booking_closed") };
     const days = Math.min(60, Math.max(1, Math.ceil((endMs - now()) / 86400_000) + 1));
     const sl = await deps.portalCall(staff, "GET", `/slots?days=${days}`);
     if (sl.status !== 200) return { ok: false, text: errText(sl.body?.error?.code) };
@@ -432,7 +435,7 @@ function createTrainerBot(deps) {
     const slotId = op.body?.firstId;
     const okNames = [], bad = [];
     for (const x of c.group) {
-      const r = await deps.portalCall(staff, "POST", `/slots/${slotId}/bookings`, { studentId: x.id }).catch(() => ({ status: 0, body: null }));
+      const r = await deps.portalCall(staff, "POST", `/slots/${slotId}/bookings`, { studentId: x.id, ...(leadReady ? { untilStart: true } : {}) }).catch(() => ({ status: 0, body: null }));
       if (r.status === 200) okNames.push(`${x.displayName}님`);
       else bad.push(`${x.displayName}님(${errText(r.body?.error?.code)})`);
     }

@@ -833,7 +833,7 @@ test("GET /slots unclosed — 끝난 시각이 지난 열린 예약만 · 개인
 });
 
 // ════════ 트레이너봇 한 줄 예약의 마감 예외(§83 · 계약 §9.37.1) ════════
-test("대신 넣기 untilStart — 개인 칸만 book_slot_trainer · 함수 없으면 409 booking_closed · 앱(플래그 없음)은 book_slot 그대로", async () => {
+test("대신 넣기 untilStart — 개인 칸 book_slot_trainer · 함수 없으면 409 booking_closed · 앱(플래그 없음)은 book_slot 그대로", async () => {
   const personal = slot(910, { trainer_id: 2, lesson_type: "personal", capacity: 1, duration_min: null, course_level: null,
     slot_start: at(grid(Date.now() + HOUR)) });
   const group = slot(911, { trainer_id: 2, lesson_type: "participate", course_level: null, duration_min: 60 });
@@ -848,13 +848,37 @@ test("대신 넣기 untilStart — 개인 칸만 book_slot_trainer · 함수 없
   // 플래그 없음 = 종전 길(3시간 마감)
   assert.deepEqual(await call(2, `/slots/${SL(910)}/bookings`, "POST", { studentId: S(10), durationMin: 60 }),
     { status: 409, json: { error: { code: "booking_closed" } } });
-  // 값은 true 만 · 개인 칸만
+  // 값은 true 만
   assert.equal((await call(2, `/slots/${SL(910)}/bookings`, "POST", { studentId: S(10), durationMin: 60, untilStart: false })).status, 400);
-  assert.equal((await call(2, `/slots/${SL(911)}/bookings`, "POST", { studentId: S(10), untilStart: true })).status, 400);
   // §83 미실행(PostgREST 404 → throw) — 3시간 마감과 같게 답한다
   rpcOut.book_slot_trainer = () => { throw new Error("PGRST202"); };
   assert.deepEqual(await call(2, `/slots/${SL(910)}/bookings`, "POST", { studentId: S(10), durationMin: 60, untilStart: true }),
     { status: 409, json: { error: { code: "booking_closed" } } });
+});
+
+// 그룹 칸도 트레이너 대신 넣기는 시작 시각까지(오너 10/17 「트레이너는 열기」) · 수강생 본인 예약 · 상담은 3시간 마감 그대로
+test("대신 넣기 untilStart — 시작 2시간 남은 그룹 칸에 2명 넣기 · 선차감 0 · 플래그 없으면 3시간 마감 · 상담 칸은 400", async () => {
+  const soon = at(grid(Date.now() + 2 * HOUR));
+  const group = slot(912, { trainer_id: 2, lesson_type: "participate", capacity: 3, course_level: null, duration_min: 120, slot_start: soon });
+  const watch = slot(913, { trainer_id: 2, lesson_type: "spectate", capacity: 3, course_level: null, duration_min: 120, slot_start: soon });
+  const consult = slot(914, { trainer_id: 2, lesson_type: "consult", capacity: 1, course_level: null, duration_min: 60, slot_start: soon });
+  reset({ trainer_slots: [group, watch, consult] });
+  let n = 70;
+  rpcOut.book_slot_trainer = () => ({ bookingId: n++, gamesHeld: 0, slotsHeld: 1 });
+  rpcOut.book_slot = () => ({ error: "booking_closed" });   // 수강생 길 = 3시간 마감
+  for (const sid of [10, 12]) {
+    const r = await call(2, `/slots/${SL(912)}/bookings`, "POST", { studentId: S(sid), untilStart: true });
+    assert.equal(r.status, 200, `student ${sid}`);
+    assert.equal(r.json.gamesHeld, 0);
+  }
+  assert.deepEqual(argsOf("book_slot_trainer").map((a) => [a.p_student_id, a.p_slot_id, a.p_duration_min]), [[10, 912, null], [12, 912, null]]);
+  assert.equal((await call(2, `/slots/${SL(913)}/bookings`, "POST", { studentId: S(10), untilStart: true })).status, 200);
+  // 플래그 없음(앱 · 수강생과 같은 book_slot) = 3시간 마감 그대로
+  assert.deepEqual(await call(2, `/slots/${SL(912)}/bookings`, "POST", { studentId: S(10) }),
+    { status: 409, json: { error: { code: "booking_closed" } } });
+  // 상담 칸은 예외 없음
+  assert.equal((await call(2, `/slots/${SL(914)}/bookings`, "POST", { studentId: S(10), untilStart: true })).status, 400);
+  assert.equal(argsOf("book_slot_trainer").length, 3);
 });
 
 // ════════ 예약 한 건 바꾸기 · 취소(§84 · 계약 §9.38 · 트레이너봇) ════════

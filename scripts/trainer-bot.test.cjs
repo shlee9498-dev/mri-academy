@@ -665,7 +665,8 @@ test("그룹 — [그룹 관전형] → 정원 → 수강생 여러 명 · 고�
   await bot.handle(press(saveBtn(msg).custom_id, msg).itx);
   assert.deepEqual(fp.writes().map((c) => `${c.method} ${c.path}`), ["POST /slots", "POST /slots/slot-op/bookings", "POST /slots/slot-op/bookings"]);
   assert.deepEqual(fp.writes()[0].body, { startAt: iso("2026-10-20T20:00:00+09:00"), durationMin: 120, lessonType: "spectate", capacity: 3 });
-  assert.deepEqual(fp.writes().slice(1).map((c) => c.body), [{ studentId: "stu-1" }, { studentId: "stu-2" }]);   // durationMin · untilStart 없음
+  // durationMin 없음(선차감 0) · 마감 예외(§83)가 있으면 개인과 같이 늘 untilStart(오너 10/17 「트레이너는 열기」)
+  assert.deepEqual(fp.writes().slice(1).map((c) => c.body), [{ studentId: "stu-1", untilStart: true }, { studentId: "stu-2", untilStart: true }]);
   assert.equal(msg.content, "저장했어요 · 10/20(화) 20:00~22:00 · 그룹 관전형 · 정원 3명 · 길동님 · 철수님 · 남은 1자리는 앱에서 잡을 수 있어요\n판수는 수업이 끝난 뒤 진행한 판만큼 빠져요");
 });
 
@@ -694,10 +695,20 @@ test("그룹 — 일부만 들어가면 칸은 두고 못 넣은 사람만 · �
   assert.match(m2.content, /아무도 넣지 못했어요/);
 });
 
-test("그룹 — 칸을 열기 전에 막기: 3시간 안 · 지난 시각 · 판수 0 수강생 · 겹침", async () => {
+test("그룹 — 칸을 열기 전에 막기: 3시간 안(마감 예외 없을 때만) · 지난 시각 · 판수 0 수강생 · 겹침", async () => {
   const zero = { ...CHULSU, remainingMine: 0 };
+  {
+    const { bot, fp } = makeBot({ portal: { students: [GILDONG] }, leadReady: false });
+    const msg = await groupCard(bot);
+    await bot.handle(pick(idOf(msg, "tbot_fstu:"), msg, ["stu-1"]).itx);
+    await bot.handle(pick(idOf(msg, "tbot_fday:"), msg, ["2026-10-14"]).itx);
+    await bot.handle(pick(idOf(msg, "tbot_fhour:"), msg, ["17"]).itx);
+    await bot.handle(press(msg.components[3].components[2].custom_id, msg).itx);
+    await bot.handle(press(saveBtn(msg).custom_id, msg).itx);
+    assert.equal(fp.writes().length, 0);
+    assert.match(msg.content, /이 시각은 지금 잡을 수 없어요/);
+  }
   const cases = [
-    [{ students: [GILDONG] }, "2026-10-14", "17", /시작 3시간 안 그룹 수업은 아직 여기서 못 잡아요/],
     [{ students: [GILDONG, zero] }, "2026-10-20", "20", /남은 판수가 없는 수강생이 있어요\(철수님\)/],
     [{ students: [GILDONG], slots: [{ id: "x", startAt: iso("2026-10-20T21:00:00+09:00"), durationMin: 30, status: "open", lessonType: "personal" }] }, "2026-10-20", "20", /그 시간에 이미 칸이나 예약이 있어요/],
   ];
@@ -721,4 +732,17 @@ test("그룹 — 칸을 열기 전에 막기: 3시간 안 · 지난 시각 · �
   const r = press(saveBtn(msg).custom_id, msg); await bot.handle(r.itx);
   assert.equal(r.out.replies[0].content, "지난 그룹 수업은 앱에서 기록해 주세요");
   assert.equal(fp.writes().length, 0);
+});
+
+test("그룹 — 시작 3시간 안이어도 마감 예외(§83)가 있으면 칸 열기 + untilStart 로 넣기(오너 10/17 「트레이너는 열기」)", async () => {
+  const { bot, fp } = makeBot({ portal: { students: [GILDONG, CHULSU] } });
+  const msg = await groupCard(bot);
+  await bot.handle(pick(idOf(msg, "tbot_fstu:"), msg, ["stu-1", "stu-2"]).itx);
+  await bot.handle(pick(idOf(msg, "tbot_fday:"), msg, ["2026-10-14"]).itx);
+  await bot.handle(pick(idOf(msg, "tbot_fhour:"), msg, ["17"]).itx);
+  await bot.handle(press(msg.components[3].components[2].custom_id, msg).itx);
+  await bot.handle(press(saveBtn(msg).custom_id, msg).itx);
+  assert.deepEqual(fp.writes().map((c) => `${c.method} ${c.path}`), ["POST /slots", "POST /slots/slot-op/bookings", "POST /slots/slot-op/bookings"]);
+  assert.deepEqual(fp.writes().slice(1).map((c) => c.body), [{ studentId: "stu-1", untilStart: true }, { studentId: "stu-2", untilStart: true }]);
+  assert.match(msg.content, /^저장했어요 · .* 그룹 관전형 · 정원 3명 · 길동님 · 철수님/);
 });
