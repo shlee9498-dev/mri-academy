@@ -549,8 +549,10 @@ module.exports = function mountBookingApi(app, deps) {
   //   잔여 부족은 **여기서는 막는다**(「완료」와 반대) — 아직 안 한 수업이라 막아도 기록이 사라지지 않는다.
   //   범위: 내 칸 + 내 수강생(로스터와 같은 scopedStudents — 담당 + 최근 90일 진행).
   //   ⚠️ 레벨 테스트 신규(prospect)는 로스터 범위 밖이라 여기로 못 넣는다 — 본인이 앱에서 잡는다.
-  //   untilStart(§83 · 계약 §9.37.1) — 트레이너봇 한 줄 예약만 보낸다(앱은 보내지 않는다). true 면 개인 칸에 한해 마감이
+  //   untilStart(§83 · 계약 §9.37.1) — 트레이너봇 한 줄 예약만 보낸다(앱은 보내지 않는다). true 면 개인 · 그룹(관전형 · 참여형) 칸에 한해 마감이
   //   3시간 전 → **시작 시각**인 book_slot_trainer 를 탄다(그 밖 규칙은 글자 그대로 같은 사본). §83 미실행이면 409 booking_closed.
+  //   그룹은 오너 10/17 「트레이너는 열기」 — 선차감 0 · 끝난 뒤 진행한 판만큼(§42) 그대로. 상담은 3시간 마감 그대로.
+  const UNTIL_START_TYPES = new Set(["personal", "spectate", "participate"]);   // 트레이너 대신 넣기 마감 예외(시작 시각까지) 칸 종류
   app.post(`${TRAINER}/slots/:id/bookings`, rateLimit("trainerAssign", 20, 60_000),
     bodyOnly(["studentId", "durationMin", "courseKey", "untilStart"]), requireTrainer, wrap(async (req, res) => {
       const slotId = readOpaqueId("slot", req.params.id);
@@ -567,7 +569,7 @@ module.exports = function mountBookingApi(app, deps) {
       const [slot] = await sbSelect("trainer_slots", `select=id,trainer_id,lesson_type,course_level&id=eq.${slotId}`);
       if (!slot) return fail(res, 404, "slot_not_found");
       if (slot.trainer_id !== req.staff.id) return fail(res, 403, "scope_denied");
-      if (untilStart && slot.lesson_type !== "personal") return fail(res, 400, "invalid_body");   // 마감 예외는 개인 칸만
+      if (untilStart && !UNTIL_START_TYPES.has(slot.lesson_type)) return fail(res, 400, "invalid_body");   // 마감 예외는 개인 · 그룹 칸만
       if (courseKey !== undefined && slot.lesson_type !== "course") return fail(res, 400, "invalid_body");   // 강의 고르기는 직강 칸만
 
       // 직강 반 수업 칸(§59 · 계약 §9.21) — 판수 대신 강의의 남은 회차로 넣는다(선차감 없음).
