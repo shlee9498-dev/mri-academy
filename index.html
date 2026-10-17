@@ -720,7 +720,15 @@ html.vr-lock{overflow:hidden}
   var v = box.querySelector(".iv"), btn = box.querySelector(".iv-sound");
   var phone = window.matchMedia && matchMedia("(max-width:820px)").matches;
   var order = phone ? [["v", box.getAttribute("data-v")], ["h", box.getAttribute("data-h")]] : [["h", box.getAttribute("data-h")], ["v", box.getAttribute("data-v")]];
-  order = order.filter(function(o){ return o[1] && /^[A-Za-z0-9_\-\/.]+\.mp4$/.test(o[1]) && o[1].indexOf("..") < 0; });
+  // 주소는 허용 글자표(SAFE)에서 한 글자씩 다시 골라 만든다 — 사이트 안 상대 경로 .mp4 만 통과한다
+  var SAFE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-./";
+  function clean(raw){
+    if (!raw || raw.indexOf("..") >= 0 || raw.charAt(0) === "/" || !/\.mp4$/.test(raw)) return "";
+    var out = "";
+    for (var k = 0; k < raw.length; k++) { var j = SAFE.indexOf(raw.charAt(k)); if (j < 0) return ""; out += SAFE.charAt(j); }
+    return out;
+  }
+  order = order.map(function(o){ return [o[0], clean(o[1])]; }).filter(function(o){ return o[1]; });
   var i = 0;
   function tryNext(){
     if (i >= order.length) { box.hidden = true; v.removeAttribute("src"); return; }
