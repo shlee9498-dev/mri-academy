@@ -131,6 +131,9 @@ function createTrainerBot(deps) {
       };
     }
     const when = cardWhen(c.startAt, c.durationMin);
+    if (c.mode === "gconfirm") {
+      return { content: `👥 ${when} · ${GROUP_TYPES[c.groupType]} · ${c.group.map((x) => `${x.displayName}님`).join(" · ")} · 정원 ${c.capacity}명`, components: [] };
+    }
     const games = c.gamesLabel ? `(${c.gamesLabel})` : "";
     if (c.mode === "record") {
       return {
@@ -353,9 +356,95 @@ function createTrainerBot(deps) {
     if (f.error) return { content: errText(f.error) };
     if (!f.list.length) return { content: "고를 수강생이 없어요. 담당 수강생이 생기면 여기에 떠요" };
     const sl = await deps.portalCall(staff, "GET", "/slots?days=1").catch(() => null);
-    const c = newCard({ mode: "form", staffId: staff.id, discordId, students: f.list, more: f.more,
+    const c = newCard({ mode: "kind", staffId: staff.id, discordId, students: f.list, more: f.more,
       lengths: sl?.body?.personalLengths || [], sel: { half: 0 } });
-    return formView(c);
+    return kindView(c);
+  }
+
+  // ── 그룹(계약 §9.37.1b) — 첫 단계 [개인] [그룹 관전형] [그룹 참여형] → 그룹이면 정원 → 같은 모양 카드(수강생 여러 명) ──
+  //   판수: 선차감 없음 · 끝난 뒤 진행한 판만큼(앱 그룹 예약과 같은 길 · 같은 라우트). 남은 자리는 앱에서 다른 수강생이 잡는다.
+  const GROUP_TYPES = { spectate: "그룹 관전형", participate: "그룹 참여형" };
+  const GROUP_CAPS = [2, 3, 4, 5, 6, 7, 8];
+  function kindView(c) {
+    const g = c.sel.groupType;
+    return {
+      content: `📅 수업 잡기 · 본인에게만 보여요\n${g ? `${GROUP_TYPES[g]} · 정원을 골라 주세요` : "어떤 수업이에요?"}`,
+      components: [
+        row(btn(`${PREFIX}fkind:${c.id}:0`, "개인", 1), btn(`${PREFIX}fkind:${c.id}:1`, "그룹 관전형", g === "spectate" ? 1 : 2),
+            btn(`${PREFIX}fkind:${c.id}:2`, "그룹 참여형", g === "participate" ? 1 : 2), btn(`${PREFIX}cancel:${c.id}`, "취소")),
+        ...(g ? [select(`${PREFIX}fcap:${c.id}`, "정원", GROUP_CAPS.map((n) => ({ label: `${n}명`, value: String(n) })))] : []),
+      ],
+    };
+  }
+  const groupPool = (c) => c.students.filter((x) => !x.course || x.inMyScope !== false);
+  function groupView(c) {
+    const sel = c.sel, pool = groupPool(c);
+    const picked = pool.filter((x) => (sel.studentIds || []).includes(x.id));
+    const startAt = selStart(sel), dur = sel.durationMin;
+    const ready = !!(picked.length && startAt && dur);
+    let line;
+    if (ready) {
+      const names = picked.length > 2 ? `${picked[0].displayName}님 외 ${picked.length - 1}명` : picked.map((x) => `${x.displayName}님`).join(" · ");
+      line = `${cardWhen(startAt, dur)} · ${GROUP_TYPES[sel.groupType]} · ${names} · 정원 ${sel.capacity}명 · ${durationLabel(dur)}`;
+    } else {
+      const need = [!picked.length && "수강생", !sel.ymd && "날짜", sel.hour == null && "시각", !dur && "길이"].filter(Boolean);
+      line = `${need.join(" · ")}${eulReul(need[need.length - 1])} 골라 주세요`;
+    }
+    return {
+      content: `👥 ${GROUP_TYPES[sel.groupType]} 잡기 · 본인에게만 보여요\n${line}\n판수는 미리 빠지지 않고 수업이 끝난 뒤 진행한 판만큼 빠져요`,
+      components: [
+        { type: 1, components: [{ type: 3, custom_id: `${PREFIX}fstu:${c.id}`, placeholder: `수강생(최대 ${sel.capacity}명)`,
+          min_values: 1, max_values: Math.max(1, Math.min(sel.capacity, pool.length)),
+          options: pool.slice(0, 25).map((x) => ({
+            label: `${x.displayName}${x.pubgName ? ` (${x.pubgName})` : ""}`.slice(0, 100), value: x.id,
+            description: x.remainingMine != null ? `남은 판수 ${x.remainingMine}판` : undefined,
+            default: (sel.studentIds || []).includes(x.id) })) }] },
+        select(`${PREFIX}fday:${c.id}`, "날짜", dayOptions().map((o) => ({ ...o, default: o.value === sel.ymd }))),
+        select(`${PREFIX}fhour:${c.id}`, "시각", HOURS.map((h) => ({ label: hourLabel(h), value: String(h), default: h === sel.hour }))),
+        { type: 1, components: PERSONAL_DURATIONS.map((m) => btn(`${PREFIX}flen:${c.id}:${m}`, durationLabel(m), m === dur ? 1 : 2)) },
+        row(btn(`${PREFIX}fmin:${c.id}:0`, "정각", sel.half ? 2 : 1), btn(`${PREFIX}fmin:${c.id}:30`, "30분", sel.half ? 1 : 2),
+            btn(`${PREFIX}save:${c.id}`, "저장", 3, !ready), btn(`${PREFIX}cancel:${c.id}`, "취소")),
+      ],
+    };
+  }
+  const anyView = (c) => (c.sel.groupType ? groupView(c) : formView(c));
+
+  // 그룹 저장 — 막히는 건 칸을 열기 전에(지난 시각 · 3시간 안 · 겹침 · 판수 0) → 칸 하나 열기 → 한 명씩 넣기(재시도 없음).
+  //   아무도 못 넣었으면 방금 연 그 칸만 닫는다(예약 0 이라 수강생 DM 없음). 일부만 들어가면 칸을 두고 못 넣은 사람만 알린다.
+  async function saveGroup(staff, c) {
+    const startMs = Date.parse(c.startAt), endMs = startMs + c.durationMin * 60_000;
+    if (startMs - now() < LEAD_MS) return { ok: false, text: "시작 3시간 안 그룹 수업은 아직 여기서 못 잡아요. 원장에게 말해 주세요" };
+    const days = Math.min(60, Math.max(1, Math.ceil((endMs - now()) / 86400_000) + 1));
+    const sl = await deps.portalCall(staff, "GET", `/slots?days=${days}`);
+    if (sl.status !== 200) return { ok: false, text: errText(sl.body?.error?.code) };
+    const overlap = (sl.body?.slots || []).some((s) => {
+      if (s.status === "cancelled") return false;
+      const a = Date.parse(s.startAt), b = a + Number(s.durationMin || 30) * 60_000;
+      return a < endMs && startMs < b;
+    });
+    if (overlap) return { ok: false, text: errText("overlap") };
+    const zero = c.group.filter((x) => x.remainingMine != null && Number(x.remainingMine) < 1);
+    if (zero.length) return { ok: false, text: `남은 판수가 없는 수강생이 있어요(${zero.map((x) => `${x.displayName}님`).join(" · ")}). 결제 안내를 먼저 해 주세요` };
+
+    const op = await deps.portalCall(staff, "POST", "/slots",
+      { startAt: c.startAt, durationMin: c.durationMin, lessonType: c.groupType, capacity: c.capacity });
+    if (op.status !== 200) return { ok: false, text: errText(op.body?.error?.code) };
+    const slotId = op.body?.firstId;
+    const okNames = [], bad = [];
+    for (const x of c.group) {
+      const r = await deps.portalCall(staff, "POST", `/slots/${slotId}/bookings`, { studentId: x.id }).catch(() => ({ status: 0, body: null }));
+      if (r.status === 200) okNames.push(`${x.displayName}님`);
+      else bad.push(`${x.displayName}님(${errText(r.body?.error?.code)})`);
+    }
+    const head = `${cardWhen(c.startAt, c.durationMin)} · ${GROUP_TYPES[c.groupType]} · 정원 ${c.capacity}명`;
+    if (!okNames.length) {
+      const d = await deps.portalCall(staff, "DELETE", `/slots/${slotId}`).catch(() => ({ status: 0 }));
+      const left = d.status === 200 ? "" : `\n${await reportLeft(staff, c, null)}`;
+      return { ok: false, text: `아무도 넣지 못했어요 · ${bad.join(" · ")}${left}` };
+    }
+    const rest = c.capacity - okNames.length;
+    return { ok: true, text: `저장했어요 · ${head} · ${okNames.join(" · ")}${rest > 0 ? ` · 남은 ${rest}자리는 앱에서 잡을 수 있어요` : ""}`
+      + `${bad.length ? `\n못 넣은 수강생: ${bad.join(" · ")}` : ""}\n판수는 수업이 끝난 뒤 진행한 판만큼 빠져요` };
   }
 
   // 날짜 14일 · 시각 10시~다음날 새벽 2시(시 단위 + 정각/30분 버튼) — 드롭다운 25개 한도 안
@@ -443,7 +532,7 @@ function createTrainerBot(deps) {
   }
 
   async function onButton(itx) {
-    const m = /^tbot_(save|edit|cancel|ampm|pick|done|chg|ns|nsok|len|fstu|fday|fhour|flen|fmin|cpick|cday|chour|clen|cmin|cgo):([^:]+)(?::(\d+))?$/.exec(itx.customId || "");
+    const m = /^tbot_(save|edit|cancel|ampm|pick|done|chg|ns|nsok|len|fstu|fday|fhour|flen|fmin|fkind|fcap|cpick|cday|chour|clen|cmin|cgo):([^:]+)(?::(\d+))?$/.exec(itx.customId || "");
     if (!m) return false;
     const [, act, key, arg] = m;
     const staff = await deps.staffByDiscord(itx.user.id);
@@ -460,14 +549,29 @@ function createTrainerBot(deps) {
     if (act === "cancel") { c.state = "closed"; return itx.update({ content: c.kind ? "그만뒀어요 · 아무것도 바뀌지 않았어요" : "취소했어요", components: [] }); }
     if (c.kind) return onChange(itx, staff, c, act, arg);
     // 클릭 카드 고르기 — 고를 때마다 줄을 다시 그린다(쓰기 없음)
+    if (c.mode === "kind" && (act === "fkind" || act === "fcap")) {
+      if (act === "fkind") {
+        const k = Number(arg);
+        if (k === 0) { c.mode = "form"; c.sel.groupType = null; return itx.update(formView(c)); }
+        c.sel.groupType = k === 1 ? "spectate" : "participate";
+        return itx.update(kindView(c));
+      }
+      const n = Number(itx.values?.[0]);
+      if (!c.sel.groupType || !GROUP_CAPS.includes(n)) return true;
+      c.sel.capacity = n; c.mode = "form";
+      return itx.update(groupView(c));
+    }
     if (c.mode === "form" && ["fstu", "fday", "fhour", "flen", "fmin"].includes(act)) {
       const v = itx.values?.[0];
-      if (act === "fstu" && c.students.some((x) => x.id === v)) c.sel.studentId = v;
+      if (act === "fstu" && c.sel.groupType) {
+        const pool = new Set(groupPool(c).map((x) => x.id));
+        c.sel.studentIds = [...new Set((itx.values || []).filter((x) => pool.has(x)))].slice(0, c.sel.capacity);
+      } else if (act === "fstu" && c.students.some((x) => x.id === v)) c.sel.studentId = v;
       if (act === "fday" && /^\d{4}-\d{2}-\d{2}$/.test(v || "")) c.sel.ymd = v;
       if (act === "fhour" && HOURS.includes(Number(v))) c.sel.hour = Number(v);
       if (act === "flen" && PERSONAL_DURATIONS.includes(Number(arg))) c.sel.durationMin = Number(arg);
       if (act === "fmin") c.sel.half = Number(arg) === 30 ? 30 : 0;
-      return itx.update(formView(c));
+      return itx.update(anyView(c));
     }
     if (act === "edit") { c.state = "closed"; return itx.update({ content: `고쳐서 다시 보내 주세요 · /${COMMAND_NAME}`, components: [] }); }
     if (act === "ampm") {
@@ -490,7 +594,15 @@ function createTrainerBot(deps) {
     }
     // save — 한 번만. 누르는 순간 버튼을 걷고, 실패해도 다시 보내지 않는다
     if (inflight.has(c.id)) { await itx.reply({ content: "저장 중이에요", ephemeral: true }); return true; }
-    if (c.mode === "form") {
+    if (c.mode === "form" && c.sel.groupType) {
+      const pool = groupPool(c);
+      const picked = pool.filter((x) => (c.sel.studentIds || []).includes(x.id));
+      const startAt = selStart(c.sel);
+      if (!picked.length || !startAt || !c.sel.durationMin) { await itx.reply({ content: "아직 다 고르지 않았어요", ephemeral: true }); return true; }
+      if (Date.parse(startAt) <= now()) { await itx.reply({ content: "지난 그룹 수업은 앱에서 기록해 주세요", ephemeral: true }); return true; }
+      c.group = picked; c.groupType = c.sel.groupType; c.capacity = c.sel.capacity;
+      c.startAt = startAt; c.durationMin = c.sel.durationMin; c.mode = "gconfirm";
+    } else if (c.mode === "form") {
       const stu = c.students.find((x) => x.id === c.sel.studentId);
       const startAt = selStart(c.sel);
       const dur = stu?.course ? COURSE_MIN : c.sel.durationMin;
@@ -509,7 +621,7 @@ function createTrainerBot(deps) {
     c.state = "saving";
     await itx.update({ content: `${cardView(c).content}\n저장 중이에요`, components: [] });
     let out;
-    try { out = c.course ? await saveCourse(staff, c) : await save(staff, c); } catch (e) { log.error("[trainer-bot] save", e?.message); out = { ok: false, text: errText() }; }
+    try { out = c.group ? await saveGroup(staff, c) : c.course ? await saveCourse(staff, c) : await save(staff, c); } catch (e) { log.error("[trainer-bot] save", e?.message); out = { ok: false, text: errText() }; }
     c.state = out.ok ? "done" : "failed";
     inflight.delete(c.id);
     await itx.editReply({ content: out.ok ? out.text : `${cardView(c).content.split("\n").pop()}\n${out.text}`, components: [] });

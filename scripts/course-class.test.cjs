@@ -915,3 +915,30 @@ test("바꾸기 · 취소 라우트 — 본문 검사 · 함수 인자 · 기록
   assert.deepEqual(await call(4, `/bookings/${B(52)}/move`, "POST", { startAt: at(next) }), { status: 409, json: { error: { code: "no_course_slot" } } });
   delete process.env.MRI_OWNER_ID;
 });
+
+// ════════ 트레이너봇 그룹 잡기(계약 §9.37.1b) — 기존 길(칸 열기 · 대신 넣기)만 쓴다 ════════
+test("그룹 잡기 — 칸 하나 + 두 명 넣기 → 두 수강생 앱 일정에 같은 칸 · 선차감 0(book_slot 길이 없음 · 판수 줄 없음)", async () => {
+  const start = grid(Date.now() + 2 * DAY);
+  reset({ trainer_slots: [slot(930, { trainer_id: 2, lesson_type: "spectate", capacity: 4, duration_min: 120, course_level: null, slot_start: at(start) })] });
+  let nextId = 70;
+  rpcOut.book_slot = (a) => {
+    db.slot_bookings.push(bk(nextId, a.p_slot_id, a.p_student_id, "booked", { games_held: 0 }));
+    return { bookingId: nextId++, gamesHeld: 0, slotsHeld: 1 };
+  };
+  for (const sid of [10, 12]) {
+    const r = await call(2, `/slots/${SL(930)}/bookings`, "POST", { studentId: S(sid) });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.gamesHeld, 0);
+  }
+  assert.deepEqual(argsOf("book_slot").map((a) => a.p_duration_min), [null, null]);   // 그룹 = 길이 없음 → 함수가 선차감 0
+  assert.equal(calls.write.filter(([, t]) => t === "lesson_sessions").length, 0);      // 수업 전 판수 줄 없음
+  for (const sid of [10, 12]) {
+    const a = await callStudent(sid, "/availability");
+    assert.equal(a.status, 200);
+    const mine = (a.json.slots || []).filter((x) => x.id === SL(930));
+    assert.equal(mine.length, 1, `#${sid} 앱 일정에 그 칸`);
+    assert.equal(mine[0].bookedByMe, true);
+    assert.equal(mine[0].seatsLeft, 2);                                               // 남은 자리는 다른 수강생이 앱에서
+  }
+  assert.ok(dms.some((d) => d.to === "s10" && /판수는 수업 후에 차감돼요/.test(d.text)));
+});
