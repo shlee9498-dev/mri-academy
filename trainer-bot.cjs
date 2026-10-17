@@ -270,10 +270,11 @@ function createTrainerBot(deps) {
     return { left: left.map((s) => ({ no: deps.slotNo ? deps.slotNo(s.id) : null, startAt: s.startAt })) };
   }
   // 못 닫은 칸 — 카드 한 줄 + 원장 알림(운영진 DM · 반말)
-  async function reportLeft(staff, c, left) {
+  //   what = 「한 줄 예약」(개인) · 「그룹 잡기」 · 「직강 옮기기」 — 원장 DM 에 어떤 칸인지 그대로 적는다(검수 메모 10/17)
+  async function reportLeft(staff, c, left, what = "한 줄 예약", kind = "개인") {
     const hm = (iso) => new Date(Date.parse(iso) + 9 * 3600_000).toISOString().slice(11, 16);
     const list = left === null ? "확인 못 함" : left.map((x) => `${x.no == null ? "" : `#${x.no} `}${hm(x.startAt)}`).join(", ");
-    await deps.ownerAlert?.(`[트레이너봇] 한 줄 예약 실패 뒤 닫지 못한 빈 개인 칸 — ${staff.name} · ${cardWhen(c.startAt, c.durationMin)} · 칸 ${list}`)
+    await deps.ownerAlert?.(`[트레이너봇] ${what} 실패 뒤 닫지 못한 빈 ${kind} 칸 — ${staff.name} · ${cardWhen(c.startAt, c.durationMin)} · 칸 ${list}`)
       .catch?.(() => {});
     return left === null ? "방금 연 칸을 다 닫았는지 확인하지 못했어요. 원장에게 알렸어요"
       : `닫지 못한 빈 칸이 남았어요(${list}). 원장에게 알렸어요`;
@@ -442,7 +443,7 @@ function createTrainerBot(deps) {
     const head = `${cardWhen(c.startAt, c.durationMin)} · ${GROUP_TYPES[c.groupType]} · 정원 ${c.capacity}명`;
     if (!okNames.length) {
       const d = await deps.portalCall(staff, "DELETE", `/slots/${slotId}`).catch(() => ({ status: 0 }));
-      const left = d.status === 200 ? "" : `\n${await reportLeft(staff, c, null)}`;
+      const left = d.status === 200 ? "" : `\n${await reportLeft(staff, c, null, "그룹 잡기", "그룹")}`;
       return { ok: false, text: `아무도 넣지 못했어요 · ${bad.join(" · ")}${left}` };
     }
     const rest = c.capacity - okNames.length;
@@ -822,7 +823,14 @@ function createTrainerBot(deps) {
     const body = { startAt: newStart, ...(c.bk.course ? {} : { durationMin: dur }), ...(late ? { late } : {}) };
     const r = await deps.portalCall(staff, "POST", `/bookings/${c.bk.id}/move`, body);
     if (r.status !== 200) {
-      if (opened) await deps.portalCall(staff, "DELETE", `/slots/${opened}`).catch(() => null);   // 방금 연 그 칸만 닫는다
+      if (opened) {                                          // 방금 연 그 칸만 닫는다 · 못 닫으면 원장에게(saveGroup 과 같다)
+        const d = await deps.portalCall(staff, "DELETE", `/slots/${opened}`).catch(() => ({ status: 0 }));
+        if (d.status !== 200) {
+          const out = failOut(r);
+          const note = await reportLeft(staff, { startAt: newStart, durationMin: COURSE_MIN }, null, "직강 옮기기", "직강");
+          return out.lateCrossed ? out : { ...out, text: `${out.text}\n${note}` };
+        }
+      }
       return failOut(r);
     }
     return { ok: true, text: `바꿨어요 · ${startText(c.bk.startAt)} → ${cardWhen(newStart, dur)} · ${c.bk.name}님${lateTail(r, "변경")}` };

@@ -746,3 +746,30 @@ test("그룹 — 시작 3시간 안이어도 마감 예외(§83)가 있으면 �
   assert.deepEqual(fp.writes().slice(1).map((c) => c.body), [{ studentId: "stu-1", untilStart: true }, { studentId: "stu-2", untilStart: true }]);
   assert.match(msg.content, /^저장했어요 · .* 그룹 관전형 · 정원 3명 · 길동님 · 철수님/);
 });
+
+test("못 닫은 칸 알림 — 그룹은 「그룹 칸」 · 직강 옮기기 실패 뒤 연 칸을 못 닫으면 원장 알림(검수 메모 10/17)", async () => {
+  const alerts = [];
+  const b1 = makeBot({ portal: { students: [GILDONG],
+    "POST /slots/:id/bookings": () => ({ status: 409, body: { error: { code: "slot_full" } } }),
+    "DELETE /slots/:id": () => ({ status: 500, body: null }) } });
+  b1.bot._deps.ownerAlert = async (t) => { alerts.push(t); return true; };
+  const m1 = await groupCard(b1.bot);
+  await b1.bot.handle(pick(idOf(m1, "tbot_fstu:"), m1, ["stu-1"]).itx);
+  await b1.bot.handle(pick(idOf(m1, "tbot_fday:"), m1, ["2026-10-20"]).itx);
+  await b1.bot.handle(pick(idOf(m1, "tbot_fhour:"), m1, ["20"]).itx);
+  await b1.bot.handle(press(m1.components[3].components[0].custom_id, m1).itx);
+  await b1.bot.handle(press(saveBtn(m1).custom_id, m1).itx);
+  assert.match(alerts[0], /^\[트레이너봇\] 그룹 잡기 실패 뒤 닫지 못한 빈 그룹 칸 — /);
+  assert.match(m1.content, /원장에게 알렸어요/);
+
+  const b2 = makeBot({ portal: { slots: CH_SLOTS,
+    "POST /bookings/:id/move": () => ({ status: 409, body: { error: { code: "no_units_left" } } }),
+    "DELETE /slots/:id": () => ({ status: 500, body: null }) } });
+  b2.bot._deps.ownerAlert = async (t) => { alerts.push(t); return true; };
+  const m2 = { ...(await b2.bot.openChangeCard(OWNER, "d5", "move")) };
+  await b2.bot.handle(pick(idOf(m2, "tbot_cpick:"), m2, ["2"]).itx);
+  await b2.bot.handle(pick(idOf(m2, "tbot_cday:"), m2, ["2026-10-19"]).itx);
+  await b2.bot.handle(press(goBtn(m2, "바꾸기").custom_id, m2).itx);
+  assert.match(alerts[1], /^\[트레이너봇\] 직강 옮기기 실패 뒤 닫지 못한 빈 직강 칸 — /);
+  assert.match(m2.content, /직강 남은 회차가 없어요[\s\S]*원장에게 알렸어요/);
+});
