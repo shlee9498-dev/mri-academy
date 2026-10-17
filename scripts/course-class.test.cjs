@@ -866,12 +866,12 @@ test("대신 넣기 untilStart — 시작 2시간 남은 그룹 칸에 2명 넣�
   let n = 70;
   rpcOut.book_slot_trainer = () => ({ bookingId: n++, gamesHeld: 0, slotsHeld: 1 });
   rpcOut.book_slot = () => ({ error: "booking_closed" });   // 수강생 길 = 3시간 마감
-  for (const sid of [10, 11]) {
+  for (const sid of [10, 12]) {
     const r = await call(2, `/slots/${SL(912)}/bookings`, "POST", { studentId: S(sid), untilStart: true });
     assert.equal(r.status, 200, `student ${sid}`);
     assert.equal(r.json.gamesHeld, 0);
   }
-  assert.deepEqual(argsOf("book_slot_trainer").map((a) => [a.p_student_id, a.p_slot_id, a.p_duration_min]), [[10, 912, null], [11, 912, null]]);
+  assert.deepEqual(argsOf("book_slot_trainer").map((a) => [a.p_student_id, a.p_slot_id, a.p_duration_min]), [[10, 912, null], [12, 912, null]]);
   assert.equal((await call(2, `/slots/${SL(913)}/bookings`, "POST", { studentId: S(10), untilStart: true })).status, 200);
   // 플래그 없음(앱 · 수강생과 같은 book_slot) = 3시간 마감 그대로
   assert.deepEqual(await call(2, `/slots/${SL(912)}/bookings`, "POST", { studentId: S(10) }),
