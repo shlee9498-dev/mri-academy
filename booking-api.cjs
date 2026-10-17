@@ -189,6 +189,9 @@ module.exports = function mountBookingApi(app, deps) {
     reason_required: 400, already_cancelled: 409, bulk_row: 409,
     // §59b(lesson_type 'course' 허용) 전 코드 — 10/1 실행 뒤로는 나오지 않는다(함수가 남겨 둔 코드라 번역만 둔다).
     course_slots_not_ready: 503,
+    // 예약 한 건 바꾸기 · 취소(§84 · 계약 §9.38)
+    already_started: 409, late_reason_required: 400, late_not_allowed: 400, same_time: 409, no_course_slot: 409,
+    request_pending: 409, adjust_failed: 503,
   };
   const rpcFail = (res, code) => fail(res, STATUS[code] || 400, code);
   // 출석 판정에서 막힌 사람들(§59 students_rejected) — 사람별 코드를 싣는다. 키는 studentKey(불투명 id · 가드 규칙).
@@ -989,6 +992,64 @@ module.exports = function mountBookingApi(app, deps) {
       sendTrainer(res, { resolved: true, status: out.status });
     }));
 
+  // ══════════════ 예약 한 건 바꾸기 · 취소(계약 §9.38 · DDL §84 · 트레이너봇 /수업변경 · /수업취소) ══════════════
+  //   판정 · 닫기 · 새 칸 열기 · 새 예약 · 늦은 변경 −3 은 DB 함수 하나(trainer_move_booking / trainer_cancel_booking)가
+  //   한 번에 한다 — 실패하면 옛 예약 그대로. 여기는 본문 검사 · 알림(수강생 · 원장 · 담당) · 기록(admin_audit)만.
+  //   §84 미실행 배포면 함수가 없어 503(아무것도 안 바뀐다).
+  const LATE = new Set(["agreed", "student"]);
+  const lateOk = (v) => v === undefined || LATE.has(v);
+  async function moveRpc(name, args) {
+    try { return await sbRpc(name, args); }
+    catch (e) { console.error(name, e?.status || e?.message); return null; }
+  }
+  async function auditBooking(staff, action, bookingId, detail) {
+    if (!sbInsert) return;
+    try { await sbInsert("admin_audit", { actor_id: `staff:${staff.id}`, actor_name: staff.name, action, target: `slot_bookings:${bookingId}`, detail }); }
+    catch (e) { console.error("booking_audit", action, e?.status || "fail"); }
+  }
+
+  app.post(`${TRAINER}/bookings/:id/cancel`, rateLimit("trainerResolve", 60, 60_000), bodyOnly(["late"]), requireTrainer,
+    wrap(async (req, res) => {
+      const bookingId = readOpaqueId("booking", req.params.id);
+      if (bookingId == null || !lateOk(req.body?.late)) return fail(res, 400, "invalid_body");
+      const late = req.body?.late ?? null;
+      const out = await moveRpc("trainer_cancel_booking", { p_trainer_id: req.staff.id, p_booking_id: bookingId, p_late: late });
+      if (!out) return fail(res, 503, "portal_unavailable");
+      if (out.error) return rpcFail(res, out.error);
+      await auditBooking(req.staff, "booking.trainer_cancel", bookingId, {
+        student_id: out.studentId, slot_start: out.slotStart, lesson_type: out.lessonType, duration_min: out.durationMin,
+        late_window: out.lateWindow, late, late_request_id: out.lateRequestId ?? null, games_restored: out.gamesRestored });
+      if (Number(out.gamesRestored) > 0 || out.lateCharged) onGamesChanged?.([out.studentId]);
+      notifyTrainerChange(req.staff, { kind: "cancel", ...out }).catch((e) => console.error("trainer_change_dm", e?.message));
+      sendTrainer(res, { cancelled: true, gamesRestored: Number(out.gamesRestored || 0), late, lateCharged: Number(out.lateCharged || 0),
+        remainingAfter: out.remainingAfter ?? null });
+    }));
+
+  app.post(`${TRAINER}/bookings/:id/move`, rateLimit("trainerResolve", 60, 60_000), bodyOnly(["startAt", "durationMin", "late"]),
+    requireTrainer, wrap(async (req, res) => {
+      const bookingId = readOpaqueId("booking", req.params.id);
+      const startAt = req.body?.startAt, d = req.body?.durationMin;
+      const startMs = typeof startAt === "string" ? Date.parse(startAt) : NaN;
+      if (bookingId == null || !Number.isFinite(startMs) || !lateOk(req.body?.late)) return fail(res, 400, "invalid_body");
+      if (d !== undefined && !DURATION_MIN.includes(d)) return fail(res, 400, "invalid_body");
+      const late = req.body?.late ?? null;
+      const out = await moveRpc("trainer_move_booking", { p_trainer_id: req.staff.id, p_booking_id: bookingId,
+        p_new_start: new Date(startMs).toISOString(), p_duration_min: d ?? null, p_late: late });
+      if (!out) return fail(res, 503, "portal_unavailable");
+      if (out.error) return rpcFail(res, out.error);
+      await auditBooking(req.staff, "booking.trainer_move", bookingId, {
+        student_id: out.studentId, new_booking_id: out.bookingId, old_start: out.oldStart, new_start: out.newStart,
+        old_duration_min: out.oldDurationMin, duration_min: out.durationMin, lesson_type: out.lessonType,
+        late_window: out.lateWindow, late, late_request_id: out.lateRequestId ?? null });
+      onGamesChanged?.([out.studentId]);
+      notifyTrainerChange(req.staff, { kind: "move", ...out }).catch((e) => console.error("trainer_change_dm", e?.message));
+      sendTrainer(res, {
+        bookingId: opaqueId("booking", out.bookingId), gamesHeld: Number(out.gamesHeld || 0), late,
+        lateCharged: Number(out.lateCharged || 0), remainingAfter: out.remainingAfter ?? null,
+        ...(out.lessonType === "course" ? { unitsLeft: unitsOf(out.unitsLeft) } : {}),
+      });
+    }));
+
   // POST /slots/:id/attendance — 직강 반 수업 칸 출석(§59 · 계약 §9.21)
   //   body { present: [studentId…], heldOn?, sameDayOk? } — present 는 GET /students 의 id(= 칸 목록의 studentKey).
   //   출석한 사람 = course_attendance units 1 · 예약은 done. **명단에 없는 예약자는 no_show**(회차는 빠지지 않는다).
@@ -1452,6 +1513,37 @@ module.exports = function mountBookingApi(app, deps) {
       ? `수업이 취소됐어요 — ${when} ${typeLabel(slot)}\n원장님 사정이에요. 직강 남은 회차는 그대로예요.`
       : `⚠️ 수업이 취소됐어요 — ${when}\n트레이너(${trainerName}) 사정입니다. **차감분은 100% 복원**됐어요.`;
     for (const r of rows) await discordDM(r.discord_id, text);
+  }
+
+  // 트레이너봇 바꾸기 · 취소(계약 §9.38.3) — 수강생 · 담당(진행과 다를 때) · 원장(3시간 안 · 트레이너가 한 것만).
+  //   돈 문구라 이모지 없이(ui-copy §2). 원장 DM 은 수강생을 #번호로만 쓴다.
+  const kstShort = (iso) => {
+    const d = new Date(Date.parse(iso) + 9 * 3600_000), p = (n) => String(n).padStart(2, "0");
+    return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${"일월화수목금토"[d.getUTCDay()]}) ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+  };
+  async function notifyTrainerChange(staff, o) {
+    const [stu] = await sbSelect("students", `select=name,discord_id,trainer_id&id=eq.${o.studentId}`);
+    const course = o.lessonType === "course";
+    const was = kstShort(o.kind === "move" ? o.oldStart : o.slotStart);
+    const lateWord = o.kind === "move" ? "변경" : "취소";
+    const lines = o.kind === "move"
+      ? [`수업 시간이 바뀌었어요 — ${was} → ${kstShort(o.newStart)} · 진행 ${course ? "원장님" : staff.name}`]
+      : [`수업이 취소됐어요 — ${was}`, course ? "직강 남은 회차는 그대로예요" : "잡아 둔 판수는 돌아왔어요"];
+    if (o.lateCharged) lines.push(`시작 3시간 안 ${lateWord}${lateWord === "취소" ? "라" : "이라"} 약관대로 3판이 빠졌어요`);
+    lines.push("궁금한 건 담당 트레이너에게 물어보세요");
+    await discordDM(stu?.discord_id, lines.join("\n"));
+    if (stu?.trainer_id && stu.trainer_id !== staff.id) {
+      const [own] = await sbSelect("staff", `select=discord_id&id=eq.${stu.trainer_id}`);
+      await discordDM(own?.discord_id, o.kind === "move"
+        ? `📅 담당 수강생 시간 변경 — ${was} → ${kstShort(o.newStart)} · ${stu.name || "?"} (진행 ${staff.name})`
+        : `🚫 담당 수강생 예약 취소 — ${was} · ${stu.name || "?"} (진행 ${staff.name})`);
+    }
+    const ownerId = process.env.MRI_OWNER_ID;
+    if (o.lateWindow && staff.role !== "owner" && ownerId) {
+      const why = o.late === "student" ? `수강생 사정(늦은 ${lateWord} 3판)` : "사전 합의(차감 없음)";
+      const what = o.kind === "move" ? `${was} → ${kstShort(o.newStart)}` : `${was} 취소`;
+      await discordDM(ownerId, `[트레이너봇] 3시간 안 ${lateWord} — ${staff.name} · #${o.studentId} · ${what} · ${why}`);
+    }
   }
 
   // 예약 DM 의 차감 한 줄 — 상담 · 직강 · 개인(선차감) · 그룹. 돈 · 차감 문구라 담백하게(ui-copy §2).

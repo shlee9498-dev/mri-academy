@@ -17,7 +17,7 @@ test("설정 — scoring 없으면 classic · race 는 목표 · 감점 방식 �
   const c = K.normEventConfig({}, 8);
   assert.equal(c.scoring, "classic"); assert.equal(c.race, null);
   const r = K.normEventConfig({ scoring: "race", raceGoal: 150, racePenalty: "none", teamGoals: { A: 200, B: 3, C: "x" } }, 8);
-  assert.deepEqual([r.scoring, r.race], ["race", { goal: 150, penalty: "none", teamGoals: { A: 200 } }]);
+  assert.deepEqual([r.scoring, r.race], ["race", { goal: 150, penalty: "none", teamGoals: { A: 200 }, goalBy: "fixed" }]);
   assert.equal(K.normEventConfig({ scoring: "race" }, 9).race.goal, K.RACE_GOAL_DEFAULT);
   assert.equal(K.normEventConfig({ scoring: "race", racePenalty: "stored" }, 9).race.penalty, "stored");
 });
@@ -39,7 +39,7 @@ test("8회 모양 — 목표 먼저 도착한 팀이 1등(총점이 낮아도) �
   ];
   const cfg = K.normEventConfig({ scoring: "race", raceGoal: 150, racePenalty: "none", boostMul: 1, boostMode: "time" }, 8);
   const b = K.buildBoard({ ev, teams, cfg, rows, at: ev.end + 3600e3, admin: false });
-  assert.equal(b.scoring, "race"); assert.deepEqual(b.race, { goal: 150, penalty: "none" });
+  assert.equal(b.scoring, "race"); assert.deepEqual(b.race, { goal: 150, penalty: "none", goalBy: "fixed" });
   const byName = Object.fromEntries(b.teams.map((t) => [t.name, t]));
   assert.deepEqual(b.teams.map((t) => t.name), ["A", "B", "C"]);
   assert.deepEqual([byName.A.total, byName.B.total, byName.C.total], [150, 160, 130]);           // A = 15 × 10(저장 감점 6 은 안 뺌) · C = (30 + 10 + 8) + (30 + 52)
@@ -118,4 +118,24 @@ test("집계 DM · 공개 발표 — 레이스 회차는 규칙 줄 · 도착 �
   const card = K.formatCard({ seq: 1, map: "Erangel_Main", createdAtMs: 0, doneAt: 60000, place: 3, kills: 2, damage: 250, dmgPts: 2, chicken: 0, penalty: 4, deadSlots: [1], score: 4, members: [] }, { penalty: "none" });
   assert.doesNotMatch(card, /감점/); assert.match(card, /09:01:00 확정/);
   assert.match(K.formatCard({ seq: 1, map: "Erangel_Main", createdAtMs: 0, place: 3, kills: 2, damage: 250, dmgPts: 2, chicken: 0, penalty: 4, deadSlots: [1], score: 0, members: [] }), /감점 -4/);
+});
+
+// §1.39.1 팀 목표 = 팀원 티어 할당 합(9회부터 · 오너 10/17)
+test("tier allot goal — 1·3·5·7 = 131 × 0.8 = 105 · no tier ×4 = 44 × 0.8 = 35 · teamGoals wins · 8회 stays fixed", () => {
+  const K = require("../killrace.cjs")._test;
+  const mem = (tiers) => tiers.map((t, i) => ({ slot: i + 1, ign: `p${i + 1}`, accountId: `account.${i}`, ...(t == null ? {} : { tier: t }) }));
+  assert.deepEqual(K.teamGoalOf(mem([1, 3, 5, 7]), null), { goal: 105, sum: 131, missing: 0 });
+  assert.deepEqual(K.teamGoalOf(mem([null, null, null, null]), null), { goal: 35, sum: 44, missing: 4 });
+  // 티어표(닉 소문자)에서 찾기 · 1.5 키 · 표 밖 티어 = 11
+  const tiers = { list: { p1: { tier: 1.5 }, p2: { tier: 2 } }, byAccount: {} };
+  assert.deepEqual(K.teamGoalOf(mem([null, null, 4, 9]), tiers), { goal: 108, sum: 55 + 42 + 27 + 11, missing: 0 });
+  assert.equal(K.normEventConfig({ scoring: "race" }, 9).race.goalBy, "tier");
+  assert.equal(K.normEventConfig({ scoring: "race", raceGoal: 150 }, 8).race.goalBy, "fixed");
+  assert.equal(K.normEventConfig({ scoring: "race", raceGoalBy: "fixed" }, 9).race.goalBy, "fixed");
+  const race = { ...K.normEventConfig({ scoring: "race", teamGoals: { B: 120 } }, 9).race, tierGoals: { A: 105, B: 35 } };
+  const team = (name) => ({ team: { name }, total: 0, games: [] });
+  const list = [team("A"), team("B"), team("C")];
+  K.rankRace(list, race);
+  const g = Object.fromEntries(list.map((t) => [t.team.name, t.goal]));
+  assert.deepEqual(g, { A: 105, B: 120, C: K.RACE_GOAL_DEFAULT });
 });

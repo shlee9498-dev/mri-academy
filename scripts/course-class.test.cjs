@@ -880,3 +880,89 @@ test("대신 넣기 untilStart — 시작 2시간 남은 그룹 칸에 2명 넣�
   assert.equal((await call(2, `/slots/${SL(914)}/bookings`, "POST", { studentId: S(10), untilStart: true })).status, 400);
   assert.equal(argsOf("book_slot_trainer").length, 3);
 });
+
+// ════════ 예약 한 건 바꾸기 · 취소(§84 · 계약 §9.38 · 트레이너봇) ════════
+test("바꾸기 · 취소 라우트 — 본문 검사 · 함수 인자 · 기록 · 수강생 DM · 원장 DM 은 3시간 안 · 트레이너 것만 · 함수 없으면 503", async () => {
+  reset();
+  process.env.MRI_OWNER_ID = "owner-dm";
+  const start = Date.parse("2026-10-20T12:00:00Z"), next = Date.parse("2026-10-21T11:00:00Z");
+  rpcOut.trainer_cancel_booking = (a) => ({ cancelled: true, gamesRestored: 10, studentId: 10, slotStart: at(start), lessonType: "personal",
+    durationMin: 120, lateWindow: a.p_late != null, late: a.p_late, lateCharged: a.p_late === "student" ? 3 : 0,
+    lateRequestId: a.p_late === "student" ? 77 : null, remainingAfter: a.p_late === "student" ? 17 : null });
+  // 본문 검사 — late 값 · 모르는 칸 · id
+  assert.equal((await call(2, `/bookings/${B(50)}/cancel`, "POST", { late: "maybe" })).status, 400);
+  assert.equal((await call(2, `/bookings/${B(50)}/cancel`, "POST", { why: "x" })).status, 400);
+  assert.equal((await call(2, `/bookings/50/cancel`, "POST", {})).status, 400);
+  assert.deepEqual(argsOf("trainer_cancel_booking"), []);
+  // 3시간 밖 취소
+  const c1 = await call(2, `/bookings/${B(50)}/cancel`, "POST", {});
+  assert.deepEqual(c1, { status: 200, json: { cancelled: true, gamesRestored: 10, late: null, lateCharged: 0, remainingAfter: null } });
+  assert.deepEqual(argsOf("trainer_cancel_booking")[0], { p_trainer_id: 2, p_booking_id: 50, p_late: null });
+  assert.deepEqual(dms.map((d) => d.to), ["s10"]);                     // 담당 = 진행 · 3시간 밖 → 원장 DM 없음
+  assert.equal(dms[0].text, "수업이 취소됐어요 — 10/20(화) 21:00\n잡아 둔 판수는 돌아왔어요\n궁금한 건 담당 트레이너에게 물어보세요");
+  assert.equal(auditRows().at(-1).action, "booking.trainer_cancel");
+  // 3시간 안 · 수강생 사정 → 3판 문구 · 원장 DM(#번호)
+  dms = [];
+  const c2 = await call(2, `/bookings/${B(50)}/cancel`, "POST", { late: "student" });
+  assert.equal(c2.json.lateCharged, 3);
+  assert.equal(c2.json.remainingAfter, 17);
+  assert.match(dms.find((d) => d.to === "s10").text, /시작 3시간 안 취소라 약관대로 3판이 빠졌어요/);
+  assert.equal(dms.find((d) => d.to === "owner-dm").text, "[트레이너봇] 3시간 안 취소 — 트레이너A · #10 · 10/20(화) 21:00 취소 · 수강생 사정(늦은 취소 3판)");
+  assert.equal(auditRows().at(-1).detail.late_request_id, 77);
+  // 원장 본인이 한 것은 원장 DM 없음
+  dms = [];
+  await call(4, `/bookings/${B(50)}/cancel`, "POST", { late: "agreed" });
+  assert.equal(dms.some((d) => d.to === "owner-dm"), false);
+  // 함수 오류 코드 → 상태
+  rpcOut.trainer_cancel_booking = () => ({ error: "late_reason_required" });
+  assert.deepEqual(await call(2, `/bookings/${B(50)}/cancel`, "POST", {}), { status: 400, json: { error: { code: "late_reason_required" } } });
+  rpcOut.trainer_cancel_booking = () => ({ error: "already_started" });
+  assert.equal((await call(2, `/bookings/${B(50)}/cancel`, "POST", {})).status, 409);
+  // §84 미실행(함수 없음 → throw) — 503 · 아무것도 안 바뀐다
+  rpcOut.trainer_cancel_booking = () => { throw new Error("PGRST202"); };
+  assert.deepEqual(await call(2, `/bookings/${B(50)}/cancel`, "POST", {}), { status: 503, json: { error: { code: "portal_unavailable" } } });
+
+  // 옮기기
+  dms = [];
+  rpcOut.trainer_move_booking = (a) => ({ bookingId: 61, gamesHeld: 13, unitsLeft: null, studentId: 10, oldStart: at(start), oldDurationMin: 120,
+    newStart: a.p_new_start, durationMin: a.p_duration_min ?? 120, lessonType: "personal", lateWindow: a.p_late != null, late: a.p_late,
+    lateCharged: a.p_late === "student" ? 3 : 0, lateRequestId: null, remainingAfter: null });
+  assert.equal((await call(2, `/bookings/${B(50)}/move`, "POST", { startAt: "어제" })).status, 400);
+  assert.equal((await call(2, `/bookings/${B(50)}/move`, "POST", { startAt: at(next), durationMin: 45 })).status, 400);
+  const m1 = await call(2, `/bookings/${B(50)}/move`, "POST", { startAt: at(next), durationMin: 150, late: "agreed" });
+  assert.deepEqual(m1, { status: 200, json: { bookingId: B(61), gamesHeld: 13, late: "agreed", lateCharged: 0, remainingAfter: null } });
+  assert.deepEqual(argsOf("trainer_move_booking")[0], { p_trainer_id: 2, p_booking_id: 50, p_new_start: at(next), p_duration_min: 150, p_late: "agreed" });
+  assert.equal(dms.find((d) => d.to === "s10").text, "수업 시간이 바뀌었어요 — 10/20(화) 21:00 → 10/21(수) 20:00 · 진행 트레이너A\n궁금한 건 담당 트레이너에게 물어보세요");
+  assert.equal(dms.find((d) => d.to === "owner-dm").text, "[트레이너봇] 3시간 안 변경 — 트레이너A · #10 · 10/20(화) 21:00 → 10/21(수) 20:00 · 사전 합의(차감 없음)");
+  assert.equal(auditRows().at(-1).action, "booking.trainer_move");
+  rpcOut.trainer_move_booking = () => ({ error: "no_course_slot" });
+  assert.deepEqual(await call(4, `/bookings/${B(52)}/move`, "POST", { startAt: at(next) }), { status: 409, json: { error: { code: "no_course_slot" } } });
+  delete process.env.MRI_OWNER_ID;
+});
+
+// ════════ 트레이너봇 그룹 잡기(계약 §9.37.1b) — 기존 길(칸 열기 · 대신 넣기)만 쓴다 ════════
+test("그룹 잡기 — 칸 하나 + 두 명 넣기 → 두 수강생 앱 일정에 같은 칸 · 선차감 0(book_slot 길이 없음 · 판수 줄 없음)", async () => {
+  const start = grid(Date.now() + 2 * DAY);
+  reset({ trainer_slots: [slot(930, { trainer_id: 2, lesson_type: "spectate", capacity: 4, duration_min: 120, course_level: null, slot_start: at(start) })] });
+  let nextId = 70;
+  rpcOut.book_slot = (a) => {
+    db.slot_bookings.push(bk(nextId, a.p_slot_id, a.p_student_id, "booked", { games_held: 0 }));
+    return { bookingId: nextId++, gamesHeld: 0, slotsHeld: 1 };
+  };
+  for (const sid of [10, 12]) {
+    const r = await call(2, `/slots/${SL(930)}/bookings`, "POST", { studentId: S(sid) });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.gamesHeld, 0);
+  }
+  assert.deepEqual(argsOf("book_slot").map((a) => a.p_duration_min), [null, null]);   // 그룹 = 길이 없음 → 함수가 선차감 0
+  assert.equal(calls.write.filter(([, t]) => t === "lesson_sessions").length, 0);      // 수업 전 판수 줄 없음
+  for (const sid of [10, 12]) {
+    const a = await callStudent(sid, "/availability");
+    assert.equal(a.status, 200);
+    const mine = (a.json.slots || []).filter((x) => x.id === SL(930));
+    assert.equal(mine.length, 1, `#${sid} 앱 일정에 그 칸`);
+    assert.equal(mine[0].bookedByMe, true);
+    assert.equal(mine[0].seatsLeft, 2);                                               // 남은 자리는 다른 수강생이 앱에서
+  }
+  assert.ok(dms.some((d) => d.to === "s10" && /판수는 수업 후에 차감돼요/.test(d.text)));
+});
