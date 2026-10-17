@@ -36,6 +36,8 @@ const killracePoster = require("./killrace-poster.cjs");
 // 킬내기 개인 누적 지표(§1.11) — 계정 기준 · 불투명 키 · 회차 묶음. 시험 scripts/killrace-career.test.cjs
 const killraceCareer = require("./killrace-career.cjs");
 const killraceTiers = require("./killrace-tiers.cjs");       // 공개 티어 읽기(§1.29) — 서버 표 하나(killrace:tiers)를 그대로
+// 역할군 이벤트(18회 · 43시즌부터) — 신청 · 검증 · drand 추첨 · 지급 기록. 설계 docs/role-event-bot-design.md · DDL §85 · 시험 scripts/role-event.test.cjs
+const roleEvent = require("./role-event.cjs");
 // 방송용 경쟁전 현황(오너 방송 OBS 띠) — 읽기 전용 · 시험 scripts/ranked-live.test.cjs
 const rankedLive = require("./ranked-live.cjs");
 // 킬내기 주간 개인 리더보드(§1.18) — 1 ~ 10위 · 역할 묶음(1 / 2-4 / 5-10) · 순위 계산은 이 모듈 한 곳. 시험 scripts/killrace-leaderboard.test.cjs
@@ -1388,7 +1390,8 @@ if (process.env.DISCORD_TOKEN) {
       // 있고 GmI(LESSON_GUILD_ID)에는 없어서, GmI에서 /연결승인을 열면 유저 옵션에 수강생이 안 뜬다
       // (유저 옵션은 그 길드 멤버만 고를 수 있다). 권한은 길드가 아니라 staff 명부 기준이라
       // 어느 길드에서 실행해도 같은 규칙이 돈다.
-      const mainCmds = [...(splitLesson ? cmds : [...cmds, LESSON_CMD, CORRECTION_CMD]), ...LINK_CMDS];
+      // /역할군신청(회원) 은 MRI ACADEMY 서버(GUILD_ID) 목록 맨 뒤 — 설계 §2
+      const mainCmds = [...(splitLesson ? cmds : [...cmds, LESSON_CMD, CORRECTION_CMD]), ...LINK_CMDS, roleEvent.APPLY_CMD];
       if (process.env.GUILD_ID) await client.application.commands.set(mainCmds, process.env.GUILD_ID);
       else await client.application.commands.set(mainCmds);
       console.log(`slash commands registered (main guild ${process.env.GUILD_ID || "global"}):`, mainCmds.map((c) => c.name).join(", "));
@@ -1406,6 +1409,9 @@ if (process.env.DISCORD_TOKEN) {
       // ⚠️ 전파에 최대 1시간 — 배포 직후 안 보이는 건 정상이다.
       try { await client.application.commands.create(LINKREQ_CMD); console.log("/연결신청 registered (global · 길드+DM)"); }
       catch (e) { console.error("linkreq_register_failed", e?.message); }
+      // /역할군(오너 · 회차생성·현황·검증·판정·추첨·지급·수동등록) 글로벌 등록(DM 전용 · /승급 과 같은 방식)
+      try { await client.application.commands.create(roleEvent.ADMIN_CMD); console.log("/역할군 registered (global · DM 전용)"); }
+      catch (e) { console.error("role_event_register_failed", e?.message); }
     } catch (e) { console.error("slash_register_failed", e?.message); }
 
   });
@@ -1424,6 +1430,13 @@ if (process.env.DISCORD_TOKEN) {
   // pubgGet·pubgMatch·sb* 는 모듈 레벨 함수 선언이라 여기서 그대로 넘긴다.
   const killraceBot = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch, sbInsert });
   client.on("interactionCreate", (itx) => killraceBot.handle(itx).catch((e) => console.error("[killrace] handler", e?.message)));
+  // 역할군 이벤트 — /역할군신청 · /역할군 · 버튼(roleev:*) · 5분 크론. ROLE_EVENT_DISABLED=1 이면 신청 · 크론 정지(배포 없이)
+  const roleEventBot = roleEvent.createRoleEvent({ sbSelect, sbInsert, sbPatch, sbUpsert, pubgGet, findPlayer, seasonIdByNumber, getClient: () => botClient });
+  client.on("interactionCreate", (itx) => roleEventBot.handle(itx).catch((e) => console.error("[role-event] handler", e?.status || "", e?.message)));
+  client.once("ready", () => {
+    if (!hasSupabase()) return;
+    setInterval(() => roleEventBot.tick().catch((e) => console.error("[role-event] tick", e?.status || "", e?.message)), 5 * 60 * 1000).unref();
+  });
   // /킬내기포스터(오너 전용 · 미리 보기 · 켜기 · 끄기 · 게시) — killrace-poster.cjs
   client.on("interactionCreate", (itx) => { if (killPoster) killPoster.handle(itx).catch((e) => console.error("[killrace-poster] handler", e?.message)); });
   // 결과 화면 스샷 → 점수판 「잠정」(killrace-shot.cjs · 팀배정 채널 사진만 · 확정 점수는 안 건드린다)
@@ -8867,6 +8880,15 @@ const REQUIRED_SCHEMA = {
   registry_history: ["discord_id","season","platform","pubg_name","account_id","real_name",
                      "valid_from","valid_to","note"],
   replies:          ["id","parent_type","parent_id","discord_id","discord_name","content","is_staff","hidden"],
+  // §85 역할군 이벤트(2026-10-17 · 더하기만) — role-event.cjs 가 쓰는 칸만
+  role_event_rounds:  ["id","round_no","season","rp_threshold","closes_at","verify_after","draw_at","status","seed_secret","seed_commit",
+                       "drand_chain","drand_round","drand_round_fixed_at","drand_randomness","results_published_at","participants_frozen_at",
+                       "participants_hash","draw_input","draw_order","winners_count","seed_revealed_at","draw_error","season_ids","created_by","updated_at"],
+  role_event_entries: ["id","round_id","discord_id","discord_name","platform","mode","pubg_name","pubg_name_input","name_match","account_id",
+                       "status","season_id","final_rp","best_rp","tier","sub_tier","rounds_played","verified_at","verify_error","verify_attempts",
+                       "raw","review_flags","reviewed_by","reviewed_at","review_note","role_granted_at","role_revoked_at","role_error","applied_at","updated_at"],
+  role_event_awards:  ["id","round_id","entry_id","draw_rank","status","notified_at","dm_error","contacted_at","paid_at","paid_by",
+                       "cancelled_at","cancel_reason","succeeded_from"],
   reviews:          ["id","discord_id","discord_name","trainer","content","hidden"],
   schedule_events:  ["id","kind","event_date","start_time","end_time","trainer_id","format","title",
                      "participants","capacity","memo","is_public","is_recruiting","status","created_by"],
