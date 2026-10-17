@@ -218,13 +218,14 @@ function tierPenaltyMap(members, tiers) {
   rows.forEach((r, i) => { out[r.slot] = SLOT_PENALTY[i]; });
   return out;
 }
-// 팀 목표(§1.39.1 · 9회부터) — 선수 티어별 할당(2시간 · 판 10개 기준 점수). 오너 10/17 「1티어 1.5티어 빼고 각 티어들 5점씩만 올리자」
+// 팀 목표(§1.39.1 · 9회부터) — 선수 티어별 할당 = 1 ~ 7회 그 티어 2시간 평균 기여(「평소만큼 = 100%」 · 오너 10/17).
 //   표에 없는 티어 · 티어 없음 = 8티어(11). 이 표는 여기 한 곳에만 둔다 — 화면은 응답 goal 을 그린다
-const TIER_ALLOT = { 1: 40, 1.5: 35, 2: 30, 3: 25, 4: 21, 5: 18, 6: 15, 7: 13, 8: 11 };
+const TIER_ALLOT = { 1: 64, 1.5: 55, 2: 42, 3: 32, 4: 27, 5: 22, 6: 16, 7: 13, 8: 11 };
+const RACE_TIER_GOAL_RATIO = 0.8;                 // 팀 목표 = 할당 합 × 0.8 반올림(오너 10/17 「팀 목표는 합의 80%」 · 합 그대로면 도착하는 날이 너무 적다)
 const TIER_ALLOT_NONE = TIER_ALLOT[8];
 const RACE_TIER_GOAL_FROM_EVENT = 9;              // 이 회차부터 race 목표 기본 = 팀원 할당 합(raceGoalBy "tier") · 8회까지는 회차 목표 하나(raceGoal)
 const tierAllotOf = (tier) => (tier != null && Number.isFinite(Number(tier)) && TIER_ALLOT[Number(tier)] ? TIER_ALLOT[Number(tier)] : TIER_ALLOT_NONE);
-// 팀 목표 = 등록 주전 할당 합 — 티어 찾는 길은 tierPenaltyMap 과 같다(팀 줄 members[].tier → 티어표 닉 → 계정 합치기). 교체 선수는 넣지 않는다
+// 팀 목표 = round(등록 주전 할당 합 × 0.8) — 티어 찾는 길은 tierPenaltyMap 과 같다(팀 줄 members[].tier → 티어표 닉 → 계정 합치기). 교체 선수는 넣지 않는다
 function teamGoalOf(members, tiers) {
   const list = tiers && tiers.list && typeof tiers.list === "object" ? tiers.list : {};
   const byAcc = tiers && tiers.byAccount && typeof tiers.byAccount === "object" ? tiers.byAccount : {};
@@ -235,7 +236,7 @@ function teamGoalOf(members, tiers) {
     if (tier == null) missing += 1;
     goal += tierAllotOf(tier);
   }
-  return { goal, missing };
+  return { goal: Math.round(goal * RACE_TIER_GOAL_RATIO), sum: goal, missing };
 }
 const penaltyOf = (slot, penBySlot) => (penBySlot && Number.isInteger(penBySlot[slot]) ? penBySlot[slot] : SLOT_PENALTY[slot - 1] || 0);
 
@@ -1981,7 +1982,7 @@ module.exports = {
   telemetry: { fetchTelemetry },                                                 // 텔레메트리 스트리밍 — 판별 상세 기록(killrace-detail.cjs)이 같은 해석기를 쓴다
   tiers: { tierRowsByMerge },                                                    // 같은 사람 계정끼리 티어 나누기(§1.26) — 공개 티어 읽기(killrace-tiers.cjs · §1.29)가 같은 묶기를 쓴다
   _test: {
-    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, tierPenaltyMap, penaltyOf, TIER_PENALTY_FROM_EVENT, LATE_START_GRACE_MS, LATE_START_GRACE_FROM, startsInWindow, botAdjOf, pickCurrentEvent, CURRENT_GRACE_MS, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, raceScore, rankRace, RACE_GOAL_DEFAULT, TIER_ALLOT, tierAllotOf, teamGoalOf, RACE_TIER_GOAL_FROM_EVENT, teamEndOf, formatChannelPost, formatReport, tierRowsByMerge, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
+    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, tierPenaltyMap, penaltyOf, TIER_PENALTY_FROM_EVENT, LATE_START_GRACE_MS, LATE_START_GRACE_FROM, startsInWindow, botAdjOf, pickCurrentEvent, CURRENT_GRACE_MS, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, raceScore, rankRace, RACE_GOAL_DEFAULT, TIER_ALLOT, RACE_TIER_GOAL_RATIO, tierAllotOf, teamGoalOf, RACE_TIER_GOAL_FROM_EVENT, teamEndOf, formatChannelPost, formatReport, tierRowsByMerge, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, lateReviveCheck, reviveOutOf, reviveWho, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory, lineupFor, playerRows, PLAYERS_TABLE_PAUSE_MS,
   },
