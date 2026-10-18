@@ -1,4 +1,4 @@
-// node --test scripts/payment-received.test.cjs — 「입금 받음」(계약 §9.40) 라우트 · 순수 함수 · 봇 카드
+// node --test scripts/payment-received.test.cjs — 「입금 받음」(계약 §9.40) 라우트 · 순수 함수 · 봇 카드 · express 를 쓰므로 test:deps 쪽(npm ci 뒤)
 //   라우트는 가짜 DB 위에 띄운다(운영 DB 안 씀). trainer-portal 자리에는 같은 모양의 가짜(requireTrainer · sendTrainer · scopedStudents)를 둔다.
 //   픽스처 값은 전부 가짜다(실제 이름 · 디스코드 id 금지).
 "use strict";

@@ -4106,6 +4106,6 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - 현금영수증 번호는 받지 않는다(트레이너 경로) — 10만원 이상 계좌이체는 오너 카드 「자진발급 필요」 줄이 종전대로 뜬다.
 - 승인 판정 · 정산 계산은 바뀌지 않는다(§18d 그대로).
 
-### 9.40.6 시험 (`scripts/payment-received.test.cjs` · `npm run check`)
+### 9.40.6 시험 (`scripts/payment-received.test.cjs` · `npm run test:deps` — express 를 써서 npm ci 뒤에 돈다)
 정가 출처 · 본문 판정(입금일 · 키) · 디코 닉 · 중복 판정 · 결과 문구(존댓말 · 이모지 없음) · 라우트(범위 · 400 · 403 · 409 · 행 모양 ·
 오너 담당 넘김 · 카드 실패) · 봇 카드(꺼진 보내기 · 409 그래도 보내기 · 실패 재전송 없음 · 남의 카드).
