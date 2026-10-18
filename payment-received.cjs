@@ -107,6 +107,20 @@ function mountPaymentReceived(app, tp, deps) {
     return new Map([...rows, ...pros].map((s) => [s.id, s]));
   }
 
+  // 명부 번호 없는 대기 신청 중 같은 사람(명부 이름 또는 별칭 정확일치) · 같은 금액 · 같은 입금일 — 없으면 null
+  async function unlinkedPending(sid, name, amount, paidOn) {
+    const names = new Set([String(name || "").trim()].filter(Boolean));
+    try {
+      for (const a of await sbSelect("student_aliases", `select=alias&student_id=eq.${sid}`)) if (a.alias) names.add(String(a.alias).trim());
+    } catch (_) { /* 별칭 표가 없어도 이름으로는 본다 */ }
+    if (!names.size) return null;
+    const list = [...names].map((n) => `"${n.replace(/["\\]/g, "")}"`).join(",");
+    const rows = await sbSelect("payment_requests",
+      `select=id,status&student_id=is.null&status=eq.pending&amount=eq.${Number(amount)}&paid_on=eq.${paidOn}`
+      + `&student_name=in.(${encodeURIComponent(list)})&order=id.desc&limit=1`);
+    return rows[0] || null;
+  }
+
   // GET /payment-received/options — 봇 고르기 칸에 쓰는 목록(수강생 · 상품). 금액은 오너 카드와 같은 정가표.
   app.get(`${TRAINER}/payment-received/options`, rateLimit("trainerRead", 120, 60_000), tp.requireTrainer, async (req, res) => {
     try {
@@ -138,7 +152,10 @@ function mountPaymentReceived(app, tp, deps) {
       if (!parsed.confirmDuplicate) {
         const rows = await sbSelect("payment_requests",
           `select=id,status,amount,created_at&student_id=eq.${sid}&status=in.(pending,approved)&order=id.desc&limit=20`);
-        const dup = liveDuplicate(rows, { amount: p.amount }, now());
+        // 명부 번호가 아직 없는 대기 건(/결제신청은 승인 때 명부를 잇는다 · 검수 10/19) — 이름(명부 이름 · 별칭) · 금액 · 입금일로 잡는다.
+        //   이걸 안 보면 같은 입금이 두 입구로 올라가 원장 카드 두 장 → 둘 다 승인하면 판수가 두 번 들어간다.
+        const unlinked = await unlinkedPending(sid, stu.name, p.amount, parsed.paidOn);
+        const dup = liveDuplicate(rows, { amount: p.amount }, now()) || unlinked;
         if (dup) return res.status(409).json({ error: { code: "already_requested",
           requestId: opaqueId("payreq", dup.id), pending: dup.status === "pending" } });
       }

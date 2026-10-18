@@ -51,7 +51,7 @@ test("nickOf · liveDuplicate · trainerResultText — 디코 닉(#태그 뗌) �
 });
 
 // ── 라우트 ──
-const st = { inserts: [], cards: [], payreqs: [], selects: [] };
+const st = { inserts: [], cards: [], payreqs: [], selects: [], unlinked: [], aliases: [] };
 const STUDENTS = [
   { id: 11, name: "가가", status: "active", discord_nick: "Alpha", trainer_id: 2 },
   { id: 12, name: "나나", status: "paused", discord_nick: null, trainer_id: 2 },
@@ -69,7 +69,9 @@ const deps = {
       if (q.includes("status=eq.prospect")) { const tid = Number(/trainer_id=eq\.(\d+)/.exec(q)[1]); return STUDENTS.filter((s) => s.status === "prospect" && s.trainer_id === tid); }
       const ids = inList(q); if (ids) return STUDENTS.filter((s) => ids.includes(s.id));
     }
+    if (t === "payment_requests" && q.includes("student_id=is.null")) { st.unlinkedQ = decodeURIComponent(q); return st.unlinked; }
     if (t === "payment_requests") return st.payreqs;
+    if (t === "student_aliases") return st.aliases;
     if (t === "staff") { const id = Number(/id=eq\.(\d+)/.exec(q)[1]); return STAFF[id] ? [STAFF[id]] : []; }
     throw new Error(`unexpected ${t} ${q}`);
   },
@@ -99,7 +101,7 @@ const call = async (staff, method, path, body) => {
   const r = await fetch(base + path, { method, headers: { "x-staff": String(staff), "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: r.status, json: await r.json().catch(() => null) };
 };
-const reset = () => Object.assign(st, { inserts: [], cards: [], payreqs: [], selects: [] });
+const reset = () => Object.assign(st, { inserts: [], cards: [], payreqs: [], selects: [], unlinked: [], aliases: [] });
 
 test("GET options — 트레이너 = 담당 ∪ 90일 ∪ 내 예비 수강생 · 디코 닉 · 예비는 뒤 · 상품 5개", async () => {
   reset();
@@ -146,6 +148,22 @@ test("POST — 본문에 금액 · 판수 넣으면 400 · 범위 밖 403 · 같
   assert.equal(d.status, 409); assert.deepEqual(d.json.error, { code: "already_requested", requestId: "payreq-40", pending: true });
   assert.equal(st.inserts.length, 0);
   assert.equal((await call(2, "POST", "/payment-received", { studentId: "student-11", productKey: "lesson10" })).status, 200);   // 금액이 다르면 통과
+  assert.equal((await call(2, "POST", "/payment-received", { studentId: "student-11", productKey: "lesson21", confirmDuplicate: true })).status, 200);
+});
+
+test("POST — 명부 번호 없는 /결제신청 대기 건도 이름(별칭 포함) · 금액 · 입금일로 잡아 409 (검수 10/19)", async () => {
+  reset();
+  st.aliases = [{ alias: "가가별칭" }];
+  st.unlinked = [{ id: 77, status: "pending" }];
+  const d = await call(2, "POST", "/payment-received", { studentId: "student-11", productKey: "lesson21", paidOn: "2026-10-17" });
+  assert.equal(d.status, 409);
+  assert.deepEqual(d.json.error, { code: "already_requested", requestId: "payreq-77", pending: true });
+  assert.match(st.unlinkedQ, /student_id=is\.null&status=eq\.pending&amount=eq\.90000&paid_on=eq\.2026-10-17/);
+  assert.match(st.unlinkedQ, /student_name=in\.\("가가","가가별칭"\)/);
+  assert.equal(st.inserts.length, 0);
+  st.unlinked = [];                                                                         // 그런 대기 건이 없으면 통과
+  assert.equal((await call(2, "POST", "/payment-received", { studentId: "student-11", productKey: "lesson21", paidOn: "2026-10-17" })).status, 200);
+  st.unlinked = [{ id: 77, status: "pending" }];                                            // 다른 입금이면 confirmDuplicate 로 통과
   assert.equal((await call(2, "POST", "/payment-received", { studentId: "student-11", productKey: "lesson21", confirmDuplicate: true })).status, 200);
 });
 

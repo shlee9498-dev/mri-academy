@@ -4082,6 +4082,7 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
   - 범위 밖 수강생 403 `scope_denied`.
   - **같은 수강생 · 같은 금액**의 신청이 대기 중이거나 14일 안에 승인됐으면 409 `already_requested { requestId, pending }` —
     앱 신청 · `/결제신청` · 입금 받음을 **다 본다**(같은 입금이 두 입구로 두 번 들어오는 것을 막는다). 다른 입금이면 `confirmDuplicate:true` 로 통과.
+    **명부 번호가 아직 없는 대기 건**(`/결제신청`은 승인 때 명부를 잇는다)은 `student_id is null` · 신청 이름이 명부 이름 또는 별칭(`student_aliases`)과 정확히 같고 · 같은 금액 · 같은 입금일이면 같은 409 로 잡는다(검수 10/19 — 안 잡으면 원장 카드 두 장 → 둘 다 승인하면 판수 두 번).
   - 쓰는 행: `student_id`(고른 명부 행) · `student_name` · `trainer_id`/`trainer_name`(판수가 들어갈 트레이너 = 올린 트레이너 ·
     오너가 올리면 그 수강생 담당, 없으면 오너) · `kind`(판수 · 레벨 테스트 = 상담) · `amount` · `games`(상담은 null — 칸 제약 `games > 0`) ·
     `quantity 1` · `paid_on` · `pay_channel 'transfer'` · `memo '트레이너 입금 받음'` · **`requested_by 'trainer:<staff id>'`**.
