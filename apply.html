@@ -121,16 +121,17 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
         </select>
       </div>
       <div class="fld">
-        <label>유입 경로<span class="req">*</span></label>
-        <select name="source" required>
-          <option value="">선택하세요</option>
-          <option>유튜브 라이브만 보고</option>
-          <option>유튜브 영상(롱/숏폼) 보고</option>
-          <option>인스타그램</option>
-          <option>숨고</option>
-          <option>지인 추천 / 트레이너 로비</option>
-          <option>검색(구글/네이버)</option>
-          <option>기타</option>
+        <label for="inflow">어디서 보고 오셨어요?<span class="req">*</span></label>
+        <!-- 선택지 정본 = inflow.cjs(INFLOW_OPTIONS) · 고르기만(타이핑 없음) · 바꾸면 둘 다 고친다(scripts/inflow.test.cjs) -->
+        <select name="source" id="inflow" required>
+          <option value="">하나 골라 주세요</option>
+          <option value="yt_shorts">유튜브 쇼츠</option>
+          <option value="yt_long">유튜브 롱폼</option>
+          <option value="soop">SOOP 방송</option>
+          <option value="discord">디스코드</option>
+          <option value="friend">지인 소개</option>
+          <option value="search">검색</option>
+          <option value="etc">기타</option>
         </select>
       </div>
       <div class="fld">
