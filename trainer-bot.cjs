@@ -15,12 +15,13 @@
 const { parseLessonLine, cardWhen, durationLabel, kstYmd } = require("./lesson-line.cjs");
 const { PERSONAL_DURATIONS } = require("./lesson-lengths.cjs");
 const { createBookGuide } = require("./book-guide.cjs");
+const { isTestStudent } = require("./test-accounts.cjs");
 
 const COMMAND_NAME = "수업잡기";
 const PREFIX = "tbot_";
 const BELL_KEY = "trainer-bell";
-const BELL_AFTER_MS = 10 * 60_000;            // 끝난 시각 + 10분
-const BELL_AGAIN_MS = 3 * 3600_000;           // 무응답 3시간 뒤 한 번 더
+const BELL_AFTER_MS = 0;                      // 끝 시각 뒤 첫 틱(계약 §9.39.2 · 종전 +10분)
+const AUTO_KEY = "auto-complete";             // 서버 자동 완료 기록 줄(#606 · 읽기만) — since = 자동 완료가 켜진 시각
 const BELL_KEEP_MS = 7 * 86400_000;           // 물은 기록 7일 보관
 const BELL_LOOKBACK_MS = 2 * 86400_000;       // 대상 창 — 시작이 이틀 안
 const CARD_TTL_MS = 30 * 60_000;              // 확인 카드 유효 30분
@@ -62,6 +63,15 @@ const ERR_TEXT = {
   slot_not_found: "그 칸을 찾지 못했어요. 앱에서 확인해 주세요",
 };
 const errText = (code) => ERR_TEXT[code] || "지금은 저장하지 못했어요. 앱에서 확인해 주세요";
+
+// [수업 안 함] 결과(계약 §9.39.2 · 서버 #606 POST /bookings/:id/hold) — 예약은 닫지 않는다
+function holdOutcome(status, body) {
+  if (status === 200) return body?.already ? { done: true, text: "이미 수업 안 함으로 남겼어요" }
+    : { done: true, notify: true, text: "수업 안 함으로 남겼어요 · 원장님이 확인하고 닫아요 · 그때까지 판수는 그대로예요" };
+  const code = body?.error?.code;
+  if (code === "already_completed" || code === "not_open" || code === "not_found") return { done: true, text: "이미 처리됐어요" };
+  return { done: false, text: "지금은 남기지 못했어요 · 원장에게 말해 주세요" };
+}
 
 // 벨 결과 — not_found · already_recorded 는 둘 다 「이미 처리됐어요」(계약 §9.37.2)
 function bellOutcome(status, body) {
@@ -280,11 +290,14 @@ function createTrainerBot(deps) {
       : `닫지 못한 빈 칸이 남았어요(${list}). 원장에게 알렸어요`;
   }
 
-  // ── 벨 — 계약 §9.37.2 ──────────────────────────────────────
-  const bellView = (t, again) => ({
-    content: `🔔 ${again ? "다시 여쭤봐요 · " : ""}${cardWhen(t.startAt, t.durationMin)} ${t.studentName}님 ${durationLabel(t.durationMin)} 수업 끝났나요?`,
-    components: [row(btn(`${PREFIX}done:${t.bookingId}`, "끝났어요", 3), btn(`${PREFIX}chg:${t.bookingId}`, "시간 바뀜", 1),
-                     btn(`${PREFIX}ns:${t.bookingId}`, "노쇼", 4))],
+  // ── 벨 — 계약 §9.39.2(개인 레슨 · §9.37.2 를 대신한다) ──────────────────
+  //   끝 시각에 한 번 · 다시 묻기 없음 · 버튼 넷. 수강생은 트레이너가 부르는 디코 닉 · 📅 없음.
+  //   서버 자동 완료(#606)가 켜진 뒤 끝난 수업만 「24시간 … 완료돼요」 줄을 단다 — 그 전에 끝난 수업은 자동 완료되지 않는다(§9.39.6).
+  const bellView = (t, autoOn) => ({
+    content: `${t.studentName} · ${cardWhen(t.startAt, t.durationMin)} · 개인 ${durationLabel(t.durationMin)} 수업 끝났어요\n`
+      + (autoOn ? "24시간 안에 아무것도 안 누르면 예약 그대로 완료돼요" : "아래 버튼으로 닫아 주세요"),
+    components: [row(btn(`${PREFIX}done:${t.bookingId}`, "그대로 완료", 3), btn(`${PREFIX}chg:${t.bookingId}`, "연장 · 단축", 1),
+                     btn(`${PREFIX}ns:${t.bookingId}`, "노쇼", 4), btn(`${PREFIX}hold:${t.bookingId}`, "수업 안 함", 2))],
   });
 
   // 벨 기록(ops_state 한 줄)을 읽고 쓰는 일은 하나씩만 — 틱이 DM 을 보내는 동안 버튼 답이 끼면
@@ -306,19 +319,15 @@ function createTrainerBot(deps) {
     for (const [k, v] of Object.entries(items)) if (t0 - Date.parse(v.first) > BELL_KEEP_MS) { delete items[k]; changed = true; }
     const since = Date.parse(st.since);
     const targets = await deps.bellTargets(t0);
+    let autoSince = NaN;
     for (const t of targets) {
       const end = Date.parse(t.startAt) + t.durationMin * 60_000;
-      if (end < since || t0 < end + BELL_AFTER_MS) continue;
-      const it = items[t.bookingId];
-      if (!it) {
-        const ok = await deps.sendDM(t.trainerDiscordId, bellView(t, false)).catch(() => false);
-        items[t.bookingId] = { first: new Date(t0).toISOString(), ok: !!ok };
-        changed = true; sent++;
-      } else if (!it.second && !it.answered && it.ok && t0 - Date.parse(it.first) >= BELL_AGAIN_MS) {
-        const ok = await deps.sendDM(t.trainerDiscordId, bellView(t, true)).catch(() => false);
-        it.second = new Date(t0).toISOString(); it.ok2 = !!ok;
-        changed = true; sent++;
-      }
+      if (end < since || t0 < end + BELL_AFTER_MS || items[t.bookingId]) continue;   // 한 번만 · 다시 묻기 없음(§9.39.2)
+      if (Number.isNaN(autoSince)) autoSince = Date.parse((await deps.stateGet(AUTO_KEY).catch(() => null))?.since) || Infinity;
+      const name = (await deps.nickOf?.(t).catch(() => null)) || t.studentName;
+      const ok = await deps.sendDM(t.trainerDiscordId, bellView({ ...t, studentName: name }, end >= autoSince)).catch(() => false);
+      items[t.bookingId] = { first: new Date(t0).toISOString(), ok: !!ok };
+      changed = true; sent++;
     }
     if (changed) await deps.stateSet(BELL_KEY, { since: st.since, items });
     return { sent };
@@ -536,14 +545,14 @@ function createTrainerBot(deps) {
   }
 
   async function onButton(itx) {
-    const m = /^tbot_(save|edit|cancel|ampm|pick|done|chg|ns|nsok|len|fstu|fday|fhour|flen|fmin|fkind|fcap|cpick|cday|chour|clen|cmin|cgo):([^:]+)(?::(\d+))?$/.exec(itx.customId || "");
+    const m = /^tbot_(save|edit|cancel|ampm|pick|done|chg|ns|nsok|len|fstu|fday|fhour|flen|fmin|fkind|fcap|hold|cpick|cday|chour|clen|cmin|cgo):([^:]+)(?::(\d+))?$/.exec(itx.customId || "");
     if (!m) return false;
     const [, act, key, arg] = m;
     const staff = await deps.staffByDiscord(itx.user.id);
     if (!staff) { await itx.reply({ content: errText("not_staff"), ephemeral: true }); return true; }
 
     // 벨 버튼(key = 예약 번호)
-    if (["done", "chg", "ns", "nsok", "len"].includes(act)) return onBell(itx, staff, act, Number(key), arg);
+    if (["done", "chg", "ns", "nsok", "len", "hold"].includes(act)) return onBell(itx, staff, act, Number(key), arg);
 
     const c = cards.get(key);
     if (!c || now() - c.createdAt > CARD_TTL_MS) { await itx.reply({ content: "카드가 만료됐어요. 한 줄을 다시 보내 주세요", ephemeral: true }); return true; }
@@ -650,11 +659,18 @@ function createTrainerBot(deps) {
     try {
       const op = deps.opaqueBooking(bookingId);
       if (act === "nsok") r = await deps.portalCall(staff, "POST", `/bookings/${op}/no-show`, {});
+      else if (act === "hold") r = await deps.portalCall(staff, "POST", `/bookings/${op}/hold`, {});
       else if (act === "len") r = await deps.portalCall(staff, "POST", `/bookings/${op}/complete`, { games: await gamesFor(staff, Number(arg)) });
       else r = await deps.portalCall(staff, "POST", `/bookings/${op}/complete`, {});
     } catch (e) { log.error("[trainer-bot] bell", e?.message); r = { status: 0, body: null }; }
     if (act === "len" && r?.badLength) r = { status: 0, body: null };
-    const out = bellOutcome(r.status, act === "nsok" && r.status === 200 ? { status: "no_show" } : r.body);
+    const out = act === "hold" ? holdOutcome(r.status, r.body)
+      : bellOutcome(r.status, act === "nsok" && r.status === 200 ? { status: "no_show" } : r.body);
+    // [수업 안 함] — 예약은 열린 채 · 원장이 지난 예약 취소(휴강 · §9.31)로 닫는다 → 원장에게 한 줄(처음 남길 때만)
+    if (act === "hold" && out.done && out.notify) {
+      await deps.ownerAlert?.(`[트레이너봇] 수업 안 함 — ${staff.name} · ${head.replace(/ 수업 끝났어요$/, "")} · 지난 예약 취소(휴강)로 닫아 주세요`)
+        ?.catch?.(() => {});
+    }
     if (out.done) markAnswered(bookingId).catch(() => {});        // 기다리지 않는다 — 틱이 DM 을 보내는 중이어도 카드는 바로 바뀐다
     inflight.delete(lock);
     await itx.editReply({ content: `${head}\n${out.text}`, components: [] });
@@ -935,6 +951,15 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
       try { const u = await client.users.fetch(env.MRI_OWNER_ID); await u.send({ content: text, allowedMentions: { parse: [] } }); return true; }
       catch (e) { log.warn("[trainer-bot] owner_alert_failed", e?.code || ""); return false; }
     };
+    // 수강생 디코 닉(§9.39.2) — MRI ACADEMY 서버 표시 이름 → 디코 사용자 이름. 못 찾으면 null(벨이 앱 활동명으로)
+    deps.nickOf = async (t) => {
+      if (!t.studentDiscordId) return null;
+      const g = env.GUILD_ID ? client.guilds?.cache?.get(String(env.GUILD_ID)) : null;
+      const m = g ? await g.members.fetch(t.studentDiscordId).catch(() => null) : null;
+      if (m) return m.displayName || m.user?.globalName || m.user?.username || null;
+      const u = await client.users.fetch(t.studentDiscordId).catch(() => null);
+      return u ? (u.globalName || u.username || null) : null;
+    };
     deps.sendDM = async (did, payload) => {
       try { const u = await client.users.fetch(did); await u.send(payload); return true; }
       catch (e) { log.warn("[trainer-bot] dm_failed", e?.code || ""); return false; }
@@ -1009,18 +1034,21 @@ async function bellTargets(sbSelect, nowMs) {
   const from = new Date(nowMs - BELL_LOOKBACK_MS).toISOString();
   const to = new Date(nowMs).toISOString();
   const rows = await sbSelect("slot_bookings",
-    "select=id,student_id,duration_min,status,trainer_slots!inner(slot_start,lesson_type,trainer_id)"
-    + `&status=in.(booked,pending_review)&span_head_id=is.null&trainer_slots.lesson_type=eq.personal`
+    "select=id,student_id,duration_min,status,games_held,trainer_slots!inner(slot_start,lesson_type,trainer_id)"
+    + `&status=in.(booked,pending_review)&span_head_id=is.null&games_held=gt.0&trainer_slots.lesson_type=eq.personal`
     + `&trainer_slots.slot_start=gte.${encodeURIComponent(from)}&trainer_slots.slot_start=lt.${encodeURIComponent(to)}`);
   if (!rows.length) return [];
   const sids = [...new Set(rows.map((r) => r.student_id))], tids = [...new Set(rows.map((r) => r.trainer_slots.trainer_id))];
   const [studs, staff] = await Promise.all([
-    sbSelect("students", `select=id,name&id=in.(${sids.join(",")})`),
+    sbSelect("students", `select=id,name,display_name,discord_id&id=in.(${sids.join(",")})`),
     sbSelect("staff", `select=id,discord_id,active&id=in.(${tids.join(",")})`),
   ]);
-  const sName = new Map(studs.map((s) => [s.id, s.name])), tDid = new Map(staff.filter((s) => s.discord_id && s.active !== false).map((s) => [s.id, s.discord_id]));
-  return rows.filter((r) => tDid.has(r.trainer_slots.trainer_id) && Number(r.duration_min) > 0).map((r) => ({
-    bookingId: r.id, trainerDiscordId: tDid.get(r.trainer_slots.trainer_id), studentName: sName.get(r.student_id) || `#${r.student_id}`,
+  const sRow = new Map(studs.map((s) => [s.id, s])), tDid = new Map(staff.filter((s) => s.discord_id && s.active !== false).map((s) => [s.id, s.discord_id]));
+  return rows.filter((r) => tDid.has(r.trainer_slots.trainer_id) && Number(r.duration_min) > 0 && !isTestStudent(r.student_id)).map((r) => ({
+    bookingId: r.id, trainerDiscordId: tDid.get(r.trainer_slots.trainer_id),
+    // 이름 순서(§9.39.2): 서버 닉 · 디코 이름은 nickOf 가 디스코드에서 · 없으면 앱 활동명 · 명부 이름(#번호는 쓰지 않는다)
+    studentName: sRow.get(r.student_id)?.display_name || sRow.get(r.student_id)?.name || "수강생",
+    studentDiscordId: sRow.get(r.student_id)?.discord_id || null,
     startAt: r.trainer_slots.slot_start, durationMin: Number(r.duration_min),
   }));
 }
@@ -1037,4 +1065,4 @@ async function leadReady(sbRpc) {
   return ok;
 }
 
-module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, guildTargets, commandChanged, channelCheck, COMMANDS, COMMAND_NAME, CHANGE_KIND, BELL_KEY });
+module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, holdOutcome, bellTargets, guildTargets, commandChanged, channelCheck, COMMANDS, COMMAND_NAME, CHANGE_KIND, BELL_KEY });
