@@ -7819,7 +7819,8 @@ notify pgrst, 'reload schema';
 
 
 -- ════════════════════════════════════════════════════════════════════════════════
--- §85  예약 완료 함수에 출처 인자 — 개인 레슨 자동 완료(2026-10-18 · 오너 OK 「OK — 함수에 출처 칸 추가」 · 계약 §9.39 · 기존 함수 교체 = B 구간)
+-- §86  예약 완료 함수에 출처 인자 — 개인 레슨 자동 완료(2026-10-18 · 오너 OK 「OK — 함수에 출처 칸 추가」 · 계약 §9.39 · 기존 함수 교체 = B 구간)
+--   번호: §85 는 역할군 이벤트 봇(#600)이 먼저 잡았다 — 이 절은 §86(10/18 지휘 정정 · 열린 PR 까지 확인).
 --   왜: 자동 완료 기록을 앱 기록과 같은 함수 · 같은 트랜잭션으로 남기고 출처를 한 번에 표시한다(완료와 표시가 갈라지면
 --       봇 /수업등록 중복 건너뛰기가 자동 완료를 못 알아봐 같은 수업 판수가 두 번 빠질 수 있다 — #605 검수).
 --   바뀌는 것(§50 본문 = 운영 md5 fe597597c1e0fa63e4915672b7f373b8 · 4595 에서 세 군데만):
@@ -7828,15 +7829,15 @@ notify pgrst, 'reload schema';
 --     ③ 넣는 줄 created_by = 'auto' 면 'auto:bell' · 아니면 종전 그대로 'portal'
 --   안 바뀌는 것: 판수 · 날짜 · 중복 판정(v_has) · 잔여 계산 · 반환 모양 · 기존 칸 · 제약 · 데이터. 기존 호출(4인자 이름 지정)은 기본값으로 'app' = 종전과 같다.
 --   ⚠️ 인자 추가 = 교체(§42 와 같은 방식) — 4인자판을 drop 하고 **같은 요청 안에서** 5인자판을 만든다(함수가 비는 순간 없음 · PostgREST 후보 하나).
---   실행: 오너가 SQL Editor 에서 아래 85-1 블록 하나를 **단독으로** 실행 → 85 검증. 이 함수에 'auto' 를 보내는 서버 코드는 실행 확인 전까지 Draft.
+--   실행: 오너가 SQL Editor 에서 아래 86-1 블록 하나를 **단독으로** 실행 → 86 검증. 이 함수에 'auto' 를 보내는 서버 코드는 실행 확인 전까지 Draft.
 --
--- 85-0) 스냅샷(읽기만):
+-- 86-0) 스냅샷(읽기만):
 --   select pg_get_function_identity_arguments(oid), length(replace(prosrc, E'\r','')), md5(replace(prosrc, E'\r',''))
 --     from pg_proc where proname = 'record_lesson_from_booking' and pronamespace = 'public'::regnamespace;
 --   기대: 1행 · p_trainer_id bigint, p_booking_id bigint, p_games integer, p_played_at date · 4595 · fe597597c1e0fa63e4915672b7f373b8
 --   select count(*), sum(games) from lesson_sessions;   select created_by, count(*) from lesson_sessions where created_by in ('portal','auto:bell') group by 1;
 --
--- 85-1) 실행(한 블록):
+-- 86-1) 실행(한 블록):
 begin;
 drop function if exists public.record_lesson_from_booking(bigint, bigint, int, date);
 create or replace function public.record_lesson_from_booking(
@@ -7863,7 +7864,7 @@ begin
   if p_games is not null and (p_games < 1 or p_games > 50) then
     return jsonb_build_object('error','invalid_body');
   end if;
-  -- §85 출처(계약 §9.39) — 'app' = 앱 「완료」(종전 그대로 created_by 'portal') · 'auto' = 24시간 자동 완료(created_by 'auto:bell').
+  -- §86 출처(계약 §9.39) — 'app' = 앱 「완료」(종전 그대로 created_by 'portal') · 'auto' = 24시간 자동 완료(created_by 'auto:bell').
   if p_source is null or p_source not in ('app','auto') then
     return jsonb_build_object('error','invalid_body');
   end if;
@@ -7877,7 +7878,7 @@ begin
   if v_owner is distinct from p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
   -- §59 직강 반 수업 칸 예약은 판수가 아니라 출석(record_course_attendance)으로 닫는다.
   if v_type = 'course' then return jsonb_build_object('error','course_slot'); end if;
-  -- §85 자동 완료는 개인 레슨만(계약 §9.39.1) — 그룹 · 상담은 판수 입력 · 마침이 사람 몫이다.
+  -- §86 자동 완료는 개인 레슨만(계약 §9.39.1) — 그룹 · 상담은 판수 입력 · 마침이 사람 몫이다.
   if p_source = 'auto' and v_type is distinct from 'personal' then
     return jsonb_build_object('error','invalid_body');
   end if;
@@ -7964,10 +7965,10 @@ $$;
 commit;
 notify pgrst, 'reload schema';
 
--- 85 검증(읽기만):
---   ① 1행 · p_trainer_id bigint, p_booking_id bigint, p_games integer, p_played_at date, p_source text · 5097 · 4c88a85f0524250fda37fc5302c7af83
+-- 86 검증(읽기만):
+--   ① 1행 · p_trainer_id bigint, p_booking_id bigint, p_games integer, p_played_at date, p_source text · 5097 · 10834f0785b97f1b75cc241599457d8a
 --   ② select record_lesson_from_booking(0, 0, null, null, 'x');      -- {"error":"invalid_body"}(출처 검사 · 쓰는 것 없음)
 --      select record_lesson_from_booking(0, 0);                       -- {"error":"not_found"}(기본값 'app' · 쓰는 것 없음)
---   ③ 85-0 의 lesson_sessions 수 · 판수 합 · 출처별 수가 그대로
+--   ③ 86-0 의 lesson_sessions 수 · 판수 합 · 출처별 수가 그대로
 -- 되돌림(한 블록): begin; drop function if exists public.record_lesson_from_booking(bigint, bigint, int, date, text);
 --   위 §50 의 record_lesson_from_booking(4인자) create 문 그대로; commit; notify pgrst, 'reload schema';   -- md5 fe597597c1e0fa63e4915672b7f373b8 로 돌아오는지 확인

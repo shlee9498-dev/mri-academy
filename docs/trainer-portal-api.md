@@ -3957,7 +3957,7 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
   옮기기 실패(겹침 · 판수 부족) 시 옛 예약 그대로 · 30분 미루기(옛 칸과 겹치는 이동) 성공 · 직강 칸 없음 → 봇이 연 칸만 닫기 · 버튼 두 번 = 한 번 ·
   실패 재시도 없음 · 원장 DM 은 3시간 안 · 트레이너 것만 · 수강생 DM 문구 · 시험은 가짜 DB(실제 예약 · 차감 0).
 
-## 9.39 개인 레슨 자동 완료 + 예외만 신고 (2026-10-18 · 오너 OK 「1 개인: 자동 완료 + 예외만」 · 판수 · 정산 규칙 변경 OK · 지휘 주문) · **계약만 · 구현 전 · DDL §85(기존 함수 교체 · 오너 OK 10/18)**
+## 9.39 개인 레슨 자동 완료 + 예외만 신고 (2026-10-18 · 오너 OK 「1 개인: 자동 완료 + 예외만」 · 판수 · 정산 규칙 변경 OK · 지휘 주문) · **계약만 · 구현 전 · DDL §86(기존 함수 교체 · 오너 OK 10/18)**
 
 > 배경(10/17 · 10/18): 아침 「닫지 않은 수업」 알림(§9.34.2)이 같은 3건으로 매일 반복됐다(10/14 건까지 남음). 트레이너가 닫는 일을 안 하는 구조라
 > 독촉을 늘려도 그대로다. 방향을 뒤집는다 — **개인 레슨은 기본 = 완료**, 트레이너는 다를 때만 누른다.
@@ -4001,7 +4001,7 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 ### 9.39.3 24시간 안에 안 누르면 — 예약 길이대로 자동 완료
 
 - 끝 시각 + **24시간** 뒤 첫 틱에 서버가 [그대로 완료]와 **같은 완료 함수**를 부른다(개인 · `games` 생략 = 예약 판수 그대로 · `playedAt` = 칸 날짜 KST).
-- **완료 출처 = 자동 — 완료 함수가 한 번에 남긴다**(오너 OK 10/18 (나) 「함수에 출처 칸 추가」 · DDL §85).
+- **완료 출처 = 자동 — 완료 함수가 한 번에 남긴다**(오너 OK 10/18 (나) 「함수에 출처 칸 추가」 · DDL §86).
   `record_lesson_from_booking` 에 인자 `p_source text default 'app'` 를 더한다 — 서버 자동 완료 틱은 `p_source = 'auto'` 로 부르고, 함수가 같은 트랜잭션 안에서
   기록 줄 `lesson_sessions.created_by = 'auto:bell'` 로 넣는다(앱 「완료」는 기본값 'app' = 종전 그대로 `portal`). 완료와 표시가 따로 가지 않는다 — 기록을 넣고 나중에 칸을 고치는 방식은 쓰지 않는다.
   `'auto'` 는 개인 레슨에만 받는다(그 밖 칸은 `invalid_body`). 판수 · 날짜 · 같은 날 중복 판정 · 잔여 계산은 함수 그대로.
@@ -4040,11 +4040,11 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 | 누가 | 할 일 |
 |---|---|
 | **트레이너봇**(`trainer-bot.cjs`) | ① 끝 시각 DM 카드(버튼 넷 · 디코 닉 · KST 시각 · 📅 없음) ② [연장 · 단축] 길이 고르기 ③ [수업 안 함] → 서버 `hold` + 원장 DM 한 줄 ④ 개인은 §9.37.2 3시간 다시 묻기 없앰 ⑤ 독촉 DM(§9.39.5) 문안 · 트레이너별 발송 ⑥ 시험(가짜 포털 · 차감 0) |
-| **경비**(서버) | ① 24시간 자동 완료 틱 — 같은 완료 함수를 `p_source: 'auto'` 로(DDL §85 · 실행 확인 전까지 Draft) · 잠긴 달 · `hold` 건너뜀 · 재시도 없음 ② `hold` 기록(`ops_state` `trainer-bell` 항목에 `hold: true` · DDL 없음) ③ 원장 하루 목록 DM ④ §9.34.2 채널 알림 끄기 → 트레이너 DM 대상 계산(같은 `unclosed-lessons.cjs`) ⑤ 기록 응답 · 원장 운영 화면에 `source: "auto"`(`trainer-lessons.cjs` · `ops-status.cjs` `sourceOf`) ⑤-2 봇 `/수업등록` 중복 건너뛰기가 `auto:bell` 도 앱 기록으로(`lesson-record.cjs` `appRecordedOn`) ⑥ §9.31 지난 예약 취소 라우트(원장 · 계약만 있고 서버 없음 — [수업 안 함] 의 닫는 길) ⑦ 시험(가짜 DB · 실제 예약 · 차감 0) |
+| **경비**(서버) | ① 24시간 자동 완료 틱 — 같은 완료 함수를 `p_source: 'auto'` 로(DDL §86 · 실행 확인 전까지 Draft) · 잠긴 달 · `hold` 건너뜀 · 재시도 없음 ② `hold` 기록(`ops_state` `trainer-bell` 항목에 `hold: true` · DDL 없음) ③ 원장 하루 목록 DM ④ §9.34.2 채널 알림 끄기 → 트레이너 DM 대상 계산(같은 `unclosed-lessons.cjs`) ⑤ 기록 응답 · 원장 운영 화면에 `source: "auto"`(`trainer-lessons.cjs` · `ops-status.cjs` `sourceOf`) ⑤-2 봇 `/수업등록` 중복 건너뛰기가 `auto:bell` 도 앱 기록으로(`lesson-record.cjs` `appRecordedOn`) ⑥ §9.31 지난 예약 취소 라우트(원장 · 계약만 있고 서버 없음 — [수업 안 함] 의 닫는 길) ⑦ 시험(가짜 DB · 실제 예약 · 차감 0) |
 | **오너** | 결정 끝(10/18) — 켜는 날 = **구현 검수 → 배포 → 부팅 확인 즉시**(별도 날짜 없음 · 오너 「구현 끝나면 바로」) · 소급 없음(§9.39.6) |
 
-- **DDL §85** (`supabase_admin_panel.sql` §85 · 기존 함수 교체 = B 구간 · 오너 OK 10/18) — `record_lesson_from_booking` 4인자 → 5인자(`p_source text default 'app'`).
-  새 칸 · 새 표 없음(출처는 기존 `created_by` 칸) · 기존 칸 · 제약 · 데이터 그대로. 실행 = 오너가 SQL Editor 에서 85-1 블록 단독 실행 → `notify pgrst` → 85 검증(md5 · 쓰는 것 없는 호출 2개 · 수 · 합 그대로).
+- **DDL §86** (`supabase_admin_panel.sql` §86 · 기존 함수 교체 = B 구간 · 오너 OK 10/18) — `record_lesson_from_booking` 4인자 → 5인자(`p_source text default 'app'`).
+  새 칸 · 새 표 없음(출처는 기존 `created_by` 칸) · 기존 칸 · 제약 · 데이터 그대로. 실행 = 오너가 SQL Editor 에서 86-1 블록 단독 실행 → `notify pgrst` → 86 검증(md5 · 쓰는 것 없는 호출 2개 · 수 · 합 그대로).
   `hold` · 물은 기록은 `ops_state`. env 없음(봇 DM · 기존 채널 env 그대로).
 - 판수 · 정산 계산식 · 잠금월 · 노쇼 판정 · 취소 차감(§9.38)은 **그대로**다. 바뀌는 것은 「안 누르면 아무것도 안 한다」가 「안 누르면 예약대로 완료」로 바뀌는 것 하나다.
 
