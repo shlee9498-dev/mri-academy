@@ -153,7 +153,11 @@ app.use(express.json());
 const portal = require("../student-portal.cjs")(app, deps);
 const trainerApi = require("../trainer-portal.cjs")(app, { ...deps, portal });
 db = { trainer_slots: [], slot_bookings: [] };          // 기동 프로브(예약 표) — 마운트 전에 있어야 예약 API 가 켜진다
-require("../booking-api.cjs")(app, { ...deps, portal, trainer: trainerApi });
+// 자동 완료 기록(§9.39) — 가짜 ops_state 한 칸(시험마다 acState 로 바꾼다)
+let acState = null;
+const acFake = require("../auto-complete.cjs").createAutoComplete({ sbSelect: deps.sbSelect, sbRpc: deps.sbRpc,
+  stateGet: async () => (acState == null ? null : JSON.parse(JSON.stringify(acState))), stateSet: async (_k, v) => { acState = v; }, log: { log() {}, error() {} } });
+require("../booking-api.cjs")(app, { ...deps, portal, trainer: trainerApi, autoComplete: acFake });
 let base, server;
 test.before(async () => {
   server = app.listen(0);
@@ -965,4 +969,50 @@ test("그룹 잡기 — 칸 하나 + 두 명 넣기 → 두 수강생 앱 일정
     assert.equal(mine[0].seatsLeft, 2);                                               // 남은 자리는 다른 수강생이 앱에서
   }
   assert.ok(dms.some((d) => d.to === "s10" && /판수는 수업 후에 차감돼요/.test(d.text)));
+});
+
+// ════════ [수업 안 함] hold · 지난 예약 휴강(계약 §9.39.2 · §9.31) ════════
+test("hold — 칸 트레이너 · 원장만 · 개인 · 열린 예약 · 끝난 수업만 · 켜지기 전 409 · 기록만(예약 · 판수 안 바뀜)", async () => {
+  const ended = at(grid(Date.now() - 5 * HOUR)), soon = at(grid(Date.now() + 5 * HOUR));
+  reset({ trainer_slots: [slot(920, { trainer_id: 2, lesson_type: "personal", course_level: null, duration_min: 30, slot_start: ended }),
+    slot(921, { trainer_id: 2, lesson_type: "personal", course_level: null, duration_min: 30, slot_start: soon }),
+    slot(922, { trainer_id: 2, lesson_type: "participate", course_level: null, duration_min: 60, slot_start: ended })],
+  slot_bookings: [bk(70, 920, 10, "booked", { games_held: 10, duration_min: 120 }), bk(71, 921, 10, "booked", { games_held: 5, duration_min: 60 }),
+    bk(72, 922, 10), bk(73, 920, 12, "done", { games_held: 10, duration_min: 120 })] });
+  acState = null;
+  assert.deepEqual(await call(2, `/bookings/${B(70)}/hold`, "POST"), { status: 409, json: { error: { code: "not_ready" } } });
+  acState = { since: at(Date.now() - DAY), hold: {}, done: {}, skip: {} };
+  const before = JSON.stringify(db.slot_bookings);
+  const ok = await call(2, `/bookings/${B(70)}/hold`, "POST");
+  assert.deepEqual(ok, { status: 200, json: { held: true, already: false } });
+  assert.equal(acState.hold[70].by, 2);
+  assert.equal(JSON.stringify(db.slot_bookings), before);                            // 예약 · 판수는 그대로(원장이 휴강으로 닫는다)
+  assert.equal((await call(4, `/bookings/${B(70)}/hold`, "POST")).json.already, true);   // 원장도 · 두 번 = 한 번
+  assert.equal((await call(2, `/bookings/${B(71)}/hold`, "POST")).json.error.code, "not_ended");
+  assert.equal((await call(2, `/bookings/${B(72)}/hold`, "POST")).status, 400);          // 그룹
+  assert.equal((await call(2, `/bookings/${B(73)}/hold`, "POST")).json.error.code, "not_open");
+  db.trainer_slots[0].trainer_id = 9;
+  assert.equal((await call(2, `/bookings/${B(70)}/hold`, "POST")).status, 403);         // 남의 칸
+});
+
+test("cancel-past — 원장만 · 사유 2~200 · 지난 예약만 · 머리 + 꼬리 줄 cancelled · 선차감 풀림 · 기록 · 이미 닫힌 건 409", async () => {
+  const ended = at(grid(Date.now() - 5 * HOUR)), soon = at(grid(Date.now() + 5 * HOUR));
+  reset({ trainer_slots: [slot(930, { trainer_id: 2, lesson_type: "personal", course_level: null, duration_min: 30, slot_start: ended }),
+    slot(931, { trainer_id: 2, lesson_type: "personal", course_level: null, duration_min: 30, slot_start: soon })],
+  slot_bookings: [bk(80, 930, 10, "pending_review", { games_held: 10, duration_min: 60 }), bk(81, 930, 10, "booked", { span_head_id: 80 }),
+    bk(82, 931, 10, "booked", { games_held: 5, duration_min: 60 }), bk(83, 930, 12, "done", { games_held: 5, duration_min: 60 })] });
+  assert.deepEqual(await call(2, `/bookings/${B(80)}/cancel-past`, "POST", { reason: "휴강 — 원장 사정" }),
+    { status: 403, json: { error: { code: "owner_only" } } });
+  assert.equal((await call(4, `/bookings/${B(80)}/cancel-past`, "POST", { reason: "x" })).status, 400);
+  assert.equal((await call(4, `/bookings/${B(82)}/cancel-past`, "POST", { reason: "휴강" })).json.error.code, "not_past");
+  assert.equal((await call(4, `/bookings/${B(83)}/cancel-past`, "POST", { reason: "휴강" })).json.error.code, "not_cancellable");
+  const ok = await call(4, `/bookings/${B(80)}/cancel-past`, "POST", { reason: "휴강 — 원장 사정" });
+  assert.deepEqual(ok, { status: 200, json: { bookingId: B(80), status: "cancelled", gamesRestored: 10 } });
+  assert.deepEqual(db.slot_bookings.filter((r) => [80, 81].includes(r.id)).map((r) => r.status), ["cancelled", "cancelled"]);
+  assert.equal(db.slot_bookings.find((r) => r.id === 82).status, "booked");
+  const audit = (db.admin_audit || []).find((r) => r.action === "booking.cancel");
+  assert.equal(audit.target, "slot_bookings:80");
+  assert.equal(audit.detail.reason, "휴강 — 원장 사정");
+  assert.equal(dms.length, 0);                                                         // 수강생 DM 없음
+  assert.equal((await call(4, `/bookings/${B(80)}/cancel-past`, "POST", { reason: "휴강" })).json.error.code, "not_cancellable");
 });
