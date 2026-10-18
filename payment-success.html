@@ -34,7 +34,7 @@
   <div id="done" style="display:none">
     <div class="icon">✅</div>
     <h1>결제가 완료됐어요</h1>
-    <p class="sub">상담비 결제가 정상 처리됐습니다.<br>곧 운영진이 디스코드/카카오로 일정·반 배정을 안내드릴게요.</p>
+    <p class="sub">레벨 테스트 결제가 정상 처리됐어요.<br>곧 운영진이 디스코드/카카오로 일정·반 배정을 안내드릴게요.</p>
     <div class="detail">
       <div class="row"><span class="k">항목</span><span class="v" id="dName">-</span></div>
       <div class="row"><span class="k">결제 금액</span><span class="v gold" id="dAmount">-</span></div>
@@ -69,7 +69,7 @@ function showFail(t){ document.getElementById("loading").style.display="none"; d
     if (!r.ok || !d.ok) { showFail((d.error || "승인 실패") + (d.code ? ` (${d.code})` : "")); return; }
     document.getElementById("loading").style.display = "none";
     document.getElementById("done").style.display = "block";
-    document.getElementById("dName").textContent = d.orderName || "상담비";
+    document.getElementById("dName").textContent = d.orderName || "레벨 테스트";
     document.getElementById("dAmount").textContent = Number(d.amount).toLocaleString() + "원";
     document.getElementById("dOrder").textContent = d.orderId || orderId;
   } catch (e) { showFail("네트워크 오류 — 잠시 후 다시 시도해 주세요."); }
