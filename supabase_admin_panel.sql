@@ -7827,6 +7827,7 @@ notify pgrst, 'reload schema';
 --     ① 인자 p_source text default 'app' 추가 · 'app' | 'auto' 밖은 invalid_body
 --     ② 'auto' 는 개인 레슨(personal)만 · 그 밖 칸은 invalid_body
 --     ③ 넣는 줄 created_by = 'auto' 면 'auto:bell' · 아니면 종전 그대로 'portal'
+--   권한: 새 함수는 service_role 만 실행(public · anon · authenticated 회수 · 오너 OK 10/18). 종전 4인자판은 기본 권한(PUBLIC)이었다.
 --   안 바뀌는 것: 판수 · 날짜 · 중복 판정(v_has) · 잔여 계산 · 반환 모양 · 기존 칸 · 제약 · 데이터. 기존 호출(4인자 이름 지정)은 기본값으로 'app' = 종전과 같다.
 --   ⚠️ 인자 추가 = 교체(§42 와 같은 방식) — 4인자판을 drop 하고 **같은 요청 안에서** 5인자판을 만든다(함수가 비는 순간 없음 · PostgREST 후보 하나).
 --   실행: 오너가 SQL Editor 에서 아래 86-1 블록 하나를 **단독으로** 실행 → 86 검증. 이 함수에 'auto' 를 보내는 서버 코드는 실행 확인 전까지 Draft.
@@ -7962,6 +7963,10 @@ begin
                             'remainingWasShort', v_after < 0);
 end;
 $$;
+-- §86 권한(오너 OK 10/18 「OK — 서버만 실행하게」) — 서버(service_role)만 부른다. 허락을 **먼저** 주고 회수한다(순서가 바뀌면 그 사이 서버 완료가 멈춘다).
+--   4인자판은 위 drop 으로 없어진다 — 남는 함수는 5인자 하나뿐이라 그 하나만 묶는다.
+grant execute on function public.record_lesson_from_booking(bigint, bigint, int, date, text) to service_role;
+revoke all on function public.record_lesson_from_booking(bigint, bigint, int, date, text) from public, anon, authenticated;
 commit;
 notify pgrst, 'reload schema';
 
@@ -7970,5 +7975,9 @@ notify pgrst, 'reload schema';
 --   ② select record_lesson_from_booking(0, 0, null, null, 'x');      -- {"error":"invalid_body"}(출처 검사 · 쓰는 것 없음)
 --      select record_lesson_from_booking(0, 0);                       -- {"error":"not_found"}(기본값 'app' · 쓰는 것 없음)
 --   ③ 86-0 의 lesson_sessions 수 · 판수 합 · 출처별 수가 그대로
+--   ④ 권한 — select has_function_privilege('anon', 'public.record_lesson_from_booking(bigint,bigint,integer,date,text)', 'execute') as anon,
+--               has_function_privilege('authenticated', 'public.record_lesson_from_booking(bigint,bigint,integer,date,text)', 'execute') as authed,
+--               has_function_privilege('service_role', 'public.record_lesson_from_booking(bigint,bigint,integer,date,text)', 'execute') as server;
+--      기대: anon false · authed false · server true. 4인자판 없음: select count(*) from pg_proc where proname = 'record_lesson_from_booking';  -- 1
 -- 되돌림(한 블록): begin; drop function if exists public.record_lesson_from_booking(bigint, bigint, int, date, text);
---   위 §50 의 record_lesson_from_booking(4인자) create 문 그대로; commit; notify pgrst, 'reload schema';   -- md5 fe597597c1e0fa63e4915672b7f373b8 로 돌아오는지 확인
+--   위 §50 의 record_lesson_from_booking(4인자) create 문 그대로(권한은 종전처럼 기본값 · 손대지 않는다); commit; notify pgrst, 'reload schema';   -- md5 fe597597c1e0fa63e4915672b7f373b8 로 돌아오는지 확인

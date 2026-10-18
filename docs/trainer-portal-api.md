@@ -4044,7 +4044,8 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 | **오너** | 결정 끝(10/18) — 켜는 날 = **구현 검수 → 배포 → 부팅 확인 즉시**(별도 날짜 없음 · 오너 「구현 끝나면 바로」) · 소급 없음(§9.39.6) |
 
 - **DDL §86** (`supabase_admin_panel.sql` §86 · 기존 함수 교체 = B 구간 · 오너 OK 10/18) — `record_lesson_from_booking` 4인자 → 5인자(`p_source text default 'app'`).
-  새 칸 · 새 표 없음(출처는 기존 `created_by` 칸) · 기존 칸 · 제약 · 데이터 그대로. 실행 = 오너가 SQL Editor 에서 86-1 블록 단독 실행 → `notify pgrst` → 86 검증(md5 · 쓰는 것 없는 호출 2개 · 수 · 합 그대로).
+  **권한**: 새 함수는 서버(service_role)만 실행 — public · anon · authenticated 실행 회수(오너 OK 10/18 「OK — 서버만 실행하게」 · 4인자판은 같은 블록에서 없어져 남지 않는다).
+  새 칸 · 새 표 없음(출처는 기존 `created_by` 칸) · 기존 칸 · 제약 · 데이터 그대로. 실행 = 오너가 SQL Editor 에서 86-1 블록 단독 실행 → `notify pgrst` → 86 검증(md5 · 쓰는 것 없는 호출 2개 · 수 · 합 그대로 · anon 실행 false · service_role true).
   `hold` · 물은 기록은 `ops_state`. env 없음(봇 DM · 기존 채널 env 그대로).
 - 판수 · 정산 계산식 · 잠금월 · 노쇼 판정 · 취소 차감(§9.38)은 **그대로**다. 바뀌는 것은 「안 누르면 아무것도 안 한다」가 「안 누르면 예약대로 완료」로 바뀌는 것 하나다.
 
