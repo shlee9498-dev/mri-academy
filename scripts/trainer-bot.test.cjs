@@ -523,7 +523,7 @@ const goBtn = (msg, label) => msg.components.flatMap((r) => r.components).find((
 
 test("바꾸기 · 취소 — 명령 둘 · 칸 없음 · 내 다가오는 예약(개인 · 직강 · 시작 전 · 예약됨)만 빠른 순", async () => {
   const { COMMANDS, CHANGE_KIND } = require("../trainer-bot.cjs");
-  assert.deepEqual(COMMANDS.map((c) => c.name), ["수업잡기", "수업변경", "수업취소"]);
+  assert.deepEqual(COMMANDS.map((c) => c.name), ["수업잡기", "수업변경", "수업취소", "입금받음"]);
   for (const c of COMMANDS) assert.deepEqual(c.options, []);
   assert.deepEqual(CHANGE_KIND, { 수업변경: "move", 수업취소: "cancel" });
   const { bot, fp } = makeBot({ portal: { slots: CH_SLOTS } });
