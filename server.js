@@ -66,6 +66,8 @@ let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP �
 const payreqIntake = require("./payreq-intake.cjs");
 // 상담 · 레벨 테스트 신청서 「어디서 보고 오셨어요?」 선택지(apply.html 과 한 벌 · 오너 10/19)
 const inflowMod = require("./inflow.cjs");
+// 「입금 받음」(계약 §9.40) — 트레이너가 올리는 입금 신청 · 결과 DM 문구 · 화면 이름(디코 닉)
+const paymentReceived = require("./payment-received.cjs");
 // 공개 API 응답에서 수강생 식별정보를 걷어내는 순수 함수(커뮤니티 작성자 ID · 공개 코칭 기록 본문 치환 · 9/30 개인정보 점검)
 const publicRows = require("./public-rows.cjs");
 // 수업 기록 행 판정 한 벌(판수 조정 · 봇 정정 · 0 이하 행은 수업이 아니다) — 원장 화면 · 공개 지표 · 예약 고아 감시가 같이 쓴다.
@@ -3297,12 +3299,20 @@ if (process.env.DISCORD_TOKEN) {
       )];
       const cr = payreqIntake.receiptOwnerLine(req);
       if (cr && !req.cash_receipt_issued_at) rows.push(payreqReceiptRow(req.id));
+      // 「입금 받음」(계약 §9.40 · 오너 10/19) — 트레이너가 통장 입금을 대신 올린 신청. 버튼 · 승인 뒤 길은 앱 신청과 같다.
+      //   머리만 다르다: 누가 올렸는지(트레이너) · 수강생 디코 닉. 레벨 테스트는 kind 「상담」이라 상품 이름을 바꿔 보인다.
+      const fromTrainer = opts.from === "trainer" || String(req.requested_by || "").startsWith("trainer:");
+      const head = fromTrainer
+        ? `**입금 받음 #${req.id}** (트레이너 ${opts.requesterName || req.trainer_name || "-"}${opts.note ? ` · ${opts.note}` : ""})`
+        : `**${card ? "카드 결제 신청" : "입금 신청"} #${req.id}** (앱${opts.note ? ` · ${opts.note}` : ""})`;
+      const what = req.kind === "상담" ? "레벨 테스트" : payreqIntake.productText(req, units);
       await owner.send({
         // 돈 문구라 이모지를 뺀다(ui-copy §2 — 💰 는 돈을 가볍게 만든다). /결제신청 카드의 💰 는
         // 전수 교체 금지라 그대로 둔다 — 두 카드 머리가 다른 게 오히려 입구 구분이 된다.
-        content: `**${card ? "카드 결제 신청" : "입금 신청"} #${req.id}** (앱${opts.note ? ` · ${opts.note}` : ""})`
-          + `\n· 학생: **${req.student_name}**`
-          + `\n· 상품: ${payreqIntake.productText(req, units)} · **${won(req.amount)}원**`
+        content: head
+          + `\n· 학생: **${req.student_name}**${fromTrainer && opts.nick && opts.nick !== req.student_name ? ` (디코 ${opts.nick})` : ""}`
+          + (fromTrainer ? `\n· 명부: #${req.student_id}` : "")
+          + `\n· 상품: ${what} · **${won(req.amount)}원**`
           + `\n· ${card ? "결제일" : "입금일"}: ${req.paid_on}`
           + (card
               ? `\n· 그로블 주문번호: ${req.deposit_ref || "-"}\n· 채널: ${channelLine("groble", req.amount)}`
@@ -3965,6 +3975,11 @@ if (process.env.DISCORD_TOKEN) {
       });
     }
 
+    // 「입금 받음」(§9.40)은 트레이너가 명부에서 고른 행이 신청에 실려 있다 — 이름 후보 대신 그 행을 먼저 보인다(대상 변경은 그대로 된다).
+    if (action === "ok" && String(q.requested_by || "").startsWith("trainer:") && q.student_id) {
+      const s = await payreqStudentById(Number(q.student_id));
+      return payreqShowTargets(itx, reqId, q, s ? [s] : await payreqCandidates(q.student_name), s ? "트레이너가 명부에서 고른 수강생이야." : null);
+    }
     if (action === "ok") return payreqShowTargets(itx, reqId, q, await payreqCandidates(q.student_name), null);   // ✅ = 확인 단계(승인 아님)
     if (action === "sel") {
       const s = await payreqStudentById(Number(itx.values?.[0]));
@@ -4085,6 +4100,22 @@ if (process.env.DISCORD_TOKEN) {
         }
         await discordDM(stu?.discord_id, msg);
       } catch (e) { console.error("payreq_notify_student", e?.message); }
+      return;
+    }
+    // 「입금 받음」(§9.40) — requested_by = "trainer:<staff id>". 디코 id 가 아니라 아래 users.fetch 로는 못 보낸다.
+    //   올린 트레이너에게 존댓말로(오너 지시 10/19 · 트레이너 쪽 문구 존댓말) · 수강생은 디코 닉으로 · 돈 문구라 이모지 없이.
+    if (String(q.requested_by || "").startsWith("trainer:")) {
+      try {
+        const staffId = Number(String(q.requested_by).slice(8));
+        const st = Number.isInteger(staffId) && staffId > 0
+          ? (await sbSelect("staff", `select=discord_id&id=eq.${staffId}&limit=1`))[0] : null;
+        const sid = approve ? target.id : Number(q.student_id);
+        const stu = sid ? (await sbSelect("students", `select=name,discord_nick&id=eq.${sid}&limit=1`))[0] : null;
+        const reflected = approve
+          ? await sbSelect("payment_requests", `select=payment_id&id=eq.${reqId}&limit=1`).then((r) => !!r[0]?.payment_id).catch(() => false)
+          : false;
+        await discordDM(st?.discord_id, paymentReceived.trainerResultText(q, approve, { nick: stu ? paymentReceived.nickOf(stu) : null, reflected }));
+      } catch (e) { console.error("payreq_notify_trainer", e?.message); }
       return;
     }
     // 신청 트레이너에게 결과 통보(best-effort — 실패해도 처리 자체는 완료)
@@ -8589,6 +8620,13 @@ const reviewApi = require("./review-api.cjs")(app, { sbSelect, sbInsert, sbPatch
 // sbPatch · sbDelete = 명부 레벨 칸 · 종료 취소(계약 §9.16 · §9.17 · 2026-09-30).
 const trainerPortal = require("./trainer-portal.cjs")(app, {
   sbSelect, sbInsert, sbUpsert, sbPatch, sbDelete, sbRpc, limit, getUser, portal: studentPortal,
+});
+
+// ── 「입금 받음」(계약 §9.40 · 오너 10/19) — 트레이너가 통장 입금을 대신 올린다 → 오너 승인 카드(앱 신청과 같은 버튼) ──
+//   trainer-portal 뒤 — 그 파일의 게이트 · requireTrainer · scopedStudents 를 같은 함수로 쓴다. 봇(/입금받음)이 이 라우트를 부른다.
+paymentReceived.mountPaymentReceived(app, trainerPortal, {
+  sbSelect, sbInsert, limit, portal: studentPortal,
+  payreqCard: (r, o) => (payreqPortalCard ? payreqPortalCard(r, o) : Promise.resolve(false)),
 });
 
 // ── 수업 복기 트레이너 라우트(§29 PR-3 · /api/trainer-portal/{reviews,feedback,feed}) ──
