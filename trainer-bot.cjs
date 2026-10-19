@@ -16,6 +16,8 @@ const { parseLessonLine, cardWhen, durationLabel, kstYmd } = require("./lesson-l
 const { PERSONAL_DURATIONS } = require("./lesson-lengths.cjs");
 const { createBookGuide } = require("./book-guide.cjs");
 const { isTestStudent } = require("./test-accounts.cjs");
+// /입금받음(계약 §9.40 · 오너 10/19) — 통장 입금을 원장 승인 카드로 올리는 클릭 카드. 같은 등록 · 같은 portalCall 을 쓴다.
+const paymentReceivedBot = require("./payment-received-bot.cjs");
 
 const COMMAND_NAME = "수업잡기";
 const PREFIX = "tbot_";
@@ -36,6 +38,7 @@ const COMMANDS = [
   // 예약 한 건 바꾸기 · 취소(계약 §9.38) — 내 다가오는 예약에서 고른다
   { name: "수업변경", description: "내 예약 한 건을 다른 시간으로 옮겨요 · 본인에게만 보여요", options: [] },
   { name: "수업취소", description: "내 예약 한 건을 취소해요 · 본인에게만 보여요", options: [] },
+  paymentReceivedBot.COMMAND,
 ];
 const CHANGE_KIND = { 수업변경: "move", 수업취소: "cancel" };
 
@@ -684,7 +687,9 @@ function createTrainerBot(deps) {
     return Number(hit.games);
   }
 
+  const paid = paymentReceivedBot.createPaymentReceivedBot({ portalCall: deps.portalCall, staffByDiscord: deps.staffByDiscord, now, log });
   async function handle(itx) {
+    if (await paid.handle(itx)) return true;
     if (itx.isChatInputCommand?.() && itx.commandName === COMMAND_NAME) return onCommand(itx);
     if (itx.isChatInputCommand?.() && CHANGE_KIND[itx.commandName]) return onChangeCommand(itx, CHANGE_KIND[itx.commandName]);
     if ((itx.isButton?.() || itx.isStringSelectMenu?.()) && String(itx.customId || "").startsWith(PREFIX)) return onButton(itx);
