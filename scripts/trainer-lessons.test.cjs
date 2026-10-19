@@ -19,6 +19,12 @@ test("수업 기록 — 개인 1명 · 그룹 1~4명 · 중복 id 불가", () =>
   assert.equal(T.parseLessonBody(lesson({ kind: "consult" }), TODAY).ok, false);             // 상담은 이 화면이 아니다
 });
 
+test("수업 기록 — 출처 via(§9.41.1) · 없으면 app · just_done 만 더 · 다른 값 400", () => {
+  assert.equal(T.parseLessonBody(lesson(), TODAY).value.via, "app");
+  assert.equal(T.parseLessonBody(lesson({ via: "just_done" }), TODAY).value.via, "just_done");
+  assert.equal(T.parseLessonBody(lesson({ via: "bot" }), TODAY).ok, false);
+});
+
 test("수업 기록 — 날짜는 오늘부터 7일 전까지 · 미래 · 없는 날짜 불가", () => {
   assert.equal(T.parseLessonBody(lesson({ playedAt: "2026-09-24" }), TODAY).ok, true);        // 7일 전
   assert.equal(T.parseLessonBody(lesson({ playedAt: "2026-09-23" }), TODAY).ok, false);       // 8일 전
