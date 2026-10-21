@@ -8698,7 +8698,7 @@ reconcile = ledgerReconcile.mountReconcile(app, trainerPortal, {
 // trainer-portal 뒤 — 그 파일이 건 게이트 뒤에 서고, 트레이너 판정·범위(담당 ∪ 최근 90일)·응답 가드를 같은 함수로 쓴다.
 reviewApi.mountTrainer(trainerPortal);
 
-// 「AI 무리 복기」 리플 API(/api/replay/* · docs/replay-ai.md §13) — 클립 피드백 엔진 부품 · 닉네임 조회만 PUBG 한도를 쓴다(분당 4회 몫 · 줄 서기).
+// 「AI 무리 복기」 리플 API(/api/replay/* · docs/replay-ai.md §13) — 클립 피드백 엔진 부품 · 운영진 로그인만 · 닉네임 조회만 PUBG 한도를 쓴다(분당 4회 몫 · 줄 서기).
 //   저장(§87 버킷 replay · replay_matches)이 없으면 메모리 캐시로 돈다.
 require("./replay-api.cjs")(app, { findPlayer, pubgGet, getUser, limit, sbSelect, sbInsert });
 

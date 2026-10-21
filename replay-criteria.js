@@ -31,7 +31,8 @@
       const snap = Scene.snapshotAt(S, k.t + 0.1, { radiusM: 600 });
       const enemy = snap.enemies.find((e) => e.team === k.byTeam);
       const enemyThrows = enemy ? enemy.attackThrows : null;
-      const depth1 = k.from ? dist(k.at, k.from) : null;                    // 1선이 상대에서 떨어진 거리(기절 순간)
+      // 1선이 상대에서 떨어진 거리(기절 순간). 쏜 상대 위치가 없거나 같은 자리면 「앞 · 뒤」 축을 못 잡는다 → null(판정 안 함)
+      const depth1 = k.from && dist(k.at, k.from) > 0 ? dist(k.at, k.from) : null;
       // 「앞 · 뒤」는 기절 순간의 축으로 잰다: 기절한 자리 → 그때 쏜 상대 방향. + = 1선보다 상대 쪽(앞), − = 뒤
       //   (움직이는 상대 위치로 재면 상대가 다가온 것을 우리가 전진한 것으로 잘못 센다)
       const ux = k.from && depth1 ? (k.from.x - k.at.x) / depth1 : 0, uy = k.from && depth1 ? (k.from.y - k.at.y) / depth1 : 0;
@@ -66,7 +67,7 @@
         && /^Proj/.test(f.weapon || "") && dist(f.at, k.at) <= cfg.chainRadiusM * M)
         .map((f) => ({ t: r1(f.t), to: f.to, name: (S.players.get(f.to) || {}).name || "", weapon: f.weapon, fromKnockedM: Math.round(dist(f.at, k.at) / M) }));
       const finished = S.fights.find((f) => f.type === "kill" && f.to === k.to && f.t > k.t);
-      const matched = enemyThrows != null && enemyThrows >= cfg.minEnemyAttackThrows && seconds.some((s) => s.wentToKnocked && !s.wentForward);
+      const matched = depth1 != null && enemyThrows != null && enemyThrows >= cfg.minEnemyAttackThrows && seconds.some((s) => s.wentToKnocked && !s.wentForward);
       out.push({ card: card.id, t: r1(k.t), knocked: { id: k.to, name: knocked ? knocked.name : "" }, weapon: k.weapon,
         depth1M: depth1 != null ? Math.round(depth1 / M) : null, enemyTeam: enemy ? enemy.label : "상대 팀", enemyThrows,
         attackerThrows: (atkThrows.grenade || 0) + (atkThrows.molotov || 0), attackerLabel: enemy ? (enemy.members.find((r) => r.id === k.by) || {}).label || "" : "", far,
@@ -81,6 +82,8 @@
   /** 감지 결과 1건 → 피드백(구조 + 화면 문장). clipOffset 이 있으면 클립 시각도 같이 적는다 */
   function feedback001(f, card, opts) {
     const at = (t) => (opts && opts.clipOffset != null ? `클립 ${mmss(Math.max(0, t - opts.clipOffset))} · 경기 ${mmss(t)}` : `경기 ${mmss(t)}`);
+    // 쏜 상대 위치가 없으면 「1선보다 앞 · 뒤」를 잴 수 없다 — 숫자 없이 판단하지 않는다(검수 10/21 · 「nullm」 방지)
+    if (f.depth1M == null) return { verdict: "기준 없음", when: at(f.t), reason: `쏜 상대 위치 기록이 없어 1선(${f.knocked.name}) 기준 「앞 · 뒤」를 잴 수 없어요` };
     if (f.enemyThrows == null) return { verdict: "기준 없음", when: at(f.t), reason: "상대 팀 물자 기록이 없어 카드 #001 조건(상대 투척물 남음)을 확인 못 했어요" };
     if (!f.seconds.length) return { verdict: "기준 없음", when: at(f.t), reason: `1선(${f.knocked.name}) 기절 장면이지만 150m 안에 2선이 없어 카드 #001 로 볼 수 없어요(${f.far.map((x) => `${x.name} ${x.m}m`).join(" · ") || "다른 팀원 없음"})` };
     if (!f.matched && !f.followed) return { verdict: "기준 없음", when: at(f.t), reason: "1선 기절 장면이지만 2선이 기절한 자리로 가지도, 더 앞으로 나가지도 않아 카드 #001 패턴에 안 맞아요" };

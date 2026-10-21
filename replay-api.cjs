@@ -1,8 +1,9 @@
-// 「AI 무리 복기」 리플 API(docs/replay-ai.md §13) — 클립 피드백 엔진의 부품. 로그인 없음 · 누구나 무료(PUBG 개발자 약관 「Monetization」)
+// 「AI 무리 복기」 리플 API(docs/replay-ai.md §13) — 클립 피드백 엔진의 부품. **운영진(STAFF_DISCORD_IDS) 로그인만**(10/21 검수):
+//   공개 화면이 없는 동안 아무 닉네임 경기 데이터를 밖에서 받아 가는 뒷문이 되면 안 된다. 공개할 때는 약관상 무료로 열고 이 게이트를 다시 정한다.
 //
-//   GET  /api/replay/recent?name=&platform=steam|kakao  → 최근 경기 목록(경쟁전 · 일반 구분 · 최대 12판)
-//   GET  /api/replay/match/:id?name=&platform=          → 그 사람 팀 한 팀분만 잘라 파싱한 재생 데이터(상대 이름 · id 는 「적 N」)
-//   GET  /api/replay/stats                              → 한도 · 캐시 수치(운영진만)
+//   GET  /api/replay/recent?name=&platform=steam|kakao  → 최근 경기 목록(경쟁전 · 일반 구분 · 최대 12판) — 운영진만
+//   GET  /api/replay/match/:id?name=&platform=          → 그 사람 팀 한 팀분만 잘라 파싱한 재생 데이터(상대 이름 · id 는 「적 N」) — 운영진만
+//   GET  /api/replay/stats                              → 한도 · 캐시 수치 — 운영진만
 //   2주차 공개 페이지 · 카드 · 측정(POST /api/replay/event)은 10/21 지휘 결정으로 이 PR 에서 뺐다 — 브랜치 claude/replay-public-parked 에 보관
 //
 // PUBG 호출 한도(공식 문서 rst/rate-limits.rst):
@@ -24,6 +25,7 @@ const QUEUE_WAIT_MS = 20_000;       // 이보다 오래 기다려야 하면 줄 
 const RECENT_MAX = 12;              // 목록에 보일 판 수(경기 객체는 한도 밖이지만 응답 시간을 위해)
 const PLAYER_TTL = 90_000;          // 같은 닉 다시 조회 — 방금 끝난 판이 보이도록 짧게
 const TELEMETRY_SLOTS = 1;          // 텔레메트리(원본 약 20MB · 파싱 중 메모리 200MB 안팎) — 한 번에 하나만
+const TELEMETRY_QUEUE_MAX = 3;      // 그 뒤에 기다리는 줄 상한 — 넘치면 줄 세우지 않고 429 busy(밖에서 계속 불러도 메모리가 안 쌓인다)
 const TELEMETRY_MAX_BYTES = 120 * 1024 * 1024;
 const BUCKET = "replay";
 const PARSER_VERSION = "replay-core@1";
@@ -206,10 +208,14 @@ function mountReplay(app, deps) {
 
   // 텔레메트리 동시 다운로드 칸
   let free = TELEMETRY_SLOTS; const waiters = [];
-  const take = () => (free > 0 ? (free--, Promise.resolve()) : new Promise((r) => waiters.push(r)));
+  const take = () => {
+    if (free > 0) { free--; return Promise.resolve(); }
+    if (waiters.length >= TELEMETRY_QUEUE_MAX) { stat.busy++; const e = new Error("busy"); e.status = 429; e.retryAfter = 30; return Promise.reject(e); }
+    return new Promise((r) => waiters.push(r));
+  };
   const give = () => { const w = waiters.shift(); if (w) w(); else free++; };
   async function downloadTelemetry(url) {
-    await take();
+    await take();                                   // 줄이 꽉 차면 여기서 429 — 칸을 안 잡았으니 give 도 안 부른다
     try {
       stat.telemetryFetch++;
       const r = await fetchImpl(url, { headers: { "Accept-Encoding": "gzip", Accept: "application/json" } });
@@ -301,8 +307,14 @@ function mountReplay(app, deps) {
     return { platform, name };
   }
   const lim = deps.limit ? deps.limit("replay", 30, 60_000) : (q, s, n) => n();
+  // 운영진만 — 한도 · PUBG 호출보다 먼저 막는다(비로그인 요청은 줄도 캐시도 안 건드린다)
+  const staffOnly = (req, res, next) => {
+    const u = deps.getUser ? deps.getUser(req) : null;
+    if (!u || !u.isStaff) return bad(res, "forbidden", 403);
+    next();
+  };
 
-  app.get("/api/replay/recent", lim, async (req, res) => {
+  app.get("/api/replay/recent", staffOnly, lim, async (req, res) => {
     const a = args(req);
     if (!a) return bad(res, "bad_request");
     if (!hasKey()) return bad(res, "pubg_disabled", 503);
@@ -320,7 +332,7 @@ function mountReplay(app, deps) {
     } catch (e) { fail(res, e); }
   });
 
-  app.get("/api/replay/match/:id", lim, async (req, res) => {
+  app.get("/api/replay/match/:id", staffOnly, lim, async (req, res) => {
     const a = args(req);
     const id = String(req.params.id || "");
     if (!a || !MATCH_ID_RE.test(id)) return bad(res, "bad_request");
@@ -341,9 +353,7 @@ function mountReplay(app, deps) {
     } catch (e) { fail(res, e); }
   });
 
-  app.get("/api/replay/stats", (req, res) => {
-    const u = deps.getUser ? deps.getUser(req) : null;
-    if (!u || !u.isStaff) return bad(res, "forbidden", 403);
+  app.get("/api/replay/stats", staffOnly, (req, res) => {
     res.json({ api: { ...stat, cache: { players: players.size, matches: matches.size, replays: replays.size } }, storage: { bucket: ready.bucket, matches: ready.matches } });
   });
 
@@ -353,4 +363,4 @@ function mountReplay(app, deps) {
 }
 
 module.exports = mountReplay;
-Object.assign(module.exports, { trimTeam, forClient, matchSummary, findInMatch, telemetryUrl, LOOKUPS_PER_MIN, QUEUE_WAIT_MS });
+Object.assign(module.exports, { trimTeam, forClient, matchSummary, findInMatch, telemetryUrl, LOOKUPS_PER_MIN, TELEMETRY_QUEUE_MAX, QUEUE_WAIT_MS });

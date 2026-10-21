@@ -58,7 +58,9 @@ function boot(over = {}) {
     const srv = app.listen(0, () => ok({ srv, api, calls, base: `http://127.0.0.1:${srv.address().port}`, tick: (ms) => { clock += ms; } }));
   });
 }
-const get = (b, p, h) => fetch(b + p, { headers: h }).then(async (r) => ({ status: r.status, body: await r.json() }));
+const STAFF = { authorization: "Bearer staff" };
+// 기본은 운영진으로 부른다(게이트 시험만 h 를 따로 준다)
+const get = (b, p, h) => fetch(b + p, { headers: h || STAFF }).then(async (r) => ({ status: r.status, body: await r.json() }));
 
 test("최근 경기 — 최신 순 · 경쟁전 / 일반 라벨 · 내 순위 · 킬", async (t) => {
   const s = await boot(); t.after(() => s.srv.close());
@@ -114,7 +116,7 @@ test("PUBG 키가 없으면 503 · 텔레메트리가 없어진 경기(14일 지
 test("한도 줄 — 1분에 닉 조회 4번까지, 넘치면 429 busy · Retry-After", async (t) => {
   const s = await boot(); t.after(() => s.srv.close());
   for (const n of ["AA1", "AA2", "AA3", "AA4"]) assert.equal((await get(s.base, `/api/replay/recent?name=${n}&platform=steam`)).status, 200);
-  const r = await fetch(s.base + "/api/replay/recent?name=AA5&platform=steam");
+  const r = await fetch(s.base + "/api/replay/recent?name=AA5&platform=steam", { headers: STAFF });
   assert.equal(r.status, 429);
   assert.equal(r.headers.get("retry-after"), "60");
   assert.equal((await r.json()).error, "busy");
@@ -127,11 +129,11 @@ test("한도 · 캐시 수치 — 운영진만 · 측정 라우트는 없다(10/
   const s = await boot(); t.after(() => s.srv.close());
   await get(s.base, `/api/replay/match/${MID}?name=MRI_A&platform=steam`);
   await get(s.base, `/api/replay/match/${MID}?name=MRI_B&platform=steam`);
-  assert.equal((await get(s.base, "/api/replay/stats")).status, 403);
+  assert.equal((await get(s.base, "/api/replay/stats", {})).status, 403);
   const st = await get(s.base, "/api/replay/stats", { authorization: "Bearer staff" });
   assert.equal(st.status, 200);
   assert.deepEqual([st.body.api.telemetryFetch, st.body.api.replayMem, st.body.api.matchFetch], [1, 1, 1]);
-  const ev = await fetch(s.base + "/api/replay/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const ev = await fetch(s.base + "/api/replay/event", { method: "POST", headers: { "Content-Type": "application/json", ...STAFF }, body: "{}" });
   assert.equal(ev.status, 404);
 });
 
@@ -141,4 +143,37 @@ test("순수 함수 — trimTeam 은 그 팀 줄만 · 텔레메트리 주소는
   assert.ok(ev.some((e) => e._T === "LogGameStatePeriodic"));
   assert.equal(ev.find((e) => e._T === "LogMatchStart").characters.length, 1);
   assert.equal(mount.telemetryUrl({ included: [{ type: "asset", attributes: { name: "telemetry", URL: "https://evil.example/x.json" } }] }), null);
+});
+
+test("운영진 게이트 — 비로그인 · 일반 로그인은 /api/replay/* 전부 403 · PUBG 도 캐시도 안 건드린다 · 운영진은 200", async (t) => {
+  const s = await boot({ getUser: (req) => (req.headers.authorization === "Bearer staff" ? { id: "1", isStaff: true }
+    : req.headers.authorization === "Bearer student" ? { id: "2", isStaff: false } : null) });
+  t.after(() => s.srv.close());
+  const paths = ["/api/replay/recent?name=MRI_A&platform=steam", `/api/replay/match/${MID}?name=MRI_A&platform=steam`, "/api/replay/stats"];
+  for (const p of paths) {
+    assert.deepEqual(await get(s.base, p, {}), { status: 403, body: { error: "forbidden" } }, `비로그인 ${p}`);
+    assert.equal((await get(s.base, p, { authorization: "Bearer student" })).status, 403, `일반 로그인 ${p}`);
+  }
+  assert.deepEqual([s.calls.find, s.calls.match, s.calls.tele], [0, 0, 0], "막힌 요청은 PUBG 를 한 번도 안 부른다");
+  for (const p of paths) assert.equal((await get(s.base, p)).status, 200, `운영진 ${p}`);
+});
+
+test("텔레메트리 줄 상한 — 받는 중 1개 + 기다림 3개까지, 넘치면 429 busy(메모리가 안 쌓인다)", async (t) => {
+  let release; const gate = new Promise((r) => { release = r; });
+  const ids = [1, 2, 3, 4, 5].map((n) => `aaaaaaaa-2222-4333-8444-00000000000${n}`);
+  const s = await boot({
+    pubgGet: async (p) => fakeMatch(p.split("/").pop(), "official", "2026-10-20T10:00:00Z"),
+    fetchImpl: async () => { await gate; return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(SAMPLE) }; },
+  });
+  t.after(() => s.srv.close());
+  assert.equal(mount.TELEMETRY_QUEUE_MAX, 3);
+  const pending = ids.slice(0, 4).map((id) => get(s.base, `/api/replay/match/${id}?name=MRI_A&platform=steam`));
+  await new Promise((r) => setTimeout(r, 100));                      // 앞 4건이 칸 · 줄에 들어갈 때까지
+  const fifth = await get(s.base, `/api/replay/match/${ids[4]}?name=MRI_A&platform=steam`);
+  assert.equal(fifth.status, 429);
+  assert.equal(fifth.body.error, "busy");
+  release();
+  for (const r of await Promise.all(pending)) assert.equal(r.status, 200);
+  // 줄이 비면 다시 받는다
+  assert.equal((await get(s.base, `/api/replay/match/${ids[4]}?name=MRI_A&platform=steam`)).status, 200);
 });

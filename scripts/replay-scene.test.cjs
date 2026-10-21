@@ -112,3 +112,19 @@ test("클립 → 경기 시각 — 신호가 약하면 못 맞췄다고 하고 �
   assert.ok(Math.abs(hinted.offset - 786) <= 1, `${hinted.offset}`);
   assert.equal(Align.nameSim("MRl_A", "MRI_A"), 1);
 });
+
+test("카드 #001 — 쏜 상대 위치가 없으면 「앞 · 뒤」를 못 재서 「기준 없음」(「nullm」 안 찍힘 · 검수 10/21)", () => {
+  const ev = JSON.parse(JSON.stringify(EV));
+  const g = ev.find((e) => e._T === "LogPlayerMakeGroggy" && e.victim.name === "MRI_A" && e.attacker && e.attacker.name === "T29_1" && /FNFal/.test(e.damageCauserName));
+  assert.ok(g, "표본에 12:54 1선 기절 줄이 있다");
+  delete g.attacker.location;
+  const S2 = Scene.buildScene(ev, { accountId: "account.fake-mri-d" });
+  const f = Crit.detect001(S2, DECK.cards[0]).find((x) => Math.abs(x.t - 774.6) < 0.1);
+  assert.equal(f.depth1M, null);
+  assert.equal(f.matched, false, "숫자 없이 「흔한 실수」로 새지 않는다");
+  assert.equal(f.followed, false);
+  const fb = Crit.feedback001(f, DECK.cards[0]);
+  assert.equal(fb.verdict, "기준 없음");
+  assert.match(fb.reason, /쏜 상대 위치 기록이 없어/);
+  for (const r of Crit.review(S2, DECK)) assert.doesNotMatch(Crit.render(r.feedback), /null|undefined|NaN/);
+});
