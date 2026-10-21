@@ -185,12 +185,6 @@ a{color:inherit}
 .rec .tag{font-size:14px;font-weight:700}
 .rec .src{font-size:13px;color:var(--mute)}
 .rec.dk .src{color:var(--on-dark-sub)}
-.rec .big{font-size:clamp(44px,5vw,64px);line-height:1}
-.rec .big small{font-size:.4em;font-weight:700;margin-left:4px}
-.rec .big .pend{font-size:14px}
-.rec .lab{font-size:14px;color:var(--sub);margin-top:6px}
-.rec.dk .lab{color:var(--on-dark-sub)}
-.rec .took{font-weight:700}
 .cases{list-style:none;display:grid;gap:0;border-top:1px solid var(--line)}
 .rec.dk .cases{border-color:rgba(251,246,239,.16)}
 .cases li{display:grid;grid-template-columns:4.5em minmax(0,1fr) auto;gap:12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);font-size:15px}
@@ -200,18 +194,8 @@ a{color:inherit}
 .cases .tr b{font-weight:700}
 .cases .d{font-size:13px;color:var(--mute);white-space:nowrap}
 .rec.dk .cases .d{color:var(--on-dark-sub)}
-.quote{position:relative;padding:2px 0 2px 16px;color:var(--sub);font-size:15px}
-.quote::before{content:"";position:absolute;left:0;top:3px;bottom:3px;width:4px;border-radius:2px;background:var(--hl)}
-.rec.dk .quote{color:var(--on-dark-sub)}
-.rec .more{margin-top:auto;font-size:14px}
 .g-fact{font-size:14px;color:var(--sub)}
-.g-fact b{color:var(--ink)}
-/* 성장 기록 뼈대 — 기록이 오기 전 자리만 잡는다 */
-.sk{display:grid;gap:10px}
-.sk i{display:block;height:20px;border-radius:6px;background:#F3ECE2}
-@media(prefers-reduced-motion:no-preference){.sk i{animation:skp 1.4s ease-in-out infinite}}
-@keyframes skp{50%{opacity:.55}}
-.state{font-size:14px;color:var(--mute)}
+.rec.dk .g-fact{color:var(--on-dark-sub)}
 
 /* 수업 영상 칸(비어 있으면 숨김) */
 .lv{margin-top:16px}
@@ -452,9 +436,10 @@ html.vr-lock{overflow:hidden}
     </div>
   </section>
 
-  <!-- 5. 얼마나 다니면 달라져요 — 레슨(PUBG 공식 전적)과 원장 직강(관리대장 · 후기)을 나눠 보여 준다(오너 10/21).
-       큰 숫자 · 걸린 기간 · 후기 · 원장 직강 사례는 회계 집계 중이라 [확인 대기] 자리만 둔다(하드코딩 금지 · 값은 지휘가 내려보낸다).
-       레슨 사례 세 줄은 GET /api/progress-public(전적 스냅샷 · 닉은 서버가 「세**」로 가림)에서 채운다 -->
+  <!-- 5. 얼마나 다니면 달라져요 — 레슨(PUBG 공식 전적)과 원장 직강(관리대장)을 나눠 보여 준다(오너 10/21).
+       사례는 회계 대조로 재현된 것만 고정 글자로 둔다(지휘 10/21). 표본이 작아(레슨 6명 중 3명 상승 · 직강 2명) 「n / n명」 · 평균 기간 같은 큰 숫자는 싣지 않는다.
+       닉은 앞 두 글자 + **(공개 규격 · docs/public-metrics.md §2.3) — 회계 값이 오면 「확인 대기」 자리를 채운다.
+       /api/progress-public 사례는 같은 티어 안 RP 상승도 「상승」으로 세는 문제가 있어 여기서 읽지 않는다(서버 수정은 경비) -->
   <section class="sec" id="growth" style="padding-top:0">
     <div class="wrap">
       <div class="kick">수강생 기록</div>
@@ -462,31 +447,20 @@ html.vr-lock{overflow:hidden}
       <div class="two">
         <article class="card rec" aria-labelledby="recL">
           <div><div class="tag" id="recL">트레이너 레슨</div><div class="src">PUBG 공식 전적 · 2026년 6~10월</div></div>
-          <div>
-            <div class="big num"><span class="pend">확인 대기</span> <small>/</small> <span class="pend">확인 대기</span><small>명</small></div>
-            <div class="lab">전적이 쌓이는 레슨생 중 티어가 오른 사람</div>
-          </div>
-          <p class="took">오른 사람은 첫 수업부터 보통 <span class="pend">확인 대기</span> 안팎</p>
-          <!-- 불러오는 동안 뼈대를 보여 주고, 지난번 받은 기록이 있으면 그걸 먼저 그린다 -->
-          <div id="growthBody" aria-busy="true"><div class="sk" aria-hidden="true"><i></i><i></i><i></i></div><p class="sr">기록을 불러오고 있어요</p></div>
-          <p class="quote">후기 한 줄 <span class="pend">확인 대기</span></p>
-          <!-- 5명은 /api/site-metrics 의 graduatesMasterPlus 가 오면 덮어쓴다 -->
-          <p class="g-fact"><b><span data-srv="graduatesMasterPlus">5</span>명</b> 레슨으로 마스터 이상 달성</p>
-          <a class="link more" href="gmi-progress.html">레슨 기록 전체 보기</a>
+          <ul class="cases">
+            <li><span class="nick"><span class="pend">닉</span></span><span class="tr">크리스탈 → <b>다이아</b></span><span class="d">55일</span></li>
+            <li><span class="nick"><span class="pend">닉</span></span><span class="tr">플래티넘 → <b>크리스탈</b></span><span class="d">32일</span></li>
+            <li><span class="nick"><span class="pend">닉</span></span><span class="tr">다이아 → <b>마스터</b></span><span class="d">112일</span></li>
+          </ul>
+          <p class="g-fact">기록이 쌓이는 대로 늘려 갈게요</p>
         </article>
         <article class="card dk rec" aria-labelledby="recD">
-          <div><div class="tag" id="recD">원장 직강</div><div class="src">2023년 9월부터 · 관리대장 · 후기</div></div>
-          <div>
-            <div class="big num"><span class="pend">확인 대기</span> <small>/</small> <span class="pend">확인 대기</span><small>명</small></div>
-            <div class="lab">원장 직강을 들은 사람 중 티어가 오른 사람</div>
-          </div>
-          <p class="took">걸린 기간 <span class="pend">확인 대기</span></p>
+          <div><div class="tag" id="recD">원장 직강</div><div class="src">2023년 9월부터 · 관리대장</div></div>
           <ul class="cases">
-            <li><span class="nick">**</span><span class="tr"><span class="pend">시작 → 달성</span></span><span class="d"><span class="pend">기간</span></span></li>
-            <li><span class="nick">**</span><span class="tr"><span class="pend">시작 → 달성</span></span><span class="d"><span class="pend">기간</span></span></li>
-            <li><span class="nick">**</span><span class="tr"><span class="pend">시작 → 달성</span></span><span class="d"><span class="pend">기간</span></span></li>
+            <li><span class="nick"><span class="pend">닉</span></span><span class="tr">다이아 → <b>마스터</b></span><span class="d">78일</span></li>
+            <li><span class="nick"><span class="pend">닉</span></span><span class="tr"><b>마스터</b> 달성</span><span class="d">122일 · 29회 수업</span></li>
           </ul>
-          <p class="quote">후기 한 줄 <span class="pend">확인 대기</span></p>
+          <p class="g-fact">기록이 쌓이는 대로 늘려 갈게요</p>
         </article>
       </div>
 
@@ -751,60 +725,13 @@ html.vr-lock{overflow:hidden}
   });
   box.hidden = false;
 })();
-// 성장 기록(레슨 칸) — GET /api/progress-public(전적 스냅샷 원장 · gmi-progress.html 과 같은 응답 · 상위 상승 순 · 닉은 서버가 「세**」로 가린다)
-// 숫자 · 닉은 서버 값만 쓴다(하드코딩 금지). 글자는 textContent 로만 넣는다.
-(function(){
-  var API = "https://mri-academy-production.up.railway.app";
-  var box = document.getElementById("growthBody");
-  function el(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
-  function span(s){
-    var dl = s.delta || {};
-    if (typeof dl.seasons === "number" && dl.seasons > 0) return dl.seasons + "시즌";
-    if (typeof dl.months === "number" && dl.months > 0) return dl.months + "개월";
-    return "";
-  }
-  var KEY = "mri.growth.v1", shown = false;
-  function done(){ box.removeAttribute("aria-busy"); }
-  function fail(msg){ if (shown) return done(); box.textContent = ""; box.appendChild(el("p", "state", msg)); done(); }
-  function pick(d){
-    var list = (d && d.students) || [];
-    return list.filter(function(s){ return s && s.delta && s.delta.tierFrom && s.delta.tierTo; });
-  }
-  // 지난번 받은 기록(이 브라우저에만 저장)이 있으면 먼저 그린다 — 새 응답이 오면 덮어쓴다
-  try { var c = JSON.parse(localStorage.getItem(KEY) || "null"); var cl = pick(c); if (cl.length) { render(cl); shown = true; } } catch (e) {}
-  fetch(API + "/api/progress-public").then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
-    var list = pick(d);
-    if (!list.length) return fail("전적 스냅샷이 쌓이는 대로 이 자리에 공개돼요");
-    render(list); shown = true; done();
-    try { localStorage.setItem(KEY, JSON.stringify({ students: list.slice(0, 6) })); } catch (e) {}
-  }).catch(function(){ fail("기록을 불러오지 못했어요. 레슨 기록 전체 보기에서 다시 확인할 수 있어요"); });
-  // 레슨 사례 세 줄 — 닉(서버가 가림) · 시작 티어 → 달성 티어 · 걸린 기간
-  function render(list){
-    box.textContent = "";
-    var ul = el("ul", "cases");
-    list.slice(0, 3).forEach(function(s){
-      var li = el("li");
-      li.appendChild(el("span", "nick", s.alias || "익명"));
-      var tr = el("span", "tr"); tr.appendChild(document.createTextNode(s.delta.tierFrom + " → ")); tr.appendChild(el("b", null, s.delta.tierTo));
-      li.appendChild(tr);
-      li.appendChild(el("span", "d", span(s)));
-      ul.appendChild(li);
-    });
-    box.appendChild(ul);
-  }
-})();
-// 「레슨으로 마스터 이상 달성」 — 서버 값(graduations)이 숫자로 올 때만 연다. 키 이름은 경비 응답으로 확정(지금은 요청 초안의 이름)
+// 트레이너 최근 30일 — 서버 값(byTrainer.students30)이 숫자로 올 때만 덮어쓴다
 (function(){
   fetch("https://mri-academy-production.up.railway.app/api/site-metrics", { cache: "no-store" }).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
     var ok = function(n){ return typeof n === "number" && isFinite(n) && n > 0; };
     (d && d.byTrainer || []).forEach(function(t){
       var el = document.querySelector('.r30 [data-trainer="' + t.id + '"]');
       if (el && ok(t.students30)) el.textContent = t.students30;
-    });
-    // 숫자 한 줄 — 경비 응답에 값이 생기면 10/3 고정 숫자를 덮어쓴다(키 이름은 요청 초안 기준)
-    document.querySelectorAll("[data-srv]").forEach(function(el){
-      var v = d && d[el.getAttribute("data-srv")];
-      if (ok(v)) el.textContent = v.toLocaleString("ko-KR");
     });
   }).catch(function(){});
 })();
