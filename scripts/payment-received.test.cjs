@@ -68,6 +68,7 @@ const deps = {
       if (q.includes("status=in.(active,paused,prospect)")) return STUDENTS;
       if (q.includes("status=eq.prospect")) { const tid = Number(/trainer_id=eq\.(\d+)/.exec(q)[1]); return STUDENTS.filter((s) => s.status === "prospect" && s.trainer_id === tid); }
       const ids = inList(q); if (ids) return STUDENTS.filter((s) => ids.includes(s.id));
+      if (q === "select=id,name&merged_into=is.null") return STUDENTS.map(({ id, name }) => ({ id, name }));
     }
     if (t === "payment_requests" && q.includes("student_id=is.null")) { st.unlinkedQ = decodeURIComponent(q); return st.unlinked; }
     if (t === "payment_requests") return st.payreqs;
@@ -154,17 +155,40 @@ test("POST — 본문에 금액 · 판수 넣으면 400 · 범위 밖 403 · 같
 test("POST — 명부 번호 없는 /결제신청 대기 건도 이름(별칭 포함) · 금액 · 입금일로 잡아 409 (검수 10/19)", async () => {
   reset();
   st.aliases = [{ alias: "가가별칭" }];
-  st.unlinked = [{ id: 77, status: "pending" }];
+  st.unlinked = [{ id: 77, status: "pending", student_name: "가가 별칭" }];                    // 별칭 · 띄어쓰기 달라도(§9.41.4)
   const d = await call(2, "POST", "/payment-received", { studentId: "student-11", productKey: "lesson21", paidOn: "2026-10-17" });
   assert.equal(d.status, 409);
   assert.deepEqual(d.json.error, { code: "already_requested", requestId: "payreq-77", pending: true });
-  assert.match(st.unlinkedQ, /student_id=is\.null&status=eq\.pending&amount=eq\.90000&paid_on=eq\.2026-10-17/);
-  assert.match(st.unlinkedQ, /student_name=in\.\("가가","가가별칭"\)/);
+  assert.match(st.unlinkedQ, /student_id=is\.null&status=eq\.pending&amount=eq\.90000&paid_on=gte\.2026-10-16&paid_on=lte\.2026-10-18/);   // 입금일 앞뒤 하루
+  st.unlinked = [{ id: 78, status: "pending", student_name: "다른사람" }];                     // 이름이 다르면 통과 대상
+  assert.equal((await call(2, "POST", "/payment-received", { studentId: "student-11", productKey: "lesson21", paidOn: "2026-10-17" })).status, 200);
+  st.inserts = [];
+  st.unlinked = [{ id: 77, status: "pending", student_name: "가가별칭" }];
   assert.equal(st.inserts.length, 0);
   st.unlinked = [];                                                                         // 그런 대기 건이 없으면 통과
   assert.equal((await call(2, "POST", "/payment-received", { studentId: "student-11", productKey: "lesson21", paidOn: "2026-10-17" })).status, 200);
   st.unlinked = [{ id: 77, status: "pending" }];                                            // 다른 입금이면 confirmDuplicate 로 통과
   assert.equal((await call(2, "POST", "/payment-received", { studentId: "student-11", productKey: "lesson21", confirmDuplicate: true })).status, 200);
+});
+
+test("POST — 명부에 없는 사람(§9.41.4) — 예비 수강생 한 줄 + 신청 · 같은 이름(띄어쓰기 무시)이면 409 · 모양 틀리면 400", async () => {
+  reset();
+  const d = await call(2, "POST", "/payment-received", { newStudent: { name: "가 가" }, productKey: "lesson21" });
+  assert.equal(d.status, 409); assert.equal(d.json.error.code, "name_exists"); assert.deepEqual(d.json.error.studentIds, ["student-11"]);
+  assert.equal(st.inserts.length, 0);
+  const r = await call(2, "POST", "/payment-received", { newStudent: { name: "새사람", discordNick: "Newbie", platform: "steam" }, productKey: "levelTest" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(st.inserts[0], { t: "students", row: { name: "새사람", discord_nick: "Newbie", pubg_platform: "steam",
+    status: "prospect", trainer_id: 2, note: "입금 받음 신규" } });
+  assert.equal(st.inserts[1].t, "payment_requests"); assert.equal(st.inserts[1].row.student_id, 501); assert.equal(st.inserts[1].row.kind, "상담");
+  for (const bad of [{ newStudent: { name: "가" }, productKey: "lesson21" }, { newStudent: { name: "새사람", platform: "pc" }, productKey: "lesson21" },
+                     { newStudent: { name: "새사람" }, studentId: "student-11", productKey: "lesson21" }, { productKey: "lesson21" }])
+    assert.equal((await call(2, "POST", "/payment-received", bad)).status, 400, JSON.stringify(bad));
+  // 같은 입금이 /결제신청(명부 번호 없음)으로 와 있으면 명부 행을 만들기 전에 409
+  reset();
+  st.unlinked = [{ id: 79, status: "pending", student_name: "새 사람" }];
+  const u = await call(2, "POST", "/payment-received", { newStudent: { name: "새사람" }, productKey: "lesson21" });
+  assert.equal(u.status, 409); assert.equal(u.json.error.requestId, "payreq-79"); assert.equal(st.inserts.length, 0);
 });
 
 test("POST — 원장이 올리면 판수는 그 수강생 담당 트레이너로 · 카드가 못 가도 행은 남고 ownerNotified false", async () => {

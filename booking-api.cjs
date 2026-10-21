@@ -992,6 +992,63 @@ module.exports = function mountBookingApi(app, deps) {
       sendTrainer(res, { resolved: true, status: out.status });
     }));
 
+  // ══════════════ 개인 레슨 자동 완료의 예외 · 지난 예약 휴강(계약 §9.39 · §9.31) ══════════════
+  // 끝난 개인 예약 머리 줄을 읽는다 — 칸 트레이너 · 시작 · 길이 · 상태. 없거나 꼬리 줄이면 null
+  async function pastHead(bookingId) {
+    const [b] = await sbSelect("slot_bookings",
+      `select=id,slot_id,student_id,status,duration_min,span_head_id,games_held&id=eq.${bookingId}&limit=1`);
+    if (!b || b.span_head_id != null) return null;
+    const [s] = await sbSelect("trainer_slots", `select=id,trainer_id,slot_start,duration_min,lesson_type&id=eq.${b.slot_id}&limit=1`);
+    return s ? { b, s } : null;
+  }
+
+  // POST /bookings/:id/hold — [수업 안 함](§9.39.2): 예약을 **닫지 않고** 24시간 자동 완료에서 뺀다. 판수는 그대로 붙들린다 —
+  //   원장이 아래 지난 예약 취소(휴강)로 닫으면 풀린다. 칸 트레이너(원장은 전부)만 · 개인 레슨 · 열린 예약 · 끝난 수업만.
+  const autoComplete = deps.autoComplete || null;
+  app.post(`${TRAINER}/bookings/:id/hold`, rateLimit("trainerResolve", 60, 60_000), bodyOnly([]), requireTrainer,
+    wrap(async (req, res) => {
+      const bookingId = readOpaqueId("booking", req.params.id);
+      if (bookingId == null) return fail(res, 400, "invalid_body");
+      if (!autoComplete) return fail(res, 503, "unavailable");
+      const h = await pastHead(bookingId);
+      if (!h) return fail(res, 404, "not_found");
+      if (h.s.trainer_id !== req.staff.id && req.staff.role !== "owner") return fail(res, 403, "scope_denied");
+      if (h.s.lesson_type !== "personal") return fail(res, 400, "invalid_body");
+      if (!["booked", "pending_review"].includes(h.b.status)) return fail(res, 409, "not_open");
+      const end = unclosedLessons.endMsOf(h.s.slot_start, h.b.duration_min, h.s.duration_min);
+      if (!(end <= Date.now())) return fail(res, 409, "not_ended");
+      const out = await autoComplete.hold(bookingId, { by: req.staff.id, trainerId: h.s.trainer_id, studentId: h.b.student_id, startAt: h.s.slot_start });
+      if (!out.ok) return fail(res, 409, out.code);
+      sendTrainer(res, { held: true, already: !!out.already });
+    }));
+
+  // POST /bookings/:id/cancel-past — 지난 예약 휴강 · 취소(§9.31 · 원장만). 시작이 지난 「예약됨」 · 「확인 필요」만 → 「취소」.
+  //   회차 · 판수 차감 없음 — 레슨 선차감(games_held)은 취소 상태가 되며 풀린다(portal_remaining 은 booked · pending_review · no_show 만 센다).
+  //   사유 필수 2~200자 · admin_audit booking.cancel · 수강생 DM 없음 · 예약 줄은 지우지 않는다.
+  app.post(`${TRAINER}/bookings/:id/cancel-past`, rateLimit("trainerResolve", 30, 60_000), bodyOnly(["reason"]), requireTrainer,
+    wrap(async (req, res) => {
+      if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
+      const bookingId = readOpaqueId("booking", req.params.id);
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      if (bookingId == null || reason.length < 2 || reason.length > 200) return fail(res, 400, "invalid_body");
+      if (!sbPatch) return fail(res, 503, "unavailable");
+      const h = await pastHead(bookingId);
+      if (!h) return fail(res, 404, "not_found");
+      if (!["booked", "pending_review"].includes(h.b.status)) return fail(res, 409, "not_cancellable");
+      if (!(Date.parse(h.s.slot_start) <= Date.now())) return fail(res, 409, "not_past");
+      const at = new Date().toISOString();
+      // 머리 줄 먼저(상태 조건부) — 그 사이 다른 길로 닫혔으면 0줄 → 409. 꼬리 줄은 머리를 따라간다.
+      const got = await sbPatch("slot_bookings", `id=eq.${bookingId}&status=in.(booked,pending_review)`, { status: "cancelled", cancelled_at: at });
+      if (!got?.length) return fail(res, 409, "not_cancellable");
+      await sbPatch("slot_bookings", `span_head_id=eq.${bookingId}&status=in.(booked,pending_review)`, { status: "cancelled", cancelled_at: at })
+        .catch((e) => console.error("cancel_past_tail", bookingId, e?.status || e?.message));
+      const gamesRestored = Number(h.b.games_held || 0);
+      await auditBooking(req.staff, "booking.cancel", bookingId,
+        { reason, before: h.b.status, after: "cancelled", slotStart: h.s.slot_start, lessonType: h.s.lesson_type, gamesRestored, path: "cancel-past" });
+      if (gamesRestored > 0) onGamesChanged?.([h.b.student_id]);
+      sendTrainer(res, { bookingId: opaqueId("booking", bookingId), status: "cancelled", gamesRestored });
+    }));
+
   // ══════════════ 예약 한 건 바꾸기 · 취소(계약 §9.38 · DDL §84 · 트레이너봇 /수업변경 · /수업취소) ══════════════
   //   판정 · 닫기 · 새 칸 열기 · 새 예약 · 늦은 변경 −3 은 DB 함수 하나(trainer_move_booking / trainer_cancel_booking)가
   //   한 번에 한다 — 실패하면 옛 예약 그대로. 여기는 본문 검사 · 알림(수강생 · 원장 · 담당) · 기록(admin_audit)만.

@@ -23,7 +23,7 @@ const RECEIVED_PRODUCTS = Object.freeze([
   Object.freeze({ key: "lesson99", kind: "판수", games: 99 }),
   Object.freeze({ key: "levelTest", kind: "상담", games: 0 }),
 ]);
-const BODY_KEYS = Object.freeze(["studentId", "productKey", "paidOn", "confirmDuplicate"]);
+const BODY_KEYS = Object.freeze(["studentId", "newStudent", "productKey", "paidOn", "confirmDuplicate"]);
 const PAST_DAYS = 31;                 // 입금일은 오늘부터 31일 전까지(그 전 입금은 오너가 직접 정리한다)
 const DUP_DAYS = 14;                  // 같은 수강생 · 같은 금액 신청이 14일 안에 살아 있으면 한 번 확인받는다
 const OPTIONS_MAX = 25;               // 디스코드 고르기 칸 한도
@@ -61,6 +61,26 @@ function parseReceivedBody(body, { products = [], nowMs = Date.now() } = {}) {
     return { ok: false, code: "invalid_body" };
   return { ok: true, product, paidOn, confirmDuplicate: b.confirmDuplicate === true };
 }
+
+// 명부에 없는 사람(§9.41.4) — { name 2~20자 · discordNick? ≤40 · platform? steam|kakao } | null(모양 틀림)
+function parseNewStudent(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  if (Object.keys(v).some((k) => !["name", "discordNick", "platform"].includes(k))) return null;
+  const name = typeof v.name === "string" ? v.name.trim().replace(/\s+/g, " ") : "";
+  if ([...name].length < 2 || [...name].length > 20) return null;
+  let discordNick = null, platform = null;
+  if (v.discordNick !== undefined && v.discordNick !== null) {
+    if (typeof v.discordNick !== "string" || v.discordNick.trim().length > 40) return null;
+    discordNick = v.discordNick.trim() || null;
+  }
+  if (v.platform !== undefined && v.platform !== null) {
+    if (v.platform !== "steam" && v.platform !== "kakao") return null;
+    platform = v.platform;
+  }
+  return { name, discordNick, platform };
+}
+// 이름 비교 열쇠 — 띄어쓰기 · 대소문자 무시(§9.41.4 · 검수 권고 10/19 「홍 길동」/「홍길동」)
+const nameKey = (s) => String(s ?? "").replace(/\s+/g, "").toLowerCase();
 
 // 화면 이름 — 디코 닉 → 이름(오너 지시 10/19 「수강생은 디코 닉으로」). #태그는 떼어 낸다.
 const nickOf = (s) => String(s?.discord_nick || "").replace(/#\d{1,6}$/, "").trim() || String(s?.name || "").trim() || "수강생";
@@ -107,18 +127,18 @@ function mountPaymentReceived(app, tp, deps) {
     return new Map([...rows, ...pros].map((s) => [s.id, s]));
   }
 
-  // 명부 번호 없는 대기 신청 중 같은 사람(명부 이름 또는 별칭 정확일치) · 같은 금액 · 같은 입금일 — 없으면 null
+  // 명부 번호 없는 대기 신청 중 같은 사람 · 같은 금액 · 입금일 앞뒤 하루 — 없으면 null
+  //   사람 = 신청 이름이 명부 이름 또는 별칭과 띄어쓰기 · 대소문자 무시로 같다(§9.41.4 · 검수 권고 10/19).
   async function unlinkedPending(sid, name, amount, paidOn) {
-    const names = new Set([String(name || "").trim()].filter(Boolean));
+    const keys = new Set([nameKey(name)].filter(Boolean));
     try {
-      for (const a of await sbSelect("student_aliases", `select=alias&student_id=eq.${sid}`)) if (a.alias) names.add(String(a.alias).trim());
+      for (const a of await sbSelect("student_aliases", `select=alias&student_id=eq.${sid}`)) if (a.alias) keys.add(nameKey(a.alias));
     } catch (_) { /* 별칭 표가 없어도 이름으로는 본다 */ }
-    if (!names.size) return null;
-    const list = [...names].map((n) => `"${n.replace(/["\\]/g, "")}"`).join(",");
+    if (!keys.size) return null;
     const rows = await sbSelect("payment_requests",
-      `select=id,status&student_id=is.null&status=eq.pending&amount=eq.${Number(amount)}&paid_on=eq.${paidOn}`
-      + `&student_name=in.(${encodeURIComponent(list)})&order=id.desc&limit=1`);
-    return rows[0] || null;
+      `select=id,status,student_name&student_id=is.null&status=eq.pending&amount=eq.${Number(amount)}`
+      + `&paid_on=gte.${addDays(paidOn, -1)}&paid_on=lte.${addDays(paidOn, 1)}&order=id.desc&limit=50`);
+    return rows.find((r) => keys.has(nameKey(r.student_name))) || null;
   }
 
   // GET /payment-received/options — 봇 고르기 칸에 쓰는 목록(수강생 · 상품). 금액은 오너 카드와 같은 정가표.
@@ -138,18 +158,40 @@ function mountPaymentReceived(app, tp, deps) {
   // POST /payment-received — { studentId, productKey, paidOn?, confirmDuplicate? } → { requestId, status:"pending", ownerNotified }
   app.post(`${TRAINER}/payment-received`, rateLimit("trainerWrite", 30, 60_000), bodyOnly, tp.requireTrainer, async (req, res) => {
     try {
-      const sid = readOpaqueId("student", req.body?.studentId);
-      if (sid == null) return fail(res, 400, "invalid_body");
+      const hasNew = req.body?.newStudent !== undefined && req.body?.newStudent !== null;
+      if (hasNew === (req.body?.studentId !== undefined && req.body?.studentId !== null)) return fail(res, 400, "invalid_body");   // 둘 중 하나만
+      const ns = hasNew ? parseNewStudent(req.body.newStudent) : null;
+      if (hasNew && !ns) return fail(res, 400, "invalid_body");
+      let sid = hasNew ? null : readOpaqueId("student", req.body?.studentId);
+      if (!hasNew && sid == null) return fail(res, 400, "invalid_body");
       const list = await products();
       if (!list.length) return fail(res, 503, "portal_unavailable");
       const parsed = parseReceivedBody(req.body, { products: list, nowMs: now() });
       if (!parsed.ok) return fail(res, 400, parsed.code);
       const map = await pickable(req.staff);
-      const stu = map.get(sid);
-      if (!stu) return fail(res, 403, "scope_denied");
+      let stu = hasNew ? null : map.get(sid);
+      if (!hasNew && !stu) return fail(res, 403, "scope_denied");
       const p = parsed.product;
 
-      if (!parsed.confirmDuplicate) {
+      // 명부에 없는 사람(§9.41.4) — 같은 이름(띄어쓰기 무시)이 명부에 있으면 그 행을 고르게 409. 없으면 예비 수강생 한 줄(더하기만).
+      if (hasNew) {
+        const same = (await sbSelect("students", "select=id,name&merged_into=is.null")).filter((r) => nameKey(r.name) === nameKey(ns.name));
+        if (same.length) return res.status(409).json({ error: { code: "name_exists",
+          studentIds: same.filter((r) => map.has(r.id)).map((r) => opaqueId("student", r.id)) } });
+        // 같은 입금이 /결제신청(명부 번호 없음)으로 이미 올라와 있으면 — 명부 행을 만들기 전에 막는다
+        if (!parsed.confirmDuplicate) {
+          const u = await unlinkedPending(0, ns.name, p.amount, parsed.paidOn);
+          if (u) return res.status(409).json({ error: { code: "already_requested", requestId: opaqueId("payreq", u.id), pending: true } });
+        }
+        stu = await sbInsert("students", {
+          name: ns.name, discord_nick: ns.discordNick, pubg_platform: ns.platform,
+          status: "prospect", trainer_id: req.staff.id, note: "입금 받음 신규",
+        });
+        sid = stu.id;
+        console.log(`[payment-received] 예비 수강생 #${sid} 등록(staff ${req.staff.id})`);
+      }
+
+      if (!parsed.confirmDuplicate && !hasNew) {
         const rows = await sbSelect("payment_requests",
           `select=id,status,amount,created_at&student_id=eq.${sid}&status=in.(pending,approved)&order=id.desc&limit=20`);
         // 명부 번호가 아직 없는 대기 건(/결제신청은 승인 때 명부를 잇는다 · 검수 10/19) — 이름(명부 이름 · 별칭) · 금액 · 입금일로 잡는다.
@@ -199,5 +241,5 @@ function trainerResultText(q, approve, { nick, reflected } = {}) {
     : `${who}님 입금 받음이 승인됐어요 · 판수 반영은 조금 걸릴 수 있어요`;
 }
 
-module.exports = { RECEIVED_PRODUCTS, BODY_KEYS, loadReceivedProducts, parseReceivedBody, nickOf, liveDuplicate,
+module.exports = { RECEIVED_PRODUCTS, BODY_KEYS, loadReceivedProducts, parseReceivedBody, parseNewStudent, nameKey, nickOf, liveDuplicate,
   mountPaymentReceived, trainerResultText, kstDate, addDays };
