@@ -4172,11 +4172,13 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
    - 사람 찾기: 내 범위(담당 ∪ 90일 · `scopedStudents`)에서 명부 이름 · 디코 닉 · 배그 닉 · 별칭을 **띄어쓰기 · 대소문자 무시** 정확일치. 괄호 안 닉은 동명이인 가르기에 쓴다.
    - 응답 `{ lines:[{ line, status, studentId?, displayName?, memoRemaining, appRemaining?, delta? }], counts }`
      · `status` = `match`(같음) · `diff`(다름 · `delta = memoRemaining − appRemaining`) · `not_found` · `ambiguous`(둘 이상) · `bad_line`(숫자 못 읽음) · `too_big`(|delta| > 50 · 원장에게).
-     · **쓰기 없음.** 같은 줄 두 번(같은 사람) 은 두 번째를 `duplicate` 로.
+     · **쓰기 없음.** 같은 줄 두 번(같은 사람) 은 두 번째를 `duplicate` 로. 그 수강생에게 대기(pending) 판수 조정이 하나라도 있으면(종류 · 숫자 무관) `status 'pending_exists'` 로 보인다(submit 이 건너뛸 줄).
 2. **`POST /api/trainer-portal/reconcile/submit`** `{ lines:[{ studentId, memoRemaining }] }`(1~25줄 · `diff` 였던 줄만 보내면 된다)
    → 서버가 **다시 계산**(그새 바뀌었을 수 있다) → `delta ≠ 0` 인 줄마다 `games_adjust_requests`(`kind 'correction'` · `remaining_delta = delta` ·
    `played_at = 오늘 KST` · `reason = '판수 맞추기 #<묶음> · 메모 남은 N판'`) **대기(pending)** 로 넣고, 원장에게 **카드 한 장**.
-   - 응답 `{ batchId, requests:[{ studentId, delta, requestId }], skipped:[{ studentId, why }], ownerNotified }`. `why` = `same_now` · `too_big` · `pending_exists`.
+   - 응답 `{ batchId, requests:[{ studentId, delta, requestId }], skipped:[{ studentId, why }], ownerNotified }`. `why` = `same_now` · `too_big` · `pending_exists` · `unavailable`(앱 남은 판수를 못 읽음).
+   - **`pending_exists` = 그 수강생에게 대기(pending) 판수 조정이 하나라도 있으면(종류 · `remaining_delta` 무관 · 다른 트레이너 · 노쇼 §9.10 포함)** 넣지 않는다.
+     운영 인덱스 `uq_gar_pending` 은 delta 까지 열쇠라 숫자를 바꿔 다시 보내면 못 막고, 앱 남은 판수(§41)는 대기 조정을 세지 않아 둘 다 승인되면 두 번 빠진다(검수 10/21). 원장이 먼저 결정한 뒤 다시 보낸다.
    - 이번 달이 잠겨 있으면 409 `period_locked`(트레이너 · 원장 모두 — 원장은 SQL 로).
    - **승인 전에는 판수가 안 움직인다.** §9.18 바로 반영(±10)은 이 경로에 없다 — 전부 카드.
 3. **원장 카드** — 줄 목록(수강생 이름 · `#번호` · 앱 → 메모 · `±N판`) + 고르기 「줄별 반려」(여러 개) + [남은 줄 전체 승인] [전부 반려].
@@ -4191,7 +4193,7 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 
 ### 9.41.4 `/입금받음` 보강 — 명부에 없는 사람은 그 자리에서 예비 등록 + 중복 확인 넓히기(검수 권고)
 - `POST /payment-received` 에 **`newStudent: { name, discordNick?, platform? }`**(`studentId` 대신) — 이름 2~20자 · 닉 ≤40 · 플랫폼 `steam`|`kakao`.
-  - 서버: 같은 이름(띄어쓰기 무시) 명부 행이 있으면 409 `name_exists`(그 행을 고르게 — 봇은 목록 다시). 없으면 `students` 한 줄(`status 'prospect'` ·
+  - 서버: 같은 이름(띄어쓰기 무시) 명부 행이 있으면 409 `name_exists`(그 행을 고르게 — 봇은 목록 다시 · 응답 `studentIds` 가 비어 있으면 = 같은 이름이 내 범위 밖 → 봇은 「원장에게 물어봐 주세요」). 없으면 `students` 한 줄(`status 'prospect'` ·
     `trainer_id = 올린 트레이너` · `note '입금 받음 신규'`)을 만들고 그 행으로 신청을 낸다. 이 행 생성은 「더하기만」이다.
   - 원장 ✅ 승인 때 그 수강생이 `prospect` 면 **`active` 로 전환**(담당 없으면 올린 트레이너) — 결제 승인과 같은 카드에서. 반려면 예비 그대로.
 - 중복 확인(§9.40.2 보강) — 명부 번호 없는 대기 건의 이름 비교는 **띄어쓰기 무시**, 입금일은 **앞뒤 하루**까지 같은 것으로 본다.
