@@ -85,7 +85,8 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@800&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
 /* ===== B3 (오너 확정 10/21) — 크림 바탕 · 갈색 점 격자 · 흰 카드 · 검정 알약 버튼 · 노란 형광펜은 제목 「원인」 하나 =====
    검정 바탕은 세 자리만(성장 기록 원장 직강 칸 · 원장 직강 가격 칸 · 마지막 신청 칸). 빨강 · 주황 버튼 · 금색 없음 */
@@ -95,7 +96,7 @@
   --dark:#1A1714; --on-dark:#FBF6EF; --on-dark-sub:#C9BEB1;
   --r:24px; --wrap:1200px;
   --sans:'Noto Sans KR',-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
-  --num:'Inter','Noto Sans KR',sans-serif;
+  --num:'Pretendard Variable',Pretendard,'Noto Sans KR',sans-serif;
   --shadow:0 1px 2px rgba(0,0,0,.03),0 8px 24px rgba(0,0,0,.04);
   color-scheme:light;
 }
@@ -118,8 +119,6 @@ a{color:inherit}
 .link:hover{text-decoration-color:var(--ink)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:clamp(22px,2.6vw,34px);min-width:0}
 .card.dk{background:var(--dark);border-color:var(--dark);color:var(--on-dark)}
-/* 아직 값이 안 온 자리 — 회계 · 오너 확인 뒤 지휘가 값을 내려보낸다(하드코딩 금지) */
-.pend{display:inline-block;padding:1px 8px;border:1px dashed currentColor;border-radius:8px;font:600 13px/1.6 var(--sans);letter-spacing:0;opacity:.7;vertical-align:middle}
 
 /* 버튼 — 검정 알약 하나로 통일 */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:52px;padding:0 26px;border-radius:999px;background:var(--ink);color:#fff;font-weight:700;font-size:16px;text-decoration:none;white-space:nowrap;transition:transform .15s ease,opacity .15s ease}
@@ -187,8 +186,9 @@ a{color:inherit}
 .rec.dk .src{color:var(--on-dark-sub)}
 .cases{list-style:none;display:grid;gap:0;border-top:1px solid var(--line)}
 .rec.dk .cases{border-color:rgba(251,246,239,.16)}
-.cases li{display:grid;grid-template-columns:4.5em minmax(0,1fr) auto;gap:12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);font-size:15px}
+.cases li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);font-size:15px}
 .rec.dk .cases li{border-color:rgba(251,246,239,.16)}
+.cases li:has(.nick){grid-template-columns:4.5em minmax(0,1fr) auto}
 .cases .nick{font-weight:700}
 .cases .tr{min-width:0}
 .cases .tr b{font-weight:700}
@@ -306,8 +306,8 @@ footer .bizinfo{line-height:1.9;margin-bottom:10px}
   .wrap{padding-inline:16px}
   .top .btn{display:none}
   .stat{padding:18px}
-  .cases li{grid-template-columns:4em minmax(0,1fr);}
-  .cases .d{grid-column:2}
+  .cases li:has(.nick){grid-template-columns:4em minmax(0,1fr)}
+  .cases li:has(.nick) .d{grid-column:2}
 }
 .js .rise{opacity:0;translate:0 18px;transition:opacity .5s ease,translate .5s cubic-bezier(.2,.8,.2,1)}
 .js .rise.in{opacity:1;translate:0 0}
@@ -400,11 +400,12 @@ html.vr-lock{overflow:hidden}
   </section>
 
   <!-- 3. 숫자 네 칸 — 장부로 다시 셀 수 있는 값만(회계 실측 10/18 · 오너 「숫자는 장부 확인값으로」 10/20 · 고정 글자).
+       연도(지휘 10/21): 원장 직강 시작 = 2023년 9월 · 장부 기록 시작 = 2023년 10월 — 칸마다 무엇의 시작인지 붙여 쓴다.
        원장 = 2023년 10월(장부 시작)부터 수강생 120명 · 원장 직강 400회 이상 / 트레이너 = 2026년 4월부터 레슨 3,100판 이상 / S29 카카오 1위 5,000 RP -->
   <section class="wrap">
     <div class="stats">
-      <div class="card stat"><div class="v num">120<small>명</small></div><div class="k">수강생 · 2023년 10월부터</div></div>
-      <div class="card stat"><div class="v num">400<small>회+</small></div><div class="k">원장 직강</div></div>
+      <div class="card stat"><div class="v num">120<small>명</small></div><div class="k">수강생 · 장부 기록 2023년 10월부터</div></div>
+      <div class="card stat"><div class="v num">400<small>회+</small></div><div class="k">원장 직강 · 장부 기록 2023년 10월부터</div></div>
       <div class="card stat"><div class="v num">3,100<small>판+</small></div><div class="k">트레이너 레슨 · 2026년 4월부터</div></div>
       <div class="card stat"><div class="v num">S29 1위</div><div class="k">원장 · 카카오 5,000 RP</div></div>
     </div>
@@ -438,7 +439,8 @@ html.vr-lock{overflow:hidden}
 
   <!-- 5. 얼마나 다니면 달라져요 — 레슨(PUBG 공식 전적)과 원장 직강(관리대장)을 나눠 보여 준다(오너 10/21).
        사례는 회계 대조로 재현된 것만 고정 글자로 둔다(지휘 10/21). 표본이 작아(레슨 6명 중 3명 상승 · 직강 2명) 「n / n명」 · 평균 기간 같은 큰 숫자는 싣지 않는다.
-       닉은 앞 두 글자 + **(공개 규격 · docs/public-metrics.md §2.3) — 회계 값이 오면 「확인 대기」 자리를 채운다.
+       닉은 앞 두 글자 + **(공개 규격 · docs/public-metrics.md §2.3). 값이 없으면 닉 칸을 그리지 않는다(빈 자리 표시 금지 · 지휘 10/21).
+       회계 닉 값이 오면 줄 맨 앞에 <span class="nick">세**</span> 를 넣는다
        /api/progress-public 사례는 같은 티어 안 RP 상승도 「상승」으로 세는 문제가 있어 여기서 읽지 않는다(서버 수정은 경비) -->
   <section class="sec" id="growth" style="padding-top:0">
     <div class="wrap">
@@ -448,17 +450,17 @@ html.vr-lock{overflow:hidden}
         <article class="card rec" aria-labelledby="recL">
           <div><div class="tag" id="recL">트레이너 레슨</div><div class="src">PUBG 공식 전적 · 2026년 6~10월</div></div>
           <ul class="cases">
-            <li><span class="nick"><span class="pend">닉</span></span><span class="tr">크리스탈 → <b>다이아</b></span><span class="d">55일</span></li>
-            <li><span class="nick"><span class="pend">닉</span></span><span class="tr">플래티넘 → <b>크리스탈</b></span><span class="d">32일</span></li>
-            <li><span class="nick"><span class="pend">닉</span></span><span class="tr">다이아 → <b>마스터</b></span><span class="d">112일</span></li>
+            <li><span class="tr">크리스탈 → <b>다이아</b></span><span class="d">55일</span></li>
+            <li><span class="tr">플래티넘 → <b>크리스탈</b></span><span class="d">32일</span></li>
+            <li><span class="tr">다이아 → <b>마스터</b></span><span class="d">112일</span></li>
           </ul>
           <p class="g-fact">기록이 쌓이는 대로 늘려 갈게요</p>
         </article>
         <article class="card dk rec" aria-labelledby="recD">
-          <div><div class="tag" id="recD">원장 직강</div><div class="src">2023년 9월부터 · 관리대장</div></div>
+          <div><div class="tag" id="recD">원장 직강</div><div class="src">2023년 9월부터 가르쳤어요 · 관리대장</div></div>
           <ul class="cases">
-            <li><span class="nick"><span class="pend">닉</span></span><span class="tr">다이아 → <b>마스터</b></span><span class="d">78일</span></li>
-            <li><span class="nick"><span class="pend">닉</span></span><span class="tr"><b>마스터</b> 달성</span><span class="d">122일 · 29회 수업</span></li>
+            <li><span class="tr">다이아 → <b>마스터</b></span><span class="d">78일</span></li>
+            <li><span class="tr"><b>마스터</b> 달성</span><span class="d">122일 · 29회 수업</span></li>
           </ul>
           <p class="g-fact">기록이 쌓이는 대로 늘려 갈게요</p>
         </article>
@@ -493,7 +495,7 @@ html.vr-lock{overflow:hidden}
 
   <!-- 7. 가르치는 사람 셋 — 같은 높이 칸 · 링크는 바닥에.
        기록 · 누적 숫자는 지휘가 장부에서 뽑은 10/3 기준 고정 글자. 최근 30일은 서버 값(byTrainer.students30)이 오면 덮어쓴다.
-       트레이너 소개 한 줄은 아직 없어서 빈칸 표시(지휘 10/21) -->
+       트레이너 소개 한 줄은 아직 없어서 그 줄을 그리지 않는다(빈 자리 표시 금지 · 지휘 10/21). 들어오면 stat1 아래에 <p class="one"> 로 넣는다 -->
   <section class="sec" id="trainers" style="padding-top:0">
     <div class="wrap">
       <div class="kick">가르치는 사람</div>
@@ -512,7 +514,6 @@ html.vr-lock{overflow:hidden}
         <article class="card person" aria-labelledby="htH">
           <div class="who"><img class="av" src="img/trainers/ht-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너 · 이번 시즌 우수 트레이너</div><div class="nm" id="htH">현태</div></div></div>
           <div class="stat1"><span class="v num">4,527<small>RP</small></span><span class="k">S41 스팀 서바이버</span></div>
-          <p class="one">소개 한 줄 <span class="pend">확인 대기</span></p>
           <p class="tot">누적 <b>50명</b> · <b>2,496판</b><span>2026년 4월부터</span></p>
           <p class="r30">최근 30일 <span data-trainer="hyuntae">16</span>명</p>
           <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae">현태에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_Hye0n" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/gusxo3874" target="_blank" rel="noopener">SOOP</a></div>
@@ -520,7 +521,6 @@ html.vr-lock{overflow:hidden}
         <article class="card person" aria-labelledby="jgH">
           <div class="who"><img class="av" src="img/trainers/jg-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너</div><div class="nm" id="jgH">준구</div></div></div>
           <div class="stat1"><span class="v num">S38</span><span class="k">스팀 서바이버</span></div>
-          <p class="one">소개 한 줄 <span class="pend">확인 대기</span></p>
           <p class="tot">누적 <b>37명</b> · <b>1,425판</b><span>2026년 3월부터</span></p>
           <p class="r30">최근 30일 <span data-trainer="jungu">7</span>명</p>
           <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">SOOP</a></div>
