@@ -7981,3 +7981,64 @@ notify pgrst, 'reload schema';
 --      기대: anon false · authed false · server true. 4인자판 없음: select count(*) from pg_proc where proname = 'record_lesson_from_booking';  -- 1
 -- 되돌림(한 블록): begin; drop function if exists public.record_lesson_from_booking(bigint, bigint, int, date, text);
 --   위 §50 의 record_lesson_from_booking(4인자) create 문 그대로(권한은 종전처럼 기본값 · 손대지 않는다); commit; notify pgrst, 'reload schema';   -- md5 fe597597c1e0fa63e4915672b7f373b8 로 돌아오는지 확인
+
+-- ════════════════════════════════════════════════════════════════════════════════
+-- §87  「AI 무리 복기」 무료 시험판 저장 — 비공개 버킷 replay · 목록 표 replay_matches · 측정 표 replay_events
+--      (2026-10-21 · 지휘 주문서 「복기AI 2주차」 · docs/replay-ai.md §13 · 더하기만 = A 구간)
+--   번호: 열린 PR 과 겹치면 머지 직전에 다음 빈 번호로 바꾼다(내용은 그대로).
+--   왜: PUBG 경기 데이터는 14일 뒤 사라진다 — 받은 한 팀분을 압축해 비공개로 남기고(같은 경기를 두 번 받지 않는다),
+--       무료 시험판의 판정 숫자(카드 「맞아요/아니에요」 · 유료 의향 · 재방문 · 공유)를 익명 id 로만 모은다.
+--   개인정보: 닉네임 · 디스코드 id · IP 는 어느 칸에도 넣지 않는다. anon_id = 브라우저가 만든 무작위 문자열.
+--   코드: replay-api.cjs — 표 · 버킷이 없으면 메모리 캐시 · 메모리 집계로 돈다(1분마다 다시 확인 · 실행 뒤 재시작 없이 켜진다).
+--   실행: 경비 세션이 87-1 블록 하나를 단독 실행 → 87 검증. 운영 DB 쓰기는 경비만(지휘 주문서).
+--
+-- 87-0) 스냅샷(읽기만):
+--   select to_regclass('public.replay_matches'), to_regclass('public.replay_events');   -- 기대: null · null
+--   select id, public from storage.buckets where id = 'replay';                          -- 기대: 0행
+--
+-- 87-1) 실행(한 블록):
+begin;
+create table if not exists public.replay_matches (
+  id              bigint generated always as identity primary key,
+  platform        text not null check (platform in ('steam', 'kakao')),
+  match_id        text not null check (match_id ~ '^[0-9a-f-]{36}$'),
+  team_id         int  not null,
+  map_name        text,
+  game_mode       text,
+  match_type      text,
+  played_at       timestamptz,
+  storage_path    text not null,
+  size_bytes      int,
+  parser_version  text,
+  fetched_at      timestamptz not null default now(),
+  unique (platform, match_id, team_id)
+);
+alter table public.replay_matches enable row level security;   -- service_role 만
+
+create table if not exists public.replay_events (
+  id          bigint generated always as identity primary key,
+  anon_id     text not null check (anon_id ~ '^[A-Za-z0-9_-]{16,40}$'),
+  kind        text not null check (kind in ('visit', 'open', 'share', 'image', 'vote', 'survey')),
+  match_id    text check (match_id is null or match_id ~ '^[0-9a-f-]{36}$'),
+  card_id     text check (card_id is null or card_id ~ '^[a-z0-9-]{2,40}$'),
+  value       text check (value is null or value in ('yes', 'no', 'maybe')),
+  created_at  timestamptz not null default now()
+);
+create index if not exists idx_replay_events_kind_at on public.replay_events (kind, created_at);
+create index if not exists idx_replay_events_anon on public.replay_events (anon_id);
+alter table public.replay_events enable row level security;    -- service_role 만
+
+-- 비공개 · 한 파일 20MB 까지 · gzip 만(한 팀분 압축본은 보통 100KB 안팎)
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('replay', 'replay', false, 20971520, array['application/gzip'])
+on conflict (id) do nothing;
+commit;
+notify pgrst, 'reload schema';
+
+-- 87 검증(읽기만):
+--   select to_regclass('public.replay_matches'), to_regclass('public.replay_events');                      -- 둘 다 이름이 나온다
+--   select relname, relrowsecurity from pg_class where relname in ('replay_matches', 'replay_events');      -- 둘 다 true
+--   select id, public, file_size_limit from storage.buckets where id = 'replay';                            -- replay · false · 20971520
+--   서버 로그: 「[replay] 복기 시험판 API 활성 · 저장 bucket=true matches=true events=true」(실행 뒤 1분 안 · 재시작 없이)
+-- 되돌림(한 블록 · 쌓인 기록도 지워지니 오너 OK 필요): begin; drop table if exists public.replay_events; drop table if exists public.replay_matches;
+--   delete from storage.objects where bucket_id = 'replay'; delete from storage.buckets where id = 'replay'; commit; notify pgrst, 'reload schema';
