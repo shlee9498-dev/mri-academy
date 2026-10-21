@@ -102,6 +102,8 @@
     return {
       verdict: f.matched ? "카드 #001 흔한 실수와 같은 모양" : "카드 #001 원칙대로",
       card: `#${card.id} ${card.title}`, cardStatus: card.status,
+      // 감지 기준값(25초 · 150m · 5m · 3m · 10m)은 지휘가 오너에게 묻는 중(10/21) — 답이 오기 전까지 피드백마다 붙인다
+      detectStatus: card.detectStatus || "감지 기준값 오너 확인 전",
       when: at(f.t), evidence, mistake, principle: card.principle, next: card.action,
     };
   }
@@ -111,7 +113,7 @@
     if (fb.verdict === "기준 없음") return `■ ${fb.when}\n기준 없음 — ${fb.reason}`;
     return [
       `■ 장면 ${fb.when} — ${fb.verdict}`,
-      `카드 ${fb.card} (${fb.cardStatus})`,
+      `카드 ${fb.card} (${fb.cardStatus} · ${fb.detectStatus})`,
       "", "근거(리플 숫자)", ...fb.evidence.map((x) => "· " + x),
       ...(fb.mistake ? ["", "흔한 실수(카드)", "· " + fb.mistake] : []),
       "", "원칙(카드)", ...fb.principle.map((x) => "· " + x),
