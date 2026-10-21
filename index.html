@@ -189,10 +189,6 @@ a{color:inherit}
 .sk-feat i{height:56px}
 @media(prefers-reduced-motion:no-preference){.sk i{animation:skp 1.4s ease-in-out infinite}}
 @keyframes skp{50%{opacity:.55}}
-/* 원장 직강 핵심 세 줄 */
-.pitch{padding-bottom:clamp(20px,3vw,32px);margin-bottom:clamp(20px,3vw,32px);border-bottom:1px solid var(--line)}
-.pitch-l{list-style:none;margin-top:10px;display:flex;flex-wrap:wrap;gap:6px 0;font-size:clamp(24px,3.2vw,40px);font-weight:800;line-height:1.25;letter-spacing:-.01em}
-.pitch-l li+li::before{content:'·';color:var(--mute);font-weight:400;margin:0 .4em}
 /* 원장에게 바로 신청 한 줄 */
 .ask-strip{display:flex;flex-wrap:wrap;align-items:center;gap:12px 32px;padding-block:clamp(18px,2vw,24px)}
 .ask-strip .ask-h{font-size:16px;font-weight:800}
@@ -536,7 +532,7 @@ html.vr-lock{overflow:hidden}
         </article>
 
         <!-- 원장에게 바로 신청 — 원장 카드 안에 있던 연락처를 한 줄로 뺐다(10/20 · 세 카드 높이 맞춤). 오너 10/3 지정 창구 그대로 -->
-        <aside class="cell s12 ask-strip rise" aria-labelledby="askH">
+        <aside class="cell s12 ask-strip rise" id="direct" aria-labelledby="askH">
           <div class="ask-h" id="askH">원장에게 바로 신청</div>
           <dl>
             <div><dt>디스코드</dt><dd>e_muri<small>친구 추가 후 메시지</small></dd></div>
@@ -547,15 +543,7 @@ html.vr-lock{overflow:hidden}
 
         <!-- 커리큘럼 — 오너가 설명한 실제 수업 순서(10/4). 단계별 넘어가는 기준은 트레이너 답을 받은 뒤 채운다 -->
         <article class="cell s12 rise" id="curriculum" aria-labelledby="curH">
-          <!-- 원장 직강 핵심(지휘 10/20) — 커리큘럼 위에 크게 -->
-          <div class="pitch" id="direct">
-            <div class="eyebrow">원장 직강</div>
-            <ul class="pitch-l">
-              <li>같은 실력대끼리</li>
-              <li>판수제 아님</li>
-              <li>원장과 같은 팀에서 실시간 피드백</li>
-            </ul>
-          </div>
+          <!-- 원장 직강 핵심 문구 자리 — 10/20 세 줄은 오너 10/21 지시로 뺐다. 새 문구는 지휘 시안으로 내려온다 -->
           <div class="eyebrow">Curriculum</div>
           <h2 id="curH">수업 순서</h2>
           <p class="lead">처음 오면 레벨 테스트로 시작 단계를 정함</p>
