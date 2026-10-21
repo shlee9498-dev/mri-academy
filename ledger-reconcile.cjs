@@ -51,9 +51,10 @@ function matchPerson(people, name, nick) {
 }
 
 // 미리보기(순수) — rows = parseLine 결과(null 제외) · remaining(id) = 앱 남은 판수(그 트레이너 기준)
-function buildPreview(rows, people, remainingOf) {
+//   hasPending(id) = 그 수강생에게 대기 판수 조정이 있음(종류 · 숫자 무관 · §9.41.2) → submit 이 건너뛸 줄이라 pending_exists 로 보인다
+function buildPreview(rows, people, remainingOf, hasPending = () => false) {
   const seen = new Set(), lines = [];
-  const counts = { match: 0, diff: 0, not_found: 0, ambiguous: 0, bad_line: 0, too_big: 0, duplicate: 0 };
+  const counts = { match: 0, diff: 0, not_found: 0, ambiguous: 0, bad_line: 0, too_big: 0, duplicate: 0, pending_exists: 0 };
   for (const r of rows) {
     if (r.bad) { lines.push({ line: r.line, status: "bad_line" }); counts.bad_line++; continue; }
     const hits = matchPerson(people, r.name, r.nick);
@@ -65,7 +66,8 @@ function buildPreview(rows, people, remainingOf) {
     seen.add(p.id);
     const app = remainingOf(p.id);
     const delta = app == null ? null : r.memoRemaining - app;
-    const status = delta === 0 ? "match" : (delta != null && Math.abs(delta) > DELTA_MAX ? "too_big" : "diff");
+    const status = hasPending(p.id) ? "pending_exists"
+      : delta === 0 ? "match" : (delta != null && Math.abs(delta) > DELTA_MAX ? "too_big" : "diff");
     counts[status]++;
     lines.push({ ...base, status, sid: p.id, displayName: p.discord_nick ? normNick(p.discord_nick) : p.name, appRemaining: app, delta });
   }
@@ -109,6 +111,14 @@ function mountReconcile(app, tp, deps) {
   };
 
   // 내 범위 사람들 + 디코 닉 · 별칭 · 남은 판수
+  // 대기 판수 조정이 있는 수강생(종류 · delta · 트레이너 무관) — uq_gar_pending 은 delta 까지 열쇠라 숫자를 바꿔 다시 보내면 못 막고,
+  // 앱 남은 판수(§41)는 대기를 세지 않아 둘 다 승인되면 두 번 빠진다(검수 10/21 · §9.41.2)
+  async function pendingStudents(ids) {
+    if (!ids.length) return new Set();
+    const rows = await sbSelect("games_adjust_requests", `select=student_id&status=eq.pending&student_id=in.(${ids.map(Number).join(",")})`);
+    return new Set(rows.map((r) => Number(r.student_id)));
+  }
+
   async function people(staff, { primaryOnly = false } = {}) {
     const scope = await tp.scopedStudents(staff.id);
     let ids = [...scope.keys()];
@@ -133,7 +143,8 @@ function mountReconcile(app, tp, deps) {
     const rows = text.split(/\r?\n/).map(parseLine).filter(Boolean);
     if (!rows.length || rows.length > LINES_MAX) return fail(res, 400, "invalid_body");
     const { list, remaining } = await people(req.staff);
-    const out = buildPreview(rows, list, (id) => remaining.get(id) ?? null);
+    const pend = await pendingStudents(list.map((p) => p.id));
+    const out = buildPreview(rows, list, (id) => remaining.get(id) ?? null, (id) => pend.has(Number(id)));
     tp.sendTrainer(res, {
       lines: out.lines.map(({ sid, ...l }) => (sid == null ? l : { ...l, studentId: opaqueId("student", sid) })),
       counts: out.counts,
@@ -166,6 +177,7 @@ function mountReconcile(app, tp, deps) {
       const delta = p.memoRemaining - app;
       if (delta === 0) { skipped.push({ studentId: opaqueId("student", p.sid), why: "same_now" }); continue; }
       if (Math.abs(delta) > DELTA_MAX) { skipped.push({ studentId: opaqueId("student", p.sid), why: "too_big" }); continue; }
+      if ((await pendingStudents([p.sid])).has(p.sid)) { skipped.push({ studentId: opaqueId("student", p.sid), why: "pending_exists" }); continue; }
       let row;
       try {
         row = await sbInsert("games_adjust_requests", {

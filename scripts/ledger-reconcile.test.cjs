@@ -37,7 +37,12 @@ test("matchPerson · buildPreview — 띄어쓰기 · 대소문자 무시 · 닉
   assert.deepEqual(out.lines.map((l) => l.status), ["match", "diff", "not_found", "ambiguous", "duplicate", "bad_line", "too_big"]);
   assert.equal(out.lines[1].delta, -2);
   assert.equal(out.lines[0].displayName, "Abc");
-  assert.deepEqual(out.counts, { match: 1, diff: 1, not_found: 1, ambiguous: 1, bad_line: 1, too_big: 1, duplicate: 1 });
+  assert.deepEqual(out.counts, { match: 1, diff: 1, not_found: 1, ambiguous: 1, bad_line: 1, too_big: 1, duplicate: 1, pending_exists: 0 });
+  // 대기 조정이 있는 수강생 — 같음 · 다름 · 큼보다 먼저 pending_exists(submit 이 건너뛸 줄)
+  const pend = R.buildPreview(rows, people, (id) => app[id], (id) => id === 2);
+  assert.equal(pend.lines[1].status, "pending_exists");
+  assert.equal(pend.lines[1].delta, -2);
+  assert.equal(pend.counts.pending_exists, 1);
 });
 
 test("cardText · trainerResultText — 번호 · 앱→메모 · ±판 · 이모지 없음 · 트레이너 존댓말", () => {
@@ -55,7 +60,7 @@ test("cardText · trainerResultText — 번호 · 앱→메모 · ±판 · 이�
 
 // ── 라우트 ──
 const NOW = Date.parse("2026-10-20T03:00:00Z");
-const st = { inserts: [], state: {}, rpc: [], locks: [], cards: [], insertThrow: null };
+const st = { inserts: [], state: {}, rpc: [], locks: [], cards: [], insertThrow: null, pending: [] };
 const STUDENTS = [
   { id: 11, name: "가가", discord_nick: "Alpha", pubg_name: null, status: "active" },
   { id: 12, name: "나나", discord_nick: null, pubg_name: "NaNa", status: "active" },
@@ -67,6 +72,12 @@ const deps = {
     if (t === "students") { const ids = /id=in\.\(([\d,]+)\)/.exec(q)[1].split(",").map(Number); return STUDENTS.filter((s) => ids.includes(s.id)); }
     if (t === "student_aliases") return [];
     if (t === "period_locks") return st.locks;
+    if (t === "games_adjust_requests") {             // 대기 행 = 미리 심은 것(다른 종류 포함) + 이 시험에서 넣은 것
+      assert.match(q, /status=eq\.pending/);
+      const ids = /student_id=in\.\(([\d,]+)\)/.exec(q)[1].split(",").map(Number);
+      const rows = [...st.pending, ...st.inserts.filter((i) => i.t === "games_adjust_requests").map((i) => i.row)];
+      return rows.filter((r) => ids.includes(r.student_id)).map((r) => ({ student_id: r.student_id }));
+    }
     throw new Error(`unexpected ${t} ${q}`);
   },
   sbInsert: async (t, row) => {
@@ -104,7 +115,7 @@ const call = async (method, path, body) => {
   const r = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: r.status, json: await r.json().catch(() => null) };
 };
-const reset = () => Object.assign(st, { inserts: [], state: {}, rpc: [], locks: [], cards: [], insertThrow: null });
+const reset = () => Object.assign(st, { inserts: [], state: {}, rpc: [], locks: [], cards: [], insertThrow: null, pending: [] });
 
 test("preview — 쓰기 없음 · 줄 판정 · studentId 불투명 · 모양 틀리면 400", async () => {
   reset();
@@ -152,6 +163,27 @@ test("submit — 이번 달 잠김 409 · 범위 밖 403 · 같은 대기 요청
   for (const bad of [{ lines: [] }, { lines: [{ studentId: "student-11", memoRemaining: 1.5 }] }, { lines: [{ studentId: "student-11", memoRemaining: 1, x: 1 }] },
                      { lines: [{ studentId: "student-11", memoRemaining: 1 }, { studentId: "student-11", memoRemaining: 2 }] }])
     assert.equal((await call("POST", "/reconcile/submit", bad)).status, 400, JSON.stringify(bad));
+});
+
+test("submit — 대기 조정이 있으면 숫자를 바꿔 다시 보내도 pending_exists · insert 0번(두 번 빠짐 막기 · 검수 10/21)", async () => {
+  reset();
+  const a = await call("POST", "/reconcile/submit", { lines: [{ studentId: "student-11", memoRemaining: 5 }] });   // 앱 7 → 대기 −2
+  assert.equal(a.json.requests.length, 1);
+  const b = await call("POST", "/reconcile/submit", { lines: [{ studentId: "student-11", memoRemaining: 4 }] });   // 앱 아직 7 → −3 이 될 뻔
+  assert.deepEqual(b.json.skipped, [{ studentId: "student-11", why: "pending_exists" }]);
+  assert.equal(b.json.batchId, null);
+  assert.equal(st.inserts.filter((i) => i.t === "games_adjust_requests").length, 1);
+  assert.equal(st.cards.length, 1);
+  const p = await call("POST", "/reconcile/preview", { text: "가가 4" });
+  assert.equal(p.json.lines[0].status, "pending_exists");
+});
+
+test("submit — 다른 종류 대기(노쇼 −5)가 있어도 pending_exists · insert 0번", async () => {
+  reset();
+  st.pending = [{ student_id: 12, kind: "no_show", remaining_delta: -5 }];
+  const r = await call("POST", "/reconcile/submit", { lines: [{ studentId: "student-12", memoRemaining: 3 }, { studentId: "student-11", memoRemaining: 5 }] });
+  assert.deepEqual(r.json.skipped, [{ studentId: "student-12", why: "pending_exists" }]);
+  assert.deepEqual(st.inserts.filter((i) => i.t === "games_adjust_requests").map((i) => i.row.student_id), [11]);
 });
 
 test("sheet — 담당 · 진행/보류만 · 붙여넣기 모양 text(닉이 이름과 다르면 괄호)", async () => {
