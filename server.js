@@ -66,6 +66,9 @@ let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP �
 const payreqIntake = require("./payreq-intake.cjs");
 // 「입금 받음」(계약 §9.40) — 트레이너가 올리는 입금 신청 · 결과 DM 문구 · 화면 이름(디코 닉)
 const paymentReceived = require("./payment-received.cjs");
+// 판수 맞추기 · 일요일 확인 목록(계약 §9.41.2 · §9.41.3) — 라우트 · 카드 본문 · 결정(§46 줄마다)
+const ledgerReconcile = require("./ledger-reconcile.cjs");
+let reconcile = null;   // mountReconcile 반환값 — 카드 버튼 처리기가 decide 를 부른다(아래 trainer-portal 뒤에서 채운다)
 // 공개 API 응답에서 수강생 식별정보를 걷어내는 순수 함수(커뮤니티 작성자 ID · 공개 코칭 기록 본문 치환 · 9/30 개인정보 점검)
 const publicRows = require("./public-rows.cjs");
 // 수업 기록 행 판정 한 벌(판수 조정 · 봇 정정 · 0 이하 행은 수업이 아니다) — 원장 화면 · 공개 지표 · 예약 고아 감시가 같이 쓴다.
@@ -1015,6 +1018,8 @@ let payreqPortalCard = null;
 // 앱 판수 조정 요청 → 오너 DM 승인 카드(계약 §9.10 · §46). 같은 패턴으로 봇 블록이 채운다 — 봇이 없으면 null
 // (요청은 그래도 저장되고 ownerNotified:false 로 답한다). 버튼 = adjreq_ok · adjreq_no.
 let adjreqPortalCard = null;
+// 판수 맞추기 묶음 카드(계약 §9.41.2) — 봇 블록이 채운다 · 봇이 없으면 null(요청은 그래도 대기로 남는다 · ownerNotified:false).
+let reconcilePortalCard = null;
 // 신청 창구 카드 · DM(docs/intake-design.md §6 · PR-2) — 봇 블록이 intake-cards.cjs 로 채운다. 봇이 없으면 null
 // (신청은 그래도 저장된다 — 카드 · 접수 DM 만 안 간다). 제출 훅 · cronTick 재알림 · PR-3 트레이너 라우트가 이것을 부른다.
 let intakeFlow = null;
@@ -3351,6 +3356,55 @@ if (process.env.DISCORD_TOKEN) {
       return true;
     } catch (e) { console.error("adjreq_card_dm", e?.message); return false; }
   };
+  // 판수 맞추기 묶음 카드(계약 §9.41.2) — 「줄별 반려」 고르기(여러 개) · [남은 줄 전체 승인] · [전부 반려].
+  //   결정은 ledger-reconcile.decide(줄마다 §46 한 번 · 두 번 눌러도 한 번). 다 끝나면 올린 트레이너에게 결과 DM(존댓말).
+  const reconcileRows = (b) => {
+    const pending = b.items.filter((i) => i.status === "pending");
+    if (!pending.length) return [];
+    return [
+      new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`recon_rej:${b.id}`)
+        .setPlaceholder("줄별 반려 — 틀린 줄을 골라줘").setMinValues(1).setMaxValues(pending.length)
+        .addOptions(pending.slice(0, 25).map((it) => ({ label: `${it.name} · ${ledgerReconcile.deltaText(it.delta)}`.slice(0, 100), value: String(it.requestId) })))),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`recon_all:${b.id}`).setLabel("✅ 남은 줄 전체 승인").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`recon_none:${b.id}`).setLabel("❌ 전부 반려").setStyle(ButtonStyle.Danger)),
+    ];
+  };
+  reconcilePortalCard = async (b) => {
+    if (!process.env.MRI_OWNER_ID) return false;
+    try {
+      const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+      await owner.send({ content: ledgerReconcile.cardText(b).slice(0, 1990), components: reconcileRows(b) });
+      return true;
+    } catch (e) { console.error("reconcile_card_dm", e?.message); return false; }
+  };
+  client.on("interactionCreate", async (itx) => {
+    if (!(itx.isButton() || itx.isStringSelectMenu())) return;
+    const m = String(itx.customId || "").match(/^recon_(rej|all|none):(\d+)$/);
+    if (!m) return;
+    if (!isMriOwner(itx)) return itx.reply({ content: "오너 전용 버튼이야.", ephemeral: true });
+    if (!reconcile) return itx.reply({ content: "판수 맞추기 준비 전이야.", ephemeral: true });
+    try { await itx.deferUpdate(); } catch (e) { console.error("recon_defer", e?.message); return; }
+    const opts = m[1] === "rej" ? { rejectIds: (itx.values || []).map(Number) } : m[1] === "all" ? { approveRest: true } : { rejectAll: true };
+    let out;
+    try { out = await reconcile.decide(m[2], opts); }
+    catch (e) {
+      console.error("recon_decide", e?.message);
+      return itx.followUp({ content: `#${m[2]} 처리 중 오류가 났어 — 처리된 줄만 반영됐어. 카드를 다시 눌러줘`, ephemeral: true }).catch(() => {});
+    }
+    if (out.error) return itx.editReply({ content: `판수 맞추기 #${m[2]} — 묶음을 못 찾았어(${out.error})`, components: [] }).catch(() => {});
+    const b = out.batch;
+    const ids = b.items.filter((i) => i.status === "approved").map((i) => i.studentId);
+    if (ids.length) gamesShort.check(ids);                 // §45 — 승인으로 음수가 되면 바로
+    await itx.editReply({ content: ledgerReconcile.cardText(b).slice(0, 1990), components: reconcileRows(b) }).catch(() => {});
+    if (!b.items.some((i) => i.status === "pending")) {
+      try {
+        const tr = (await sbSelect("staff", `select=discord_id&id=eq.${b.trainerId}&limit=1`))[0];
+        await discordDM(tr?.discord_id, ledgerReconcile.trainerResultText(b));
+      } catch (e) { console.error("recon_trainer_dm", e?.message); }
+    }
+  });
+
   client.on("interactionCreate", async (itx) => {
     if (!itx.isButton()) return;
     const m = String(itx.customId || "").match(/^adjreq_(ok|no):(\d+)$/);
@@ -4014,6 +4068,14 @@ if (process.env.DISCORD_TOKEN) {
     }
     if (approve) {
       console.log(`[payreq] approve #${reqId} → students.id=${target.id} (승인자 확정)`);
+      // 「입금 받음」으로 같이 등록한 예비 수강생(§9.41.4) — 원장 승인 = 정식 전환(담당 없으면 올린 트레이너). 반려면 예비 그대로.
+      if (String(q.requested_by || "").startsWith("trainer:") && target.status === "prospect") {
+        try {
+          await sbPatch("students", `id=eq.${target.id}&status=eq.prospect`,
+            { status: "active", ...(target.trainer_id ? {} : { trainer_id: q.trainer_id }) });
+          console.log(`[payreq] #${reqId} 예비 #${target.id} → active`);
+        } catch (e) { console.error("payreq_prospect_activate", e?.message); }
+      }
       // 본표 반영 결과 — PATCH 응답(RETURNING)은 §18d AFTER 트리거가 payment_id 를 채우기 **전** 스냅샷이라
       // 항상 null 로 온다(9/20 #28 실측). 그래서 갱신 뒤 같은 행을 다시 읽는다. 컬럼 자체가 없으면(§18b 미실행) 종전대로 undefined.
       let row = Array.isArray(patched) ? patched[0] : null;
@@ -8623,6 +8685,13 @@ const trainerPortal = require("./trainer-portal.cjs")(app, {
 paymentReceived.mountPaymentReceived(app, trainerPortal, {
   sbSelect, sbInsert, limit, portal: studentPortal,
   payreqCard: (r, o) => (payreqPortalCard ? payreqPortalCard(r, o) : Promise.resolve(false)),
+});
+
+// ── 판수 맞추기(계약 §9.41.2 · §9.41.3) — 메모 붙여넣기 → 다른 줄만 → 원장 카드 한 장. 판수는 승인 때만 움직인다(§46). ──
+reconcile = ledgerReconcile.mountReconcile(app, trainerPortal, {
+  sbSelect, sbInsert, sbRpc, limit, portal: studentPortal,
+  stateGet: (k) => opsStateGet(k), stateSet: (k, v) => opsStateSet(k, v),
+  card: (b) => (reconcilePortalCard ? reconcilePortalCard(b) : Promise.resolve(false)),
 });
 
 // ── 수업 복기 트레이너 라우트(§29 PR-3 · /api/trainer-portal/{reviews,feedback,feed}) ──
