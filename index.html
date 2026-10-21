@@ -29,7 +29,7 @@
 <meta name="twitter:image" content="https://mriacademy.gg/og-banner.png">
 
 <!-- ───────── PWA ───────── -->
-<meta name="theme-color" content="#0b0b0c">
+<meta name="theme-color" content="#FBF6EF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -85,303 +85,252 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@800&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
 <style>
-/* ===== 기록실 (오너 승인 10/3) — 검정 바탕 · 칸은 바탕색 차이로만 · 골드는 간판 숫자 · 달성 티어 · 45,000 · 신청 버튼에만 ===== */
+/* ===== B3 (오너 확정 10/21) — 크림 바탕 · 갈색 점 격자 · 흰 카드 · 검정 알약 버튼 · 노란 형광펜은 제목 「원인」 하나 =====
+   검정 바탕은 세 자리만(성장 기록 원장 직강 칸 · 원장 직강 가격 칸 · 마지막 신청 칸). 빨강 · 주황 버튼 · 금색 없음 */
 :root{
-  --bg:#0b0b0c; --cell:#141416; --cell-2:#1b1b1e; --line:#29292e;
-  --ink:#f3f1ec; --mute:#918d85; --gold:#e2b658; --on-gold:#17140c;
-  --r:22px; --wrap:1200px; --gap:12px;
-  --sans:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic Neo',sans-serif;
-  --num:'Saira Condensed','Pretendard Variable',sans-serif;
-  color-scheme:dark;
+  --bg:#FBF6EF; --card:#fff; --line:#EEE5D9;
+  --ink:#1A1714; --sub:#5A5047; --mute:#8A7E72; --kick:#B4662A; --hl:#FFE58A;
+  --dark:#1A1714; --on-dark:#FBF6EF; --on-dark-sub:#C9BEB1;
+  --r:24px; --wrap:1200px;
+  --sans:'Noto Sans KR',-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
+  --num:'Inter','Noto Sans KR',sans-serif;
+  --shadow:0 1px 2px rgba(0,0,0,.03),0 8px 24px rgba(0,0,0,.04);
+  color-scheme:light;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
-body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.65;word-break:keep-all;overflow-wrap:break-word;-webkit-font-smoothing:antialiased}
+body{color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.7;word-break:keep-all;overflow-wrap:break-word;-webkit-font-smoothing:antialiased;
+  background-color:var(--bg);
+  background-image:radial-gradient(60% 520px at 92% 0,rgba(255,196,160,.38),transparent 70%),radial-gradient(rgba(120,90,60,.10) 1.2px,transparent 1.2px);
+  background-size:100% 900px,26px 26px;background-repeat:no-repeat,repeat}
 img{display:block;max-width:100%}
 a{color:inherit}
-:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:4px}
-.wrap{max-width:var(--wrap);margin:0 auto;padding:0 24px}
-.num{font-family:var(--num);font-weight:800;letter-spacing:.005em;font-variant-numeric:tabular-nums}
-.eyebrow{font:700 13px/1.3 var(--num);letter-spacing:.16em;text-transform:uppercase;color:var(--mute)}
-.muted{color:var(--mute)}
-.link{font-weight:600;text-decoration:underline;text-underline-offset:4px;text-decoration-color:var(--line);transition:text-decoration-color .15s}
+:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:6px}
+.wrap{max-width:var(--wrap);margin:0 auto;padding-inline:24px}
+.num{font-family:var(--num);font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.kick{font-size:14px;font-weight:700;color:var(--kick);margin-bottom:10px}
+.h2{font-size:clamp(28px,3.6vw,44px);font-weight:900;line-height:1.2;letter-spacing:-.045em;text-wrap:balance}
+.sec{padding-block:clamp(56px,7vw,96px)}
+.sec-sub{margin-top:12px;color:var(--sub);max-width:640px}
+.link{font-weight:700;text-decoration:underline;text-underline-offset:4px;text-decoration-color:var(--line)}
 .link:hover{text-decoration-color:var(--ink)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:clamp(22px,2.6vw,34px);min-width:0}
+.card.dk{background:var(--dark);border-color:var(--dark);color:var(--on-dark)}
+/* 아직 값이 안 온 자리 — 회계 · 오너 확인 뒤 지휘가 값을 내려보낸다(하드코딩 금지) */
+.pend{display:inline-block;padding:1px 8px;border:1px dashed currentColor;border-radius:8px;font:600 13px/1.6 var(--sans);letter-spacing:0;opacity:.7;vertical-align:middle}
 
-/* 채운 버튼 — 페이지 전체에서 이것 하나 */
-.cta{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:54px;padding:0 26px;border-radius:14px;background:var(--gold);color:var(--on-gold);font-weight:800;font-size:16px;text-decoration:none;white-space:nowrap;transition:filter .15s ease,transform .15s ease}
-.cta:hover{filter:brightness(1.06)}
-.cta:active{transform:translateY(1px)}
-.cta .p{font-family:var(--num);font-weight:800;font-size:17px}
+/* 버튼 — 검정 알약 하나로 통일 */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:52px;padding:0 26px;border-radius:999px;background:var(--ink);color:#fff;font-weight:700;font-size:16px;text-decoration:none;white-space:nowrap;transition:transform .15s ease,opacity .15s ease}
+.btn:hover{opacity:.9}
+.btn:active{transform:translateY(1px)}
+.btn .p{font-family:var(--num);font-weight:800}
+.btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+.btn.white{background:#fff;color:var(--ink)}
 
-/* 1. 머리 — 한 줄 · 글자만 */
-.top{position:sticky;top:0;z-index:50;background:var(--bg);border-bottom:1px solid var(--line)}
-.top-in{display:flex;align-items:center;gap:32px;height:64px}
-.logo{font:800 20px/1 var(--num);letter-spacing:.08em;text-decoration:none;white-space:nowrap}
-.menu{display:flex;gap:22px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}
+/* 1. 머리 */
+.top{position:sticky;top:0;z-index:50;background:rgba(251,246,239,.94);border-bottom:1px solid var(--line)}
+.top-in{display:flex;align-items:center;gap:28px;height:68px}
+.logo{font:800 19px/1 var(--num);letter-spacing:.02em;text-decoration:none;white-space:nowrap}
+.menu{display:flex;gap:24px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}
 .menu::-webkit-scrollbar{display:none}
-.menu a{flex:none;text-decoration:none;color:var(--mute);font-weight:600;font-size:15px}
+.menu a{flex:none;text-decoration:none;color:var(--sub);font-weight:500;font-size:15px}
 .menu a:hover{color:var(--ink)}
-.top .cta{min-height:40px;padding:0 18px;font-size:15px;border-radius:10px}
+.top .btn{min-height:42px;padding:0 20px;font-size:15px}
 
-/* 1. 소개 영상 — PC 가로 16:9 · 폰 세로 9:16 · 첫 화면 안에 들어가게 높이로 폭을 묶는다 */
-.intro{padding:clamp(20px,3vw,32px) 0 0}
-.intro:not([hidden]) + .hero{padding-top:clamp(32px,4vw,56px)}
-.iv-frame{position:relative;margin:0 auto;aspect-ratio:16/9;width:min(100%,calc((100svh - 200px) * 16 / 9));max-width:100%;border-radius:var(--r);overflow:hidden;background:var(--cell);border:1px solid var(--line)}
-.iv-frame::before{content:'MRI ACADEMY';position:absolute;inset:0;display:grid;place-items:center;font:800 15px/1 var(--num);letter-spacing:.18em;color:var(--mute)}
+/* 2. 첫 화면 — 왼쪽 제목 · 오른쪽 영상 카드 / 폰은 제목 바로 아래 세로 영상 */
+.hero{padding-block:clamp(40px,6vw,88px) clamp(28px,4vw,48px)}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);grid-template-areas:"h v" "c v";column-gap:clamp(28px,4vw,64px);align-items:start}
+.hero-grid:has(.intro[hidden]){grid-template-columns:minmax(0,1fr);grid-template-areas:"h" "c"}
+.h1{grid-area:h;font-size:clamp(46px,7.2vw,96px);font-weight:900;line-height:1.08;letter-spacing:-.06em;align-self:end}
+.hl{background:linear-gradient(transparent 60%,var(--hl) 60%,var(--hl) 92%,transparent 92%);padding:0 .04em}
+.hero-copy{grid-area:c;margin-top:28px}
+.hero-copy .lead{font-size:clamp(17px,1.5vw,19px);color:var(--sub);max-width:30em}
+.acts{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}
+.fine{margin-top:14px;font-size:14px;color:var(--mute)}
+.intro{grid-area:v;min-width:0}
+.iv-card{background:var(--card);border:1px solid var(--line);border-radius:28px;box-shadow:var(--shadow);padding:12px}
+.iv-frame{position:relative;aspect-ratio:16/9;width:100%;border-radius:18px;overflow:hidden;background:#F3ECE2}
+.iv-frame::before{content:'MRI ACADEMY';position:absolute;inset:0;display:grid;place-items:center;font:800 14px/1 var(--num);letter-spacing:.16em;color:var(--mute)}
 .iv{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:transparent}
-.iv-sound{position:absolute;right:14px;top:14px;min-height:40px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(10,10,12,.78);color:var(--ink);font:700 14px/1 var(--sans);cursor:pointer}
-.iv-sound:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.iv-sound{position:absolute;right:12px;top:12px;min-height:38px;padding:0 16px;border-radius:999px;border:0;background:rgba(26,23,20,.82);color:#fff;font:700 14px/1 var(--sans);cursor:pointer}
 .iv-sound[hidden]{display:none}
-.iv-acts{display:flex;justify-content:center;margin-top:16px}
-.intro.is-v .iv-frame{aspect-ratio:9/16;width:min(100%,calc((100svh - 190px) * 9 / 16))}
-/* 2. 간판 */
-.hero{padding:clamp(48px,7vw,96px) 0 clamp(32px,4vw,48px)}
-.hero .eyebrow{margin-bottom:clamp(12px,2vw,20px)}
-/* 간판 = 실적 두 줄. 줄마다 「누가 · 기간」 작은 머리 + 「몇 명 · 얼마나」 큰 글자 */
-.sign{display:grid;gap:clamp(18px,2.6vw,32px)}
-.sign .ln{display:block}
-.sign .hd{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;font-size:clamp(16px,1.5vw,20px);font-weight:700;color:var(--mute)}
-.sign .hd b{color:var(--ink);font-weight:800}
-.sign .big{display:block;margin-top:6px;font:800 clamp(38px,6.2vw,88px)/1.02 var(--num);letter-spacing:-.01em;color:var(--ink);text-wrap:balance}
-.sign .big small{font:800 .42em/1 var(--sans);margin:0 .12em 0 .06em}
-.sign .big .sep{color:var(--mute);font-weight:400;margin:0 .14em}
-.hero-row .note{font-size:15px;line-height:1.6;color:var(--mute)}
-.hero-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px 48px;align-items:end;margin-top:clamp(20px,3vw,32px)}
-.hero-row p{font-size:clamp(18px,1.7vw,22px);line-height:1.55;max-width:620px}
-.hero-acts{display:flex;align-items:center;gap:24px}
+.intro.is-v .iv-frame{aspect-ratio:9/16;max-height:calc(100svh - 160px);width:auto;margin-inline:auto}
 
-/* 3. 숫자 한 줄 */
+/* 3. 숫자 네 칸 */
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.stat{padding:22px 24px}
+.stat .v{font-size:clamp(30px,3.4vw,42px);line-height:1.1}
+.stat .v small{font-size:.5em;font-weight:700;margin-left:2px}
+.stat .k{margin-top:8px;font-size:14px;color:var(--sub)}
 
-/* 4. 칸 배치 — 12칸 격자 */
-.hero .grid{margin-top:clamp(28px,4vw,48px)}
-.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:var(--gap)}
-.cell{background:var(--cell);border-radius:var(--r);padding:clamp(22px,2.6vw,36px);min-width:0;position:relative;overflow:hidden}
-.s7{grid-column:span 7}.s5{grid-column:span 5}.s6{grid-column:span 6}.s8{grid-column:span 8}.s4{grid-column:span 4}.s12{grid-column:span 12}
-.cell h2{font-size:clamp(22px,2.2vw,28px);font-weight:800;line-height:1.3;letter-spacing:-.01em;margin-top:8px;text-wrap:balance}
-.cell .lead{margin-top:10px;color:var(--mute);max-width:560px}
+/* 4. 원인 — 채팅 말풍선 */
+.cause{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;margin-top:36px;align-items:stretch}
+.chat{display:flex;flex-direction:column;gap:12px}
+.bub{align-self:flex-start;max-width:88%;background:#F6EFE5;border-radius:20px 20px 20px 6px;padding:12px 18px;font-weight:500}
+.bub.ans{align-self:flex-end;background:var(--dark);color:var(--on-dark);border-radius:20px 20px 6px 20px;font-weight:700}
+.chat .src{font-size:13px;color:var(--mute)}
+.proof h3{font-size:22px;font-weight:900;letter-spacing:-.03em}
+.proof .pair{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;margin-top:20px}
+.proof .sc{border:1px solid var(--line);border-radius:18px;padding:18px;text-align:center}
+.proof .sc .v{font-size:clamp(34px,4vw,48px);line-height:1}
+.proof .sc .k{margin-top:6px;font-size:13px;color:var(--mute)}
+.proof .arr{font:800 22px/1 var(--num);color:var(--mute)}
+.proof .note{margin-top:16px;font-size:14px;color:var(--sub)}
 
-/* 성장 기록 */
-.feat{margin-top:28px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:16px;align-items:end}
-.feat .side .k{font-size:13px;color:var(--mute);font-weight:600}
-.feat .side .t{font-size:clamp(20px,2vw,26px);font-weight:800;margin-top:6px;line-height:1.2}
-.feat .side .rp{font:800 clamp(30px,3.4vw,46px)/1 var(--num);margin-top:6px}
-.feat .side .rp small{font:700 14px/1 var(--num);letter-spacing:.08em;margin-left:4px;color:var(--mute)}
-.feat .after .t{color:var(--gold)}
-.feat .arr{font:800 30px/1 var(--num);color:var(--mute);padding-bottom:8px}
-.feat-who{margin-top:16px;color:var(--mute);font-size:15px}
-.feat-who b{color:var(--ink)}
-.list{list-style:none;margin-top:28px;border-top:1px solid var(--line)}
-.list li{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.3fr) auto;gap:12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);font-size:15px}
-.list .nick{font-weight:700}
-.list .where{color:var(--mute)}
-.list .tier{font-weight:800;color:var(--gold);text-align:right}
-.cell .more{display:inline-block;margin-top:20px}
-.state{margin-top:20px;color:var(--mute)}
-.g-fact{margin-top:10px;color:var(--mute);font-size:15px}
-.g-fact b{color:var(--ink);font:800 20px/1 var(--num);margin-right:6px}
-/* 성장 기록 뼈대 — 숫자가 오기 전 자리만 잡는다 */
-.sk{margin-top:20px;display:grid;gap:12px}
-.sk i{display:block;height:18px;border-radius:6px;background:var(--cell-2)}
-.sk-feat{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:8px}
-.sk-feat i{height:56px}
+/* 5. 얼마나 다니면 — 레슨(흰) · 원장 직강(검정) 두 갈래 */
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:36px}
+.rec{display:flex;flex-direction:column;gap:18px}
+.rec .tag{font-size:14px;font-weight:700}
+.rec .src{font-size:13px;color:var(--mute)}
+.rec.dk .src{color:var(--on-dark-sub)}
+.rec .big{font-size:clamp(44px,5vw,64px);line-height:1}
+.rec .big small{font-size:.4em;font-weight:700;margin-left:4px}
+.rec .big .pend{font-size:14px}
+.rec .lab{font-size:14px;color:var(--sub);margin-top:6px}
+.rec.dk .lab{color:var(--on-dark-sub)}
+.rec .took{font-weight:700}
+.cases{list-style:none;display:grid;gap:0;border-top:1px solid var(--line)}
+.rec.dk .cases{border-color:rgba(251,246,239,.16)}
+.cases li{display:grid;grid-template-columns:4.5em minmax(0,1fr) auto;gap:12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);font-size:15px}
+.rec.dk .cases li{border-color:rgba(251,246,239,.16)}
+.cases .nick{font-weight:700}
+.cases .tr{min-width:0}
+.cases .tr b{font-weight:700}
+.cases .d{font-size:13px;color:var(--mute);white-space:nowrap}
+.rec.dk .cases .d{color:var(--on-dark-sub)}
+.quote{position:relative;padding:2px 0 2px 16px;color:var(--sub);font-size:15px}
+.quote::before{content:"";position:absolute;left:0;top:3px;bottom:3px;width:4px;border-radius:2px;background:var(--hl)}
+.rec.dk .quote{color:var(--on-dark-sub)}
+.rec .more{margin-top:auto;font-size:14px}
+.g-fact{font-size:14px;color:var(--sub)}
+.g-fact b{color:var(--ink)}
+/* 성장 기록 뼈대 — 기록이 오기 전 자리만 잡는다 */
+.sk{display:grid;gap:10px}
+.sk i{display:block;height:20px;border-radius:6px;background:#F3ECE2}
 @media(prefers-reduced-motion:no-preference){.sk i{animation:skp 1.4s ease-in-out infinite}}
 @keyframes skp{50%{opacity:.55}}
-/* 원장에게 바로 신청 한 줄 */
-.ask-strip{display:flex;flex-wrap:wrap;align-items:center;gap:12px 32px;padding-block:clamp(18px,2vw,24px)}
-.ask-strip .ask-h{font-size:16px;font-weight:800}
-.ask-strip dl{display:flex;flex-wrap:wrap;gap:8px 28px;font-size:14px}
-.ask-strip dl div{display:flex;gap:10px;align-items:baseline}
-.ask-strip dt{color:var(--mute)}
-.ask-strip dd{margin:0;color:var(--ink)}
-.ask-strip dd small{color:var(--mute);font-size:13px;margin-left:6px}
-.ask-strip a{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+.state{font-size:14px;color:var(--mute)}
 
-/* 원장 */
-.boss{display:flex;flex-direction:column;padding:0}
-.boss .ph{aspect-ratio:4/3.4;background:var(--cell-2)}
-.boss .ph img{width:100%;height:100%;object-fit:cover;object-position:50% 22%}
-.boss .bd{padding:clamp(22px,2.6vw,32px)}
-.boss .nm{display:flex;align-items:baseline;gap:12px;font-size:clamp(28px,3vw,38px);font-weight:800;line-height:1.1}
-.boss .nm .rank{font:800 clamp(28px,3vw,38px)/1 var(--num);color:var(--gold)}
-.boss .one{margin-top:10px;font-size:17px;font-weight:600}
-.boss .sub{margin-top:6px;color:var(--mute);font-size:15px}
-.boss .links{margin-top:16px}
-
-/* 트레이너 */
-.tr{display:grid;grid-template-columns:140px minmax(0,1fr);gap:24px;align-items:start}
-.tr .ph{border-radius:14px;overflow:hidden;aspect-ratio:4/5;background:var(--cell-2)}
-.tr .ph img{width:100%;height:100%;object-fit:cover}
-.tr .role{font-size:13px;color:var(--mute);font-weight:600}
-.tr .nm{font-size:clamp(26px,2.6vw,32px);font-weight:800;line-height:1.15;margin-top:4px}
-.tr .one{margin-top:8px}
-.links{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:14px;font-size:15px}
-.links a{color:var(--mute)}
-.links a:hover{color:var(--ink)}
-.tr .apply{margin-top:16px;display:inline-block}
-
-/* 가르치는 사람 셋 — 같은 크기 칸 · 얼굴은 64px 원 */
-.person{display:flex;flex-direction:column}
-.person .who{display:flex;align-items:center;gap:14px}
-.person .av{width:64px;height:64px;border-radius:50%;object-fit:cover;object-position:50% 20%;background:var(--cell-2);flex:none}
-.person .role{font-size:13px;color:var(--mute);font-weight:600}
-.person .nm{font-size:26px;font-weight:800;line-height:1.15;margin-top:2px}
-.stat2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:22px}
-.stat2 .v{font-size:clamp(40px,4vw,52px);line-height:1;color:var(--gold)}
-.stat2 .k,.stat1 .k{margin-top:6px;font-size:14px;color:var(--mute);display:block}
-.stat1{margin-top:22px}
-.stat1 .v{display:block;font-size:clamp(40px,4vw,52px);line-height:1}
-.stat1 .v{color:var(--gold)}
-.stat2 .v small,.stat1 .v small{font:800 16px/1 var(--num);letter-spacing:.06em;margin-left:4px}
-.recs{list-style:none;margin-top:16px;display:grid;gap:6px;font-size:14px;color:var(--mute)}
-.recs li{padding-left:12px;position:relative}
-.recs li::before{content:'';position:absolute;left:0;top:.7em;width:4px;height:4px;border-radius:50%;background:var(--mute)}
-.person .tot{margin-top:14px;font-size:15px}
-.person .tot b{font-weight:800}
-.person .tot span{color:var(--mute);margin-left:8px;font-size:14px}
-.person .r30{margin-top:2px;font-size:13px;color:var(--mute)}
-.person .one{margin-top:16px}
-.person .fine{margin-top:8px;font-size:13px;line-height:1.6;color:var(--mute)}
-.person .links{margin-top:auto;padding-top:16px}
-
-/* 커리큘럼 */
-.steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:24px;border-top:1px solid var(--line)}
-.step{padding:20px 20px 4px 0}
-.step+.step{padding-left:20px;border-left:1px solid var(--line)}
-.step .n{font:800 15px/1 var(--num);letter-spacing:.12em;color:var(--mute)}
-.step .nm{font-size:22px;font-weight:800;margin-top:10px}
-.step .d{margin-top:6px;color:var(--mute);font-size:15px}
-
-/* 수업 영상 — 16:9 유지 · 누르면 그 자리에서 재생 */
-.lv-frame{margin-top:24px;position:relative;aspect-ratio:16/9;max-width:100%;border-radius:16px;overflow:hidden;background:var(--cell-2)}
+/* 수업 영상 칸(비어 있으면 숨김) */
+.lv{margin-top:16px}
+.lv h3{font-size:22px;font-weight:900;letter-spacing:-.03em}
+.lv .lead{margin-top:6px;color:var(--sub)}
+.lv-frame{margin-top:20px;position:relative;aspect-ratio:16/9;max-width:100%;border-radius:16px;overflow:hidden;background:#F3ECE2}
 .lv-play{all:unset;cursor:pointer;position:absolute;inset:0;display:block}
 .lv-play img{width:100%;height:100%;object-fit:cover;display:block}
-.lv-btn{position:absolute;left:50%;top:50%;width:72px;height:72px;margin:-36px 0 0 -36px;border-radius:50%;background:rgba(10,10,12,.72);border:1px solid var(--line)}
-.lv-btn::after{content:'';position:absolute;left:29px;top:22px;border-style:solid;border-width:14px 0 14px 22px;border-color:transparent transparent transparent var(--ink)}
+.lv-btn{position:absolute;left:50%;top:50%;width:72px;height:72px;margin:-36px 0 0 -36px;border-radius:50%;background:rgba(26,23,20,.82)}
+.lv-btn::after{content:'';position:absolute;left:29px;top:22px;border-style:solid;border-width:14px 0 14px 22px;border-color:transparent transparent transparent #fff}
 .lv-play:focus-visible{outline:2px solid var(--ink);outline-offset:-4px}
 .lv-frame iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
-.vid{display:flex;flex-direction:column;padding:0;text-decoration:none}
-.vid .th{flex:1;min-height:200px;background:var(--cell-2);position:relative}
-.vid .th::before{content:'YouTube';position:absolute;inset:0;display:grid;place-items:center;font:800 15px/1 var(--num);letter-spacing:.14em;color:var(--mute)}
-.vid .th img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.vid .bd{padding:clamp(20px,2.4vw,28px)}
-.vid .bd b{display:block;font-size:18px;line-height:1.4;margin-top:8px}
-.vid .bd span{display:block;margin-top:8px;color:var(--mute);font-size:15px}
-.vid:hover .bd b{text-decoration:underline;text-underline-offset:4px}
 
-/* 5. 가격 — 박스 없음 */
-.sec{padding:clamp(72px,9vw,120px) 0 0}
-.sec-h{font-size:clamp(28px,3.4vw,44px);font-weight:800;line-height:1.2;letter-spacing:-.015em;text-wrap:balance}
-.sec-sub{margin-top:10px;color:var(--mute);max-width:640px}
-.price-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:end;margin-top:36px}
-.big-p .lab{font-weight:700;color:var(--mute)}
-.big-p .v{font:800 clamp(96px,13vw,184px)/.9 var(--num);color:var(--gold);margin-top:6px}
-.big-p .v small{font:800 clamp(22px,2.2vw,30px)/1 var(--sans);color:var(--ink);margin-left:6px}
-.prow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 18px;align-items:baseline;padding:16px 0;border-bottom:1px solid var(--line)}
-.prow:first-child{border-top:1px solid var(--line)}
-.prow .n{font-weight:700;font-size:17px}
-.prow .n small{display:block;color:var(--mute);font-weight:400;font-size:14px;margin-top:2px}
-.prow .p{font:800 28px/1 var(--num);text-align:right;min-width:110px}
-.prow .p small{font:700 14px/1 var(--sans);margin-left:2px}
-.cols{display:grid;grid-template-columns:minmax(0,1fr);max-width:620px;gap:48px;margin-top:56px}
-.entry{margin-top:12px;font-size:clamp(16px,1.5vw,19px);color:var(--mute)}
-.entry b{color:var(--ink)}
-.cols h3{font-size:22px;font-weight:800}
-.cols .gd{color:var(--mute);font-size:15px;margin:4px 0 14px}
-.pnotes{margin-top:40px;display:grid;gap:6px;color:var(--mute);font-size:15px;max-width:820px}
-.pnotes b{color:var(--ink)}
-.vip-door{display:inline-block;margin-top:18px;color:var(--mute);font-size:15px}
-.vip-door span{color:var(--ink);font-weight:700}
+/* 6. 오해 → 실제 원인 */
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:36px}
+.myth .no{font:800 14px/1 var(--num);color:var(--mute)}
+.myth .q{margin-top:14px;font-size:15px;color:var(--mute)}
+.myth .a{margin-top:8px;font-size:19px;font-weight:700;line-height:1.5;letter-spacing:-.02em}
 
-/* 6. 차감 기준 — 박스 없는 세 칸 */
-.rules{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:36px;border-top:1px solid var(--line)}
-.rule{padding:24px 28px 8px 0}
-.rule+.rule{padding-left:28px;border-left:1px solid var(--line)}
-.rule .who{font-size:14px;font-weight:700;color:var(--mute)}
-.rule .v{font:800 clamp(48px,5.4vw,72px)/1 var(--num);margin-top:10px}
-.rule .v small{font:700 18px/1 var(--sans);margin-left:3px}
-.rule ul{list-style:none;margin-top:14px;display:grid;gap:4px;color:var(--mute);font-size:15px}
-.rule p{margin-top:14px;color:var(--mute);font-size:15px}
+/* 7. 가르치는 사람 — 같은 높이 · 링크는 바닥에 */
+.person{display:flex;flex-direction:column;gap:14px}
+.who{display:flex;align-items:center;gap:14px}
+.av{width:64px;height:64px;border-radius:50%;object-fit:cover;background:#F3ECE2;flex:none}
+.role{font-size:13px;color:var(--mute)}
+.nm{font-size:24px;font-weight:900;letter-spacing:-.03em;line-height:1.2}
+.stat1 .v{font-size:30px;line-height:1.1}
+.stat1 .v small{font-size:.5em;margin-left:3px}
+.stat1 .k{display:block;font-size:14px;color:var(--sub);margin-top:4px}
+.one{font-size:15px;color:var(--sub)}
+.recs{list-style:none;font-size:14px;color:var(--sub);display:grid;gap:4px}
+.tot{font-size:15px;color:var(--sub)}
+.tot b{color:var(--ink)}
+.tot span{display:block;font-size:13px;color:var(--mute)}
+.r30{font-size:14px;color:var(--mute)}
+.r30 span{font-family:var(--num);font-weight:800;color:var(--ink)}
+.person .links{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:6px 16px;font-size:14px;font-weight:700}
+.person .links a{text-decoration:none}
+.person .links a:hover{text-decoration:underline;text-underline-offset:4px}
 
-/* 7. 마무리 */
-.end{padding:clamp(80px,10vw,140px) 0 clamp(40px,5vw,64px)}
-.end-h{font-size:clamp(36px,5.6vw,76px);font-weight:800;line-height:1.12;letter-spacing:-.02em;text-wrap:balance}
-.flow{margin-top:20px;color:var(--mute);font-size:17px}
-.flow b{color:var(--ink);font-weight:700}
-.end .acts{margin-top:28px;display:flex;align-items:center;gap:24px;flex-wrap:wrap}
-.end .lt-note{margin-top:14px;color:var(--mute);font-size:14px}
-.faq{margin-top:clamp(32px,4vw,48px);border-top:1px solid var(--line)}
-.faq h2{font-size:20px;font-weight:800;padding:24px 0 8px}
+/* 8. 가격 세 칸 */
+.plans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:36px;align-items:stretch}
+.plan{display:flex;flex-direction:column;gap:12px}
+.plan.first{border:2px solid var(--ink)}
+.plan .step{font:800 13px/1 var(--num);letter-spacing:.02em}
+.plan .step span{font-family:var(--sans);font-weight:700;margin-left:6px}
+.plan h3{font-size:20px;font-weight:900;letter-spacing:-.03em}
+.plan .price{font-size:clamp(34px,3.6vw,44px);line-height:1.1}
+.plan .price small{font-size:.42em;font-weight:700;margin-left:3px}
+.plan .d{font-size:15px;color:var(--sub)}
+.plan.dk .d{color:var(--on-dark-sub)}
+.plan .sm{font-size:13px;color:var(--mute)}
+.plan.dk .sm{color:var(--on-dark-sub)}
+.plan .btn{margin-top:auto}
+.prows{display:grid;border-top:1px solid var(--line)}
+.prow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--line)}
+.prow .n{font-weight:700}
+.prow .n small{display:block;font-weight:400;font-size:13px;color:var(--mute)}
+.prow .p{font-family:var(--num);font-weight:800;font-size:20px}
+.prow .p small{font-family:var(--sans);font-size:13px;font-weight:700;margin-left:2px}
+.pnotes{margin-top:20px;display:grid;gap:6px;font-size:14px;color:var(--sub)}
+.vip-door{display:inline-block;margin-top:14px;font-size:14px}
+
+/* 9. 자주 묻는 질문 */
+.faq{margin-top:28px;border-top:1px solid var(--line)}
 .faq details{border-bottom:1px solid var(--line)}
-.faq summary{list-style:none;cursor:pointer;padding:18px 40px 18px 0;font-weight:700;font-size:17px;position:relative}
+.faq summary{list-style:none;cursor:pointer;padding:20px 40px 20px 0;font-weight:700;font-size:18px;position:relative}
 .faq summary::-webkit-details-marker{display:none}
-.faq summary::after{content:'+';position:absolute;right:4px;top:12px;font:700 26px/1 var(--num);color:var(--mute)}
+.faq summary::after{content:'+';position:absolute;right:4px;top:16px;font:800 24px/1 var(--num);color:var(--mute)}
 .faq details[open] summary::after{content:'−'}
-.faq .a{padding:0 0 22px;color:var(--mute);max-width:820px}
-.faq .a b{color:var(--ink)}
-.faq .a a{color:var(--ink)}
+.faq .a{padding:0 0 22px;color:var(--sub);max-width:820px}
+.faq .a b,.faq .a a{color:var(--ink)}
 
-/* 하단 */
-footer{border-top:1px solid var(--line);margin-top:clamp(24px,3vw,40px);padding:48px 0 40px;font-size:14px;color:var(--mute)}
+/* 10. 마지막 신청 칸 */
+.end{border-radius:32px;padding:clamp(36px,6vw,80px) clamp(24px,5vw,72px)}
+.end .h2{color:var(--on-dark)}
+.end .flow{margin-top:20px;color:var(--on-dark-sub);font-size:15px}
+.end .flow b{color:var(--on-dark);font-weight:700}
+.end .acts{align-items:center;gap:18px}
+.end .link{color:var(--on-dark);text-decoration-color:rgba(251,246,239,.4)}
+.end .fine{color:var(--on-dark-sub)}
+
+/* 11. 바닥 — 사업자 표기는 그대로 */
+footer{padding-block:48px 56px;margin-top:clamp(48px,6vw,80px);border-top:1px solid var(--line);font-size:14px;color:var(--mute)}
 footer .fl{display:flex;flex-wrap:wrap;gap:8px 18px;margin-bottom:14px}
-footer a{color:var(--mute);text-decoration:none}
-footer a:hover{color:var(--ink)}
-footer .bizinfo{margin-top:18px;font-size:13px;line-height:1.8;color:color-mix(in srgb,var(--ink) 78%,var(--bg))}
-footer .more summary{cursor:pointer;color:var(--mute);list-style:none;width:max-content}
-footer .more summary::-webkit-details-marker{display:none}
-footer .more summary::after{content:' +'}
-footer .more[open] summary::after{content:' −'}
-footer .more{margin-bottom:14px}
-footer .more .fl{margin-top:10px;margin-bottom:0}
-footer p{margin-top:16px;font-size:13px}
+footer .fl a{text-decoration:none;color:var(--sub)}
+footer .fl a:hover{color:var(--ink)}
+footer details.more{margin-bottom:14px}
+footer details.more summary{cursor:pointer;color:var(--sub);margin-bottom:10px;width:max-content}
+footer .bizinfo{line-height:1.9;margin-bottom:10px}
 
-/* 스크롤 등장 — JS 가 있고 움직임 줄이기가 아닐 때만 */
-.js .rise{opacity:0;translate:0 18px;transition:opacity .5s ease,translate .5s cubic-bezier(.2,.8,.2,1)}
-.js .rise.in{opacity:1;translate:0 0}
-
-@media(max-width:1024px){
-  .tr{grid-template-columns:110px minmax(0,1fr);gap:18px}
-  .feat{grid-template-columns:1fr;gap:10px}
-  .feat .arr{display:none}
+/* 폰 — 아래 고정 신청 버튼 */
+.mbar{display:none}
+@media(max-width:1000px){
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .plans,.three{grid-template-columns:minmax(0,1fr)}
 }
 @media(max-width:820px){
-  /* 수업 영상 — 폰에선 칸 안쪽 여백을 넘어 화면 좌우 16px 까지 넓힌다 */
-  .lv-frame{max-width:none;margin-left:calc(-1 * clamp(22px,2.6vw,36px));margin-right:calc(-1 * clamp(22px,2.6vw,36px));border-radius:0}
-  .wrap{padding:0 16px}
-  .top-in{gap:16px;height:56px}
-  .top .cta .p,.top .cta .dot{display:none}
   .menu{display:none}
   .top-in{justify-content:space-between}
-  .grid{grid-template-columns:minmax(0,1fr)}
-  .s7,.s5,.s6,.s8,.s4,.s12{grid-column:auto}
-  .hero-row{grid-template-columns:1fr}
-  .hero-acts{flex-direction:column-reverse;align-items:stretch;gap:14px}
-  .hero-acts .link{align-self:flex-start}
-  .cta{width:100%}
-  .top .cta{width:auto}
-  .steps{grid-template-columns:1fr 1fr}
-  .step:nth-child(3){padding-left:0;border-left:0}
-  .step:nth-child(n+3){border-top:1px solid var(--line)}
-  .price-main,.cols{grid-template-columns:1fr;gap:28px}
-  .cols{margin-top:40px}
-  .rules{grid-template-columns:1fr}
-  .rule,.rule+.rule{padding:20px 0 8px;border-left:0}
-  .rule+.rule{border-top:1px solid var(--line)}
-  .end .acts{flex-direction:column;align-items:stretch}
-  .end .acts .link{align-self:flex-start}
+  .hero-grid{grid-template-columns:minmax(0,1fr);grid-template-areas:"h" "v" "c"}
+  .intro{margin-top:24px}
+  .cause,.two{grid-template-columns:minmax(0,1fr)}
+  .mbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:60;padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));background:rgba(251,246,239,.96);border-top:1px solid var(--line)}
+  .mbar .btn{width:100%}
+  body{padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
 }
-@media(max-width:420px){
-  .tr{grid-template-columns:88px minmax(0,1fr);gap:14px}
-  .list li{grid-template-columns:minmax(0,1fr) auto;}
-  .list .where{grid-column:1;grid-row:2;font-size:14px}
-  .list .tier{grid-row:1/3;grid-column:2;align-self:center}
+@media(max-width:560px){
+  .wrap{padding-inline:16px}
+  .top .btn{display:none}
+  .stat{padding:18px}
+  .cases li{grid-template-columns:4em minmax(0,1fr);}
+  .cases .d{grid-column:2}
 }
+.js .rise{opacity:0;translate:0 18px;transition:opacity .5s ease,translate .5s cubic-bezier(.2,.8,.2,1)}
+.js .rise.in{opacity:1;translate:0 0}
 @media(prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
   .js .rise{opacity:1;translate:none;transition:none}
-  .cta{transition:none}
+  .btn{transition:none}
 }
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
@@ -395,15 +344,15 @@ footer p{margin-top:16px;font-size:13px}
 .vr-wrap{max-width:720px;margin:0 auto;padding:88px 24px 96px;min-height:100%;display:flex;flex-direction:column}
 .vr-close{position:fixed;top:18px;right:18px;width:44px;height:44px;border-radius:50%;background:transparent;border:1px solid var(--vr-hair);color:var(--vr-mute);font-size:20px;line-height:1;cursor:pointer;transition:color .2s,border-color .2s}
 .vr-close:hover,.vr-close:focus-visible{color:var(--vr-ivory);border-color:var(--vr-ivory)}
-.vr-kick{font-family:'Saira Condensed',sans-serif;font-weight:700;letter-spacing:.42em;font-size:11px;color:var(--gold);text-transform:uppercase}
+.vr-kick{font-family:var(--num);font-weight:700;letter-spacing:.42em;font-size:11px;color:var(--hl);text-transform:uppercase}
 .vr-title{font-weight:300;font-size:clamp(34px,8vw,56px);line-height:1.15;letter-spacing:-.01em;margin:22px 0 18px;color:var(--vr-ivory)}
 .vr-title b{font-weight:700}
 .vr-lead{font-size:15px;line-height:1.85;color:var(--vr-mute);max-width:520px;font-weight:400}
 .vr-rule{height:1px;background:var(--vr-hair);margin:56px 0 8px;border:0}
 .vr-item{display:grid;grid-template-columns:56px 1fr;gap:8px 20px;padding:36px 0;border-bottom:1px solid var(--vr-hair)}
-.vr-no{font-family:'Saira Condensed',sans-serif;font-size:13px;letter-spacing:.2em;color:var(--vr-mute);padding-top:6px}
+.vr-no{font-family:var(--num);font-size:13px;letter-spacing:.2em;color:var(--vr-mute);padding-top:6px}
 .vr-name{font-size:22px;font-weight:600;color:var(--vr-ivory);letter-spacing:-.005em}
-.vr-en{display:block;font-family:'Saira Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.3em;color:var(--vr-mute);margin-top:6px;text-transform:uppercase}
+.vr-en{display:block;font-family:var(--num);font-weight:700;font-size:11px;letter-spacing:.3em;color:var(--vr-mute);margin-top:6px;text-transform:uppercase}
 .vr-desc{grid-column:2;font-size:14.5px;line-height:1.85;color:var(--vr-mute);margin-top:8px}
 .vr-desc b{color:var(--vr-ivory);font-weight:600}
 .vr-price{margin:48px 0 0;font-size:13.5px;line-height:1.8;color:var(--vr-mute)}
@@ -411,7 +360,7 @@ footer p{margin-top:16px;font-size:13px}
 .vr-cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}
 .vr-btn{flex:1 1 220px;display:block;text-align:center;padding:16px 18px;font-size:14px;font-weight:700;text-decoration:none;letter-spacing:.02em;transition:background .2s,color .2s,border-color .2s}
 .vr-btn.main{background:var(--vr-ivory);color:#050505}
-.vr-btn.main:hover,.vr-btn.main:focus-visible{background:var(--gold)}
+.vr-btn.main:hover,.vr-btn.main:focus-visible{background:var(--hl)}
 .vr-btn.sub{border:1px solid var(--vr-hair);color:var(--vr-ivory)}
 .vr-btn.sub:hover,.vr-btn.sub:focus-visible{border-color:var(--vr-ivory)}
 .vr-sign{margin-top:auto;padding-top:64px;font-size:12px;color:var(--vr-mute);letter-spacing:.04em}
@@ -427,266 +376,278 @@ html.vr-lock{overflow:hidden}
   <div class="wrap top-in">
     <a class="logo" href="#top" aria-label="MRI ACADEMY 처음으로">MRI ACADEMY</a>
     <nav class="menu" aria-label="주 메뉴">
-      <a href="#growth">성장 기록</a><a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#plans">가격</a><a href="lesson-schedule.html">수업 시간표</a><a href="#direct">직강</a>
+      <a href="#cause">원인 찾기</a><a href="#growth">수강생 기록</a><a href="#trainers">가르치는 사람</a><a href="#plans">가격</a><a href="#faq">자주 묻는 질문</a>
     </nav>
-    <a class="cta" href="#start">레벨 테스트 신청<span class="dot"> · </span><span class="p">20,000원</span></a>
+    <a class="btn" href="apply.html?utm_source=site&amp;utm_medium=nav">레벨 테스트 신청</a>
   </div>
 </header>
 
 <main id="top">
 
-  <!-- 1. 소개 영상 — 오너 10/18 「들어오자마자 커리큘럼부터 가격까지 설명하는 영상이 가장 먼저 눈에 띄게」.
-       파일 주소는 아래 data-h(PC 가로 16:9) · data-v(폰 세로 9:16) 두 곳에서만 바꾼다. src 속성이 아니라 data 로 둔 까닭:
-       파일이 저장소에 없는 동안 사이트 점검(site-files 시험)이 없는 파일을 부른다고 막지 않게 하려고.
-       영상을 불러오지 못하면(파일 없음 · 형식 오류) 칸 전체가 숨은 채로 남는다 — 깨진 화면이 나가지 않는다.
-       자동재생은 무음 · playsinline · 반복 없음. 「소리 켜고 보기」를 누르면 소리가 켜진다 -->
-  <section class="intro" id="intro" aria-label="MRI ACADEMY 소개 영상" hidden
-           data-h="assets/video/intro_h.mp4"
-           data-v="assets/video/intro_v.mp4">
-    <div class="wrap">
-      <div class="iv-frame">
-        <video class="iv" muted playsinline preload="metadata" aria-label="MRI ACADEMY 소개 영상 · 커리큘럼부터 가격까지 80초"></video>
-        <button type="button" class="iv-sound">소리 켜고 보기</button>
-      </div>
-      <div class="iv-acts">
-        <a class="cta" href="apply.html?utm_source=site&amp;utm_medium=intro">레벨 테스트 신청</a>
+  <!-- 2. 첫 화면 — 왼쪽 제목 · 오른쪽 소개 영상(PC 가로) / 폰은 제목 바로 아래 세로 영상(오너 10/21 「레벨테스트 영상 바로 눈에 보이게」) -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <h1 class="h1">감도 말고<br><span class="hl">원인</span>을 고쳐요</h1>
+
+      <!-- 소개 영상 — 파일 주소는 아래 data-h(PC 가로 16:9) · data-v(폰 세로 9:16) 두 곳에서만 바꾼다. src 속성이 아니라 data 로 둔 까닭:
+           파일이 저장소에 없는 동안 사이트 점검(site-files 시험)이 없는 파일을 부른다고 막지 않게 하려고.
+           영상을 불러오지 못하면(파일 없음 · 형식 오류) 칸 전체가 숨은 채로 남고 제목 칸이 넓게 펴진다 — 깨진 화면이 나가지 않는다.
+           자동재생은 무음 · playsinline · 반복 없음. 「소리 켜고 보기」를 누르면 소리가 켜진다 -->
+      <section class="intro" id="intro" aria-label="MRI ACADEMY 소개 영상" hidden
+               data-h="assets/video/intro_h.mp4"
+               data-v="assets/video/intro_v.mp4">
+        <div class="iv-card">
+          <div class="iv-frame">
+            <video class="iv" muted playsinline preload="metadata" aria-label="MRI ACADEMY 소개 영상 · 커리큘럼부터 가격까지 80초"></video>
+            <button type="button" class="iv-sound">소리 켜고 보기</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="hero-copy">
+        <p class="lead">감도를 여러 번 바꿔도 그대로였다면 문제는 숫자가 아닐 수 있어요. 지는 장면을 같이 보고 진짜 이유부터 찾아요</p>
+        <div class="acts">
+          <a class="btn" href="apply.html?utm_source=site&amp;utm_medium=hero">레벨 테스트 신청 · <span class="p">20,000원</span></a>
+          <a class="btn ghost" href="#plans">가격 보기</a>
+        </div>
+        <p class="fine">60~90분 · 시작 3시간 전까지 취소하면 전액 환불</p>
       </div>
     </div>
   </section>
 
-  <!-- 2. 간판 -->
-  <section class="hero">
+  <!-- 3. 숫자 네 칸 — 장부로 다시 셀 수 있는 값만(회계 실측 10/18 · 오너 「숫자는 장부 확인값으로」 10/20 · 고정 글자).
+       원장 = 2023년 10월(장부 시작)부터 수강생 120명 · 원장 직강 400회 이상 / 트레이너 = 2026년 4월부터 레슨 3,100판 이상 / S29 카카오 1위 5,000 RP -->
+  <section class="wrap">
+    <div class="stats">
+      <div class="card stat"><div class="v num">120<small>명</small></div><div class="k">수강생 · 2023년 10월부터</div></div>
+      <div class="card stat"><div class="v num">400<small>회+</small></div><div class="k">원장 직강</div></div>
+      <div class="card stat"><div class="v num">3,100<small>판+</small></div><div class="k">트레이너 레슨 · 2026년 4월부터</div></div>
+      <div class="card stat"><div class="v num">S29 1위</div><div class="k">원장 · 카카오 5,000 RP</div></div>
+    </div>
+  </section>
+
+  <!-- 4. 원인 찾기 — 방송 채팅 질문(닉네임 없이) -->
+  <section class="sec" id="cause">
     <div class="wrap">
-      <div class="eyebrow">배틀그라운드 경쟁전 코칭</div>
-      <!-- 간판 = 실적 두 줄 · 장부로 다시 셀 수 있는 값만(회계 실측 10/18 · 오너 「숫자는 장부 확인값으로」 10/20 · 고정 글자).
-           원장 = 2023년 10월(장부 시작)부터 수강생 120명 · 원장 직강 400회 이상 / 트레이너 = 2026년 4월부터 레슨 3,100판 이상.
-           종전 「101명 · 직강 4,200시간 이상」 「78명 · 레슨 약 4,000판」은 근거 재현이 안 돼서 뺐다(400회 × 3시간 ≈ 1,200시간). 트레이너 인원은 확인값이 없어 뺐다 -->
-      <h1 class="sign">
-        <span class="ln"><span class="hd"><b>원장</b><span>2023년 10월부터</span></span><span class="big">수강생 120<small>명</small><span class="sep">·</span>원장 직강 400<small>회 이상</small></span></span>
-        <span class="ln"><span class="hd"><b>트레이너</b><span>2026년 4월부터</span></span><span class="big">레슨 3,100<small>판 이상</small></span></span>
-      </h1>
-      <div class="hero-row">
-        <div class="hero-txt">
-          <p class="note">29시즌(2024년 6월) · 수강생 3명과 번갈아 가며 처음부터 끝까지 함께 5,000점 달성</p>
+      <div class="kick">원인 찾기</div>
+      <h2 class="h2">방송 채팅에서 제일 많이 받는 질문</h2>
+      <div class="cause">
+        <div class="card chat">
+          <p class="bub">형 감도 몇이에요?</p>
+          <p class="bub">감도 공유 좀 해 주세요</p>
+          <p class="bub">똑같이 맞췄는데 저는 왜 안 맞을까요</p>
+          <p class="bub ans">감도는 그대로 두세요. 원인은 따로 있어요</p>
         </div>
-        <div class="hero-acts">
-          <a class="link" href="#plans">가격 먼저 보기</a>
-          <a class="cta" href="apply.html?utm_source=site&amp;utm_medium=hero">레벨 테스트 신청 · <span class="p">20,000원</span></a>
+        <!-- 3/10 → 7/7 = 소개 영상 첫 장면(0:00~0:12)의 수강생 기록 그대로 — 처음 상담 때 실내 사격장 50m 10발 중 3발 → 22분 뒤 7발 모두 가운데 · 감도 교정 없음 · 이름 비공개 -->
+        <div class="card proof">
+          <h3>감도는 한 번도 안 바꿨어요</h3>
+          <div class="pair">
+            <div class="sc"><div class="v num">3/10</div><div class="k">처음 상담 · 50m 10발 중 3발</div></div>
+            <div class="arr" aria-hidden="true">→</div>
+            <div class="sc"><div class="v num">7/7</div><div class="k">22분 뒤 · 7발 모두 가운데</div></div>
+          </div>
+          <p class="note">초탄 반동을 이해하고 연습해서 바뀌었어요. 수강생 기록이고 이름은 밝히지 않아요</p>
         </div>
       </div>
+    </div>
+  </section>
 
-      <!-- 4. 칸 배치 -->
-      <div class="grid">
-
-        <!-- 성장 기록 — GET /api/progress-public(전적 스냅샷 원장 · 상위 상승 순 · 닉 마스킹 「세**」) -->
-        <article class="cell s7 rise" id="growth" aria-labelledby="growthH">
-          <div class="eyebrow">Growth Record</div>
-          <h2 id="growthH">수강 전 → 달성, 전적 그대로</h2>
-          <!-- 외딴 숫자 칸을 성장 기록 안으로 합침(10/20). 5명은 /api/site-metrics 의 graduatesMasterPlus 가 오면 덮어쓴다 -->
-          <p class="g-fact"><b><span data-srv="graduatesMasterPlus">5</span>명</b> 레슨으로 마스터 이상 달성</p>
-          <!-- 불러오는 동안 뼈대를 보여 주고, 지난번 받은 기록이 있으면 그걸 먼저 그린다 -->
-          <div id="growthBody" aria-busy="true"><div class="sk" aria-hidden="true"><div class="sk-feat"><i></i><i></i></div><i></i><i></i><i></i></div><p class="sr">기록을 불러오고 있어요</p></div>
-          <a class="link more" href="gmi-progress.html">성장 기록 전체 보기</a>
-        </article>
-
-        <!-- 메인 영상 — 준구 트레이너 매드무비(오너 10/3) · 누르면 유튜브로 -->
-        <a class="cell s5 vid rise" href="https://youtu.be/LkHHjpjKQbU" target="_blank" rel="noopener" aria-label="준구 트레이너 매드무비 유튜브에서 보기">
-          <div class="th"><img src="https://i.ytimg.com/vi/LkHHjpjKQbU/hqdefault.jpg" alt="" width="480" height="360" loading="lazy" onerror="this.remove()"></div>
-          <div class="bd">
-            <div class="eyebrow">Mad Movie · YouTube</div>
-            <b>준구 트레이너 매드무비</b>
-            <span>교전 장면 모음</span>
+  <!-- 5. 얼마나 다니면 달라져요 — 레슨(PUBG 공식 전적)과 원장 직강(관리대장 · 후기)을 나눠 보여 준다(오너 10/21).
+       큰 숫자 · 걸린 기간 · 후기 · 원장 직강 사례는 회계 집계 중이라 [확인 대기] 자리만 둔다(하드코딩 금지 · 값은 지휘가 내려보낸다).
+       레슨 사례 세 줄은 GET /api/progress-public(전적 스냅샷 · 닉은 서버가 「세**」로 가림)에서 채운다 -->
+  <section class="sec" id="growth" style="padding-top:0">
+    <div class="wrap">
+      <div class="kick">수강생 기록</div>
+      <h2 class="h2">얼마나 다니면 달라져요?</h2>
+      <div class="two">
+        <article class="card rec" aria-labelledby="recL">
+          <div><div class="tag" id="recL">트레이너 레슨</div><div class="src">PUBG 공식 전적 · 2026년 6~10월</div></div>
+          <div>
+            <div class="big num"><span class="pend">확인 대기</span> <small>/</small> <span class="pend">확인 대기</span><small>명</small></div>
+            <div class="lab">전적이 쌓이는 레슨생 중 티어가 오른 사람</div>
           </div>
-        </a>
+          <p class="took">오른 사람은 첫 수업부터 보통 <span class="pend">확인 대기</span> 안팎</p>
+          <!-- 불러오는 동안 뼈대를 보여 주고, 지난번 받은 기록이 있으면 그걸 먼저 그린다 -->
+          <div id="growthBody" aria-busy="true"><div class="sk" aria-hidden="true"><i></i><i></i><i></i></div><p class="sr">기록을 불러오고 있어요</p></div>
+          <p class="quote">후기 한 줄 <span class="pend">확인 대기</span></p>
+          <!-- 5명은 /api/site-metrics 의 graduatesMasterPlus 가 오면 덮어쓴다 -->
+          <p class="g-fact"><b><span data-srv="graduatesMasterPlus">5</span>명</b> 레슨으로 마스터 이상 달성</p>
+          <a class="link more" href="gmi-progress.html">레슨 기록 전체 보기</a>
+        </article>
+        <article class="card dk rec" aria-labelledby="recD">
+          <div><div class="tag" id="recD">원장 직강</div><div class="src">2023년 9월부터 · 관리대장 · 후기</div></div>
+          <div>
+            <div class="big num"><span class="pend">확인 대기</span> <small>/</small> <span class="pend">확인 대기</span><small>명</small></div>
+            <div class="lab">원장 직강을 들은 사람 중 티어가 오른 사람</div>
+          </div>
+          <p class="took">걸린 기간 <span class="pend">확인 대기</span></p>
+          <ul class="cases">
+            <li><span class="nick">**</span><span class="tr"><span class="pend">시작 → 달성</span></span><span class="d"><span class="pend">기간</span></span></li>
+            <li><span class="nick">**</span><span class="tr"><span class="pend">시작 → 달성</span></span><span class="d"><span class="pend">기간</span></span></li>
+            <li><span class="nick">**</span><span class="tr"><span class="pend">시작 → 달성</span></span><span class="d"><span class="pend">기간</span></span></li>
+          </ul>
+          <p class="quote">후기 한 줄 <span class="pend">확인 대기</span></p>
+        </article>
+      </div>
 
-        <!-- 가르치는 사람 셋 — 같은 크기 칸 · 사진은 이름 옆 64px 원
-             기록 · 누적 숫자는 지휘가 장부에서 뽑은 10/3 기준 고정 글자. 최근 30일은 서버 값(byTrainer.students30)이 오면 덮어쓴다 -->
-        <article class="cell s4 person rise" id="trainers" aria-labelledby="muriH">
+      <!-- 수업 영상 — 영상 주소는 아래 data-yt 한 곳에서만 바꾼다(유튜브 주소 또는 영상 ID).
+           비어 있으면 칸 전체가 화면에 안 나온다. 제목 · 설명 문구도 data-title · data-desc 에서 바꾼다.
+           처음엔 썸네일 + 재생 버튼만 보이고, 누르면 그 자리에서 재생한다(유튜브 플레이어는 누를 때만 불러옴) -->
+      <article class="card lv" id="lessonVideo" aria-labelledby="lvH" hidden
+               data-yt=""
+               data-title=""
+               data-desc="">
+        <h3 id="lvH"></h3>
+        <p class="lead" id="lvDesc"></p>
+        <div class="lv-frame"><button type="button" class="lv-play" aria-label="수업 영상 재생"><span class="lv-btn" aria-hidden="true"></span></button></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- 6. 오해 → 실제 원인 — [오너 확인] 아래 세 장 문구는 시안 초안이다. 오너 확인 전 머지 금지 -->
+  <section class="sec" id="myths" style="padding-top:0">
+    <div class="wrap">
+      <div class="kick">오해와 실제</div>
+      <h2 class="h2">다들 이렇게 생각해요</h2>
+      <div class="three">
+        <div class="card myth"><div class="no">01</div><p class="q">감도가 안 맞아서 진다</p><p class="a">교전을 여는 자리와 타이밍이 늦은 경우가 더 많아요</p></div>
+        <div class="card myth"><div class="no">02</div><p class="q">에임이 부족해서 진다</p><p class="a">이길 수 있는 싸움만 고르는 판단이 먼저예요</p></div>
+        <div class="card myth"><div class="no">03</div><p class="q">판을 많이 하면 는다</p><p class="a">지는 장면을 다시 보지 않으면 같은 실수가 판수만큼 쌓여요</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. 가르치는 사람 셋 — 같은 높이 칸 · 링크는 바닥에.
+       기록 · 누적 숫자는 지휘가 장부에서 뽑은 10/3 기준 고정 글자. 최근 30일은 서버 값(byTrainer.students30)이 오면 덮어쓴다.
+       트레이너 소개 한 줄은 아직 없어서 빈칸 표시(지휘 10/21) -->
+  <section class="sec" id="trainers" style="padding-top:0">
+    <div class="wrap">
+      <div class="kick">가르치는 사람</div>
+      <h2 class="h2">원장 한 명, 서바이버 트레이너 두 명</h2>
+      <div class="three">
+        <article class="card person" aria-labelledby="muriH">
           <div class="who"><img class="av" src="img/trainers/mr-lead.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">원장 · 직강</div><div class="nm" id="muriH">이무리</div></div></div>
-          <!-- 첫 화면 간판에서 내려온 29시즌 기록(10/4) -->
           <div class="stat1"><span class="v num">S29 1위</span><span class="k">카카오 서버 · 5,000 RP</span></div>
           <p class="one">29시즌 카카오 서버에서 수강생 세 분과 함께 1위를 달성했어요. 그 뒤로 강의 방송을 시작했어요</p>
-          <p class="fine">1위 점수 5,000점은 그때 최고 점수였어요. 36시즌에 서바이버가 생기면서 최고 점수가 9,999점으로 바뀌었어요</p>
           <ul class="recs">
-            <li>S29 카카오 1위 · 5,000 RP · 평균 딜량 684</li>
             <li>S36 카카오 1위 · 서바이버 5,002 RP · 평균 딜량 614</li>
             <li>S38 스팀 서바이버 두 계정 · 4,359 RP · 4,370 RP</li>
           </ul>
           <div class="links"><a href="#plans">원장 직강 보기</a><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a></div>
         </article>
-
-        <article class="cell s4 person rise" aria-labelledby="htH">
+        <article class="card person" aria-labelledby="htH">
           <div class="who"><img class="av" src="img/trainers/ht-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너 · 이번 시즌 우수 트레이너</div><div class="nm" id="htH">현태</div></div></div>
           <div class="stat1"><span class="v num">4,527<small>RP</small></span><span class="k">S41 스팀 서바이버</span></div>
+          <p class="one">소개 한 줄 <span class="pend">확인 대기</span></p>
           <p class="tot">누적 <b>50명</b> · <b>2,496판</b><span>2026년 4월부터</span></p>
           <p class="r30">최근 30일 <span data-trainer="hyuntae">16</span>명</p>
           <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae">현태에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_Hye0n" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/gusxo3874" target="_blank" rel="noopener">SOOP</a></div>
         </article>
-
-        <article class="cell s4 person rise" aria-labelledby="jgH">
+        <article class="card person" aria-labelledby="jgH">
           <div class="who"><img class="av" src="img/trainers/jg-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너</div><div class="nm" id="jgH">준구</div></div></div>
-          <div class="stat1"><span class="v num">S38</span><span class="k">서바이버</span></div>
+          <div class="stat1"><span class="v num">S38</span><span class="k">스팀 서바이버</span></div>
+          <p class="one">소개 한 줄 <span class="pend">확인 대기</span></p>
           <p class="tot">누적 <b>37명</b> · <b>1,425판</b><span>2026년 3월부터</span></p>
           <p class="r30">최근 30일 <span data-trainer="jungu">7</span>명</p>
           <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">SOOP</a></div>
         </article>
-
-        <!-- 원장에게 바로 신청 — 원장 카드 안에 있던 연락처를 한 줄로 뺐다(10/20 · 세 카드 높이 맞춤). 오너 10/3 지정 창구 그대로 -->
-        <aside class="cell s12 ask-strip rise" id="direct" aria-labelledby="askH">
-          <div class="ask-h" id="askH">원장에게 바로 신청</div>
-          <dl>
-            <div><dt>디스코드</dt><dd>e_muri<small>친구 추가 후 메시지</small></dd></div>
-            <div><dt>강의 서버</dt><dd><a href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">MRI ACADEMY 디스코드</a></dd></div>
-            <div><dt>이메일</dt><dd><a href="mailto:shlee9498@naver.com">shlee9498@naver.com</a> · <a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></dd></div>
-          </dl>
-        </aside>
-
-        <!-- 커리큘럼 — 오너가 설명한 실제 수업 순서(10/4). 단계별 넘어가는 기준은 트레이너 답을 받은 뒤 채운다 -->
-        <article class="cell s12 rise" id="curriculum" aria-labelledby="curH">
-          <!-- 원장 직강 핵심 문구 자리 — 10/20 세 줄은 오너 10/21 지시로 뺐다. 새 문구는 지휘 시안으로 내려온다 -->
-          <div class="eyebrow">Curriculum</div>
-          <h2 id="curH">수업 순서</h2>
-          <p class="lead">처음 오면 레벨 테스트로 시작 단계를 정함</p>
-          <div class="steps">
-            <div class="step"><div class="n">01</div><div class="nm">피지컬 기초</div><div class="d">연습 모드에서 소규모 교전 · 투척물 · 차량 · 라인전 · 피킹</div></div>
-            <div class="step"><div class="n">02</div><div class="nm">일반 게임 운영</div><div class="d">판을 읽는 법, 치킨까지 가 보는 경험</div></div>
-            <div class="step"><div class="n">03</div><div class="nm">경쟁전 레슨</div><div class="d">익숙해진 뒤 경쟁전 실전</div></div>
-            <div class="step"><div class="n">04</div><div class="nm">마스터 · 서바이버</div><div class="d">상위 티어 도달</div></div>
-          </div>
-        </article>
-
-        <!-- 수업 영상 — 영상 주소는 아래 data-yt 한 곳에서만 바꾼다(유튜브 주소 또는 영상 ID).
-             비어 있으면 칸 전체가 화면에 안 나온다. 제목 · 설명 문구도 data-title · data-desc 에서 바꾼다.
-             처음엔 썸네일 + 재생 버튼만 보이고, 누르면 그 자리에서 재생한다(유튜브 플레이어는 누를 때만 불러옴).
-             이 자리에 있던 복기 칸은 오너 10/9 지시로 뺐다 — 되살릴 땐 #501 머지(1a9262f)의 index.html 에서 가져온다 -->
-        <article class="cell s12 rise" id="lessonVideo" aria-labelledby="lvH" hidden
-                 data-yt=""
-                 data-title=""
-                 data-desc="">
-          <div class="eyebrow">Lesson Video</div>
-          <h2 id="lvH"></h2>
-          <p class="lead" id="lvDesc"></p>
-          <div class="lv-frame"><button type="button" class="lv-play" aria-label="수업 영상 재생"><span class="lv-btn" aria-hidden="true"></span></button></div>
-        </article>
-
       </div>
     </div>
   </section>
 
-  <!-- 5. 가격 — 숫자 · 문구는 이전 화면 값 그대로(토스 심사 대상) -->
-  <section class="sec" id="plans">
+  <!-- 8. 가격 — 숫자는 정본 그대로(토스 심사 대상 · 레슨 45,000 · 90,000 · 140,000 · 99판 420,000 · 직강 290,000 · 레벨 테스트 20,000).
+       원장 직강 = 290,000 하나 · 세트 없음(가격 계약 docs/direct-price-unify.md §1 · §5 · 오너 10/19) -->
+  <section class="sec" id="plans" style="padding-top:0">
     <div class="wrap">
-      <div class="eyebrow">Price</div>
-      <h2 class="sec-h">레슨 10판, 판당 4,500원</h2>
-      <p class="entry">처음이면 <b>레벨 테스트 20,000원</b> → 실력 보고 직강 반 또는 레슨</p>
-      <div class="price-main">
-        <div class="big-p">
-          <div class="lab">레슨 10판</div>
-          <div class="v">45,000<small>원</small></div>
+      <div class="kick">가격</div>
+      <h2 class="h2">처음엔 레벨 테스트부터</h2>
+      <div class="plans">
+        <div class="card plan first">
+          <div class="step">01<span>먼저</span></div>
+          <h3>레벨 테스트</h3>
+          <div class="price num">20,000<small>원</small></div>
+          <p class="d">60~90분 동안 다시보기로 지는 장면을 보고, 실력에 맞춰 직강 반 또는 레슨을 정해요</p>
+          <p class="sm">예약 3시간 전까지 취소하면 전액 환불이고, 그 뒤 취소와 불참은 환불되지 않아요</p>
+          <a class="btn" href="apply.html?utm_source=site&amp;utm_medium=plans">레벨 테스트 신청</a>
         </div>
-        <div>
-          <div class="prow"><div class="n">21판<small>판당 4,286원</small></div><div class="p">90,000<small>원</small></div></div>
-          <div class="prow"><div class="n">33판<small>판당 4,242원</small></div><div class="p">140,000<small>원</small></div></div>
-          <div class="prow"><div class="n">99판<small>33판 × 3 · 한 번에 넉넉히 받고 싶은 분</small></div><div class="p">420,000<small>원</small></div></div>
+        <div class="card plan">
+          <h3>트레이너 레슨</h3>
+          <div class="price num">45,000<small>원부터</small></div>
+          <div class="prows">
+            <div class="prow"><div class="n">10판<small>판당 4,500원</small></div><div class="p">45,000<small>원</small></div></div>
+            <div class="prow"><div class="n">21판<small>판당 4,286원</small></div><div class="p">90,000<small>원</small></div></div>
+            <div class="prow"><div class="n">33판<small>판당 4,242원</small></div><div class="p">140,000<small>원</small></div></div>
+          </div>
+          <p class="d">개인 1시간은 5판이 차감돼요</p>
+          <p class="sm">1시간 30분 8판 · 2시간 10판. 그룹 · 관전형은 실제로 한 판 수만큼 줄어요</p>
         </div>
-      </div>
-      <!-- 원장 직강 = 290,000 하나 · 세트 없음(가격 계약 docs/direct-price-unify.md §1 · §5 · 오너 10/19) -->
-      <div class="cols">
-        <div>
-          <h3>원장 직강</h3><p class="gd">회 단위 · 반 단계와 상관없이 같은 가격 · 직강과 레슨은 따로 신청해요</p>
-          <div class="prow"><div class="n">원장 직강 8회<small>1회 3시간 · 총 24시간</small></div><div class="p">290,000<small>원</small></div></div>
+        <div class="card dk plan">
+          <h3>원장 직강</h3>
+          <div class="price num">290,000<small>원</small></div>
+          <p class="d">8회 · 1회 3시간 · 총 24시간</p>
+          <p class="d">기수반으로 들어요. 반 단계와 상관없이 같은 가격이에요</p>
+          <p class="sm">판이 아니라 회로 세요. 직강과 레슨은 따로 신청해요</p>
         </div>
       </div>
       <div class="pnotes">
+        <p>99판 420,000원(33판 × 3)도 있어요</p>
         <p>핵이나 버그로 터진 게임은 무효로 처리해요</p>
         <p>환불은 남은 판수 × 판당 단가(강의는 남은 회차 × 회당 단가)이고 위약금은 없어요. 자세한 기준은 <a class="link" href="terms.html">이용약관 제7조</a>에 있어요</p>
       </div>
-      <a class="vip-door link" href="#vip" data-vip-open>정해진 구성 말고 원장과 1:1로 맞추고 싶다면 <span>VIP 룸</span></a>
+      <a class="vip-door link" href="#vip" data-vip-open>정해진 구성 말고 원장과 1:1로 맞추고 싶다면 VIP 룸</a>
     </div>
   </section>
 
-  <!-- 6. 차감 기준 — 레슨은 판, 원장 직강은 회 -->
-  <section class="sec" id="rules">
+  <!-- 9. 자주 묻는 질문 — 환불 답은 지금 문장 그대로(약관 제7조 연결) -->
+  <section class="sec" id="faq" style="padding-top:0">
     <div class="wrap">
-      <div class="eyebrow">Count Rule</div>
-      <h2 class="sec-h">판수 차감 기준</h2>
-      <p class="sec-sub">레슨은 판 단위, 원장 직강은 회 단위</p>
-      <div class="rules">
-        <div class="rule">
-          <div class="who">개인 레슨 · 1시간</div>
-          <div class="v">5<small>판</small></div>
-          <ul><li>1시간 30분 8판</li><li>2시간 10판</li></ul>
-        </div>
-        <div class="rule">
-          <div class="who">그룹 레슨(참여형 · 관전형)</div>
-          <div class="v">1판 = 1<small>판</small></div>
-          <p>시간과 상관없이 실제로 한 판 수만큼 줄어요. 그룹으로 잡았으면 1명만 와도 같은 기준이에요</p>
-        </div>
-        <div class="rule">
-          <div class="who">원장 직강</div>
-          <div class="v">1회 = 3<small>시간</small></div>
-          <p>판이 아니라 회로 세요. 한 과정은 8회예요</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- 7. 마무리 -->
-  <section class="end" id="start">
-    <div class="wrap">
-      <h2 class="end-h">다음 기록은 내 전적</h2>
-      <p class="flow"><b>다시보기 2~4개 챙기기</b> → <b>트레이너 고르고 신청</b> → <b>일정 잡고 시작</b></p>
-      <div class="acts">
-        <a class="cta" href="apply.html?utm_source=site&amp;utm_medium=end">레벨 테스트 신청 · <span class="p">20,000원</span></a>
-        <a class="link" href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">간단한 질문은 디스코드로</a>
-      </div>
-      <p class="lt-note">레벨 테스트는 60~90분이에요. 예약 3시간 전까지 취소하면 전액 환불이고, 그 뒤 취소와 불참은 환불되지 않아요</p>
-
-      <div class="faq" id="faq">
-        <h2>자주 묻는 질문</h2>
+      <div class="kick">자주 묻는 질문</div>
+      <h2 class="h2">신청 전에 많이 물어봐요</h2>
+      <div class="faq">
+        <details>
+          <summary>얼마나 다니면 달라져요?</summary>
+          <div class="a">실력대와 연습량에 따라 달라요. 위 <a href="#growth">수강생 기록</a>에 레슨과 원장 직강을 나눠서 실제 기록을 올려 두었어요.</div>
+        </details>
         <details>
           <summary>레슨이랑 원장 강의는 뭐가 달라요?</summary>
           <div class="a"><b>레슨</b>은 판수 기준으로 서바이버 트레이너와 같이 게임하며 배워요. <b>원장 강의</b>는 예약한 1회 3시간 동안 이무리 원장이 직접 가르치는 8회 과정이고, 레벨 테스트에 합격했거나 레슨을 마친 분이 들을 수 있어요.</div>
         </details>
         <details>
-          <summary>처음인데 뭐부터 하면 돼요?</summary>
-          <div class="a">레벨 테스트부터 해요. 다시보기 파일 2개 이상을 받아 플레이와 습관, 교전 디테일을 60~90분 동안 보고 방향을 잡아요. <b>다이아 2 · 300딜 이하</b>라면 레슨부터 권해요.</div>
-        </details>
-        <details>
-          <summary>판수는 어떻게 줄어요?</summary>
-          <div class="a"><b>개인 레슨</b>은 시간 기준으로 1시간에 5판이에요. <b>그룹 레슨과 관전형</b>은 실제로 한 판 수만큼 줄어요. 남은 판수는 수강생 앱에서 언제든 볼 수 있어요.</div>
-        </details>
-        <details>
-          <summary>여러 명이 같이 들을 수 있나요?</summary>
-          <div class="a">네. 레슨은 <b>그룹 레슨(수강생 3명 + 트레이너 1명)</b>이나 <b>관전형(최대 4명)</b>으로 들을 수 있어요. 원장 강의도 같은 실력대 <b>3명</b>으로 편성돼요.</div>
-        </details>
-        <details>
-          <summary>새벽이나 심야에도 수업이 돼요?</summary>
-          <div class="a">돼요. <b>연중무휴 24시간</b> 운영하고, 1주일 전에만 맞춰 주시면 어떤 시간대든 잡아요. 비어 있는 그룹 자리는 <a href="lesson-schedule.html">수업 시간표</a>에서 로그인 없이 볼 수 있어요.</div>
+          <summary>수업 기록은 어디서 봐요?</summary>
+          <div class="a">남은 판수와 지난 수업 기록은 <a href="https://app.mriacademy.gg/" rel="noopener">수강생 앱</a>에서 언제든 볼 수 있어요.</div>
         </details>
         <details>
           <summary>환불이 되나요?</summary>
           <div class="a">수강 시작 전이면 전액 돌려드려요. 시작한 뒤에는 <b>남은 판수 × 판당 단가</b>(강의는 남은 회차 × 회당 단가)로 돌려드리고 위약금은 없어요. 무료로 받은 보너스 판은 먼저 쓴 것으로 보고, 결제한 판수 중 남은 만큼만 계산해요. 레벨 테스트는 예약 3시간 전까지 취소하면 전액 환불이고, 그 뒤 취소와 불참은 환불되지 않아요. 자세한 기준은 <a href="terms.html">이용약관 제7조</a>에 있어요.</div>
         </details>
-        <details>
-          <summary>기존 수강생인데 가격이 바뀌었어요. 저도 새 가격인가요?</summary>
-          <div class="a">아니요. <b>기존 수강생은 등록 당시 조건이 그대로 유지</b>돼요(기존 등록 기준 2시간 = 1회 포함). 새 가격표는 신규 등록부터 적용하고, 재등록할 때 안내해요.</div>
-        </details>
       </div>
+    </div>
+  </section>
+
+  <!-- 10. 마지막 신청 칸 -->
+  <section class="wrap" id="start">
+    <div class="card dk end">
+      <h2 class="h2">감도 바꾸기 전에<br>원인부터 봐요</h2>
+      <p class="flow"><b>다시보기 2~4개 챙기기</b> → <b>트레이너 고르고 신청</b> → <b>일정 잡고 시작</b></p>
+      <div class="acts">
+        <a class="btn white" href="apply.html?utm_source=site&amp;utm_medium=end">레벨 테스트 신청 · <span class="p">20,000원</span></a>
+        <a class="link" href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">간단한 질문은 디스코드로</a>
+      </div>
+      <p class="fine">레벨 테스트는 60~90분이에요. 예약 3시간 전까지 취소하면 전액 환불이고, 그 뒤 취소와 불참은 환불되지 않아요</p>
     </div>
   </section>
 </main>
 
 <footer>
   <div class="wrap">
-    <!-- 맨 아래 링크 — 자주 쓰는 6개만 펼쳐 두고 나머지는 「더 보기」 안에(10/4 · 지운 링크 없음) -->
+    <!-- 맨 아래 링크 — 자주 쓰는 6개만 펼쳐 두고 나머지는 「더 보기」 안에. B3(10/21)에서 없어진 칸(커리큘럼 · 차감 기준)으로 가던 두 링크만 뺐다 -->
     <div class="fl">
       <a href="#plans">가격</a><a href="lesson-schedule.html">수업 시간표</a><a href="https://app.mriacademy.gg/" rel="noopener">수강생 앱</a><a href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">Discord</a><a href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">카카오</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a>
     </div>
     <details class="more">
       <summary>더 보기</summary>
       <div class="fl">
-        <a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#rules">차감 기준</a><a href="success.html">성장 기록</a><a href="lesson-feedback.html">코칭 기록</a><a href="community.html">후기</a><a href="gmi-progress.html">클랜 성장 기록</a>
+        <a href="#trainers">트레이너</a><a href="success.html">성장 기록</a><a href="lesson-feedback.html">코칭 기록</a><a href="community.html">후기</a><a href="gmi-progress.html">클랜 성장 기록</a>
         <a href="trainer-recruit.html">트레이너 모집</a><a href="sound-guide.html">사운드 세팅 가이드</a><a href="graphics-guide.html">그래픽 세팅 가이드</a>
         <a href="https://shlee9498-dev.github.io/gmi-clancup/" target="_blank" rel="noopener">클랜컵</a><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP</a><a href="#vip" data-vip-open>VIP 룸</a>
       </div>
@@ -703,6 +664,9 @@ html.vr-lock{overflow:hidden}
     <p>© 2026 MRI ACADEMY</p>
   </div>
 </footer>
+
+<!-- 폰 — 아래 고정 신청 버튼 -->
+<div class="mbar"><a class="btn" href="apply.html?utm_source=site&amp;utm_medium=mbar">레벨 테스트 신청 · <span class="p">20,000원</span></a></div>
 
 <script>
 // 소개 영상 — 폭으로 가로(data-h) · 세로(data-v) 를 고르고, 불러오면 칸을 연다. 못 불러오면 다른 쪽을 한 번 더 시도하고, 그래도 안 되면 숨긴 채 둔다
@@ -787,24 +751,12 @@ html.vr-lock{overflow:hidden}
   });
   box.hidden = false;
 })();
-// 성장 기록 칸 — GET /api/progress-public(전적 스냅샷 원장 · gmi-progress.html 과 같은 응답 · 상위 상승 순 · 닉은 서버가 「세**」로 가린다)
+// 성장 기록(레슨 칸) — GET /api/progress-public(전적 스냅샷 원장 · gmi-progress.html 과 같은 응답 · 상위 상승 순 · 닉은 서버가 「세**」로 가린다)
 // 숫자 · 닉은 서버 값만 쓴다(하드코딩 금지). 글자는 textContent 로만 넣는다.
 (function(){
   var API = "https://mri-academy-production.up.railway.app";
   var box = document.getElementById("growthBody");
   function el(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
-  function rpOf(traj, last){
-    var pts = (traj || []).filter(function(p){ return p && typeof p.rankPoint === "number"; });
-    if (!pts.length) return null;
-    return Math.round(pts[last ? pts.length - 1 : 0].rankPoint);
-  }
-  function side(cls, label, tier, rp){
-    var d = el("div", "side " + cls);
-    d.appendChild(el("div", "k", label));
-    d.appendChild(el("div", "t", tier || "—"));
-    if (rp != null) { var r = el("div", "rp", rp.toLocaleString("ko-KR")); r.appendChild(el("small", null, "RP")); d.appendChild(r); }
-    return d;
-  }
   function span(s){
     var dl = s.delta || {};
     if (typeof dl.seasons === "number" && dl.seasons > 0) return dl.seasons + "시즌";
@@ -825,27 +777,20 @@ html.vr-lock{overflow:hidden}
     if (!list.length) return fail("전적 스냅샷이 쌓이는 대로 이 자리에 공개돼요");
     render(list); shown = true; done();
     try { localStorage.setItem(KEY, JSON.stringify({ students: list.slice(0, 6) })); } catch (e) {}
-  }).catch(function(){ fail("기록을 불러오지 못했어요. 성장 기록 전체 보기에서 다시 확인할 수 있어요"); });
+  }).catch(function(){ fail("기록을 불러오지 못했어요. 레슨 기록 전체 보기에서 다시 확인할 수 있어요"); });
+  // 레슨 사례 세 줄 — 닉(서버가 가림) · 시작 티어 → 달성 티어 · 걸린 기간
   function render(list){
     box.textContent = "";
-    var top = list[0], f = el("div", "feat");
-    f.appendChild(side("before", "수강 전", top.delta.tierFrom, rpOf(top.trajectory, false)));
-    f.appendChild(el("div", "arr", "→"));
-    f.appendChild(side("after", "달성", top.delta.tierTo, rpOf(top.trajectory, true)));
-    box.appendChild(f);
-    var who = el("p", "feat-who"); who.appendChild(el("b", null, top.alias || "익명"));
-    var sp = span(top); if (sp) who.appendChild(document.createTextNode(" · " + sp));
-    box.appendChild(who);
-    var ul = el("ul", "list");
-    list.slice(1, 6).forEach(function(s){
+    var ul = el("ul", "cases");
+    list.slice(0, 3).forEach(function(s){
       var li = el("li");
       li.appendChild(el("span", "nick", s.alias || "익명"));
-      var w = s.delta.tierFrom + "에서"; var t = span(s); if (t) w += " · " + t;
-      li.appendChild(el("span", "where", w));
-      li.appendChild(el("span", "tier", s.delta.tierTo));
+      var tr = el("span", "tr"); tr.appendChild(document.createTextNode(s.delta.tierFrom + " → ")); tr.appendChild(el("b", null, s.delta.tierTo));
+      li.appendChild(tr);
+      li.appendChild(el("span", "d", span(s)));
       ul.appendChild(li);
     });
-    if (ul.children.length) box.appendChild(ul);
+    box.appendChild(ul);
   }
 })();
 // 「레슨으로 마스터 이상 달성」 — 서버 값(graduations)이 숫자로 올 때만 연다. 키 이름은 경비 응답으로 확정(지금은 요청 초안의 이름)
