@@ -162,11 +162,12 @@ function revertibleUntil(r, nowMs = Date.now()) {
   return until > nowMs ? new Date(until).toISOString() : null;
 }
 
-// 수업 기록의 출처 — 앱(예약 「완료」 · 수업 기록하기) · 봇(/수업등록) · 조정(요청 승인 · /판수정정)
+// 수업 기록의 출처 — 앱(예약 「완료」 · 수업 기록하기) · 자동 완료(24시간 · §9.39) · 봇(/수업등록) · 조정(요청 승인 · /판수정정)
 function sourceOf(row) {
   const by = String(row?.created_by || "");
   if (by.startsWith("adjreq:") || String(row?.memo || "").startsWith("정정:")) return "adjustment";
   if (by === "portal") return "app";
+  if (by === "auto:bell") return "auto";                  // 앱 문구 「자동 완료」 — 「봇 기록」으로 보이지 않게(#605 검수)
   return "bot";
 }
 
@@ -191,7 +192,7 @@ function resolveKinds(ids, known, corr, app, booked) {
       const base = depth < CORRECT_DEPTH && known.has(c.oldId) ? resolve(c.oldId, depth + 1) : null;
       v = c.dur != null ? { kind: "personal", dur: c.dur } : base ? { kind: base.kind, dur: c.same ? base.dur : null } : null;
     } else if (app.has(id)) v = app.get(id);
-    else if (known.get(id)?.created_by === "portal") v = booked(known.get(id));
+    else if (["portal", "auto:bell"].includes(known.get(id)?.created_by)) v = booked(known.get(id));
     memo.set(id, v);
     return v;
   };
@@ -290,7 +291,7 @@ module.exports = function mountTrainerLessons(app, deps) {
       }
     }
     // ③ 예약 「완료」 — 감사로 못 찾은 'portal' 줄만. 같은 수강생 · 트레이너의 완료된 예약(머리 칸) · 날짜 ±1일(자정 넘김)
-    const need = [...known.values()].filter((r) => r.created_by === "portal" && isRealDate(r.played_at)
+    const need = [...known.values()].filter((r) => ["portal", "auto:bell"].includes(r.created_by) && isRealDate(r.played_at)
       && !corr.has(Number(r.id)) && !app.has(Number(r.id)));
     if (need.length) {
       const ds = need.map((r) => r.played_at).sort();
