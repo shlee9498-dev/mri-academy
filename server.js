@@ -8698,8 +8698,8 @@ reconcile = ledgerReconcile.mountReconcile(app, trainerPortal, {
 // trainer-portal 뒤 — 그 파일이 건 게이트 뒤에 서고, 트레이너 판정·범위(담당 ∪ 최근 90일)·응답 가드를 같은 함수로 쓴다.
 reviewApi.mountTrainer(trainerPortal);
 
-// 「AI 무리 복기」 무료 시험판(/api/replay/* · docs/replay-ai.md §13) — 로그인 없음 · 닉네임 조회만 PUBG 한도를 쓴다(분당 4회 몫 · 줄 서기).
-//   저장(§87 버킷 replay · replay_matches · replay_events)이 없으면 메모리 캐시 · 메모리 집계로 돈다.
+// 「AI 무리 복기」 리플 API(/api/replay/* · docs/replay-ai.md §13) — 클립 피드백 엔진 부품 · 닉네임 조회만 PUBG 한도를 쓴다(분당 4회 몫 · 줄 서기).
+//   저장(§87 버킷 replay · replay_matches)이 없으면 메모리 캐시로 돈다.
 require("./replay-api.cjs")(app, { findPlayer, pubgGet, getUser, limit, sbSelect, sbInsert });
 
 // ── 트레이너별 판수 부족 알림(§45 · 2026-09-30 오너 판정 B — 재결제 안내) ──
@@ -9108,9 +9108,8 @@ const REQUIRED_SCHEMA = {
 // 122행을 실DB에서 확인했고 코드가 참조를 시작했다(잔여·환불 파생). settlements는
 // 아직 코드가 안 쓰므로 선택 유지다. 승격 경로는 §18 payment_requests와 같다.
 const SCHEMA_OPTIONAL = {
-  // §87 「AI 무리 복기」 무료 시험판(replay-api.cjs · 2026-10-21) — 없으면 메모리 캐시 · 메모리 집계로 돈다. 시험판이 정식이 되면 REQUIRED 로 올린다.
+  // §87 「AI 무리 복기」 리플 저장(replay-api.cjs · 2026-10-21) — 없으면 메모리 캐시로 돈다. 클립 피드백이 정식이 되면 REQUIRED 로 올린다.
   replay_matches: ["platform", "match_id", "team_id", "map_name", "game_mode", "match_type", "played_at", "storage_path", "size_bytes", "parser_version"],
-  replay_events: ["id", "anon_id", "kind", "match_id", "card_id", "value", "created_at"],
   // settled_period = 정산 귀속월(마감월 정정분을 다음 열린 달로 이월). 부재하면
   // admin-panel이 paid_at 월로 떨어져 현행과 동일하게 동작한다.
   // deposit_ref(§19f 세트 묶음)는 **DDL 실행 완료**다(2026-08-17 실DB 실측 — 컬럼 +

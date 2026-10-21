@@ -1,6 +1,6 @@
 // node --test scripts/replay-api.test.cjs — 「AI 무리 복기」 무료 시험판 API(replay-api.cjs · docs/replay-ai.md §13)
 //   진짜 라우트를 express 위에 띄우고 PUBG(닉 조회 · 경기 · 텔레메트리 CDN)는 가짜로 둔다. 텔레메트리 = tests/fixtures 표본(이름 · id 가짜).
-//   ① 목록(경쟁전 · 일반 구분) ② 재생 데이터(상대 이름 · id 숨김 · 캐시로 두 번 안 받음) ③ 한도 줄(busy) ④ 측정 ⑤ 순수 함수
+//   ① 목록(경쟁전 · 일반 구분) ② 재생 데이터(상대 이름 · id 숨김 · 캐시로 두 번 안 받음) ③ 한도 줄(busy) ④ 한도 · 캐시 수치(운영진만) ⑤ 순수 함수
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -59,8 +59,6 @@ function boot(over = {}) {
   });
 }
 const get = (b, p, h) => fetch(b + p, { headers: h }).then(async (r) => ({ status: r.status, body: await r.json() }));
-const post = (b, p, body) => fetch(b + p, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-  .then(async (r) => ({ status: r.status, body: await r.json() }));
 
 test("최근 경기 — 최신 순 · 경쟁전 / 일반 라벨 · 내 순위 · 킬", async (t) => {
   const s = await boot(); t.after(() => s.srv.close());
@@ -125,31 +123,22 @@ test("한도 줄 — 1분에 닉 조회 4번까지, 넘치면 429 busy · Retry-
   assert.equal((await get(s.base, "/api/replay/recent?name=AA5&platform=steam")).status, 200, "1분 지나면 다시 된다");
 });
 
-test("측정 — 익명 id 만 · 값 검사 · 표가 없으면 메모리 집계 · 집계는 운영진만", async (t) => {
+test("한도 · 캐시 수치 — 운영진만 · 측정 라우트는 없다(10/21 지휘 결정으로 뺌)", async (t) => {
   const s = await boot(); t.after(() => s.srv.close());
-  const anon = "anon_test_0123456789";
-  assert.equal((await post(s.base, "/api/replay/event", { anon, kind: "visit" })).status, 202);
-  assert.equal((await post(s.base, "/api/replay/event", { anon, kind: "vote", card: "death-outside", value: "yes", match: MID })).status, 202);
-  assert.equal((await post(s.base, "/api/replay/event", { anon, kind: "survey", value: "maybe" })).status, 202);
-  assert.equal((await post(s.base, "/api/replay/event", { anon, kind: "share" })).status, 202);
-  s.tick(86_400_000);
-  assert.equal((await post(s.base, "/api/replay/event", { anon, kind: "visit" })).status, 202);
-  for (const bad of [{ anon: "short", kind: "visit" }, { anon, kind: "hack" }, { anon, kind: "vote", card: "x y", value: "yes" },
-    { anon, kind: "survey", value: "sure" }])
-    assert.equal((await post(s.base, "/api/replay/event", bad)).status, 400, JSON.stringify(bad));
+  await get(s.base, `/api/replay/match/${MID}?name=MRI_A&platform=steam`);
+  await get(s.base, `/api/replay/match/${MID}?name=MRI_B&platform=steam`);
   assert.equal((await get(s.base, "/api/replay/stats")).status, 403);
   const st = await get(s.base, "/api/replay/stats", { authorization: "Bearer staff" });
-  assert.equal(st.body.source, "memory");
-  assert.deepEqual([st.body.visits, st.body.people, st.body.revisitPeople, st.body.shares], [2, 1, 1, 1]);
-  assert.deepEqual(st.body.votes["death-outside"], { yes: 1, no: 0 });
-  assert.deepEqual(st.body.survey, { yes: 0, maybe: 1, no: 0 });
+  assert.equal(st.status, 200);
+  assert.deepEqual([st.body.api.telemetryFetch, st.body.api.replayMem, st.body.api.matchFetch], [1, 1, 1]);
+  const ev = await fetch(s.base + "/api/replay/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  assert.equal(ev.status, 404);
 });
 
-test("순수 함수 — trimTeam 은 그 팀 줄만 · kstDay 는 한국 날짜", () => {
+test("순수 함수 — trimTeam 은 그 팀 줄만 · 텔레메트리 주소는 공식 CDN 만", () => {
   const ev = mount.trimTeam(SAMPLE, ["account.fake-mri-c"]);
   assert.ok(ev.filter((e) => e._T === "LogPlayerPosition").every((e) => e.character.accountId === "account.fake-mri-c"));
   assert.ok(ev.some((e) => e._T === "LogGameStatePeriodic"));
   assert.equal(ev.find((e) => e._T === "LogMatchStart").characters.length, 1);
-  assert.equal(mount.kstDay("2026-10-20T15:30:00Z"), "2026-10-21");
   assert.equal(mount.telemetryUrl({ included: [{ type: "asset", attributes: { name: "telemetry", URL: "https://evil.example/x.json" } }] }), null);
 });

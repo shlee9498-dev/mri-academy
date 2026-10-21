@@ -1,17 +1,17 @@
-// 「AI 무리 복기」 무료 시험판 API(docs/replay-ai.md §13) — 로그인 없음 · 누구나 무료(PUBG 개발자 약관 「Monetization」)
+// 「AI 무리 복기」 리플 API(docs/replay-ai.md §13) — 클립 피드백 엔진의 부품. 로그인 없음 · 누구나 무료(PUBG 개발자 약관 「Monetization」)
 //
 //   GET  /api/replay/recent?name=&platform=steam|kakao  → 최근 경기 목록(경쟁전 · 일반 구분 · 최대 12판)
 //   GET  /api/replay/match/:id?name=&platform=          → 그 사람 팀 한 팀분만 잘라 파싱한 재생 데이터(상대 이름 · id 는 「적 N」)
-//   POST /api/replay/event                              → 측정(방문 · 공유 · 카드 「맞아요/아니에요」 · 유료 의향) — 익명 id 만
-//   GET  /api/replay/stats                              → 측정 집계(운영진만)
+//   GET  /api/replay/stats                              → 한도 · 캐시 수치(운영진만)
+//   2주차 공개 페이지 · 카드 · 측정(POST /api/replay/event)은 10/21 지휘 결정으로 이 PR 에서 뺐다 — 브랜치 claude/replay-public-parked 에 보관
 //
 // PUBG 호출 한도(공식 문서 rst/rate-limits.rst):
 //   · 닉네임 → 계정(/players) 만 키당 분당 10회 한도에 든다. 이 모듈은 그중 LOOKUPS_PER_MIN 회만 쓰고(나머지는 전적 · 킬내기 몫)
 //     넘치면 줄을 세우고, QUEUE_WAIT_MS 넘게 기다려야 하면 429 busy(「잠시 뒤 다시」)로 돌려보낸다.
 //   · /matches · 텔레메트리 CDN 은 한도 밖이다(문서 원문 「not rate limited」 · 텔레메트리는 키도 필요 없다). 그래도 같은 경기는
 //     두 번 받지 않는다 — 경기 목록 캐시(메모리) + 한 팀분 재생 데이터 캐시(메모리 → 비공개 Storage).
-// 저장(§87 · 경비가 실행): 비공개 버킷 replay · 목록 표 replay_matches · 측정 표 replay_events. 없으면 메모리 캐시만으로 돌고
-//   측정은 메모리 집계만 한다(1분마다 다시 확인 · 실행 뒤 재시작 없이 켜진다).
+// 저장(§87 · 경비가 실행): 비공개 버킷 replay · 목록 표 replay_matches. 없으면 메모리 캐시만으로 돈다
+//   (1분마다 다시 확인 · 실행 뒤 재시작 없이 켜진다).
 "use strict";
 const zlib = require("zlib");
 const R = require("./replay-core.js");
@@ -30,7 +30,6 @@ const PARSER_VERSION = "replay-core@1";
 
 const TYPE_LABEL = { competitive: "경쟁전", official: "일반", custom: "사용자 지정", event: "이벤트", arcade: "아케이드",
   airoyale: "이벤트", seasonal: "이벤트", training: "훈련장" };
-const EVENT_KINDS = { visit: null, open: null, share: null, image: null, vote: ["yes", "no"], survey: ["yes", "maybe", "no"] };
 
 // ── 순수 함수(시험 대상) ──────────────────────────────────────────────
 
@@ -128,25 +127,6 @@ function findInMatch(m, name) {
   return { accountId: part.attributes.stats.playerId, teamIds, rosterTeamId: roster ? roster.attributes.stats.teamId : 0 };
 }
 
-// 측정 집계(행 → 숫자) — 표가 있든 없든 같은 모양으로 낸다
-function aggregate(rows) {
-  const anon = new Map(); const out = { visits: 0, people: 0, revisitPeople: 0, opens: 0, shares: 0, images: 0, votes: {}, survey: { yes: 0, maybe: 0, no: 0 } };
-  for (const r of rows) {
-    const day = kstDay(r.created_at);
-    if (r.kind === "visit") { out.visits++; if (!anon.has(r.anon_id)) anon.set(r.anon_id, new Set()); anon.get(r.anon_id).add(day); }
-    else if (r.kind === "open") out.opens++;
-    else if (r.kind === "share") out.shares++;
-    else if (r.kind === "image") out.images++;
-    else if (r.kind === "vote" && r.card_id) { const v = out.votes[r.card_id] || (out.votes[r.card_id] = { yes: 0, no: 0 }); if (v[r.value] != null) v[r.value]++; }
-    else if (r.kind === "survey" && out.survey[r.value] != null) out.survey[r.value]++;
-  }
-  out.people = anon.size;
-  out.revisitPeople = [...anon.values()].filter((d) => d.size >= 2).length;
-  return out;
-}
-// 같은 사람의 「다른 날 다시 옴」은 KST 날짜로 가른다(UTC 로 읽으면 밤 9시 이후가 다음 날로 넘어간다)
-const kstDay = (iso) => new Date(Date.parse(iso || 0) + 9 * 3600_000).toISOString().slice(0, 10);
-
 // 작은 LRU
 function lru(max) {
   const m = new Map();
@@ -173,7 +153,6 @@ function mountReplay(app, deps) {
   const matches = lru(150);            // matchId → 경기 객체(약 100KB · 14일 동안 안 바뀐다)
   const replays = lru(20);             // `${matchId}:${teamId}` → 한 팀분 원본(trimmed · 메모리 수 MB) — 나머지는 Storage 에서
   const inflight = new Map();          // 같은 요청이 동시에 오면 한 번만 부른다
-  const counters = [];                 // 측정 — 표가 없을 때 메모리 집계(최근 5000줄)
   const stat = { lookups: 0, lookupQueued: 0, busy: 0, matchFetch: 0, matchCache: 0, telemetryFetch: 0, replayMem: 0, replayStore: 0, bytes: 0 };
 
   // 닉네임 조회 줄 — 최근 1분 통과 시각을 들고, 꽉 차면 빈자리 날 때까지 기다린다(QUEUE_WAIT_MS 넘으면 busy)
@@ -244,14 +223,13 @@ function mountReplay(app, deps) {
   }
 
   // ── 저장(§87) — 버킷 · 표가 있는지 1분마다 다시 본다 ──
-  const ready = { bucket: false, matches: false, events: false, at: 0 };
+  const ready = { bucket: false, matches: false, at: 0 };
   const storageHeaders = (extra = {}) => ({ apikey: process.env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`, ...extra });
   async function probe() {
     if (!hasSb() || now() - ready.at < 60_000) return ready;
     ready.at = now();
     const ok = async (f) => { try { await f(); return true; } catch { return false; } };
     ready.matches = await ok(() => deps.sbSelect("replay_matches", "select=match_id&limit=0"));
-    ready.events = await ok(() => deps.sbSelect("replay_events", "select=id&limit=0"));
     ready.bucket = await ok(async () => {
       const r = await fetchImpl(`${process.env.SUPABASE_URL}/storage/v1/bucket/${BUCKET}`, { headers: storageHeaders() });
       if (!r.ok) throw new Error(String(r.status));
@@ -323,7 +301,6 @@ function mountReplay(app, deps) {
     return { platform, name };
   }
   const lim = deps.limit ? deps.limit("replay", 30, 60_000) : (q, s, n) => n();
-  const limEv = deps.limit ? deps.limit("replay-event", 60, 60_000) : (q, s, n) => n();
 
   app.get("/api/replay/recent", lim, async (req, res) => {
     const a = args(req);
@@ -364,40 +341,16 @@ function mountReplay(app, deps) {
     } catch (e) { fail(res, e); }
   });
 
-  app.post("/api/replay/event", limEv, async (req, res) => {
-    const b = req.body || {};
-    const anon = String(b.anon || ""), kind = String(b.kind || "");
-    if (!/^[A-Za-z0-9_-]{16,40}$/.test(anon) || !(kind in EVENT_KINDS)) return bad(res, "bad_request");
-    const allowed = EVENT_KINDS[kind];
-    const value = allowed ? String(b.value || "") : null;
-    if (allowed && !allowed.includes(value)) return bad(res, "bad_request");
-    const card = kind === "vote" ? String(b.card || "") : null;
-    if (kind === "vote" && !/^[a-z0-9-]{2,40}$/.test(card)) return bad(res, "bad_request");
-    const match = b.match && MATCH_ID_RE.test(String(b.match)) ? String(b.match) : null;
-    const row = { anon_id: anon, kind, match_id: match, card_id: card, value, created_at: new Date(now()).toISOString() };
-    counters.push(row); if (counters.length > 5000) counters.shift();
-    if ((await probe()).events) {
-      try { await deps.sbInsert("replay_events", { anon_id: row.anon_id, kind, match_id: match, card_id: card, value }); return res.status(201).json({ stored: true }); }
-      catch (e) { console.warn("[replay] replay_events insert", e && e.message); }
-    }
-    res.status(202).json({ stored: false });
-  });
-
-  app.get("/api/replay/stats", async (req, res) => {
+  app.get("/api/replay/stats", (req, res) => {
     const u = deps.getUser ? deps.getUser(req) : null;
     if (!u || !u.isStaff) return bad(res, "forbidden", 403);
-    let rows = counters, source = "memory";
-    if ((await probe()).events) {
-      try { rows = await deps.sbSelect("replay_events", "select=anon_id,kind,card_id,value,created_at&order=id.desc&limit=50000"); source = "table"; }
-      catch { /* 메모리로 */ }
-    }
-    res.json({ source, ...aggregate(rows), api: { ...stat, cache: { players: players.size, matches: matches.size, replays: replays.size } } });
+    res.json({ api: { ...stat, cache: { players: players.size, matches: matches.size, replays: replays.size } }, storage: { bucket: ready.bucket, matches: ready.matches } });
   });
 
-  if (hasSb()) probe().then((st) => console.log(`[replay] 복기 시험판 API 활성 · 저장 bucket=${st.bucket} matches=${st.matches} events=${st.events}`
-    + (st.bucket && st.matches && st.events ? "" : " (§87 미실행이면 메모리 캐시 · 메모리 집계만)")));
+  if (hasSb()) probe().then((st) => console.log(`[replay] 리플 API 활성 · 저장 bucket=${st.bucket} matches=${st.matches}`
+    + (st.bucket && st.matches ? "" : " (§87 미실행이면 메모리 캐시만)")));
   return { stat, probe };
 }
 
 module.exports = mountReplay;
-Object.assign(module.exports, { trimTeam, forClient, matchSummary, findInMatch, telemetryUrl, aggregate, kstDay, LOOKUPS_PER_MIN, QUEUE_WAIT_MS });
+Object.assign(module.exports, { trimTeam, forClient, matchSummary, findInMatch, telemetryUrl, LOOKUPS_PER_MIN, QUEUE_WAIT_MS });
