@@ -75,9 +75,9 @@ test("피드백 — 장면 시각 → 근거 숫자 → 원칙 → 다음엔 이
   assert.equal(fb.mistake, card.mistakes[0]);
   assert.ok(fb.evidence.some((x) => /추정 12개/.test(x) && /적 1만 3개/.test(x)));
   assert.ok(fb.evidence.some((x) => /13:11 그 폭에 MRI_D · MRI_A 같이 기절/.test(x)));
-  assert.equal(fb.detectStatus, "감지 기준값 오너 확인 전");
+  assert.equal(fb.detectStatus, "감지 기준값 시험값 · 오너 OK 10/21");
   const text = Crit.render(fb);
-  assert.match(text, /감지 기준값 오너 확인 전/);
+  assert.match(text, /감지 기준값 시험값 · 오너 OK 10\/21/);
   assert.ok(text.indexOf("근거") < text.indexOf("원칙") && text.indexOf("원칙") < text.indexOf("다음엔 이렇게"));
   assert.doesNotMatch(text, /T29_|account\./, "상대 이름 · id 가 피드백에 안 나온다");
 });

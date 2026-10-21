@@ -102,8 +102,8 @@
     return {
       verdict: f.matched ? "카드 #001 흔한 실수와 같은 모양" : "카드 #001 원칙대로",
       card: `#${card.id} ${card.title}`, cardStatus: card.status,
-      // 감지 기준값(25초 · 150m · 5m · 3m · 10m)은 지휘가 오너에게 묻는 중(10/21) — 답이 오기 전까지 피드백마다 붙인다
-      detectStatus: card.detectStatus || "감지 기준값 오너 확인 전",
+      // 감지 기준값(25초 · 150m · 5m · 3m · 10m) 상태 — 오너 「이대로 시험」(10/21). 실제 클립에서 틀린 판정이 나오면 조정한다
+      detectStatus: card.detectStatus || "감지 기준값 상태 없음",
       when: at(f.t), evidence, mistake, principle: card.principle, next: card.action,
     };
   }
