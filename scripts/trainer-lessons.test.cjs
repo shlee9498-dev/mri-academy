@@ -77,6 +77,7 @@ test("조정 — 고칠 수업(sessionId)은 정정만 · 그때 날짜는 보�
 
 test("수업 출처 — 앱 · 봇 · 조정", () => {
   assert.equal(T.sourceOf({ created_by: "portal" }), "app");
+  assert.equal(T.sourceOf({ created_by: "auto:bell" }), "auto");            // 24시간 자동 완료(§9.39) — 「봇 기록」이 아니다
   assert.equal(T.sourceOf({ created_by: "1234567890" }), "bot");
   assert.equal(T.sourceOf({ created_by: "adjreq:12" }), "adjustment");
   assert.equal(T.sourceOf({ created_by: "1234567890", memo: "정정: 중복 (대상 세션 #3)" }), "adjustment");

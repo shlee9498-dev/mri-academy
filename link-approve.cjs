@@ -42,6 +42,23 @@ function commandScope(actor, s) {
   if (!LIVE.includes(s.status)) return "not_live";
   return null;
 }
+// 명부보다 먼저 온 신청 다시 잡기(§9.32.6 · 10/14 #50 7일 방치) — 대기 신청 · 미연결 명부(합치지 않음 · 종료 아님) · 이미 다시 올린 신청 번호
+//   반환 [{ req, student }] — 입력 이름이 명부 이름과 똑같은(normName) 미연결 한 명이 있고, 그 명부가 신청보다 **나중에** 생겼고,
+//   아직 다시 올리지 않은 신청만. 같은 이름이 둘 이상이면 고르지 않는다(원장이 /연결승인 으로).
+function recoverPicks(pending, roster, done = {}) {
+  const out = [];
+  for (const q of pending || []) {
+    if (!q || q.status !== "pending" || done[String(q.id)] != null) continue;
+    const key = normName(q.claimed_name);
+    if (!key) continue;
+    const hits = (roster || []).filter((s) => !s.discord_id && s.merged_into == null && s.status !== "done" && normName(s.name) === key);
+    if (hits.length !== 1) continue;
+    const s = hits[0];
+    if (!(Date.parse(s.created_at) > Date.parse(q.created_at))) continue;   // 신청 때 이미 있던 명부면 카드에 후보가 떴다
+    out.push({ req: q, student: s });
+  }
+  return out;
+}
 const isUnique = (e) => e?.status === 409 || /23505|idx_students_discord/.test(String(e?.body || ""));
 
 // deps: sbSelect · sbPatch · sbInsert · discordDM(id, text) → bool · now(시험용)
@@ -136,7 +153,15 @@ function createLinkApproval(deps) {
     return { code: "ok", claimedName: q.claimed_name, dm };
   }
 
-  return { approve, reject, audit };
+  // /연결승인(직접 지정)으로 연결한 뒤 — 같은 계정의 대기 신청을 승인으로 닫는다(§9.32.6). 반환 닫은 신청 번호들
+  async function closePendingFor({ discordId, studentId, actorId }) {
+    if (!discordId || !Number.isInteger(Number(studentId))) return [];
+    const got = await sbPatch("student_link_requests", `discord_id=eq.${encodeURIComponent(String(discordId))}&status=eq.pending`,
+      { status: "approved", student_id: Number(studentId), decided_by: String(actorId || ""), decided_at: nowIso() });
+    return (got || []).map((r) => r.id);
+  }
+
+  return { approve, reject, audit, closePendingFor };
 }
 
-module.exports = { createLinkApproval, trainerClaim, commandScope, normName, APPROVED_DM, REJECTED_DM, LIVE };
+module.exports = { createLinkApproval, recoverPicks, trainerClaim, commandScope, normName, APPROVED_DM, REJECTED_DM, LIVE };

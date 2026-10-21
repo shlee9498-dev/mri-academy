@@ -64,6 +64,8 @@ let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP �
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
 //   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
 const payreqIntake = require("./payreq-intake.cjs");
+// 「입금 받음」(계약 §9.40) — 트레이너가 올리는 입금 신청 · 결과 DM 문구 · 화면 이름(디코 닉)
+const paymentReceived = require("./payment-received.cjs");
 // 공개 API 응답에서 수강생 식별정보를 걷어내는 순수 함수(커뮤니티 작성자 ID · 공개 코칭 기록 본문 치환 · 9/30 개인정보 점검)
 const publicRows = require("./public-rows.cjs");
 // 수업 기록 행 판정 한 벌(판수 조정 · 봇 정정 · 0 이하 행은 수업이 아니다) — 원장 화면 · 공개 지표 · 예약 고아 감시가 같이 쓴다.
@@ -150,6 +152,7 @@ function limit(name, max, windowMs, reject) {
 const crypto = require("crypto");
 const killraceApply = require("./killrace-apply.cjs");
 const unclosedLessons = require("./unclosed-lessons.cjs");   // 닫지 않은 수업 — 세기만(계약 trainer-portal-api §9.34)
+const autoCompleteMod = require("./auto-complete.cjs");       // 개인 레슨 24시간 자동 완료(계약 §9.39 · DDL §86)
 const OAUTH_REDIRECT = "https://mri-academy-production.up.railway.app/api/auth/callback";
 const STAFF_IDS = (process.env.STAFF_DISCORD_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
 const reviewsReady = () =>
@@ -2962,15 +2965,21 @@ if (process.env.DISCORD_TOKEN) {
         return itx.editReply(`❌ 그사이 **${s.name}**(#${s.id})이 다른 계정에 연결됐어. \`/연결현황\`으로 확인해줘.`);
 
       const dmOk = await discordDM(target.id, linkRules.APPROVED_DM);
+      // 같은 계정의 대기 신청은 승인으로 닫는다(§9.32.6) — 안 닫으면 처리 대기에 「연결 신청」이 계속 남는다(10/14 #50)
+      let closedReqs = [];
+      try { closedReqs = await linkApproval.closePendingFor({ discordId: target.id, studentId: s.id, actorId: itx.user.id }); }
+      catch (e) { console.error("linkreq_close_on_command", e?.message); }
       try {
         await sbInsert("admin_audit", {
           actor_id: itx.user.id, actor_name: actor.label, action: "student.link",
           target: `student:${s.id}`, detail: { discord_id: String(target.id), discord_src: "app_link", dm: dmOk,
-            student_id: s.id, role: actor.isOwner ? "owner" : "trainer", staff_id: actor.staffId ?? null },
+            student_id: s.id, role: actor.isOwner ? "owner" : "trainer", staff_id: actor.staffId ?? null,
+            ...(closedReqs.length ? { request_id: closedReqs[0], closed_requests: closedReqs } : {}) },
         });
       } catch (e) { console.error("link_audit", e?.message); }
       await itx.editReply(
         `✅ 연결 완료 — **${s.name}**(#${s.id}) ↔ <@${target.id}>\n`
+        + (closedReqs.length ? `🔗 대기 중이던 연결 신청 #${closedReqs.join(" · #")} 도 승인으로 닫았어.\n` : "")
         + (dmOk ? "📨 본인에게 안내 DM을 보냈어(앱 재로그인 안내)."
                 : "⚠️ 안내 DM을 못 보냈어(DM 차단?). 앱에서 다시 로그인하라고 직접 알려줘."));
     } catch (e) {
@@ -3227,7 +3236,7 @@ if (process.env.DISCORD_TOKEN) {
     if (tied > 1) out.push(`⚠️ 같은 점수 후보가 ${tied}명이에요 — 디스코드 이름 · 배그 닉으로 누구인지 확인하세요`);
     return out;
   }
-  async function postLinkReqCard(req, user, cands) {
+  async function postLinkReqCard(req, user, cands, note = null) {
     const btns = cands.map((c) =>
       new ButtonBuilder().setCustomId(`linkreq_ok:${req.id}:${c.s.id}`)
         .setLabel(`✅ ${c.s.name} #${c.s.id}`.slice(0, 80)).setStyle(ButtonStyle.Success));
@@ -3235,7 +3244,8 @@ if (process.env.DISCORD_TOKEN) {
       .setLabel("❌ 거절").setStyle(ButtonStyle.Danger));
     const payload = {
       content:
-        `🔗 **계정 연결 신청 #${req.id}**\n`
+        (note ? `${note}\n` : "")
+        + `🔗 **계정 연결 신청 #${req.id}**\n`
         + `· 신청자: <@${user.id}> · 디스코드 이름 \`${user.username || req.discord_tag || "?"}\`\n`
         + `· 입력한 이름: **${req.claimed_name}**\n`
         + linkReqWarnings(req.claimed_name, cands).map((w) => `${w}\n`).join("")
@@ -3288,12 +3298,20 @@ if (process.env.DISCORD_TOKEN) {
       )];
       const cr = payreqIntake.receiptOwnerLine(req);
       if (cr && !req.cash_receipt_issued_at) rows.push(payreqReceiptRow(req.id));
+      // 「입금 받음」(계약 §9.40 · 오너 10/19) — 트레이너가 통장 입금을 대신 올린 신청. 버튼 · 승인 뒤 길은 앱 신청과 같다.
+      //   머리만 다르다: 누가 올렸는지(트레이너) · 수강생 디코 닉. 레벨 테스트는 kind 「상담」이라 상품 이름을 바꿔 보인다.
+      const fromTrainer = opts.from === "trainer" || String(req.requested_by || "").startsWith("trainer:");
+      const head = fromTrainer
+        ? `**입금 받음 #${req.id}** (트레이너 ${opts.requesterName || req.trainer_name || "-"}${opts.note ? ` · ${opts.note}` : ""})`
+        : `**${card ? "카드 결제 신청" : "입금 신청"} #${req.id}** (앱${opts.note ? ` · ${opts.note}` : ""})`;
+      const what = req.kind === "상담" ? "레벨 테스트" : payreqIntake.productText(req, units);
       await owner.send({
         // 돈 문구라 이모지를 뺀다(ui-copy §2 — 💰 는 돈을 가볍게 만든다). /결제신청 카드의 💰 는
         // 전수 교체 금지라 그대로 둔다 — 두 카드 머리가 다른 게 오히려 입구 구분이 된다.
-        content: `**${card ? "카드 결제 신청" : "입금 신청"} #${req.id}** (앱${opts.note ? ` · ${opts.note}` : ""})`
-          + `\n· 학생: **${req.student_name}**`
-          + `\n· 상품: ${payreqIntake.productText(req, units)} · **${won(req.amount)}원**`
+        content: head
+          + `\n· 학생: **${req.student_name}**${fromTrainer && opts.nick && opts.nick !== req.student_name ? ` (디코 ${opts.nick})` : ""}`
+          + (fromTrainer ? `\n· 명부: #${req.student_id}` : "")
+          + `\n· 상품: ${what} · **${won(req.amount)}원**`
           + `\n· ${card ? "결제일" : "입금일"}: ${req.paid_on}`
           + (card
               ? `\n· 그로블 주문번호: ${req.deposit_ref || "-"}\n· 채널: ${channelLine("groble", req.amount)}`
@@ -3542,6 +3560,40 @@ if (process.env.DISCORD_TOKEN) {
   //   먼저 누른 사람만 — 신청을 「대기 → 승인/거절」로 먼저 잡고(조건부) 그다음 기록에 붙인다(조건부 + §11 부분 유니크).
   //   트레이너가 못 누르는 버튼은 **카드를 그대로 두고** 누른 사람에게만 알린다(원장이 이어서 처리).
   const linkApproval = linkRules.createLinkApproval({ sbSelect, sbPatch, sbInsert, discordDM });
+  const welcomeGuide = require("./welcome-guide.cjs").createWelcome({
+    sbSelect, sbInsert, opsSet: opsStateSet, discordDM,
+    // opsStateGet 은 읽기 실패도 null 로 삼킨다 — 여기서는 실패를 throw 로 넘겨야 발송 기록을 덮어쓰지 않는다
+    opsGet: async (key) => (await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`))[0]?.value || null,
+  });
+  // 명부보다 먼저 온 신청 다시 잡기(§9.32.6) — 10분마다 대기 신청을 보고, 신청 뒤에 생긴 명부에 이름이 똑같은 미연결 한 명이 있으면
+  //   승인 버튼을 붙인 카드를 한 번 다시 올린다. 다시 올린 신청 번호는 ops_state 'linkreq:reposted' 에 남겨 두 번 올리지 않는다.
+  const LINKREQ_REPOSTED_KEY = "linkreq:reposted";
+  async function linkReqRecover() {
+    if (!hasSupabase()) return;
+    try {
+      const pending = await sbSelect("student_link_requests",
+        "select=id,status,discord_id,discord_tag,claimed_name,created_at&status=eq.pending&order=id.asc&limit=50");
+      if (!pending.length) return;
+      const [roster, saved] = await Promise.all([
+        sbSelect("students", `select=id,name,status,trainer_id,pubg_name,discord_id,merged_into,created_at&discord_id=is.null${NOT_MERGED}&status=neq.done&limit=1000`),
+        opsStateGet(LINKREQ_REPOSTED_KEY),
+      ]);
+      const done = saved && typeof saved === "object" ? { ...saved } : {};
+      const picks = linkRules.recoverPicks(pending, roster, done);
+      if (!picks.length) return;
+      const staffById = await staffNameMap();
+      for (const { req, student } of picks) {
+        let user = { id: String(req.discord_id), username: req.discord_tag || null };
+        try { user = await client.users.fetch(String(req.discord_id)); } catch (_) {}
+        const cand = { s: student, score: 1, via: null, trainer: staffById[student.trainer_id] || "담당없음" };
+        const posted = await postLinkReqCard(req, user, [cand], "🔁 **다시 올린 카드** — 신청 뒤에 명부가 생겨서 승인 버튼을 붙였어요");
+        console.log(`[linkreq] recover #${req.id} → student #${student.id} posted=${posted}`);
+        if (posted) done[String(req.id)] = { studentId: student.id, at: new Date().toISOString() };
+      }
+      await opsStateSet(LINKREQ_REPOSTED_KEY, done);
+    } catch (e) { console.error("linkreq_recover", e?.message); }
+  }
+  setInterval(() => { linkReqRecover(); }, 10 * 60 * 1000).unref();
   const LINKREQ_TAG = { approved: "승인", rejected: "거절", cancelled: "취소" };
   const LINKREQ_TRAINER_MSG = {
     not_assigned: "내 담당 수강생 기록이 아니에요",
@@ -3922,6 +3974,11 @@ if (process.env.DISCORD_TOKEN) {
       });
     }
 
+    // 「입금 받음」(§9.40)은 트레이너가 명부에서 고른 행이 신청에 실려 있다 — 이름 후보 대신 그 행을 먼저 보인다(대상 변경은 그대로 된다).
+    if (action === "ok" && String(q.requested_by || "").startsWith("trainer:") && q.student_id) {
+      const s = await payreqStudentById(Number(q.student_id));
+      return payreqShowTargets(itx, reqId, q, s ? [s] : await payreqCandidates(q.student_name), s ? "트레이너가 명부에서 고른 수강생이야." : null);
+    }
     if (action === "ok") return payreqShowTargets(itx, reqId, q, await payreqCandidates(q.student_name), null);   // ✅ = 확인 단계(승인 아님)
     if (action === "sel") {
       const s = await payreqStudentById(Number(itx.values?.[0]));
@@ -4015,6 +4072,11 @@ if (process.env.DISCORD_TOKEN) {
     } else {
       await itx.update({ content: `❌ **#${reqId} 반려** — ${q.student_name} · ${Number(q.amount).toLocaleString("ko-KR")}원`, components: [] });
     }
+    // 신규 자동 안내(§9.37.3) — 승인 직후 · 앱 미연결 수강생에게 한 번(못 찾으면 담당 트레이너 몫). 실패해도 승인은 그대로다.
+    if (approve && target && q.kind !== "상담")
+      welcomeGuide.run({ studentId: target.id, trainerId: q.trainer_id, requestedBy: q.requested_by, kind: q.kind })
+        .then((r) => console.log(`[welcome] #${reqId} student #${target.id} ${r.status}${r.route ? ` ${r.route} ok=${r.ok}` : ` ${r.reason}`}`))
+        .catch((e) => console.error("welcome_dm", e?.message));
     // 앱 입금 신청(계약 §9.5·§9.6)은 신청자가 **수강생**이다 — requested_by = "app:<명부 id>".
     //   아래 트레이너용 반말 통보를 그대로 보내면 수강생이 「결제 신청 #N 승인」 반말을 받는다.
     //   수강생에게는 ui-copy 요체로, 돈 문구라 이모지 없이 보낸다(§2).
@@ -4037,6 +4099,22 @@ if (process.env.DISCORD_TOKEN) {
         }
         await discordDM(stu?.discord_id, msg);
       } catch (e) { console.error("payreq_notify_student", e?.message); }
+      return;
+    }
+    // 「입금 받음」(§9.40) — requested_by = "trainer:<staff id>". 디코 id 가 아니라 아래 users.fetch 로는 못 보낸다.
+    //   올린 트레이너에게 존댓말로(오너 지시 10/19 · 트레이너 쪽 문구 존댓말) · 수강생은 디코 닉으로 · 돈 문구라 이모지 없이.
+    if (String(q.requested_by || "").startsWith("trainer:")) {
+      try {
+        const staffId = Number(String(q.requested_by).slice(8));
+        const st = Number.isInteger(staffId) && staffId > 0
+          ? (await sbSelect("staff", `select=discord_id&id=eq.${staffId}&limit=1`))[0] : null;
+        const sid = approve ? target.id : Number(q.student_id);
+        const stu = sid ? (await sbSelect("students", `select=name,discord_nick&id=eq.${sid}&limit=1`))[0] : null;
+        const reflected = approve
+          ? await sbSelect("payment_requests", `select=payment_id&id=eq.${reqId}&limit=1`).then((r) => !!r[0]?.payment_id).catch(() => false)
+          : false;
+        await discordDM(st?.discord_id, paymentReceived.trainerResultText(q, approve, { nick: stu ? paymentReceived.nickOf(stu) : null, reflected }));
+      } catch (e) { console.error("payreq_notify_trainer", e?.message); }
       return;
     }
     // 신청 트레이너에게 결과 통보(best-effort — 실패해도 처리 자체는 완료)
@@ -6918,7 +6996,7 @@ async function pubgMatch(platform, matchId, ttlMs){
   // createdAt·telemetryUrl 은 킬내기 집계용으로 덧붙인 것(G드컵 응답에는 실리지 않는다).
   inc.forEach(it=>{
     if(it.type==="participant"){ const s=(it.attributes&&it.attributes.stats)||{}; parts[it.id]={ name:s.name||"", kills:Number(s.kills)||0, winPlace:Number(s.winPlace)||0,
-      accountId:s.playerId||"", damageDealt:Number(s.damageDealt)||0, deathType:s.deathType||"" }; }
+      accountId:s.playerId||"", damageDealt:Number(s.damageDealt)||0, deathType:s.deathType||"", timeSurvived:Number(s.timeSurvived)||0 }; }
     else if(it.type==="roster"){ const s=(it.attributes&&it.attributes.stats)||{}; const pd=(it.relationships&&it.relationships.participants&&it.relationships.participants.data)||[]; rosters.push({ rank:Number(s.rank)||0, pids:pd.map(p=>p.id),
       won:String(it.attributes&&it.attributes.won)==="true" }); }
     else if(it.type==="asset" && !telemetryUrl && it.attributes && it.attributes.URL){ telemetryUrl = String(it.attributes.URL); }
@@ -8540,6 +8618,13 @@ const trainerPortal = require("./trainer-portal.cjs")(app, {
   sbSelect, sbInsert, sbUpsert, sbPatch, sbDelete, sbRpc, limit, getUser, portal: studentPortal,
 });
 
+// ── 「입금 받음」(계약 §9.40 · 오너 10/19) — 트레이너가 통장 입금을 대신 올린다 → 오너 승인 카드(앱 신청과 같은 버튼) ──
+//   trainer-portal 뒤 — 그 파일의 게이트 · requireTrainer · scopedStudents 를 같은 함수로 쓴다. 봇(/입금받음)이 이 라우트를 부른다.
+paymentReceived.mountPaymentReceived(app, trainerPortal, {
+  sbSelect, sbInsert, limit, portal: studentPortal,
+  payreqCard: (r, o) => (payreqPortalCard ? payreqPortalCard(r, o) : Promise.resolve(false)),
+});
+
 // ── 수업 복기 트레이너 라우트(§29 PR-3 · /api/trainer-portal/{reviews,feedback,feed}) ──
 // trainer-portal 뒤 — 그 파일이 건 게이트 뒤에 서고, 트레이너 판정·범위(담당 ∪ 최근 90일)·응답 가드를 같은 함수로 쓴다.
 reviewApi.mountTrainer(trainerPortal);
@@ -8619,8 +8704,15 @@ function onLevelTestDone(bookingId, staff) {
     });
 }
 
+// 개인 레슨 자동 완료(계약 §9.39) — 기록은 ops_state 'auto-complete' 한 줄. 틱은 cronTick · [수업 안 함] 은 아래 booking-api 의 hold 라우트
+const autoComplete = autoCompleteMod.createAutoComplete({
+  sbSelect, sbRpc,
+  stateGet: async (k) => { const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(k)}&limit=1`); return rows.length ? rows[0].value : null; },
+  stateSet: (k, v) => sbUpsert("ops_state", { key: k, value: v, updated_at: new Date().toISOString() }, "key"),
+});
 require("./booking-api.cjs")(app, {
   sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,
+  autoComplete,                                                     // §9.39 [수업 안 함] → hold
   recorder: lessonRecorder,                                         // §9.29 — 취소한 기록만 있는 날의 「완료」를 대신 기록
   onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 「완료」 · 예약(선차감) 직후
   onConsultDone: onLevelTestDone,                                  // 레벨 테스트 「완료」 → 상담 기록
@@ -8641,6 +8733,9 @@ require("./trainer-lessons.cjs")(app, {
   ownerAlert: (a) => discordDM(process.env.MRI_OWNER_ID, adjustAlertText(a)),
   onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 바로 반영 · 되돌림 직후
 });
+// 트레이너봇(계약 §9.37.1 · §9.37.2) — /수업잡기 한 줄 예약 · 끝났나요 벨. 쓰기는 위 트레이너 앱 라우트를 같은 프로세스에서 부른다.
+//   TRAINER_BOOK_CHANNEL_ID(선택) 가 있으면 그 채널 한 줄도 받는다.
+if (process.env.DISCORD_TOKEN) require("./trainer-bot.cjs")({ getClient: () => botClient, sbSelect, sbUpsert, sbRpc, portal: studentPortal, port: PORT });
 // 공지 · 전달문(계약 §9.30 · 2026-10-04) — 초안함 → 미리보기 → 보내기 · 앱 알림함 + 봇 DM. §65 미실행이면 이 라우트군만 503.
 // TRAINER_APP_URL = 트레이너 전달문 DM 끝의 앱 링크(트레이너 앱은 다른 저장소 · 이 저장소에 주소가 없다 — 오너가 주면 적는다 ·
 //   비어 있으면 링크 줄 없이 나간다). 수강생 공지 링크는 STUDENT_APP_URL/notices/{id}.
@@ -9322,13 +9417,11 @@ const DIRECT_STALE_DAYS = 7;   // 직강은 주 단위 운영 — 3일은 오탐
 // 판정식은 §37 의 v_has 와 **같다**(학생 · 진행 트레이너 · KST 날짜). 다르면 화면과 알림이 갈린다.
 // 고치는 건 사람이 한다 — /수업등록 으로 판수를 넣거나, 수업을 안 했으면 예약을 취소로 되돌린다.
 const BOOKING_ORPHAN_DAYS = Number(process.env.BOOKING_ORPHAN_DAYS || 14);
-// ── 닫지 않은 수업 아침 알림(계약 trainer-portal-api §9.34.2) — 세기만 한다(상태 · 판수 · 48시간 전이 안 바꿈) ──
-//   채널 = /수업등록 채널(LESSON_CHANNEL_ID · 새 env 없음 · 미설정이면 건너뜀). 대상이 비면 안 보낸다. 하루 한 번(maybeRunDaily).
-//   한 통 = 트레이너별 · 예약 #번호와 날짜만(수강생 · 판수 없음) · 멘션 없음. 로그에는 건수만 남긴다.
+// ── 닫지 않은 수업 아침 독촉(계약 trainer-portal-api §9.39.5 · §9.34.2 를 대신한다) — 세기만 한다(상태 · 판수 · 48시간 전이 안 바꿈) ──
+//   공개 채널(/수업등록) 알림은 없앴다(오너 10/18) — 트레이너마다 DM 한 통(그 트레이너 몫이 있을 때만) · 수강생 디코 닉 · 시각 · 종류 · n일째.
+//   하루 한 번(maybeRunDaily). 로그에는 건수만. DM 이 막힌 트레이너는 건너뛴다(다른 사람에게 보내지 않는다).
 async function runUnclosedLessonsAlert() {
   if (!process.env.SUPABASE_URL) { console.log("[cron] unclosed_lessons: SUPABASE_URL 미설정 — 스킵"); return; }
-  const chId = process.env.LESSON_CHANNEL_ID;
-  if (!chId) { console.log("[cron] unclosed_lessons: LESSON_CHANNEL_ID 미설정 — 스킵"); return; }
   if (!botClient) throw new Error("bot_not_ready");                // 다음 틱에 한 번 더(두 번 실패면 maybeRunDaily 가 오너 DM)
   // 임베드 대신 2질의(runBookingOrphans 와 같은 이유 — 임베드 문법이 어긋나면 조용히 0건이 된다)
   const books = await sbSelect("slot_bookings",
@@ -9342,12 +9435,41 @@ async function runUnclosedLessonsAlert() {
   const rows = unclosedLessons.alertRows(unclosedLessons.unclosedOf(books, new Map(slots.map((s) => [s.id, s])), now), now);
   if (!rows.length) { console.log("[cron] unclosed_lessons: 없음"); return; }
   const tids = [...new Set(rows.map((r) => r.trainerId))];
-  const staff = await sbSelect("staff", `select=id,name&id=in.(${tids.join(",")})`).catch(() => []);
-  const names = Object.fromEntries(staff.map((x) => [x.id, x.name]));
-  const ch = await botClient.channels.fetch(String(chId));
-  if (!ch?.isTextBased?.()) throw new Error("lesson_channel_not_text");
-  await ch.send({ content: unclosedLessons.alertText(rows, names), allowedMentions: { parse: [] } });
-  console.log(`[cron] unclosed_lessons: ${rows.length}건 · 트레이너 ${tids.length}명 · 채널에 보냄`);
+  const sids = [...new Set(rows.map((r) => r.studentId))];
+  const [staff, studs] = await Promise.all([
+    sbSelect("staff", `select=id,discord_id,active&id=in.(${tids.join(",")})`).catch(() => []),
+    sbSelect("students", `select=id,name,discord_nick&id=in.(${sids.join(",")})`).catch(() => []),
+  ]);
+  const nick = Object.fromEntries(studs.map((x) => [x.id, x.discord_nick || x.name || null]));
+  let sent = 0, skipped = 0;
+  for (const t of staff) {
+    const mine = rows.filter((r) => r.trainerId === t.id);
+    const text = unclosedLessons.trainerDmText(mine, nick, now);
+    if (!text || !t.discord_id || t.active === false) { skipped++; continue; }
+    if (await discordDM(t.discord_id, text)) sent++; else skipped++;
+  }
+  console.log(`[cron] unclosed_lessons: ${rows.length}건 · 트레이너 ${tids.length}명 · DM ${sent} · 못 보냄 ${skipped}`);
+}
+
+// ── 개인 레슨 자동 완료 원장 하루 목록(계약 §9.39.3) — 어제 자동 완료 · 수업 안 함 · 잠긴 달 · 안 된 것. 비면 안 보낸다 ──
+async function runAutoCompleteDigest() {
+  if (!process.env.SUPABASE_URL || !process.env.MRI_OWNER_ID) return;
+  const st = await autoComplete.state();
+  if (!st || !st.since) return;
+  const ids = (k) => Object.values(st[k] || {});
+  const all = [...ids("done"), ...ids("hold"), ...ids("skip")];
+  const sids = [...new Set(all.map((v) => v.studentId).filter(Boolean))], tids = [...new Set(all.map((v) => v.trainerId).filter(Boolean))];
+  const [studs, staff] = await Promise.all([
+    sids.length ? sbSelect("students", `select=id,name,discord_nick&id=in.(${sids.join(",")})`).catch(() => []) : [],
+    tids.length ? sbSelect("staff", `select=id,name&id=in.(${tids.join(",")})`).catch(() => []) : [],
+  ]);
+  const text = autoCompleteMod.digestText(st, Date.now(), {
+    nick: Object.fromEntries(studs.map((x) => [x.id, x.discord_nick || x.name || null])),
+    trainerName: Object.fromEntries(staff.map((x) => [x.id, x.name])),
+  });
+  if (!text) { console.log("[cron] auto_complete_digest: 없음"); return; }
+  if (!(await discordDM(process.env.MRI_OWNER_ID, text))) throw new Error("owner_dm_failed");
+  console.log("[cron] auto_complete_digest: 보냄");
 }
 
 async function runBookingOrphans() {
@@ -9565,6 +9687,11 @@ async function cronTick() {
   // 닫지 않은 수업(계약 trainer-portal-api §9.34.2 · 지휘 10/7) — 「어제까지」 끝났는데 열린 예약을 /수업등록 채널에 하루 한 통.
   //   위 bookingOrphan 은 **닫힌** 예약만 본다 — 아예 안 닫힌 예약은 48시간 sweep 전까지 아무 데도 안 떴다(10월 기록 멈춤의 원인).
   await maybeRunDaily("unclosedLessons", unclosedLessons.ALERT_AT, runUnclosedLessonsAlert, "닫지 않은 수업 알림");
+  // 개인 레슨 24시간 자동 완료(계약 §9.39 · 오너 10/18 「구현 끝나면 바로」) — 매 틱. 첫 틱이 켜진 시각을 적는다(소급 없음 §9.39.6).
+  await autoComplete.tick()
+    .then((r) => { if (r.studentIds?.length) Promise.resolve(gamesShort.check(r.studentIds)).catch(() => {}); })
+    .catch((e) => console.error("auto_complete_tick", e?.status || "", e?.message));
+  await maybeRunDaily("autoCompleteDigest", unclosedLessons.ALERT_AT, runAutoCompleteDigest, "자동 완료 원장 목록");
   // 트레이너별 판수 부족 알림(§45) — 매 틱. 입금 승인 · 오너 SQL 처럼 코드가 직후 점검을 못 거는 변화도 여기서 잡는다.
   await gamesShort.run({ label: "tick" }).catch((e) => console.error("short_tick", e?.message));
   // 현금영수증 4일 미발급(계약 §9.5 · 오너 판정 9/30) — 낮에 한 번. 신청마다 한 통 · 한 번만.

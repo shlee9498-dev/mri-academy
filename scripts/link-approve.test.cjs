@@ -248,3 +248,34 @@ test("순수 함수 — 이름 정규화 · 트레이너 판정 · /연결승인
   assert.equal(L.commandScope(TA, { trainer_id: null, status: "active" }), "not_assigned");
   assert.equal(L.commandScope(TA, { trainer_id: 2, status: "done" }), "not_live");
 });
+
+// ════════ §9.32.6 명부보다 먼저 온 신청 다시 잡기 · /연결승인 때 대기 신청 닫기 (10/14 #50) ════════
+test("§9.32.6 recoverPicks — 신청 뒤 생긴 · 이름 똑같은 · 미연결 한 명만 · 이미 다시 올린 신청 · 같은 이름 둘 · 신청 때 있던 명부는 고르지 않는다", () => {
+  const q = (id, name, at, o = {}) => ({ id, status: "pending", claimed_name: name, created_at: at, ...o });
+  const r = (id, name, at, o = {}) => ({ id, name, status: "active", discord_id: null, merged_into: null, created_at: at, ...o });
+  const pending = [q(50, "가 나다", "2026-10-06T17:35:00Z"), q(51, "라마", "2026-10-06T00:00:00Z"), q(52, "바사", "2026-10-06T00:00:00Z"),
+    q(53, "아자", "2026-10-06T00:00:00Z"), q(54, "차카", "2026-10-06T00:00:00Z", { status: "approved" }), q(55, "타파", "2026-10-06T00:00:00Z")];
+  const roster = [r(111, "가나다", "2026-10-10T07:52:00Z"),                       // 신청 뒤 · 공백만 다름 → 고른다
+    r(112, "라마", "2026-10-01T00:00:00Z"),                                        // 신청 전부터 있던 명부 → 카드에 이미 후보가 떴다
+    r(113, "바사", "2026-10-09T00:00:00Z"), r(114, "바사", "2026-10-09T00:00:00Z"), // 같은 이름 둘 → 원장에게
+    r(115, "아자", "2026-10-09T00:00:00Z", { discord_id: "x" }),                    // 이미 연결
+    r(116, "차카", "2026-10-09T00:00:00Z"),                                        // 신청이 대기가 아님
+    r(117, "타파", "2026-10-09T00:00:00Z", { status: "done" })];                   // 종료 명부
+  assert.deepEqual(L.recoverPicks(pending, roster).map((p) => [p.req.id, p.student.id]), [[50, 111]]);
+  assert.deepEqual(L.recoverPicks(pending, roster, { 50: { studentId: 111 } }), [], "이미 다시 올린 신청은 또 올리지 않는다");
+  assert.deepEqual(L.recoverPicks([], roster), []);
+});
+
+test("§9.32.6 closePendingFor — /연결승인 뒤 같은 계정의 대기 신청만 승인으로 닫는다 · 다른 계정 · 끝난 신청은 그대로", async () => {
+  db.student_link_requests = [
+    { id: 90, status: "pending", discord_id: "d-1", claimed_name: "가", student_id: null, decided_by: null, decided_at: null },
+    { id: 91, status: "pending", discord_id: "d-2", claimed_name: "나", student_id: null, decided_by: null, decided_at: null },
+    { id: 92, status: "rejected", discord_id: "d-1", claimed_name: "가", student_id: null, decided_by: "x", decided_at: "2026-10-01T00:00:00Z" },
+  ];
+  const closed = await api.closePendingFor({ discordId: "d-1", studentId: 111, actorId: "u-owner" });
+  assert.deepEqual(closed, [90]);
+  const by = Object.fromEntries(db.student_link_requests.map((r) => [r.id, r]));
+  assert.deepEqual([by[90].status, by[90].student_id, by[90].decided_by], ["approved", 111, "u-owner"]);
+  assert.deepEqual([by[91].status, by[92].status], ["pending", "rejected"]);
+  assert.deepEqual(await api.closePendingFor({ discordId: null, studentId: 1, actorId: "u" }), []);
+});
