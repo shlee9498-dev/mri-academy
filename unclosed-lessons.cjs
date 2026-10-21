@@ -97,3 +97,38 @@ function alertText(rows, names = {}) {
 }
 
 module.exports = { OPEN_STATUSES, ALERT_AT, ALERT_LOOKBACK_DAYS, ALERT_MAX_ITEMS, endMsOf, unclosedOf, trainerSummary, alertRows, alertText };
+
+// ── 트레이너 DM 독촉(계약 §9.39.5 · 공개 채널 알림을 대신한다) ──
+// 한 트레이너 몫 rows(alertRows 결과 중 그 트레이너) → DM 한 통. #번호 · 📅 없음. 같은 칸 그룹은 한 줄(인원).
+//   nick: 수강생 id → 디코 닉(없으면 「수강생」). 비면 null(보내지 않는다).
+const KIND_KO = { personal: "개인", spectate: "관전형", participate: "참여형", course: "직강", consult: "레벨 테스트" };
+const WD = ["일", "월", "화", "수", "목", "금", "토"];
+function trainerDmText(rows, nick = {}, nowMs = Date.now()) {
+  if (!rows || !rows.length) return null;
+  const bySlot = new Map();
+  for (const r of rows) { if (!bySlot.has(r.slotId)) bySlot.set(r.slotId, []); bySlot.get(r.slotId).push(r); }
+  const when = (iso) => {
+    const ms = Date.parse(iso); const d = new Date(ms + 9 * 3600_000);
+    return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${WD[d.getUTCDay()]}) ${d.toISOString().slice(11, 16)}`;
+  };
+  const days = (iso) => Math.max(1, Math.floor((Date.parse(kstDate(nowMs)) - Date.parse(kstDate(Date.parse(iso)))) / DAY));
+  const lines = [...bySlot.values()]
+    .sort((a, b) => Date.parse(a[0].startAt) - Date.parse(b[0].startAt))
+    .slice(0, ALERT_MAX_ITEMS)
+    .map((list) => {
+      const r = list[0]; const kind = KIND_KO[r.lessonType] || "수업";
+      const group = list.length > 1 || (r.lessonType !== "personal" && r.lessonType !== "consult");
+      const who = group ? `${kind} ${list.length}명` : `${nick[r.studentId] || "수강생"} · ${kind}`;
+      return `· ${who} · ${when(r.startAt)} · ${days(r.startAt)}일째`;
+    });
+  const more = bySlot.size - lines.length;
+  return [
+    `닫지 않은 수업 ${bySlot.size}건이 있어요`,
+    ...lines,
+    ...(more > 0 ? [`외 ${more}건`] : []),
+    "",
+    "트레이너 앱 예약 카드에서 「완료 · 기록하기」로 닫아 주세요",
+    "닫지 않으면 이 수업 판수가 이번 달 정산에 안 들어가요",
+  ].join("\n");
+}
+module.exports.trainerDmText = trainerDmText;

@@ -89,6 +89,10 @@ test("중복 판정 — 봇은 앱 기록(portal)만 · 앱은 수업 기록 전
   const s1 = await createRecorder(a.deps).appRecordedOn(2, [7, 8], "2026-10-01");
   assert.deepEqual([...s1], [7]);                                        // 봇 기록(8)은 앱 기록이 아니다
   assert.match(a.log.lastSessionQuery, /created_by\.eq\.portal/);
+  // 24시간 자동 완료(created_by 'auto:bell' · §9.39)도 앱 기록 — 봇 /수업등록 이 같은 수업을 또 넣으면 판수가 두 번 빠진다
+  const c = fakeDb({ sessionsOn: [{ id: 3, student_id: 7, games: 10, created_by: "auto:bell" }, { id: 4, student_id: 8, games: 5, created_by: "1234" }] });
+  assert.deepEqual([...(await createRecorder(c.deps).appRecordedOn(2, [7, 8], "2026-10-01"))], [7]);
+  assert.match(c.log.lastSessionQuery, /created_by\.eq\."auto:bell"/);
 
   const b = fakeDb({ sessionsOn: [{ id: 1, student_id: 7, games: 5, created_by: "1234" }, { id: 2, student_id: 8, games: 3, created_by: "adjreq:3" }] });
   const s2 = await createRecorder(b.deps).recordedOn(2, [7, 8], "2026-10-01");

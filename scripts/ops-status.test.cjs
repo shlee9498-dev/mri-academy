@@ -25,7 +25,7 @@ test("수업 행 판정 — 조정 요청 · /판수정정(양수 포함) · 0 �
   assert.equal(ops.isLessonRow({ games: 0, created_by: "owner_sql" }), false);
   assert.equal(ops.isLessonRow({ games: -3, created_by: "owner_sql" }), false);
   assert.equal(ops.isLessonRow({ games: 3, created_by: "1234", memo: "보강 수업" }), true);
-  assert.deepEqual(["portal", "1234567890", "owner_sql", "seed", null].map(ops.sourceOf), ["app", "bot", "manual", "manual", "manual"]);
+  assert.deepEqual(["portal", "auto:bell", "1234567890", "owner_sql", "seed", null].map(ops.sourceOf), ["app", "auto", "bot", "manual", "manual", "manual"]);
 });
 
 test("색 — 처리 대기 6시간 · 열린 칸(오너는 판정 안 함) · 가장 나쁜 색", () => {
