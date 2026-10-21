@@ -152,6 +152,7 @@ function limit(name, max, windowMs, reject) {
 const crypto = require("crypto");
 const killraceApply = require("./killrace-apply.cjs");
 const unclosedLessons = require("./unclosed-lessons.cjs");   // 닫지 않은 수업 — 세기만(계약 trainer-portal-api §9.34)
+const autoCompleteMod = require("./auto-complete.cjs");       // 개인 레슨 24시간 자동 완료(계약 §9.39 · DDL §86)
 const OAUTH_REDIRECT = "https://mri-academy-production.up.railway.app/api/auth/callback";
 const STAFF_IDS = (process.env.STAFF_DISCORD_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
 const reviewsReady = () =>
@@ -8703,8 +8704,15 @@ function onLevelTestDone(bookingId, staff) {
     });
 }
 
+// 개인 레슨 자동 완료(계약 §9.39) — 기록은 ops_state 'auto-complete' 한 줄. 틱은 cronTick · [수업 안 함] 은 아래 booking-api 의 hold 라우트
+const autoComplete = autoCompleteMod.createAutoComplete({
+  sbSelect, sbRpc,
+  stateGet: async (k) => { const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(k)}&limit=1`); return rows.length ? rows[0].value : null; },
+  stateSet: (k, v) => sbUpsert("ops_state", { key: k, value: v, updated_at: new Date().toISOString() }, "key"),
+});
 require("./booking-api.cjs")(app, {
   sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,
+  autoComplete,                                                     // §9.39 [수업 안 함] → hold
   recorder: lessonRecorder,                                         // §9.29 — 취소한 기록만 있는 날의 「완료」를 대신 기록
   onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 「완료」 · 예약(선차감) 직후
   onConsultDone: onLevelTestDone,                                  // 레벨 테스트 「완료」 → 상담 기록
@@ -9409,13 +9417,11 @@ const DIRECT_STALE_DAYS = 7;   // 직강은 주 단위 운영 — 3일은 오탐
 // 판정식은 §37 의 v_has 와 **같다**(학생 · 진행 트레이너 · KST 날짜). 다르면 화면과 알림이 갈린다.
 // 고치는 건 사람이 한다 — /수업등록 으로 판수를 넣거나, 수업을 안 했으면 예약을 취소로 되돌린다.
 const BOOKING_ORPHAN_DAYS = Number(process.env.BOOKING_ORPHAN_DAYS || 14);
-// ── 닫지 않은 수업 아침 알림(계약 trainer-portal-api §9.34.2) — 세기만 한다(상태 · 판수 · 48시간 전이 안 바꿈) ──
-//   채널 = /수업등록 채널(LESSON_CHANNEL_ID · 새 env 없음 · 미설정이면 건너뜀). 대상이 비면 안 보낸다. 하루 한 번(maybeRunDaily).
-//   한 통 = 트레이너별 · 예약 #번호와 날짜만(수강생 · 판수 없음) · 멘션 없음. 로그에는 건수만 남긴다.
+// ── 닫지 않은 수업 아침 독촉(계약 trainer-portal-api §9.39.5 · §9.34.2 를 대신한다) — 세기만 한다(상태 · 판수 · 48시간 전이 안 바꿈) ──
+//   공개 채널(/수업등록) 알림은 없앴다(오너 10/18) — 트레이너마다 DM 한 통(그 트레이너 몫이 있을 때만) · 수강생 디코 닉 · 시각 · 종류 · n일째.
+//   하루 한 번(maybeRunDaily). 로그에는 건수만. DM 이 막힌 트레이너는 건너뛴다(다른 사람에게 보내지 않는다).
 async function runUnclosedLessonsAlert() {
   if (!process.env.SUPABASE_URL) { console.log("[cron] unclosed_lessons: SUPABASE_URL 미설정 — 스킵"); return; }
-  const chId = process.env.LESSON_CHANNEL_ID;
-  if (!chId) { console.log("[cron] unclosed_lessons: LESSON_CHANNEL_ID 미설정 — 스킵"); return; }
   if (!botClient) throw new Error("bot_not_ready");                // 다음 틱에 한 번 더(두 번 실패면 maybeRunDaily 가 오너 DM)
   // 임베드 대신 2질의(runBookingOrphans 와 같은 이유 — 임베드 문법이 어긋나면 조용히 0건이 된다)
   const books = await sbSelect("slot_bookings",
@@ -9429,12 +9435,41 @@ async function runUnclosedLessonsAlert() {
   const rows = unclosedLessons.alertRows(unclosedLessons.unclosedOf(books, new Map(slots.map((s) => [s.id, s])), now), now);
   if (!rows.length) { console.log("[cron] unclosed_lessons: 없음"); return; }
   const tids = [...new Set(rows.map((r) => r.trainerId))];
-  const staff = await sbSelect("staff", `select=id,name&id=in.(${tids.join(",")})`).catch(() => []);
-  const names = Object.fromEntries(staff.map((x) => [x.id, x.name]));
-  const ch = await botClient.channels.fetch(String(chId));
-  if (!ch?.isTextBased?.()) throw new Error("lesson_channel_not_text");
-  await ch.send({ content: unclosedLessons.alertText(rows, names), allowedMentions: { parse: [] } });
-  console.log(`[cron] unclosed_lessons: ${rows.length}건 · 트레이너 ${tids.length}명 · 채널에 보냄`);
+  const sids = [...new Set(rows.map((r) => r.studentId))];
+  const [staff, studs] = await Promise.all([
+    sbSelect("staff", `select=id,discord_id,active&id=in.(${tids.join(",")})`).catch(() => []),
+    sbSelect("students", `select=id,name,discord_nick&id=in.(${sids.join(",")})`).catch(() => []),
+  ]);
+  const nick = Object.fromEntries(studs.map((x) => [x.id, x.discord_nick || x.name || null]));
+  let sent = 0, skipped = 0;
+  for (const t of staff) {
+    const mine = rows.filter((r) => r.trainerId === t.id);
+    const text = unclosedLessons.trainerDmText(mine, nick, now);
+    if (!text || !t.discord_id || t.active === false) { skipped++; continue; }
+    if (await discordDM(t.discord_id, text)) sent++; else skipped++;
+  }
+  console.log(`[cron] unclosed_lessons: ${rows.length}건 · 트레이너 ${tids.length}명 · DM ${sent} · 못 보냄 ${skipped}`);
+}
+
+// ── 개인 레슨 자동 완료 원장 하루 목록(계약 §9.39.3) — 어제 자동 완료 · 수업 안 함 · 잠긴 달 · 안 된 것. 비면 안 보낸다 ──
+async function runAutoCompleteDigest() {
+  if (!process.env.SUPABASE_URL || !process.env.MRI_OWNER_ID) return;
+  const st = await autoComplete.state();
+  if (!st || !st.since) return;
+  const ids = (k) => Object.values(st[k] || {});
+  const all = [...ids("done"), ...ids("hold"), ...ids("skip")];
+  const sids = [...new Set(all.map((v) => v.studentId).filter(Boolean))], tids = [...new Set(all.map((v) => v.trainerId).filter(Boolean))];
+  const [studs, staff] = await Promise.all([
+    sids.length ? sbSelect("students", `select=id,name,discord_nick&id=in.(${sids.join(",")})`).catch(() => []) : [],
+    tids.length ? sbSelect("staff", `select=id,name&id=in.(${tids.join(",")})`).catch(() => []) : [],
+  ]);
+  const text = autoCompleteMod.digestText(st, Date.now(), {
+    nick: Object.fromEntries(studs.map((x) => [x.id, x.discord_nick || x.name || null])),
+    trainerName: Object.fromEntries(staff.map((x) => [x.id, x.name])),
+  });
+  if (!text) { console.log("[cron] auto_complete_digest: 없음"); return; }
+  if (!(await discordDM(process.env.MRI_OWNER_ID, text))) throw new Error("owner_dm_failed");
+  console.log("[cron] auto_complete_digest: 보냄");
 }
 
 async function runBookingOrphans() {
@@ -9652,6 +9687,11 @@ async function cronTick() {
   // 닫지 않은 수업(계약 trainer-portal-api §9.34.2 · 지휘 10/7) — 「어제까지」 끝났는데 열린 예약을 /수업등록 채널에 하루 한 통.
   //   위 bookingOrphan 은 **닫힌** 예약만 본다 — 아예 안 닫힌 예약은 48시간 sweep 전까지 아무 데도 안 떴다(10월 기록 멈춤의 원인).
   await maybeRunDaily("unclosedLessons", unclosedLessons.ALERT_AT, runUnclosedLessonsAlert, "닫지 않은 수업 알림");
+  // 개인 레슨 24시간 자동 완료(계약 §9.39 · 오너 10/18 「구현 끝나면 바로」) — 매 틱. 첫 틱이 켜진 시각을 적는다(소급 없음 §9.39.6).
+  await autoComplete.tick()
+    .then((r) => { if (r.studentIds?.length) Promise.resolve(gamesShort.check(r.studentIds)).catch(() => {}); })
+    .catch((e) => console.error("auto_complete_tick", e?.status || "", e?.message));
+  await maybeRunDaily("autoCompleteDigest", unclosedLessons.ALERT_AT, runAutoCompleteDigest, "자동 완료 원장 목록");
   // 트레이너별 판수 부족 알림(§45) — 매 틱. 입금 승인 · 오너 SQL 처럼 코드가 직후 점검을 못 거는 변화도 여기서 잡는다.
   await gamesShort.run({ label: "tick" }).catch((e) => console.error("short_tick", e?.message));
   // 현금영수증 4일 미발급(계약 §9.5 · 오너 판정 9/30) — 낮에 한 번. 신청마다 한 통 · 한 번만.

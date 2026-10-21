@@ -4051,6 +4051,25 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
   `hold` · 물은 기록은 `ops_state`. env 없음(봇 DM · 기존 채널 env 그대로).
 - 판수 · 정산 계산식 · 잠금월 · 노쇼 판정 · 취소 차감(§9.38)은 **그대로**다. 바뀌는 것은 「안 누르면 아무것도 안 한다」가 「안 누르면 예약대로 완료」로 바뀌는 것 하나다.
 
+### 9.39.7a 서버 반영 (2026-10-18 · 경비 · §86 실행 확인 뒤)
+
+- **자동 완료 틱** — `auto-complete.cjs` · server.js `cronTick`(10분) 매 틱. 첫 틱이 **켜진 시각**(`since`)을 적고, 그보다 먼저 끝난 예약은 보지 않는다(§9.39.6).
+  대상 = 개인 · 머리 줄 · `booked`/`pending_review` · 선차감 > 0 · 끝 + 24시간 지남 · hold 아님 · 처음 보는 예약 · 테스트 계정 아님. 한 틱 20건 상한.
+  `record_lesson_from_booking(p_trainer_id = 칸 트레이너, p_booking_id, p_source: 'auto')` 한 번만 — 실패 · `already` 도 기록하고 **다시 부르지 않는다**.
+  잠긴 달(`period_locks`)이면 부르지 않고 열어 둔다 · 잠금을 못 읽은 틱은 아무것도 닫지 않는다.
+- **기록 줄** — `ops_state` **`auto-complete`** `{ since, hold, done, skip }`(30일 보관 · DDL 없음). 위 §9.39.7 표의 「`trainer-bell` 항목에 `hold`」는 이 줄로 바꿨다 —
+  `trainer-bell` 은 트레이너봇이 혼자 쓰는 줄이라 서버가 같이 쓰면 덮어쓰기가 난다.
+- **[수업 안 함]** — `POST /api/trainer-portal/bookings/:id/hold`(body 없음 · 60회/분) → `{ held: true, already }`.
+  칸 트레이너 · 원장만(403 `scope_denied`) · 개인만(400) · 열린 예약만(409 `not_open`) · 끝난 수업만(409 `not_ended`) · 켜지기 전 409 `not_ready` · 이미 자동 완료 409 `already_completed`.
+  예약 · 판수는 **그대로**(선차감이 붙들린 채) — 원장이 아래 지난 예약 취소로 닫으면 풀린다. 봇 버튼은 이 라우트를 부르고 원장 DM 한 줄을 보낸다(봇 몫).
+- **지난 예약 휴강 · 취소(§9.31) 서버** — `POST /api/trainer-portal/bookings/:id/cancel-past` `{ reason }` → `{ bookingId, status: "cancelled", gamesRestored }`.
+  원장만(403 `owner_only`) · 사유 2~200(400) · 시작이 지난 머리 줄만(409 `not_past`) · `booked`/`pending_review` 만(409 `not_cancellable`) · 꼬리 줄도 같이 · `admin_audit` `booking.cancel` · 수강생 DM 없음.
+- **독촉 DM** — §9.34.2 채널 알림을 끄고 같은 아침 틱(09:30 KST)이 트레이너마다 DM(`unclosed-lessons.cjs` `trainerDmText`)을 **서버가 직접** 보낸다(§9.39.7 봇 ⑤ 를 서버가 맡음 — 하루 한 번 크론이 서버에 있어서).
+  한 줄 = 「디코 닉 · 개인」 또는 「참여형 n명」 · `M/D(요일) HH:MM` · n일째 + 정산 영향 한 줄 · #번호 · 📅 없음. 닉 = 명부 `discord_nick` → 없으면 이름.
+- **원장 하루 목록** — 같은 09:30 틱 · `maybeRunDaily("autoCompleteDigest")` · 어제(KST) 자동 완료(트레이너별) · 수업 안 함 · 잠긴 달 · 안 된 것. 비면 안 보낸다.
+- **출처 표시** — `trainer-lessons` · `ops-status` 의 `sourceOf` 가 `auto:bell` → `"auto"`(앱 「자동 완료」) · 봇 `/수업등록` 중복 건너뛰기(`lesson-record` `appRecordedOn`)가 `auto:bell` 도 앱 기록으로 본다.
+- **봇 몫으로 남은 것**(트레이너봇 세션) — 끝 시각 DM 카드 · 버튼 넷 · [연장 · 단축] 길이 · [수업 안 함] → 위 hold 라우트 + 원장 DM · 개인 3시간 다시 묻기 없앰.
+
 ### 9.39.8 시험 (구현 PR)
 
 - 끝 시각 DM 한 번 · 다시 묻기 없음 · 버튼 넷이 각각 기존 함수 · [수업 안 함] = 예약 안 닫힘 + 자동 완료 안 됨 + 원장 DM ·
