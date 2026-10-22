@@ -64,7 +64,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   대기 항목을 해소 처리**하고, **무엇을 근거로 고쳤는지**를 한 줄 남긴다. 근거 없이 말만으로 완료 처리 금지.
 
 # MRI ACADEMY 작업 규칙
-- 브랜드: 다크 #0a0a0c + 골드 #f5c518. 강조색은 골드 하나만. 라이트 테마 금지.
+- 브랜드(2026-10-21 오너 「B3로 가자 디자인」): 크림 #FBF6EF + 잉크 #1A1714 · 버튼은 검정 알약 · 강조는 노란 형광 밑줄 하나. **빨강 · 주황 강조 금지**(오너 「위험한 채널 같다」). 아래 §디자인 시스템 B3 참조.
 - TOSS_SECRET_KEY, PUBG_API_KEY 등 모든 키는 절대 HTML/JS/커밋에 넣지 않는다 (Railway env 전용).
 - apply.html의 TOSS_CLIENT_KEY는 현재 테스트키(test_gck). 심사 통과 전 임의 변경 금지.
 - canonical/og:url은 항상 https://mriacademy.gg (github.io 주소 금지).
@@ -95,8 +95,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 외부 UI 컴포넌트 (21st.dev MCP · `.mcp.json`)
 - **구조만 채택한다.** 레이아웃·마크업·상호작용 패턴만 가져오고 시각 표현은 전부 우리 것으로 갈아끼운다. 붙여넣은 그대로 두지 않는다.
-- **폰트·색은 CSS 변수로 바꾼다.** 영문·숫자 = Space Grotesk, 한글 = Pretendard(디자인 시스템 v1). 가져온 코드의 하드코딩 색·폰트·px 값은 `--bg`·`--surface-1`·`--surface-2`·`--gold` 등 토큰 참조로 교체한다.
-- **골드는 절제한다.** 컴포넌트가 강조색을 여러 곳에 쓰면 하나만 남긴다. 골드 글로우는 화면당 1개 원칙을 그대로 적용한다.
+- **폰트·색은 CSS 변수로 바꾼다.** 본문 = Noto Sans KR, 숫자 = Pretendard(디자인 시스템 B3). 가져온 코드의 하드코딩 색·폰트·px 값은 `--bg`·`--card`·`--ink`·`--hl` 등 토큰 참조로 교체한다.
+- **강조는 절제한다.** 컴포넌트가 강조색을 여러 곳에 쓰면 하나만 남긴다. 노란 형광 강조는 화면당 1곳 원칙.
 - **의존성은 사전 보고한다.** 가져온 컴포넌트가 npm 패키지·CDN·아이콘셋을 요구하면 **설치 전에** 무엇이 왜 필요한지 보고하고 승인받는다. 이 저장소는 빌드 단계가 없다 — 번들러를 전제한 코드는 그대로 못 쓴다.
 - `API_KEY_21ST`는 **로컬 env 전용**이다. `.mcp.json`에는 `${API_KEY_21ST}` 참조만 두고 값은 커밋하지 않는다.
 
@@ -316,7 +316,20 @@ dual-write(마이그레이션 중), 채널 잠금(`LESSON_CHANNEL_ID`)·`TRAINER
 `2026-07-20` 이후 진행분만 신 엔진 정산(이전은 이월동결). 컷오버(`PANEL_WRITE=1` + 키 로테이션)는
 검증 후 오너 승인 예정.
 
-## 디자인 시스템 v1 ("OLED Premium", lesson-schedule.html에서 확정)
+## 디자인 시스템 B3 (2026-10-21 오너 확정 · 첫 페이지 index.html 부터)
+소개 영상의 크림 · 따뜻한 톤에 맞춘 밝고 차분한 페이지. **새로 만들거나 크게 고치는 화면은 B3 를 따른다.**
+- 토큰: `--bg:#FBF6EF`(+ 갈색 점 격자 rgba(120,90,60,.10) 1.2px · 26px 간격 · 오른쪽 위 복숭아빛) · `--card:#fff` · `--line:#EEE5D9` ·
+  `--ink:#1A1714` · `--sub:#5A5047` · `--mute:#8A7E72` · 소제목(eyebrow) `--kick:#B4662A` 굵게 14px · `--hl:#FFE58A`
+- 카드: 흰 바탕 · 테두리 `--line` · 아주 옅은 중립 그림자 · 모서리 22~28px
+- 버튼: 검정 알약(`--ink` 바탕 · 흰 글씨) 하나로 통일. **빨강 · 주황 · 금색 버튼 금지**
+- 강조: 노란 형광펜 밑줄(글자 아래 60~92%) — 제목 한 단어에만
+- 검정 바탕 칸은 눈이 쉬는 자리에만(첫 페이지 = 원장 직강 기록 · 원장 직강 가격 · 마지막 신청 칸)
+- 글꼴: 본문 · 제목 = Noto Sans KR(제목 900 · 자간 좁게) · 숫자 = Pretendard 800(Inter 는 impeccable overused-font 라 쓰지 않는다)
+- 값이 아직 없는 자리는 화면에 빈칸 · 「확인 대기」로 그리지 않는다 — 그 줄을 빼 두고 값이 오면 넣는다(지휘 10/21)
+
+## 디자인 시스템 v1 ("OLED Premium", lesson-schedule.html에서 확정) — 옛 판
+> B3 로 옮기기 전의 다른 화면(lesson-schedule · apply 등)에 남아 있는 체계다. 그 화면을 고칠 때는 화면 안 일관성을 지키고,
+> 크게 손볼 때 B3 로 옮긴다.
 토큰 `--bg:#0a0a0c / --surface-1:#15151a / --surface-2:#1a1a20 / --gold:#f5c518` + 골드 단일 강조.
 폰트: 영문·숫자 = Space Grotesk, 한글 헤딩 = Pretendard 800. 모션 = 바닐라 Motion(CDN ESM,
 `prefers-reduced-motion` 존중, fade-up 스태거). **골드 글로우는 3곳만**(히어로 CTA·클랜컵 배너·"모집중"
