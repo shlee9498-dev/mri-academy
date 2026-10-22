@@ -184,18 +184,13 @@ a{color:inherit}
 .rec .tag{font-size:14px;font-weight:700}
 .rec .src{font-size:13px;color:var(--mute)}
 .rec.dk .src{color:var(--on-dark-sub)}
-.cases{list-style:none;display:grid;gap:0;border-top:1px solid var(--line)}
-.rec.dk .cases{border-color:rgba(251,246,239,.16)}
-.cases li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);font-size:15px}
-.rec.dk .cases li{border-color:rgba(251,246,239,.16)}
-.cases li:has(.nick){grid-template-columns:4.5em minmax(0,1fr) auto}
-.cases .nick{font-weight:700}
-.cases .tr{min-width:0}
-.cases .tr b{font-weight:700}
-.cases .d{font-size:13px;color:var(--mute);white-space:nowrap}
-.rec.dk .cases .d{color:var(--on-dark-sub)}
-.g-fact{font-size:14px;color:var(--sub)}
-.rec.dk .g-fact{color:var(--on-dark-sub)}
+.fast .lab{font-size:14px;font-weight:700;color:var(--sub)}
+.rec.dk .fast .lab{color:var(--on-dark-sub)}
+.fast .v{font-size:clamp(52px,6vw,76px);line-height:1;margin-top:8px}
+.fast .v small{font-size:.36em;font-weight:700;margin-left:4px}
+.fast .avg{margin-top:10px;font-size:15px;color:var(--sub)}
+.rec.dk .fast .avg{color:var(--on-dark-sub)}
+.g-note{margin-top:14px;font-size:13px;color:var(--mute)}
 
 /* 수업 영상 칸(비어 있으면 숨김) */
 .lv{margin-top:16px}
@@ -306,8 +301,6 @@ footer .bizinfo{line-height:1.9;margin-bottom:10px}
   .wrap{padding-inline:16px}
   .top .btn{display:none}
   .stat{padding:18px}
-  .cases li:has(.nick){grid-template-columns:4em minmax(0,1fr)}
-  .cases li:has(.nick) .d{grid-column:2}
 }
 .js .rise{opacity:0;translate:0 18px;transition:opacity .5s ease,translate .5s cubic-bezier(.2,.8,.2,1)}
 .js .rise.in{opacity:1;translate:0 0}
@@ -437,34 +430,34 @@ html.vr-lock{overflow:hidden}
     </div>
   </section>
 
-  <!-- 5. 얼마나 다니면 달라져요 — 레슨(PUBG 공식 전적)과 원장 직강(관리대장)을 나눠 보여 준다(오너 10/21).
-       사례는 회계 대조로 재현된 것만 고정 글자로 둔다(지휘 10/21). 표본이 작아(레슨 6명 중 3명 상승 · 직강 2명) 「n / n명」 · 평균 기간 같은 큰 숫자는 싣지 않는다.
-       닉은 앞 두 글자 + **(공개 규격 · docs/public-metrics.md §2.3). 값이 없으면 닉 칸을 그리지 않는다(빈 자리 표시 금지 · 지휘 10/21).
-       회계 닉 값이 오면 줄 맨 앞에 <span class="nick">세**</span> 를 넣는다
-       /api/progress-public 사례는 같은 티어 안 RP 상승도 「상승」으로 세는 문제가 있어 여기서 읽지 않는다(서버 수정은 경비) -->
+  <!-- 5. 얼마나 다니면 달라져요 — 레슨과 원장 직강을 나눠 보여 준다(오너 10/21). 두 칸만 · 병행(레슨 + 직강) 칸은 싣지 않는다(지휘 10/22).
+       값 = 회계 10/22 KST 재산출(고정 글자 · 하드코딩이 아니라 장부 대조값): 레슨 가장 빠른 33일 · 평균 67일 · 사례 3건 / 직강 가장 빠른 79일 · 평균 101일 · 사례 2건.
+       기준 = 같은 시즌 안에서 티어가 오른 날까지 · 레슨은 첫 결제일, 직강은 첫 수업일부터 · 장부에 남은 기록 기준(연도 · 시작일은 싣지 않는다 — 지휘 10/22 정정).
+       「가장 빠른 기록」이 메인, 괄호에 평균과 사례 수(오너 10/22 「티어 승급 최고 속도를 메인, 괄호에 평균」) — 사례 수는 반드시 같이 둔다.
+       /api/progress-public 은 같은 티어 안 RP 상승도 「상승」으로 세는 문제가 있어 여기서 읽지 않는다(서버 수정은 경비) -->
   <section class="sec" id="growth" style="padding-top:0">
     <div class="wrap">
       <div class="kick">수강생 기록</div>
       <h2 class="h2">얼마나 다니면 달라져요?</h2>
       <div class="two">
         <article class="card rec" aria-labelledby="recL">
-          <div><div class="tag" id="recL">트레이너 레슨</div><div class="src">PUBG 공식 전적 · 2026년 6~10월</div></div>
-          <ul class="cases">
-            <li><span class="tr">크리스탈 → <b>다이아</b></span><span class="d">55일</span></li>
-            <li><span class="tr">플래티넘 → <b>크리스탈</b></span><span class="d">32일</span></li>
-            <li><span class="tr">다이아 → <b>마스터</b></span><span class="d">112일</span></li>
-          </ul>
-          <p class="g-fact">기록이 쌓이는 대로 늘려 갈게요</p>
+          <div><div class="tag" id="recL">트레이너 레슨</div><div class="src">PUBG 공식 전적</div></div>
+          <div class="fast">
+            <div class="lab">가장 빠른 기록</div>
+            <div class="v num">33<small>일</small></div>
+            <div class="avg">(평균 67일 · 사례 3건)</div>
+          </div>
         </article>
         <article class="card dk rec" aria-labelledby="recD">
-          <div><div class="tag" id="recD">원장 직강</div><div class="src">2023년 9월부터 가르쳤어요 · 관리대장</div></div>
-          <ul class="cases">
-            <li><span class="tr">다이아 → <b>마스터</b></span><span class="d">78일</span></li>
-            <li><span class="tr"><b>마스터</b> 달성</span><span class="d">122일 · 29회 수업</span></li>
-          </ul>
-          <p class="g-fact">기록이 쌓이는 대로 늘려 갈게요</p>
+          <div><div class="tag" id="recD">원장 직강</div><div class="src">관리대장</div></div>
+          <div class="fast">
+            <div class="lab">가장 빠른 기록</div>
+            <div class="v num">79<small>일</small></div>
+            <div class="avg">(평균 101일 · 사례 2건)</div>
+          </div>
         </article>
       </div>
+      <p class="g-note">같은 시즌 안에서 티어가 오른 날까지예요. 레슨은 첫 결제일, 직강은 첫 수업일부터 셌고 장부에 남은 기록 기준이에요</p>
 
       <!-- 수업 영상 — 영상 주소는 아래 data-yt 한 곳에서만 바꾼다(유튜브 주소 또는 영상 ID).
            비어 있으면 칸 전체가 화면에 안 나온다. 제목 · 설명 문구도 data-title · data-desc 에서 바꾼다.
