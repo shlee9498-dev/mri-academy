@@ -4202,3 +4202,108 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - 이 절은 정산 계산을 바꾸지 않는다(조정 행 = §46 그대로 · 수업 기록 = §9.9 그대로).
 - **트레이너봇 세션**: 9.41.1 카드 · 9.41.2 붙여넣기 모달 · 결과 표 · 9.41.3 일요일 DM · 9.41.4 「명부에 없음 → 새로 등록」 칸.
 - **경비(이 PR)**: `via` · reconcile 3라우트 · 원장 묶음 카드 · 일요일 sheet · 입금 받음 신규 등록 · 중복 확인 넓히기 · 시험.
+
+## 9.43 전술 지도 · 복기창 P1 — 복기 판 ↔ 경기 연결 · 기절 장면 · 원 크기 · 기절 지점 모음 · 첨삭 요청 · 예약에 복기 싣기 (2026-10-22 · 반장 요청 7건 · 오너 「고퀄리티가 중요함 애매하게만들지말자」) · **계약만 · 서버는 배포 재개 뒤 · DDL = §88 초안(더하기만 · 실행 전)**
+
+공통 원칙
+- 서버가 사실만 낸다(거리 · 방향 · 시각 · 원 밖 거리 · 남은 팀 수). **판정 문구 · 판수 · 금액은 이 절에 없다** — 카드(⑤)는 트레이너가 붙인 것만.
+- 앱으로 나가지 않는 것: **matchId · accountId · 다른 플레이어 닉네임 · 상대 좌표 · 상대 팀 번호**. 경기는 불투명 `ref`(서버 HMAC · `SESSION_SECRET` 파생 · 새 env 없음)로만 오간다.
+- 좌표는 그 지도 크기로 나눈 **0~1**(왼쪽 위 0,0 · `replay-core.js` 원본은 cm). 시각은 경기 시작 기준 **초**(`atSec`).
+- 경로 접두: 수강생 `/api/student-portal`(반장 요청의 `/api/portal` = 이것) · 트레이너 `/api/trainer-portal`. 범위 판정은 기존 복기 규칙 그대로(본인 · 맡은 트레이너 · 오너, 아니면 404).
+- PUBG 원자료는 `replay` 비공개 버킷(§87)에만 둔다. 앱 응답은 아래 모양으로 줄인 것뿐이다.
+
+### 9.43.1 경기 연결 — 복기 판 하나 = 경기 하나
+- `GET  /api/student-portal/reviews/:id/games/:gameId/match-candidates` (트레이너도 같은 경로를 `/api/trainer-portal/...` 로)
+  → `{ candidates:[{ ref, playedAt(KST ISO), map(한글 지도 이름), placement, mode }], reason? }`
+  - 후보 = 그 수강생 `students.pubg_platform` · `pubg_name`(없으면 `pubg_account_id`)의 최근 경기(`findPlayer` → `relationships.matches` · ttl 0). **복기 판 지도와 같은 지도**를 위로, 같은 날 · 판 순서(`review_games.ord`)가 맞는 것을 먼저. 최대 12개.
+  - `reason` = `no_pubg_name`(명부에 닉 없음) · `expired`(복기 작성일이 14일 넘음 — PUBG 경기 데이터 보관 14일) · `none`(그 기간 경기 0) · `rate_limited`(PUBG 10 RPM · 잠시 뒤).
+  - **커스텀 · 이벤트 경기는 후보에서 뺀다**(`isCustomGame` · `isEventMode`).
+- `PUT /api/student-portal/reviews/:id/games/:gameId/match` `{ ref }` | `{ ref: null }`(연결 끊기)
+  - 연결하면 서버가 그 경기 원자료를 `replay` 버킷에 저장(§87 `replay_matches` 한 줄)하고 장면 만들기(9.43.2)를 줄 세운다. 응답 `{ linked: true, scene: { status } }`.
+  - 한 경기를 같은 수강생의 두 판에 걸면 409 `already_linked`. 다른 수강생 복기에 같은 경기(같은 팀)가 걸리는 건 허용(듀오 · 스쿼드).
+- 저장: `review_games` 에 `replay_match_id bigint references replay_matches(id)` · `linked_at` · `linked_by`(§88 · 더하기만).
+- 경비 답(물음 3개)
+  - 닉 보유: 명부(합쳐진 행 제외) active **78명 중 15명**만 `pubg_name` 이 있고 계정 id 는 14명(10/22 실측). → 연결 전에 **닉 채우기가 먼저**다. 수강생 앱 「배그 닉 등록」 한 칸(본인 입력 → `findPlayer` 로 확인 뒤 저장)을 같이 넣는 걸 권한다.
+  - 보관 기간: PUBG 경기 · 텔레메트리 **14일**. 연결한 경기는 우리 버킷에 남아 14일 뒤에도 장면이 열린다. 연결 안 한 경기는 14일 뒤 못 찾는다.
+  - 연결 비율: 셀 수 있다 — `review_games` 중 `replay_match_id` 있는 비율. 원장 화면 지표로 `GET /api/trainer-portal/tactics/link-rate` `{ games, linked, byTrainer }`.
+
+### 9.43.2 그 판 장면
+- `GET /api/student-portal/reviews/:id/games/:gameId/scene` (트레이너 경로 같음)
+```
+{ status: "ready" | "reading" | "queued" | "failed" | "unlinked",
+  map, mapSizeM, placement,
+  knockdowns: [ { idx, phase, atSec, x, y, inVehicle,
+                  attacker: { distanceM, bearingDeg },          // 내 위치에서 공격자 쪽 · 북 0° 시계방향 · 좌표 · 닉 없음
+                  facts: { outsideNextM, sinceAnnounceSec, aliveTeams } } ],
+  path: [ [x, y, atSec] ],                                      // 본인만 · 5초 간격 · 착지 전 비행기 구간 제외
+  zones: [ { phase, announceSec, safe: { cx, cy, r }, warn: { cx, cy, r } } ] }
+```
+  - `knockdowns` = 그 수강생이 **기절당한** 순간(`LogPlayerMakeGroggy` victim = 본인). 기절 없이 바로 죽은 경우는 `LogPlayerKillV2` 를 같은 모양으로 넣고 `kind:"kill"` 을 붙인다.
+  - `facts.outsideNextM` = 그 시각 다음 원(흰 원 · `poisonGasWarning`) 밖이면 원 가장자리까지 m, 안이면 `0`, 다음 원 공개 전이면 `null`.
+  - `facts.sinceAnnounceSec` = 직전 「원 공개」(`LogPhaseChange` 정수 페이즈)부터 지난 초. 원 공개 전이면 `null`.
+  - `facts.aliveTeams` = 그 시각 직전 `LogGameStatePeriodic.numAliveTeams`.
+  - `zones[].safe` = 파란 원(`safetyZone`) · `warn` = 흰 원(`poisonGasWarning`) · 반지름 0~1(지도 크기 비).
+  - `status` — 연결 직후 `queued` → 읽는 중 `reading` → `ready`. 원자료를 못 받으면 `failed`(14일 지남 · PUBG 오류). 앱은 `reading` 동안 5초 간격으로 다시 묻는다(최대 2분).
+  - 저장: 만든 장면은 `review_game_scenes`(game_id PK · status · scene jsonb · parser_version · built_at · §88)에 둔다. 같은 판은 다시 계산하지 않는다(파서 버전이 바뀌면 다시).
+- **공개 범위: 오너 결정 대기.** 그 전까지 서버는 **본인 · 맡은 트레이너 · 오너만**(반장 권고와 같음). 복기 `visibility` 가 group · students 여도 장면은 열지 않는다.
+
+### 9.43.3 페이즈 원 크기
+- `GET /api/student-portal/tactics/zone-sizes` · `GET /api/trainer-portal/tactics/zone-sizes`
+  → `{ maps: { [mapKey]: [ { phase, safeRadiusM, warnRadiusM, source: "measured", sampleSize, sourceNote } ] }, updatedAt }`
+  - `measured` = 우리 버킷 경기(`replay_matches`)의 페이즈별 반지름 **중앙값**. **sampleSize 30 미만인 칸은 응답에서 뺀다**(앱이 「표본 부족」을 따로 그릴 필요 없음).
+  - `official` 은 지금 없다 — PUBG 가 페이즈별 반지름을 공식 표로 내지 않는다(텔레메트리 실측만 있음). 표가 생기면 `source:"official"` 로 같은 모양에 넣는다.
+  - 하루 한 번 다시 계산 · 캐시. 경기 수가 쌓이기 전(첫 몇 주)에는 지도 대부분이 빈 배열일 수 있다.
+
+### 9.43.4 내 기절 지점 모음
+- `GET /api/student-portal/me/knockdowns?map=&limit=`(기본 100 · 최대 300)
+- `GET /api/trainer-portal/students/:id/knockdowns?map=&limit=` — 맡은 트레이너 · 오너, 아니면 404 `student_not_found`
+```
+{ items: [ { reviewId, gameId, playedAt, map, phase, x, y, inVehicle,
+             attacker: { distanceM, bearingDeg }, facts, cardNo | null } ],
+  summary: { byPhase: { "1": n, … }, outsideNext: n, thisWeek: n, lastWeek: n },
+  sampleSize }
+```
+  - 출처 = 연결된 복기 판의 장면(9.43.2)만. 복기에 안 건 경기는 넣지 않는다(→ `reviewId` · `gameId` 는 지금 항상 값이 있다 · null 은 나중에 「자동 저장 경기」를 넣을 자리).
+  - `cardNo` = 트레이너가 그 기절에 붙인 카드 번호(9.43.5)만. **자동 후보는 내지 않는다.**
+  - `thisWeek` · `lastWeek` = KST 월요일 0시 기준.
+
+### 9.43.5 첨삭 요청 · 대기열 · 새 첨삭 · 카드 카탈로그
+- `POST /api/student-portal/reviews/:id/feedback-requests` `{ gameId, knockdownIdx | null }` → `{ requestId, status:"open" }`
+  - 같은 판 · 같은 기절에 열린 요청이 있으면 409 `already_requested`. 수강생당 열린 요청 최대 5개(넘으면 409 `too_many_open`).
+  - 저장: `review_feedback_requests`(id · review_id · game_id · knockdown_idx · student_id · status open/answered/closed · created_at · answered_at · answered_by · §88).
+  - 맡은 트레이너에게 트레이너봇 DM 한 줄(트레이너봇 세션 몫 · 이 절은 데이터만).
+- `GET /api/trainer-portal/feedback-requests?status=open` — 맡은 수강생만 · **오래된 것부터** · `{ items:[{ requestId, reviewId, gameId, knockdownIdx, student:{ studentId, nick }, createdAt, waitingHours }] }`
+- 트레이너 그리기 — mri-student-app `docs/tactical-map.md` §4 의 두 라우트를 **그 문서 모양 그대로** 받는다(경비가 본문을 받아 이 절에 붙인다 · 지금은 자리만).
+  - 그리기를 저장하면 그 요청이 `answered` 가 되고, 수강생 복기 목록 · 홈의 기존 `unreadFeedback`(review-api.cjs 의 그 키)이 1 올라간다. 새 키는 만들지 않는다.
+- `GET /api/student-portal/cards` · `GET /api/trainer-portal/cards` → `[ { no, title, why, instead } ]`
+  - 정본 = 저장소 JSON 한 파일(`replay-cards.json` · 오너 문장 그대로). 지금 저장소 main 에는 기준 **#001 하나**(`replay-criteria.json`)뿐이고, 카드 20장 v0 는 `claude/replay-public-parked` 에 보관 중이다 → **오너가 문장을 확정한 카드만** main 에 올린다. 확정 전 응답은 확정된 것만(0~n장).
+  - 트레이너가 기절에 카드를 붙이는 쓰기: `PUT /api/trainer-portal/reviews/:id/games/:gameId/knockdowns/:idx/card` `{ cardNo | null }`(§88 `review_knockdown_cards`).
+
+### 9.43.6 예약에 복기 싣기
+- 수강생 `POST /api/student-portal/bookings` 본문에 **선택 칸** `reviewRef: { reviewId, gameId }` 추가(지금 키 `slotId` · `durationMin` 옆).
+  - 본인 복기 · 본인 판만. 아니면 400 `invalid_body`(예약 자체는 막지 않게 — 잘못된 `reviewRef` 는 무시하지 않고 400 으로 돌려 앱이 고치게 한다).
+  - 저장: `slot_bookings.review_game_id bigint`(§88 · 더하기만).
+- 트레이너 수업 상세(기존 응답)에 `review: { reviewId, gameId, map, sceneStatus } | null` 이 붙는다 → 그 장면으로 가는 링크.
+- **판수 · 선차감 · 정원 판정은 지금 그대로**(이 칸은 판정에 쓰지 않는다).
+
+### 9.43.7 DDL §88 초안(더하기만 · 실행 전 · 정본 = `supabase_admin_panel.sql` 에 서버 PR 과 같이)
+- `review_games` + `replay_match_id` · `linked_at` · `linked_by`
+- 새 표 `review_game_scenes` · `review_feedback_requests` · `review_knockdown_cards`
+- `slot_bookings` + `review_game_id`
+- 전부 RLS on · service_role 만. 실행은 경비(A 구간 · 스냅샷 → 실행 → 검증 → notify). `REQUIRED_SCHEMA` 에 같이 올린다.
+
+### 9.43.8 내보내기 순서
+Railway 배포 재개 → #608 · #610(가격) → **§87 실행 상태 확인 · 버킷 확인** → 서버 PR ①(9.43.1 연결 + §88 + 9.43.2 장면) → ②(9.43.3 원 크기 · 9.43.4 모음) → ③(9.43.5 첨삭 · 카드 · 9.43.6 예약). 앱은 ① 배포 뒤 연결 화면부터.
+- 복기AI #589 는 이미 main 에 머지됐다(10/22 02:23 KST · 엔진만 · 운영진 전용 `/api/replay/*`). 배포가 멈춰 있어 **서버에는 아직 안 올라갔다**(10/19 코드). 배포 재개 때 같이 올라간다.
+
+### 9.43.9 반장 물음 ⑦ 답
+- `replay_matches` 에 기절 · 원 · 내 위치가 있나 → **없다.** 그 표는 목록(platform · match_id · team_id · map · played_at · storage_path)뿐이고, 사건은 버킷 파일(`replay/{platform}/{matchId}/{teamId}.json.gz` · 한 팀으로 줄인 텔레메트리)에만 있다. 장면은 그 파일에서 다시 뽑는다(9.43.2 → `review_game_scenes` 에 결과만 저장).
+  - 운영 DB 에 `replay_matches` 표는 있다(10/22 실측). 다만 저장소 SQL 머리말에는 「실행 완료」 표시가 없어, 행 수 · 버킷 확인을 배포 재개 때 경비가 한 번 더 한다(오늘은 DB 연결 오류로 못 셈).
+- 키 이름(`replay-core.js` 가 실제로 읽는 것)
+  - 기절: `LogPlayerMakeGroggy` — `attacker` · `victim`(각 `accountId` · `name` · `location{x,y,z}` · `teamId`) · `damageCauserName` · `distance`.
+  - 상태: `LogGameStatePeriodic.gameState` — `safetyZonePosition` · `safetyZoneRadius`(파란 원) · `poisonGasWarningPosition` · `poisonGasWarningRadius`(흰 원) · `redZonePosition/Radius` · `numAliveTeams` · `numAlivePlayers` · `common.isGame`.
+  - 위치: `LogPlayerPosition.character.location{x,y,z}` · `health` · `isInBlueZone` · `vehicle.vehicleType`.
+  - 시각: 모든 이벤트 `_D` → 경기 시작(`LogMatchStart._D`) 기준 초.
+- 원 발표 시각 찾는 법: `LogPhaseChange.phase`(또는 `common.isGame`)가 **정수로 바뀐 첫 순간 = 「N페이즈 원 공개」**, `.5` 가 붙은 첫 순간 = 「수축 시작」(`replay-core.js` `phases[]`). `LogGameStatePeriodic` 의 흰 원 좌표가 바뀐 첫 샘플과 같은 순간이라 교차 확인할 수 있다. `remainsTime` · `elapsedTime` 은 지금 읽지 않는다(필요 없음).
+- 주의 1: `trimTeam` 은 우리 팀 사건만 남긴다 → 공격자 거리 · 방향은 `LogPlayerMakeGroggy` 의 `attacker.location` 으로 구한다(상대 경로는 없음 · 그래서 공격자는 거리 · 방향 한 점만 낸다).
+- 주의 2(오너 확인 필요): `docs/replay-ai.md` 10/21 결정 — 공개 화면을 보관한 이유 중 하나가 **「PUBG API 이용 약관상 공개 사용은 무료여야 한다」**였다. 전술 지도가 유료 상품의 일부가 되면 이 약관에 걸릴 수 있다 → **유료로 팔지, 수강생 무료 기능으로 둘지 오너 판단을 받고 서버 PR ③ 전에 정한다.**
