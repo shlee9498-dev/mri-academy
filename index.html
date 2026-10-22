@@ -277,17 +277,17 @@ a{color:inherit}
 .sec-sub{margin-top:10px;color:var(--mute);max-width:640px}
 .price-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:end;margin-top:36px}
 .big-p .lab{font-weight:700;color:var(--mute)}
-.big-p .lab del{font-family:var(--num);font-weight:700;margin-left:8px}
 .big-p .v{font:800 clamp(96px,13vw,184px)/.9 var(--num);color:var(--gold);margin-top:6px}
 .big-p .v small{font:800 clamp(22px,2.2vw,30px)/1 var(--sans);color:var(--ink);margin-left:6px}
-.prow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 18px;align-items:baseline;padding:16px 0;border-bottom:1px solid var(--line)}
+.prow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 18px;align-items:baseline;padding:16px 0;border-bottom:1px solid var(--line)}
 .prow:first-child{border-top:1px solid var(--line)}
 .prow .n{font-weight:700;font-size:17px}
 .prow .n small{display:block;color:var(--mute);font-weight:400;font-size:14px;margin-top:2px}
-.prow del{font:700 15px/1 var(--num);color:var(--mute)}
 .prow .p{font:800 28px/1 var(--num);text-align:right;min-width:110px}
 .prow .p small{font:700 14px/1 var(--sans);margin-left:2px}
-.cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:48px;margin-top:56px}
+.cols{display:grid;grid-template-columns:minmax(0,1fr);max-width:620px;gap:48px;margin-top:56px}
+.entry{margin-top:12px;font-size:clamp(16px,1.5vw,19px);color:var(--mute)}
+.entry b{color:var(--ink)}
 .cols h3{font-size:22px;font-weight:800}
 .cols .gd{color:var(--mute);font-size:15px;margin:4px 0 14px}
 .pnotes{margin-top:40px;display:grid;gap:6px;color:var(--mute);font-size:15px;max-width:820px}
@@ -458,12 +458,12 @@ html.vr-lock{overflow:hidden}
   <section class="hero">
     <div class="wrap">
       <div class="eyebrow">배틀그라운드 경쟁전 코칭</div>
-      <!-- 간판 = 실적 두 줄(오너 10/4 확정 숫자 · 고정 글자). 근거는 PR 본문 — 원장 101명 = 관리대장 + 적립 내역 + 전체현황 합친 수강생 ·
-           2023년 9월 = 강의 서버 개설일 · 4,200시간 이상 = 입금 기준 약 1,890시간 + 수업 800회 × 3시간 ·
-           트레이너 78명 = DB 2026-04-01 ~ 09-30 레슨 · 세트 결제자 · 약 4,000판 = 같은 기간 결제 3,795판 · 3월 중순부터 누적 4,000판 -->
+      <!-- 간판 = 실적 두 줄 · 장부로 다시 셀 수 있는 값만(회계 실측 10/18 · 오너 「숫자는 장부 확인값으로」 10/20 · 고정 글자).
+           원장 = 2023년 10월(장부 시작)부터 수강생 120명 · 원장 직강 400회 이상 / 트레이너 = 2026년 4월부터 레슨 3,100판 이상.
+           종전 「101명 · 직강 4,200시간 이상」 「78명 · 레슨 약 4,000판」은 근거 재현이 안 돼서 뺐다(400회 × 3시간 ≈ 1,200시간). 트레이너 인원은 확인값이 없어 뺐다 -->
       <h1 class="sign">
-        <span class="ln"><span class="hd"><b>원장</b><span>2023년 9월 ~ 2026년 9월</span></span><span class="big">101<small>명</small><span class="sep">·</span>직강 4,200<small>시간 이상</small></span></span>
-        <span class="ln"><span class="hd"><b>트레이너</b><span>2026년 4월 ~ 9월</span></span><span class="big">78<small>명</small><span class="sep">·</span>레슨 약 4,000<small>판</small></span></span>
+        <span class="ln"><span class="hd"><b>원장</b><span>2023년 10월부터</span></span><span class="big">수강생 120<small>명</small><span class="sep">·</span>원장 직강 400<small>회 이상</small></span></span>
+        <span class="ln"><span class="hd"><b>트레이너</b><span>2026년 4월부터</span></span><span class="big">레슨 3,100<small>판 이상</small></span></span>
       </h1>
       <div class="hero-row">
         <div class="hero-txt">
@@ -578,35 +578,27 @@ html.vr-lock{overflow:hidden}
     <div class="wrap">
       <div class="eyebrow">Price</div>
       <h2 class="sec-h">레슨 10판, 판당 4,500원</h2>
-      <p class="sec-sub">취소선은 정가이고, 지금은 특가가 적용돼 있어요</p>
+      <p class="entry">처음이면 <b>레벨 테스트 20,000원</b> → 실력 보고 직강 반 또는 레슨</p>
       <div class="price-main">
         <div class="big-p">
-          <div class="lab">레슨 10판<del>50,000</del></div>
+          <div class="lab">레슨 10판</div>
           <div class="v">45,000<small>원</small></div>
         </div>
         <div>
-          <div class="prow"><div class="n">21판<small>판당 4,286원</small></div><del>105,000</del><div class="p">90,000<small>원</small></div></div>
-          <div class="prow"><div class="n">33판<small>판당 4,242원</small></div><del>165,000</del><div class="p">140,000<small>원</small></div></div>
-          <div class="prow"><div class="n">99판<small>33판 × 3 · 한 번에 넉넉히 받고 싶은 분</small></div><span></span><div class="p">420,000<small>원</small></div></div>
+          <div class="prow"><div class="n">21판<small>판당 4,286원</small></div><div class="p">90,000<small>원</small></div></div>
+          <div class="prow"><div class="n">33판<small>판당 4,242원</small></div><div class="p">140,000<small>원</small></div></div>
+          <div class="prow"><div class="n">99판<small>33판 × 3 · 한 번에 넉넉히 받고 싶은 분</small></div><div class="p">420,000<small>원</small></div></div>
         </div>
       </div>
+      <!-- 원장 직강 = 290,000 하나 · 세트 없음(가격 계약 docs/direct-price-unify.md §1 · §5 · 오너 10/19) -->
       <div class="cols">
         <div>
-          <h3>원장 직강</h3><p class="gd">회 단위 · 8회 과정 · 회당 3시간</p>
-          <div class="prow"><div class="n">초급 직강<small>8회</small></div><del>320,000</del><div class="p">250,000<small>원</small></div></div>
-          <div class="prow"><div class="n">중급 직강<small>8회</small></div><del>340,000</del><div class="p">270,000<small>원</small></div></div>
-          <div class="prow"><div class="n">심화 직강<small>8회</small></div><del>360,000</del><div class="p">290,000<small>원</small></div></div>
-        </div>
-        <div>
-          <h3>세트</h3><p class="gd">원장 직강 8회 + 레슨 판수</p>
-          <div class="prow"><div class="n">초급 세트<small>초급 직강 8회 + 레슨 10판</small></div><del>295,000</del><div class="p">280,000<small>원</small></div></div>
-          <div class="prow"><div class="n">중급 세트<small>중급 직강 8회 + 레슨 21판</small></div><del>360,000</del><div class="p">340,000<small>원</small></div></div>
-          <div class="prow"><div class="n">심화 세트<small>심화 직강 8회 + 레슨 33판</small></div><del>430,000</del><div class="p">405,000<small>원</small></div></div>
+          <h3>원장 직강</h3><p class="gd">회 단위 · 반 단계와 상관없이 같은 가격 · 직강과 레슨은 따로 신청해요</p>
+          <div class="prow"><div class="n">원장 직강 8회<small>1회 3시간 · 총 24시간</small></div><div class="p">290,000<small>원</small></div></div>
         </div>
       </div>
       <div class="pnotes">
         <p>핵이나 버그로 터진 게임은 무효로 처리해요</p>
-        <p>트레이너 1인당 정원은 25명이에요. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b>을 넘으면 각각 그 주 다음 주부터 정가로 바뀌어요</p>
         <p>환불은 남은 판수 × 판당 단가(강의는 남은 회차 × 회당 단가)이고 위약금은 없어요. 자세한 기준은 <a class="link" href="terms.html">이용약관 제7조</a>에 있어요</p>
       </div>
       <a class="vip-door link" href="#vip" data-vip-open>정해진 구성 말고 원장과 1:1로 맞추고 싶다면 <span>VIP 룸</span></a>
