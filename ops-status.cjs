@@ -72,6 +72,7 @@ function lessonRowsOf(rows) {
 function sourceOf(createdBy) {
   const s = String(createdBy || "");
   if (s === "portal") return "app";
+  if (s === "auto:bell") return "auto";                    // 24시간 자동 완료(계약 §9.39)
   if (/^\d+$/.test(s)) return "bot";
   return "manual";
 }

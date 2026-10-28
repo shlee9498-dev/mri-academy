@@ -5,13 +5,15 @@
 // 두 입구가 따로 쓰면 등록 귀속 · 예약 닫기 · 부족 점검 중 하나가 한쪽에서만 고쳐져 어긋난다.
 //
 //   writeLessonRows  = 등록 귀속(resolveEnrollmentId) → lesson_sessions 기록 → 같은 날 예약 닫기 → 부족 점검 훅
-//   appRecordedOn    = 그날 앱이 남긴 기록(created_by 'portal')이 있는 수강생 — 봇 /수업등록 의 중복 건너뛰기 판정
+//   appRecordedOn    = 그날 앱이 남긴 기록(created_by 'portal' · 자동 완료 'auto:bell')이 있는 수강생 — 봇 /수업등록 의 중복 건너뛰기 판정
 //   recordedOn       = 그날 이 트레이너의 수업 기록(앱 · 봇 · 판수 조정 행 제외)이 있는 수강생 — 앱 기록하기의 중복 판정
 //
 // 봇 전용 일(이름 → 명부 해석 · 시트 웹훅 · 디스코드 회신)은 server.js 에 남는다. 이 파일은 DB 만 만진다.
 // 값(이름 등)은 로그에 남기지 않는다 — 코드 · 건수 · id 만.
 // ============================================================
 "use strict";
+// 앱이 남긴 수업 기록 표시 — 예약 「완료」 · 수업 기록하기(portal) · 24시간 자동 완료(auto:bell · 계약 §9.39)
+const APP_CREATED_BY = new Set(["portal", "auto:bell"]);
 
 const { voidRef, voidState } = require("./ops-status.cjs");   // 수업 기록 취소(§9.29) 판정 한 벌
 
@@ -106,9 +108,10 @@ module.exports = function createLessonRecorder(deps) {
   async function appRecordedOn(trainerId, studentIds, playedAt) {
     const have = await sbSelect("lesson_sessions",
       `select=id,student_id,games,created_by,memo&trainer_id=eq.${trainerId}&played_at=eq.${playedAt}`
-      + `&or=(created_by.eq.portal,created_by.like.void:*)&student_id=in.(${studentIds.join(",")})`);
+      + `&or=(created_by.eq.portal,created_by.eq."auto:bell",created_by.like.void:*)&student_id=in.(${studentIds.join(",")})`);
     const { voided } = voidState(have);
-    return new Set(have.filter((r) => r.created_by === "portal" && !voided.has(Number(r.id))).map((r) => Number(r.student_id)));
+    // 24시간 자동 완료(created_by 'auto:bell' · 계약 §9.39.3 · DDL §86)도 앱 기록이다 — 같은 수업을 봇으로 또 넣으면 판수가 두 번 빠진다
+    return new Set(have.filter((r) => APP_CREATED_BY.has(r.created_by) && !voided.has(Number(r.id))).map((r) => Number(r.student_id)));
   }
 
   // 그날 이 트레이너의 **수업 기록**이 있는 수강생 — 앱 「수업 기록하기」의 중복 판정(계약 §9.9).
@@ -168,3 +171,4 @@ module.exports = function createLessonRecorder(deps) {
 };
 
 module.exports.parseLessonDate = parseLessonDate;
+module.exports.APP_CREATED_BY = APP_CREATED_BY;

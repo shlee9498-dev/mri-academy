@@ -237,27 +237,70 @@ test("A — 규칙이 못 읽으면 Claude 정리본을 규칙으로 다시 검�
   assert.match(m2.content, /못 읽었어요/);
 });
 
-test("B — 벨: 배포 전 수업 제외 · +10분 · 재기동 뒤 두 번 안 감 · 3시간 뒤 1번 더 · 그 뒤 없음", async () => {
-  const target = { bookingId: 77, trainerDiscordId: "d5", studentName: "길동", startAt: iso("2026-10-14T23:00:00+09:00"), durationMin: 120 };
+test("B — 벨(§9.39.2): 배포 전 수업 제외 · 끝 시각 첫 틱에 한 번 · 다시 묻기 없음 · 버튼 넷 · 디코 닉 · 📅 없음", async () => {
+  const target = { bookingId: 77, trainerDiscordId: "d5", studentName: "앱활동명", studentDiscordId: "s77", startAt: iso("2026-10-14T23:00:00+09:00"), durationMin: 120 };
   const old = { ...target, bookingId: 70, startAt: iso("2026-10-14T10:00:00+09:00") };
   const state = new Map();
   let h = makeBot({ targets: [target, old], state });
   assert.equal((await h.bot.bellTick()).init, true);                  // 첫 틱 = 기준 시각만
   const st = new Map(h.state);
+  st.set("auto-complete", { since: iso("2026-10-14T20:00:00+09:00") });   // 서버 자동 완료(#606)가 켜진 시각
   const at = (s) => Date.parse(s);
-  h = makeBot({ targets: [target, old], state: st, now: at("2026-10-15T01:09:00+09:00") });
-  assert.equal((await h.bot.bellTick()).sent, 0);                     // 자정 넘긴 수업(01:00 끝) — 01:10 전
-  h.setNow(at("2026-10-15T01:10:00+09:00"));
-  assert.equal((await h.bot.bellTick()).sent, 1);
-  assert.equal(h.dms[0].payload.content, "🔔 10/14(수) 23:00~다음 날 01:00 길동님 2시간 수업 끝났나요?");
-  assert.deepEqual(labels(h.dms[0].payload), ["끝났어요", "시간 바뀜", "노쇼"]);
+  h = makeBot({ targets: [target, old], state: st, now: at("2026-10-15T00:59:00+09:00") });
+  h.bot._deps.nickOf = async (t) => (t.studentDiscordId === "s77" ? "길동" : null);
+  assert.equal((await h.bot.bellTick()).sent, 0);                     // 자정 넘긴 수업(01:00 끝) — 끝나기 전
+  h.setNow(at("2026-10-15T01:00:00+09:00"));
+  assert.equal((await h.bot.bellTick()).sent, 1);                     // 끝 시각 첫 틱
+  assert.equal(h.dms[0].payload.content, "길동 · 10/14(수) 23:00~다음 날 01:00 · 개인 2시간 수업 끝났어요\n24시간 안에 아무것도 안 누르면 예약 그대로 완료돼요");
+  assert.doesNotMatch(h.dms[0].payload.content, /📅|#\d/);
+  assert.deepEqual(labels(h.dms[0].payload), ["그대로 완료", "연장 · 단축", "노쇼", "수업 안 함"]);
   const h2 = makeBot({ targets: [target], state: h.state, now: at("2026-10-15T02:00:00+09:00") });   // 재기동
-  assert.equal((await h2.bot.bellTick()).sent, 0);
-  h2.setNow(at("2026-10-15T04:10:00+09:00"));
-  assert.equal((await h2.bot.bellTick()).sent, 1);
-  assert.match(h2.dms[0].payload.content, /^🔔 다시 여쭤봐요/);
-  h2.setNow(at("2026-10-15T09:00:00+09:00"));
-  assert.equal((await h2.bot.bellTick()).sent, 0);
+  for (const t of ["2026-10-15T02:00:00+09:00", "2026-10-15T04:10:00+09:00", "2026-10-16T09:00:00+09:00"]) {
+    h2.setNow(at(t));
+    assert.equal((await h2.bot.bellTick()).sent, 0);                  // 다시 묻기 없음(종전 3시간 뒤 1번 → 없앰)
+  }
+});
+
+test("B — 벨: 자동 완료가 켜지기 전에 끝난 수업은 「24시간」 약속을 하지 않는다 · 닉을 못 찾으면 앱 활동명", async () => {
+  const target = { bookingId: 88, trainerDiscordId: "d5", studentName: "앱활동명", studentDiscordId: null, startAt: iso("2026-10-14T18:00:00+09:00"), durationMin: 60 };
+  const st = new Map([["trainer-bell", { since: iso("2026-10-14T00:00:00+09:00"), items: {} }],
+                      ["auto-complete", { since: iso("2026-10-14T20:00:00+09:00") }]]);
+  const h = makeBot({ targets: [target], state: st, now: Date.parse("2026-10-14T19:05:00+09:00") });
+  h.bot._deps.nickOf = async () => null;
+  assert.equal((await h.bot.bellTick()).sent, 1);
+  assert.equal(h.dms[0].payload.content, "앱활동명 · 10/14(수) 18:00~19:00 · 개인 1시간 수업 끝났어요\n아래 버튼으로 닫아 주세요");
+  const none = makeBot({ targets: [{ ...target, bookingId: 89 }], state: new Map([["trainer-bell", { since: iso("2026-10-14T00:00:00+09:00"), items: {} }]]),
+    now: Date.parse("2026-10-14T19:05:00+09:00") });
+  await none.bot.bellTick();                                          // 자동 완료 기록 줄이 아직 없음 = 켜지기 전
+  assert.match(none.dms[0].payload.content, /아래 버튼으로 닫아 주세요$/);
+});
+
+test("B — [수업 안 함]: hold 라우트 한 번 · 예약은 안 닫음 · 원장 DM 한 줄(처음만) · 이미면 안내만 · 실패 재시도 없음", async () => {
+  const alerts = [];
+  const msg = { content: "길동 · 10/18(토) 20:00~22:00 · 개인 2시간 수업 끝났어요\n24시간 안에 아무것도 안 누르면 예약 그대로 완료돼요", components: [] };
+  const { bot, fp } = makeBot({ portal: { "POST /bookings/:id/hold": () => ({ status: 200, body: { held: true, already: false } }) } });
+  bot._deps.ownerAlert = async (t) => { alerts.push(t); return true; };
+  await bot.handle(press("tbot_hold:77", msg).itx);
+  assert.deepEqual(fp.writes(), [{ method: "POST", path: "/bookings/op77/hold", body: {} }]);   // complete · no-show 안 부름
+  assert.equal(msg.content, "길동 · 10/18(토) 20:00~22:00 · 개인 2시간 수업 끝났어요\n수업 안 함으로 남겼어요 · 원장님이 확인하고 닫아요 · 그때까지 판수는 그대로예요");
+  assert.deepEqual(alerts, ["[트레이너봇] 수업 안 함 — 현태 · 길동 · 10/18(토) 20:00~22:00 · 개인 2시간 · 지난 예약 취소(휴강)로 닫아 주세요"]);
+
+  const again = makeBot({ portal: { "POST /bookings/:id/hold": () => ({ status: 200, body: { held: true, already: true } }) } });
+  const a2 = []; again.bot._deps.ownerAlert = async (t) => { a2.push(t); };
+  const m2 = { content: "x", components: [] };
+  await again.bot.handle(press("tbot_hold:77", m2).itx);
+  assert.match(m2.content, /이미 수업 안 함으로 남겼어요/);
+  assert.equal(a2.length, 0);
+
+  for (const [code, re] of [["already_completed", /이미 처리됐어요/], ["not_ready", /지금은 남기지 못했어요/]]) {
+    const b = makeBot({ portal: { "POST /bookings/:id/hold": () => ({ status: 409, body: { error: { code } } }) } });
+    const a3 = []; b.bot._deps.ownerAlert = async (t) => { a3.push(t); };
+    const m3 = { content: "x", components: [] };
+    await b.bot.handle(press("tbot_hold:5", m3).itx);
+    assert.match(m3.content, re);
+    assert.equal(b.fp.writes().length, 1);
+    assert.equal(a3.length, 0);
+  }
 });
 
 test("B — 버튼: 끝났어요 · 두 번 · 이미 닫힘 · 실패는 재시도 없음 · 노쇼는 한 번 더 묻는다", async () => {
@@ -745,4 +788,51 @@ test("그룹 — 시작 3시간 안이어도 마감 예외(§83)가 있으면 �
   assert.deepEqual(fp.writes().map((c) => `${c.method} ${c.path}`), ["POST /slots", "POST /slots/slot-op/bookings", "POST /slots/slot-op/bookings"]);
   assert.deepEqual(fp.writes().slice(1).map((c) => c.body), [{ studentId: "stu-1", untilStart: true }, { studentId: "stu-2", untilStart: true }]);
   assert.match(msg.content, /^저장했어요 · .* 그룹 관전형 · 정원 3명 · 길동님 · 철수님/);
+});
+
+test("못 닫은 칸 알림 — 그룹은 「그룹 칸」 · 직강 옮기기 실패 뒤 연 칸을 못 닫으면 원장 알림(검수 메모 10/17)", async () => {
+  const alerts = [];
+  const b1 = makeBot({ portal: { students: [GILDONG],
+    "POST /slots/:id/bookings": () => ({ status: 409, body: { error: { code: "slot_full" } } }),
+    "DELETE /slots/:id": () => ({ status: 500, body: null }) } });
+  b1.bot._deps.ownerAlert = async (t) => { alerts.push(t); return true; };
+  const m1 = await groupCard(b1.bot);
+  await b1.bot.handle(pick(idOf(m1, "tbot_fstu:"), m1, ["stu-1"]).itx);
+  await b1.bot.handle(pick(idOf(m1, "tbot_fday:"), m1, ["2026-10-20"]).itx);
+  await b1.bot.handle(pick(idOf(m1, "tbot_fhour:"), m1, ["20"]).itx);
+  await b1.bot.handle(press(m1.components[3].components[0].custom_id, m1).itx);
+  await b1.bot.handle(press(saveBtn(m1).custom_id, m1).itx);
+  assert.match(alerts[0], /^\[트레이너봇\] 그룹 잡기 실패 뒤 닫지 못한 빈 그룹 칸 — /);
+  assert.match(m1.content, /원장에게 알렸어요/);
+
+  const b2 = makeBot({ portal: { slots: CH_SLOTS,
+    "POST /bookings/:id/move": () => ({ status: 409, body: { error: { code: "no_units_left" } } }),
+    "DELETE /slots/:id": () => ({ status: 500, body: null }) } });
+  b2.bot._deps.ownerAlert = async (t) => { alerts.push(t); return true; };
+  const m2 = { ...(await b2.bot.openChangeCard(OWNER, "d5", "move")) };
+  await b2.bot.handle(pick(idOf(m2, "tbot_cpick:"), m2, ["2"]).itx);
+  await b2.bot.handle(pick(idOf(m2, "tbot_cday:"), m2, ["2026-10-19"]).itx);
+  await b2.bot.handle(press(goBtn(m2, "바꾸기").custom_id, m2).itx);
+  assert.match(alerts[1], /^\[트레이너봇\] 직강 옮기기 실패 뒤 닫지 못한 빈 직강 칸 — /);
+  assert.match(m2.content, /직강 남은 회차가 없어요[\s\S]*원장에게 알렸어요/);
+});
+
+test("벨 대상(§9.39.1) — 개인 · 머리 줄 · 선차감 > 0 · 열린 예약만 묻고 · 테스트 계정 제외 · 받는 사람 = 칸 트레이너 · 이름에 #번호 없음", async () => {
+  const { bellTargets } = require("../trainer-bot.cjs");
+  const { TEST_STUDENT_IDS } = require("../test-accounts.cjs");
+  const testId = [...TEST_STUDENT_IDS][0];
+  const qs = [];
+  const sbSelect = async (table, q) => {
+    qs.push(`${table}?${q}`);
+    if (table === "slot_bookings") return [
+      { id: 1, student_id: 10, duration_min: 120, status: "booked", games_held: 10, trainer_slots: { slot_start: "2026-10-18T11:00:00Z", lesson_type: "personal", trainer_id: 2 } },
+      { id: 2, student_id: testId, duration_min: 60, status: "booked", games_held: 5, trainer_slots: { slot_start: "2026-10-18T11:00:00Z", lesson_type: "personal", trainer_id: 2 } },
+    ];
+    if (table === "students") return [{ id: 10, name: "명부이름", display_name: "활동명", discord_id: "s10" }];
+    if (table === "staff") return [{ id: 2, discord_id: "t2", active: true }];
+    return [];
+  };
+  const out = await bellTargets(sbSelect, Date.parse("2026-10-18T14:00:00Z"));
+  assert.match(qs[0], /status=in\.\(booked,pending_review\)&span_head_id=is\.null&games_held=gt\.0&trainer_slots\.lesson_type=eq\.personal/);
+  assert.deepEqual(out, [{ bookingId: 1, trainerDiscordId: "t2", studentName: "활동명", studentDiscordId: "s10", startAt: "2026-10-18T11:00:00Z", durationMin: 120 }]);
 });
