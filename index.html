@@ -230,6 +230,16 @@ a{color:inherit}
 .person .links a{text-decoration:none}
 .person .links a:hover{text-decoration:underline;text-underline-offset:4px}
 
+/* 원장에게 바로 신청 한 줄 */
+.ask-strip{display:flex;flex-wrap:wrap;align-items:center;gap:12px 32px;margin-top:16px;padding-block:20px}
+.ask-strip .ask-h{font-size:16px;font-weight:900;letter-spacing:-.02em}
+.ask-strip dl{display:flex;flex-wrap:wrap;gap:8px 28px;font-size:14px}
+.ask-strip dl div{display:flex;gap:10px;align-items:baseline;min-width:0}
+.ask-strip dt{color:var(--mute)}
+.ask-strip dd{margin:0;color:var(--ink);overflow-wrap:anywhere}
+.ask-strip dd small{color:var(--mute);font-size:13px;margin-left:6px}
+.ask-strip a{color:var(--ink);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--line)}
+
 /* 8. 가격 세 칸 */
 .plans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:36px;align-items:stretch}
 .plan{display:flex;flex-direction:column;gap:12px}
@@ -519,6 +529,15 @@ html.vr-lock{overflow:hidden}
           <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">SOOP</a></div>
         </article>
       </div>
+      <!-- 원장에게 바로 신청 — B3(10/21)에서 빠졌던 줄을 되살렸다(총무 10/28). 오너 10/3 지정 창구 · 문구 그대로 -->
+      <aside class="card ask-strip" id="direct" aria-labelledby="askH">
+        <div class="ask-h" id="askH">원장에게 바로 신청</div>
+        <dl>
+          <div><dt>디스코드</dt><dd>e_muri<small>친구 추가 후 메시지</small></dd></div>
+          <div><dt>강의 서버</dt><dd><a href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">MRI ACADEMY 디스코드</a></dd></div>
+          <div><dt>이메일</dt><dd><a href="mailto:shlee9498@naver.com">shlee9498@naver.com</a> · <a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></dd></div>
+        </dl>
+      </aside>
     </div>
   </section>
 
