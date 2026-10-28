@@ -4,6 +4,7 @@
 const crypto = require("crypto");
 
 const DEFAULTS = {
+  ops_state: () => ({}),
   role_event_rounds: () => ({ rp_threshold: 3400, status: "open", drand_chain: null, drand_round: null, drand_round_fixed_at: null,
     drand_randomness: null, results_published_at: null, participants_frozen_at: null, participants_hash: null, draw_input: null,
     draw_order: null, winners_count: null, seed_revealed_at: null, draw_error: null, season_ids: {}, created_by: null }),
@@ -13,11 +14,11 @@ const DEFAULTS = {
   role_event_awards: () => ({ status: "won", kind: "chicken", notified_at: null, dm_error: null, contacted_at: null, paid_at: null, paid_by: null,
     cancelled_at: null, cancel_reason: null, succeeded_from: null, memo: null }),
 };
-const UNIQUE = { role_event_rounds: [["round_no"]], role_event_entries: [["round_id", "discord_id"]], role_event_awards: [["round_id", "entry_id"]] };
+const UNIQUE = { ops_state: [["key"]], role_event_rounds: [["round_no"]], role_event_entries: [["round_id", "discord_id"]], role_event_awards: [["round_id", "entry_id"]] };
 
 function makeDb(clock) {
-  const tables = { role_event_rounds: [], role_event_entries: [], role_event_awards: [] };
-  const seq = { role_event_rounds: 0, role_event_entries: 0, role_event_awards: 0 };
+  const tables = { role_event_rounds: [], role_event_entries: [], role_event_awards: [], ops_state: [] };
+  const seq = { role_event_rounds: 0, role_event_entries: 0, role_event_awards: 0, ops_state: 0 };
   const calls = [];
   const clone = (x) => JSON.parse(JSON.stringify(x));
   function parse(query) {
@@ -85,7 +86,7 @@ function makeDb(clock) {
 function makePubg(players) {
   const calls = [];
   return {
-    calls,
+    calls, players,
     async findPlayer(platform, nick) {
       calls.push(["find", platform, nick]);
       const low = nick.toLowerCase().replace(/[il1]/g, "l").replace(/[o0]/g, "o");
@@ -99,6 +100,7 @@ function makePubg(players) {
       const m = path.match(/players\/([^/]+)\/seasons\/([^/]+)\/ranked$/);
       const p = m && players.find((x) => x.accountId === m[1]);
       if (!p) { const e = new Error("404"); e.status = 404; throw e; }
+      if (p.fail) { const e = new Error("502"); e.status = 502; throw e; }
       if (p.rateLimitOnce) { p.rateLimitOnce = false; const e = new Error("429"); e.status = 429; throw e; }
       return { data: { attributes: { rankedGameModeStats: p.modes || {} } } };
     },
@@ -122,20 +124,26 @@ function makeDrand(clock, { failTimes = 0 } = {}) {
 }
 
 // 디스코드 — DM · 채널 게시 · 역할을 기록만 한다
-function makeDiscord({ closedDm = [], roleMembers = [] } = {}) {
+function makeDiscord({ closedDm = [], roleMembers = [], survivorMembers = [], notInGuild = [], noPermission = false } = {}) {
   const dms = [], posts = [], roleOps = [];
-  const members = new Map(roleMembers.map((id) => [id, { id, displayName: "u" + id.slice(-3) }]));
-  const role = { id: "ROLE", members };
+  const person = (id) => ({ id, displayName: "u" + id.slice(-3) });
+  const members = new Map(roleMembers.map((id) => [id, person(id)]));            // 「43s master」(ROLE)
+  const survivors = new Map(survivorMembers.map((id) => [id, person(id)]));     // 「43s Survivor」(SURV)
+  const sets = { ROLE: members, SURV: survivors };
+  const roles = new Map([["ROLE", { id: "ROLE", members }], ["SURV", { id: "SURV", members: survivors }]]);
+  const perm = () => { if (noPermission) { const e = new Error("Missing Permissions"); e.code = 50013; throw e; } };
   const memberObj = (id) => ({ id, displayName: "u" + id.slice(-3), roles: {
-    add: async (rid) => { roleOps.push(["add", id, rid]); members.set(id, { id, displayName: "u" + id.slice(-3) }); },
-    remove: async (rid) => { roleOps.push(["remove", id, rid]); members.delete(id); } } });
-  const guild = { id: "G", roles: { cache: new Map([["ROLE", role]]), fetch: async () => role }, members: { fetch: async (id) => (id ? memberObj(id) : null) } };
+    cache: { has: (rid) => !!sets[rid]?.has(id) },
+    add: async (rid) => { perm(); roleOps.push(["add", id, rid]); sets[rid].set(id, person(id)); },
+    remove: async (rid) => { perm(); roleOps.push(["remove", id, rid]); sets[rid].delete(id); } } });
+  const guild = { id: "G", roles: { cache: roles, fetch: async (rid) => roles.get(rid) },
+    members: { fetch: async (id) => { if (!id) return null; if (notInGuild.includes(id)) { const e = new Error("Unknown Member"); e.code = 10007; throw e; } return memberObj(id); } } };
   const client = {
     users: { fetch: async (id) => ({ send: async (p) => { if (closedDm.includes(id)) { const e = new Error("Cannot send messages to this user"); e.code = 50007; throw e; } dms.push({ to: id, ...p }); } }) },
     channels: { fetch: async (id) => ({ send: async (p) => { posts.push({ ch: id, ...p }); } }) },
     guilds: { cache: new Map([["G", guild]]), fetch: async () => guild },
   };
-  return { client, dms, posts, roleOps, members };
+  return { client, dms, posts, roleOps, members, survivors };
 }
 
 // 상호작용 흉내

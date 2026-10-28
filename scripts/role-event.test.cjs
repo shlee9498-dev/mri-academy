@@ -86,11 +86,11 @@ test("서버 식 = 공개 재현 스크립트 식 (여러 크기)", () => {
     assert.equal(s.drawInput, `${seed}:${closes}:${s.participantsHash}:${rand}`);
   }
 });
-test("명령 정의 — 신청은 길드 · 관리는 글로벌 DM 전용 · 하위 명령 9개", () => {
+test("명령 정의 — 신청은 길드 · 관리는 글로벌 DM 전용 · 하위 명령 11개", () => {
   assert.equal(APPLY_CMD.name, "역할군신청");
   assert.deepEqual(APPLY_CMD.options.map((o) => o.name), ["닉네임", "플랫폼", "모드"]);
   assert.deepEqual(ADMIN_CMD.contexts, [1]);
-  assert.deepEqual(ADMIN_CMD.options.map((o) => o.name), ["회차생성", "일정", "채널읽기", "현황", "검증", "판정", "추첨", "지급", "수동등록"]);
+  assert.deepEqual(ADMIN_CMD.options.map((o) => o.name), ["회차생성", "일정", "채널읽기", "현황", "매일검사", "티어확인", "검증", "판정", "추첨", "지급", "수동등록"]);
   // 명령 · 옵션 이름만(선택지 choices 의 name 은 표시 글자라 규칙 밖)
   const names = [];
   const walk = (o) => { names.push(o.name); for (const c of o.options || []) walk(c); };
@@ -121,7 +121,7 @@ test("PUBG 호출 예산 — 신청 1건 = 조회 1콜 · 검증 1명 = 무캐�
   assert.equal(a.pubgCalls.filter((c) => c[0] === "find").length, 3);
   const gets = a.pubgCalls.filter((c) => c[0] === "get" && /\/ranked$/.test(c[1]));   // 시즌 목록(24시간 캐시)은 따로
   assert.ok(a.pubgCalls.filter((c) => c[0] === "get" && /\/seasons$/.test(c[1])).every((c) => c[2] === 86400_000));
-  assert.equal(gets.length, 3);
+  assert.equal(gets.length, 6);   // 검증 3 + 마감 날(11/8) 매일 검사 3 — 한 사람에 하루 1콜
   assert.ok(gets.every((c) => c[2] === 0));
 });
 test("신청 응답 · 공지에 규정 문구 2건", async () => {
@@ -412,4 +412,109 @@ test("시즌 id — 번호 끝자리로 찾고, env 역산 값이 번호와 다�
   const re = createRoleEvent({ ...w2.db, pubgGet: async () => { throw new Error("down"); }, findPlayer: w2.pubg.findPlayer,
     seasonIdByNumber: async () => "division.bro.official.pc-2018-41", env: { SUPABASE_URL: "fake" }, log: { log() {}, error() {} } });
   assert.equal(await re.resolveSeasonId("steam", 43), null);
+});
+
+// ── 매일 검사(10/28) — 가짜 전적 5종: 서바이버 · 마스터 · 다이아 · 조회 실패 · 이틀 연속 미달 ──
+const DAILY_IDS = { sv: "400000000000000001", ms: "400000000000000002", dia: "400000000000000003", fail: "400000000000000004", drop: "400000000000000005" };
+const dailyPlayers = () => [
+  { platform: "steam", name: "Surv", accountId: "account.sv", modes: { squad: { currentRankPoint: 3820, roundsPlayed: 200, currentTier: { tier: "Survivor", subTier: "1" } } } },
+  { platform: "steam", name: "Mast", accountId: "account.ms", modes: { squad: { currentRankPoint: 3450, roundsPlayed: 150, currentTier: { tier: "Master", subTier: "1" } } } },
+  { platform: "steam", name: "Dia", accountId: "account.dia", modes: { squad: { currentRankPoint: 3210, roundsPlayed: 120, currentTier: { tier: "Diamond", subTier: "2" } } } },
+  { platform: "steam", name: "Fail", accountId: "account.fail", modes: { squad: { currentRankPoint: 3500, roundsPlayed: 120, currentTier: { tier: "Master", subTier: "1" } } } },
+  { platform: "steam", name: "Drop", accountId: "account.drop", modes: { squad: { currentRankPoint: 3380, roundsPlayed: 120, currentTier: { tier: "Diamond", subTier: "1" } } } },
+];
+async function dailyWorld(discord = {}) {
+  const w = world({ players: dailyPlayers(), env: { ROLE_EVENT_SURVIVOR_ROLE_ID: "SURV" },
+    discord: { roleMembers: [DAILY_IDS.sv, DAILY_IDS.fail, DAILY_IDS.drop, DAILY_IDS.dia], ...discord } });   // 어제까지 master 를 달고 있던 넷
+  await makeRound(w);
+  for (const [k, n] of [["sv", "Surv"], ["ms", "Mast"], ["dia", "Dia"], ["fail", "Fail"], ["drop", "Drop"]]) await apply(w, DAILY_IDS[k], n, "steam", "squad");
+  w.pubg.players.find((p) => p.name === "Fail").fail = true;
+  return w;
+}
+const ownerDms = (w) => w.dc.dms.filter((d) => d.to === OWNER && /매일 검사/.test(d.content || ""));
+test("매일 검사 — 서바이버는 Survivor 역할만 · 마스터는 master · 다이아는 하루 미달이면 그대로 · 조회 실패는 안 뺀다", async () => {
+  const w = await dailyWorld();
+  w.clock.set("2026-10-28T21:00:00Z");                 // 10/29 06:00 KST
+  await w.re.tick(); await w.re.idle();
+  const has = (set, k) => w.dc[set].has(DAILY_IDS[k]);
+  assert.ok(has("survivors", "sv") && !has("members", "sv"));          // 서바이버 = Survivor 만
+  assert.ok(has("members", "ms") && !has("survivors", "ms"));          // 마스터 = master 바로 줌
+  assert.ok(has("members", "dia"));                                     // 다이아 하루 미달 = 아직 그대로
+  assert.ok(has("members", "drop"));                                    // 3380 하루 미달 = 아직 그대로
+  assert.ok(has("members", "fail"));                                    // 조회 실패 = 안 뺌
+  const dm = ownerDms(w);
+  assert.equal(dm.length, 1);
+  assert.match(dm[0].content, /준 2 · 뺀 0 · 조회 실패 1/);
+  assert.match(dm[0].content, /u001\(서바이버\)/);
+  // 같은 날 다시 돌려도 아무 일 없음
+  await w.re.tick(); await w.re.idle();
+  assert.equal(ownerDms(w).length, 1);
+});
+test("매일 검사 — 이틀 연속 미달이면 뺀다 · 하루 회복하면 카운트가 0으로", async () => {
+  const w = await dailyWorld();
+  w.clock.set("2026-10-28T21:00:00Z"); await w.re.tick(); await w.re.idle();
+  // 둘째 날: Drop 은 다시 마스터로 회복, Dia 는 계속 다이아
+  w.pubg.players.find((p) => p.name === "Drop").modes.squad.currentRankPoint = 3405;
+  w.clock.set("2026-10-29T21:00:00Z"); await w.re.tick(); await w.re.idle();
+  assert.ok(!w.dc.members.has(DAILY_IDS.dia) && !w.dc.survivors.has(DAILY_IDS.dia));   // 이틀 연속 → 뺌
+  assert.ok(w.dc.members.has(DAILY_IDS.drop));                                          // 회복
+  assert.ok(w.dc.members.has(DAILY_IDS.fail));                                          // 이틀 연속 조회 실패여도 안 뺌
+  assert.match(ownerDms(w).pop().content, /뺀 1 .*\n.*\n?뺀 사람\(이틀 연속 미달\): u003|뺀 사람\(이틀 연속 미달\): u003/);
+  // 셋째 날: Drop 이 다시 미달 — 하루뿐이라 그대로(카운트가 0 에서 다시 시작)
+  w.pubg.players.find((p) => p.name === "Drop").modes.squad.currentRankPoint = 3390;
+  w.clock.set("2026-10-30T21:00:00Z"); await w.re.tick(); await w.re.idle();
+  assert.ok(w.dc.members.has(DAILY_IDS.drop));
+  const st = w.db.tables.ops_state.find((r) => r.key === `role-event:daily:${w.round().id}`).value;
+  assert.equal(st.last.removed, 0);
+  assert.equal(st.entries[w.entries().find((e) => e.discord_id === DAILY_IDS.drop).id].miss, 1);
+});
+test("매일 검사 — 바뀐 게 없으면 DM 없음 · 06:00 전에는 안 돈다 · 검증 날부터 멈춤", async () => {
+  const w = await dailyWorld();
+  w.clock.set("2026-10-28T20:30:00Z");                 // 10/29 05:30 KST
+  await w.re.tick(); await w.re.idle();
+  assert.equal(ownerDms(w).length, 0);
+  assert.equal(w.dc.roleOps.length, 0);
+  w.clock.set("2026-10-28T21:00:00Z"); await w.re.tick(); await w.re.idle();
+  w.clock.set("2026-10-29T21:00:00Z"); await w.re.tick(); await w.re.idle();   // 둘째 날 — Dia · Drop 빠짐 → DM 1
+  const before = ownerDms(w).length;
+  w.clock.set("2026-10-30T21:00:00Z"); await w.re.tick(); await w.re.idle();   // 셋째 날 — 바뀐 것 없음
+  assert.equal(ownerDms(w).length, before);
+  // 검증 날(11/10 KST)부터는 돌지 않는다 — 마감 뒤 검증 전날(11/9)까지만
+  const ops = w.dc.roleOps.length;
+  w.pubg.players.find((p) => p.name === "Mast").modes.squad.currentRankPoint = 3000;
+  w.clock.set("2026-11-09T21:01:00Z"); await w.re.tick(); await w.re.idle();   // 11/10 06:01 KST
+  w.clock.set("2026-11-10T21:01:00Z"); await w.re.tick(); await w.re.idle();
+  assert.ok(w.dc.members.has(DAILY_IDS.ms));
+  assert.ok(w.dc.roleOps.length === ops);
+});
+test("매일 검사 — 봇 역할이 아래면 오너 DM 에 「봇 역할 순서」 한 줄 · 서버에 없는 사람은 건너뜀", async () => {
+  const w = await dailyWorld({ noPermission: true, notInGuild: [DAILY_IDS.ms] });
+  w.clock.set("2026-10-28T21:00:00Z"); await w.re.tick(); await w.re.idle();
+  const dm = ownerDms(w);
+  assert.equal(dm.length, 1);
+  assert.match(dm[0].content, /봇 역할 순서/);
+  assert.equal(w.db.tables.ops_state[0].value.last.left, 1);
+});
+test("판정 함수 — tier 이름으로 서바이버 · RP 기준으로 마스터", () => {
+  const { dailyLevel } = require("../role-event.cjs").daily;
+  assert.equal(dailyLevel({ currentRankPoint: 3500, currentTier: { tier: "Survivor" } }, 3400), "survivor");
+  assert.equal(dailyLevel({ currentRankPoint: 3900, currentTier: { tier: "Master" } }, 3400), "master");   // RP 높아도 tier 가 Master 면 마스터
+  assert.equal(dailyLevel({ currentRankPoint: 3399, currentTier: { tier: "Diamond" } }, 3400), "none");
+  assert.equal(dailyLevel(null, 3400), "none");
+});
+test("검증 뒤 역할 부여 — 서바이버 tier 는 Survivor 역할 · 회수 대상에 Survivor 보유자도 포함", async () => {
+  const w = world({ players: dailyPlayers(), env: { ROLE_EVENT_SURVIVOR_ROLE_ID: "SURV" }, discord: { survivorMembers: ["400000000000000099"] } });
+  await makeRound(w);
+  await apply(w, DAILY_IDS.sv, "Surv", "steam", "squad");
+  await apply(w, DAILY_IDS.ms, "Mast", "steam", "squad");
+  w.clock.set("2026-11-08T14:01:00Z"); await w.re.tick();
+  w.clock.set("2026-11-10T03:01:00Z"); await w.re.tick(); await w.re.idle();
+  // 매일 검사가 이미 역할을 줬을 수 있으니 부여 기록만 본다
+  const g = await w.re.grantRoles(w.round().id);
+  assert.equal(g.fail, 0);
+  assert.ok(w.dc.survivors.has(DAILY_IDS.sv) && !w.dc.members.has(DAILY_IDS.sv));
+  assert.ok(w.dc.members.has(DAILY_IDS.ms));
+  const r = await w.re.revokeRoles(w.round().id);
+  assert.equal(r.ok, 1);
+  assert.ok(!w.dc.survivors.has("400000000000000099"));
 });
