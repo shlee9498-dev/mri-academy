@@ -321,3 +321,16 @@ test("순수 — 글쓴이 판정 · 임베드 자르기 · snowflake 시작점"
   const sf = BigInt(rs.snowflakeAt("2026-10-03T04:30:47.162Z"));
   assert.equal(Number((sf >> 22n) + 1420070400000n), Date.parse("2026-10-03T04:30:47.162Z"));
 });
+
+test("§9.46.1 확인 대기 채널 현황 — 점검 첫 회에 건수만(본문 없음) · 트레이너 · 명부 수강생 · 명부 밖 글쓴이", async () => {
+  const h = harness();
+  const list = [msg({ ch: CH2, author: TRAINER, content: "트레이너 피드백 글" }), msg({ ch: CH2, author: STU_OTHER, content: NOTE }),
+    msg({ ch: CH2, author: STRANGER, content: "명부 밖" }), msg({ ch: CH2, author: BOT, bot: true, content: "봇" })];
+  h.channels.set(CH, { id: CH, messages: { fetch: async () => new Map() } });
+  h.channels.set(CH2, { id: CH2, messages: { fetch: async ({ after: a }) => new Map(list.filter((m) => BigInt(m.id) > BigInt(a)).map((m) => [m.id, m])) } });
+  await h.sync.sweep();
+  const p = h.ops.get(rs.PENDING_KEY).channels[CH2];
+  assert.deepEqual([p.n, p.trainer, p.students, p.unmatched, p.candidate], [3, 1, { 9: 1 }, { [STRANGER]: 1 }, 9]);
+  assert.equal(JSON.stringify(h.ops.get(rs.PENDING_KEY)).includes("트레이너 피드백 글"), false);
+  assert.equal(h.db.lesson_reviews.length, 0, "확인 대기 채널 글은 넣지 않는다");
+});
