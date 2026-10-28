@@ -202,5 +202,12 @@ test("배그 사주(시험) — 운영진만 · 판마다 전체 리플 요약 1
   assert.equal(tele, 2);
   assert.equal(r2.body.card.lang, "en");
   assert.equal(s.api.stat.sajuCache, 2);
+  // 언어 칩이 없으면 브라우저 언어로 · 공유 카드 이미지
+  const r3 = await get(s.base, "/api/replay/saju?name=MRI_B&platform=steam&n=2", { ...STAFF, "accept-language": "th-TH,th;q=0.9" });
+  assert.equal(r3.body.card.lang, "th");
+  const svg = await fetch(s.base + "/api/replay/saju?name=MRI_B&platform=steam&n=2&lang=ja&format=svg", { headers: STAFF });
+  assert.match(svg.headers.get("content-type"), /image\/svg\+xml/);
+  assert.match(await svg.text(), /lang="ja"/);
+  assert.equal(tele, 2);
   assert.equal((await get(s.base, "/api/replay/saju?name=x&platform=steam")).status, 400);
 });

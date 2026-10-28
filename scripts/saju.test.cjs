@@ -70,7 +70,7 @@ test("카드 — 문구는 문자열 표에서만 · 숫자만 끼움 · 언어 
   const vi = C.card(p, T, "vi");
   assert.equal(vi.title, T.en.title, "베트남어가 비면 영어로");
   // 화면 글자(언어 표)에 상표 없음 — 성격유형 검사 이름 · 게임 정식 명칭 · 줄임말
-  const shown = JSON.stringify(Object.fromEntries(Object.entries(T).filter(([k]) => k !== "_note")));
+  const shown = JSON.stringify(Object.fromEntries(Object.entries(T).filter(([k]) => !k.startsWith("_"))));
   assert.doesNotMatch(shown, /MBTI|PUBG|배틀그라운드|배그|BATTLEGROUNDS/i);
   // 16종 이름이 다 있다
   const names = Object.keys(T.ko).filter((k) => /^type\.[AP][CE][LN][TW]$/.test(k));
@@ -86,4 +86,54 @@ test("유형이 안 나오면(축이 빈 판) 「판이 더 쌓이면」 · 카�
   assert.equal(c.type.code, null);
   assert.equal(c.type.name, T.ko["type.pending"]);
   assert.doesNotMatch(JSON.stringify(c), /null m|undefined|NaN/);
+});
+
+test("언어 — 한 앱에서 고름 · 1차 4개(ko · en · th · ja)는 칸이 다 차 있고 {자리}가 한국어와 같다 · 나머지 4개는 빈 칸(→ en)", () => {
+  assert.deepEqual(T._langs.map((l) => l.code), C.LANGS, "언어 칩 순서 = 문구 표 _langs");
+  const keys = Object.keys(T.ko);
+  const holes = (s) => (String(s).match(/\{\w+\}/g) || []).sort().join();
+  for (const l of ["en", "th", "ja"]) {
+    for (const k of keys) {
+      assert.ok(T[l][k], `${l} ${k} 비어 있음`);
+      assert.equal(holes(T[l][k]), holes(T.ko[k]), `${l} ${k} 끼울 자리 다름`);
+    }
+  }
+  for (const l of ["pt-BR", "zh-Hans", "ru", "vi"]) assert.ok(T[l], `${l} 칸 준비`);
+  const p = S.profile([M], ME);
+  const th = C.card(p, T, "th"), ja = C.card(p, T, "ja"), pt = C.card(p, T, "pt-BR");
+  assert.equal(th.title, T.th.title);
+  assert.match(th.type.name + th.strength + th.duo, /[\u0e00-\u0e7f]/, "태국어로 나온다");
+  assert.match(ja.type.name + ja.strength, /[\u3040-\u30ff\u4e00-\u9fff]/, "일본어로 나온다");
+  assert.equal(pt.type.name, T.en["type." + p.type], "포르투갈어가 비면 영어로");
+  for (const c of [th, ja]) assert.doesNotMatch(JSON.stringify(c), /null|undefined|NaN/);
+});
+
+test("처음 언어 — 브라우저 언어로 자동(없으면 en)", () => {
+  assert.equal(C.pickLang(["th-TH", "en-US"]), "th");
+  assert.equal(C.pickLang("ja-JP,ja;q=0.9,en;q=0.8"), "ja");
+  assert.equal(C.pickLang(["ko-KR"]), "ko");
+  assert.equal(C.pickLang(["pt-PT"]), "pt-BR");
+  assert.equal(C.pickLang(["zh-CN"]), "zh-Hans");
+  assert.equal(C.pickLang(["zh-TW", "en"]), "en", "번체는 칸이 없어 다음 언어로");
+  assert.equal(C.pickLang(["de-DE", "fr"]), "en");
+  assert.equal(C.pickLang([]), "en");
+  assert.equal(C.pickLang(["", "vi-VN"]), "vi");
+});
+
+test("공유 카드 이미지 — 고른 언어 글자 그대로 · 태국어 줄바꿈 · 글자 이스케이프", () => {
+  const p = S.profile([M], ME);
+  for (const l of ["ko", "en", "th", "ja"]) {
+    const c = C.card(p, T, l), svg = C.cardSvg(c);
+    assert.match(svg, /^<svg [^>]*width="1080"/);
+    assert.ok(svg.includes(`lang="${l}"`));
+    assert.ok(svg.includes(c.type.name), `${l} 유형 이름이 이미지에`);
+    assert.doesNotMatch(svg, /null|undefined|NaN/);
+  }
+  assert.match(C.cardSvg(C.card(p, T, "th")), /Noto Sans Thai/);
+  // 태국어는 띄어쓰기 없이 길어도 폭 안에서 끊긴다
+  const lines = C.wrap(T.th["zone.good"], 20, "th");
+  assert.ok(lines.length > 1);
+  assert.equal(lines.join("").replace(/\s+/g, ""), T.th["zone.good"].replace(/\s+/g, ""), "글자를 잃지 않는다");
+  const evil = C.cardSvg({ lang: "en", title: "<script>&", games: "", meters: {}, type: { code: null, label: "", name: "x" }, cta: "", fun: "" });
+  assert.ok(evil.includes("&lt;script&gt;&amp;") && !evil.includes("<script>"));
 });

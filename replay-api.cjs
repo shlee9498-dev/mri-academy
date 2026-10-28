@@ -4,7 +4,7 @@
 //   GET  /api/replay/recent?name=&platform=steam|kakao  → 최근 경기 목록(경쟁전 · 일반 구분 · 최대 12판) — 운영진만
 //   GET  /api/replay/match/:id?name=&platform=          → 그 사람 팀 한 팀분만 잘라 파싱한 재생 데이터(상대 이름 · id 는 「적 N」) — 운영진만
 //   GET  /api/replay/stats                              → 한도 · 캐시 수치 — 운영진만
-//   GET  /api/replay/saju?name=&platform=&n=&lang=      → 「배그 사주」 시험 계산(최근 n판 · 기본 10 · 최대 20) — 운영진만(docs/saju.md)
+//   GET  /api/replay/saju?name=&platform=&n=&lang=&format=svg → 「배그 사주」 시험 계산(최근 n판 · 기본 10 · 최대 20) — 운영진만(docs/saju.md)
 //   2주차 공개 페이지 · 카드 · 측정(POST /api/replay/event)은 10/21 지휘 결정으로 이 PR 에서 뺐다 — 브랜치 claude/replay-public-parked 에 보관
 //
 // PUBG 호출 한도(공식 문서 rst/rate-limits.rst):
@@ -380,7 +380,8 @@ function mountReplay(app, deps) {
     if (!a) return bad(res, "bad_request");
     if (!hasKey()) return bad(res, "pubg_disabled", 503);
     const n = Math.max(1, Math.min(20, Number(req.query.n) || 10));
-    const lang = ["ko", "en", "vi", "th", "zh-Hans", "ru"].includes(String(req.query.lang)) ? String(req.query.lang) : "ko";
+    // 언어 = 고른 칩(lang) → 없으면 브라우저 언어(Accept-Language) → 없으면 en
+    const lang = SajuCard.pickLang([String(req.query.lang || ""), ...String(req.headers["accept-language"] || "").split(",").map((x) => x.split(";")[0].trim())]);
     try {
       const player = await lookupPlayer(a.platform, a.name);
       const ids = ((player.relationships && player.relationships.matches && player.relationships.matches.data) || []).map((x) => x.id).slice(0, n);
@@ -391,7 +392,9 @@ function mountReplay(app, deps) {
       // 근거표 — 판마다 숫자(상대 · 팀원 이름 없음)
       const rows = prof.rows.map((r) => ({ match: list[r.idx].match.id, createdAt: list[r.idx].match.createdAt, matchType: list[r.idx].match.matchType, ...r }));
       res.set("Cache-Control", "private, max-age=300");
-      res.json({ card: SajuCard.card(prof, SAJU_STRINGS, lang), profile: { ...prof, rows: undefined }, rows, ms: now() - t0, games: list.length });
+      const card = SajuCard.card(prof, SAJU_STRINGS, lang);
+      if (req.query.format === "svg") return res.type("image/svg+xml").send(SajuCard.cardSvg(card));   // 공유 카드 이미지 확인용
+      res.json({ card, profile: { ...prof, rows: undefined }, rows, ms: now() - t0, games: list.length });
     } catch (e) { fail(res, e); }
   });
 
