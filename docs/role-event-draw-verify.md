@@ -26,6 +26,8 @@ node scripts/role-event-verify.cjs \
   --chain 52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971 --round <drand_round>
 ```
 
+소급 회차처럼 당첨 수를 따로 공지했으면 `--winners <n>` 을 더한다.
+
 `--randomness` 를 빼면 `https://api.drand.sh/{chain}/public/{round}` 에서 직접 받아 온다. 미러(`api2.drand.sh` · `drand.cloudflare.com`)로 같은 값인지 따로 봐도 된다.
 
 출력: seed_commit 일치 · participants_hash 일치 · draw_input · 전체 순번 · 당첨 account_id.

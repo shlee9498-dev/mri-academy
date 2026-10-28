@@ -95,6 +95,7 @@ function makePubg(players) {
     },
     async pubgGet(path, ttl) {
       calls.push(["get", path, ttl]);
+      if (/\/seasons$/.test(path)) return { data: [41, 42, 43].map((n) => ({ id: `division.bro.official.pc-2018-${n}`, attributes: { isCurrentSeason: n === 43 } })) };
       const m = path.match(/players\/([^/]+)\/seasons\/([^/]+)\/ranked$/);
       const p = m && players.find((x) => x.accountId === m[1]);
       if (!p) { const e = new Error("404"); e.status = 404; throw e; }
@@ -143,7 +144,7 @@ function makeItx({ kind = "command", name, sub, user, guildId = "G", channelId =
   const itx = {
     user: { id: user, username: "user" + user.slice(-3), globalName: null }, guildId, channelId, commandName: name, customId, replies,
     isButton: () => kind === "button", isAutocomplete: () => kind === "auto", isChatInputCommand: () => kind === "command",
-    options: { getSubcommand: () => sub, getString: (k) => (opts[k] ?? null), getInteger: (k) => (opts[k] ?? null), getFocused: () => opts._focused || "" },
+    options: { getSubcommand: () => sub, getString: (k) => (opts[k] ?? null), getInteger: (k) => (opts[k] ?? null), getBoolean: (k) => (opts[k] ?? null), getFocused: () => opts._focused || "" },
     reply: async (p) => { replies.push(["reply", p]); }, deferReply: async () => { replies.push(["defer"]); },
     editReply: async (p) => { replies.push(["edit", p]); }, update: async (p) => { replies.push(["update", p]); },
     followUp: async (p) => { replies.push(["follow", p]); }, respond: async (p) => { replies.push(["respond", p]); },

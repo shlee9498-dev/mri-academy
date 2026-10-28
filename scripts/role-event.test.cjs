@@ -86,11 +86,11 @@ test("서버 식 = 공개 재현 스크립트 식 (여러 크기)", () => {
     assert.equal(s.drawInput, `${seed}:${closes}:${s.participantsHash}:${rand}`);
   }
 });
-test("명령 정의 — 신청은 길드 · 관리는 글로벌 DM 전용 · 하위 명령 7개", () => {
+test("명령 정의 — 신청은 길드 · 관리는 글로벌 DM 전용 · 하위 명령 9개", () => {
   assert.equal(APPLY_CMD.name, "역할군신청");
   assert.deepEqual(APPLY_CMD.options.map((o) => o.name), ["닉네임", "플랫폼", "모드"]);
   assert.deepEqual(ADMIN_CMD.contexts, [1]);
-  assert.deepEqual(ADMIN_CMD.options.map((o) => o.name), ["회차생성", "현황", "검증", "판정", "추첨", "지급", "수동등록"]);
+  assert.deepEqual(ADMIN_CMD.options.map((o) => o.name), ["회차생성", "일정", "채널읽기", "현황", "검증", "판정", "추첨", "지급", "수동등록"]);
   // 명령 · 옵션 이름만(선택지 choices 의 name 은 표시 글자라 규칙 밖)
   const names = [];
   const walk = (o) => { names.push(o.name); for (const c of o.options || []) walk(c); };
@@ -119,7 +119,8 @@ test("드라이런 — 신청 3명 → 검증 → 추첨 2명 · 같은 seed 면
 test("PUBG 호출 예산 — 신청 1건 = 조회 1콜 · 검증 1명 = 무캐시 1콜", async () => {
   const a = await dry.run();
   assert.equal(a.pubgCalls.filter((c) => c[0] === "find").length, 3);
-  const gets = a.pubgCalls.filter((c) => c[0] === "get");
+  const gets = a.pubgCalls.filter((c) => c[0] === "get" && /\/ranked$/.test(c[1]));   // 시즌 목록(24시간 캐시)은 따로
+  assert.ok(a.pubgCalls.filter((c) => c[0] === "get" && /\/seasons$/.test(c[1])).every((c) => c[2] === 86400_000));
   assert.equal(gets.length, 3);
   assert.ok(gets.every((c) => c[2] === 0));
 });
@@ -343,4 +344,72 @@ test("크론 멱등 — 같은 시각에 여러 번 돌려도 공지 · 전이�
   await w.re.tick(); await w.re.tick();
   assert.equal(w.dc.posts.length, n);
   assert.equal(w.awards().length, 1);
+});
+
+test("소급 회차(17회 · 42시즌) — 마감 과거 허용 · 수동등록 후보 · 약속한 3명 · 유예 24시간 · 공개값으로 재현", async () => {
+  const players = ["a", "b", "c", "d", "e"].map((x, i) => ({ platform: "kakao", name: "P" + x, accountId: "account.k" + x,
+    modes: { squad: { currentRankPoint: 3400 + i * 50, bestRankPoint: 3600, roundsPlayed: 100 } } }));
+  const w = world({ players });
+  w.clock.set("2026-10-28T03:00:00Z");
+  const r = await w.re.createRound({ roundNo: 17, season: 42, closesAt: "2026-09-10T00:00:00Z", verifyAfter: "2026-10-28T06:00:00Z",
+    drawAt: "2026-10-29T12:00:00Z", backfill: true, winners: 3, by: OWNER });
+  assert.ok(r.round, r.msg);
+  assert.equal(w.round().status, "closed");
+  assert.equal(w.round().winners_count, 3);
+  assert.match(w.dc.posts[0].content, /밀린 추첨/);
+  // 회원 신청은 막히고(open 아님) 오너 수동등록만 된다
+  const ap = await apply(w, dry.U.a, "Pa", "kakao", "squad");
+  assert.match(ap.last().content, /신청 기간이 아니에요/);
+  const ids = ["300000000000000001", "300000000000000002", "300000000000000003", "300000000000000004", "300000000000000005"];
+  for (const [i, x] of ["a", "b", "c", "d", "e"].entries()) {
+    const m = makeItx({ name: "역할군", sub: "수동등록", user: OWNER, guildId: null, opts: { 회차: 17, 대상: ids[i], 플랫폼: "kakao", 모드: "squad", 계정: "P" + x } });
+    await w.re.handle(m);
+  }
+  assert.equal(w.entries().length, 5);
+  w.clock.set("2026-10-28T06:01:00Z"); await w.re.tick(); await w.re.idle();
+  assert.ok(w.entries().every((e) => e.status === "verified" && e.season_id === "division.bro.official.pc-2018-42"));
+  const pub = await w.re.publishResults(w.round().id);
+  assert.equal(pub.drawAt, "2026-10-29T12:00:00.000Z");            // 입력값이 공지 + 24시간보다 늦어서 그대로
+  w.clock.set("2026-10-29T12:01:00Z"); await w.re.tick();
+  assert.equal(w.round().winners_count, 3);
+  w.clock.set(new Date((pure.drandRoundTime(w.round().drand_round) + 60) * 1000).toISOString()); await w.re.tick();
+  assert.equal(w.round().status, "announced");
+  assert.equal(w.awards().length, 3);
+  const rr = w.round();
+  const rep = reproduce({ seed: rr.seed_secret, commit: rr.seed_commit, closes: pure.isoNoMs(rr.closes_at), ids: w.entries().map((e) => e.account_id).sort(),
+    hash: rr.participants_hash, randomness: rr.drand_randomness, winners: 3 });
+  const byId = new Map(w.entries().map((e) => [e.id, e.account_id]));
+  assert.deepEqual(rep.winners, rr.draw_order.slice(0, 3).map((id) => byId.get(id)));
+  const g = await w.re.grantRoles(rr.id);
+  assert.match(g.error, /소급/);
+  assert.equal(w.dc.roleOps.length, 0);
+});
+test("소급 — 검증 시작이 과거면 거절(후보 넣을 틈이 없다)", async () => {
+  const w = world();
+  const r = await w.re.createRound({ roundNo: 17, season: 42, closesAt: "2026-09-10T00:00:00Z", verifyAfter: "2026-10-01T00:00:00Z", drawAt: "2026-11-01T00:00:00Z", backfill: true });
+  assert.equal(r.error, "past");
+});
+test("일정 고치기 — 검증 전까지 · 순서 지킴 · 마감 바뀌면 공지", async () => {
+  const w = world();
+  await makeRound(w);
+  const bad = await w.re.reschedule(w.round().id, { verifyAfter: "2026-11-30T00:00:00Z" });   // 추첨(11/20)보다 뒤
+  assert.equal(bad.error, "order");
+  const ok = await w.re.reschedule(w.round().id, { closesAt: "2026-11-11T14:00:00Z", verifyAfter: "2026-11-13T03:00:00Z", drawAt: "2026-11-23T12:00:00Z" });
+  assert.ok(ok.round);
+  assert.equal(w.round().closes_at, "2026-11-11T14:00:00Z");
+  assert.ok(w.dc.posts.some((p) => /일정이 바뀌었어요/.test(p.content)));
+  await apply(w, dry.U.a, "MuriKing", "steam", "squad");
+  w.clock.set("2026-11-13T03:01:00Z"); await w.re.tick(); await w.re.idle();
+  const late = await w.re.reschedule(w.round().id, { drawAt: "2026-11-30T00:00:00Z" });
+  assert.equal(late.error, "state");
+});
+test("시즌 id — 번호 끝자리로 찾고, env 역산 값이 번호와 다르면 쓰지 않는다", async () => {
+  const w = world();
+  assert.equal(await w.re.resolveSeasonId("kakao", 42), "division.bro.official.pc-2018-42");
+  const w2 = world();
+  w2.pubg.pubgGet = async () => { throw Object.assign(new Error("x"), { status: 502 }); };
+  const { createRoleEvent } = require("../role-event.cjs");
+  const re = createRoleEvent({ ...w2.db, pubgGet: async () => { throw new Error("down"); }, findPlayer: w2.pubg.findPlayer,
+    seasonIdByNumber: async () => "division.bro.official.pc-2018-41", env: { SUPABASE_URL: "fake" }, log: { log() {}, error() {} } });
+  assert.equal(await re.resolveSeasonId("steam", 43), null);
 });

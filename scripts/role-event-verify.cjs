@@ -9,6 +9,7 @@
 //   node scripts/role-event-verify.cjs --seed <seed_secret> --commit <seed_commit> --closes 2026-11-08T14:00:00Z \
 //     --ids account.a,account.b,... --hash <participants_hash> --chain <drand_chain> --round <drand_round> \
 //     [--randomness <hex64>]   ← 생략하면 api.drand.sh 에서 받아 온다
+//     [--winners <n>]          ← 소급 회차처럼 당첨 수를 따로 공지한 경우만
 const crypto = require("crypto");
 
 const GENESIS = 1692803367, PERIOD = 3;
@@ -24,12 +25,13 @@ function shuffle(items, input) {
   for (let i = a.length - 1; i >= 1; i--) { const j = next() % (i + 1); [a[i], a[j]] = [a[j], a[i]]; }
   return a;
 }
-function reproduce({ seed, commit, closes, ids, hash, randomness }) {
+function reproduce({ seed, commit, closes, ids, hash, randomness, winners }) {
   const sorted = [...ids].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
   const phash = sha256(sorted.join(","));
   const input = `${seed}:${closes}:${phash}:${randomness}`;
   const order = shuffle(sorted, input);
-  const k = winnersCount(sorted.length);
+  // 소급 회차는 공지한 당첨 수(--winners)를 쓴다 · 참여자보다 많이 안 뽑는다
+  const k = winners ? Math.min(Number(winners), sorted.length) : winnersCount(sorted.length);
   return {
     commitOk: commit ? sha256(seed) === commit : null,
     hashOk: hash ? phash === hash : null,
@@ -58,7 +60,7 @@ async function main(argv) {
     const t = GENESIS + (Number(a.round) - 1) * PERIOD;
     console.log(`drand 라운드 시각 = ${new Date(t * 1000).toISOString()} (참여자 확정 시각보다 뒤여야 해요)`);
   }
-  const out = reproduce({ seed: a.seed, commit: a.commit, closes: a.closes, ids, hash: a.hash, randomness });
+  const out = reproduce({ seed: a.seed, commit: a.commit, closes: a.closes, ids, hash: a.hash, randomness, winners: a.winners });
   const mark = (v) => (v === null ? "확인 안 함" : v ? "일치" : "불일치");
   console.log(`seed_commit         ${mark(out.commitOk)}`);
   console.log(`participants_hash   ${mark(out.hashOk)} (${out.participantsHash})`);
