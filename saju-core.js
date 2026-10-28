@@ -118,8 +118,11 @@
         zone, mateGapM: gaps.length >= 3 ? Math.round(median(gaps)) : null,
       };
     }
+    // zones = 이 판 자기장 순서(페이즈별 공개 때 흰 원 중심 · 반지름 · m) — 맵별로 모아 감독 게임 자동 경기의 자기장 패턴으로 쓴다
     return { match: { mapName: start.mapName, teamSize: start.teamSize || null, duration: Math.round(duration), players: P.size,
-      isCustomGame: !!start.isCustomGame }, players: out };
+      isCustomGame: !!start.isCustomGame,
+      zones: reveals.map((rv) => ({ phase: rv.phase, t: Math.round(rv.t), x: Math.round(rv.white.x / 100), y: Math.round(rv.white.y / 100), r: Math.round(rv.white.r / 100) })) },
+      players: out };
   }
 
   // 한 판 안에서 그 플레이어 값의 로비 순위(0 = 가장 낮음 · 1 = 가장 높음). 값이 없는 사람은 빼고 센다
@@ -170,6 +173,9 @@
         teamPct: pct(m, accountId, (p) => (p.mateGapM == null ? null : -p.mateGapM)),
         firstFight: me.firstFight, fights: me.fights, dmgDistM: me.dmgDistM, mateGapM: me.mateGapM,
         lateRatio: centerOf(me) == null ? null : -centerOf(me),
+        // 카드 능력치용(cardStats) — 오래 살수록 · 교전당 기절을 많이 낼수록 1
+        survPct: pct(m, accountId, (p) => p.survived),
+        knockEffPct: pct(m, accountId, (p) => (p.fights ? p.knocks / p.fights : null)),
       });
     }
     if (!rows.length) return null;
@@ -208,8 +214,32 @@
     if (!late.length) late = p.zone.filter((z) => z.phase === ZONE_LUCK_MAX_PHASE);
     return late.length ? -mean(late.map((z) => z.ratio)) : null;
   };
+  /**
+   * 카드 능력치 6개(0~100) — 감독 게임(docs/saju.md §10)에서 선수 카드로 다시 쓴다. 전부 「같은 판 로비 안 순위」의 판 평균이라 맵 · 모드가 섞여도 같은 눈금
+   *   aggression 공격성 · risk 사망 위험(일찍 죽는 쪽 100) · zone 자기장 위치(중심 쪽 100) · range 교전 거리(멀수록 100) ·
+   *   contribution 팀 기여(공정 몫 = 50 · 두 배 = 100) · knockEff 기절 효율(교전당 기절)
+   *   volatility = 판마다 생존 순위가 얼마나 흔들리나(0 = 늘 같음 · 100 = 크게 흔들림) · confidence = 판 수 / 20(1 이 최대)
+   */
+  function cardStats(prof) {
+    if (!prof) return null;
+    const rows = prof.rows || [];
+    const sc = (v) => (v == null ? null : clamp100(v * 100));
+    const surv = rows.map((r) => r.survPct).filter((v) => v != null);
+    const survMean = mean(surv);
+    const sd = surv.length >= 2 ? Math.sqrt(mean(surv.map((v) => (v - survMean) ** 2))) : null;
+    return {
+      aggression: sc(prof.axes.aggr),
+      risk: survMean == null ? null : sc(1 - survMean),
+      zone: sc(prof.axes.center),
+      range: sc(prof.axes.range),
+      contribution: prof.contribution ? clamp100(prof.contribution.x * 50) : null,
+      knockEff: sc(mean(rows.map((r) => r.knockEffPct))),
+      volatility: sd == null ? null : clamp100(sd / 0.5 * 100),   // 0~1 값의 표준편차 최대 0.5
+      type: prof.type, games: prof.games, confidence: Math.min(1, Math.round(prof.games / 20 * 100) / 100),
+    };
+  }
   const avg2 = (a, b) => (a == null && b == null ? null : a == null ? b : b == null ? a : (a + b) / 2);
   const clamp100 = (v) => Math.max(0, Math.min(100, Math.round(v)));
 
-  return { summarizeMatch, profile, ZONE_LUCK_MAX_PHASE };
+  return { summarizeMatch, profile, cardStats, ZONE_LUCK_MAX_PHASE };
 });

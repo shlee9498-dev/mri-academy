@@ -137,3 +137,19 @@ test("공유 카드 이미지 — 고른 언어 글자 그대로 · 태국어 �
   const evil = C.cardSvg({ lang: "en", title: "<script>&", games: "", meters: {}, type: { code: null, label: "", name: "x" }, cta: "", fun: "" });
   assert.ok(evil.includes("&lt;script&gt;&amp;") && !evil.includes("<script>"));
 });
+
+test("감독 게임용 — 카드 능력치 6개 0~100 · 판이 쌓이면 흔들림 · 자기장 순서(맵별 패턴)", () => {
+  const one = S.cardStats(S.profile([M], ME));
+  for (const k of ["aggression", "risk", "zone", "range", "contribution", "knockEff"]) assert.ok(one[k] >= 0 && one[k] <= 100, k);
+  assert.equal(one.volatility, null, "한 판이면 흔들림은 아직 모름");
+  assert.equal(one.type, S.profile([M], ME).type);
+  const two = S.cardStats(S.profile([M, M], ME));
+  assert.equal(two.volatility, 0, "같은 판 두 번 = 흔들림 0");
+  assert.equal(two.aggression, one.aggression, "판 평균이라 같은 판을 더해도 그대로");
+  assert.equal(S.cardStats(null), null);
+  const z = M.match.zones;
+  assert.ok(z.length >= 5, "공개된 원이 페이즈 순서대로");
+  assert.deepEqual(z.map((x) => x.phase), [...z.map((x) => x.phase)].sort((a, b) => a - b));
+  for (let i = 1; i < z.length; i++) assert.ok(z[i].r < z[i - 1].r && z[i].t > z[i - 1].t, "원은 줄고 시간은 늘어난다");
+  assert.deepEqual(Object.keys(z[0]).sort(), ["phase", "r", "t", "x", "y"], "자기장 패턴에 사람 정보 없음");
+});

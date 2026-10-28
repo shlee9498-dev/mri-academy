@@ -194,6 +194,7 @@ test("배그 사주(시험) — 운영진만 · 판마다 전체 리플 요약 1
   assert.match(r.body.card.type.code, /^[AP][CE][LN][TW]$/);
   assert.ok(r.body.card.meters.zone && r.body.card.meters.team && r.body.card.meters.contrib);
   assert.equal(r.body.rows.length, 2);
+  assert.equal(r.body.stats.games, 2, "카드 능력치(감독 게임용)도 같이");
   assert.deepEqual(r.body.rows.map((x) => x.match), [MID, MID2]);
   assert.doesNotMatch(JSON.stringify(r.body), /MRI_[ACD]|P\d+_\d|account\./, "팀원 · 상대 이름 · 계정 id 가 응답에 없다");
   // 같은 판은 다시 안 받는다(로비 요약 캐시)

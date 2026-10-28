@@ -130,3 +130,85 @@
 2. 바이럴 앱 전용 PUBG 개발자 키를 따로 받을지(§7).
 3. 태국어 · 일본어 원어민 검수를 누가 할지(지금은 기계 번역 초안 · §9).
 4. 확인 못 한 것: 무리 계정 실데이터(§6) · 요즘 형식 리플에서 어시 칸 · 텔레메트리 다운로드 실제 시간 · th · ja 문장의 현지 자연스러움.
+
+## 10. 다음 층 — 감독 키우기 게임(가칭) 0단계 설계(10/28 총무 · 오너 「판결대로 단계형」)
+
+> 지금 일(사주 시험판 · 언어 선택)이 먼저다. 이 절은 **1단계에서 그대로 꺼내 쓸 수 있게 지금 엔진을 맞춰 둔 것**과 표 초안이다. 운영 DB 에는 아무것도 만들지 않았다.
+> 기획안 전문: 드라이브 「01_인수인계_현행」 「기획안 — 배그 감독 키우기(가칭) v1 · 법정 판결 — 2026-10-28」(이 세션은 읽지 않았다 · 총무 메모 기준).
+
+### 10-1. 카드 능력치 함수 — `saju-core.cardStats(profile)` (이번에 만듦 · 시험 있음)
+
+| 능력치 | 0~100 뜻 | 계산(전부 같은 판 로비 안 순위의 판 평균) |
+|---|---|---|
+| `aggression` 공격성 | 먼저 · 자주 싸울수록 100 | 첫 교전 시각(빠를수록) · 교전 수 순위 평균 = 유형 A/P 축 |
+| `risk` 사망 위험 | 일찍 죽을수록 100 | 1 − 생존 시간 순위 |
+| `zone` 자기장 위치 | 원 중심 쪽일수록 100 | 3페이즈부터 원 공개 때 중심 거리/반지름 순위 = C/E 축 |
+| `range` 교전 거리 | 멀리서 맞힐수록 100 | 딜 넣은 거리 중앙값 순위 = L/N 축 |
+| `contribution` 팀 기여 | 공정 몫 = 50 · 두 배 = 100 | 팀 합 대비 내 몫(딜 · 기절 · 킬 · 부활 · 어시 · 생존) ÷ 공정 몫 |
+| `knockEff` 기절 효율 | 교전당 기절이 많을수록 100 | 기절시킴 ÷ 교전 수 순위 |
+| `volatility` 분산 | 판마다 들쭉날쭉할수록 100 | 생존 순위의 판 간 표준편차(2판부터) |
+| `confidence` | 판 수 / 20 | 카드가 몇 판으로 만들어졌나(20판 = 1) |
+
+- 시험 주소 응답에 `stats` 로 같이 나온다. 표본(MRI_B · 1판): 공격 93 · 위험 7 · 자기장 9 · 거리 75 · 기여 100 · 기절 효율 69.
+- 로비 순위라서 **맵 · 모드 · 시즌이 섞여도 같은 눈금**이다. 서버 전체 · 동접 비교는 하지 않는다.
+
+### 10-2. 16 원형 — 유형 4글자 = 가상 선수 원형(이름은 문구 표 `type.XXXX` 그대로)
+
+자동 경기에서는 **글자마다 효과를 더한다**(원형 16개를 따로 짜지 않는다 → 밸런스 손볼 곳이 8칸뿐).
+
+| 글자 | 자동 경기 효과(1단계 시작값 · 숫자는 그때 정함) |
+|---|---|
+| A 먼저 치는 | 킬 기대값 ↑ · 사망 위험 ↑ · 초반 교전 확률 ↑ |
+| P 기다리는 | 사망 위험 ↓ · 후반 생존 가치 ↑ · 킬 기대값 ↓ |
+| C 중심 잡는 | 이동 손실 ↓ · 후반 자리 싸움 유리 |
+| E 가장자리 도는 | 이동 위험 ↑ · 제3자 개입(뒤치기) 기회 ↑ |
+| L 멀리 보는 | 딜 ↑ · 기절 → 킬 전환 ↓ · 개활지 유리 |
+| N 붙는 | 기절 → 킬 전환 ↑ · 사망 위험 ↑ · 건물 · 근접 유리 |
+| T 같이 움직이는 | **옆 팀원 분산 ↓**(커버) · 부활 확률 ↑ |
+| W 혼자 길 내는 | 본인 분산 ↑ · 측면 기습 ↑ · 커버 효과 없음 |
+
+- 예: 암살형 = A·N·W 를 가진 원형(`ACNW` 중앙 난입러 · `AENW` 외곽 습격자) → 킬 기대값 ↑ · 사망 위험 ↑ · 분산 ↑. 커버형 = T(+P)(`PCLT` 중앙 감시탑 · `PCNT` 중앙 수비대) → 옆 사람 분산 ↓.
+- 원형은 「출발점」이고 실제 카드 수치는 10-1 능력치다(같은 AELT 라도 사람마다 다르다).
+
+### 10-3. 매일 수집기 — 표 초안(**실행 안 함 · 운영 DB DDL 은 지휘 판단**)
+
+- 하루 1번: 대상 계정 목록 → `/players?filter[playerNames]=` **10명씩 묶어 1번**(분당 10회 한도에서 한 번에 최대 100명/분) → 새 판만 `/matches`(한도 없음) → 텔레메트리(CDN · 한도 없음 · 1판 약 1초) → 판 요약 → 아래 표에 더하기.
+- 14일 보관이라 **하루라도 빠지면 그 날 판은 영영 못 가져온다** — 이틀에 한 번까지는 안전, 그 이상 쉬면 구멍.
+
+```sql
+-- 초안 · 더하기만 · 실행은 지휘 판단(운영 DB 쓰기는 경비 세션)
+create table if not exists saju_players (
+  platform text not null, account_id text not null,
+  display_name text,                       -- 동의한 사람만 · 화면 표시용
+  consent_scope text not null,             -- 'private_test'(디코 비공개 시험) | 'public'(개별 동의 확인 뒤)
+  consent_source text not null,            -- 예: '오너 일괄 10/28 「클랜원들 데이터있는거다해 동의다 했어」'
+  consent_confirmed_at timestamptz,        -- 개별 동의 확인 시각 · 공개 출시 전 필수
+  added_at timestamptz not null default now(),
+  primary key (platform, account_id));
+create table if not exists saju_player_matches (
+  platform text not null, match_id text not null, account_id text not null,
+  played_at timestamptz not null, map_name text, match_type text,
+  row jsonb not null,                      -- profile rows 한 줄(숫자만 · 이름 없음)
+  primary key (platform, match_id, account_id));
+create table if not exists saju_zone_patterns (
+  platform text not null, match_id text not null, map_name text not null, played_at timestamptz not null,
+  zones jsonb not null,                    -- [{phase,t,x,y,r}] (m) — summarizeMatch().match.zones
+  primary key (platform, match_id));
+create index if not exists saju_zone_patterns_map on saju_zone_patterns (map_name, played_at desc);
+```
+
+- 누적 카드 = `saju_player_matches` 최근 N판 → `profile` → `cardStats`(다시 계산 · 계산식이 바뀌어도 원본 줄에서 다시 낸다).
+
+### 10-4. 자기장 패턴 저장 방식 — `summarizeMatch().match.zones` (이번에 만듦 · 시험 있음)
+
+- 판마다 **페이즈별 원 공개 때 흰 원 중심(x, y) · 반지름 r(m) · 공개 시각 t(초)** 순서만 남긴다. 사람 정보는 없다.
+- 표본: Baltic_Main 7페이즈 — r 2029 → 1217 → 670 → 368 → 184 → 92 → 46m.
+- 수집기가 판마다 `saju_zone_patterns` 에 한 줄 → 맵별로 쌓이면 1단계 자동 경기는 **그 맵의 실제 패턴 하나를 골라 그대로 돌린다**(가짜 자기장을 만들지 않는다).
+- 수강생 · 클랜원이 아닌 공개 판에서도 모을 수 있다(사람 정보가 없어서) — 이건 동의가 필요 없는 칸이다.
+
+### 10-5. 카드 대상 · 동의 근거
+
+- **GmI 클랜원**: 오너 원문 **「그냥 예시로 클랜원들 데이터있는거다해 동의다 했어」(2026-10-28)** → 디코 비공개 시험에 쓴다(`consent_scope = private_test`). **공개 출시 전에는 한 명씩 동의 확인**(`consent_confirmed_at`)을 받는다.
+- **원장 레전드 카드**: 무리 계정 GmI_mriacademy.
+- **금지**: 실존 프로 선수의 실명 · 닉네임 · 「팀 + 역할 + 기록」 조합(퍼블리시티권 · 라이선스 전).
+- 수치는 **무료**로만 · 카드 가격은 **환전 안 되는 「인기 지수」**만 · 게임 로고 · 상표 금지(§5 그대로).

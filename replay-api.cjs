@@ -394,7 +394,7 @@ function mountReplay(app, deps) {
       res.set("Cache-Control", "private, max-age=300");
       const card = SajuCard.card(prof, SAJU_STRINGS, lang);
       if (req.query.format === "svg") return res.type("image/svg+xml").send(SajuCard.cardSvg(card));   // 공유 카드 이미지 확인용
-      res.json({ card, profile: { ...prof, rows: undefined }, rows, ms: now() - t0, games: list.length });
+      res.json({ card, stats: Saju.cardStats(prof), profile: { ...prof, rows: undefined }, rows, ms: now() - t0, games: list.length });
     } catch (e) { fail(res, e); }
   });
 
