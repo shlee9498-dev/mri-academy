@@ -23,9 +23,11 @@ function world({ players = dry.PLAYERS, env = {}, discord = {}, drandFail = 0, s
     getClient: () => dc.client, newSeed: () => ({ secret: seed, commit: sha(seed) }), log: { log() {}, error() {} } });
   return { clock, db, pubg, drand, dc, re, sleeps, round: () => db.tables.role_event_rounds[0], entries: () => db.tables.role_event_entries, awards: () => db.tables.role_event_awards };
 }
-async function makeRound(w) {
+async function makeRound(w, prize = 2) {
   const r = await w.re.createRound({ roundNo: 18, season: 43, closesAt: "2026-11-08T14:00:00Z", verifyAfter: "2026-11-10T03:00:00Z", drawAt: "2026-11-20T12:00:00Z", by: OWNER });
   assert.ok(r.round);
+  // 흐름 시험은 「12명 이상 모여 치킨 2개」인 회차로 둔다 — 마감 때 정해진 값이 있으면 그대로 쓴다. 인원표 자체는 아래 경품 시험이 본다
+  if (prize) w.db.tables.role_event_rounds.find((x) => x.id === r.round.id).winners_count = prize;
   return r.round;
 }
 async function apply(w, user, nick, platform, mode) {
@@ -56,9 +58,9 @@ test("drand 라운드 식 — 설계 §5 (genesis 1692803367 · 3초)", () => {
   assert.equal(r, pure.drandRoundAt(Date.parse(drawAt) / 1000 + 3600) + 1);
   assert.ok(pure.drandRoundTime(r) > Date.parse(drawAt) / 1000 + 3600 - 3);   // draw_at + 1h 뒤
 });
-test("당첨 인원 — n≤20 2 · ≤50 3 · ≤89 4 · 90↑ 5 · 참여자보다 많이 안 뽑음", () => {
-  const cases = [[0, 0], [1, 1], [2, 2], [3, 2], [20, 2], [21, 3], [50, 3], [51, 4], [89, 4], [90, 5], [300, 5]];
-  for (const [n, k] of cases) assert.equal(pure.winnersCount(n), k, `n=${n}`);
+test("치킨 개수 — 신청 인원 12 미만 0 · 12 ↑ 2 · 20 ↑ 3 · 30 ↑ 4 · 50 ↑ 5 (오너 10/28)", () => {
+  const cases = [[0, 0], [7, 0], [11, 0], [12, 2], [19, 2], [20, 3], [29, 3], [30, 4], [49, 4], [50, 5], [300, 5]];
+  for (const [n, k] of cases) assert.equal(pure.prizeCount(n), k, `n=${n}`);
 });
 test("KST 시각 해석", () => {
   assert.equal(pure.parseKst("2026-11-08 23:00"), "2026-11-08T14:00:00.000Z");
@@ -78,8 +80,8 @@ test("서버 식 = 공개 재현 스크립트 식 (여러 크기)", () => {
   for (const n of [1, 2, 3, 20, 21, 51, 90, 150]) {
     const ids = Array.from({ length: n }, (_, i) => "account." + sha("p" + i).slice(0, 12));
     const seed = sha("seed" + n), rand = sha("rand" + n), closes = "2026-11-08T14:00:00Z";
-    const s = pure.computeDraw({ seedSecret: seed, closesAt: closes, accountIds: ids, randomness: rand });
-    const v = reproduce({ seed, commit: sha(seed), closes, ids: [...ids].sort(), randomness: rand, hash: s.participantsHash });
+    const s = pure.computeDraw({ seedSecret: seed, closesAt: closes, accountIds: ids, randomness: rand, winners: Math.max(2, pure.prizeCount(n)) });
+    const v = reproduce({ seed, commit: sha(seed), closes, ids: [...ids].sort(), randomness: rand, hash: s.participantsHash, winners: Math.max(2, pure.prizeCount(n)) });
     assert.deepEqual(s.winners, v.winners, `n=${n}`);
     assert.deepEqual(s.order, v.order);
     assert.equal(v.commitOk, true); assert.equal(v.hashOk, true);
@@ -102,7 +104,7 @@ test("명령 정의 — 신청은 길드 · 관리는 글로벌 DM 전용 · 하
 test("드라이런 — 신청 3명 → 검증 → 추첨 2명 · 같은 seed 면 같은 결과 · 공개값으로 재현", async () => {
   const a = await dry.run();
   const b = await dry.run();
-  assert.equal(a.db.tables.role_event_entries.length, 3);
+  assert.equal(a.db.tables.role_event_entries.length, 12);
   assert.equal(a.round.status, "announced");
   assert.equal(a.round.winners_count, 2);
   assert.equal(a.winners.length, 2);
@@ -118,10 +120,10 @@ test("드라이런 — 신청 3명 → 검증 → 추첨 2명 · 같은 seed 면
 });
 test("PUBG 호출 예산 — 신청 1건 = 조회 1콜 · 검증 1명 = 무캐시 1콜", async () => {
   const a = await dry.run();
-  assert.equal(a.pubgCalls.filter((c) => c[0] === "find").length, 3);
+  assert.equal(a.pubgCalls.filter((c) => c[0] === "find").length, 12);
   const gets = a.pubgCalls.filter((c) => c[0] === "get" && /\/ranked$/.test(c[1]));   // 시즌 목록(24시간 캐시)은 따로
   assert.ok(a.pubgCalls.filter((c) => c[0] === "get" && /\/seasons$/.test(c[1])).every((c) => c[2] === 86400_000));
-  assert.equal(gets.length, 6);   // 검증 3 + 마감 날(11/8) 매일 검사 3 — 한 사람에 하루 1콜
+  assert.equal(gets.length, 24);   // 검증 12 + 마감 날(11/8) 매일 검사 12 — 한 사람에 하루 1콜
   assert.ok(gets.every((c) => c[2] === 0));
 });
 test("신청 응답 · 공지에 규정 문구 2건", async () => {
@@ -493,7 +495,7 @@ test("매일 검사 — 봇 역할이 아래면 오너 DM 에 「봇 역할 순�
   const dm = ownerDms(w);
   assert.equal(dm.length, 1);
   assert.match(dm[0].content, /봇 역할 순서/);
-  assert.equal(w.db.tables.ops_state[0].value.last.left, 1);
+  assert.equal(w.db.tables.ops_state.find((r) => r.key.startsWith("role-event:daily:")).value.last.left, 1);
 });
 test("판정 함수 — tier 이름으로 서바이버 · RP 기준으로 마스터", () => {
   const { dailyLevel } = require("../role-event.cjs").daily;
@@ -573,4 +575,46 @@ test("작업 backfill → publish — 소급 회차 · 3명 추첨 · 당첨자 
   w.clock.add(3 * 86400_000); await w.re.tick();
   assert.equal(w.awards().length, 3);
   assert.ok(w.awards().every((a) => a.status === "contacted"));
+});
+
+// ── 경품 규칙(오너 10/28) — 마감 때 신청자 수로 치킨 개수를 정하고 공개 ──
+async function prizeWorld(n) {
+  const players = Array.from({ length: n }, (_, i) => ({ platform: "steam", name: "Q" + i, accountId: "account.q" + String(i).padStart(3, "0"),
+    modes: { squad: { currentRankPoint: 3500, bestRankPoint: 3500, roundsPlayed: 90, currentTier: { tier: "Master", subTier: "1" } } } }));
+  const w = world({ players });
+  await makeRound(w, null);
+  for (let i = 0; i < n; i++) await apply(w, "8000000000000000" + String(i).padStart(2, "0"), "Q" + i, "steam", "squad");
+  return w;
+}
+test("경품 — 11명 신청이면 치킨 0개 · 마감 공지에 「역할만」 · 추첨 · drand 없이 끝", async () => {
+  const w = await prizeWorld(11);
+  await toAnnounced(w);
+  assert.equal(w.round().winners_count, 0);
+  assert.ok(w.dc.posts.some((p) => /11명 신청 — 이번 회차는 역할만 드려요\(치킨은 12명부터\)/.test(p.content)));
+  assert.equal(w.awards().length, 0);
+  assert.equal(w.drand.calls.length, 0);
+  assert.equal(w.round().status, "done");
+});
+test("경품 — 12명 신청이면 치킨 2개 · 통과자가 1명뿐이면 1명만 당첨", async () => {
+  const w = await prizeWorld(12);
+  // 11명은 미달(3399)로 바꿔 통과자를 1명으로
+  for (const p of w.pubg.players.slice(1)) p.modes.squad.currentRankPoint = 3399;
+  await toAnnounced(w);
+  assert.equal(w.round().winners_count, 1);       // 확정 때 min(2, 통과 1)
+  assert.ok(w.dc.posts.some((p) => /12명 신청 → 치킨 2개/.test(p.content)));
+  assert.equal(w.awards().length, 1);
+});
+test("개설 공지 — 경품 표 · 지금 신청 N명 · 영상 자리 · 신청마다 같은 글을 고친다", async () => {
+  const w = await prizeWorld(0);
+  const open = w.dc.posts[0];
+  assert.match(open.content, /12명부터 2개 · 20명 3개 · 30명 4개 · 50명 5개/);
+  assert.match(open.content, /지금 신청 0명 → 아직 역할만/);
+  assert.match(open.content, /신청 방법 영상: 곧 올라와요/);
+  await w.db.sbUpsert("ops_state", { key: "role-event:howto-url", value: { url: "https://youtu.be/xyz" } }, "key");
+  const players = Array.from({ length: 12 }, (_, i) => ({ platform: "steam", name: "R" + i, accountId: "account.r" + i, modes: {} }));
+  w.pubg.players.push(...players);
+  for (let i = 0; i < 12; i++) await apply(w, "8100000000000000" + String(i).padStart(2, "0"), "R" + i, "steam", "squad");
+  assert.match(open.content, /지금 신청 12명 → 치킨 2개/);
+  assert.match(open.content, /신청 방법 영상: https:\/\/youtu.be\/xyz/);
+  assert.equal(open.edits.length, 12);
 });

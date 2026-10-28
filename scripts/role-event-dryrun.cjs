@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-// 역할군 이벤트 드라이런 — 가짜 회차로 회차생성 → 신청 3명 → 마감 → 검증 → 결과 공지 → 참여자 확정 → drand 추첨 → 당첨 DM.
+// 역할군 이벤트 드라이런 — 가짜 회차로 회차생성 → 신청 12명 → 마감 → 검증 → 결과 공지 → 참여자 확정 → drand 추첨 → 당첨 DM.
 // 전부 메모리 위에서 돈다(운영 DB · PUBG · 디스코드 호출 0). 같은 seed 로 두 번 돌려 같은 당첨자가 나오는지 본다.
 // 사용: node scripts/role-event-dryrun.cjs
 const { createRoleEvent } = require("../role-event.cjs");
@@ -14,6 +14,9 @@ const PLAYERS = [
   { platform: "kakao", name: "Survivor0ne", accountId: "account.bbb222", modes: { "squad-fpp": { currentRankPoint: 3455, bestRankPoint: 3520, roundsPlayed: 95, currentTier: { tier: "Master", subTier: "1" } } } },
   { platform: "kakao", name: "HyunTae", accountId: "account.ccc333", modes: { squad: { currentRankPoint: 3402, bestRankPoint: 3800, roundsPlayed: 33, currentTier: { tier: "Master", subTier: "1" } } } },
 ];
+// 12명이 모여야 치킨 2개(오너 10/28 규칙) — 위 3명 + 마스터 유지 9명
+for (let i = 0; i < 9; i++) PLAYERS.push({ platform: "steam", name: "Extra" + i, accountId: "account.x" + i,
+  modes: { squad: { currentRankPoint: 3400 + i * 10, bestRankPoint: 3500, roundsPlayed: 100, currentTier: { tier: "Master", subTier: "1" } } } });
 
 async function run({ seedSecret = "11".repeat(32), log = () => {} } = {}) {
   const clock = makeClock("2026-10-17T03:00:00Z");
@@ -44,6 +47,7 @@ async function run({ seedSecret = "11".repeat(32), log = () => {} } = {}) {
   const okB = makeItx({ kind: "button", user: U.b, customId: token }); await re.handle(okB);
   const apC = makeItx({ name: "역할군신청", user: U.c, opts: { 닉네임: "HyunTae", 플랫폼: "kakao", 모드: "squad" } });
   await re.handle(apC);
+  for (let i = 0; i < 9; i++) await re.handle(makeItx({ name: "역할군신청", user: "2100000000000000" + String(i).padStart(2, "0"), opts: { 닉네임: "Extra" + i, 플랫폼: "steam", 모드: "squad" } }));
   log(`신청 ${db.tables.role_event_entries.length}건 · ${db.tables.role_event_entries.map((e) => `${e.pubg_name}(${e.name_match})`).join(" · ")}`);
 
   step("마감 → 검증");
@@ -70,7 +74,7 @@ async function run({ seedSecret = "11".repeat(32), log = () => {} } = {}) {
 
   // 공개값만으로 재현(scripts/role-event-verify.cjs 와 같은 식)
   const ids = db.tables.role_event_entries.filter((e) => e.status === "verified").map((e) => e.account_id).sort();
-  const rep = reproduce({ seed: r.seed_secret, commit: r.seed_commit, closes: r.closes_at.replace(/\.\d{3}Z$/, "Z"), ids, hash: r.participants_hash, randomness: r.drand_randomness });
+  const rep = reproduce({ seed: r.seed_secret, commit: r.seed_commit, closes: r.closes_at.replace(/\.\d{3}Z$/, "Z"), ids, hash: r.participants_hash, randomness: r.drand_randomness, winners: r.winners_count });
   log(`재현 commit ${rep.commitOk} · hash ${rep.hashOk} · 당첨 ${rep.winners.join(", ")}`);
   return { re, db, dc, clock, round: r, winners, reproduced: rep, pubgCalls: pubg.calls, drandCalls: drand.calls };
 }

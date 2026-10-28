@@ -9,12 +9,11 @@
 //   node scripts/role-event-verify.cjs --seed <seed_secret> --commit <seed_commit> --closes 2026-11-08T14:00:00Z \
 //     --ids account.a,account.b,... --hash <participants_hash> --chain <drand_chain> --round <drand_round> \
 //     [--randomness <hex64>]   ← 생략하면 api.drand.sh 에서 받아 온다
-//     [--winners <n>]          ← 소급 회차처럼 당첨 수를 따로 공지한 경우만
+//     --winners <n>            ← 마감 공지의 치킨 개수(신청 인원표: 12명 2 · 20명 3 · 30명 4 · 50명 5)
 const crypto = require("crypto");
 
 const GENESIS = 1692803367, PERIOD = 3;
 const sha256 = (s) => crypto.createHash("sha256").update(String(s)).digest("hex");
-const winnersCount = (n) => (n <= 0 ? 0 : Math.min(n, n <= 20 ? 2 : n <= 50 ? 3 : n <= 89 ? 4 : 5));
 function shuffle(items, input) {
   const a = [...items];
   let counter = 0, buf = "", pos = 0;
@@ -30,8 +29,8 @@ function reproduce({ seed, commit, closes, ids, hash, randomness, winners }) {
   const phash = sha256(sorted.join(","));
   const input = `${seed}:${closes}:${phash}:${randomness}`;
   const order = shuffle(sorted, input);
-  // 소급 회차는 공지한 당첨 수(--winners)를 쓴다 · 참여자보다 많이 안 뽑는다
-  const k = winners ? Math.min(Number(winners), sorted.length) : winnersCount(sorted.length);
+  // 당첨 수 = 마감 공지의 치킨 개수(--winners) · 참여자보다 많이 안 뽑는다. 없으면 순번만 보여 준다
+  const k = winners ? Math.min(Number(winners), sorted.length) : 0;
   return {
     commitOk: commit ? sha256(seed) === commit : null,
     hashOk: hash ? phash === hash : null,
