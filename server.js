@@ -1063,6 +1063,9 @@ if (process.env.DISCORD_TOKEN) {
     ],
     partials: [Partials.Message, Partials.Channel, Partials.Reaction],
   });
+  // 슬래시 · 버튼 손잡이가 모듈마다 interactionCreate 를 하나씩 단다(봇 하나에 30개 넘게) — 누수가 아니라 설계다.
+  //   기본 한도 10 이면 부팅마다 MaxListenersExceededWarning 이 찍혀 진짜 경고를 가린다(10/28 부팅 로그).
+  client.setMaxListeners(64);
 
   // /수업등록 명령 정의 — GmI 서버(LESSON_GUILD_ID)에만 등록 (기존 명령과 길드 분리).
   // /판수정정 — 오등록 판수 보정. 대상 수업을 직접 고르게 해서 정정분이 엉뚱한
@@ -1321,7 +1324,7 @@ if (process.env.DISCORD_TOKEN) {
     }
   }
 
-  client.once("ready", async () => {
+  client.once("clientReady", async () => {
     console.log("bot ready:", client.user.tag);
     botClient = client;   // Phase T1 오너 DM용
     // 디스코드 피드백 이관 드라이런(feedback-scan.cjs · 읽기 전용 · 10/1) — 기동 1분 30초 뒤 한 번(같은 token 은 다시 안 돈다)
@@ -1437,7 +1440,7 @@ if (process.env.DISCORD_TOKEN) {
   client.on("interactionCreate", (itx) => { if (killPoster) killPoster.handle(itx).catch((e) => console.error("[killrace-poster] handler", e?.message)); });
   // 결과 화면 스샷 → 점수판 「잠정」(killrace-shot.cjs · 팀배정 채널 사진만 · 확정 점수는 안 건드린다)
   client.on("messageCreate", (msg) => { if (killShot) killShot.onMessage(msg).catch((e) => console.error("[killrace-shot] handler", e?.message)); });
-  client.once("ready", () => { if (killShot) killShot.checkChannel(client); });
+  client.once("clientReady", () => { if (killShot) killShot.checkChannel(client); });
 
   const isStaff = (id) => STAFF_IDS.includes(id);
 

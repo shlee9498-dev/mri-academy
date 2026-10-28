@@ -1000,7 +1000,7 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
         .catch((e) => log.error("[trainer-bot] bell_tick", e?.message));
       setInterval(tick, tickMs).unref?.();
     };
-    if (typeof client.isReady === "function" && client.isReady()) start(); else client.once("ready", start);
+    if (typeof client.isReady === "function" && client.isReady()) start(); else client.once("clientReady", start);
     return true;
   };
   if (!tryAttach()) { const t = setInterval(() => { if (tryAttach()) clearInterval(t); }, 5000); t.unref?.(); }
