@@ -57,6 +57,9 @@ function prizeCount(applicants) {
   for (const [min, k] of PRIZE_TABLE) if (applicants >= min) return k;
   return 0;
 }
+// 치킨 추첨 대상 RP(오너 10/29 「3400점은 마스터 역할군만 · 3600점 이상부터 치킨」) — 역할 기준(rp_threshold 3,400)과 따로.
+//   회차별 값 = ops_state 'role-event:round-config:<id>' { drawRp } · 없으면 일반 회차 3,600 · 소급 회차(17회)는 역할 기준(3,400) 그대로
+const DRAW_RP_DEFAULT = 3600;
 const PRIZE_LINE = "🍗 치킨은 신청 인원으로 정해요 — 12명부터 2개 · 20명 3개 · 30명 4개 · 50명 5개 (12명 미만이면 역할만)";
 const prizeText = (n, k) => (k > 0 ? `${n}명 신청 → 치킨 ${k}개` : `${n}명 신청 — 이번 회차는 역할만 드려요(치킨은 12명부터)`);
 // ISO 8601 UTC · 밀리초 없음 (예 2026-11-08T14:00:00Z) — draw_input 의 closes_at 표기
@@ -81,8 +84,9 @@ function shuffle(items, input) {
   return a;
 }
 // 참여자 = verified & !excluded − 같은 account_id 2건 이상 그룹(전부 제외 · 역할·판정 유지)
-function participantsOf(entries) {
-  const cand = entries.filter((e) => e.status === "verified");
+// minRp = 추첨 대상 기준(18회부터 3,600 · 역할 기준 3,400 과 따로 · 오너 10/29). 역할 판정(verified)과 별개로 시즌 최종 RP 로 거른다
+function participantsOf(entries, minRp = 0) {
+  const cand = entries.filter((e) => e.status === "verified" && (e.final_rp ?? -1) >= minRp);
   const by = new Map();
   for (const e of cand) by.set(e.account_id, [...(by.get(e.account_id) || []), e]);
   const dupGroups = [...by.values()].filter((g) => g.length >= 2);
@@ -306,10 +310,11 @@ function createRoleEvent(deps) {
   //   글 위치 = ops_state 'role-event:announce:<round id>' { channelId, messageId } · 영상 주소 = ops_state 'role-event:howto-url' { url }
   const ANN_KEY = (id) => `role-event:announce:${id}`;
   const HOWTO_KEY = "role-event:howto-url";
-  function openText(r, n, videoUrl) {
+  function openText(r, n, videoUrl, drawRp = DRAW_RP_DEFAULT) {
     return [
       `📣 역할군 ${r.round_no}회 신청을 받아요`,
-      `대상: ${r.season}시즌을 마스터(${r.rp_threshold} RP 이상)로 마친 분 · 신청 마감 ${kst(r.closes_at)}(KST)`,
+      `역할: ${r.rp_threshold.toLocaleString("en-US")} 이상 43s master · 서바이버 43s Survivor`.replace(/43s/g, `${r.season}s`),
+      `치킨 추첨: 시즌 최종 ${drawRp.toLocaleString("en-US")} 이상 · 신청 마감 ${kst(r.closes_at)}(KST)`,
       "신청: `/역할군신청 닉네임 플랫폼 모드` (TPP · FPP 중 하나)",
       `신청 방법 영상: ${videoUrl || "곧 올라와요"}`,
       PRIZE_LINE,
@@ -318,6 +323,16 @@ function createRoleEvent(deps) {
       `추첨 seed 약속값(sha256): \`${r.seed_commit}\``,
       `추첨 예정 drand quicknet 라운드 ${drawRoundFor(r.draw_at)} (결과 공지 때 최종 고정)`,
     ].join("\n");
+  }
+  async function drawRpOf(round) {
+    try { const c = await opsGet(`role-event:round-config:${round.id}`); if (c?.drawRp) return Number(c.drawRp); } catch (_) {}
+    return isBackfill(round) ? round.rp_threshold : Math.max(round.rp_threshold, DRAW_RP_DEFAULT);
+  }
+  // 개설 공지를 (다시) 올린다 — 채널 env 가 나중에 들어온 경우 · 오너 /역할군 공지
+  async function postOpenAnnouncement(round) {
+    const sent = await announce(openText(round, await applicantCount(round.id), await howtoUrl(), await drawRpOf(round)));
+    if (sent && sent.id && sent.channelId) { await opsPut(ANN_KEY(round.id), { channelId: sent.channelId, messageId: sent.id, postedAt: nowIso() }); return true; }
+    return false;
   }
   const howtoUrl = async () => { try { return (await opsGet(HOWTO_KEY))?.url || null; } catch (_) { return null; } };
   const applicantCount = async (roundId) => (await entriesOf(roundId)).filter((e) => e.status !== "withdrawn").length;
@@ -329,7 +344,7 @@ function createRoleEvent(deps) {
       const c = getClient();
       const ch = await c.channels.fetch(at.channelId);
       const msg = await ch.messages.fetch(at.messageId);
-      await msg.edit({ content: openText(round, await applicantCount(round.id), await howtoUrl()), allowedMentions: { parse: [] } });
+      await msg.edit({ content: openText(round, await applicantCount(round.id), await howtoUrl(), await drawRpOf(round)), allowedMentions: { parse: [] } });
       return true;
     } catch (e) { log.error("[role-event] announce_edit", e?.message); return false; }
   }
@@ -361,8 +376,7 @@ function createRoleEvent(deps) {
       log.log(`[role-event] round#${roundNo} backfill created season=${season} commit=${seed.commit.slice(0, 12)}`);
       return { round: r, planned };
     }
-    const sent = await announce(openText(r, 0, await howtoUrl()));
-    if (sent && sent.id && sent.channelId) await opsPut(ANN_KEY(r.id), { channelId: sent.channelId, messageId: sent.id }).catch(() => null);
+    await postOpenAnnouncement(r).catch(() => null);
     log.log(`[role-event] round#${roundNo} created season=${season} commit=${seed.commit.slice(0, 12)}`);
     return { round: r, planned };
   }
@@ -530,9 +544,12 @@ function createRoleEvent(deps) {
     });
     if (!ok.length) return { error: "done", msg: "이미 결과를 공지했어" };
     const pass = list.filter((e) => e.status === "verified");
+    const drawRp = await drawRpOf(round);
+    const eligible = pass.filter((e) => (e.final_rp ?? -1) >= drawRp);
     await announce([
-      `🏅 역할군 ${round.round_no}회 검증 결과 — 통과 ${pass.length}명`,
+      `🏅 역할군 ${round.round_no}회 검증 결과 — 역할 통과 ${pass.length}명`,
       pass.map((e) => `<@${e.discord_id}>`).join(" ") || "(통과자 없음)",
+      `치킨 추첨 대상(시즌 최종 ${drawRp.toLocaleString("en-US")} 이상) ${eligible.length}명`,
       `추첨일 ${kst(drawAt)}(KST) · drand quicknet 체인 \`${round.drand_chain}\` · 라운드 ${drandRound}`,
       "판정 · 제외 정정은 추첨일까지 받아요. 이상한 점은 운영진에게 알려 주세요",
       `· ${RULE_LINES[1]}`,
@@ -589,7 +606,7 @@ function createRoleEvent(deps) {
   // ═════════ 참여자 확정 · 추첨 · 발표 ═════════
   async function freeze(round) {
     const list = await entriesOf(round.id);
-    const p = participantsOf(list);
+    const p = participantsOf(list, await drawRpOf(round));
     for (const e of p.excluded) {
       const next = withFlags(e.review_flags, [{ code: "draw_excluded_dup", detail: e.account_id }]);
       if (!sameFlags(next, e.review_flags)) await sbPatch(T.E, `id=eq.${e.id}`, { review_flags: next, updated_at: nowIso() });
@@ -610,6 +627,7 @@ function createRoleEvent(deps) {
     if (k === 0) { log.log(`[role-event] round#${round.round_no} frozen n=${p.ids.length} k=0 (역할만)`); return { n: p.ids.length, k, phash }; }
     await announce([
       `🔒 역할군 ${round.round_no}회 추첨 참여자를 확정했어요 — ${p.ids.length}명 · 당첨 ${k}명`,
+      `추첨 대상 기준: 시즌 최종 ${(await drawRpOf(round)).toLocaleString("en-US")} RP 이상`,
       `participants_hash \`${phash}\``,
       `drand quicknet 라운드 ${round.drand_round} 이 나오면 추첨해요`,
       ...(late ? ["※ 이번 확정은 서버 지연으로 drand 라운드 시각보다 늦게 게시됐어요 — 추첨일 이후 판정 · 제외는 막혀 있었어요"] : []),
@@ -631,7 +649,7 @@ function createRoleEvent(deps) {
     const k = round.winners_count || 0;
     if (k > 0 && now() / 1000 < drandRoundTime(round.drand_round)) return { error: "early" };
     const list = await entriesOf(round.id);
-    const p = participantsOf(list);
+    const p = participantsOf(list, await drawRpOf(round));
     if (participantsHash(p.ids) !== round.participants_hash) {
       // 확정 뒤 명단이 바뀌었다 — 코드상 막혀 있어야 하는 경로. 추첨하지 않고 알린다
       if (round.draw_error !== "participants_changed") { await patchIf(T.R, `id=eq.${round.id}`, { draw_error: "participants_changed" }); await dmOwner(`🚨 역할군 ${round.round_no}회 — 확정 뒤 참여 명단이 바뀌어 추첨을 멈췄어. 확인 필요`); }
@@ -673,7 +691,7 @@ function createRoleEvent(deps) {
       return;
     }
     const list = await entriesOf(round.id);
-    const p = participantsOf(list);
+    const p = participantsOf(list, await drawRpOf(round));
     const byId = new Map(list.map((e) => [e.id, e]));
     const winners = (round.draw_order || []).slice(0, round.winners_count || 0).map((id) => byId.get(id)?.account_id);
     const exIds = sortIds([...new Set(p.excluded.map((e) => e.account_id))]);
@@ -684,6 +702,7 @@ function createRoleEvent(deps) {
       "", "재현에 쓰는 값",
       `seed_secret \`${round.seed_secret}\` (약속값 \`${round.seed_commit}\`)`,
       `closes_at \`${isoNoMs(round.closes_at)}\``,
+      `추첨 대상 기준 시즌 최종 ${(await drawRpOf(round)).toLocaleString("en-US")} RP 이상 · 당첨 수 ${round.winners_count}`,
       `participants_hash \`${round.participants_hash}\``,
       `drand ${round.drand_chain} · 라운드 ${round.drand_round} · randomness \`${round.drand_randomness || "-"}\``,
       `참여 account_id(정렬 순): ${p.ids.join(", ") || "-"}`,
@@ -937,6 +956,11 @@ function createRoleEvent(deps) {
     for (const r0 of rounds) {
       let r = r0;
       try {
+        // 개설 공지가 채널에 안 올라간 회차(채널 env 가 나중에 들어온 경우) — 채널이 생기면 한 번 올린다
+        if (r.status === "open" && !isBackfill(r) && env.ROLE_EVENT_ANNOUNCE_CHANNEL_ID && now() < Date.parse(r.closes_at)) {
+          const at = await opsGet(ANN_KEY(r.id)).catch(() => null);
+          if (!at?.messageId) await postOpenAnnouncement(r).catch((e) => log.error("[role-event] announce_repost", e?.message));
+        }
         if (r.status === "open" && now() >= Date.parse(r.closes_at)) {
           // 치킨 개수는 마감 순간의 신청자 수로 정하고 바로 공개한다(오너 10/28)
           const n = await applicantCount(r.id);
@@ -1017,6 +1041,11 @@ function createRoleEvent(deps) {
       const r = await reschedule(round.id, { closesAt: c, verifyAfter: v, drawAt: d });
       if (r.error) return itx.editReply({ content: r.msg });
       return itx.editReply({ content: `${round.round_no}회 일정 — 마감 ${kst(r.round.closes_at)} · 검증 ${kst(r.round.verify_after)} · 추첨 ${kst(r.round.draw_at)}` });
+    }
+    if (sub === "공지") {
+      if (round.status !== "open") return itx.editReply({ content: "신청 중인 회차만 개설 공지를 다시 올려" });
+      const ok = await postOpenAnnouncement(round);
+      return itx.editReply({ content: ok ? "개설 공지를 채널에 올렸어 · 이제 신청마다 이 글의 인원이 바뀌어" : "채널에 못 올려서 문안을 DM으로 보냈어 — ROLE_EVENT_ANNOUNCE_CHANNEL_ID · 봇의 채널 글쓰기 권한을 봐 줘" });
     }
     if (sub === "매일검사") {
       if (!["open", "closed"].includes(round.status)) return itx.editReply({ content: "신청 · 마감 단계 회차만 매일 검사를 돌려" });
@@ -1190,7 +1219,7 @@ function createRoleEvent(deps) {
     if (itx.commandName === "역할군") return handleOwner(itx);
   }
 
-  return { handle, tick, runDaily, jobTick, runVerify, createRound, reschedule, resolveSeasonId, publishResults, freeze, draw, announceDraw, processAwards, saveEntry, grantRoles, revokeRoles, statusText, idle: () => Promise.all([...inflight]), _pending: pending };
+  return { handle, tick, runDaily, jobTick, runVerify, createRound, reschedule, resolveSeasonId, publishResults, freeze, draw, announceDraw, processAwards, saveEntry, grantRoles, revokeRoles, statusText, idle: () => Promise.all([...inflight]), _pending: pending, _env: env };
 }
 
 // ── 명령 정의 (설계 §2) ──
@@ -1231,6 +1260,7 @@ const ADMIN_CMD = {
       { name: "시작", description: "시작(KST)", type: 3, required: true },
       { name: "끝", description: "끝(KST)", type: 3, required: true } ] },
     { name: "현황", description: "회차 요약 · 플래그 · 미해결 중복", type: 1, options: [ROUND_OPT] },
+    { name: "공지", description: "개설 공지를 채널에 다시 올리기(신청 중인 회차)", type: 1, options: [ROUND_OPT] },
     { name: "매일검사", description: "역할 매일 검사를 지금 한 번 돌리기(정기 = 매일 06:00)", type: 1, options: [ROUND_OPT] },
     { name: "티어확인", description: "신청자 한 명의 지금 tier · RP 를 PUBG 에서 바로 읽기", type: 1, options: [
       { name: "대상", description: "신청자(자동완성 · 디스코드 id · #신청번호)", type: 3, required: true, autocomplete: true }, ROUND_OPT ] },
@@ -1255,6 +1285,7 @@ const ADMIN_CMD = {
 module.exports = {
   createRoleEvent, APPLY_CMD, ADMIN_CMD, TABLES: T, DRAND, COPY, RULE_LINES,
   daily: { dailyLevel, isSurvivorTier, kstDate, DAILY_MISS_TO_REMOVE },
+  DRAW_RP_DEFAULT,
   pure: { sha256, drandRoundAt, drandRoundTime, drawRoundFor, prizeCount, PRIZE_TABLE, isoNoMs, sortIds, participantsHash, drawInput, shuffle, participantsOf, computeDraw, parseKst, kst, verifyFlags },
   consts: { DRAW_BUFFER_S, GRACE_MS, NO_CONTACT_MS, FLAG_BEST_GAP, FLAG_FEW_ROUNDS, DEFAULT_PACING_MS },
 };

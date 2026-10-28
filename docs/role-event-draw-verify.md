@@ -11,7 +11,7 @@
 | `seed_commit` | 회차 생성 공지 · 마감 공지 | 발표 때 공개되는 `seed_secret` 의 sha256 과 같아야 한다 |
 | `seed_secret` | 추첨 발표 | — |
 | `closes_at` | 추첨 발표(ISO UTC · 밀리초 없음, 예 `2026-11-08T14:00:00Z`) | 글자 그대로 쓴다 |
-| 참여 `account_id` 목록 | 참여자 확정 공지 · 추첨 발표(정렬 순) | `,` 로 이어 sha256 = `participants_hash` |
+| 참여 `account_id` 목록 (18회부터 = 역할 통과자 중 시즌 최종 3,600 이상만) | 참여자 확정 공지 · 추첨 발표(정렬 순) | `,` 로 이어 sha256 = `participants_hash` |
 | `participants_hash` | 참여자 확정 공지(추첨보다 먼저 나간다) | — |
 | `drand_chain` · `drand_round` | 결과 공지(추첨 열흘쯤 전에 고정) | 라운드 시각이 참여자 확정 공지보다 뒤여야 한다 |
 

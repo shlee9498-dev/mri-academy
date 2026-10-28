@@ -14,9 +14,9 @@ const PLAYERS = [
   { platform: "kakao", name: "Survivor0ne", accountId: "account.bbb222", modes: { "squad-fpp": { currentRankPoint: 3455, bestRankPoint: 3520, roundsPlayed: 95, currentTier: { tier: "Master", subTier: "1" } } } },
   { platform: "kakao", name: "HyunTae", accountId: "account.ccc333", modes: { squad: { currentRankPoint: 3402, bestRankPoint: 3800, roundsPlayed: 33, currentTier: { tier: "Master", subTier: "1" } } } },
 ];
-// 12명이 모여야 치킨 2개(오너 10/28 규칙) — 위 3명 + 마스터 유지 9명
+// 12명이 모여야 치킨 2개(오너 10/28 규칙) — 위 3명 + 3,600 이상 9명(추첨 대상 기준 · 오너 10/29)
 for (let i = 0; i < 9; i++) PLAYERS.push({ platform: "steam", name: "Extra" + i, accountId: "account.x" + i,
-  modes: { squad: { currentRankPoint: 3400 + i * 10, bestRankPoint: 3500, roundsPlayed: 100, currentTier: { tier: "Master", subTier: "1" } } } });
+  modes: { squad: { currentRankPoint: 3600 + i * 10, bestRankPoint: 3700, roundsPlayed: 100, currentTier: { tier: "Master", subTier: "1" } } } });
 
 async function run({ seedSecret = "11".repeat(32), log = () => {} } = {}) {
   const clock = makeClock("2026-10-17T03:00:00Z");
@@ -73,7 +73,7 @@ async function run({ seedSecret = "11".repeat(32), log = () => {} } = {}) {
   log(`당첨 DM ${dc.dms.filter((d) => d.to !== OWNER).length}통 · 공지 ${dc.posts.length}건`);
 
   // 공개값만으로 재현(scripts/role-event-verify.cjs 와 같은 식)
-  const ids = db.tables.role_event_entries.filter((e) => e.status === "verified").map((e) => e.account_id).sort();
+  const ids = db.tables.role_event_entries.filter((e) => e.status === "verified" && e.final_rp >= 3600).map((e) => e.account_id).sort();
   const rep = reproduce({ seed: r.seed_secret, commit: r.seed_commit, closes: r.closes_at.replace(/\.\d{3}Z$/, "Z"), ids, hash: r.participants_hash, randomness: r.drand_randomness, winners: r.winners_count });
   log(`재현 commit ${rep.commitOk} · hash ${rep.hashOk} · 당첨 ${rep.winners.join(", ")}`);
   return { re, db, dc, clock, round: r, winners, reproduced: rep, pubgCalls: pubg.calls, drandCalls: drand.calls };
