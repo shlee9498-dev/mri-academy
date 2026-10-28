@@ -23,11 +23,13 @@ function world({ players = dry.PLAYERS, env = {}, discord = {}, drandFail = 0, s
     getClient: () => dc.client, newSeed: () => ({ secret: seed, commit: sha(seed) }), log: { log() {}, error() {} } });
   return { clock, db, pubg, drand, dc, re, sleeps, round: () => db.tables.role_event_rounds[0], entries: () => db.tables.role_event_entries, awards: () => db.tables.role_event_awards };
 }
-async function makeRound(w, prize = 2) {
+async function makeRound(w, prize = 2, drawRp = 3400) {
   const r = await w.re.createRound({ roundNo: 18, season: 43, closesAt: "2026-11-08T14:00:00Z", verifyAfter: "2026-11-10T03:00:00Z", drawAt: "2026-11-20T12:00:00Z", by: OWNER });
   assert.ok(r.round);
   // 흐름 시험은 「12명 이상 모여 치킨 2개」인 회차로 둔다 — 마감 때 정해진 값이 있으면 그대로 쓴다. 인원표 자체는 아래 경품 시험이 본다
   if (prize) w.db.tables.role_event_rounds.find((x) => x.id === r.round.id).winners_count = prize;
+  // 흐름 시험의 전적이 3,400 언저리라 추첨 기준을 3,400 으로 둔다 — 3,600 기본값 · 경계는 아래 「추첨 대상 3,600」 시험이 본다
+  if (drawRp) await w.db.sbUpsert("ops_state", { key: `role-event:round-config:${r.round.id}`, value: { drawRp } }, "key");
   return r.round;
 }
 async function apply(w, user, nick, platform, mode) {
@@ -88,11 +90,11 @@ test("서버 식 = 공개 재현 스크립트 식 (여러 크기)", () => {
     assert.equal(s.drawInput, `${seed}:${closes}:${s.participantsHash}:${rand}`);
   }
 });
-test("명령 정의 — 신청은 길드 · 관리는 글로벌 DM 전용 · 하위 명령 11개", () => {
+test("명령 정의 — 신청은 길드 · 관리는 글로벌 DM 전용 · 하위 명령 12개", () => {
   assert.equal(APPLY_CMD.name, "역할군신청");
   assert.deepEqual(APPLY_CMD.options.map((o) => o.name), ["닉네임", "플랫폼", "모드"]);
   assert.deepEqual(ADMIN_CMD.contexts, [1]);
-  assert.deepEqual(ADMIN_CMD.options.map((o) => o.name), ["회차생성", "일정", "채널읽기", "현황", "매일검사", "티어확인", "검증", "판정", "추첨", "지급", "수동등록"]);
+  assert.deepEqual(ADMIN_CMD.options.map((o) => o.name), ["회차생성", "일정", "채널읽기", "현황", "공지", "매일검사", "티어확인", "검증", "판정", "추첨", "지급", "수동등록"]);
   // 명령 · 옵션 이름만(선택지 choices 의 name 은 표시 글자라 규칙 밖)
   const names = [];
   const walk = (o) => { names.push(o.name); for (const c of o.options || []) walk(c); };
@@ -580,9 +582,9 @@ test("작업 backfill → publish — 소급 회차 · 3명 추첨 · 당첨자 
 // ── 경품 규칙(오너 10/28) — 마감 때 신청자 수로 치킨 개수를 정하고 공개 ──
 async function prizeWorld(n) {
   const players = Array.from({ length: n }, (_, i) => ({ platform: "steam", name: "Q" + i, accountId: "account.q" + String(i).padStart(3, "0"),
-    modes: { squad: { currentRankPoint: 3500, bestRankPoint: 3500, roundsPlayed: 90, currentTier: { tier: "Master", subTier: "1" } } } }));
+    modes: { squad: { currentRankPoint: 3650, bestRankPoint: 3650, roundsPlayed: 90, currentTier: { tier: "Master", subTier: "1" } } } }));
   const w = world({ players });
-  await makeRound(w, null);
+  await makeRound(w, null, null);
   for (let i = 0; i < n; i++) await apply(w, "8000000000000000" + String(i).padStart(2, "0"), "Q" + i, "steam", "squad");
   return w;
 }
@@ -617,4 +619,51 @@ test("개설 공지 — 경품 표 · 지금 신청 N명 · 영상 자리 · 신
   assert.match(open.content, /지금 신청 12명 → 치킨 2개/);
   assert.match(open.content, /신청 방법 영상: https:\/\/youtu.be\/xyz/);
   assert.equal(open.edits.length, 12);
+});
+
+// ── 추첨 대상 3,600(오너 10/29) — 역할은 3,400 · 치킨 추첨은 시즌 최종 3,600 이상 ──
+test("추첨 대상 — 3,599 는 역할만 · 3,600 은 추첨 대상 · 공지에 기준이 남는다", async () => {
+  const rps = [3599, 3600, 3700, 3450, 3601, 3400, 3650, 3500, 3620, 3599, 3800, 3610];   // 12명 → 치킨 2개
+  const players = rps.map((rp, i) => ({ platform: "steam", name: "T" + i, accountId: "account.t" + String(i).padStart(2, "0"),
+    modes: { squad: { currentRankPoint: rp, bestRankPoint: rp, roundsPlayed: 90, currentTier: { tier: "Master", subTier: "1" } } } }));
+  const w = world({ players });
+  await makeRound(w, null, null);                                     // 기본값 = 3,600
+  assert.match(w.dc.posts[0].content, /역할: 3,400 이상 43s master · 서바이버 43s Survivor/);
+  assert.match(w.dc.posts[0].content, /치킨 추첨: 시즌 최종 3,600 이상/);
+  for (let i = 0; i < 12; i++) await apply(w, "8200000000000000" + String(i).padStart(2, "0"), "T" + i, "steam", "squad");
+  await toAnnounced(w);
+  assert.equal(w.entries().filter((e) => e.status === "verified").length, 12);          // 역할은 전원(3,400 이상)
+  const eligible = w.entries().filter((e) => e.final_rp >= 3600).map((e) => e.account_id).sort();
+  assert.equal(eligible.length, 7);
+  assert.equal(w.round().participants_hash, sha(eligible.join(",")));
+  const winners = w.awards().map((a) => w.entries().find((e) => e.id === a.entry_id));
+  assert.equal(winners.length, 2);
+  assert.ok(winners.every((e) => e.final_rp >= 3600));
+  assert.ok(w.dc.posts.some((p) => /치킨 추첨 대상\(시즌 최종 3,600 이상\) 7명/.test(p.content)));
+  assert.ok(w.dc.posts.some((p) => /추첨 대상 기준: 시즌 최종 3,600 RP 이상/.test(p.content)));
+});
+test("추첨 대상 — 소급 회차(17회)는 역할 기준 3,400 그대로", async () => {
+  const players = [3400, 3450].map((rp, i) => ({ platform: "steam", name: "S" + i, accountId: "account.s" + i,
+    modes: { squad: { currentRankPoint: rp, bestRankPoint: rp, roundsPlayed: 90, currentTier: { tier: "Master", subTier: "1" } } } }));
+  const w = world({ players });
+  w.clock.set("2026-10-28T15:00:00Z");
+  await w.re.createRound({ roundNo: 17, season: 42, closesAt: "2026-09-21T00:00:00Z", verifyAfter: "2026-10-28T15:20:00Z", drawAt: "2026-10-29T16:00:00Z", backfill: true, winners: 1 });
+  for (const [i, p] of players.entries()) await w.re.handle(makeItx({ name: "역할군", sub: "수동등록", user: OWNER, guildId: null, opts: { 회차: 17, 대상: "83000000000000000" + i, 플랫폼: "steam", 모드: "squad", 계정: p.name } }));
+  w.clock.set("2026-10-28T15:21:00Z"); await w.re.tick(); await w.re.idle();
+  await w.re.publishResults(w.round().id);
+  w.clock.set("2026-10-29T16:01:00Z"); await w.re.tick();
+  assert.equal(w.round().participants_hash, sha(["account.s0", "account.s1"].join(",")));
+});
+test("개설 공지 — 채널 env 가 나중에 들어오면 틱에서 한 번 올리고 · /역할군 공지 로 다시 올린다", async () => {
+  const w = world({ env: { ROLE_EVENT_ANNOUNCE_CHANNEL_ID: "" } });
+  await makeRound(w);
+  assert.equal(w.dc.posts.length, 0);
+  assert.ok(w.dc.dms.some((d) => d.to === OWNER && /공지 문안/.test(d.content || "")));
+  w.re._env.ROLE_EVENT_ANNOUNCE_CHANNEL_ID = "ANN";
+  await w.re.tick(); await w.re.tick();
+  assert.equal(w.dc.posts.filter((p) => /신청을 받아요/.test(p.content)).length, 1);
+  const again = makeItx({ name: "역할군", sub: "공지", user: OWNER, guildId: null });
+  await w.re.handle(again);
+  assert.match(again.last().content, /채널에 올렸어/);
+  assert.equal(w.dc.posts.filter((p) => /신청을 받아요/.test(p.content)).length, 2);
 });
