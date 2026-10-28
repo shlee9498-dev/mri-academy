@@ -19,6 +19,6 @@
     "@resvg/resvg-js": "2.6.2",
     "discord.js": "^14.16.3",
     "express": "^4.22.3",
-    "sharp": "0.35.4"
+    "sharp": "0.35.5"
   }
 }
