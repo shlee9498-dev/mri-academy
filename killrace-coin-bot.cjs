@@ -449,7 +449,7 @@ function attach({ coin, gift, getClient, ownerId, env = process.env, log = conso
     };
     // registerLessonCmd(set)가 먼저 돌게 잠깐 기다린 뒤 빠진 것만 만든다
     if (typeof client.isReady === "function" && client.isReady()) setTimeout(register, 15000).unref?.();
-    else client.once("ready", () => setTimeout(register, 15000).unref?.());
+    else client.once("clientReady", () => setTimeout(register, 15000).unref?.());
     return true;
   };
   if (!tryAttach()) { const t = setInterval(() => { if (tryAttach()) clearInterval(t); }, 5000); if (t.unref) t.unref(); }

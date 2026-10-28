@@ -1230,10 +1230,11 @@ alter table public.consults drop constraint if exists chk_consults_source;
 alter table public.consults add  constraint chk_consults_source
   check (source is null or source in ('site','discord','kakao','soomgo'));
 
--- 22d-1) [제안 — 오너 승인 시 실행] 폼의 '유입 경로'(유튜브·지인·숨고 등) 전용 컬럼.
---        22d의 source와 이름이 겹치는 다른 개념이라 분리를 제안한다. 이 컬럼이 없으면
---        server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다(유실은 없고 질의만 불편).
--- alter table public.consults add column if not exists inflow text;
+-- 22d-1) 폼의 「어디서 보고 오셨어요?」 전용 컬럼(오너 「유입경로는 … 일단 ㅇㅋ」 2026-10-19 · 더하기만 · 세션 실행 10/19 · 46 → 47칸).
+--        22d의 source(접수 채널 site|discord|…)와 이름이 겹치는 다른 개념이라 분리했다. 값 = inflow.cjs 7개 화면 이름
+--        (유튜브 쇼츠 · 유튜브 롱폼 · SOOP 방송 · 디스코드 · 지인 소개 · 검색 · 기타) — 목록은 서버가 지키고 칸 제약은 두지 않는다
+--        (목록을 바꿀 때 제약 교체 = 기존 것 바꾸기가 되지 않게). 집계: select inflow, count(*) from consults group by 1;
+alter table public.consults add column if not exists inflow text;
 
 -- 22f) 신청 UTM 3컬럼 (2026-09-17 · 관제탑 UTM 집계 경로 확인) — index.html 트레이너 소개 CTA 가
 --      apply.html?utm_source=site&utm_medium=trainers&utm_content=hyuntae|jungu|muri 로 진입하고 폼이 제출 payload 에
@@ -7981,3 +7982,52 @@ notify pgrst, 'reload schema';
 --      기대: anon false · authed false · server true. 4인자판 없음: select count(*) from pg_proc where proname = 'record_lesson_from_booking';  -- 1
 -- 되돌림(한 블록): begin; drop function if exists public.record_lesson_from_booking(bigint, bigint, int, date, text);
 --   위 §50 의 record_lesson_from_booking(4인자) create 문 그대로(권한은 종전처럼 기본값 · 손대지 않는다); commit; notify pgrst, 'reload schema';   -- md5 fe597597c1e0fa63e4915672b7f373b8 로 돌아오는지 확인
+
+-- ════════════════════════════════════════════════════════════════════════════════
+-- §87  「AI 무리 복기」 리플 저장 — 비공개 버킷 replay · 목록 표 replay_matches
+--      (2026-10-21 · 지휘 주문서 「복기AI 2주차」 · docs/replay-ai.md §13 · 더하기만 = A 구간)
+--   번호: 열린 PR 과 겹치면 머지 직전에 다음 빈 번호로 바꾼다(내용은 그대로).
+--   왜: PUBG 경기 데이터는 14일 뒤 사라진다 — 받은 한 팀분을 압축해 비공개로 남긴다(같은 경기를 두 번 받지 않는다).
+--   개인정보: 닉네임 · 디스코드 id · IP 는 어느 칸에도 넣지 않는다.
+--   측정 표는 10/21 지휘 결정으로 뺐다(공개 페이지 보류 · 브랜치 claude/replay-public-parked 에 보관).
+--   코드: replay-api.cjs — 표 · 버킷이 없으면 메모리 캐시로 돈다(1분마다 다시 확인 · 실행 뒤 재시작 없이 켜진다).
+--   실행: 경비 세션이 87-1 블록 하나를 단독 실행 → 87 검증. 운영 DB 쓰기는 경비만(지휘 주문서).
+--
+-- 87-0) 스냅샷(읽기만):
+--   select to_regclass('public.replay_matches');                                        -- 기대: null
+--   select id, public from storage.buckets where id = 'replay';                          -- 기대: 0행
+--
+-- 87-1) 실행(한 블록):
+begin;
+create table if not exists public.replay_matches (
+  id              bigint generated always as identity primary key,
+  platform        text not null check (platform in ('steam', 'kakao')),
+  match_id        text not null check (match_id ~ '^[0-9a-f-]{36}$'),
+  team_id         int  not null,
+  map_name        text,
+  game_mode       text,
+  match_type      text,
+  played_at       timestamptz,
+  storage_path    text not null,
+  size_bytes      int,
+  parser_version  text,
+  fetched_at      timestamptz not null default now(),
+  unique (platform, match_id, team_id)
+);
+alter table public.replay_matches enable row level security;   -- service_role 만
+
+
+-- 비공개 · 한 파일 20MB 까지 · gzip 만(한 팀분 압축본은 보통 100KB 안팎)
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('replay', 'replay', false, 20971520, array['application/gzip'])
+on conflict (id) do nothing;
+commit;
+notify pgrst, 'reload schema';
+
+-- 87 검증(읽기만):
+--   select to_regclass('public.replay_matches');                                                            -- 이름이 나온다
+--   select relname, relrowsecurity from pg_class where relname = 'replay_matches';                          -- true
+--   select id, public, file_size_limit from storage.buckets where id = 'replay';                            -- replay · false · 20971520
+--   서버 로그: 「[replay] 리플 API 활성 · 저장 bucket=true matches=true」(실행 뒤 1분 안 · 재시작 없이)
+-- 되돌림(한 블록 · 쌓인 기록도 지워지니 오너 OK 필요): begin; drop table if exists public.replay_matches;
+--   delete from storage.objects where bucket_id = 'replay'; delete from storage.buckets where id = 'replay'; commit; notify pgrst, 'reload schema';

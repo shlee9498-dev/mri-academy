@@ -64,6 +64,8 @@ let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP �
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
 //   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
 const payreqIntake = require("./payreq-intake.cjs");
+// 상담 · 레벨 테스트 신청서 「어디서 보고 오셨어요?」 선택지(apply.html 과 한 벌 · 오너 10/19)
+const inflowMod = require("./inflow.cjs");
 // 「입금 받음」(계약 §9.40) — 트레이너가 올리는 입금 신청 · 결과 DM 문구 · 화면 이름(디코 닉)
 const paymentReceived = require("./payment-received.cjs");
 // 판수 맞추기 · 일요일 확인 목록(계약 §9.41.2 · §9.41.3) — 라우트 · 카드 본문 · 결정(§46 줄마다)
@@ -668,7 +670,7 @@ const SYSTEM_TEMPLATE = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우
   · 플레이 분석 · 판단 근거 질문(사고 과정 파악) · 방향성 제시
   · 레벨테스트 항목: 초탄 잡기 · 서칭 · 조준 훈련
 - 결과: 수용력에 따라 1:1 레슨 또는 원장 직강 중 어느 쪽이 맞는지 배정 안내.
-- 원장 직강 초급반 진입 기준: 레벨테스트 80%(37개 이상).
+- 원장 직강 초급반은 레벨 테스트 직후 바로 들어올 수 있습니다(2026-10-18 오너). 직강은 반 단계와 상관없이 같은 가격입니다.
 - 키설정 최적화는 수강 확정·입금 후에 진행합니다(상담 단계 아님).
 
 [다시보기 파일 찾는 법 — 물어보면 안내]
@@ -680,7 +682,7 @@ const SYSTEM_TEMPLATE = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우
 - 카카오·스팀 모두 가능합니다. 초·중급자는 매칭이 원활한 **카카오 일반게임 또는 스팀 경쟁전**을 권합니다.
 - 환불(이용약관 제7조 · 방문판매법(계속거래)과 전자상거래법 기준 · 위약금 없음): 수강 시작 전이면 전액 환불합니다.
   레슨은 결제한 판수 중 남은 판 × 판당 단가(결제 금액 ÷ 결제 판수)입니다. 무료로 받은 보너스 판은 먼저 쓴 것으로 보고 환불에서 뺍니다.
-  강의는 남은 회차 × 회당 단가(결제 금액 ÷ 결제 회차), 세트는 레슨분(같은 판수 레슨 정가)과 강의분(세트 금액 − 레슨분)으로 나눠 같은 기준입니다.
+  강의는 남은 회차 × 회당 단가(결제 금액 ÷ 결제 회차), 예전에 세트로 결제한 분은 레슨분(같은 판수 레슨 정가)과 강의분(세트 금액 − 레슨분)으로 나눠 같은 기준입니다(세트는 2026-10-19부터 팔지 않습니다).
   레벨 테스트는 예약 3시간 전까지 취소하면 전액, 그 뒤 취소와 불참은 환불하지 않습니다. 미성년 수강생의 보호자가 동의를 철회하면 미사용분 전액입니다.
   **이 기준만 안내하고 개인별 환불 금액은 계산하지 마세요.** 실제 금액 확인과 접수는 상담(디스코드/카카오)으로 연결하고 이용약관 링크를 함께 주세요.
 - 담당 트레이너의 부득이한 사정(군 입대 등) 시: 잔여 회차를 ①후임 인계 ②동급 전환 ③미사용분 환불 중 수강생이 선택.
@@ -1061,6 +1063,9 @@ if (process.env.DISCORD_TOKEN) {
     ],
     partials: [Partials.Message, Partials.Channel, Partials.Reaction],
   });
+  // 슬래시 · 버튼 손잡이가 모듈마다 interactionCreate 를 하나씩 단다(봇 하나에 30개 넘게) — 누수가 아니라 설계다.
+  //   기본 한도 10 이면 부팅마다 MaxListenersExceededWarning 이 찍혀 진짜 경고를 가린다(10/28 부팅 로그).
+  client.setMaxListeners(64);
 
   // /수업등록 명령 정의 — GmI 서버(LESSON_GUILD_ID)에만 등록 (기존 명령과 길드 분리).
   // /판수정정 — 오등록 판수 보정. 대상 수업을 직접 고르게 해서 정정분이 엉뚱한
@@ -1254,7 +1259,6 @@ if (process.env.DISCORD_TOKEN) {
         { name: "판수(레슨)", value: "판수" },
         { name: "강의", value: "강의" },
         { name: "상담", value: "상담" },
-        { name: "세트(강의+레슨 · 초급 280,000 · 중급 340,000 · 심화 405,000)", value: "세트" },
         { name: "기타", value: "기타" } ] },
       // §28 신고 닉네임(필수 · 오너 「§28 판정 그대로」 2026-09-25) — 승인 카드가 명부 닉과 대조한다. 명부가 비어 있으면 승인 뒤 오너 버튼으로만 채운다.
       { name: "배그닉네임", description: "수강생 배그 인게임 닉네임(명부에 있으면 자동완성)", type: 3, required: true, autocomplete: true },
@@ -1320,7 +1324,7 @@ if (process.env.DISCORD_TOKEN) {
     }
   }
 
-  client.once("ready", async () => {
+  client.once("clientReady", async () => {
     console.log("bot ready:", client.user.tag);
     botClient = client;   // Phase T1 오너 DM용
     // 디스코드 피드백 이관 드라이런(feedback-scan.cjs · 읽기 전용 · 10/1) — 기동 1분 30초 뒤 한 번(같은 token 은 다시 안 돈다)
@@ -1436,7 +1440,7 @@ if (process.env.DISCORD_TOKEN) {
   client.on("interactionCreate", (itx) => { if (killPoster) killPoster.handle(itx).catch((e) => console.error("[killrace-poster] handler", e?.message)); });
   // 결과 화면 스샷 → 점수판 「잠정」(killrace-shot.cjs · 팀배정 채널 사진만 · 확정 점수는 안 건드린다)
   client.on("messageCreate", (msg) => { if (killShot) killShot.onMessage(msg).catch((e) => console.error("[killrace-shot] handler", e?.message)); });
-  client.once("ready", () => { if (killShot) killShot.checkChannel(client); });
+  client.once("clientReady", () => { if (killShot) killShot.checkChannel(client); });
 
   const isStaff = (id) => STAFF_IDS.includes(id);
 
@@ -3774,15 +3778,10 @@ if (process.env.DISCORD_TOKEN) {
       return itx.reply({ content: "배그닉네임의 플랫폼(스팀/카카오)을 골라줘.", ephemeral: true });
     if (kind === "판수" && !games)
       return itx.reply({ content: "구분이 판수면 판수도 입력해줘(예: 33).", ephemeral: true });
-    // 세트(v1.1): 금액이 상품을 결정하고 판수는 정가표에서 온다 — 서버 §18d payreq_apply 의 표와 같아야 한다.
-    //   초급 280,000(10판) · 중급 340,000(21판) · 심화 405,000(33판). 표 밖 금액은 접수 단계에서 막는다(승인 시 예외보다 빠르다).
-    //   세트 이름은 2026-10-02 사이트 개편(#480)대로 초급 · 중급 · 심화다(옛 입문 · 도약 · 마스터 · 금액 그대로).
-    const SET_GAMES = { 280000: 10, 340000: 21, 405000: 33 };
-    if (kind === "세트") {
-      if (!SET_GAMES[amount])
-        return itx.reply({ content: "세트 금액은 280,000(초급) · 340,000(중급) · 405,000(심화) 중 하나여야 해. 금액을 확인해줘.", ephemeral: true });
-      games = SET_GAMES[amount];
-    }
+    // 세트 폐지(2026-10-19 오너 · docs/direct-price-unify.md §6) — 고르기에서 뺐다. 명령이 다시 등록되기 전 화면에 남은 「세트」를 누르면 여기서 막는다.
+    //   옛 세트 결제의 승인 · 분해는 §18d payreq_apply 가 그대로 한다(이미 대기 중인 신청은 이 경로를 안 탄다).
+    if (kind === "세트")
+      return itx.reply({ content: "세트는 10/19부터 팔지 않아 — 직강은 「강의」(290,000), 레슨은 「판수」로 따로 올려줘.", ephemeral: true });
     let paid_on = kstToday();
     if (paidRaw) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(paidRaw) || Number.isNaN(Date.parse(paidRaw)))
@@ -5970,7 +5969,7 @@ app.post("/api/apply", async (req, res) => {
       color: 0xf5c518,
       fields: [
         { name: "신청 구분", value: clip(b.applyType, 50), inline: true },
-        { name: "유입 경로", value: clip(b.source, 50), inline: true },
+        { name: "어디서 보고 왔나", value: (() => { const x = inflowMod.normalizeInflow(b.source); return x ? (x.legacy ? `기타(${x.legacy})` : x.label) : "—"; })(), inline: true },
         { name: "플랫폼/닉", value: `${clip(b.platform, 10)} / ${clip(b.nickname, 40)}`, inline: true },
         { name: "🎯 BPI 자동진단", value: bpiText, inline: false },
         { name: "최고 티어", value: clip(b.tier, 40) || "—", inline: true },
@@ -6003,7 +6002,9 @@ app.post("/api/apply", async (req, res) => {
       //   playtime·focus·stats_consent 를 전부 null 로 저장하고 memo 폴백만 남겼다. REQUIRED 는 부팅 점검이
       //   실재를 보장하므로 존재로 본다. (관제탑 9/17 UTM 집계 경로 확인에서 드러남)
       const has = (c) => schemaOptional[`consults.${c}`] === true || (REQUIRED_SCHEMA.consults || []).includes(c);
-      const inflow = clip(b.source, 50);                       // 폼의 '유입 경로'(유튜브·지인 등)
+      // 폼의 「어디서 보고 오셨어요?」(inflow.cjs 7개 중 하나 · 오너 10/19) — 저장 값은 화면 이름. 목록 밖(옛 페이지)은 「기타」 + 원래 값 memo.
+      const inflowPick = inflowMod.normalizeInflow(b.source);
+      const inflow = inflowPick?.label || "";
       // UTM(index.html 트레이너 CTA → apply.html 진입 시 캡처 → 제출 payload). 종전에는 디스코드 embed 에만 실리고
       // 어디에도 저장되지 않아 집계가 성립하지 않았다. §22f 컬럼이 있으면 컬럼에, 없으면 memo 에 `utm: a/b/c` 로 남긴다.
       const utm = { utm_source: clip(b.utm_source, 40), utm_medium: clip(b.utm_medium, 40), utm_content: clip(b.utm_content, 60) };
@@ -6023,8 +6024,9 @@ app.post("/api/apply", async (req, res) => {
       if (has("focus")) row.focus = clip(b.focus, 200);
       if (has("stats_consent")) row.stats_consent = String(b.statsConsent) === "동의";
       const memoParts = [];
-      if (has("inflow")) row.inflow = inflow;
+      if (has("inflow")) row.inflow = inflow || null;
       else if (inflow) memoParts.push(`유입: ${inflow}`);
+      if (inflowPick?.legacy) memoParts.push(`유입(옛 선택지): ${inflowPick.legacy}`);
       const utmVals = Object.values(utm).filter(Boolean);
       if (has("utm_source")) Object.assign(row, { utm_source: utm.utm_source || null, utm_medium: utm.utm_medium || null, utm_content: utm.utm_content || null });
       else if (utmVals.length) memoParts.push(`utm: ${[utm.utm_source, utm.utm_medium, utm.utm_content].map((v) => v || "-").join("/")}`);
@@ -8698,6 +8700,10 @@ reconcile = ledgerReconcile.mountReconcile(app, trainerPortal, {
 // trainer-portal 뒤 — 그 파일이 건 게이트 뒤에 서고, 트레이너 판정·범위(담당 ∪ 최근 90일)·응답 가드를 같은 함수로 쓴다.
 reviewApi.mountTrainer(trainerPortal);
 
+// 「AI 무리 복기」 리플 API(/api/replay/* · docs/replay-ai.md §13) — 클립 피드백 엔진 부품 · 운영진 로그인만 · 닉네임 조회만 PUBG 한도를 쓴다(분당 4회 몫 · 줄 서기).
+//   저장(§87 버킷 replay · replay_matches)이 없으면 메모리 캐시로 돈다.
+require("./replay-api.cjs")(app, { findPlayer, pubgGet, getUser, limit, sbSelect, sbInsert });
+
 // ── 트레이너별 판수 부족 알림(§45 · 2026-09-30 오너 판정 B — 재결제 안내) ──
 // 트레이너별 잔여가 0 미만이 되면 수강생·그 트레이너에게 DM 1회 · 다시 0 이상이 될 때까지 재발송 없음 · 풀리면 조용히 닫는다.
 // cronTick(10분)이 전체를 보고, 판수가 움직인 자리(「완료」 · /수업등록 · /판수정정 · 예약) 직후에 그 수강생만 다시 본다.
@@ -8936,6 +8942,8 @@ const REQUIRED_SCHEMA = {
                      // §22d 승격(2026-09-04) — 오너 DDL 실행 완료를 실DB에서 확인했고
                      // /api/apply가 이 컬럼들에 쓴다. inflow만 SCHEMA_OPTIONAL에 남는다(22d-1 미실행).
                      "source","phone","platform","game_nick","playtime","focus","stats_consent",
+                     // §22d-1 inflow(2026-10-19 세션 실행 · 46 → 47칸) — /api/apply 「어디서 보고 오셨어요?」
+                     "inflow",
                      // §60 상담 보드(2026-10-01 · 세션 실행 · 실측 46칸) — consult-board.cjs · consult-record.cjs 가 쓴다
                      "consult_type","booking_id","application_id","outcome","outcome_note","outcome_at","outcome_by",
                      "thinking_reminded_at","handover_at","handover_note","updated_at"],
@@ -9104,6 +9112,8 @@ const REQUIRED_SCHEMA = {
 // 122행을 실DB에서 확인했고 코드가 참조를 시작했다(잔여·환불 파생). settlements는
 // 아직 코드가 안 쓰므로 선택 유지다. 승격 경로는 §18 payment_requests와 같다.
 const SCHEMA_OPTIONAL = {
+  // §87 「AI 무리 복기」 리플 저장(replay-api.cjs · 2026-10-21) — 없으면 메모리 캐시로 돈다. 클립 피드백이 정식이 되면 REQUIRED 로 올린다.
+  replay_matches: ["platform", "match_id", "team_id", "map_name", "game_mode", "match_type", "played_at", "storage_path", "size_bytes", "parser_version"],
   // settled_period = 정산 귀속월(마감월 정정분을 다음 열린 달로 이월). 부재하면
   // admin-panel이 paid_at 월로 떨어져 현행과 동일하게 동작한다.
   // deposit_ref(§19f 세트 묶음)는 **DDL 실행 완료**다(2026-08-17 실DB 실측 — 컬럼 +
@@ -9167,7 +9177,7 @@ const SCHEMA_OPTIONAL = {
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
-  consults: ["inflow", "utm_source", "utm_medium", "utm_content"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계)
+  consults: ["utm_source", "utm_medium", "utm_content"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계) · inflow 는 10/19 실행으로 필수 승격
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",
