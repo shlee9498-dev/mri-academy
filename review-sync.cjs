@@ -309,6 +309,13 @@ function createReviewSync(deps) {
 
   // ── 점검 · 백필(9.46.3) ──
   async function startCursor(ch) { return snowflakeAt(await startIso(ch)); }
+  // 채널의 스레드 — 진행 중 + 보관된 공개 스레드(최근 50개). 보관된 스레드 글도 놓치지 않게(검수 LOW · 10/30 실측)
+  async function threadsOf(channel) {
+    const out = new Map();
+    try { for (const t of (await channel.threads?.fetchActive?.())?.threads?.values?.() || []) out.set(String(t.id), t); } catch { /* 스레드 없음 */ }
+    try { for (const t of (await channel.threads?.fetchArchived?.({ type: "public", limit: 50 }))?.threads?.values?.() || []) out.set(String(t.id), t); } catch { /* 권한 없음 */ }
+    return [...out.values()];
+  }
   async function readAfter(channel, after, cap) {
     const out = [];
     let cur = after;
@@ -340,10 +347,7 @@ function createReviewSync(deps) {
         tally.channels++;
         const after = cursors[ch] || await startCursor(ch);
         const lists = [{ ch: channel, msgs: await readAfter(channel, after, SWEEP_PER_CH).catch((e) => { tally.errors++; logError("rsync_sweep_read", ch, e?.code); return []; }) }];
-        try {
-          const th = await channel.threads?.fetchActive?.();
-          for (const t of th?.threads?.values?.() || []) lists.push({ ch: t, msgs: await readAfter(t, after, SWEEP_PER_CH).catch(() => []) });
-        } catch { /* 스레드 없음 */ }
+        for (const t of await threadsOf(channel)) lists.push({ ch: t, msgs: await readAfter(t, after, SWEEP_PER_CH).catch(() => []) });
         let last = after, failed = false;
         for (const { msgs } of lists) {
           for (const m of msgs) {
@@ -366,31 +370,52 @@ function createReviewSync(deps) {
   }
 
   // 확인 대기 채널 현황(읽기만 · 한 시간에 한 번) — 시작선 뒤 글 수 · 트레이너 글 수 · 명부에 맞는 수강생 · 명부 밖 글쓴이(디스코드 id)
+  //   대상 = 확인 대기 줄 + 짝 표에 없는 채널 중 짝 채널과 같은 카테고리에 있는 글 채널(unmapped · 10/3 뒤에 생긴 채널). 스레드 글 포함
   //   → ops_state 'review_sync:pending'. 세션이 이걸 보고 짝 확정을 오너 · 지휘에게 올린다. 본문 · 채널 이름은 담지 않는다
   async function scanPending(client, mp) {
     const ppl = await people();
+    const targets = [];
+    for (const [ch, map] of mp.byCh) if (map.kind === "student" && !map.confirmed_at) targets.push({ ch, map });
+    // 짝 표에 없는 채널 — 짝 채널들의 카테고리 안 글 채널
+    const parents = new Set();
+    for (const ch of mp.byCh.keys()) {
+      try { const c = await client.channels.fetch(ch); if (c?.parentId) parents.add(String(c.parentId)); } catch { /* 지워진 채널 */ }
+    }
+    for (const g of mp.guilds) {
+      try {
+        const guild = await client.guilds.fetch(g);
+        const all = await guild.channels.fetch();
+        for (const c of all.values()) {
+          if (!c || c.type !== 0 || mp.byCh.has(String(c.id)) || !parents.has(String(c.parentId))) continue;
+          targets.push({ ch: String(c.id), map: null });
+        }
+      } catch (e) { logError("rsync_pending_guild", g, e?.code); }
+    }
     const out = {};
-    for (const [ch, map] of mp.byCh) {
-      if (map.kind !== "student" || map.confirmed_at) continue;
+    for (const { ch, map } of targets) {
       let channel;
       try { channel = await client.channels.fetch(ch); } catch { out[ch] = { error: "fetch" }; continue; }
       if (!channel?.messages) continue;
-      const msgs = await readAfter(channel, await startCursor(ch), SWEEP_PER_CH).catch(() => null);
-      if (!msgs) { out[ch] = { error: "read" }; continue; }
-      const row = { n: 0, trainer: 0, students: {}, unmatched: {}, last: null, candidate: map.student_id ?? null };
+      const after = map ? await startCursor(ch) : snowflakeAt(FRESH_FROM);
+      const msgs = [];
+      try {
+        msgs.push(...await readAfter(channel, after, SWEEP_PER_CH));
+        for (const t of await threadsOf(channel)) msgs.push(...await readAfter(t, after, SWEEP_PER_CH).catch(() => []));
+      } catch { out[ch] = { error: "read" }; continue; }
+      const row = { n: 0, trainer: 0, students: {}, unmatched: {}, last: null, candidate: map?.student_id ?? null, ...(map ? {} : { unmapped: true }) };
       for (const m of msgs) {
         const n = normMessage(m);
         if (n.bot || n.system) continue;
         row.n++;
-        row.last = new Date(n.ts).toISOString();
+        if (!row.last || n.ts > Date.parse(row.last)) row.last = new Date(n.ts).toISOString();
         if (ppl.staffByDiscord.has(n.authorId)) row.trainer++;
         else if (ppl.studentByDiscord.has(n.authorId)) { const sid = ppl.studentByDiscord.get(n.authorId); row.students[sid] = (row.students[sid] || 0) + 1; }
         else if (n.authorId) row.unmatched[n.authorId] = (row.unmatched[n.authorId] || 0) + 1;
       }
       if (row.n) out[ch] = row;
     }
-    await opsSet(PENDING_KEY, { at: iso(), channels: out });
-    log(`[review-sync] 확인 대기 채널 현황 — 글 있는 채널 ${Object.keys(out).length}`);
+    await opsSet(PENDING_KEY, { at: iso(), scanned: targets.length, channels: out });
+    log(`[review-sync] 확인 대기 · 짝 없는 채널 현황 — 본 채널 ${targets.length} · 글 있는 채널 ${Object.keys(out).length}`);
     return out;
   }
 
