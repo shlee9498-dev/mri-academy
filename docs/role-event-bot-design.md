@@ -1,5 +1,7 @@
 # 역할군 이벤트 봇 — 설계 확정 문안 (2026-09-30)
 
+> **2026-10-17 구현 1차 반영** — 코드 `role-event.cjs`(server.js 는 연결만) · DDL `supabase_admin_panel.sql` §85 · 시험 `scripts/role-event.test.cjs` · 드라이런 `scripts/role-event-dryrun.cjs` · 재현 `scripts/role-event-verify.cjs`. 구현 중 문서와 달라진 곳은 §12 에 이유와 함께 적었다(문서가 정본).
+>
 > 메인3(오너 설계·검토 창구) 검토 1~3차 종료분. **문서 전용 · 기존 파일 무수정 · 코드·DDL 실행 없음.**
 > 구현 착수는 수강생 앱 마무리 후. DDL 문안은 `docs/role-event-ddl-draft.sql`(미실행) — 착수 시 경비가 `supabase_admin_panel.sql` §NN 으로 편입하고, 실행은 오너 SQL Editor 단독 + `NOTIFY pgrst, 'reload schema';`.
 > 실측 근거: mri-academy `server.js`(2026-09-24 · 함수명 기준) · `supabase_admin_panel.sql` · gmi-casino-bot `cogs/_crash_rng.py` · `_holdem_shuffle.py` · drand `api.drand.sh` `/info`(2026-09-30).
@@ -55,10 +57,13 @@
 | 오너 | `/역할군 회차생성 round_no season closes_at verify_after draw_at` | 글로벌 + DM 전용(`/승급` 과 같은 `integrationTypes`/`contexts` 방식) | `closes_at < verify_after < draw_at` 아니면 거절 |
 | 오너 | `/역할군 현황 [round_no]` | 〃 | 요약 · 플래그 · 미해결 중복 |
 | 오너 | `/역할군 검증 [round_no]` | 〃 | 수동 트리거(크론 자동이 기본) |
-| 오너 | `/역할군 판정 @유저 승인\|제외 [메모]` | 〃 | `reviewed_by/at` · 제외 = `status excluded`. **참여자 확정 후 거절** |
+| 오너 | `/역할군 판정 대상 승인\|제외 [메모]` | 〃 | `reviewed_by/at` · 제외 = `status excluded`. **참여자 확정 후 · 결과 공지 뒤 추첨일이 지나면 거절**. 대상 = 자동완성(신청 목록) · 디스코드 id · 멘션 · `#신청번호` · 게임 닉(§12-①) |
 | 오너 | `/역할군 추첨 [round_no]` | 〃 | 버튼 확인 1회. drand 라운드 시각 이전이면 거절 |
-| 오너 | `/역할군 지급 @유저` | 〃 | 카드 [지급함] 과 같은 동작 |
-| 오너 | `/역할군 수동등록 @유저 플랫폼 모드 닉\|accountId` | 〃 | API 실패로 접수 못 한 신청자(스크린샷 검수 후) |
+| 오너 | `/역할군 지급 대상` | 〃 | 카드 [지급함] 과 같은 동작 · 대상은 판정과 같은 문자열 |
+| 오너 | `/역할군 수동등록 대상 플랫폼 모드 닉\|accountId` | 〃 | API 실패로 접수 못 한 신청자(스크린샷 검수 후) · 대상 = 디스코드 id 또는 멘션 · 신청 · 마감 단계 회차만 |
+| 오너 | `/역할군 일정 [마감] [검증시작] [추첨]` | 〃 | 검증 전(open · closed)까지 시각 고치기 · 순서 검사 · 마감 · 추첨이 바뀌면 공지 1줄(§12-⑩) |
+| 오너 | `/역할군 채널읽기 채널 시작 끝` | 〃 | 채널 글을 기간으로 읽어 오너 DM(읽기만) — 옛 방식(글 · 스샷) 신청 모으기(§12-⑫) |
+| 오너 | `/역할군 회차생성 … 소급:true 당첨수:n` | 〃 | 지난 시즌 밀린 회차(§12-⑪) |
 | 크론 | `runRoleEventTick` | in-process `setInterval` 5분 · 기존 크론 패턴(`runPayreqUnreflected` · `sweep_pending_review`) | 마감 · 검증 시작 · 참여자 확정 · drand 조회·추첨 · 미연락 취소·승계. 전부 상태 전이 기반으로 **멱등** |
 
 서브커맨드 하나(`/역할군`)로 묶어 등록 수를 줄인다. `ROLE_EVENT_DISABLED=1` 이면 신청·크론이 멈춘다(배포 없이).
@@ -103,12 +108,13 @@
 [오너 확인 카드 · DM]
    요약(참여/충족/미충족/보류/플래그) · 플래그 목록(닉 · 코드 · 수치) · 미해결 중복 상단 표시
    · 회수 명단 = guild(GUILD_ID).members 중 ROLE_EVENT_ROLE_ID 보유자 − verified & !excluded
-   · 버튼 [보류 재조회] [명단 보기] [역할 부여] [회수 실행]
+   · 버튼 [보류 재조회] [명단 보기] [결과 공지] [역할 부여] [회수 실행]  ([결과 공지] = §12-②)
    · 18회(첫 봇 회차)는 「명단 확인 후 [회수 실행]」 문구 고정 — 수동 부여 누락·오부여 혼재 가능
    · [역할 부여] → verified & !excluded → roles.add(ROLE_EVENT_ROLE_ID) → role_granted_at / role_error
    · [회수 실행] → roles.remove 순차 → entries 있으면 role_revoked_at · 없으면 오너 DM 로그 1줄 · 실패 건 카드 유지
    · /역할군 판정 @유저 승인|제외 메모 → reviewed_by/at
-[결과 공지] 통과자 명단 공지 → results_published_at
+[결과 공지] 오너 카드 [결과 공지] → 통과자 명단 공지(멘션 · 알림 없음) → results_published_at
+   · 보류(held) · 미검증(applied) 이 남아 있으면 거절 — [보류 재조회] 먼저
    → draw_at = max(입력 draw_at, results_published_at + 10일) 확정
    → drand_round = round(draw_at + 3600) + 1 → drand_round_fixed_at (이후 변경 금지)
    → 공지 추가: 확정 draw_at · drand chain(64자) · drand_round · 「판정·제외는 draw_at 까지」
@@ -131,8 +137,8 @@
        → 발표: 당첨 account_id · seed_secret · closes_at · participants_hash · drand_chain · drand_round · drand_randomness
               · 참여 account_id 목록 · 재현 방법(§10) → seed_revealed_at · status announced
 [당첨 DM] discordDM(당첨자): 안내 + 버튼 「받을게요」 → notified_at · status notified
-   · DM 닫힘 → dm_error · 오너 카드 표시 · 공지 채널 멘션 1회 폴백
-   · 버튼 또는 답장 → contacted_at · status contacted
+   · DM 닫힘 → dm_error · 오너 카드 표시 · 공지 채널 멘션 1회 폴백 · notified_at 은 폴백 시각(48시간이 여기서 시작 · §12-③)
+   · 버튼 「받을게요」 또는 오너 카드 [연락됨] → contacted_at · status contacted (DM 답장 감지는 1차 제외 · §12-④)
 [지급 체크] 오너 카드 [지급함] 또는 /역할군 지급 @유저 → paid_at · paid_by · status paid (기프티콘 전송은 수동)
 [미연락] notified_at + 48h 이고 contacted_at null → status cancelled · cancel_reason no_contact_48h → 오너 알림
    └ 승계(자동): draw_order 에서 awards 가 없는 다음 순번 1명 → awards 추가(draw_rank=그 순번 · succeeded_from=취소 행)
@@ -269,10 +275,32 @@ gmi-casino-bot `_crash_rng.py`(commit/reveal) · `_holdem_shuffle.py`(결정적 
 |---|---|---|
 | G-4 | `verify_after` 기본 규칙(시즌 종료 + N시간) | 오너 실측(42시즌 값 동결 시점 · `railway run` 명령은 9/24 회신) |
 | G-5 | 플래그 임계값(best_gap 300 · few_rounds 40) | 17회(9/27 수동) 검수 데이터로 보정 |
-| §NN | DDL 절 번호(현재 최신 §49) · 본 파일 편입 | 구현 착수 시 경비 |
+| ~~§NN~~ | DDL 절 번호 · 본 파일 편입 | **§85 로 편입(10/17)** — §84 는 #596 이 잡고 있어 건너뜀 |
 | 18회 | 첫 봇 회차 회수 명단 오너 확인 절차 | 카드 문구로 고정 · 운영 시 오너 |
 | ② | PUBG 키 공유 여부 | 오너 확인 중 → 공유면 카지노 env 값 교체 |
 | ⑤ | 봇 역할 순서(마스터 역할 위) | 오너 |
-| 문구 | 문구 표(§9) | 구현 시 제출 |
+| 문구 | 문구 표(§9) | `docs/role-event-copy.md` 제출(10/17) · 오너 OK 대기 — 코드는 표의 문구로 들어가 있고 OK 뒤 고칠 곳은 `role-event.cjs` COPY 한 곳 |
 
 구현 착수 = 수강생 앱 마무리 후. 착수 시 가드: 브랜치 → draft PR → 오너 승인 → 머지 · main 직푸시 금지 · env 추가·삭제는 이름·용도·서비스를 회신에 명시.
+
+---
+
+## 12. 구현 1차에서 문서와 달라진 곳 (2026-10-17 · 이유)
+
+| # | 원래 | 바꾼 것 | 이유 |
+|---|---|---|---|
+| ① | `/역할군 판정 @유저` · `지급 @유저` · `수동등록 @유저` (유저 옵션) | 문자열 옵션 + 자동완성(판정 · 지급) | `/역할군` 은 DM 전용인데, DM 에서 유저 옵션은 대화 상대(오너 · 봇)만 고를 수 있다 — `/연결승인` 이 DM 에서 못 쓰이는 이유와 같다(server.js LINKREQ 주석). |
+| ② | [결과 공지] 를 누가 하는지 없음 | 오너 카드에 [결과 공지] 버튼 | 10일 유예 기산점이 공지 시각이라 사람이 명단을 본 뒤 누르게 했다. 자동으로 하면 18회 회수 명단 확인 전에 시계가 돈다. |
+| ③ | DM 닫힘 시 48시간 기준 시각 미정 | 채널 멘션 폴백 시각을 notified_at 으로 | 기준이 없으면 DM 닫힌 당첨자가 영원히 대기한다. |
+| ④ | 「버튼 또는 답장」 → contacted | 버튼 + 오너 [연락됨] | DM 답장을 읽으려면 DM 메시지 이벤트 처리가 새로 필요하다(1차 범위 밖). 답장이 오면 오너가 [연락됨] 한 번. |
+| ⑤ | 판정은 「참여자 확정 후」 거절 | 결과 공지 뒤 **추첨일(draw_at)이 지나면** 거절(확정 전이라도) | 크론 5분 주기 사이에 판정이 끼면 확정 시점이 흔들린다. [보류 재조회] 도 같은 시점부터 막는다. |
+| ⑥ | 없음 | 참여자 확정이 drand 라운드 시각보다 늦으면(서버 정지 등) 확정 공지에 그 사실 한 줄 + 오너 알림 | 라운드는 바꾸지 않는다(설계 그대로). 숨기지 않는 것만 더했다. |
+| ⑦ | 없음 | 확정 뒤 참여 명단 hash 가 달라지면 추첨을 멈추고 오너 알림(`draw_error='participants_changed'`) | 코드상 막힌 경로지만 마지막 방어선. |
+| ⑧ | 오너 DM 대상 `ROLE_EVENT_OWNER_ID` 후보 | 기존 `MRI_OWNER_ID` 재사용 | 다른 오너 전용 명령과 같은 값 · env 하나 덜 만든다. |
+| ⑨ | 참여 0명 | drand 조회 없이 「drawn → announced → done」 | 당첨자가 없으니 난수가 필요 없다. |
+
+플래그 임계값(best_gap 300 · few_rounds 40)은 G-5 보정 전 잠정값 그대로 코드 상수(`FLAG_BEST_GAP` · `FLAG_FEW_ROUNDS`)에 있다.
+| ⑩ | 회차 일정 변경 수단 없음 | `/역할군 일정` | 43시즌 종료일이 공식 미발표(10/28)라 추정값으로 열고 공지가 나오면 맞춘다. 검증 시작이 실제 종료보다 앞이면 시즌 중 값을 읽는 사고라, 고칠 길이 있어야 한다. 검증이 시작되면 못 고친다. |
+| ⑪ | 회차는 미래 마감만 | `소급` 회차: 마감 과거 허용 · 「closed」로 시작(신청은 수동등록만) · 검증 시작은 미래 · 결과 공지 유예 24시간 · `당첨수`로 약속한 인원 · 역할 부여 · 회수 안 함 | 17회(42시즌) 기프티콘 3매 약속(9/21)이 밀려 있다. 역할은 9/27 수동으로 끝났고, `ROLE_EVENT_ROLE_ID` 는 이번 시즌 역할이라 지난 명단으로 건드리면 안 된다. 소급 표시는 칸을 더하지 않고 `opens_at > closes_at` 으로 읽는다. 당첨 수는 `winners_count` 에 생성 때 넣어 두고 확정 때 그대로 쓴다(참여자보다 많이 안 뽑음). 재현 스크립트는 `--winners` 로 같은 값을 받는다. |
+| ⑫ | 없음 | `/역할군 채널읽기` | 채널에 글 · 스샷으로 신청한 사람을 다시 신청시키지 않고 수동등록하려면 명단이 필요하다. 읽기만 하고 결과는 오너 DM 으로만 간다(저장소 · 공지에 이름이 남지 않는다). |
+| ⑬ | 시즌 id = `PUBG_CURRENT_SEASON_NUM` 역산 | 시즌 목록에서 id 끝자리(`…-43`)로 먼저 찾고, 없을 때만 역산 · 역산 값 끝자리가 번호와 다르면 쓰지 않고 보류 | env 가 비면 41 로 역산해 엉뚱한 시즌을 읽는다. 시즌 목록은 24시간 캐시라 PUBG 부담은 그대로다. |
