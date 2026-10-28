@@ -690,3 +690,37 @@ test("색 자리 — 고정 셋은 colorKey 와 같은 사람 · 나머지는 �
   assert.deepEqual(r.trainers.map((t) => [t.trainerName, t.colorSlot]),
     [["트레이너A", 2], ["트레이너B", 1], ["트레이너C", 4], ["트레이너D", 6], ["원장", 3]]);
 });
+
+// ════════ §9.46.5 변경 커서 — 바뀐 복기 id 만 · 답 · 사진 바뀜도 · 숨김 = gone · 범위 밖 안 섞임 ════════
+test("GET /reviews/changes(트레이너) — since 뒤 바뀐 것만 · 답 · 사진도 바뀜 · 숨김 gone · 남의 비공개 안 섞임 · since 400", async () => {
+  const since = daysAgoIso(0.5);
+  const fresh = daysAgoIso(0.1);
+  db = {
+    staff: STAFF,
+    students: [stu(10, "복기10", 2), stu(12, "남의복기", 5)],
+    lesson_reviews: [
+      rv(1, 10, daysAgoIso(2), { updated_at: fresh }),                                    // 내 범위 · 바뀜
+      rv(2, 10, daysAgoIso(2)),                                                            // 내 범위 · 안 바뀜 — 답만 바뀜(아래)
+      rv(3, 10, daysAgoIso(2), { hidden_at: fresh, updated_at: fresh }),                  // 숨김 → gone
+      rv(4, 12, daysAgoIso(2), { updated_at: fresh }),                                    // 남의 담당 · 비공개 → 안 보인다
+      rv(5, 12, daysAgoIso(2), { updated_at: fresh, visibility: "students" }),            // 남의 담당 · 공개 피드 → 보인다
+      rv(6, 12, daysAgoIso(2)),                                                            // 남의 비공개 · 사진만 바뀜 → 안 보인다
+      rv(7, 10, daysAgoIso(2), { updated_at: daysAgoIso(1) }),                            // since 전 — 안 나온다
+    ],
+    review_feedback: [{ id: 1, review_id: 2, trainer_id: 2, kind: "overall", body: "답", created_at: fresh, updated_at: fresh, hidden_at: null }],
+    review_images: [{ id: 1, review_id: 6, original_path: "students/12/reviews/6/1.orig.png", created_at: fresh }],
+  };
+  const j = await ok(2, `/reviews/changes?since=${encodeURIComponent(since)}`);
+  const RV = (id) => portal.opaqueId("review", id);
+  assert.deepEqual(new Set(j.changes.map((c) => c.id)), new Set([RV(1), RV(2), RV(3), RV(5)]));
+  assert.equal(j.changes.find((c) => c.id === RV(3)).gone, true);
+  assert.equal(j.changes.find((c) => c.id === RV(2)).updatedAt, fresh);
+  assert.equal(j.more, false);
+  assert.ok(Date.parse(j.now) >= Date.parse(fresh));
+  assert.equal(JSON.stringify(j).includes("본문"), false, "본문은 싣지 않는다");
+  // 원장은 남의 비공개도
+  const o = await ok(4, `/reviews/changes?since=${encodeURIComponent(since)}`);
+  assert.ok(o.changes.some((c) => c.id === RV(4)) && o.changes.some((c) => c.id === RV(6)));
+  for (const bad of ["", "?since=abc", `?since=${encodeURIComponent(daysAgoIso(8))}`])
+    assert.equal((await call(2, `/reviews/changes${bad}`)).status, 400, bad);
+});

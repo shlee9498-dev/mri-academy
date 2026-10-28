@@ -717,7 +717,7 @@ module.exports = function mountReviewApi(app, deps) {
     const out = new Map();
     if (!l) return out;
     const [fb, reads] = await Promise.all([
-      sbSelect("review_feedback", `select=review_id,kind,created_at&review_id=in.(${l})`),
+      sbSelect("review_feedback", `select=review_id,kind,created_at&review_id=in.(${l})&hidden_at=is.null`),
       sbSelect("review_reads", `select=review_id,read_at&reader_kind=eq.student&reader_id=eq.${sub}&review_id=in.(${l})`),
     ]);
     const readAt = new Map(reads.map((r) => [r.review_id, r.read_at]));
@@ -910,7 +910,7 @@ module.exports = function mountReviewApi(app, deps) {
       gl ? sbSelect("review_phases",
         `select=id,game_id,ord,phase_from,phase_to,phase_to_end,header_raw,lines,tags,suggested_tags&game_id=in.(${gl})&order=ord.asc`) : [],
       sbSelect("review_images", `select=${IMAGE_COLS}&review_id=eq.${r.id}&${LIVE_IMAGE}&order=ord.asc,id.asc`),
-      sbSelect("review_feedback", `select=id,trainer_id,kind,phase_id,line_ord,verdict,body,due_at,created_at,updated_at&review_id=eq.${r.id}&order=created_at.asc`),
+      sbSelect("review_feedback", `select=id,trainer_id,kind,phase_id,line_ord,verdict,body,due_at,created_at,updated_at&review_id=eq.${r.id}&hidden_at=is.null&order=created_at.asc`),
       sbSelect("review_reactions", `select=reactor_kind,reactor_id,emoji,created_at&review_id=eq.${r.id}&order=created_at.asc`),
       playedAtMap([r]),
       own && r.status === "published" ? anchorChangesOf(r.id) : [],   // 공유 열람자에게는 빈 배열(세션 id 를 안 싣는 것과 같은 선)
@@ -1161,6 +1161,60 @@ module.exports = function mountReviewApi(app, deps) {
     }));
 
   // GET /reviews/:id — 상세(본인 · 공유 열람자) · 본인이면 읽음 기록
+  // ── 변경 커서(계약 §9.46.5 · 디코 ↔ 앱 실시간) — since 뒤에 바뀐 복기 id 만(본문 없음) ─────────────
+  //   바뀜 = 복기 updated_at · 그 복기의 답 updated_at · 사진 created_at. 응답 now 를 다음 since 로 쓴다(서버가 2초 겹쳐 읽는다).
+  const CHANGES_MAX = 100, CHANGES_OVERLAP_MS = 2000, CHANGES_WINDOW_MS = 7 * 86400_000;
+  const CHANGE_COLS = "id,student_id,author_role,author_staff_id,recipient_trainer_id,status,visibility,hidden_at,updated_at";
+  function parseSince(q) {
+    const raw = q && q.since;
+    if (typeof raw !== "string" || raw.length > 40) return null;
+    const t = Date.parse(raw);
+    if (!Number.isFinite(t) || Date.now() - t > CHANGES_WINDOW_MS || t > Date.now() + 60_000) return null;
+    return new Date(t - CHANGES_OVERLAP_MS).toISOString();
+  }
+  // scopeOr = PostgREST or 조각들(빈 배열 = 전부) · view(r) → null(안 보임) | { gone }
+  async function changesFor(since, scopeOr, view) {
+    const nowAt = nowIso();
+    const s = encodeURIComponent(since);
+    const or = scopeOr.length ? `&or=${encodeURIComponent(`(${scopeOr.join(",")})`)}` : "";
+    const [a, fb, im] = await Promise.all([
+      sbSelect("lesson_reviews", `select=${CHANGE_COLS}&updated_at=gt.${s}${or}&order=updated_at.asc&limit=${CHANGES_MAX + 1}`),
+      sbSelect("review_feedback", `select=review_id,updated_at&updated_at=gt.${s}&order=updated_at.asc&limit=${CHANGES_MAX + 1}`),
+      sbSelect("review_images", `select=review_id,created_at&created_at=gt.${s}&${LIVE_IMAGE}&order=created_at.asc&limit=${CHANGES_MAX + 1}`),
+    ]);
+    const touched = new Map();
+    const touch = (id, at) => { const k = Number(id); if (!touched.has(k) || at > touched.get(k)) touched.set(k, at); };
+    for (const f of fb) touch(f.review_id, f.updated_at);
+    for (const i of im) touch(i.review_id, i.created_at);
+    const have = new Set(a.map((r) => Number(r.id)));
+    const extra = [...touched.keys()].filter((id) => !have.has(id)).slice(0, CHANGES_MAX + 1);
+    const b = extra.length ? await sbSelect("lesson_reviews", `select=${CHANGE_COLS}&id=in.(${extra.join(",")})`) : [];
+    const out = [];
+    for (const r of [...a, ...b]) {
+      const v = await view(r);
+      if (!v) continue;
+      const t = touched.get(Number(r.id));
+      out.push({ id: opaqueId("review", r.id), updatedAt: t && t > r.updated_at ? t : r.updated_at, gone: !!v.gone });
+    }
+    out.sort((x, y) => (x.updatedAt < y.updatedAt ? -1 : 1));
+    const more = a.length > CHANGES_MAX || fb.length > CHANGES_MAX || im.length > CHANGES_MAX || out.length > CHANGES_MAX;
+    return { now: nowAt, changes: out.slice(0, CHANGES_MAX), more };
+  }
+  app.get(`${P}/reviews/changes`, readLimit, requireStudent, needReady, wrap(async (req, res) => {
+    const since = parseSince(req.query);
+    if (!since) return fail(res, 400, "invalid_since");
+    const sub = Number(req.portal.sub);
+    const share = await inShareScope(sub);
+    const scope = [`student_id.eq.${sub}`, ...(share ? ["and(status.eq.published,visibility.eq.students)"] : [])];
+    send(res, await changesFor(since, scope, (r) => {
+      if (isOwn(sub, r)) return { gone: !!r.hidden_at };
+      if (!share || r.status !== "published") return null;
+      if (r.visibility !== "students") return null;
+      return { gone: !!r.hidden_at };
+    }));
+  }));
+
+
   app.get(`${P}/reviews/:id`, readLimit, requireStudent, needReady, wrap(async (req, res) => {
     const sub = req.portal.sub;
     const r = await loadReview(readOpaqueId("review", req.params.id));
@@ -1703,6 +1757,7 @@ module.exports = function mountReviewApi(app, deps) {
     if (q.cursor !== undefined && !cur) return { error: "invalid_body" };
     return { tags, map, days, author, cur };
   }
+
   app.get(`${P}/feed`, readLimit, requireStudent, needReady, wrap(async (req, res) => {
     const sub = req.portal.sub;
     const fq = parseFeedQuery(req.query || {});
@@ -1786,7 +1841,7 @@ module.exports = function mountReviewApi(app, deps) {
     const [games, reacts, fb, imgs, playedAt, sdisp, tnames, anchorDetail] = await Promise.all([
       sbSelect("review_games", `select=id,review_id,ord,map&review_id=in.(${l})&order=ord.asc`),
       sbSelect("review_reactions", `select=review_id,reactor_kind,reactor_id,emoji&review_id=in.(${l})`),
-      sbSelect("review_feedback", `select=review_id&review_id=in.(${l})&kind=in.(comment,overall)`),
+      sbSelect("review_feedback", `select=review_id&review_id=in.(${l})&kind=in.(comment,overall)&hidden_at=is.null`),
       sbSelect("review_images", `select=review_id,thumb_path,created_at&review_id=in.(${l})&thumb_path=not.is.null&order=created_at.asc`),
       playedAtMap(page),
       (trainerView ? studentNameMap : studentDisplayMap)(page.filter((r) => r.author_role === "student").map((r) => r.student_id)),
@@ -2003,7 +2058,7 @@ module.exports = function mountReviewApi(app, deps) {
       const [games, images, fb, reads, reacts, playedAt, tnames, people, anchorDetail] = await Promise.all([
         sbSelect("review_games", `select=review_id&review_id=in.(${l})`),
         sbSelect("review_images", `select=review_id&review_id=in.(${l})&${LIVE_IMAGE}`),
-        sbSelect("review_feedback", `select=review_id,trainer_id,kind&review_id=in.(${l})`),
+        sbSelect("review_feedback", `select=review_id,trainer_id,kind&review_id=in.(${l})&hidden_at=is.null`),
         sbSelect("review_reads", `select=review_id,read_at&reader_kind=eq.trainer&reader_id=eq.${me}&review_id=in.(${l})`),
         sbSelect("review_reactions", `select=review_id,emoji,reactor_kind,reactor_id&review_id=in.(${l})`),
         playedAtMap(rows),
@@ -2083,6 +2138,23 @@ module.exports = function mountReviewApi(app, deps) {
       const tail = page[page.length - 1];
       sendTrainer(res, { reviews: await trainerSummaries(req.staff, page),
         nextCursor: rows.length > lim ? signPage(process.env.SESSION_SECRET, "t-reviews", { v: me, d: days, at: tail.published_at, id: Number(tail.id) }) : null });
+    }));
+
+    // GET /reviews/changes?since= — 변경 커서(계약 §9.46.5) · 오너 = 전부 · 그 밖 = 받는 사람 · 작성자 · 담당 범위 + 공개 피드
+    app.get(`${T}/reviews/changes`, readLimit, requireTrainer, needReady, wrap(async (req, res) => {
+      const since = parseSince(req.query);
+      if (!since) return fail(res, 400, "invalid_since");
+      const me = Number(req.staff.id), owner = req.staff.role === "owner";
+      const scope = owner ? null : await scopedStudents(me);
+      const ids = scope ? [...scope.keys()] : [];
+      const or = owner ? [] : [`recipient_trainer_id.eq.${me}`, `author_staff_id.eq.${me}`,
+        ...(ids.length ? [`student_id.in.(${ids.join(",")})`] : []), "and(status.eq.published,visibility.eq.students)"];
+      sendTrainer(res, await changesFor(since, or, (r) => {
+        const mine = owner || Number(r.recipient_trainer_id) === me || (r.author_role === "trainer" && Number(r.author_staff_id) === me)
+          || !!scope?.has(Number(r.student_id));
+        if (!mine && !(r.status === "published" && r.visibility === "students")) return null;
+        return { gone: !!r.hidden_at || r.status !== "published" };
+      }));
     }));
 
     // GET /feed — 수강생과 같은 필터·커서 · 활성 트레이너 전원 · 작성자 = 이름 + authorPubgName
@@ -2209,8 +2281,16 @@ module.exports = function mountReviewApi(app, deps) {
     return rows.length;
   }
 
+  // 거울 카드(§9.46.4 · review-sync.cjs) — 그 복기의 첫 사진(표시본 · 없으면 원본) 바이트. 없으면 null
+  async function firstImage(reviewId) {
+    const i = (await sbSelect("review_images", `select=original_path,display_path&review_id=eq.${Number(reviewId)}&${LIVE_IMAGE}&order=ord.asc,id.asc&limit=1`))[0];
+    if (!i) return null;
+    const p = i.display_path || i.original_path;
+    return { buf: await getObject(p), ext: (/\.(png|jpg|webp)$/.exec(p) || [])[1] || "webp" };
+  }
+
   const probed = probe().catch((e) => console.error("review_probe", e?.message));
-  return { ready: () => ready, draftSweep, mountTrainer, flipPublicDue, importImage };
+  return { ready: () => ready, draftSweep, mountTrainer, flipPublicDue, importImage, firstImage };
 };
 
 module.exports._test = {
