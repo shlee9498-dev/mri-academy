@@ -706,6 +706,7 @@ test("GET /reviews/changes(트레이너) — since 뒤 바뀐 것만 · 답 · �
       rv(5, 12, daysAgoIso(2), { updated_at: fresh, visibility: "students" }),            // 남의 담당 · 공개 피드 → 보인다
       rv(6, 12, daysAgoIso(2)),                                                            // 남의 비공개 · 사진만 바뀜 → 안 보인다
       rv(7, 10, daysAgoIso(2), { updated_at: daysAgoIso(1) }),                            // since 전 — 안 나온다
+      rv(8, 10, null, { status: "draft", updated_at: fresh }),                             // 담당 수강생 초안 — 쓴 트레이너가 아니면 안 나온다
     ],
     review_feedback: [{ id: 1, review_id: 2, trainer_id: 2, kind: "overall", body: "답", created_at: fresh, updated_at: fresh, hidden_at: null }],
     review_images: [{ id: 1, review_id: 6, original_path: "students/12/reviews/6/1.orig.png", created_at: fresh }],
@@ -718,9 +719,11 @@ test("GET /reviews/changes(트레이너) — since 뒤 바뀐 것만 · 답 · �
   assert.equal(j.more, false);
   assert.ok(Date.parse(j.now) >= Date.parse(fresh));
   assert.equal(JSON.stringify(j).includes("본문"), false, "본문은 싣지 않는다");
+  assert.equal(j.changes.some((c) => c.id === RV(8)), false, "남의 초안은 안 나온다");
   // 원장은 남의 비공개도
   const o = await ok(4, `/reviews/changes?since=${encodeURIComponent(since)}`);
   assert.ok(o.changes.some((c) => c.id === RV(4)) && o.changes.some((c) => c.id === RV(6)));
+  assert.equal(o.changes.some((c) => c.id === RV(8)), false, "원장도 남의 초안은 안 본다");
   for (const bad of ["", "?since=abc", `?since=${encodeURIComponent(daysAgoIso(8))}`])
     assert.equal((await call(2, `/reviews/changes${bad}`)).status, 400, bad);
 });

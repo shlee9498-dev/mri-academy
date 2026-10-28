@@ -81,7 +81,7 @@ const baseTables = () => ({
   staff: [{ id: 4, discord_id: TRAINER, role: "owner", active: true, name: "트레이너가" }],
   students: [{ id: 8, discord_id: STU, trainer_id: 4 }, { id: 9, discord_id: STU_OTHER, trainer_id: 4 }],
   feedback_channel_map: [
-    { src_guild: G, src_channel: CH, student_id: 8, kind: "student", confirmed_at: "2026-10-30T00:00:00Z" },
+    { src_guild: G, src_channel: CH, student_id: 8, kind: "student", confirmed_at: "2026-10-30T00:00:00Z", note: "§9.46 짝 — 10/3 이관" },
     { src_guild: G, src_channel: CH2, student_id: 9, kind: "student", confirmed_at: null },     // 확인 대기
   ],
 });
@@ -99,7 +99,7 @@ function harness(extra = {}) {
   const images = [];
   const sent = [];
   const channels = new Map();
-  const client = { channels: { fetch: async (id) => channels.get(String(id)) || { id, messages: null,
+  const client = { channels: { cache: new Map([[CH, { parentId: "CAT_FB" }]]), fetch: async (id) => channels.get(String(id)) || { id, messages: null,
     send: async (m) => { const out = { id: mid(), ...m }; sent.push({ ch: id, ...m, id: out.id }); return out; } } } };
   const sync = rs.createReviewSync({
     getClient: () => client, sb: f.sb,
@@ -169,7 +169,8 @@ test("§9.46.2 트레이너 답장 → 그 복기의 답(사진 포함) · 답�
 
 test("§9.46.1 짝 없는 채널 → 확인 대기 줄(후보 = 명부 수강생) · 확인 대기 채널 글은 안 들어간다 · 다른 서버는 무시", async () => {
   const h = harness();
-  assert.equal((await h.sync.ingest(msg({ ch: CH_NEW, content: NOTE }), { guildId: G, ch: CH_NEW })).done, "pending");
+  const fb = (o) => { const m = msg({ ch: CH_NEW, ...o }); m.channel = { isThread: () => false, parentId: "CAT_FB" }; return m; };   // 확정 채널과 같은 카테고리
+  assert.equal((await h.sync.ingest(fb({ content: NOTE }), { guildId: G, ch: CH_NEW })).done, "pending");
   assert.equal((await h.sync.ingest(msg({ ch: CH_NEW, content: NOTE }), { guildId: G, ch: CH_NEW })).why, "not_confirmed");
   const row = h.db.feedback_channel_map.find((r) => r.src_channel === CH_NEW);
   assert.deepEqual([row.student_id, row.kind, row.confirmed_at ?? null], [8, "student", null]);
@@ -182,12 +183,23 @@ test("§9.46.2 수정 = 같은 행 본문 · 10/3 이관 묶음 행은 덮지 �
   const h = harness();
   const s = msg({ content: NOTE });
   await h.sync.onCreate(s);
-  await h.sync.onUpdate({ ...s, content: `${NOTE} (고침)`, partial: false });
+  // 고정 · 미리보기처럼 글이 안 바뀐 update(editedTimestamp 없음)는 앱에서 고친 본문을 덮지 않는다
+  h.db.lesson_reviews[0].body = "앱에서 고친 본문";
+  await h.sync.onUpdate({ ...s, partial: false });
+  assert.equal(h.db.lesson_reviews[0].body, "앱에서 고친 본문");
+  await h.sync.onUpdate({ ...s, content: `${NOTE} (고침)`, editedTimestamp: T0 + 10 * 60_000, partial: false });
   assert.equal(h.db.lesson_reviews[0].body, `${NOTE} (고침)`);
   // 이관 행(원래 글 시각 = 이관 전)
-  h.db.lesson_reviews.push({ id: 77, src_msg: "1200000000000000077", body: "묶음 본문", created_at: "2026-09-01T00:00:00Z", status: "published", hidden_at: null });
-  await h.sync.onUpdate({ ...msg({ id: "1200000000000000077", content: "첫 글만" }), partial: false });
+  h.db.lesson_reviews.push({ id: 77, src_msg: "1200000000000000077", src_channel: CH, body: "묶음 본문", created_at: "2026-09-01T00:00:00Z",
+    updated_at: "2026-09-01T00:00:00Z", status: "published", hidden_at: null });
+  await h.sync.onUpdate({ ...msg({ id: "1200000000000000077", content: "첫 글만" }), editedTimestamp: T0, partial: false });
   assert.equal(h.db.lesson_reviews.find((x) => x.id === 77).body, "묶음 본문");
+  await h.sync.onDelete({ id: "1200000000000000077" });
+  assert.equal(h.db.lesson_reviews.find((x) => x.id === 77).hidden_at, null, "이관 묶음은 첫 글 삭제로 숨기지 않는다");
+  // 시작선 전 옛 글이 update 로 와도(스레드 시작 · 고정) 새 줄을 만들지 않는다
+  const old = msg({ content: NOTE, ts: Date.parse("2026-09-20T00:00:00Z") });
+  await h.sync.onUpdate({ ...old, editedTimestamp: T0, partial: false });
+  assert.equal((await h.sync.ingest(old, { guildId: G, ch: CH })).why, "before_start");
   // 삭제
   const a = msg({ author: TRAINER, content: "답이에요 — 차량 콜 좋았어요", ref: s.id });
   await h.sync.onCreate(a);
@@ -199,8 +211,7 @@ test("§9.46.2 수정 = 같은 행 본문 · 10/3 이관 묶음 행은 덮지 �
 });
 
 test("§9.46.3 점검 · 백필 — 이관 채널은 이관 시각 뒤부터 · 커서 저장 · 다시 돌려도 한 줄", async () => {
-  const h = harness();
-  h.ops.set("feedback_import:result", { channels: [{ ch: CH }] });
+  const h = harness();                                          // CH 짝 줄 note 에 「이관」 = 이관 채널
   const after = [];
   const list = [msg({ content: NOTE }), msg({ content: "넵" }), msg({ author: TRAINER, content: "다음 수업 전 감도 확인 꼭 해 오세요" })];
   h.channels.set(CH, { id: CH, messages: { fetch: async ({ after: a }) => { after.push(a); return new Map(list.filter((m) => BigInt(m.id) > BigInt(a)).map((m) => [m.id, m])); } } });
@@ -215,6 +226,30 @@ test("§9.46.3 점검 · 백필 — 이관 채널은 이관 시각 뒤부터 · 
   const t3 = await h.sync.sweep();
   assert.equal(t3.exists, 2);
   assert.equal(h.db.lesson_reviews.length, 2);
+});
+
+test("§9.46.3 사진 실패 → 커서 그대로 → 다음 점검이 「이미 있음」 길에서 사진만 채운다", async () => {
+  let fail = true;
+  const h = harness({ fetchImpl: async () => (fail ? { ok: false, status: 503 } : { ok: true, arrayBuffer: async () => new Uint8Array([1]).buffer }) });
+  const p = msg({ content: NOTE, atts: [{ id: "9", size: 100, url: "https://cdn.example/z.png", contentType: "image/png" }] });
+  h.channels.set(CH, { id: CH, messages: { fetch: async ({ after: a }) => new Map([p].filter((m) => BigInt(m.id) > BigInt(a)).map((m) => [m.id, m])) } });
+  const t1 = await h.sync.sweep();
+  assert.equal(t1.errors, 1);
+  assert.equal(h.ops.get(rs.CURSOR_KEY)[CH], undefined, "실패하면 커서를 안 옮긴다");
+  assert.equal(h.db.lesson_reviews.length, 1);
+  fail = false;
+  const t2 = await h.sync.sweep();
+  assert.deepEqual([t2.exists, t2.errors], [1, 0]);
+  assert.equal(h.images.length, 1);
+  assert.equal(h.ops.get(rs.CURSOR_KEY)[CH], p.id);
+});
+
+test("§9.46.1 짝 없는 채널 — 피드백 카테고리 밖(일반 대화)은 대기 줄도 안 만든다", async () => {
+  const h = harness();
+  const m = msg({ ch: "910000000000000077", content: NOTE });
+  m.channel = { isThread: () => false, parentId: "CAT_GENERAL" };
+  assert.equal((await h.sync.ingest(m, { guildId: G, ch: "910000000000000077" })).why, "unmapped");
+  assert.equal(h.db.feedback_channel_map.length, 2);
 });
 
 test("§9.46.4 거울 — 공개 앱 복기 · 답은 카드 한 장(사진 · 「앱에서 보기」) · 비공개는 안 올림 · 채널 없으면 표시 · 두 번 안 보냄 · 봇 카드는 다시 안 들어옴 · 카드에 단 답장은 그 복기의 답", async () => {
@@ -245,6 +280,19 @@ test("§9.46.4 거울 — 공개 앱 복기 · 답은 카드 한 장(사진 · �
   // 트레이너가 카드에 답장 → 그 앱 복기(501)의 답
   const rep = msg({ author: TRAINER, content: "카드 보고 답해요 — 2페이즈 동선 좋아요", ref: h.sent[0].id });
   assert.equal((await h.sync.ingest(rep, { guildId: G, ch: CH })).reviewId, 501);
+});
+
+test("§9.46.4 거울 — 보낸 뒤 기록이 실패해도 다시 안 보낸다(두 장 방지)", async () => {
+  const h = harness();
+  h.db.lesson_reviews.push({ id: 801, student_id: 8, source: "app", status: "published", hidden_at: null, visibility: "students", title: "t", body: "b",
+    published_at: "2026-10-30T10:01:00Z", mirror_msg: null });
+  h.ops.set(rs.MIRROR_SINCE_KEY, { at: "2026-10-30T09:00:00Z" });
+  const patch = h.sb.patch;
+  h.sb.patch = async (t, q, p) => (p.mirror_msg && /^\d+$/.test(p.mirror_msg) ? Promise.reject(Object.assign(new Error("x"), { status: 503 })) : patch(t, q, p));
+  await h.sync.mirrorTick();
+  await h.sync.mirrorTick();
+  assert.equal(h.sent.length, 1);
+  assert.match(h.db.lesson_reviews[0].mirror_msg, /^pending:/);
 });
 
 test("§9.46.4 거울 실패는 한 번만 다시(fail1 → fail2)", async () => {

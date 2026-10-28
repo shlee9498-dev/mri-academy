@@ -2150,10 +2150,11 @@ module.exports = function mountReviewApi(app, deps) {
       const or = owner ? [] : [`recipient_trainer_id.eq.${me}`, `author_staff_id.eq.${me}`,
         ...(ids.length ? [`student_id.in.(${ids.join(",")})`] : []), "and(status.eq.published,visibility.eq.students)"];
       sendTrainer(res, await changesFor(since, or, (r) => {
-        const mine = owner || Number(r.recipient_trainer_id) === me || (r.author_role === "trainer" && Number(r.author_staff_id) === me)
-          || !!scope?.has(Number(r.student_id));
-        if (!mine && !(r.status === "published" && r.visibility === "students")) return null;
-        return { gone: !!r.hidden_at || r.status !== "published" };
+        const author = r.author_role === "trainer" && Number(r.author_staff_id) === me;
+        if (r.status !== "published") return author ? { gone: !!r.hidden_at } : null;   // 초안은 쓴 트레이너만(trainerAccess 와 같은 선)
+        const mine = owner || author || Number(r.recipient_trainer_id) === me || !!scope?.has(Number(r.student_id));
+        if (!mine && r.visibility !== "students") return null;
+        return { gone: !!r.hidden_at };
       }));
     }));
 

@@ -12,7 +12,6 @@ const { normMessage, chatterOf, uniqueViolation, PHOTO_ONLY_ANSWER } = require("
 
 const CURSOR_KEY = "review_sync:cursor";
 const MIRROR_SINCE_KEY = "review_mirror:since";
-const IMPORT_RES_KEY = "feedback_import:result";
 const IMPORT_AT = "2026-10-03T04:30:47.162Z";                 // 10/3 이관 시작 — 그 전 글은 이관이 묶어 넣었다(9.46.3)
 const FRESH_FROM = "2026-09-28T15:00:00.000Z";                // 이관에 없던 채널 — 9/29 00:00 KST 뒤부터
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -91,7 +90,7 @@ function createReviewSync(deps) {
 
   async function maps(force = false) {
     if (!force && mapCache && now() - mapAt < MAP_TTL_MS) return mapCache;
-    const rows = await sb.select("feedback_channel_map", "select=src_guild,src_channel,student_id,kind,confirmed_at,created_at");
+    const rows = await sb.select("feedback_channel_map", "select=src_guild,src_channel,student_id,kind,confirmed_at,created_at,note");
     mapCache = { byCh: new Map(rows.map((r) => [String(r.src_channel), r])), guilds: new Set(rows.map((r) => String(r.src_guild))) };
     mapAt = now();
     return mapCache;
@@ -109,6 +108,20 @@ function createReviewSync(deps) {
     };
     peopleAt = now();
     return peopleCache;
+  }
+  // 이관 채널 판정 — 짝 표 note(「이관」)로 본다. ops_state 'feedback_import:result' 는 뒤 요청(드라이런 포함)이 덮어써서 쓰지 않는다(검수 10/30 #2)
+  const importedCh = async (ch) => /이관/.test(String((await maps()).byCh.get(String(ch))?.note || ""));
+  const startIso = async (ch) => ((await importedCh(ch)) ? IMPORT_AT : FRESH_FROM);
+  // 이관 묶음 행 — 이관 채널에서 이관 시각 전 글로 만든 행(이어 쓴 글을 첫 글 id 하나로 묶었다). 디코 수정 · 삭제로 건드리지 않는다
+  const bundled = async (row, ch) => !!row && Date.parse(row.created_at) < Date.parse(IMPORT_AT) && await importedCh(row.src_channel || ch);
+  function feedbackCategory(m, mp) {
+    const parent = m.channel?.isThread?.() ? m.channel.parent?.parentId : m.channel?.parentId;
+    if (!parent) return false;
+    const cache = getClient()?.channels?.cache;
+    for (const r of mp.byCh.values()) {
+      if (r.kind === "student" && r.confirmed_at && cache?.get?.(String(r.src_channel))?.parentId === parent) return true;
+    }
+    return false;
   }
   const chOf = (m) => String(m.channel?.isThread?.() ? m.channel.parentId : m.channelId);
   const bump = (reviewId) => sb.patch("lesson_reviews", `id=eq.${Number(reviewId)}`, { updated_at: iso() })
@@ -132,17 +145,21 @@ function createReviewSync(deps) {
     const buf = Buffer.from(await r.arrayBuffer());
     return buf.length > IMAGE_MAX_BYTES ? null : buf;
   }
+  // 사진 — 같은 파일(sha256)은 importImage 가 한 번만 넣는다. 한 장이라도 실패하면 끝에 던진다 → 점검 커서가 안 넘어가
+  //   다음 점검이 그 글을 다시 집고(「이미 있음」 길) 빠진 사진만 채운다(검수 10/30 #5)
   async function putImages(reviewId, atts, role) {
-    let n = 0;
+    let n = 0, failed = 0;
     for (const a of atts.filter(isImage)) {
       try {
         const buf = await download(a);
         if (!buf) continue;
         const r = await importImage({ reviewId, buf, role });
         if (r && !r.skipped && !r.existing) n++;
-      } catch (e) { stats.errors++; logError("rsync_image", reviewId, e?.code || e?.status || String(e?.message || "").slice(0, 60)); }
+      } catch (e) { failed++; stats.errors++; logError("rsync_image", reviewId, e?.code || e?.status || String(e?.message || "").slice(0, 60)); }
     }
     stats.images += n;
+    if (n) await bump(reviewId);
+    if (failed) throw Object.assign(new Error("image_failed"), { code: "image_failed" });
     return n;
   }
 
@@ -166,14 +183,22 @@ function createReviewSync(deps) {
     const ppl = await people();
     if (!map) {
       if (n.bot || n.system || !n.authorId) return { done: "skip", why: "unmapped" };
+      // 피드백 채널 묶음(확정 채널과 같은 카테고리)에 새로 생긴 채널만 대기 줄로 — 일반 대화 · 공지 채널은 넣지 않는다(검수 LOW)
+      if (!feedbackCategory(m, mp)) return { done: "skip", why: "unmapped" };
       await ensurePending(guildId, ch, n.authorId, ppl);
       return { done: "pending" };
     }
     if (map.kind !== "student" || !map.confirmed_at || map.student_id == null) return { done: "skip", why: "not_confirmed" };
-    // 이미 들어간 글 — 유일 키보다 먼저 본다(조회 한 번 · 사진만 빠졌으면 채운다)
-    const had = (await sb.select("lesson_reviews", `select=id,author_role&src_msg=eq.${n.id}&limit=1`))[0]
-      || (await sb.select("review_feedback", `select=id,review_id&src_msg=eq.${n.id}&limit=1`))[0];
-    if (had) return { done: "exists" };
+    // 채널 시작선 전 글(옛 글 수정 · 고정 · 스레드 시작 알림 포함)은 넣지 않는다 — 이관이 묶어 넣었거나 범위 밖(검수 10/30 #1)
+    if (n.ts && n.ts < Date.parse(await startIso(ch))) return { done: "skip", why: "before_start" };
+    // 이미 들어간 글 — 유일 키보다 먼저 본다. 사진이 있으면 빠진 것만 채운다(같은 파일은 한 번)
+    const hadR = (await sb.select("lesson_reviews", `select=id,author_role&src_msg=eq.${n.id}&limit=1`))[0];
+    const hadF = hadR ? null : (await sb.select("review_feedback", `select=id,review_id&src_msg=eq.${n.id}&limit=1`))[0];
+    if (hadR || hadF) {
+      const imgs = n.atts.filter(isImage);
+      if (imgs.length) await putImages(Number(hadR ? hadR.id : hadF.review_id), imgs, hadR ? hadR.author_role : "trainer");
+      return { done: "exists" };
+    }
     const ref = n.authorId && ppl.staffByDiscord.has(n.authorId) ? await refReviewOf(n.refId) : null;
     const d = decide(n, map, ppl, ref && Number(ref.student_id) === Number(map.student_id) ? ref : null);
     if (d.act === "skip") { stats.skipped++; return { done: "skip", why: d.why }; }
@@ -227,24 +252,29 @@ function createReviewSync(deps) {
       if (m.partial) { try { m = await m.fetch(); } catch { return; } }
       if (!m.guild || m.author?.bot) return;
       const id = String(m.id), text = String(m.content || "").trim();
-      // 10/3 이관 행은 이어 쓴 글을 첫 글 id 하나로 묶었다 — 첫 글 수정으로 묶음 본문을 덮지 않게 이관 뒤에 생긴 행만 고친다
-      const lr = (await sb.select("lesson_reviews", `select=id,body,created_at&src_msg=eq.${id}&limit=1`))[0];
-      if (lr && Date.parse(lr.created_at) < Date.parse(IMPORT_AT)) return;
+      // 글이 실제로 고쳐졌을 때만 — 고정 · 링크 미리보기 · 스레드 시작도 update 로 오고 그때는 옛 글 그대로다(앱에서 고친 걸 덮지 않게 · 검수 #4)
+      const editedAt = Number(m.editedTimestamp || 0);
+      // 10/3 이관 묶음 행은 건드리지 않는다(첫 글 수정으로 묶음 본문을 덮지 않게)
+      const ch = chOf(m);
+      const lr = (await sb.select("lesson_reviews", `select=id,body,created_at,updated_at,src_channel&src_msg=eq.${id}&limit=1`))[0];
       if (lr) {
-        if (text && text !== lr.body) { await sb.patch("lesson_reviews", `id=eq.${lr.id}`, { body: text.slice(0, BODY_MAX), updated_at: iso() }); stats.edits++; }
+        if (await bundled(lr, ch)) return;
+        if (text && text !== lr.body && editedAt > Date.parse(lr.updated_at)) {
+          await sb.patch("lesson_reviews", `id=eq.${lr.id}`, { body: text.slice(0, BODY_MAX), updated_at: iso() }); stats.edits++;
+        }
         return;
       }
-      const fb = (await sb.select("review_feedback", `select=id,review_id,body,created_at&src_msg=eq.${id}&limit=1`))[0];
-      if (fb && Date.parse(fb.created_at) < Date.parse(IMPORT_AT)) return;
+      const fb = (await sb.select("review_feedback", `select=id,review_id,body,created_at,updated_at&src_msg=eq.${id}&limit=1`))[0];
       if (fb) {
-        if (text && text !== fb.body) {
+        if (await bundled(fb, ch)) return;
+        if (text && text !== fb.body && editedAt > Date.parse(fb.updated_at)) {
           await sb.patch("review_feedback", `id=eq.${fb.id}`, { body: text.slice(0, ANSWER_MAX), updated_at: iso() });
           await bump(fb.review_id);
           stats.edits++;
         }
         return;
       }
-      await ingest(m, { guildId: m.guild.id, ch: chOf(m) });
+      if (editedAt) await ingest(m, { guildId: m.guild.id, ch });            // 거르기에 걸렸던 글이 고쳐져 수업 글이 된 경우만(시작선은 ingest 가 본다)
     } catch (e) { stats.errors++; logError("rsync_update", e?.status || e?.code || String(e?.message || "").slice(0, 60)); }
   }
 
@@ -253,8 +283,16 @@ function createReviewSync(deps) {
     try {
       const id = String(m.id);
       if (!SNOWFLAKE.test(id)) return;
+      // 이관 묶음 행은 숨기지 않는다 — 첫 글 하나를 지웠다고 묶음의 다른 글까지 사라지면 안 된다(검수 #6 · 로그만)
+      const lr = (await sb.select("lesson_reviews", `select=id,created_at,src_channel&src_msg=eq.${id}&limit=1`))[0];
+      if (lr && await bundled(lr)) { log(`[review-sync] 이관 묶음 첫 글 삭제 — 숨기지 않음 review=${lr.id}`); return; }
       const hid = await sb.patch("lesson_reviews", `src_msg=eq.${id}&hidden_at=is.null&status=eq.published`, { hidden_at: iso(), updated_at: iso() });
       if (hid.length) { stats.hides++; log(`[review-sync] 숨김 review=${hid[0].id}`); return; }
+      const fr = (await sb.select("review_feedback", `select=id,review_id,created_at&src_msg=eq.${id}&limit=1`))[0];
+      if (fr && Date.parse(fr.created_at) < Date.parse(IMPORT_AT)) {
+        const parent = (await sb.select("lesson_reviews", `select=src_channel&id=eq.${Number(fr.review_id)}&limit=1`))[0];
+        if (parent && await importedCh(parent.src_channel)) { log(`[review-sync] 이관 묶음 답 삭제 — 숨기지 않음 review=${fr.review_id}`); return; }
+      }
       const fb = await sb.patch("review_feedback", `src_msg=eq.${id}&hidden_at=is.null`, { hidden_at: iso(), updated_at: iso() });
       if (fb.length) { await bump(fb[0].review_id); stats.hides++; log(`[review-sync] 답 숨김 review=${fb[0].review_id}`); }
     } catch (e) { stats.errors++; logError("rsync_delete", e?.status || e?.code || String(e?.message || "").slice(0, 60)); }
@@ -268,11 +306,7 @@ function createReviewSync(deps) {
   }
 
   // ── 점검 · 백필(9.46.3) ──
-  async function startCursor(ch) {
-    const res = await opsGet(IMPORT_RES_KEY).catch(() => null);
-    const inImport = Array.isArray(res?.channels) && res.channels.some((c) => String(c.ch) === String(ch));
-    return snowflakeAt(inImport ? IMPORT_AT : FRESH_FROM);
-  }
+  async function startCursor(ch) { return snowflakeAt(await startIso(ch)); }
   async function readAfter(channel, after, cap) {
     const out = [];
     let cur = after;
@@ -353,7 +387,9 @@ function createReviewSync(deps) {
       const name = img ? `review.${img.ext || "webp"}` : null;
       const msg = await channel.send({ embeds: [mirrorEmbed({ ...out, image: name })], ...(img ? { files: [{ attachment: img.buf, name }] } : {}),
         allowedMentions: { parse: [] } });
-      await sb.patch(table, `id=eq.${row.id}`, { mirror_msg: String(msg.id) });
+      // 보낸 뒤 기록 실패는 다시 보내지 않는다 — pending:… 이 남아 다음 회에도 안 잡힌다(두 장 방지 · 검수 #3)
+      try { await sb.patch(table, `id=eq.${row.id}`, { mirror_msg: String(msg.id) }); }
+      catch (e) { logError("rsync_mirror_record", table, row.id, e?.status || e?.code); return "sent"; }
       stats.mirrors++;
       log(`[review-sync] 거울 ${table === "lesson_reviews" ? "복기" : "답"} #${row.id} → 카드`);
       return "sent";
