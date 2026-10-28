@@ -131,9 +131,10 @@ test("PUBG 호출 예산 — 신청 1건 = 조회 1콜 · 검증 1명 = 무캐�
 test("신청 응답 · 공지에 규정 문구 2건", async () => {
   const a = await dry.run();
   const open = a.dc.posts[0].content;
-  assert.ok(open.includes("시즌 종료 시점 최종값 · 신청 모드 기준으로 판정해요"));
-  assert.ok(open.includes("같은 게임 계정으로 두 명 이상이 신청하고 추첨일까지 정리되지 않으면, 해당 신청은 모두 추첨에서 제외돼요"));
-  assert.ok(open.includes(a.round.seed_commit));
+  // 규정 · 증명값은 본문이 아니라 맨 아래 -# 줄(10/29 총무 문안)
+  assert.ok(open.includes("-# 판정은 시즌이 끝나는 시점 점수 · 신청한 모드 기준이에요. 한 계정으로 여러 명이 신청하면 추첨에서 빠져요"));
+  assert.ok(open.includes(`-# 공정 추첨 확인값 ${a.round.seed_commit}`));
+  assert.ok(!/sha256|seed|KST|RP/.test(open.split("\n").filter((l) => !l.startsWith("-#")).join("\n")), "본문에 기술 말 없음");
   assert.ok(!a.dc.posts.slice(0, -1).some((p) => p.content.includes(a.round.seed_secret)), "발표 전에는 seed_secret 이 안 나간다");
   assert.ok(a.dc.posts[a.dc.posts.length - 1].content.includes(a.round.seed_secret));
 });
@@ -342,7 +343,7 @@ test("크론 멱등 — 같은 시각에 여러 번 돌려도 공지 · 전이�
   await apply(w, dry.U.a, "MuriKing", "steam", "squad");
   w.clock.set("2026-11-08T14:01:00Z");
   await w.re.tick(); await w.re.tick(); await w.re.tick();
-  assert.equal(w.dc.posts.filter((p) => /마감했어요/.test(p.content)).length, 1);
+  assert.equal(w.dc.posts.filter((p) => /신청 마감!/.test(p.content)).length, 1);
   await toAnnounced(w);
   const n = w.dc.posts.length;
   await w.re.tick(); await w.re.tick();
@@ -595,7 +596,7 @@ test("경품 — 11명 신청이면 치킨 0개 · 마감 공지에 「역할만
   const w = await prizeWorld(11);
   await toAnnounced(w);
   assert.equal(w.round().winners_count, 0);
-  assert.ok(w.dc.posts.some((p) => /11명 신청 — 이번 회차는 역할만 드려요\(치킨은 12명부터\)/.test(p.content)));
+  assert.ok(w.dc.posts.some((p) => /총 11명 신청해 주셨어요 · 이번 회차는 역할만 드려요\(치킨은 12명부터\)/.test(p.content)));
   assert.equal(w.awards().length, 0);
   assert.equal(w.drand.calls.length, 0);
   assert.equal(w.round().status, "done");
@@ -606,21 +607,23 @@ test("경품 — 12명 신청이면 치킨 2개 · 통과자가 1명뿐이면 1�
   for (const p of w.pubg.players.slice(1)) p.modes.squad.currentRankPoint = 3399;
   await toAnnounced(w);
   assert.equal(w.round().winners_count, 1);       // 확정 때 min(2, 통과 1)
-  assert.ok(w.dc.posts.some((p) => /12명 신청 → 치킨 2개/.test(p.content)));
+  assert.ok(w.dc.posts.some((p) => /총 12명 신청해 주셨어요 → 치킨 2개 확정/.test(p.content)));
   assert.equal(w.awards().length, 1);
 });
 test("개설 공지 — 경품 표 · 지금 신청 N명 · 영상 자리 · 신청마다 같은 글을 고친다", async () => {
   const w = await prizeWorld(0);
   const open = w.dc.posts[0];
   assert.match(open.content, /12명부터 2개 · 20명 3개 · 30명 4개 · 50명 5개/);
-  assert.match(open.content, /지금 신청 0명 → 아직 역할만/);
-  assert.match(open.content, /신청 방법 영상: 곧 올라와요/);
+  assert.ok(!/지금 \d+명/.test(open.content), "0명이면 인원 줄 없음");
+  assert.ok(!/🎬/.test(open.content), "영상 주소가 없으면 영상 줄 없음");
+  assert.match(open.content, /⏰ 마감 11\/8\(일\) 23시 · 🎲 추첨 11\/20\(금\) 21시/);
   await w.db.sbUpsert("ops_state", { key: "role-event:howto-url", value: { url: "https://youtu.be/xyz" } }, "key");
   const players = Array.from({ length: 12 }, (_, i) => ({ platform: "steam", name: "R" + i, accountId: "account.r" + i, modes: {} }));
   w.pubg.players.push(...players);
   for (let i = 0; i < 12; i++) await apply(w, "8100000000000000" + String(i).padStart(2, "0"), "R" + i, "steam", "squad");
-  assert.match(open.content, /지금 신청 12명 → 치킨 2개/);
-  assert.match(open.content, /신청 방법 영상: https:\/\/youtu.be\/xyz/);
+  assert.match(open.content, /지금 12명 신청 · 치킨 2개 확정 🎉/);
+  assert.match(open.content, /🎬 신청 방법 영상 → https:\/\/youtu.be\/xyz/);
+  assert.match(open.edits[0], /지금 1명 신청했어요 · 12명이 모이면 치킨 확정!/);
   assert.equal(open.edits.length, 12);
 });
 
@@ -631,8 +634,9 @@ test("추첨 대상 — 3,599 는 역할만 · 3,600 은 추첨 대상 · 공지
     modes: { squad: { currentRankPoint: rp, bestRankPoint: rp, roundsPlayed: 90, currentTier: { tier: "Master", subTier: "1" } } } }));
   const w = world({ players });
   await makeRound(w, null, null);                                     // 기본값 = 3,600
-  assert.match(w.dc.posts[0].content, /역할: 3,400 이상 43s master · 서바이버 43s Survivor/);
-  assert.match(w.dc.posts[0].content, /치킨 추첨: 시즌 최종 3,600 이상/);
+  assert.match(w.dc.posts[0].content, /· 3,400점 이상 → 43s master/);
+  assert.match(w.dc.posts[0].content, /· 서바이버 → 43s Survivor/);
+  assert.match(w.dc.posts[0].content, /시즌 최종 3,600점 이상인 분들끼리 추첨해요/);
   for (let i = 0; i < 12; i++) await apply(w, "8200000000000000" + String(i).padStart(2, "0"), "T" + i, "steam", "squad");
   await toAnnounced(w);
   assert.equal(w.entries().filter((e) => e.status === "verified").length, 12);          // 역할은 전원(3,400 이상)
@@ -642,8 +646,8 @@ test("추첨 대상 — 3,599 는 역할만 · 3,600 은 추첨 대상 · 공지
   const winners = w.awards().map((a) => w.entries().find((e) => e.id === a.entry_id));
   assert.equal(winners.length, 2);
   assert.ok(winners.every((e) => e.final_rp >= 3600));
-  assert.ok(w.dc.posts.some((p) => /치킨 추첨 대상\(시즌 최종 3,600 이상\) 7명/.test(p.content)));
-  assert.ok(w.dc.posts.some((p) => /추첨 대상 기준: 시즌 최종 3,600 RP 이상/.test(p.content)));
+  assert.ok(w.dc.posts.some((p) => /치킨 추첨 대상\(3,600점 이상\) 7명/.test(p.content)));
+  assert.ok(w.dc.posts.some((p) => /-# 추첨 대상 기준 시즌 최종 3,600점 이상/.test(p.content)));
 });
 test("추첨 대상 — 소급 회차(17회)는 역할 기준 3,400 그대로", async () => {
   const players = [3400, 3450].map((rp, i) => ({ platform: "steam", name: "S" + i, accountId: "account.s" + i,
@@ -664,9 +668,43 @@ test("개설 공지 — 채널 env 가 나중에 들어오면 틱에서 한 번 
   assert.ok(w.dc.dms.some((d) => d.to === OWNER && /공지 문안/.test(d.content || "")));
   w.re._env.ROLE_EVENT_ANNOUNCE_CHANNEL_ID = "ANN";
   await w.re.tick(); await w.re.tick();
-  assert.equal(w.dc.posts.filter((p) => /신청을 받아요/.test(p.content)).length, 1);
+  assert.equal(w.dc.posts.filter((p) => /신청 받아요~!/.test(p.content)).length, 1);
   const again = makeItx({ name: "역할군", sub: "공지", user: OWNER, guildId: null });
   await w.re.handle(again);
   assert.match(again.last().content, /채널에 올렸어/);
-  assert.equal(w.dc.posts.filter((p) => /신청을 받아요/.test(p.content)).length, 2);
+  assert.equal(w.dc.posts.filter((p) => /신청 받아요~!/.test(p.content)).length, 2);
+});
+
+test("날짜 표기 — 11/13(금) 23시 · 콜론 시각 없음", () => {
+  const { kstShort } = require("../role-event.cjs").pure;
+  assert.equal(kstShort("2026-11-13T14:00:00Z"), "11/13(금) 23시");
+  assert.equal(kstShort("2026-11-25T12:00:00Z"), "11/25(수) 21시");
+  assert.equal(kstShort("2026-11-25T12:30:00Z"), "11/25(수) 21시 30분");
+});
+test("개설 공지 — 문안 판이 바뀌면 다음 틱에 같은 메시지를 고친다(새 글 없음)", async () => {
+  const w = world();
+  await makeRound(w);
+  const open = w.dc.posts[0];
+  const key = `role-event:announce:${w.round().id}`;
+  const row = w.db.tables.ops_state.find((r) => r.key === key);
+  row.value = { ...row.value, textVersion: 1 };          // 옛 판으로 올라간 글
+  open.content = "📣 옛 문안 sha256 …";
+  await w.re.tick();
+  assert.equal(w.dc.posts.length, 1);                     // 새 글 없음
+  assert.match(open.content, /역할군 18회 신청 받아요~!/);
+  assert.equal(w.db.tables.ops_state.find((r) => r.key === key).value.textVersion, 2);
+  const edits = open.edits.length;
+  await w.re.tick();
+  assert.equal(open.edits.length, edits);                  // 판이 같으면 다시 안 고침
+});
+test("신청 응답 — 같은 계정 중복이면 본인에게 안내 한 줄 · 실패는 본인에게만", async () => {
+  const w = world();
+  await makeRound(w);
+  await apply(w, dry.U.a, "MuriKing", "steam", "squad");
+  const second = await apply(w, dry.U.b, "MuriKing", "steam", "squad");
+  assert.match(second.last().content, /같은 게임 계정으로 다른 분도 신청했어요/);
+  const miss = makeItx({ name: "역할군신청", user: dry.U.c, opts: { 닉네임: "Nobody", 플랫폼: "steam", 모드: "squad" } });
+  await w.re.handle(miss);
+  assert.ok(miss.replies.some((r) => r[0] === "defer"));
+  assert.match(miss.last().content, /닉네임을 못 찾았어요/);
 });
