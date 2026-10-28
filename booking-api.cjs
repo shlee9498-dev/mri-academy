@@ -803,6 +803,7 @@ module.exports = function mountBookingApi(app, deps) {
     const unclosed = unclosedLessons.trainerSummary(
       unclosedLessons.unclosedOf(books, new Map(slots.map((s) => [s.id, s])), Date.now()), opaqueId);
 
+    const nowMs = Date.now();
     sendTrainer(res, {
       unclosed,
       slots: slots.map((s) => ({
@@ -810,6 +811,8 @@ module.exports = function mountBookingApi(app, deps) {
         startAt: s.slot_start, slotMinutes: SLOT_MIN,
         durationMin: s.duration_min ?? SLOT_MIN,   // 이 칸이 차지하는 길이(그룹 · 레벨 테스트 · 직강은 30~180)
         lessonType: s.lesson_type, capacity: s.capacity, status: s.status,
+        // 끝난 칸(§9.44.4) — 칸 시작 + 길이가 지났다. status 가 open 이어도 「열린 시간」 · 빈자리 집계에 넣지 말 것(지난 open 칸 188개 · 10/28)
+        ended: Date.parse(s.slot_start) + Number(s.duration_min ?? SLOT_MIN) * 60_000 <= nowMs,
         takenCount: taken[s.id] || 0,
         seatsLeft: Math.max(0, s.capacity - (taken[s.id] || 0)),
         bookings: by[s.id] || [],
@@ -886,6 +889,18 @@ module.exports = function mountBookingApi(app, deps) {
   //     (record_course_attendance · 다른 예약자는 건드리지 않는다). games · level 은 받지 않는다(400).
   //     sameDayOk 는 직강 예약에만 — 같은 날 다른 직강 출석이 있으면 409 already_today 이고, 맞으면 true 로 다시 보낸다.
   //     outcome "attended" · unitsLeft(출석 뒤 남은 회차 · 0 이하여도 막지 않는다) · overdrawn.
+  // 출석을 넣은 직강 칸은 수업이 끝났으면 닫는다(§9.44.4 · 앱 전수 검토 10/28) — 출석이 기록됐는데 open 으로 남아
+  //   「열린 칸」에 섞이던 것(#342 · #343). 끝나기 전이면(수업 중에 출석부터 찍은 경우) 그대로 둔다 · open 일 때만 바꾼다.
+  //   실패해도 출석 응답은 그대로 간다(칸 상태는 표시용 · 판수 · 회차와 무관).
+  async function closeEndedCourseSlot(slotId) {
+    try {
+      const s = (await sbSelect("trainer_slots", `select=id,slot_start,duration_min,status&id=eq.${Number(slotId)}&limit=1`))[0];
+      if (!sbPatch || !s || s.status !== "open") return;
+      if (!(Date.parse(s.slot_start) + Number(s.duration_min || 0) * 60_000 <= Date.now())) return;
+      await sbPatch("trainer_slots", `id=eq.${Number(slotId)}&status=eq.open`, { status: "closed" });
+    } catch (e) { console.error("course_slot_close", slotId, e?.status || e?.message); }
+  }
+
   app.post(`${TRAINER}/bookings/:id/complete`, rateLimit("trainerResolve", 60, 60_000),
     bodyOnly(["games", "playedAt", "level", "sameDayOk"]), requireTrainer, wrap(async (req, res) => {
       const bookingId = readOpaqueId("booking", req.params.id);
@@ -911,6 +926,7 @@ module.exports = function mountBookingApi(app, deps) {
         if (out?.error) return rpcFail(res, out.error);
         const mine = (out.recorded || [])[0];
         if (!mine) return rpcFail(res, "already_recorded");     // 이 회차에 이미 출석이 있다(두 번 세지 않았다)
+        await closeEndedCourseSlot(bk0.slot_id);
         return sendTrainer(res, {
           resolved: true, status: "done", outcome: "attended",
           games: 0, playedAt: out.heldOn || null,
@@ -1128,6 +1144,7 @@ module.exports = function mountBookingApi(app, deps) {
       });
       if (out?.error === "students_rejected") return rejectFail(res, out.rejected);
       if (out?.error) return rpcFail(res, out.error);
+      await closeEndedCourseSlot(slotId);
       sendTrainer(res, attendOut(out));
     }));
 

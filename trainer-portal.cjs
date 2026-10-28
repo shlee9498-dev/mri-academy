@@ -79,9 +79,11 @@ function parseStudentQuery(q) {
   const states = list(q.state, LIST_STATES), levels = list(q.level, LIST_LEVELS);
   const limit = pageLimit(q.limit, STUDENT_PAGE, STUDENT_PAGE_MAX);
   const raw = q.q === undefined ? "" : String(q.q);
-  if (states === undefined || levels === undefined || limit == null || raw.length > 40) return null;
+  // 앱 연결 거르기(§9.44.1) — no = 수강생 앱에 아직 못 들어오는 사람만 · yes = 연결된 사람만 · 없으면 전원
+  const linked = q.linked === undefined ? null : ["no", "yes"].includes(String(q.linked)) ? String(q.linked) : undefined;
+  if (states === undefined || levels === undefined || linked === undefined || limit == null || raw.length > 40) return null;
   return { paged: q.cursor !== undefined || q.limit !== undefined || q.state !== undefined,
-           states, levels, query: normQ(raw), limit, trainerKey: q.trainerKey, cursor: q.cursor };
+           states, levels, linked, query: normQ(raw), limit, trainerKey: q.trainerKey, cursor: q.cursor };
 }
 // 쪽 나눔 순서 = 목록 화면 순서 — 레벨 묶음(심화 → 중급 → 초급 → 미분류) · 묶음 안 테스트 계정은 맨 아래 · 가나다 · 번호
 const LEVEL_RANK = Object.freeze({ advanced: 0, intermediate: 1, beginner: 2 });
@@ -557,7 +559,7 @@ module.exports = function mountTrainerPortal(app, deps) {
     }
     const includeTest = owner && req.query.includeTest === "1";
     // 표지는 이 사람 · 이 거르기에 묶는다(다른 거르기로 이어 읽으면 400 — 처음부터 다시)
-    const fp = JSON.stringify([owner ? 1 : 0, pq.states, pq.levels, pq.query, byTrainer, includeTest ? 1 : 0]);
+    const fp = JSON.stringify([owner ? 1 : 0, pq.states, pq.levels, pq.query, byTrainer, includeTest ? 1 : 0, pq.linked]);
     let after = null;
     if (pq.cursor !== undefined) {
       const c = readPage(process.env.SESSION_SECRET, "students", pq.cursor);
@@ -570,16 +572,19 @@ module.exports = function mountTrainerPortal(app, deps) {
     if (!scope.size) {
       const book = await staffBook();
       return sendTrainer(res, { ...head, trainers: book.coaches.map((t) => trainerChip(book, t.id)), students: [],
-        nextCursor: null, counts: { active: 0, hold: 0, done: 0 } });
+        nextCursor: null, counts: { active: 0, hold: 0, done: 0, unlinked: 0 } });
     }
     const { book, rows } = await buildRows(req.staff, owner, scope);
     // 탭 숫자 = 검색 · 담당 트레이너를 적용하고 탭(state) · 레벨만 뺀 수(검색 중이면 그 결과의 탭별 수)
     const found = rows.filter((r) => (!pq.query || normQ(r.s.name).includes(pq.query) || normQ(r.s.pubg_name).includes(pq.query))
       && (byTrainer == null || Number(r.assigned) === byTrainer));
-    const counts = { active: 0, hold: 0, done: 0 };
+    const counts = { active: 0, hold: 0, done: 0, unlinked: 0 };
     for (const r of found) if (r.st.listState in counts) counts[r.st.listState]++;
+    // unlinked = 진행 중(active) 탭에서 앱 연결이 없는 사람 수 — 홈 카드 숫자(§9.44.1) · 탭 · 레벨 거르기와 상관없이 같은 값
+    counts.unlinked = found.filter((r) => r.st.listState === "active" && !r.x.discord_id && !isTestStudent(r.s.id)).length;
     let list = found.filter((r) => (!pq.states || pq.states.includes(r.st.listState))
-      && (!pq.levels || pq.levels.includes(r.lv.level ?? "none")));
+      && (!pq.levels || pq.levels.includes(r.lv.level ?? "none"))
+      && (!pq.linked || (pq.linked === "yes") === !!r.x.discord_id));
     let nextCursor = null;
     if (pq.paged) {
       const keyOf = (r) => listKeyOf(r.lv.level, isTestStudent(r.s.id), r.s.name, r.s.id);
