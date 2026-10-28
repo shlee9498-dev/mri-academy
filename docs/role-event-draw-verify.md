@@ -26,7 +26,7 @@ node scripts/role-event-verify.cjs \
   --chain 52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971 --round <drand_round>
 ```
 
-소급 회차처럼 당첨 수를 따로 공지했으면 `--winners <n>` 을 더한다.
+당첨 수는 `--winners <n>` 으로 넣는다(마감 공지의 치킨 개수 · 소급 회차는 공지한 당첨 수).
 
 `--randomness` 를 빼면 `https://api.drand.sh/{chain}/public/{round}` 에서 직접 받아 온다. 미러(`api2.drand.sh` · `drand.cloudflare.com`)로 같은 값인지 따로 봐도 된다.
 
@@ -41,7 +41,7 @@ participants_hash = sha256(정렬된 account_id 를 ',' 로 이은 글자)      
 draw_input        = seed_secret ':' closes_at ':' participants_hash ':' drand_randomness
 난수열            = sha256(draw_input ':' counter) 를 8 hex(32bit) 씩, counter 0,1,2…
 셔플              = Fisher-Yates, i = n−1 … 1, j = u32 % (i+1)          n ≤ 200 이라 모듈로 편향은 무시할 수준
-당첨 인원         = n ≤ 20 → 2 · ≤ 50 → 3 · ≤ 89 → 4 · ≥ 90 → 5 (n 보다 많이 안 뽑음)
+당첨 인원         = 마감 공지의 치킨 개수(신청자 12 ↑ 2 · 20 ↑ 3 · 30 ↑ 4 · 50 ↑ 5 · 12 미만 0) → --winners 로 넣는다 (통과자 n 보다 많이 안 뽑음)
 당첨              = 셔플 결과 앞에서부터 당첨 인원만큼 · 뒤 순번은 미연락 승계 순서
 ```
 

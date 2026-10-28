@@ -140,9 +140,12 @@ function makeDiscord({ closedDm = [], roleMembers = [], survivorMembers = [], no
     members: { fetch: async (id) => { if (!id) return null; if (notInGuild.includes(id)) { const e = new Error("Unknown Member"); e.code = 10007; throw e; } return memberObj(id); } } };
   const client = {
     users: { fetch: async (id) => ({ send: async (p) => { if (closedDm.includes(id)) { const e = new Error("Cannot send messages to this user"); e.code = 50007; throw e; } dms.push({ to: id, ...p }); } }) },
-    channels: { fetch: async (id) => ({ send: async (p) => { posts.push({ ch: id, ...p }); },
+    channels: { fetch: async (id) => ({ send: async (p) => { const m = { id: "p" + posts.length, channelId: id, ch: id, ...p, edits: [] };
+        m.edit = async (q) => { m.edits.push(q.content); m.content = q.content; }; posts.push(m); return m; },
       // 채널 글 — 최신 순 · before 커서 · limit (discord.js messages.fetch 모양만)
-      messages: { fetch: async ({ limit = 100, before } = {}) => {
+      messages: { fetch: async (arg = {}) => {
+        if (typeof arg === "string") { const m = posts.find((x) => x.id === arg && x.ch === id); if (!m) throw new Error("Unknown Message"); return m; }
+        const { limit = 100, before } = arg;
         const all = [...messages].sort((a, b) => b.t - a.t);
         const start = before ? all.findIndex((m) => m.id === before) + 1 : 0;
         const page = all.slice(start, start + limit).map((m) => [m.id, { id: m.id, createdTimestamp: m.t, content: m.content,

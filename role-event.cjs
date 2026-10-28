@@ -50,12 +50,15 @@ const sha256 = (s) => crypto.createHash("sha256").update(String(s)).digest("hex"
 const drandRoundAt = (tSec) => Math.floor((tSec - DRAND.genesis) / DRAND.period) + 1;
 const drandRoundTime = (round) => DRAND.genesis + (round - 1) * DRAND.period;   // unix 초
 const drawRoundFor = (drawAtIso) => drandRoundAt(Math.floor(Date.parse(drawAtIso) / 1000) + DRAW_BUFFER_S) + 1;
-// 참여 n ≤ 20 → 2 · ≤ 50 → 3 · ≤ 89 → 4 · ≥ 90 → 5 (참여자보다 많이 뽑지 않는다)
-function winnersCount(n) {
-  if (!(n > 0)) return 0;
-  const w = n <= 20 ? 2 : n <= 50 ? 3 : n <= 89 ? 4 : 5;
-  return Math.min(w, n);
+// 치킨 개수 = 신청 마감 때 신청자 수(판정 전) 기준 — 오너 10/28 확정: 12명 미만 0 · 12 ↑ 2 · 20 ↑ 3 · 30 ↑ 4 · 50 ↑ 5
+//   (예전 표 「참여 20명 이하 2 · 50 이하 3 …」은 버렸다). 추첨은 검증 통과자 안에서 · 통과자가 더 적으면 전원 당첨.
+const PRIZE_TABLE = [[50, 5], [30, 4], [20, 3], [12, 2]];
+function prizeCount(applicants) {
+  for (const [min, k] of PRIZE_TABLE) if (applicants >= min) return k;
+  return 0;
 }
+const PRIZE_LINE = "🍗 치킨은 신청 인원으로 정해요 — 12명부터 2개 · 20명 3개 · 30명 4개 · 50명 5개 (12명 미만이면 역할만)";
+const prizeText = (n, k) => (k > 0 ? `${n}명 신청 → 치킨 ${k}개` : `${n}명 신청 — 이번 회차는 역할만 드려요(치킨은 12명부터)`);
 // ISO 8601 UTC · 밀리초 없음 (예 2026-11-08T14:00:00Z) — draw_input 의 closes_at 표기
 const isoNoMs = (v) => new Date(v).toISOString().replace(/\.\d{3}Z$/, "Z");
 const newSeed = () => { const secret = crypto.randomBytes(32).toString("hex"); return { secret, commit: sha256(secret) }; };
@@ -88,12 +91,12 @@ function participantsOf(entries) {
   return { list: sorted, ids: sorted.map((e) => e.account_id), excluded: dupGroups.flat() };
 }
 // 한 번에 계산 — 시험 · 드라이런 · 재현 스크립트 대조용
-function computeDraw({ seedSecret, closesAt, accountIds, randomness }) {
+function computeDraw({ seedSecret, closesAt, accountIds, randomness, winners = 0 }) {
   const ids = sortIds(accountIds);
   const phash = participantsHash(ids);
   const input = drawInput(seedSecret, closesAt, phash, randomness);
   const order = shuffle(ids, input);
-  const k = winnersCount(ids.length);
+  const k = Math.min(winners, ids.length);   // 당첨 수는 마감 공지의 치킨 개수(회차 winners_count) · 통과자보다 많이 안 뽑는다
   return { seedCommit: sha256(seedSecret), participantsHash: phash, drawInput: input, order, winnersCount: k, winners: order.slice(0, k) };
 }
 // 「2026-11-08 23:00」 (KST) → ISO. 다른 모양은 null
@@ -203,7 +206,7 @@ function createRoleEvent(deps) {
   async function announce(text, ping = []) {
     const c = getClient(); const ch = env.ROLE_EVENT_ANNOUNCE_CHANNEL_ID;
     if (c && ch) {
-      try { const channel = await c.channels.fetch(ch); await channel.send({ content: text, allowedMentions: { parse: [], users: ping } }); return true; }
+      try { const channel = await c.channels.fetch(ch); return (await channel.send({ content: text, allowedMentions: { parse: [], users: ping } })) || true; }
       catch (e) { log.error("[role-event] announce_failed", e?.message); }
     }
     await dmOwner(`📋 공지 문안(채널 미설정 또는 게시 실패 — 직접 올려 주세요)\n\n${text}`);
@@ -277,6 +280,7 @@ function createRoleEvent(deps) {
     if (data.pubg_name === nick) {
       const saved = await saveEntry(round, { ...data, name_match: "exact" });
       log.log(`[role-event] applied round#${round.round_no} entry#${saved?.id} ${platform}/${mode} exact`);
+      await refreshOpenAnnouncement(round);
       return itx.editReply({ content: COPY.done(saved || data, round) });
     }
     const token = crypto.randomBytes(6).toString("hex");
@@ -293,10 +297,43 @@ function createRoleEvent(deps) {
     if (!round || round.status !== "open" || Date.parse(round.closes_at) <= now()) return itx.update({ content: COPY.noRound, components: [] });
     const saved = await saveEntry(round, p.data);
     log.log(`[role-event] applied round#${round.round_no} entry#${saved?.id} variant_confirmed`);
+    await refreshOpenAnnouncement(round);
     return itx.update({ content: COPY.done(saved || p.data, round), components: [] });
   }
 
   // ═════════ 회차 생성 ═════════
+  // ── 개설 공지 — 경품 표 · 지금 신청 N명 · 신청 방법 영상 자리. 신청이 들어올 때마다 같은 글을 고친다 ──
+  //   글 위치 = ops_state 'role-event:announce:<round id>' { channelId, messageId } · 영상 주소 = ops_state 'role-event:howto-url' { url }
+  const ANN_KEY = (id) => `role-event:announce:${id}`;
+  const HOWTO_KEY = "role-event:howto-url";
+  function openText(r, n, videoUrl) {
+    return [
+      `📣 역할군 ${r.round_no}회 신청을 받아요`,
+      `대상: ${r.season}시즌을 마스터(${r.rp_threshold} RP 이상)로 마친 분 · 신청 마감 ${kst(r.closes_at)}(KST)`,
+      "신청: `/역할군신청 닉네임 플랫폼 모드` (TPP · FPP 중 하나)",
+      `신청 방법 영상: ${videoUrl || "곧 올라와요"}`,
+      PRIZE_LINE,
+      `지금 신청 ${n}명 → ${prizeCount(n) > 0 ? `치킨 ${prizeCount(n)}개` : "아직 역할만(12명부터 치킨)"}`,
+      `· ${RULE_LINES[0]}`, `· ${RULE_LINES[1]}`,
+      `추첨 seed 약속값(sha256): \`${r.seed_commit}\``,
+      `추첨 예정 drand quicknet 라운드 ${drawRoundFor(r.draw_at)} (결과 공지 때 최종 고정)`,
+    ].join("\n");
+  }
+  const howtoUrl = async () => { try { return (await opsGet(HOWTO_KEY))?.url || null; } catch (_) { return null; } };
+  const applicantCount = async (roundId) => (await entriesOf(roundId)).filter((e) => e.status !== "withdrawn").length;
+  async function refreshOpenAnnouncement(round) {
+    try {
+      if (!round || round.status !== "open") return false;
+      const at = await opsGet(ANN_KEY(round.id));
+      if (!at?.messageId) return false;
+      const c = getClient();
+      const ch = await c.channels.fetch(at.channelId);
+      const msg = await ch.messages.fetch(at.messageId);
+      await msg.edit({ content: openText(round, await applicantCount(round.id), await howtoUrl()), allowedMentions: { parse: [] } });
+      return true;
+    } catch (e) { log.error("[role-event] announce_edit", e?.message); return false; }
+  }
+
   // backfill(소급) = 이미 끝난 시즌의 밀린 회차. 마감은 과거여도 되고 「closed」로 시작한다(신청은 오너 수동등록만).
   //   검증 시작은 미래여야 한다 — 그 사이에 후보를 수동등록한다. winners = 약속한 당첨 수(비우면 인원표).
   //   소급 표시는 칸을 더하지 않고 opens_at > closes_at 으로 읽는다(isBackfill).
@@ -324,14 +361,8 @@ function createRoleEvent(deps) {
       log.log(`[role-event] round#${roundNo} backfill created season=${season} commit=${seed.commit.slice(0, 12)}`);
       return { round: r, planned };
     }
-    await announce([
-      `📣 역할군 ${roundNo}회 신청을 받아요`,
-      `대상: ${season}시즌을 마스터(${r.rp_threshold} RP 이상)로 마친 분 · 신청 마감 ${kst(closesAt)}(KST)`,
-      "신청: `/역할군신청 닉네임 플랫폼 모드` (TPP · FPP 중 하나)",
-      `· ${RULE_LINES[0]}`, `· ${RULE_LINES[1]}`,
-      `추첨 seed 약속값(sha256): \`${seed.commit}\``,
-      `추첨 예정 drand quicknet 라운드 ${planned} (결과 공지 때 최종 고정)`,
-    ].join("\n"));
+    const sent = await announce(openText(r, 0, await howtoUrl()));
+    if (sent && sent.id && sent.channelId) await opsPut(ANN_KEY(r.id), { channelId: sent.channelId, messageId: sent.id }).catch(() => null);
     log.log(`[role-event] round#${roundNo} created season=${season} commit=${seed.commit.slice(0, 12)}`);
     return { round: r, planned };
   }
@@ -565,7 +596,8 @@ function createRoleEvent(deps) {
     }
     const phash = participantsHash(p.ids);
     // 소급 회차가 약속한 당첨 수(회차생성 때 저장)를 쓰고, 없으면 인원표 · 참여자보다 많이 안 뽑는다
-    const k = round.winners_count ? Math.min(round.winners_count, p.ids.length) : winnersCount(p.ids.length);
+    const prize = round.winners_count != null ? round.winners_count : prizeCount(list.filter((e) => e.status !== "withdrawn").length);
+    const k = Math.min(prize, p.ids.length);
     const ok = await patchIf(T.R, `id=eq.${round.id}&status=eq.verified&participants_frozen_at=is.null`, {
       participants_frozen_at: nowIso(), participants_hash: phash, winners_count: k,
     });
@@ -575,6 +607,7 @@ function createRoleEvent(deps) {
     if (late) await dmOwner(`⚠️ 역할군 ${round.round_no}회 — 참여자 확정이 drand 라운드 ${round.drand_round} 시각보다 늦었어(공지에 그대로 적었어)`);
     const exIds = sortIds([...new Set(p.excluded.map((e) => e.account_id))]);
     if (exIds.length) await dmOwner(`역할군 ${round.round_no}회 — 같은 계정 중복 미정리로 추첨 제외 ${p.excluded.length}건 (${exIds.join(", ")})`);
+    if (k === 0) { log.log(`[role-event] round#${round.round_no} frozen n=${p.ids.length} k=0 (역할만)`); return { n: p.ids.length, k, phash }; }
     await announce([
       `🔒 역할군 ${round.round_no}회 추첨 참여자를 확정했어요 — ${p.ids.length}명 · 당첨 ${k}명`,
       `participants_hash \`${phash}\``,
@@ -595,7 +628,8 @@ function createRoleEvent(deps) {
   }
   async function draw(round) {
     if (!round.participants_frozen_at || round.status !== "verified") return { error: "state" };
-    if (now() / 1000 < drandRoundTime(round.drand_round)) return { error: "early" };
+    const k = round.winners_count || 0;
+    if (k > 0 && now() / 1000 < drandRoundTime(round.drand_round)) return { error: "early" };
     const list = await entriesOf(round.id);
     const p = participantsOf(list);
     if (participantsHash(p.ids) !== round.participants_hash) {
@@ -604,7 +638,7 @@ function createRoleEvent(deps) {
       return { error: "participants_changed" };
     }
     let rand = null;
-    if (p.ids.length) {
+    if (p.ids.length && k > 0) {
       try { rand = await fetchDrand(round.drand_chain, round.drand_round); }
       catch (e) {
         log.error("[role-event] drand", e?.message);
@@ -612,11 +646,11 @@ function createRoleEvent(deps) {
         return { error: "drand_unavailable" };
       }
     }
-    const res = computeDraw({ seedSecret: round.seed_secret, closesAt: round.closes_at, accountIds: p.ids, randomness: rand || "" });
+    const res = computeDraw({ seedSecret: round.seed_secret, closesAt: round.closes_at, accountIds: p.ids, randomness: rand || "", winners: k });
     const byAcc = new Map(p.list.map((e) => [e.account_id, e.id]));
     const order = res.order.map((a) => byAcc.get(a));
     const ok = await patchIf(T.R, `id=eq.${round.id}&status=eq.verified`, {
-      status: "drawn", drand_randomness: rand, draw_input: p.ids.length ? res.drawInput : null, draw_order: order, draw_error: null,
+      status: "drawn", drand_randomness: rand, draw_input: rand ? res.drawInput : null, draw_order: rand ? order : [], draw_error: null,
     });
     if (!ok.length) return { error: "state" };
     log.log(`[role-event] round#${round.round_no} drawn n=${p.ids.length} winners=${res.winners.join(",")}`);
@@ -634,6 +668,10 @@ function createRoleEvent(deps) {
     await ensureAwards(round);
     const ok = await patchIf(T.R, `id=eq.${round.id}&status=eq.drawn`, { status: "announced", seed_revealed_at: nowIso() });
     if (!ok.length) return;
+    if (!round.winners_count) {   // 치킨 0개 회차(12명 미만) — 역할만 · 추첨 발표 없음
+      await announce(`역할군 ${round.round_no}회는 신청이 12명 미만이라 치킨 추첨 없이 역할만 드렸어요. 다음 회차에 친구들과 같이 신청해 주세요`);
+      return;
+    }
     const list = await entriesOf(round.id);
     const p = participantsOf(list);
     const byId = new Map(list.map((e) => [e.id, e]));
@@ -900,11 +938,11 @@ function createRoleEvent(deps) {
       let r = r0;
       try {
         if (r.status === "open" && now() >= Date.parse(r.closes_at)) {
-          const ok = await patchIf(T.R, `id=eq.${r.id}&status=eq.open`, { status: "closed" });
-          if (ok.length) {
-            const n = (await entriesOf(r.id)).filter((e) => e.status !== "withdrawn").length;
-            await announce(`⏰ 역할군 ${r.round_no}회 신청을 마감했어요 — ${n}명 신청\nseed 약속값(sha256) \`${r.seed_commit}\``);
-          }
+          // 치킨 개수는 마감 순간의 신청자 수로 정하고 바로 공개한다(오너 10/28)
+          const n = await applicantCount(r.id);
+          const k = r.winners_count != null ? r.winners_count : prizeCount(n);
+          const ok = await patchIf(T.R, `id=eq.${r.id}&status=eq.open`, { status: "closed", winners_count: k });
+          if (ok.length) await announce(`⏰ 역할군 ${r.round_no}회 신청을 마감했어요 — ${prizeText(n, k)}\nseed 약속값(sha256) \`${r.seed_commit}\``);
           r = await getRound(r.id);
         }
         if (r.status === "closed" && now() >= Date.parse(r.verify_after)) {
@@ -919,7 +957,7 @@ function createRoleEvent(deps) {
         if (r.status === "verified" && r.results_published_at && !r.participants_frozen_at && now() >= Date.parse(r.draw_at)) {
           await freeze(r); r = await getRound(r.id);
         }
-        if (r.status === "verified" && r.participants_frozen_at && now() / 1000 >= drandRoundTime(r.drand_round)) {
+        if (r.status === "verified" && r.participants_frozen_at && (!r.winners_count || now() / 1000 >= drandRoundTime(r.drand_round))) {
           await draw(r); r = await getRound(r.id);
         }
         if (r.status === "drawn") { await announceDraw(r); r = await getRound(r.id); }
@@ -1044,6 +1082,7 @@ function createRoleEvent(deps) {
       } catch (e) { return itx.editReply({ content: `PUBG 조회 실패(${e?.status || e?.message}) — 잠시 뒤 다시` }); }
       const saved = await saveEntry(round, { discord_id: did, platform, mode, pubg_name: name, pubg_name_input: acct, account_id: accountId, name_match: null });
       await sbPatch(T.E, `id=eq.${saved.id}`, { reviewed_by: itx.user.id, reviewed_at: nowIso(), review_note: "수동등록", updated_at: nowIso() });
+      await refreshOpenAnnouncement(round);
       return itx.editReply({ content: `#${saved.id} ${name} (${accountId}) 수동등록했어` });
     }
     return itx.editReply({ content: "모르는 명령이야" });
@@ -1216,6 +1255,6 @@ const ADMIN_CMD = {
 module.exports = {
   createRoleEvent, APPLY_CMD, ADMIN_CMD, TABLES: T, DRAND, COPY, RULE_LINES,
   daily: { dailyLevel, isSurvivorTier, kstDate, DAILY_MISS_TO_REMOVE },
-  pure: { sha256, drandRoundAt, drandRoundTime, drawRoundFor, winnersCount, isoNoMs, sortIds, participantsHash, drawInput, shuffle, participantsOf, computeDraw, parseKst, kst, verifyFlags },
+  pure: { sha256, drandRoundAt, drandRoundTime, drawRoundFor, prizeCount, PRIZE_TABLE, isoNoMs, sortIds, participantsHash, drawInput, shuffle, participantsOf, computeDraw, parseKst, kst, verifyFlags },
   consts: { DRAW_BUFFER_S, GRACE_MS, NO_CONTACT_MS, FLAG_BEST_GAP, FLAG_FEW_ROUNDS, DEFAULT_PACING_MS },
 };
