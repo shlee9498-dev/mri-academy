@@ -518,3 +518,59 @@ test("검증 뒤 역할 부여 — 서바이버 tier 는 Survivor 역할 · 회�
   assert.equal(r.ok, 1);
   assert.ok(!w.dc.survivors.has("400000000000000099"));
 });
+
+// ── 작업 요청(세션 → 봇 · ops_state 'role-event:job') — 17회 소급용 ──
+test("작업 lookup — 채널 글 기간 필터 · 닉을 스팀 · 카카오로 찾아 시즌 모드별 tier · RP", async () => {
+  const msgs = [
+    { id: "m1", t: Date.parse("2026-08-11T03:00:00Z"), authorId: "500000000000000001", username: "aa", content: "신청 Pa", files: ["https://cdn/x.png"] },
+    { id: "m2", t: Date.parse("2026-07-01T03:00:00Z"), authorId: "500000000000000002", username: "bb", content: "옛 글" },
+  ];
+  const players = [{ platform: "kakao", name: "Pa", accountId: "account.pa", modes: { squad: { currentRankPoint: 3456, bestRankPoint: 3500, roundsPlayed: 90, currentTier: { tier: "Master", subTier: "1" } } } }];
+  const w = world({ players, discord: { messages: msgs } });
+  await w.db.sbUpsert("ops_state", { key: "role-event:job", value: { id: "t1", kind: "lookup", status: "requested", channelId: "600000000000000001",
+    from: "2026-08-01T00:00:00Z", to: "2026-09-21T00:00:00Z", season: 42, nicks: ["Pa", "Nobody"] } }, "key");
+  await w.re.jobTick(); await w.re.idle();
+  const job = w.db.tables.ops_state.find((r) => r.key === "role-event:job").value;
+  assert.equal(job.status, "done");
+  assert.equal(job.result.posts.length, 1);
+  assert.equal(job.result.posts[0].authorId, "500000000000000001");
+  assert.deepEqual(job.result.posts[0].attachments, ["https://cdn/x.png"]);
+  const pa = job.result.players.find((x) => x.nick === "Pa");
+  assert.equal(pa.found.length, 1);
+  assert.equal(pa.found[0].platform, "kakao");
+  assert.equal(pa.found[0].seasons[42].modes.squad.rp, 3456);
+  assert.equal(job.result.players.find((x) => x.nick === "Nobody").found.length, 0);
+  // 다시 돌려도 done 이면 아무것도 안 한다
+  await w.re.jobTick(); await w.re.idle();
+  assert.equal(w.db.tables.ops_state.find((r) => r.key === "role-event:job").value.result.posts.length, 1);
+});
+test("작업 backfill → publish — 소급 회차 · 3명 추첨 · 당첨자 DM 없음(오너 카드만) · seed 는 결과에 없다", async () => {
+  const players = ["a", "b", "c", "d", "e"].map((x) => ({ platform: "steam", name: "B" + x, accountId: "account.b" + x,
+    modes: { squad: { currentRankPoint: 3500, bestRankPoint: 3500, roundsPlayed: 90, currentTier: { tier: "Master", subTier: "1" } } } }));
+  const w = world({ players });
+  w.clock.set("2026-10-28T15:00:00Z");
+  const entries = players.map((p, i) => ({ discordId: "70000000000000000" + i, discordName: "n" + i, platform: "steam", mode: "squad", accountId: p.accountId, pubgName: p.name }));
+  await w.db.sbUpsert("ops_state", { key: "role-event:job", value: { id: "t2", kind: "backfill", status: "requested", roundNo: 17, season: 42,
+    closesAt: "2026-09-21T00:00:00Z", verifyAfter: "2026-10-28T15:20:00Z", drawAt: "2026-10-29T16:00:00Z", winners: 3, entries } }, "key");
+  await w.re.jobTick(); await w.re.idle();
+  const job = w.db.tables.ops_state.find((r) => r.key === "role-event:job").value;
+  assert.equal(job.status, "done", JSON.stringify(job.result));
+  assert.ok(!JSON.stringify(job.result).includes(w.round().seed_secret));
+  assert.equal(w.entries().length, 5);
+  w.clock.set("2026-10-28T15:21:00Z"); await w.re.tick(); await w.re.idle();
+  assert.ok(w.entries().every((e) => e.status === "verified"));
+  await w.db.sbUpsert("ops_state", { key: "role-event:job", value: { id: "t3", kind: "publish", status: "requested", roundNo: 17 } }, "key");
+  await w.re.jobTick(); await w.re.idle();
+  assert.ok(w.round().results_published_at);
+  w.clock.set("2026-10-29T16:01:00Z"); await w.re.tick();
+  w.clock.set(new Date((pure.drandRoundTime(w.round().drand_round) + 60) * 1000).toISOString()); await w.re.tick();
+  assert.equal(w.round().status, "announced");
+  assert.equal(w.awards().length, 3);
+  assert.ok(w.awards().every((a) => a.status === "contacted" && a.dm_error === "owner_handles"));
+  const ids = new Set(w.entries().map((e) => e.discord_id));
+  assert.equal(w.dc.dms.filter((d) => ids.has(d.to)).length, 0);           // 당첨자 DM 0
+  // 48시간 지나도 취소 · 승계 없음
+  w.clock.add(3 * 86400_000); await w.re.tick();
+  assert.equal(w.awards().length, 3);
+  assert.ok(w.awards().every((a) => a.status === "contacted"));
+});
