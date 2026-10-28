@@ -8031,3 +8031,56 @@ notify pgrst, 'reload schema';
 --   서버 로그: 「[replay] 리플 API 활성 · 저장 bucket=true matches=true」(실행 뒤 1분 안 · 재시작 없이)
 -- 되돌림(한 블록 · 쌓인 기록도 지워지니 오너 OK 필요): begin; drop table if exists public.replay_matches;
 --   delete from storage.objects where bucket_id = 'replay'; delete from storage.buckets where id = 'replay'; commit; notify pgrst, 'reload schema';
+
+-- ============================================================
+-- §88  통장 입출금 알림 — bank_alerts (2026-10-28 · 지휘 「토스뱅크 입금 알림 → 자동 대조 → 오너 알림」 · 계약 §9.45 · 설계 docs/bank-alerts.md)
+--      종전 초안 §69(#535 · 미실행 · main 에 없음)를 이 번호로 옮기고 칸 6개를 더했다(가린 원문 · 짝 결과 · 알림 보낸 시각).
+--      오너 폰 알림 전달 앱이 POST /api/bank-alerts(· /hooks/bank-alert)로 넘기면 서버가 한 줄씩 쌓는다. **참고 장부**다 —
+--      정본은 통장 거래내역이고, 이 표를 보고 돈 · 판수 · 신청 상태를 바꾸지 않는다. payments · 정산 · 잠금월과 외래 키 · 함수 · 방아쇠로 잇지 않는다.
+--      toss 통장 입금은 열린 신청(결제 신청 · 레벨 테스트 신청 · 상담) 중 짝 후보를 찾아 오너 DM 한 통 — 짝은 번호만 적어 둔다(match_ref · 외래 키 없음).
+--      A 구간(새 표 하나 · 더하기만 · 기존 표 · 칸 · 제약 · 함수를 건드리지 않는다). 코드 PR 은 실행 확인 전까지 Draft.
+--      저장하지 않는 것: 계좌 번호(어느 모양이든 — 원문은 「[계좌]」로 가린 뒤 저장) · 출금 상대 이름 · 비밀 값.
+-- ============================================================
+-- 88-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select to_regclass('public.bank_alerts');                                                   -- 기대 null
+-- 88a) 표 하나
+create table if not exists public.bank_alerts (
+  id               bigint generated always as identity primary key,
+  account_key      text        not null check (account_key ~ '^[a-z][a-z0-9_]{1,23}$'),     -- 통장 이름표(toss · sabi) · 계좌 번호가 아니다
+  direction        text        check (direction in ('in', 'out')),                            -- 못 읽으면 null
+  amount           bigint      check (amount > 0 and amount <= 1000000000),
+  balance          bigint,                                                                     -- 알림에 잔액이 있을 때만
+  occurred_at      timestamptz,                                                                -- 알림 글의 시각(없으면 null · 받은 시각은 received_at)
+  counterparty     text        check (counterparty is null or (char_length(counterparty) between 1 and 20 and direction = 'in')),   -- 입금자 이름 · 입금 줄만
+  parse_status     text        not null check (parse_status in ('ok', 'partial', 'unparsed')),
+  shape            text        check (shape is null or (parse_status <> 'ok' and char_length(shape) <= 300)),   -- 다 못 읽은 줄의 글자 모양
+  dedupe_key       text        not null check (dedupe_key ~ '^[0-9a-f]{64}$'),                -- sha256(통장 이름표 + 알림 글) — 같은 알림 두 번 = 한 줄
+  source_app       text        check (source_app is null or char_length(source_app) <= 60),
+  posted_at        timestamptz,                                                                -- 폰이 알림을 받은 시각(기기 시각 · 앱이 보내 줄 때만)
+  received_at      timestamptz not null default now(),                                         -- 서버가 받은 시각
+  raw_masked       text        check (raw_masked is null or char_length(raw_masked) <= 500),  -- 계좌 모양을 「[계좌]」로 가린 원문
+  match_status     text        check (match_status in ('matched', 'multiple', 'none')),       -- toss 입금만 · 그 밖은 null
+  match_kind       text        check (match_kind in ('payment_request', 'intake', 'consult')),
+  match_ref        bigint,                                                                     -- 짝 신청 번호(외래 키 없음 · 확정은 회계 대조)
+  notified_at      timestamptz,                                                                -- 오너 DM 을 잡은 시각(이 줄 DM 1회 표시)
+  notify_failed_at timestamptz,                                                                -- DM 이 실패한 시각(다시 보내지 않는다)
+  check ((match_kind is null) = (match_ref is null)),
+  check (match_kind is null or match_status = 'matched')
+);
+create unique index if not exists bank_alerts_dedupe_key on public.bank_alerts (dedupe_key);
+create index if not exists idx_bank_alerts_account_received on public.bank_alerts (account_key, received_at desc);
+alter table public.bank_alerts enable row level security;                                      -- 정책 0 = service_role 만
+-- 88b) 88a 뒤 검증(세션 · 읽기만 · 운영 DB 에 시험 줄을 넣지 않는다):
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'bank_alerts';   -- 기대 19
+--   select count(*) filter (where contype = 'c') c, count(*) filter (where contype = 'p') p
+--     from pg_constraint where conrelid = 'public.bank_alerts'::regclass;                     -- 기대 c 13 · p 1
+--   select indexname from pg_indexes where schemaname = 'public' and tablename = 'bank_alerts' order by 1;
+--     -- 기대 bank_alerts_dedupe_key · bank_alerts_pkey · idx_bank_alerts_account_received
+--   select relrowsecurity from pg_class where oid = 'public.bank_alerts'::regclass;          -- 기대 true
+--   select count(*) from public.bank_alerts;                                                  -- 기대 0
+-- 88c) notify pgrst, 'reload schema';
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 알림 장부만 사라진다 — 다른 표는 그대로):
+--   drop table if exists public.bank_alerts;
+--   notify pgrst, 'reload schema';
+-- ============================================================

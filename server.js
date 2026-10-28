@@ -77,6 +77,9 @@ const publicRows = require("./public-rows.cjs");
 const { isLessonRow, lessonRowsOf } = require("./ops-status.cjs");
 // 연결 신청 승인 · 거절 규칙(계약 §9.32) — 트레이너는 자기 담당만 · 먼저 누른 사람만. 카드 버튼 · /연결승인 이 같이 쓴다.
 const linkRules = require("./link-approve.cjs");
+// 통장 입출금 알림 받기(§88 · docs/bank-alerts.md · 지휘 10/7 · 10/28) — 오너 폰 알림 전달 앱이 보낸 은행 알림을 받아 쌓는다(참고 장부) · toss 입금은 짝 후보 + 오너 DM(§9.45).
+//   돈 · 판수 · 신청 상태를 바꾸지 않고 payments · 정산과 잇지 않는다. 시험 scripts/bank-alerts.test.cjs
+const bankAlerts = require("./bank-alerts.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -7368,6 +7371,15 @@ async function gmiGuildMember(discordId) {
   const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
 }
+// 통장 입출금 알림 받기(§88 · docs/bank-alerts.md) — POST /api/bank-alerts · /hooks/bank-alert · env BANK_ALERT_SECRET 이 없으면 503(닫힘).
+//   계좌 번호는 저장하지 않는다(원문은 「[계좌]」로 가린 뒤) · 같은 알림 두 번이면 한 줄(중복 키) · 분당 30번까지.
+// 입금 알림 → 열린 신청 짝 찾기 · 오너 DM(계약 §9.45 · bank-match.cjs) — toss 통장만. 짝 후보만 만들고 payments · 신청 상태는 바꾸지 않는다.
+const bankMatch = require("./bank-match.cjs").createBankMatch({
+  sbSelect, sbPatch, levelTestFee: () => require("./intake-api.cjs").levelTestWon(),
+  notifyOwner: async (text) => { const oid = process.env.MRI_OWNER_ID; if (!botClient || !oid) return false; try { const u = await botClient.users.fetch(String(oid)); await u.send(text); return true; } catch (_) { return false; } },
+});
+bankAlerts.createBankAlerts({ insert: (row) => sbInsert("bank_alerts", row), afterSave: (row) => bankMatch.onSaved(row) })
+  .mount(app, { express, limiter: limit("bankAlerts", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
 // ── 운영 응답용 members 정제 ──
 // 계좌·실명은 gdcup_payouts(owner 전용)에만 존재해야 한다. 그런데 시즌2 레거시 행은
@@ -9174,6 +9186,11 @@ const SCHEMA_OPTIONAL = {
   killrace_sponsors: ["id", "event_id", "display_name", "amount", "token_hash", "show_name", "agreed_at", "agree_terms_version", "agree_pure", "agree_carry", "agree_not_player", "deposit_confirmed_at", "deposit_confirmed_by", "memo", "created_at", "created_by", "carry_from_event"],   // carry_from_event = §82
   // §79 자율 판(앱 계약 §12 · killrace-api §1.33.4) — 미실행이면 자율 판 길만 503 table_missing
   killrace_casual: ["id", "play_date", "mode", "state", "opened_by", "opened_name", "opened_via", "opened_tier", "event_id", "detail", "log", "created_at", "updated_at"],
+  // §88 통장 입출금 알림(docs/bank-alerts.md · 지휘 10/7 · 10/28 짝 찾기 §9.45) — toss 입금은 짝 후보 + 오너 DM. 미실행이면 POST /api/bank-alerts 만 503 table_missing 이고
+  //   다른 기능은 그대로다. 읽는 화면(오너 목록 · 공개 합계)이 생기면 REQUIRED 로 올린다.
+  bank_alerts: ["id", "account_key", "direction", "amount", "balance", "occurred_at", "counterparty", "parse_status", "shape",
+                "dedupe_key", "source_app", "posted_at", "received_at", "raw_masked", "match_status", "match_kind", "match_ref",
+                "notified_at", "notify_failed_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
