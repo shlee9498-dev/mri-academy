@@ -8211,3 +8211,32 @@ alter table public.bank_alerts enable row level security;                       
 --   drop table if exists public.bank_alerts;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §89  레슨 디코 피드백 ↔ 앱 복기 실시간 연동 (2026-10-30 · 총무 주문 · 계약 §9.46 · 소관 MRIacademy)
+--      A 구간(칸 3 · 유일 색인 2 · 더하기만). 기존 칸 · 제약 · 함수 · 행을 건드리지 않는다. 판수 · 금액 무관.
+--      review_feedback.hidden_at = 디코에서 지운 트레이너 답(지우지 않고 숨김 · 앱 읽기는 hidden_at is null 만)
+--      mirror_msg = 앱 복기 · 답을 수강생 디코 채널에 올린 거울 카드 메시지 id
+--        (숫자 = 보낸 카드 · '-' = 채널 없음 · 'pending:<부팅 id>' = 보내는 중 · 'fail1' · 'fail2' = 실패) — 숫자만 유일
+-- ============================================================
+-- 89-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select count(*) from information_schema.columns where table_schema='public' and table_name='review_feedback'
+--     and column_name in ('hidden_at','mirror_msg');                                            -- 기대 0
+--   select count(*) from information_schema.columns where table_schema='public' and table_name='lesson_reviews'
+--     and column_name = 'mirror_msg';                                                          -- 기대 0
+-- 89a) 칸 · 색인
+alter table public.review_feedback add column if not exists hidden_at  timestamptz;
+alter table public.review_feedback add column if not exists mirror_msg text;
+alter table public.lesson_reviews  add column if not exists mirror_msg text;
+create unique index if not exists uq_lr_mirror_msg on public.lesson_reviews  (mirror_msg) where mirror_msg ~ '^[0-9]+$';
+create unique index if not exists uq_rf_mirror_msg on public.review_feedback (mirror_msg) where mirror_msg ~ '^[0-9]+$';
+-- 89b) 89a 뒤 검증(세션 · 읽기만):
+--   칸 수 lesson_reviews 26 · review_feedback 15 · 새 칸은 모두 null · 색인 uq_lr_mirror_msg · uq_rf_mirror_msg 있음
+-- 89c) notify pgrst, 'reload schema';
+--
+-- 되돌림(새 칸에 값이 있으면 먼저 지휘 확인):
+--   drop index if exists public.uq_lr_mirror_msg; drop index if exists public.uq_rf_mirror_msg;
+--   alter table public.lesson_reviews drop column if exists mirror_msg;
+--   alter table public.review_feedback drop column if exists mirror_msg; alter table public.review_feedback drop column if exists hidden_at;
+--   notify pgrst, 'reload schema';
+-- ============================================================

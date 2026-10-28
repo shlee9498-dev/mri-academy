@@ -1015,6 +1015,8 @@ function computeViolations(guild) {
 }
 
 let botClient = null;   // Phase T1 — 스냅샷 완료 시 오너 DM용 모듈 레벨 ref
+// 레슨 디코 피드백 ↔ 앱 복기 실시간 연동(계약 §9.46 · review-sync.cjs) — 아래 복기 API 를 만든 뒤 채운다. 봇 이벤트 · 점검 · 거울이 쓴다.
+let reviewSync = null;
 // 연결 신청 접수 — 봇 블록이 채운다(discordDM 과 같은 패턴). 앱의 연결 대기 화면이
 // student-portal.cjs 의 POST /link-request 로 들어와 이 함수를 쓴다. 봇이 없으면 null.
 let linkReqIntake = null;
@@ -1338,6 +1340,12 @@ if (process.env.DISCORD_TOKEN) {
     // 이관 실행 요청 확인(§57) — 1분마다 ops_state 한 번 읽는다. 새 요청이 없으면 그걸로 끝난다.
     if (hasSupabase()) setInterval(() => feedbackImport.poll()
       .catch((e) => console.error("fbimport_poll", e?.status || "", e?.message)), 60_000);
+    // 디코 ↔ 앱 복기(계약 §9.46.3 · §9.46.4) — 점검 · 백필 = 1분 뒤 첫 회 · 10분마다 / 거울 카드 = 30초마다
+    if (hasSupabase() && reviewSync) {
+      setTimeout(() => reviewSync.sweep(), 60_000);
+      setInterval(() => reviewSync.sweep(), 10 * 60_000);
+      setInterval(() => reviewSync.mirrorTick(), 30_000);
+    }
     // 기동 틱은 로그인 전에 돌아 카드 다시 띄우기가 실패할 수 있다 — 준비 직후 한 번 더(ops_state 'payreq:resend').
     setTimeout(() => runPayreqResend().catch((e) => console.error("payreq_resend_ready", e?.message)), 5000);
 
@@ -1456,6 +1464,10 @@ if (process.env.DISCORD_TOKEN) {
   client.on("interactionCreate", (itx) => { if (killPoster) killPoster.handle(itx).catch((e) => console.error("[killrace-poster] handler", e?.message)); });
   // 결과 화면 스샷 → 점수판 「잠정」(killrace-shot.cjs · 팀배정 채널 사진만 · 확정 점수는 안 건드린다)
   client.on("messageCreate", (msg) => { if (killShot) killShot.onMessage(msg).catch((e) => console.error("[killrace-shot] handler", e?.message)); });
+  // 레슨 디코 피드백 채널 ↔ 앱 복기(계약 §9.46) — 확정 채널 글만 앱으로 · 수정 = 같은 행 · 삭제 = hidden_at. 실패는 10분 점검이 다시 집는다
+  client.on("messageCreate", (msg) => { if (reviewSync && msg.guild) reviewSync.onCreate(msg); });
+  client.on("messageUpdate", (_old, msg) => { if (reviewSync && msg?.guildId) reviewSync.onUpdate(msg); });
+  client.on("messageDelete", (msg) => { if (reviewSync && msg?.guildId) reviewSync.onDelete(msg); });
   client.once("clientReady", () => { if (killShot) killShot.checkChannel(client); });
 
   const isStaff = (id) => STAFF_IDS.includes(id);
@@ -8735,6 +8747,14 @@ require("./replay-api.cjs")(app, { findPlayer, pubgGet, getUser, limit, sbSelect
 // STUDENT_APP_URL = 수강생 DM 끝의 앱 링크(학생 앱은 다른 저장소라 오너가 준 주소를 적는다 · 비어 있으면 링크 줄 없이).
 // notifyAssigned = 담당 트레이너에게도 보낼지 — 오너 판정 2026-09-30 「판수가 모자란 그 트레이너에게만」 → 끈다.
 const STUDENT_APP_URL = "https://app.mriacademy.gg";   // 오너 확인 2026-09-30
+// 디코 ↔ 앱 복기 연동(계약 §9.46) — 거울 카드 「앱에서 보기」 링크가 이 주소를 쓴다
+reviewSync = require("./review-sync.cjs").createReviewSync({
+  getClient: () => botClient,
+  sb: { select: sbSelect, insert: sbInsert, patch: sbPatch, upsert: sbUpsert },
+  importImage: (x) => reviewApi.importImage(x), firstImage: (id) => reviewApi.firstImage(id),
+  opaqueId: (k, id) => studentPortal.opaqueId(k, id), appUrl: STUDENT_APP_URL,
+  opsGet: (k) => opsStateGet(k), opsSet: (k, v) => opsStateSet(k, v),
+});
 const gamesShort = require("./games-short.cjs")({
   sbSelect, sbInsert, sbPatch, sbRpc, discordDM, appUrl: STUDENT_APP_URL, notifyAssigned: false,
 });
@@ -9086,14 +9106,16 @@ const REQUIRED_SCHEMA = {
                          "author_staff_id","recipient_trainer_id","source","status","title","body","src_file_name",
                          "src_guild","src_channel","src_msg","consent_public_at","created_at","updated_at","published_at","hidden_at",
                          "visibility","visibility_changed_at",
-                         "public_at"],                      // §57 공개 대기(디스코드 이관 · 2026-10-01)
+                         "public_at",                       // §57 공개 대기(디스코드 이관 · 2026-10-01)
+                         "mirror_msg"],                     // §89 거울 카드(계약 §9.46.4 · 2026-10-30 실행)
   review_games:         ["id","review_id","ord","seq_label","map","map_raw"],
   review_phases:        ["id","game_id","ord","phase_from","phase_to","phase_to_end","header_raw","lines","tags","suggested_tags"],
   review_images:        ["id","review_id","phase_id","ord","original_path","display_path","thumb_path","width","height",
                          "bytes","sha256","uploaded_by_role","created_at"],
   review_annotations:   ["id","image_id","author_kind","author_id","shapes","version","updated_at"],
   review_feedback:      ["id","review_id","trainer_id","kind","phase_id","line_ord","verdict","body","due_booking_id","due_at","created_at","updated_at",
-                         "src_msg"],                        // §57 디스코드에서 옮긴 트레이너 답의 원문 좌표(재실행 멱등)
+                         "src_msg",                         // §57 디스코드에서 옮긴 트레이너 답의 원문 좌표(재실행 멱등)
+                         "hidden_at","mirror_msg"],         // §89 디코에서 지운 답 · 거울 카드(계약 §9.46 · 2026-10-30 실행)
   review_purge_log:     ["id","ran_at","dry_run","review_id","images","bytes","purged_at"],
   review_reads:         ["review_id","reader_kind","reader_id","read_at"],
   review_reactions:     ["review_id","phase_id","reactor_kind","reactor_id","emoji","created_at"],
