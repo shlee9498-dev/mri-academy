@@ -334,3 +334,28 @@ test("§9.46.1 확인 대기 채널 현황 — 점검 첫 회에 건수만(본�
   assert.equal(JSON.stringify(h.ops.get(rs.PENDING_KEY)).includes("트레이너 피드백 글"), false);
   assert.equal(h.db.lesson_reviews.length, 0, "확인 대기 채널 글은 넣지 않는다");
 });
+
+test("§9.46.1 현황 — 짝 표에 없는 채널(짝 채널과 같은 카테고리 · 10/3 뒤 생김)도 건수만 · 보관된 스레드 글 포함 · 다른 카테고리는 안 봄", async () => {
+  const h = harness();
+  const NEWCH = "910000000000000055", OTHER = "910000000000000066", TH = "910000000000000077";
+  const inThread = [msg({ ch: TH, author: TRAINER, content: "스레드 안 트레이너 글" })];
+  const top = [msg({ ch: NEWCH, author: STRANGER, content: "새 채널 수강생 글" })];
+  const reader = (list) => ({ fetch: async ({ after: a }) => new Map(list.filter((m) => BigInt(m.id) > BigInt(a)).map((m) => [m.id, m])) });
+  h.channels.set(CH, { id: CH, parentId: "CAT_FB", messages: reader([]) });
+  h.channels.set(CH2, { id: CH2, parentId: "CAT_FB", messages: reader([]) });
+  h.channels.set(NEWCH, { id: NEWCH, parentId: "CAT_FB", messages: reader(top),
+    threads: { fetchActive: async () => ({ threads: new Map() }), fetchArchived: async () => ({ threads: new Map([[TH, { id: TH, messages: reader(inThread) }]]) }) } });
+  // 길드 채널 목록
+  const sync = rs.createReviewSync({
+    getClient: () => ({ channels: { cache: new Map(), fetch: async (id) => h.channels.get(String(id)) || { id, messages: null } },
+      guilds: { fetch: async () => ({ channels: { fetch: async () => new Map([[NEWCH, { id: NEWCH, type: 0, parentId: "CAT_FB" }], [OTHER, { id: OTHER, type: 0, parentId: "CAT_GENERAL" }], [CH, { id: CH, type: 0, parentId: "CAT_FB" }]]) } }) } }),
+    sb: h.sb, importImage: async () => ({}), firstImage: async () => null, opaqueId: (k, id) => `${k}-${id}`, appUrl: null,
+    opsGet: async (k) => h.ops.get(k) ?? null, opsSet: async (k, v) => { h.ops.set(k, v); }, now: () => T0 + 60_000, log: () => {}, logError: () => {},
+  });
+  await sync.sweep();
+  const rep = h.ops.get(rs.PENDING_KEY);
+  assert.deepEqual(Object.keys(rep.channels), [NEWCH]);
+  assert.deepEqual([rep.channels[NEWCH].unmapped, rep.channels[NEWCH].n, rep.channels[NEWCH].trainer], [true, 2, 1]);
+  assert.equal(rep.scanned, 2);                                       // 확인 대기 1 + 짝 없는 같은 카테고리 1(다른 카테고리는 빠짐)
+  assert.equal(h.db.feedback_channel_map.length, 2, "현황은 짝 표를 바꾸지 않는다");
+});
