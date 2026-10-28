@@ -177,3 +177,38 @@ test("텔레메트리 줄 상한 — 받는 중 1개 + 기다림 3개까지, 넘
   // 줄이 비면 다시 받는다
   assert.equal((await get(s.base, `/api/replay/match/${ids[4]}?name=MRI_A&platform=steam`)).status, 200);
 });
+
+test("배그 사주(시험) — 운영진만 · 판마다 전체 리플 요약 1번 · 카드 + 판별 근거표 · 이름 없음", async (t) => {
+  const LOBBY = require(path.join(__dirname, "..", "tests", "fixtures", "saju-lobby.json"));
+  let tele = 0;
+  const s = await boot({
+    findPlayer: async () => ({ id: "account.fake-mri-b", attributes: { name: "MRI_B" }, relationships: { matches: { data: [{ id: MID }, { id: MID2 }] } } }),
+    fetchImpl: async () => { tele++; return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(LOBBY) }; },
+  });
+  t.after(() => s.srv.close());
+  assert.equal((await get(s.base, "/api/replay/saju?name=MRI_B&platform=steam", {})).status, 403);
+  const r = await get(s.base, "/api/replay/saju?name=MRI_B&platform=steam&n=2");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.games, 2);
+  assert.equal(tele, 2);
+  assert.match(r.body.card.type.code, /^[AP][CE][LN][TW]$/);
+  assert.ok(r.body.card.meters.zone && r.body.card.meters.team && r.body.card.meters.contrib);
+  assert.equal(r.body.rows.length, 2);
+  assert.equal(r.body.stats.games, 2, "카드 능력치(감독 게임용)도 같이");
+  assert.deepEqual(r.body.rows.map((x) => x.match), [MID, MID2]);
+  assert.doesNotMatch(JSON.stringify(r.body), /MRI_[ACD]|P\d+_\d|account\./, "팀원 · 상대 이름 · 계정 id 가 응답에 없다");
+  // 같은 판은 다시 안 받는다(로비 요약 캐시)
+  const r2 = await get(s.base, "/api/replay/saju?name=MRI_B&platform=steam&n=2&lang=en");
+  assert.equal(r2.status, 200);
+  assert.equal(tele, 2);
+  assert.equal(r2.body.card.lang, "en");
+  assert.equal(s.api.stat.sajuCache, 2);
+  // 언어 칩이 없으면 브라우저 언어로 · 공유 카드 이미지
+  const r3 = await get(s.base, "/api/replay/saju?name=MRI_B&platform=steam&n=2", { ...STAFF, "accept-language": "th-TH,th;q=0.9" });
+  assert.equal(r3.body.card.lang, "th");
+  const svg = await fetch(s.base + "/api/replay/saju?name=MRI_B&platform=steam&n=2&lang=ja&format=svg", { headers: STAFF });
+  assert.match(svg.headers.get("content-type"), /image\/svg\+xml/);
+  assert.match(await svg.text(), /lang="ja"/);
+  assert.equal(tele, 2);
+  assert.equal((await get(s.base, "/api/replay/saju?name=x&platform=steam")).status, 400);
+});

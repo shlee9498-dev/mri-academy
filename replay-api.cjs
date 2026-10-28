@@ -4,6 +4,7 @@
 //   GET  /api/replay/recent?name=&platform=steam|kakao  → 최근 경기 목록(경쟁전 · 일반 구분 · 최대 12판) — 운영진만
 //   GET  /api/replay/match/:id?name=&platform=          → 그 사람 팀 한 팀분만 잘라 파싱한 재생 데이터(상대 이름 · id 는 「적 N」) — 운영진만
 //   GET  /api/replay/stats                              → 한도 · 캐시 수치 — 운영진만
+//   GET  /api/replay/saju?name=&platform=&n=&lang=&format=svg → 「배그 사주」 시험 계산(최근 n판 · 기본 10 · 최대 20) — 운영진만(docs/saju.md)
 //   2주차 공개 페이지 · 카드 · 측정(POST /api/replay/event)은 10/21 지휘 결정으로 이 PR 에서 뺐다 — 브랜치 claude/replay-public-parked 에 보관
 //
 // PUBG 호출 한도(공식 문서 rst/rate-limits.rst):
@@ -16,6 +17,9 @@
 "use strict";
 const zlib = require("zlib");
 const R = require("./replay-core.js");
+const Saju = require("./saju-core.js");
+const SajuCard = require("./saju-card.js");
+const SAJU_STRINGS = require("./saju-strings.json");
 
 const PLATFORMS = ["steam", "kakao"];
 const MATCH_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -153,9 +157,10 @@ function mountReplay(app, deps) {
 
   const players = lru(500);            // `${platform}:${name}` → { at, data }
   const matches = lru(150);            // matchId → 경기 객체(약 100KB · 14일 동안 안 바뀐다)
+  const sajus = lru(400);              // matchId → 그 판 모든 플레이어 요약(saju-core · 수십 KB) — 같은 로비 사람은 텔레메트리를 다시 안 받는다
   const replays = lru(20);             // `${matchId}:${teamId}` → 한 팀분 원본(trimmed · 메모리 수 MB) — 나머지는 Storage 에서
   const inflight = new Map();          // 같은 요청이 동시에 오면 한 번만 부른다
-  const stat = { lookups: 0, lookupQueued: 0, busy: 0, matchFetch: 0, matchCache: 0, telemetryFetch: 0, replayMem: 0, replayStore: 0, bytes: 0 };
+  const stat = { lookups: 0, lookupQueued: 0, busy: 0, matchFetch: 0, matchCache: 0, telemetryFetch: 0, replayMem: 0, replayStore: 0, bytes: 0, sajuMatch: 0, sajuCache: 0, sajuMs: 0 };
 
   // 닉네임 조회 줄 — 최근 1분 통과 시각을 들고, 꽉 차면 빈자리 날 때까지 기다린다(QUEUE_WAIT_MS 넘으면 busy)
   const passed = [];
@@ -353,8 +358,48 @@ function mountReplay(app, deps) {
     } catch (e) { fail(res, e); }
   });
 
+  // 「배그 사주」 — 판마다 전체 텔레메트리로 모든 플레이어 요약을 한 번 만들어 두고(같은 로비 다른 사람은 재사용), 대상 계정 프로필 → 카드
+  async function matchSaju(platform, id) {
+    const c = sajus.get(id);
+    if (c) { stat.sajuCache++; return c; }
+    return once("s:" + id, async () => {
+      const m = await getMatch(platform, id);
+      const url = telemetryUrl(m);
+      if (!url || !R.MAP_SIZE[m.data.attributes.mapName]) return null;
+      const t0 = now();
+      const sum = Saju.summarizeMatch(await downloadTelemetry(url));
+      stat.sajuMs += now() - t0; stat.sajuMatch++;
+      sum.match.id = id; sum.match.createdAt = m.data.attributes.createdAt;
+      sum.match.matchType = m.data.attributes.matchType || ""; sum.match.gameMode = m.data.attributes.gameMode;
+      sajus.set(id, sum);
+      return sum;
+    });
+  }
+  app.get("/api/replay/saju", staffOnly, lim, async (req, res) => {
+    const a = args(req);
+    if (!a) return bad(res, "bad_request");
+    if (!hasKey()) return bad(res, "pubg_disabled", 503);
+    const n = Math.max(1, Math.min(20, Number(req.query.n) || 10));
+    // 언어 = 고른 칩(lang) → 없으면 브라우저 언어(Accept-Language) → 없으면 en
+    const lang = SajuCard.pickLang([String(req.query.lang || ""), ...String(req.headers["accept-language"] || "").split(",").map((x) => x.split(";")[0].trim())]);
+    try {
+      const player = await lookupPlayer(a.platform, a.name);
+      const ids = ((player.relationships && player.relationships.matches && player.relationships.matches.data) || []).map((x) => x.id).slice(0, n);
+      const t0 = now(), list = [];
+      for (const id of ids) { const sm = await matchSaju(a.platform, id).catch((e) => { if (e && e.status === 429) throw e; return null; }); if (sm) list.push(sm); }
+      const prof = Saju.profile(list, player.id);
+      if (!prof) return bad(res, "no_games", 404);
+      // 근거표 — 판마다 숫자(상대 · 팀원 이름 없음)
+      const rows = prof.rows.map((r) => ({ match: list[r.idx].match.id, createdAt: list[r.idx].match.createdAt, matchType: list[r.idx].match.matchType, ...r }));
+      res.set("Cache-Control", "private, max-age=300");
+      const card = SajuCard.card(prof, SAJU_STRINGS, lang);
+      if (req.query.format === "svg") return res.type("image/svg+xml").send(SajuCard.cardSvg(card));   // 공유 카드 이미지 확인용
+      res.json({ card, stats: Saju.cardStats(prof), profile: { ...prof, rows: undefined }, rows, ms: now() - t0, games: list.length });
+    } catch (e) { fail(res, e); }
+  });
+
   app.get("/api/replay/stats", staffOnly, (req, res) => {
-    res.json({ api: { ...stat, cache: { players: players.size, matches: matches.size, replays: replays.size } }, storage: { bucket: ready.bucket, matches: ready.matches } });
+    res.json({ api: { ...stat, cache: { players: players.size, matches: matches.size, replays: replays.size, sajus: sajus.size } }, storage: { bucket: ready.bucket, matches: ready.matches } });
   });
 
   if (hasSb()) probe().then((st) => console.log(`[replay] 리플 API 활성 · 저장 bucket=${st.bucket} matches=${st.matches}`
