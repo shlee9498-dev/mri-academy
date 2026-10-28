@@ -207,7 +207,9 @@ function createRoleEvent(deps) {
   const dmOwner = (payload) => dmUser(env.MRI_OWNER_ID, payload);
   // 공지 채널 — 없으면 오너 DM 으로 문안만(설계 §8)
   // ping = 알림을 보낼 디스코드 id(당첨자 DM 폴백만) · 나머지 멘션은 알림 없이 이름만 보인다
-  async function announce(text, ping = []) {
+  // ownerOnly = 소급 회차(17회 등) — 채널이 있어도 공개하지 않고 오너 DM 으로만(10/29 총무 「당첨자 DM · 공지는 오너 손」)
+  async function announce(text, ping = [], { ownerOnly = false } = {}) {
+    if (ownerOnly) { await dmOwner(`📋 소급 회차 문안(공개하지 않음 · 오너 확인 · 영상용)\n\n${text}`); return false; }
     const c = getClient(); const ch = env.ROLE_EVENT_ANNOUNCE_CHANNEL_ID;
     if (c && ch) {
       try { const channel = await c.channels.fetch(ch); return (await channel.send({ content: text, allowedMentions: { parse: [], users: ping } })) || true; }
@@ -372,7 +374,7 @@ function createRoleEvent(deps) {
         `· ${RULE_LINES[0]}`, `· ${RULE_LINES[1]}`,
         `추첨 seed 약속값(sha256): \`${seed.commit}\``,
         `추첨 예정 drand quicknet 라운드 ${planned} (결과 공지 때 최종 고정)`,
-      ].join("\n"));
+      ].join("\n"), [], { ownerOnly: true });
       log.log(`[role-event] round#${roundNo} backfill created season=${season} commit=${seed.commit.slice(0, 12)}`);
       return { round: r, planned };
     }
@@ -553,7 +555,7 @@ function createRoleEvent(deps) {
       `추첨일 ${kst(drawAt)}(KST) · drand quicknet 체인 \`${round.drand_chain}\` · 라운드 ${drandRound}`,
       "판정 · 제외 정정은 추첨일까지 받아요. 이상한 점은 운영진에게 알려 주세요",
       `· ${RULE_LINES[1]}`,
-    ].join("\n"));
+    ].join("\n"), [], { ownerOnly: isBackfill(round) });
     log.log(`[role-event] round#${round.round_no} published draw_at=${drawAt} drand=${drandRound}`);
     return { drawAt, drandRound, pass: pass.length };
   }
@@ -633,7 +635,7 @@ function createRoleEvent(deps) {
       ...(late ? ["※ 이번 확정은 서버 지연으로 drand 라운드 시각보다 늦게 게시됐어요 — 추첨일 이후 판정 · 제외는 막혀 있었어요"] : []),
       ...(exIds.length ? [`추첨 제외 ${p.excluded.length}건 · 같은 계정 중복 신청 미정리 · account_id: ${exIds.join(", ")}`] : []),
       `참여 account_id(정렬 순): ${p.ids.join(", ") || "-"}`,
-    ].join("\n"));
+    ].join("\n"), [], { ownerOnly: isBackfill(round) });
     log.log(`[role-event] round#${round.round_no} frozen n=${p.ids.length} k=${k}`);
     return { n: p.ids.length, k, phash };
   }
@@ -687,7 +689,7 @@ function createRoleEvent(deps) {
     const ok = await patchIf(T.R, `id=eq.${round.id}&status=eq.drawn`, { status: "announced", seed_revealed_at: nowIso() });
     if (!ok.length) return;
     if (!round.winners_count) {   // 치킨 0개 회차(12명 미만) — 역할만 · 추첨 발표 없음
-      await announce(`역할군 ${round.round_no}회는 신청이 12명 미만이라 치킨 추첨 없이 역할만 드렸어요. 다음 회차에 친구들과 같이 신청해 주세요`);
+      await announce(`역할군 ${round.round_no}회는 신청이 12명 미만이라 치킨 추첨 없이 역할만 드렸어요. 다음 회차에 친구들과 같이 신청해 주세요`, [], { ownerOnly: isBackfill(round) });
       return;
     }
     const list = await entriesOf(round.id);
@@ -708,7 +710,7 @@ function createRoleEvent(deps) {
       `참여 account_id(정렬 순): ${p.ids.join(", ") || "-"}`,
       ...(exIds.length ? [`추첨 제외(중복 계정): ${exIds.join(", ")}`] : []),
       "재현 방법: docs/role-event-draw-verify.md · `node scripts/role-event-verify.cjs`",
-    ].join("\n"));
+    ].join("\n"), [], { ownerOnly: isBackfill(round) });
   }
 
   // ═════════ 당첨 DM · 미연락 · 승계 · 종료 ═════════
@@ -740,7 +742,7 @@ function createRoleEvent(deps) {
     for (let r = maxRank + 1; r <= order.length; r++) {
       if (used.has(order[r - 1])) continue;
       await sbInsert(T.A, { round_id: round.id, entry_id: order[r - 1], draw_rank: r, status: "won", succeeded_from: cancelled.id });
-      await announce(`역할군 ${round.round_no}회 — ${cancelled.draw_rank}순번 미연락으로 ${r}순번이 이어받아요`);
+      await announce(`역할군 ${round.round_no}회 — ${cancelled.draw_rank}순번 미연락으로 ${r}순번이 이어받아요`, [], { ownerOnly: isBackfill(round) });
       return r;
     }
     await dmOwner(`역할군 ${round.round_no}회 — 순번이 다 떨어져 당첨 1자리가 비었어`);

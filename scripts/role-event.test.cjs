@@ -360,7 +360,9 @@ test("소급 회차(17회 · 42시즌) — 마감 과거 허용 · 수동등록 
   assert.ok(r.round, r.msg);
   assert.equal(w.round().status, "closed");
   assert.equal(w.round().winners_count, 3);
-  assert.match(w.dc.posts[0].content, /밀린 추첨/);
+  // 소급 회차 공지는 공지 채널이 있어도 공개하지 않고 오너 DM 문안으로만
+  assert.equal(w.dc.posts.length, 0);
+  assert.ok(w.dc.dms.some((d) => d.to === OWNER && /공개하지 않음/.test(d.content || "") && /밀린 추첨/.test(d.content || "")));
   // 회원 신청은 막히고(open 아님) 오너 수동등록만 된다
   const ap = await apply(w, dry.U.a, "Pa", "kakao", "squad");
   assert.match(ap.last().content, /신청 기간이 아니에요/);
@@ -384,6 +386,7 @@ test("소급 회차(17회 · 42시즌) — 마감 과거 허용 · 수동등록 
     hash: rr.participants_hash, randomness: rr.drand_randomness, winners: 3 });
   const byId = new Map(w.entries().map((e) => [e.id, e.account_id]));
   assert.deepEqual(rep.winners, rr.draw_order.slice(0, 3).map((id) => byId.get(id)));
+  assert.equal(w.dc.posts.length, 0);                                          // 결과 · 확정 · 발표도 채널에 안 나간다
   const g = await w.re.grantRoles(rr.id);
   assert.match(g.error, /소급/);
   assert.equal(w.dc.roleOps.length, 0);
