@@ -124,7 +124,7 @@ function makeDrand(clock, { failTimes = 0 } = {}) {
 }
 
 // 디스코드 — DM · 채널 게시 · 역할을 기록만 한다
-function makeDiscord({ closedDm = [], roleMembers = [], survivorMembers = [], notInGuild = [], noPermission = false } = {}) {
+function makeDiscord({ closedDm = [], roleMembers = [], survivorMembers = [], notInGuild = [], noPermission = false, messages = [] } = {}) {
   const dms = [], posts = [], roleOps = [];
   const person = (id) => ({ id, displayName: "u" + id.slice(-3) });
   const members = new Map(roleMembers.map((id) => [id, person(id)]));            // 「43s master」(ROLE)
@@ -140,7 +140,16 @@ function makeDiscord({ closedDm = [], roleMembers = [], survivorMembers = [], no
     members: { fetch: async (id) => { if (!id) return null; if (notInGuild.includes(id)) { const e = new Error("Unknown Member"); e.code = 10007; throw e; } return memberObj(id); } } };
   const client = {
     users: { fetch: async (id) => ({ send: async (p) => { if (closedDm.includes(id)) { const e = new Error("Cannot send messages to this user"); e.code = 50007; throw e; } dms.push({ to: id, ...p }); } }) },
-    channels: { fetch: async (id) => ({ send: async (p) => { posts.push({ ch: id, ...p }); } }) },
+    channels: { fetch: async (id) => ({ send: async (p) => { posts.push({ ch: id, ...p }); },
+      // 채널 글 — 최신 순 · before 커서 · limit (discord.js messages.fetch 모양만)
+      messages: { fetch: async ({ limit = 100, before } = {}) => {
+        const all = [...messages].sort((a, b) => b.t - a.t);
+        const start = before ? all.findIndex((m) => m.id === before) + 1 : 0;
+        const page = all.slice(start, start + limit).map((m) => [m.id, { id: m.id, createdTimestamp: m.t, content: m.content,
+          author: { id: m.authorId, username: m.username, globalName: null, bot: false }, member: { displayName: m.username },
+          attachments: new Map((m.files || []).map((u, i) => [String(i), { url: u }])) }]);
+        return new Map(page);
+      } } }) },
     guilds: { cache: new Map([["G", guild]]), fetch: async () => guild },
   };
   return { client, dms, posts, roleOps, members, survivors };

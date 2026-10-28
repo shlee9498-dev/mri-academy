@@ -657,6 +657,16 @@ function createRoleEvent(deps) {
   // ═════════ 당첨 DM · 미연락 · 승계 · 종료 ═════════
   async function notifyAward(round, a) {
     const e = await one(T.E, `select=*&id=eq.${a.entry_id}`);
+    // 소급 회차(17회 등)는 당첨자에게 봇이 DM 하지 않는다 — 연락 · 기프티콘은 오너 손(10/28 총무 주문).
+    // 오너가 챙기는 것으로 보고 바로 「연락됨」으로 두고(48시간 취소 · 승계 없음) 오너에게만 [지급함] 카드를 보낸다.
+    if (isBackfill(round)) {
+      const ok = await sbPatch(T.A, `id=eq.${a.id}&status=eq.won&notified_at=is.null`,
+        { notified_at: nowIso(), contacted_at: nowIso(), status: "contacted", dm_error: "owner_handles" });
+      if (!ok.length) return;
+      await dmOwner({ content: `🎁 역할군 ${round.round_no}회(소급) 당첨 ${a.draw_rank}순번 #${e?.id} ${e?.pubg_name} · <@${e?.discord_id}> — 당첨 안내 · 기프티콘은 오너가 직접(봇 DM 없음) · 보낸 뒤 [지급함]`,
+        components: [row(btn(`roleev:paid:${a.id}`, "지급함", 3))] });
+      return;
+    }
     const sent = await dmUser(e?.discord_id, { content: COPY.winnerDm(round), components: [row(btn(`roleev:claim:${a.id}`, "받을게요", 1))] });
     const patch = { notified_at: nowIso(), status: "notified", dm_error: sent ? null : "dm_closed" };
     const ok = await sbPatch(T.A, `id=eq.${a.id}&status=eq.won&notified_at=is.null`, patch);
@@ -789,6 +799,90 @@ function createRoleEvent(deps) {
       return summary;
     } finally { running.delete(key); }
   }
+  // ═════════ 작업 요청(세션 → 봇) — PUBG 키 · 디스코드는 봇에만 있어서, 세션이 ops_state 에 요청을 넣으면 봇이 다음 틱에 한다 ═════════
+  // ops_state 'role-event:job' = { id, kind, status:'requested', ... } → 봇이 status running → done | error 로 바꾸고 result 를 붙인다.
+  //   kind 'lookup'   — { channelId, from, to, season, nicks:[…] } : 채널 글(작성자 id · 이름 · 날짜 · 글 · 첨부 주소) + 닉마다 스팀 · 카카오 조회 → 그 시즌 모드별 tier · RP
+  //   kind 'backfill' — { roundNo, season, closesAt, verifyAfter, drawAt, winners, entries:[{ discordId, discordName, platform, mode, accountId, pubgName }] } : 소급 회차 + 등록
+  //   kind 'publish'  — { roundNo } : 결과 공지(= 오너 카드 [결과 공지])
+  // 읽기 · 더하기만 한다. seed 는 봇 안에서만 만들고 결과에 싣지 않는다.
+  const JOB_KEY = "role-event:job";
+  async function jobLookup(job) {
+    const out = { posts: [], players: [] };
+    if (job.channelId) {
+      const c = getClient();
+      const channel = await c.channels.fetch(String(job.channelId));
+      let before = null;
+      for (let page = 0; page < 30; page++) {
+        const batch = await channel.messages.fetch({ limit: 100, cache: false, ...(before ? { before } : {}) });
+        if (!batch.size) break;
+        const list = [...batch.values()];
+        for (const m of list) {
+          const t = m.createdTimestamp;
+          if ((!job.from || t >= Date.parse(job.from)) && (!job.to || t < Date.parse(job.to)))
+            out.posts.push({ at: new Date(t).toISOString(), authorId: m.author?.id, username: m.author?.username || null, globalName: m.author?.globalName || null,
+              displayName: m.member?.displayName || null, bot: !!m.author?.bot, content: (m.content || "").slice(0, 400),
+              attachments: [...(m.attachments?.values?.() || [])].map((a) => a.url) });
+        }
+        before = list[list.length - 1].id;
+        if (job.from && list[list.length - 1].createdTimestamp < Date.parse(job.from)) break;
+      }
+      out.posts.reverse();
+    }
+    for (const nick of job.nicks || []) {
+      const row = { nick, found: [] };
+      for (const pf of ["steam", "kakao"]) {
+        await sleep(pacing());
+        let p;
+        try { p = await findPlayer(pf, nick); } catch (e) { if (e?.status !== 404) row[`${pf}Error`] = String(e?.status || e?.message); continue; }
+        const hit = { platform: pf, accountId: p.id, name: p.attributes?.name || null, seasons: {} };
+        for (const season of [].concat(job.season || [])) {
+          const sid = await resolveSeasonId(pf, season).catch(() => null);
+          if (!sid) { hit.seasons[season] = { error: "season_unresolved" }; continue; }
+          await sleep(pacing());
+          try {
+            const d = await pubgGet(`/shards/${pf}/players/${p.id}/seasons/${sid}/ranked`, 0);
+            const modes = d?.data?.attributes?.rankedGameModeStats || {};
+            hit.seasons[season] = { seasonId: sid, modes: Object.fromEntries(Object.entries(modes).map(([k, m]) => [k,
+              { tier: m.currentTier?.tier || null, subTier: m.currentTier?.subTier || null, rp: m.currentRankPoint ?? null, best: m.bestRankPoint ?? null, rounds: m.roundsPlayed ?? null }])) };
+          } catch (e) { hit.seasons[season] = { seasonId: sid, error: String(e?.status || e?.message) }; }
+        }
+        row.found.push(hit);
+      }
+      out.players.push(row);
+    }
+    return out;
+  }
+  async function jobBackfill(job) {
+    const r = await createRound({ roundNo: job.roundNo, season: job.season, closesAt: job.closesAt, verifyAfter: job.verifyAfter, drawAt: job.drawAt,
+      backfill: true, winners: job.winners || null, by: env.MRI_OWNER_ID || null });
+    if (r.error) return { error: r.error, msg: r.msg };
+    const saved = [];
+    for (const x of job.entries || []) {
+      const e = await saveEntry(r.round, { discord_id: String(x.discordId), discord_name: x.discordName || null, platform: x.platform, mode: x.mode,
+        pubg_name: x.pubgName, pubg_name_input: x.nickInput || x.pubgName, account_id: x.accountId, name_match: null });
+      await sbPatch(T.E, `id=eq.${e.id}`, { reviewed_by: "session", reviewed_at: nowIso(), review_note: x.note || "소급 등록(채널 신청글)", updated_at: nowIso() });
+      saved.push(e.id);
+    }
+    return { roundId: r.round.id, seedCommit: r.round.seed_commit, plannedDrand: r.planned, entryIds: saved };
+  }
+  async function jobTick() {
+    const job = await opsGet(JOB_KEY).catch(() => null);
+    if (!job || job.status !== "requested" || running.has("job")) return;
+    running.add("job");
+    try {
+      await opsPut(JOB_KEY, { ...job, status: "running", startedAt: nowIso() });
+      let result;
+      try {
+        if (job.kind === "lookup") result = await jobLookup(job);
+        else if (job.kind === "backfill") result = await jobBackfill(job);
+        else if (job.kind === "publish") { const r = await roundByNo(job.roundNo); result = r ? await publishResults(r.id) : { error: "no_round" }; }
+        else result = { error: "unknown_kind" };
+        await opsPut(JOB_KEY, { ...job, status: result?.error ? "error" : "done", finishedAt: nowIso(), result });
+      } catch (e) { await opsPut(JOB_KEY, { ...job, status: "error", finishedAt: nowIso(), result: { error: String(e?.message || e).slice(0, 300) } }); }
+      log.log(`[role-event] job ${job.id || "-"} ${job.kind} done`);
+    } finally { running.delete("job"); }
+  }
+
   async function dailyTick() {
     for (const r of await sbSelect(T.R, "select=*&status=in.(open,closed)&order=round_no.asc")) {
       if (running.has(`daily:${r.id}`)) continue;
@@ -800,6 +894,7 @@ function createRoleEvent(deps) {
   async function tick() {
     if (disabled() || !env.SUPABASE_URL) return { skipped: true };
     await dailyTick().catch((e) => log.error("[role-event] daily_tick", e?.message));
+    bg(jobTick()).catch((e) => log.error("[role-event] job_tick", e?.message));
     const rounds = await liveRounds();
     for (const r0 of rounds) {
       let r = r0;
@@ -1056,7 +1151,7 @@ function createRoleEvent(deps) {
     if (itx.commandName === "역할군") return handleOwner(itx);
   }
 
-  return { handle, tick, runDaily, runVerify, createRound, reschedule, resolveSeasonId, publishResults, freeze, draw, announceDraw, processAwards, saveEntry, grantRoles, revokeRoles, statusText, idle: () => Promise.all([...inflight]), _pending: pending };
+  return { handle, tick, runDaily, jobTick, runVerify, createRound, reschedule, resolveSeasonId, publishResults, freeze, draw, announceDraw, processAwards, saveEntry, grantRoles, revokeRoles, statusText, idle: () => Promise.all([...inflight]), _pending: pending };
 }
 
 // ── 명령 정의 (설계 §2) ──
