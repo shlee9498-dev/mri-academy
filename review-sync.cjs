@@ -11,6 +11,7 @@ const crypto = require("node:crypto");
 const { normMessage, chatterOf, uniqueViolation, PHOTO_ONLY_ANSWER } = require("./feedback-import.cjs");
 
 const CURSOR_KEY = "review_sync:cursor";
+const PENDING_KEY = "review_sync:pending";                    // 확인 대기 채널 현황(건수만 · 짝 확정 판단용 · 본문 없음)
 const MIRROR_SINCE_KEY = "review_mirror:since";
 const IMPORT_AT = "2026-10-03T04:30:47.162Z";                 // 10/3 이관 시작 — 그 전 글은 이관이 묶어 넣었다(9.46.3)
 const FRESH_FROM = "2026-09-28T15:00:00.000Z";                // 이관에 없던 채널 — 9/29 00:00 KST 뒤부터
@@ -85,6 +86,7 @@ function createReviewSync(deps) {
   const logError = deps.logError || console.error;
   const bootId = crypto.randomBytes(5).toString("hex");
   const iso = (ms = now()) => new Date(ms).toISOString();
+  let sweepN = 0;
   let mapCache = null, mapAt = 0, peopleCache = null, peopleAt = 0, sweeping = false, mirroring = false;
   const stats = { reviews: 0, answers: 0, edits: 0, hides: 0, images: 0, skipped: 0, pending: 0, errors: 0, mirrors: 0 };
 
@@ -356,10 +358,40 @@ function createReviewSync(deps) {
         if (!failed) cursors[ch] = last;                            // 실패가 있으면 커서를 안 옮긴다 — 다음 점검이 한 번 더
       }
       await opsSet(CURSOR_KEY, cursors);
+      if (sweepN++ % 6 === 0) await scanPending(client, mp).catch((e) => logError("rsync_pending_scan", e?.code || e?.status));
       log(`[review-sync] 점검 채널 ${tally.channels} · 본 글 ${tally.seen} · 복기 +${tally.review} · 답 +${tally.answer} · 있음 ${tally.exists} · 건너뜀 ${tally.skip} · 오류 ${tally.errors}`);
       return tally;
     } catch (e) { logError("rsync_sweep", e?.status || e?.code || String(e?.message || "").slice(0, 60)); return null; }
     finally { sweeping = false; }
+  }
+
+  // 확인 대기 채널 현황(읽기만 · 한 시간에 한 번) — 시작선 뒤 글 수 · 트레이너 글 수 · 명부에 맞는 수강생 · 명부 밖 글쓴이(디스코드 id)
+  //   → ops_state 'review_sync:pending'. 세션이 이걸 보고 짝 확정을 오너 · 지휘에게 올린다. 본문 · 채널 이름은 담지 않는다
+  async function scanPending(client, mp) {
+    const ppl = await people();
+    const out = {};
+    for (const [ch, map] of mp.byCh) {
+      if (map.kind !== "student" || map.confirmed_at) continue;
+      let channel;
+      try { channel = await client.channels.fetch(ch); } catch { out[ch] = { error: "fetch" }; continue; }
+      if (!channel?.messages) continue;
+      const msgs = await readAfter(channel, await startCursor(ch), SWEEP_PER_CH).catch(() => null);
+      if (!msgs) { out[ch] = { error: "read" }; continue; }
+      const row = { n: 0, trainer: 0, students: {}, unmatched: {}, last: null, candidate: map.student_id ?? null };
+      for (const m of msgs) {
+        const n = normMessage(m);
+        if (n.bot || n.system) continue;
+        row.n++;
+        row.last = new Date(n.ts).toISOString();
+        if (ppl.staffByDiscord.has(n.authorId)) row.trainer++;
+        else if (ppl.studentByDiscord.has(n.authorId)) { const sid = ppl.studentByDiscord.get(n.authorId); row.students[sid] = (row.students[sid] || 0) + 1; }
+        else if (n.authorId) row.unmatched[n.authorId] = (row.unmatched[n.authorId] || 0) + 1;
+      }
+      if (row.n) out[ch] = row;
+    }
+    await opsSet(PENDING_KEY, { at: iso(), channels: out });
+    log(`[review-sync] 확인 대기 채널 현황 — 글 있는 채널 ${Object.keys(out).length}`);
+    return out;
   }
 
   // ── 거울(9.46.4) ──
@@ -435,4 +467,4 @@ function createReviewSync(deps) {
   return { ingest, onCreate, onUpdate, onDelete, sweep, mirrorTick, stats, bootId };
 }
 
-module.exports = { createReviewSync, decide, authorKind, mirrorEmbed, snowflakeAt, titleOf, isImage, IMPORT_AT, FRESH_FROM, CURSOR_KEY, MIRROR_SINCE_KEY };
+module.exports = { createReviewSync, decide, authorKind, mirrorEmbed, snowflakeAt, titleOf, isImage, IMPORT_AT, FRESH_FROM, CURSOR_KEY, MIRROR_SINCE_KEY, PENDING_KEY };
