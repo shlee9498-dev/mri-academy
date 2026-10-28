@@ -36,6 +36,8 @@ const killracePoster = require("./killrace-poster.cjs");
 // 킬내기 개인 누적 지표(§1.11) — 계정 기준 · 불투명 키 · 회차 묶음. 시험 scripts/killrace-career.test.cjs
 const killraceCareer = require("./killrace-career.cjs");
 const killraceTiers = require("./killrace-tiers.cjs");       // 공개 티어 읽기(§1.29) — 서버 표 하나(killrace:tiers)를 그대로
+// 역할군 이벤트(18회 · 43시즌부터) — 신청 · 검증 · drand 추첨 · 지급 기록. 설계 docs/role-event-bot-design.md · DDL §85 · 시험 scripts/role-event.test.cjs
+const roleEvent = require("./role-event.cjs");
 // 방송용 경쟁전 현황(오너 방송 OBS 띠) — 읽기 전용 · 시험 scripts/ranked-live.test.cjs
 const rankedLive = require("./ranked-live.cjs");
 // 킬내기 주간 개인 리더보드(§1.18) — 1 ~ 10위 · 역할 묶음(1 / 2-4 / 5-10) · 순위 계산은 이 모듈 한 곳. 시험 scripts/killrace-leaderboard.test.cjs
@@ -77,6 +79,9 @@ const publicRows = require("./public-rows.cjs");
 const { isLessonRow, lessonRowsOf } = require("./ops-status.cjs");
 // 연결 신청 승인 · 거절 규칙(계약 §9.32) — 트레이너는 자기 담당만 · 먼저 누른 사람만. 카드 버튼 · /연결승인 이 같이 쓴다.
 const linkRules = require("./link-approve.cjs");
+// 통장 입출금 알림 받기(§88 · docs/bank-alerts.md · 지휘 10/7 · 10/28) — 오너 폰 알림 전달 앱이 보낸 은행 알림을 받아 쌓는다(참고 장부) · toss 입금은 짝 후보 + 오너 DM(§9.45).
+//   돈 · 판수 · 신청 상태를 바꾸지 않고 payments · 정산과 잇지 않는다. 시험 scripts/bank-alerts.test.cjs
+const bankAlerts = require("./bank-alerts.cjs");
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -1010,6 +1015,8 @@ function computeViolations(guild) {
 }
 
 let botClient = null;   // Phase T1 — 스냅샷 완료 시 오너 DM용 모듈 레벨 ref
+// 레슨 디코 피드백 ↔ 앱 복기 실시간 연동(계약 §9.46 · review-sync.cjs) — 아래 복기 API 를 만든 뒤 채운다. 봇 이벤트 · 점검 · 거울이 쓴다.
+let reviewSync = null;
 // 연결 신청 접수 — 봇 블록이 채운다(discordDM 과 같은 패턴). 앱의 연결 대기 화면이
 // student-portal.cjs 의 POST /link-request 로 들어와 이 함수를 쓴다. 봇이 없으면 null.
 let linkReqIntake = null;
@@ -1333,6 +1340,12 @@ if (process.env.DISCORD_TOKEN) {
     // 이관 실행 요청 확인(§57) — 1분마다 ops_state 한 번 읽는다. 새 요청이 없으면 그걸로 끝난다.
     if (hasSupabase()) setInterval(() => feedbackImport.poll()
       .catch((e) => console.error("fbimport_poll", e?.status || "", e?.message)), 60_000);
+    // 디코 ↔ 앱 복기(계약 §9.46.3 · §9.46.4) — 점검 · 백필 = 1분 뒤 첫 회 · 10분마다 / 거울 카드 = 30초마다
+    if (hasSupabase() && reviewSync) {
+      setTimeout(() => reviewSync.sweep(), 60_000);
+      setInterval(() => reviewSync.sweep(), 10 * 60_000);
+      setInterval(() => reviewSync.mirrorTick(), 30_000);
+    }
     // 기동 틱은 로그인 전에 돌아 카드 다시 띄우기가 실패할 수 있다 — 준비 직후 한 번 더(ops_state 'payreq:resend').
     setTimeout(() => runPayreqResend().catch((e) => console.error("payreq_resend_ready", e?.message)), 5000);
 
@@ -1400,7 +1413,8 @@ if (process.env.DISCORD_TOKEN) {
       // 있고 GmI(LESSON_GUILD_ID)에는 없어서, GmI에서 /연결승인을 열면 유저 옵션에 수강생이 안 뜬다
       // (유저 옵션은 그 길드 멤버만 고를 수 있다). 권한은 길드가 아니라 staff 명부 기준이라
       // 어느 길드에서 실행해도 같은 규칙이 돈다.
-      const mainCmds = [...(splitLesson ? cmds : [...cmds, LESSON_CMD, CORRECTION_CMD]), ...LINK_CMDS];
+      // /역할군신청(회원) 은 MRI ACADEMY 서버(GUILD_ID) 목록 맨 뒤 — 설계 §2
+      const mainCmds = [...(splitLesson ? cmds : [...cmds, LESSON_CMD, CORRECTION_CMD]), ...LINK_CMDS, roleEvent.APPLY_CMD];
       if (process.env.GUILD_ID) await client.application.commands.set(mainCmds, process.env.GUILD_ID);
       else await client.application.commands.set(mainCmds);
       console.log(`slash commands registered (main guild ${process.env.GUILD_ID || "global"}):`, mainCmds.map((c) => c.name).join(", "));
@@ -1418,6 +1432,9 @@ if (process.env.DISCORD_TOKEN) {
       // ⚠️ 전파에 최대 1시간 — 배포 직후 안 보이는 건 정상이다.
       try { await client.application.commands.create(LINKREQ_CMD); console.log("/연결신청 registered (global · 길드+DM)"); }
       catch (e) { console.error("linkreq_register_failed", e?.message); }
+      // /역할군(오너 · 회차생성·현황·검증·판정·추첨·지급·수동등록) 글로벌 등록(DM 전용 · /승급 과 같은 방식)
+      try { await client.application.commands.create(roleEvent.ADMIN_CMD); console.log("/역할군 registered (global · DM 전용)"); }
+      catch (e) { console.error("role_event_register_failed", e?.message); }
     } catch (e) { console.error("slash_register_failed", e?.message); }
 
   });
@@ -1436,10 +1453,21 @@ if (process.env.DISCORD_TOKEN) {
   // pubgGet·pubgMatch·sb* 는 모듈 레벨 함수 선언이라 여기서 그대로 넘긴다.
   const killraceBot = killrace.createKillrace({ pubgGet, pubgMatch, sbSelect, sbUpsert, sbPatch, sbInsert });
   client.on("interactionCreate", (itx) => killraceBot.handle(itx).catch((e) => console.error("[killrace] handler", e?.message)));
+  // 역할군 이벤트 — /역할군신청 · /역할군 · 버튼(roleev:*) · 5분 크론. ROLE_EVENT_DISABLED=1 이면 신청 · 크론 정지(배포 없이)
+  const roleEventBot = roleEvent.createRoleEvent({ sbSelect, sbInsert, sbPatch, sbUpsert, pubgGet, findPlayer, seasonIdByNumber, getClient: () => botClient });
+  client.on("interactionCreate", (itx) => roleEventBot.handle(itx).catch((e) => console.error("[role-event] handler", e?.status || "", e?.message)));
+  client.once("ready", () => {
+    if (!hasSupabase()) return;
+    setInterval(() => roleEventBot.tick().catch((e) => console.error("[role-event] tick", e?.status || "", e?.message)), 5 * 60 * 1000).unref();
+  });
   // /킬내기포스터(오너 전용 · 미리 보기 · 켜기 · 끄기 · 게시) — killrace-poster.cjs
   client.on("interactionCreate", (itx) => { if (killPoster) killPoster.handle(itx).catch((e) => console.error("[killrace-poster] handler", e?.message)); });
   // 결과 화면 스샷 → 점수판 「잠정」(killrace-shot.cjs · 팀배정 채널 사진만 · 확정 점수는 안 건드린다)
   client.on("messageCreate", (msg) => { if (killShot) killShot.onMessage(msg).catch((e) => console.error("[killrace-shot] handler", e?.message)); });
+  // 레슨 디코 피드백 채널 ↔ 앱 복기(계약 §9.46) — 확정 채널 글만 앱으로 · 수정 = 같은 행 · 삭제 = hidden_at. 실패는 10분 점검이 다시 집는다
+  client.on("messageCreate", (msg) => { if (reviewSync && msg.guild) reviewSync.onCreate(msg); });
+  client.on("messageUpdate", (_old, msg) => { if (reviewSync && msg?.guildId) reviewSync.onUpdate(msg); });
+  client.on("messageDelete", (msg) => { if (reviewSync && msg?.guildId) reviewSync.onDelete(msg); });
   client.once("clientReady", () => { if (killShot) killShot.checkChannel(client); });
 
   const isStaff = (id) => STAFF_IDS.includes(id);
@@ -7368,6 +7396,15 @@ async function gmiGuildMember(discordId) {
   const killDetail = killraceDetail.createDetail({ pubgGet, sbSelect, sbUpsert, sbPatch, fetchTelemetry: killrace.telemetry.fetchTelemetry, log: console });
   if (process.env.SUPABASE_URL && process.env.PUBG_API_KEY) setInterval(() => { killDetail.tick(); }, 60000).unref();
 }
+// 통장 입출금 알림 받기(§88 · docs/bank-alerts.md) — POST /api/bank-alerts · /hooks/bank-alert · env BANK_ALERT_SECRET 이 없으면 503(닫힘).
+//   계좌 번호는 저장하지 않는다(원문은 「[계좌]」로 가린 뒤) · 같은 알림 두 번이면 한 줄(중복 키) · 분당 30번까지.
+// 입금 알림 → 열린 신청 짝 찾기 · 오너 DM(계약 §9.45 · bank-match.cjs) — toss 통장만. 짝 후보만 만들고 payments · 신청 상태는 바꾸지 않는다.
+const bankMatch = require("./bank-match.cjs").createBankMatch({
+  sbSelect, sbPatch, levelTestFee: () => require("./intake-api.cjs").levelTestWon(),
+  notifyOwner: async (text) => { const oid = process.env.MRI_OWNER_ID; if (!botClient || !oid) return false; try { const u = await botClient.users.fetch(String(oid)); await u.send(text); return true; } catch (_) { return false; } },
+});
+bankAlerts.createBankAlerts({ insert: (row) => sbInsert("bank_alerts", row), afterSave: (row) => bankMatch.onSaved(row) })
+  .mount(app, { express, limiter: limit("bankAlerts", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
 // ── 운영 응답용 members 정제 ──
 // 계좌·실명은 gdcup_payouts(owner 전용)에만 존재해야 한다. 그런데 시즌2 레거시 행은
@@ -8710,6 +8747,14 @@ require("./replay-api.cjs")(app, { findPlayer, pubgGet, getUser, limit, sbSelect
 // STUDENT_APP_URL = 수강생 DM 끝의 앱 링크(학생 앱은 다른 저장소라 오너가 준 주소를 적는다 · 비어 있으면 링크 줄 없이).
 // notifyAssigned = 담당 트레이너에게도 보낼지 — 오너 판정 2026-09-30 「판수가 모자란 그 트레이너에게만」 → 끈다.
 const STUDENT_APP_URL = "https://app.mriacademy.gg";   // 오너 확인 2026-09-30
+// 디코 ↔ 앱 복기 연동(계약 §9.46) — 거울 카드 「앱에서 보기」 링크가 이 주소를 쓴다
+reviewSync = require("./review-sync.cjs").createReviewSync({
+  getClient: () => botClient,
+  sb: { select: sbSelect, insert: sbInsert, patch: sbPatch, upsert: sbUpsert },
+  importImage: (x) => reviewApi.importImage(x), firstImage: (id) => reviewApi.firstImage(id),
+  opaqueId: (k, id) => studentPortal.opaqueId(k, id), appUrl: STUDENT_APP_URL,
+  opsGet: (k) => opsStateGet(k), opsSet: (k, v) => opsStateSet(k, v),
+});
 const gamesShort = require("./games-short.cjs")({
   sbSelect, sbInsert, sbPatch, sbRpc, discordDM, appUrl: STUDENT_APP_URL, notifyAssigned: false,
 });
@@ -8990,6 +9035,15 @@ const REQUIRED_SCHEMA = {
   registry_history: ["discord_id","season","platform","pubg_name","account_id","real_name",
                      "valid_from","valid_to","note"],
   replies:          ["id","parent_type","parent_id","discord_id","discord_name","content","is_staff","hidden"],
+  // §85 역할군 이벤트(2026-10-17 · 더하기만) — role-event.cjs 가 쓰는 칸만
+  role_event_rounds:  ["id","round_no","season","rp_threshold","closes_at","verify_after","draw_at","status","seed_secret","seed_commit",
+                       "drand_chain","drand_round","drand_round_fixed_at","drand_randomness","results_published_at","participants_frozen_at",
+                       "participants_hash","draw_input","draw_order","winners_count","seed_revealed_at","draw_error","season_ids","created_by","updated_at"],
+  role_event_entries: ["id","round_id","discord_id","discord_name","platform","mode","pubg_name","pubg_name_input","name_match","account_id",
+                       "status","season_id","final_rp","best_rp","tier","sub_tier","rounds_played","verified_at","verify_error","verify_attempts",
+                       "raw","review_flags","reviewed_by","reviewed_at","review_note","role_granted_at","role_revoked_at","role_error","applied_at","updated_at"],
+  role_event_awards:  ["id","round_id","entry_id","draw_rank","status","notified_at","dm_error","contacted_at","paid_at","paid_by",
+                       "cancelled_at","cancel_reason","succeeded_from"],
   reviews:          ["id","discord_id","discord_name","trainer","content","hidden"],
   schedule_events:  ["id","kind","event_date","start_time","end_time","trainer_id","format","title",
                      "participants","capacity","memo","is_public","is_recruiting","status","created_by"],
@@ -9052,14 +9106,16 @@ const REQUIRED_SCHEMA = {
                          "author_staff_id","recipient_trainer_id","source","status","title","body","src_file_name",
                          "src_guild","src_channel","src_msg","consent_public_at","created_at","updated_at","published_at","hidden_at",
                          "visibility","visibility_changed_at",
-                         "public_at"],                      // §57 공개 대기(디스코드 이관 · 2026-10-01)
+                         "public_at",                       // §57 공개 대기(디스코드 이관 · 2026-10-01)
+                         "mirror_msg"],                     // §89 거울 카드(계약 §9.46.4 · 2026-10-30 실행)
   review_games:         ["id","review_id","ord","seq_label","map","map_raw"],
   review_phases:        ["id","game_id","ord","phase_from","phase_to","phase_to_end","header_raw","lines","tags","suggested_tags"],
   review_images:        ["id","review_id","phase_id","ord","original_path","display_path","thumb_path","width","height",
                          "bytes","sha256","uploaded_by_role","created_at"],
   review_annotations:   ["id","image_id","author_kind","author_id","shapes","version","updated_at"],
   review_feedback:      ["id","review_id","trainer_id","kind","phase_id","line_ord","verdict","body","due_booking_id","due_at","created_at","updated_at",
-                         "src_msg"],                        // §57 디스코드에서 옮긴 트레이너 답의 원문 좌표(재실행 멱등)
+                         "src_msg",                         // §57 디스코드에서 옮긴 트레이너 답의 원문 좌표(재실행 멱등)
+                         "hidden_at","mirror_msg"],         // §89 디코에서 지운 답 · 거울 카드(계약 §9.46 · 2026-10-30 실행)
   review_purge_log:     ["id","ran_at","dry_run","review_id","images","bytes","purged_at"],
   review_reads:         ["review_id","reader_kind","reader_id","read_at"],
   review_reactions:     ["review_id","phase_id","reactor_kind","reactor_id","emoji","created_at"],
@@ -9174,6 +9230,11 @@ const SCHEMA_OPTIONAL = {
   killrace_sponsors: ["id", "event_id", "display_name", "amount", "token_hash", "show_name", "agreed_at", "agree_terms_version", "agree_pure", "agree_carry", "agree_not_player", "deposit_confirmed_at", "deposit_confirmed_by", "memo", "created_at", "created_by", "carry_from_event"],   // carry_from_event = §82
   // §79 자율 판(앱 계약 §12 · killrace-api §1.33.4) — 미실행이면 자율 판 길만 503 table_missing
   killrace_casual: ["id", "play_date", "mode", "state", "opened_by", "opened_name", "opened_via", "opened_tier", "event_id", "detail", "log", "created_at", "updated_at"],
+  // §88 통장 입출금 알림(docs/bank-alerts.md · 지휘 10/7 · 10/28 짝 찾기 §9.45) — toss 입금은 짝 후보 + 오너 DM. 미실행이면 POST /api/bank-alerts 만 503 table_missing 이고
+  //   다른 기능은 그대로다. 읽는 화면(오너 목록 · 공개 합계)이 생기면 REQUIRED 로 올린다.
+  bank_alerts: ["id", "account_key", "direction", "amount", "balance", "occurred_at", "counterparty", "parse_status", "shape",
+                "dedupe_key", "source_app", "posted_at", "received_at", "raw_masked", "match_status", "match_kind", "match_ref",
+                "notified_at", "notify_failed_at"],
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
