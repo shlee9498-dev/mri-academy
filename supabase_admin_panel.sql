@@ -1230,10 +1230,11 @@ alter table public.consults drop constraint if exists chk_consults_source;
 alter table public.consults add  constraint chk_consults_source
   check (source is null or source in ('site','discord','kakao','soomgo'));
 
--- 22d-1) [제안 — 오너 승인 시 실행] 폼의 '유입 경로'(유튜브·지인·숨고 등) 전용 컬럼.
---        22d의 source와 이름이 겹치는 다른 개념이라 분리를 제안한다. 이 컬럼이 없으면
---        server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다(유실은 없고 질의만 불편).
--- alter table public.consults add column if not exists inflow text;
+-- 22d-1) 폼의 「어디서 보고 오셨어요?」 전용 컬럼(오너 「유입경로는 … 일단 ㅇㅋ」 2026-10-19 · 더하기만 · 세션 실행 10/19 · 46 → 47칸).
+--        22d의 source(접수 채널 site|discord|…)와 이름이 겹치는 다른 개념이라 분리했다. 값 = inflow.cjs 7개 화면 이름
+--        (유튜브 쇼츠 · 유튜브 롱폼 · SOOP 방송 · 디스코드 · 지인 소개 · 검색 · 기타) — 목록은 서버가 지키고 칸 제약은 두지 않는다
+--        (목록을 바꿀 때 제약 교체 = 기존 것 바꾸기가 되지 않게). 집계: select inflow, count(*) from consults group by 1;
+alter table public.consults add column if not exists inflow text;
 
 -- 22f) 신청 UTM 3컬럼 (2026-09-17 · 관제탑 UTM 집계 경로 확인) — index.html 트레이너 소개 CTA 가
 --      apply.html?utm_source=site&utm_medium=trainers&utm_content=hyuntae|jungu|muri 로 진입하고 폼이 제출 payload 에
@@ -7622,6 +7623,202 @@ notify pgrst, 'reload schema';
 --   (되돌리면 트레이너봇은 3시간 안 수업을 칸을 열기 전에 막는다 — 서버 · 봇 코드는 그대로 둬도 된다)
 
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- §84  트레이너 예약 한 건 바꾸기 · 취소 — /수업변경 · /수업취소 (2026-10-16 · 오너 OK 10/16 · 계약 §9.38 · 더하기만)
+--   예약 한 건(머리 줄)을 옮기거나 취소한다. 닫기 · 새 칸 열기 · 새 예약 · 늦은 변경 −3 이 **한 함수 안에서** 같이 되거나 같이 안 된다.
+--   안쪽 블록에서 하나라도 오류면 raise → 블록 전체 되돌림 → 그 코드를 돌려준다(옛 예약 그대로).
+--   부르는 곳: booking-api.cjs POST /api/trainer-portal/bookings/:id/cancel · /move (트레이너봇만 부른다).
+--   p_late: 3시간 안(개인)일 때만 'agreed'(사전 합의 · 차감 없음) | 'student'(수강생 사정 · 늦은 취소 −3 · §9.18 고정값). 직강은 null 만.
+--   새 표 · 칸 · 제약 없음 · 기존 함수 변경 없음(부르기만: open_trainer_slots · book_slot_trainer · book_course_slot · decide_games_adjustment).
+-- 84-0) 스냅샷: select proname from pg_proc where proname in ('trainer_cancel_booking','trainer_move_booking');   -- 0행
+--        §83 이 먼저 있어야 한다: select count(*) from pg_proc where proname = 'book_slot_trainer';                 -- 1
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+-- 공통 판정 + 닫기(내부용) — 머리 줄 잠금 · 내 칸 · booked · 시작 전 · 개인/직강 · 3시간 사유 판정 → 닫기.
+--   반환 {student_id, slot_id, slot_start, lesson_type, duration_min, course_id, games_held, late_window} 또는 {error}.
+--   닫기: 개인 = 머리 · 꼬리 cancelled · 쓰던 30분 칸 cancelled / 직강 = 그 줄만 cancelled · 칸이 비고 출석이 없으면 칸도 cancelled.
+create or replace function public.trainer_close_booking_(
+  p_trainer_id bigint, p_booking_id bigint, p_late text
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_b    slot_bookings%rowtype;
+  v_s    trainer_slots%rowtype;
+  v_win  boolean;
+  v_ids  bigint[];
+begin
+  if p_trainer_id is null or p_booking_id is null then return jsonb_build_object('error','invalid_body'); end if;
+  if p_late is not null and p_late not in ('agreed','student') then return jsonb_build_object('error','invalid_body'); end if;
+  select * into v_b from slot_bookings where id = p_booking_id for update;
+  if not found or v_b.span_head_id is not null or v_b.status <> 'booked' then return jsonb_build_object('error','not_found'); end if;
+  select * into v_s from trainer_slots where id = v_b.slot_id for update;
+  if not found or v_s.trainer_id is distinct from p_trainer_id then return jsonb_build_object('error','not_found'); end if;
+  if v_s.lesson_type not in ('personal','course') then return jsonb_build_object('error','not_found'); end if;
+  if v_s.slot_start <= now() then return jsonb_build_object('error','already_started'); end if;
+
+  v_win := v_s.slot_start - now() < interval '3 hours';
+  if v_s.lesson_type = 'course' then
+    if p_late is not null then return jsonb_build_object('error','invalid_body'); end if;   -- 직강은 사유 없음(회차 · −3 없음)
+  elsif v_win and p_late is null then
+    return jsonb_build_object('error','late_reason_required');
+  elsif not v_win and p_late is not null then
+    return jsonb_build_object('error','late_not_allowed');
+  end if;
+
+  if v_s.lesson_type = 'personal' then
+    select array_agg(slot_id) into v_ids from slot_bookings where id = v_b.id or span_head_id = v_b.id;
+    update slot_bookings set status = 'cancelled', cancelled_at = now(), games_held = 0
+     where id = v_b.id or span_head_id = v_b.id;
+    -- 다시 열지 않는다 — 열어 두면 수강생 앱에 빈 칸으로 뜬다(다시 열기는 앱 · 계약 §9.38.3)
+    update trainer_slots set status = 'cancelled' where id = any(v_ids) and status <> 'cancelled';
+  else
+    update slot_bookings set status = 'cancelled', cancelled_at = now() where id = v_b.id;
+    if not exists (select 1 from slot_bookings where slot_id = v_s.id and status = 'booked')
+       and not exists (select 1 from course_sessions where slot_id = v_s.id and status <> 'cancelled') then
+      update trainer_slots set status = 'cancelled' where id = v_s.id;
+    end if;
+  end if;
+
+  return jsonb_build_object('student_id', v_b.student_id, 'slot_id', v_s.id, 'slot_start', v_s.slot_start,
+    'lesson_type', v_s.lesson_type, 'duration_min', coalesce(v_b.duration_min, v_s.duration_min),
+    'course_id', v_b.course_id, 'games_held', v_b.games_held, 'late_window', v_win);
+end;
+$$;
+
+-- 늦은 변경 −3(내부용) — §9.18 late_cancel 고정값을 바로 반영(decide_games_adjustment direct · 요청 줄 = 기록).
+--   played_at = 원래 수업 KST 날짜와 오늘 KST 중 이른 날(미래 날짜 판수 줄을 만들지 않는다).
+create or replace function public.trainer_late_charge_(
+  p_trainer_id bigint, p_student_id bigint, p_slot_start timestamptz, p_reason text
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_req bigint;
+  v_out jsonb;
+begin
+  insert into games_adjust_requests (student_id, trainer_id, kind, remaining_delta, reason, played_at)
+  values (p_student_id, p_trainer_id, 'late_cancel', -3, p_reason,
+          least((p_slot_start at time zone 'Asia/Seoul')::date, (now() at time zone 'Asia/Seoul')::date))
+  returning id into v_req;
+  v_out := decide_games_adjustment(v_req, true, 'direct');
+  if coalesce((v_out->>'ok')::boolean, false) is not true then
+    return jsonb_build_object('error', coalesce(v_out->>'error', 'adjust_failed'));
+  end if;
+  return jsonb_build_object('requestId', v_req, 'remainingAfter', v_out->'remainingAfter');
+exception
+  when unique_violation then return jsonb_build_object('error','request_pending');
+end;
+$$;
+
+create or replace function public.trainer_cancel_booking(
+  p_trainer_id bigint, p_booking_id bigint, p_late text default null
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_c   jsonb;
+  v_l   jsonb := null;
+begin
+  begin
+    v_c := trainer_close_booking_(p_trainer_id, p_booking_id, p_late);
+    if v_c ? 'error' then raise exception using errcode = 'P0001', message = v_c->>'error'; end if;
+    if p_late = 'student' then
+      v_l := trainer_late_charge_(p_trainer_id, (v_c->>'student_id')::bigint, (v_c->>'slot_start')::timestamptz, '늦은 취소(트레이너봇)');
+      if v_l ? 'error' then raise exception using errcode = 'P0001', message = v_l->>'error'; end if;
+    end if;
+  exception when sqlstate 'P0001' then
+    return jsonb_build_object('error', sqlerrm);
+  end;
+  return jsonb_build_object('cancelled', true, 'gamesRestored', (v_c->>'games_held')::int,
+    'studentId', (v_c->>'student_id')::bigint, 'slotStart', v_c->'slot_start', 'lessonType', v_c->>'lesson_type',
+    'durationMin', (v_c->>'duration_min')::int, 'lateWindow', (v_c->>'late_window')::boolean,
+    'late', p_late, 'lateCharged', case when v_l is null then 0 else 3 end,
+    'lateRequestId', v_l->'requestId', 'remainingAfter', v_l->'remainingAfter');
+end;
+$$;
+
+create or replace function public.trainer_move_booking(
+  p_trainer_id bigint, p_booking_id bigint, p_new_start timestamptz, p_duration_min int default null, p_late text default null
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_b    slot_bookings%rowtype;
+  v_s    trainer_slots%rowtype;
+  v_dur  int;
+  v_c    jsonb;
+  v_o    jsonb;
+  v_n    jsonb;
+  v_l    jsonb := null;
+  v_new  bigint;
+begin
+  if p_trainer_id is null or p_booking_id is null or p_new_start is null then return jsonb_build_object('error','invalid_body'); end if;
+  -- 바뀌는 게 있는가 — 잠그기 전 가벼운 판정(잠근 뒤 trainer_close_booking_ 이 다시 본다)
+  select * into v_b from slot_bookings where id = p_booking_id;
+  if not found then return jsonb_build_object('error','not_found'); end if;
+  select * into v_s from trainer_slots where id = v_b.slot_id;
+  if not found then return jsonb_build_object('error','not_found'); end if;
+  if v_s.lesson_type = 'course' and p_duration_min is not null then return jsonb_build_object('error','invalid_body'); end if;
+  v_dur := coalesce(p_duration_min, v_b.duration_min, v_s.duration_min);
+  if v_s.slot_start = p_new_start and (v_s.lesson_type = 'course' or v_dur = v_b.duration_min) then
+    return jsonb_build_object('error','same_time');
+  end if;
+
+  begin
+    v_c := trainer_close_booking_(p_trainer_id, p_booking_id, p_late);
+    if v_c ? 'error' then raise exception using errcode = 'P0001', message = v_c->>'error'; end if;
+
+    if v_c->>'lesson_type' = 'personal' then
+      -- 옛 칸을 닫은 뒤에 연다 — 30분만 미루는 이동도 옛 칸과 겹치지 않는다
+      v_o := open_trainer_slots(p_trainer_id, p_new_start, v_dur, 'personal', 1);
+      if v_o ? 'error' then raise exception using errcode = 'P0001', message = v_o->>'error'; end if;
+      v_n := book_slot_trainer((v_c->>'student_id')::bigint, (v_o->>'firstId')::bigint, v_dur);
+    else
+      select id into v_new from trainer_slots
+       where trainer_id = p_trainer_id and lesson_type = 'course' and status = 'open' and slot_start = p_new_start
+       limit 1;
+      if v_new is null then raise exception using errcode = 'P0001', message = 'no_course_slot'; end if;
+      v_n := book_course_slot((v_c->>'student_id')::bigint, v_new, p_trainer_id, (v_c->>'course_id')::bigint);
+    end if;
+    if v_n ? 'error' then raise exception using errcode = 'P0001', message = v_n->>'error'; end if;
+
+    if p_late = 'student' then
+      v_l := trainer_late_charge_(p_trainer_id, (v_c->>'student_id')::bigint, (v_c->>'slot_start')::timestamptz, '늦은 변경(트레이너봇)');
+      if v_l ? 'error' then raise exception using errcode = 'P0001', message = v_l->>'error'; end if;
+    end if;
+  exception when sqlstate 'P0001' then
+    return jsonb_build_object('error', sqlerrm);
+  end;
+
+  return jsonb_build_object('bookingId', (v_n->>'bookingId')::bigint, 'gamesHeld', coalesce((v_n->>'gamesHeld')::int, 0),
+    'unitsLeft', v_n->'unitsLeft', 'studentId', (v_c->>'student_id')::bigint,
+    'oldStart', v_c->'slot_start', 'oldDurationMin', (v_c->>'duration_min')::int,
+    'newStart', p_new_start, 'durationMin', case when v_c->>'lesson_type' = 'course' then null else v_dur end,
+    'lessonType', v_c->>'lesson_type', 'lateWindow', (v_c->>'late_window')::boolean,
+    'late', p_late, 'lateCharged', case when v_l is null then 0 else 3 end,
+    'lateRequestId', v_l->'requestId', 'remainingAfter', v_l->'remainingAfter');
+end;
+$$;
+
+-- 서버(service_role)만 부른다 — 판수를 넣는 길이 섞여 있다(늦은 변경 −3)
+revoke all on function public.trainer_close_booking_(bigint, bigint, text) from public, anon, authenticated;
+revoke all on function public.trainer_late_charge_(bigint, bigint, timestamptz, text) from public, anon, authenticated;
+revoke all on function public.trainer_cancel_booking(bigint, bigint, text) from public, anon, authenticated;
+revoke all on function public.trainer_move_booking(bigint, bigint, timestamptz, int, text) from public, anon, authenticated;
+grant execute on function public.trainer_close_booking_(bigint, bigint, text) to service_role;
+grant execute on function public.trainer_late_charge_(bigint, bigint, timestamptz, text) to service_role;
+grant execute on function public.trainer_cancel_booking(bigint, bigint, text) to service_role;
+grant execute on function public.trainer_move_booking(bigint, bigint, timestamptz, int, text) to service_role;
+notify pgrst, 'reload schema';
+
+-- 84 검증(읽기만 · 쓰는 것 없음):
+--   select proname, pg_get_function_identity_arguments(oid) from pg_proc
+--    where proname in ('trainer_close_booking_','trainer_late_charge_','trainer_cancel_booking','trainer_move_booking') order by 1;   -- 4행
+--   select trainer_cancel_booking(null, null, null);                    -- {"error":"invalid_body"}
+--   select trainer_move_booking(null, null, null, null, null);          -- {"error":"invalid_body"}
+--   select has_function_privilege('anon', 'public.trainer_move_booking(bigint,bigint,timestamptz,int,text)', 'execute');   -- false
+-- 되돌림: drop function if exists public.trainer_move_booking(bigint, bigint, timestamptz, int, text);
+--         drop function if exists public.trainer_cancel_booking(bigint, bigint, text);
+--         drop function if exists public.trainer_late_charge_(bigint, bigint, timestamptz, text);
+--         drop function if exists public.trainer_close_booking_(bigint, bigint, text);  notify pgrst, 'reload schema';
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
 -- §85  역할군 이벤트 봇 — 회차 · 신청/검증 · 당첨/지급 (2026-10-17 · 지휘 주문 「18회 · 43시즌부터」 · 설계 docs/role-event-bot-design.md · 더하기만)
 --   docs/role-event-ddl-draft.sql(9/30 메인3 검토 1~3차 종료분)을 글자 그대로 옮겼다 — 새 표 3개 · 인덱스 3개 · RLS. 기존 표 · 칸 · 제약 무변경.
 --   대상 = MRI ACADEMY 서버(GUILD_ID) 회원. clan_registry(GmI 등록계)와 모집단 · 정책 분리 — 통합 없음.
@@ -7748,3 +7945,216 @@ notify pgrst, 'reload schema';
 --   select indexname from pg_indexes where tablename like 'role_event_%' and indexname like 'idx_role_%' order by 1;
 --   → idx_role_awards_round · idx_role_entries_account · idx_role_entries_round
 -- 되돌림(표가 비어 있을 때만 · 오너 결정): drop table if exists public.role_event_awards, public.role_event_entries, public.role_event_rounds; notify pgrst, 'reload schema';
+
+-- ════════════════════════════════════════════════════════════════════════════════
+-- §86  예약 완료 함수에 출처 인자 — 개인 레슨 자동 완료(2026-10-18 · 오너 OK 「OK — 함수에 출처 칸 추가」 · 계약 §9.39 · 기존 함수 교체 = B 구간)
+--   번호: 바로 앞 번호는 역할군 이벤트 봇(#600)이 먼저 잡았다 — 이 절은 §86(10/18 지휘 정정 · 열린 PR 까지 확인).
+--   왜: 자동 완료 기록을 앱 기록과 같은 함수 · 같은 트랜잭션으로 남기고 출처를 한 번에 표시한다(완료와 표시가 갈라지면
+--       봇 /수업등록 중복 건너뛰기가 자동 완료를 못 알아봐 같은 수업 판수가 두 번 빠질 수 있다 — #605 검수).
+--   바뀌는 것(§50 본문 = 운영 md5 fe597597c1e0fa63e4915672b7f373b8 · 4595 에서 세 군데만):
+--     ① 인자 p_source text default 'app' 추가 · 'app' | 'auto' 밖은 invalid_body
+--     ② 'auto' 는 개인 레슨(personal)만 · 그 밖 칸은 invalid_body
+--     ③ 넣는 줄 created_by = 'auto' 면 'auto:bell' · 아니면 종전 그대로 'portal'
+--   권한: 새 함수는 service_role 만 실행(public · anon · authenticated 회수 · 오너 OK 10/18). 종전 4인자판은 기본 권한(PUBLIC)이었다.
+--   안 바뀌는 것: 판수 · 날짜 · 중복 판정(v_has) · 잔여 계산 · 반환 모양 · 기존 칸 · 제약 · 데이터. 기존 호출(4인자 이름 지정)은 기본값으로 'app' = 종전과 같다.
+--   ⚠️ 인자 추가 = 교체(§42 와 같은 방식) — 4인자판을 drop 하고 **같은 요청 안에서** 5인자판을 만든다(함수가 비는 순간 없음 · PostgREST 후보 하나).
+--   실행: 오너가 SQL Editor 에서 아래 86-1 블록 하나를 **단독으로** 실행 → 86 검증. 이 함수에 'auto' 를 보내는 서버 코드는 실행 확인 전까지 Draft.
+--
+-- 86-0) 스냅샷(읽기만):
+--   select pg_get_function_identity_arguments(oid), length(replace(prosrc, E'\r','')), md5(replace(prosrc, E'\r',''))
+--     from pg_proc where proname = 'record_lesson_from_booking' and pronamespace = 'public'::regnamespace;
+--   기대: 1행 · p_trainer_id bigint, p_booking_id bigint, p_games integer, p_played_at date · 4595 · fe597597c1e0fa63e4915672b7f373b8
+--   select count(*), sum(games) from lesson_sessions;   select created_by, count(*) from lesson_sessions where created_by in ('portal','auto:bell') group by 1;
+--
+-- 86-1) 실행(한 블록):
+begin;
+drop function if exists public.record_lesson_from_booking(bigint, bigint, int, date);
+create or replace function public.record_lesson_from_booking(
+  p_trainer_id bigint, p_booking_id bigint,
+  p_games      int  default null,
+  p_played_at  date default null,
+  p_source     text default 'app')
+returns jsonb
+language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_b     slot_bookings%rowtype;
+  v_owner bigint;
+  v_start timestamptz;
+  v_type  text;
+  v_day   date;
+  v_slot  date;
+  v_has   boolean;
+  v_carry int;
+  v_enr   bigint;
+  v_sid   bigint;
+  v_games int;
+  v_after int;
+begin
+  if p_games is not null and (p_games < 1 or p_games > 50) then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+  -- §86 출처(계약 §9.39) — 'app' = 앱 「완료」(종전 그대로 created_by 'portal') · 'auto' = 24시간 자동 완료(created_by 'auto:bell').
+  if p_source is null or p_source not in ('app','auto') then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+
+  select * into v_b from slot_bookings where id = p_booking_id for update;
+  if not found                    then return jsonb_build_object('error','not_found'); end if;
+  if v_b.span_head_id is not null  then return jsonb_build_object('error','not_found'); end if;
+
+  select trainer_id, slot_start, lesson_type into v_owner, v_start, v_type
+    from trainer_slots where id = v_b.slot_id;
+  if v_owner is distinct from p_trainer_id then return jsonb_build_object('error','scope_denied'); end if;
+  -- §59 직강 반 수업 칸 예약은 판수가 아니라 출석(record_course_attendance)으로 닫는다.
+  if v_type = 'course' then return jsonb_build_object('error','course_slot'); end if;
+  -- §86 자동 완료는 개인 레슨만(계약 §9.39.1) — 그룹 · 상담은 판수 입력 · 마침이 사람 몫이다.
+  if p_source = 'auto' and v_type is distinct from 'personal' then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+  -- 상담(레벨 테스트)은 판수를 쓰는 수업이 아니다. 여기서 세션이 생기면 판수가 없는 신규가
+  -- 잔여 음수로 꽂힌다 — 조용히 무시하지 않고 돌려보낸다(앱이 입력칸을 안 띄우게).
+  if v_type = 'consult' and p_games is not null then
+    return jsonb_build_object('error','invalid_body');
+  end if;
+
+  -- 날짜 축은 server.js kstToday() · booking-api kstDate() 와 같은 식이라 경계가 어긋나지 않는다.
+  v_slot := (v_start at time zone 'Asia/Seoul')::date;
+  v_day  := coalesce(p_played_at, v_slot);
+  -- 자정을 넘겨 진행한 경우만 허용한다. 그보다 먼 날짜는 오타로 본다.
+  if abs(v_day - v_slot) > 1 then return jsonb_build_object('error','invalid_body'); end if;
+
+  -- 판수 조정 행(created_by 'adjreq:…' · §46 · §50)과 0 이하 행은 수업이 아니라 뺀다 — 앱 「수업 기록하기」의
+  -- recordedOn(lesson-record.cjs)과 같은 기준(§50 · 2026-09-30). 종전에는 오늘 날짜로 조정한 뒤 오늘 예약을
+  -- 「완료」하면 이 판정이 조정 행을 수업으로 보고 판수 없이 닫았다(수업 판수가 0회 빠진다).
+  v_has := exists (select 1 from lesson_sessions ls
+                    where ls.student_id = v_b.student_id
+                      and ls.trainer_id = p_trainer_id
+                      and ls.played_at  = v_day
+                      and ls.games > 0
+                      and coalesce(ls.created_by, '') not like 'adjreq:%');
+
+  -- 이미 닫힌 예약은 손대지 않는다(§37 과 같다 — hasSession 으로 화면이 문구를 가른다).
+  if v_b.status not in ('booked','pending_review') then
+    return jsonb_build_object('already', v_b.status, 'hasSession', v_has, 'playedAt', v_day);
+  end if;
+
+  -- 같은 날 같은 트레이너의 기록이 이미 있으면 판수를 또 넣지 않는다(상태만 닫는다).
+  if v_has then
+    update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+    return jsonb_build_object('already','session','hasSession',true,'playedAt',v_day);
+  end if;
+
+  -- 기록할 판수: 트레이너가 넣었으면 그 값, 아니면 예약이 잡은 선차감분.
+  v_games := coalesce(p_games, coalesce(v_b.games_held, 0));
+
+  if v_games <= 0 then
+    -- 그룹인데 판수가 없다 → **닫지 않고** 돌려보낸다. 여기서 닫으면 10/1 뒤에는 이 수업의
+    -- 판수를 넣을 길이 없다(다시 누르면 already → registration_missing · /수업등록 은 잠김).
+    -- 예약이 booked 로 남아 있으니 트레이너가 판수를 넣고 한 번 더 누르면 된다.
+    if v_type in ('spectate','participate') then
+      return jsonb_build_object('error','games_required');
+    end if;
+    -- 상담(레벨 테스트)은 판수가 없는 게 정상이다 — 상태만 닫는다.
+    update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+    return jsonb_build_object('closed', true, 'games', 0, 'reason', 'no_hold');
+  end if;
+
+  select carry_games into v_carry from students where id = v_b.student_id;
+  if coalesce(v_carry, 0) = 0 then
+    select e.id into v_enr
+      from lesson_enrollments e
+     where e.student_id = v_b.student_id
+       and e.trainer_id = p_trainer_id
+       and e.status in ('active','paused')
+       and coalesce(e.games_total, 0) + coalesce(e.bonus_games, 0)
+           - coalesce((select sum(ls.games) from lesson_sessions ls
+                        where ls.lesson_enrollment_id = e.id), 0) > 0
+     order by e.started_on asc, e.id asc
+     limit 1;
+  end if;
+
+  insert into lesson_sessions
+    (student_id, trainer_id, played_at, games, created_by, lesson_enrollment_id)
+    values (v_b.student_id, p_trainer_id, v_day, v_games,
+            case p_source when 'auto' then 'auto:bell' else 'portal' end, v_enr)
+    returning id into v_sid;
+
+  update slot_bookings set status = 'done' where id = v_b.id or span_head_id = v_b.id;
+
+  -- 선차감이 풀리고 세션이 들어간 **뒤**의 잔여다(§41 · 그 트레이너 기준).
+  v_after := portal_remaining_for_trainer(v_b.student_id, p_trainer_id);
+
+  return jsonb_build_object('recorded', true, 'games', v_games, 'playedAt', v_day,
+                            'sessionId', v_sid, 'enrollmentId', v_enr,
+                            'remainingAfter', v_after,
+                            -- 음수 = 이 수업을 덮을 판수가 없었다. 막지는 않았고 알리기만 한다.
+                            'remainingWasShort', v_after < 0);
+end;
+$$;
+-- §86 권한(오너 OK 10/18 「OK — 서버만 실행하게」) — 서버(service_role)만 부른다. 허락을 **먼저** 주고 회수한다(순서가 바뀌면 그 사이 서버 완료가 멈춘다).
+--   4인자판은 위 drop 으로 없어진다 — 남는 함수는 5인자 하나뿐이라 그 하나만 묶는다.
+grant execute on function public.record_lesson_from_booking(bigint, bigint, int, date, text) to service_role;
+revoke all on function public.record_lesson_from_booking(bigint, bigint, int, date, text) from public, anon, authenticated;
+commit;
+notify pgrst, 'reload schema';
+
+-- 86 검증(읽기만):
+--   ① 1행 · p_trainer_id bigint, p_booking_id bigint, p_games integer, p_played_at date, p_source text · 5097 · 10834f0785b97f1b75cc241599457d8a
+--   ② select record_lesson_from_booking(0, 0, null, null, 'x');      -- {"error":"invalid_body"}(출처 검사 · 쓰는 것 없음)
+--      select record_lesson_from_booking(0, 0);                       -- {"error":"not_found"}(기본값 'app' · 쓰는 것 없음)
+--   ③ 86-0 의 lesson_sessions 수 · 판수 합 · 출처별 수가 그대로
+--   ④ 권한 — select has_function_privilege('anon', 'public.record_lesson_from_booking(bigint,bigint,integer,date,text)', 'execute') as anon,
+--               has_function_privilege('authenticated', 'public.record_lesson_from_booking(bigint,bigint,integer,date,text)', 'execute') as authed,
+--               has_function_privilege('service_role', 'public.record_lesson_from_booking(bigint,bigint,integer,date,text)', 'execute') as server;
+--      기대: anon false · authed false · server true. 4인자판 없음: select count(*) from pg_proc where proname = 'record_lesson_from_booking';  -- 1
+-- 되돌림(한 블록): begin; drop function if exists public.record_lesson_from_booking(bigint, bigint, int, date, text);
+--   위 §50 의 record_lesson_from_booking(4인자) create 문 그대로(권한은 종전처럼 기본값 · 손대지 않는다); commit; notify pgrst, 'reload schema';   -- md5 fe597597c1e0fa63e4915672b7f373b8 로 돌아오는지 확인
+
+-- ════════════════════════════════════════════════════════════════════════════════
+-- §87  「AI 무리 복기」 리플 저장 — 비공개 버킷 replay · 목록 표 replay_matches
+--      (2026-10-21 · 지휘 주문서 「복기AI 2주차」 · docs/replay-ai.md §13 · 더하기만 = A 구간)
+--   번호: 열린 PR 과 겹치면 머지 직전에 다음 빈 번호로 바꾼다(내용은 그대로).
+--   왜: PUBG 경기 데이터는 14일 뒤 사라진다 — 받은 한 팀분을 압축해 비공개로 남긴다(같은 경기를 두 번 받지 않는다).
+--   개인정보: 닉네임 · 디스코드 id · IP 는 어느 칸에도 넣지 않는다.
+--   측정 표는 10/21 지휘 결정으로 뺐다(공개 페이지 보류 · 브랜치 claude/replay-public-parked 에 보관).
+--   코드: replay-api.cjs — 표 · 버킷이 없으면 메모리 캐시로 돈다(1분마다 다시 확인 · 실행 뒤 재시작 없이 켜진다).
+--   실행: 경비 세션이 87-1 블록 하나를 단독 실행 → 87 검증. 운영 DB 쓰기는 경비만(지휘 주문서).
+--
+-- 87-0) 스냅샷(읽기만):
+--   select to_regclass('public.replay_matches');                                        -- 기대: null
+--   select id, public from storage.buckets where id = 'replay';                          -- 기대: 0행
+--
+-- 87-1) 실행(한 블록):
+begin;
+create table if not exists public.replay_matches (
+  id              bigint generated always as identity primary key,
+  platform        text not null check (platform in ('steam', 'kakao')),
+  match_id        text not null check (match_id ~ '^[0-9a-f-]{36}$'),
+  team_id         int  not null,
+  map_name        text,
+  game_mode       text,
+  match_type      text,
+  played_at       timestamptz,
+  storage_path    text not null,
+  size_bytes      int,
+  parser_version  text,
+  fetched_at      timestamptz not null default now(),
+  unique (platform, match_id, team_id)
+);
+alter table public.replay_matches enable row level security;   -- service_role 만
+
+
+-- 비공개 · 한 파일 20MB 까지 · gzip 만(한 팀분 압축본은 보통 100KB 안팎)
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('replay', 'replay', false, 20971520, array['application/gzip'])
+on conflict (id) do nothing;
+commit;
+notify pgrst, 'reload schema';
+
+-- 87 검증(읽기만):
+--   select to_regclass('public.replay_matches');                                                            -- 이름이 나온다
+--   select relname, relrowsecurity from pg_class where relname = 'replay_matches';                          -- true
+--   select id, public, file_size_limit from storage.buckets where id = 'replay';                            -- replay · false · 20971520
+--   서버 로그: 「[replay] 리플 API 활성 · 저장 bucket=true matches=true」(실행 뒤 1분 안 · 재시작 없이)
+-- 되돌림(한 블록 · 쌓인 기록도 지워지니 오너 OK 필요): begin; drop table if exists public.replay_matches;
+--   delete from storage.objects where bucket_id = 'replay'; delete from storage.buckets where id = 'replay'; commit; notify pgrst, 'reload schema';

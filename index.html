@@ -126,6 +126,17 @@ a{color:inherit}
 .menu a:hover{color:var(--ink)}
 .top .cta{min-height:40px;padding:0 18px;font-size:15px;border-radius:10px}
 
+/* 1. 소개 영상 — PC 가로 16:9 · 폰 세로 9:16 · 첫 화면 안에 들어가게 높이로 폭을 묶는다 */
+.intro{padding:clamp(20px,3vw,32px) 0 0}
+.intro:not([hidden]) + .hero{padding-top:clamp(32px,4vw,56px)}
+.iv-frame{position:relative;margin:0 auto;aspect-ratio:16/9;width:min(100%,calc((100svh - 200px) * 16 / 9));max-width:100%;border-radius:var(--r);overflow:hidden;background:var(--cell);border:1px solid var(--line)}
+.iv-frame::before{content:'MRI ACADEMY';position:absolute;inset:0;display:grid;place-items:center;font:800 15px/1 var(--num);letter-spacing:.18em;color:var(--mute)}
+.iv{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:transparent}
+.iv-sound{position:absolute;right:14px;top:14px;min-height:40px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(10,10,12,.78);color:var(--ink);font:700 14px/1 var(--sans);cursor:pointer}
+.iv-sound:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.iv-sound[hidden]{display:none}
+.iv-acts{display:flex;justify-content:center;margin-top:16px}
+.intro.is-v .iv-frame{aspect-ratio:9/16;width:min(100%,calc((100svh - 190px) * 9 / 16))}
 /* 2. 간판 */
 .hero{padding:clamp(48px,7vw,96px) 0 clamp(32px,4vw,48px)}
 .hero .eyebrow{margin-bottom:clamp(12px,2vw,20px)}
@@ -143,15 +154,9 @@ a{color:inherit}
 .hero-acts{display:flex;align-items:center;gap:24px}
 
 /* 3. 숫자 한 줄 */
-.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:clamp(28px,4vw,48px) 0 var(--gap)}
-.fact{padding:22px 24px 22px 0}
-.fact+.fact{padding-left:24px;border-left:1px solid var(--line)}
-.fact .v{font:800 clamp(40px,4.4vw,60px)/1 var(--num)}
-.fact .v small{font:700 18px/1 var(--sans);margin-left:4px}
-.fact .k{margin-top:8px;color:var(--mute);font-size:15px}
-.fact[hidden]{display:none}
 
 /* 4. 칸 배치 — 12칸 격자 */
+.hero .grid{margin-top:clamp(28px,4vw,48px)}
 .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:var(--gap)}
 .cell{background:var(--cell);border-radius:var(--r);padding:clamp(22px,2.6vw,36px);min-width:0;position:relative;overflow:hidden}
 .s7{grid-column:span 7}.s5{grid-column:span 5}.s6{grid-column:span 6}.s8{grid-column:span 8}.s4{grid-column:span 4}.s12{grid-column:span 12}
@@ -175,6 +180,24 @@ a{color:inherit}
 .list .tier{font-weight:800;color:var(--gold);text-align:right}
 .cell .more{display:inline-block;margin-top:20px}
 .state{margin-top:20px;color:var(--mute)}
+.g-fact{margin-top:10px;color:var(--mute);font-size:15px}
+.g-fact b{color:var(--ink);font:800 20px/1 var(--num);margin-right:6px}
+/* 성장 기록 뼈대 — 숫자가 오기 전 자리만 잡는다 */
+.sk{margin-top:20px;display:grid;gap:12px}
+.sk i{display:block;height:18px;border-radius:6px;background:var(--cell-2)}
+.sk-feat{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:8px}
+.sk-feat i{height:56px}
+@media(prefers-reduced-motion:no-preference){.sk i{animation:skp 1.4s ease-in-out infinite}}
+@keyframes skp{50%{opacity:.55}}
+/* 원장에게 바로 신청 한 줄 */
+.ask-strip{display:flex;flex-wrap:wrap;align-items:center;gap:12px 32px;padding-block:clamp(18px,2vw,24px)}
+.ask-strip .ask-h{font-size:16px;font-weight:800}
+.ask-strip dl{display:flex;flex-wrap:wrap;gap:8px 28px;font-size:14px}
+.ask-strip dl div{display:flex;gap:10px;align-items:baseline}
+.ask-strip dt{color:var(--mute)}
+.ask-strip dd{margin:0;color:var(--ink)}
+.ask-strip dd small{color:var(--mute);font-size:13px;margin-left:6px}
+.ask-strip a{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
 
 /* 원장 */
 .boss{display:flex;flex-direction:column;padding:0}
@@ -222,13 +245,6 @@ a{color:inherit}
 .person .one{margin-top:16px}
 .person .fine{margin-top:8px;font-size:13px;line-height:1.6;color:var(--mute)}
 .person .links{margin-top:auto;padding-top:16px}
-.ask{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
-.ask-h{font-size:14px;font-weight:800}
-.ask dl{margin-top:10px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 14px;font-size:14px}
-.ask dt{color:var(--mute);white-space:nowrap}
-.ask dd{margin:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ask dd small{color:var(--mute);font-size:13px;margin-left:4px}
-.ask a{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
 
 /* 커리큘럼 */
 .steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:24px;border-top:1px solid var(--line)}
@@ -345,9 +361,6 @@ footer p{margin-top:16px;font-size:13px}
   .hero-acts .link{align-self:flex-start}
   .cta{width:100%}
   .top .cta{width:auto}
-  .facts{grid-template-columns:1fr}
-  .fact,.fact+.fact{padding:16px 0;border-left:0}
-  .fact+.fact{border-top:1px solid var(--line)}
   .steps{grid-template-columns:1fr 1fr}
   .step:nth-child(3){padding-left:0;border-left:0}
   .step:nth-child(n+3){border-top:1px solid var(--line)}
@@ -414,13 +427,32 @@ html.vr-lock{overflow:hidden}
   <div class="wrap top-in">
     <a class="logo" href="#top" aria-label="MRI ACADEMY 처음으로">MRI ACADEMY</a>
     <nav class="menu" aria-label="주 메뉴">
-      <a href="#growth">성장 기록</a><a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#plans">가격</a><a href="lesson-schedule.html">수업 시간표</a><a href="https://app.mriacademy.gg/" rel="noopener">수강생 앱</a>
+      <a href="#growth">성장 기록</a><a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#plans">가격</a><a href="lesson-schedule.html">수업 시간표</a><a href="#direct">직강</a>
     </nav>
     <a class="cta" href="#start">레벨 테스트 신청<span class="dot"> · </span><span class="p">20,000원</span></a>
   </div>
 </header>
 
 <main id="top">
+
+  <!-- 1. 소개 영상 — 오너 10/18 「들어오자마자 커리큘럼부터 가격까지 설명하는 영상이 가장 먼저 눈에 띄게」.
+       파일 주소는 아래 data-h(PC 가로 16:9) · data-v(폰 세로 9:16) 두 곳에서만 바꾼다. src 속성이 아니라 data 로 둔 까닭:
+       파일이 저장소에 없는 동안 사이트 점검(site-files 시험)이 없는 파일을 부른다고 막지 않게 하려고.
+       영상을 불러오지 못하면(파일 없음 · 형식 오류) 칸 전체가 숨은 채로 남는다 — 깨진 화면이 나가지 않는다.
+       자동재생은 무음 · playsinline · 반복 없음. 「소리 켜고 보기」를 누르면 소리가 켜진다 -->
+  <section class="intro" id="intro" aria-label="MRI ACADEMY 소개 영상" hidden
+           data-h="assets/video/intro_h.mp4"
+           data-v="assets/video/intro_v.mp4">
+    <div class="wrap">
+      <div class="iv-frame">
+        <video class="iv" muted playsinline preload="metadata" aria-label="MRI ACADEMY 소개 영상 · 커리큘럼부터 가격까지 80초"></video>
+        <button type="button" class="iv-sound">소리 켜고 보기</button>
+      </div>
+      <div class="iv-acts">
+        <a class="cta" href="apply.html?utm_source=site&amp;utm_medium=intro">레벨 테스트 신청</a>
+      </div>
+    </div>
+  </section>
 
   <!-- 2. 간판 -->
   <section class="hero">
@@ -443,12 +475,6 @@ html.vr-lock{overflow:hidden}
         </div>
       </div>
 
-      <!-- 3. 숫자 한 줄 — 레슨 수강생 · 판수는 간판 둘째 줄로 올라갔다(10/4).
-           5명은 /api/site-metrics 의 graduatesMasterPlus(#493 배포)가 오면 그 값으로 덮어쓴다 -->
-      <div class="facts">
-        <div class="fact"><div class="v"><span data-srv="graduatesMasterPlus">5</span><small>명</small></div><div class="k">레슨으로 마스터 이상 달성</div></div>
-      </div>
-
       <!-- 4. 칸 배치 -->
       <div class="grid">
 
@@ -456,7 +482,10 @@ html.vr-lock{overflow:hidden}
         <article class="cell s7 rise" id="growth" aria-labelledby="growthH">
           <div class="eyebrow">Growth Record</div>
           <h2 id="growthH">수강 전 → 달성, 전적 그대로</h2>
-          <div id="growthBody"><p class="state">기록을 불러오고 있어요</p></div>
+          <!-- 외딴 숫자 칸을 성장 기록 안으로 합침(10/20). 5명은 /api/site-metrics 의 graduatesMasterPlus 가 오면 덮어쓴다 -->
+          <p class="g-fact"><b><span data-srv="graduatesMasterPlus">5</span>명</b> 레슨으로 마스터 이상 달성</p>
+          <!-- 불러오는 동안 뼈대를 보여 주고, 지난번 받은 기록이 있으면 그걸 먼저 그린다 -->
+          <div id="growthBody" aria-busy="true"><div class="sk" aria-hidden="true"><div class="sk-feat"><i></i><i></i></div><i></i><i></i><i></i></div><p class="sr">기록을 불러오고 있어요</p></div>
           <a class="link more" href="gmi-progress.html">성장 기록 전체 보기</a>
         </article>
 
@@ -483,16 +512,6 @@ html.vr-lock{overflow:hidden}
             <li>S36 카카오 1위 · 서바이버 5,002 RP · 평균 딜량 614</li>
             <li>S38 스팀 서바이버 두 계정 · 4,359 RP · 4,370 RP</li>
           </ul>
-          <!-- 원장 직강 신청 창구 — 오너 10/3 지정(디코 아이디 · 강의 서버 · 이메일 둘) -->
-          <div class="ask">
-            <div class="ask-h">원장에게 바로 신청</div>
-            <dl>
-              <dt>디스코드</dt><dd>e_muri<small>친구 추가 후 메시지</small></dd>
-              <dt>강의 서버</dt><dd><a href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">MRI ACADEMY 디스코드</a></dd>
-              <dt>이메일</dt><dd><a href="mailto:shlee9498@naver.com">shlee9498@naver.com</a></dd>
-              <dt><span class="sr">이메일 </span></dt><dd><a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></dd>
-            </dl>
-          </div>
           <div class="links"><a href="#plans">원장 직강 보기</a><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a></div>
         </article>
 
@@ -512,8 +531,19 @@ html.vr-lock{overflow:hidden}
           <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">SOOP</a></div>
         </article>
 
+        <!-- 원장에게 바로 신청 — 원장 카드 안에 있던 연락처를 한 줄로 뺐다(10/20 · 세 카드 높이 맞춤). 오너 10/3 지정 창구 그대로 -->
+        <aside class="cell s12 ask-strip rise" id="direct" aria-labelledby="askH">
+          <div class="ask-h" id="askH">원장에게 바로 신청</div>
+          <dl>
+            <div><dt>디스코드</dt><dd>e_muri<small>친구 추가 후 메시지</small></dd></div>
+            <div><dt>강의 서버</dt><dd><a href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">MRI ACADEMY 디스코드</a></dd></div>
+            <div><dt>이메일</dt><dd><a href="mailto:shlee9498@naver.com">shlee9498@naver.com</a> · <a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></dd></div>
+          </dl>
+        </aside>
+
         <!-- 커리큘럼 — 오너가 설명한 실제 수업 순서(10/4). 단계별 넘어가는 기준은 트레이너 답을 받은 뒤 채운다 -->
         <article class="cell s12 rise" id="curriculum" aria-labelledby="curH">
+          <!-- 원장 직강 핵심 문구 자리 — 10/20 세 줄은 오너 10/21 지시로 뺐다. 새 문구는 지휘 시안으로 내려온다 -->
           <div class="eyebrow">Curriculum</div>
           <h2 id="curH">수업 순서</h2>
           <p class="lead">처음 오면 레벨 테스트로 시작 단계를 정함</p>
@@ -683,6 +713,58 @@ html.vr-lock{overflow:hidden}
 </footer>
 
 <script>
+// 소개 영상 — 폭으로 가로(data-h) · 세로(data-v) 를 고르고, 불러오면 칸을 연다. 못 불러오면 다른 쪽을 한 번 더 시도하고, 그래도 안 되면 숨긴 채 둔다
+(function(){
+  var box = document.getElementById("intro");
+  if (!box) return;
+  var v = box.querySelector(".iv"), btn = box.querySelector(".iv-sound");
+  var phone = window.matchMedia && matchMedia("(max-width:820px)").matches;
+  // 주소는 허용 글자표(SAFE)에서 한 글자씩 다시 골라 만든다 — 사이트 안 상대 경로 .mp4 만 통과한다
+  var SAFE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-./";
+  function clean(raw){
+    if (!raw || raw.indexOf("..") >= 0 || raw.charAt(0) === "/" || !/\.mp4$/.test(raw)) return "";
+    var out = "";
+    for (var k = 0; k < raw.length; k++) { var j = SAFE.indexOf(raw.charAt(k)); if (j < 0) return ""; out += SAFE.charAt(j); }
+    return out;
+  }
+  var H = clean(box.getAttribute("data-h")), V = clean(box.getAttribute("data-v"));
+  var order = [];
+  if (phone) { if (V) order.push(["v", V]); if (H) order.push(["h", H]); }
+  else { if (H) order.push(["h", H]); if (V) order.push(["v", V]); }
+  var i = 0;
+  function tryNext(){
+    if (i >= order.length) { box.hidden = true; v.removeAttribute("src"); return; }
+    var o = order[i++];
+    box.classList.toggle("is-v", o[0] === "v");
+    v.src = o[1];
+  }
+  v.addEventListener("error", tryNext);
+  // 무음 자동재생 — 뒤에 깔린 탭 · 절전 모드에선 브라우저가 미룰 수 있어서, 화면에 다시 보일 때 한 번 더 튼다
+  var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var opened = false, userPaused = false;
+  function autoplay(){
+    if (reduce || userPaused || v.ended || !v.paused || document.hidden) return;
+    var pr = v.play(); if (pr && pr.catch) pr.catch(function(){ v.controls = true; });
+  }
+  function open(){
+    if (opened) return; opened = true;
+    box.hidden = false;
+    if (reduce) v.controls = true; else autoplay();
+  }
+  // 아이폰 사파리는 미리 받기를 아끼느라 loadeddata 가 늦을 수 있어 loadedmetadata 에서도 연다
+  v.addEventListener("loadedmetadata", open);
+  v.addEventListener("loadeddata", open);
+  v.addEventListener("pause", function(){ if (opened && !v.ended && !document.hidden && v.controls) userPaused = true; });
+  document.addEventListener("visibilitychange", autoplay);
+  v.addEventListener("ended", function(){ v.controls = true; });
+  btn.addEventListener("click", function(){
+    v.muted = false; v.controls = true;
+    if (v.ended) v.currentTime = 0;
+    var pr = v.play(); if (pr && pr.catch) pr.catch(function(){});
+    btn.hidden = true;
+  });
+  tryNext();
+})();
 // 수업 영상 칸 — data-yt 가 비었거나 형식이 틀리면 칸을 숨긴 채 둔다. 문구는 textContent 로만 넣는다
 (function(){
   var box = document.getElementById("lessonVideo");
@@ -737,11 +819,22 @@ html.vr-lock{overflow:hidden}
     if (typeof dl.months === "number" && dl.months > 0) return dl.months + "개월";
     return "";
   }
-  function fail(msg){ box.textContent = ""; box.appendChild(el("p", "state", msg)); }
-  fetch(API + "/api/progress-public").then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+  var KEY = "mri.growth.v1", shown = false;
+  function done(){ box.removeAttribute("aria-busy"); }
+  function fail(msg){ if (shown) return done(); box.textContent = ""; box.appendChild(el("p", "state", msg)); done(); }
+  function pick(d){
     var list = (d && d.students) || [];
-    list = list.filter(function(s){ return s && s.delta && s.delta.tierFrom && s.delta.tierTo; });
+    return list.filter(function(s){ return s && s.delta && s.delta.tierFrom && s.delta.tierTo; });
+  }
+  // 지난번 받은 기록(이 브라우저에만 저장)이 있으면 먼저 그린다 — 새 응답이 오면 덮어쓴다
+  try { var c = JSON.parse(localStorage.getItem(KEY) || "null"); var cl = pick(c); if (cl.length) { render(cl); shown = true; } } catch (e) {}
+  fetch(API + "/api/progress-public").then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+    var list = pick(d);
     if (!list.length) return fail("전적 스냅샷이 쌓이는 대로 이 자리에 공개돼요");
+    render(list); shown = true; done();
+    try { localStorage.setItem(KEY, JSON.stringify({ students: list.slice(0, 6) })); } catch (e) {}
+  }).catch(function(){ fail("기록을 불러오지 못했어요. 성장 기록 전체 보기에서 다시 확인할 수 있어요"); });
+  function render(list){
     box.textContent = "";
     var top = list[0], f = el("div", "feat");
     f.appendChild(side("before", "수강 전", top.delta.tierFrom, rpOf(top.trajectory, false)));
@@ -761,7 +854,7 @@ html.vr-lock{overflow:hidden}
       ul.appendChild(li);
     });
     if (ul.children.length) box.appendChild(ul);
-  }).catch(function(){ fail("기록을 불러오지 못했어요. 성장 기록 전체 보기에서 다시 확인할 수 있어요"); });
+  }
 })();
 // 「레슨으로 마스터 이상 달성」 — 서버 값(graduations)이 숫자로 올 때만 연다. 키 이름은 경비 응답으로 확정(지금은 요청 초안의 이름)
 (function(){

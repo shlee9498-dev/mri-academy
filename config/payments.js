@@ -29,12 +29,16 @@
  * 2026-10-02 원장 1:1 직강(oneOnOneTrial 50,000 · oneOnOne 70,000) · VIP DAY PASS(vipDayPass 150,000) 키를 지웠다
  * (지휘 주문 · 오너 결정). 가격 미확정 · 판매 0건이고 읽는 코드가 0곳이었다(챗봇은 #483 부터 VIP 룸 문의로만 안내).
  * 사이트 VIP 룸도 금액을 싣지 않는다. 다시 팔게 되면 오너가 정한 값으로 네 곳에 함께 넣는다.
+ *
+ * 2026-10-19 원장 직강 가격 하나로 · 세트 폐지(오너 결정 · 새 신청분부터 · 계약 docs/direct-price-unify.md):
+ * 직강 단계 3키(direct8_beginner · _inter · _advanced)와 세트 3키(setEntry · setLeap · setMaster)를 지우고
+ * direct8(290,000 · 1회 3시간 × 8회 = 24시간) 하나를 둔다. SET_COMPONENTS · setListPrice 도 지웠다(읽는 곳 0).
+ * 이미 결제한 사람(옛 단계 가격 · 12회 · 세트)의 결제 행은 그대로다 — 이 표는 새 신청 가격만 정한다.
  */
 export const PRODUCT_KEYS = /** @type {const} */ ([
   "lesson10", "lesson21", "lesson33", "lesson99",
   "levelTest",
-  "direct8_beginner", "direct8_inter", "direct8_advanced",
-  "setEntry", "setLeap", "setMaster",
+  "direct8",
 ]);
 
 /**
@@ -61,34 +65,8 @@ export const PRICES = {
 
   levelTest: 20000,
 
-  direct8_beginner: 250000,
-  direct8_inter: 270000,
-  direct8_advanced: 290000,
-
-  setEntry: 280000,
-  setLeap: 340000,
-  setMaster: 405000,
+  direct8: 290000,   // 원장 직강 8회 · 단계 구분 없음(2026-10-19 · 종전 250,000 · 270,000 · 290,000 + 세트 3종 폐지)
 };
-
-/**
- * 세트 구성 — 어떤 단품을 묶었는지. 화면의 「개별 신청가」 비교가 이 표에서 나온다.
- *
- * 세트 할인폭을 별도 상수로 두지 않는 이유: 단품가가 바뀔 때마다 손으로 다시 계산해야
- * 하고, 한 번 놓치면 화면에 "정가 X → 특가 Y"인데 X가 아무 근거 없는 숫자가 된다.
- * 구성만 적어두고 합계는 계산해서 쓴다.
- */
-export const SET_COMPONENTS = {
-  setEntry:  ["lesson10", "direct8_beginner"],
-  setLeap:   ["lesson21", "direct8_inter"],
-  setMaster: ["lesson33", "direct8_advanced"],
-};
-
-/** 세트를 단품으로 따로 살 때의 합계(원). setEntry → 295000 */
-export function setListPrice(setKey) {
-  const parts = SET_COMPONENTS[setKey];
-  if (!parts) return null;
-  return parts.reduce((sum, k) => sum + (PRICES[k] || 0), 0);
-}
 
 /**
  * 그로블(통신판매중개) 결제 링크. 오너가 그로블에서 발급해 여기 채운다.
@@ -108,13 +86,7 @@ export const GROBLE_LINKS = {
 
   levelTest: "",
 
-  direct8_beginner: "",
-  direct8_inter: "",
-  direct8_advanced: "",
-
-  setEntry: "",
-  setLeap: "",
-  setMaster: "",
+  direct8: "",
 };
 
 /** 표시용 상품명. 화면 문구가 트랙마다 갈리지 않도록 여기서 한 번만 정한다. */
@@ -126,13 +98,7 @@ export const PRODUCT_LABELS = {
 
   levelTest: "레벨 테스트",
 
-  direct8_beginner: "직강 8회 · 기초 입문",
-  direct8_inter: "직강 8회 · 체계적 과정",
-  direct8_advanced: "직강 8회 · 고점 돌파",
-
-  setEntry: "초급 세트",
-  setLeap: "중급 세트",
-  setMaster: "심화 세트",
+  direct8: "원장 직강 8회",
 };
 
 /** 45000 → "45,000원" */

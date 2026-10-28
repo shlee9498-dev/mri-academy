@@ -36,6 +36,7 @@ const GAMES_MIN = 1, GAMES_MAX = 50;                     // 「완료」(§9.1)�
 const LESSON_BACK_DAYS = 7;                              // 수업 기록은 7일 전까지 — 더 지난 건 판수 조정 요청
 const ADJ_BACK_DAYS = 31;
 const MEMO_MAX = 200;
+const VIA = Object.freeze(["app", "just_done"]);          // POST /lessons 출처(§9.41.1)
 // 종류별 남은 판수 증감(계약 §9.10). null = 트레이너가 보낸다 · 숫자 = 고정(약관)
 const ADJ_FIXED = { correction: null, compensation: null, late_cancel: -3, no_show: -5, other: null };
 const ADJ_LABEL = { correction: "정정", compensation: "보상", late_cancel: "늦은 취소", no_show: "노쇼", other: "기타" };
@@ -74,9 +75,11 @@ function parseLessonBody(b, today) {
   if (!g.ok) return { ok: false };
   if (b.memo !== undefined && b.memo !== null && (typeof b.memo !== "string" || b.memo.length > MEMO_MAX)) return { ok: false };
   if (b.sameDayOk !== undefined && typeof b.sameDayOk !== "boolean") return { ok: false };
+  // 출처(§9.41.1) — "just_done" = 트레이너봇 「방금 한 수업」. 감사 줄에만 남는다(정산 · 판수 계산 변경 없음).
+  if (b.via !== undefined && b.via !== null && !VIA.includes(b.via)) return { ok: false };
   const memo = typeof b.memo === "string" && b.memo.trim() ? b.memo.trim() : null;
   return { ok: true, value: { kind, studentIds: ids, playedAt: b.playedAt, games: g.games, durationMin: g.durationMin,
-                              memo, sameDayOk: b.sameDayOk === true } };
+                              memo, sameDayOk: b.sameDayOk === true, via: b.via || "app" } };
 }
 
 // 고치기 · 취소 · 되살리기 사유(§9.29) — 앞뒤 공백을 떼고 2~200자.
@@ -162,11 +165,12 @@ function revertibleUntil(r, nowMs = Date.now()) {
   return until > nowMs ? new Date(until).toISOString() : null;
 }
 
-// 수업 기록의 출처 — 앱(예약 「완료」 · 수업 기록하기) · 봇(/수업등록) · 조정(요청 승인 · /판수정정)
+// 수업 기록의 출처 — 앱(예약 「완료」 · 수업 기록하기) · 자동 완료(24시간 · §9.39) · 봇(/수업등록) · 조정(요청 승인 · /판수정정)
 function sourceOf(row) {
   const by = String(row?.created_by || "");
   if (by.startsWith("adjreq:") || String(row?.memo || "").startsWith("정정:")) return "adjustment";
   if (by === "portal") return "app";
+  if (by === "auto:bell") return "auto";                  // 앱 문구 「자동 완료」 — 「봇 기록」으로 보이지 않게(#605 검수)
   return "bot";
 }
 
@@ -191,7 +195,7 @@ function resolveKinds(ids, known, corr, app, booked) {
       const base = depth < CORRECT_DEPTH && known.has(c.oldId) ? resolve(c.oldId, depth + 1) : null;
       v = c.dur != null ? { kind: "personal", dur: c.dur } : base ? { kind: base.kind, dur: c.same ? base.dur : null } : null;
     } else if (app.has(id)) v = app.get(id);
-    else if (known.get(id)?.created_by === "portal") v = booked(known.get(id));
+    else if (["portal", "auto:bell"].includes(known.get(id)?.created_by)) v = booked(known.get(id));
     memo.set(id, v);
     return v;
   };
@@ -290,7 +294,7 @@ module.exports = function mountTrainerLessons(app, deps) {
       }
     }
     // ③ 예약 「완료」 — 감사로 못 찾은 'portal' 줄만. 같은 수강생 · 트레이너의 완료된 예약(머리 칸) · 날짜 ±1일(자정 넘김)
-    const need = [...known.values()].filter((r) => r.created_by === "portal" && isRealDate(r.played_at)
+    const need = [...known.values()].filter((r) => ["portal", "auto:bell"].includes(r.created_by) && isRealDate(r.played_at)
       && !corr.has(Number(r.id)) && !app.has(Number(r.id)));
     if (need.length) {
       const ds = need.map((r) => r.played_at).sort();
@@ -323,7 +327,7 @@ module.exports = function mountTrainerLessons(app, deps) {
 
   // ════════════════ POST /lessons — 수업 기록하기(예약 없이) · 계약 §9.9 ════════════════
   app.post(`${TRAINER}/lessons`, rateLimit("trainerLessons", 30, 60_000),
-    bodyOnly(["kind", "studentIds", "playedAt", "games", "durationMin", "memo", "sameDayOk"]), requireTrainer, wrap(async (req, res) => {
+    bodyOnly(["kind", "studentIds", "playedAt", "games", "durationMin", "memo", "sameDayOk", "via"]), requireTrainer, wrap(async (req, res) => {
       const today = kstDate(Date.now());
       const v = parseLessonBody(req.body, today);
       if (!v.ok) return fail(res, 400, "invalid_body");
@@ -358,7 +362,7 @@ module.exports = function mountTrainerLessons(app, deps) {
         await sbInsert("admin_audit", {
           actor_id: `staff:${req.staff.id}`, actor_name: req.staff.name,
           action: "session.app_record", target: `students:${sids.join(",")}`,
-          detail: { kind: v.value.kind, games, duration_min: v.value.durationMin, played_at: playedAt, same_day_ok: sameDayOk,
+          detail: { kind: v.value.kind, games, duration_min: v.value.durationMin, played_at: playedAt, same_day_ok: sameDayOk, via: v.value.via,
                     session_ids: out.inserted.map((r) => r.id), closed_bookings: out.closed || 0 },
         });
       } catch (e) { console.error("app_lesson_audit", e?.status || "fail"); }

@@ -66,6 +66,13 @@ let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP �
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
 //   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
 const payreqIntake = require("./payreq-intake.cjs");
+// 상담 · 레벨 테스트 신청서 「어디서 보고 오셨어요?」 선택지(apply.html 과 한 벌 · 오너 10/19)
+const inflowMod = require("./inflow.cjs");
+// 「입금 받음」(계약 §9.40) — 트레이너가 올리는 입금 신청 · 결과 DM 문구 · 화면 이름(디코 닉)
+const paymentReceived = require("./payment-received.cjs");
+// 판수 맞추기 · 일요일 확인 목록(계약 §9.41.2 · §9.41.3) — 라우트 · 카드 본문 · 결정(§46 줄마다)
+const ledgerReconcile = require("./ledger-reconcile.cjs");
+let reconcile = null;   // mountReconcile 반환값 — 카드 버튼 처리기가 decide 를 부른다(아래 trainer-portal 뒤에서 채운다)
 // 공개 API 응답에서 수강생 식별정보를 걷어내는 순수 함수(커뮤니티 작성자 ID · 공개 코칭 기록 본문 치환 · 9/30 개인정보 점검)
 const publicRows = require("./public-rows.cjs");
 // 수업 기록 행 판정 한 벌(판수 조정 · 봇 정정 · 0 이하 행은 수업이 아니다) — 원장 화면 · 공개 지표 · 예약 고아 감시가 같이 쓴다.
@@ -152,6 +159,7 @@ function limit(name, max, windowMs, reject) {
 const crypto = require("crypto");
 const killraceApply = require("./killrace-apply.cjs");
 const unclosedLessons = require("./unclosed-lessons.cjs");   // 닫지 않은 수업 — 세기만(계약 trainer-portal-api §9.34)
+const autoCompleteMod = require("./auto-complete.cjs");       // 개인 레슨 24시간 자동 완료(계약 §9.39 · DDL §86)
 const OAUTH_REDIRECT = "https://mri-academy-production.up.railway.app/api/auth/callback";
 const STAFF_IDS = (process.env.STAFF_DISCORD_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
 const reviewsReady = () =>
@@ -664,7 +672,7 @@ const SYSTEM_TEMPLATE = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우
   · 플레이 분석 · 판단 근거 질문(사고 과정 파악) · 방향성 제시
   · 레벨테스트 항목: 초탄 잡기 · 서칭 · 조준 훈련
 - 결과: 수용력에 따라 1:1 레슨 또는 원장 직강 중 어느 쪽이 맞는지 배정 안내.
-- 원장 직강 초급반 진입 기준: 레벨테스트 80%(37개 이상).
+- 원장 직강 초급반은 레벨 테스트 직후 바로 들어올 수 있습니다(2026-10-18 오너). 직강은 반 단계와 상관없이 같은 가격입니다.
 - 키설정 최적화는 수강 확정·입금 후에 진행합니다(상담 단계 아님).
 
 [다시보기 파일 찾는 법 — 물어보면 안내]
@@ -676,7 +684,7 @@ const SYSTEM_TEMPLATE = `당신은 "MRI ACADEMY(GmI 배그강의)" 상담 도우
 - 카카오·스팀 모두 가능합니다. 초·중급자는 매칭이 원활한 **카카오 일반게임 또는 스팀 경쟁전**을 권합니다.
 - 환불(이용약관 제7조 · 방문판매법(계속거래)과 전자상거래법 기준 · 위약금 없음): 수강 시작 전이면 전액 환불합니다.
   레슨은 결제한 판수 중 남은 판 × 판당 단가(결제 금액 ÷ 결제 판수)입니다. 무료로 받은 보너스 판은 먼저 쓴 것으로 보고 환불에서 뺍니다.
-  강의는 남은 회차 × 회당 단가(결제 금액 ÷ 결제 회차), 세트는 레슨분(같은 판수 레슨 정가)과 강의분(세트 금액 − 레슨분)으로 나눠 같은 기준입니다.
+  강의는 남은 회차 × 회당 단가(결제 금액 ÷ 결제 회차), 예전에 세트로 결제한 분은 레슨분(같은 판수 레슨 정가)과 강의분(세트 금액 − 레슨분)으로 나눠 같은 기준입니다(세트는 2026-10-19부터 팔지 않습니다).
   레벨 테스트는 예약 3시간 전까지 취소하면 전액, 그 뒤 취소와 불참은 환불하지 않습니다. 미성년 수강생의 보호자가 동의를 철회하면 미사용분 전액입니다.
   **이 기준만 안내하고 개인별 환불 금액은 계산하지 마세요.** 실제 금액 확인과 접수는 상담(디스코드/카카오)으로 연결하고 이용약관 링크를 함께 주세요.
 - 담당 트레이너의 부득이한 사정(군 입대 등) 시: 잔여 회차를 ①후임 인계 ②동급 전환 ③미사용분 환불 중 수강생이 선택.
@@ -1014,6 +1022,8 @@ let payreqPortalCard = null;
 // 앱 판수 조정 요청 → 오너 DM 승인 카드(계약 §9.10 · §46). 같은 패턴으로 봇 블록이 채운다 — 봇이 없으면 null
 // (요청은 그래도 저장되고 ownerNotified:false 로 답한다). 버튼 = adjreq_ok · adjreq_no.
 let adjreqPortalCard = null;
+// 판수 맞추기 묶음 카드(계약 §9.41.2) — 봇 블록이 채운다 · 봇이 없으면 null(요청은 그래도 대기로 남는다 · ownerNotified:false).
+let reconcilePortalCard = null;
 // 신청 창구 카드 · DM(docs/intake-design.md §6 · PR-2) — 봇 블록이 intake-cards.cjs 로 채운다. 봇이 없으면 null
 // (신청은 그래도 저장된다 — 카드 · 접수 DM 만 안 간다). 제출 훅 · cronTick 재알림 · PR-3 트레이너 라우트가 이것을 부른다.
 let intakeFlow = null;
@@ -1055,6 +1065,9 @@ if (process.env.DISCORD_TOKEN) {
     ],
     partials: [Partials.Message, Partials.Channel, Partials.Reaction],
   });
+  // 슬래시 · 버튼 손잡이가 모듈마다 interactionCreate 를 하나씩 단다(봇 하나에 30개 넘게) — 누수가 아니라 설계다.
+  //   기본 한도 10 이면 부팅마다 MaxListenersExceededWarning 이 찍혀 진짜 경고를 가린다(10/28 부팅 로그).
+  client.setMaxListeners(64);
 
   // /수업등록 명령 정의 — GmI 서버(LESSON_GUILD_ID)에만 등록 (기존 명령과 길드 분리).
   // /판수정정 — 오등록 판수 보정. 대상 수업을 직접 고르게 해서 정정분이 엉뚱한
@@ -1248,7 +1261,6 @@ if (process.env.DISCORD_TOKEN) {
         { name: "판수(레슨)", value: "판수" },
         { name: "강의", value: "강의" },
         { name: "상담", value: "상담" },
-        { name: "세트(강의+레슨 · 초급 280,000 · 중급 340,000 · 심화 405,000)", value: "세트" },
         { name: "기타", value: "기타" } ] },
       // §28 신고 닉네임(필수 · 오너 「§28 판정 그대로」 2026-09-25) — 승인 카드가 명부 닉과 대조한다. 명부가 비어 있으면 승인 뒤 오너 버튼으로만 채운다.
       { name: "배그닉네임", description: "수강생 배그 인게임 닉네임(명부에 있으면 자동완성)", type: 3, required: true, autocomplete: true },
@@ -1314,7 +1326,7 @@ if (process.env.DISCORD_TOKEN) {
     }
   }
 
-  client.once("ready", async () => {
+  client.once("clientReady", async () => {
     console.log("bot ready:", client.user.tag);
     botClient = client;   // Phase T1 오너 DM용
     // 디스코드 피드백 이관 드라이런(feedback-scan.cjs · 읽기 전용 · 10/1) — 기동 1분 30초 뒤 한 번(같은 token 은 다시 안 돈다)
@@ -1441,7 +1453,7 @@ if (process.env.DISCORD_TOKEN) {
   client.on("interactionCreate", (itx) => { if (killPoster) killPoster.handle(itx).catch((e) => console.error("[killrace-poster] handler", e?.message)); });
   // 결과 화면 스샷 → 점수판 「잠정」(killrace-shot.cjs · 팀배정 채널 사진만 · 확정 점수는 안 건드린다)
   client.on("messageCreate", (msg) => { if (killShot) killShot.onMessage(msg).catch((e) => console.error("[killrace-shot] handler", e?.message)); });
-  client.once("ready", () => { if (killShot) killShot.checkChannel(client); });
+  client.once("clientReady", () => { if (killShot) killShot.checkChannel(client); });
 
   const isStaff = (id) => STAFF_IDS.includes(id);
 
@@ -3308,12 +3320,20 @@ if (process.env.DISCORD_TOKEN) {
       )];
       const cr = payreqIntake.receiptOwnerLine(req);
       if (cr && !req.cash_receipt_issued_at) rows.push(payreqReceiptRow(req.id));
+      // 「입금 받음」(계약 §9.40 · 오너 10/19) — 트레이너가 통장 입금을 대신 올린 신청. 버튼 · 승인 뒤 길은 앱 신청과 같다.
+      //   머리만 다르다: 누가 올렸는지(트레이너) · 수강생 디코 닉. 레벨 테스트는 kind 「상담」이라 상품 이름을 바꿔 보인다.
+      const fromTrainer = opts.from === "trainer" || String(req.requested_by || "").startsWith("trainer:");
+      const head = fromTrainer
+        ? `**입금 받음 #${req.id}** (트레이너 ${opts.requesterName || req.trainer_name || "-"}${opts.note ? ` · ${opts.note}` : ""})`
+        : `**${card ? "카드 결제 신청" : "입금 신청"} #${req.id}** (앱${opts.note ? ` · ${opts.note}` : ""})`;
+      const what = req.kind === "상담" ? "레벨 테스트" : payreqIntake.productText(req, units);
       await owner.send({
         // 돈 문구라 이모지를 뺀다(ui-copy §2 — 💰 는 돈을 가볍게 만든다). /결제신청 카드의 💰 는
         // 전수 교체 금지라 그대로 둔다 — 두 카드 머리가 다른 게 오히려 입구 구분이 된다.
-        content: `**${card ? "카드 결제 신청" : "입금 신청"} #${req.id}** (앱${opts.note ? ` · ${opts.note}` : ""})`
-          + `\n· 학생: **${req.student_name}**`
-          + `\n· 상품: ${payreqIntake.productText(req, units)} · **${won(req.amount)}원**`
+        content: head
+          + `\n· 학생: **${req.student_name}**${fromTrainer && opts.nick && opts.nick !== req.student_name ? ` (디코 ${opts.nick})` : ""}`
+          + (fromTrainer ? `\n· 명부: #${req.student_id}` : "")
+          + `\n· 상품: ${what} · **${won(req.amount)}원**`
           + `\n· ${card ? "결제일" : "입금일"}: ${req.paid_on}`
           + (card
               ? `\n· 그로블 주문번호: ${req.deposit_ref || "-"}\n· 채널: ${channelLine("groble", req.amount)}`
@@ -3353,6 +3373,55 @@ if (process.env.DISCORD_TOKEN) {
       return true;
     } catch (e) { console.error("adjreq_card_dm", e?.message); return false; }
   };
+  // 판수 맞추기 묶음 카드(계약 §9.41.2) — 「줄별 반려」 고르기(여러 개) · [남은 줄 전체 승인] · [전부 반려].
+  //   결정은 ledger-reconcile.decide(줄마다 §46 한 번 · 두 번 눌러도 한 번). 다 끝나면 올린 트레이너에게 결과 DM(존댓말).
+  const reconcileRows = (b) => {
+    const pending = b.items.filter((i) => i.status === "pending");
+    if (!pending.length) return [];
+    return [
+      new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`recon_rej:${b.id}`)
+        .setPlaceholder("줄별 반려 — 틀린 줄을 골라줘").setMinValues(1).setMaxValues(pending.length)
+        .addOptions(pending.slice(0, 25).map((it) => ({ label: `${it.name} · ${ledgerReconcile.deltaText(it.delta)}`.slice(0, 100), value: String(it.requestId) })))),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`recon_all:${b.id}`).setLabel("✅ 남은 줄 전체 승인").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`recon_none:${b.id}`).setLabel("❌ 전부 반려").setStyle(ButtonStyle.Danger)),
+    ];
+  };
+  reconcilePortalCard = async (b) => {
+    if (!process.env.MRI_OWNER_ID) return false;
+    try {
+      const owner = await client.users.fetch(process.env.MRI_OWNER_ID);
+      await owner.send({ content: ledgerReconcile.cardText(b).slice(0, 1990), components: reconcileRows(b) });
+      return true;
+    } catch (e) { console.error("reconcile_card_dm", e?.message); return false; }
+  };
+  client.on("interactionCreate", async (itx) => {
+    if (!(itx.isButton() || itx.isStringSelectMenu())) return;
+    const m = String(itx.customId || "").match(/^recon_(rej|all|none):(\d+)$/);
+    if (!m) return;
+    if (!isMriOwner(itx)) return itx.reply({ content: "오너 전용 버튼이야.", ephemeral: true });
+    if (!reconcile) return itx.reply({ content: "판수 맞추기 준비 전이야.", ephemeral: true });
+    try { await itx.deferUpdate(); } catch (e) { console.error("recon_defer", e?.message); return; }
+    const opts = m[1] === "rej" ? { rejectIds: (itx.values || []).map(Number) } : m[1] === "all" ? { approveRest: true } : { rejectAll: true };
+    let out;
+    try { out = await reconcile.decide(m[2], opts); }
+    catch (e) {
+      console.error("recon_decide", e?.message);
+      return itx.followUp({ content: `#${m[2]} 처리 중 오류가 났어 — 처리된 줄만 반영됐어. 카드를 다시 눌러줘`, ephemeral: true }).catch(() => {});
+    }
+    if (out.error) return itx.editReply({ content: `판수 맞추기 #${m[2]} — 묶음을 못 찾았어(${out.error})`, components: [] }).catch(() => {});
+    const b = out.batch;
+    const ids = b.items.filter((i) => i.status === "approved").map((i) => i.studentId);
+    if (ids.length) gamesShort.check(ids);                 // §45 — 승인으로 음수가 되면 바로
+    await itx.editReply({ content: ledgerReconcile.cardText(b).slice(0, 1990), components: reconcileRows(b) }).catch(() => {});
+    if (!b.items.some((i) => i.status === "pending")) {
+      try {
+        const tr = (await sbSelect("staff", `select=discord_id&id=eq.${b.trainerId}&limit=1`))[0];
+        await discordDM(tr?.discord_id, ledgerReconcile.trainerResultText(b));
+      } catch (e) { console.error("recon_trainer_dm", e?.message); }
+    }
+  });
+
   client.on("interactionCreate", async (itx) => {
     if (!itx.isButton()) return;
     const m = String(itx.customId || "").match(/^adjreq_(ok|no):(\d+)$/);
@@ -3722,15 +3791,10 @@ if (process.env.DISCORD_TOKEN) {
       return itx.reply({ content: "배그닉네임의 플랫폼(스팀/카카오)을 골라줘.", ephemeral: true });
     if (kind === "판수" && !games)
       return itx.reply({ content: "구분이 판수면 판수도 입력해줘(예: 33).", ephemeral: true });
-    // 세트(v1.1): 금액이 상품을 결정하고 판수는 정가표에서 온다 — 서버 §18d payreq_apply 의 표와 같아야 한다.
-    //   초급 280,000(10판) · 중급 340,000(21판) · 심화 405,000(33판). 표 밖 금액은 접수 단계에서 막는다(승인 시 예외보다 빠르다).
-    //   세트 이름은 2026-10-02 사이트 개편(#480)대로 초급 · 중급 · 심화다(옛 입문 · 도약 · 마스터 · 금액 그대로).
-    const SET_GAMES = { 280000: 10, 340000: 21, 405000: 33 };
-    if (kind === "세트") {
-      if (!SET_GAMES[amount])
-        return itx.reply({ content: "세트 금액은 280,000(초급) · 340,000(중급) · 405,000(심화) 중 하나여야 해. 금액을 확인해줘.", ephemeral: true });
-      games = SET_GAMES[amount];
-    }
+    // 세트 폐지(2026-10-19 오너 · docs/direct-price-unify.md §6) — 고르기에서 뺐다. 명령이 다시 등록되기 전 화면에 남은 「세트」를 누르면 여기서 막는다.
+    //   옛 세트 결제의 승인 · 분해는 §18d payreq_apply 가 그대로 한다(이미 대기 중인 신청은 이 경로를 안 탄다).
+    if (kind === "세트")
+      return itx.reply({ content: "세트는 10/19부터 팔지 않아 — 직강은 「강의」(290,000), 레슨은 「판수」로 따로 올려줘.", ephemeral: true });
     let paid_on = kstToday();
     if (paidRaw) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(paidRaw) || Number.isNaN(Date.parse(paidRaw)))
@@ -3976,6 +4040,11 @@ if (process.env.DISCORD_TOKEN) {
       });
     }
 
+    // 「입금 받음」(§9.40)은 트레이너가 명부에서 고른 행이 신청에 실려 있다 — 이름 후보 대신 그 행을 먼저 보인다(대상 변경은 그대로 된다).
+    if (action === "ok" && String(q.requested_by || "").startsWith("trainer:") && q.student_id) {
+      const s = await payreqStudentById(Number(q.student_id));
+      return payreqShowTargets(itx, reqId, q, s ? [s] : await payreqCandidates(q.student_name), s ? "트레이너가 명부에서 고른 수강생이야." : null);
+    }
     if (action === "ok") return payreqShowTargets(itx, reqId, q, await payreqCandidates(q.student_name), null);   // ✅ = 확인 단계(승인 아님)
     if (action === "sel") {
       const s = await payreqStudentById(Number(itx.values?.[0]));
@@ -4011,6 +4080,14 @@ if (process.env.DISCORD_TOKEN) {
     }
     if (approve) {
       console.log(`[payreq] approve #${reqId} → students.id=${target.id} (승인자 확정)`);
+      // 「입금 받음」으로 같이 등록한 예비 수강생(§9.41.4) — 원장 승인 = 정식 전환(담당 없으면 올린 트레이너). 반려면 예비 그대로.
+      if (String(q.requested_by || "").startsWith("trainer:") && target.status === "prospect") {
+        try {
+          await sbPatch("students", `id=eq.${target.id}&status=eq.prospect`,
+            { status: "active", ...(target.trainer_id ? {} : { trainer_id: q.trainer_id }) });
+          console.log(`[payreq] #${reqId} 예비 #${target.id} → active`);
+        } catch (e) { console.error("payreq_prospect_activate", e?.message); }
+      }
       // 본표 반영 결과 — PATCH 응답(RETURNING)은 §18d AFTER 트리거가 payment_id 를 채우기 **전** 스냅샷이라
       // 항상 null 로 온다(9/20 #28 실측). 그래서 갱신 뒤 같은 행을 다시 읽는다. 컬럼 자체가 없으면(§18b 미실행) 종전대로 undefined.
       let row = Array.isArray(patched) ? patched[0] : null;
@@ -4096,6 +4173,22 @@ if (process.env.DISCORD_TOKEN) {
         }
         await discordDM(stu?.discord_id, msg);
       } catch (e) { console.error("payreq_notify_student", e?.message); }
+      return;
+    }
+    // 「입금 받음」(§9.40) — requested_by = "trainer:<staff id>". 디코 id 가 아니라 아래 users.fetch 로는 못 보낸다.
+    //   올린 트레이너에게 존댓말로(오너 지시 10/19 · 트레이너 쪽 문구 존댓말) · 수강생은 디코 닉으로 · 돈 문구라 이모지 없이.
+    if (String(q.requested_by || "").startsWith("trainer:")) {
+      try {
+        const staffId = Number(String(q.requested_by).slice(8));
+        const st = Number.isInteger(staffId) && staffId > 0
+          ? (await sbSelect("staff", `select=discord_id&id=eq.${staffId}&limit=1`))[0] : null;
+        const sid = approve ? target.id : Number(q.student_id);
+        const stu = sid ? (await sbSelect("students", `select=name,discord_nick&id=eq.${sid}&limit=1`))[0] : null;
+        const reflected = approve
+          ? await sbSelect("payment_requests", `select=payment_id&id=eq.${reqId}&limit=1`).then((r) => !!r[0]?.payment_id).catch(() => false)
+          : false;
+        await discordDM(st?.discord_id, paymentReceived.trainerResultText(q, approve, { nick: stu ? paymentReceived.nickOf(stu) : null, reflected }));
+      } catch (e) { console.error("payreq_notify_trainer", e?.message); }
       return;
     }
     // 신청 트레이너에게 결과 통보(best-effort — 실패해도 처리 자체는 완료)
@@ -5889,7 +5982,7 @@ app.post("/api/apply", async (req, res) => {
       color: 0xf5c518,
       fields: [
         { name: "신청 구분", value: clip(b.applyType, 50), inline: true },
-        { name: "유입 경로", value: clip(b.source, 50), inline: true },
+        { name: "어디서 보고 왔나", value: (() => { const x = inflowMod.normalizeInflow(b.source); return x ? (x.legacy ? `기타(${x.legacy})` : x.label) : "—"; })(), inline: true },
         { name: "플랫폼/닉", value: `${clip(b.platform, 10)} / ${clip(b.nickname, 40)}`, inline: true },
         { name: "🎯 BPI 자동진단", value: bpiText, inline: false },
         { name: "최고 티어", value: clip(b.tier, 40) || "—", inline: true },
@@ -5922,7 +6015,9 @@ app.post("/api/apply", async (req, res) => {
       //   playtime·focus·stats_consent 를 전부 null 로 저장하고 memo 폴백만 남겼다. REQUIRED 는 부팅 점검이
       //   실재를 보장하므로 존재로 본다. (관제탑 9/17 UTM 집계 경로 확인에서 드러남)
       const has = (c) => schemaOptional[`consults.${c}`] === true || (REQUIRED_SCHEMA.consults || []).includes(c);
-      const inflow = clip(b.source, 50);                       // 폼의 '유입 경로'(유튜브·지인 등)
+      // 폼의 「어디서 보고 오셨어요?」(inflow.cjs 7개 중 하나 · 오너 10/19) — 저장 값은 화면 이름. 목록 밖(옛 페이지)은 「기타」 + 원래 값 memo.
+      const inflowPick = inflowMod.normalizeInflow(b.source);
+      const inflow = inflowPick?.label || "";
       // UTM(index.html 트레이너 CTA → apply.html 진입 시 캡처 → 제출 payload). 종전에는 디스코드 embed 에만 실리고
       // 어디에도 저장되지 않아 집계가 성립하지 않았다. §22f 컬럼이 있으면 컬럼에, 없으면 memo 에 `utm: a/b/c` 로 남긴다.
       const utm = { utm_source: clip(b.utm_source, 40), utm_medium: clip(b.utm_medium, 40), utm_content: clip(b.utm_content, 60) };
@@ -5942,8 +6037,9 @@ app.post("/api/apply", async (req, res) => {
       if (has("focus")) row.focus = clip(b.focus, 200);
       if (has("stats_consent")) row.stats_consent = String(b.statsConsent) === "동의";
       const memoParts = [];
-      if (has("inflow")) row.inflow = inflow;
+      if (has("inflow")) row.inflow = inflow || null;
       else if (inflow) memoParts.push(`유입: ${inflow}`);
+      if (inflowPick?.legacy) memoParts.push(`유입(옛 선택지): ${inflowPick.legacy}`);
       const utmVals = Object.values(utm).filter(Boolean);
       if (has("utm_source")) Object.assign(row, { utm_source: utm.utm_source || null, utm_medium: utm.utm_medium || null, utm_content: utm.utm_content || null });
       else if (utmVals.length) memoParts.push(`utm: ${[utm.utm_source, utm.utm_medium, utm.utm_content].map((v) => v || "-").join("/")}`);
@@ -8599,9 +8695,27 @@ const trainerPortal = require("./trainer-portal.cjs")(app, {
   sbSelect, sbInsert, sbUpsert, sbPatch, sbDelete, sbRpc, limit, getUser, portal: studentPortal,
 });
 
+// ── 「입금 받음」(계약 §9.40 · 오너 10/19) — 트레이너가 통장 입금을 대신 올린다 → 오너 승인 카드(앱 신청과 같은 버튼) ──
+//   trainer-portal 뒤 — 그 파일의 게이트 · requireTrainer · scopedStudents 를 같은 함수로 쓴다. 봇(/입금받음)이 이 라우트를 부른다.
+paymentReceived.mountPaymentReceived(app, trainerPortal, {
+  sbSelect, sbInsert, limit, portal: studentPortal,
+  payreqCard: (r, o) => (payreqPortalCard ? payreqPortalCard(r, o) : Promise.resolve(false)),
+});
+
+// ── 판수 맞추기(계약 §9.41.2 · §9.41.3) — 메모 붙여넣기 → 다른 줄만 → 원장 카드 한 장. 판수는 승인 때만 움직인다(§46). ──
+reconcile = ledgerReconcile.mountReconcile(app, trainerPortal, {
+  sbSelect, sbInsert, sbRpc, limit, portal: studentPortal,
+  stateGet: (k) => opsStateGet(k), stateSet: (k, v) => opsStateSet(k, v),
+  card: (b) => (reconcilePortalCard ? reconcilePortalCard(b) : Promise.resolve(false)),
+});
+
 // ── 수업 복기 트레이너 라우트(§29 PR-3 · /api/trainer-portal/{reviews,feedback,feed}) ──
 // trainer-portal 뒤 — 그 파일이 건 게이트 뒤에 서고, 트레이너 판정·범위(담당 ∪ 최근 90일)·응답 가드를 같은 함수로 쓴다.
 reviewApi.mountTrainer(trainerPortal);
+
+// 「AI 무리 복기」 리플 API(/api/replay/* · docs/replay-ai.md §13) — 클립 피드백 엔진 부품 · 운영진 로그인만 · 닉네임 조회만 PUBG 한도를 쓴다(분당 4회 몫 · 줄 서기).
+//   저장(§87 버킷 replay · replay_matches)이 없으면 메모리 캐시로 돈다.
+require("./replay-api.cjs")(app, { findPlayer, pubgGet, getUser, limit, sbSelect, sbInsert });
 
 // ── 트레이너별 판수 부족 알림(§45 · 2026-09-30 오너 판정 B — 재결제 안내) ──
 // 트레이너별 잔여가 0 미만이 되면 수강생·그 트레이너에게 DM 1회 · 다시 0 이상이 될 때까지 재발송 없음 · 풀리면 조용히 닫는다.
@@ -8678,8 +8792,15 @@ function onLevelTestDone(bookingId, staff) {
     });
 }
 
+// 개인 레슨 자동 완료(계약 §9.39) — 기록은 ops_state 'auto-complete' 한 줄. 틱은 cronTick · [수업 안 함] 은 아래 booking-api 의 hold 라우트
+const autoComplete = autoCompleteMod.createAutoComplete({
+  sbSelect, sbRpc,
+  stateGet: async (k) => { const rows = await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(k)}&limit=1`); return rows.length ? rows[0].value : null; },
+  stateSet: (k, v) => sbUpsert("ops_state", { key: k, value: v, updated_at: new Date().toISOString() }, "key"),
+});
 require("./booking-api.cjs")(app, {
   sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,
+  autoComplete,                                                     // §9.39 [수업 안 함] → hold
   recorder: lessonRecorder,                                         // §9.29 — 취소한 기록만 있는 날의 「완료」를 대신 기록
   onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 「완료」 · 예약(선차감) 직후
   onConsultDone: onLevelTestDone,                                  // 레벨 테스트 「완료」 → 상담 기록
@@ -8834,6 +8955,8 @@ const REQUIRED_SCHEMA = {
                      // §22d 승격(2026-09-04) — 오너 DDL 실행 완료를 실DB에서 확인했고
                      // /api/apply가 이 컬럼들에 쓴다. inflow만 SCHEMA_OPTIONAL에 남는다(22d-1 미실행).
                      "source","phone","platform","game_nick","playtime","focus","stats_consent",
+                     // §22d-1 inflow(2026-10-19 세션 실행 · 46 → 47칸) — /api/apply 「어디서 보고 오셨어요?」
+                     "inflow",
                      // §60 상담 보드(2026-10-01 · 세션 실행 · 실측 46칸) — consult-board.cjs · consult-record.cjs 가 쓴다
                      "consult_type","booking_id","application_id","outcome","outcome_note","outcome_at","outcome_by",
                      "thinking_reminded_at","handover_at","handover_note","updated_at"],
@@ -9011,6 +9134,8 @@ const REQUIRED_SCHEMA = {
 // 122행을 실DB에서 확인했고 코드가 참조를 시작했다(잔여·환불 파생). settlements는
 // 아직 코드가 안 쓰므로 선택 유지다. 승격 경로는 §18 payment_requests와 같다.
 const SCHEMA_OPTIONAL = {
+  // §87 「AI 무리 복기」 리플 저장(replay-api.cjs · 2026-10-21) — 없으면 메모리 캐시로 돈다. 클립 피드백이 정식이 되면 REQUIRED 로 올린다.
+  replay_matches: ["platform", "match_id", "team_id", "map_name", "game_mode", "match_type", "played_at", "storage_path", "size_bytes", "parser_version"],
   // settled_period = 정산 귀속월(마감월 정정분을 다음 열린 달로 이월). 부재하면
   // admin-panel이 paid_at 월로 떨어져 현행과 동일하게 동작한다.
   // deposit_ref(§19f 세트 묶음)는 **DDL 실행 완료**다(2026-08-17 실DB 실측 — 컬럼 +
@@ -9074,7 +9199,7 @@ const SCHEMA_OPTIONAL = {
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
-  consults: ["inflow", "utm_source", "utm_medium", "utm_content"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계)
+  consults: ["utm_source", "utm_medium", "utm_content"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계) · inflow 는 10/19 실행으로 필수 승격
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",
@@ -9393,13 +9518,11 @@ const DIRECT_STALE_DAYS = 7;   // 직강은 주 단위 운영 — 3일은 오탐
 // 판정식은 §37 의 v_has 와 **같다**(학생 · 진행 트레이너 · KST 날짜). 다르면 화면과 알림이 갈린다.
 // 고치는 건 사람이 한다 — /수업등록 으로 판수를 넣거나, 수업을 안 했으면 예약을 취소로 되돌린다.
 const BOOKING_ORPHAN_DAYS = Number(process.env.BOOKING_ORPHAN_DAYS || 14);
-// ── 닫지 않은 수업 아침 알림(계약 trainer-portal-api §9.34.2) — 세기만 한다(상태 · 판수 · 48시간 전이 안 바꿈) ──
-//   채널 = /수업등록 채널(LESSON_CHANNEL_ID · 새 env 없음 · 미설정이면 건너뜀). 대상이 비면 안 보낸다. 하루 한 번(maybeRunDaily).
-//   한 통 = 트레이너별 · 예약 #번호와 날짜만(수강생 · 판수 없음) · 멘션 없음. 로그에는 건수만 남긴다.
+// ── 닫지 않은 수업 아침 독촉(계약 trainer-portal-api §9.39.5 · §9.34.2 를 대신한다) — 세기만 한다(상태 · 판수 · 48시간 전이 안 바꿈) ──
+//   공개 채널(/수업등록) 알림은 없앴다(오너 10/18) — 트레이너마다 DM 한 통(그 트레이너 몫이 있을 때만) · 수강생 디코 닉 · 시각 · 종류 · n일째.
+//   하루 한 번(maybeRunDaily). 로그에는 건수만. DM 이 막힌 트레이너는 건너뛴다(다른 사람에게 보내지 않는다).
 async function runUnclosedLessonsAlert() {
   if (!process.env.SUPABASE_URL) { console.log("[cron] unclosed_lessons: SUPABASE_URL 미설정 — 스킵"); return; }
-  const chId = process.env.LESSON_CHANNEL_ID;
-  if (!chId) { console.log("[cron] unclosed_lessons: LESSON_CHANNEL_ID 미설정 — 스킵"); return; }
   if (!botClient) throw new Error("bot_not_ready");                // 다음 틱에 한 번 더(두 번 실패면 maybeRunDaily 가 오너 DM)
   // 임베드 대신 2질의(runBookingOrphans 와 같은 이유 — 임베드 문법이 어긋나면 조용히 0건이 된다)
   const books = await sbSelect("slot_bookings",
@@ -9413,12 +9536,41 @@ async function runUnclosedLessonsAlert() {
   const rows = unclosedLessons.alertRows(unclosedLessons.unclosedOf(books, new Map(slots.map((s) => [s.id, s])), now), now);
   if (!rows.length) { console.log("[cron] unclosed_lessons: 없음"); return; }
   const tids = [...new Set(rows.map((r) => r.trainerId))];
-  const staff = await sbSelect("staff", `select=id,name&id=in.(${tids.join(",")})`).catch(() => []);
-  const names = Object.fromEntries(staff.map((x) => [x.id, x.name]));
-  const ch = await botClient.channels.fetch(String(chId));
-  if (!ch?.isTextBased?.()) throw new Error("lesson_channel_not_text");
-  await ch.send({ content: unclosedLessons.alertText(rows, names), allowedMentions: { parse: [] } });
-  console.log(`[cron] unclosed_lessons: ${rows.length}건 · 트레이너 ${tids.length}명 · 채널에 보냄`);
+  const sids = [...new Set(rows.map((r) => r.studentId))];
+  const [staff, studs] = await Promise.all([
+    sbSelect("staff", `select=id,discord_id,active&id=in.(${tids.join(",")})`).catch(() => []),
+    sbSelect("students", `select=id,name,discord_nick&id=in.(${sids.join(",")})`).catch(() => []),
+  ]);
+  const nick = Object.fromEntries(studs.map((x) => [x.id, x.discord_nick || x.name || null]));
+  let sent = 0, skipped = 0;
+  for (const t of staff) {
+    const mine = rows.filter((r) => r.trainerId === t.id);
+    const text = unclosedLessons.trainerDmText(mine, nick, now);
+    if (!text || !t.discord_id || t.active === false) { skipped++; continue; }
+    if (await discordDM(t.discord_id, text)) sent++; else skipped++;
+  }
+  console.log(`[cron] unclosed_lessons: ${rows.length}건 · 트레이너 ${tids.length}명 · DM ${sent} · 못 보냄 ${skipped}`);
+}
+
+// ── 개인 레슨 자동 완료 원장 하루 목록(계약 §9.39.3) — 어제 자동 완료 · 수업 안 함 · 잠긴 달 · 안 된 것. 비면 안 보낸다 ──
+async function runAutoCompleteDigest() {
+  if (!process.env.SUPABASE_URL || !process.env.MRI_OWNER_ID) return;
+  const st = await autoComplete.state();
+  if (!st || !st.since) return;
+  const ids = (k) => Object.values(st[k] || {});
+  const all = [...ids("done"), ...ids("hold"), ...ids("skip")];
+  const sids = [...new Set(all.map((v) => v.studentId).filter(Boolean))], tids = [...new Set(all.map((v) => v.trainerId).filter(Boolean))];
+  const [studs, staff] = await Promise.all([
+    sids.length ? sbSelect("students", `select=id,name,discord_nick&id=in.(${sids.join(",")})`).catch(() => []) : [],
+    tids.length ? sbSelect("staff", `select=id,name&id=in.(${tids.join(",")})`).catch(() => []) : [],
+  ]);
+  const text = autoCompleteMod.digestText(st, Date.now(), {
+    nick: Object.fromEntries(studs.map((x) => [x.id, x.discord_nick || x.name || null])),
+    trainerName: Object.fromEntries(staff.map((x) => [x.id, x.name])),
+  });
+  if (!text) { console.log("[cron] auto_complete_digest: 없음"); return; }
+  if (!(await discordDM(process.env.MRI_OWNER_ID, text))) throw new Error("owner_dm_failed");
+  console.log("[cron] auto_complete_digest: 보냄");
 }
 
 async function runBookingOrphans() {
@@ -9636,6 +9788,11 @@ async function cronTick() {
   // 닫지 않은 수업(계약 trainer-portal-api §9.34.2 · 지휘 10/7) — 「어제까지」 끝났는데 열린 예약을 /수업등록 채널에 하루 한 통.
   //   위 bookingOrphan 은 **닫힌** 예약만 본다 — 아예 안 닫힌 예약은 48시간 sweep 전까지 아무 데도 안 떴다(10월 기록 멈춤의 원인).
   await maybeRunDaily("unclosedLessons", unclosedLessons.ALERT_AT, runUnclosedLessonsAlert, "닫지 않은 수업 알림");
+  // 개인 레슨 24시간 자동 완료(계약 §9.39 · 오너 10/18 「구현 끝나면 바로」) — 매 틱. 첫 틱이 켜진 시각을 적는다(소급 없음 §9.39.6).
+  await autoComplete.tick()
+    .then((r) => { if (r.studentIds?.length) Promise.resolve(gamesShort.check(r.studentIds)).catch(() => {}); })
+    .catch((e) => console.error("auto_complete_tick", e?.status || "", e?.message));
+  await maybeRunDaily("autoCompleteDigest", unclosedLessons.ALERT_AT, runAutoCompleteDigest, "자동 완료 원장 목록");
   // 트레이너별 판수 부족 알림(§45) — 매 틱. 입금 승인 · 오너 SQL 처럼 코드가 직후 점검을 못 거는 변화도 여기서 잡는다.
   await gamesShort.run({ label: "tick" }).catch((e) => console.error("short_tick", e?.message));
   // 현금영수증 4일 미발급(계약 §9.5 · 오너 판정 9/30) — 낮에 한 번. 신청마다 한 통 · 한 번만.

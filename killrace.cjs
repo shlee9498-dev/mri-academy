@@ -218,6 +218,26 @@ function tierPenaltyMap(members, tiers) {
   rows.forEach((r, i) => { out[r.slot] = SLOT_PENALTY[i]; });
   return out;
 }
+// 팀 목표(§1.39.1 · 9회부터) — 선수 티어별 할당 = 1 ~ 7회 그 티어 2시간 평균 기여(「평소만큼 = 100%」 · 오너 10/17).
+//   표에 없는 티어 · 티어 없음 = 8티어(11). 이 표는 여기 한 곳에만 둔다 — 화면은 응답 goal 을 그린다
+const TIER_ALLOT = { 1: 64, 1.5: 55, 2: 42, 3: 32, 4: 27, 5: 22, 6: 16, 7: 13, 8: 11 };
+const RACE_TIER_GOAL_RATIO = 0.8;                 // 팀 목표 = 할당 합 × 0.8 반올림(오너 10/17 「팀 목표는 합의 80%」 · 합 그대로면 도착하는 날이 너무 적다)
+const TIER_ALLOT_NONE = TIER_ALLOT[8];
+const RACE_TIER_GOAL_FROM_EVENT = 9;              // 이 회차부터 race 목표 기본 = 팀원 할당 합(raceGoalBy "tier") · 8회까지는 회차 목표 하나(raceGoal)
+const tierAllotOf = (tier) => (tier != null && Number.isFinite(Number(tier)) && TIER_ALLOT[Number(tier)] ? TIER_ALLOT[Number(tier)] : TIER_ALLOT_NONE);
+// 팀 목표 = round(등록 주전 할당 합 × 0.8) — 티어 찾는 길은 tierPenaltyMap 과 같다(팀 줄 members[].tier → 티어표 닉 → 계정 합치기). 교체 선수는 넣지 않는다
+function teamGoalOf(members, tiers) {
+  const list = tiers && tiers.list && typeof tiers.list === "object" ? tiers.list : {};
+  const byAcc = tiers && tiers.byAccount && typeof tiers.byAccount === "object" ? tiers.byAccount : {};
+  let goal = 0; let missing = 0;
+  for (const m of Array.isArray(members) ? members : []) {
+    const hit = list[String(m.ign || "").toLowerCase()] || byAcc[m.accountId] || null;
+    const tier = m.tier != null && Number.isFinite(Number(m.tier)) ? Number(m.tier) : hit && hit.tier != null && Number.isFinite(Number(hit.tier)) ? Number(hit.tier) : null;
+    if (tier == null) missing += 1;
+    goal += tierAllotOf(tier);
+  }
+  return { goal: Math.round(goal * RACE_TIER_GOAL_RATIO), sum: goal, missing };
+}
 const penaltyOf = (slot, penBySlot) => (penBySlot && Number.isInteger(penBySlot[slot]) ? penBySlot[slot] : SLOT_PENALTY[slot - 1] || 0);
 
 // 그 판의 출전 명단 — 슬롯마다 주전이 그 판에 있으면 주전, 없고 그 슬롯 교체 선수가 있으면 교체 선수(사망 감점 슬롯을 물려받는다)
@@ -446,8 +466,11 @@ function normEventConfig(value, evId) {
   const goalOf = (x) => (Number.isInteger(x) && x >= 10 && x <= 10000 ? x : null);
   const teamGoals = {};
   if (scoring === "race" && v.teamGoals && typeof v.teamGoals === "object") for (const [k2, n2] of Object.entries(v.teamGoals)) if (goalOf(n2)) teamGoals[k2] = n2;
+  // 목표 정하는 법(§1.39.1) — "tier" = 팀원 할당 합 · "fixed" = 회차 목표 하나. 설정에 없으면 9회부터 "tier"
+  const goalBy = v.raceGoalBy === "tier" || v.raceGoalBy === "fixed" ? v.raceGoalBy
+    : Number.isInteger(Number(evId)) && Number(evId) >= RACE_TIER_GOAL_FROM_EVENT ? "tier" : "fixed";
   const race = scoring === "race"
-    ? { goal: goalOf(v.raceGoal) || RACE_GOAL_DEFAULT, penalty: v.racePenalty === "stored" ? "stored" : "none", teamGoals }
+    ? { goal: goalOf(v.raceGoal) || RACE_GOAL_DEFAULT, penalty: v.racePenalty === "stored" ? "stored" : "none", teamGoals, goalBy }
     : null;
   return {
     // 판 순번 버닝이면 boostAt 은 읽지 않는다(null) — 옛 화면이 「1.5배 판까지 N분」을 잘못 띄우지 않게
@@ -483,10 +506,10 @@ function raceScore(kills, damage, place, penalty, out, race) {
 // 판 확정 시각 — 팀 판 종료가 있으면 그것 · 없으면 판 시작으로 대신하고 표시(doneEstimated)
 const doneOf = (teamEndMs, startedAt) => (teamEndMs ? { doneAt: teamEndMs } : { doneAt: startedAt, doneEstimated: true });
 // 레이스 순위(§1.38.1) — 목표에 도착한 팀 먼저(도착 판이 **끝나 점수가 확정된** 시각이 이른 순 · 오너 10/17) · 못 한 팀은 목표 대비 비율 순 → 총점 → 킬 → 치킨 → 딜 → 팀명.
-// 팀 목표 = teamGoals[팀명] → 없으면 회차 목표. 도착 판 = 판 번호(seq) 순으로 더해 처음 목표 이상이 된 판(보너스는 도착 판정에 넣지 않는다)
+// 팀 목표 = teamGoals[팀명](진행자가 적은 값 · 우선) → 팀원 할당 합(race.tierGoals · goalBy "tier") → 회차 목표. 도착 판 = 판 번호(seq) 순으로 더해 처음 목표 이상이 된 판(보너스는 도착 판정에 넣지 않는다)
 function rankRace(list, race) {
   for (const t of list) {
-    t.goal = race.teamGoals[t.team.name] || race.goal;
+    t.goal = race.teamGoals[t.team.name] || (race.tierGoals && race.tierGoals[t.team.name]) || race.goal;
     let cum = 0; t.reachedAt = null; t.reachedSeq = null; t.reachedEstimated = false;
     for (const g of t.games) {
       cum += g.score;
@@ -873,7 +896,7 @@ function buildBoard({ ev, teams, cfg, rows, at, admin, live, teamEnds = null }) 
     event: { name: ev.name, start: ev.start, end: ev.end }, serverNow: at, admin: !!admin,
     boostAt: cfg.boostAt, boostMul: cfg.boostMul, boostMode: cfg.boostMode, boostSeqs: cfg.boostSeqs, auto: cfg.auto, updatedAt,
     lateRevive: cfg.lateRevive, revivePhase: cfg.revivePhase, penaltyBy: cfg.penaltyBy, mode: cfg.mode, excludeBots: !!cfg.excludeBots,
-    scoring: raceOn ? "race" : "classic", ...(raceOn ? { race: { goal: cfg.race.goal, penalty: cfg.race.penalty } } : {}),
+    scoring: raceOn ? "race" : "classic", ...(raceOn ? { race: { goal: cfg.race.goal, penalty: cfg.race.penalty, goalBy: cfg.race.goalBy } } : {}),
     run: lv.run || null, rankChangedAt: (lv.ranks && lv.ranks.at) || null,
     gains: (lv.gains || []).filter((g) => at - g.at < GAIN_SHOW_MS),
     teams: list.map((t) => ({
@@ -1151,6 +1174,15 @@ function createKillrace(deps) {
   }
   const loadTeams = async (evId) =>
     (await sbSelect("event_teams", `select=team_name,platform,members&event_id=eq.${evId}&order=team_name.asc`)).map(normTeam);
+  // race 목표 "tier"(§1.39.1) — 팀마다 팀원 할당 합을 cfg.race.tierGoals 에 붙인다. 티어표를 못 읽으면 붙이지 않는다(= 회차 목표 · 전원 11점으로 떨어뜨리지 않는다)
+  async function withTierGoals(cfg, teams) {
+    if (!(cfg.scoring === "race" && cfg.race && cfg.race.goalBy === "tier")) return cfg;
+    const tiers = await loadTiers();
+    if (!tiers) { log.warn("[killrace] tier_goals_skipped", "tiers_unavailable"); return cfg; }
+    const tierGoals = {};
+    for (const team of teams) tierGoals[team.name] = teamGoalOf(team.members, tiers).goal;
+    return { ...cfg, race: { ...cfg.race, tierGoals } };
+  }
 
   // ── /킬내기팀등록 ──
   async function registerTeam({ teamName, platform, igns }) {
@@ -1462,7 +1494,7 @@ function createKillrace(deps) {
         }
         t.total = sum(t.games, (g) => g.score) + t.bonus;
       }
-      rankRace(summary, cfg.race);
+      rankRace(summary, (await withTierGoals(cfg, teams)).race);
     } else rankTeams(summary);
     const inGames = records.filter((r) => !r.excluded);
     const stats = {
@@ -1483,7 +1515,7 @@ function createKillrace(deps) {
       sbSelect("event_matches", `select=team_name,match_id,seq,map,created_at,damage_sum,kills,win_place,penalty,leave_flag,score,flags,updated_at&event_id=eq.${ev.id}`),
     ]);
     const teamEnds = cfg.scoring === "race" ? await teamEndsOf(ev.id) : null;
-    return buildBoard({ ev, teams, cfg, rows, at: now(), admin, live: typeof live === "function" ? await live(ev) : live, teamEnds });
+    return buildBoard({ ev, teams, cfg: await withTierGoals(cfg, teams), rows, at: now(), admin, live: typeof live === "function" ? await live(ev) : live, teamEnds });
   }
   // 팀 판 종료(§1.38) 대체 재료 — 판별 상세(event_match_player_detail · §67)의 선수 생존 시간 최댓값. 판 줄에 teamEndMs 가 없는 옛 판만 쓴다. 실패하면 빈 값(판 시작으로 대체)
   async function teamEndsOf(evId) {
@@ -1525,7 +1557,7 @@ function createKillrace(deps) {
       } catch (e) { log.warn("[killrace] bot_stats_read_failed", logSafe(e)); }   // 칸이 없으면(§75 미실행) 공식 값 그대로
     }
     const teamEnds = cfg.scoring === "race" ? await teamEndsOf(ev.id) : null;
-    return buildPlayers({ ev, teams, cfg, rows, roster, at: now(), bots, teamEnds });
+    return buildPlayers({ ev, teams, cfg: await withTierGoals(cfg, teams), rows, roster, at: now(), bots, teamEnds });
   }
 
   // ── 핵 사망 무효(진행자 수동 표시) — 설정에 적고 그 판 점수를 바로 다시 센다. 다음 집계도 같은 표시를 읽는다 ──
@@ -1950,7 +1982,7 @@ module.exports = {
   telemetry: { fetchTelemetry },                                                 // 텔레메트리 스트리밍 — 판별 상세 기록(killrace-detail.cjs)이 같은 해석기를 쓴다
   tiers: { tierRowsByMerge },                                                    // 같은 사람 계정끼리 티어 나누기(§1.26) — 공개 티어 읽기(killrace-tiers.cjs · §1.29)가 같은 묶기를 쓴다
   _test: {
-    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, tierPenaltyMap, penaltyOf, TIER_PENALTY_FROM_EVENT, LATE_START_GRACE_MS, LATE_START_GRACE_FROM, startsInWindow, botAdjOf, pickCurrentEvent, CURRENT_GRACE_MS, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, raceScore, rankRace, RACE_GOAL_DEFAULT, teamEndOf, formatChannelPost, formatReport, tierRowsByMerge, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
+    SLOT_PENALTY, LEAVE_SCORE, CHICKEN_BONUS, OPEN_EVENTS_MAX, BOOST_SEQ_FROM_EVENT, BOOST_SEQS_DEFAULT, LATE_REVIVE_FROM_EVENT, LATE_REVIVE_MODES, REVIVE_PHASE_DEFAULT, REVIVE_JOBS_PER_RUN, REVIVE_RETRY_MS, baseScore, applyBoost, finalScore, tierPenaltyMap, penaltyOf, TIER_PENALTY_FROM_EVENT, LATE_START_GRACE_MS, LATE_START_GRACE_FROM, startsInWindow, botAdjOf, pickCurrentEvent, CURRENT_GRACE_MS, boostTarget, boostTargets, seqBoosts, normEventConfig, buildBoard, buildPlayers, raceScore, rankRace, RACE_GOAL_DEFAULT, TIER_ALLOT, RACE_TIER_GOAL_RATIO, tierAllotOf, teamGoalOf, RACE_TIER_GOAL_FROM_EVENT, teamEndOf, formatChannelPost, formatReport, tierRowsByMerge, kstHm, kstMdHm, mapKo, normTeam, teamSig, teamCandidates, classify, modeReason, pickPlayer,
     telemetryVerdict, deathTypeVerdict, lateReviveCheck, reviveOutOf, reviveWho, scoreGame, rankTeams, formatCard, deadLine, formatExcluded, formatReport, formatPublic, formatChannelPost,
     splitMessages, createTelemetryScanner, makeTelemetryCollector, fetchTelemetry, verdictNote, parseRoster, formatHistory, lineupFor, playerRows, PLAYERS_TABLE_PAUSE_MS,
   },

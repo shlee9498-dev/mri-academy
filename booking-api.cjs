@@ -189,6 +189,9 @@ module.exports = function mountBookingApi(app, deps) {
     reason_required: 400, already_cancelled: 409, bulk_row: 409,
     // §59b(lesson_type 'course' 허용) 전 코드 — 10/1 실행 뒤로는 나오지 않는다(함수가 남겨 둔 코드라 번역만 둔다).
     course_slots_not_ready: 503,
+    // 예약 한 건 바꾸기 · 취소(§84 · 계약 §9.38)
+    already_started: 409, late_reason_required: 400, late_not_allowed: 400, same_time: 409, no_course_slot: 409,
+    request_pending: 409, adjust_failed: 503,
   };
   const rpcFail = (res, code) => fail(res, STATUS[code] || 400, code);
   // 출석 판정에서 막힌 사람들(§59 students_rejected) — 사람별 코드를 싣는다. 키는 studentKey(불투명 id · 가드 규칙).
@@ -549,8 +552,10 @@ module.exports = function mountBookingApi(app, deps) {
   //   잔여 부족은 **여기서는 막는다**(「완료」와 반대) — 아직 안 한 수업이라 막아도 기록이 사라지지 않는다.
   //   범위: 내 칸 + 내 수강생(로스터와 같은 scopedStudents — 담당 + 최근 90일 진행).
   //   ⚠️ 레벨 테스트 신규(prospect)는 로스터 범위 밖이라 여기로 못 넣는다 — 본인이 앱에서 잡는다.
-  //   untilStart(§83 · 계약 §9.37.1) — 트레이너봇 한 줄 예약만 보낸다(앱은 보내지 않는다). true 면 개인 칸에 한해 마감이
+  //   untilStart(§83 · 계약 §9.37.1) — 트레이너봇 한 줄 예약만 보낸다(앱은 보내지 않는다). true 면 개인 · 그룹(관전형 · 참여형) 칸에 한해 마감이
   //   3시간 전 → **시작 시각**인 book_slot_trainer 를 탄다(그 밖 규칙은 글자 그대로 같은 사본). §83 미실행이면 409 booking_closed.
+  //   그룹은 오너 10/17 「트레이너는 열기」 — 선차감 0 · 끝난 뒤 진행한 판만큼(§42) 그대로. 상담은 3시간 마감 그대로.
+  const UNTIL_START_TYPES = new Set(["personal", "spectate", "participate"]);   // 트레이너 대신 넣기 마감 예외(시작 시각까지) 칸 종류
   app.post(`${TRAINER}/slots/:id/bookings`, rateLimit("trainerAssign", 20, 60_000),
     bodyOnly(["studentId", "durationMin", "courseKey", "untilStart"]), requireTrainer, wrap(async (req, res) => {
       const slotId = readOpaqueId("slot", req.params.id);
@@ -567,7 +572,7 @@ module.exports = function mountBookingApi(app, deps) {
       const [slot] = await sbSelect("trainer_slots", `select=id,trainer_id,lesson_type,course_level&id=eq.${slotId}`);
       if (!slot) return fail(res, 404, "slot_not_found");
       if (slot.trainer_id !== req.staff.id) return fail(res, 403, "scope_denied");
-      if (untilStart && slot.lesson_type !== "personal") return fail(res, 400, "invalid_body");   // 마감 예외는 개인 칸만
+      if (untilStart && !UNTIL_START_TYPES.has(slot.lesson_type)) return fail(res, 400, "invalid_body");   // 마감 예외는 개인 · 그룹 칸만
       if (courseKey !== undefined && slot.lesson_type !== "course") return fail(res, 400, "invalid_body");   // 강의 고르기는 직강 칸만
 
       // 직강 반 수업 칸(§59 · 계약 §9.21) — 판수 대신 강의의 남은 회차로 넣는다(선차감 없음).
@@ -798,6 +803,7 @@ module.exports = function mountBookingApi(app, deps) {
     const unclosed = unclosedLessons.trainerSummary(
       unclosedLessons.unclosedOf(books, new Map(slots.map((s) => [s.id, s])), Date.now()), opaqueId);
 
+    const nowMs = Date.now();
     sendTrainer(res, {
       unclosed,
       slots: slots.map((s) => ({
@@ -805,6 +811,8 @@ module.exports = function mountBookingApi(app, deps) {
         startAt: s.slot_start, slotMinutes: SLOT_MIN,
         durationMin: s.duration_min ?? SLOT_MIN,   // 이 칸이 차지하는 길이(그룹 · 레벨 테스트 · 직강은 30~180)
         lessonType: s.lesson_type, capacity: s.capacity, status: s.status,
+        // 끝난 칸(§9.44.4) — 칸 시작 + 길이가 지났다. status 가 open 이어도 「열린 시간」 · 빈자리 집계에 넣지 말 것(지난 open 칸 188개 · 10/28)
+        ended: Date.parse(s.slot_start) + Number(s.duration_min ?? SLOT_MIN) * 60_000 <= nowMs,
         takenCount: taken[s.id] || 0,
         seatsLeft: Math.max(0, s.capacity - (taken[s.id] || 0)),
         bookings: by[s.id] || [],
@@ -881,6 +889,18 @@ module.exports = function mountBookingApi(app, deps) {
   //     (record_course_attendance · 다른 예약자는 건드리지 않는다). games · level 은 받지 않는다(400).
   //     sameDayOk 는 직강 예약에만 — 같은 날 다른 직강 출석이 있으면 409 already_today 이고, 맞으면 true 로 다시 보낸다.
   //     outcome "attended" · unitsLeft(출석 뒤 남은 회차 · 0 이하여도 막지 않는다) · overdrawn.
+  // 출석을 넣은 직강 칸은 수업이 끝났으면 닫는다(§9.44.4 · 앱 전수 검토 10/28) — 출석이 기록됐는데 open 으로 남아
+  //   「열린 칸」에 섞이던 것(#342 · #343). 끝나기 전이면(수업 중에 출석부터 찍은 경우) 그대로 둔다 · open 일 때만 바꾼다.
+  //   실패해도 출석 응답은 그대로 간다(칸 상태는 표시용 · 판수 · 회차와 무관).
+  async function closeEndedCourseSlot(slotId) {
+    try {
+      const s = (await sbSelect("trainer_slots", `select=id,slot_start,duration_min,status&id=eq.${Number(slotId)}&limit=1`))[0];
+      if (!sbPatch || !s || s.status !== "open") return;
+      if (!(Date.parse(s.slot_start) + Number(s.duration_min || 0) * 60_000 <= Date.now())) return;
+      await sbPatch("trainer_slots", `id=eq.${Number(slotId)}&status=eq.open`, { status: "closed" });
+    } catch (e) { console.error("course_slot_close", slotId, e?.status || e?.message); }
+  }
+
   app.post(`${TRAINER}/bookings/:id/complete`, rateLimit("trainerResolve", 60, 60_000),
     bodyOnly(["games", "playedAt", "level", "sameDayOk"]), requireTrainer, wrap(async (req, res) => {
       const bookingId = readOpaqueId("booking", req.params.id);
@@ -906,6 +926,7 @@ module.exports = function mountBookingApi(app, deps) {
         if (out?.error) return rpcFail(res, out.error);
         const mine = (out.recorded || [])[0];
         if (!mine) return rpcFail(res, "already_recorded");     // 이 회차에 이미 출석이 있다(두 번 세지 않았다)
+        await closeEndedCourseSlot(bk0.slot_id);
         return sendTrainer(res, {
           resolved: true, status: "done", outcome: "attended",
           games: 0, playedAt: out.heldOn || null,
@@ -987,6 +1008,121 @@ module.exports = function mountBookingApi(app, deps) {
       sendTrainer(res, { resolved: true, status: out.status });
     }));
 
+  // ══════════════ 개인 레슨 자동 완료의 예외 · 지난 예약 휴강(계약 §9.39 · §9.31) ══════════════
+  // 끝난 개인 예약 머리 줄을 읽는다 — 칸 트레이너 · 시작 · 길이 · 상태. 없거나 꼬리 줄이면 null
+  async function pastHead(bookingId) {
+    const [b] = await sbSelect("slot_bookings",
+      `select=id,slot_id,student_id,status,duration_min,span_head_id,games_held&id=eq.${bookingId}&limit=1`);
+    if (!b || b.span_head_id != null) return null;
+    const [s] = await sbSelect("trainer_slots", `select=id,trainer_id,slot_start,duration_min,lesson_type&id=eq.${b.slot_id}&limit=1`);
+    return s ? { b, s } : null;
+  }
+
+  // POST /bookings/:id/hold — [수업 안 함](§9.39.2): 예약을 **닫지 않고** 24시간 자동 완료에서 뺀다. 판수는 그대로 붙들린다 —
+  //   원장이 아래 지난 예약 취소(휴강)로 닫으면 풀린다. 칸 트레이너(원장은 전부)만 · 개인 레슨 · 열린 예약 · 끝난 수업만.
+  const autoComplete = deps.autoComplete || null;
+  app.post(`${TRAINER}/bookings/:id/hold`, rateLimit("trainerResolve", 60, 60_000), bodyOnly([]), requireTrainer,
+    wrap(async (req, res) => {
+      const bookingId = readOpaqueId("booking", req.params.id);
+      if (bookingId == null) return fail(res, 400, "invalid_body");
+      if (!autoComplete) return fail(res, 503, "unavailable");
+      const h = await pastHead(bookingId);
+      if (!h) return fail(res, 404, "not_found");
+      if (h.s.trainer_id !== req.staff.id && req.staff.role !== "owner") return fail(res, 403, "scope_denied");
+      if (h.s.lesson_type !== "personal") return fail(res, 400, "invalid_body");
+      if (!["booked", "pending_review"].includes(h.b.status)) return fail(res, 409, "not_open");
+      const end = unclosedLessons.endMsOf(h.s.slot_start, h.b.duration_min, h.s.duration_min);
+      if (!(end <= Date.now())) return fail(res, 409, "not_ended");
+      const out = await autoComplete.hold(bookingId, { by: req.staff.id, trainerId: h.s.trainer_id, studentId: h.b.student_id, startAt: h.s.slot_start });
+      if (!out.ok) return fail(res, 409, out.code);
+      sendTrainer(res, { held: true, already: !!out.already });
+    }));
+
+  // POST /bookings/:id/cancel-past — 지난 예약 휴강 · 취소(§9.31 · 원장만). 시작이 지난 「예약됨」 · 「확인 필요」만 → 「취소」.
+  //   회차 · 판수 차감 없음 — 레슨 선차감(games_held)은 취소 상태가 되며 풀린다(portal_remaining 은 booked · pending_review · no_show 만 센다).
+  //   사유 필수 2~200자 · admin_audit booking.cancel · 수강생 DM 없음 · 예약 줄은 지우지 않는다.
+  app.post(`${TRAINER}/bookings/:id/cancel-past`, rateLimit("trainerResolve", 30, 60_000), bodyOnly(["reason"]), requireTrainer,
+    wrap(async (req, res) => {
+      if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
+      const bookingId = readOpaqueId("booking", req.params.id);
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      if (bookingId == null || reason.length < 2 || reason.length > 200) return fail(res, 400, "invalid_body");
+      if (!sbPatch) return fail(res, 503, "unavailable");
+      const h = await pastHead(bookingId);
+      if (!h) return fail(res, 404, "not_found");
+      if (!["booked", "pending_review"].includes(h.b.status)) return fail(res, 409, "not_cancellable");
+      if (!(Date.parse(h.s.slot_start) <= Date.now())) return fail(res, 409, "not_past");
+      const at = new Date().toISOString();
+      // 머리 줄 먼저(상태 조건부) — 그 사이 다른 길로 닫혔으면 0줄 → 409. 꼬리 줄은 머리를 따라간다.
+      const got = await sbPatch("slot_bookings", `id=eq.${bookingId}&status=in.(booked,pending_review)`, { status: "cancelled", cancelled_at: at });
+      if (!got?.length) return fail(res, 409, "not_cancellable");
+      await sbPatch("slot_bookings", `span_head_id=eq.${bookingId}&status=in.(booked,pending_review)`, { status: "cancelled", cancelled_at: at })
+        .catch((e) => console.error("cancel_past_tail", bookingId, e?.status || e?.message));
+      const gamesRestored = Number(h.b.games_held || 0);
+      await auditBooking(req.staff, "booking.cancel", bookingId,
+        { reason, before: h.b.status, after: "cancelled", slotStart: h.s.slot_start, lessonType: h.s.lesson_type, gamesRestored, path: "cancel-past" });
+      if (gamesRestored > 0) onGamesChanged?.([h.b.student_id]);
+      sendTrainer(res, { bookingId: opaqueId("booking", bookingId), status: "cancelled", gamesRestored });
+    }));
+
+  // ══════════════ 예약 한 건 바꾸기 · 취소(계약 §9.38 · DDL §84 · 트레이너봇 /수업변경 · /수업취소) ══════════════
+  //   판정 · 닫기 · 새 칸 열기 · 새 예약 · 늦은 변경 −3 은 DB 함수 하나(trainer_move_booking / trainer_cancel_booking)가
+  //   한 번에 한다 — 실패하면 옛 예약 그대로. 여기는 본문 검사 · 알림(수강생 · 원장 · 담당) · 기록(admin_audit)만.
+  //   §84 미실행 배포면 함수가 없어 503(아무것도 안 바뀐다).
+  const LATE = new Set(["agreed", "student"]);
+  const lateOk = (v) => v === undefined || LATE.has(v);
+  async function moveRpc(name, args) {
+    try { return await sbRpc(name, args); }
+    catch (e) { console.error(name, e?.status || e?.message); return null; }
+  }
+  async function auditBooking(staff, action, bookingId, detail) {
+    if (!sbInsert) return;
+    try { await sbInsert("admin_audit", { actor_id: `staff:${staff.id}`, actor_name: staff.name, action, target: `slot_bookings:${bookingId}`, detail }); }
+    catch (e) { console.error("booking_audit", action, e?.status || "fail"); }
+  }
+
+  app.post(`${TRAINER}/bookings/:id/cancel`, rateLimit("trainerResolve", 60, 60_000), bodyOnly(["late"]), requireTrainer,
+    wrap(async (req, res) => {
+      const bookingId = readOpaqueId("booking", req.params.id);
+      if (bookingId == null || !lateOk(req.body?.late)) return fail(res, 400, "invalid_body");
+      const late = req.body?.late ?? null;
+      const out = await moveRpc("trainer_cancel_booking", { p_trainer_id: req.staff.id, p_booking_id: bookingId, p_late: late });
+      if (!out) return fail(res, 503, "portal_unavailable");
+      if (out.error) return rpcFail(res, out.error);
+      await auditBooking(req.staff, "booking.trainer_cancel", bookingId, {
+        student_id: out.studentId, slot_start: out.slotStart, lesson_type: out.lessonType, duration_min: out.durationMin,
+        late_window: out.lateWindow, late, late_request_id: out.lateRequestId ?? null, games_restored: out.gamesRestored });
+      if (Number(out.gamesRestored) > 0 || out.lateCharged) onGamesChanged?.([out.studentId]);
+      notifyTrainerChange(req.staff, { kind: "cancel", ...out }).catch((e) => console.error("trainer_change_dm", e?.message));
+      sendTrainer(res, { cancelled: true, gamesRestored: Number(out.gamesRestored || 0), late, lateCharged: Number(out.lateCharged || 0),
+        remainingAfter: out.remainingAfter ?? null });
+    }));
+
+  app.post(`${TRAINER}/bookings/:id/move`, rateLimit("trainerResolve", 60, 60_000), bodyOnly(["startAt", "durationMin", "late"]),
+    requireTrainer, wrap(async (req, res) => {
+      const bookingId = readOpaqueId("booking", req.params.id);
+      const startAt = req.body?.startAt, d = req.body?.durationMin;
+      const startMs = typeof startAt === "string" ? Date.parse(startAt) : NaN;
+      if (bookingId == null || !Number.isFinite(startMs) || !lateOk(req.body?.late)) return fail(res, 400, "invalid_body");
+      if (d !== undefined && !DURATION_MIN.includes(d)) return fail(res, 400, "invalid_body");
+      const late = req.body?.late ?? null;
+      const out = await moveRpc("trainer_move_booking", { p_trainer_id: req.staff.id, p_booking_id: bookingId,
+        p_new_start: new Date(startMs).toISOString(), p_duration_min: d ?? null, p_late: late });
+      if (!out) return fail(res, 503, "portal_unavailable");
+      if (out.error) return rpcFail(res, out.error);
+      await auditBooking(req.staff, "booking.trainer_move", bookingId, {
+        student_id: out.studentId, new_booking_id: out.bookingId, old_start: out.oldStart, new_start: out.newStart,
+        old_duration_min: out.oldDurationMin, duration_min: out.durationMin, lesson_type: out.lessonType,
+        late_window: out.lateWindow, late, late_request_id: out.lateRequestId ?? null });
+      onGamesChanged?.([out.studentId]);
+      notifyTrainerChange(req.staff, { kind: "move", ...out }).catch((e) => console.error("trainer_change_dm", e?.message));
+      sendTrainer(res, {
+        bookingId: opaqueId("booking", out.bookingId), gamesHeld: Number(out.gamesHeld || 0), late,
+        lateCharged: Number(out.lateCharged || 0), remainingAfter: out.remainingAfter ?? null,
+        ...(out.lessonType === "course" ? { unitsLeft: unitsOf(out.unitsLeft) } : {}),
+      });
+    }));
+
   // POST /slots/:id/attendance — 직강 반 수업 칸 출석(§59 · 계약 §9.21)
   //   body { present: [studentId…], heldOn?, sameDayOk? } — present 는 GET /students 의 id(= 칸 목록의 studentKey).
   //   출석한 사람 = course_attendance units 1 · 예약은 done. **명단에 없는 예약자는 no_show**(회차는 빠지지 않는다).
@@ -1008,6 +1144,7 @@ module.exports = function mountBookingApi(app, deps) {
       });
       if (out?.error === "students_rejected") return rejectFail(res, out.rejected);
       if (out?.error) return rpcFail(res, out.error);
+      await closeEndedCourseSlot(slotId);
       sendTrainer(res, attendOut(out));
     }));
 
@@ -1450,6 +1587,37 @@ module.exports = function mountBookingApi(app, deps) {
       ? `수업이 취소됐어요 — ${when} ${typeLabel(slot)}\n원장님 사정이에요. 직강 남은 회차는 그대로예요.`
       : `⚠️ 수업이 취소됐어요 — ${when}\n트레이너(${trainerName}) 사정입니다. **차감분은 100% 복원**됐어요.`;
     for (const r of rows) await discordDM(r.discord_id, text);
+  }
+
+  // 트레이너봇 바꾸기 · 취소(계약 §9.38.3) — 수강생 · 담당(진행과 다를 때) · 원장(3시간 안 · 트레이너가 한 것만).
+  //   돈 문구라 이모지 없이(ui-copy §2). 원장 DM 은 수강생을 #번호로만 쓴다.
+  const kstShort = (iso) => {
+    const d = new Date(Date.parse(iso) + 9 * 3600_000), p = (n) => String(n).padStart(2, "0");
+    return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${"일월화수목금토"[d.getUTCDay()]}) ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+  };
+  async function notifyTrainerChange(staff, o) {
+    const [stu] = await sbSelect("students", `select=name,discord_id,trainer_id&id=eq.${o.studentId}`);
+    const course = o.lessonType === "course";
+    const was = kstShort(o.kind === "move" ? o.oldStart : o.slotStart);
+    const lateWord = o.kind === "move" ? "변경" : "취소";
+    const lines = o.kind === "move"
+      ? [`수업 시간이 바뀌었어요 — ${was} → ${kstShort(o.newStart)} · 진행 ${course ? "원장님" : staff.name}`]
+      : [`수업이 취소됐어요 — ${was}`, course ? "직강 남은 회차는 그대로예요" : "잡아 둔 판수는 돌아왔어요"];
+    if (o.lateCharged) lines.push(`시작 3시간 안 ${lateWord}${lateWord === "취소" ? "라" : "이라"} 약관대로 3판이 빠졌어요`);
+    lines.push("궁금한 건 담당 트레이너에게 물어보세요");
+    await discordDM(stu?.discord_id, lines.join("\n"));
+    if (stu?.trainer_id && stu.trainer_id !== staff.id) {
+      const [own] = await sbSelect("staff", `select=discord_id&id=eq.${stu.trainer_id}`);
+      await discordDM(own?.discord_id, o.kind === "move"
+        ? `📅 담당 수강생 시간 변경 — ${was} → ${kstShort(o.newStart)} · ${stu.name || "?"} (진행 ${staff.name})`
+        : `🚫 담당 수강생 예약 취소 — ${was} · ${stu.name || "?"} (진행 ${staff.name})`);
+    }
+    const ownerId = process.env.MRI_OWNER_ID;
+    if (o.lateWindow && staff.role !== "owner" && ownerId) {
+      const why = o.late === "student" ? `수강생 사정(늦은 ${lateWord} 3판)` : "사전 합의(차감 없음)";
+      const what = o.kind === "move" ? `${was} → ${kstShort(o.newStart)}` : `${was} 취소`;
+      await discordDM(ownerId, `[트레이너봇] 3시간 안 ${lateWord} — ${staff.name} · #${o.studentId} · ${what} · ${why}`);
+    }
   }
 
   // 예약 DM 의 차감 한 줄 — 상담 · 직강 · 개인(선차감) · 그룹. 돈 · 차감 문구라 담백하게(ui-copy §2).
