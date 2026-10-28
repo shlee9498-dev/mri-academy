@@ -30,6 +30,20 @@ const CONFIRM_TTL_MS = 60_000;
 const MODES = { squad: "TPP", "squad-fpp": "FPP" };
 const PLATFORMS = { kakao: "카카오", steam: "스팀" };
 const LIVE = ["open", "closed", "verifying", "verified", "drawn", "announced"];
+// 매일 검사(10/28 오너 「매일 검수해서 역할군 내리고 지급」) — KST 06:00 이후 하루 한 번 · 빼기는 이틀 연속 미달일 때만
+const DAILY_HOUR_KST = 6;
+const DAILY_MISS_TO_REMOVE = 2;
+const DAILY_KEY = (roundId) => `role-event:daily:${roundId}`;   // ops_state 한 줄(DDL 없음)
+// 서바이버는 RP 컷이 아니라 PUBG 가 돌려준 tier 이름으로만 본다(상위 순위제라 컷이 움직인다)
+const isSurvivorTier = (tier) => /survivor/i.test(String(tier || ""));
+// 한 사람의 이번 판정: survivor · master · none (모드 기록 없음 = none)
+function dailyLevel(m, threshold) {
+  if (!m) return "none";
+  if (isSurvivorTier(m.currentTier?.tier)) return "survivor";
+  return (m.currentRankPoint ?? -1) >= threshold ? "master" : "none";
+}
+const kstDate = (ms) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
+const kstHour = (ms) => new Date(ms + 9 * 3600_000).getUTCHours();
 
 // ── 순수 함수 (재현 스크립트 scripts/role-event-verify.cjs 와 같은 식 · 시험이 둘을 대조한다) ──
 const sha256 = (s) => crypto.createHash("sha256").update(String(s)).digest("hex");
@@ -421,8 +435,12 @@ function createRoleEvent(deps) {
     await g.members.fetch().catch(() => null);
     const role = g.roles.cache.get(rid) || await g.roles.fetch(rid).catch(() => null);
     if (!role) return null;
+    const sid = env.ROLE_EVENT_SURVIVOR_ROLE_ID;
+    const srole = sid ? (g.roles.cache.get(sid) || await g.roles.fetch(sid).catch(() => null)) : null;
     const keep = new Set(list.filter((e) => e.status === "verified").map((e) => e.discord_id));
-    return [...role.members.values()].filter((m) => !keep.has(m.id)).map((m) => ({ id: m.id, name: m.displayName || m.user?.username || m.id }));
+    const holders = new Map();
+    for (const r of [role, srole].filter(Boolean)) for (const m of r.members.values()) holders.set(m.id, m);
+    return [...holders.values()].filter((m) => !keep.has(m.id)).map((m) => ({ id: m.id, name: m.displayName || m.user?.username || m.id }));
   }
   async function cardText(round) {
     const list = await entriesOf(round.id);
@@ -500,9 +518,18 @@ function createRoleEvent(deps) {
     const g = await guildOf(); const rid = env.ROLE_EVENT_ROLE_ID;
     if (!g || !rid) return { error: "ROLE_EVENT_ROLE_ID 또는 길드가 없어" };
     const list = (await entriesOf(roundId)).filter((e) => e.status === "verified" && !e.role_granted_at);
+    const sv = env.ROLE_EVENT_SURVIVOR_ROLE_ID;
     let ok = 0, fail = 0;
     for (const e of list) {
-      try { const m = await g.members.fetch(e.discord_id); await m.roles.add(rid, "역할군 이벤트 통과"); await sbPatch(T.E, `id=eq.${e.id}`, { role_granted_at: nowIso(), role_error: null, updated_at: nowIso() }); ok++; }
+      // 검증 때 읽은 tier 가 서바이버면 서바이버 역할만(master 는 뺀다) — 매일 검사와 같은 규칙
+      const surv = sv && isSurvivorTier(e.tier);
+      try {
+        const m = await g.members.fetch(e.discord_id);
+        await m.roles.add(surv ? sv : rid, "역할군 이벤트 통과");
+        if (surv && m.roles?.cache?.has(rid)) await m.roles.remove(rid, "역할군 이벤트 · 서바이버");
+        if (!surv && sv && m.roles?.cache?.has(sv)) await m.roles.remove(sv, "역할군 이벤트 · 서바이버 아님");
+        await sbPatch(T.E, `id=eq.${e.id}`, { role_granted_at: nowIso(), role_error: null, updated_at: nowIso() }); ok++;
+      }
       catch (err) { await sbPatch(T.E, `id=eq.${e.id}`, { role_error: String(err?.code || err?.message || "fail").slice(0, 60), updated_at: nowIso() }); fail++; }
     }
     return { ok, fail };
@@ -518,7 +545,9 @@ function createRoleEvent(deps) {
     let ok = 0; const fail = [], noEntry = [];
     for (const m of rv) {
       try {
-        const mem = await g.members.fetch(m.id); await mem.roles.remove(rid, `역할군 ${round.round_no}회 미통과`); ok++;
+        const mem = await g.members.fetch(m.id);
+        for (const r of [rid, env.ROLE_EVENT_SURVIVOR_ROLE_ID].filter(Boolean)) if (mem.roles?.cache?.has ? mem.roles.cache.has(r) : r === rid) await mem.roles.remove(r, `역할군 ${round.round_no}회 미통과`);
+        ok++;
         const e = byDiscord.get(m.id);
         if (e) await sbPatch(T.E, `id=eq.${e.id}`, { role_revoked_at: nowIso(), updated_at: nowIso() }); else noEntry.push(m.name);
       } catch (err) { fail.push(m.name); }
@@ -667,8 +696,110 @@ function createRoleEvent(deps) {
   }
 
   // ═════════ 크론 ═════════
+  // ═════════ 매일 검사 — 시즌 동안 티어를 지키는 사람만 이번 시즌 역할을 달고 있게 ═════════
+  // 대상: 신청 · 마감 단계(open · closed) 회차의 신청자(제외 · 철회 빼고). 신청 때 확정한 account_id 로 본다(닉이 바뀌어도 그대로).
+  // 판정: survivor → 「Survivor」 역할만(master 는 뺀다) · master → 「master」 역할만 · none 이 이틀 연속이면 둘 다 뺀다.
+  // 조회 실패는 판정이 아니다 — 그 사람은 그날 건너뛰고 다음 날 다시 본다(역할을 빼지 않는다).
+  // 멈춤: 검증 시작일(KST 날짜)부터는 돌지 않는다 — 검증 · 추첨 흐름은 그대로.
+  // 기록: ops_state 'role-event:daily:<round id>' = { date, entries: { <entry id>: { level, miss, at, err } }, last }.
+  const opsGet = async (key) => { const rows = await sbSelect("ops_state", `select=value&key=eq.${q(key)}&limit=1`); return rows.length ? rows[0].value : null; };
+  const opsPut = (key, value) => sbUpsert("ops_state", { key, value, updated_at: nowIso() }, "key");
+  const roleIds = () => ({ master: env.ROLE_EVENT_ROLE_ID || null, survivor: env.ROLE_EVENT_SURVIVOR_ROLE_ID || null });
+  function dailyDue(round, state, force) {
+    if (!["open", "closed"].includes(round.status) || isBackfill(round)) return false;
+    const today = kstDate(now());
+    if (today >= kstDate(Date.parse(round.verify_after))) return false;
+    if (force) return true;
+    return kstHour(now()) >= DAILY_HOUR_KST && state?.date !== today;
+  }
+  async function runDaily(roundId, { force = false } = {}) {
+    const key = `daily:${roundId}`;
+    if (running.has(key)) return { busy: true };
+    running.add(key);
+    try {
+      const round = await getRound(roundId);
+      const state = (await opsGet(DAILY_KEY(roundId))) || { entries: {} };
+      if (!round || !dailyDue(round, state, force)) return { skipped: true };
+      const ids = roleIds();
+      const g = await guildOf();
+      if (!g || !ids.master) { log.error("[role-event] daily_no_guild_or_role"); return { error: "no_guild_or_role" }; }
+      const today = kstDate(now());
+      // 날짜를 먼저 찍는다 — 도중에 재기동돼도 같은 날 두 번 돌지 않는다(남은 사람은 다음 날)
+      await opsPut(DAILY_KEY(roundId), { ...state, date: today, startedAt: nowIso() });
+      const list = (await entriesOf(roundId)).filter((e) => !["excluded", "withdrawn"].includes(e.status));
+      const seasonIds = {};
+      for (const pf of new Set(list.map((e) => e.platform))) seasonIds[pf] = await resolveSeasonId(pf, round.season).catch(() => null);
+      const out = { gave: [], removed: [], failed: 0, waiting: 0, left: 0, permission: false };
+      const entries = { ...(state.entries || {}) };
+      let i = 0;
+      for (const e of list) {
+        if (i++ > 0) await sleep(pacing());
+        const prev = entries[e.id] || { level: null, miss: 0 };
+        const sid = seasonIds[e.platform];
+        let m = null, failed = !sid;
+        if (sid) {
+          for (let attempt = 0; ; attempt++) {
+            try { const d = await pubgGet(`/shards/${e.platform}/players/${e.account_id}/seasons/${sid}/ranked`, 0); m = d?.data?.attributes?.rankedGameModeStats?.[e.mode] || null; break; }
+            catch (err) {
+              if (err?.status === 429 && attempt === 0) { await sleep(RATE_RETRY_MS); continue; }
+              if (err?.status === 404) break;          // 계정 · 시즌 기록 없음 = 판정(none)
+              failed = true; break;
+            }
+          }
+        }
+        if (failed) { out.failed++; entries[e.id] = { ...prev, err: "lookup", at: nowIso() }; continue; }
+        const level = dailyLevel(m, round.rp_threshold);
+        const miss = level === "none" ? (prev.miss || 0) + 1 : 0;
+        entries[e.id] = { level, miss, at: nowIso(), rp: m?.currentRankPoint ?? null, tier: m?.currentTier?.tier || null };
+        let member = null;
+        try { member = await g.members.fetch(e.discord_id); } catch (_) { out.left++; continue; }
+        const has = (rid) => !!(rid && member.roles?.cache?.has(rid));
+        const name = member.displayName || member.user?.username || e.discord_id;
+        try {
+          if (level === "survivor" && ids.survivor) {
+            if (!has(ids.survivor)) { await member.roles.add(ids.survivor, "역할군 매일 검사 · 서바이버 유지"); out.gave.push(`${name}(서바이버)`); }
+            if (has(ids.master)) await member.roles.remove(ids.master, "역할군 매일 검사 · 서바이버로 올라감");
+          } else if (level === "survivor" || level === "master") {
+            // 서바이버 역할 id 가 없으면 서바이버도 master 로 둔다
+            if (!has(ids.master)) { await member.roles.add(ids.master, "역할군 매일 검사 · 마스터 유지"); out.gave.push(`${name}(마스터)`); }
+            if (has(ids.survivor)) await member.roles.remove(ids.survivor, "역할군 매일 검사 · 서바이버 아님");
+          } else if (miss >= DAILY_MISS_TO_REMOVE) {
+            if (has(ids.master) || has(ids.survivor)) {
+              if (has(ids.master)) await member.roles.remove(ids.master, `역할군 매일 검사 · ${miss}일 연속 미달`);
+              if (has(ids.survivor)) await member.roles.remove(ids.survivor, `역할군 매일 검사 · ${miss}일 연속 미달`);
+              out.removed.push(name);
+            }
+          } else if (has(ids.master) || has(ids.survivor)) out.waiting++;   // 하루 미달 — 내일 한 번 더 보고 뺀다
+        } catch (err) {
+          if (err?.code === 50013) out.permission = true;
+          entries[e.id].err = String(err?.code || "role").slice(0, 20);
+        }
+      }
+      const summary = { date: today, gave: out.gave.length, removed: out.removed.length, failed: out.failed, waiting: out.waiting, left: out.left, n: list.length };
+      await opsPut(DAILY_KEY(roundId), { date: today, entries, last: summary, finishedAt: nowIso() });
+      log.log(`[role-event] daily round#${round.round_no} ${today} 준 ${summary.gave} · 뺀 ${summary.removed} · 실패 ${summary.failed} · 하루 미달 ${summary.waiting} · 서버 없음 ${summary.left} / ${summary.n}명`);
+      if (out.gave.length || out.removed.length || out.permission) {
+        await dmOwner([
+          `🗓️ 역할군 ${round.round_no}회 매일 검사 ${today} — 준 ${out.gave.length} · 뺀 ${out.removed.length} · 조회 실패 ${out.failed}`,
+          ...(out.gave.length ? [`준 사람: ${out.gave.join(", ")}`] : []),
+          ...(out.removed.length ? [`뺀 사람(이틀 연속 미달): ${out.removed.join(", ")}`] : []),
+          ...(out.permission ? ["⚠️ 봇 역할 순서 — 봇 역할이 43s 역할들보다 아래라 일부를 못 바꿨어. 서버 설정 → 역할에서 봇 역할을 위로 올려 줘"] : []),
+        ].join("\n").slice(0, 1990));
+      }
+      return summary;
+    } finally { running.delete(key); }
+  }
+  async function dailyTick() {
+    for (const r of await sbSelect(T.R, "select=*&status=in.(open,closed)&order=round_no.asc")) {
+      if (running.has(`daily:${r.id}`)) continue;
+      const state = await opsGet(DAILY_KEY(r.id)).catch(() => null);
+      if (dailyDue(r, state, false)) bg(runDaily(r.id)).catch((e) => log.error("[role-event] daily", e?.message));
+    }
+  }
+
   async function tick() {
     if (disabled() || !env.SUPABASE_URL) return { skipped: true };
+    await dailyTick().catch((e) => log.error("[role-event] daily_tick", e?.message));
     const rounds = await liveRounds();
     for (const r0 of rounds) {
       let r = r0;
@@ -753,6 +884,21 @@ function createRoleEvent(deps) {
       const r = await reschedule(round.id, { closesAt: c, verifyAfter: v, drawAt: d });
       if (r.error) return itx.editReply({ content: r.msg });
       return itx.editReply({ content: `${round.round_no}회 일정 — 마감 ${kst(r.round.closes_at)} · 검증 ${kst(r.round.verify_after)} · 추첨 ${kst(r.round.draw_at)}` });
+    }
+    if (sub === "매일검사") {
+      if (!["open", "closed"].includes(round.status)) return itx.editReply({ content: "신청 · 마감 단계 회차만 매일 검사를 돌려" });
+      bg(runDaily(round.id, { force: true })).catch((e) => log.error("[role-event] daily", e?.message));
+      return itx.editReply({ content: "매일 검사를 지금 한 번 돌릴게. 바뀐 게 있으면 DM으로 와(오늘 정기 검사는 건너뛴다)" });
+    }
+    if (sub === "티어확인") {
+      const e = await targetEntry(round, o.getString("대상"));
+      if (!e) return itx.editReply({ content: "그 신청을 못 찾았어" });
+      const sid = await resolveSeasonId(e.platform, round.season);
+      try {
+        const d = await pubgGet(`/shards/${e.platform}/players/${e.account_id}/seasons/${sid}/ranked`, 0);
+        const m = d?.data?.attributes?.rankedGameModeStats?.[e.mode];
+        return itx.editReply({ content: `#${e.id} ${e.pubg_name} ${MODES[e.mode]} — tier ${JSON.stringify(m?.currentTier || null)} · RP ${m?.currentRankPoint ?? "-"} → ${dailyLevel(m, round.rp_threshold)}` });
+      } catch (err) { return itx.editReply({ content: `조회 실패(${err?.status || err?.message})` }); }
     }
     if (sub === "현황") return itx.editReply({ content: (await statusText(round)).slice(0, 1990) });
     if (sub === "검증") {
@@ -910,7 +1056,7 @@ function createRoleEvent(deps) {
     if (itx.commandName === "역할군") return handleOwner(itx);
   }
 
-  return { handle, tick, runVerify, createRound, reschedule, resolveSeasonId, publishResults, freeze, draw, announceDraw, processAwards, saveEntry, grantRoles, revokeRoles, statusText, idle: () => Promise.all([...inflight]), _pending: pending };
+  return { handle, tick, runDaily, runVerify, createRound, reschedule, resolveSeasonId, publishResults, freeze, draw, announceDraw, processAwards, saveEntry, grantRoles, revokeRoles, statusText, idle: () => Promise.all([...inflight]), _pending: pending };
 }
 
 // ── 명령 정의 (설계 §2) ──
@@ -951,6 +1097,9 @@ const ADMIN_CMD = {
       { name: "시작", description: "시작(KST)", type: 3, required: true },
       { name: "끝", description: "끝(KST)", type: 3, required: true } ] },
     { name: "현황", description: "회차 요약 · 플래그 · 미해결 중복", type: 1, options: [ROUND_OPT] },
+    { name: "매일검사", description: "역할 매일 검사를 지금 한 번 돌리기(정기 = 매일 06:00)", type: 1, options: [ROUND_OPT] },
+    { name: "티어확인", description: "신청자 한 명의 지금 tier · RP 를 PUBG 에서 바로 읽기", type: 1, options: [
+      { name: "대상", description: "신청자(자동완성 · 디스코드 id · #신청번호)", type: 3, required: true, autocomplete: true }, ROUND_OPT ] },
     { name: "검증", description: "검증 배치 수동 시작(크론이 기본)", type: 1, options: [ROUND_OPT] },
     { name: "판정", description: "신청 승인 · 제외(참여자 확정 전까지)", type: 1, options: [
       { name: "대상", description: "신청자(자동완성 · 디스코드 id · #신청번호)", type: 3, required: true, autocomplete: true },
@@ -971,6 +1120,7 @@ const ADMIN_CMD = {
 
 module.exports = {
   createRoleEvent, APPLY_CMD, ADMIN_CMD, TABLES: T, DRAND, COPY, RULE_LINES,
+  daily: { dailyLevel, isSurvivorTier, kstDate, DAILY_MISS_TO_REMOVE },
   pure: { sha256, drandRoundAt, drandRoundTime, drawRoundFor, winnersCount, isoNoMs, sortIds, participantsHash, drawInput, shuffle, participantsOf, computeDraw, parseKst, kst, verifyFlags },
   consts: { DRAW_BUFFER_S, GRACE_MS, NO_CONTACT_MS, FLAG_BEST_GAP, FLAG_FEW_ROUNDS, DEFAULT_PACING_MS },
 };
