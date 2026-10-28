@@ -232,6 +232,21 @@ const rosterDb = () => ({
                      source: "panel", trainer_id: 4 }],
 });
 
+test("§9.44.1 앱 연결 거르기 — linked=no · yes · 이상한 값 400 · counts.unlinked(진행 중 탭 · 테스트 계정 제외)", async () => {
+  db = rosterDb();
+  const all = await call(4, "/students");
+  const no = await call(4, "/students?linked=no");
+  const yes = await call(4, "/students?linked=yes");
+  assert.equal(no.status, 200);
+  assert.equal(no.json.students.every((s) => s.appLinked === false), true);
+  assert.equal(yes.json.students.every((s) => s.appLinked === true), true);
+  assert.equal(no.json.students.length + yes.json.students.length, all.json.students.length);
+  const activeUnlinked = all.json.students.filter((s) => s.listState === "active" && !s.appLinked && !s.isTest).length;
+  assert.equal(all.json.counts.unlinked, activeUnlinked);
+  assert.equal(no.json.counts.unlinked, activeUnlinked);                   // 거르기와 상관없이 같은 값
+  assert.equal((await call(4, "/students?linked=maybe")).status, 400);
+});
+
 test("오너 — 전체 수강생(prospect · 합친 행 제외) · 필터 칩 · 담당 · 트레이너별 잔여(§41b) · 연결 · 직강 회차 · inMyScope", async () => {
   db = rosterDb();
   const r = await call(4, "/students");

@@ -6,6 +6,8 @@
 //   픽스처 값은 전부 가짜다(실제 이름 · id · 디스코드 id 금지).
 "use strict";
 const test = require("node:test");
+// 탭 숫자만(§9.44.1 의 counts.unlinked 는 따로 본다 — trainer-owner-routes.test)
+const tabsOf = ({ unlinked, ...tabs }) => tabs;
 const assert = require("node:assert/strict");
 const express = require("express");
 
@@ -466,12 +468,12 @@ test("GET /students — 옛 호출 그대로(전원 · 종전 순서 · nextCurs
   assert.equal(legacy.students.length, 17);                                  // 16 + 테스트 계정 · 남의 담당 · 합친 번호 · 명부 종료 없음
   const names = legacy.students.map((s) => s.displayName);
   assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b, "ko")));   // 종전 순서(담당 먼저 · 이름순 — 전원 담당)
-  assert.deepEqual(legacy.counts, {
+  assert.deepEqual(tabsOf(legacy.counts), {
     active: legacy.students.filter((s) => s.listState === "active").length,
     hold: legacy.students.filter((s) => s.listState === "hold").length,
     done: legacy.students.filter((s) => s.listState === "done").length,
   });
-  assert.deepEqual(legacy.counts, { active: 7, hold: 5, done: 5 });
+  assert.deepEqual(tabsOf(legacy.counts), { active: 7, hold: 5, done: 5 });
   for (const state of ["active", "hold", "done"]) {
     const { rows, pages } = await readAll(2, `/students?state=${state}&limit=2`, "students", (s) => s.id);
     const want = legacy.students.filter((s) => s.listState === state).sort(listOrder);
@@ -511,7 +513,7 @@ test("GET /students — 이름 · 배그 닉 찾기(공백 · 대소문자 무�
   assert.equal(withTest.students.some((s) => sidOf(s.id) === 106), true);
   const onlyB = await ok(4, `/students?trainerKey=${encodeURIComponent(T(5))}&state=active,hold,done`);
   assert.deepEqual(onlyB.students.map((s) => s.displayName), ["다른담당"]);
-  assert.deepEqual(onlyB.counts, { active: 1, hold: 0, done: 0 });
+  assert.deepEqual(tabsOf(onlyB.counts), { active: 1, hold: 0, done: 0 });
   const { rows } = await readAll(4, `/students?trainerKey=${encodeURIComponent(T(2))}&state=active,hold,done&limit=3`, "students", (s) => s.id);
   assert.equal(rows.length, all.students.filter((s) => s.assignedTrainer?.trainerKey === T(2)).length);
   // 표지 — 다른 탭 · 다른 찾기 · 다른 사람 · 고친 것 · 모양이 틀린 거르기
