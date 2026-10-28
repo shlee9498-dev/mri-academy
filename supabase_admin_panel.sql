@@ -1230,10 +1230,11 @@ alter table public.consults drop constraint if exists chk_consults_source;
 alter table public.consults add  constraint chk_consults_source
   check (source is null or source in ('site','discord','kakao','soomgo'));
 
--- 22d-1) [제안 — 오너 승인 시 실행] 폼의 '유입 경로'(유튜브·지인·숨고 등) 전용 컬럼.
---        22d의 source와 이름이 겹치는 다른 개념이라 분리를 제안한다. 이 컬럼이 없으면
---        server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다(유실은 없고 질의만 불편).
--- alter table public.consults add column if not exists inflow text;
+-- 22d-1) 폼의 「어디서 보고 오셨어요?」 전용 컬럼(오너 「유입경로는 … 일단 ㅇㅋ」 2026-10-19 · 더하기만 · 세션 실행 10/19 · 46 → 47칸).
+--        22d의 source(접수 채널 site|discord|…)와 이름이 겹치는 다른 개념이라 분리했다. 값 = inflow.cjs 7개 화면 이름
+--        (유튜브 쇼츠 · 유튜브 롱폼 · SOOP 방송 · 디스코드 · 지인 소개 · 검색 · 기타) — 목록은 서버가 지키고 칸 제약은 두지 않는다
+--        (목록을 바꿀 때 제약 교체 = 기존 것 바꾸기가 되지 않게). 집계: select inflow, count(*) from consults group by 1;
+alter table public.consults add column if not exists inflow text;
 
 -- 22f) 신청 UTM 3컬럼 (2026-09-17 · 관제탑 UTM 집계 경로 확인) — index.html 트레이너 소개 CTA 가
 --      apply.html?utm_source=site&utm_medium=trainers&utm_content=hyuntae|jungu|muri 로 진입하고 폼이 제출 payload 에

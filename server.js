@@ -64,6 +64,8 @@ let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP �
 // 입금 신청 묶음(수량 · 현금영수증 · 카드 · 계약 §9.5 · 오너 OK 2026-09-30) — 오너 카드 · 발급함 버튼 · 4일 알림이 쓰는 순수 함수
 //   (앱 입구 student-portal.cjs 와 한 벌 · 테스트 scripts/payreq-intake.test.cjs)
 const payreqIntake = require("./payreq-intake.cjs");
+// 상담 · 레벨 테스트 신청서 「어디서 보고 오셨어요?」 선택지(apply.html 과 한 벌 · 오너 10/19)
+const inflowMod = require("./inflow.cjs");
 // 「입금 받음」(계약 §9.40) — 트레이너가 올리는 입금 신청 · 결과 DM 문구 · 화면 이름(디코 닉)
 const paymentReceived = require("./payment-received.cjs");
 // 판수 맞추기 · 일요일 확인 목록(계약 §9.41.2 · §9.41.3) — 라우트 · 카드 본문 · 결정(§46 줄마다)
@@ -5964,7 +5966,7 @@ app.post("/api/apply", async (req, res) => {
       color: 0xf5c518,
       fields: [
         { name: "신청 구분", value: clip(b.applyType, 50), inline: true },
-        { name: "유입 경로", value: clip(b.source, 50), inline: true },
+        { name: "어디서 보고 왔나", value: (() => { const x = inflowMod.normalizeInflow(b.source); return x ? (x.legacy ? `기타(${x.legacy})` : x.label) : "—"; })(), inline: true },
         { name: "플랫폼/닉", value: `${clip(b.platform, 10)} / ${clip(b.nickname, 40)}`, inline: true },
         { name: "🎯 BPI 자동진단", value: bpiText, inline: false },
         { name: "최고 티어", value: clip(b.tier, 40) || "—", inline: true },
@@ -5997,7 +5999,9 @@ app.post("/api/apply", async (req, res) => {
       //   playtime·focus·stats_consent 를 전부 null 로 저장하고 memo 폴백만 남겼다. REQUIRED 는 부팅 점검이
       //   실재를 보장하므로 존재로 본다. (관제탑 9/17 UTM 집계 경로 확인에서 드러남)
       const has = (c) => schemaOptional[`consults.${c}`] === true || (REQUIRED_SCHEMA.consults || []).includes(c);
-      const inflow = clip(b.source, 50);                       // 폼의 '유입 경로'(유튜브·지인 등)
+      // 폼의 「어디서 보고 오셨어요?」(inflow.cjs 7개 중 하나 · 오너 10/19) — 저장 값은 화면 이름. 목록 밖(옛 페이지)은 「기타」 + 원래 값 memo.
+      const inflowPick = inflowMod.normalizeInflow(b.source);
+      const inflow = inflowPick?.label || "";
       // UTM(index.html 트레이너 CTA → apply.html 진입 시 캡처 → 제출 payload). 종전에는 디스코드 embed 에만 실리고
       // 어디에도 저장되지 않아 집계가 성립하지 않았다. §22f 컬럼이 있으면 컬럼에, 없으면 memo 에 `utm: a/b/c` 로 남긴다.
       const utm = { utm_source: clip(b.utm_source, 40), utm_medium: clip(b.utm_medium, 40), utm_content: clip(b.utm_content, 60) };
@@ -6017,8 +6021,9 @@ app.post("/api/apply", async (req, res) => {
       if (has("focus")) row.focus = clip(b.focus, 200);
       if (has("stats_consent")) row.stats_consent = String(b.statsConsent) === "동의";
       const memoParts = [];
-      if (has("inflow")) row.inflow = inflow;
+      if (has("inflow")) row.inflow = inflow || null;
       else if (inflow) memoParts.push(`유입: ${inflow}`);
+      if (inflowPick?.legacy) memoParts.push(`유입(옛 선택지): ${inflowPick.legacy}`);
       const utmVals = Object.values(utm).filter(Boolean);
       if (has("utm_source")) Object.assign(row, { utm_source: utm.utm_source || null, utm_medium: utm.utm_medium || null, utm_content: utm.utm_content || null });
       else if (utmVals.length) memoParts.push(`utm: ${[utm.utm_source, utm.utm_medium, utm.utm_content].map((v) => v || "-").join("/")}`);
@@ -8934,6 +8939,8 @@ const REQUIRED_SCHEMA = {
                      // §22d 승격(2026-09-04) — 오너 DDL 실행 완료를 실DB에서 확인했고
                      // /api/apply가 이 컬럼들에 쓴다. inflow만 SCHEMA_OPTIONAL에 남는다(22d-1 미실행).
                      "source","phone","platform","game_nick","playtime","focus","stats_consent",
+                     // §22d-1 inflow(2026-10-19 세션 실행 · 46 → 47칸) — /api/apply 「어디서 보고 오셨어요?」
+                     "inflow",
                      // §60 상담 보드(2026-10-01 · 세션 실행 · 실측 46칸) — consult-board.cjs · consult-record.cjs 가 쓴다
                      "consult_type","booking_id","application_id","outcome","outcome_note","outcome_at","outcome_by",
                      "thinking_reminded_at","handover_at","handover_note","updated_at"],
@@ -9167,7 +9174,7 @@ const SCHEMA_OPTIONAL = {
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
-  consults: ["inflow", "utm_source", "utm_medium", "utm_content"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계)
+  consults: ["utm_source", "utm_medium", "utm_content"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계) · inflow 는 10/19 실행으로 필수 승격
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",
