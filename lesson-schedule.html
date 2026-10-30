@@ -3,246 +3,229 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>레슨 일정 · MRI ACADEMY</title>
-<meta name="description" content="MRI ACADEMY 주간 레슨·직강 일정. 자리 모집중인 그룹을 확인하고 바로 합류하세요.">
+<title>수업 시간표 · MRI ACADEMY</title>
+<meta name="description" content="MRI ACADEMY 트레이너가 앱에 열어 둔 빈 시간을 주마다 보여 줘요. 개인 레슨 · 그룹 · 관전형 · 원장 직강 자리를 확인하고 신청할 수 있어요.">
 <link rel="canonical" href="https://mriacademy.gg/lesson-schedule.html">
-<meta property="og:title" content="레슨 일정 · MRI ACADEMY">
-<meta property="og:description" content="주간 레슨·직강 일정 — 모집중 자리 확인.">
+<meta property="og:title" content="수업 시간표 · MRI ACADEMY">
+<meta property="og:description" content="트레이너가 열어 둔 이번 주 빈 시간과 남은 자리">
 <meta property="og:url" content="https://mriacademy.gg/lesson-schedule.html">
+<meta name="theme-color" content="#FBF6EF">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
-/* ── MRI 디자인 시스템 v1 · A "OLED Premium" ── */
+/* ===== 디자인 시스템 B3(2026-10-21 · CLAUDE.md §디자인 시스템 B3) — 크림 바탕 · 흰 카드 · 검정 알약 버튼 ===== */
 :root{
-  --bg:#0a0a0c; --surface-1:#15151a; --surface-2:#1a1a20;
-  --ink:#f4f4f5; --ink-dim:#c6c6cd; --ink-faint:#9b9ba4;
-  --gold:#f5c518; --gold-deep:#caa00f; --gold-soft:rgba(245,197,24,.3);
-  --line:#27272a;
-  --display:'Saira Condensed','Pretendard Variable',sans-serif;      /* 영문·숫자 */
-  --body:'Pretendard Variable',Pretendard,-apple-system,system-ui,sans-serif; /* 한글 */
+  --bg:#FBF6EF; --card:#fff; --line:#EEE5D9;
+  --ink:#1A1714; --sub:#5A5047; --mute:#8A7E72; --kick:#B4662A; --hl:#FFE58A;
+  --sans:'Noto Sans KR',-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
+  --num:'Pretendard Variable',Pretendard,'Noto Sans KR',sans-serif;
+  --shadow:0 1px 2px rgba(0,0,0,.03),0 8px 24px rgba(0,0,0,.04);
+  color-scheme:light;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh}
-.wrap{max-width:720px;margin:0 auto;padding:44px 18px 120px}
+body{color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.65;word-break:keep-all;overflow-wrap:break-word;-webkit-font-smoothing:antialiased;
+  background-color:var(--bg);background-image:radial-gradient(rgba(120,90,60,.10) 1.2px,transparent 1.2px);background-size:26px 26px}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:6px}
+.wrap{max-width:760px;margin:0 auto;padding-inline:20px;padding-block:44px 140px}
+.num{font-family:var(--num);font-weight:800;font-variant-numeric:tabular-nums}
 
-/* 헤더 */
-.top{margin-bottom:26px}
-.kick{font-family:var(--display);color:var(--gold);font-size:12px;font-weight:600;letter-spacing:.18em;text-transform:uppercase}
-h1{font-size:clamp(26px,6vw,34px);font-weight:800;letter-spacing:-.02em;margin:8px 0 8px}
-.lead{color:var(--ink-dim);font-size:14px;max-width:46ch}
+/* 머리 */
+.kick{font-size:14px;font-weight:700;color:var(--kick)}
+h1{margin-top:8px;font-size:clamp(32px,6vw,44px);font-weight:900;line-height:1.15;letter-spacing:-.045em}
+.lead{margin-top:12px;color:var(--sub);max-width:34em}
 
-/* 탭 (2층) */
-.tabs{display:flex;flex-direction:column;gap:9px;margin:22px 0 6px}
-.tabrow{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
-.tabrow .lbl{font-family:var(--display);font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--ink-faint);text-transform:uppercase;width:44px;flex:0 0 auto}
-.tab{font-family:var(--body);font-weight:700;font-size:13px;padding:8px 15px;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-dim);cursor:pointer;transition:.15s}
-.tab:hover{border-color:var(--gold-soft);color:var(--ink)}
-.tab[aria-selected="true"]{background:rgba(245,197,24,.1);border-color:var(--gold-soft);color:var(--gold)}
-.range{font-family:var(--display);color:var(--ink-faint);font-size:12.5px;font-weight:500;margin:12px 0 22px}
+/* 주 · 종류 고르기 */
+.pick{display:grid;gap:10px;margin-top:28px}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+.chip{flex:none;font:700 14px/1 var(--sans);padding:11px 16px;border-radius:999px;border:1.5px solid var(--line);background:var(--card);color:var(--sub);cursor:pointer}
+.chip:hover{border-color:var(--ink);color:var(--ink)}
+.chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+.range{margin-top:16px;font-size:14px;color:var(--mute)}
 
-/* 요일 그룹 */
-.day{margin-bottom:26px}
-.day-h{display:flex;align-items:baseline;gap:10px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
-.day-h .dow{font-family:var(--display);font-size:15px;font-weight:700;color:var(--ink)}
-.day-h .date{font-family:var(--display);font-size:12px;font-weight:500;color:var(--ink-faint)}
-.day-h .today{font-family:var(--display);font-size:10px;font-weight:700;color:var(--gold);border:1px solid var(--gold-soft);border-radius:99px;padding:1px 8px;margin-left:auto}
+/* 날짜 묶음 · 칸 카드 */
+#list{margin-top:8px}
+.day{margin-top:26px}
+.day-h{display:flex;align-items:baseline;gap:8px;margin-bottom:10px}
+.day-h b{font-size:18px;font-weight:900;letter-spacing:-.02em}
+.day-h span{font-size:14px;color:var(--mute)}
+.day-h .today{font-size:12px;font-weight:700;color:var(--ink);background:var(--hl);border-radius:6px;padding:2px 7px}
+.slots{display:grid;gap:10px}
+.slot{background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);min-width:0}
+.slot-btn{all:unset;box-sizing:border-box;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:6px 16px;width:100%;padding:16px 20px;cursor:pointer;border-radius:20px}
+.slot-btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+.slot.full .slot-btn{cursor:default}
+.t{font-size:22px;line-height:1.1}
+.t small{display:block;margin-top:4px;font:500 13px/1 var(--sans);color:var(--mute)}
+.who{min-width:0}
+.who .k{font-size:13px;font-weight:700;color:var(--kick)}
+.who .n{font-size:16px;font-weight:700}
+.seat{font-size:14px;font-weight:700;white-space:nowrap;padding:6px 12px;border-radius:999px;background:#F6EFE5}
+.slot.full .seat{background:transparent;color:var(--mute);border:1px solid var(--line)}
+.slot.full .t,.slot.full .who{opacity:.55}
+/* 누르면 펼쳐지는 신청 길 — 새로 오는 분 / 이미 수강생 */
+.go{display:flex;flex-wrap:wrap;gap:8px;padding:0 20px 18px}
+.go[hidden]{display:none}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 20px;border-radius:999px;background:var(--ink);color:#fff;font-weight:700;font-size:15px;text-decoration:none;white-space:nowrap}
+.btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+.btn:hover{opacity:.9}
 
-/* 카드 */
-.card{background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px;transition:border-color .15s,transform .15s}
-.card:hover{border-color:#3a3a40}
-.card.recruit{border-color:var(--gold-soft)}
-.c1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-.time{font-family:var(--display);font-size:16px;font-weight:700;letter-spacing:.01em}
-.chip{font-size:11px;font-weight:700;border-radius:99px;padding:3px 10px;border:1px solid var(--line);background:var(--surface-1);color:var(--ink-dim)}
-.c2{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;color:var(--ink-dim);font-size:13px}
-.c2 .trainer{color:var(--ink);font-weight:700}
-.c2 .seats{font-family:var(--display);font-weight:600;color:var(--ink-dim)}
-.title{color:var(--ink-faint);font-size:12.5px;margin-top:6px}
-.c2 .seats.full{color:var(--ink-faint)}
-/* 참가 문의 — 보조 스타일(테두리만). 글로우는 모집중 뱃지 하나로 유지한다. */
-.ask{margin-left:auto;font-size:12px;font-weight:700;color:var(--ink);border:1px solid var(--line);
-     border-radius:8px;padding:6px 12px;text-decoration:none;white-space:nowrap;transition:border-color .15s,color .15s}
-.ask:hover{border-color:var(--gold-soft);color:var(--gold)}
+/* 빈 주 · 불러오기 실패 */
+.empty{margin-top:26px;background:var(--card);border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow);padding:clamp(24px,5vw,36px)}
+.empty h2{font-size:22px;font-weight:900;letter-spacing:-.03em}
+.empty p{margin-top:8px;color:var(--sub)}
+.empty .btn{margin-top:20px}
 
-/* 모집중 뱃지 — 이 페이지의 유일한 골드 글로우 */
-.recruiting{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;color:#0a0a0c;background:var(--gold);border-radius:99px;padding:3px 10px}
-@media (prefers-reduced-motion: no-preference){
-  /* 글로우는 가장 임박한 1건에만 — 모집중이 여러 개여도 한 화면 1개 원칙(DESIGN.md)을 지킨다.
-     자동 판정으로 전환하면서 뱃지 개수가 늘어나 이 제한이 필요해졌다. */
-  .recruiting.lead{animation:glowpulse 2.6s ease-in-out infinite}
+.note{margin-top:36px;font-size:14px;color:var(--mute)}
+.note a{color:var(--sub)}
+
+/* 아래 고정 신청 줄 */
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:rgba(251,246,239,.96);border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px))}
+.bar .in{max-width:760px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.bar .txt{font-size:14px;color:var(--sub);min-width:0}
+.bar .txt b{color:var(--ink)}
+@media(max-width:480px){
+  .wrap{padding-inline:16px}
+  .slot-btn{grid-template-columns:minmax(0,1fr) auto;padding:14px 16px}
+  .who{grid-column:1 / -1;grid-row:2}
+  .go{padding:0 16px 16px}
+  .bar .txt{display:none}
+  .bar .btn{width:100%}
 }
-@keyframes glowpulse{
-  0%,100%{box-shadow:0 0 0 0 rgba(245,197,24,.0)}
-  50%{box-shadow:0 0 14px 1px rgba(245,197,24,.45)} /* impeccable-disable-line dark-glow -- 디자인 계약: 골드 글로우 한 화면 1개 = 모집중 뱃지 */
-}
-
-/* 빈 주 상태 */
-.empty{background:var(--surface-1);border:1px dashed var(--line);border-radius:14px;padding:44px 22px;text-align:center}
-.empty .em{font-size:30px;margin-bottom:12px;opacity:.6}
-.empty p{color:var(--ink-dim);font-size:14px;line-height:1.7;margin-bottom:18px}
-.empty .cta{display:inline-block;font-weight:800;font-size:14px;color:#0a0a0c;background:linear-gradient(135deg,var(--gold),var(--gold-deep));border-radius:9px;padding:12px 22px;text-decoration:none}
-
-.note{color:var(--ink-faint);font-size:12px;line-height:1.7;margin-top:26px;text-align:center}
-.back{display:inline-block;margin-top:14px;color:var(--gold);text-decoration:none;font-weight:700;font-size:13.5px}
-
-/* 하단 고정 신청 바 */
-.applybar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(10,10,12,.86);backdrop-filter:saturate(140%) blur(8px);border-top:1px solid var(--line)}
-.applybar .in{max-width:720px;margin:0 auto;padding:12px 18px calc(12px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:12px}
-.applybar .txt{flex:1;min-width:0;font-size:13px;color:var(--ink-dim)}
-.applybar .txt b{color:var(--ink)}
-.applybar a{flex:0 0 auto;font-weight:800;font-size:14px;color:#0a0a0c;background:linear-gradient(135deg,var(--gold),var(--gold-deep));border-radius:9px;padding:12px 20px;text-decoration:none;white-space:nowrap}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 </style>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
 </head>
 <body>
-<div class="wrap">
-  <div class="top">
-    <div class="kick">Weekly Schedule</div>
-    <h1>레슨 일정</h1>
-    <p class="lead">주간 레슨·직강 일정입니다. <b style="color:var(--gold)">모집중</b> 표시된 그룹은 빈 자리에 바로 합류할 수 있어요.</p>
-    <div class="tabs">
-      <div class="tabrow"><span class="lbl">구분</span>
-        <button class="tab" data-kind="lesson" aria-selected="true">레슨</button>
-        <button class="tab" data-kind="direct" aria-selected="false">직강</button>
-      </div>
-      <div class="tabrow"><span class="lbl">주간</span>
-        <button class="tab" data-week="0" aria-selected="true">이번 주</button>
-        <button class="tab" data-week="1" aria-selected="false">다음 주</button>
-        <button class="tab" data-week="2" aria-selected="false">다다음 주</button>
-      </div>
+<main class="wrap">
+  <div class="kick">수업 시간표</div>
+  <h1>트레이너가 열어 둔 빈 시간</h1>
+  <p class="lead">트레이너가 앱에 올린 빈 시간을 그대로 보여 줘요. 칸을 누르면 신청하는 길이 나와요</p>
+
+  <div class="pick">
+    <div class="row" role="group" aria-label="주 고르기">
+      <button type="button" class="chip" data-week="0" aria-pressed="true">이번 주</button>
+      <button type="button" class="chip" data-week="1" aria-pressed="false">다음 주</button>
+      <button type="button" class="chip" data-week="2" aria-pressed="false">다다음 주</button>
     </div>
-    <div class="range" id="range">불러오는 중…</div>
+    <div class="row" role="group" aria-label="수업 종류 고르기">
+      <button type="button" class="chip" data-kind="" aria-pressed="true">전체</button>
+      <button type="button" class="chip" data-kind="personal" aria-pressed="false">개인 레슨</button>
+      <button type="button" class="chip" data-kind="participate" aria-pressed="false">그룹(참여형)</button>
+      <button type="button" class="chip" data-kind="spectate" aria-pressed="false">관전형</button>
+      <button type="button" class="chip" data-kind="course" aria-pressed="false">직강</button>
+    </div>
   </div>
+  <p class="range" id="range">불러오는 중</p>
 
   <div id="list" aria-live="polite"></div>
 
-  <p class="note">일정 조율·문의는 디스코드/카카오로. 정원·시간은 레벨 테스트 때 안내해 드려요.<br>
-    <a class="back" href="/">← MRI ACADEMY 홈</a></p>
-</div>
+  <p class="note">시간은 한국 시간이에요. 판수 차감과 가격은 <a href="index.html#plans">가격 안내</a>에 있어요<br>
+    <a href="index.html">MRI ACADEMY 홈으로</a></p>
+</main>
 
-<div class="applybar">
+<div class="bar">
   <div class="in">
-    <div class="txt">새로 오는 분은 <b>레벨 테스트</b>부터</div>
-    <a href="apply.html">레벨 테스트 신청 →</a>
+    <div class="txt">새로 오는 분은 <b>레벨 테스트</b>부터 시작해요</div>
+    <a class="btn" href="apply.html?utm_source=site&amp;utm_medium=schedule_bar">레벨 테스트 신청</a>
   </div>
 </div>
 
-<script type="module">
-const API = "https://mri-academy-production.up.railway.app";
-const DOW = ["일","월","화","수","목","금","토"];
-const state = { kind: "lesson", week: 0 };
-// 모집중 카드의 참가 동선. 상담 서버(MRI) — 카카오로 바꾸려면 이 상수만 교체.
-const ASK_URL = "https://discord.gg/9RjqdSKw";
-const $ = (s, r=document) => r.querySelector(s);
-const esc = (s) => String(s==null?"":s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const dowLabel = (d) => DOW[new Date(d+"T00:00:00Z").getUTCDay()];
-const mdLabel = (d) => { const p=d.split("-"); return `${+p[1]}.${+p[2]}`; };
-const hhmm = (t) => t ? String(t).slice(0,5) : "";
-const kstToday = () => new Date(Date.now()+9*3600*1000).toISOString().slice(0,10);
+<script>
+// 수업 시간표 — GET /api/schedule?week=0|1|2 (트레이너 앱 빈 시간 trainer_slots · 계약은 경비 몫)
+// 기대하는 응답(경비 계약 절이 머지되면 그 절 이름으로 맞춘다):
+//   { week:{start,end}, slots:[{ id, startAt(ISO), durationMin, lessonType:"personal"|"participate"|"spectate"|"course",
+//     trainer, seatsLeft, full }], recent14:{ sessions } }
+// 숫자(남은 자리 · 마감 · 최근 2주 수업 횟수)는 서버 값만 쓴다. 화면은 날짜 · 시각 표기만 한다. 글자는 textContent 로만 넣는다.
+(function(){
+  var API = "https://mri-academy-production.up.railway.app";
+  var DISCORD = "https://discord.gg/9RjqdSKw";
+  var APPLY = "apply.html?utm_source=site&utm_medium=schedule";
+  var KIND = { personal: "개인 레슨", participate: "그룹(참여형)", spectate: "관전형", course: "원장 직강" };
+  var WEEK = ["이번 주", "다음 주", "다다음 주"];
+  var DOW = ["일", "월", "화", "수", "목", "금", "토"];
+  var state = { week: 0, kind: "" }, data = null;
+  var list = document.getElementById("list"), range = document.getElementById("range");
 
-// 모션 (실패해도 콘텐츠는 보임 — 카드는 기본 opacity 1)
-let animate=null, stagger=null;
-const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-if(!reduce){
-  try{ const m = await import("https://cdn.jsdelivr.net/npm/motion@11/+esm"); animate=m.animate; stagger=m.stagger; }catch(e){ /* CDN 실패 → 정적 표시 */ }
-}
-function reveal(){
-  if(!animate) return;
-  const cards = document.querySelectorAll("[data-reveal]");
-  if(!cards.length) return;
-  cards.forEach(c=>{ c.style.opacity="0"; });
-  animate(cards, { opacity:[0,1], transform:["translateY(12px)","translateY(0)"] },
-    { duration:.4, delay: stagger(0.045), easing:"ease-out" });
-}
+  function el(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function link(cls, href, text, ext){ var a = el("a", cls, text); a.href = href; if (ext) { a.target = "_blank"; a.rel = "noopener"; } return a; }
+  // 시각은 한국 시간으로만 읽는다(UTC 그대로 읽으면 날짜가 하루 밀린다)
+  function kst(iso){ var t = Date.parse(iso); if (!isFinite(t)) return null; var d = new Date(t + 9 * 3600000);
+    return { date: d.toISOString().slice(0, 10), hm: d.toISOString().slice(11, 16), dow: DOW[d.getUTCDay()] }; }
+  function md(date){ var p = date.split("-"); return (+p[1]) + "월 " + (+p[2]) + "일"; }
+  function len(min){ min = Number(min); if (!(min > 0)) return ""; var h = Math.floor(min / 60), m = min % 60;
+    return (h ? h + "시간" : "") + (h && m ? " " : "") + (m ? m + "분" : ""); }
+  var today = kst(new Date().toISOString()).date;
 
-function fmtBadge(f){ return `<span class="chip">${esc(f)}</span>`; }
-// 당일 신청자는 "2/4"보다 "2자리 남음"이 바로 읽힌다 — 뺄셈을 시키지 않는다.
-function seatText(e){
-  if(e.capacity==null) return e.filled ? { t:`${e.filled}명`, full:false } : null;
-  const left = e.capacity - e.filled;
-  return left > 0 ? { t:`${left}자리 남음`, full:false } : { t:"마감", full:true };
-}
-
-function render(data){
-  const range = $("#range"), list = $("#list");
-  const wk = data.week;
-  range.textContent = wk ? `${wk.start.replace(/-/g,".")} ~ ${data.__endLabel}` : "";
-  const events = (data.events||[]).slice()
-    .sort((a,b)=> (a.event_date<b.event_date?-1:a.event_date>b.event_date?1:0) || (hhmm(a.start_time)<hhmm(b.start_time)?-1:1));
-
-  if(!events.length){
-    list.innerHTML = `<div class="empty">
-      <div class="em">🗓️</div>
-      <p>이번 주 ${state.kind==="lesson"?"레슨":"직강"} 일정이 아직 없어요.<br>다른 주를 확인하거나, 레벨 테스트를 신청하면 맞는 자리로 안내해 드려요.</p>
-      <a class="cta" href="apply.html">레벨 테스트 신청 →</a>
-    </div>`;
-    return;
+  function emptyBox(title, line){
+    var box = el("div", "empty");
+    box.appendChild(el("h2", null, title));
+    if (line) box.appendChild(el("p", null, line));
+    box.appendChild(link("btn", APPLY, "레벨 테스트 신청"));
+    return box;
   }
-
-  const byDay = {};
-  events.forEach(e=>{ (byDay[e.event_date]=byDay[e.event_date]||[]).push(e); });
-  const today = kstToday();
-  let html="", glowUsed = false;
-  Object.keys(byDay).sort().forEach(date=>{
-    html += `<section class="day">
-      <div class="day-h"><span class="dow">${dowLabel(date)}요일</span><span class="date">${mdLabel(date)}</span>${date===today?`<span class="today">오늘</span>`:""}</div>`;
-    byDay[date].forEach(e=>{
-      const time = hhmm(e.start_time) + (e.end_time?`–${hhmm(e.end_time)}`:"");
-      const seats = seatText(e);
-      // 글로우는 가장 임박한 모집중 1건만(events가 날짜·시간순이라 처음 만나는 게 가장 이르다)
-      const lead = e.is_recruiting && !glowUsed;
-      if(lead) glowUsed = true;
-      html += `<div class="card${e.is_recruiting?" recruit":""}" data-reveal>
-        <div class="c1">
-          ${time?`<span class="time">${esc(time)}</span>`:""}
-          ${fmtBadge(e.format)}
-          ${e.is_recruiting?`<span class="recruiting${lead?" lead":""}">● 모집중</span>`:""}
-        </div>
-        <div class="c2">
-          ${e.trainer?`<span class="trainer">${esc(e.trainer)}</span>`:""}
-          ${seats?`<span class="seats${seats.full?" full":""}">${esc(seats.t)}</span>`:""}
-          ${e.is_recruiting?`<a class="ask" href="${ASK_URL}" target="_blank" rel="noopener">참가 문의 →</a>`:""}
-        </div>
-        ${e.title?`<div class="title">${esc(e.title)}</div>`:""}
-      </div>`;
+  function card(s, t){
+    var full = !!s.full || !(Number(s.seatsLeft) > 0);
+    var li = el("div", "slot" + (full ? " full" : ""));
+    var b = el("button", "slot-btn"); b.type = "button";
+    var tm = el("div", "t num", t.hm); tm.appendChild(el("small", null, len(s.durationMin)));
+    var who = el("div", "who"); who.appendChild(el("div", "k", KIND[s.lessonType] || "수업")); who.appendChild(el("div", "n", s.trainer || ""));
+    var seat = el("div", "seat", full ? "마감" : "남은 자리 " + Number(s.seatsLeft));
+    b.appendChild(tm); b.appendChild(who); b.appendChild(seat);
+    li.appendChild(b);
+    if (full) { b.disabled = true; b.setAttribute("aria-label", t.hm + " " + (KIND[s.lessonType] || "") + " 마감"); return li; }
+    var go = el("div", "go"); go.hidden = true; go.id = "go-" + String(s.id || Math.random()).replace(/[^A-Za-z0-9_-]/g, "");
+    go.appendChild(link("btn", APPLY, "처음이에요 · 레벨 테스트 신청"));
+    go.appendChild(link("btn ghost", DISCORD, "수강생이에요 · 디스코드로 신청", true));
+    b.setAttribute("aria-expanded", "false"); b.setAttribute("aria-controls", go.id);
+    b.addEventListener("click", function(){ var open = go.hidden; go.hidden = !open; b.setAttribute("aria-expanded", String(open)); });
+    li.appendChild(go);
+    return li;
+  }
+  function render(){
+    list.textContent = "";
+    var wk = data && data.week;
+    range.textContent = wk && wk.start ? md(wk.start) + "부터 7일" : "";
+    var slots = ((data && data.slots) || []).filter(function(s){ return !state.kind || s.lessonType === state.kind; });
+    if (!slots.length) {
+      var name = WEEK[state.week] + (state.kind ? " " + KIND[state.kind] : "");
+      var n = data && data.recent14 && Number(data.recent14.sessions);
+      list.appendChild(emptyBox(name + "는 자리가 다 찼어요", n > 0 ? "최근 2주 수업 " + n + "회 진행" : ""));
+      return;
+    }
+    var byDay = {}, order = [];
+    slots.forEach(function(s){ var t = kst(s.startAt); if (!t) return; if (!byDay[t.date]) { byDay[t.date] = []; order.push(t.date); } byDay[t.date].push([s, t]); });
+    order.sort().forEach(function(date){
+      var sec = el("section", "day"), h = el("div", "day-h"), first = byDay[date][0][1];
+      h.appendChild(el("b", null, first.dow + "요일")); h.appendChild(el("span", null, md(date)));
+      if (date === today) h.appendChild(el("span", "today", "오늘"));
+      sec.appendChild(h);
+      var box = el("div", "slots");
+      byDay[date].sort(function(a, b){ return a[1].hm < b[1].hm ? -1 : 1; }).forEach(function(p){ box.appendChild(card(p[0], p[1])); });
+      sec.appendChild(box); list.appendChild(sec);
     });
-    html += `</section>`;
-  });
-  list.innerHTML = html;
-  reveal();
-}
-
-async function load(){
-  $("#range").textContent = "불러오는 중…";
-  $("#list").innerHTML = "";
-  try{
-    const r = await fetch(`${API}/api/schedule?week=${state.week}&kind=${state.kind}`, { cache:"no-store" });
-    const d = await r.json();
-    // 주 종료 라벨(포함형) = end - 1일
-    if(d.week){ const e=new Date(d.week.end+"T00:00:00Z"); e.setUTCDate(e.getUTCDate()-1); d.__endLabel = e.toISOString().slice(0,10).replace(/-/g,"."); }
-    render(d);
-  }catch(e){
-    $("#list").innerHTML = `<div class="empty"><div class="em">⚠️</div><p>일정을 불러오지 못했어요. 잠시 후 새로고침해 주세요.</p><a class="cta" href="apply.html">레벨 테스트 신청 →</a></div>`;
-    $("#range").textContent = "";
   }
-}
-
-// 탭 배선
-document.querySelectorAll(".tab").forEach(btn=>{
-  btn.addEventListener("click", ()=>{
-    const grp = btn.dataset.kind!=null ? "kind" : "week";
-    const val = btn.dataset.kind!=null ? btn.dataset.kind : Number(btn.dataset.week);
-    if(state[grp]===val) return;
-    state[grp] = val;
-    const attr = grp==="kind" ? "data-kind" : "data-week";
-    document.querySelectorAll(`.tab[${attr}]`).forEach(b=> b.setAttribute("aria-selected","false"));
-    btn.setAttribute("aria-selected","true");
-    load();
+  function load(){
+    range.textContent = "불러오는 중"; list.textContent = ""; data = null;
+    fetch(API + "/api/schedule?week=" + state.week, { cache: "no-store" })
+      .then(function(r){ return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function(d){ data = d || {}; render(); })
+      .catch(function(){ range.textContent = ""; list.textContent = "";
+        list.appendChild(emptyBox("시간표를 불러오지 못했어요", "잠시 뒤 새로고침해 주세요. 급하면 디스코드로 물어봐도 돼요")); });
+  }
+  document.querySelectorAll(".chip").forEach(function(c){
+    c.addEventListener("click", function(){
+      var isWeek = c.hasAttribute("data-week"), attr = isWeek ? "data-week" : "data-kind";
+      document.querySelectorAll(".chip[" + attr + "]").forEach(function(x){ x.setAttribute("aria-pressed", "false"); });
+      c.setAttribute("aria-pressed", "true");
+      if (isWeek) { state.week = Number(c.getAttribute("data-week")) || 0; load(); }
+      else { state.kind = c.getAttribute("data-kind") || ""; if (data) render(); }
+    });
   });
-});
-load();
+  load();
+})();
 </script>
 </body>
 </html>
