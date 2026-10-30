@@ -4377,3 +4377,57 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 ### 9.46.7 하지 않는 것
 - 레슨 서버 채널 권한(잠금 · 열기)은 건드리지 않는다 — 수강생에게 다시 열지는 오너가 정한다.
 - 앱 → 디코 수정 · 삭제 따라가기, 짝 확정 화면, 수업(판) 연결 자동 찾기 — 다음 주문.
+
+## 9.47 공개 시간표 API — `GET /api/schedule` = 트레이너 앱 칸 그대로 (2026-10-30 · 총무 주문 · 오너 버튼 「앱 시간표에 자동 연결」) · **계약 + 서버(이 PR) · DDL 없음 · 새 env 없음** · 사이트 화면 = 사이트 세션(이 절 번호대로)
+
+사이트 `lesson-schedule.html` 이 읽던 `schedule_events` 는 0행이라 매주 빈 화면이었다. 이제 **트레이너가 앱에 올린 칸(`trainer_slots`)이 정본**이다 — 따로 입력하는 사람이 없다.
+읽기만 한다. `trainer_slots` · `slot_bookings` 쓰기 경로 · 판수 · 결제와 무관하다. 코드 = `public-schedule.cjs`(라우트는 `server.js` · 옛 `admin-panel.js` 공개 라우트는 지웠다 · `/api/admin/schedule*` 는 그대로).
+
+### 9.47.1 요청
+`GET /api/schedule?week=0|1|2&kind=lesson|direct` — 로그인 없음 · 공개.
+- `week` 0 = 이번 주 · 1 = 다음 주 · 2 = 다다음 주(KST 월 00:00 ~ 일 24:00). 없거나 다른 값이면 0.
+- `kind` lesson = 레슨(개인 · 참여형 · 관전형) · direct = 직강 반 수업. 없으면 전부.
+- 분당 60회(IP별 · 넘으면 429 `{ error:"too_many_requests", retry_after }` + `Retry-After`). 서버 캐시 5분 · 응답 `Cache-Control: public, max-age=60`.
+
+### 9.47.2 응답
+```json
+{
+  "source": "trainer_slots",
+  "generatedAt": "2026-10-30T09:00:00.000Z",
+  "week": { "start": "2026-10-26", "end": "2026-11-02" },
+  "slots": [
+    { "date": "2026-10-30", "startTime": "20:00", "startAt": "2026-10-30T11:00:00.000Z", "durationMin": 90,
+      "kind": "lesson", "lessonType": "participate", "courseLevel": null,
+      "trainer": "트레이너 이름", "capacity": 4, "seatsLeft": 2, "full": false }
+  ],
+  "weeks": [ { "start": "2026-10-26", "end": "2026-11-02", "open": 1, "total": 1 }, { "...": "다음 주" }, { "...": "다다음 주" } ],
+  "events": [],
+  "recent": { "days": 14, "from": "2026-10-17", "to": "2026-10-30", "lessons": 51 }
+}
+```
+| 칸 | 뜻 |
+|---|---|
+| `slots[]` | 요청한 주의 칸 — 시작 시각 순. **조건: `status='open'` · 시작 시각 ≥ 지금 · 활동 중 트레이너(`staff.active`) 칸만** |
+| `date` · `startTime` | KST 날짜 · 시작 시각(HH:MM). `startAt` 은 같은 시각의 UTC ISO |
+| `durationMin` | 칸 길이(`duration_min` · 없으면 30). 개인 레슨은 30분 칸이 이어 붙은 모양 — 화면이 이어진 칸을 묶어 보여 줘도 된다 |
+| `lessonType` | `personal` 개인 · `participate` 참여형 · `spectate` 관전형 · `course` 직강 반 수업 |
+| `courseLevel` | 직강 칸만 `beginner` · `intermediate` · `advanced`(앱 · 예약 응답과 같은 키). 그 밖은 `null` |
+| `kind` | `course` = `direct`, 그 밖 = `lesson`(옛 화면 탭과 같은 값) |
+| `trainer` | 트레이너 표시 이름(`staff.name` · 앱 예약 화면 `trainerDisplayName` 과 같은 값) |
+| `capacity` · `seatsLeft` | 정원 · 남은 자리 = 정원 − 그 칸의 활성 예약(`slot_bookings.status` booked · pending_review) 수. 0 밑으로 안 간다 |
+| `full` | `seatsLeft = 0` — **칸은 보여 주고 「마감」으로 표시**한다 |
+| `weeks[]` | 세 주 모두의 칸 수(`total`)와 남은 자리 있는 칸 수(`open`) — 탭 숫자 · 빈 주 판단용 |
+| `events[]` | 옛 수동 일정(`schedule_events` · `is_public` · 취소 아님 · 그 주) — **모양은 종전 그대로**. 지금 0행이라 빈 배열이고, 나중에 수동 일정을 다시 쓰면 여기로 온다 |
+| `recent` | 빈 주를 위한 신뢰 숫자 — 아래 §9.47.3 |
+- **응답에 없는 것**: 수강생 id · 이름 · 디스코드 정보 · 내부 칸/트레이너 id · 예약 목록. 예약은 칸별 「몇 명」으로만 센다.
+- `personal` 칸에 예약이 잡히면 칸이 `closed` 로 바뀌어 목록에서 빠진다(앱 동작 그대로) — 개인 칸의 「마감」은 거의 안 보이고, 그룹 칸(정원 2 이상)에서 보인다.
+- 서버 오류 = 503 `{ error:"schedule_unavailable" }`. DB 가 잠깐 안 되면 마지막 캐시를 내려 준다.
+
+### 9.47.3 `recent.lessons` 정의
+`lesson_sessions` 행 수 — **수강생 한 명의 수업 기록 1건 = 1**(그룹 수업에 3명이면 3). `played_at`(KST 날짜)이 `from` ~ `to`(오늘 포함 14일) 안. 직강 출석(`course_attendance`)은 넣지 않는다.
+- 10/30 18시 KST 실측 = **51**(10/17 ~ 10/30). 주문서 58은 이 정의와 다르다 — 15일 창(10/16 ~)이면 55, 직강 출석 14일 7건을 더하면 58이다. 숫자 정의를 바꾸려면 이 절을 고친다.
+- 화면 문구 예: 「최근 2주 동안 수업 51번」(사이트 세션 몫).
+
+### 9.47.4 화면이 알아 둘 것(사이트 세션)
+- 트레이너들이 지난 칸을 `open` 으로 둔 채 쌓아 두는 일이 많다(10/30 이번 주 칸 21개 중 open 20 · **그중 앞으로 남은 칸 2개**). 서버는 시작 시각이 지난 칸을 빼므로 이번 주가 비어 보일 수 있다 — 빈 주에는 `recent` 와 다음 주 `weeks[1].total` 로 채운다.
+- 옛 응답의 `week` · `events` 는 그대로라, 지금 화면은 고치기 전에도 깨지지 않는다(여전히 빈 화면).

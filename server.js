@@ -8665,6 +8665,15 @@ app.get("/api/admin/guardian-consents", async (req, res) => {
   }
 });
 
+// ── 공개 시간표 GET /api/schedule (계약 trainer-portal-api §9.47 · 총무 10/30) ──
+// 사이트 lesson-schedule.html 이 읽는다 — 트레이너 앱 칸(trainer_slots) 기준 · 5분 캐시 · 분당 60회.
+// admin-panel 의 옛 schedule_events 전용 공개 라우트를 대신한다(그 표는 events 로 같이 내려 준다).
+const publicSchedule = require("./public-schedule.cjs").createPublicSchedule({ sbSelect });
+app.get("/api/schedule", limit("public_schedule", 60, 60_000), (req, res) => {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return res.status(503).json({ error: "schedule_unavailable" });
+  return publicSchedule.handler(req, res);
+});
+
 // ── 운영진 정산·레슨로그 관리 패널 (Phase 0) ──
 // schemaOptional은 기동 시 probeOptionalSchema()가 채우는 같은 객체를 그대로 넘긴다.
 // 참조를 넘기므로 프로브가 끝나면 패널 쪽에서도 값이 보인다(매 요청 재조회 없음).
