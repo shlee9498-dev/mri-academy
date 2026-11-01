@@ -4522,6 +4522,15 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 4. (선택) 신청 알림을 따로 받을 채널이 있으면 Railway env **`GO_APPLY_CHANNEL_ID`** = 그 채널 id(운영진만 보이는 채널). 없으면 지금 연결 승인 카드 채널로 간다.
 - Railway 서버 env 는 **새로 필요 없다**(이미 있는 `SUPABASE_URL` · `SUPABASE_SERVICE_ROLE_KEY` 로 토큰을 확인한다). 화면에도 키를 넣지 않는다.
 
+### 9.48.6 쇼츠 표식 `src` · 이벤트 코드 `code` (2026-11-02 · 총무 주문 · 오너 「정식 등록 10%」 「1주일」 · DDL §92)
+- 주소: `https://mriacademy.gg/go?src=shorts-yjh&code=MURI10` — `src` = 영문 소문자 · 숫자 · `-` 1~32자, `code` = §54 이벤트 코드(대문자 · 숫자 3~20자). 둘 다 로그인 갔다 와도 돌아올 주소에 실린다(`v` · utm 과 같이).
+- **코드 정본 = 이미 있는 `event_codes`(§54) 표** — 새 구조 없음. `MURI10` 1줄: 정식 등록 10% · 대상 첫 결제(`first_payment`) · **꺼진 채로 등록**(쇼츠 올린 날 D 를 받으면 `starts_on = D` · `ends_on = D + 6` · 켬 = 7일).
+- 할인 배지: 화면은 이미 있는 `GET /api/events/:code` → `{ code, title, until, discount, active }` 를 부르고 **`active: true` 일 때만** 「정식 등록 시 10% 할인 · ~until 까지」를 보인다(꺼짐 · 기간 밖이면 배지 없음 · 신청은 그대로 된다). 레벨 테스트비 20,000 에는 할인이 없다고 함께 적는다.
+- `POST /api/go/apply` 본문에 `src` · `code` 를 더한다 → 코드는 **켜져 있고 기간 안일 때만** 신청 행 `event_code` 에 붙는다(`src` 는 그대로). 응답에 `src` · `eventCode` · `codeApplied`. `/me` 에도 `src` · `eventCode`.
+  재신청에서 둘이 비어 오면 처음 값을 지킨다.
+- 칸을 고르면(§9.49) 상담 행 `inflow` = `/go · src=shorts-yjh · v=… · 코드 MURI10` · 메모에 「정식 등록 할인 대상(결제 때 사람이 확인)」. 운영 채널 한 줄에도 `src` · 코드.
+- **할인 적용은 정식 등록 결제 때 사람이 확인한다** — 자동 차감 없음 · 결제 · 정산 계산식 변경 없음 · 가격 정본(§9.42) 그대로.
+
 ### 9.48.5 하지 않는 것
 - 결제 · 예약 · 가격 문구 · 기존 신청 · 상담 데이터 — 손대지 않음.
 - 「연락함」 바꾸기 · 신청 목록 화면 · 영상별 전환 집계 화면 — 다음 주문(지금은 세션이 DB 로 센다: `select first_v, count(*) from go_applications group by 1`).

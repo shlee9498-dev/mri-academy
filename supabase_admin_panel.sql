@@ -8314,3 +8314,22 @@ create unique index if not exists uq_go_applications_payreq on public.go_applica
 --     drop column if exists consult_id, drop column if exists student_id;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §92  /go 쇼츠 표식 · 이벤트 코드 — go_applications 칸 2 + 이벤트 코드 1줄(꺼짐) (2026-11-02 · 총무 주문 · 오너 「정식 등록 10%」 「1주일」 · 계약 §9.48.6 · 소관 MRIacademy)
+--      A 구간(칸 2 · 더하기만 · 이벤트 코드는 §54 표에 새 줄 하나). 결제 · 정산 계산식 무관 — 할인은 정식 등록 결제 때 사람이 확인한다.
+-- ============================================================
+-- 92-0) 실행 전 스냅샷(세션 · 읽기만): 칸 30 · select count(*) from public.event_codes where code='MURI10';  -- 기대 0
+-- 92a) 칸
+alter table public.go_applications add column if not exists src        text check (src is null or src ~ '^[a-z0-9-]{1,32}$');
+alter table public.go_applications add column if not exists event_code text references public.event_codes(code);
+-- 92b) 이벤트 코드 한 줄 — **꺼진 채로**(active false). 쇼츠 올린 날을 총무가 알려 주면 그날부터 7일로 날짜를 고치고 켠다(92d).
+insert into public.event_codes (code, title, discount_pct, target, starts_on, ends_on, pay_within_days, active, memo, created_by)
+values ('MURI10', '상담 쇼츠 · 정식 등록 10%', 10, 'first_payment', '2026-11-02', '2026-11-08', 7, false,
+        '쇼츠 고정 댓글 /go?src=shorts-yjh&code=MURI10 · 정식 등록(레슨 · 직강) 10% · 레벨 테스트비 할인 없음 · 결제 때 사람이 확인(자동 차감 없음) · 오너 11/2', 'session')
+on conflict (code) do nothing;
+-- 92c) 검증: 칸 32 · MURI10 1줄 active false · notify pgrst, 'reload schema';
+-- 92d) 켜기(쇼츠 올린 날 D · 총무 회신 뒤 세션): update public.event_codes set starts_on = D, ends_on = D + 6, active = true where code = 'MURI10';
+-- 되돌림: delete from public.event_codes where code='MURI10' (go_applications.event_code 가 비어 있을 때만) ·
+--   alter table public.go_applications drop column if exists event_code, drop column if exists src; notify pgrst, 'reload schema';
+-- ============================================================

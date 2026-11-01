@@ -8681,6 +8681,7 @@ let goLevelTest = null;   // §9.49 — 아래 studentPortal 뒤에 만든다(�
 const goApply = require("./go-apply.cjs").mountGoApply(app, {
   sbSelect, sbInsert, sbPatch, limit,
   levelTestOf: (id) => (goLevelTest ? goLevelTest.levelTestOf(id) : null),
+  codeActive: require("./intake-api.cjs").codeActive,   // 이벤트 코드(§54) 켜짐 · 기간 판정 — 신청 창구와 같은 함수
   supabaseUrl: () => process.env.SUPABASE_URL, serviceKey: () => process.env.SUPABASE_SERVICE_ROLE_KEY,
   notify: async (text) => {
     if (!botClient) return false;
@@ -9277,7 +9278,7 @@ const SCHEMA_OPTIONAL = {
   // §88 통장 입출금 알림(docs/bank-alerts.md · 지휘 10/7 · 10/28 짝 찾기 §9.45) — toss 입금은 짝 후보 + 오너 DM. 미실행이면 POST /api/bank-alerts 만 503 table_missing 이고
   //   다른 기능은 그대로다. 읽는 화면(오너 목록 · 공개 합계)이 생기면 REQUIRED 로 올린다.
   // §90 영상 QR 신청(계약 §9.48) — 미실행이면 POST /api/go/apply 만 503 table_missing · 다른 기능은 그대로
-  go_applications: ["id", "auth_user_id", "email", "display_name", "contact", "contact_kind", "v", "first_v", "utm", "applied_at",
+  go_applications: ["id", "auth_user_id", "src", "event_code", "email", "display_name", "contact", "contact_kind", "v", "first_v", "utm", "applied_at",
                     "first_applied_at", "apply_count", "status", "contacted_at", "contacted_by_staff_id", "created_at", "updated_at"],
   bank_alerts: ["id", "account_key", "direction", "amount", "balance", "occurred_at", "counterparty", "parse_status", "shape",
                 "dedupe_key", "source_app", "posted_at", "received_at", "raw_masked", "match_status", "match_kind", "match_ref",
