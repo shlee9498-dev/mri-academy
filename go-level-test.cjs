@@ -114,10 +114,10 @@ function mountGoLevelTest(app, deps) {
     return summary(row);
   }
 
-  async function auth(req, res) {
+  async function currentGuest(req, res) {
     let u;
     try { u = await deps.whoami(req); }
-    catch (e) { log.error("[go-lt] auth", e && e.message); fail(res, 503, "unavailable"); return null; }
+    catch (e) { log.error("[go-lt] who", e && e.message); fail(res, 503, "unavailable"); return null; }
     if (!u) { fail(res, 401, "login_required"); return null; }
     return u;
   }
@@ -150,7 +150,7 @@ function mountGoLevelTest(app, deps) {
     if (!slotId) return fail(res, 404, "slot_not_found");
     const payMethod = b.payMethod === "card" ? "card" : b.payMethod === "transfer" ? "transfer" : null;
     if (!payMethod) return fail(res, 400, "invalid_body");
-    const u = await auth(req, res); if (!u) return;
+    const u = await currentGuest(req, res); if (!u) return;
     let row;
     try { row = await rowOf(u.email); } catch (e) { return fail(res, 503, "unavailable"); }
     if (!row) return fail(res, 409, "apply_first");
@@ -215,7 +215,7 @@ function mountGoLevelTest(app, deps) {
 
   // 3) 「입금했어요」 · 「결제했어요」 — 결제 요청(대기) 1건 · 진행자 DM(가확정)
   app.post("/api/go/paid", limit("go_lt_paid", 10, 60_000), async (req, res) => {
-    const u = await auth(req, res); if (!u) return;
+    const u = await currentGuest(req, res); if (!u) return;
     let row;
     try { row = await rowOf(u.email); } catch (e) { return fail(res, 503, "unavailable"); }
     if (!row || row.lt_state !== "waiting" || !row.slot_id) return fail(res, 409, "not_waiting");
@@ -255,7 +255,7 @@ function mountGoLevelTest(app, deps) {
 
   // 4) 취소 — 시작 3시간 전까지만(이후 · 노쇼 = 환불 없음)
   app.post("/api/go/cancel", limit("go_lt_cancel", 10, 60_000), async (req, res) => {
-    const u = await auth(req, res); if (!u) return;
+    const u = await currentGuest(req, res); if (!u) return;
     let row;
     try { row = await rowOf(u.email); } catch (e) { return fail(res, 503, "unavailable"); }
     if (!row || !OPEN_STATES.includes(row.lt_state)) return fail(res, 409, "not_booked");
