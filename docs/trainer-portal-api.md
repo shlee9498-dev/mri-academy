@@ -4558,10 +4558,12 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 | ④ 「입금했어요」(계좌) · 「결제했어요」(카드) | 입금자 이름 한 칸(계좌) | `POST /api/go/paid` → 결제 요청 1건(대기) · **진행자 DM**(가확정) | `claimed`(가확정) |
 | ⑤ 확정 | 「확정됐어요」 화면 | 통장 짝(§9.49.6) 또는 오너 승인 → `payments` 1행 · 상담 `paid` · 진행자 DM(확정) | `confirmed` |
 | 취소 | 「취소할게요」 | `POST /api/go/cancel` | `cancelled` |
-- 손님 안내는 **화면(`GET /api/go/me`)이 정본**이다. 디스코드로 로그인한 손님만 봇 DM 이 더 나간다(구글 · 카카오는 이메일 · 문자 발송 없음 — 화면 + 총무 연락).
+- 손님 안내는 **화면(`GET /api/go/me`)이 정본**이다(봇 DM · 이메일 · 문자 발송 없음 — 화면 + 총무 연락). 디스코드 로그인 손님에게 봇 DM 을 더할지는 다음 판단.
 - 입금 기한: 칸을 고른 뒤 **24시간 · 시작 3시간 전 중 이른 때**까지 「입금했어요」가 없으면 서버가 예약을 풀고 `expired`(칸 다시 열림 · 손님 화면 「시간이 지나 자리를 풀었어요」).
 
 ### 9.49.4 라우트 (전부 `Authorization: Bearer <Supabase 토큰>` · §9.48 과 같은 확인 · 구글 · 디스코드 · 카카오)
+- 로그인 시작 `GET /api/go/login?provider=google|discord|kakao&v=…` (§9.48 · 없으면 google). 카카오가 이메일을 안 주면 신청 한 행 키는 `<사용자 id>@kakao.auth`(연락은 `contact` 칸).
+
 **`GET /api/go/slots`** — 로그인 없이도 된다(보기만).
 ```json
 { "fee": 20000, "lengthNote": "보통 60분 · 최대 90분", "cardLink": "https://…" ,
@@ -4592,7 +4594,8 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 
 ### 9.49.5 확정 — 「가확정」 결제 요청을 승인하면
 - 승인 길 둘: ① **통장 짝**(§9.49.6) ② 오너가 기존 결제 요청 승인 카드에서 승인(카드 결제 · 짝 실패 때).
-- 승인되면(§18d 트리거 그대로): `payments` 1행(consult · 20,000 · 칸 주인) → 상담 `paid_status=paid` · `payment_id` · 신청 `confirmed` · 진행자 DM 「확정」 · 손님 화면 「확정됐어요」(디스코드 손님은 DM).
+- 승인되면(§18d 트리거 그대로): `payments` 1행(consult · 20,000 · 칸 주인) → 서버 점검(2분마다)이 상담 `paid_status=paid` · `payment_id` · 신청 `confirmed` · 진행자 DM 「확정」 · 손님 화면 「확정됐어요」.
+- 오너 승인 카드는 「입금했어요」 때 오너 DM 으로 온다(기존 앱 입금 신청 카드 · `/go` 신청이 만든 예비 명부가 바로 대상으로 뜬다). 거절하면 신청은 다시 `waiting`(기한 24시간 새로).
 - **`payments` 행은 확정 때만 생긴다** — 「입금했어요」(가확정)는 결제 요청(대기)까지다. 통장 1줄 = 장부 1행 원칙.
 
 ### 9.49.6 통장 짝 → 자동 확정 (§9.45 확장)
