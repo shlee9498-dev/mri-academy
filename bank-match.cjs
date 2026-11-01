@@ -96,7 +96,8 @@ function createBankMatch(deps) {
       levelFee === amt
         ? safe(sbSelect("intake_applications", `select=id,real_name,display_name,created_at&status=in.(booked,tested)&deposit_confirmed_at=is.null&created_at=gte.${since}&limit=20`))
         : Promise.resolve([]),
-      safe(sbSelect("consults", `select=id,student_name,kind,fee,created_at&paid_status=eq.unpaid&fee=eq.${amt}&created_at=gte.${since}&limit=20`)),
+      // /go 상담(registered_by go)은 결제 요청(대기)이 같은 손님 짝으로 이미 있다 — 같은 사람이 두 후보로 잡히면 「multiple」이 된다(§9.49)
+      safe(sbSelect("consults", `select=id,student_name,kind,fee,created_at&paid_status=eq.unpaid&fee=eq.${amt}&created_at=gte.${since}&or=(registered_by.is.null,registered_by.neq.go)&limit=20`)),
     ]);
     return [
       ...pr.map((r) => ({ kind: "payment_request", id: r.id, name: depositorName(r), amount: r.amount, created_at: r.created_at, product: r.kind || null })),

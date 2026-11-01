@@ -4559,7 +4559,8 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 | ⑤ 확정 | 「확정됐어요」 화면 | 통장 짝(§9.49.6) 또는 오너 승인 → `payments` 1행 · 상담 `paid` · 진행자 DM(확정) | `confirmed` |
 | 취소 | 「취소할게요」 | `POST /api/go/cancel` | `cancelled` |
 - 손님 안내는 **화면(`GET /api/go/me`)이 정본**이다(봇 DM · 이메일 · 문자 발송 없음 — 화면 + 총무 연락). 디스코드 로그인 손님에게 봇 DM 을 더할지는 다음 판단.
-- 입금 기한: 칸을 고른 뒤 **24시간 · 시작 3시간 전 중 이른 때**까지 「입금했어요」가 없으면 서버가 예약을 풀고 `expired`(칸 다시 열림 · 손님 화면 「시간이 지나 자리를 풀었어요」).
+- 입금 기한: 칸을 고른 뒤 **24시간 · 시작 4시간 전 중 이른 때**까지 「입금했어요」가 없으면 서버가 예약을 풀고 `expired`(칸 다시 열림 · 손님 화면 「시간이 지나 자리를 풀었어요」). 4시간인 까닭 = 자리를 풀 때 3시간 취소 창(§32b) 안에 들지 않게.
+- 트레이너가 칸 · 예약을 따로 닫으면(§23d) 점검이 손님 쪽도 `cancelled` 로 닫는다(가확정이면 요청 거절 + 오너 DM · 확정이면 환불 대상 오너 DM).
 
 ### 9.49.4 라우트 (전부 `Authorization: Bearer <Supabase 토큰>` · §9.48 과 같은 확인 · 구글 · 디스코드 · 카카오)
 - 로그인 시작 `GET /api/go/login?provider=google|discord|kakao&v=…` (§9.48 · 없으면 google). 카카오가 이메일을 안 주면 신청 한 행 키는 `<사용자 id>@kakao.auth`(연락은 `contact` 칸).
@@ -4570,27 +4571,27 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
   "slots": [ { "slotKey": "…", "startAt": "2026-11-04T09:00:00.000Z", "date": "2026-11-04", "startTime": "18:00",
                "trainer": { "trainerKey": "…", "name": "트레이너A", "isOwner": false } } ] }
 ```
-- 조건: `lesson_type='consult'` · `status='open'` · `duration_min=90` · 활동 중 진행자 · 시작 ≥ 지금 + 3시간 · 14일 안 · 시작 순. `slotKey` · `trainerKey` 는 불투명 값(서버 id 아님). `cardLink` 는 env 가 없으면 `null`(카드 버튼 숨김).
+- 조건: `lesson_type='consult'` · `status='open'` · `duration_min=90` · **활성 예약(booked · pending_review)이 없는 칸**(상담 칸은 예약돼도 `open` 으로 남는다) · 활동 중 진행자 · 시작 ≥ 지금 + **5시간**(입금할 시간 1시간 이상) · 14일 안 · 시작 순. `slotKey` · `trainerKey` 는 불투명 값(서버 id 아님). `cardLink` 는 env 가 없으면 `null`(카드 버튼 숨김).
 
 **`POST /api/go/book`** `{ "slotKey": "…", "payMethod": "transfer" | "card", "test"?: true }`
 - 먼저 `/apply` 로 연락처가 있어야 한다(없으면 409 `apply_first`).
-- 하는 일(한 번에): ① 명부 prospect(이미 이 신청에 붙은 번호가 있으면 그것) ② `consults` 1행(`consult_type=level_test` · `fee 20000` · `paid_status unpaid` · `handler_id` = 칸 주인 · `scheduled_at` · `duration_min 90` · `status scheduled` · `source site` · `inflow` = `/go` 의 v) ③ `book_slot` ④ 신청 행에 이어 둠.
-- 200 `{ "state": "waiting", "booking": { "startAt", "trainer": { "name" } }, "pay": { "method", "amount": 20000, "deadline", "bank": { "name", "holder", "account" } | null, "cardLink" | null } }`
+- 하는 일(한 번에): ① 명부 prospect(이미 이 신청에 붙은 번호가 있으면 그것) ② `book_slot` ③ `consults` 1행(`consult_type=level_test` · `fee 20000` · `paid_status unpaid` · `handler_id` = 칸 주인 · `scheduled_at` · `duration_min 90` · `status scheduled` · `source site` · **`booking_id` = 그 예약**(트레이너 「완료」가 이 행을 채운다) · `inflow` = `/go` 의 v) ④ 신청 행에 이어 둠. 중간에 실패하면 잡은 예약 · 상담을 되돌린다.
+- 200 `{ "state": "waiting", "test": false, "booking": { "startAt", "durationNote", "trainer": { "name" } }, "pay": { "method", "amount": 20000, "deadline", "bank": { "name", "holder", "account" } | null, "cardLink" | null } }` — `/paid` · `/me` 의 `levelTest` 도 같은 모양
   — 계좌는 **로그인한 본인 응답에만**(공개 목록에 없음) · 값은 서버 env(`PAY_BANK_*`).
-- 오류: 409 `slot_taken`(다른 분이 먼저) · 409 `booking_closed`(3시간 안) · 409 `already_booked`(이미 잡은 칸이 있음 — 바꾸려면 취소 뒤 다시) · 404 `slot_not_found` · 401 `login_required` · 409 `apply_first`.
+- 오류: 409 `slot_taken`(다른 분이 먼저) · 409 `booking_closed`(5시간 안) · 503 `unavailable`(레벨 테스트비 정본을 못 읽음 — 추측하지 않는다) · 409 `already_booked`(이미 잡은 칸이 있음 — 바꾸려면 취소 뒤 다시) · 404 `slot_not_found` · 401 `login_required` · 409 `apply_first`.
 
 **`POST /api/go/paid`** `{ "depositorName"?: "…" }` (계좌면 입금자 이름 1~20자 필수 · 카드면 없음)
 - `payment_requests` 1건(대기 · 구분 상담 · 20,000 · 칸 주인 트레이너 · `requested_by = go:<신청 번호>`) · 신청 `claimed` · **진행자 디코 DM**:
   「레벨 테스트 가확정 — 11/4(수) 18:00 · 90분 · 입금 확인 중이야」. 오너가 진행자면 오너 DM.
-- 200 `{ "state": "claimed" }` · 409 `not_waiting`(이미 했거나 칸 없음) · 400 `depositor_required`.
+- 200 = 위 모양(`state: "claimed"`) · 409 `not_waiting`(이미 했거나 칸 · 예약이 없음) · 409 `pay_deadline_passed` · 400 `depositor_required`.
 
 **`POST /api/go/cancel`** — 시작 3시간 전까지만.
 - `waiting` 에서 취소: 예약 취소 · 상담 `cancelled` · 결제 없음.
-- `claimed` · `confirmed` 에서 취소: 예약 취소 · 상담 `cancelled` · 결제 요청은 거절(대기였으면) · **확정 뒤 취소는 전액 환불 대상**으로 오너 DM(환불 실행은 지금처럼 사람 · 장부는 환불 행).
+- `claimed` · `confirmed` 에서 취소: 예약 취소 · 상담 `cancelled` · 결제 요청은 거절(대기였으면 · 계좌 손님은 이미 입금했을 수 있어 오너 DM 「가확정 풀림」) · **확정 뒤(또는 거절 직전에 승인된) 취소는 전액 환불 대상**으로 오너 DM(환불 실행은 지금처럼 사람 · 장부는 환불 행).
 - 3시간 안 · 노쇼 = **환불 없음**(정본 그대로) → 409 `cancel_window_passed`(화면: 「시작 3시간 전이 지나 취소할 수 없어요 급한 사정은 디스코드로 말해 주세요」).
 
 **`GET /api/go/me`** — §9.48 응답에 `levelTest` 를 더한다:
-`{ …, "levelTest": { "state": "waiting|claimed|confirmed|cancelled|expired", "startAt", "trainer": { "name" }, "pay": { … 위와 같음 }, "deadline" } | null }`
+`{ …, "levelTest": { "state": "waiting|claimed|confirmed|cancelled|expired", "test", "booking": { … }, "pay": { … } | null } | null }` — `/book` 응답과 같은 모양
 
 ### 9.49.5 확정 — 「가확정」 결제 요청을 승인하면
 - 승인 길 둘: ① **통장 짝**(§9.49.6) ② 오너가 기존 결제 요청 승인 카드에서 승인(카드 결제 · 짝 실패 때).
