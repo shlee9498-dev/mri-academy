@@ -8240,3 +8240,41 @@ create unique index if not exists uq_rf_mirror_msg on public.review_feedback (mi
 --   alter table public.review_feedback drop column if exists mirror_msg; alter table public.review_feedback drop column if exists hidden_at;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §90  영상 QR 신청 /go — go_applications (2026-11-01 · 총무 주문 · 오너 「정말 심플한 신청란 · 구글 로그인필수」 · 계약 §9.48 · 소관 MRIacademy)
+--      A 구간(새 표 하나 · 더하기만). 결제 · payments · consults · intake 와 무관하다. 기존 표 · 행을 건드리지 않는다.
+--      구글 이메일 하나 = 한 행(재신청은 같은 행 갱신 · apply_count +1). first_v = 처음 들어온 영상코드(영상별 전환 집계용).
+--      개인정보(이메일 · 이름 · 연락처)가 담긴다 — RLS on · 정책 0(service_role 만). 공개 화면에 내리지 않는다.
+-- ============================================================
+-- 90-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select to_regclass('public.go_applications');                                   -- 기대 null
+-- 90a) 표
+create table if not exists public.go_applications (
+  id                    bigint generated always as identity primary key,
+  auth_user_id          uuid        not null,                                                       -- Supabase Auth 사용자(구글)
+  email                 text        not null check (char_length(email) between 3 and 254 and email = lower(email)),
+  display_name          text        check (display_name is null or char_length(display_name) <= 80),
+  contact               text        not null check (char_length(contact) between 2 and 60),         -- 「디스코드 아이디 또는 전화번호」 한 칸
+  contact_kind          text        not null check (contact_kind in ('phone', 'discord')),
+  v                     text        check (v is null or v ~ '^[A-Za-z0-9_-]{1,32}$'),                 -- 마지막 신청의 영상코드
+  first_v               text        check (first_v is null or first_v ~ '^[A-Za-z0-9_-]{1,32}$'),     -- 처음 신청의 영상코드
+  utm                   jsonb       not null default '{}'::jsonb check (jsonb_typeof(utm) = 'object'),
+  applied_at            timestamptz not null default now(),                                         -- 마지막 신청 시각(날짜는 KST 로 판정)
+  first_applied_at      timestamptz not null default now(),
+  apply_count           integer     not null default 1 check (apply_count >= 1),
+  status                text        not null default 'waiting' check (status in ('waiting', 'contacted')),   -- 대기 / 연락함
+  contacted_at          timestamptz,
+  contacted_by_staff_id bigint,
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+create unique index if not exists go_applications_email on public.go_applications (email);
+create index if not exists idx_go_applications_first_v on public.go_applications (first_v, first_applied_at desc);
+alter table public.go_applications enable row level security;                                       -- 정책 0 = service_role 만
+-- 90b) 90a 뒤 검증(세션 · 읽기만): 칸 17 · 행 0 · 색인 go_applications_email(유일) · RLS on · 정책 0
+-- 90c) notify pgrst, 'reload schema';
+--
+-- 되돌림(행이 있으면 먼저 지휘 확인 — 신청 기록이 지워진다):
+--   drop table if exists public.go_applications; notify pgrst, 'reload schema';
+-- ============================================================
