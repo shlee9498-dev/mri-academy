@@ -1,0 +1,335 @@
+{
+  "title": "역할군 17회 (42시즌) 치킨 추첨",
+  "note": "소급 회차(오너 결정 10/29) · 채널 신청글 21건 전부 후보 · 기준 42시즌 최종 3,400 이상 · 당첨 3 · 디스코드 이름은 싣지 않음(#번호는 이 파일 안 번호)",
+  "season": 42,
+  "threshold_rp": 3400,
+  "winners_count": 3,
+  "counts": {
+    "posts": 21,
+    "checked": 17,
+    "passed": 15,
+    "unmet": 2,
+    "excluded": 4
+  },
+  "candidates": [
+    {
+      "no": "#1",
+      "nick": "GmI_rabbit",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3421,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#2",
+      "nick": "GmI_bbak",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3320,
+      "passed": false,
+      "note": "3,400 미만 · 역할 · 추첨 없음"
+    },
+    {
+      "no": "#3",
+      "nick": "GmI_Hyun",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 2934,
+      "passed": false,
+      "note": "3,400 미만 · 역할 · 추첨 없음"
+    },
+    {
+      "no": "#4",
+      "nick": "2935-_-",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3462,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#5",
+      "nick": "vXwXa",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3520,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#6",
+      "nick": "Re__En",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3400,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#7",
+      "nick": "GmI_PackPack",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3408,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#8",
+      "nick": "GmI_HJ",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3400,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#9",
+      "nick": "NXG_Akashi",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3573,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#10",
+      "nick": "strong_ping9",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3400,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#11",
+      "nick": "713_3",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3497,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#12",
+      "nick": "NU_Godhell",
+      "platform": "kakao",
+      "mode": "squad",
+      "season42_final_rp": 3534,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#13",
+      "nick": "2CN_OX3",
+      "platform": "kakao",
+      "mode": "squad",
+      "season42_final_rp": 3534,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#14",
+      "nick": "A_I_K_A",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3481,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#15",
+      "nick": "PRF_DKDK",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3478,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#16",
+      "nick": "BBangdaa",
+      "platform": "kakao",
+      "mode": "squad",
+      "season42_final_rp": 3423,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#17",
+      "nick": "OIEI_C5",
+      "platform": "steam",
+      "mode": "squad",
+      "season42_final_rp": 3400,
+      "passed": true,
+      "note": "3,400 이상 · 추첨 대상"
+    },
+    {
+      "no": "#18",
+      "nick": null,
+      "platform": null,
+      "mode": null,
+      "season42_final_rp": null,
+      "passed": false,
+      "excluded": true,
+      "note": "계정을 확인할 수 없음"
+    },
+    {
+      "no": "#19",
+      "nick": null,
+      "platform": null,
+      "mode": null,
+      "season42_final_rp": null,
+      "passed": false,
+      "excluded": true,
+      "note": "계정을 확인할 수 없음"
+    },
+    {
+      "no": "#20",
+      "nick": null,
+      "platform": null,
+      "mode": null,
+      "season42_final_rp": null,
+      "passed": false,
+      "excluded": true,
+      "note": "계정을 확인할 수 없음"
+    },
+    {
+      "no": "#21",
+      "nick": null,
+      "platform": null,
+      "mode": null,
+      "season42_final_rp": null,
+      "passed": false,
+      "excluded": true,
+      "note": "시즌 종료 뒤 신청 · 계정을 찾지 못함"
+    }
+  ],
+  "proof": {
+    "seed_commit": "ae0cbe56a4cf2eeec4c370d219513d5e8e88f2f163295cc1fe58d64a269fa031",
+    "seed_secret": "(이 파일에는 싣지 않음 · 공개는 오너 결정)",
+    "closes_at": "2026-09-21T12:51:46Z",
+    "participants_hash": "0359d124bcf36d3957d7ae9ff64e917c2700444ac21d9fc327ab293b8b0a2466",
+    "participants_frozen_at": "2026-10-30T12:03:02Z",
+    "drand_chain": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+    "drand_round": 33520613,
+    "drand_round_time": "2026-10-30T13:00:03Z",
+    "drand_randomness": "eb1d2eb04857696781c96732d7c96c63248e311e8e8c8f89eef9a1ad895950db",
+    "drand_url": "https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971/public/33520613",
+    "reproduce": "node scripts/role-event-verify.cjs (docs/role-event-draw-verify.md)"
+  },
+  "shuffled_order": [
+    {
+      "rank": 1,
+      "no": "#8",
+      "nick": "GmI_HJ",
+      "winner": true
+    },
+    {
+      "rank": 2,
+      "no": "#5",
+      "nick": "vXwXa",
+      "winner": true
+    },
+    {
+      "rank": 3,
+      "no": "#11",
+      "nick": "713_3",
+      "winner": true
+    },
+    {
+      "rank": 4,
+      "no": "#6",
+      "nick": "Re__En",
+      "winner": false
+    },
+    {
+      "rank": 5,
+      "no": "#7",
+      "nick": "GmI_PackPack",
+      "winner": false
+    },
+    {
+      "rank": 6,
+      "no": "#17",
+      "nick": "OIEI_C5",
+      "winner": false
+    },
+    {
+      "rank": 7,
+      "no": "#9",
+      "nick": "NXG_Akashi",
+      "winner": false
+    },
+    {
+      "rank": 8,
+      "no": "#16",
+      "nick": "BBangdaa",
+      "winner": false
+    },
+    {
+      "rank": 9,
+      "no": "#1",
+      "nick": "GmI_rabbit",
+      "winner": false
+    },
+    {
+      "rank": 10,
+      "no": "#10",
+      "nick": "strong_ping9",
+      "winner": false
+    },
+    {
+      "rank": 11,
+      "no": "#12",
+      "nick": "NU_Godhell",
+      "winner": false
+    },
+    {
+      "rank": 12,
+      "no": "#14",
+      "nick": "A_I_K_A",
+      "winner": false
+    },
+    {
+      "rank": 13,
+      "no": "#15",
+      "nick": "PRF_DKDK",
+      "winner": false
+    },
+    {
+      "rank": 14,
+      "no": "#4",
+      "nick": "2935-_-",
+      "winner": false
+    },
+    {
+      "rank": 15,
+      "no": "#13",
+      "nick": "2CN_OX3",
+      "winner": false
+    }
+  ],
+  "winners": [
+    {
+      "rank": 1,
+      "no": "#8",
+      "nick": "GmI_HJ",
+      "season42_final_rp": 3400
+    },
+    {
+      "rank": 2,
+      "no": "#5",
+      "nick": "vXwXa",
+      "season42_final_rp": 3520
+    },
+    {
+      "rank": 3,
+      "no": "#11",
+      "nick": "713_3",
+      "season42_final_rp": 3497
+    }
+  ],
+  "drawn_at": "2026-10-30T13:03:02Z"
+}

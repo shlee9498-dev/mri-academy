@@ -8665,6 +8665,32 @@ app.get("/api/admin/guardian-consents", async (req, res) => {
   }
 });
 
+// ── 공개 시간표 GET /api/schedule (계약 trainer-portal-api §9.47 · 총무 10/30) ──
+// 사이트 lesson-schedule.html 이 읽는다 — 트레이너 앱 칸(trainer_slots) 기준 · 5분 캐시 · 분당 60회.
+// admin-panel 의 옛 schedule_events 전용 공개 라우트를 대신한다(그 표는 events 로 같이 내려 준다).
+const publicSchedule = require("./public-schedule.cjs").createPublicSchedule({ sbSelect });
+app.get("/api/schedule", limit("public_schedule", 60, 60_000), (req, res) => {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return res.status(503).json({ error: "schedule_unavailable" });
+  return publicSchedule.handler(req, res);
+});
+
+// ── 영상 QR 신청 /go (계약 trainer-portal-api §9.48 · DDL §90 · 총무 11/1) — 구글 로그인(Supabase Auth) + 연락처 한 칸 ──
+// 알림 한 줄: GO_APPLY_CHANNEL_ID(선택) → LINK_APPROVAL_CHANNEL_ID(운영진 비공개 채널) → 오너 DM. 연락처 · 이메일은 싣지 않는다.
+require("./go-apply.cjs").mountGoApply(app, {
+  sbSelect, sbInsert, sbPatch, limit,
+  supabaseUrl: () => process.env.SUPABASE_URL, serviceKey: () => process.env.SUPABASE_SERVICE_ROLE_KEY,
+  notify: async (text) => {
+    if (!botClient) return false;
+    for (const chId of [process.env.GO_APPLY_CHANNEL_ID, process.env.LINK_APPROVAL_CHANNEL_ID].filter(Boolean)) {
+      try {
+        const ch = await botClient.channels.fetch(chId);
+        if (ch?.isTextBased?.()) { await ch.send(text); return true; }
+      } catch (e) { console.error("go_notify_channel", e?.code || e?.message); }
+    }
+    return process.env.MRI_OWNER_ID ? !!(await discordDM(process.env.MRI_OWNER_ID, text)) : false;
+  },
+});
+
 // ── 운영진 정산·레슨로그 관리 패널 (Phase 0) ──
 // schemaOptional은 기동 시 probeOptionalSchema()가 채우는 같은 객체를 그대로 넘긴다.
 // 참조를 넘기므로 프로브가 끝나면 패널 쪽에서도 값이 보인다(매 요청 재조회 없음).
@@ -9232,6 +9258,9 @@ const SCHEMA_OPTIONAL = {
   killrace_casual: ["id", "play_date", "mode", "state", "opened_by", "opened_name", "opened_via", "opened_tier", "event_id", "detail", "log", "created_at", "updated_at"],
   // §88 통장 입출금 알림(docs/bank-alerts.md · 지휘 10/7 · 10/28 짝 찾기 §9.45) — toss 입금은 짝 후보 + 오너 DM. 미실행이면 POST /api/bank-alerts 만 503 table_missing 이고
   //   다른 기능은 그대로다. 읽는 화면(오너 목록 · 공개 합계)이 생기면 REQUIRED 로 올린다.
+  // §90 영상 QR 신청(계약 §9.48) — 미실행이면 POST /api/go/apply 만 503 table_missing · 다른 기능은 그대로
+  go_applications: ["id", "auth_user_id", "email", "display_name", "contact", "contact_kind", "v", "first_v", "utm", "applied_at",
+                    "first_applied_at", "apply_count", "status", "contacted_at", "contacted_by_staff_id", "created_at", "updated_at"],
   bank_alerts: ["id", "account_key", "direction", "amount", "balance", "occurred_at", "counterparty", "parse_status", "shape",
                 "dedupe_key", "source_app", "posted_at", "received_at", "raw_masked", "match_status", "match_kind", "match_ref",
                 "notified_at", "notify_failed_at"],
