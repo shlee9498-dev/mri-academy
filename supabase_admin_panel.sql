@@ -8278,3 +8278,39 @@ alter table public.go_applications enable row level security;                   
 -- 되돌림(행이 있으면 먼저 지휘 확인 — 신청 기록이 지워진다):
 --   drop table if exists public.go_applications; notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §91  레벨 테스트 접수 자동화 2단계 — go_applications 칸 추가 (2026-11-02 · 총무 주문 · 오너 「100명 신청왔을때 아무것도못함」 · 계약 §9.49 · 소관 MRIacademy)
+--      A 구간(칸 13 · 색인 2 · 더하기만). 기존 칸 · 제약 · 행을 건드리지 않는다. 결제 행은 만들지 않는다(확정 때 §18d 트리거가 만든다).
+--      칸 = trainer_slots(consult) · 예약 = slot_bookings · 상담 = consults · 가확정 = payment_requests(대기) — 새 표 없음.
+-- ============================================================
+-- 91-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select count(*) from information_schema.columns where table_schema='public' and table_name='go_applications';   -- 기대 17
+--   select count(*) from public.go_applications;                                                                     -- 기대 0
+-- 91a) 칸 · 색인
+alter table public.go_applications add column if not exists student_id         bigint references public.students(id);
+alter table public.go_applications add column if not exists consult_id         bigint references public.consults(id);
+alter table public.go_applications add column if not exists booking_id         bigint references public.slot_bookings(id);
+alter table public.go_applications add column if not exists slot_id            bigint references public.trainer_slots(id);
+alter table public.go_applications add column if not exists lt_state           text check (lt_state is null or lt_state in ('waiting', 'claimed', 'confirmed', 'cancelled', 'expired'));
+alter table public.go_applications add column if not exists pay_method         text check (pay_method is null or pay_method in ('transfer', 'card'));
+alter table public.go_applications add column if not exists depositor_name     text check (depositor_name is null or char_length(depositor_name) between 1 and 20);
+alter table public.go_applications add column if not exists payment_request_id bigint references public.payment_requests(id);
+alter table public.go_applications add column if not exists booked_at          timestamptz;
+alter table public.go_applications add column if not exists claimed_at         timestamptz;
+alter table public.go_applications add column if not exists confirmed_at       timestamptz;
+alter table public.go_applications add column if not exists cancelled_at       timestamptz;
+alter table public.go_applications add column if not exists is_test            boolean not null default false;
+create index if not exists idx_go_applications_lt_state on public.go_applications (lt_state) where lt_state in ('waiting', 'claimed');
+create unique index if not exists uq_go_applications_payreq on public.go_applications (payment_request_id) where payment_request_id is not null;
+-- 91b) 91a 뒤 검증(세션 · 읽기만): 칸 30 · 행 0 · 색인 idx_go_applications_lt_state · uq_go_applications_payreq 있음
+-- 91c) notify pgrst, 'reload schema';
+--
+-- 되돌림(새 칸에 값이 있으면 먼저 지휘 확인):
+--   drop index if exists public.uq_go_applications_payreq; drop index if exists public.idx_go_applications_lt_state;
+--   alter table public.go_applications drop column if exists is_test, drop column if exists cancelled_at, drop column if exists confirmed_at,
+--     drop column if exists claimed_at, drop column if exists booked_at, drop column if exists payment_request_id, drop column if exists depositor_name,
+--     drop column if exists pay_method, drop column if exists lt_state, drop column if exists slot_id, drop column if exists booking_id,
+--     drop column if exists consult_id, drop column if exists student_id;
+--   notify pgrst, 'reload schema';
+-- ============================================================

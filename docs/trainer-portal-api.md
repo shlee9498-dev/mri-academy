@@ -4525,3 +4525,88 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 ### 9.48.5 하지 않는 것
 - 결제 · 예약 · 가격 문구 · 기존 신청 · 상담 데이터 — 손대지 않음.
 - 「연락함」 바꾸기 · 신청 목록 화면 · 영상별 전환 집계 화면 — 다음 주문(지금은 세션이 DB 로 센다: `select first_v, count(*) from go_applications group by 1`).
+
+## 9.49 레벨 테스트 접수 자동화 2단계 — `/go` 에서 칸 고르기 · 「입금했어요」 · 확정 알림 (2026-11-02 · 총무 주문 · 오너 「100명 신청왔을때 아무것도못함」 「숨고 웹사이트 긱스등 다 내어플로통하게끔」) · **계약(이 절) → DDL §91(더하기만) → 서버 · 화면 = 사이트(신청창 · 칸 고르기 · 확정) · 반장(트레이너 앱 칸 열기 · 결과 버튼)**
+
+목표: 손님 한 명에 오너 손 8번 → **오너는 「상담 들어가기」만**. `/go`(§9.48) 신청창이 정문이 되고, 신청 → 칸 고르기 → 결제 → 확정 알림 · 장부가 한 줄로 이어진다.
+
+### 9.49.1 이미 있는 것 · 새로 만드는 것 (중복 구현 금지 · 11/2 실측)
+| 필요한 것 | 이미 있음 | 이 절에서 |
+|---|---|---|
+| 레벨 테스트 **칸** | `trainer_slots` `lesson_type='consult'` · 트레이너 앱 `POST /slots` `lessonType:"consult"`(§9.25 · 60/90분 · 정원 1 · 겹침 409) | **새 표 안 만듦**(`level_test_slots` 대신 이것). 오너 결정대로 **90분만** 연다(§9.49.2) |
+| 칸 잡기 · 3시간 마감 · 취소 | DB 함수 `book_slot` · `cancel_booking`(§23 · 상담 칸은 판수 확인 없음 · 시작 3시간 전 마감) | 그대로 부른다 |
+| 손님 로그인 · 연락처 | `/go` §9.48 · `go_applications`(§90 · 이메일 한 행) · Supabase 구글 · 디스코드 · 카카오(총무 11/2 실측) | 표에 칸 더하기(§91) |
+| 명부 · 상담 기록 | prospect 명부 · `consults`(상담 보드 §9.23) | 칸 고를 때 **자동으로 만든다**(손으로 하던 #119 ~ #122 와 같은 모양) |
+| 결제 「가확정」 | `payment_requests`(대기) → 승인 → §18d 트리거가 `payments` 한 행(신청 창구 `[입금 확인]` 과 같은 길) | 「입금했어요」 = 대기 요청 1건 · 확정 = 승인 |
+| 통장 대조 | §9.45 입금 알림 → 짝 후보 → 오너 DM | 짝 후보에 `/go` 예약을 더함(§9.49.6) |
+| 카드 | env `GROBLE_LINK_LEVELTEST`(신청 창구 카드 링크) | 같은 링크를 `/go` 에도 내림 |
+| 신청 창구(start.html · `intake_applications` · 디스코드 로그인 전용) | 있음 · **신청 0건**(11/2 실측) | 손대지 않음 — `/go` 가 정문. 합칠지는 다음 판단 |
+| 구글 캘린더 | 없음 | 1단계는 총무 순찰(서버가 넣지 않음) |
+- 실측(11/2): `consult` 칸 **0개**(한 번도 안 열림) · 신청 창구 0건 · `/go` 신청 0건. → 트레이너 셋이 칸을 열어야 손님이 고를 수 있다.
+
+### 9.49.2 칸 — 진행자 셋이 연다
+- 원장 · 현태 · 준구가 트레이너 앱에서 `POST /slots` `{ lessonType:"consult", durationMin: 90 }` 로 연다(기존 라우트 · 반장 화면 「레벨 테스트 칸 열기」). **90분만** — 손님 안내는 「보통 60분 · 최대 90분」.
+  60분 칸은 지금처럼 열리지만 `/go` 목록에는 **90분 칸만** 나온다.
+- 진행자가 트레이너면 레벨 테스트비 20,000 = 트레이너 15,000 · 아카데미 5,000(가격 정본 · 정산은 지금 엔진 그대로).
+
+### 9.49.3 손님 흐름
+| 단계 | 화면(사이트) | 서버 | `go_applications.lt_state` |
+|---|---|---|---|
+| ① 로그인 · 연락처 | §9.48 그대로(구글 · 디스코드 · 카카오) | `POST /api/go/apply` | — |
+| ② 칸 보기 | 날짜별 칸 · 진행자 이름 | `GET /api/go/slots` | — |
+| ③ 칸 고르기 · 결제 방법 | 「이 시간으로 할게요」 + 계좌 / 카드 | `POST /api/go/book` → 명부 prospect · 상담 1행 · 예약 1건 | `waiting`(입금 대기) |
+| ④ 「입금했어요」(계좌) · 「결제했어요」(카드) | 입금자 이름 한 칸(계좌) | `POST /api/go/paid` → 결제 요청 1건(대기) · **진행자 DM**(가확정) | `claimed`(가확정) |
+| ⑤ 확정 | 「확정됐어요」 화면 | 통장 짝(§9.49.6) 또는 오너 승인 → `payments` 1행 · 상담 `paid` · 진행자 DM(확정) | `confirmed` |
+| 취소 | 「취소할게요」 | `POST /api/go/cancel` | `cancelled` |
+- 손님 안내는 **화면(`GET /api/go/me`)이 정본**이다. 디스코드로 로그인한 손님만 봇 DM 이 더 나간다(구글 · 카카오는 이메일 · 문자 발송 없음 — 화면 + 총무 연락).
+- 입금 기한: 칸을 고른 뒤 **24시간 · 시작 3시간 전 중 이른 때**까지 「입금했어요」가 없으면 서버가 예약을 풀고 `expired`(칸 다시 열림 · 손님 화면 「시간이 지나 자리를 풀었어요」).
+
+### 9.49.4 라우트 (전부 `Authorization: Bearer <Supabase 토큰>` · §9.48 과 같은 확인 · 구글 · 디스코드 · 카카오)
+**`GET /api/go/slots`** — 로그인 없이도 된다(보기만).
+```json
+{ "fee": 20000, "lengthNote": "보통 60분 · 최대 90분", "cardLink": "https://…" ,
+  "slots": [ { "slotKey": "…", "startAt": "2026-11-04T09:00:00.000Z", "date": "2026-11-04", "startTime": "18:00",
+               "trainer": { "trainerKey": "…", "name": "트레이너A", "isOwner": false } } ] }
+```
+- 조건: `lesson_type='consult'` · `status='open'` · `duration_min=90` · 활동 중 진행자 · 시작 ≥ 지금 + 3시간 · 14일 안 · 시작 순. `slotKey` · `trainerKey` 는 불투명 값(서버 id 아님). `cardLink` 는 env 가 없으면 `null`(카드 버튼 숨김).
+
+**`POST /api/go/book`** `{ "slotKey": "…", "payMethod": "transfer" | "card", "test"?: true }`
+- 먼저 `/apply` 로 연락처가 있어야 한다(없으면 409 `apply_first`).
+- 하는 일(한 번에): ① 명부 prospect(이미 이 신청에 붙은 번호가 있으면 그것) ② `consults` 1행(`consult_type=level_test` · `fee 20000` · `paid_status unpaid` · `handler_id` = 칸 주인 · `scheduled_at` · `duration_min 90` · `status scheduled` · `source site` · `inflow` = `/go` 의 v) ③ `book_slot` ④ 신청 행에 이어 둠.
+- 200 `{ "state": "waiting", "booking": { "startAt", "trainer": { "name" } }, "pay": { "method", "amount": 20000, "deadline", "bank": { "name", "holder", "account" } | null, "cardLink" | null } }`
+  — 계좌는 **로그인한 본인 응답에만**(공개 목록에 없음) · 값은 서버 env(`PAY_BANK_*`).
+- 오류: 409 `slot_taken`(다른 분이 먼저) · 409 `booking_closed`(3시간 안) · 409 `already_booked`(이미 잡은 칸이 있음 — 바꾸려면 취소 뒤 다시) · 404 `slot_not_found` · 401 `login_required` · 409 `apply_first`.
+
+**`POST /api/go/paid`** `{ "depositorName"?: "…" }` (계좌면 입금자 이름 1~20자 필수 · 카드면 없음)
+- `payment_requests` 1건(대기 · 구분 상담 · 20,000 · 칸 주인 트레이너 · `requested_by = go:<신청 번호>`) · 신청 `claimed` · **진행자 디코 DM**:
+  「레벨 테스트 가확정 — 11/4(수) 18:00 · 90분 · 입금 확인 중이야」. 오너가 진행자면 오너 DM.
+- 200 `{ "state": "claimed" }` · 409 `not_waiting`(이미 했거나 칸 없음) · 400 `depositor_required`.
+
+**`POST /api/go/cancel`** — 시작 3시간 전까지만.
+- `waiting` 에서 취소: 예약 취소 · 상담 `cancelled` · 결제 없음.
+- `claimed` · `confirmed` 에서 취소: 예약 취소 · 상담 `cancelled` · 결제 요청은 거절(대기였으면) · **확정 뒤 취소는 전액 환불 대상**으로 오너 DM(환불 실행은 지금처럼 사람 · 장부는 환불 행).
+- 3시간 안 · 노쇼 = **환불 없음**(정본 그대로) → 409 `cancel_window_passed`(화면: 「시작 3시간 전이 지나 취소할 수 없어요 급한 사정은 디스코드로 말해 주세요」).
+
+**`GET /api/go/me`** — §9.48 응답에 `levelTest` 를 더한다:
+`{ …, "levelTest": { "state": "waiting|claimed|confirmed|cancelled|expired", "startAt", "trainer": { "name" }, "pay": { … 위와 같음 }, "deadline" } | null }`
+
+### 9.49.5 확정 — 「가확정」 결제 요청을 승인하면
+- 승인 길 둘: ① **통장 짝**(§9.49.6) ② 오너가 기존 결제 요청 승인 카드에서 승인(카드 결제 · 짝 실패 때).
+- 승인되면(§18d 트리거 그대로): `payments` 1행(consult · 20,000 · 칸 주인) → 상담 `paid_status=paid` · `payment_id` · 신청 `confirmed` · 진행자 DM 「확정」 · 손님 화면 「확정됐어요」(디스코드 손님은 DM).
+- **`payments` 행은 확정 때만 생긴다** — 「입금했어요」(가확정)는 결제 요청(대기)까지다. 통장 1줄 = 장부 1행 원칙.
+
+### 9.49.6 통장 짝 → 자동 확정 (§9.45 확장)
+- 입금 알림(toss · 입금 · 20,000)이 오면 짝 후보에 `/go` 가확정 요청(`claimed` · 입금자 이름 · 48시간 안)을 더한다.
+- **후보가 하나이고 금액 · 이름이 맞으면 서버가 그 요청을 승인**(= 확정) · 오너 DM 은 「자동 확정 #번호」 한 줄. 여럿 · 이름 다름 · 없음이면 지금처럼 오너 DM 만(손으로 승인).
+- ⚠️ 결제 승인을 서버가 하는 건 처음이다(지금은 사람만 누름) — **이 한 가지는 오너 OK 뒤 켠다**(env 없이 서버 상수 `GO_AUTO_CONFIRM = false` 로 배포 · OK 오면 true).
+
+### 9.49.7 시험 표시
+- `book` 본문 `test: true` → 신청 · 상담 메모 · 결제 요청 메모 맨 앞에 「[시험]」 · 결제 요청은 **자동 확정 대상에서 뺀다**. 지우는 건 오너 버튼(세션 SQL).
+
+### 9.49.8 DDL §91 (더하기만) — `go_applications` 칸 추가
+`student_id` · `consult_id` · `booking_id` · `slot_id` · `lt_state`(`waiting|claimed|confirmed|cancelled|expired`) · `pay_method`(`transfer|card`) · `depositor_name`(≤20) · `payment_request_id` · `booked_at` · `claimed_at` · `confirmed_at` · `cancelled_at` · `is_test`(기본 false). 기존 칸 · 행 손대지 않음.
+
+### 9.49.9 하지 않는 것 · 그대로
+- 잠금월 · 기존 `payments` · `consults` 행 · env · 토스 설정 · 정산식. 상담 #21 ~ #23 은 옮기지 않는다.
+- 레벨 테스트 3시간 전 취소 = 전액 환불 · 이후 · 노쇼 = 환불 없음(정본 그대로). 환불 실행은 사람.
+- 구글 캘린더 쓰기 · 이메일 · 문자 발송 · 숨고 · 긱스 연동(첫 답장에 `/go` 링크만 · 총무).
