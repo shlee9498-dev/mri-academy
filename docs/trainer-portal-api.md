@@ -4431,3 +4431,60 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 ### 9.47.4 화면이 알아 둘 것(사이트 세션)
 - 트레이너들이 지난 칸을 `open` 으로 둔 채 쌓아 두는 일이 많다(10/30 이번 주 칸 21개 중 open 20 · **그중 앞으로 남은 칸 2개**). 서버는 시작 시각이 지난 칸을 빼므로 이번 주가 비어 보일 수 있다 — 빈 주에는 `recent` 와 다음 주 `weeks[1].total` 로 채운다.
 - 옛 응답의 `week` · `events` 는 그대로라, 지금 화면은 고치기 전에도 깨지지 않는다(여전히 빈 화면).
+
+## 9.48 영상 QR 신청 `/go` — 구글 로그인 + 연락처 한 칸 (2026-11-01 · 총무 주문 · 오너 「정말 심플한 신청란」 「구글 로그인필수로」) · **계약 + 서버(이 PR) · DDL §90(더하기만 · 세션 실행 끝) · 새 env 선택 1(`GO_APPLY_CHANNEL_ID`)** · 화면 = 사이트 세션(이 절 번호대로)
+
+유튜브 영상 끝 QR → `https://mriacademy.gg/go?v=영상코드` → 구글 로그인 → 연락처 한 칸 → 신청. **신청만 받고 연락은 사람이 먼저 한다**(결제 · 예약 없음).
+결제 · payments · consults · 레벨 테스트 신청(intake)과 무관하다 — 새 표 `go_applications` 하나만 쓴다. 코드 = `go-apply.cjs`.
+
+### 9.48.1 흐름 (키를 화면에 두지 않는다)
+| 단계 | 화면(사이트) | 서버 |
+|---|---|---|
+| ① 진입 | `/go?v=hm1&utm_*` — v · utm 을 `sessionStorage` 에도 적어 둔다(로그인 갔다 와서 빠졌을 때 대비) | — |
+| ② 「구글로 계속하기」 | `location.href = API + "/api/go/login?" + 지금 주소의 v · utm` | `GET /api/go/login` → **302** Supabase `…/auth/v1/authorize?provider=google&redirect_to=https://mriacademy.gg/go?v=…&utm_*` |
+| ③ 구글 → 돌아옴 | 주소 끝(`#`)에 `access_token=…` 이 붙어 온다. 읽고 나서 `history.replaceState` 로 `#` 를 지운다. 토큰은 메모리(또는 `sessionStorage`)에만 | — |
+| ④ 이미 신청했나 | `GET /api/go/me` (헤더 `Authorization: Bearer <access_token>`) | `{ name, applied, appliedAt?, status? }` |
+| ⑤ 신청 | `POST /api/go/apply` 본문 `{ contact, v, utm: { utm_source, … } }` + 같은 헤더 | 아래 §9.48.2 |
+- `redirect_to` 에는 **v 와 utm 다섯 키(`utm_source` · `utm_medium` · `utm_campaign` · `utm_content` · `utm_term`)만** 실린다. v 형식 = 영문 · 숫자 · `_` · `-` 1~32자(아니면 버림).
+- **사이트 공통 스크립트가 utm 을 덮어쓰는 문제는 `/go` 에선 막는다** — `/go` 화면에는 그 스크립트를 넣지 않거나, 넣더라도 `/go` 에서는 건너뛰게 한다(사이트 세션). 서버는 화면이 보낸 `utm` 을 그대로 저장한다.
+- 돌아왔는데 주소에 v 가 없으면 ①에서 적어 둔 값을 쓴다. 둘 다 없으면 v 없이 신청된다(막지 않는다).
+- 토큰 확인은 서버가 한다(`/auth/v1/user` · service_role). **구글로 로그인한 계정만** 받는다.
+
+### 9.48.2 `POST /api/go/apply`
+| 받는 값 | 규칙 |
+|---|---|
+| `contact` | 「디스코드 아이디 또는 전화번호」 한 칸 — **아무거나**(오너). 앞뒤 공백 · 제어 문자 정리 뒤 2~60자. 숫자(공백 · `-` · `+` · 괄호 뺀) 9~15자리면 `phone`, 그 밖은 `discord` 로 종류만 적는다 |
+| `v` | 영상코드(위 형식 · 아니면 없음으로) |
+| `utm` | 다섯 키만 · 값 100자까지 |
+- 저장(§90 `go_applications`): 구글 이메일(소문자) · 표시 이름(구글 이름) · 연락처 · 종류 · `v` · `utm` · 신청 시각(`applied_at` · 날짜는 KST 로 판정) · 상태 `waiting`(대기) / `contacted`(연락함).
+- **같은 이메일 재신청 = 새 행 없이 같은 행 갱신**: 연락처 · v · utm · 신청 시각을 새 값으로, `apply_count` +1, 상태는 `waiting` 으로 되돌린다. **`first_v` · `first_applied_at` 은 처음 값 그대로** — 영상별 전환은 `first_v` 로 센다.
+- 성공 = 200 `{ ok:true, again, appliedAt }`(`again` = 재신청).
+- 알림: 신청마다 운영진 채널에 한 줄 — `📮 영상 신청 #행번호 · v=hm1 · 연락처 전화|디스코드 · 시각 KST`(재신청이면 몇 번째인지). **연락처 · 이메일 · 이름은 싣지 않는다** — 사람이 DB(또는 다음 주문의 목록 화면)에서 보고 연락한다.
+  게시처 = `GO_APPLY_CHANNEL_ID`(선택 · 새 env) → 없으면 `LINK_APPROVAL_CHANNEL_ID`(지금 쓰는 운영진 비공개 채널) → 그것도 안 되면 오너 DM. 알림이 실패해도 신청은 저장된다.
+- 분당 6회(IP별) · `/api/go/login` · `/api/go/me` 분당 30회.
+
+### 9.48.3 실패 시 응답과 화면 문구(사이트 세션 · 문구 규칙대로)
+| 상황 | 응답 | 화면 한 줄(예) |
+|---|---|---|
+| 칸이 비었음 | 400 `contact_required` | 디스코드 아이디나 전화번호를 적어 주세요 |
+| 너무 짧음 · 김 | 400 `contact_length` | 2~60자로 적어 주세요 |
+| 로그인 안 됨 · 만료 · 구글 아님 | 401 `login_required` | 구글 로그인이 풀렸어요 다시 한 번 눌러 주세요 → 「구글로 계속하기」 칩 |
+| 너무 자주 | 429 `too_many_requests` | 잠깐 뒤에 다시 눌러 주세요 |
+| 서버 · DB 문제 | 503 `unavailable` · `table_missing` | 지금 신청이 안 돼요 디스코드로 말해 주세요 → mriacademy.gg/discord |
+| 로그인 출발 실패(서버 설정 없음) | `/go?…&error=unavailable` 로 되돌아옴 | 위와 같음 |
+| 구글 화면에서 취소 | `/go#error=access_denied…` 로 돌아옴 | 로그인을 마치면 신청할 수 있어요 |
+- 완료 화면: 「신청됐어요 하루 안에 연락드릴게요」 + 디스코드 초대 `mriacademy.gg/discord`. 이미 신청한 계정(`/me` 의 `applied`)도 같은 완료 화면 + 「연락처 바꾸기」(다시 보내면 같은 행 갱신).
+
+### 9.48.4 오너 할 일 — Supabase 구글 로그인 켜기 (세션이 못 하는 것 · 값은 오너만)
+지금 이 프로젝트는 Supabase Auth 를 쓴 적이 없다(`auth.identities` 0행 · 11/1 실측). 구글 제공자 설정은 세션에서 읽을 수 없어 **꺼져 있다고 보고** 적는다.
+1. Google Cloud 콘솔 → API 및 서비스 → 사용자 인증 정보 → OAuth 클라이언트 ID 만들기(웹 애플리케이션).
+   **승인된 리디렉션 URI = `https://narqnruwjrymkjcarkjd.supabase.co/auth/v1/callback`** (이 한 줄만). 동의 화면 앱 이름 · 지원 이메일도 채운다.
+2. Supabase 대시보드 → Authentication → Sign In / Providers → **Google** 켜기 → 1의 **Client ID · Client Secret** 붙여넣기 → 저장.
+3. Supabase 대시보드 → Authentication → URL Configuration → **Redirect URLs** 에 `https://mriacademy.gg/go**` 추가(www 로도 들어오면 `https://www.mriacademy.gg/go**` 도). Site URL 은 그대로 둔다.
+   이게 빠지면 로그인 뒤 Site URL 로 떨어져 v 가 주소에서 빠진다(화면의 `sessionStorage` 값으로만 살아남는다).
+4. (선택) 신청 알림을 따로 받을 채널이 있으면 Railway env **`GO_APPLY_CHANNEL_ID`** = 그 채널 id(운영진만 보이는 채널). 없으면 지금 연결 승인 카드 채널로 간다.
+- Railway 서버 env 는 **새로 필요 없다**(이미 있는 `SUPABASE_URL` · `SUPABASE_SERVICE_ROLE_KEY` 로 토큰을 확인한다). 화면에도 키를 넣지 않는다.
+
+### 9.48.5 하지 않는 것
+- 결제 · 예약 · 가격 문구 · 기존 신청 · 상담 데이터 — 손대지 않음.
+- 「연락함」 바꾸기 · 신청 목록 화면 · 영상별 전환 집계 화면 — 다음 주문(지금은 세션이 DB 로 센다: `select first_v, count(*) from go_applications group by 1`).
