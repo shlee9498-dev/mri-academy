@@ -29,7 +29,12 @@ test("연락처 한 칸 — 아무거나 · 2~60자 · 종류 판정", () => {
 
 test("구글 사용자만 · 이메일 소문자", () => {
   const u = { id: "u1", email: "A@Example.com", app_metadata: { provider: "google", providers: ["google"] }, user_metadata: { full_name: "홍길동" } };
-  assert.deepEqual(g.googleUser(u), { id: "u1", email: "a@example.com", name: "홍길동" });
+  assert.deepEqual(g.googleUser(u), { id: "u1", email: "a@example.com", name: "홍길동", provider: "google" });
+  // 디스코드 · 카카오도 받는다(§9.49 · 오너 11/2) · 카카오는 이메일이 없으면 사용자 id 로 한 행 키
+  assert.equal(g.googleUser({ ...u, app_metadata: { provider: "discord" } }).provider, "discord");
+  assert.equal(g.googleUser({ id: "K1", app_metadata: { provider: "kakao" }, user_metadata: { nickname: "닉" } }).email, "k1@kakao.auth");
+  assert.equal(g.googleUser({ id: "D1", app_metadata: { provider: "discord" } }), null, "디스코드인데 이메일 없음");
+  assert.equal(g.providerOf({ provider: "kakao" }), "kakao"); assert.equal(g.providerOf({ provider: "x" }), "google");
   assert.equal(g.googleUser({ ...u, app_metadata: { provider: "email" } }), null);
   assert.equal(g.googleUser({ ...u, email: "" }), null);
 });

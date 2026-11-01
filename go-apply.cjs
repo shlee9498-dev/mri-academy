@@ -33,8 +33,11 @@ function returnUrl(query) {
   const qs = p.toString();
   return qs ? `${SITE_GO}?${qs}` : SITE_GO;
 }
+// 로그인 제공자 — 오너 11/2 「구글 · 디스코드 · 카카오」(Supabase 세 곳 켜짐 · 총무 실측) · 계약 §9.49
+const PROVIDERS = Object.freeze(["google", "discord", "kakao"]);
+const providerOf = (q) => (PROVIDERS.includes(q && q.provider) ? q.provider : "google");
 function googleStartUrl(supabaseUrl, query) {
-  const p = new URLSearchParams({ provider: "google", redirect_to: returnUrl(query) });
+  const p = new URLSearchParams({ provider: providerOf(query), redirect_to: returnUrl(query) });
   return `${String(supabaseUrl).replace(/\/+$/, "")}/auth/v1/authorize?${p}`;
 }
 // 연락처 한 칸 — 「아무거나」(오너). 글자 수 · 제어 문자만 본다. 종류는 숫자 9~15개면 phone, 그 밖 discord.
@@ -47,14 +50,19 @@ function cleanContact(raw) {
   const kind = /^\d{9,15}$/.test(digits) ? "phone" : "discord";
   return { contact: s, kind };
 }
-// 구글 로그인 사용자만 — Supabase /auth/v1/user 응답에서 이메일 · 이름 · 구글 여부
+// 구글 · 디스코드 · 카카오 로그인 사용자만 — Supabase /auth/v1/user 응답에서 이메일 · 이름 · 제공자
+//   카카오는 이메일을 안 줄 수 있다 → 「<사용자 id>@kakao.auth」 로 한 행 키를 만든다(이메일로 쓰지 않는다 · 사람이 보는 연락처는 contact 칸).
 function googleUser(u) {
-  if (!u || !u.id || typeof u.email !== "string" || !u.email.includes("@")) return null;
+  if (!u || !u.id) return null;
   const providers = [u.app_metadata?.provider, ...(u.app_metadata?.providers || []), ...((u.identities || []).map((i) => i.provider))];
-  if (!providers.includes("google")) return null;
+  const provider = PROVIDERS.find((p) => providers.includes(p));
+  if (!provider) return null;
+  const hasEmail = typeof u.email === "string" && u.email.includes("@");
+  if (!hasEmail && provider !== "kakao") return null;
   const m = u.user_metadata || {};
-  const name = String(m.full_name || m.name || "").trim().slice(0, 80) || null;
-  return { id: String(u.id), email: u.email.trim().toLowerCase(), name };
+  const name = String(m.full_name || m.name || m.nickname || "").trim().slice(0, 80) || null;
+  const email = hasEmail ? u.email.trim().toLowerCase() : `${String(u.id).toLowerCase()}@kakao.auth`;
+  return { id: String(u.id), email, name, provider };
 }
 const kstStamp = (iso) => {
   const d = new Date(Date.parse(iso) + 9 * 3600_000).toISOString();
@@ -106,8 +114,10 @@ function mountGoApply(app, deps) {
       if (!u) return fail(res, 401, "login_required");
       const row = (await sbSelect("go_applications",
         `select=id,v,applied_at,status&email=eq.${encodeURIComponent(u.email)}&limit=1`))[0];
+      // 레벨 테스트 2단계(§9.49) — 칸 · 결제 상태. 모듈이 없거나 읽기 실패면 null(신청 응답은 그대로)
+      const levelTest = row && deps.levelTestOf ? await Promise.resolve(deps.levelTestOf(row.id)).catch(() => null) : null;
       res.set("Cache-Control", "no-store");
-      return res.json({ name: u.name, applied: !!row, ...(row ? { appliedAt: row.applied_at, status: row.status } : {}) });
+      return res.json({ name: u.name, applied: !!row, ...(row ? { appliedAt: row.applied_at, status: row.status } : {}), levelTest });
     } catch (e) {
       log.error("[go] me", e && (e.status || e.message));
       return fail(res, 503, "unavailable");
@@ -155,6 +165,7 @@ function mountGoApply(app, deps) {
       return fail(res, 503, "unavailable");
     }
   });
+  return { whoami };
 }
 
-module.exports = { SITE_GO, UTM_KEYS, cleanV, cleanUtm, returnUrl, googleStartUrl, cleanContact, googleUser, notifyLine, kstStamp, mountGoApply };
+module.exports = { PROVIDERS, providerOf, SITE_GO, UTM_KEYS, cleanV, cleanUtm, returnUrl, googleStartUrl, cleanContact, googleUser, notifyLine, kstStamp, mountGoApply };
