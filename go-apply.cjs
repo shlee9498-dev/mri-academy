@@ -8,10 +8,14 @@
 const SITE_GO = "https://mriacademy.gg/go";
 const UTM_KEYS = Object.freeze(["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"]);
 const V_RE = /^[A-Za-z0-9_-]{1,32}$/;
+const SRC_RE = /^[a-z0-9-]{1,32}$/;          // 쇼츠 · 채널 표식(예 shorts-yjh) · 계약 §9.48.6
+const CODE_RE = /^[A-Z0-9]{3,20}$/;          // 이벤트 코드(§54 event_codes 와 같은 모양)
 const CONTACT_MIN = 2, CONTACT_MAX = 60;
 
 // ═══════════════ 순수 함수 (scripts/go-apply.test.cjs) ═══════════════
 const cleanV = (v) => (typeof v === "string" && V_RE.test(v.trim()) ? v.trim() : null);
+const cleanSrc = (v) => (typeof v === "string" && SRC_RE.test(v.trim().toLowerCase()) ? v.trim().toLowerCase() : null);
+const cleanCode = (v) => (typeof v === "string" && CODE_RE.test(v.trim().toUpperCase()) ? v.trim().toUpperCase() : null);
 // utm 원문 — 다섯 키만 · 값은 글자 그대로(제어 문자 · 앞뒤 공백만 빼고) 100자까지
 function cleanUtm(src) {
   const out = {};
@@ -28,6 +32,9 @@ function returnUrl(query) {
   const p = new URLSearchParams();
   const v = cleanV(query && query.v);
   if (v) p.set("v", v);
+  const src = cleanSrc(query && query.src), code = cleanCode(query && query.code);
+  if (src) p.set("src", src);
+  if (code) p.set("code", code);
   const u = cleanUtm(query || {});
   for (const k of UTM_KEYS) if (u[k]) p.set(k, u[k]);
   const qs = p.toString();
@@ -71,7 +78,7 @@ const kstStamp = (iso) => {
 // 운영 채널 한 줄 — 연락처 · 이메일 · 이름 없음
 function notifyLine(row, { again }) {
   const kind = row.contact_kind === "phone" ? "전화" : "디스코드";
-  return `📮 영상 신청 #${row.id}${again ? ` (재신청 ${row.apply_count}번째)` : ""} · v=${row.v || "없음"} · 연락처 ${kind} · ${kstStamp(row.applied_at)} KST\n→ 연락하고 나면 「연락함」으로 바꿔 주세요`;
+  return `📮 영상 신청 #${row.id}${again ? ` (재신청 ${row.apply_count}번째)` : ""} · v=${row.v || "없음"}${row.src ? ` · src=${row.src}` : ""}${row.event_code ? ` · 코드 ${row.event_code}` : ""} · 연락처 ${kind} · ${kstStamp(row.applied_at)} KST\n→ 연락하고 나면 「연락함」으로 바꿔 주세요`;
 }
 
 // ═══════════════ 라우트 ═══════════════
@@ -113,11 +120,11 @@ function mountGoApply(app, deps) {
       const u = await whoami(req);
       if (!u) return fail(res, 401, "login_required");
       const row = (await sbSelect("go_applications",
-        `select=id,v,applied_at,status&email=eq.${encodeURIComponent(u.email)}&limit=1`))[0];
+        `select=id,v,applied_at,status,src,event_code&email=eq.${encodeURIComponent(u.email)}&limit=1`))[0];
       // 레벨 테스트 2단계(§9.49) — 칸 · 결제 상태. 모듈이 없거나 읽기 실패면 null(신청 응답은 그대로)
       const levelTest = row && deps.levelTestOf ? await Promise.resolve(deps.levelTestOf(row.id)).catch(() => null) : null;
       res.set("Cache-Control", "no-store");
-      return res.json({ name: u.name, applied: !!row, ...(row ? { appliedAt: row.applied_at, status: row.status } : {}), levelTest });
+      return res.json({ name: u.name, applied: !!row, ...(row ? { appliedAt: row.applied_at, status: row.status, src: row.src || null, eventCode: row.event_code || null } : {}), levelTest });
     } catch (e) {
       log.error("[go] me", e && (e.status || e.message));
       return fail(res, 503, "unavailable");
@@ -132,6 +139,16 @@ function mountGoApply(app, deps) {
     if (c.error) return fail(res, 400, c.error);
     const v = cleanV(b.v);
     const utm = cleanUtm(b.utm || {});
+    const src = cleanSrc(b.src);
+    // 이벤트 코드 — §54 event_codes 에 있고 지금 켜져 있을 때만 붙인다(꺼짐 · 기간 밖 · 없는 코드 = 없음으로 · 신청은 받음)
+    let eventCode = null;
+    const askedCode = cleanCode(b.code);
+    if (askedCode && deps.codeActive) {
+      try {
+        const ec = (await sbSelect("event_codes", `select=code,active,starts_on,ends_on&code=eq.${encodeURIComponent(askedCode)}&limit=1`))[0];
+        if (ec && deps.codeActive(ec)) eventCode = ec.code;
+      } catch (_) { eventCode = null; }
+    }
     let u;
     try { u = await whoami(req); }
     catch (e) { log.error("[go] auth", e && e.message); return fail(res, 503, "unavailable"); }
@@ -141,7 +158,8 @@ function mountGoApply(app, deps) {
       const found = (await sbSelect("go_applications",
         `select=id,apply_count&email=eq.${encodeURIComponent(u.email)}&limit=1`))[0];
       let row, again = false;
-      const body = { auth_user_id: u.id, display_name: u.name, contact: c.contact, contact_kind: c.kind, v, utm, applied_at: at, status: "waiting", updated_at: at };
+      const body = { auth_user_id: u.id, display_name: u.name, contact: c.contact, contact_kind: c.kind, v, utm, applied_at: at, status: "waiting", updated_at: at,
+        ...(src ? { src } : {}), ...(eventCode ? { event_code: eventCode } : {}) };   // 재신청에서 비어 오면 처음 값을 지킨다
       if (found) {
         again = true;
         row = (await sbPatch("go_applications", `id=eq.${Number(found.id)}`, { ...body, apply_count: Number(found.apply_count || 1) + 1 }))[0];
@@ -158,7 +176,7 @@ function mountGoApply(app, deps) {
       let notified = false;
       try { notified = !!(await deps.notify(notifyLine(row, { again }))); } catch (_) { notified = false; }
       log.log(`[go] #${row.id} v=${row.v || "-"} ${again ? "again" : "new"} notify=${notified ? "ok" : "fail"}`);
-      return res.json({ ok: true, again, appliedAt: row.applied_at });
+      return res.json({ ok: true, again, appliedAt: row.applied_at, src: row.src || null, eventCode: row.event_code || null, codeApplied: !!eventCode });
     } catch (e) {
       log.error("[go] save", e && (e.status || e.message));
       if (e && (e.status === 404 || /PGRST205|42P01/.test(String(e.body || "")))) return fail(res, 503, "table_missing");
@@ -168,4 +186,4 @@ function mountGoApply(app, deps) {
   return { whoami };
 }
 
-module.exports = { PROVIDERS, providerOf, SITE_GO, UTM_KEYS, cleanV, cleanUtm, returnUrl, googleStartUrl, cleanContact, googleUser, notifyLine, kstStamp, mountGoApply };
+module.exports = { cleanSrc, cleanCode, PROVIDERS, providerOf, SITE_GO, UTM_KEYS, cleanV, cleanUtm, returnUrl, googleStartUrl, cleanContact, googleUser, notifyLine, kstStamp, mountGoApply };

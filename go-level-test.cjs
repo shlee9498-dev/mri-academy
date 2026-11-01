@@ -69,7 +69,7 @@ function mountGoLevelTest(app, deps) {
   const fail = (res, status, code) => res.status(status).json({ error: code });
   // 레벨 테스트비 — 정본(config) 을 못 읽으면 추측하지 않는다(intake-api 규칙)
   const fee = async () => { try { const n = Number(await deps.fee()); return Number.isInteger(n) && n > 0 ? n : null; } catch (_) { return null; } };
-  const ROW = "id,email,display_name,contact,v,student_id,consult_id,booking_id,slot_id,lt_state,pay_method,depositor_name,payment_request_id,booked_at,claimed_at,confirmed_at,cancelled_at,is_test";
+  const ROW = "id,email,display_name,contact,v,src,event_code,student_id,consult_id,booking_id,slot_id,lt_state,pay_method,depositor_name,payment_request_id,booked_at,claimed_at,confirmed_at,cancelled_at,is_test";
   const busy = new Set();      // 같은 신청의 쓰기를 한 번에 하나만(두 번 탭 · 점검과 버튼)
   const ownerId = () => (deps.ownerDiscordId ? String(deps.ownerDiscordId) : null);
 
@@ -208,7 +208,8 @@ function mountGoLevelTest(app, deps) {
         kind: "consult", consult_type: "level_test", student_id: studentId, student_name: row.display_name || "신청자",
         registered_by: "go", registered_at: kst(at).date, status: "scheduled", charge_type: "paid", fee: amount, paid_status: "unpaid",
         handler_id: slot.trainer_id, scheduled_at: slot.slot_start, duration_min: LT_MIN, source: "site", booking_id: made.bookingId,
-        inflow: row.v ? `/go v=${row.v}` : "/go", memo: `${tag}/go 신청 #${row.id} · 손님이 칸 고름 · ${payMethod === "card" ? "카드" : "계좌"}`, updated_at: at,
+        inflow: ["/go", row.src ? `src=${row.src}` : null, row.v ? `v=${row.v}` : null, row.event_code ? `코드 ${row.event_code}` : null].filter(Boolean).join(" · "),
+        memo: `${tag}/go 신청 #${row.id} · 손님이 칸 고름 · ${payMethod === "card" ? "카드" : "계좌"}${row.event_code ? ` · 코드 ${row.event_code} = 정식 등록 할인 대상(결제 때 사람이 확인 · 레벨 테스트비는 할인 없음)` : ""}`, updated_at: at,
       });
       made.consultId = consult.id;
       // ④ 신청에 이어 둠 — 다른 탭이 먼저 잡았으면(lt_state 가 열린 상태) 아래 catch 없이 되돌린다

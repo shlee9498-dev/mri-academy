@@ -220,3 +220,13 @@ test("레벨 테스트비를 못 읽으면 추측하지 않음 — 고르기 503
   assert.equal((await h.call("POST /api/go/book", { body: { slotKey: key, payMethod: "transfer" } })).status, 503);
   assert.equal(h.db.slot_bookings.length, 0);
 });
+
+test("쇼츠 코드 — 상담 행 inflow · 메모에 src · 코드", async () => {
+  const h = harness();
+  Object.assign(h.db.go_applications[0], { src: "shorts-yjh", event_code: "MURI10" });
+  const key = (await h.call("GET /api/go/slots", { auth: false })).body.slots[0].slotKey;
+  await h.call("POST /api/go/book", { body: { slotKey: key, payMethod: "transfer" } });
+  assert.equal(h.db.consults[0].inflow, "/go · src=shorts-yjh · v=hm1 · 코드 MURI10");
+  assert.match(h.db.consults[0].memo, /코드 MURI10 = 정식 등록 할인 대상/);
+  assert.equal(h.db.consults[0].fee, 20000, "레벨 테스트비는 할인 없음");
+});
