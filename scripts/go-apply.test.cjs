@@ -10,7 +10,7 @@ test("돌아올 주소 — v · utm 다섯 키만 · 이상한 v 는 버림", ()
     "https://mriacademy.gg/go?v=hm1&utm_source=youtube&utm_content=end+card");
   assert.equal(g.returnUrl({ v: "../x" }), "https://mriacademy.gg/go");
   assert.equal(g.returnUrl({}), "https://mriacademy.gg/go");
-  const a = new URL(g.authorizeUrl("https://p.supabase.co/", { v: "hm1" }));
+  const a = new URL(g.googleStartUrl("https://p.supabase.co/", { v: "hm1" }));
   assert.equal(a.origin + a.pathname, "https://p.supabase.co/auth/v1/authorize");
   assert.equal(a.searchParams.get("provider"), "google");
   assert.equal(a.searchParams.get("redirect_to"), "https://mriacademy.gg/go?v=hm1");

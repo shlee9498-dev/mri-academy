@@ -33,7 +33,7 @@ function returnUrl(query) {
   const qs = p.toString();
   return qs ? `${SITE_GO}?${qs}` : SITE_GO;
 }
-function authorizeUrl(supabaseUrl, query) {
+function googleStartUrl(supabaseUrl, query) {
   const p = new URLSearchParams({ provider: "google", redirect_to: returnUrl(query) });
   return `${String(supabaseUrl).replace(/\/+$/, "")}/auth/v1/authorize?${p}`;
 }
@@ -95,7 +95,7 @@ function mountGoApply(app, deps) {
   app.get("/api/go/login", limit("go_login", 30, 60_000), (req, res) => {
     if (!ready()) { const back = new URL(returnUrl(req.query)); back.searchParams.set("error", "unavailable"); return res.redirect(302, back.toString()); }
     res.set("Cache-Control", "no-store");
-    return res.redirect(302, authorizeUrl(deps.supabaseUrl(), req.query));
+    return res.redirect(302, googleStartUrl(deps.supabaseUrl(), req.query));
   });
 
   // 2) 내 신청 — 로그인 뒤 화면이 「이미 신청함」인지 본다
@@ -157,4 +157,4 @@ function mountGoApply(app, deps) {
   });
 }
 
-module.exports = { SITE_GO, UTM_KEYS, cleanV, cleanUtm, returnUrl, authorizeUrl, cleanContact, googleUser, notifyLine, kstStamp, mountGoApply };
+module.exports = { SITE_GO, UTM_KEYS, cleanV, cleanUtm, returnUrl, googleStartUrl, cleanContact, googleUser, notifyLine, kstStamp, mountGoApply };
