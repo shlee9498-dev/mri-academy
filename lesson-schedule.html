@@ -134,10 +134,9 @@ h1{margin-top:8px;font-size:clamp(32px,6vw,44px);font-weight:900;line-height:1.1
 </div>
 
 <script>
-// 수업 시간표 — GET /api/schedule?week=0|1|2 (트레이너 앱 빈 시간 trainer_slots · 계약은 경비 몫)
-// 기대하는 응답(경비 계약 절이 머지되면 그 절 이름으로 맞춘다):
-//   { week:{start,end}, slots:[{ id, startAt(ISO), durationMin, lessonType:"personal"|"participate"|"spectate"|"course",
-//     trainer, seatsLeft, full }], recent14:{ sessions } }
+// 수업 시간표 — GET /api/schedule?week=0|1|2 (계약 docs/trainer-portal-api.md §9.47 · 트레이너 앱 칸 trainer_slots 그대로)
+//   slots[] = { date(KST) · startTime(KST HH:MM) · startAt · durationMin · lessonType · trainer · capacity · seatsLeft · full }
+//   recent = { days:14 · lessons } — 빈 주 신뢰 숫자(§9.47.3)
 // 숫자(남은 자리 · 마감 · 최근 2주 수업 횟수)는 서버 값만 쓴다. 화면은 날짜 · 시각 표기만 한다. 글자는 textContent 로만 넣는다.
 (function(){
   var API = "https://mri-academy-production.up.railway.app";
@@ -146,7 +145,7 @@ h1{margin-top:8px;font-size:clamp(32px,6vw,44px);font-weight:900;line-height:1.1
   var KIND = { personal: "개인 레슨", participate: "그룹(참여형)", spectate: "관전형", course: "원장 직강" };
   var WEEK = ["이번 주", "다음 주", "다다음 주"];
   var DOW = ["일", "월", "화", "수", "목", "금", "토"];
-  var state = { week: 0, kind: "" }, data = null;
+  var state = { week: 0, kind: "" }, data = null, seq = 0;
   var list = document.getElementById("list"), range = document.getElementById("range");
 
   function el(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
@@ -166,6 +165,11 @@ h1{margin-top:8px;font-size:clamp(32px,6vw,44px);font-weight:900;line-height:1.1
     box.appendChild(link("btn", APPLY, "레벨 테스트 신청"));
     return box;
   }
+  // 칸의 KST 날짜 · 시각은 서버 값(date · startTime)을 그대로 쓴다. 없을 때만 startAt 을 KST 로 읽는다
+  function when(s){
+    if (s.date && s.startTime) return { date: s.date, hm: String(s.startTime).slice(0, 5), dow: DOW[new Date(s.date + "T00:00:00Z").getUTCDay()] };
+    return kst(s.startAt);
+  }
   function card(s, t){
     var full = !!s.full || !(Number(s.seatsLeft) > 0);
     var li = el("div", "slot" + (full ? " full" : ""));
@@ -176,7 +180,7 @@ h1{margin-top:8px;font-size:clamp(32px,6vw,44px);font-weight:900;line-height:1.1
     b.appendChild(tm); b.appendChild(who); b.appendChild(seat);
     li.appendChild(b);
     if (full) { b.disabled = true; b.setAttribute("aria-label", t.hm + " " + (KIND[s.lessonType] || "") + " 마감"); return li; }
-    var go = el("div", "go"); go.hidden = true; go.id = "go-" + String(s.id || Math.random()).replace(/[^A-Za-z0-9_-]/g, "");
+    var go = el("div", "go"); go.hidden = true; go.id = "go-" + (++seq);
     go.appendChild(link("btn", APPLY, "처음이에요 · 레벨 테스트 신청"));
     go.appendChild(link("btn ghost", DISCORD, "수강생이에요 · 디스코드로 신청", true));
     b.setAttribute("aria-expanded", "false"); b.setAttribute("aria-controls", go.id);
@@ -191,12 +195,12 @@ h1{margin-top:8px;font-size:clamp(32px,6vw,44px);font-weight:900;line-height:1.1
     var slots = ((data && data.slots) || []).filter(function(s){ return !state.kind || s.lessonType === state.kind; });
     if (!slots.length) {
       var name = WEEK[state.week] + (state.kind ? " " + KIND[state.kind] : "");
-      var n = data && data.recent14 && Number(data.recent14.sessions);
+      var n = data && data.recent && Number(data.recent.lessons);
       list.appendChild(emptyBox(name + "는 자리가 다 찼어요", n > 0 ? "최근 2주 수업 " + n + "회 진행" : ""));
       return;
     }
     var byDay = {}, order = [];
-    slots.forEach(function(s){ var t = kst(s.startAt); if (!t) return; if (!byDay[t.date]) { byDay[t.date] = []; order.push(t.date); } byDay[t.date].push([s, t]); });
+    slots.forEach(function(s){ var t = when(s); if (!t) return; if (!byDay[t.date]) { byDay[t.date] = []; order.push(t.date); } byDay[t.date].push([s, t]); });
     order.sort().forEach(function(date){
       var sec = el("section", "day"), h = el("div", "day-h"), first = byDay[date][0][1];
       h.appendChild(el("b", null, first.dow + "요일")); h.appendChild(el("span", null, md(date)));
