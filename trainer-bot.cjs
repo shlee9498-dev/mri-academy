@@ -993,6 +993,8 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
       log.log(`[trainer-bot] ${COMMANDS.map((x) => `/${x.name}`).join(" · ")} ready · ${done.join(" · ") || "등록 서버 없음"} · 채널 한 줄 ${env.TRAINER_BOOK_CHANNEL_ID ? "켜짐" : "꺼짐(TRAINER_BOOK_CHANNEL_ID 없음)"}`);
       if (env.TRAINER_BOOK_CHANNEL_ID) log.log(`[trainer-bot] ${await channelCheck(client, env.TRAINER_BOOK_CHANNEL_ID)}`);
       log.log(`[book-guide] ${env.STUDENT_BOOK_GUIDE_CHANNEL_ID ? await channelCheck(client, env.STUDENT_BOOK_GUIDE_CHANNEL_ID, "앱 예약 안내판") : "앱 예약 안내판 꺼짐(STUDENT_BOOK_GUIDE_CHANNEL_ID 없음)"}`);
+      // 4단계 상담 카드 채널 — 아직 글은 안 쓴다. 기동 때 권한만 한 줄로 본다(§9.51.12)
+      log.log(`[consult-card] ${await channelCheck(client, CONSULT_CARD_CHANNEL_ID, "상담 카드 채널", CONSULT_CARD_PERMS)}`);
     };
     const start = () => {
       setTimeout(register, 15000).unref?.();
@@ -1010,14 +1012,18 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
 // 한 줄 채널 점검(부팅 한 번) — 채널을 찾았는지 · 봇에게 모자란 권한 이름(디스코드 설정 화면 이름 그대로).
 //   한 줄을 읽으려면 「채널 보기」 · 답 카드를 달려면 「메시지 보내기」 · 원문에 답으로 다는 데 「메시지 기록 보기」가 든다.
 const CHANNEL_PERMS = [["ViewChannel", "채널 보기"], ["SendMessages", "메시지 보내기"], ["ReadMessageHistory", "메시지 기록 보기"]];
-async function channelCheck(client, id, label = "채널 한 줄") {
+// 「#상담일정-공유」 — 상담 일정 카드 게시 채널(계약 trainer-portal-api §9.51.12 · 오너 11/2 「1499664308454555738 채널id임」). 비밀값이 아니라 상수.
+//   카드 = 봇 글 1개를 상태마다 고침(자기 글 고치기는 권한 불필요) · 카드 밑 스레드에 상담 보고 → 아래 6개가 든다. 「메시지 관리」는 필요 없다.
+const CONSULT_CARD_CHANNEL_ID = "1499664308454555738";
+const CONSULT_CARD_PERMS = [...CHANNEL_PERMS, ["EmbedLinks", "링크 첨부"], ["CreatePublicThreads", "공개 스레드 만들기"], ["SendMessagesInThreads", "스레드에서 메시지 보내기"]];
+async function channelCheck(client, id, label = "채널 한 줄", need = CHANNEL_PERMS) {
   let ch;
   try { ch = await client.channels.fetch(id); }
   catch (e) { return `${label} · 채널을 못 찾음(code ${e?.code ?? "?"} · 50001 = 봇이 그 채널을 못 봄 · 10003 = 없는 채널 id)`; }
   if (!ch || typeof ch.permissionsFor !== "function") return `${label} · 글 채널이 아님`;
   const me = ch.guild?.members?.me || (ch.guild ? await ch.guild.members.fetchMe().catch(() => null) : null);
   const perms = me ? ch.permissionsFor(me) : null;
-  const missing = perms ? CHANNEL_PERMS.filter(([k]) => !perms.has(k)).map(([, label]) => label) : ["(권한을 읽지 못함)"];
+  const missing = perms ? need.filter(([k]) => !perms.has(k)).map(([, label]) => label) : ["(권한을 읽지 못함)"];
   // 메시지 내용 인텐트 — 봇이 이 인텐트를 달고 로그인했다면 개발자 포털에서 켜져 있다(꺼져 있으면 로그인 자체가 4014 로 실패)
   const intent = client.options?.intents?.has?.("MessageContent") ? "메시지 내용 인텐트 OK" : "메시지 내용 인텐트 없음(개발자 포털에서 켜야 함)";
   return `${label} · #${ch.name} (${ch.guild?.name || "?"}) · ${missing.length ? `권한 부족: ${missing.join(" · ")}` : "권한 OK"} · ${intent}`;
@@ -1070,4 +1076,4 @@ async function leadReady(sbRpc) {
   return ok;
 }
 
-module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, holdOutcome, bellTargets, guildTargets, commandChanged, channelCheck, COMMANDS, COMMAND_NAME, CHANGE_KIND, BELL_KEY });
+module.exports = Object.assign(attach, { attach, createTrainerBot, makeAiParse, bellOutcome, holdOutcome, bellTargets, guildTargets, commandChanged, channelCheck, CONSULT_CARD_CHANNEL_ID, CONSULT_CARD_PERMS, COMMANDS, COMMAND_NAME, CHANGE_KIND, BELL_KEY });
