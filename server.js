@@ -8695,6 +8695,17 @@ const goApply = require("./go-apply.cjs").mountGoApply(app, {
   },
 });
 
+// ── 오너 → 스태프 봇 DM 한 통(계약 §9.50 · 총무 11/2 · 정산 안내 등) — 보내기만 · 10분 안 같은 본문 한 번 · 실패해도 다시 안 보냄 ──
+//   /api/admin/* 밖이라 패널 읽기전용 게이트(423)와 무관 · 오너 판정 = reqOwner(위 · env 오너 디코 id).
+require("./owner-staff-dm.cjs").mountOwnerStaffDm(app, {
+  reqOwner, sbSelect, sbInsert, limit,
+  send: async (discordId, text) => {
+    if (!botClient) return { ok: false, reason: "bot_offline" };
+    try { const u = await botClient.users.fetch(String(discordId)); const m = await u.send(text); return { ok: true, messageId: m.id }; }
+    catch (e) { const code = Number(e?.code) || null; return { ok: false, reason: code === 50007 ? "dm_blocked" : code === 10013 ? "unknown_user" : "error" }; }
+  },
+});
+
 // ── 운영진 정산·레슨로그 관리 패널 (Phase 0) ──
 // schemaOptional은 기동 시 probeOptionalSchema()가 채우는 같은 객체를 그대로 넘긴다.
 // 참조를 넘기므로 프로브가 끝나면 패널 쪽에서도 값이 보인다(매 요청 재조회 없음).
