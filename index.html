@@ -50,7 +50,7 @@
       "alternateName": "엠알아이 아카데미",
       "url": "https://mriacademy.gg/",
       "logo": "https://mriacademy.gg/og-banner.png",
-      "description": "PUBG(배틀그라운드) 전문 코칭 아카데미. 서바이버 트레이너진의 1:1 맞춤 레슨과 이무리 클랜장 직강.",
+      "description": "PUBG(배틀그라운드) 전문 코칭 아카데미. 서바이버 트레이너진의 레슨과 이무리 클랜장 직강. 처음 오는 분은 레벨 테스트부터 시작.",
       "areaServed": "KR",
       "sameAs": [
         "https://www.youtube.com/@mriacademy-w6v",
@@ -60,10 +60,10 @@
     },
     {
       "@type": "Service",
-      "name": "PUBG 1:1 맞춤 레슨",
+      "name": "PUBG 레슨",
       "serviceType": "게임 코칭",
       "provider": { "@id": "https://mriacademy.gg/#org" },
-      "description": "서바이버 트레이너진과 진행하는 판수 기준 맞춤 레슨. 레벨테스트 무관, 누구나 가능.",
+      "description": "서바이버 트레이너진과 진행하는 판수 기준 레슨. 레벨 테스트부터 시작.",
       "offers": [
         { "@type": "Offer", "name": "10판 패키지", "price": "45000", "priceCurrency": "KRW" },
         { "@type": "Offer", "name": "21판 패키지", "price": "90000", "priceCurrency": "KRW" },
@@ -75,7 +75,8 @@
       "@type": "Course",
       "name": "이무리 클랜장 직강 강의",
       "provider": { "@id": "https://mriacademy.gg/#org" },
-      "description": "예약제 1회 3시간 집중. 레벨테스트 합격자 한정. 주도권→우선순위→포지션→강제 4단계 커리큘럼.",
+      "description": "예약제 1회 3시간 · 8회 과정. 레벨 테스트 합격 또는 레슨 수료 후 수강. 주도권→우선순위→포지션→강제 4단계 커리큘럼.",
+      "offers": { "@type": "Offer", "name": "원장 직강 8회", "price": "290000", "priceCurrency": "KRW" },
       "educationalLevel": "고급",
       "inLanguage": "ko"
     }
@@ -427,7 +428,7 @@ html.vr-lock{overflow:hidden}
   <div class="wrap top-in">
     <a class="logo" href="#top" aria-label="MRI ACADEMY 처음으로">MRI ACADEMY</a>
     <nav class="menu" aria-label="주 메뉴">
-      <a href="#growth">성장 기록</a><a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#plans">가격</a><a href="lesson-schedule.html">수업 시간표</a><a href="#direct">직강</a>
+      <a href="#growth">성장 기록</a><a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#plans">가격</a><a href="#direct">직강</a>
     </nav>
     <a class="cta" href="#start">레벨 테스트 신청<span class="dot"> · </span><span class="p">20,000원</span></a>
   </div>
@@ -537,7 +538,7 @@ html.vr-lock{overflow:hidden}
           <dl>
             <div><dt>디스코드</dt><dd>e_muri<small>친구 추가 후 메시지</small></dd></div>
             <div><dt>강의 서버</dt><dd><a href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">MRI ACADEMY 디스코드</a></dd></div>
-            <div><dt>이메일</dt><dd><a href="mailto:shlee9498@naver.com">shlee9498@naver.com</a> · <a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></dd></div>
+            <div><dt>이메일</dt><dd><a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></dd></div>
           </dl>
         </aside>
 
@@ -578,35 +579,26 @@ html.vr-lock{overflow:hidden}
     <div class="wrap">
       <div class="eyebrow">Price</div>
       <h2 class="sec-h">레슨 10판, 판당 4,500원</h2>
-      <p class="sec-sub">취소선은 정가이고, 지금은 특가가 적용돼 있어요</p>
       <div class="price-main">
         <div class="big-p">
-          <div class="lab">레슨 10판<del>50,000</del></div>
+          <div class="lab">레슨 10판</div>
           <div class="v">45,000<small>원</small></div>
         </div>
         <div>
-          <div class="prow"><div class="n">21판<small>판당 4,286원</small></div><del>105,000</del><div class="p">90,000<small>원</small></div></div>
-          <div class="prow"><div class="n">33판<small>판당 4,242원</small></div><del>165,000</del><div class="p">140,000<small>원</small></div></div>
+          <div class="prow"><div class="n">21판<small>판당 4,286원</small></div><span></span><div class="p">90,000<small>원</small></div></div>
+          <div class="prow"><div class="n">33판<small>판당 4,242원</small></div><span></span><div class="p">140,000<small>원</small></div></div>
           <div class="prow"><div class="n">99판<small>33판 × 3 · 한 번에 넉넉히 받고 싶은 분</small></div><span></span><div class="p">420,000<small>원</small></div></div>
         </div>
       </div>
+      <!-- 원장 직강 = 8회 290,000 하나 · 세트 없음(오너 11/2 · 가격 계약 docs/direct-price-unify.md) -->
       <div class="cols">
         <div>
           <h3>원장 직강</h3><p class="gd">회 단위 · 8회 과정 · 회당 3시간</p>
-          <div class="prow"><div class="n">초급 직강<small>8회</small></div><del>320,000</del><div class="p">250,000<small>원</small></div></div>
-          <div class="prow"><div class="n">중급 직강<small>8회</small></div><del>340,000</del><div class="p">270,000<small>원</small></div></div>
-          <div class="prow"><div class="n">심화 직강<small>8회</small></div><del>360,000</del><div class="p">290,000<small>원</small></div></div>
-        </div>
-        <div>
-          <h3>세트</h3><p class="gd">원장 직강 8회 + 레슨 판수</p>
-          <div class="prow"><div class="n">초급 세트<small>초급 직강 8회 + 레슨 10판</small></div><del>295,000</del><div class="p">280,000<small>원</small></div></div>
-          <div class="prow"><div class="n">중급 세트<small>중급 직강 8회 + 레슨 21판</small></div><del>360,000</del><div class="p">340,000<small>원</small></div></div>
-          <div class="prow"><div class="n">심화 세트<small>심화 직강 8회 + 레슨 33판</small></div><del>430,000</del><div class="p">405,000<small>원</small></div></div>
+          <div class="prow"><div class="n">원장 직강 8회<small>1회 3시간 · 총 24시간</small></div><span></span><div class="p">290,000<small>원</small></div></div>
         </div>
       </div>
       <div class="pnotes">
         <p>핵이나 버그로 터진 게임은 무효로 처리해요</p>
-        <p>트레이너 1인당 정원은 25명이에요. 레슨생 <b>50명</b> · 강의 수강생 <b>25명</b>을 넘으면 각각 그 주 다음 주부터 정가로 바뀌어요</p>
         <p>환불은 남은 판수 × 판당 단가(강의는 남은 회차 × 회당 단가)이고 위약금은 없어요. 자세한 기준은 <a class="link" href="terms.html">이용약관 제7조</a>에 있어요</p>
       </div>
       <a class="vip-door link" href="#vip" data-vip-open>정해진 구성 말고 원장과 1:1로 맞추고 싶다면 <span>VIP 룸</span></a>
@@ -662,7 +654,7 @@ html.vr-lock{overflow:hidden}
         </details>
         <details>
           <summary>판수는 어떻게 줄어요?</summary>
-          <div class="a"><b>개인 레슨</b>은 시간 기준으로 1시간에 5판이에요. <b>그룹 레슨과 관전형</b>은 실제로 한 판 수만큼 줄어요. 남은 판수는 수강생 앱에서 언제든 볼 수 있어요.</div>
+          <div class="a"><b>개인 레슨</b>은 시간 기준으로 1시간 5판 · 1시간 30분 8판 · 2시간 10판이에요. <b>그룹 레슨과 관전형</b>은 실제로 한 판 수만큼 줄어요. 남은 판수는 수강생 앱에서 언제든 볼 수 있어요.</div>
         </details>
         <details>
           <summary>여러 명이 같이 들을 수 있나요?</summary>
@@ -670,7 +662,7 @@ html.vr-lock{overflow:hidden}
         </details>
         <details>
           <summary>새벽이나 심야에도 수업이 돼요?</summary>
-          <div class="a">돼요. <b>연중무휴 24시간</b> 운영하고, 1주일 전에만 맞춰 주시면 어떤 시간대든 잡아요. 비어 있는 그룹 자리는 <a href="lesson-schedule.html">수업 시간표</a>에서 로그인 없이 볼 수 있어요.</div>
+          <div class="a">돼요. <b>연중무휴 24시간</b> 운영하고, 1주일 전에만 맞춰 주시면 어떤 시간대든 잡아요.</div>
         </details>
         <details>
           <summary>환불이 되나요?</summary>
@@ -689,12 +681,12 @@ html.vr-lock{overflow:hidden}
   <div class="wrap">
     <!-- 맨 아래 링크 — 자주 쓰는 6개만 펼쳐 두고 나머지는 「더 보기」 안에(10/4 · 지운 링크 없음) -->
     <div class="fl">
-      <a href="#plans">가격</a><a href="lesson-schedule.html">수업 시간표</a><a href="https://app.mriacademy.gg/" rel="noopener">수강생 앱</a><a href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">Discord</a><a href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">카카오</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a>
+      <a href="#plans">가격</a><a href="https://app.mriacademy.gg/" rel="noopener">수강생 앱</a><a href="https://discord.gg/9RjqdSKw" target="_blank" rel="noopener">Discord</a><a href="https://open.kakao.com/o/sAUU6OGf" target="_blank" rel="noopener">카카오</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a>
     </div>
     <details class="more">
       <summary>더 보기</summary>
       <div class="fl">
-        <a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#rules">차감 기준</a><a href="success.html">성장 기록</a><a href="lesson-feedback.html">코칭 기록</a><a href="community.html">후기</a><a href="gmi-progress.html">클랜 성장 기록</a>
+        <a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#rules">차감 기준</a><a href="success.html">성장 기록</a><a href="gmi-progress.html">클랜 성장 기록</a>
         <a href="trainer-recruit.html">트레이너 모집</a><a href="sound-guide.html">사운드 세팅 가이드</a><a href="graphics-guide.html">그래픽 세팅 가이드</a>
         <a href="https://shlee9498-dev.github.io/gmi-clancup/" target="_blank" rel="noopener">클랜컵</a><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP</a><a href="#vip" data-vip-open>VIP 룸</a>
       </div>
@@ -706,7 +698,7 @@ html.vr-lock{overflow:hidden}
     <div class="bizinfo">
       상호명: 무리아카데미 · 대표자: 이주형 · 사업자등록번호: 761-10-02908<br>
       통신판매업신고번호: 2026-화도수동-0325 · 사업장 주소: 경기도 남양주시 녹촌로 51<br>
-      고객센터: 010-5264-9498 · 이메일: shlee9498@naver.com
+      고객센터: 010-5264-9498 · 이메일: shlee9498@gmail.com
     </div>
     <p>© 2026 MRI ACADEMY</p>
   </div>
