@@ -5,6 +5,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const g = require("../go-apply.cjs");
 
+test("쇼츠 표식 · 코드 — 돌아올 주소에 실림 · 모양 거르기", () => {
+  assert.equal(g.returnUrl({ src: "Shorts-YJH", code: "muri10" }), "https://mriacademy.gg/go?src=shorts-yjh&code=MURI10");
+  assert.equal(g.cleanSrc("bad src!"), null); assert.equal(g.cleanCode("x"), null);
+});
+
 test("돌아올 주소 — v · utm 다섯 키만 · 이상한 v 는 버림", () => {
   assert.equal(g.returnUrl({ v: "hm1", utm_source: "youtube", utm_content: "end card", ref: "x", tab: "price" }),
     "https://mriacademy.gg/go?v=hm1&utm_source=youtube&utm_content=end+card");
@@ -29,7 +34,12 @@ test("연락처 한 칸 — 아무거나 · 2~60자 · 종류 판정", () => {
 
 test("구글 사용자만 · 이메일 소문자", () => {
   const u = { id: "u1", email: "A@Example.com", app_metadata: { provider: "google", providers: ["google"] }, user_metadata: { full_name: "홍길동" } };
-  assert.deepEqual(g.googleUser(u), { id: "u1", email: "a@example.com", name: "홍길동" });
+  assert.deepEqual(g.googleUser(u), { id: "u1", email: "a@example.com", name: "홍길동", provider: "google" });
+  // 디스코드 · 카카오도 받는다(§9.49 · 오너 11/2) · 카카오는 이메일이 없으면 사용자 id 로 한 행 키
+  assert.equal(g.googleUser({ ...u, app_metadata: { provider: "discord" } }).provider, "discord");
+  assert.equal(g.googleUser({ id: "K1", app_metadata: { provider: "kakao" }, user_metadata: { nickname: "닉" } }).email, "k1@kakao.auth");
+  assert.equal(g.googleUser({ id: "D1", app_metadata: { provider: "discord" } }), null, "디스코드인데 이메일 없음");
+  assert.equal(g.providerOf({ provider: "kakao" }), "kakao"); assert.equal(g.providerOf({ provider: "x" }), "google");
   assert.equal(g.googleUser({ ...u, app_metadata: { provider: "email" } }), null);
   assert.equal(g.googleUser({ ...u, email: "" }), null);
 });
@@ -41,7 +51,7 @@ test("알림 한 줄 — 연락처 · 이메일 · 이름 없음", () => {
 });
 
 // 라우트 — 가짜 DB · 가짜 Supabase Auth
-function harness({ user = { id: "u1", email: "a@example.com", app_metadata: { provider: "google" }, user_metadata: { name: "홍길동" } }, table = true } = {}) {
+function harness({ user = { id: "u1", email: "a@example.com", app_metadata: { provider: "google" }, user_metadata: { name: "홍길동" } }, table = true, codes = [] } = {}) {
   const rows = []; const notes = []; const routes = {};
   const app = { get: (p, _l, h) => { routes["GET " + p] = h; }, post: (p, _l, h) => { routes["POST " + p] = h; } };
   const q = (s) => Object.fromEntries(new URLSearchParams(s));
@@ -54,7 +64,11 @@ function harness({ user = { id: "u1", email: "a@example.com", app_metadata: { pr
       if (opt.headers.Authorization !== "Bearer " + "t".repeat(30) || !user) return { status: 401, ok: false };
       return { status: 200, ok: true, json: async () => user };
     },
-    sbSelect: async (_t, s) => { miss(); const e = decodeURIComponent(q(s).email.slice(3)); return rows.filter((r) => r.email === e); },
+    sbSelect: async (t, s) => {
+      if (t === "event_codes") return codes.filter((c) => c.code === decodeURIComponent(q(s).code.slice(3)));
+      miss(); const e = decodeURIComponent(q(s).email.slice(3)); return rows.filter((r) => r.email === e);
+    },
+    codeActive: (r) => r.active === true,
     sbInsert: async (_t, r) => {
       miss();
       if (rows.some((x) => x.email === r.email)) throw Object.assign(new Error("dup"), { status: 409 });
@@ -107,4 +121,16 @@ test("로그인 출발 — Supabase 구글 authorize 로 302 · v 실림", async
   assert.equal(r.status, 302);
   const u = new URL(r.loc);
   assert.equal(u.searchParams.get("redirect_to"), "https://mriacademy.gg/go?v=hm1&utm_source=youtube");
+});
+
+test("이벤트 코드 — 켜진 코드만 신청에 붙음 · src 는 그대로 · 재신청에서 비어 오면 처음 값 유지", async () => {
+  const off = harness({ codes: [{ code: "MURI10", active: false }] });
+  const r0 = await off.call("POST /api/go/apply", { body: { contact: "gamer_01", src: "shorts-yjh", code: "MURI10" } });
+  assert.equal(r0.body.codeApplied, false); assert.equal(off.rows[0].event_code, undefined); assert.equal(off.rows[0].src, "shorts-yjh");
+  const on = harness({ codes: [{ code: "MURI10", active: true }] });
+  const r1 = await on.call("POST /api/go/apply", { body: { contact: "gamer_01", src: "shorts-yjh", code: "muri10" } });
+  assert.equal(r1.body.codeApplied, true); assert.equal(on.rows[0].event_code, "MURI10");
+  assert.match(on.notes[0], /src=shorts-yjh · 코드 MURI10/);
+  await on.call("POST /api/go/apply", { body: { contact: "010-1234-5678" } });
+  assert.equal(on.rows[0].event_code, "MURI10"); assert.equal(on.rows[0].src, "shorts-yjh");
 });

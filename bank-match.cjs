@@ -49,6 +49,12 @@ function decide(alert, cands, { now = Date.now() } = {}) {
   return { status: "matched", pick: top[0], others: named.slice(1), amountOnly };
 }
 
+// /go 「입금했어요」(§9.49)는 입금자 이름을 메모에 싣는다 — 「신청자(입금자)」 모양으로 두면 nameParts 가 둘 다 본다
+function depositorName(r) {
+  const m = /입금자 ([^·\n]{1,20})/.exec(String(r.memo || ""));
+  return m ? `${r.student_name || ""}(${m[1].trim()})` : r.student_name;
+}
+
 const won = (n) => `${Number(n).toLocaleString("ko-KR")}원`;
 const ref = (c) => `${KIND_LABEL[c.kind]} #${c.id}`;
 const kstHm = (iso) => {
@@ -86,14 +92,15 @@ function createBankMatch(deps) {
     const levelFee = await fee();
     const safe = (p) => p.catch((e) => { log.warn("[bank-match] read", e && e.status ? e.status : "error"); return []; });
     const [pr, ia, co] = await Promise.all([
-      safe(sbSelect("payment_requests", `select=id,student_name,kind,amount,created_at&status=eq.pending&amount=eq.${amt}&created_at=gte.${since}&limit=20`)),
+      safe(sbSelect("payment_requests", `select=id,student_name,kind,amount,created_at,memo&status=eq.pending&amount=eq.${amt}&created_at=gte.${since}&limit=20`)),
       levelFee === amt
         ? safe(sbSelect("intake_applications", `select=id,real_name,display_name,created_at&status=in.(booked,tested)&deposit_confirmed_at=is.null&created_at=gte.${since}&limit=20`))
         : Promise.resolve([]),
-      safe(sbSelect("consults", `select=id,student_name,kind,fee,created_at&paid_status=eq.unpaid&fee=eq.${amt}&created_at=gte.${since}&limit=20`)),
+      // /go 상담(registered_by go)은 결제 요청(대기)이 같은 손님 짝으로 이미 있다 — 같은 사람이 두 후보로 잡히면 「multiple」이 된다(§9.49)
+      safe(sbSelect("consults", `select=id,student_name,kind,fee,created_at&paid_status=eq.unpaid&fee=eq.${amt}&created_at=gte.${since}&or=(registered_by.is.null,registered_by.neq.go)&limit=20`)),
     ]);
     return [
-      ...pr.map((r) => ({ kind: "payment_request", id: r.id, name: r.student_name, amount: r.amount, created_at: r.created_at, product: r.kind || null })),
+      ...pr.map((r) => ({ kind: "payment_request", id: r.id, name: depositorName(r), amount: r.amount, created_at: r.created_at, product: r.kind || null })),
       ...ia.map((r) => ({ kind: "intake", id: r.id, name: r.display_name ? `${r.real_name || ""}(${r.display_name})` : r.real_name, amount: amt, created_at: r.created_at, product: "레벨 테스트" })),
       ...co.map((r) => ({ kind: "consult", id: r.id, name: r.student_name, amount: r.fee, created_at: r.created_at, product: r.kind || "상담" })),
     ];
@@ -127,4 +134,4 @@ function createBankMatch(deps) {
   return { candidates, onSaved };
 }
 
-module.exports = { WINDOW_MS, KIND_LABEL, nameParts, nameScore, decide, dmText, createBankMatch };
+module.exports = { depositorName, WINDOW_MS, KIND_LABEL, nameParts, nameScore, decide, dmText, createBankMatch };

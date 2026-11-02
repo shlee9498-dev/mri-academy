@@ -4056,9 +4056,10 @@ if (process.env.DISCORD_TOKEN) {
     }
 
     // 「입금 받음」(§9.40)은 트레이너가 명부에서 고른 행이 신청에 실려 있다 — 이름 후보 대신 그 행을 먼저 보인다(대상 변경은 그대로 된다).
-    if (action === "ok" && String(q.requested_by || "").startsWith("trainer:") && q.student_id) {
+    if (action === "ok" && /^(trainer|go):/.test(String(q.requested_by || "")) && q.student_id) {
       const s = await payreqStudentById(Number(q.student_id));
-      return payreqShowTargets(itx, reqId, q, s ? [s] : await payreqCandidates(q.student_name), s ? "트레이너가 명부에서 고른 수강생이야." : null);
+      const why = String(q.requested_by).startsWith("go:") ? "/go 레벨 테스트 신청이 만든 예비 명부야(§9.49)." : "트레이너가 명부에서 고른 수강생이야.";
+      return payreqShowTargets(itx, reqId, q, s ? [s] : await payreqCandidates(q.student_name), s ? why : null);
     }
     if (action === "ok") return payreqShowTargets(itx, reqId, q, await payreqCandidates(q.student_name), null);   // ✅ = 확인 단계(승인 아님)
     if (action === "sel") {
@@ -8676,8 +8677,11 @@ app.get("/api/schedule", limit("public_schedule", 60, 60_000), (req, res) => {
 
 // ── 영상 QR 신청 /go (계약 trainer-portal-api §9.48 · DDL §90 · 총무 11/1) — 구글 로그인(Supabase Auth) + 연락처 한 칸 ──
 // 알림 한 줄: GO_APPLY_CHANNEL_ID(선택) → LINK_APPROVAL_CHANNEL_ID(운영진 비공개 채널) → 오너 DM. 연락처 · 이메일은 싣지 않는다.
-require("./go-apply.cjs").mountGoApply(app, {
+let goLevelTest = null;   // §9.49 — 아래 studentPortal 뒤에 만든다(불투명 id 가 필요). /api/go/me 가 늦게 묶어 읽는다
+const goApply = require("./go-apply.cjs").mountGoApply(app, {
   sbSelect, sbInsert, sbPatch, limit,
+  levelTestOf: (id) => (goLevelTest ? goLevelTest.levelTestOf(id) : null),
+  codeActive: require("./intake-api.cjs").codeActive,   // 이벤트 코드(§54) 켜짐 · 기간 판정 — 신청 창구와 같은 함수
   supabaseUrl: () => process.env.SUPABASE_URL, serviceKey: () => process.env.SUPABASE_SERVICE_ROLE_KEY,
   notify: async (text) => {
     if (!botClient) return false;
@@ -8810,6 +8814,21 @@ intakeFlow = require("./intake-cards.cjs").mountIntakeFlow({
   },
 });
 
+// ── 레벨 테스트 접수 자동화 2단계(계약 §9.49 · DDL §91 · 총무 11/2) — /go 칸 고르기 · 「입금했어요」 · 확정 ──
+//   칸 = trainer_slots consult 90분 · 가확정 = payment_requests(대기 · requested_by go:<신청>) · 확정 = 오너 승인 → §18d payments.
+//   점검 2분마다(확정 감지 · 거절이면 다시 대기 · 입금 기한 지난 예약 풀기). 통장 짝 자동 확정은 꺼짐(GO_AUTO_CONFIRM · 오너 OK 뒤).
+goLevelTest = require("./go-level-test.cjs").mountGoLevelTest(app, {
+  sbSelect, sbInsert, sbPatch, sbRpc, limit, whoami: goApply.whoami,
+  opaqueId: studentPortal.opaqueId, readOpaqueId: studentPortal.readOpaqueId,
+  dm: (id, text) => discordDM(id, text), ownerDiscordId: process.env.MRI_OWNER_ID,
+  bank: () => ({ name: process.env.PAY_BANK_NAME, account: process.env.PAY_BANK_ACCOUNT, holder: process.env.PAY_BANK_HOLDER }),
+  cardLink: () => require("./payreq-intake.cjs").cardLinksFromEnv(process.env, require("./payreq-intake.cjs").GROBLE_LINK_ENV_INTAKE).links.levelTest || null,
+  fee: () => require("./intake-api.cjs").levelTestWon(),
+  payreqCard: (r, o) => (payreqPortalCard ? payreqPortalCard(r, o) : Promise.resolve(false)),
+});
+if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  setInterval(() => goLevelTest.sweep().catch((e) => console.error("[go-lt] sweep", e?.status || e?.message)), 2 * 60_000);
+}
 // ── 신청 창구 트레이너 앱 라우트(계약 §9.20 · PR-3 · /api/trainer-portal/applications*) ──
 // trainer-portal 뒤 — 그 파일이 건 공유비밀 게이트 · 트레이너 판정 · 응답 가드를 같은 함수로 쓴다.
 // 상태 전이는 위 흐름(intakeFlow) 한 벌이라 앱에서 누른 것도 디스코드 카드에 그대로 보인다.
@@ -9259,7 +9278,7 @@ const SCHEMA_OPTIONAL = {
   // §88 통장 입출금 알림(docs/bank-alerts.md · 지휘 10/7 · 10/28 짝 찾기 §9.45) — toss 입금은 짝 후보 + 오너 DM. 미실행이면 POST /api/bank-alerts 만 503 table_missing 이고
   //   다른 기능은 그대로다. 읽는 화면(오너 목록 · 공개 합계)이 생기면 REQUIRED 로 올린다.
   // §90 영상 QR 신청(계약 §9.48) — 미실행이면 POST /api/go/apply 만 503 table_missing · 다른 기능은 그대로
-  go_applications: ["id", "auth_user_id", "email", "display_name", "contact", "contact_kind", "v", "first_v", "utm", "applied_at",
+  go_applications: ["id", "auth_user_id", "src", "event_code", "email", "display_name", "contact", "contact_kind", "v", "first_v", "utm", "applied_at",
                     "first_applied_at", "apply_count", "status", "contacted_at", "contacted_by_staff_id", "created_at", "updated_at"],
   bank_alerts: ["id", "account_key", "direction", "amount", "balance", "occurred_at", "counterparty", "parse_status", "shape",
                 "dedupe_key", "source_app", "posted_at", "received_at", "raw_masked", "match_status", "match_kind", "match_ref",
