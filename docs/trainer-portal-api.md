@@ -4623,3 +4623,12 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - 잠금월 · 기존 `payments` · `consults` 행 · env · 토스 설정 · 정산식. 상담 #21 ~ #23 은 옮기지 않는다.
 - 레벨 테스트 3시간 전 취소 = 전액 환불 · 이후 · 노쇼 = 환불 없음(정본 그대로). 환불 실행은 사람.
 - 구글 캘린더 쓰기 · 이메일 · 문자 발송 · 숨고 · 긱스 연동(첫 답장에 `/go` 링크만 · 총무).
+
+## 9.50 오너 → 스태프 봇 DM 한 통 — `POST /api/owner/staff-dm` (2026-11-02 · 총무 주문 · 오너 「mriacademy 통해서 각각 디엠 보내줘」) · **서버(이 PR) · DDL 없음 · env 없음**
+- 쓰는 사람: **오너만**(운영진 패널 로그인 토큰 · env 오너 디코 id). 토큰 없음 401 `login_required` · 오너 아닌 스태프 403 `owner_only`.
+- 본문 `{ "staffId": 5, "text": "…" }` — `text` 1~1,900자(줄바꿈 됨). 봇(MRI ACADEMY)이 그 스태프의 디스코드로 **글 그대로** 한 통 보낸다.
+- 200 `{ "ok": true, "staffId", "staffName", "messageId" }` · 502 `{ "ok": false, "reason": "dm_blocked" | "unknown_user" | "bot_offline" | "error" }`
+  · 409 `duplicate_within_10min`(같은 스태프 · 같은 본문 10분 안 · `retryAfterSec`) · `staff_inactive` · `no_discord` · 404 `staff_not_found` · 400 `invalid_body`.
+- **보내기만** — 금액 계산 · 지급 기록 · 잠금 · DB 쓰기 없음(감사 기록 `admin_audit` action `staff.dm` 한 줄만 · 성공 여부 · 메시지 id · 본문).
+- 실패해도 서버가 다시 보내지 않는다(중복 DM 금지) — 결과를 보고 사람이 다시 누른다. 실패한 건은 10분 막힘에 걸리지 않는다.
+- `/api/admin/*` 밖이라 패널 읽기전용 게이트(`PANEL_WRITE` · 423)와 무관.
