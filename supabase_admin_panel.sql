@@ -8333,3 +8333,44 @@ on conflict (code) do nothing;
 -- 되돌림: delete from public.event_codes where code='MURI10' (go_applications.event_code 가 비어 있을 때만) ·
 --   alter table public.go_applications drop column if exists event_code, drop column if exists src; notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §93  상담 일정 카드 · 상담 기록 — consults 칸 3 + consult_cards · consult_digests (2026-11-03 · 영상 세션 주문 · 오너 「트레이너들이 내가 어떻게 일하는지 공유」 · 계약 §9.53 · 소관 MRIacademy)
+--      A 구간(더하기만). 결제 · 판수 · 정산 무관. 봇 상태(글 id · 그린 지문 · 캘린더 id · 알림 시각)는 consult_cards, 사람이 쓰는 상담 기록은 consults.write_up.
+--      ※ PR #643(접수 3 · 4단계 계약)이 적어 둔 「§93」은 이 번호를 쓰지 않는다 — 그 DDL 은 실행 때 §94 로 옮긴다.
+-- ============================================================
+-- 93-0) 실행 전 스냅샷(세션 · 읽기만): consults 칸 47 · to_regclass('public.consult_cards') null · to_regclass('public.consult_digests') null
+-- 93a) 상담 기록 — 항목별(배경 · 피지컬 · 배그력 · 핵심 문제 · 숙제 · 등록 의향 · 후속 · 등록 결과 · 메모) · AI 상담 학습 자료로 키를 고정해 꺼낸다
+alter table public.consults add column if not exists write_up    jsonb check (write_up is null or jsonb_typeof(write_up) = 'object');
+alter table public.consults add column if not exists write_up_at timestamptz;
+alter table public.consults add column if not exists write_up_by text;
+-- 93b) 봇 상태 — 상담 하나에 한 줄
+create table if not exists public.consult_cards (
+  consult_id        bigint primary key references public.consults(id),
+  message_id        text,
+  rendered_hash     text,
+  posted_at         timestamptz,
+  edited_at         timestamptz,
+  deleted_at        timestamptz,
+  calendar_event_id text,
+  calendar_hash     text,
+  reminded_at       timestamptz,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz
+);
+alter table public.consult_cards enable row level security;
+-- 93c) 09시 오늘 상담 요약 — 하루 한 줄(두 번 안 보내기)
+create table if not exists public.consult_digests (
+  day        date primary key,
+  count      integer not null default 0,
+  created_at timestamptz not null default now()
+);
+alter table public.consult_digests enable row level security;
+-- 93d) 검증: consults 칸 50 · 두 표 행 0 · RLS on · 정책 0 → notify pgrst, 'reload schema';
+-- 93e) 손으로 이미 올린 카드 · 캘린더(11/3 오너 · 총무) — 봇이 겹쳐 올리지 않게 표식(세션 · 이 PR 배포 전):
+--      update public.consults set channel_msg_id = 'manual:' || id where id in (23, 27, 28, 29) and channel_msg_id is null;   -- channel_msg_id 는 유일(uq_consults_channel_msg) → 번호를 붙인다
+--      insert into public.consult_cards (consult_id, calendar_event_id) values (23,'manual'),(27,'manual'),(28,'manual'),(29,'manual') on conflict do nothing;
+-- 되돌림(값이 있으면 먼저 지휘 확인): drop table if exists public.consult_digests; drop table if exists public.consult_cards;
+--   alter table public.consults drop column if exists write_up_by, drop column if exists write_up_at, drop column if exists write_up;
+--   notify pgrst, 'reload schema';
+-- ============================================================
