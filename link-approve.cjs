@@ -59,6 +59,21 @@ function recoverPicks(pending, roster, done = {}) {
   }
   return out;
 }
+// 승인 카드 버튼(§9.56 · 11/4 #71 사고 — 「김우주」 신청이 「김해주」 #10 에 승인됨) — 입력 이름이 명부 이름과 똑같으면(normName) 바로 승인 버튼,
+//   다르면 「⚠ 이름 다름」 회색 버튼 → 누르면 누른 사람에게만 확인 단계(이름 두 개를 나란히 보여 주고 한 번 더 누르게) — 바로 붙지 않는다.
+const exactName = (claimed, name) => !!normName(claimed) && normName(claimed) === normName(name);
+function cardButton(reqId, claimed, s) {
+  return exactName(claimed, s.name)
+    ? { customId: `linkreq_ok:${reqId}:${s.id}`, label: `✅ ${s.name} #${s.id}`.slice(0, 80), style: "Success" }
+    : { customId: `linkreq_chk:${reqId}:${s.id}`, label: `⚠ 이름 다름 · ${s.name} #${s.id}`.slice(0, 80), style: "Secondary" };
+}
+// 이름이 다를 때 카드 맨 위에 크게(디스코드 제목 글씨)
+function mismatchBanner(claimed, cands) {
+  const top = cands && cands[0];
+  if (!top || exactName(claimed, top.s.name)) return null;
+  return `## ⚠️ 이름 다름 — 입력 「${claimed}」 ≠ 명부 「${top.s.name}」\n같은 사람인지 디스코드 이름 · 배그 닉으로 먼저 확인하세요. 다르면 거절하고 \`/연결승인\` 으로 맞는 학생을 지정하세요`;
+}
+
 const isUnique = (e) => e?.status === 409 || /23505|idx_students_discord/.test(String(e?.body || ""));
 
 // deps: sbSelect · sbPatch · sbInsert · discordDM(id, text) → bool · now(시험용)
@@ -164,4 +179,4 @@ function createLinkApproval(deps) {
   return { approve, reject, audit, closePendingFor };
 }
 
-module.exports = { createLinkApproval, recoverPicks, trainerClaim, commandScope, normName, APPROVED_DM, REJECTED_DM, LIVE };
+module.exports = { exactName, cardButton, mismatchBanner, createLinkApproval, recoverPicks, trainerClaim, commandScope, normName, APPROVED_DM, REJECTED_DM, LIVE };
