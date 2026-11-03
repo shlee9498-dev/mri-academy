@@ -8400,3 +8400,19 @@ alter table public.inbound_alerts enable row level security;
 -- 94a) 검증: 칸 11 · 행 0 · RLS on · 정책 0 → notify pgrst, 'reload schema';
 -- 되돌림(행이 있으면 먼저 지휘 확인): drop table if exists public.inbound_alerts; notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §95  사이트 신청 → 원장 즉시 연락 — consults.discord_handle + consult_cards 알림 칸 5 (2026-11-03 · 영상 세션 주문 · 오너 「입금주셨으니 가장 우선이 돼야함」 · 계약 §9.55 · 소관 MRIacademy)
+--      A 구간(칸 추가만). 결제 · 정산 무관. ※ PR #643(접수 3 · 4단계) DDL 은 실행 때 §96 으로 옮긴다.
+-- ============================================================
+-- 95-0) 실행 전 스냅샷(세션 · 읽기만): consults 칸 50 · consult_cards 칸 11
+alter table public.consults add column if not exists discord_handle text check (discord_handle is null or char_length(discord_handle) <= 40);
+alter table public.consult_cards add column if not exists intake_notified_at timestamptz;
+alter table public.consult_cards add column if not exists deposit_dm_at      timestamptz;
+alter table public.consult_cards add column if not exists intake_nudges      integer not null default 0;
+alter table public.consult_cards add column if not exists intake_nudged_at   timestamptz;
+alter table public.consult_cards add column if not exists welcome_dm_at      timestamptz;
+-- 95a) 검증: consults 칸 51 · consult_cards 칸 16 → notify pgrst, 'reload schema';
+-- 되돌림: alter table public.consult_cards drop column if exists welcome_dm_at, drop column if exists intake_nudged_at, drop column if exists intake_nudges,
+--   drop column if exists deposit_dm_at, drop column if exists intake_notified_at; alter table public.consults drop column if exists discord_handle; notify pgrst, 'reload schema';
+-- ============================================================

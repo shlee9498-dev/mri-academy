@@ -99,10 +99,15 @@ function createBankMatch(deps) {
       // /go 상담(registered_by go)은 결제 요청(대기)이 같은 손님 짝으로 이미 있다 — 같은 사람이 두 후보로 잡히면 「multiple」이 된다(§9.49)
       safe(sbSelect("consults", `select=id,student_name,kind,fee,created_at&paid_status=eq.unpaid&fee=eq.${amt}&created_at=gte.${since}&or=(registered_by.is.null,registered_by.neq.go)&limit=20`)),
     ]);
+    // 사이트 신청서(/api/apply)로 들어온 레벨 테스트는 금액 칸이 비어 있다(fee 0) — 레벨 테스트비와 같은 입금이면 후보에 넣는다(§9.55 · 오너 11/3 「입금주셨으니 가장 우선」)
+    const site = levelFee === amt && amt > 0
+      ? await safe(sbSelect("consults", `select=id,student_name,kind,fee,created_at&paid_status=eq.unpaid&fee=eq.0&source=eq.site&registered_by=is.null&kind=eq.consult&created_at=gte.${since}&limit=20`))
+      : [];
+    for (const r of site) if (!co.some((x) => x.id === r.id)) co.push(r);
     return [
       ...pr.map((r) => ({ kind: "payment_request", id: r.id, name: depositorName(r), amount: r.amount, created_at: r.created_at, product: r.kind || null })),
       ...ia.map((r) => ({ kind: "intake", id: r.id, name: r.display_name ? `${r.real_name || ""}(${r.display_name})` : r.real_name, amount: amt, created_at: r.created_at, product: "레벨 테스트" })),
-      ...co.map((r) => ({ kind: "consult", id: r.id, name: r.student_name, amount: r.fee, created_at: r.created_at, product: r.kind || "상담" })),
+      ...co.map((r) => ({ kind: "consult", id: r.id, name: r.student_name, amount: Number(r.fee) || amt, created_at: r.created_at, product: Number(r.fee) ? (r.kind || "상담") : "사이트 레벨 테스트 신청" })),
     ];
   }
 
