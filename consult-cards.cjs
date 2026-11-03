@@ -95,6 +95,12 @@ function render(r, ctx = {}) {
     `● 입금 상태 · ${depositLine(r, ctx.deposit)}`,
   ];
   if (asked) lines.push(`● 신청 때 적은 것 · ${asked}`);
+  // 숨고 새 메시지(§9.54) — 상담을 마지막으로 고친 뒤에 온 것만 「확인 필요」(사람이 상담을 고치면 사라진다 · 일정은 봇이 안 바꾼다)
+  const inb = ctx.inbound;
+  if (inb && !(r.updated_at && Date.parse(r.updated_at) >= Date.parse(inb.received_at))) {
+    const t = kst(Date.parse(inb.received_at));
+    lines.push(`● 변동 확인 필요 · 숨고 새 메시지 ${t.mo}/${t.d} ${hm(t)} 「${oneLine(inb.first_line, 60)}」`);
+  }
   const wu = r.write_up && typeof r.write_up === "object" ? r.write_up : null;
   const filled = wu ? WRITE_UP_FIELDS.filter(([k]) => wu[k]) : [];
   lines.push("", "■ 상담 기록");
@@ -161,16 +167,19 @@ function createConsultCards(deps) {
   async function load() {
     const since = new Date(now() - WINDOW_BACK_MS).toISOString();
     const rows = await deps.sbSelect("consults", `select=${COLS}&scheduled_at=gte.${since}&kind=neq.direct_lecture&order=scheduled_at.asc&limit=200`);
-    if (!rows.length) return { rows, cards: new Map(), staff: new Map(), deposits: new Map() };
+    if (!rows.length) return { rows, cards: new Map(), staff: new Map(), deposits: new Map(), inbound: new Map() };
     const ids = rows.map((r) => r.id).join(",");
-    const [cards, staff, alerts] = await Promise.all([
+    const [cards, staff, alerts, inbounds] = await Promise.all([
       deps.sbSelect("consult_cards", `select=*&consult_id=in.(${ids})`),
       deps.sbSelect("staff", "select=id,name,discord_id"),
       deps.sbSelect("bank_alerts", `select=match_ref,amount,occurred_at,posted_at&match_kind=eq.consult&match_ref=in.(${ids})&order=occurred_at.desc`).catch(() => []),
+      deps.sbSelect("inbound_alerts", `select=consult_id,first_line,received_at&consult_id=in.(${ids})&order=received_at.desc`).catch(() => []),   // §94 전이면 빈 목록
     ]);
     const deposits = new Map();
     for (const a of alerts || []) if (!deposits.has(Number(a.match_ref))) deposits.set(Number(a.match_ref), a);
-    return { rows, cards: new Map(cards.map((c) => [Number(c.consult_id), c])), staff: new Map(staff.map((s) => [Number(s.id), s])), deposits };
+    const inbound = new Map();
+    for (const a of inbounds || []) if (!inbound.has(Number(a.consult_id))) inbound.set(Number(a.consult_id), a);
+    return { rows, cards: new Map(cards.map((c) => [Number(c.consult_id), c])), staff: new Map(staff.map((s) => [Number(s.id), s])), deposits, inbound };
   }
 
   async function channel() {
@@ -188,7 +197,7 @@ function createConsultCards(deps) {
   async function syncOne(r, ctx, ch) {
     const card = ctx.cards.get(Number(r.id)) || null;
     const staffName = (sid) => (sid != null ? ctx.staff.get(Number(sid))?.name : null);
-    const text = render(r, { staffName, deposit: ctx.deposits.get(Number(r.id)) || null });
+    const text = render(r, { staffName, deposit: ctx.deposits.get(Number(r.id)) || null, inbound: ctx.inbound?.get(Number(r.id)) || null });
     const h = hashOf(text);
     const patch = {};
     // 올리다 멈춘 표식(「posting」 · 보내기 전에 프로세스가 죽음) — 풀고 다음 점검에서 다시 올린다
