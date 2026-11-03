@@ -279,3 +279,14 @@ test("§9.32.6 closePendingFor — /연결승인 뒤 같은 계정의 대기 신
   assert.deepEqual([by[91].status, by[92].status], ["pending", "rejected"]);
   assert.deepEqual(await api.closePendingFor({ discordId: null, studentId: 1, actorId: "u" }), []);
 });
+
+test("§9.56 승인 카드 — 이름이 똑같을 때만 바로 승인 버튼 · 다르면 「⚠ 이름 다름」 확인 단계 · 크게 띄우기", () => {
+  const r = require("../link-approve.cjs");
+  assert.equal(r.exactName("홍 길동", "홍길동"), true);
+  assert.equal(r.exactName("홍길동", "홍길순"), false);
+  assert.deepEqual(r.cardButton(71, "홍길동", { id: 9, name: "홍길동" }), { customId: "linkreq_ok:71:9", label: "✅ 홍길동 #9", style: "Success" });
+  assert.deepEqual(r.cardButton(71, "홍길동", { id: 10, name: "홍길순" }), { customId: "linkreq_chk:71:10", label: "⚠ 이름 다름 · 홍길순 #10", style: "Secondary" });
+  assert.match(r.mismatchBanner("홍길동", [{ s: { id: 10, name: "홍길순" } }]), /^## ⚠️ 이름 다름 — 입력 「홍길동」 ≠ 명부 「홍길순」/);
+  assert.equal(r.mismatchBanner("홍길동", [{ s: { id: 9, name: "홍길동" } }]), null);
+  assert.equal(r.mismatchBanner("홍길동", []), null);
+});

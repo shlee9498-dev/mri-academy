@@ -3274,14 +3274,17 @@ if (process.env.DISCORD_TOKEN) {
     return out;
   }
   async function postLinkReqCard(req, user, cands, note = null) {
-    const btns = cands.map((c) =>
-      new ButtonBuilder().setCustomId(`linkreq_ok:${req.id}:${c.s.id}`)
-        .setLabel(`✅ ${c.s.name} #${c.s.id}`.slice(0, 80)).setStyle(ButtonStyle.Success));
+    // 이름이 명부와 똑같은 후보만 바로 승인 버튼 · 다르면 「⚠ 이름 다름」 → 확인 단계(§9.56 · 11/4 #71)
+    const btns = cands.map((c) => {
+      const b = linkRules.cardButton(req.id, req.claimed_name, c.s);
+      return new ButtonBuilder().setCustomId(b.customId).setLabel(b.label).setStyle(ButtonStyle[b.style]);
+    });
     btns.push(new ButtonBuilder().setCustomId(`linkreq_no:${req.id}`)
       .setLabel("❌ 거절").setStyle(ButtonStyle.Danger));
     const payload = {
       content:
         (note ? `${note}\n` : "")
+        + (linkRules.mismatchBanner(req.claimed_name, cands) ? `${linkRules.mismatchBanner(req.claimed_name, cands)}\n` : "")
         + `🔗 **계정 연결 신청 #${req.id}**\n`
         + `· 신청자: <@${user.id}> · 디스코드 이름 \`${user.username || req.discord_tag || "?"}\`\n`
         + `· 입력한 이름: **${req.claimed_name}**\n`
@@ -3688,9 +3691,29 @@ if (process.env.DISCORD_TOKEN) {
     name_mismatch: "누른 후보가 입력한 이름과 똑같지 않아요",
     not_live: "진행 중인 수강생이 아니에요",
   };
+  // 이름 다름 후보(§9.56) — 누른 사람에게만 확인 단계. 「그래도 연결」을 눌러야 승인으로 간다(카드 메시지 id 를 실어 결과를 카드에도 적는다).
   client.on("interactionCreate", async (itx) => {
     if (!itx.isButton()) return;
-    const m = itx.customId.match(/^linkreq_(ok|no):(\d+)(?::(\d+))?$/);
+    const k = itx.customId.match(/^linkreq_chk:(\d+):(\d+)$/);
+    if (!k) return;
+    try {
+      const [q, s] = await Promise.all([
+        sbSelect("student_link_requests", `select=id,claimed_name,status&id=eq.${Number(k[1])}&limit=1`).then((r) => r[0]),
+        sbSelect("students", `select=id,name&id=eq.${Number(k[2])}&limit=1`).then((r) => r[0]),
+      ]);
+      if (!q || !s) return itx.reply({ content: "신청이나 학생을 못 찾았어.", ephemeral: true });
+      const ok = new ButtonBuilder().setCustomId(`linkreq_okc:${q.id}:${s.id}:${itx.message.id}`)
+        .setLabel(`그래도 연결 — ${s.name} #${s.id}`.slice(0, 80)).setStyle(ButtonStyle.Danger);
+      return itx.reply({
+        content: `## ⚠️ 이름이 달라요\n입력한 이름 **「${q.claimed_name}」** · 명부 **「${s.name}」**(#${s.id})\n`
+          + "같은 사람이 맞을 때만 아래 버튼을 눌러 주세요. 다른 사람이면 카드에서 거절하고 `/연결승인` 으로 맞는 학생을 지정하세요",
+        components: [new ActionRowBuilder().addComponents(ok)], ephemeral: true,
+      });
+    } catch (e) { console.error("linkreq_chk", e?.message); }
+  });
+  client.on("interactionCreate", async (itx) => {
+    if (!itx.isButton()) return;
+    const m = itx.customId.match(/^linkreq_(ok|no|okc):(\d+)(?::(\d+))?(?::(\d+))?$/);
     if (!m) return;
     // ↓ deferUpdate 이전이라 reply() 가 맞다(아직 아무 응답도 안 보냈다).
     if (!hasSupabase()) return itx.reply({ content: "DB 연동 준비 전이야.", ephemeral: true });
@@ -3705,6 +3728,7 @@ if (process.env.DISCORD_TOKEN) {
     const who = { ...actor, userId: itx.user.id };
     const mine = (content) => itx.followUp({ content, ephemeral: true });
     try {
+      const cardId = m[1] === "okc" ? m[4] : null;     // 확인 단계에서 왔으면 원래 카드도 결과로 고친다
       const r = m[1] === "no"
         ? await linkApproval.reject({ actor: who, reqId })
         : await linkApproval.approve({ actor: who, reqId, studentId: m[3] ? Number(m[3]) : null });
@@ -3743,12 +3767,15 @@ if (process.env.DISCORD_TOKEN) {
           components: [],
         });
       }
-      await itx.editReply({
+      const done = {
         content: `✅ **#${reqId} 승인** — **${r.student.name}**(#${r.student.id}) ↔ <@${r.applicant}> · 처리 ${actor.label || "운영진"}\n`
+          + (cardId ? "⚠️ 이름이 달랐지만 확인 뒤 연결했어.\n" : "")
           + (r.dm ? "📨 신청자에게 안내 DM을 보냈어(앱 재로그인 안내)."
                   : "⚠️ 안내 DM 을 못 보냈어(DM 차단?). 앱에서 다시 로그인하라고 직접 알려줘."),
         components: [],
-      });
+      };
+      await itx.editReply(done);
+      if (cardId) { try { await itx.channel.messages.edit(cardId, done); } catch (e) { console.error("linkreq_card_edit", e?.message); } }
     } catch (e) {
       console.error("linkreq_button_failed", e?.status || e?.message);
       try { await mine(`#${reqId} 처리 중 오류가 났어 — 버튼을 다시 눌러줘.`); } catch (_) {}
