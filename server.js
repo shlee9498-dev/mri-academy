@@ -7406,6 +7406,9 @@ const bankMatch = require("./bank-match.cjs").createBankMatch({
 });
 bankAlerts.createBankAlerts({ insert: (row) => sbInsert("bank_alerts", row), afterSave: (row) => bankMatch.onSaved(row) })
   .mount(app, { express, limiter: limit("bankAlerts", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
+// 숨고 메시지 알림 받기(§94 · 계약 §9.54) — POST /hooks/inbound-alert · 통장 알림과 같은 비밀 값(BANK_ALERT_SECRET) · 숨고 외 알림은 저장 · 로그 없음
+require("./inbound-alerts.cjs").createInboundAlerts({ sbInsert, sbSelect, sbPatch, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID })
+  .mount(app, { express, limiter: limit("inboundAlerts", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
 // ── 운영 응답용 members 정제 ──
 // 계좌·실명은 gdcup_payouts(owner 전용)에만 존재해야 한다. 그런데 시즌2 레거시 행은
@@ -9326,7 +9329,9 @@ const SCHEMA_OPTIONAL = {
   consults: ["utm_source", "utm_medium", "utm_content", "write_up", "write_up_at", "write_up_by"],   // write_up 3종 = §93(상담 기록 · 계약 §9.53)
   // §93 상담 일정 카드 — 미실행이면 카드 봇만 꺼진 채(채널 글 · 캘린더 · 알림 없음) · 다른 기능은 그대로
   consult_cards: ["consult_id", "message_id", "rendered_hash", "posted_at", "edited_at", "deleted_at", "calendar_event_id", "calendar_hash", "reminded_at", "created_at", "updated_at"],
-  consult_digests: ["day", "count", "created_at"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계) · inflow 는 10/19 실행으로 필수 승격
+  consult_digests: ["day", "count", "created_at"],
+  // §94 숨고 메시지 알림(계약 §9.54) — 미실행이면 POST /hooks/inbound-alert 만 503 table_missing
+  inbound_alerts: ["id", "source", "sender", "customer_hint", "first_line", "received_at", "posted_at", "dedupe_key", "consult_id", "notified_at", "created_at"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계) · inflow 는 10/19 실행으로 필수 승격
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",

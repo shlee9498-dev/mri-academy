@@ -8374,3 +8374,29 @@ alter table public.consult_digests enable row level security;
 --   alter table public.consults drop column if exists write_up_by, drop column if exists write_up_at, drop column if exists write_up;
 --   notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §94  숨고 메시지 알림 — inbound_alerts (2026-11-03 · 영상 세션 주문 · 오너 「숨고 메시지오면 카카오톡 알림으로 바로오긴함 … 둘 다」 · 계약 §9.54 · 소관 MRIacademy)
+--      A 구간(새 표 하나 · 더하기만). 통장 알림 bank_alerts(§88)와 섞지 않는다. 결제 · 정산 무관.
+--      숨고 알림만 저장(서버가 다시 거른다) · 「누가 · 언제 · 첫 문장」 · 연락처 · 계좌 · 메일 모양은 가린 뒤 저장.
+--      ※ PR #643(접수 3 · 4단계)이 적어 둔 DDL 은 실행 때 §95 로 옮긴다.
+-- ============================================================
+-- 94-0) 실행 전 스냅샷(세션 · 읽기만): to_regclass('public.inbound_alerts') null
+create table if not exists public.inbound_alerts (
+  id            bigint generated always as identity primary key,
+  source        text not null check (source in ('soomgo_kakao', 'soomgo_app')),
+  sender        text check (sender is null or char_length(sender) <= 40),
+  customer_hint text check (customer_hint is null or char_length(customer_hint) <= 20),
+  first_line    text check (first_line is null or char_length(first_line) <= 160),
+  received_at   timestamptz not null default now(),
+  posted_at     timestamptz,
+  dedupe_key    text not null unique,
+  consult_id    bigint references public.consults(id),
+  notified_at   timestamptz,
+  created_at    timestamptz not null default now()
+);
+create index if not exists idx_inbound_alerts_consult on public.inbound_alerts (consult_id, received_at desc) where consult_id is not null;
+alter table public.inbound_alerts enable row level security;
+-- 94a) 검증: 칸 11 · 행 0 · RLS on · 정책 0 → notify pgrst, 'reload schema';
+-- 되돌림(행이 있으면 먼저 지휘 확인): drop table if exists public.inbound_alerts; notify pgrst, 'reload schema';
+-- ============================================================

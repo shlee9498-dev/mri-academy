@@ -181,3 +181,9 @@ test("캘린더 서명 — 서비스 계정 키로 RS256 · 꺼짐 조건", () =
   assert.equal(g.createCalendar({ env: {} }), null);
   assert.equal(g.createCalendar({ env: { GOOGLE_CALENDAR_ID: "x", GOOGLE_CALENDAR_SA: "{bad" }, log: { warn() {} } }), null);
 });
+
+test("숨고 새 메시지(§9.54) — 상담을 고친 뒤에 온 것만 「변동 확인 필요」", () => {
+  const inbound = { received_at: "2026-11-03T06:45:00Z", first_line: "다음 주로 미룰 수 있을까요?" };
+  assert.ok(c.render(base({ updated_at: "2026-11-03T06:00:00Z" }), { inbound }).includes("● 변동 확인 필요 · 숨고 새 메시지 11/3 15시 45분 「다음 주로 미룰 수 있을까요?」"));
+  assert.ok(!c.render(base({ updated_at: "2026-11-03T07:00:00Z" }), { inbound }).includes("변동 확인 필요"), "사람이 고친 뒤면 사라짐");
+});
