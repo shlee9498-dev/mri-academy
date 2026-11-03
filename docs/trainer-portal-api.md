@@ -4771,7 +4771,7 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 
 ### 9.55.2 서버 — 다리 A (지금 켜짐)
 - `/api/apply` 가 디코 계정을 `consults.discord_handle`(§95 · 40자)에 저장한다.
-- 1분마다(`site-intake.cjs`) 사이트 신청(`source=site` · `registered_by` 비어 있음 · 11/3 21시 이후 · 24시간 안)을 보고 **원장(오너) DM**:
+- 1분마다(`site-intake.cjs`) 사이트 신청(`source=site` · `registered_by` 비어 있음 · 11/3 20시 30분 이후 · 24시간 안)을 보고 **원장(오너) DM**:
   1. 새 신청 즉시 한 줄 — `🆕 새 레벨 테스트 신청 · #번호 · 디코 … · 배그 … · 플랫폼 · 원하는 것 … · 유입 … · 연락처 있음` (**연락처 값은 쓰지 않는다**)
   2. 통장 알림 짝이 이 신청이면 한 번 더 — `💰 입금 확인 후보 · #번호 · 20,000원 · 입금자 … · 시각 · 디코 … — 지금 바로 연락 필요(확정은 회계 대조)`
      - 통장 짝 찾기가 사이트 레벨 테스트 신청(금액 칸 0)도 레벨 테스트비와 같은 입금이면 후보로 본다(`bank-match.cjs`). **자동 paid 확정 없음.**
