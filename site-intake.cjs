@@ -11,7 +11,9 @@
 const SINCE = "2026-11-03T11:30:00Z";        // 이 시각 뒤 신청만(배포 날 옛 신청에 DM 이 몰리지 않게 · 11/3 20시 30분 KST · 그 뒤 사이트 신청 0건 실측)
 const WINDOW_MS = 24 * 3600_000;
 const NUDGE_MS = [30 * 60_000, 60 * 60_000];  // 일정 없음 재알림 두 번
-const WELCOME_DM_ON = false;                 // ④ 신청자 DM — 오너가 문안을 승인하면 true(PR)
+// ④ 신청자 DM 스위치 — env WELCOME_DM_ON=true 일 때만(오너가 Railway 에서 켜고 끈다 · 문안 승인 11/3 「8번 승인임」). 없거나 다른 값이면 꺼짐.
+const welcomeOn = (env = process.env) => String(env.WELCOME_DM_ON || "").trim().toLowerCase() === "true";
+const WELCOME_DM_ON = false;                 // 기본값(env 없을 때) — 시험 · 계약 표기용
 const WELCOME_TEXT = (nick) => `${nick}님, 안녕하세요! 👋 MRI ACADEMY예요. 레벨 테스트 신청 잘 받았어요\n`
   + "■ 편한 시간대 2~3개를 이 DM 에 남겨 주세요 — 원장이 맞춰서 잡아 드려요\n"
   + "■ 최근 다시보기(리플레이) 2~3판도 준비해 주시면 상담 때 바로 같이 볼 수 있어요\n"
@@ -124,7 +126,7 @@ function createSiteIntake(deps) {
     await card(Number(r.id), cards);
     if (!(await claim(r.id, "welcome_dm_at"))) return { matched: true, already: true };
     let welcomed = false;
-    if (WELCOME_DM_ON && member.send) { try { await member.send(WELCOME_TEXT(member.displayName || member.username)); welcomed = true; } catch (_) { welcomed = false; } }
+    if ((deps.welcomeOn ? deps.welcomeOn() : welcomeOn()) && member.send) { try { await member.send(WELCOME_TEXT(member.displayName || member.username)); welcomed = true; } catch (_) { welcomed = false; } }
     if (deps.ownerDiscordId) await deps.dm(String(deps.ownerDiscordId), `👋 #${r.id} 신청자가 MRI 서버에 들어왔어 · 디코 ${one(r.discord_handle, 40)}${welcomed ? " · 안내 DM 보냄" : ""}`);
     log.log(`[site-intake] join #${r.id}${welcomed ? " welcomed" : ""}`);
     return { matched: true, id: r.id, welcomed };
@@ -132,4 +134,4 @@ function createSiteIntake(deps) {
   return { tick, onMemberJoin };
 }
 
-module.exports = { SINCE, NUDGE_MS, WELCOME_DM_ON, WELCOME_TEXT, handleKey, newLine, depositLine, nudgeLine, nextAction, matchMember, createSiteIntake };
+module.exports = { SINCE, NUDGE_MS, WELCOME_DM_ON, welcomeOn, WELCOME_TEXT, handleKey, newLine, depositLine, nudgeLine, nextAction, matchMember, createSiteIntake };

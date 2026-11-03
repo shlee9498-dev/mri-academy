@@ -8731,7 +8731,9 @@ require("./owner-staff-dm.cjs").mountOwnerStaffDm(app, {
       sbSelect, sbPatch, sbInsert, getClient: () => botClient, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID, calendar,
     });
     // 사이트 신청 → 원장 즉시 연락(§9.55) — 새 신청 · 입금 후보 · 30분 · 60분 재알림 · MRI 서버 입장 짝
-    const siteIntake = require("./site-intake.cjs").createSiteIntake({ sbSelect, sbPatch, sbInsert, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID });
+    const siteIntakeMod = require("./site-intake.cjs");
+    const siteIntake = siteIntakeMod.createSiteIntake({ sbSelect, sbPatch, sbInsert, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID });
+    console.log(`[site-intake] 환영 DM ${siteIntakeMod.welcomeOn() ? "켜짐(WELCOME_DM_ON=true)" : "꺼짐(WELCOME_DM_ON 없음 · true 일 때만 켜짐)"}`);
     setTimeout(() => {
       const run = () => cards.tick().catch((e) => console.error("[consult-card] tick", e?.status || e?.message));
       const runIntake = () => siteIntake.tick().catch((e) => console.error("[site-intake] tick", e?.status || e?.message));

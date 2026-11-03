@@ -2,7 +2,7 @@
 // ═══════════════ 구글 캘린더 쓰기(DB → 캘린더 단방향) — 서비스 계정 · 의존성 0 (계약 trainer-portal-api §9.53.3) ═══════════════
 // env(오너가 Railway 서버 서비스에 넣는다 · 없으면 꺼짐):
 //   GOOGLE_CALENDAR_ID  — 쓸 캘린더 id(오너 캘린더 설정 「캘린더 통합」의 캘린더 ID)
-//   GOOGLE_CALENDAR_SA  — 서비스 계정 키 JSON 통째(client_email · private_key). 그 client_email 을 캘린더 「특정 사용자와 공유」에
+//   GOOGLE_CALENDAR_SA  — 서비스 계정 키 JSON 파일 내용 통째(또는 그 base64 한 줄 · client_email · private_key). 그 client_email 을 캘린더 「특정 사용자와 공유」에
 //                         「일정 변경」 권한으로 넣어야 쓸 수 있다.
 // 읽지 않는다 · 지우지 않는다 — 만들기(insert) · 고치기(patch)만. 취소는 제목 앞 「[취소]」로 남긴다.
 const crypto = require("crypto");
@@ -16,11 +16,22 @@ function signedAssertion(sa, nowSec) {
   return `${head}.${body}.${b64u(sig)}`;
 }
 
+// 키 값 읽기 — ① 키 JSON 파일 내용 통째(「{」로 시작 · 여러 줄 그대로 붙여도 됨) ② 그 내용을 base64 로 바꾼 한 줄. 둘 다 받는다.
+//   private_key 의 줄바꿈이 「\\n」 글자로 들어와도 실제 줄바꿈으로 고친다.
+function readSa(raw) {
+  const v = String(raw || "").trim();
+  if (!v) return null;
+  const text = v.startsWith("{") ? v : Buffer.from(v, "base64").toString("utf8");
+  const sa = JSON.parse(text);
+  if (sa && typeof sa.private_key === "string") sa.private_key = sa.private_key.replace(/\\n/g, "\n");
+  return sa;
+}
+
 // env 가 없거나 키가 깨졌으면 null(꺼짐) — 이유는 한 번만 로그
 function createCalendar({ env = process.env, fetchImpl = globalThis.fetch, now = () => Date.now(), log = console } = {}) {
   const calId = env.GOOGLE_CALENDAR_ID;
   let sa = null;
-  try { sa = env.GOOGLE_CALENDAR_SA ? JSON.parse(env.GOOGLE_CALENDAR_SA) : null; } catch (_) { log.warn("[calendar] GOOGLE_CALENDAR_SA JSON 아님 — 꺼짐"); return null; }
+  try { sa = readSa(env.GOOGLE_CALENDAR_SA); } catch (_) { log.warn("[calendar] GOOGLE_CALENDAR_SA 를 읽지 못함(JSON 통째 또는 base64) — 꺼짐"); return null; }
   if (!calId || !sa || !sa.client_email || !sa.private_key) return null;
   let tok = null, tokExp = 0;
   async function token() {
@@ -46,4 +57,4 @@ function createCalendar({ env = process.env, fetchImpl = globalThis.fetch, now =
   return { upsert, clientEmail: sa.client_email };
 }
 
-module.exports = { createCalendar, signedAssertion, SCOPE };
+module.exports = { createCalendar, signedAssertion, readSa, SCOPE };

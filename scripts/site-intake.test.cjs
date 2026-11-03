@@ -40,7 +40,9 @@ test("서버 입장 짝 — @ · #1234 · 대소문자 무시 · 둘이면 짝 �
   assert.equal(s.matchMember(rows, { username: "gildong_01" }).id, 1);
   assert.equal(s.matchMember(rows, { username: "x", globalName: "OTHER" }).id, 2);
   assert.equal(s.matchMember([...rows, row({ id: 3, discord_handle: "gildong_01" })], { username: "gildong_01" }), null);
-  assert.equal(s.WELCOME_DM_ON, false, "신청자 DM 은 꺼진 채 배포");
+  assert.equal(s.WELCOME_DM_ON, false, "env 없으면 꺼짐");
+  assert.equal(s.welcomeOn({}), false); assert.equal(s.welcomeOn({ WELCOME_DM_ON: "1" }), false);
+  assert.equal(s.welcomeOn({ WELCOME_DM_ON: " TRUE " }), true);
 });
 
 function harness(rows, { alerts = [], now = NOW } = {}) {
@@ -69,4 +71,19 @@ test("끝까지 — 1분 점검: 새 신청 DM 1통 → 같은 점검 다시 돌
   z.db.consult_cards.push({ consult_id: 40, intake_notified_at: "x", intake_nudges: 0 });
   await z.h.tick(); await z.h.tick();
   assert.equal(z.dms.length, 1); assert.match(z.dms[0], /^⏰ #40/);
+});
+
+test("서버 입장 — 스위치 켜짐이면 신청자 DM 1통 + 원장 한 줄 · 꺼짐이면 원장 한 줄만", async () => {
+  for (const on of [true, false]) {
+    const sent = [], dms = [], cards = [];
+    const h = s.createSiteIntake({ now: () => NOW, ownerDiscordId: "1", log: { log() {} }, welcomeOn: () => on,
+      dm: async (_t, x) => { dms.push(x); return true; },
+      sbSelect: async () => [row({ id: 7 })],
+      sbInsert: async (_t, r) => { if (cards.some((x) => x.consult_id === r.consult_id)) throw Object.assign(new Error("dup"), { status: 409 }); cards.push({ ...r }); },
+      sbPatch: async (_t, f, p) => { const c = cards.find((x) => x.consult_id === 7 && x.welcome_dm_at == null); if (!c) return []; Object.assign(c, p); return [c]; } });
+    const r = await h.onMemberJoin({ username: "gildong_01", send: async (t) => { sent.push(t); } });
+    assert.equal(r.welcomed, on); assert.equal(sent.length, on ? 1 : 0); assert.equal(dms.length, 1);
+    assert.match(dms[0], /^👋 #7 신청자가 MRI 서버에 들어왔어/);
+    assert.equal((await h.onMemberJoin({ username: "gildong_01", send: async (t) => { sent.push(t); } })).already, true, "한 번만");
+  }
 });
