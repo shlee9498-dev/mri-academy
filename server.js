@@ -6052,6 +6052,8 @@ app.post("/api/apply", async (req, res) => {
       if (has("playtime")) row.playtime = clip(b.playtime, 80);
       if (has("focus")) row.focus = clip(b.focus, 200);
       if (has("stats_consent")) row.stats_consent = String(b.statsConsent) === "동의";
+      // 디코 계정 — 신청서 필수 칸인데 종전에는 웹훅 · 시트로만 나가고 DB 에 없었다(§9.55 · 11/3 #28 입금 손님에게 먼저 연락할 길이 없었음)
+      if (has("discord_handle")) row.discord_handle = clip(String(b.discord).trim(), 40) || null;
       const memoParts = [];
       if (has("inflow")) row.inflow = inflow || null;
       else if (inflow) memoParts.push(`유입: ${inflow}`);
@@ -8728,9 +8730,20 @@ require("./owner-staff-dm.cjs").mountOwnerStaffDm(app, {
     const cards = consultCards.createConsultCards({
       sbSelect, sbPatch, sbInsert, getClient: () => botClient, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID, calendar,
     });
+    // 사이트 신청 → 원장 즉시 연락(§9.55) — 새 신청 · 입금 후보 · 30분 · 60분 재알림 · MRI 서버 입장 짝
+    const siteIntake = require("./site-intake.cjs").createSiteIntake({ sbSelect, sbPatch, sbInsert, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID });
     setTimeout(() => {
       const run = () => cards.tick().catch((e) => console.error("[consult-card] tick", e?.status || e?.message));
+      const runIntake = () => siteIntake.tick().catch((e) => console.error("[site-intake] tick", e?.status || e?.message));
       run(); setInterval(run, 60_000).unref?.();
+      runIntake(); setInterval(runIntake, 60_000).unref?.();
+      if (botClient && process.env.GUILD_ID) {
+        botClient.on("guildMemberAdd", (m) => {
+          if (String(m.guild?.id) !== String(process.env.GUILD_ID)) return;
+          siteIntake.onMemberJoin({ username: m.user?.username, globalName: m.user?.globalName, displayName: m.displayName, nickname: m.nickname, send: (t) => m.send(t) })
+            .catch((e) => console.error("[site-intake] join", e?.status || e?.message));
+        });
+      }
     }, 30_000).unref?.();
   }
 }
@@ -9326,9 +9339,10 @@ const SCHEMA_OPTIONAL = {
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
-  consults: ["utm_source", "utm_medium", "utm_content", "write_up", "write_up_at", "write_up_by"],   // write_up 3종 = §93(상담 기록 · 계약 §9.53)
+  consults: ["utm_source", "utm_medium", "utm_content", "write_up", "write_up_at", "write_up_by", "discord_handle"],   // discord_handle = §95(사이트 신청 디코 · 계약 §9.55)   // write_up 3종 = §93(상담 기록 · 계약 §9.53)
   // §93 상담 일정 카드 — 미실행이면 카드 봇만 꺼진 채(채널 글 · 캘린더 · 알림 없음) · 다른 기능은 그대로
-  consult_cards: ["consult_id", "message_id", "rendered_hash", "posted_at", "edited_at", "deleted_at", "calendar_event_id", "calendar_hash", "reminded_at", "created_at", "updated_at"],
+  consult_cards: ["consult_id", "message_id", "rendered_hash", "posted_at", "edited_at", "deleted_at", "calendar_event_id", "calendar_hash", "reminded_at", "created_at", "updated_at",
+                  "intake_notified_at", "deposit_dm_at", "intake_nudges", "intake_nudged_at", "welcome_dm_at"],   // intake 5종 = §95(§9.55)
   consult_digests: ["day", "count", "created_at"],
   // §94 숨고 메시지 알림(계약 §9.54) — 미실행이면 POST /hooks/inbound-alert 만 503 table_missing
   inbound_alerts: ["id", "source", "sender", "customer_hint", "first_line", "received_at", "posted_at", "dedupe_key", "consult_id", "notified_at", "created_at"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계) · inflow 는 10/19 실행으로 필수 승격

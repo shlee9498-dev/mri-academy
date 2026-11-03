@@ -372,3 +372,13 @@ test("§9.45 짝 찾기가 터져도 받기는 200 · 저장은 그대로", asyn
   await api.handle({ body: `account=toss\n---\n${ALERTS.tossIn}`, headers: { "x-bank-alert-key": SECRET } }, res);
   assert.deepEqual([res.code, res.body.saved, rows.length], [200, true, 1]);
 });
+
+test("§9.55 사이트 레벨 테스트 신청(금액 칸 0)도 레벨 테스트비와 같은 입금이면 짝 후보", async () => {
+  const h = e2e({ levelFee: 45000, tables: { consults: [{ id: 28, paid_status: "unpaid", fee: 0, source: "site", student_name: "홍길동", kind: "consult", created_at: ago(2) }] } });
+  // 가짜 DB 는 fee 로만 거른다 — 사이트 줄(fee=eq.0)을 읽는지 확인
+  const r = await h.send(ALERTS.tossIn);
+  assert.equal(r.body.match, "matched");
+  assert.deepEqual([h.db.bank_alerts[0].match_kind, h.db.bank_alerts[0].match_ref], ["consult", 28]);
+  assert.ok(h.reads.some(([t, q]) => t === "consults" && /source=eq\.site/.test(q) && /fee=eq\.0/.test(q)));
+  assert.equal(h.db.consults[0].paid_status, "unpaid", "확정하지 않는다");
+});
