@@ -8713,6 +8713,25 @@ require("./owner-staff-dm.cjs").mountOwnerStaffDm(app, {
   },
 });
 
+// ── 상담 일정 카드(계약 §9.53 · 오너 11/3) — consults 한 곳 → #상담일정-공유 글 1개(같은 글 수정) · 구글 캘린더(env 있을 때) · 30분 전 · 09시 요약 DM ──
+//   상담 기록(write_up)은 사람이 쓴다: PUT /api/owner/consults/:id/write-up(오너 토큰) — 봇은 읽어서 글 아래에 붙이기만.
+//   §93 미실행이면 카드는 꺼진 채(로그 한 줄) · 기록 길은 503 schema_missing.
+{
+  const consultCards = require("./consult-cards.cjs");
+  consultCards.mountWriteUp(app, { reqOwner, sbSelect, sbPatch, sbInsert, limit });
+  if (process.env.DISCORD_TOKEN) {
+    const calendar = require("./google-calendar.cjs").createCalendar();
+    console.log(`[consult-card] 캘린더 ${calendar ? `켜짐(${calendar.clientEmail.replace(/^(.{3}).*(@.*)$/, "$1…$2")})` : "꺼짐(GOOGLE_CALENDAR_ID · GOOGLE_CALENDAR_SA 없음)"}`);
+    const cards = consultCards.createConsultCards({
+      sbSelect, sbPatch, sbInsert, getClient: () => botClient, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID, calendar,
+    });
+    setTimeout(() => {
+      const run = () => cards.tick().catch((e) => console.error("[consult-card] tick", e?.status || e?.message));
+      run(); setInterval(run, 60_000).unref?.();
+    }, 30_000).unref?.();
+  }
+}
+
 // ── 운영진 정산·레슨로그 관리 패널 (Phase 0) ──
 // schemaOptional은 기동 시 probeOptionalSchema()가 채우는 같은 객체를 그대로 넘긴다.
 // 참조를 넘기므로 프로브가 끝나면 패널 쪽에서도 값이 보인다(매 요청 재조회 없음).
@@ -9304,7 +9323,10 @@ const SCHEMA_OPTIONAL = {
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
-  consults: ["utm_source", "utm_medium", "utm_content"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계) · inflow 는 10/19 실행으로 필수 승격
+  consults: ["utm_source", "utm_medium", "utm_content", "write_up", "write_up_at", "write_up_by"],   // write_up 3종 = §93(상담 기록 · 계약 §9.53)
+  // §93 상담 일정 카드 — 미실행이면 카드 봇만 꺼진 채(채널 글 · 캘린더 · 알림 없음) · 다른 기능은 그대로
+  consult_cards: ["consult_id", "message_id", "rendered_hash", "posted_at", "edited_at", "deleted_at", "calendar_event_id", "calendar_hash", "reminded_at", "created_at", "updated_at"],
+  consult_digests: ["day", "count", "created_at"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계) · inflow 는 10/19 실행으로 필수 승격
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",
