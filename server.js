@@ -8052,7 +8052,7 @@ app.get("/api/progress-public", async (_req, res) => {
     const snaps = [];
     for (let offset = 0; ; offset += 1000) {             // 매일 쌓인다 — 한 번에 자르지 않고 끝까지 읽는다
       const page = await sbSelect("student_snapshots",
-        "select=student_id,player_name,platform,snapshot_type,season_id,tier,sub_tier,tier_index,rank_point,avg_damage,created_at"
+        "select=student_id,player_name,platform,snapshot_type,season_id,tier,sub_tier,tier_index,rank_point,avg_damage,rounds_played,normal:raw->normal,created_at"
         + `&order=created_at.asc,id.asc&limit=1000&offset=${offset}`);
       snaps.push(...(page || []));
       if (!page || page.length < 1000) break;
@@ -8345,6 +8345,13 @@ async function runStatsSnapshot() {
           } catch (e) { console.error("nick_history", s.name, e?.message); }
         }
         const snap = await pubgRankedByAccount(s.pubg_platform, accountId);
+        // 일반 시즌 스쿼드 전적(§9.52 · 오너 11/3 「경쟁전, 일겜 두개 구분」) — raw.normal 에만 · 실패해도 스냅샷은 그대로 넣는다
+        let normal = null;
+        try {
+          await sleepT(7000);                                               // 계정당 호출이 하나 늘었다 — 10 RPM 보호
+          const nd = await pubgGet(`/shards/${s.pubg_platform}/players/${accountId}/seasons/${snap.seasonId}`, 1800000);
+          normal = publicRows.normalOf(nd?.data?.attributes?.gameModeStats);
+        } catch (e) { if (e?.status !== 404) console.error("snap_normal", s.id, e?.status || e?.message); }
         try {
           await sbInsert("student_snapshots", {
             student_id: s.id, discord_id: null, platform: s.pubg_platform, player_name: s.pubg_name || null,
@@ -8354,7 +8361,7 @@ async function runStatsSnapshot() {
             event_type: "정기",
             tier: snap.tier, sub_tier: snap.subTier, tier_index: snap.tierIdx,
             rank_point: snap.rankPoint, best_rank_point: snap.bestRP, rounds_played: snap.rounds,
-            kda: snap.kda, avg_kills: snap.avgKills, avg_damage: snap.avgDamage, raw: snap,
+            kda: snap.kda, avg_kills: snap.avgKills, avg_damage: snap.avgDamage, raw: { ...snap, normal },
           });
         } catch (e) {
           console.error("snap_insert", s.name, e?.message);

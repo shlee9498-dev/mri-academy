@@ -4632,3 +4632,36 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - **보내기만** — 금액 계산 · 지급 기록 · 잠금 · DB 쓰기 없음(감사 기록 `admin_audit` action `staff.dm` 한 줄만 · 성공 여부 · 메시지 id · 본문).
 - 실패해도 서버가 다시 보내지 않는다(중복 DM 금지) — 결과를 보고 사람이 다시 누른다. 실패한 건은 10분 막힘에 걸리지 않는다.
 - `/api/admin/*` 밖이라 패널 읽기전용 게이트(`PANEL_WRITE` · 423)와 무관.
+
+## 9.52 성장 기록 경쟁전 · 일반 두 줄 — `GET /api/progress-public` 의 `modes` (2026-11-03 · 영상 세션 주문 · 오너 「웹사이트 딜량이랑 판수나오는거 경쟁전, 일겜두개구분해서」) · **계약 + 서버(이 PR) · DDL 없음 · env 없음** · 사이트 화면 = 사이트 세션(이 절 번호대로)
+
+### 9.52.1 왜
+- `student_snapshots`(정기 `tracking`)의 `avg_damage` · `rounds_played` 는 **경쟁전 값만** 들어 있다(실측 11/3 · 1,445행). 일반 전적은 저장하지 않았다.
+- 사이트 성장 기록이 「평균딜 +57 · 2개월」처럼 모드 없이 보여서 오너가 일반 기록으로 오해했다.
+
+### 9.52.2 수집 (서버 · 정기 05:00 배치 `runStatsSnapshot`)
+- 계정마다 경쟁전 조회 다음에 **일반 시즌 전적** 한 번 더: `GET /shards/{platform}/players/{accountId}/seasons/{같은 시즌}` → `gameModeStats`.
+- 스쿼드 기준: TPP `squad` 에 판이 있으면 그것, 없으면 `squad-fpp`(경쟁전 고르는 순서와 같다). 둘 다 0판이면 `null`.
+- 저장: `raw.normal = { mode, rounds, avgDamage, avgKills }` — **기존 칸 그대로 · 새 칸 없음(DDL 없음)**. 일반 조회가 실패해도 경쟁전 스냅샷은 그대로 넣는다(`raw.normal = null`).
+- 호출이 계정당 하나 늘어서 7초를 더 쉰다(PUBG 10 RPM). 배치 시간이 약 1.5배가 된다.
+- 11/3 이전 행에는 `raw.normal` 이 없다 → 일반 줄은 **다음 정기 수집(11/4 05:00)부터** 생기고, 「변화」는 두 번째 기록부터 나온다.
+
+### 9.52.3 응답 — 학생마다 `modes` 추가 (기존 칸은 바꾸지 않음)
+```json
+{ "alias": "세**", "trajectory": [...], "delta": { "dmgDelta": 57, ... },
+  "modes": {
+    "ranked": { "avgDamage": 268, "rounds": 63,  "dmgDelta": 57 },
+    "normal": { "avgDamage": 301, "rounds": 120, "dmgDelta": null }
+  } }
+```
+- `ranked` = 경쟁전(`avg_damage` · `rounds_played`) · `normal` = 일반(`raw.normal`). 기록이 없으면 그 줄이 `null`.
+- `avgDamage` · `rounds` = **끝 기록**의 이번 시즌 값(시즌이 바뀌면 판수는 다시 센다) · `dmgDelta` = 첫 · 끝 기록 평균딜 차이(기록이 하나면 `null`).
+- 기존 `delta.dmgDelta` 는 경쟁전 값 그대로 남는다(옛 화면 호환) — 새 화면은 `modes` 를 쓴다.
+- 수강 성장 등록(baseline → after) 기록도 같은 모양 · 그 기록엔 일반 값이 없어 `normal: null`.
+
+### 9.52.4 사이트(사이트 세션 · 이 절 번호대로)
+- 성장 기록 카드(`gmi-progress.html`) · 메인 성장 기록(`index.html`) — 두 줄로:
+  「경쟁전 · 평균딜 268(+57) · 63판」 / 「일반 · 평균딜 301 · 120판」. **값이 없는 줄은 숨긴다**(빈 줄 · 「준비 중」 금지).
+- 판수 옆 「이번 시즌」 같은 기준 한 마디는 사이트 판단(시즌마다 다시 센다는 사실만 맞으면 된다).
+- 트레이너 카드 「누적 ○판」은 **레슨 판수**다 → 「레슨 ○판」으로 문구만 명확히(숫자 그대로).
+- 손대지 않음: 결제 금액 · 판수 · 정산 계산 · 잠금월 · 기존 칸.
