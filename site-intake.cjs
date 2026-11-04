@@ -117,7 +117,8 @@ function createSiteIntake(deps) {
   }
 
   // ④ MRI 서버 입장 — 짝이 맞으면 원장에게 한 줄(늘) · 신청자 DM 은 WELCOME_DM_ON 일 때만 · 한 번만(welcome_dm_at)
-  async function onMemberJoin(member) {
+  //   opts.dmSent — §9.57 맞춤 DM 이 이미 갔으면 웰컴 DM 은 보내지 않는다(한 사람에게 두 통 없음) · 원장 줄에 「맞춤 DM 보냄」
+  async function onMemberJoin(member, opts = {}) {
     const since = new Date(now() - 7 * 86400_000).toISOString();
     const rows = await deps.sbSelect("consults", `select=id,discord_handle,status,scheduled_at&source=eq.site&registered_by=is.null&status=eq.pending&discord_handle=not.is.null&created_at=gte.${since}&limit=100`);
     const r = matchMember(rows, member);
@@ -126,8 +127,8 @@ function createSiteIntake(deps) {
     await card(Number(r.id), cards);
     if (!(await claim(r.id, "welcome_dm_at"))) return { matched: true, already: true };
     let welcomed = false;
-    if ((deps.welcomeOn ? deps.welcomeOn() : welcomeOn()) && member.send) { try { await member.send(WELCOME_TEXT(member.displayName || member.username)); welcomed = true; } catch (_) { welcomed = false; } }
-    if (deps.ownerDiscordId) await deps.dm(String(deps.ownerDiscordId), `👋 #${r.id} 신청자가 MRI 서버에 들어왔어 · 디코 ${one(r.discord_handle, 40)}${welcomed ? " · 안내 DM 보냄" : ""}`);
+    if (!opts.dmSent && (deps.welcomeOn ? deps.welcomeOn() : welcomeOn()) && member.send) { try { await member.send(WELCOME_TEXT(member.displayName || member.username)); welcomed = true; } catch (_) { welcomed = false; } }
+    if (deps.ownerDiscordId) await deps.dm(String(deps.ownerDiscordId), `👋 #${r.id} 신청자가 MRI 서버에 들어왔어 · 디코 ${one(r.discord_handle, 40)}${opts.dmSent ? " · 맞춤 DM 보냄" : welcomed ? " · 안내 DM 보냄" : ""}`);
     log.log(`[site-intake] join #${r.id}${welcomed ? " welcomed" : ""}`);
     return { matched: true, id: r.id, welcomed };
   }

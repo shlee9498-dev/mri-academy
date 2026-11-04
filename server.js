@@ -1032,6 +1032,7 @@ let reconcilePortalCard = null;
 // 신청 창구 카드 · DM(docs/intake-design.md §6 · PR-2) — 봇 블록이 intake-cards.cjs 로 채운다. 봇이 없으면 null
 // (신청은 그래도 저장된다 — 카드 · 접수 DM 만 안 간다). 제출 훅 · cronTick 재알림 · PR-3 트레이너 라우트가 이것을 부른다.
 let intakeFlow = null;
+let intakeDm = null;     // 웹 신청 첫 연락 봇 DM(§9.57 · intake-dm.cjs) — 아래 상담 일정 카드 블록에서 만들고 /api/apply · DM 중계 · 서버 입장이 쓴다
 // 디스코드 피드백 이관 드라이런(10/1 어플 · 1순위) — 봇이 준비되면 위 ready 에서 한 번 돈다. 결과 = ops_state 'feedback_import:scan'.
 //   token 을 바꾸면 다음 기동에 다시 돈다. LESSON_GUILD_ID(GmI 클랜)는 읽지 않는다.
 const FEEDBACK_SCAN_TOKEN = "2026-10-01a";
@@ -3565,6 +3566,13 @@ if (process.env.DISCORD_TOKEN) {
       if (out.relayed) console.log(`[intake] 신청 #${out.appId} DM 중계 → ${out.n}명`);
     } catch (e) { console.error("intake_relay", e?.status || "", e?.message); }
   });
+  // 웹 신청 봇 DM(§9.57)에 온 답장 → 그 신청 카드 스레드(봇이 DM 을 보낸 사람만 · 본문은 로그에 남기지 않는다)
+  client.on("messageCreate", async (msg) => {
+    if (msg.author?.bot || msg.guild || !intakeDm || !hasSupabase()) return;
+    try {
+      await intakeDm.relayIn({ authorId: msg.author.id, text: msg.content || "", attachments: [...(msg.attachments?.values?.() || [])].map((a) => a.url) });
+    } catch (e) { console.error("intake_dm_relay", e?.status || e?.code || "", e?.message); }
+  });
 
   // 연결 신청 접수 — /연결신청(디스코드)과 앱의 연결 대기 화면이 **같은 함수**를 쓴다.
   // 두 입구가 갈라지면 한쪽만 고쳐져 어긋나므로 한 벌로 둔다(2026-09-26 오너 지시).
@@ -6052,6 +6060,7 @@ app.post("/api/apply", async (req, res) => {
     //   · 신규 컬럼은 오너가 DDL을 실행한 뒤에야 생긴다. schemaOptional로 존재하는 컬럼만 실어
     //     보내므로, DDL 실행 전 배포에서도 기본 컬럼으로 저장이 시작된다(전량 유실 방지).
     //   · 전화번호는 여기까지만 온다. 수강생 포털 API 응답에는 어떤 경로로도 넣지 않는다.
+    let savedConsultId = null;   // §9.57 첫 연락 DM 이 쓴다
     try {
       // ⚠️ 2026-09-17 실측 정정: §22d 7컬럼이 9/4 에 REQUIRED_SCHEMA 로 승격되면서 probeOptionalSchema 가 더는
       //   프로브하지 않아 has() 가 전부 false 였다 — 9/4 이후 신청 3건(8·9·10)이 source·phone·platform·game_nick·
@@ -6091,13 +6100,14 @@ app.post("/api/apply", async (req, res) => {
       if (!has("game_nick")) memoParts.push(`${clip(b.platform, 10)}/${clip(b.nickname, 40)}`);
       if (b.memo && String(b.memo).trim()) memoParts.push(clip(b.memo, 300));
       if (memoParts.length) row.memo = memoParts.join(" · ").slice(0, 500);
-      await sbInsert("consults", row);
+      savedConsultId = (await sbInsert("consults", row))?.id || null;
     } catch (e) {
       // 값은 로그에 남기지 않는다(신청자 개인정보). 실패 사실과 코드만.
       console.error("apply_consult_save_failed", e?.message);
     }
 
-    const wr = await fetch(WEBHOOK, {
+    // wait=true — 카드 글 번호(id · channel_id)를 받아 §9.57 이 같은 글에 「봇 DM 보냄」 한 줄을 고쳐 단다
+    const wr = await fetch(WEBHOOK + (WEBHOOK.includes("?") ? "&" : "?") + "wait=true", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ username: "수강신청봇", embeds: [embed] }),
@@ -6105,6 +6115,14 @@ app.post("/api/apply", async (req, res) => {
     if (!wr.ok) {
       console.error("webhook_error", wr.status);
       return res.status(502).json({ error: "webhook_failed" });
+    }
+    const card = await wr.json().catch(() => null);
+    // 웹 신청 첫 연락 — 봇 맞춤 DM(§9.57 · 스위치 ops_state 'intake_dm:on'). 기다리지 않는다(신청 응답을 늦추지 않음 · 실패는 로그 한 줄).
+    if (intakeDm && savedConsultId) {
+      intakeDm.onApply({
+        consultId: savedConsultId, handle: String(b.discord || ""), card, bpiText,
+        fields: { nick: String(b.discord || "").trim().replace(/^@/, "").replace(/#\d{4}$/, ""), tier: b.tier, focus: b.focus, memo: b.memo, playtime: b.playtime },
+      }).catch((e) => console.error(`[intake-dm] #${savedConsultId}`, e?.status || e?.message));
     }
     // 상담신청 매출관리 시트에도 append (best-effort — 실패해도 신청 자체는 성공 처리)
     if (process.env.SHEET_WEBHOOK_URL) {
@@ -8761,15 +8779,28 @@ require("./owner-staff-dm.cjs").mountOwnerStaffDm(app, {
     const siteIntakeMod = require("./site-intake.cjs");
     const siteIntake = siteIntakeMod.createSiteIntake({ sbSelect, sbPatch, sbInsert, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID });
     console.log(`[site-intake] 환영 DM ${siteIntakeMod.welcomeOn() ? "켜짐(WELCOME_DM_ON=true)" : "꺼짐(WELCOME_DM_ON 없음 · true 일 때만 켜짐)"}`);
+    // 웹 신청 첫 연락 봇 DM(§9.57) — 스위치는 ops_state 'intake_dm:on'(행 없음 = 꺼짐 · on=false 면 test 아이디만)
+    intakeDm = require("./intake-dm.cjs").createIntakeDm({
+      sbSelect, sbInsert, sbPatch, getClient: () => botClient,
+      opsGet: async (key) => (await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`))[0]?.value || null,
+      guildIds: [process.env.GUILD_ID, process.env.LESSON_GUILD_ID].filter(Boolean),
+      webhookUrl: process.env.DISCORD_APPLY_WEBHOOK,
+      levelTestWon: async () => (await require("./price-book.cjs").loadPrices()).PRICES.levelTest,
+    });
     setTimeout(() => {
       const run = () => cards.tick().catch((e) => console.error("[consult-card] tick", e?.status || e?.message));
       const runIntake = () => siteIntake.tick().catch((e) => console.error("[site-intake] tick", e?.status || e?.message));
       run(); setInterval(run, 60_000).unref?.();
       runIntake(); setInterval(runIntake, 60_000).unref?.();
+      const runDm = () => intakeDm.tick().catch((e) => console.error("[intake-dm] tick", e?.status || e?.message));
+      setInterval(runDm, 60_000).unref?.();
       if (botClient && process.env.GUILD_ID) {
         botClient.on("guildMemberAdd", (m) => {
           if (String(m.guild?.id) !== String(process.env.GUILD_ID)) return;
-          siteIntake.onMemberJoin({ username: m.user?.username, globalName: m.user?.globalName, displayName: m.displayName, nickname: m.nickname, send: (t) => m.send(t) })
+          // §9.57 대기 중인 웹 신청이면 맞춤 DM 먼저 → 짝이 맞았으면 웰컴 DM 은 건너뛴다(한 사람에게 두 통 없음)
+          intakeDm.onMemberJoin({ id: m.user?.id, username: m.user?.username, send: (t) => m.send(t) })
+            .catch((e) => { console.error("[intake-dm] join", e?.status || e?.message); return {}; })
+            .then((r) => siteIntake.onMemberJoin({ username: m.user?.username, globalName: m.user?.globalName, displayName: m.displayName, nickname: m.nickname, send: (t) => m.send(t) }, { dmSent: r?.matched === true }))
             .catch((e) => console.error("[site-intake] join", e?.status || e?.message));
         });
       }
@@ -9382,6 +9413,8 @@ const SCHEMA_OPTIONAL = {
   consult_digests: ["day", "count", "created_at"],
   // §94 숨고 메시지 알림(계약 §9.54) — 미실행이면 POST /hooks/inbound-alert 만 503 table_missing
   inbound_alerts: ["id", "source", "sender", "customer_hint", "first_line", "received_at", "posted_at", "dedupe_key", "consult_id", "notified_at", "created_at"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계) · inflow 는 10/19 실행으로 필수 승격
+  // §97 웹 신청 첫 연락 봇 DM(계약 §9.57) — 미실행이면 onApply 가 insert 에서 실패해 DM 0통(로그 한 줄) · 신청 저장 · 웹훅은 그대로
+  intake_dms: ["consult_id", "handle", "dm_text", "status", "discord_id", "card_msg_id", "card_channel_id", "thread_id", "sent_at", "flagged_at", "created_at", "updated_at"],
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",

@@ -8432,3 +8432,31 @@ alter table public.review_feedback     add column if not exists mirrored_at time
 -- 되돌림: alter table public.review_feedback drop column if exists mirrored_at; alter table public.lesson_reviews drop column if exists mirrored_at;
 --   alter table public.feedback_channel_map drop column if exists is_group; notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §97  웹 신청 첫 연락 봇 DM — intake_dms (2026-11-04 · 총무 주문 · 오너 「자동으로 연동해둬 그사람에맞도록 시스템답변짜서」 · 계약 §9.57 · 소관 MRIacademy)
+--      A 구간(새 표만). 판수 · 결제 · 정산 무관. 같은 신청에 DM 한 번 = consult_id 유일. ※ PR #643(접수 3 · 4단계) DDL 은 실행 때 §98 로 옮긴다.
+-- ============================================================
+-- 97-0) 실행 전 스냅샷(세션 · 읽기만): to_regclass('public.intake_dms') is null
+create table if not exists public.intake_dms (
+  consult_id      bigint primary key references public.consults(id) on delete cascade,   -- 신청 1건 = 줄 1개 = DM 최대 1통
+  handle          text not null check (char_length(handle) <= 40),                         -- 신청서의 디코 아이디(짝 찾기용)
+  dm_text         text not null check (char_length(dm_text) <= 2000),                       -- 보낼(보낸) 맞춤 DM 본문 — 틀 + 칸 채우기
+  status          text not null default 'waiting' check (status in ('waiting','sending','sent','blocked','failed','flagged')),
+  discord_id      text,                                                                      -- 찾은 사람(보내기 직전에 적는다)
+  card_msg_id     text,                                                                      -- #웹신청알림 카드 글(웹훅 wait=true)
+  card_channel_id text,
+  thread_id       text,                                                                      -- 답장을 넘기는 카드 스레드
+  sent_at         timestamptz,
+  flagged_at      timestamptz,                                                               -- 48시간 미입장 표시
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+create index if not exists ix_intake_dms_status on public.intake_dms (status, created_at);
+create index if not exists ix_intake_dms_discord on public.intake_dms (discord_id) where discord_id is not null;
+alter table public.intake_dms enable row level security;   -- 정책 없음 = service_role 만
+-- 97a) 검증: 칸 12 · 행 0 · RLS on · 정책 0 (2026-11-04 세션 실행 · 확인) → notify pgrst, 'reload schema';
+-- 스위치(DDL 아님 · 세션 SQL): insert into public.ops_state(key, value) values ('intake_dm:on', jsonb_build_object('on', false, 'test', jsonb_build_array('<시험 아이디>')))
+--   on conflict (key) do update set value = excluded.value;   -- 켜기(오너 문구 OK 뒤): value = '{"on": true}'
+-- 되돌림(행이 있으면 먼저 지휘 확인): drop table if exists public.intake_dms; notify pgrst, 'reload schema';
+-- ============================================================
