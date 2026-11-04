@@ -1341,6 +1341,21 @@ if (process.env.DISCORD_TOKEN) {
     // 이관 실행 요청 확인(§57) — 1분마다 ops_state 한 번 읽는다. 새 요청이 없으면 그걸로 끝난다.
     if (hasSupabase()) setInterval(() => feedbackImport.poll()
       .catch((e) => console.error("fbimport_poll", e?.status || "", e?.message)), 60_000);
+    // 역할 단위 봇 DM(계약 §9.58) — ops_state 'role_dm:request' 를 1분마다 한 번 읽는다(미리보기 · 오너 「보내」 뒤 발송 · 같은 문안 한 사람 한 번)
+    if (hasSupabase() && process.env.GUILD_ID) {
+      const roleDm = require("./role-dm.cjs").createRoleDm({
+        sbSelect, guildId: process.env.GUILD_ID,
+        opsGet: async (key) => (await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`))[0]?.value || null,
+        opsSet: (key, value) => sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key"),
+        listMembers: async (gid) => {
+          const g = client.guilds.cache.get(String(gid)) || await client.guilds.fetch(String(gid));
+          const all = await g.members.fetch();
+          return [...all.values()].map((m) => ({ id: m.user?.id, bot: !!m.user?.bot, nick: m.displayName || m.user?.globalName || m.user?.username,
+            roles: [...m.roles.cache.values()].map((r) => r.name), send: (t) => m.send(t) }));
+        },
+      });
+      setInterval(() => roleDm.poll().catch((e) => console.error("role_dm_poll", e?.status || "", e?.message)), 60_000);
+    }
     // 디코 ↔ 앱 복기(계약 §9.46.3 · §9.46.4) — 점검 · 백필 = 1분 뒤 첫 회 · 10분마다 / 거울 카드 = 30초마다
     if (hasSupabase() && reviewSync) {
       setTimeout(() => reviewSync.sweep(), 60_000);

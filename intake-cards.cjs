@@ -118,9 +118,10 @@ function recipientsFor(app, staff, ownerDiscordId) {
   const owner = ownerOf(staff, ownerDiscordId);
   if (owner) out.push({ staffId: owner.id, discordId: owner.discord_id, view: "owner" });
   const pref = app.preferred_trainer_id != null ? live.find((s) => s.id === app.preferred_trainer_id) : null;
-  // 신규 배정 중지(ops_state 'assign:paused' · 오너 11/4 「준구는 배정된인원들만한대추가로안받고」)인 트레이너는 새 신청 카드를 받지 않는다 — 원하는 트레이너로 골랐어도 나머지에게 간다
+  // 신규 배정 중지(ops_state 'assign:paused' · 오너 11/4)인 트레이너는 「누구든」 신청 카드를 받지 않는다.
+  //   단 신청자가 그 트레이너를 직접 골랐으면 그 사람에게 간다(오너 11/5 「준구를찾는사람있으면 그건 준구가할거야」).
   const open = live.filter((s) => s.role === "trainer" && !s.paused);
-  const trainers = pref && !pref.paused ? [pref] : open;
+  const trainers = pref ? [pref] : open;
   for (const t of trainers) {
     if (!out.some((o) => o.staffId === t.id)) out.push({ staffId: t.id, discordId: t.discord_id, view: "trainer" });
   }
@@ -336,7 +337,11 @@ function mountIntakeFlow(deps) {
   async function claim({ appId, actorDiscordId, actorStaffId }) {
     const actor = await actorOf({ actorDiscordId, actorStaffId });
     if (!actor) return { ok: false, code: "not_staff" };
-    if ((await pausedIds()).has(Number(actor.id))) return { ok: false, code: "paused" };
+    // 신규 배정 중지 트레이너는 자기를 직접 고른 신청만 맡는다(오너 11/5)
+    if ((await pausedIds()).has(Number(actor.id))) {
+      const cur = await loadApp(appId);
+      if (!cur || Number(cur.preferred_trainer_id) !== Number(actor.id)) return { ok: false, code: "paused" };
+    }
     const t = iso();
     const rows = await sbPatch("intake_applications", `id=eq.${Number(appId)}&status=eq.new&assigned_trainer_id=is.null`,
       { status: "claimed", assigned_trainer_id: actor.id, claimed_at: t, updated_at: t });

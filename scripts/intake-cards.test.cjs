@@ -247,12 +247,12 @@ test("수신자 — 오너 늘 · 원하는 트레이너 한 명 · 「누구든
   assert.deepEqual(ids({ preferred_trainer_id: 6 }), ["4:owner", "2:trainer", "5:trainer"]);    // 고른 사람이 쉬면 전원
 });
 
-test("수신자 — 신규 배정 중지(paused) 트레이너는 새 신청 카드를 안 받는다 · 그 사람을 골랐어도 나머지에게", () => {
+test("수신자 — 신규 배정 중지(paused) 트레이너는 「누구든」 카드를 안 받는다 · 그 사람을 직접 고르면 그 사람에게", () => {
   fresh();
   const staff = db.staff.map((x) => (x.id === 2 ? { ...x, paused: true } : x));
   const ids = (a) => recipientsFor(a, staff, OWNER).map((r) => `${r.staffId}:${r.view}`);
   assert.deepEqual(ids({ preferred_trainer_id: null }), ["4:owner", "5:trainer"]);
-  assert.deepEqual(ids({ preferred_trainer_id: 2 }), ["4:owner", "5:trainer"]);
+  assert.deepEqual(ids({ preferred_trainer_id: 2 }), ["4:owner", "2:trainer"]);
   assert.deepEqual(ids({ preferred_trainer_id: 5 }), ["4:owner", "5:trainer"]);
 });
 
