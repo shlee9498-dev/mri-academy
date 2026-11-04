@@ -10,10 +10,14 @@ const SLOTS = 5;
 const HIST_MAX = 30;
 const LIVE_REFRESH_MS = 60_000;
 const DEFAULT_IGN = "GmI_mriacademy";
+// 미션(§3 · 11/5 오너 「목요일 오후 6시반 ~ 금요일 오후 6시 반까지 노방종으로 서바이버 달성하기」) — 기본값은 이번 미션 그대로, 꺼진 채로 시작
+const MISSION_DEFAULT = Object.freeze({ on: false, title: "24시간 서바이버 미션", target: 3700,
+  startAt: "2026-11-05T09:30:00.000Z", endAt: "2026-11-06T09:30:00.000Z", startRp: null,
+  autoStartRp: null, reachedAt: null, reachedRp: null, lastRp: null });
 
 function blank(now) {
   return { v: 1, mode: "normal", ign: DEFAULT_IGN, since: null, startRp: null, adj: { w: 0, t: 0, l: 0 }, mates: null,
-    placement: { since: null, manual: Array(SLOTS).fill(null), tier: null }, updatedAt: new Date(now).toISOString() };
+    placement: { since: null, manual: Array(SLOTS).fill(null), tier: null }, mission: { ...MISSION_DEFAULT }, updatedAt: new Date(now).toISOString() };
 }
 const clampInt = (x, lo, hi) => { const n = Math.round(Number(x)); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null; };
 
@@ -62,6 +66,42 @@ function normalView(state, live) {
     tier: live && live.now ? live.now.tier : null, subTier: live && live.now ? live.now.subTier : null,
     mates: Array.isArray(state.mates) ? state.mates : (live && live.last) || [] };
 }
+// 미션 칸 — 단계: before(시작 전) · placement(배치 중) · running · achieved(목표 넘김 · 시각 고정) · ended(종료 시각 지남)
+//   점수는 일반 줄과 같은 값(live.now.rp) · 시작 점수 = 손 입력 > 배치 끝난 뒤 첫 점수(autoStartRp)
+function missionView(state, live, pv, now) {
+  const m = { ...MISSION_DEFAULT, ...(state.mission || {}) };
+  if (!m.on) return { on: false };
+  const start = Date.parse(m.startAt), end = Date.parse(m.endAt);
+  const nowRp = live && live.now && live.now.rp != null ? live.now.rp : null;
+  const startRp = m.startRp != null ? m.startRp : m.autoStartRp;
+  const placing = state.mode === "placement" && !(pv && pv.finished);
+  let phase = "running";
+  if (m.reachedAt) phase = "achieved";
+  else if (now >= end) phase = "ended";
+  else if (now < start) phase = "before";
+  else if (placing) phase = "placement";
+  const cur = phase === "ended" ? (m.lastRp != null ? m.lastRp : nowRp) : nowRp;
+  const pct = startRp != null && cur != null && m.target > startRp ? Math.max(0, Math.min(1, (cur - startRp) / (m.target - startRp))) : null;
+  return { on: true, title: m.title, target: m.target, startAt: m.startAt, endAt: m.endAt, serverNow: new Date(now).toISOString(),
+    phase, startRp, startSrc: m.startRp != null ? "manual" : m.autoStartRp != null ? "auto" : null, nowRp: cur, pct,
+    placementPlayed: pv ? pv.summary.played : 0,
+    reachedAt: m.reachedAt, reachedRp: m.reachedRp, elapsedMs: m.reachedAt ? Date.parse(m.reachedAt) - start : null,
+    finalRp: phase === "ended" ? cur : null };
+}
+// 미션 기록 — 시작 점수(자동) · 목표 넘긴 시각 · 마지막 점수를 상태에 남긴다. 바뀐 게 없으면 null
+function missionTrack(state, live, pv, now) {
+  const m = { ...MISSION_DEFAULT, ...(state.mission || {}) };
+  if (!m.on) return null;
+  const start = Date.parse(m.startAt), end = Date.parse(m.endAt);
+  const nowRp = live && live.now && live.now.rp != null ? live.now.rp : null;
+  if (nowRp == null || now < start || now >= end) return null;
+  const patch = {};
+  const placing = state.mode === "placement" && !(pv && pv.finished);
+  if (m.startRp == null && m.autoStartRp == null && !placing) patch.autoStartRp = nowRp;
+  if (m.lastRp !== nowRp) patch.lastRp = nowRp;
+  if (!m.reachedAt && nowRp >= m.target) { patch.reachedAt = new Date(now).toISOString(); patch.reachedRp = nowRp; }
+  return Object.keys(patch).length ? patch : null;
+}
 // 조작 하나 → 새 상태(원본은 안 바꾼다) · 잘못된 요청은 { error }
 function apply(state, body, ctx) {
   const s = JSON.parse(JSON.stringify(state));
@@ -93,6 +133,19 @@ function apply(state, body, ctx) {
     if (!Array.isArray(body.mates)) return { error: "bad_value" };
     s.mates = body.mates.map((x) => String(x).trim().slice(0, 24)).filter(Boolean).slice(0, 3); return { state: s };
   }
+  if (op === "mission") {
+    const m = { ...MISSION_DEFAULT, ...(s.mission || {}) };
+    const before = { target: m.target, startAt: m.startAt, endAt: m.endAt };
+    if (body.on !== undefined) { if (typeof body.on !== "boolean") return { error: "bad_value" }; m.on = body.on; }
+    if (body.title !== undefined) m.title = String(body.title || "").trim().slice(0, 30) || MISSION_DEFAULT.title;
+    if (body.target !== undefined) { const t = clampInt(body.target, 1000, 10000); if (t == null) return { error: "bad_value" }; m.target = t; }
+    for (const k of ["startAt", "endAt"]) if (body[k] !== undefined) { const t = Date.parse(body[k]); if (!Number.isFinite(t)) return { error: "bad_time" }; m[k] = new Date(t).toISOString(); }
+    if (Date.parse(m.endAt) <= Date.parse(m.startAt)) return { error: "bad_time" };
+    if (body.startRp !== undefined) { const v = body.startRp == null || body.startRp === "" ? null : clampInt(body.startRp, 0, 20000); if (body.startRp != null && body.startRp !== "" && v == null) return { error: "bad_value" }; m.startRp = v; }
+    // 목표 · 시각을 바꾸면 기록(달성 시각 · 자동 시작 점수 · 마지막 점수)을 새로 잡는다
+    if (m.target !== before.target || m.startAt !== before.startAt || m.endAt !== before.endAt || body.reset === true) { m.reachedAt = null; m.reachedRp = null; m.autoStartRp = null; m.lastRp = null; }
+    s.mission = m; return { state: s };
+  }
   if (op === "newBroadcast") {
     if (body.confirm !== true) return { error: "confirm_required" };
     const nowRp = ctx.live && ctx.live.now ? ctx.live.now.rp : null;
@@ -114,7 +167,7 @@ function createRankedBoard(deps) {
 
   async function load() {
     if (state) return state;
-    if (!loaded) loaded = (async () => { try { const v = await deps.opsGet(KEY); state = v && v.v === 1 ? { ...blank(now()), ...v } : blank(now()); } catch (_) { state = blank(now()); } loaded = null; return state; })();
+    if (!loaded) loaded = (async () => { try { const v = await deps.opsGet(KEY); state = v && v.v === 1 ? { ...blank(now()), ...v, mission: { ...MISSION_DEFAULT, ...(v.mission || {}) } } : blank(now()); } catch (_) { state = blank(now()); } loaded = null; return state; })();
     return loaded;
   }
   const activeSince = (s) => (s.mode === "placement" ? s.placement.since : s.since);
@@ -144,13 +197,26 @@ function createRankedBoard(deps) {
     return got ? { ...got.body, fetchedAt: new Date(got.at).toISOString() } : null;
   }
   function view(s, live) {
+    const pv = placementView(s, live);
     return { v: s.v, mode: s.mode, ign: s.ign, since: s.since, placementSince: s.placement.since, updatedAt: s.updatedAt,
-      normal: normalView(s, live), placement: placementView(s, live), stale: !!(live && live.stale), liveAt: live ? live.fetchedAt : null, undo: hist.length };
+      normal: normalView(s, live), placement: pv, mission: missionView(s, live, pv, now()),
+      missionCfg: (({ on, title, target, startAt, endAt, startRp }) => ({ on, title, target, startAt, endAt, startRp }))({ ...MISSION_DEFAULT, ...(s.mission || {}) }),
+      stale: !!(live && live.stale), liveAt: live ? live.fetchedAt : null, undo: hist.length };
+  }
+  // 미션 기록은 읽을 때 따라 적는다(바뀐 게 있을 때만 저장 · 되돌리기 기록에는 넣지 않는다)
+  async function track(s, live) {
+    const patch = missionTrack(s, live, placementView(s, live), now());
+    if (!patch) return s;
+    state = { ...s, mission: { ...s.mission, ...patch } };
+    try { await deps.opsSet(KEY, state); } catch (e) { log.error("[ranked-board] mission save", e && (e.status || e.message)); }
+    if (patch.reachedAt) log.log("[ranked-board] mission reached");
+    return state;
   }
 
   async function get(req, res) {
-    const s = await load();
+    let s = await load();
     const live = await liveFor(s, true);
+    s = await track(s, live);
     res.set("Cache-Control", "no-store");
     res.json(view(s, live));
   }
@@ -164,6 +230,10 @@ function createRankedBoard(deps) {
     if (b.op === "undo") {
       if (!hist.length) return res.status(409).json({ error: { code: "nothing_to_undo" } });
       next = hist.pop();
+      // 미션 기록(달성 시각 · 자동 시작 점수 · 마지막 점수)은 읽을 때 따라 적은 값이라 되돌리기로 지우지 않는다 — 미션 설정이 같을 때만
+      const a = s.mission || {}, b2 = next.mission || {};
+      if (a.target === b2.target && a.startAt === b2.startAt && a.endAt === b2.endAt)
+        next = { ...next, mission: { ...b2, autoStartRp: a.autoStartRp, reachedAt: a.reachedAt, reachedRp: a.reachedRp, lastRp: a.lastRp } };
     } else {
       const live = b.op === "newBroadcast" ? await (async () => { const out = await deps.live(s.ign, ""); return out.status === 200 ? out.body : null; })() : null;
       const r = apply(s, b, { now: now(), live });
@@ -188,4 +258,4 @@ function createRankedBoard(deps) {
   return { mount, get, post };
 }
 
-module.exports = { KEY, SLOTS, blank, wtl, placementView, normalView, apply, createRankedBoard };
+module.exports = { KEY, SLOTS, MISSION_DEFAULT, blank, wtl, placementView, normalView, missionView, missionTrack, apply, createRankedBoard };

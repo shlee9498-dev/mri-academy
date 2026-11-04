@@ -61,11 +61,29 @@
   @keyframes pop{0%{transform:translateY(30%);opacity:.2}100%{transform:none;opacity:1}}
   .stale{position:absolute;right:6px;top:4px;width:6px;height:6px;border-radius:50%;background:var(--ink-3);opacity:.6}
   .hide{display:none!important}
-  @media (prefers-reduced-motion:reduce){.pop{animation:none}}
+  /* 미션 칸(§3) — 남은 시간 · 현재/목표 · 진행 막대 */
+  .mission{gap:16px;background:rgba(245,197,24,.07)}
+  .mt{display:flex;flex-direction:column;justify-content:center;gap:2px}
+  .mt .lab{font-size:calc(var(--h)*.19);color:var(--gold);letter-spacing:.03em}
+  .clock{font-family:var(--num);font-weight:700;font-size:calc(var(--h)*.36);line-height:1;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .mp{display:flex;flex-direction:column;justify-content:center;gap:5px;min-width:calc(var(--h)*3.4)}
+  .mp .num{font-family:var(--num);font-weight:700;font-size:calc(var(--h)*.28);line-height:1;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+  .mp .num b{color:var(--gold);font-weight:700}
+  .track{height:calc(var(--h)*.12);border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden}
+  .fill{height:100%;width:100%;transform:scaleX(0);transform-origin:left center;background:var(--gold);border-radius:99px;transition:transform .8s cubic-bezier(.2,.8,.2,1)}
+  .mmsg{font-weight:800;font-size:calc(var(--h)*.30);color:var(--gold);line-height:1}
+  .mmsg.dim{color:var(--ink-2)}
+  @media (prefers-reduced-motion:reduce){.pop{animation:none}.fill{transition:none}}
 </style>
 </head>
 <body>
 <div class="bar" id="bar" aria-live="polite">
+  <!-- 미션(§3 · 켜져 있을 때만 · 두 모드 공통) -->
+  <div class="seg mission hide" id="mSeg">
+    <div class="mt"><span class="lab" id="mTitle">24시간 서바이버 미션</span><span class="clock" id="mClock">--:--:--</span></div>
+    <div class="mp" id="mProg"><span class="num" id="mNum">—</span><div class="track"><div class="fill" id="mFill"></div></div></div>
+    <span class="mmsg hide" id="mMsg"></span>
+  </div>
   <!-- 일반 모드 -->
   <div class="seg" data-m="normal"><span class="id" id="ign">GmI_mriacademy</span><span class="tier" id="tier"></span></div>
   <div class="seg" data-m="normal"><span class="lab">시작</span><span class="val" id="start">—</span></div>
@@ -102,8 +120,44 @@ function setNum(el, n) {
 }
 function setText(el, s) { if (el.textContent !== s) { el.textContent = s; if (!reduce) { el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop"); } } }
 
+// 미션 — 남은 시간은 서버 시각 기준(받을 때 차이를 재서 맞춘다) · 0.25초마다 다시 그린다
+let M = null, skew = 0, skewSet = false;
+const two = (n) => String(n).padStart(2, "0");
+const hms = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)); return `${two(Math.floor(t / 3600))}:${two(Math.floor(t / 60) % 60)}:${two(t % 60)}`; };
+function drawClock() {
+  if (!M || !M.on) return;
+  const now = Date.now() + skew;
+  const el = $("mClock");
+  if (M.phase === "achieved") el.textContent = hms(M.elapsedMs);
+  else if (M.phase === "ended") el.textContent = "00:00:00";
+  else if (now < Date.parse(M.startAt)) el.textContent = hms(Date.parse(M.startAt) - now);
+  else el.textContent = hms(Date.parse(M.endAt) - now);
+}
+setInterval(drawClock, 250);
+function renderMission(m) {
+  M = m;
+  $("mSeg").classList.toggle("hide", !m || !m.on);
+  if (!m || !m.on) return;
+  setText($("mTitle"), m.phase === "before" ? `${m.title} · 시작까지` : m.phase === "achieved" ? `${m.title} · 걸린 시간` : m.title);
+  const msg = $("mMsg"), prog = $("mProg");
+  let text = "", dim = false;
+  if (m.phase === "achieved") text = `서바이버 달성! ${fmt(m.reachedRp)}점`;
+  else if (m.phase === "ended") { text = `미션 종료 · 최종 ${fmt(m.finalRp)}점`; dim = true; }
+  else if (m.phase === "placement") { text = `배치 ${m.placementPlayed}/5`; dim = true; }
+  msg.classList.toggle("hide", !text); prog.classList.toggle("hide", !!text);
+  if (text) { setText(msg, text); msg.classList.toggle("dim", dim); }
+  else {
+    $("mNum").innerHTML = `<b>${fmt(m.nowRp)}</b> / ${fmt(m.target)}`;
+    $("mFill").style.transform = `scaleX(${Math.round((m.pct || 0) * 1000) / 1000})`;
+  }
+  drawClock();
+}
+
 let lastSlots = "";
 function render(d) {
+  // 서버 시각 차이는 처음 한 번 재고, 1.5초 넘게 벌어질 때만 다시 맞춘다(매초 다시 재면 통신 지연만큼 시계가 떨린다)
+  if (d.mission && d.mission.serverNow) { const k = Date.parse(d.mission.serverNow) - Date.now(); if (!skewSet || Math.abs(k - skew) > 1500) { skew = k; skewSet = true; } }
+  renderMission(d.mission);
   document.querySelectorAll("[data-m]").forEach((el) => el.classList.toggle("hide", el.dataset.m !== d.mode || (el.id === "resSeg" && !(d.placement && d.placement.finished))));
   if (d.mode === "placement") {
     const p = d.placement;
