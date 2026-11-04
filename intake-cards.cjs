@@ -118,7 +118,9 @@ function recipientsFor(app, staff, ownerDiscordId) {
   const owner = ownerOf(staff, ownerDiscordId);
   if (owner) out.push({ staffId: owner.id, discordId: owner.discord_id, view: "owner" });
   const pref = app.preferred_trainer_id != null ? live.find((s) => s.id === app.preferred_trainer_id) : null;
-  const trainers = pref ? [pref] : live.filter((s) => s.role === "trainer");
+  // 신규 배정 중지(ops_state 'assign:paused' · 오너 11/4 「준구는 배정된인원들만한대추가로안받고」)인 트레이너는 새 신청 카드를 받지 않는다 — 원하는 트레이너로 골랐어도 나머지에게 간다
+  const open = live.filter((s) => s.role === "trainer" && !s.paused);
+  const trainers = pref && !pref.paused ? [pref] : open;
   for (const t of trainers) {
     if (!out.some((o) => o.staffId === t.id)) out.push({ staffId: t.id, discordId: t.discord_id, view: "trainer" });
   }
@@ -231,6 +233,15 @@ function mountIntakeFlow(deps) {
 
   const loadApp = async (id) => (await sbSelect("intake_applications", `select=*&id=eq.${Number(id)}&limit=1`))[0] || null;
   const staffAll = () => sbSelect("staff", "select=id,name,role,active,discord_id&order=id.asc");
+  // 새 배정용 — 신규 배정 중지 목록(ops_state 'assign:paused' { staffIds })을 paused 로 표시한다. 기존 배정 · 카드 · 판수는 그대로.
+  async function pausedIds() {
+    try { const r = await sbSelect("ops_state", "select=value&key=eq.assign%3Apaused&limit=1"); return new Set(((r[0] && r[0].value && r[0].value.staffIds) || []).map(Number)); }
+    catch (_) { return new Set(); }
+  }
+  async function staffForNew() {
+    const [staff, paused] = await Promise.all([staffAll(), pausedIds()]);
+    return staff.map((s) => (paused.has(Number(s.id)) ? { ...s, paused: true } : s));
+  }
   const cardsOf = (appId) => sbSelect("intake_cards", `select=application_id,recipient_staff_id,channel_id,message_id&application_id=eq.${Number(appId)}`);
   async function staffByDiscord(discordId) {
     const rows = await sbSelect("staff", `select=id,name,role,active,discord_id&discord_id=eq.${enc(String(discordId))}&limit=1`);
@@ -312,7 +323,7 @@ function mountIntakeFlow(deps) {
       await markDm(app.id, false);
       app = { ...app, dm_failed_at: iso() };
     }
-    const staff = await staffAll();
+    const staff = await staffForNew();
     const rcpts = recipientsFor(app, staff, deps.ownerDiscordId);
     const ctx = await contextFor(app, staff);
     let sent = 0;
@@ -325,6 +336,7 @@ function mountIntakeFlow(deps) {
   async function claim({ appId, actorDiscordId, actorStaffId }) {
     const actor = await actorOf({ actorDiscordId, actorStaffId });
     if (!actor) return { ok: false, code: "not_staff" };
+    if ((await pausedIds()).has(Number(actor.id))) return { ok: false, code: "paused" };
     const t = iso();
     const rows = await sbPatch("intake_applications", `id=eq.${Number(appId)}&status=eq.new&assigned_trainer_id=is.null`,
       { status: "claimed", assigned_trainer_id: actor.id, claimed_at: t, updated_at: t });
@@ -471,13 +483,13 @@ function mountIntakeFlow(deps) {
 
   // [배정] 선택지 — 활성 트레이너 · 원장(디스코드 있는 사람)
   async function trainerOptions() {
-    return liveStaff(await staffAll()).map((s) => ({ label: `${s.name}${s.role === "owner" ? " (원장)" : ""}`, value: s.id }));
+    return liveStaff(await staffForNew()).filter((s) => !s.paused).map((s) => ({ label: `${s.name}${s.role === "owner" ? " (원장)" : ""}`, value: s.id }));
   }
 
   // [배정] — 오너가 트레이너를 정한다(새 신청 · 맡음 상태만 · 레벨 테스트 칸이 잡힌 뒤에는 칸부터 옮겨야 해서 막는다)
   async function assign({ appId, trainerId }) {
-    const staff = await staffAll();
-    const t = liveStaff(staff).find((s) => s.id === Number(trainerId));
+    const staff = await staffForNew();
+    const t = liveStaff(staff).find((s) => s.id === Number(trainerId) && !s.paused);
     if (!t) return { ok: false, code: "bad_trainer" };
     const cur = await loadApp(appId);
     if (!cur) return { ok: false, code: "not_found" };

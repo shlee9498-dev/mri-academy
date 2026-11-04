@@ -3490,7 +3490,7 @@ if (process.env.DISCORD_TOKEN) {
   const intakeReplyText = {
     claim: (o) => (o.ok ? "맡았어 — 트레이너 앱에서 레벨 테스트 시간을 넣어줘. 넣으면 신청자에게 안내 DM 이 가"
       : o.code === "taken" ? (o.mine ? "이미 네가 맡은 신청이야" : `이미 ${o.by || "다른 트레이너"}가 맡았어`)
-      : o.code === "closed" ? "닫힌 신청이야" : o.code === "not_staff" ? "활성 트레이너만 맡을 수 있어" : "신청을 못 찾았어"),
+      : o.code === "closed" ? "닫힌 신청이야" : o.code === "not_staff" ? "활성 트레이너만 맡을 수 있어" : o.code === "paused" ? "지금은 새 신청을 받지 않는 상태야(원장 확인)" : "신청을 못 찾았어"),
     asgsel: (o) => (o.ok ? (o.same ? `이미 ${o.trainer.name}가 맡고 있어` : `${o.trainer.name}에게 배정했어 — 카드를 보냈어`)
       : o.code === "locked" ? `지금 상태(${o.status || "?"})에서는 배정을 바꿀 수 없어 — 레벨 테스트 칸이 잡힌 뒤에는 트레이너 앱에서 칸부터 옮겨줘`
       : o.code === "bad_trainer" ? "그 트레이너는 지금 고를 수 없어" : "신청을 못 찾았어"),

@@ -52,7 +52,7 @@ module.exports = function mountIntakeTrainer(app, deps) {
   // 흐름 결과 코드 → HTTP. taken 이면 누가 맡았는지 같이 내린다(계약 §9.20.3).
   const STATUS = {
     not_found: 404, slot_not_found: 404,
-    not_staff: 403, not_assignee: 403, not_my_slot: 403, scope_denied: 403,
+    not_staff: 403, paused: 403, not_assignee: 403, not_my_slot: 403, scope_denied: 403,
     not_consult_slot: 400, level_required: 400, bad_reason: 400,
   };
   function flowFail(res, out) {
