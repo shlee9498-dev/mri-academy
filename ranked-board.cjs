@@ -178,10 +178,12 @@ function createRankedBoard(deps) {
   }
   // 읽기 = 방송 화면 1초 + 조작 화면 3초가 같은 IP 에서 와도 넉넉하게 · 쓰기 = 사람 손 속도
   function mount(app) {
-    const lim = deps.limit || (() => (req, res, next) => next());
+    const { limit } = deps;
     const tooMany = (res) => res.status(429).json({ error: { code: "rate_limited" } });
-    app.get("/api/ranked/board", lim("rankedBoardRead", 240, 60_000, tooMany), get);
-    app.post("/api/ranked/board", lim("rankedBoardWrite", 60, 60_000, tooMany), post);
+    const readLimit = limit("rankedBoardRead", 240, 60_000, tooMany);
+    const writeLimit = limit("rankedBoardWrite", 60, 60_000, tooMany);
+    app.get("/api/ranked/board", readLimit, get);
+    app.post("/api/ranked/board", writeLimit, post);
   }
   return { mount, get, post };
 }
