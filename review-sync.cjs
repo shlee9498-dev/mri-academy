@@ -13,6 +13,9 @@ const { normMessage, chatterOf, uniqueViolation, PHOTO_ONLY_ANSWER } = require("
 const CURSOR_KEY = "review_sync:cursor";
 const PENDING_KEY = "review_sync:pending";                    // 확인 대기 채널 현황(건수만 · 짝 확정 판단용 · 본문 없음)
 const MIRROR_SINCE_KEY = "review_mirror:since";
+const MIRROR_ON_KEY = "review_mirror:on";                     // B 스위치 { on, since } — 없으면 꺼짐(9.46.10-6 · env 아님 · 세션이 SQL 로 켠다)
+const CANDIDATES_KEY = "review_sync:candidates";              // 확인 대기 채널 후보(9.46.9-2 · 트레이너 앱 「맞아요」가 읽는다)
+const HIDDEN_TEXT = "앱에서 숨긴 글이에요";
 const IMPORT_AT = "2026-10-03T04:30:47.162Z";                 // 10/3 이관 시작 — 그 전 글은 이관이 묶어 넣었다(9.46.3)
 const FRESH_FROM = "2026-09-28T15:00:00.000Z";                // 이관에 없던 채널 — 9/29 00:00 KST 뒤부터
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -61,6 +64,22 @@ function decide(n, map, people, refReview) {
   return { act: "review", role: who };
 }
 
+// 짝 후보(9.46.9-2) — 채널 이름 · 사람 단위 보기 허용 계정 → 명부 수강생 번호 집합. 한 명이면 자동 확정.
+const normKey = (s) => String(s || "").toLowerCase().replace(/[^0-9a-z가-힣]/g, "");
+function pairCandidates({ channelName, viewerIds }, roster) {
+  const out = new Map();                                       // sid → 근거 배열
+  const add = (sid, why) => { const k = Number(sid); out.set(k, [...(out.get(k) || []), why]); };
+  const ch = normKey(channelName);
+  for (const s of roster) {
+    if (s.discord_id && viewerIds.has(String(s.discord_id))) add(s.id, "보기 허용");
+    for (const n of [s.name, s.discord_nick]) {
+      const k = normKey(n);
+      if (k.length >= 2 && ch && (ch === k || ch.includes(k))) { add(s.id, "채널 이름"); break; }
+    }
+  }
+  return out;
+}
+
 // 거울 카드 임베드(앱 → 디코) — 제목 · 본문 앞 300자 · 링크 「앱에서 보기」 · 사진은 부르는 쪽이 파일로 붙인다
 function mirrorEmbed({ title, body, link, footer, image }) {
   const text = String(body || "").trim();
@@ -87,12 +106,12 @@ function createReviewSync(deps) {
   const bootId = crypto.randomBytes(5).toString("hex");
   const iso = (ms = now()) => new Date(ms).toISOString();
   let sweepN = 0;
-  let mapCache = null, mapAt = 0, peopleCache = null, peopleAt = 0, sweeping = false, mirroring = false;
+  let mapCache = null, mapAt = 0, peopleCache = null, peopleAt = 0, sweeping = false, mirroring = false, rerun = false;
   const stats = { reviews: 0, answers: 0, edits: 0, hides: 0, images: 0, skipped: 0, pending: 0, errors: 0, mirrors: 0 };
 
   async function maps(force = false) {
     if (!force && mapCache && now() - mapAt < MAP_TTL_MS) return mapCache;
-    const rows = await sb.select("feedback_channel_map", "select=src_guild,src_channel,student_id,kind,confirmed_at,created_at,note");
+    const rows = await sb.select("feedback_channel_map", "select=src_guild,src_channel,student_id,kind,confirmed_at,created_at,note,is_group");
     mapCache = { byCh: new Map(rows.map((r) => [String(r.src_channel), r])), guilds: new Set(rows.map((r) => String(r.src_guild))) };
     mapAt = now();
     return mapCache;
@@ -125,6 +144,8 @@ function createReviewSync(deps) {
     }
     return false;
   }
+  // 확정 채널 = 개인(학생 번호 있음) 또는 그룹(is_group · 9.46.9-4)
+  const isLive = (map) => map && map.kind === "student" && !!map.confirmed_at && (map.student_id != null || map.is_group === true);
   const chOf = (m) => String(m.channel?.isThread?.() ? m.channel.parentId : m.channelId);
   const bump = (reviewId) => sb.patch("lesson_reviews", `id=eq.${Number(reviewId)}`, { updated_at: iso() })
     .catch((e) => logError("rsync_bump", reviewId, e?.status || e?.code));
@@ -190,7 +211,7 @@ function createReviewSync(deps) {
       await ensurePending(guildId, ch, n.authorId, ppl);
       return { done: "pending" };
     }
-    if (map.kind !== "student" || !map.confirmed_at || map.student_id == null) return { done: "skip", why: "not_confirmed" };
+    if (!isLive(map)) return { done: "skip", why: "not_confirmed" };
     // 채널 시작선 전 글(옛 글 수정 · 고정 · 스레드 시작 알림 포함)은 넣지 않는다 — 이관이 묶어 넣었거나 범위 밖(검수 10/30 #1)
     if (n.ts && n.ts < Date.parse(await startIso(ch))) return { done: "skip", why: "before_start" };
     // 이미 들어간 글 — 유일 키보다 먼저 본다. 사진이 있으면 빠진 것만 채운다(같은 파일은 한 번)
@@ -202,7 +223,15 @@ function createReviewSync(deps) {
       return { done: "exists" };
     }
     const ref = n.authorId && ppl.staffByDiscord.has(n.authorId) ? await refReviewOf(n.refId) : null;
-    const d = decide(n, map, ppl, ref && Number(ref.student_id) === Number(map.student_id) ? ref : null);
+    // 그룹 채널(9.46.9-4) — 수강생 글은 글쓴이 번호로 · 트레이너 글은 답장한 복기의 수강생으로(답장 아니면 누구 것인지 몰라 건너뜀)
+    let eff = map;
+    if (map.is_group) {
+      if (ppl.staffByDiscord.has(String(n.authorId)) && !ref) { stats.skipped++; return { done: "skip", why: "group_trainer_no_ref" }; }
+      const sid = ppl.studentByDiscord.get(String(n.authorId)) ?? (ref ? Number(ref.student_id) : null);
+      if (sid == null) { stats.skipped++; return { done: "skip", why: "group_author" }; }
+      eff = { ...map, student_id: sid };
+    }
+    const d = decide(n, eff, ppl, ref && Number(ref.student_id) === Number(eff.student_id) ? ref : null);
     if (d.act === "skip") { stats.skipped++; return { done: "skip", why: d.why }; }
     const at = iso(n.ts || now());
     const imgs = n.atts.filter(isImage);
@@ -223,14 +252,14 @@ function createReviewSync(deps) {
     const staff = student ? null : ppl.staffByDiscord.get(n.authorId);
     let recipient = null;
     if (student) {
-      const s = (await sb.select("students", `select=trainer_id&id=eq.${Number(map.student_id)}&limit=1`))[0];
+      const s = (await sb.select("students", `select=trainer_id&id=eq.${Number(eff.student_id)}&limit=1`))[0];
       recipient = Number(s?.trainer_id) || ppl.ownerId;
       if (!recipient) return { done: "skip", why: "no_recipient" };
     }
     let row;
     try {
       row = await sb.insert("lesson_reviews", {
-        student_id: Number(map.student_id), anchor_kind: "none", lesson_session_id: null,
+        student_id: Number(eff.student_id), anchor_kind: "none", lesson_session_id: null,
         author_role: d.role, author_staff_id: student ? null : Number(staff.id), recipient_trainer_id: recipient,
         source: "discord", status: "published", title: titleOf(n.ts || now()), body: text ? text.slice(0, BODY_MAX) : null,
         src_guild: String(guildId), src_channel: String(ch), src_msg: n.id,
@@ -240,7 +269,7 @@ function createReviewSync(deps) {
     const rid = Number(row.id);
     if (imgs.length) await putImages(rid, imgs, d.role);
     if (student) {
-      await sb.upsert("review_reads", { review_id: rid, reader_kind: "student", reader_id: Number(map.student_id), read_at: at },
+      await sb.upsert("review_reads", { review_id: rid, reader_kind: "student", reader_id: Number(eff.student_id), read_at: at },
         "review_id,reader_kind,reader_id").catch((e) => logError("rsync_read", rid, e?.status));
     }
     stats.reviews++;
@@ -340,7 +369,7 @@ function createReviewSync(deps) {
       await people(true);
       const cursors = (await opsGet(CURSOR_KEY).catch(() => null)) || {};
       for (const [ch, map] of mp.byCh) {
-        if (map.kind !== "student" || !map.confirmed_at || map.student_id == null) continue;
+        if (!isLive(map)) continue;
         let channel;
         try { channel = await client.channels.fetch(ch); } catch (e) { tally.errors++; logError("rsync_sweep_ch", ch, e?.code); continue; }
         if (!channel?.messages) continue;
@@ -362,11 +391,15 @@ function createReviewSync(deps) {
         if (!failed) cursors[ch] = last;                            // 실패가 있으면 커서를 안 옮긴다 — 다음 점검이 한 번 더
       }
       await opsSet(CURSOR_KEY, cursors);
-      if (sweepN++ % 6 === 0) await scanPending(client, mp).catch((e) => logError("rsync_pending_scan", e?.code || e?.status));
+      if (sweepN++ % 2 === 0) await scanPending(client, mp).catch((e) => logError("rsync_pending_scan", e?.code || e?.status));   // 30분 점검 기준 한 시간에 한 번
+      await autoPair(client, mp).catch((e) => logError("rsync_autopair", e?.code || e?.status || String(e?.message || "").slice(0, 60)));
       log(`[review-sync] 점검 채널 ${tally.channels} · 본 글 ${tally.seen} · 복기 +${tally.review} · 답 +${tally.answer} · 있음 ${tally.exists} · 건너뜀 ${tally.skip} · 오류 ${tally.errors}`);
       return tally;
     } catch (e) { logError("rsync_sweep", e?.status || e?.code || String(e?.message || "").slice(0, 60)); return null; }
-    finally { sweeping = false; }
+    finally {
+      sweeping = false;
+      if (rerun) { rerun = false; setTimeout(() => sweep().catch(() => {}), 1000); }
+    }
   }
 
   // 확인 대기 채널 현황(읽기만 · 한 시간에 한 번) — 시작선 뒤 글 수 · 트레이너 글 수 · 명부에 맞는 수강생 · 명부 밖 글쓴이(디스코드 id)
@@ -419,11 +452,84 @@ function createReviewSync(deps) {
     return out;
   }
 
+  // ── 짝 자동 제안 · 확정(9.46.9-2 · 9.46.11) ──
+  async function rosterForPair() {
+    return sb.select("students", "select=id,name,discord_nick,discord_id,trainer_id,status&merged_into=is.null&status=neq.done&limit=2000");
+  }
+  // 사람 단위로 「보기 허용」된 계정 — 역할 단위 허용은 그 역할 사람이 많아 후보로 쓰지 않는다
+  function viewerIdsOf(channel) {
+    const out = new Set();
+    for (const ow of channel?.permissionOverwrites?.cache?.values?.() || []) {
+      if (Number(ow.type) === 1 && ow.allow?.has?.("ViewChannel")) out.add(String(ow.id));
+    }
+    return out;
+  }
+  async function confirm(ch, { studentId = null, group = false, staffId, why }) {
+    const mp = await maps(true);
+    const map = mp.byCh.get(String(ch));
+    if (!map || map.kind !== "student") return { code: "channel_not_pending" };
+    if (map.confirmed_at) return { code: "already_confirmed" };
+    const note = `${map.note ? `${map.note} · ` : ""}§9.46.11 확정(${why}) ${iso().slice(0, 16)}`.slice(0, 300);
+    const got = await sb.patch("feedback_channel_map", `src_channel=eq.${String(ch)}&confirmed_at=is.null`,
+      { confirmed_at: iso(), confirmed_by_staff_id: Number(staffId), student_id: group ? null : Number(studentId), is_group: !!group, note });
+    if (!got.length) return { code: "already_confirmed" };
+    // 대기함 소급(9.46.9-3) — 그 채널 커서를 비우면 다음 점검이 시작선부터 읽는다 · 바로 한 번 돌린다
+    const cursors = (await opsGet(CURSOR_KEY).catch(() => null)) || {};
+    delete cursors[String(ch)];
+    await opsSet(CURSOR_KEY, cursors);
+    mapAt = 0;
+    await sb.insert("admin_audit", { actor_id: `staff:${staffId}`, actor_name: why, action: "feedback_channel.confirm", target: `channel:${ch}`,
+      detail: { student_id: group ? null : Number(studentId), group: !!group } }).catch((e) => logError("rsync_confirm_audit", e?.status));
+    log(`[review-sync] 짝 확정 ch=${ch} ${group ? "그룹" : `student=${studentId}`} (${why})`);
+    if (sweeping) rerun = true; else setTimeout(() => sweep().catch(() => {}), 1000);   // 점검 중이면 끝난 뒤 한 번 더
+    return { code: "ok", channelId: String(ch), studentId: group ? null : Number(studentId), group: !!group };
+  }
+  async function ignore(ch, staffId) {
+    const got = await sb.patch("feedback_channel_map", `src_channel=eq.${String(ch)}&confirmed_at=is.null&kind=eq.student`,
+      { kind: "ignore", note: `§9.46.11 수업 채널 아님(원장) ${iso().slice(0, 16)}` });
+    mapAt = 0;
+    if (!got.length) return { code: "channel_not_pending" };
+    await sb.insert("admin_audit", { actor_id: `staff:${staffId}`, actor_name: "원장", action: "feedback_channel.ignore", target: `channel:${ch}`, detail: {} })
+      .catch(() => {});
+    return { code: "ok", channelId: String(ch) };
+  }
+  // 확인 대기 채널마다 후보를 모아 ops_state 에 두고(트레이너 앱이 읽는다) · 한 명이면 자동 확정
+  async function autoPair(client, mp) {
+    const roster = await rosterForPair();
+    const ownerId = (await people()).ownerId;
+    const out = {};
+    let auto = 0;
+    for (const [ch, map] of mp.byCh) {
+      if (map.kind !== "student" || map.confirmed_at) continue;
+      let channel;
+      try { channel = await client.channels.fetch(ch); } catch { continue; }
+      if (!channel) continue;
+      const cands = pairCandidates({ channelName: channel.name, viewerIds: viewerIdsOf(channel) }, roster);
+      out[ch] = { name: String(channel.name || "").slice(0, 60), candidates: [...cands].map(([sid, why]) => ({ sid, why: [...new Set(why)] })) };
+      if (cands.size === 1 && ownerId) {
+        const [[sid, why]] = [...cands];
+        const r = await confirm(ch, { studentId: sid, staffId: ownerId, why: `자동 · ${[...new Set(why)].join("+")}` });
+        if (r.code === "ok") { auto++; delete out[ch]; }
+      }
+    }
+    await opsSet(CANDIDATES_KEY, { at: iso(), channels: out });
+    log(`[review-sync] 짝 후보 — 대기 ${Object.keys(out).length} · 자동 확정 ${auto}`);
+    return { pending: Object.keys(out).length, auto };
+  }
+
   // ── 거울(9.46.4) ──
   async function mirrorSince() {
     let v = await opsGet(MIRROR_SINCE_KEY).catch(() => null);
     if (!v?.at) { v = { at: iso(), by: bootId }; await opsSet(MIRROR_SINCE_KEY, v); }
     return v.at;
+  }
+  // B 스위치(9.46.10-6) — { on: true, since } 일 때만. 시작선 = 켠 시각과 종전 시작선 중 늦은 쪽(과거분을 한꺼번에 올리지 않게)
+  async function mirrorSwitch() {
+    const v = await opsGet(MIRROR_ON_KEY).catch(() => null);
+    if (!v || v.on !== true) return null;
+    const a = await mirrorSince();
+    const b = v.since && Number.isFinite(Date.parse(v.since)) ? v.since : a;
+    return Date.parse(b) > Date.parse(a) ? b : a;
   }
   async function channelFor(studentId) {
     const mp = await maps();
@@ -443,9 +549,10 @@ function createReviewSync(deps) {
       const img = out.reviewId ? await firstImage(out.reviewId).catch(() => null) : null;
       const name = img ? `review.${img.ext || "webp"}` : null;
       const msg = await channel.send({ embeds: [mirrorEmbed({ ...out, image: name })], ...(img ? { files: [{ attachment: img.buf, name }] } : {}),
+        ...(out.replyTo ? { reply: { messageReference: out.replyTo, failIfNotExists: false } } : {}),     // 답은 원글에 답장(9.46.10-2)
         allowedMentions: { parse: [] } });
       // 보낸 뒤 기록 실패는 다시 보내지 않는다 — pending:… 이 남아 다음 회에도 안 잡힌다(두 장 방지 · 검수 #3)
-      try { await sb.patch(table, `id=eq.${row.id}`, { mirror_msg: String(msg.id) }); }
+      try { await sb.patch(table, `id=eq.${row.id}`, { mirror_msg: String(msg.id), mirrored_at: iso() }); }
       catch (e) { logError("rsync_mirror_record", table, row.id, e?.status || e?.code); return "sent"; }
       stats.mirrors++;
       log(`[review-sync] 거울 ${table === "lesson_reviews" ? "복기" : "답"} #${row.id} → 카드`);
@@ -456,13 +563,58 @@ function createReviewSync(deps) {
       return "failed";
     }
   }
+  // 앱 수정 · 숨김 따라가기(9.46.10-3) — 이미 올라간 거울 카드(mirror_msg 숫자)의 updated_at · hidden_at 이 mirrored_at 뒤면 같은 메시지를 고친다
+  //   숨김 → 「앱에서 숨긴 글이에요」(삭제 안 함). 비공개로 바뀐 복기도 숨김과 같게. 한 번에 10줄 · 실패는 다음 회에 다시(메시지 수정은 겹쳐도 한 장)
+  async function mirrorFollow(sinceIso) {
+    const n = { edited: 0, hidden: 0 };
+    const since = encodeURIComponent(sinceIso);
+    const due = (r) => !r.mirrored_at || Date.parse(r.updated_at || 0) > Date.parse(r.mirrored_at) || (r.hidden_at && Date.parse(r.hidden_at) > Date.parse(r.mirrored_at));
+    const sel = (cols) => `select=${cols}&mirror_msg=not.is.null&updated_at=gte.${since}&order=updated_at.asc&limit=${MIRROR_BATCH * 3}`;
+    const revs = (await sb.select("lesson_reviews", sel("id,student_id,title,body,visibility,status,hidden_at,updated_at,mirrored_at,mirror_msg")))
+      .filter((r) => SNOWFLAKE.test(String(r.mirror_msg)) && due(r)).slice(0, MIRROR_BATCH);
+    for (const r of revs) {
+      const gone = !!r.hidden_at || r.status !== "published" || r.visibility === "private";
+      const ok = await mirrorEdit("lesson_reviews", r, await channelFor(r.student_id), gone ? null
+        : { title: r.title || "복기", body: r.body, link: linkOf(r.id), footer: "앱에서 올린 복기 · 고침" });
+      if (ok) n[gone ? "hidden" : "edited"]++;
+    }
+    const fbs = (await sb.select("review_feedback", sel("id,review_id,trainer_id,body,hidden_at,updated_at,mirrored_at,mirror_msg")))
+      .filter((f) => SNOWFLAKE.test(String(f.mirror_msg)) && due(f)).slice(0, MIRROR_BATCH);
+    for (const f of fbs) {
+      const r = (await sb.select("lesson_reviews", `select=id,student_id,title&id=eq.${Number(f.review_id)}&limit=1`))[0];
+      if (!r) continue;
+      const t = (await sb.select("staff", `select=name&id=eq.${Number(f.trainer_id)}&limit=1`))[0];
+      const ok = await mirrorEdit("review_feedback", f, await channelFor(r.student_id), f.hidden_at ? null
+        : { title: `${t?.name || "트레이너"} 트레이너 답 · ${r.title || "복기"}`, body: f.body, link: linkOf(r.id), footer: "앱에서 단 답 · 고침" });
+      if (ok) n[f.hidden_at ? "hidden" : "edited"]++;
+    }
+    return n;
+  }
+  async function mirrorEdit(table, row, ch, card) {
+    if (!ch) return false;
+    try {
+      const channel = await getClient().channels.fetch(ch);
+      await channel.messages.edit(String(row.mirror_msg), card
+        ? { embeds: [mirrorEmbed(card)], allowedMentions: { parse: [] } }
+        : { embeds: [{ description: HIDDEN_TEXT, color: 0x555555 }], attachments: [], allowedMentions: { parse: [] } });
+      await sb.patch(table, `id=eq.${row.id}`, { mirrored_at: iso() });
+      log(`[review-sync] 거울 ${card ? "고침" : "숨김"} ${table === "lesson_reviews" ? "복기" : "답"} #${row.id}`);
+      return true;
+    } catch (e) {
+      if (e?.code === 10008) { await sb.patch(table, `id=eq.${row.id}`, { mirrored_at: iso() }).catch(() => {}); return false; }   // 디코에서 이미 지운 카드 — 더 따라가지 않는다
+      logError("rsync_mirror_edit", table, row.id, e?.code || e?.status);
+      return false;
+    }
+  }
   const linkOf = (reviewId) => (appUrl ? `${appUrl}/reviews/${opaqueId("review", Number(reviewId))}` : null);
   async function mirrorTick() {
     if (mirroring || !getClient()) return null;
     mirroring = true;
     const out = { reviews: 0, answers: 0 };
     try {
-      const since = encodeURIComponent(await mirrorSince());
+      const on = await mirrorSwitch();
+      if (!on) return { off: true };
+      const since = encodeURIComponent(on);
       const revs = await sb.select("lesson_reviews",
         `select=id,student_id,title,body,visibility,mirror_msg&source=eq.app&status=eq.published&hidden_at=is.null`
         + `&visibility=in.(group,students)&published_at=gte.${since}&or=(mirror_msg.is.null,mirror_msg.eq.fail1)&order=id.asc&limit=${MIRROR_BATCH}`);
@@ -477,19 +629,21 @@ function createReviewSync(deps) {
         + `&created_at=gte.${since}&or=(mirror_msg.is.null,mirror_msg.eq.fail1)&order=id.asc&limit=${MIRROR_BATCH}`);
       for (const f of fbs) {
         if ((await mirrorOne("review_feedback", f, async () => {
-          const r = (await sb.select("lesson_reviews", `select=id,student_id,title,visibility,hidden_at,status&id=eq.${Number(f.review_id)}&limit=1`))[0];
+          const r = (await sb.select("lesson_reviews", `select=id,student_id,title,visibility,hidden_at,status,src_msg,mirror_msg&id=eq.${Number(f.review_id)}&limit=1`))[0];
           if (!r || r.hidden_at || r.status !== "published" || r.visibility === "private") return null;   // 비공개 복기의 답은 안 올린다
           const ch = await channelFor(r.student_id);
           const t = (await sb.select("staff", `select=name&id=eq.${Number(f.trainer_id)}&limit=1`))[0];
-          return ch ? { ch, title: `${t?.name || "트레이너"} 트레이너 답 · ${r.title || "복기"}`, body: f.body, link: linkOf(r.id), footer: "앱에서 단 답" } : null;
+          const parent = [r.src_msg, r.mirror_msg].find((x) => SNOWFLAKE.test(String(x || ""))) || null;
+          return ch ? { ch, replyTo: parent, title: `${t?.name || "트레이너"} 트레이너 답 · ${r.title || "복기"}`, body: f.body, link: linkOf(r.id), footer: "앱에서 단 답" } : null;
         })) === "sent") out.answers++;
       }
+      out.follow = await mirrorFollow(on);
       return out;
     } catch (e) { logError("rsync_mirror_tick", e?.status || e?.code || String(e?.message || "").slice(0, 60)); return null; }
     finally { mirroring = false; }
   }
 
-  return { ingest, onCreate, onUpdate, onDelete, sweep, mirrorTick, stats, bootId };
+  return { ingest, onCreate, onUpdate, onDelete, sweep, mirrorTick, mirrorFollow, autoPair, confirm, ignore, stats, bootId };
 }
 
-module.exports = { createReviewSync, decide, authorKind, mirrorEmbed, snowflakeAt, titleOf, isImage, IMPORT_AT, FRESH_FROM, CURSOR_KEY, MIRROR_SINCE_KEY, PENDING_KEY };
+module.exports = { createReviewSync, decide, authorKind, pairCandidates, normKey, HIDDEN_TEXT, MIRROR_ON_KEY, CANDIDATES_KEY, mirrorEmbed, snowflakeAt, titleOf, isImage, IMPORT_AT, FRESH_FROM, CURSOR_KEY, MIRROR_SINCE_KEY, PENDING_KEY };

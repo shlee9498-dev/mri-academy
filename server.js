@@ -1343,7 +1343,7 @@ if (process.env.DISCORD_TOKEN) {
     // 디코 ↔ 앱 복기(계약 §9.46.3 · §9.46.4) — 점검 · 백필 = 1분 뒤 첫 회 · 10분마다 / 거울 카드 = 30초마다
     if (hasSupabase() && reviewSync) {
       setTimeout(() => reviewSync.sweep(), 60_000);
-      setInterval(() => reviewSync.sweep(), 10 * 60_000);
+      setInterval(() => reviewSync.sweep(), 30 * 60_000);    // 안전망 — 실시간은 메시지 이벤트(§9.46.9-1 · 10분 → 30분)
       setInterval(() => reviewSync.mirrorTick(), 30_000);
     }
     // 기동 틱은 로그인 전에 돌아 카드 다시 띄우기가 실패할 수 있다 — 준비 직후 한 번 더(ops_state 'payreq:resend').
@@ -8920,6 +8920,10 @@ require("./intake-trainer.cjs")(app, { sbSelect, limit, trainer: trainerPortal, 
 // ── 상담 보드(계약 §9.23 · 설계 docs/consult-board-design.md · §60 · /api/trainer-portal/consults*) ──
 // 레벨 테스트 · 클랜 상담 · 일반 상담을 한 보드로 — 신청 · 레벨 테스트 예약 · 상담 기록을 카드 한 장으로 묶는다.
 // 결제는 읽기만(상담 가산은 그대로 payments.handler_id) · 신청 등록은 위 흐름(intakeFlow.enroll) 한 벌 · 「고민 중」 3일 DM 은 cronTick.
+// 피드백 채널 짝 「맞아요」(계약 §9.46.11) — 트레이너 앱이 확인 대기 채널을 확정 · 원장은 그룹 · 무시도
+require("./review-pairing.cjs").mountReviewPairing(app, {
+  sbSelect, opsGet: (k) => opsStateGet(k), reviewSync: () => reviewSync, trainer: trainerPortal, portal: studentPortal, limit,
+});
 const consultBoard = require("./consult-board.cjs")(app, {
   sbSelect, sbInsert, sbPatch, limit, discordDM, trainer: trainerPortal, portal: studentPortal, flow: () => intakeFlow,
   dmEnrolled: require("./intake-cards.cjs").dmEnrolled, appUrl: STUDENT_APP_URL,
@@ -9234,7 +9238,8 @@ const REQUIRED_SCHEMA = {
                          "src_guild","src_channel","src_msg","consent_public_at","created_at","updated_at","published_at","hidden_at",
                          "visibility","visibility_changed_at",
                          "public_at",                       // §57 공개 대기(디스코드 이관 · 2026-10-01)
-                         "mirror_msg"],                     // §89 거울 카드(계약 §9.46.4 · 2026-10-30 실행)
+                         "mirror_msg",                      // §89 거울 카드(계약 §9.46.4 · 2026-10-30 실행)
+                         "mirrored_at"],                    // §96 거울 수정 · 숨김 따라가기(§9.46.10-3 · 2026-11-04 세션 실행)
   review_games:         ["id","review_id","ord","seq_label","map","map_raw"],
   review_phases:        ["id","game_id","ord","phase_from","phase_to","phase_to_end","header_raw","lines","tags","suggested_tags"],
   review_images:        ["id","review_id","phase_id","ord","original_path","display_path","thumb_path","width","height",
@@ -9242,7 +9247,8 @@ const REQUIRED_SCHEMA = {
   review_annotations:   ["id","image_id","author_kind","author_id","shapes","version","updated_at"],
   review_feedback:      ["id","review_id","trainer_id","kind","phase_id","line_ord","verdict","body","due_booking_id","due_at","created_at","updated_at",
                          "src_msg",                         // §57 디스코드에서 옮긴 트레이너 답의 원문 좌표(재실행 멱등)
-                         "hidden_at","mirror_msg"],         // §89 디코에서 지운 답 · 거울 카드(계약 §9.46 · 2026-10-30 실행)
+                         "hidden_at","mirror_msg",          // §89 디코에서 지운 답 · 거울 카드(계약 §9.46 · 2026-10-30 실행)
+                         "mirrored_at"],                    // §96(2026-11-04 세션 실행)
   review_purge_log:     ["id","ran_at","dry_run","review_id","images","bytes","purged_at"],
   review_reads:         ["review_id","reader_kind","reader_id","read_at"],
   review_reactions:     ["review_id","phase_id","reactor_kind","reactor_id","emoji","created_at"],
@@ -9276,7 +9282,8 @@ const REQUIRED_SCHEMA = {
                          // PR-3 흐름(2026-10-01) — 마침 · 보호자 동의 확인 · 등록(§55 에 이미 있던 칸 · 자기점검에 올린다)
                          "tested_at","guardian_verified_at","guardian_verified_by","enrolled_at"],
   intake_cards:         ["application_id","recipient_staff_id","channel_id","message_id"],
-  feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at"],
+  feedback_channel_map: ["src_guild","src_channel","student_id","kind","confirmed_by_staff_id","confirmed_at","note","created_at",
+                         "is_group"],                       // §96 그룹 채널(§9.46.9-4 · 2026-11-04 세션 실행)
 };
 
 // ── 선택 컬럼 (warn 레벨) ────────────────────────────────────────────────────
