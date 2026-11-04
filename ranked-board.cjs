@@ -102,7 +102,7 @@ function apply(state, body, ctx) {
 }
 
 // ═══════════════ 돌리기 ═══════════════
-// deps: opsGet(key) · opsSet(key, value) · live(ign, since) → {status, body} · auth(req) → user|null|false · now · log
+// deps: opsGet(key) · opsSet(key, value) · live(ign, since) → {status, body} · auth(req) → user|null|false · limit(name, max, ms, reject) · now · log
 function createRankedBoard(deps) {
   const now = deps.now || (() => Date.now());
   const log = deps.log || console;
@@ -176,7 +176,13 @@ function createRankedBoard(deps) {
     log.log(`[ranked-board] ${b.op}`);
     res.json(view(state, await liveFor(state, false)));
   }
-  function mount(app) { app.get("/api/ranked/board", get); app.post("/api/ranked/board", post); }
+  // 읽기 = 방송 화면 1초 + 조작 화면 3초가 같은 IP 에서 와도 넉넉하게 · 쓰기 = 사람 손 속도
+  function mount(app) {
+    const lim = deps.limit || (() => (req, res, next) => next());
+    const tooMany = (res) => res.status(429).json({ error: { code: "rate_limited" } });
+    app.get("/api/ranked/board", lim("rankedBoardRead", 240, 60_000, tooMany), get);
+    app.post("/api/ranked/board", lim("rankedBoardWrite", 60, 60_000, tooMany), post);
+  }
   return { mount, get, post };
 }
 
