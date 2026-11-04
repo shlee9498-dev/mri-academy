@@ -8416,3 +8416,19 @@ alter table public.consult_cards add column if not exists welcome_dm_at      tim
 -- 되돌림: alter table public.consult_cards drop column if exists welcome_dm_at, drop column if exists intake_nudged_at, drop column if exists intake_nudges,
 --   drop column if exists deposit_dm_at, drop column if exists intake_notified_at; alter table public.consults drop column if exists discord_handle; notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §96  레슨 피드백 디코 ↔ 앱 복기 양방향 확장 — 그룹 채널 · 거울 따라가기 (2026-11-04 · 지휘 주문 · 오너 「자동으로해도돼 … 내가책임짐」 · 계약 §9.46.8~14 · 소관 MRIacademy)
+--      A 구간(칸 추가만). 판수 · 결제 · 정산 무관. ※ PR #643(접수 3 · 4단계) DDL 은 실행 때 §97 로 옮긴다.
+-- ============================================================
+-- 96-0) 실행 전 스냅샷(세션 · 읽기만): feedback_channel_map 칸 8 · lesson_reviews 26 · review_feedback 15
+alter table public.feedback_channel_map add column if not exists is_group boolean not null default false;   -- 그룹 채널(글쓴이별로 갈라 담기)
+alter table public.lesson_reviews      add column if not exists mirrored_at timestamptz;                   -- 거울 카드를 마지막으로 맞춘 시각
+alter table public.review_feedback     add column if not exists mirrored_at timestamptz;
+-- 96a) 검증: 9 · 27 · 16 (2026-11-04 세션 실행 · 확인) → notify pgrst, 'reload schema';
+-- 유일 색인은 이미 있다(§89): uq_lr_src_msg · uq_rf_src_msg · uq_lr_mirror_msg · uq_rf_mirror_msg
+-- 스위치(DDL 아님 · 세션 SQL): insert into public.ops_state(key, value) values ('review_mirror:on', jsonb_build_object('on', true, 'since', now()))
+--   on conflict (key) do update set value = excluded.value;   -- 끄기: value = '{"on": false}'
+-- 되돌림: alter table public.review_feedback drop column if exists mirrored_at; alter table public.lesson_reviews drop column if exists mirrored_at;
+--   alter table public.feedback_channel_map drop column if exists is_group; notify pgrst, 'reload schema';
+-- ============================================================

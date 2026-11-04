@@ -23,6 +23,7 @@ function fakeDb(init) {
     const [op, ...rest] = v.split(".");
     const val = rest.join(".");
     if (op === "eq") return String(row[k]) === decodeURIComponent(val);
+    if (op === "neq") return String(row[k]) !== decodeURIComponent(val);
     if (op === "gte") return String(row[k] ?? "") >= decodeURIComponent(val);
     if (op === "in") return val.replace(/[()]/g, "").split(",").includes(String(row[k]));
     throw new Error(`op ${op}`);
@@ -261,8 +262,9 @@ test("§9.46.4 거울 — 공개 앱 복기 · 답은 카드 한 장(사진 · �
   h.db.review_feedback.push({ id: 601, review_id: 501, trainer_id: 4, kind: "overall", body: "좋아요", src_msg: null, hidden_at: null, mirror_msg: null, created_at: "2026-10-30T10:02:00Z" },
     { id: 602, review_id: 502, trainer_id: 4, kind: "overall", body: "비공개 답", src_msg: null, hidden_at: null, mirror_msg: null, created_at: "2026-10-30T10:02:00Z" });
   h.ops.set(rs.MIRROR_SINCE_KEY, { at: "2026-10-30T09:00:00Z" });
+  h.ops.set(rs.MIRROR_ON_KEY, { on: true });
   const out = await h.sync.mirrorTick();
-  assert.deepEqual(out, { reviews: 1, answers: 1 });
+  assert.deepEqual([out.reviews, out.answers], [1, 1]);
   assert.equal(h.sent.length, 2);
   assert.equal(h.sent[0].ch, CH);
   assert.match(h.sent[0].embeds[0].description, /\[앱에서 보기\]\(https:\/\/app\.example\/reviews\/review-501\)/);
@@ -273,7 +275,8 @@ test("§9.46.4 거울 — 공개 앱 복기 · 답은 카드 한 장(사진 · �
   assert.equal(h.db.lesson_reviews.find((x) => x.id === 502).mirror_msg, null);      // 비공개는 대상 아님
   assert.equal(h.db.lesson_reviews.find((x) => x.id === 503).mirror_msg, "-");       // 확정 채널 없음
   assert.equal(h.db.review_feedback.find((x) => x.id === 602).mirror_msg, "-");      // 비공개 복기의 답
-  assert.deepEqual(await h.sync.mirrorTick(), { reviews: 0, answers: 0 });          // 두 번 안 보낸다
+  const again = await h.sync.mirrorTick();
+  assert.deepEqual([again.reviews, again.answers], [0, 0]);                          // 두 번 안 보낸다
   assert.equal(h.sent.length, 2);
   // 봇이 쓴 카드는 앱으로 안 들어온다
   assert.equal((await h.sync.ingest(msg({ id: h.sent[0].id, author: BOT, bot: true, content: "카드" }), { guildId: G, ch: CH })).why, "bot");
@@ -287,6 +290,7 @@ test("§9.46.4 거울 — 보낸 뒤 기록이 실패해도 다시 안 보낸다
   h.db.lesson_reviews.push({ id: 801, student_id: 8, source: "app", status: "published", hidden_at: null, visibility: "students", title: "t", body: "b",
     published_at: "2026-10-30T10:01:00Z", mirror_msg: null });
   h.ops.set(rs.MIRROR_SINCE_KEY, { at: "2026-10-30T09:00:00Z" });
+  h.ops.set(rs.MIRROR_ON_KEY, { on: true });
   const patch = h.sb.patch;
   h.sb.patch = async (t, q, p) => (p.mirror_msg && /^\d+$/.test(p.mirror_msg) ? Promise.reject(Object.assign(new Error("x"), { status: 503 })) : patch(t, q, p));
   await h.sync.mirrorTick();
@@ -300,6 +304,7 @@ test("§9.46.4 거울 실패는 한 번만 다시(fail1 → fail2)", async () =>
   h.db.lesson_reviews.push({ id: 701, student_id: 8, source: "app", status: "published", hidden_at: null, visibility: "group", title: "t", body: "b",
     published_at: "2026-10-30T10:01:00Z", mirror_msg: null });
   h.ops.set(rs.MIRROR_SINCE_KEY, { at: "2026-10-30T09:00:00Z" });
+  h.ops.set(rs.MIRROR_ON_KEY, { on: true });
   h.channels.set(CH, { id: CH, send: async () => { throw Object.assign(new Error("no"), { code: 50013 }); } });
   await h.sync.mirrorTick();
   assert.equal(h.db.lesson_reviews[0].mirror_msg, "fail1");
@@ -358,4 +363,86 @@ test("§9.46.1 현황 — 짝 표에 없는 채널(짝 채널과 같은 카테�
   assert.deepEqual([rep.channels[NEWCH].unmapped, rep.channels[NEWCH].n, rep.channels[NEWCH].trainer], [true, 2, 1]);
   assert.equal(rep.scanned, 2);                                       // 확인 대기 1 + 짝 없는 같은 카테고리 1(다른 카테고리는 빠짐)
   assert.equal(h.db.feedback_channel_map.length, 2, "현황은 짝 표를 바꾸지 않는다");
+});
+
+test("§9.46.10-6 스위치 — 꺼져 있으면(없음 · on:false) 거울을 하나도 안 보낸다 · 켜면 켠 시각 뒤 것만", async () => {
+  const h = harness();
+  h.db.lesson_reviews.push({ id: 901, student_id: 8, source: "app", status: "published", hidden_at: null, visibility: "students", title: "t", body: "b",
+    published_at: "2026-10-30T10:01:00Z", mirror_msg: null },
+  { id: 902, student_id: 8, source: "app", status: "published", hidden_at: null, visibility: "students", title: "t2", body: "b2",
+    published_at: "2026-10-30T08:00:00Z", mirror_msg: null });
+  h.ops.set(rs.MIRROR_SINCE_KEY, { at: "2026-10-01T00:00:00Z" });
+  assert.deepEqual(await h.sync.mirrorTick(), { off: true });
+  h.ops.set(rs.MIRROR_ON_KEY, { on: false });
+  assert.deepEqual(await h.sync.mirrorTick(), { off: true });
+  assert.equal(h.sent.length, 0);
+  h.ops.set(rs.MIRROR_ON_KEY, { on: true, since: "2026-10-30T09:00:00Z" });
+  await h.sync.mirrorTick();
+  assert.equal(h.sent.length, 1, "켠 시각 전(902)은 안 올림");
+  assert.equal(h.db.lesson_reviews.find((x) => x.id === 902).mirror_msg, null);
+});
+
+test("§9.46.10-2 · 3 거울 — 앱 답은 원글에 답장 · 앱에서 고치면 같은 카드 수정 · 숨기면 「앱에서 숨긴 글이에요」(삭제 없음)", async () => {
+  const h = harness();
+  const edits = [];
+  h.channels.set(CH, { id: CH, send: async (m) => { const id = mid(); h.sent.push({ ch: CH, ...m, id }); return { id }; },
+    messages: { edit: async (id, m) => { edits.push({ id, ...m }); } } });
+  const src = mid();
+  h.db.lesson_reviews.push({ id: 950, student_id: 8, source: "discord", status: "published", hidden_at: null, visibility: "students", title: "디코 글",
+    body: "b", src_msg: src, mirror_msg: null, published_at: "2026-10-30T08:00:00Z" });
+  h.db.review_feedback.push({ id: 951, review_id: 950, trainer_id: 4, kind: "overall", body: "앱 답", src_msg: null, hidden_at: null, mirror_msg: null,
+    created_at: "2026-10-30T10:00:30Z", updated_at: "2026-10-30T10:00:30Z" });
+  h.ops.set(rs.MIRROR_SINCE_KEY, { at: "2026-10-30T09:00:00Z" });
+  h.ops.set(rs.MIRROR_ON_KEY, { on: true });
+  await h.sync.mirrorTick();
+  assert.equal(h.sent.length, 1);
+  assert.equal(h.sent[0].reply.messageReference, src, "원글(디코 src_msg)에 답장");
+  const fb = h.db.review_feedback.find((x) => x.id === 951);
+  assert.ok(/^\d+$/.test(fb.mirror_msg) && fb.mirrored_at);
+  // 앱에서 고침 → 같은 카드 수정
+  fb.body = "앱 답 고침"; fb.mirrored_at = "2026-10-30T09:59:00Z"; fb.updated_at = "2026-10-30T10:00:00Z";   // 시계가 멈춘 가짜라 시각을 직접 둔다
+  await h.sync.mirrorTick();
+  assert.equal(edits.length, 1); assert.equal(edits[0].id, fb.mirror_msg);
+  assert.match(edits[0].embeds[0].description, /앱 답 고침/);
+  await h.sync.mirrorTick();
+  assert.equal(edits.length, 1, "다시 안 고침(mirrored_at 뒤)");
+  // 앱에서 숨김 → 「앱에서 숨긴 글이에요」로 수정 · 새 글 없음
+  fb.mirrored_at = "2026-10-30T09:59:30Z"; fb.hidden_at = "2026-10-30T10:00:30Z"; fb.updated_at = "2026-10-30T10:00:30Z";
+  await h.sync.mirrorTick();
+  assert.equal(edits.length, 2); assert.equal(edits[1].embeds[0].description, rs.HIDDEN_TEXT);
+  assert.equal(h.sent.length, 1, "새 글 없음");
+});
+
+test("§9.46.9-4 그룹 채널 — 글쓴이 번호로 각자 복기 · 명부 밖 · 답장 아닌 트레이너 글은 건너뜀", async () => {
+  const h = harness();
+  h.db.feedback_channel_map.push({ src_guild: G, src_channel: CH_NEW, student_id: null, kind: "student", confirmed_at: "2026-10-30T00:00:00Z", is_group: true });
+  const a = await h.sync.ingest(msg({ ch: CH_NEW, author: STU, content: NOTE }), { guildId: G, ch: CH_NEW });
+  const b = await h.sync.ingest(msg({ ch: CH_NEW, author: STU_OTHER, content: NOTE + " 2" }), { guildId: G, ch: CH_NEW });
+  assert.equal(a.done, "review"); assert.equal(b.done, "review");
+  assert.deepEqual(h.db.lesson_reviews.map((r) => r.student_id).sort(), [8, 9]);
+  assert.equal((await h.sync.ingest(msg({ ch: CH_NEW, author: STRANGER, content: NOTE }), { guildId: G, ch: CH_NEW })).why, "group_author");
+  assert.equal((await h.sync.ingest(msg({ ch: CH_NEW, author: TRAINER, content: NOTE }), { guildId: G, ch: CH_NEW })).why, "group_trainer_no_ref");
+  const src = h.db.lesson_reviews.find((r) => r.student_id === 9).src_msg;
+  const rep = await h.sync.ingest(msg({ ch: CH_NEW, author: TRAINER, content: "답이에요 — 좋아요", ref: src }), { guildId: G, ch: CH_NEW });
+  assert.equal(rep.done, "answer");
+});
+
+test("§9.46.9-2 짝 후보 — 사람 단위 보기 허용 · 채널 이름 · 한 명이면 자동 확정 · 둘이면 대기 · 확정 즉시 커서 비움(소급)", async () => {
+  const roster = [{ id: 8, name: "홍길동", discord_nick: "gildong", discord_id: STU }, { id: 9, name: "김철수", discord_nick: null, discord_id: STU_OTHER }];
+  const c1 = rs.pairCandidates({ channelName: "피드백-홍길동", viewerIds: new Set() }, roster);
+  assert.deepEqual([...c1.keys()], [8]);
+  const c2 = rs.pairCandidates({ channelName: "그룹방", viewerIds: new Set([STU, STU_OTHER]) }, roster);
+  assert.deepEqual([...c2.keys()].sort(), [8, 9]);
+  assert.equal(rs.pairCandidates({ channelName: "공지", viewerIds: new Set() }, roster).size, 0);
+  // 자동 확정
+  const h = harness();
+  h.db.students = roster.map((r) => ({ ...r, trainer_id: 4, status: "active" }));
+  h.ops.set(rs.CURSOR_KEY, { [CH2]: "123" });
+  h.channels.set(CH2, { id: CH2, name: "피드백-김철수", permissionOverwrites: { cache: new Map() }, messages: null });
+  const r = await h.sync.autoPair({ channels: { fetch: async (id) => h.channels.get(id) } }, { byCh: new Map([[CH2, h.db.feedback_channel_map[1]]]) });
+  assert.deepEqual(r, { pending: 0, auto: 1 });
+  const m = h.db.feedback_channel_map.find((x) => x.src_channel === CH2);
+  assert.ok(m.confirmed_at); assert.equal(m.student_id, 9); assert.equal(m.confirmed_by_staff_id, 4); assert.match(m.note, /자동/);
+  assert.equal(h.ops.get(rs.CURSOR_KEY)[CH2], undefined, "커서 비움 — 다음 점검이 시작선부터");
+  assert.equal((await h.sync.confirm(CH2, { studentId: 9, staffId: 4, why: "x" })).code, "already_confirmed");
 });
