@@ -4889,3 +4889,20 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 
 ### 9.57.7 사이트 몫 (지휘가 따로 주문)
 - 신청 완료 화면: 「디스코드에 들어오시면 바로 안내 DM이 가요」 + 초대 링크.
+
+## 9.58 역할 단위 봇 DM — 미리보기 → 오너 「보내」 뒤 발송 (2026-11-05 · 총무 주문 · 오너 「수강생역할군달려있는분들한테 디엠보내둬어플사용방식이랑」) · **서버(이 PR) · DDL 없음 · env 없음**
+
+### 9.58.1 길 — ops_state 요청(새 라우트 없음)
+- 세션 · 지휘가 `ops_state 'role_dm:request'` 에 `{ id, mode: "preview" | "send", role: "수강생", text, confirmCount?, guildId? }` 를 쓰면 봇이 **1분 안에 한 번** 돈다(§57 이관 요청과 같은 모양 · 세션 컨테이너가 API 에 못 닿아서).
+- 결과 = `ops_state 'role_dm:result'` `{ id, mode, status: running | preview | sent | error, role, count, unlinked, recipients: [{ n, studentId | null }], sample, textHash, sent, skipped, blocked: [번호], failed: [번호], error? }`.
+- 대상 = 서버(`GUILD_ID` · MRI) 회원 중 역할 이름이 정확히 `role` 인 사람 · 봇 제외. `text` 의 `{닉}` 은 그 사람 서버 닉으로 채운다(1,900자까지).
+
+### 9.58.2 안전
+- `preview` 는 아무에게도 보내지 않는다 — 인원 · 번호 목록 · 첫 사람 기준 문안 한 벌만.
+- `send` 는 **오너 「보내」 뒤에만** 쓴다. `confirmCount` 가 지금 인원과 다르면 `count_changed` 로 멈춘다(미리보기 뒤 사람이 바뀌면 다시 미리보기).
+- 같은 문안 · 같은 사람에게 한 번만 — `ops_state 'role_dm:sent:<문안 해시 12자>'` 에 보낸 사람을 적고 건너뛴다(봇 재시작 · 같은 요청 다시 써도 0통). 막힘 · 실패도 적어 **다시 보내지 않는다**. 1.5초 간격.
+- 결과 · 로그에는 수강생 번호 · 건수만. 판수 · 결제 · 정산 무관.
+
+### 9.58.3 신규 배정 중지 보완 (§9.57 다음 · PR #657 이어서 · 오너 11/5 「준구를찾는사람있으면 그건 준구가할거야 내가따로나눠주진않을거임현태한테만주고」)
+- `assign:paused` 트레이너도 **신청자가 직접 고른 신청**은 카드를 받고 [맡기]할 수 있다.
+- 「누구든」 신청 카드 · 오너 [배정] 목록에서는 계속 빠진다(기본 · 오너 배정 = 현태).
