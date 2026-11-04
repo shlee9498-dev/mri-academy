@@ -8460,3 +8460,49 @@ alter table public.intake_dms enable row level security;   -- 정책 없음 = se
 --   on conflict (key) do update set value = excluded.value;   -- 켜기(오너 문구 OK 뒤): value = '{"on": true}'
 -- 되돌림(행이 있으면 먼저 지휘 확인): drop table if exists public.intake_dms; notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §98  원장 직강 취소 1시간 전 — cancel_booking 교체 (2026-11-05 · 오너 OK 11/5 · 계약 §9.59 · 소관 MRIacademy)
+--      B 구간(기존 함수 교체 · 오너 OK). 판수 · 결제 · 정산 계산 무관 — 취소 가능 시각만 바뀐다(직강 3시간 → 1시간).
+--      ※ PR #643(접수 3 · 4단계) DDL 은 실행 때 §99 로 옮긴다.
+-- ============================================================
+-- 98-0) 실행 전 스냅샷: md5(prosrc) = 48d908adb7cb23e2157fda514434d2bd
+-- 98a)  2026-11-05 세션 실행 · 드라이런(롤백) 직강 2시간 반 전 취소됨 / 그룹 cancel_window_passed
+CREATE OR REPLACE FUNCTION public.cancel_booking(p_student_id bigint, p_booking_id bigint)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_b     slot_bookings%rowtype;
+  v_start timestamptz;
+  v_type  text;
+  v_win   interval;
+  v_ids   bigint[];
+begin
+  select * into v_b from slot_bookings where id = p_booking_id for update;
+  if not found                          then return jsonb_build_object('error','not_found'); end if;
+  if v_b.student_id <> p_student_id     then return jsonb_build_object('error','scope_denied'); end if;
+  if v_b.span_head_id is not null       then return jsonb_build_object('error','not_found'); end if;  -- 꼬리 행은 직접 취소 대상이 아니다
+  if v_b.status <> 'booked'             then return jsonb_build_object('error','not_found'); end if;
+
+  select slot_start, lesson_type into v_start, v_type from trainer_slots where id = v_b.slot_id;
+  -- §98 · 계약 §9.59(오너 11/5): 원장 직강(course)은 1시간 전까지 · 그 밖(레슨 · 그룹 · 레벨 테스트)은 3시간 전까지
+  v_win := (case when v_type = 'course' then interval '1 hour' else interval '3 hours' end);
+  if v_start - now() < v_win then
+    return jsonb_build_object('error','cancel_window_passed');
+  end if;
+
+  select array_agg(slot_id) into v_ids from slot_bookings
+    where id = v_b.id or span_head_id = v_b.id;
+  update slot_bookings set status = 'cancelled', cancelled_at = now(), games_held = 0
+    where id = v_b.id or span_head_id = v_b.id;
+  -- 개인이 닫아둔 칸만 되연다. 그룹 슬롯은 애초에 open 이라 이 update 가 건드리지 않는다.
+  update trainer_slots set status = 'open' where id = any(v_ids) and status = 'closed';
+
+  return jsonb_build_object('cancelled', true, 'gamesRestored', v_b.games_held);
+end;
+$function$;
+-- 되돌림: 위에서 v_type · v_win 두 줄을 빼고 조건을 `if v_start - now() < interval '3 hours' then` 으로(§32 정본) → md5 48d908… 로 돌아온다.
+-- ============================================================
