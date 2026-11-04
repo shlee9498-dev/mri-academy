@@ -43,6 +43,8 @@ gdcup-score.html
 kill-mvp.html
 live-board.html
 live.html
+obs-board.html
+obs-control.html
 overlay.html
 results.html
 roster.html

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<title>MRI 방송 점수판</title>
+<link rel="canonical" href="https://mriacademy.gg/obs-board.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<!-- impeccable-disable-next-line overused-font -- 디자인 시스템 v1 정본: 영문 · 숫자 = Space Grotesk(CLAUDE.md) -->
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  /* 방송 화면(OBS 브라우저 소스 · 1920×1080) — 점수 줄만 · 입력판 없음. 조작은 obs-control.html(계약 ranked-live-api §2) */
+  :root{
+    --bg:#0a0a0c; --surface-1:#15151a; --surface-2:#1a1a20; --gold:#f5c518;
+    --ink:#f4f4f5; --ink-2:#c9c9d1; --ink-3:#8a8a94; --line:rgba(255,255,255,.10);
+    --up:#4ade80; --down:#f87171;
+    --num:'Space Grotesk','Pretendard Variable',sans-serif; --body:'Pretendard Variable',Pretendard,sans-serif;
+    --h:64px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:transparent;color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased}
+  body{padding:var(--pad,0)}
+  .bar{display:inline-flex;align-items:stretch;height:var(--h);background:rgba(10,10,12,.92);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    box-shadow:inset 0 -3px 0 var(--gold),0 10px 30px rgba(0,0,0,.45)}
+  .seg{display:flex;align-items:center;gap:10px;padding:0 20px;border-right:1px solid var(--line);white-space:nowrap}
+  .seg:last-child{border-right:0}
+  .lab{font-size:calc(var(--h)*.24);font-weight:700;color:var(--ink-3);letter-spacing:.02em}
+  .val{font-family:var(--num);font-weight:700;font-size:calc(var(--h)*.46);line-height:1;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .val.gold{color:var(--gold)}
+  .delta{font-family:var(--num);font-weight:700;font-size:calc(var(--h)*.30);font-variant-numeric:tabular-nums}
+  .delta.up{color:var(--up)} .delta.down{color:var(--down)} .delta.zero{color:var(--ink-3)}
+  .id{font-family:var(--num);font-weight:700;font-size:calc(var(--h)*.30);color:var(--gold);letter-spacing:.01em}
+  .tier{font-size:calc(var(--h)*.26);font-weight:800;color:var(--ink-2)}
+  .rec{display:flex;gap:14px;align-items:baseline}
+  .rec b{font-family:var(--num);font-weight:700;font-size:calc(var(--h)*.46);font-variant-numeric:tabular-nums}
+  .rec i{font-style:normal;font-size:calc(var(--h)*.27);font-weight:800;color:var(--ink-2);margin-left:2px}
+  .rec .w b{color:var(--gold)}
+  .mates{font-size:calc(var(--h)*.27);font-weight:700;color:var(--ink-2);max-width:420px;overflow:hidden;text-overflow:ellipsis}
+  /* 배치 */
+  .pcount{font-family:var(--num);font-weight:700;font-size:calc(var(--h)*.40);color:var(--gold)}
+  .slots{display:flex;gap:6px;align-items:center}
+  .slot{width:calc(var(--h)*1.42);height:calc(var(--h)*.74);border-radius:8px;background:var(--surface-2);border:1px solid var(--line);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
+  .slot .p{font-family:var(--num);font-weight:700;font-size:calc(var(--h)*.30);line-height:1;color:var(--ink-3)}
+  .slot .k{font-size:calc(var(--h)*.19);font-weight:700;color:var(--ink-3);line-height:1}
+  .slot.empty{background:transparent;border-style:dashed}
+  .slot.empty .p{color:rgba(255,255,255,.22)}
+  .slot.top .p,.slot.top .k{color:var(--ink)}
+  .slot.win{border-color:var(--gold);background:rgba(245,197,24,.12)}
+  .slot.win .p,.slot.win .k{color:var(--gold)}
+  .slot.now{box-shadow:0 0 0 2px rgba(245,197,24,.55) inset}
+  .sum{display:flex;gap:16px;align-items:baseline}
+  .sum span{font-size:calc(var(--h)*.24);font-weight:700;color:var(--ink-3)}
+  .sum b{font-family:var(--num);font-weight:700;font-size:calc(var(--h)*.36);color:var(--ink);font-variant-numeric:tabular-nums;margin-left:4px}
+  .result{background:rgba(245,197,24,.12)}
+  .result .val{font-family:var(--body);font-weight:800;font-size:calc(var(--h)*.36);color:var(--gold)}
+  .pop{animation:pop .45s cubic-bezier(.2,.8,.2,1)}
+  @keyframes pop{0%{transform:translateY(30%);opacity:.2}100%{transform:none;opacity:1}}
+  .stale{position:absolute;right:6px;top:4px;width:6px;height:6px;border-radius:50%;background:var(--ink-3);opacity:.6}
+  .hide{display:none!important}
+  @media (prefers-reduced-motion:reduce){.pop{animation:none}}
+</style>
+</head>
+<body>
+<div class="bar" id="bar" aria-live="polite">
+  <!-- 일반 모드 -->
+  <div class="seg" data-m="normal"><span class="id" id="ign">GmI_mriacademy</span><span class="tier" id="tier"></span></div>
+  <div class="seg" data-m="normal"><span class="lab">시작</span><span class="val" id="start">—</span></div>
+  <div class="seg" data-m="normal"><span class="lab">현재</span><span class="val gold" id="now">—</span><span class="delta zero" id="delta"></span></div>
+  <div class="seg" data-m="normal"><div class="rec"><span class="w"><b id="w">0</b><i>승</i></span><span><b id="t">0</b><i>탑</i></span><span><b id="l">0</b><i>패</i></span></div></div>
+  <div class="seg" data-m="normal" id="mateSeg"><span class="lab">함께</span><span class="mates" id="mates"></span></div>
+  <!-- 배치 모드 -->
+  <div class="seg" data-m="placement"><span class="id">배치</span><span class="pcount" id="pc">0/5</span></div>
+  <div class="seg" data-m="placement"><div class="slots" id="slots"></div></div>
+  <div class="seg" data-m="placement"><div class="sum"><span>평균<b id="avg">—</b></span><span>킬<b id="pk">0</b></span><span>치킨<b id="ch">0</b></span></div></div>
+  <div class="seg result hide" data-m="placement" id="resSeg"><span class="lab">배치 끝</span><span class="val" id="res">—</span></div>
+</div>
+<script>
+const API = "https://mri-academy-production.up.railway.app";
+const q = new URLSearchParams(location.search);
+if (q.get("h")) document.documentElement.style.setProperty("--h", Math.max(40, Math.min(120, Number(q.get("h")) || 64)) + "px");
+if (q.get("pad")) document.body.style.setProperty("--pad", Math.max(0, Math.min(80, Number(q.get("pad")) || 0)) + "px");
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const fmt = (n) => (n == null ? "—" : Number(n).toLocaleString("ko-KR"));
+const $ = (id) => document.getElementById(id);
+
+// 숫자가 바뀌면 짧게 세어 올라가거나 내려간다(0.5초)
+function setNum(el, n) {
+  const prev = el.dataset.v == null ? null : Number(el.dataset.v);
+  if (n == null) { el.textContent = "—"; el.dataset.v = ""; return; }
+  if (prev === n) return;
+  el.dataset.v = n;
+  if (reduce || prev == null || !Number.isFinite(prev)) { el.textContent = fmt(n); return; }
+  const t0 = performance.now(), d = 500;
+  const step = (t) => { const k = Math.min(1, (t - t0) / d); const e = 1 - Math.pow(1 - k, 3);
+    el.textContent = fmt(Math.round(prev + (n - prev) * e)); if (k < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+  el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
+}
+function setText(el, s) { if (el.textContent !== s) { el.textContent = s; if (!reduce) { el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop"); } } }
+
+let lastSlots = "";
+function render(d) {
+  document.querySelectorAll("[data-m]").forEach((el) => el.classList.toggle("hide", el.dataset.m !== d.mode || (el.id === "resSeg" && !(d.placement && d.placement.finished))));
+  if (d.mode === "placement") {
+    const p = d.placement;
+    setText($("pc"), `${p.summary.played}/5`);
+    const key = JSON.stringify(p.slots);
+    if (key !== lastSlots) {
+      lastSlots = key;
+      const firstEmpty = p.slots.findIndex((s) => !s);
+      $("slots").innerHTML = p.slots.map((s, i) => {
+        if (!s) return `<div class="slot empty${i === firstEmpty ? " now" : ""}"><span class="p">${i + 1}</span></div>`;
+        const cls = s.place === 1 ? "win" : s.place && s.place <= 10 ? "top" : "";
+        return `<div class="slot ${cls} pop"><span class="p">#${s.place ?? "?"}</span><span class="k">${s.kills}킬</span></div>`;
+      }).join("");
+    }
+    setText($("avg"), p.summary.avgPlace == null ? "—" : `${p.summary.avgPlace}등`);
+    setNum($("pk"), p.summary.kills); setNum($("ch"), p.summary.chickens);
+    setText($("res"), p.tier ? p.tier.text : "확인 중");
+  } else {
+    const n = d.normal;
+    setText($("ign"), d.ign || "");
+    setText($("tier"), n.tier && n.tier !== "Unranked" ? `${n.tier}${n.subTier ? " " + n.subTier : ""}` : "");
+    setNum($("start"), n.startRp); setNum($("now"), n.nowRp);
+    const dl = $("delta");
+    const dt = n.delta == null ? "" : n.delta > 0 ? `+${fmt(n.delta)}` : n.delta < 0 ? `−${fmt(-n.delta)}` : "±0";
+    setText(dl, dt); dl.className = "delta " + (n.delta > 0 ? "up" : n.delta < 0 ? "down" : "zero");
+    setNum($("w"), n.rec.w); setNum($("t"), n.rec.t); setNum($("l"), n.rec.l);
+    const m = (n.mates || []).join(" · ");
+    setText($("mates"), m); $("mateSeg").classList.toggle("hide", !m);
+  }
+}
+// 1초마다 — 조작 화면에서 바꾼 것이 1초 안에 보인다. 실패하면 마지막 화면을 그대로 둔다.
+let busy = false;
+async function poll() {
+  if (busy) return; busy = true;
+  try { const r = await fetch(API + "/api/ranked/board", { cache: "no-store" }); if (r.ok) render(await r.json()); }
+  catch (_) {} finally { busy = false; }
+}
+poll(); setInterval(poll, 1000);
+</script>
+</body>
+</html>

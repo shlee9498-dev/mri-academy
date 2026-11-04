@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<title>MRI 점수판 조작</title>
+<link rel="canonical" href="https://mriacademy.gg/obs-control.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<!-- impeccable-disable-next-line overused-font -- 디자인 시스템 v1 정본: 영문 · 숫자 = Space Grotesk(CLAUDE.md) -->
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  /* 조작 화면(폰 · 브라우저) — 오너 로그인만. 누르면 바로 저장되고 방송 화면(obs-board.html)에 1초 안에 보인다 */
+  :root{--bg:#0a0a0c;--surface-1:#15151a;--surface-2:#1a1a20;--gold:#f5c518;--ink:#f4f4f5;--ink-2:#c9c9d1;--ink-3:#8a8a94;--line:rgba(255,255,255,.10);
+    --num:'Space Grotesk','Pretendard Variable',sans-serif;--body:'Pretendard Variable',Pretendard,sans-serif}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased}
+  main{max-width:640px;margin:0 auto;padding:20px 16px 80px;display:flex;flex-direction:column;gap:16px}
+  h1{font-size:20px;font-weight:800}
+  h2{font-size:15px;font-weight:800;color:var(--ink-2);margin-bottom:10px}
+  .card{background:var(--surface-1);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .muted{color:var(--ink-3);font-size:13px;line-height:1.5}
+  button{font-family:var(--body);font-weight:700;font-size:15px;min-height:44px;padding:0 14px;border-radius:10px;border:1px solid var(--line);
+    background:var(--surface-2);color:var(--ink);cursor:pointer}
+  button:focus-visible,input:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  button.primary{background:var(--gold);color:#0a0a0c;border-color:var(--gold)}
+  button.warn{border-color:rgba(248,113,113,.6);color:#fca5a5}
+  button[aria-pressed="true"]{border-color:var(--gold);color:var(--gold)}
+  button:disabled{opacity:.45;cursor:default}
+  input{font-family:var(--num);font-size:16px;min-height:44px;padding:0 10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);width:100%}
+  label{font-size:13px;color:var(--ink-3);font-weight:700;display:flex;flex-direction:column;gap:4px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .rec{display:flex;flex-direction:column;align-items:center;gap:6px;background:var(--surface-2);border-radius:10px;padding:10px 6px}
+  .rec b{font-family:var(--num);font-size:26px}
+  .rec .row{justify-content:center}
+  .rec button{min-width:44px;padding:0}
+  .slot{display:grid;grid-template-columns:40px 1fr 1fr auto;gap:8px;align-items:end;padding:8px 0;border-top:1px solid var(--line)}
+  .slot:first-of-type{border-top:0}
+  .slot .n{font-family:var(--num);font-weight:700;font-size:18px;color:var(--ink-3);padding-bottom:12px}
+  .src{font-size:11px;color:var(--ink-3)}
+  .preview{width:100%;aspect-ratio:1920/160;border:1px dashed var(--line);border-radius:10px;overflow:hidden;position:relative;background:#222228}
+  .preview iframe{position:absolute;left:0;top:0;width:1920px;height:160px;border:0;transform-origin:0 0}
+  .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--line);padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .2s}
+  .toast.on{opacity:1}
+  .hide{display:none!important}
+  .stat{font-family:var(--num);font-size:13px;color:var(--ink-3)}
+</style>
+</head>
+<body>
+<main>
+  <h1>점수판 조작</h1>
+
+  <section class="card hide" id="gate">
+    <p class="muted" id="gateHint">원장 디스코드 계정으로 로그인하면 바로 조작할 수 있어요</p>
+    <div class="row" style="margin-top:12px"><button class="primary" onclick="login()">Discord로 로그인</button></div>
+  </section>
+
+  <div id="app" class="hide" style="display:flex;flex-direction:column;gap:16px">
+    <section class="card">
+      <h2>방송 화면 미리 보기</h2>
+      <div class="preview" id="pv"><iframe src="obs-board.html?pad=16" title="방송 화면 미리 보기" tabindex="-1"></iframe></div>
+      <div class="row" style="margin-top:10px;justify-content:space-between">
+        <div class="row">
+          <button id="mNormal" aria-pressed="false" onclick="send({op:'mode',mode:'normal'})">일반</button>
+          <button id="mPlace" aria-pressed="false" onclick="send({op:'mode',mode:'placement'})">배치 5판</button>
+        </div>
+        <button id="undo" onclick="send({op:'undo'})">되돌리기</button>
+      </div>
+      <p class="stat" id="stat" style="margin-top:8px"></p>
+    </section>
+
+    <section class="card" id="normalCard">
+      <h2>일반 모드</h2>
+      <div class="row" style="align-items:flex-end">
+        <label style="flex:1">시작 점수<input id="startRp" inputmode="numeric" placeholder="비우면 표시 안 함"></label>
+        <button id="nb" class="warn" onclick="confirmStep(this, {op:'newBroadcast',confirm:true}, '한 번 더 누르면 새로 시작')">새 방송 시작</button>
+      </div>
+      <p class="muted" style="margin-top:6px">새 방송 시작 = 지금 점수를 시작 점수로 · 승탑패 0 · 오늘 이 시각부터 셈</p>
+      <p class="muted" style="margin:14px 0 8px">승 · 탑 · 패는 경쟁전 판이 끝나면 자동으로 올라가요. 틀리면 여기서 맞춰요</p>
+      <div class="grid3">
+        <div class="rec"><span class="muted">승</span><b id="cw">0</b><div class="row"><button onclick="send({op:'adj',key:'w',d:-1})" aria-label="승 하나 빼기">−</button><button onclick="send({op:'adj',key:'w',d:1})" aria-label="승 하나 더하기">+</button></div></div>
+        <div class="rec"><span class="muted">탑</span><b id="ct">0</b><div class="row"><button onclick="send({op:'adj',key:'t',d:-1})" aria-label="탑 하나 빼기">−</button><button onclick="send({op:'adj',key:'t',d:1})" aria-label="탑 하나 더하기">+</button></div></div>
+        <div class="rec"><span class="muted">패</span><b id="cl">0</b><div class="row"><button onclick="send({op:'adj',key:'l',d:-1})" aria-label="패 하나 빼기">−</button><button onclick="send({op:'adj',key:'l',d:1})" aria-label="패 하나 더하기">+</button></div></div>
+      </div>
+      <div class="row" style="margin-top:14px;align-items:flex-end">
+        <label style="flex:1">같이 하는 사람(쉼표로 구분)<input id="mates" placeholder="비우면 최근 판 팀원 자동"></label>
+        <button onclick="send({op:'mates',mates:null})">자동으로</button>
+      </div>
+    </section>
+
+    <section class="card" id="placeCard">
+      <h2>배치 5판</h2>
+      <p class="muted">판이 끝나면 경쟁전 기록에서 자동으로 채워져요. 숫자를 넣으면 그 칸은 넣은 값이 이겨요</p>
+      <div id="slots" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:12px;align-items:flex-end">
+        <label style="flex:1">결과 티어(비우면 자동)<input id="tier" placeholder="예: 다이아 3" style="font-family:var(--body)"></label>
+        <button class="warn" onclick="confirmStep(this, {op:'placementStart',confirm:true}, '한 번 더 누르면 비우고 시작')">배치 새로 시작</button>
+      </div>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast" role="status"></div>
+<script>
+(function(){ if(location.hash.startsWith("#token=")){ localStorage.setItem("mri_token", location.hash.slice(7)); history.replaceState(null,"",location.pathname); } })();
+const API = "https://mri-academy-production.up.railway.app";
+const token = () => { try { return localStorage.getItem("mri_token"); } catch (_) { return null; } };
+function login(){ location.href = API + "/api/auth/login?return=" + encodeURIComponent(location.href.split("#")[0]); }
+const $ = (id) => document.getElementById(id);
+let S = null;
+
+function toast(t) { const el = $("toast"); el.textContent = t; el.classList.add("on"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), 1600); }
+const ERR = { login_required: "로그인이 풀렸어요. 다시 로그인해 주세요", owner_only: "원장 계정만 조작할 수 있어요", nothing_to_undo: "되돌릴 게 없어요", bad_value: "숫자를 다시 볼까요?", confirm_required: "한 번 더 눌러 주세요" };
+
+async function send(body) {
+  try {
+    const r = await fetch(API + "/api/ranked/board", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token() }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const c = j.error && j.error.code; if (c === "login_required") showGate(ERR[c]); toast(ERR[c] || "잠깐 문제가 생겼어요. 다시 해볼까요?"); return; }
+    render(j); toast(body.op === "undo" ? "되돌렸어요" : "반영했어요");
+  } catch (_) { toast("연결이 잠깐 끊겼어요. 다시 해볼까요?"); }
+}
+// 위험한 버튼은 두 번 — 처음 누르면 글자가 바뀌고 4초 안에 한 번 더 눌러야 실행
+function confirmStep(btn, body, msg) {
+  if (btn.dataset.armed === "1") { btn.dataset.armed = ""; btn.textContent = btn.dataset.label; send(body); return; }
+  btn.dataset.label = btn.dataset.label || btn.textContent; btn.dataset.armed = "1"; btn.textContent = msg;
+  setTimeout(() => { if (btn.dataset.armed === "1") { btn.dataset.armed = ""; btn.textContent = btn.dataset.label; } }, 4000);
+}
+function showGate(hint) { $("gate").classList.remove("hide"); $("app").classList.add("hide"); if (hint) $("gateHint").textContent = hint; }
+
+function slotHtml(s, i) {
+  const src = s ? (s.src === "manual" ? "손 입력" : "자동") : "아직";
+  return `<div class="slot"><span class="n">${i + 1}</span>
+    <label>등수<input inputmode="numeric" data-i="${i}" data-f="place" value="${s && s.place != null ? s.place : ""}"></label>
+    <label>킬<input inputmode="numeric" data-i="${i}" data-f="kills" value="${s ? s.kills : ""}"></label>
+    <div style="display:flex;flex-direction:column;gap:2px;align-items:flex-end"><span class="src">${src}</span>${s && s.src === "manual" ? `<button onclick="send({op:'slot',i:${i},clear:true})" aria-label="${i + 1}판 손 입력 지우기">지우기</button>` : ""}</div></div>`;
+}
+const focused = () => document.activeElement && document.activeElement.tagName === "INPUT";
+function render(d) {
+  S = d;
+  $("mNormal").setAttribute("aria-pressed", String(d.mode === "normal"));
+  $("mPlace").setAttribute("aria-pressed", String(d.mode === "placement"));
+  $("normalCard").classList.toggle("hide", d.mode !== "normal");
+  $("placeCard").classList.toggle("hide", d.mode !== "placement");
+  $("undo").disabled = !d.undo;
+  $("stat").textContent = `현재 ${d.normal.nowRp ?? "—"}점 · 기록 ${d.liveAt ? new Date(d.liveAt).toLocaleTimeString("ko-KR") : "아직"}${d.stale ? " · 배그 응답 지연" : ""}`;
+  $("cw").textContent = d.normal.rec.w; $("ct").textContent = d.normal.rec.t; $("cl").textContent = d.normal.rec.l;
+  if (!focused()) {
+    $("startRp").value = d.normal.startRp ?? "";
+    $("mates").value = (d.normal.mates || []).join(", ");
+    $("tier").value = d.placement.tier && d.placement.tier.src === "manual" ? d.placement.tier.text : "";
+    $("slots").innerHTML = d.placement.slots.map(slotHtml).join("");
+  }
+}
+// 칸을 벗어나거나 엔터를 치면 바로 저장
+document.addEventListener("change", (e) => {
+  const el = e.target;
+  if (el.id === "startRp") return send({ op: "startRp", value: el.value.trim() });
+  if (el.id === "mates") { const v = el.value.split(",").map((x) => x.trim()).filter(Boolean); return send({ op: "mates", mates: v.length ? v : null }); }
+  if (el.id === "tier") return send({ op: "tier", tier: el.value.trim() || null });
+  if (el.dataset.f) {
+    const i = Number(el.dataset.i);
+    const box = el.closest(".slot");
+    const place = box.querySelector('[data-f="place"]').value.trim();
+    const kills = box.querySelector('[data-f="kills"]').value.trim();
+    if (!place) return;
+    send({ op: "slot", i, place: Number(place), kills: Number(kills || 0) });
+  }
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.tagName === "INPUT") e.target.blur(); });
+
+function fitPreview() { const pv = $("pv"); const f = pv.querySelector("iframe"); f.style.transform = `scale(${pv.clientWidth / 1920})`; }
+addEventListener("resize", fitPreview);
+
+async function boot() {
+  if (!token()) return showGate();
+  try {
+    const me = await fetch(API + "/api/auth/me", { headers: { Authorization: "Bearer " + token() } });
+    if (!me.ok) { try { localStorage.removeItem("mri_token"); } catch (_) {} return showGate("로그인이 풀렸어요. 다시 로그인해 주세요"); }
+  } catch (_) { return showGate("연결이 잠깐 끊겼어요. 새로고침해 볼까요?"); }
+  $("gate").classList.add("hide"); $("app").classList.remove("hide"); fitPreview();
+  const tick = async () => { try { const r = await fetch(API + "/api/ranked/board", { cache: "no-store" }); if (r.ok) render(await r.json()); } catch (_) {} };
+  tick(); setInterval(tick, 3000);
+}
+boot();
+</script>
+</body>
+</html>
