@@ -102,7 +102,7 @@ function apply(state, body, ctx) {
 }
 
 // ═══════════════ 돌리기 ═══════════════
-// deps: opsGet(key) · opsSet(key, value) · live(ign, since) → {status, body} · auth(req) → user|null|false · limit(name, max, ms, reject) · now · log
+// deps: opsGet(key) · opsSet(key, value) · live(ign, since) → {status, body} · reqOwner(req) → user|null|false · limit(name, max, ms, reject) · now · log
 function createRankedBoard(deps) {
   const now = deps.now || (() => Date.now());
   const log = deps.log || console;
@@ -155,7 +155,7 @@ function createRankedBoard(deps) {
     res.json(view(s, live));
   }
   async function post(req, res) {
-    const u = deps.auth(req);
+    const u = deps.reqOwner(req);
     if (u === null) return res.status(401).json({ error: { code: "login_required" } });
     if (u === false) return res.status(403).json({ error: { code: "owner_only" } });
     const s = await load();

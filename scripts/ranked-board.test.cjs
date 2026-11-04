@@ -61,7 +61,7 @@ test("돌리기 — 오너만 · 누르면 바로 저장 · 되돌리기 · 방�
     now: () => T0, log: { log() {}, warn() {}, error() {} },
     opsGet: async () => null, opsSet: async (k, v) => saved.push(v),
     live: async () => { liveCalls++; return { status: 200, body: { now: { rp: 3400 }, matches: [], last: [] } }; },
-    auth: (req) => req.who,
+    reqOwner: (req) => req.who,
   });
   const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; return r; }, json(x) { r.body = x; return r; }, set() { return r; } }; return r; };
   let r = res(); await board.post({ who: null, body: { op: "mode", mode: "placement" } }, r); assert.equal(r.code, 401);

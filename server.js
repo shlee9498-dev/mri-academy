@@ -7347,7 +7347,7 @@ async function gmiGuildMember(discordId) {
     live: rankedLiveApi.live,
     opsGet: async (key) => (await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`))[0]?.value || null,
     opsSet: (key, value) => sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key"),
-    auth: reqOwner, limit,
+    reqOwner, limit,
   }).mount(app);
   // 킬내기 앱 회원(앱 계약 §2 ~ §5) — /api/killrace/me · consent · link · leave · app/admin(unlink). 키는 개인 기록과 같은 불투명 키
   const killMembers = killraceMembers.createMembers({
