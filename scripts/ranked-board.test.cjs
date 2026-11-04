@@ -75,3 +75,77 @@ test("돌리기 — 오너만 · 누르면 바로 저장 · 되돌리기 · 방�
   assert.equal(r.body.normal.nowRp, 3400);
   assert.ok(liveCalls <= 2, `live ${liveCalls}`);
 });
+
+// ── §3 미션 ──
+const MS = Date.parse("2026-11-05T09:30:00Z"), ME = Date.parse("2026-11-06T09:30:00Z");
+const onMission = (o = {}) => b.apply(b.blank(MS), { op: "mission", on: true, ...o }, { now: MS }).state;
+
+test("미션 — 기본값은 이번 미션(3,700 · 11/5 18:30 ~ 11/6 18:30 KST) · 꺼진 채로 시작", () => {
+  const s = b.blank(MS);
+  assert.equal(s.mission.on, false); assert.equal(s.mission.target, 3700);
+  assert.equal(s.mission.startAt, "2026-11-05T09:30:00.000Z"); assert.equal(s.mission.endAt, "2026-11-06T09:30:00.000Z");
+  assert.deepEqual(b.missionView(s, null, null, MS), { on: false });
+});
+
+test("미션 막대 — 시작 3,000 · 현재 3,350 · 목표 3,700 = 50% · 시작 전 · 배치 중 단계", () => {
+  const s = onMission({ startRp: 3000 });
+  const live = { now: { rp: 3350 } };
+  const v = b.missionView(s, live, b.placementView(s, live), MS + 3600_000);
+  assert.equal(v.phase, "running"); assert.equal(v.pct, 0.5); assert.equal(v.startSrc, "manual"); assert.equal(v.nowRp, 3350);
+  assert.equal(b.missionView(s, live, null, MS - 1000).phase, "before");
+  const p = b.apply(s, { op: "placementStart", confirm: true }, { now: MS }).state;
+  assert.equal(b.missionView(p, live, b.placementView(p, live), MS + 60_000).phase, "placement");
+});
+
+test("미션 기록 — 시작 점수 비우면 배치 끝난 뒤 첫 점수 · 목표 넘긴 시각 고정 · 종료 뒤 최종 점수", () => {
+  let s = b.apply(onMission(), { op: "placementStart", confirm: true }, { now: MS }).state;
+  const live = { now: { rp: 2800 }, matches: [] };
+  assert.deepEqual(b.missionTrack(s, live, b.placementView(s, live), MS + 60_000), { lastRp: 2800 }, "배치 중엔 시작 점수 안 잡음");
+  s = b.apply(s, { op: "mode", mode: "normal" }, { now: MS }).state;
+  let t = b.missionTrack(s, live, b.placementView(s, live), MS + 120_000);
+  assert.equal(t.autoStartRp, 2800);
+  s = { ...s, mission: { ...s.mission, ...t } };
+  const hit = { now: { rp: 3712 } };
+  t = b.missionTrack(s, hit, null, MS + 20 * 3600_000);
+  assert.equal(t.reachedAt, new Date(MS + 20 * 3600_000).toISOString()); assert.equal(t.reachedRp, 3712);
+  s = { ...s, mission: { ...s.mission, ...t } };
+  const v = b.missionView(s, { now: { rp: 3650 } }, null, ME + 3600_000);
+  assert.equal(v.phase, "achieved"); assert.equal(v.elapsedMs, 20 * 3600_000);
+  assert.equal(b.missionTrack(s, { now: { rp: 3800 } }, null, MS + 21 * 3600_000).reachedAt, undefined, "한 번만");
+  // 못 넘기고 끝남
+  let f = onMission({ startRp: 3000 });
+  f = { ...f, mission: { ...f.mission, ...b.missionTrack(f, { now: { rp: 3512 } }, null, ME - 60_000) } };
+  assert.equal(b.missionTrack(f, { now: { rp: 3400 } }, null, ME + 1000), null, "종료 뒤엔 안 적음");
+  const e = b.missionView(f, { now: { rp: 3400 } }, null, ME + 1000);
+  assert.equal(e.phase, "ended"); assert.equal(e.finalRp, 3512);
+});
+
+test("미션 조작 — 잘못된 값 · 종료가 시작보다 빠르면 거절 · 목표를 바꾸면 기록 새로", () => {
+  const s = onMission();
+  assert.equal(b.apply(s, { op: "mission", on: "yes" }, { now: MS }).error, "bad_value");
+  assert.equal(b.apply(s, { op: "mission", endAt: "2026-11-05T09:00:00Z" }, { now: MS }).error, "bad_time");
+  assert.equal(b.apply(s, { op: "mission", startAt: "nope" }, { now: MS }).error, "bad_time");
+  const done = { ...s, mission: { ...s.mission, reachedAt: "x", autoStartRp: 2900 } };
+  const r = b.apply(done, { op: "mission", target: 3800 }, { now: MS }).state;
+  assert.equal(r.mission.reachedAt, null); assert.equal(r.mission.autoStartRp, null); assert.equal(r.mission.target, 3800);
+  assert.equal(b.apply(done, { op: "mission", title: "x" }, { now: MS }).state.mission.reachedAt, "x", "제목만 바꾸면 기록 그대로");
+});
+
+test("미션 돌리기 — 읽을 때 달성 시각을 저장 · 되돌리기로 안 지워짐", async () => {
+  let clock = MS + 3600_000;
+  const saved = [];
+  let stored = { ...onMission({ startRp: 3000 }) };
+  const board = b.createRankedBoard({
+    now: () => clock, log: { log() {}, warn() {}, error() {} },
+    opsGet: async () => stored, opsSet: async (k, v) => saved.push(v),
+    live: async () => ({ status: 200, body: { now: { rp: 3705 }, matches: [], last: [] } }), reqOwner: () => ({ id: "o" }),
+  });
+  const res = () => { const r = { code: 200, body: null, status(c) { r.code = c; return r; }, json(x) { r.body = x; return r; }, set() { return r; } }; return r; };
+  let r = res(); await board.post({ body: { op: "adj", key: "w", d: 1 } }, r);
+  r = res(); await board.get({}, r);
+  assert.equal(r.body.mission.phase, "achieved");
+  assert.ok(saved.some((v) => v.mission.reachedAt));
+  r = res(); await board.post({ body: { op: "undo" } }, r);
+  assert.equal(r.body.mission.phase, "achieved");
+  assert.equal(r.body.normal.rec.w, 0);
+});

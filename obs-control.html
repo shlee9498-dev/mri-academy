@@ -32,6 +32,7 @@
   input{font-family:var(--num);font-size:16px;min-height:44px;padding:0 10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);width:100%}
   label{font-size:13px;color:var(--ink-3);font-weight:700;display:flex;flex-direction:column;gap:4px}
   .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
   .rec{display:flex;flex-direction:column;align-items:center;gap:6px;background:var(--surface-2);border-radius:10px;padding:10px 6px}
   .rec b{font-family:var(--num);font-size:26px}
   .rec .row{justify-content:center}
@@ -69,6 +70,25 @@
         <button id="undo" onclick="send({op:'undo'})">되돌리기</button>
       </div>
       <p class="stat" id="stat" style="margin-top:8px"></p>
+    </section>
+
+    <section class="card" id="missionCard">
+      <h2>미션</h2>
+      <div class="row" style="justify-content:space-between">
+        <div class="row">
+          <button id="mOn" aria-pressed="false" onclick="send({op:'mission',on:true})">켜기</button>
+          <button id="mOff" aria-pressed="false" onclick="send({op:'mission',on:false})">끄기</button>
+        </div>
+        <span class="stat" id="mStat"></span>
+      </div>
+      <div class="grid2" style="margin-top:12px">
+        <label style="grid-column:1/-1">제목<input id="mTitleIn" style="font-family:var(--body)"></label>
+        <label>목표 점수<input id="mTarget" inputmode="numeric"></label>
+        <label>시작 점수(비우면 배치 끝난 뒤 첫 점수)<input id="mStartRp" inputmode="numeric" placeholder="자동"></label>
+        <label>시작(KST)<input id="mStartAt" type="datetime-local"></label>
+        <label>종료(KST)<input id="mEndAt" type="datetime-local"></label>
+      </div>
+      <p class="muted" style="margin-top:8px">목표나 시각을 바꾸면 달성 기록을 새로 잡아요</p>
     </section>
 
     <section class="card" id="normalCard">
@@ -111,7 +131,11 @@ const $ = (id) => document.getElementById(id);
 let S = null;
 
 function toast(t) { const el = $("toast"); el.textContent = t; el.classList.add("on"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), 1600); }
-const ERR = { login_required: "로그인이 풀렸어요. 다시 로그인해 주세요", owner_only: "원장 계정만 조작할 수 있어요", nothing_to_undo: "되돌릴 게 없어요", bad_value: "숫자를 다시 볼까요?", confirm_required: "한 번 더 눌러 주세요" };
+// KST 입력칸 ↔ ISO — 입력칸 값은 한국 시각으로 읽고 쓴다(폰 시간대와 상관없이)
+const toKst = (iso) => { const t = new Date(Date.parse(iso) + 9 * 3600_000); return isNaN(t) ? "" : t.toISOString().slice(0, 16); };
+const fromKst = (v) => (v ? new Date(v + ":00+09:00").toISOString() : null);
+const PHASE = { before: "시작 전", placement: "배치 중", running: "진행 중", achieved: "달성", ended: "종료" };
+const ERR = { bad_time: "시각을 다시 볼까요? 종료가 시작보다 뒤여야 해요", login_required: "로그인이 풀렸어요. 다시 로그인해 주세요", owner_only: "원장 계정만 조작할 수 있어요", nothing_to_undo: "되돌릴 게 없어요", bad_value: "숫자를 다시 볼까요?", confirm_required: "한 번 더 눌러 주세요" };
 
 async function send(body) {
   try {
@@ -139,6 +163,13 @@ function slotHtml(s, i) {
 const focused = () => document.activeElement && document.activeElement.tagName === "INPUT";
 function render(d) {
   S = d;
+  const mc = d.missionCfg || {};
+  $("mOn").setAttribute("aria-pressed", String(!!mc.on)); $("mOff").setAttribute("aria-pressed", String(!mc.on));
+  $("mStat").textContent = d.mission && d.mission.on ? `${PHASE[d.mission.phase] || ""} · 시작 ${d.mission.startRp ?? "—"}${d.mission.startSrc === "auto" ? "(자동)" : ""}` : "꺼짐";
+  if (!focused()) {
+    $("mTitleIn").value = mc.title || ""; $("mTarget").value = mc.target ?? "";
+    $("mStartRp").value = mc.startRp ?? ""; $("mStartAt").value = mc.startAt ? toKst(mc.startAt) : ""; $("mEndAt").value = mc.endAt ? toKst(mc.endAt) : "";
+  }
   $("mNormal").setAttribute("aria-pressed", String(d.mode === "normal"));
   $("mPlace").setAttribute("aria-pressed", String(d.mode === "placement"));
   $("normalCard").classList.toggle("hide", d.mode !== "normal");
@@ -159,6 +190,11 @@ document.addEventListener("change", (e) => {
   if (el.id === "startRp") return send({ op: "startRp", value: el.value.trim() });
   if (el.id === "mates") { const v = el.value.split(",").map((x) => x.trim()).filter(Boolean); return send({ op: "mates", mates: v.length ? v : null }); }
   if (el.id === "tier") return send({ op: "tier", tier: el.value.trim() || null });
+  if (el.id === "mTitleIn") return send({ op: "mission", title: el.value.trim() });
+  if (el.id === "mTarget") return el.value.trim() ? send({ op: "mission", target: Number(el.value) }) : undefined;
+  if (el.id === "mStartRp") return send({ op: "mission", startRp: el.value.trim() });
+  if (el.id === "mStartAt") return send({ op: "mission", startAt: fromKst(el.value) });
+  if (el.id === "mEndAt") return send({ op: "mission", endAt: fromKst(el.value) });
   if (el.dataset.f) {
     const i = Number(el.dataset.i);
     const box = el.closest(".slot");

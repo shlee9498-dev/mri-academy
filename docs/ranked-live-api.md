@@ -121,3 +121,33 @@ DB 쓰기 · 새 표 없음. 킬내기 집계 · 리더보드 · 상금 원장 �
 ### §2.6 안 바뀌는 것 · 되돌리는 법
 - §1 응답 · 킬내기 · 다른 API 그대로. DB 표 · 칸 추가 없음. 판수 · 결제 · 정산 무관.
 - 되돌리기: OBS 소스 주소를 원래 파일로 돌리면 끝. 서버는 `server.js` 의 `ranked-board.cjs` 한 덩어리를 지우면 길이 없어진다.
+
+## §3 미션 칸 — 목표 · 남은 시간 · 진행 막대 (2026-11-05 · 총무 주문 · 오너 04:10 「목요일 오후 6시반 ~ 금요일 오후 6시 반까지 노방종으로 서바이버 달성하기 미션 … 배치부터 서바이버까지 … 3700점이 서바이버」) · **서버 + 화면(이 PR) · DDL 없음 · 새 env 없음**
+
+### §3.1 상태 — `ops_state 'ranked:board'` 의 `mission`
+```
+mission = { on, title, target, startAt, endAt, startRp,          // 조작 화면이 정한다
+            autoStartRp, reachedAt, reachedRp, lastRp }          // 서버가 읽을 때 따라 적는다
+```
+- 기본값 = 이번 미션: `on:false` · 「24시간 서바이버 미션」 · 3,700 · 2026-11-05 18:30 ~ 2026-11-06 18:30 KST(`startAt`/`endAt` 은 UTC ISO 로 저장).
+- 점수는 일반 줄과 같은 값(§1 `now.rp`)을 그대로 쓴다 — 새 계산 없음. 같이 하는 사람 칸도 그대로.
+- 시작 점수: 손 입력(`startRp`)이 먼저, 비우면 **배치가 끝난 뒤 처음 본 점수**(`autoStartRp` · 배치 모드가 아니면 시작 시각 뒤 처음 본 점수).
+- 목표 넘김: 시작 ~ 종료 사이에 점수가 목표 이상이면 그때 시각(`reachedAt`)과 점수를 한 번 적고 고정한다(점수 갱신 주기가 60초라 실제보다 최대 1분 늦을 수 있다).
+- 종료 뒤 최종 점수 = 종료 전 마지막으로 본 점수(`lastRp`).
+- 기록 칸은 되돌리기로 지워지지 않는다. 목표 · 시작 · 종료 시각을 바꾸면 새로 잡는다.
+
+### §3.2 API
+- `GET /api/ranked/board` 에 두 칸이 더해진다.
+  - `mission` — 꺼져 있으면 `{ on:false }`. 켜져 있으면 `{ on, title, target, startAt, endAt, serverNow, phase, startRp, startSrc: "manual"|"auto"|null, nowRp, pct(0~1|null), placementPlayed, reachedAt, reachedRp, elapsedMs, finalRp }`.
+  - `phase`: `before`(시작 전) · `placement`(배치 모드에서 5판 전) · `running` · `achieved`(목표 넘김) · `ended`(종료 시각 지남 · 못 넘김).
+  - `missionCfg` — 조작 화면용 설정값(`on · title · target · startAt · endAt · startRp`).
+- `POST /api/ranked/board` `op: "mission"` — `on`(true/false) · `title`(30자) · `target`(1,000 ~ 10,000) · `startAt` · `endAt`(ISO · 종료 > 시작) · `startRp`(빈 값 = 자동) · `reset: true`(기록만 새로) 중 바꿀 것만. 잘못되면 400 `bad_value` · `bad_time`.
+
+### §3.3 방송 화면
+- 미션이 켜져 있으면 줄 맨 앞에 한 칸(일반 · 배치 모드 공통, 한 줄 높이 안):
+  - 위 작은 글씨 = 제목 · 아래 큰 숫자 = 남은 시간 `HH:MM:SS`(서버 시각에 맞춰 0.25초마다 · 시작 전이면 「시작까지」)
+  - 오른쪽 = `현재 / 목표` + 진행 막대(시작 점수 → 목표) · 배치 중이면 막대 대신 `배치 n/5`
+  - 목표 넘김 → `서바이버 달성! ○점` + 걸린 시간 고정 · 종료 → `미션 종료 · 최종 ○점` + `00:00:00`
+
+### §3.4 조작 화면
+- 「미션」 칸: 켜기 · 끄기 · 제목 · 목표 점수 · 시작 점수(비우면 자동) · 시작 · 종료(한국 시각 입력). 칸을 벗어나면 바로 저장.
