@@ -7336,9 +7336,18 @@ async function gmiGuildMember(discordId) {
   killTiers.mount(app);
   // 방송용 경쟁전 현황(docs/ranked-live-api.md §1) — GET /api/ranked/live?ign=&since= · 읽기만 · 허용 닉만(기본 GmI_mriacademy · ops_state 'ranked:live' { igns })
   //   배그 키는 기존 PUBG_API_KEY 그대로(새 env 없음) · 선수 · 점수 60초 캐시 · 매치 요약은 matchId 로 기억
-  rankedLive.createRankedLive({
+  const rankedLiveApi = rankedLive.createRankedLive({
     findPlayer, pubgGet, currentSeasonId, pubgMatch,
     readAllowed: async () => { const r = await sbSelect("ops_state", "select=value&key=eq.ranked%3Alive&limit=1"); return r[0] && r[0].value && r[0].value.igns; },
+  });
+  rankedLiveApi.mount(app);
+  // 방송 점수판(docs/ranked-live-api.md §2) — 방송 화면 obs-board.html(읽기 1초) · 조작 화면 obs-control.html(오너 로그인) · 배치 5판
+  //   상태 = ops_state 'ranked:board' 한 줄 · 새 env 없음
+  require("./ranked-board.cjs").createRankedBoard({
+    live: rankedLiveApi.live,
+    opsGet: async (key) => (await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`))[0]?.value || null,
+    opsSet: (key, value) => sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key"),
+    reqOwner, limit,
   }).mount(app);
   // 킬내기 앱 회원(앱 계약 §2 ~ §5) — /api/killrace/me · consent · link · leave · app/admin(unlink). 키는 개인 기록과 같은 불투명 키
   const killMembers = killraceMembers.createMembers({
