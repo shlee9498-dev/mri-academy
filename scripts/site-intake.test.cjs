@@ -87,3 +87,15 @@ test("서버 입장 — 스위치 켜짐이면 신청자 DM 1통 + 원장 한 �
     assert.equal((await h.onMemberJoin({ username: "gildong_01", send: async (t) => { sent.push(t); } })).already, true, "한 번만");
   }
 });
+
+test("서버 입장 — §9.57 맞춤 DM 이 갔으면 웰컴 DM 0통 · 원장 줄에 「맞춤 DM 보냄」", async () => {
+  const sent = [], dms = [], cards = [];
+  const h = s.createSiteIntake({ now: () => NOW, ownerDiscordId: "1", log: { log() {} }, welcomeOn: () => true,
+    dm: async (_t, x) => { dms.push(x); return true; },
+    sbSelect: async () => [row({ id: 7 })],
+    sbInsert: async (_t, r) => { cards.push({ ...r }); },
+    sbPatch: async (_t, f, p) => { const c = cards.find((x) => x.welcome_dm_at == null); if (!c) return []; Object.assign(c, p); return [c]; } });
+  const r = await h.onMemberJoin({ username: "gildong_01", send: async (t) => { sent.push(t); } }, { dmSent: true });
+  assert.equal(r.welcomed, false); assert.equal(sent.length, 0);
+  assert.match(dms[0], /· 맞춤 DM 보냄$/);
+});
