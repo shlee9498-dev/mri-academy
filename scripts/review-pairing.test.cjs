@@ -15,12 +15,23 @@ test("§9.46.11 원장은 전부 · 글 많은 채널 먼저", () => {
   const out = listFor({ id: 4, role: "owner" }, cands, pend, roster, op);
   assert.equal(out.length, 3);
   assert.equal(out[0].channelId, "910000000000000002"); assert.equal(out[0].posts, 4);
-  assert.deepEqual(out[0].candidates.map((c) => c.studentId), ["s8", "s9"]);
+  assert.deepEqual(out[0].candidates.map((c) => c.studentKey), ["s8", "s9"]);
+  assert.equal(out[0].channelName, "그룹방");
 });
 
 test("§9.46.11 트레이너는 자기 담당 후보만 · 후보 없는 채널은 안 보임", () => {
   const out = listFor({ id: 5, role: "trainer" }, cands, pend, roster, op);
   assert.deepEqual(out.map((c) => c.channelId).sort(), ["910000000000000001", "910000000000000002"]);
-  assert.deepEqual(out.find((c) => c.channelId === "910000000000000002").candidates.map((c) => c.name), ["홍길동"]);
+  assert.deepEqual(out.find((c) => c.channelId === "910000000000000002").candidates.map((c) => c.displayName), ["홍길동"]);
   assert.equal(listFor({ id: 2, role: "trainer" }, cands, pend, roster, op).length, 1);
+});
+
+test("§9.46.11 응답 키 — 트레이너 응답 가드(scrubTrainer)를 통과한다(name · studentId 없음 · 11/5 정정)", () => {
+  const tp = require("../trainer-portal.cjs");
+  const scrub = tp.scrubTrainer || tp._test?.scrubTrainer;
+  const out = { at: null, channels: listFor({ id: 4, role: "owner" }, cands, pend, roster, op) };
+  const keys = JSON.stringify(out);
+  assert.ok(!/"name"|"studentId"/.test(keys));
+  assert.match(keys, /"channelName"/); assert.match(keys, /"studentKey"/); assert.match(keys, /"displayName"/);
+  if (scrub) assert.doesNotThrow(() => scrub(out));
 });

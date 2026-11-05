@@ -434,6 +434,11 @@ test("§9.46.9-2 짝 후보 — 사람 단위 보기 허용 · 채널 이름 · 
   const c2 = rs.pairCandidates({ channelName: "그룹방", viewerIds: new Set([STU, STU_OTHER]) }, roster);
   assert.deepEqual([...c2.keys()].sort(), [8, 9]);
   assert.equal(rs.pairCandidates({ channelName: "공지", viewerIds: new Set() }, roster).size, 0);
+  // 채널 끝이 이름(성 뺀 부분)과 같으면 후보 「이름 끝」(11/5) · 한 글자 · 다른 이름은 아님
+  const c3 = rs.pairCandidates({ channelName: "📝｜🇧그룹-길동", viewerIds: new Set() }, roster);
+  assert.deepEqual([...c3.entries()], [[8, ["이름 끝"]]]);
+  assert.equal(rs.pairCandidates({ channelName: "📝｜🇧그룹-동", viewerIds: new Set() }, roster).size, 0);
+  assert.equal(rs.pairCandidates({ channelName: "📝｜🇧그룹-철", viewerIds: new Set() }, roster).size, 0);
   // 자동 확정
   const h = harness();
   h.db.students = roster.map((r) => ({ ...r, trainer_id: 4, status: "active" }));
@@ -445,4 +450,14 @@ test("§9.46.9-2 짝 후보 — 사람 단위 보기 허용 · 채널 이름 · 
   assert.ok(m.confirmed_at); assert.equal(m.student_id, 9); assert.equal(m.confirmed_by_staff_id, 4); assert.match(m.note, /자동/);
   assert.equal(h.ops.get(rs.CURSOR_KEY)[CH2], undefined, "커서 비움 — 다음 점검이 시작선부터");
   assert.equal((await h.sync.confirm(CH2, { studentId: 9, staffId: 4, why: "x" })).code, "already_confirmed");
+});
+
+test("§9.46.9-2 「이름 끝」 후보 한 명은 자동 확정하지 않는다 — 대기에만(트레이너 「맞아요」 · 11/5)", async () => {
+  const h = harness();
+  h.db.students = [{ id: 8, name: "홍길동", discord_nick: null, discord_id: STU, trainer_id: 4, status: "active" }];
+  h.channels.set(CH2, { id: CH2, name: "📝｜🇧그룹-길동", permissionOverwrites: { cache: new Map() }, messages: null });
+  const r = await h.sync.autoPair({ channels: { fetch: async (id) => h.channels.get(id) } }, { byCh: new Map([[CH2, h.db.feedback_channel_map[1]]]) });
+  assert.deepEqual(r, { pending: 1, auto: 0 });
+  assert.ok(!h.db.feedback_channel_map.find((x) => x.src_channel === CH2).confirmed_at);
+  assert.deepEqual(h.ops.get(rs.CANDIDATES_KEY || "review_sync:candidates").channels[CH2].candidates, [{ sid: 8, why: ["이름 끝"] }]);
 });
