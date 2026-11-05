@@ -148,7 +148,7 @@ const csess = (id, held_on, source = "panel", status = "done", trainer_id = null
 const review = (id, student_id, o = {}) => ({ id, student_id, anchor_kind: "none", lesson_session_id: null, course_session_id: null, course_id: null,
   author_role: "student", author_staff_id: null, recipient_trainer_id: null, source: "app", status: "draft", title: null, body: null,
   src_file_name: null, created_at: "2026-09-30T00:00:00Z", updated_at: "2026-09-30T00:00:00Z", published_at: null, hidden_at: null,
-  visibility: "private", visibility_changed_at: null, public_at: null, ...o });
+  visibility: "private", visibility_changed_at: null, public_at: null, mirror_msg: null, ...o });
 
 const fixture = () => ({
   staff: [staff(2, "트레이너A", "trainer"), staff(4, "원장", "owner"), staff(5, "트레이너B", "trainer")],
@@ -182,7 +182,7 @@ const fixture = () => ({
     review(22, 37, { anchor_kind: "lesson", lesson_session_id: 165, status: "published", recipient_trainer_id: 5,
       published_at: "2026-09-02T00:00:00Z" }),
   ],
-  review_feedback: [{ id: 1, review_id: 19, trainer_id: 5, kind: "overall", created_at: "2026-10-01T01:00:00Z" }],
+  review_feedback: [{ id: 1, review_id: 19, trainer_id: 5, kind: "overall", created_at: "2026-10-01T01:00:00Z", src_msg: null, mirror_msg: null }],
 });
 
 test("/sessions — 직강 출석 회차(courseSessions) · 회차 번호 · 복기 넷 · 레슨이 없는 수강생도", async () => {

@@ -843,7 +843,7 @@ module.exports = function mountReviewApi(app, deps) {
         imagePurgeAt: imagePurgeAt(r, (ic.get(r.id) || 0) > 0),
         visibility: r.visibility,
         source: r.source,                                         // §57 discord = 「디스코드에서 옮겨온 기록」 표시
-        onDiscord: !!r.mirror_msg,                                // §9.46.13 「디코에 올라감」(봇이 디코 채널에 대신 올린 복기)
+        mirrored: !!r.mirror_msg,                                  // §9.46.13 「디코에 올라감」(봇이 디코 채널에 대신 올린 복기)
         publicAt: r.public_at ?? null,                            // §57 이 시각에 「수강생 모두」로 바뀐다(그 전에 고르면 null)
         reactionCounts: reactionSummary(rx.get(r.id), "student", sub).counts,
       };
@@ -895,7 +895,7 @@ module.exports = function mountReviewApi(app, deps) {
     phaseId: f.phase_id ? opaqueId("rphase", f.phase_id) : null, lineOrd: f.line_ord ?? null,
     verdict: f.verdict ?? null, body: f.body ?? null, trainerDisplayName: trainerName || "트레이너",
     dueAt: f.due_at ?? null, createdAt: f.created_at, updatedAt: f.updated_at,
-    fromDiscord: !!f.src_msg, onDiscord: !!f.mirror_msg,            // §9.46.13 디코에서 온 트레이너 답 · 디코에 올라간 답
+    imported: !!f.src_msg, mirrored: !!f.mirror_msg,            // §9.46.13 디코에서 온 트레이너 답 · 디코에 올라간 답
     ...(viewerStaffId !== undefined ? { mine: Number(f.trainer_id) === Number(viewerStaffId) } : {}),
   });
 
@@ -948,7 +948,7 @@ module.exports = function mountReviewApi(app, deps) {
       body: r.body ?? null,
       status: r.status,
       source: r.source,
-      onDiscord: !!r.mirror_msg,                                  // §9.46.13 「디코에 올라감」
+      mirrored: !!r.mirror_msg,                                    // §9.46.13 「디코에 올라감」
       authorRole: r.author_role,
       authorDisplayName,
       recipientDisplayName: own && r.recipient_trainer_id ? tnames[r.recipient_trainer_id] || null : null,
@@ -2104,7 +2104,7 @@ module.exports = function mountReviewApi(app, deps) {
           publishedAt: r.published_at ?? null,
           visibility: r.visibility,
           source: r.source,                                       // §57 discord = 「디스코드에서 옮겨온 기록」
-          onDiscord: !!r.mirror_msg,                              // §9.46.13 「디코에 올라감」
+          mirrored: !!r.mirror_msg,                                // §9.46.13 「디코에 올라감」
           publicAt: r.public_at ?? null,                          // §57 공개 대기(이 시각에 「수강생 모두」)
           reactionCounts: rs.counts,
           myReactions: rs.mine,
