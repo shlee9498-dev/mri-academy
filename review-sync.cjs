@@ -70,12 +70,16 @@ function pairCandidates({ channelName, viewerIds }, roster) {
   const out = new Map();                                       // sid → 근거 배열
   const add = (sid, why) => { const k = Number(sid); out.set(k, [...(out.get(k) || []), why]); };
   const ch = normKey(channelName);
+  const tail = normKey(String(channelName || "").split(/[-–—]/).pop());   // 마지막 「-」 뒤(없으면 전체)
   for (const s of roster) {
     if (s.discord_id && viewerIds.has(String(s.discord_id))) add(s.id, "보기 허용");
-    for (const n of [s.name, s.discord_nick]) {
+    for (const n of [s.name, s.discord_nick, s.pubg_name]) {
       const k = normKey(n);
       if (k.length >= 2 && ch && (ch === k || ch.includes(k))) { add(s.id, "채널 이름"); break; }
     }
+    // 「📝｜🇧그룹-해주」처럼 채널 끝이 이름(성 뺀 두 글자 이상)과 같으면 후보(11/5 · 28채널 후보 0 원인 — 이름 전체만 봤다)
+    const given = normKey(s.name).slice(1);
+    if (tail.length >= 2 && given.length >= 2 && tail === given && !(out.get(Number(s.id)) || []).includes("채널 이름")) add(s.id, "이름 끝");
   }
   return out;
 }
@@ -454,7 +458,7 @@ function createReviewSync(deps) {
 
   // ── 짝 자동 제안 · 확정(9.46.9-2 · 9.46.11) ──
   async function rosterForPair() {
-    return sb.select("students", "select=id,name,discord_nick,discord_id,trainer_id,status&merged_into=is.null&status=neq.done&limit=2000");
+    return sb.select("students", "select=id,name,discord_nick,pubg_name,discord_id,trainer_id,status&merged_into=is.null&status=neq.done&limit=2000");
   }
   // 사람 단위로 「보기 허용」된 계정 — 역할 단위 허용은 그 역할 사람이 많아 후보로 쓰지 않는다
   function viewerIdsOf(channel) {
@@ -506,8 +510,10 @@ function createReviewSync(deps) {
       if (!channel) continue;
       const cands = pairCandidates({ channelName: channel.name, viewerIds: viewerIdsOf(channel) }, roster);
       out[ch] = { name: String(channel.name || "").slice(0, 60), candidates: [...cands].map(([sid, why]) => ({ sid, why: [...new Set(why)] })) };
-      if (cands.size === 1 && ownerId) {
-        const [[sid, why]] = [...cands];
+      // 자동 확정은 근거가 「보기 허용 · 채널 이름」일 때만 — 「이름 끝」(두 글자 이름 일치)은 사람이 「맞아요」로만(11/5 · 지휘 「확정은 하지 않음」)
+      const solo = cands.size === 1 ? [...cands][0] : null;
+      if (solo && ownerId && !(solo[1].length === 1 && solo[1][0] === "이름 끝")) {
+        const [sid, why] = solo;
         const r = await confirm(ch, { studentId: sid, staffId: ownerId, why: `자동 · ${[...new Set(why)].join("+")}` });
         if (r.code === "ok") { auto++; delete out[ch]; }
       }

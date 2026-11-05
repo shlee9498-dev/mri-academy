@@ -563,7 +563,7 @@ test("GET /journals — 옛 호출 그대로 · cursor 로 끝까지 = 같은 �
 const rv = (id, student_id, published_at, o = {}) => ({ id, student_id, anchor_kind: null, lesson_session_id: null, course_session_id: null,
   course_id: null, author_role: "student", author_staff_id: null, recipient_trainer_id: null, source: "app", status: "published",
   title: `복기${id}`, body: "본문", src_file_name: null, created_at: published_at, updated_at: published_at, published_at,
-  hidden_at: null, visibility: "trainer", visibility_changed_at: null, public_at: null, ...o });
+  hidden_at: null, visibility: "trainer", visibility_changed_at: null, public_at: null, mirror_msg: null, ...o });
 const reviewsFixture = () => ({
   staff: STAFF,
   students: [stu(10, "복기10", 2), stu(11, "복기11", 2), stu(12, "남의복기", 5)],
