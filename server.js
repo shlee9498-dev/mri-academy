@@ -9058,7 +9058,7 @@ require("./notices.cjs")(app, {
     opsSet: (key, value) => sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key"),
     dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID,
   });
-  if (hasSupabase()) setInterval(() => timePrefs.digestTick().catch((e) => console.error("[time-prefs] digest", e?.status || e?.message)), 10 * 60_000).unref?.();
+  if (process.env.SUPABASE_URL) setInterval(() => timePrefs.digestTick().catch((e) => console.error("[time-prefs] digest", e?.status || e?.message)), 10 * 60_000).unref?.();
 }
 // 오너 알림 본문 — 승인 카드(adjreqPortalCard)와 같은 줄 모양. 운영진 DM 이라 반말이다.
 function adjustAlertText(a) {
