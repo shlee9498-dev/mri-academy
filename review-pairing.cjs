@@ -1,7 +1,9 @@
 "use strict";
 // ═══════════════ 피드백 채널 짝 「맞아요」 — 트레이너 앱 API (계약 trainer-portal-api §9.46.11 · 2026-11-04 · 지휘 주문) ═══════════════
 //   GET  /api/trainer-portal/feedback-channels                    — 확인 대기 채널 · 후보(트레이너는 자기 담당 후보만 · 원장은 전부)
-//   POST /api/trainer-portal/feedback-channels/:channelId/confirm  — { studentId(opaque) } 또는 { group: true }(원장만)
+//   POST /api/trainer-portal/feedback-channels/:channelId/confirm  — { studentKey(opaque) } 또는 { group: true }(원장만)
+//   ⚠️ 응답 키(11/5 정정 · 계약 §9.46.11): 트레이너 응답 가드(scrubTrainer · 앱 guard.ts)가 name · studentId 를 막는다
+//      → channelName · candidates[].studentKey · candidates[].displayName · 확정 응답 studentKey. 요청 본문은 studentKey(옛 studentId 도 받음).
 //   POST /api/trainer-portal/feedback-channels/:channelId/ignore   — 수업 채널 아님(원장만)
 // 확정 · 무시 · 소급 반영은 review-sync.cjs(confirm · ignore)가 한다. 이 모듈은 권한 · 모양만.
 // 채널 이름은 디스코드 채널 이름(수강생 실명일 수 있다) — 트레이너 앱(운영진 전용)에만 내려간다. 로그에는 번호만.
@@ -18,8 +20,8 @@ function listFor(staff, cands, pend, roster, opaque) {
     if (!owner && !mine.length) continue;                    // 후보 없는 채널 · 남의 담당 후보만 있는 채널은 원장에게만
     const p = (pend || {})[ch] || {};
     out.push({
-      channelId: ch, name: c.name || null, posts: Number(p.n || 0), lastPostAt: p.last || null,
-      candidates: mine.map((x) => ({ studentId: opaque(Number(x.sid)), name: roster.get(Number(x.sid))?.name || null, why: x.why || [] })),
+      channelId: ch, channelName: c.name || null, posts: Number(p.n || 0), lastPostAt: p.last || null,
+      candidates: mine.map((x) => ({ studentKey: opaque(Number(x.sid)), displayName: roster.get(Number(x.sid))?.name || null, why: x.why || [] })),
     });
   }
   return out.sort((a, b) => b.posts - a.posts || String(a.channelId).localeCompare(String(b.channelId)));
@@ -28,6 +30,7 @@ function listFor(staff, cands, pend, roster, opaque) {
 // deps: sbSelect · opsGet · reviewSync(confirm · ignore) · trainer(requireTrainer) · portal(opaqueId · readOpaqueId · fail) · limit
 function mountReviewPairing(app, deps) {
   const { sbSelect, opsGet, trainer, portal, limit } = deps;
+  const send = trainer.sendTrainer || ((res, obj) => res.json(obj));   // 트레이너 응답 가드(금지 키가 섞이면 그 자리에서 막힌다)
   const { opaqueId, readOpaqueId, fail } = portal;
   const rs = () => deps.reviewSync();
   const base = "/api/trainer-portal/feedback-channels";
@@ -42,7 +45,7 @@ function mountReviewPairing(app, deps) {
 
   app.get(base, read, trainer.requireTrainer, staffOnly, wrap(async (req, res) => {
     const [c, p, r] = await Promise.all([opsGet("review_sync:candidates").catch(() => null), opsGet("review_sync:pending").catch(() => null), roster()]);
-    res.json({ at: c?.at || null, channels: listFor(req.staff, c?.channels, p?.channels, r, (sid) => opaqueId("student", sid)) });
+    send(res, { at: c?.at || null, channels: listFor(req.staff, c?.channels, p?.channels, r, (sid) => opaqueId("student", sid)) });
   }));
 
   app.post(`${base}/:channelId/confirm`, write, trainer.requireTrainer, staffOnly, wrap(async (req, res) => {
@@ -53,16 +56,17 @@ function mountReviewPairing(app, deps) {
     if (b.group === true) {
       if (!owner) return fail(res, 403, "owner_only");
       const out = await rs().confirm(ch, { group: true, staffId: req.staff.id, why: "원장 · 그룹 채널" });
-      return out.code === "ok" ? res.json({ ok: true, ...out, code: undefined }) : fail(res, out.code === "already_confirmed" ? 409 : 404, out.code);
+      return out.code === "ok" ? send(res, { ok: true, channelId: ch, studentKey: null, group: true }) : fail(res, out.code === "already_confirmed" ? 409 : 404, out.code);
     }
-    const sid = readOpaqueId("student", String(b.studentId || ""));
+    const key = b.studentKey != null ? b.studentKey : b.studentId;   // 옛 이름(studentId)도 받는다
+    const sid = readOpaqueId("student", String(key || ""));
     if (!sid) return fail(res, 400, "invalid_body");
     const s = (await sbSelect("students", `select=id,trainer_id&id=eq.${Number(sid)}&merged_into=is.null&limit=1`))[0];
     if (!s) return fail(res, 404, "student_not_found");
     if (!owner && Number(s.trainer_id) !== Number(req.staff.id)) return fail(res, 403, "not_assigned");
     const out = await rs().confirm(ch, { studentId: Number(sid), staffId: req.staff.id, why: owner ? "원장 「맞아요」" : "트레이너 「맞아요」" });
     if (out.code !== "ok") return fail(res, out.code === "already_confirmed" ? 409 : 404, out.code);
-    res.json({ ok: true, channelId: ch, studentId: String(b.studentId), group: false });
+    send(res, { ok: true, channelId: ch, studentKey: String(key), group: false });
   }));
 
   app.post(`${base}/:channelId/ignore`, write, trainer.requireTrainer, staffOnly, wrap(async (req, res) => {
@@ -71,7 +75,7 @@ function mountReviewPairing(app, deps) {
     if (req.staff.role !== "owner") return fail(res, 403, "owner_only");
     const out = await rs().ignore(ch, req.staff.id);
     if (out.code !== "ok") return fail(res, 404, out.code);
-    res.json({ ok: true, channelId: ch });
+    send(res, { ok: true, channelId: ch });
   }));
 }
 

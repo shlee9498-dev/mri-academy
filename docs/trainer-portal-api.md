@@ -4438,12 +4438,16 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 6. **스위치(꺼진 채 배포)** — `ops_state 'review_mirror:on'` = `{ "on": true, "since": "<켠 시각>" }` 일 때만 B 가 돈다. **env 를 쓰지 않는다**(세션이 시험 채널 확인 뒤 SQL 로 켜고 끈다 · 오너 손 없음).
 
 ### 9.46.11 트레이너 앱 — 짝 「맞아요」 (반장 화면 · 서버 경비)
-- `GET /api/trainer-portal/feedback-channels` → `{ channels: [{ channelId, name, posts, lastPostAt, candidates: [{ studentId, name }], group }] }`
+- `GET /api/trainer-portal/feedback-channels` → `{ at, channels: [{ channelId, channelName, posts, lastPostAt, candidates: [{ studentKey, displayName, why: [근거…] }] }] }`
+  - ⚠️ **키 정정(2026-11-05 · 지휘 · 반장 #68)**: 종전 이 줄의 `name` · `candidates[].studentId` · `candidates[].name` 은 트레이너 응답 가드(서버 `scrubTrainer` · 앱 `guard.ts` 정확일치)가 막는 키라 화면이 열리지 않았다. **반장 앱 키로 통일** — `channelName` · `studentKey`(불투명) · `displayName`. 서버는 이제 트레이너 응답 가드를 거쳐 보낸다.
   - 확인 대기 채널만 · 후보 = 9.46.9-2 후보. 트레이너는 **자기 담당 후보만** 보인다(원장은 전부). 후보 없는 채널은 원장에게만.
-- `POST /api/trainer-portal/feedback-channels/:channelId/confirm` `{ "studentId": "<opaque>" }` 또는 `{ "group": true }`(원장만)
-  - 트레이너는 자기 담당 수강생으로만 확정. 확정되면 그 채널 소급 반영(9.46.9-3)이 바로 돈다. 응답 `{ ok, channelId, studentId|null, group }`
+- `POST /api/trainer-portal/feedback-channels/:channelId/confirm` `{ "studentKey": "<opaque>" }`(옛 이름 `studentId` 도 받는다) 또는 `{ "group": true }`(원장만)
+  - 트레이너는 자기 담당 수강생으로만 확정. 확정되면 그 채널 소급 반영(9.46.9-3)이 바로 돈다. 응답 `{ ok, channelId, studentKey|null, group }`
   - 오류: 403 `not_assigned` · 404 `channel_not_pending` · 409 `already_confirmed`(먼저 누른 사람만 · 조건부 patch)
 - `POST /api/trainer-portal/feedback-channels/:channelId/ignore`(원장만) — 수업 채널이 아니면 `kind='ignore'`.
+
+- **후보 넓힘(11/5)**: 짝 후보 대기 28채널이 전부 후보 0이었다 — 채널 이름이 「📝｜🇧그룹-해주」처럼 끝에 **이름(성 뺀 부분)·닉**만 있어 「채널 이름에 실명 전체가 들어 있음」 규칙에 안 걸렸다.
+  이제 ① 배그 닉(`pubg_name`)도 채널 이름과 견주고 ② 마지막 「-」 뒤가 실명에서 성을 뺀 부분과 같으면 후보(근거 「이름 끝」). **「이름 끝」 한 명뿐이어도 자동 확정하지 않는다** — 트레이너 「맞아요」로만.
 
 ### 9.46.12 안전
 - 같은 글 두 번 금지 — 유일 색인 `uq_lr_src_msg` · `uq_rf_src_msg` · `uq_lr_mirror_msg` · `uq_rf_mirror_msg`(이미 있음 · §89). 실패 건은 다음 점검이 한 번 더(유일 키라 겹칠 수 없음) — 사람이 손으로 다시 누르는 재시도 없음.
@@ -4453,6 +4457,7 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 ### 9.46.13 반장 몫 (지휘가 따로 주문)
 - 트레이너 앱 「맞아요」 칩(9.46.11 · 후보 한 명 = 칩 하나 · 원장은 「그룹 채널」 · 「수업 채널 아님」 칩 추가).
 - 복기 화면 출처 표시 — `source='discord'` = 「디코에서 옴」 · `mirror_msg` 숫자 = 「디코에 올라감」.
+  - **응답 칸(11/5 · 서버 반영)**: 복기 목록 · 상세 · 트레이너 목록에 `mirrored`(봇이 디코에 대신 올린 복기) · 답(`feedback[]`)에 `imported`(디코에서 옮겨 온 트레이너 답) · `mirrored`(디코에 올라간 답) — 응답 가드가 키 이름에 「discord」를 막아서 이 이름을 쓴다. 실시간은 9.46.5 변경 커서(10초 · 15초 안 반영).
 
 ### 9.46.14 검사 (시험 채널)
 디코 글 → 10초 안 앱 · 앱 복기 · 답 → 디코 카드 · 답장 · 양쪽 수정 · 삭제 · 숨김 · 봇 재시작 뒤 중복 0 · 확인 대기 채널 글이 확정 순간 들어옴.
