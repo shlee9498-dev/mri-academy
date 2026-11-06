@@ -8506,3 +8506,30 @@ end;
 $function$;
 -- 되돌림: 위에서 v_type · v_win 두 줄을 빼고 조건을 `if v_start - now() < interval '3 hours' then` 으로(§32 정본) → md5 48d908… 로 돌아온다.
 -- ============================================================
+
+-- ============================================================
+-- §99  수강생 희망 시간 — student_time_prefs (2026-11-05 · 총무 주문 · 오너 「판단대로해」 · 계약 §9.60 · 소관 MRIacademy)
+--      A 구간(새 표만). 판수 · 결제 · 정산 · 예약 무관. ※ PR #643(접수 3 · 4단계) DDL 은 실행 때 §100 으로 옮긴다.
+-- ============================================================
+-- 99-0) 실행 전 스냅샷: to_regclass('public.student_time_prefs') is null
+create table if not exists public.student_time_prefs (
+  id            bigint generated always as identity primary key,
+  student_id    bigint not null references public.students(id) on delete cascade,
+  slots         text[] not null check (cardinality(slots) between 1 and 35 and slots <@ array[
+                  'mon:morning','mon:afternoon','mon:evening','mon:night','mon:late','tue:morning','tue:afternoon','tue:evening','tue:night','tue:late',
+                  'wed:morning','wed:afternoon','wed:evening','wed:night','wed:late','thu:morning','thu:afternoon','thu:evening','thu:night','thu:late',
+                  'fri:morning','fri:afternoon','fri:evening','fri:night','fri:late','sat:morning','sat:afternoon','sat:evening','sat:night','sat:late',
+                  'sun:morning','sun:afternoon','sun:evening','sun:night','sun:late']::text[]),
+  kinds         text[] not null check (cardinality(kinds) between 1 and 3 and kinds <@ array['lesson','course','level_test']::text[]),
+  trainer_id    bigint references public.staff(id),
+  memo          text check (memo is null or char_length(memo) <= 100),
+  active        boolean not null default true,
+  created_at    timestamptz not null default now(),
+  superseded_at timestamptz
+);
+create unique index if not exists uq_student_time_prefs_active on public.student_time_prefs (student_id) where active;
+create index if not exists ix_student_time_prefs_created on public.student_time_prefs (created_at);
+alter table public.student_time_prefs enable row level security;   -- 정책 없음 = service_role 만
+-- 99a) 검증: 칸 9 · 행 0 · RLS on · 정책 0 · 색인 3 (2026-11-05 세션 실행 · 확인) → notify pgrst, 'reload schema';
+-- 되돌림(행이 있으면 먼저 지휘 확인): drop table if exists public.student_time_prefs; notify pgrst, 'reload schema';
+-- ============================================================

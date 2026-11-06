@@ -4935,3 +4935,38 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 ### 9.59.4 화면 문구(반장 · 디자인 몫 — 주문서로 넘김)
 - 앱 `cancel_window_passed` 안내가 「수업 3시간 이내에는 앱에서 취소할 수 없어요」 하나다 → 직강 칸이면 「수업 1시간 이내에는 앱에서 취소할 수 없어요. 원장에게 말해 주세요」로 갈라야 한다.
 - 사용설명서 · 직강 안내의 「3시간 전」 문구도 직강은 1시간으로.
+
+## 9.60 수강생 희망 시간 모으기 (2026-11-05 · 총무 주문 · 오너 「수강생들이 원하는 시간대 취합도 받아서 해볼 수 있게 … 판단대로해」) · **서버(Draft · 금 18:30 뒤 머지) · DDL §99(더하기만 · 세션 실행 끝) · env 없음** · 화면 = 반장(이 절 번호대로)
+
+### 9.60.1 왜
+- 수강생이 「5시 ~ 8시 반 · 화 · 금이 좋다」처럼 말로 알려 주면 지금 칸과 안 맞아도 남지 않는다. 앱으로 받아 모아 두고, 원장 · 트레이너가 그 표를 보고 칸을 연다(식당이 예약 전에 「언제 오실 수 있나요」를 먼저 받는 것).
+
+### 9.60.2 값
+- 요일 `mon tue wed thu fri sat sun` × 시간 덩어리(KST) `morning` 오전 09~12 · `afternoon` 오후 12~17 · `evening` 저녁 17~20 · `night` 밤 20~23 · `late` 심야 23~02 → 칸 키 `"tue:evening"` (35칸 · 여러 개).
+- 수업 종류 `kinds`: `lesson` 레슨 · `course` 원장 직강 · `level_test` 레벨 테스트(1개 이상).
+- 원하는 트레이너 `trainer`: `"any"`(누구든) 또는 `options.trainers[].key`(불투명 키 · 활성 트레이너 · 원장. 신규 배정 중지 트레이너도 고를 수 있다 — §9.58.3).
+- 한 줄 메모 `note` 100자까지.
+- 한 사람당 살아 있는 건 1건 — 고치면 지난 건은 `active=false` · `superseded_at` 으로 남기고 새로 넣는다(기록 보존).
+
+### 9.60.3 수강생 API (`x-portal-secret` + 수강생 세션 · 기존 포털과 같다)
+- `GET /api/student-portal/time-prefs` → `{ mine: { slots, kinds, trainer: { key, label }, note, updatedAt } | null, options: { days: [{key,label}], blocks: [{key,label,from,to}], kinds: [{key,label}], trainers: [{key,label}] } }`
+- `PUT /api/student-portal/time-prefs` `{ slots, kinds, trainer, note? }` → `{ ok, mine }` · 400 `invalid_slots` · `invalid_kinds` · `invalid_trainer` · `memo_too_long` · 409 `try_again`(동시에 두 번 저장)
+- `DELETE /api/student-portal/time-prefs` → `{ ok, mine: null }`(지우기 · 기록은 남는다)
+- 표가 없으면(§99 미실행) 503 `schema_missing`.
+
+### 9.60.4 원장 · 트레이너 API (트레이너 세션)
+- `GET /api/trainer-portal/time-prefs` → `{ scope: "all" | "mine_and_any", total, days, blocks, cells: [{ day, block, count, people: [{ studentKey, studentNo, displayName, kinds, trainer: {key,label}, note }] }] }`(35칸 · 인원 0 칸 포함)
+- 원장 = 전부 · 트레이너 = 자기를 고른 사람 + 「누구든」만. 사무 계정 403 `not_staff`.
+
+### 9.60.5 원장 알림 — 하루 한 번
+- 새 희망 시간이 들어온 날 **21시(KST)** 에 원장 DM 한 통: `🗓️ 희망 시간 새로 n명 들어왔어 · 많이 몰린 칸: 화 저녁 4명 · …(위 5개)`. 즉시 알림 없음. 기록 = `ops_state 'time_prefs:digest'`.
+
+### 9.60.6 DDL §99 (더하기만 · 2026-11-05 세션 실행 · 칸 9 · 행 0 · RLS on · 정책 0 · 색인 3)
+- `student_time_prefs`(id · student_id → students · slots text[] 35칸 목록 안 · kinds text[] · trainer_id → staff · memo 100자 · active · created_at · superseded_at) · 살아 있는 건 수강생당 1건(부분 유일 색인).
+
+### 9.60.7 반장 화면 요구(이 절 번호대로)
+1. 수강생 앱: 「원하는 시간」 화면 — 요일 7 × 시간 덩어리 5 격자에서 여러 칸 탭 선택 + 수업 종류 칩 + 트레이너 고르기(누구든 기본) + 한 줄 메모 → 저장(`PUT`).
+2. 저장한 값이 다시 열면 그대로 보이고(`GET mine`) · 「지우기」(`DELETE`).
+3. 원장 · 트레이너 앱: 같은 격자에 칸마다 인원 수 히트맵(많을수록 진하게 · 골드 한 색 농도).
+4. 칸을 누르면 그 시간 원하는 수강생 목록(#번호 · 이름 · 종류 · 원하는 트레이너 · 메모).
+5. 원장 화면 진입점은 칸 열기 화면 옆(표 보고 바로 칸 열기).

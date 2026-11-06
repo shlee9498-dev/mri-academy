@@ -9050,6 +9050,16 @@ require("./notices.cjs")(app, {
   sbSelect, sbInsert, sbInsertMany, sbPatch, limit, portal: studentPortal, trainer: trainerPortal,
   sendDM: discordDMDetail, appUrl: STUDENT_APP_URL, trainerAppUrl: TRAINER_APP_URL,
 });
+// 수강생 희망 시간 모으기(계약 §9.60 · DDL §99) — 수강생 저장 · 원장/트레이너 표 · 원장 DM 하루 한 번(21시 KST)
+{
+  const timePrefs = require("./time-prefs.cjs").mountTimePrefs(app, {
+    sbSelect, sbInsert, sbPatch, limit, portal: studentPortal, trainer: trainerPortal,
+    opsGet: async (key) => (await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`))[0]?.value || null,
+    opsSet: (key, value) => sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key"),
+    dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID,
+  });
+  if (process.env.SUPABASE_URL) setInterval(() => timePrefs.digestTick().catch((e) => console.error("[time-prefs] digest", e?.status || e?.message)), 10 * 60_000).unref?.();
+}
 // 오너 알림 본문 — 승인 카드(adjreqPortalCard)와 같은 줄 모양. 운영진 DM 이라 반말이다.
 function adjustAlertText(a) {
   const n = Math.abs(Number(a.remainingDelta));
@@ -9439,6 +9449,8 @@ const SCHEMA_OPTIONAL = {
   inbound_alerts: ["id", "source", "sender", "customer_hint", "first_line", "received_at", "posted_at", "dedupe_key", "consult_id", "notified_at", "created_at"],   // utm 3종 = §22f(2026-09-17 · 트레이너별 유입 집계) · inflow 는 10/19 실행으로 필수 승격
   // §97 웹 신청 첫 연락 봇 DM(계약 §9.57) — 미실행이면 onApply 가 insert 에서 실패해 DM 0통(로그 한 줄) · 신청 저장 · 웹훅은 그대로
   intake_dms: ["consult_id", "handle", "dm_text", "status", "discord_id", "card_msg_id", "card_channel_id", "thread_id", "sent_at", "flagged_at", "created_at", "updated_at"],
+  // §99 수강생 희망 시간(계약 §9.60) — 미실행이면 /time-prefs 만 503 schema_missing
+  student_time_prefs: ["id", "student_id", "slots", "kinds", "trainer_id", "memo", "active", "created_at", "superseded_at"],
   // §20 전환 승인 게이트 — 미실행이면 /등록계가 종전(즉시 교체)으로 degrade하고 warnOnce로만 알린다.
   registry_transfer_requests: ["id","discord_id","season","tier","from_platform","from_pubg_name",
     "from_account_id","to_platform","to_pubg_name","to_account_id","real_name","active_hours",
