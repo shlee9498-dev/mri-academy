@@ -1356,6 +1356,15 @@ if (process.env.DISCORD_TOKEN) {
       });
       setInterval(() => roleDm.poll().catch((e) => console.error("role_dm_poll", e?.status || "", e?.message)), 60_000);
     }
+    // PUBG 경기 조회(읽기 전용 · 롱폼 소재 찾기 · 11/7) — ops_state 'pubg_scan:request' 를 1분마다 한 번 읽는다(컨테이너가 PUBG API 에 못 닿아서)
+    if (hasSupabase() && process.env.PUBG_API_KEY) {
+      const pubgScan = require("./pubg-scan.cjs").createPubgScan({
+        pubgGet,
+        opsGet: async (key) => (await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`))[0]?.value || null,
+        opsSet: (key, value) => sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key"),
+      });
+      setInterval(() => pubgScan.poll().catch((e) => console.error("pubg_scan_poll", e?.status || "", e?.message)), 60_000);
+    }
     // 디코 ↔ 앱 복기(계약 §9.46.3 · §9.46.4) — 점검 · 백필 = 1분 뒤 첫 회 · 10분마다 / 거울 카드 = 30초마다
     if (hasSupabase() && reviewSync) {
       setTimeout(() => reviewSync.sweep(), 60_000);
