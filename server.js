@@ -9449,9 +9449,9 @@ const SCHEMA_OPTIONAL = {
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
-  consults: ["utm_source", "utm_medium", "utm_content", "write_up", "write_up_at", "write_up_by", "discord_handle"],   // discord_handle = §95(사이트 신청 디코 · 계약 §9.55)   // write_up 3종 = §93(상담 기록 · 계약 §9.53)
+  consults: ["utm_source", "utm_medium", "utm_content", "write_up", "write_up_at", "write_up_by", "discord_handle", "avail_slots", "tier_note", "depositor_name", "intake_state", "deposit_due_at", "intake_expired_at"],   // §101 6칸 = 레벨 테스트 입금 먼저(계약 §9.61) · discord_handle = §95(사이트 신청 디코 · 계약 §9.55)   // write_up 3종 = §93(상담 기록 · 계약 §9.53)
   // §93 상담 일정 카드 — 미실행이면 카드 봇만 꺼진 채(채널 글 · 캘린더 · 알림 없음) · 다른 기능은 그대로
-  consult_cards: ["consult_id", "message_id", "rendered_hash", "posted_at", "edited_at", "deleted_at", "calendar_event_id", "calendar_hash", "reminded_at", "created_at", "updated_at",
+  consult_cards: ["consult_id", "message_id", "rendered_hash", "posted_at", "edited_at", "deleted_at", "calendar_event_id", "calendar_hash", "reminded_at", "created_at", "updated_at", "confirmed_dm_at", "deposit_reminded_at",
                   "intake_notified_at", "deposit_dm_at", "intake_nudges", "intake_nudged_at", "welcome_dm_at"],   // intake 5종 = §95(§9.55)
   consult_digests: ["day", "count", "created_at"],
   // §94 숨고 메시지 알림(계약 §9.54) — 미실행이면 POST /hooks/inbound-alert 만 503 table_missing

@@ -8533,3 +8533,38 @@ alter table public.student_time_prefs enable row level security;   -- 정책 없
 -- 99a) 검증: 칸 9 · 행 0 · RLS on · 정책 0 · 색인 3 (2026-11-05 세션 실행 · 확인) → notify pgrst, 'reload schema';
 -- 되돌림(행이 있으면 먼저 지휘 확인): drop table if exists public.student_time_prefs; notify pgrst, 'reload schema';
 -- ============================================================
+
+-- §101  레벨 테스트 신청 = 입금 먼저 + 7일 가능 시간표 — consults 칸 6 · consult_cards 칸 2 (2026-11-09 · 총무 주문 · 오너 OK 11/9 「무료말고 입금해야 신청하는거로하자」 · 계약 §9.61 · 소관 MRIacademy)
+--      A 구간(칸 · 색인 더하기만 · 기존 행 값 그대로). 판수 · 결제 · 정산 무관. ※ §100 = PR #643(접수 3 · 4단계) 몫.
+alter table public.consults add column if not exists avail_slots       text[];
+alter table public.consults add column if not exists tier_note         text;
+alter table public.consults add column if not exists depositor_name    text;
+alter table public.consults add column if not exists intake_state      text;
+alter table public.consults add column if not exists deposit_due_at    timestamptz;
+alter table public.consults add column if not exists intake_expired_at timestamptz;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_intake_state') then
+    alter table public.consults add constraint chk_consults_intake_state
+      check (intake_state is null or intake_state in ('awaiting_deposit','confirmed','expired'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_tier_note') then
+    alter table public.consults add constraint chk_consults_tier_note check (tier_note is null or char_length(tier_note) <= 40);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_depositor_name') then
+    alter table public.consults add constraint chk_consults_depositor_name check (depositor_name is null or char_length(depositor_name) <= 40);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_avail_slots') then
+    alter table public.consults add constraint chk_consults_avail_slots check (avail_slots is null or cardinality(avail_slots) <= 35);
+  end if;
+end $$;
+create index if not exists ix_consults_awaiting_deposit on public.consults (deposit_due_at) where intake_state = 'awaiting_deposit';
+alter table public.consult_cards add column if not exists confirmed_dm_at     timestamptz;
+alter table public.consult_cards add column if not exists deposit_reminded_at timestamptz;
+-- 101a) 검증: consults 새 칸 6 · 제약 4 · 색인 1 · consult_cards 새 칸 2 · 기존 행 새 칸 전부 null (2026-11-09 세션 실행 · 확인 · consults 38행 · cards 13행 그대로) → notify pgrst, 'reload schema';
+-- 되돌림(새 칸에 값이 있으면 먼저 지휘 확인): drop index if exists public.ix_consults_awaiting_deposit;
+--   alter table public.consults drop constraint if exists chk_consults_intake_state, drop constraint if exists chk_consults_tier_note,
+--     drop constraint if exists chk_consults_depositor_name, drop constraint if exists chk_consults_avail_slots,
+--     drop column if exists avail_slots, drop column if exists tier_note, drop column if exists depositor_name,
+--     drop column if exists intake_state, drop column if exists deposit_due_at, drop column if exists intake_expired_at;
+--   alter table public.consult_cards drop column if exists confirmed_dm_at, drop column if exists deposit_reminded_at; notify pgrst, 'reload schema';
+-- ============================================================
