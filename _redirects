@@ -3,9 +3,9 @@
 
 # 디스코드 서버 초대 — 유튜브 설명 · 고정 댓글처럼 저장소 밖에 거는 링크는 mriacademy.gg/discord 를 쓴다(설계 §6.3).
 #   사이트 페이지 · 챗봇 안내는 같은 초대를 직접 건다(10/1 어플 「이 코드로 통일」 · 휴대폰에서 디스코드 앱이 바로 열린다).
-# 9RjqdSKw = 만료 없음 · 횟수 제한 없음(오너 확인 10/1). 사이트 · 신청 페이지 · 챗봇 안내도 같은 초대다.
-# GitHub Pages 동안은 discord.html 이 같은 일을 한다(이 파일은 Cloudflare 만 읽는다). 초대가 바뀌면 `grep -rn 9RjqdSKw` 로 전부 같이 고친다.
-/discord  https://discord.gg/9RjqdSKw  302
+# szFa7teEJs = 만료 없음(11/7 교체 · 옛 9RjqdSKw 는 만료로 죽음). 사이트 · 신청 페이지 · 챗봇 안내도 같은 초대다.
+# GitHub Pages 동안은 discord.html 이 같은 일을 한다(이 파일은 Cloudflare 만 읽는다). 초대가 바뀌면 `grep -rn szFa7teEJs` 로 전부 같이 고친다(server.js 챗봇 안내 포함).
+/discord  https://discord.gg/szFa7teEJs  302
 
 # 킬내기 앱 — 공지용 짧은 주소 mriacademy.gg/kill(지휘 10/12). GitHub Pages 동안은 kill/index.html 이 같은 일을 한다.
 # 브라우저가 주소 뒤 해시(#gift 등)를 넘긴 쪽에 다시 붙인다. 앱 주소가 바뀌면 grep -rn killnaegi-app.html 로 같이 고친다.
