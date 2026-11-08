@@ -19,7 +19,11 @@ const WELCOME_TEXT = (nick) => `${nick}님, 안녕하세요! 👋 MRI ACADEMY예
   + "■ 최근 다시보기(리플레이) 2~3판도 준비해 주시면 상담 때 바로 같이 볼 수 있어요\n"
   + "막히는 게 있으면 편하게 물어보세요 💬";
 
-const TYPE = (r) => (r.kind === "direct_lecture" ? "직강 신청" : "레벨 테스트 신청");
+// 이름은 consult_type 기준 — general · clan 을 「레벨 테스트」라고 부르지 않는다(11/9 오너 지적 · 후속 상담 #38 오발송)
+const TYPE = (r) => (r.kind === "direct_lecture" ? "직강 신청"
+  : r.consult_type === "general" || r.consult_type === "clan" ? "상담 신청" : "레벨 테스트 신청");
+// 새 신청이 아닌 행 — 다른 상담의 후속(linked_consult_id) · 무료(charge_type free) · 손으로 만든 행(registered_by 있음)은 알림 대상이 아니다
+const isFresh = (r) => r.linked_consult_id == null && r.charge_type !== "free" && !r.registered_by;
 const one = (s, n) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 // 디코 닉 견주기 — 「@」 · 「#1234」 · 공백 · 대소문자 무시
 const handleKey = (s) => String(s || "").trim().toLowerCase().replace(/^@/, "").replace(/#\d{4}$/, "").replace(/\s+/g, "");
@@ -35,7 +39,7 @@ function newLine(r) {
     r.inflow ? `유입 ${one(r.inflow, 20)}` : null,
     r.phone ? "연락처 있음" : "연락처 없음",
   ].filter(Boolean);
-  return `🆕 새 ${TYPE(r)} · ${bits.join(" · ")} — 입금 들어오면 바로 다시 알려 줄게`;
+  return `🆕 새 ${TYPE(r)} · ${bits.join(" · ")}${r.charge_type === "free" ? "" : " — 입금 들어오면 바로 다시 알려 줄게"}`;
 }
 function depositLine(r, a) {
   const t = new Date(Date.parse(a.occurred_at || a.posted_at || a.received_at || "") + 9 * 3600_000);
@@ -48,6 +52,7 @@ function nudgeLine(r, n) {
 }
 // 다음에 보낼 것 — { kind: "new" | "deposit" | "nudge", n? } | null
 function nextAction(r, card, alert, now) {
+  if (!isFresh(r)) return null;
   if (!card || !card.intake_notified_at) return { kind: "new" };
   if (alert && !card.deposit_dm_at) return { kind: "deposit" };
   const open = !r.scheduled_at && r.status === "pending";
@@ -68,7 +73,7 @@ function createSiteIntake(deps) {
   const now = deps.now || (() => Date.now());
   const log = deps.log || console;
   let running = false;
-  const COLS = "id,kind,status,source,registered_by,created_at,scheduled_at,paid_status,discord_handle,game_nick,platform,focus,inflow,phone";
+  const COLS = "id,kind,status,source,registered_by,created_at,scheduled_at,paid_status,discord_handle,game_nick,platform,focus,inflow,phone,consult_type,charge_type,linked_consult_id";
 
   async function card(id, cards) {
     if (cards.has(id)) return cards.get(id);
@@ -86,7 +91,7 @@ function createSiteIntake(deps) {
     running = true;
     try {
       const since = new Date(Math.max(Date.parse(SINCE), now() - WINDOW_MS)).toISOString();
-      const rows = await deps.sbSelect("consults", `select=${COLS}&source=eq.site&registered_by=is.null&created_at=gte.${since}&order=id.asc&limit=50`);
+      const rows = await deps.sbSelect("consults", `select=${COLS}&source=eq.site&registered_by=is.null&linked_consult_id=is.null&created_at=gte.${since}&order=id.asc&limit=50`);
       if (!rows.length) return { rows: 0 };
       const ids = rows.map((r) => r.id).join(",");
       const [cardRows, alerts] = await Promise.all([
@@ -120,7 +125,7 @@ function createSiteIntake(deps) {
   //   opts.dmSent — §9.57 맞춤 DM 이 이미 갔으면 웰컴 DM 은 보내지 않는다(한 사람에게 두 통 없음) · 원장 줄에 「맞춤 DM 보냄」
   async function onMemberJoin(member, opts = {}) {
     const since = new Date(now() - 7 * 86400_000).toISOString();
-    const rows = await deps.sbSelect("consults", `select=id,discord_handle,status,scheduled_at&source=eq.site&registered_by=is.null&status=eq.pending&discord_handle=not.is.null&created_at=gte.${since}&limit=100`);
+    const rows = await deps.sbSelect("consults", `select=id,discord_handle,status,scheduled_at&source=eq.site&registered_by=is.null&linked_consult_id=is.null&status=eq.pending&discord_handle=not.is.null&created_at=gte.${since}&limit=100`);
     const r = matchMember(rows, member);
     if (!r) return { matched: false };
     const cards = new Map();
@@ -135,4 +140,4 @@ function createSiteIntake(deps) {
   return { tick, onMemberJoin };
 }
 
-module.exports = { SINCE, NUDGE_MS, WELCOME_DM_ON, welcomeOn, WELCOME_TEXT, handleKey, newLine, depositLine, nudgeLine, nextAction, matchMember, createSiteIntake };
+module.exports = { SINCE, isFresh, TYPE, NUDGE_MS, WELCOME_DM_ON, welcomeOn, WELCOME_TEXT, handleKey, newLine, depositLine, nudgeLine, nextAction, matchMember, createSiteIntake };

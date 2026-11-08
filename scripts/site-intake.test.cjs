@@ -99,3 +99,14 @@ test("서버 입장 — §9.57 맞춤 DM 이 갔으면 웰컴 DM 0통 · 원장 
   assert.equal(r.welcomed, false); assert.equal(sent.length, 0);
   assert.match(dms[0], /· 맞춤 DM 보냄$/);
 });
+
+test("후속 · 무료 · 손으로 만든 행은 알림 없음 · 이름은 consult_type 기준 · 무료엔 입금 꼬리 없음(11/9 #38 오발송)", () => {
+  assert.equal(s.nextAction(row({ linked_consult_id: 36 }), null, null, NOW), null, "후속 상담");
+  assert.equal(s.nextAction(row({ charge_type: "free" }), null, null, NOW), null, "무료");
+  assert.equal(s.nextAction(row({ registered_by: "session" }), null, null, NOW), null, "손으로 만든 행");
+  assert.deepEqual(s.nextAction(row({ charge_type: null, linked_consult_id: null }), null, null, NOW), { kind: "new" }, "진짜 새 신청은 그대로");
+  assert.match(s.newLine(row({ consult_type: "general" })), /^🆕 새 상담 신청 · #40/);
+  assert.match(s.newLine(row({ consult_type: "level_test" })), /^🆕 새 레벨 테스트 신청 · #40/);
+  assert.ok(!s.newLine(row({ charge_type: "free" })).includes("입금"));
+  assert.match(s.newLine(row()), /입금 들어오면 바로 다시 알려 줄게$/);
+});
