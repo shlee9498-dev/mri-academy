@@ -23,7 +23,8 @@ const WELCOME_TEXT = (nick) => `${nick}님, 안녕하세요! 👋 MRI ACADEMY예
 const TYPE = (r) => (r.kind === "direct_lecture" ? "직강 신청"
   : r.consult_type === "general" || r.consult_type === "clan" ? "상담 신청" : "레벨 테스트 신청");
 // 새 신청이 아닌 행 — 다른 상담의 후속(linked_consult_id) · 무료(charge_type free) · 손으로 만든 행(registered_by 있음)은 알림 대상이 아니다
-const isFresh = (r) => r.linked_consult_id == null && r.charge_type !== "free" && !r.registered_by;
+// v2 신청(입금 먼저 · §9.64)은 입금 전 원장 알림 · 재알림 없음 — 입금 확인 뒤 level-test-intake.cjs 가 한 장 보낸다(통장 후보 줄은 그대로)
+const isFresh = (r) => r.linked_consult_id == null && r.charge_type !== "free" && !r.registered_by && !r.intake_state;
 const one = (s, n) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 // 디코 닉 견주기 — 「@」 · 「#1234」 · 공백 · 대소문자 무시
 const handleKey = (s) => String(s || "").trim().toLowerCase().replace(/^@/, "").replace(/#\d{4}$/, "").replace(/\s+/g, "");
@@ -52,6 +53,9 @@ function nudgeLine(r, n) {
 }
 // 다음에 보낼 것 — { kind: "new" | "deposit" | "nudge", n? } | null
 function nextAction(r, card, alert, now) {
+  if (r.intake_state === "awaiting_deposit" && r.linked_consult_id == null && !r.registered_by) {
+    return alert && !(card && card.deposit_dm_at) ? { kind: "deposit" } : null;
+  }
   if (!isFresh(r)) return null;
   if (!card || !card.intake_notified_at) return { kind: "new" };
   if (alert && !card.deposit_dm_at) return { kind: "deposit" };
@@ -73,7 +77,7 @@ function createSiteIntake(deps) {
   const now = deps.now || (() => Date.now());
   const log = deps.log || console;
   let running = false;
-  const COLS = "id,kind,status,source,registered_by,created_at,scheduled_at,paid_status,discord_handle,game_nick,platform,focus,inflow,phone,consult_type,charge_type,linked_consult_id";
+  const COLS = "id,kind,status,source,registered_by,created_at,scheduled_at,paid_status,discord_handle,game_nick,platform,focus,inflow,phone,consult_type,charge_type,linked_consult_id,intake_state";
 
   async function card(id, cards) {
     if (cards.has(id)) return cards.get(id);

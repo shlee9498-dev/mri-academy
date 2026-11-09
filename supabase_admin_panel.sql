@@ -8568,3 +8568,37 @@ alter table public.consult_cards add column if not exists deposit_reminded_at ti
 --     drop column if exists intake_state, drop column if exists deposit_due_at, drop column if exists intake_expired_at;
 --   alter table public.consult_cards drop column if exists confirmed_dm_at, drop column if exists deposit_reminded_at; notify pgrst, 'reload schema';
 -- ============================================================
+
+-- §104  레벨 테스트 신청 v2 — consults 칸 5 (2026-11-09 · 총무 주문 · 오너 「레벨테스트 신청란 개선안 적용해서 지금 작업시작해」 · 계약 §9.64 · 소관 MRIacademy)
+--      A 구간(칸 · 제약 더하기만). §101 위에 얹는다(§101 avail_slots 는 §9.64 가 avail_windows 로 대체 · 칸은 남김). ※ §102 · §103 = §9.62 · §9.63 설계 몫(미실행).
+alter table public.consults add column if not exists best_tier     text;
+alter table public.consults add column if not exists avg_damage    integer;
+alter table public.consults add column if not exists damage_basis  text;
+alter table public.consults add column if not exists play_slots    text[];
+alter table public.consults add column if not exists avail_windows jsonb;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_best_tier') then
+    alter table public.consults add constraint chk_consults_best_tier
+      check (best_tier is null or best_tier in ('브론즈','실버','골드','플래티넘','다이아','마스터','서바이버','없음'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_avg_damage') then
+    alter table public.consults add constraint chk_consults_avg_damage check (avg_damage is null or (avg_damage between 0 and 3000));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_damage_basis') then
+    alter table public.consults add constraint chk_consults_damage_basis check (damage_basis is null or damage_basis in ('ranked','normal'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_play_slots') then
+    alter table public.consults add constraint chk_consults_play_slots check (play_slots is null or cardinality(play_slots) <= 35);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_avail_windows') then
+    alter table public.consults add constraint chk_consults_avail_windows
+      check (avail_windows is null or (jsonb_typeof(avail_windows) = 'array' and jsonb_array_length(avail_windows) <= 14));
+  end if;
+end $$;
+-- 104a) 검증: 칸 5 · 제약 5 · consults 40행 그대로 · 새 칸 값 0 (2026-11-09 세션 실행 · 확인) → notify pgrst, 'reload schema';
+-- 되돌림(새 칸에 값이 있으면 먼저 지휘 확인): alter table public.consults drop constraint if exists chk_consults_best_tier,
+--   drop constraint if exists chk_consults_avg_damage, drop constraint if exists chk_consults_damage_basis,
+--   drop constraint if exists chk_consults_play_slots, drop constraint if exists chk_consults_avail_windows,
+--   drop column if exists best_tier, drop column if exists avg_damage, drop column if exists damage_basis,
+--   drop column if exists play_slots, drop column if exists avail_windows; notify pgrst, 'reload schema';
+-- ============================================================
