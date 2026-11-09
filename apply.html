@@ -62,19 +62,128 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
 .copy-btn:active{transform:scale(.97)}
 .dep-warn{font-size:12.5px;color:var(--ink);background:rgba(230,57,70,.08);border:1px solid rgba(230,57,70,.3);border-radius:0;padding:12px 14px;margin:4px 0 12px;line-height:1.6}
 .dep-note{font-size:12.5px;color:var(--ink-dim);line-height:1.6}
+/* 레벨 테스트 신청서(계약 §9.61) */
+.lbl{display:block;font-size:12.5px;font-weight:700;margin-bottom:7px;color:var(--ink)}
+.lbl .req{color:var(--red);margin-left:3px}
+.lbl .opt{color:var(--ink-faint);font-weight:500;font-size:11px;margin-left:5px}
+.sec-lead{font-size:13px;color:var(--ink-dim);margin:-8px 0 14px}
+.radios label,.checks label{min-height:40px;position:relative}
+.radios input,.checks input{position:absolute;opacity:0;width:1px;height:1px}
+.radios label:has(input:focus-visible),.checks label:has(input:focus-visible){outline:2px solid var(--gold);outline-offset:2px}
+.radios label:has(input:disabled){opacity:.35;cursor:not-allowed}
+.basis{margin-top:8px}
+.dmg-row{display:flex;align-items:center;gap:8px;margin-top:10px;max-width:220px}
+.dmg-row span{font-size:13px;color:var(--ink-dim)}
+.days label{flex-direction:column;align-items:center;gap:0;padding:7px 12px;line-height:1.25;min-width:58px}
+.days small{font-size:11px;font-weight:500;color:var(--ink-faint)}
+.tp-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}
+.tp{display:grid;gap:4px;font-size:12px;color:var(--ink-dim);margin:0!important}
+.tp select{width:auto;min-width:110px}
+.chip-btn{min-height:44px;padding:0 16px;background:var(--bg-elev);color:var(--gold);border:1px solid var(--gold-soft);font:700 14px var(--body);cursor:pointer}
+.chip-btn:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.picked{list-style:none;display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.picked li{display:flex;align-items:center;gap:8px;padding:8px 6px 8px 12px;border:1px solid var(--gold-soft);background:rgba(245,197,24,.08);font-size:13px;font-weight:700}
+.picked button{all:unset;cursor:pointer;width:26px;height:26px;display:grid;place-items:center;color:var(--ink-dim);font-size:16px}
+.picked button:focus-visible{outline:2px solid var(--gold)}
+#availMsg{font-size:12px;color:var(--ink-faint);margin-top:8px}
+#availMsg.warn{color:var(--gold);font-weight:700}
+.pay-main{font-size:16px}
+.pay-main b{color:var(--gold);font-size:20px}
+.pay-sub{margin-top:6px;font-size:13px;color:var(--ink-dim)}
+.state-pill{display:inline-flex;gap:8px;align-items:center;padding:5px 12px;border:1px solid var(--gold-soft);color:var(--gold);font-weight:800;font-size:13px}
+.state-pill span{color:var(--ink-dim);font-weight:600}
+.next{list-style:none;counter-reset:n;display:grid;gap:12px}
+.next li{counter-increment:n;display:grid;grid-template-columns:28px 1fr;gap:2px 10px;font-size:13.5px}
+.next li::before{content:counter(n);grid-row:span 2;width:24px;height:24px;display:grid;place-items:center;background:var(--gold);color:#0a0a0c;font-weight:800;font-size:12px}
+.next span{color:var(--ink-dim);line-height:1.6}
+.next code{font-family:ui-monospace,Menlo,Consolas,monospace;background:var(--bg-elev);padding:1px 5px}
+.next a{color:var(--gold)}
 </style>
 <script src="https://js.tosspayments.com/v2/standard"></script>
+<script id="apply-intake">
+// @apply-intake start
+// 레벨 테스트 신청서 v2 — 화면 값 → /api/apply 보내는 칸(계약 trainer-portal-api §9.64.1)
+// 순수 함수만 둔다(화면 · 네트워크 없음). scripts/apply-intake.test.cjs 가 이 블록(@apply-intake 표시 사이)을 꺼내
+// 서버 검사(level-test-intake.cjs parseV2)와 같은 모양인지 대조한다. 칸 이름을 바꾸면 둘 다 고친다.
+(function (root, factory) {
+  var api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  else root.ApplyIntake = api;
+})(typeof self !== "undefined" ? self : this, function () {
+  "use strict";
+  var DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  var BLOCKS = ["morning", "afternoon", "evening", "night", "late"];   // §9.60.2 덩어리
+  var TIERS = ["브론즈", "실버", "골드", "플래티넘", "다이아", "마스터", "서바이버", "없음"];
+  var END_OF_DAY = 24 * 60 - 1;   // 「자정」 = 23:59(서버는 날짜를 넘는 시각을 받지 않는다)
+  var MIN_LEN = 60;               // 한 칸 60분 이상(레벨 테스트 60~90분)
+
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function hhmm(min) { return pad(Math.floor(min / 60)) + ":" + pad(min % 60); }
+
+  // KST 지금 → { today: "YYYY-MM-DD", nowMin }
+  function kstClock(ms) {
+    var d = new Date(ms + 9 * 3600 * 1000);
+    return { today: d.toISOString().slice(0, 10), nowMin: d.getUTCHours() * 60 + d.getUTCMinutes() };
+  }
+  // 오늘부터 7일(오늘 + 6일)
+  function weekDates(ms) {
+    var base = Date.parse(kstClock(ms).today + "T00:00:00Z"), out = [];
+    for (var i = 0; i < 7; i++) out.push(new Date(base + i * 86400000).toISOString().slice(0, 10));
+    return out;
+  }
+  // 그날 고를 수 있는 시작 시각(분) — 오늘은 지금보다 뒤 정각부터, 끝이 자정 전 60분 이상 남는 데까지
+  function startChoices(date, ms) {
+    var c = kstClock(ms), lo = date === c.today ? (Math.floor(c.nowMin / 60) + 1) * 60 : 0, out = [];
+    for (var m = lo; m + MIN_LEN <= END_OF_DAY; m += 60) out.push(m);
+    return out;
+  }
+  // 시작 다음의 끝 시각(분) — 60분 뒤 정각부터 자정(23:59)까지
+  function endChoices(start) {
+    var out = [];
+    for (var m = start + MIN_LEN; m < 24 * 60; m += 60) out.push(m);
+    if (out[out.length - 1] !== END_OF_DAY && END_OF_DAY - start >= MIN_LEN) out.push(END_OF_DAY);
+    return out;
+  }
+  // [{ date, s, e }](분) → availWindows
+  function toWindows(picked) {
+    return picked.map(function (p) { return { date: p.date, from: hhmm(p.s), to: hhmm(p.e) }; });
+  }
+  // 요일 칩 × 시간대 칩 → playSlots("sat:evening")
+  function toPlaySlots(days, blocks) {
+    var out = [];
+    days.forEach(function (d) { blocks.forEach(function (b) { if (DAYS.indexOf(d) >= 0 && BLOCKS.indexOf(b) >= 0) out.push(d + ":" + b); }); });
+    return out;
+  }
+  // 연락처 한 칸 — 숫자 · 하이픈 · 공백 · +만 9자 이상이면 휴대폰, 아니면 디스코드 아이디
+  function splitContact(v) {
+    var t = String(v || "").trim();
+    return /^[0-9\-\s+]{9,}$/.test(t) ? { phone: t, discord: "" } : { phone: "", discord: t };
+  }
+  // 딜 — 정수 0~3000 만. 딜이 있을 때만 기준을 싣는다(딜만 있고 기준 없으면 서버 400)
+  function damage(raw, basis) {
+    var t = String(raw == null ? "" : raw).trim();
+    if (!/^\d{1,4}$/.test(t) || +t > 3000) return { avgDamage: null, damageBasis: null };
+    return { avgDamage: +t, damageBasis: basis === "normal" ? "normal" : "ranked" };
+  }
+  return {
+    DAYS: DAYS, BLOCKS: BLOCKS, TIERS: TIERS, END_OF_DAY: END_OF_DAY, MIN_LEN: MIN_LEN,
+    hhmm: hhmm, kstClock: kstClock, weekDates: weekDates, startChoices: startChoices, endChoices: endChoices,
+    toWindows: toWindows, toPlaySlots: toPlaySlots, splitContact: splitContact, damage: damage
+  };
+});
+// @apply-intake end
+</script>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
 </head>
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="kick">Application</div>
-    <h1>수강 신청</h1>
-    <p class="sub">작성해 주시면 <b style="color:var(--gold)">운영진에게 바로 전달</b>됩니다. 확인 후 디스코드/카카오로 일정·결제를 안내드려요.<br>수업 시간은 신청 후 조율 — <b style="color:var(--gold)">24시간 모든 시간대 가능</b> (1주일 전 협의)</p>
+    <div class="kick">Level Test</div>
+    <h1>레벨 테스트 신청</h1>
+    <p class="sub">문항은 모두 고르기 위주라 1분이면 끝나요. 20,000원을 입금하면 신청이 끝나요</p>
   </div>
 
-  <form id="form">
+  <form id="form" novalidate>
     <!-- 제출 payload 보존용 (UTM은 진입 시 URL→sessionStorage 백업) -->
     <input type="hidden" name="discount_code" id="discount_code">
     <input type="hidden" name="utm_source" id="utm_source">
@@ -83,42 +192,15 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
 
     <!-- 1. 기본 -->
     <div class="sec">
-      <h2>📝 기본 정보</h2>
+      <h2>기본 정보</h2>
       <div class="fld">
-        <label>이름<span class="req">*</span></label>
-        <input name="name" type="text" required placeholder="실명">
+        <label for="fName">이름<span class="req">*</span></label>
+        <input id="fName" name="name" type="text" required placeholder="실명 · 입금자명 기본값이 돼요" autocomplete="name">
       </div>
       <div class="fld">
-        <label>성별<span class="req">*</span></label>
-        <div class="radios">
-          <label><input type="radio" name="gender" value="남" required>남</label>
-          <label><input type="radio" name="gender" value="여">여</label>
-          <label><input type="radio" name="gender" value="비공개">비공개</label>
-        </div>
-      </div>
-      <div class="fld">
-        <label>디스코드 계정<span class="req">*</span></label>
-        <input name="discord" type="text" required placeholder="예: cdairepme">
-      </div>
-      <div class="fld">
-        <label>연락처<span class="req">*</span></label>
-        <input name="phone" type="tel" required placeholder="010-0000-0000" inputmode="numeric">
-      </div>
-    </div>
-
-    <!-- 2. 신청 -->
-    <div class="sec">
-      <h2>📚 신청 구분</h2>
-      <div class="fld">
-        <label>신청 항목<span class="req">*</span></label>
-        <select name="applyType" required>
-          <option value="">선택하세요</option>
-          <option>레슨</option>
-          <option>그룹 레슨</option>
-          <option>강의 (이무리 직강)</option>
-          <option>레벨 테스트</option>
-          <option>아직 모르겠음 (레벨 테스트 후 결정)</option>
-        </select>
+        <label for="fContact">연락처<span class="req">*</span></label>
+        <input id="fContact" name="contact" type="text" required placeholder="디스코드 아이디 또는 휴대폰 번호" autocomplete="off">
+        <div class="hint">원장이 이 연락처로 일정을 잡아요. 디스코드 아이디면 가장 빨라요</div>
       </div>
       <div class="fld">
         <label for="inflow">어디서 보고 오셨어요?<span class="req">*</span></label>
@@ -135,37 +217,74 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
         </select>
       </div>
       <div class="fld">
-        <label>추천 트레이너<span class="opt">(로비 받았을 경우)</span></label>
-        <input name="trainer" type="text" placeholder="트레이너 닉네임">
+        <label for="fTrainer">원하는 트레이너<span class="opt">(선택)</span></label>
+        <input id="fTrainer" name="trainer" type="text" placeholder="비워 두면 원장이 맞춰 드려요">
       </div>
+      <!-- 신청 구분 — 새로 오는 분은 전부 레벨 테스트부터(9/28 확정). 값은 서버 kind 판정(/직강|강의/)에 그대로 쓰인다 -->
+      <input type="hidden" name="applyType" value="레벨 테스트">
     </div>
 
-    <!-- 3. 실력 -->
+    <!-- 2. 배그 -->
     <div class="sec">
-      <h2>🎮 배틀그라운드 정보</h2>
+      <h2>배그 정보</h2>
       <div class="fld">
-        <label>플랫폼<span class="req">*</span></label>
-        <div class="radios">
+        <span class="lbl">플랫폼<span class="req">*</span></span>
+        <div class="radios" role="radiogroup" aria-label="플랫폼">
           <label><input type="radio" name="platform" value="steam" required>스팀</label>
           <label><input type="radio" name="platform" value="kakao">카카오</label>
         </div>
       </div>
       <div class="fld">
-        <label>인게임 닉네임<span class="req">*</span></label>
-        <input name="nickname" type="text" required placeholder="예: psh1838">
-        <div class="hint">입력하시면 신청과 동시에 현재 시즌 전적이 자동 진단됩니다.</div>
+        <label for="fNick">인게임 닉네임<span class="req">*</span></label>
+        <input id="fNick" name="nickname" type="text" required placeholder="예: psh1838" autocomplete="off">
+        <div class="hint">입력하면 신청과 동시에 이번 시즌 전적을 자동으로 봐요</div>
+      </div>
+      <!-- 딜량 칸 — 오너 11/9 「일반 · 경쟁전 둘 다 하면 경쟁전 기준, 최고 티어 달성했을 때 찍힌 딜량」 -->
+      <div class="fld">
+        <span class="lbl">경쟁전 최고 티어와 그때 평균 딜량<span class="opt">(선택)</span></span>
+        <div class="radios chips-tier" role="radiogroup" aria-label="경쟁전 최고 티어">
+          <label><input type="radio" name="tierPick" value="브론즈">브론즈</label>
+          <label><input type="radio" name="tierPick" value="실버">실버</label>
+          <label><input type="radio" name="tierPick" value="골드">골드</label>
+          <label><input type="radio" name="tierPick" value="플래티넘">플래티넘</label>
+          <label><input type="radio" name="tierPick" value="다이아">다이아</label>
+          <label><input type="radio" name="tierPick" value="마스터">마스터</label>
+          <label><input type="radio" name="tierPick" value="서바이버">서바이버</label>
+          <label><input type="radio" name="tierPick" value="없음">없음</label>
+        </div>
+        <div class="dmg-row">
+          <input id="fDmg" name="dmg" type="number" inputmode="numeric" min="0" max="3000" step="1" placeholder="평균 딜량" aria-label="그때 평균 딜량">
+          <span>딜</span>
+        </div>
+        <div class="radios basis" role="radiogroup" aria-label="딜량 기준">
+          <label><input type="radio" name="damageBasis" value="ranked" checked>경쟁전 기준</label>
+          <label><input type="radio" name="damageBasis" value="normal">일반 게임 기준</label>
+        </div>
+        <div class="hint">일반 게임만 하면 일반 게임 평균 딜량이면 돼요 · 모르면 비워 두세요</div>
+      </div>
+      <!-- 주로 하는 요일 · 시간대 — 시간대 이름은 §9.60.2 덩어리와 같다 -->
+      <div class="fld">
+        <span class="lbl">배그 주로 하는 요일과 시간대<span class="req">*</span></span>
+        <div class="checks" role="group" aria-label="주로 하는 요일">
+          <label><input type="checkbox" name="playDay" value="mon">월</label>
+          <label><input type="checkbox" name="playDay" value="tue">화</label>
+          <label><input type="checkbox" name="playDay" value="wed">수</label>
+          <label><input type="checkbox" name="playDay" value="thu">목</label>
+          <label><input type="checkbox" name="playDay" value="fri">금</label>
+          <label><input type="checkbox" name="playDay" value="sat">토</label>
+          <label><input type="checkbox" name="playDay" value="sun">일</label>
+        </div>
+        <div class="checks" role="group" aria-label="주로 하는 시간대" style="margin-top:8px">
+          <label><input type="checkbox" name="playBlock" value="morning">오전 9~12시</label>
+          <label><input type="checkbox" name="playBlock" value="afternoon">낮 12~17시</label>
+          <label><input type="checkbox" name="playBlock" value="evening">저녁 17~20시</label>
+          <label><input type="checkbox" name="playBlock" value="night">밤 20~23시</label>
+          <label><input type="checkbox" name="playBlock" value="late">새벽 23~2시</label>
+        </div>
       </div>
       <div class="fld">
-        <label>최근 2시즌 최고 티어<span class="opt">(선택)</span></label>
-        <input name="tier" type="text" placeholder="예: 다이아 2 / 모름">
-      </div>
-      <div class="fld">
-        <label>주 플레이 시간<span class="req">*</span></label>
-        <input name="playtime" type="text" required placeholder="예: 주말 저녁·밤, 가끔 평일 오후">
-      </div>
-      <div class="fld">
-        <label>집중 교정 희망<span class="req">*</span></label>
-        <div class="checks">
+        <span class="lbl">가장 고치고 싶은 것<span class="req">*</span></span>
+        <div class="checks" role="group" aria-label="가장 고치고 싶은 것">
           <label><input type="checkbox" name="focus" value="운영 판단">운영 판단</label>
           <label><input type="checkbox" name="focus" value="교전">교전</label>
           <label><input type="checkbox" name="focus" value="샷 피지컬">샷 피지컬</label>
@@ -174,15 +293,45 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
           <label><input type="checkbox" name="focus" value="오더/브리핑">오더/브리핑</label>
         </div>
       </div>
+    </div>
+
+    <!-- 3. 가능 일정 — 계약 §9.64.1 availWindows · 오늘(KST)부터 7일 · 2~14개 · 한 칸 60분 이상 · 자유 글 없음 · 날짜를 넘는 시각은 없음(끝 = 자정 23:59까지) -->
+    <div class="sec">
+      <h2>레벨 테스트 가능 일정</h2>
+      <p class="sec-lead">앞으로 7일 중 되는 시간을 2개 이상 골라 주세요. 원장이 이 안에서 맞춰요</p>
       <div class="fld">
-        <label>추가로 하고 싶은 말<span class="opt">(선택)</span></label>
-        <textarea name="memo" placeholder="목표, 궁금한 점 등 자유롭게"></textarea>
+        <span class="lbl">날짜<span class="req">*</span></span>
+        <div class="radios days" id="dayChips" role="radiogroup" aria-label="날짜"></div>
+      </div>
+      <div class="fld time-pick" id="timePick" hidden>
+        <div class="tp-row">
+          <label class="tp"><span>시작</span><select id="tpStart" aria-label="시작 시각"></select></label>
+          <label class="tp"><span>끝</span><select id="tpEnd" aria-label="끝 시각"></select></label>
+          <button type="button" class="chip-btn" id="tpAdd">이 시간 넣기</button>
+        </div>
+        <div class="hint" id="tpHint"></div>
+      </div>
+      <ul class="picked" id="picked" aria-live="polite"></ul>
+      <div class="hint" id="availMsg"></div>
+    </div>
+
+    <!-- 4. 입금 안내 — 금액 · 환불 문구는 사이트 정본(index.html lt-note) 그대로. 토스 심사 대상 · 입금 확인 방법 = §9.64.3 의 1번(입금자명 = 신청한 이름) -->
+    <div class="sec pay-box">
+      <h2>입금 안내</h2>
+      <p class="pay-main">레벨 테스트 <b>20,000원</b> · 입금하면 신청이 끝나요</p>
+      <p class="pay-sub">레벨 테스트는 60~90분이에요. 예약 3시간 전까지 취소하면 전액 환불이고, 그 뒤 취소와 불참은 환불되지 않아요</p>
+      <!-- 7일 환불 — 오너 OK 11/9(「넣기」) · 문장은 계약 §9.61.5 확정본 그대로(#673 · 새로 짓지 않음 · 토스 심사 대상) -->
+      <p class="pay-sub">신청 뒤 7일 안에 일정을 맞추지 못하면 20,000원을 전액 환불해요</p>
+      <div class="fld" style="margin-top:14px">
+        <label for="fDepositor">입금하실 분 이름<span class="opt">(신청자와 다르면 고쳐 주세요)</span></label>
+        <input id="fDepositor" name="depositor" type="text" maxlength="40" placeholder="입금하실 분 성함">
+        <div class="hint">신청하면 이 이름 뒤에 신청 번호 두 자리를 붙인 입금자명을 알려 드려요</div>
       </div>
     </div>
 
-    <!-- 4. 할인코드 — 현재 활성 코드 없음(SHORTS10 만료). 로직/상수는 '다음 코드'용으로 보존, UI만 숨김. -->
+    <!-- 4-1. 할인코드 — 현재 활성 코드 없음(SHORTS10 만료). 로직/상수는 '다음 코드'용으로 보존, UI만 숨김. -->
     <div class="sec" style="display:none">
-      <h2>🎟️ 할인코드</h2>
+      <h2>할인코드</h2>
       <div class="fld">
         <label>할인코드<span class="opt">(선택)</span></label>
         <div class="code-row">
@@ -205,10 +354,9 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
       </label>
     </div>
 
-    <button class="submit" id="submit" type="submit">신청서 보내기</button>
+    <button class="submit" id="submit" type="submit">신청하고 입금 안내 받기</button>
     <div class="msg" id="msg"></div>
     <div class="pii-note">
-      🏦 신청서를 보내면 이어서 <b style="color:var(--gold)">레벨 테스트 비용 입금 안내</b>가 이어집니다. (레벨 테스트 20,000원 · 60~90분 · 새로 오는 분은 전부 여기부터 · 예약 3시간 전까지 취소하면 전액 환불, 그 뒤 취소와 불참은 환불 없음) 입금 확인 후 운영진이 일정·수업을 안내드립니다.<br>
       문의: <a href="https://open.kakao.com/o/sAUU6OGf" style="color:var(--gold)">카카오</a> · <a href="https://discord.gg/szFa7teEJs" style="color:var(--gold)">디스코드</a>
     </div>
   </form>
@@ -227,9 +375,10 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
     <div class="msg" id="payMsg"></div>
   </div>
 
-  <!-- ===== 상담비 입금 안내 (PAYMENT_LIVE=false · 계좌이체) ===== -->
+  <!-- ===== 입금 안내 (PAYMENT_LIVE=false · 계좌이체) — 계약 §9.61.3 상태 「입금 대기」 · 기한 48시간 ===== -->
   <div class="sec" id="depositStep" style="display:none;margin-top:22px">
-    <h2>🏦 레벨 테스트 입금 안내</h2>
+    <div class="state-pill">입금 대기<span id="depNo"></span></div>
+    <h2 style="margin-top:12px">입금하면 신청이 끝나요</h2>
     <div class="dep-amt">
       <span id="depName" style="font-weight:700"></span>
       <span class="dep-final" id="depFinal"></span>
@@ -242,13 +391,18 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
       <span>토스뱅크 <b>1002-4781-4797</b> (MRI아카데미)</span>
       <button type="button" class="copy-btn" id="copyAcct" data-copy="100247814797">계좌복사</button>
     </div>
-    <div class="fld" style="margin:14px 0 12px">
-      <label>입금 예정자명<span class="opt">(신청자명과 다를 경우 수정)</span></label>
-      <input type="text" id="depositor" placeholder="입금하실 분 성함">
+    <div class="dep-line">
+      <span>입금자명 <b id="depWho"></b></span>
+      <button type="button" class="copy-btn" id="copyWho" data-copy="">입금자명복사</button>
     </div>
-    <div class="dep-warn">⚠️ 입금자명은 <b>신청자 이름과 동일</b>하게 해주세요. 다를 경우 위 <b>입금 예정자명</b>에 기재해 주세요.</div>
-    <div class="dep-note">입금 확인 후 <b style="color:var(--gold)">24시간 이내</b> 디스코드/카카오로 수강 안내드립니다.</div>
+    <p class="dep-note"><b id="depDue"></b>까지 입금되지 않으면 신청이 닫혀요. 그 뒤에도 다시 신청할 수 있어요</p>
     <div class="msg" id="depMsg"></div>
+
+    <h2 style="margin-top:22px">입금한 뒤에는</h2>
+    <ol class="next">
+      <li><b>입금이 확인되면 원장이 디스코드로 연락드려요</b><span>고른 시간 안에서 일정을 맞춰요</span></li>
+      <li><b>최근 리플레이를 <a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a>으로 보내 주세요</b><span>PC 리플레이 폴더(윈도우키 + R → <code>%localappdata%</code> → TslGame → Saved → Demos)에서 「수정한 날짜」로 정렬하면 최근 판을 찾기 쉬워요</span></li>
+    </ol>
   </div>
 
   <div style="text-align:center"><a class="back" href="index.html">← MRI ACADEMY 홈으로</a></div>
@@ -315,47 +469,134 @@ function applyDiscount(base){
   });
 })();
 
+// ===== 가능 일정 — 계약 §9.64.1 availWindows(오늘 KST부터 7일 · 2~14개 · 60분 이상 · 오늘은 지금 뒤 시각만) =====
+// 고를 수 있는 시각 · 보내는 모양은 apply-intake.js 한 곳에서 만든다(서버 검사와 시험으로 대조)
+const AI = window.ApplyIntake;
+const WEEK = ["일","월","화","수","목","금","토"];
+function hLabel(min){ return min === AI.END_OF_DAY ? "자정" : (min / 60) + "시"; }
+function dayLabel(date, first){ const d = new Date(date + "T00:00:00Z"); const md = (d.getUTCMonth() + 1) + "/" + d.getUTCDate(); return { top: first ? "오늘" : md, sub: first ? md : WEEK[d.getUTCDay()], text: first ? "오늘" : md + "(" + WEEK[d.getUTCDay()] + ")" }; }
+const dates = AI.weekDates(Date.now());
+const picked = [];   // { date, s, e } — 분
+const dayBox = document.getElementById("dayChips"), timePick = document.getElementById("timePick");
+const tpStart = document.getElementById("tpStart"), tpEnd = document.getElementById("tpEnd"), tpHint = document.getElementById("tpHint");
+const pickedEl = document.getElementById("picked"), availMsg = document.getElementById("availMsg");
+dates.forEach((date, i) => {
+  const L = dayLabel(date, i === 0);
+  const lb = document.createElement("label");
+  const r = document.createElement("input"); r.type = "radio"; r.name = "availDay"; r.value = date;
+  if (!AI.startChoices(date, Date.now()).length) r.disabled = true;
+  lb.appendChild(r);
+  lb.appendChild(document.createTextNode(L.top));
+  const sm = document.createElement("small"); sm.textContent = L.sub; lb.appendChild(sm);
+  dayBox.appendChild(lb);
+  r.addEventListener("change", () => fillTimes(date));
+});
+function opt(sel, min){ const o = document.createElement("option"); o.value = String(min); o.textContent = hLabel(min); sel.appendChild(o); }
+function fillTimes(date){
+  tpStart.textContent = "";
+  const starts = AI.startChoices(date, Date.now());
+  starts.forEach((m) => opt(tpStart, m));
+  const pre = starts.find((m) => m >= 20 * 60) ?? starts[0];
+  if (pre != null) tpStart.value = String(pre);
+  fillEnd(); timePick.hidden = false; tpHint.textContent = "";
+}
+function fillEnd(){
+  const s = +tpStart.value; tpEnd.textContent = "";
+  const ends = AI.endChoices(s); ends.forEach((m) => opt(tpEnd, m));
+  tpEnd.value = String(ends.includes(s + 120) ? s + 120 : ends[0]);
+}
+tpStart.addEventListener("change", fillEnd);
+document.getElementById("tpAdd").addEventListener("click", () => {
+  const date = (document.querySelector('input[name="availDay"]:checked') || {}).value;
+  if (!date) return;
+  const s = +tpStart.value, e = +tpEnd.value;
+  if (!(e - s >= AI.MIN_LEN)) { tpHint.textContent = "1시간 이상으로 골라 주세요"; return; }
+  if (!AI.startChoices(date, Date.now()).includes(s)) { tpHint.textContent = "이미 지난 시각이에요. 다시 골라 주세요"; fillTimes(date); return; }
+  if (picked.some((p) => p.date === date && s < p.e && e > p.s)) { tpHint.textContent = "이미 고른 시간과 겹쳐요"; return; }
+  if (picked.length >= 14) { tpHint.textContent = "14개까지 고를 수 있어요"; return; }
+  picked.push({ date, s, e });
+  picked.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.s - b.s);
+  tpHint.textContent = ""; drawPicked();
+});
+function pickLabel(p){ return dayLabel(p.date, p.date === dates[0]).text + " " + hLabel(p.s) + " ~ " + hLabel(p.e); }
+function drawPicked(){
+  pickedEl.textContent = "";
+  picked.forEach((p, i) => {
+    const li = document.createElement("li"); li.textContent = pickLabel(p);
+    const x = document.createElement("button"); x.type = "button"; x.textContent = "×"; x.setAttribute("aria-label", pickLabel(p) + " 빼기");
+    x.addEventListener("click", () => { picked.splice(i, 1); drawPicked(); });
+    li.appendChild(x); pickedEl.appendChild(li);
+  });
+  availMsg.className = "hint" + (picked.length === 1 ? " warn" : "");
+  availMsg.textContent = picked.length === 1 ? "2개 이상 골라 주시면 더 빨리 잡혀요" : picked.length ? picked.length + "개 골랐어요" : "";
+}
+
+const nameEl = document.getElementById("fName"), depositorEl = document.getElementById("fDepositor");
+let depositorTouched = false;
+depositorEl.addEventListener("input", () => { depositorTouched = true; });
+nameEl.addEventListener("input", () => { if (!depositorTouched) depositorEl.value = nameEl.value; });
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (!document.getElementById("agree").checked) { show("err", "개인정보 수집·이용에 동의해 주세요."); return; }
-  if (!document.getElementById("agreeStats").checked) { show("err", "전적 수집·활용에 동의해 주세요."); return; }
   const fd = new FormData(form);
   const focus = fd.getAll("focus");
+  const playSlots = AI.toPlaySlots(fd.getAll("playDay"), fd.getAll("playBlock"));
+  const need = [["name","이름"],["contact","연락처"],["source","어디서 보고 오셨는지"],["platform","플랫폼"],["nickname","인게임 닉네임"]];
+  for (const [k, label] of need) if (!String(fd.get(k) || "").trim()) { show("err", label + "을(를) 채워 주세요"); return; }
+  if (!playSlots.length) { show("err", "배그 주로 하는 요일과 시간대를 하나 이상씩 골라 주세요"); return; }
+  if (!focus.length) { show("err", "가장 고치고 싶은 것을 하나 이상 골라 주세요"); return; }
+  if (picked.length < 2) { show("err", "레벨 테스트 가능 일정을 2개 이상 골라 주세요"); return; }
+  const dmgRaw = String(fd.get("dmg") || "").trim();
+  const dmg = AI.damage(dmgRaw, fd.get("damageBasis"));
+  if (dmgRaw && dmg.avgDamage == null) { show("err", "평균 딜량은 0~3000 사이 숫자로 적어 주세요"); return; }
+  if (!document.getElementById("agree").checked) { show("err", "개인정보 수집·이용에 동의해 주세요"); return; }
+  if (!document.getElementById("agreeStats").checked) { show("err", "전적 수집·활용에 동의해 주세요"); return; }
+  const c = AI.splitContact(fd.get("contact"));
+  const name = String(fd.get("name")).trim();
+  const depositor = (String(fd.get("depositor") || "").trim() || name).slice(0, 40);
+  const tier = fd.get("tierPick") || "";
   const payload = {
-    name: fd.get("name"), gender: fd.get("gender"), discord: fd.get("discord"),
-    phone: fd.get("phone"),
+    name, discord: c.discord, phone: c.phone,
     applyType: fd.get("applyType"), source: fd.get("source"), trainer: fd.get("trainer") || "",
     platform: fd.get("platform"), nickname: fd.get("nickname"),
-    tier: fd.get("tier") || "", playtime: fd.get("playtime"),
-    focus: focus.join(", "), memo: fd.get("memo") || "", statsConsent: document.getElementById("agreeStats").checked ? "동의" : "미동의",
+    bestTier: tier || null, avgDamage: dmg.avgDamage, damageBasis: dmg.damageBasis,
+    playSlots, availWindows: AI.toWindows(picked),
+    // 입금하실 분 이름 — 서버가 신청 번호 두 자리를 붙여 입금자명을 만들어 돌려준다(§9.64.3 3번 · #673)
+    depositor, memo: "",
+    focus: focus.join(", "), statsConsent: "동의",
     discount_code: appliedCode ? appliedCode.code : "",
     utm_source: fd.get("utm_source") || "", utm_medium: fd.get("utm_medium") || "", utm_content: fd.get("utm_content") || "",
   };
-  if (!focus.length) { show("err", "집중 교정 희망을 하나 이상 선택해 주세요."); return; }
 
-  submit.disabled = true; submit.textContent = "전송 중…";
+  submit.disabled = true; submit.textContent = "보내는 중…";
   try {
     const r = await fetch(`${API_BASE}/api/apply`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || "전송 실패");
-    if (window.umami) umami.track("apply_submit");
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(ERRORS[d.error] || d.error || "전송 실패");
     form.querySelectorAll("input,select,textarea,button").forEach(el => el.disabled = true);
     if (window.umami) umami.track("apply_submit", { applyType: payload.applyType, source: payload.source });
+    form.hidden = true;
     if (PAYMENT_LIVE) {
-      show("ok", "✅ 신청서 접수 완료! 이어서 아래에서 레벨 테스트 비용을 결제해 주세요.");
       startPayment(payload.applyType, payload.name, payload.phone);
     } else {
-      show("ok", "✅ 신청서 접수 완료! 아래 안내에 따라 레벨 테스트 비용을 입금해 주세요. 입금 확인 후 24시간 이내에 카카오톡/디스코드로 레벨 테스트 일정을 안내드립니다 🙂");
-      startDeposit(payload.applyType, payload.name);
+      startDeposit(payload.applyType, depositor, d.consultNo, d.depositDueAt, d.depositorName);
     }
   } catch (err) {
-    show("err", "❌ " + (err.message || "전송 오류") + " — 디스코드/카카오로 직접 문의해 주세요.");
-    submit.disabled = false; submit.textContent = "신청서 보내기";
+    show("err", (err.message || "전송 오류") + " · 안 되면 디스코드나 카카오로 알려 주세요");
+    submit.disabled = false; submit.textContent = "신청하고 입금 안내 받기";
   }
 });
+// 서버 400 오류 키(§9.64.1) → 화면 문구
+const ERRORS = {
+  contact_required: "디스코드 아이디나 휴대폰 번호를 적어 주세요",
+  invalid_tier: "티어를 다시 골라 주세요",
+  invalid_damage: "평균 딜량을 다시 확인해 주세요",
+  invalid_play_slots: "주로 하는 요일과 시간대를 다시 골라 주세요",
+  invalid_avail: "가능 일정을 다시 골라 주세요. 지난 시간이나 7일 밖이 섞였을 수 있어요",
+};
 function show(type, text) { msg.className = "msg " + type; msg.textContent = text; msg.scrollIntoView({behavior:"smooth", block:"center"}); }
 
 // ===== 토스페이먼츠 결제위젯 =====
@@ -461,14 +702,21 @@ document.getElementById("discountInput").addEventListener("keydown", (e) => { if
 
 // ===== 상담비 입금 안내 (계좌이체) =====
 // 상담비는 할인 대상 아님 — 원가 그대로 안내. (할인은 수강료 자격이며 정식 등록 시 반영)
-function startDeposit(applyType, customerName){
+function startDeposit(applyType, depositor, consultNo, dueIso, depositorName){
   const fee = consultFee(applyType);
   document.getElementById("depName").textContent = fee.name;
   document.getElementById("depFinal").textContent = fee.amount.toLocaleString() + "원";
   document.getElementById("depAmountText").textContent = fee.amount.toLocaleString() + "원";
   document.getElementById("copyAmount").dataset.copy = String(fee.amount);
-  const depositor = document.getElementById("depositor");
-  if (!depositor.value) depositor.value = customerName || "";
+  // 입금자명 = 서버가 준 값 그대로(이름 + 신청 번호 두 자리 · §9.64.3 3번) — 응답에 없을 때만 이름
+  const who = typeof depositorName === "string" && depositorName.trim() ? depositorName.trim().slice(0, 40) : (depositor || "");
+  document.getElementById("depWho").textContent = who;
+  document.getElementById("copyWho").dataset.copy = who;
+  if (consultNo != null && /^\d+$/.test(String(consultNo))) document.getElementById("depNo").textContent = "신청 #" + consultNo;
+  // 기한 = 서버 depositDueAt(§9.61.4) · 없으면 지금 + 48시간
+  const due = dueIso && !isNaN(new Date(dueIso)) ? dueIso : new Date(Date.now() + 48 * 3600 * 1000).toISOString();
+  const k = kstFmt(due);
+  document.getElementById("depDue").textContent = k.md + " " + k.kor;
   const dep = document.getElementById("depositStep");
   dep.style.display = "block";
   dep.scrollIntoView({ behavior:"smooth", block:"start" });
@@ -490,6 +738,7 @@ function fallbackCopy(text, cb){
 }
 document.getElementById("copyAmount").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
 document.getElementById("copyAcct").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
+document.getElementById("copyWho").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
 
 // ── 결제 직행 모드 (?pay=1|lesson / ?pay=lecture) ──
 // 신청서 제출 없이 결제창 바로 노출 — PG 심사 확인용 + "상담비만 먼저 결제" 동선.
