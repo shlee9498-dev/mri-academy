@@ -33,7 +33,7 @@ const hhmm = (ms) => { const t = new Date(ms + 9 * 3600_000); return `${String(t
 // BPI 진단 문구(server.js diagnoseBpi) → ok(기록 있음 · 판정 보류 포함) | none(최근 기록 없음 · 닉 못 찾음) | null(진단 안 함 · 실패)
 function bpiKind(text) {
   const t = String(text || "");
-  if (/^\*\*/.test(t) || /^⏸/.test(t)) return "ok";
+  if (/^\*\*/.test(t) || /^⏸/.test(t) || /^판정 (\*\*|⏸)/.test(t)) return "ok";   // 판정 … = 세 줄 형식(§9.64.7 · bpi-text.cjs)
   if (/기록 없음|찾지 못함/.test(t)) return "none";
   return null;
 }

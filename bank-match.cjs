@@ -31,6 +31,16 @@ function nameScore(a, b) {
   return best;
 }
 
+// 입금자명 끝 신청 번호 두 자리(§9.64.3 · 오너 11/9 「번호 붙이기」) — 「홍길동12」 = 이름이 맞고 끝 두 자리가 그 신청 번호면 3(이름 같음보다 먼저)
+//   번호만 맞고 이름이 다르면 0(두 자리는 겹칠 수 있다 · 사람이 확인) · 번호 없이 들어온 입금은 지금처럼 이름으로
+function codeScore(counterparty, c) {
+  if (!c || !c.code) return 0;
+  const m = /^(.*?)(\d{2})\s*$/.exec(String(counterparty || "").normalize("NFC"));
+  if (!m || m[2] !== c.code) return 0;
+  return nameScore(m[1], c.name) > 0 ? 3 : 0;
+}
+const consultCode = (id) => String(Number(id) % 100).padStart(2, "0");
+
 // 후보 목록(셋 표를 모은 것) → { status, pick, others }
 //   matched = 이름 점수가 가장 높은 후보가 하나 · multiple = 같은 점수가 둘 이상 · none = 이름 맞는 후보 없음
 //   amountOnly = 금액만 맞고 이름이 다른 후보(짝 없는 입금 DM 에 「참고」로 번호만)
@@ -40,7 +50,7 @@ function decide(alert, cands, { now = Date.now() } = {}) {
     const t = Date.parse(c.created_at || "");
     return Number(c.amount) === Number(alert.amount) && Number.isFinite(t) && t <= at + 3600_000 && at - t <= WINDOW_MS;
   });
-  const scored = inWin.map((c) => ({ ...c, score: alert.counterparty ? nameScore(alert.counterparty, c.name) : 0 }));
+  const scored = inWin.map((c) => ({ ...c, score: alert.counterparty ? (codeScore(alert.counterparty, c) || nameScore(alert.counterparty, c.name)) : 0 }));
   const named = scored.filter((c) => c.score > 0).sort((x, y) => y.score - x.score || Date.parse(y.created_at) - Date.parse(x.created_at));
   const amountOnly = scored.filter((c) => c.score === 0);
   if (!named.length) return { status: "none", pick: null, others: [], amountOnly };
@@ -101,13 +111,14 @@ function createBankMatch(deps) {
     ]);
     // 사이트 신청서(/api/apply)로 들어온 레벨 테스트는 금액 칸이 비어 있다(fee 0) — 레벨 테스트비와 같은 입금이면 후보에 넣는다(§9.55 · 오너 11/3 「입금주셨으니 가장 우선」)
     const site = levelFee === amt && amt > 0
-      ? await safe(sbSelect("consults", `select=id,student_name,kind,fee,created_at&paid_status=eq.unpaid&fee=eq.0&source=eq.site&registered_by=is.null&kind=eq.consult&created_at=gte.${since}&limit=20`))
+      ? await safe(sbSelect("consults", `select=id,student_name,kind,fee,created_at,depositor_name&paid_status=eq.unpaid&fee=eq.0&source=eq.site&registered_by=is.null&kind=eq.consult&created_at=gte.${since}&limit=20`))
       : [];
     for (const r of site) if (!co.some((x) => x.id === r.id)) co.push(r);
     return [
       ...pr.map((r) => ({ kind: "payment_request", id: r.id, name: depositorName(r), amount: r.amount, created_at: r.created_at, product: r.kind || null })),
       ...ia.map((r) => ({ kind: "intake", id: r.id, name: r.display_name ? `${r.real_name || ""}(${r.display_name})` : r.real_name, amount: amt, created_at: r.created_at, product: "레벨 테스트" })),
-      ...co.map((r) => ({ kind: "consult", id: r.id, name: r.student_name, amount: Number(r.fee) || amt, created_at: r.created_at, product: Number(r.fee) ? (r.kind || "상담") : "사이트 레벨 테스트 신청" })),
+      ...co.map((r) => ({ kind: "consult", id: r.id, name: r.student_name, amount: Number(r.fee) || amt, created_at: r.created_at, product: Number(r.fee) ? (r.kind || "상담") : "사이트 레벨 테스트 신청",
+        ...(r.depositor_name ? { code: consultCode(r.id) } : {}) })),
     ];
   }
 
@@ -139,4 +150,4 @@ function createBankMatch(deps) {
   return { candidates, onSaved };
 }
 
-module.exports = { depositorName, WINDOW_MS, KIND_LABEL, nameParts, nameScore, decide, dmText, createBankMatch };
+module.exports = { codeScore, consultCode, depositorName, WINDOW_MS, KIND_LABEL, nameParts, nameScore, decide, dmText, createBankMatch };
