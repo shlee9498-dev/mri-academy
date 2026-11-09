@@ -110,3 +110,11 @@ test("후속 · 무료 · 손으로 만든 행은 알림 없음 · 이름은 con
   assert.ok(!s.newLine(row({ charge_type: "free" })).includes("입금"));
   assert.match(s.newLine(row()), /입금 들어오면 바로 다시 알려 줄게$/);
 });
+
+test("v2 입금 대기 신청 — 새 신청 · 재알림 없음 · 통장 후보 줄만(§9.64)", () => {
+  const r = row({ intake_state: "awaiting_deposit" });
+  assert.equal(s.nextAction(r, null, null, NOW), null);
+  assert.deepEqual(s.nextAction(r, null, { amount: 20000 }, NOW), { kind: "deposit" });
+  assert.equal(s.nextAction(r, { deposit_dm_at: "x" }, { amount: 20000 }, NOW), null);
+  assert.equal(s.nextAction(r, { intake_notified_at: "x", intake_nudges: 0 }, null, Date.parse("2026-11-03T14:00:00Z")), null);
+});

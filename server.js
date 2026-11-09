@@ -68,6 +68,7 @@ let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP �
 const payreqIntake = require("./payreq-intake.cjs");
 // 상담 · 레벨 테스트 신청서 「어디서 보고 오셨어요?」 선택지(apply.html 과 한 벌 · 오너 10/19)
 const inflowMod = require("./inflow.cjs");
+const levelTestIntakeMod = require("./level-test-intake.cjs");   // 레벨 테스트 신청 v2(계약 §9.64)
 // 「입금 받음」(계약 §9.40) — 트레이너가 올리는 입금 신청 · 결과 DM 문구 · 화면 이름(디코 닉)
 const paymentReceived = require("./payment-received.cjs");
 // 판수 맞추기 · 일요일 확인 목록(계약 §9.41.2 · §9.41.3) — 라우트 · 카드 본문 · 결정(§46 줄마다)
@@ -6029,10 +6030,16 @@ app.post("/api/apply", async (req, res) => {
     if (rateLimited(ip)) return res.status(429).json({ error: "too_many_requests" });
 
     const b = req.body || {};
-    const required = ["name", "gender", "discord", "phone", "applyType", "source", "platform", "nickname", "playtime", "focus", "statsConsent"];
+    // 레벨 테스트 신청 v2(계약 §9.64 · 입금 먼저 · 날짜 · 시각 일정) — 화면이 availWindows 를 보내면 v2, 아니면 옛 흐름 그대로
+    const v2 = levelTestIntakeMod.isV2(b);
+    const required = v2
+      ? ["name", "applyType", "source", "platform", "nickname", "focus", "statsConsent"]
+      : ["name", "gender", "discord", "phone", "applyType", "source", "platform", "nickname", "playtime", "focus", "statsConsent"];
     for (const k of required) {
       if (!b[k] || String(b[k]).trim() === "") return res.status(400).json({ error: `필수 항목 누락: ${k}` });
     }
+    const v2p = v2 ? levelTestIntakeMod.parseV2(b, Date.now()) : null;
+    if (v2p && v2p.error) return res.status(400).json({ error: v2p.error });
     const clip = (s, n) => String(s || "").slice(0, n);
 
     // 할인코드 — 서버 시각(KST 오프셋 기준) 재검증 후 운영진용 표기 (제출 자체는 거부 안 함)
@@ -6060,13 +6067,14 @@ app.post("/api/apply", async (req, res) => {
         { name: "어디서 보고 왔나", value: (() => { const x = inflowMod.normalizeInflow(b.source); return x ? (x.legacy ? `기타(${x.legacy})` : x.label) : "—"; })(), inline: true },
         { name: "플랫폼/닉", value: `${clip(b.platform, 10)} / ${clip(b.nickname, 40)}`, inline: true },
         { name: "🎯 BPI 자동진단", value: bpiText, inline: false },
-        { name: "최고 티어", value: clip(b.tier, 40) || "—", inline: true },
-        { name: "플레이 시간", value: clip(b.playtime, 80), inline: true },
+        { name: "최고 티어", value: v2p ? `${v2p.fields.best_tier || "—"}${v2p.fields.avg_damage != null ? ` · 평균 딜 ${v2p.fields.avg_damage}(${v2p.fields.damage_basis === "normal" ? "일반" : "경쟁전"})` : ""}` : (clip(b.tier, 40) || "—"), inline: true },
+        { name: "플레이 시간", value: v2p ? (levelTestIntakeMod.playText(v2p.fields.play_slots) || "—").slice(0, 200) : clip(b.playtime, 80), inline: true },
+        ...(v2p ? [{ name: "📅 가능 일정(입금 대기)", value: levelTestIntakeMod.windowsText(v2p.fields.avail_windows).slice(0, 900), inline: false }] : []),
         { name: "집중 교정", value: clip(b.focus, 100), inline: false },
         { name: "추천 트레이너", value: clip(b.trainer, 30) || "—", inline: true },
         { name: "성별", value: clip(b.gender, 10) || "—", inline: true },   // 생년월일 칸 제거(오너 §28 판정 2026-09-25 — 받지 않는다)
-        { name: "📞 연락처", value: clip(b.phone, 20), inline: true },
-        { name: "💬 디스코드", value: clip(b.discord, 40), inline: true },
+        { name: "📞 연락처", value: clip(b.phone, 20) || "—", inline: true },
+        { name: "💬 디스코드", value: clip(b.discord, 40) || "—", inline: true },
         { name: "🎟️ 할인코드", value: discountText, inline: true },
         { name: "전적 동의", value: clip(b.statsConsent, 10) || "미기록", inline: true },
         { name: "🔗 UTM", value: [clip(b.utm_source, 40), clip(b.utm_medium, 40), clip(b.utm_content, 60)].filter(Boolean).join(" / ") || "—", inline: true },
@@ -6123,6 +6131,11 @@ app.post("/api/apply", async (req, res) => {
       else if (utmVals.length) memoParts.push(`utm: ${[utm.utm_source, utm.utm_medium, utm.utm_content].map((v) => v || "-").join("/")}`);
       if (!has("game_nick")) memoParts.push(`${clip(b.platform, 10)}/${clip(b.nickname, 40)}`);
       if (b.memo && String(b.memo).trim()) memoParts.push(clip(b.memo, 300));
+      // v2 — 입금 대기로 저장(칸이 없는 배포면 그 칸만 빠지고 memo 에 일정 한 줄)
+      if (v2p) {
+        for (const [k, v] of Object.entries(v2p.fields)) if (has(k)) row[k] = v;
+        if (!has("avail_windows")) memoParts.push(`가능 일정: ${levelTestIntakeMod.windowsText(v2p.fields.avail_windows)}`);
+      }
       if (memoParts.length) row.memo = memoParts.join(" · ").slice(0, 500);
       savedConsultId = (await sbInsert("consults", row))?.id || null;
     } catch (e) {
@@ -6166,7 +6179,7 @@ app.post("/api/apply", async (req, res) => {
         }),
       }).catch((e) => console.error("consult_sheet_error", e?.message));
     }
-    res.json({ ok: true });
+    res.json(v2p ? { ok: true, depositDueAt: v2p.fields.deposit_due_at } : { ok: true });
   } catch (e) {
     console.error("apply_error", e);
     res.status(500).json({ error: "server_error" });
@@ -8809,7 +8822,7 @@ require("./owner-staff-dm.cjs").mountOwnerStaffDm(app, {
       sbSelect, sbPatch, sbInsert, getClient: () => botClient, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID, calendar,
     });
     // 사이트 신청 → 원장 즉시 연락(§9.55) — 새 신청 · 입금 후보 · 30분 · 60분 재알림 · MRI 서버 입장 짝
-    const siteIntakeMod = require("./site-intake.cjs");
+const siteIntakeMod = require("./site-intake.cjs");
     const siteIntake = siteIntakeMod.createSiteIntake({ sbSelect, sbPatch, sbInsert, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID });
     console.log(`[site-intake] 환영 DM ${siteIntakeMod.welcomeOn() ? "켜짐(WELCOME_DM_ON=true)" : "꺼짐(WELCOME_DM_ON 없음 · true 일 때만 켜짐)"}`);
     // 웹 신청 첫 연락 봇 DM(§9.57) — 스위치는 ops_state 'intake_dm:on'(행 없음 = 꺼짐 · on=false 면 test 아이디만)
@@ -8825,6 +8838,10 @@ require("./owner-staff-dm.cjs").mountOwnerStaffDm(app, {
       const runIntake = () => siteIntake.tick().catch((e) => console.error("[site-intake] tick", e?.status || e?.message));
       run(); setInterval(run, 60_000).unref?.();
       runIntake(); setInterval(runIntake, 60_000).unref?.();
+      // 레벨 테스트 v2(§9.64) — 입금 확인된 「입금 대기」 → 「신청 완료」 + 원장 DM 한 장 · 48시간 지난 것 → 「기한 지남」
+      const ltIntake = levelTestIntakeMod.createLevelTestIntake({ sbSelect, sbPatch, sbInsert, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID });
+      const runLt = () => ltIntake.tick().catch((e) => console.error("[level-test] tick", e?.status || e?.message));
+      setInterval(runLt, 60_000).unref?.();
       const runDm = () => intakeDm.tick().catch((e) => console.error("[intake-dm] tick", e?.status || e?.message));
       setInterval(runDm, 60_000).unref?.();
       if (botClient && process.env.GUILD_ID) {
@@ -9449,7 +9466,7 @@ const SCHEMA_OPTIONAL = {
   // §22d 7컬럼은 2026-09-04에 REQUIRED_SCHEMA로 승격됐다(오너 DDL 실행 + 실DB 확인).
   // inflow만 남는다 — 폼의 '유입 경로'용 제안 컬럼이고 22d-1은 주석 그대로 미실행이다.
   // 없으면 server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다.
-  consults: ["utm_source", "utm_medium", "utm_content", "write_up", "write_up_at", "write_up_by", "discord_handle", "avail_slots", "tier_note", "depositor_name", "intake_state", "deposit_due_at", "intake_expired_at"],   // §101 6칸 = 레벨 테스트 입금 먼저(계약 §9.61) · discord_handle = §95(사이트 신청 디코 · 계약 §9.55)   // write_up 3종 = §93(상담 기록 · 계약 §9.53)
+  consults: ["utm_source", "utm_medium", "utm_content", "write_up", "write_up_at", "write_up_by", "discord_handle", "avail_slots", "tier_note", "depositor_name", "intake_state", "deposit_due_at", "intake_expired_at", "best_tier", "avg_damage", "damage_basis", "play_slots", "avail_windows"],   // §101 6칸 = 레벨 테스트 입금 먼저(계약 §9.61) · discord_handle = §95(사이트 신청 디코 · 계약 §9.55)   // write_up 3종 = §93(상담 기록 · 계약 §9.53)
   // §93 상담 일정 카드 — 미실행이면 카드 봇만 꺼진 채(채널 글 · 캘린더 · 알림 없음) · 다른 기능은 그대로
   consult_cards: ["consult_id", "message_id", "rendered_hash", "posted_at", "edited_at", "deleted_at", "calendar_event_id", "calendar_hash", "reminded_at", "created_at", "updated_at", "confirmed_dm_at", "deposit_reminded_at",
                   "intake_notified_at", "deposit_dm_at", "intake_nudges", "intake_nudged_at", "welcome_dm_at"],   // intake 5종 = §95(§9.55)
