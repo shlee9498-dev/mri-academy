@@ -382,3 +382,15 @@ test("§9.55 사이트 레벨 테스트 신청(금액 칸 0)도 레벨 테스트
   assert.ok(h.reads.some(([t, q]) => t === "consults" && /source=eq\.site/.test(q) && /fee=eq\.0/.test(q)));
   assert.equal(h.db.consults[0].paid_status, "unpaid", "확정하지 않는다");
 });
+
+test("입금자명 끝 신청 번호 두 자리(§9.64.3) — 이름 + 번호면 먼저 · 번호만 맞으면 안 됨 · 번호 없으면 지금처럼", () => {
+  const bm = require("../bank-match.cjs");
+  assert.equal(bm.consultCode(41), "41"); assert.equal(bm.consultCode(105), "05"); assert.equal(bm.consultCode(7), "07");
+  const at = "2026-11-09T12:00:00Z";
+  const c = (id, name, code) => ({ kind: "consult", id, name, amount: 20000, created_at: "2026-11-09T11:00:00Z", ...(code ? { code } : {}) });
+  const alert = (who) => ({ amount: 20000, counterparty: who, occurred_at: at });
+  const two = [c(41, "홍길동", "41"), c(42, "홍길동", "42")];
+  assert.equal(bm.decide(alert("홍길동42"), two).pick.id, 42, "번호로 가른다");
+  assert.equal(bm.decide(alert("홍길동"), two).status, "multiple", "번호 없으면 사람이 확인");
+  assert.equal(bm.codeScore("김철수42", two[1]), 0, "번호만 맞고 이름 다름");
+});

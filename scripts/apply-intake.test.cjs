@@ -113,10 +113,11 @@ test("apply.html 이 v2 칸 이름으로 보내고 서버 오류 키를 다 안�
   for (const t of AI.TIERS) assert.ok(html.includes(`name="tierPick" value="${t}"`), t);
 });
 
-test("입금자명 = 이름 + 신청 번호 끝 두 자리(오너 11/9)", () => {
-  assert.equal(AI.depositorTag("홍길동", 112), "홍길동12");
-  assert.equal(AI.depositorTag("홍길동", 7), "홍길동07");
-  assert.equal(AI.depositorTag("홍 길동", "41"), "홍길동41");
-  assert.equal(AI.depositorTag("홍길동", undefined), "홍길동");   // 번호가 안 오면 이름만
-  assert.ok(HTML.includes("7일 안에 서로 시간을 못 맞추면 전액 환불"));
+test("입금자명 = 서버가 준 depositorName 그대로 · 7일 환불 확정 문장(#673)", () => {
+  assert.ok(HTML.includes("depositor, memo"), "보내는 칸 depositor");
+  assert.ok(HTML.includes("d.depositorName"), "응답 depositorName 을 읽는다");
+  assert.ok(!HTML.includes("depositorTag"), "화면에서 따로 만들지 않는다");
+  assert.ok(HTML.includes("신청 뒤 7일 안에 일정을 맞추지 못하면 20,000원을 전액 환불해요"));
+  const doc = fs.readFileSync(path.join(ROOT, "docs/trainer-portal-api.md"), "utf8");
+  assert.ok(doc.includes("신청 뒤 7일 안에 일정을 맞추지 못하면 20,000원을 전액 환불해요"), "계약 문장과 같다");
 });

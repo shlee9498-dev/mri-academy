@@ -165,15 +165,7 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
     if (!/^\d{1,4}$/.test(t) || +t > 3000) return { avgDamage: null, damageBasis: null };
     return { avgDamage: +t, damageBasis: basis === "normal" ? "normal" : "ranked" };
   }
-  // 입금자명 = 이름 + 신청 번호 끝 두 자리(오너 OK 11/9 · 계약 §9.64.3 3번 · 예 홍길동12 · #7 → 홍길동07)
-  function depositorTag(name, consultNo) {
-    var n = String(name || "").replace(/\s+/g, "").slice(0, 38);
-    var no = String(consultNo == null ? "" : consultNo);
-    if (!/^\d+$/.test(no)) return n;
-    return n + ("0" + no).slice(-2);
-  }
   return {
-    depositorTag: depositorTag,
     DAYS: DAYS, BLOCKS: BLOCKS, TIERS: TIERS, END_OF_DAY: END_OF_DAY, MIN_LEN: MIN_LEN,
     hhmm: hhmm, kstClock: kstClock, weekDates: weekDates, startChoices: startChoices, endChoices: endChoices,
     toWindows: toWindows, toPlaySlots: toPlaySlots, splitContact: splitContact, damage: damage
@@ -328,8 +320,8 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
       <h2>입금 안내</h2>
       <p class="pay-main">레벨 테스트 <b>20,000원</b> · 입금하면 신청이 끝나요</p>
       <p class="pay-sub">레벨 테스트는 60~90분이에요. 예약 3시간 전까지 취소하면 전액 환불이고, 그 뒤 취소와 불참은 환불되지 않아요</p>
-      <!-- 7일 환불 — 오너 OK 11/9(「넣기」) · 문장은 계약 §9.61.5 그대로(새로 짓지 않음 · 토스 심사 대상) -->
-      <p class="pay-sub">7일 안에 서로 시간을 못 맞추면 전액 환불</p>
+      <!-- 7일 환불 — 오너 OK 11/9(「넣기」) · 문장은 계약 §9.61.5 확정본 그대로(#673 · 새로 짓지 않음 · 토스 심사 대상) -->
+      <p class="pay-sub">신청 뒤 7일 안에 일정을 맞추지 못하면 20,000원을 전액 환불해요</p>
       <div class="fld" style="margin-top:14px">
         <label for="fDepositor">입금하실 분 이름<span class="opt">(신청자와 다르면 고쳐 주세요)</span></label>
         <input id="fDepositor" name="depositor" type="text" maxlength="40" placeholder="입금하실 분 성함">
@@ -569,8 +561,8 @@ form.addEventListener("submit", async (e) => {
     platform: fd.get("platform"), nickname: fd.get("nickname"),
     bestTier: tier || null, avgDamage: dmg.avgDamage, damageBasis: dmg.damageBasis,
     playSlots, availWindows: AI.toWindows(picked),
-    // 입금 예정자명 — 서버 칸이 없어 이름과 다를 때만 memo 로 남긴다(§9.64.3 1번 · 통장 대사가 읽는다)
-    memo: depositor !== name ? "입금 예정자명: " + depositor : "",
+    // 입금하실 분 이름 — 서버가 신청 번호 두 자리를 붙여 입금자명을 만들어 돌려준다(§9.64.3 3번 · #673)
+    depositor, memo: "",
     focus: focus.join(", "), statsConsent: "동의",
     discount_code: appliedCode ? appliedCode.code : "",
     utm_source: fd.get("utm_source") || "", utm_medium: fd.get("utm_medium") || "", utm_content: fd.get("utm_content") || "",
@@ -590,7 +582,7 @@ form.addEventListener("submit", async (e) => {
     if (PAYMENT_LIVE) {
       startPayment(payload.applyType, payload.name, payload.phone);
     } else {
-      startDeposit(payload.applyType, depositor, d.consultNo, d.depositDueAt);
+      startDeposit(payload.applyType, depositor, d.consultNo, d.depositDueAt, d.depositorName);
     }
   } catch (err) {
     show("err", (err.message || "전송 오류") + " · 안 되면 디스코드나 카카오로 알려 주세요");
@@ -710,14 +702,14 @@ document.getElementById("discountInput").addEventListener("keydown", (e) => { if
 
 // ===== 상담비 입금 안내 (계좌이체) =====
 // 상담비는 할인 대상 아님 — 원가 그대로 안내. (할인은 수강료 자격이며 정식 등록 시 반영)
-function startDeposit(applyType, depositor, consultNo, dueIso){
+function startDeposit(applyType, depositor, consultNo, dueIso, depositorName){
   const fee = consultFee(applyType);
   document.getElementById("depName").textContent = fee.name;
   document.getElementById("depFinal").textContent = fee.amount.toLocaleString() + "원";
   document.getElementById("depAmountText").textContent = fee.amount.toLocaleString() + "원";
   document.getElementById("copyAmount").dataset.copy = String(fee.amount);
-  // 입금자명 = 이름 + 신청 번호 끝 두 자리(오너 OK 11/9) — 서버 응답에 consultNo 가 없으면 이름만(번호 없이 통장 대사)
-  const who = window.ApplyIntake.depositorTag(depositor, consultNo);
+  // 입금자명 = 서버가 준 값 그대로(이름 + 신청 번호 두 자리 · §9.64.3 3번) — 응답에 없을 때만 이름
+  const who = typeof depositorName === "string" && depositorName.trim() ? depositorName.trim().slice(0, 40) : (depositor || "");
   document.getElementById("depWho").textContent = who;
   document.getElementById("copyWho").dataset.copy = who;
   if (consultNo != null && /^\d+$/.test(String(consultNo))) document.getElementById("depNo").textContent = "신청 #" + consultNo;

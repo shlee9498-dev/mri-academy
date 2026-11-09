@@ -68,7 +68,9 @@ let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP �
 const payreqIntake = require("./payreq-intake.cjs");
 // 상담 · 레벨 테스트 신청서 「어디서 보고 오셨어요?」 선택지(apply.html 과 한 벌 · 오너 10/19)
 const inflowMod = require("./inflow.cjs");
-const levelTestIntakeMod = require("./level-test-intake.cjs");   // 레벨 테스트 신청 v2(계약 §9.64)
+const levelTestIntakeMod = require("./level-test-intake.cjs");
+const bankMatchMod = require("./bank-match.cjs");   // 입금자명 번호(§9.64.3)
+const bpiTextMod = require("./bpi-text.cjs");   // 웹 신청 BPI 줄 경쟁전 · 일반 나눔(계약 §9.64.7)   // 레벨 테스트 신청 v2(계약 §9.64)
 // 「입금 받음」(계약 §9.40) — 트레이너가 올리는 입금 신청 · 결과 DM 문구 · 화면 이름(디코 닉)
 const paymentReceived = require("./payment-received.cjs");
 // 판수 맞추기 · 일요일 확인 목록(계약 §9.41.2 · §9.41.3) — 라우트 · 카드 본문 · 결정(§46 줄마다)
@@ -6005,9 +6007,8 @@ async function diagnoseBpi(platform, nick) {
     if (!s || !r.sample) {
       return `✅ 닉 확인됨(${r.platform}) · ⚠ 최근 두 시즌 매치 기록 없음 — 티어는 신고값 유지` + (extra || "");
     }
-    return `**${s.tier} ${s.label}** (BPI ${s.bpi}) · 평균딜 ${r.sample.avgDamage} · ${r.sample.roundsPlayed}판`
-      + (r.seasonSource === "previous" ? " (직전 시즌 기준)" : "")
-      + (r.lowConfidence ? " ⚠표본부족" : "") + (extra || "");
+    // 경쟁전 · 일반을 나눠 세 줄(계약 §9.64.7 · 오너 11/9 「일겜인지 경쟁전인지」) — 계산식은 그대로, 보이는 것만
+    return bpiTextMod.bpiLines(r) + (extra || "");
   };
   try {
     return fmt(await computeBPI(platform, nick, false));
@@ -6066,8 +6067,8 @@ app.post("/api/apply", async (req, res) => {
         { name: "신청 구분", value: clip(b.applyType, 50), inline: true },
         { name: "어디서 보고 왔나", value: (() => { const x = inflowMod.normalizeInflow(b.source); return x ? (x.legacy ? `기타(${x.legacy})` : x.label) : "—"; })(), inline: true },
         { name: "플랫폼/닉", value: `${clip(b.platform, 10)} / ${clip(b.nickname, 40)}`, inline: true },
-        { name: "🎯 BPI 자동진단", value: bpiText, inline: false },
-        { name: "최고 티어", value: v2p ? `${v2p.fields.best_tier || "—"}${v2p.fields.avg_damage != null ? ` · 평균 딜 ${v2p.fields.avg_damage}(${v2p.fields.damage_basis === "normal" ? "일반" : "경쟁전"})` : ""}` : (clip(b.tier, 40) || "—"), inline: true },
+        { name: "🎯 BPI 자동진단(전적)", value: String(bpiText).slice(0, 1000), inline: false },
+        { name: "📝 신청자가 적은 최고 티어 · 딜", value: v2p ? `${v2p.fields.best_tier || "—"}${v2p.fields.avg_damage != null ? ` · 평균 딜 ${v2p.fields.avg_damage}(${v2p.fields.damage_basis === "normal" ? "일반" : "경쟁전"})` : ""}` : (clip(b.tier, 40) || "—"), inline: true },
         { name: "플레이 시간", value: v2p ? (levelTestIntakeMod.playText(v2p.fields.play_slots) || "—").slice(0, 200) : clip(b.playtime, 80), inline: true },
         ...(v2p ? [{ name: "📅 가능 일정(입금 대기)", value: levelTestIntakeMod.windowsText(v2p.fields.avail_windows).slice(0, 900), inline: false }] : []),
         { name: "집중 교정", value: clip(b.focus, 100), inline: false },
@@ -6093,6 +6094,7 @@ app.post("/api/apply", async (req, res) => {
     //     보내므로, DDL 실행 전 배포에서도 기본 컬럼으로 저장이 시작된다(전량 유실 방지).
     //   · 전화번호는 여기까지만 온다. 수강생 포털 API 응답에는 어떤 경로로도 넣지 않는다.
     let savedConsultId = null;   // §9.57 첫 연락 DM 이 쓴다
+    let depositorCode = null;    // v2 입금자명(§9.64.3)
     try {
       // ⚠️ 2026-09-17 실측 정정: §22d 7컬럼이 9/4 에 REQUIRED_SCHEMA 로 승격되면서 probeOptionalSchema 가 더는
       //   프로브하지 않아 has() 가 전부 false 였다 — 9/4 이후 신청 3건(8·9·10)이 source·phone·platform·game_nick·
@@ -6138,6 +6140,11 @@ app.post("/api/apply", async (req, res) => {
       }
       if (memoParts.length) row.memo = memoParts.join(" · ").slice(0, 500);
       savedConsultId = (await sbInsert("consults", row))?.id || null;
+      // v2 입금자명 = 이름 + 신청 번호 끝 두 자리(§9.64.3 · 오너 11/9 「번호 붙이기」) — 통장 짝 찾기가 이 이름부터 본다
+      if (v2p && savedConsultId && has("depositor_name")) {
+        depositorCode = `${clip(String(b.depositor || b.name).trim(), 36)}${bankMatchMod.consultCode(savedConsultId)}`;
+        try { await sbPatch("consults", `id=eq.${savedConsultId}`, { depositor_name: depositorCode }); } catch (e) { console.error("apply_depositor_save_failed", e?.status || e?.message); }
+      }
     } catch (e) {
       // 값은 로그에 남기지 않는다(신청자 개인정보). 실패 사실과 코드만.
       console.error("apply_consult_save_failed", e?.message);
@@ -6179,7 +6186,7 @@ app.post("/api/apply", async (req, res) => {
         }),
       }).catch((e) => console.error("consult_sheet_error", e?.message));
     }
-    res.json(v2p ? { ok: true, depositDueAt: v2p.fields.deposit_due_at } : { ok: true });
+    res.json(v2p ? { ok: true, depositDueAt: v2p.fields.deposit_due_at, consultNo: savedConsultId, depositorName: depositorCode } : { ok: true });
   } catch (e) {
     console.error("apply_error", e);
     res.status(500).json({ error: "server_error" });
