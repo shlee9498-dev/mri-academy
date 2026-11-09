@@ -112,3 +112,11 @@ test("apply.html 이 v2 칸 이름으로 보내고 서버 오류 키를 다 안�
   for (const d of AI.DAYS) assert.ok(html.includes(`name="playDay" value="${d}"`), d);
   for (const t of AI.TIERS) assert.ok(html.includes(`name="tierPick" value="${t}"`), t);
 });
+
+test("입금자명 = 이름 + 신청 번호 끝 두 자리(오너 11/9)", () => {
+  assert.equal(AI.depositorTag("홍길동", 112), "홍길동12");
+  assert.equal(AI.depositorTag("홍길동", 7), "홍길동07");
+  assert.equal(AI.depositorTag("홍 길동", "41"), "홍길동41");
+  assert.equal(AI.depositorTag("홍길동", undefined), "홍길동");   // 번호가 안 오면 이름만
+  assert.ok(HTML.includes("7일 안에 서로 시간을 못 맞추면 전액 환불"));
+});

@@ -165,7 +165,15 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
     if (!/^\d{1,4}$/.test(t) || +t > 3000) return { avgDamage: null, damageBasis: null };
     return { avgDamage: +t, damageBasis: basis === "normal" ? "normal" : "ranked" };
   }
+  // 입금자명 = 이름 + 신청 번호 끝 두 자리(오너 OK 11/9 · 계약 §9.64.3 3번 · 예 홍길동12 · #7 → 홍길동07)
+  function depositorTag(name, consultNo) {
+    var n = String(name || "").replace(/\s+/g, "").slice(0, 38);
+    var no = String(consultNo == null ? "" : consultNo);
+    if (!/^\d+$/.test(no)) return n;
+    return n + ("0" + no).slice(-2);
+  }
   return {
+    depositorTag: depositorTag,
     DAYS: DAYS, BLOCKS: BLOCKS, TIERS: TIERS, END_OF_DAY: END_OF_DAY, MIN_LEN: MIN_LEN,
     hhmm: hhmm, kstClock: kstClock, weekDates: weekDates, startChoices: startChoices, endChoices: endChoices,
     toWindows: toWindows, toPlaySlots: toPlaySlots, splitContact: splitContact, damage: damage
@@ -320,9 +328,12 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
       <h2>입금 안내</h2>
       <p class="pay-main">레벨 테스트 <b>20,000원</b> · 입금하면 신청이 끝나요</p>
       <p class="pay-sub">레벨 테스트는 60~90분이에요. 예약 3시간 전까지 취소하면 전액 환불이고, 그 뒤 취소와 불참은 환불되지 않아요</p>
+      <!-- 7일 환불 — 오너 OK 11/9(「넣기」) · 문장은 계약 §9.61.5 그대로(새로 짓지 않음 · 토스 심사 대상) -->
+      <p class="pay-sub">7일 안에 서로 시간을 못 맞추면 전액 환불</p>
       <div class="fld" style="margin-top:14px">
-        <label for="fDepositor">입금자명<span class="opt">(이름과 다르면 고쳐 주세요)</span></label>
+        <label for="fDepositor">입금하실 분 이름<span class="opt">(신청자와 다르면 고쳐 주세요)</span></label>
         <input id="fDepositor" name="depositor" type="text" maxlength="40" placeholder="입금하실 분 성함">
+        <div class="hint">신청하면 이 이름 뒤에 신청 번호 두 자리를 붙인 입금자명을 알려 드려요</div>
       </div>
     </div>
 
@@ -390,6 +401,7 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
     </div>
     <div class="dep-line">
       <span>입금자명 <b id="depWho"></b></span>
+      <button type="button" class="copy-btn" id="copyWho" data-copy="">입금자명복사</button>
     </div>
     <p class="dep-note"><b id="depDue"></b>까지 입금되지 않으면 신청이 닫혀요. 그 뒤에도 다시 신청할 수 있어요</p>
     <div class="msg" id="depMsg"></div>
@@ -704,7 +716,10 @@ function startDeposit(applyType, depositor, consultNo, dueIso){
   document.getElementById("depFinal").textContent = fee.amount.toLocaleString() + "원";
   document.getElementById("depAmountText").textContent = fee.amount.toLocaleString() + "원";
   document.getElementById("copyAmount").dataset.copy = String(fee.amount);
-  document.getElementById("depWho").textContent = depositor || "";
+  // 입금자명 = 이름 + 신청 번호 끝 두 자리(오너 OK 11/9) — 서버 응답에 consultNo 가 없으면 이름만(번호 없이 통장 대사)
+  const who = window.ApplyIntake.depositorTag(depositor, consultNo);
+  document.getElementById("depWho").textContent = who;
+  document.getElementById("copyWho").dataset.copy = who;
   if (consultNo != null && /^\d+$/.test(String(consultNo))) document.getElementById("depNo").textContent = "신청 #" + consultNo;
   // 기한 = 서버 depositDueAt(§9.61.4) · 없으면 지금 + 48시간
   const due = dueIso && !isNaN(new Date(dueIso)) ? dueIso : new Date(Date.now() + 48 * 3600 * 1000).toISOString();
@@ -731,6 +746,7 @@ function fallbackCopy(text, cb){
 }
 document.getElementById("copyAmount").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
 document.getElementById("copyAcct").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
+document.getElementById("copyWho").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
 
 // ── 결제 직행 모드 (?pay=1|lesson / ?pay=lecture) ──
 // 신청서 제출 없이 결제창 바로 노출 — PG 심사 확인용 + "상담비만 먼저 결제" 동선.
