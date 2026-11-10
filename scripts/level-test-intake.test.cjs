@@ -18,9 +18,13 @@ test("v2 판별 · 정상 저장 값 · 입금 대기 48시간", () => {
   assert.equal(r.fields.phone, null);
 });
 
-test("연락처 하나는 필수 · 휴대폰만도 됨", () => {
-  assert.deepEqual(L.parseV2(body({ discord: "", phone: "" }), NOW), { error: "contact_required" });
-  assert.equal(L.parseV2(body({ discord: "", phone: "010-0000-0000" }), NOW).ok, true);
+test("디스코드 아이디 필수(§9.66) · 휴대폰만으로는 안 됨 · 모양 검사", () => {
+  assert.deepEqual(L.parseV2(body({ discord: "", phone: "" }), NOW), { error: "discord_required" });
+  assert.deepEqual(L.parseV2(body({ discord: "  ", phone: "010-0000-0000" }), NOW), { error: "discord_required" });
+  assert.deepEqual(L.parseV2(body({ discord: "010-0000-0000" }), NOW), { error: "invalid_discord" });
+  assert.deepEqual(L.parseV2(body({ discord: "홍 길동" }), NOW), { error: "invalid_discord" });
+  for (const ok of ["gildong_01", "@gildong.01", "Gildong#1234"]) assert.equal(L.parseV2(body({ discord: ok }), NOW).ok, true, ok);
+  assert.equal(L.parseV2(body({ phone: "" }), NOW).ok, true, "휴대폰은 선택");
 });
 
 test("티어 · 딜 — 비워도 됨 · 딜엔 기준(경쟁전/일반) 필수", () => {

@@ -17,6 +17,20 @@ const addDays = (ymd, n) => new Date(Date.parse(ymd + "T00:00:00Z") + n * 86400_
 const hm = (s) => { const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(s || "")); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
 const wdOf = (ymd) => WD[new Date(ymd + "T00:00:00Z").getUTCDay()];
 
+// 디스코드 아이디 모양 — 새 사용자명(소문자 · 숫자 · _ · . · 2~32자) · 옛 「이름#1234」 · 앞 「@」 허용 · 공백 · 전화번호 모양은 안 됨
+function validDiscord(s) {
+  const t = String(s || "").trim().replace(/^@/, "");
+  if (t.length < 2 || t.length > 40 || /\s/.test(t)) return false;
+  if (/^[0-9+\-]{8,}$/.test(t)) return false;   // 전화번호를 디코 칸에 적은 경우
+  return /^[A-Za-z0-9_.]{2,32}$/.test(t) || /^[^#@:`]{2,32}#\d{4}$/.test(t);
+}
+
+// 화면이 아직 모르는 새 오류 코드의 사람 문구(§9.66.2) — 화면은 자기 문구표를 먼저 쓰고, 없으면 이 message 를 쓴다
+const ERROR_TEXT = {
+  discord_required: "디스코드 아이디를 적어 주세요. 수업과 첫 연락이 디스코드에서 열려요",
+  invalid_discord: "디스코드 아이디를 다시 확인해 주세요. 디스코드 설정의 「사용자명」을 그대로 적으면 돼요",
+};
+
 // v2 신청인가 — 화면이 availWindows 를 보내면 v2(옛 화면은 그대로 옛 흐름)
 const isV2 = (b) => Array.isArray(b && b.availWindows);
 
@@ -24,7 +38,9 @@ const isV2 = (b) => Array.isArray(b && b.availWindows);
 function parseV2(b, now) {
   const contactDiscord = String(b.discord || "").trim().slice(0, 40);
   const contactPhone = String(b.phone || "").trim().slice(0, 20);
-  if (!contactDiscord && !contactPhone) return { error: "contact_required" };
+  // 디스코드 아이디 필수(§9.66 · 오너 11/10 「디코닉이랑 연락처를 안적어두니까연락을할수가없어」 — 수업 · 첫 연락이 디코에서 열린다)
+  if (!contactDiscord) return { error: "discord_required" };
+  if (!validDiscord(contactDiscord)) return { error: "invalid_discord" };
   const tier = b.bestTier == null || b.bestTier === "" ? null : String(b.bestTier).trim();
   if (tier && !TIERS.includes(tier)) return { error: "invalid_tier" };
   let dmg = null;
@@ -114,4 +130,4 @@ function createLevelTestIntake(deps) {
   return { tick };
 }
 
-module.exports = { DUE_MS, TIERS, BLOCKS, isV2, parseV2, windowsText, playText, confirmedLine, createLevelTestIntake };
+module.exports = { ERROR_TEXT, validDiscord, DUE_MS, TIERS, BLOCKS, isV2, parseV2, windowsText, playText, confirmedLine, createLevelTestIntake };
