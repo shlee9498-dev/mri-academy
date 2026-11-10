@@ -6040,7 +6040,7 @@ app.post("/api/apply", async (req, res) => {
       if (!b[k] || String(b[k]).trim() === "") return res.status(400).json({ error: `필수 항목 누락: ${k}` });
     }
     const v2p = v2 ? levelTestIntakeMod.parseV2(b, Date.now()) : null;
-    if (v2p && v2p.error) return res.status(400).json({ error: v2p.error });
+    if (v2p && v2p.error) return res.status(400).json({ error: v2p.error, ...(levelTestIntakeMod.ERROR_TEXT[v2p.error] ? { message: levelTestIntakeMod.ERROR_TEXT[v2p.error] } : {}) });
     const clip = (s, n) => String(s || "").slice(0, n);
 
     // 할인코드 — 서버 시각(KST 오프셋 기준) 재검증 후 운영진용 표기 (제출 자체는 거부 안 함)
@@ -6074,8 +6074,8 @@ app.post("/api/apply", async (req, res) => {
         { name: "집중 교정", value: clip(b.focus, 100), inline: false },
         { name: "추천 트레이너", value: clip(b.trainer, 30) || "—", inline: true },
         { name: "성별", value: clip(b.gender, 10) || "—", inline: true },   // 생년월일 칸 제거(오너 §28 판정 2026-09-25 — 받지 않는다)
+        { name: "💬 디스코드 아이디", value: clip(String(b.discord || "").trim(), 40) || "⚠️ 디스코드 아이디 없음 · 전화로 연락", inline: true },   // §9.66 — 연락처 위
         { name: "📞 연락처", value: clip(b.phone, 20) || "—", inline: true },
-        { name: "💬 디스코드", value: clip(b.discord, 40) || "—", inline: true },
         { name: "🎟️ 할인코드", value: discountText, inline: true },
         { name: "전적 동의", value: clip(b.statsConsent, 10) || "미기록", inline: true },
         { name: "🔗 UTM", value: [clip(b.utm_source, 40), clip(b.utm_medium, 40), clip(b.utm_content, 60)].filter(Boolean).join(" / ") || "—", inline: true },
