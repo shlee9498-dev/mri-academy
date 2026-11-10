@@ -86,7 +86,7 @@ function createLevelTestIntake(deps) {
     running = true;
     try {
       const rows = await deps.sbSelect("consults",
-        "select=id,status,paid_status,intake_state,deposit_due_at,discord_handle,game_nick,platform,best_tier,avg_damage,damage_basis,play_slots,avail_windows,focus"
+        "select=id,status,done_at,paid_status,intake_state,deposit_due_at,discord_handle,game_nick,platform,best_tier,avg_damage,damage_basis,play_slots,avail_windows,focus"
         + "&intake_state=eq.awaiting_deposit&order=id.asc&limit=50");
       let confirmed = 0, expired = 0;
       for (const r of rows) {
@@ -98,8 +98,11 @@ function createLevelTestIntake(deps) {
             const claim = await deps.sbPatch("consult_cards", `consult_id=eq.${r.id}&confirmed_dm_at=is.null`, { confirmed_dm_at: new Date(now()).toISOString() });
             if (Array.isArray(claim) && claim.length && deps.ownerDiscordId) await deps.dm(String(deps.ownerDiscordId), confirmedLine(r));
             confirmed++; log.log(`[level-test] #${r.id} 신청 완료`);
+          } else if (r.status === "done" || r.done_at) {
+            // §9.64.2 보완(총무 11/10 · 「상담을 마친 건은 입금 기한으로 취소하지 않기」) — 기한이 지나도 그대로 「입금 대기」로 둔다(= 입금 확인 필요 · 사람이 통장 대사)
+            continue;
           } else if (r.deposit_due_at && Date.parse(r.deposit_due_at) <= now()) {
-            const got = await deps.sbPatch("consults", `id=eq.${r.id}&intake_state=eq.awaiting_deposit&paid_status=neq.paid`,
+            const got = await deps.sbPatch("consults", `id=eq.${r.id}&intake_state=eq.awaiting_deposit&paid_status=neq.paid&status=neq.done&done_at=is.null`,
               { intake_state: "expired", intake_expired_at: new Date(now()).toISOString(), status: "cancelled", cancel_reason: "입금 기한 지남", updated_at: new Date(now()).toISOString() });
             if (Array.isArray(got) && got.length) { expired++; log.log(`[level-test] #${r.id} 기한 지남`); }
           }
