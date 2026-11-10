@@ -38,6 +38,10 @@ section{padding:40px 0;border-bottom:1px solid var(--line)}
 .nums .rp{font-family:var(--display);font-weight:800;font-size:18px}
 .nums .rp .unit{font-size:12px;color:var(--ink-body);font-family:var(--body);font-weight:700;margin-left:2px}
 .nums .meta{font-size:13px;font-weight:700;color:var(--ink-dim);margin-top:2px}
+/* 경쟁전 · 일반 두 줄(계약 §9.52 · 값 없는 줄은 그리지 않는다) */
+.modes{grid-column:2/4;display:grid;gap:2px;font-size:13px;color:var(--ink-dim)}
+.modes b{color:var(--ink);font-weight:700}
+.season-note{margin-top:10px;font-size:13px;color:var(--ink-dim)}
 .spark{grid-column:2/4;height:34px}
 .spark svg{width:100%;max-width:340px;height:34px;display:block}
 .spark polyline{fill:none;stroke:var(--gold);stroke-width:2}
@@ -116,6 +120,15 @@ footer .links{margin-top:8px}
   var API="https://mri-academy-production.up.railway.app";
   function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
   function sign(n){return (n>0?"+":"")+Number(n).toLocaleString("ko-KR");}
+  // 「경쟁전 · 평균딜 268(+57) · 63판」 — 서버 modes 값만(§9.52.3). 값이 하나도 없으면 줄을 만들지 않는다
+  function modeLine(label,m){
+    if(!m)return "";
+    var parts=[];
+    if(m.avgDamage!=null)parts.push("평균딜 "+Math.round(m.avgDamage).toLocaleString("ko-KR")+(m.dmgDelta?"("+sign(Math.round(m.dmgDelta))+")":""));
+    if(m.rounds!=null)parts.push(Number(m.rounds).toLocaleString("ko-KR")+"판");
+    if(!parts.length)return "";
+    return '<div><b>'+label+'</b> · '+esc(parts.join(" · "))+'</div>';
+  }
   function spark(traj){
     var pts=traj.filter(function(p){return p.rankPoint!=null;});
     if(pts.length<2)return "";
@@ -137,16 +150,19 @@ footer .links{margin-top:8px}
       var dl=s.delta||{};
       var path=(dl.tierFrom&&dl.tierTo)?('<b>'+esc(dl.tierFrom)+'</b> <span class="arr">→</span> <b>'+esc(dl.tierTo)+'</b>'):"";
       var meta=[];
-      if(dl.dmgDelta!=null&&dl.dmgDelta!==0)meta.push("평균딜 "+sign(Math.round(dl.dmgDelta)));
+      var md=s.modes||null;
+      if(!md&&dl.dmgDelta!=null&&dl.dmgDelta!==0)meta.push("평균딜 "+sign(Math.round(dl.dmgDelta)));   // modes 없는 옛 응답만
       if(dl.months)meta.push(dl.months+"개월");
       return '<div class="row fade" style="animation-delay:'+Math.min(i*40,400)+'ms">'
         +'<div class="no">'+String(i+1).padStart(2,"0")+'</div>'
         +'<div class="who"><div class="nick">'+esc(s.alias)+'</div>'+(path?'<div class="path">'+path+'</div>':'')+'</div>'
         +'<div class="nums">'+(dl.rpDelta!=null?'<div class="rp">'+sign(Math.round(dl.rpDelta))+'<span class="unit">RP</span></div>':'')
         +(meta.length?'<div class="meta">'+meta.join(" · ")+'</div>':'')+'</div>'
+        +(md&&(modeLine("경쟁전",md.ranked)+modeLine("일반",md.normal))?'<div class="modes">'+modeLine("경쟁전",md.ranked)+modeLine("일반",md.normal)+'</div>':'')
         +spark(s.trajectory||[])
         +'</div>';
-    }).join("")+'</div>';
+    }).join("")+'</div>'
+      +(list.some(function(s){return s.modes;})?'<p class="season-note">판수는 이번 시즌 기준이라 시즌이 바뀌면 다시 세요</p>':'');
     document.getElementById("ledger").innerHTML=html;
     if(d.updatedAt){
       var el=document.getElementById("updatedAt");

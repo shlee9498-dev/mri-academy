@@ -174,6 +174,9 @@ a{color:inherit}
 .feat .arr{font:800 30px/1 var(--num);color:var(--mute);padding-bottom:8px}
 .feat-who{margin-top:16px;color:var(--mute);font-size:15px}
 .feat-who b{color:var(--ink)}
+/* 경쟁전 · 일반 두 줄(계약 §9.52 · 값 없는 줄은 그리지 않는다) */
+.g-modes{margin-top:8px;display:grid;gap:2px;font-size:14px;color:var(--mute)}
+.g-modes b{color:var(--ink)}
 .list{list-style:none;margin-top:28px;border-top:1px solid var(--line)}
 .list li{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.3fr) auto;gap:12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);font-size:15px}
 .list .nick{font-weight:700}
@@ -519,7 +522,7 @@ html.vr-lock{overflow:hidden}
         <article class="cell s4 person rise" aria-labelledby="htH">
           <div class="who"><img class="av" src="img/trainers/ht-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너 · 이번 시즌 우수 트레이너</div><div class="nm" id="htH">현태</div></div></div>
           <div class="stat1"><span class="v num">4,527<small>RP</small></span><span class="k">S41 스팀 서바이버</span></div>
-          <p class="tot">누적 <b>50명</b> · <b>2,496판</b><span>2026년 4월부터</span></p>
+          <p class="tot">누적 <b>50명</b> · 레슨 <b>2,496판</b><span>2026년 4월부터</span></p>
           <p class="r30">최근 30일 <span data-trainer="hyuntae">16</span>명</p>
           <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae">현태에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_Hye0n" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/gusxo3874" target="_blank" rel="noopener">SOOP</a></div>
         </article>
@@ -527,7 +530,7 @@ html.vr-lock{overflow:hidden}
         <article class="cell s4 person rise" aria-labelledby="jgH">
           <div class="who"><img class="av" src="img/trainers/jg-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너</div><div class="nm" id="jgH">준구</div></div></div>
           <div class="stat1"><span class="v num">S38</span><span class="k">서바이버</span></div>
-          <p class="tot">누적 <b>37명</b> · <b>1,425판</b><span>2026년 3월부터</span></p>
+          <p class="tot">누적 <b>37명</b> · 레슨 <b>1,425판</b><span>2026년 3월부터</span></p>
           <p class="r30">최근 30일 <span data-trainer="jungu">7</span>명</p>
           <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">SOOP</a></div>
         </article>
@@ -811,6 +814,18 @@ html.vr-lock{overflow:hidden}
     if (typeof dl.months === "number" && dl.months > 0) return dl.months + "개월";
     return "";
   }
+  function modeLine(label, m){
+    if (!m) return null;
+    var parts = [];
+    if (typeof m.avgDamage === "number") {
+      var dd = typeof m.dmgDelta === "number" ? Math.round(m.dmgDelta) : 0;
+      parts.push("평균딜 " + Math.round(m.avgDamage).toLocaleString("ko-KR") + (dd ? "(" + (dd > 0 ? "+" : "") + dd.toLocaleString("ko-KR") + ")" : ""));
+    }
+    if (typeof m.rounds === "number") parts.push(m.rounds.toLocaleString("ko-KR") + "판");
+    if (!parts.length) return null;
+    var d = el("div"); d.appendChild(el("b", null, label)); d.appendChild(document.createTextNode(" · " + parts.join(" · ")));
+    return d;
+  }
   var KEY = "mri.growth.v1", shown = false;
   function done(){ box.removeAttribute("aria-busy"); }
   function fail(msg){ if (shown) return done(); box.textContent = ""; box.appendChild(el("p", "state", msg)); done(); }
@@ -836,6 +851,12 @@ html.vr-lock{overflow:hidden}
     var who = el("p", "feat-who"); who.appendChild(el("b", null, top.alias || "익명"));
     var sp = span(top); if (sp) who.appendChild(document.createTextNode(" · " + sp));
     box.appendChild(who);
+    // 경쟁전 · 일반 두 줄(계약 §9.52 · 서버 modes 값만) — 값 없는 줄은 만들지 않는다
+    var md = top.modes || {}, g = el("div", "g-modes");
+    [["경쟁전", md.ranked], ["일반", md.normal]].forEach(function(p){
+      var line = modeLine(p[0], p[1]); if (line) g.appendChild(line);
+    });
+    if (g.children.length) box.appendChild(g);
     var ul = el("ul", "list");
     list.slice(1, 6).forEach(function(s){
       var li = el("li");
