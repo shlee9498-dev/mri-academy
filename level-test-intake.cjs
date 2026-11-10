@@ -34,6 +34,17 @@ const ERROR_TEXT = {
 // 신청 완료 화면에 실을 연락 길(§9.67 · 오너 11/10 「신청접수할때나한테친추 주시는거까지」) — 값의 정본은 여기 하나(초대 = discord.html 이 현재 초대로 넘긴다)
 const CONTACT = Object.freeze({ discordInvite: "https://mriacademy.gg/discord", ownerDiscord: "e_muri" });
 
+// 30분 안 같은 사람의 「입금 대기」 신청(§9.66.5) — 게임 닉 · 디코 아이디는 대소문자 무시 · 플랫폼 같음 · 사이트 접수 · 미입금
+const DUP_MS = 30 * 60_000;
+const lowerKey = (s) => String(s || "").trim().toLowerCase().replace(/^@/, "");
+async function findRecentDuplicate(sbSelect, { nick, platform, discord, now }) {
+  if (!nick || !platform || !discord) return null;
+  const since = new Date(now - DUP_MS).toISOString();
+  const rows = await sbSelect("consults", `select=id,game_nick,platform,discord_handle,depositor_name,memo,created_at&source=eq.site&registered_by=is.null`
+    + `&intake_state=eq.awaiting_deposit&paid_status=eq.unpaid&platform=eq.${encodeURIComponent(platform)}&created_at=gte.${encodeURIComponent(since)}&order=id.desc&limit=20`);
+  return (rows || []).find((r) => lowerKey(r.game_nick) === lowerKey(nick) && lowerKey(r.discord_handle) === lowerKey(discord)) || null;
+}
+
 // v2 신청인가 — 화면이 availWindows 를 보내면 v2(옛 화면은 그대로 옛 흐름)
 const isV2 = (b) => Array.isArray(b && b.availWindows);
 
@@ -133,4 +144,4 @@ function createLevelTestIntake(deps) {
   return { tick };
 }
 
-module.exports = { CONTACT, ERROR_TEXT, validDiscord, DUE_MS, TIERS, BLOCKS, isV2, parseV2, windowsText, playText, confirmedLine, createLevelTestIntake };
+module.exports = { DUP_MS, findRecentDuplicate, CONTACT, ERROR_TEXT, validDiscord, DUE_MS, TIERS, BLOCKS, isV2, parseV2, windowsText, playText, confirmedLine, createLevelTestIntake };
