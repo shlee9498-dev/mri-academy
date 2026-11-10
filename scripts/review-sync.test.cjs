@@ -461,3 +461,19 @@ test("§9.46.9-2 「이름 끝」 후보 한 명은 자동 확정하지 않는�
   assert.ok(!h.db.feedback_channel_map.find((x) => x.src_channel === CH2).confirmed_at);
   assert.deepEqual(h.ops.get(rs.CANDIDATES_KEY || "review_sync:candidates").channels[CH2].candidates, [{ sid: 8, why: ["이름 끝"] }]);
 });
+
+test("§9.46.14 시험만 — { on, only:[번호] } 이면 그 수강생 복기 · 답만 올리고 운영 수강생 행은 잡지도 표시하지도 않는다", async () => {
+  const h = harness();
+  h.db.lesson_reviews.push({ id: 971, student_id: 8, source: "app", status: "published", hidden_at: null, visibility: "students", title: "시험", body: "b",
+    published_at: "2026-10-30T10:01:00Z", mirror_msg: null },
+  { id: 972, student_id: 9, source: "app", status: "published", hidden_at: null, visibility: "students", title: "운영", body: "b",
+    published_at: "2026-10-30T10:01:00Z", mirror_msg: null });
+  h.db.review_feedback.push({ id: 981, review_id: 972, trainer_id: 4, kind: "overall", body: "운영 답", src_msg: null, hidden_at: null, mirror_msg: null, created_at: "2026-10-30T10:02:00Z" });
+  h.ops.set(rs.MIRROR_SINCE_KEY, { at: "2026-10-30T09:00:00Z" });
+  h.ops.set(rs.MIRROR_ON_KEY, { on: true, only: [8] });
+  const out = await h.sync.mirrorTick();
+  assert.deepEqual([out.reviews, out.answers], [1, 0]);
+  assert.equal(h.sent.length, 1);
+  assert.equal(h.db.lesson_reviews.find((x) => x.id === 972).mirror_msg, null, "운영 행은 그대로(나중에 정식으로 켜면 대상)");
+  assert.equal(h.db.review_feedback.find((x) => x.id === 981).mirror_msg, null);
+});
