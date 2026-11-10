@@ -94,3 +94,14 @@ test("완료 화면 연락 길(§9.67) — 초대 링크 · 원장 디코 아이
   assert.deepEqual(L.CONTACT, { discordInvite: "https://mriacademy.gg/discord", ownerDiscord: "e_muri" });
   assert.ok(Object.isFrozen(L.CONTACT));
 });
+
+test("30분 안 같은 사람 재신청 찾기(§9.66.5) — 닉 · 디코 대소문자 무시 · 다른 사람 · 정보 모자라면 없음", async () => {
+  const seen = [];
+  const rows = [{ id: 50, game_nick: "Other", discord_handle: "x" }, { id: 49, game_nick: "Gildong_PUBG", discord_handle: "@GilDong_01", depositor_name: "홍길동49" }];
+  const sel = async (t, q) => { seen.push(q); return rows; };
+  const hit = await L.findRecentDuplicate(sel, { nick: "gildong_pubg", platform: "steam", discord: "gildong_01", now: NOW });
+  assert.equal(hit.id, 49);
+  assert.match(seen[0], /intake_state=eq\.awaiting_deposit&paid_status=eq\.unpaid&platform=eq\.steam&created_at=gte\.2026-11-09T11%3A00%3A00\.000Z/);
+  assert.equal(await L.findRecentDuplicate(sel, { nick: "nobody", platform: "steam", discord: "gildong_01", now: NOW }), null);
+  assert.equal(await L.findRecentDuplicate(sel, { nick: "x", platform: "steam", discord: "", now: NOW }), null);
+});

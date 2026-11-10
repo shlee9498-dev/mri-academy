@@ -6140,9 +6140,20 @@ app.post("/api/apply", async (req, res) => {
         if (!has("avail_windows")) memoParts.push(`가능 일정: ${levelTestIntakeMod.windowsText(v2p.fields.avail_windows)}`);
       }
       if (memoParts.length) row.memo = memoParts.join(" · ").slice(0, 500);
-      savedConsultId = (await sbInsert("consults", row))?.id || null;
+      // 30분 안 같은 사람 재신청 = 앞 행 고침(§9.66.5 · 오너 11/10 「중복 신청 합치기」) — 같은 게임 닉 + 플랫폼 + 디코 아이디 · 입금 대기 · 미입금일 때만
+      let merged = null;
+      if (v2p && has("intake_state")) {
+        const prev = await levelTestIntakeMod.findRecentDuplicate(sbSelect, { nick: row.game_nick, platform: row.platform, discord: row.discord_handle, now: Date.now() }).catch(() => null);
+        if (prev) {
+          const { deposit_due_at, intake_state, ...upd } = Object.fromEntries(Object.entries(row).filter(([k]) => !["kind", "status", "source"].includes(k)));
+          upd.memo = [prev.memo, `재신청 합침 ${new Date(Date.now() + 9 * 3600_000).toISOString().slice(5, 16).replace("T", " ")} KST`, row.memo].filter(Boolean).join(" | ").slice(0, 1000);
+          const got = await sbPatch("consults", `id=eq.${prev.id}&intake_state=eq.awaiting_deposit&paid_status=eq.unpaid`, upd).catch(() => null);
+          if (Array.isArray(got) && got.length) { merged = prev; savedConsultId = prev.id; depositorCode = prev.depositor_name || null; }
+        }
+      }
+      if (!merged) savedConsultId = (await sbInsert("consults", row))?.id || null;
       // v2 입금자명 = 이름 + 신청 번호 끝 두 자리(§9.64.3 · 오너 11/9 「번호 붙이기」) — 통장 짝 찾기가 이 이름부터 본다
-      if (v2p && savedConsultId && has("depositor_name")) {
+      if (v2p && savedConsultId && !merged && has("depositor_name")) {
         depositorCode = `${clip(String(b.depositor || b.name).trim(), 36)}${bankMatchMod.consultCode(savedConsultId)}`;
         try { await sbPatch("consults", `id=eq.${savedConsultId}`, { depositor_name: depositorCode }); } catch (e) { console.error("apply_depositor_save_failed", e?.status || e?.message); }
       }
