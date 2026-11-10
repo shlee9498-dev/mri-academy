@@ -54,8 +54,9 @@ test("연락처 한 칸 — 휴대폰 · 디코 중 하나만 채움 · 둘 다 
   assert.deepEqual(AI.splitContact("010-1234-5678"), { phone: "010-1234-5678", discord: "" });
   assert.deepEqual(AI.splitContact("mri_test"), { phone: "", discord: "mri_test" });
   const p = AI.splitContact("01012345678");
-  assert.equal(LT.parseV2(base(p), NOW).error, undefined);
-  assert.equal(LT.parseV2(base({ discord: "", phone: "" }), NOW).error, "contact_required");
+  assert.equal(LT.parseV2(base(p), NOW).error, "discord_required", "휴대폰만이면 §9.66 부터 거절");
+  assert.equal(LT.parseV2(base({ ...p, discord: "mri_test" }), NOW).error, undefined);
+  assert.equal(LT.parseV2(base({ discord: "", phone: "" }), NOW).error, "discord_required");   // §9.66(11/10) — 디코 아이디 필수 · 이 블록의 휴대폰만 칸 갈래는 사이트 주문으로 바뀐다
 });
 
 test("요일 · 시간대 키 = 서버 키", () => {

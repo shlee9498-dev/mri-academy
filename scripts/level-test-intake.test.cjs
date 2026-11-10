@@ -18,9 +18,13 @@ test("v2 판별 · 정상 저장 값 · 입금 대기 48시간", () => {
   assert.equal(r.fields.phone, null);
 });
 
-test("연락처 하나는 필수 · 휴대폰만도 됨", () => {
-  assert.deepEqual(L.parseV2(body({ discord: "", phone: "" }), NOW), { error: "contact_required" });
-  assert.equal(L.parseV2(body({ discord: "", phone: "010-0000-0000" }), NOW).ok, true);
+test("디스코드 아이디 필수(§9.66) · 휴대폰만으로는 안 됨 · 모양 검사", () => {
+  assert.deepEqual(L.parseV2(body({ discord: "", phone: "" }), NOW), { error: "discord_required" });
+  assert.deepEqual(L.parseV2(body({ discord: "  ", phone: "010-0000-0000" }), NOW), { error: "discord_required" });
+  assert.deepEqual(L.parseV2(body({ discord: "010-0000-0000" }), NOW), { error: "invalid_discord" });
+  assert.deepEqual(L.parseV2(body({ discord: "홍 길동" }), NOW), { error: "invalid_discord" });
+  for (const ok of ["gildong_01", "@gildong.01", "Gildong#1234"]) assert.equal(L.parseV2(body({ discord: ok }), NOW).ok, true, ok);
+  assert.equal(L.parseV2(body({ phone: "" }), NOW).ok, true, "휴대폰은 선택");
 });
 
 test("티어 · 딜 — 비워도 됨 · 딜엔 기준(경쟁전/일반) 필수", () => {
@@ -84,4 +88,9 @@ test("상담을 마친 건(done · done_at)은 기한이 지나도 취소하지 
   assert.deepEqual(await t.tick(), { rows: 3, confirmed: 0, expired: 1 });
   assert.deepEqual(patches.map((p) => p.q.split("&")[0]), ["id=eq.9"]);
   assert.match(patches[0].q, /status=neq\.done&done_at=is\.null/);
+});
+
+test("완료 화면 연락 길(§9.67) — 초대 링크 · 원장 디코 아이디", () => {
+  assert.deepEqual(L.CONTACT, { discordInvite: "https://mriacademy.gg/discord", ownerDiscord: "e_muri" });
+  assert.ok(Object.isFrozen(L.CONTACT));
 });
