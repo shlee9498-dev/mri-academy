@@ -64,7 +64,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   대기 항목을 해소 처리**하고, **무엇을 근거로 고쳤는지**를 한 줄 남긴다. 근거 없이 말만으로 완료 처리 금지.
 
 # MRI ACADEMY 작업 규칙
-- 브랜드: 다크 #0a0a0c + 골드 #f5c518. 강조색은 골드 하나만. 라이트 테마 금지.
+- 브랜드: 밝은 톤 B3(오너 11/11 결정) — 크림 바탕 #FBF6EF + 주황 강조(버튼 #C2611C · 글자 #A4551C). 강조색은 주황 하나만, 빨강·검은 바탕 없음. 상세는 아래 「디자인 시스템 B3」.
 - TOSS_SECRET_KEY, PUBG_API_KEY 등 모든 키는 절대 HTML/JS/커밋에 넣지 않는다 (Railway env 전용).
 - apply.html의 TOSS_CLIENT_KEY는 현재 테스트키(test_gck). 심사 통과 전 임의 변경 금지.
 - canonical/og:url은 항상 https://mriacademy.gg (github.io 주소 금지).
@@ -95,8 +95,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 외부 UI 컴포넌트 (21st.dev MCP · `.mcp.json`)
 - **구조만 채택한다.** 레이아웃·마크업·상호작용 패턴만 가져오고 시각 표현은 전부 우리 것으로 갈아끼운다. 붙여넣은 그대로 두지 않는다.
-- **폰트·색은 CSS 변수로 바꾼다.** 영문·숫자 = Space Grotesk, 한글 = Pretendard(디자인 시스템 v1). 가져온 코드의 하드코딩 색·폰트·px 값은 `--bg`·`--surface-1`·`--surface-2`·`--gold` 등 토큰 참조로 교체한다.
-- **골드는 절제한다.** 컴포넌트가 강조색을 여러 곳에 쓰면 하나만 남긴다. 골드 글로우는 화면당 1개 원칙을 그대로 적용한다.
+- **폰트·색은 CSS 변수로 바꾼다.** 제목 = Wanted Sans, 본문 = Pretendard, 숫자 = Saira Condensed(디자인 시스템 B3). 가져온 코드의 하드코딩 색·폰트·px 값은 `--bg`·`--card`·`--ink`·`--kick`·`--cta-bg` 등 토큰 참조로 교체한다.
+- **강조색은 절제한다.** 컴포넌트가 강조색을 여러 곳에 쓰면 주황 하나만 남긴다. 눈에 띄는 주황 버튼은 화면당 1개 원칙.
 - **의존성은 사전 보고한다.** 가져온 컴포넌트가 npm 패키지·CDN·아이콘셋을 요구하면 **설치 전에** 무엇이 왜 필요한지 보고하고 승인받는다. 이 저장소는 빌드 단계가 없다 — 번들러를 전제한 코드는 그대로 못 쓴다.
 - `API_KEY_21ST`는 **로컬 env 전용**이다. `.mcp.json`에는 `${API_KEY_21ST}` 참조만 두고 값은 커밋하지 않는다.
 
@@ -316,9 +316,12 @@ dual-write(마이그레이션 중), 채널 잠금(`LESSON_CHANNEL_ID`)·`TRAINER
 `2026-07-20` 이후 진행분만 신 엔진 정산(이전은 이월동결). 컷오버(`PANEL_WRITE=1` + 키 로테이션)는
 검증 후 오너 승인 예정.
 
-## 디자인 시스템 v1 ("OLED Premium", lesson-schedule.html에서 확정)
-토큰 `--bg:#0a0a0c / --surface-1:#15151a / --surface-2:#1a1a20 / --gold:#f5c518` + 골드 단일 강조.
-폰트: 영문·숫자 = Space Grotesk, 한글 헤딩 = Pretendard 800. 모션 = 바닐라 Motion(CDN ESM,
-`prefers-reduced-motion` 존중, fade-up 스태거). **골드 글로우는 3곳만**(히어로 CTA·클랜컵 배너·"모집중"
-뱃지), 한 화면 1개 원칙. 글래스/blur 미채택(성능). 브랜드 톤 = "퍼포먼스 코칭"(방패·트로피·스톡
-게이밍아트 배제).
+## 디자인 시스템 B3 (밝은 톤 · 오너 11/11 결정 · #682 index.html에서 확정)
+토큰 `--bg:#FBF6EF / --bg-2:#F4ECE1 / --card:#FFFFFF / --line:#E6DACB / --ink:#1A1714 / --sub:#544A41 /
+--mute:#776B60 / --kick:#A4551C(강조 글자) / --cta-bg:#C2611C(버튼, 흰 글자)` + 주황 단일 강조. 빨강·검은 바탕·골드 없음.
+`color-scheme: light`. 폰트: 제목 = Wanted Sans(Variable), 본문 = Pretendard, 숫자 = Saira Condensed.
+- **외부 의존성(CDN)**: Wanted Sans 는 `https://cdn.jsdelivr.net/npm/wanted-sans@1.0.3/fonts/webfonts/variable/split/WantedSansVariable.css`
+  에서 불러온다(버전 고정 · 자체 호스팅 아님). CDN 이 막히면 Pretendard 로 떨어진다 — 글꼴 스택에 항상 Pretendard 를 뒤에 둔다.
+- 종전 v1("OLED Premium" — 다크 #0a0a0c + 골드 #f5c518 · Space Grotesk)은 폐기. 아직 어두운 화면은 차례로 B3 로 옮긴다.
+  ※ G드컵·클랜(gmi-*) 화면의 브랜드는 카지노 트랙 소관이라 이 절의 대상이 아니다.
+브랜드 톤 = "퍼포먼스 코칭"(방패·트로피·스톡 게이밍아트 배제) 유지.
