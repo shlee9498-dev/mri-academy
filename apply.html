@@ -90,6 +90,9 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
 .pay-main{font-size:16px}
 .pay-main b{color:var(--gold);font-size:20px}
 .pay-sub{margin-top:6px;font-size:13px;color:var(--ink-dim)}
+.contact-box{margin-top:14px;display:grid;gap:10px}
+.join-btn{display:flex;align-items:center;justify-content:center;text-decoration:none;margin-top:0}
+.agree a,.fld .hint a{color:var(--gold)}
 .state-pill{display:inline-flex;gap:8px;align-items:center;padding:5px 12px;border:1px solid var(--gold-soft);color:var(--gold);font-weight:800;font-size:13px}
 .state-pill span{color:var(--ink-dim);font-weight:600}
 .next{list-style:none;counter-reset:n;display:grid;gap:12px}
@@ -154,10 +157,18 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
     days.forEach(function (d) { blocks.forEach(function (b) { if (DAYS.indexOf(d) >= 0 && BLOCKS.indexOf(b) >= 0) out.push(d + ":" + b); }); });
     return out;
   }
-  // 연락처 한 칸 — 숫자 · 하이픈 · 공백 · +만 9자 이상이면 휴대폰, 아니면 디스코드 아이디
-  function splitContact(v) {
-    var t = String(v || "").trim();
-    return /^[0-9\-\s+]{9,}$/.test(t) ? { phone: t, discord: "" } : { phone: "", discord: t };
+  // 디스코드 아이디 모양 — 서버 level-test-intake.cjs validDiscord 와 같은 규칙(§9.66.1 · 시험이 대조)
+  //   새 사용자명(영문 · 숫자 · _ · . · 2~32자) · 옛 「이름#1234」 · 앞 「@」 허용 · 공백 · 전화번호 모양은 안 됨
+  function validDiscord(s) {
+    var t = String(s || "").trim().replace(/^@/, "");
+    if (t.length < 2 || t.length > 40 || /\s/.test(t)) return false;
+    if (/^[0-9+\-]{8,}$/.test(t)) return false;
+    return /^[A-Za-z0-9_.]{2,32}$/.test(t) || /^[^#@:`]{2,32}#\d{4}$/.test(t);
+  }
+  // 응답 contact.discordInvite 는 https 주소만 쓴다(그 밖이면 칸을 숨긴다)
+  function safeHttps(u) {
+    var t = String(u || "").trim();
+    return /^https:\/\/[A-Za-z0-9.-]+(\/[^\s"'<>]*)?$/.test(t) ? t : "";
   }
   // 딜 — 정수 0~3000 만. 딜이 있을 때만 기준을 싣는다(딜만 있고 기준 없으면 서버 400)
   function damage(raw, basis) {
@@ -168,7 +179,7 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
   return {
     DAYS: DAYS, BLOCKS: BLOCKS, TIERS: TIERS, END_OF_DAY: END_OF_DAY, MIN_LEN: MIN_LEN,
     hhmm: hhmm, kstClock: kstClock, weekDates: weekDates, startChoices: startChoices, endChoices: endChoices,
-    toWindows: toWindows, toPlaySlots: toPlaySlots, splitContact: splitContact, damage: damage
+    toWindows: toWindows, toPlaySlots: toPlaySlots, validDiscord: validDiscord, safeHttps: safeHttps, damage: damage
   };
 });
 // @apply-intake end
@@ -197,10 +208,15 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
         <label for="fName">이름<span class="req">*</span></label>
         <input id="fName" name="name" type="text" required placeholder="실명 · 입금자명 기본값이 돼요" autocomplete="name">
       </div>
+      <!-- 연락처 — 디스코드 필수 · 휴대폰 선택(계약 §9.66.2 · 오너 11/10 「디코닉이랑 연락처를 안적어두니까연락을할수가없어」) -->
       <div class="fld">
-        <label for="fContact">연락처<span class="req">*</span></label>
-        <input id="fContact" name="contact" type="text" required placeholder="디스코드 아이디 또는 휴대폰 번호" autocomplete="off">
-        <div class="hint">원장이 이 연락처로 일정을 잡아요. 디스코드 아이디면 가장 빨라요</div>
+        <label for="fDiscord">디스코드 아이디<span class="req">*</span></label>
+        <input id="fDiscord" name="discord" type="text" required placeholder="예: e_muri" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="hint">디스코드 앱 → 내 프로필 → 사용자명을 그대로 적어 주세요. 수업과 첫 연락이 디스코드에서 열려요 · 아직 없다면 <a href="https://discord.com/register" target="_blank" rel="noopener">디스코드 가입하기</a></div>
+      </div>
+      <div class="fld">
+        <label for="fPhone">휴대폰 번호<span class="opt">(선택)</span></label>
+        <input id="fPhone" name="phone" type="tel" inputmode="tel" placeholder="010-0000-0000" autocomplete="tel">
       </div>
       <div class="fld">
         <label for="inflow">어디서 보고 오셨어요?<span class="req">*</span></label>
@@ -343,6 +359,16 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
       </div>
     </div>
 
+    <!-- 원장 친구 추가 — 계약 §9.67.2 · 제출 전에 있어야 알림 카드에 실린다(friendRequested) -->
+    <div class="sec">
+      <h2>원장에게 친구 추가</h2>
+      <p class="sec-lead">디스코드에서 <b>e_muri</b> 에게 친구 추가를 보내 주시면 원장이 DM으로 일정을 잡아 드려요</p>
+      <label class="agree">
+        <input type="checkbox" id="friendReq">
+        <span>「e_muri 에게 친구 추가 보냈어요」</span>
+      </label>
+    </div>
+
     <div class="sec">
       <label class="agree">
         <input type="checkbox" id="agree" required>
@@ -378,7 +404,16 @@ h1{font-family:var(--display);font-weight:800;font-size:clamp(24px,6vw,32px);mar
   <!-- ===== 입금 안내 (PAYMENT_LIVE=false · 계좌이체) — 계약 §9.61.3 상태 「입금 대기」 · 기한 48시간 ===== -->
   <div class="sec" id="depositStep" style="display:none;margin-top:22px">
     <div class="state-pill">입금 대기<span id="depNo"></span></div>
-    <h2 style="margin-top:12px">입금하면 신청이 끝나요</h2>
+    <!-- 연락 길 — 서버 응답 contact.discordInvite · contact.ownerDiscord 그대로(계약 §9.67.2 · 값이 없으면 칸을 숨긴다) -->
+    <div class="contact-box" id="contactBox" hidden>
+      <a class="submit join-btn" id="joinBtn" href="#" target="_blank" rel="noopener">MRI 디스코드 들어오기</a>
+      <div class="dep-line">
+        <span>디스코드에서 <b id="ownerId"></b> 에게 친구 추가를 보내 주세요</span>
+        <button type="button" class="copy-btn" id="copyOwner" data-copy="">아이디복사</button>
+      </div>
+      <p class="dep-note">친구 추가가 되면 원장이 DM으로 일정을 잡아 드려요 💬</p>
+    </div>
+    <h2 style="margin-top:18px">입금하면 신청이 끝나요</h2>
     <div class="dep-amt">
       <span id="depName" style="font-weight:700"></span>
       <span class="dep-final" id="depFinal"></span>
@@ -541,7 +576,10 @@ form.addEventListener("submit", async (e) => {
   const fd = new FormData(form);
   const focus = fd.getAll("focus");
   const playSlots = AI.toPlaySlots(fd.getAll("playDay"), fd.getAll("playBlock"));
-  const need = [["name","이름"],["contact","연락처"],["source","어디서 보고 오셨는지"],["platform","플랫폼"],["nickname","인게임 닉네임"]];
+  const need = [["name","이름"],["source","어디서 보고 오셨는지"],["platform","플랫폼"],["nickname","인게임 닉네임"]];
+  if (!String(fd.get("name") || "").trim()) { show("err", "이름을 채워 주세요"); return; }
+  if (!String(fd.get("discord") || "").trim()) { show("err", ERRORS.discord_required); document.getElementById("fDiscord").focus(); return; }
+  if (!AI.validDiscord(fd.get("discord"))) { show("err", ERRORS.invalid_discord); document.getElementById("fDiscord").focus(); return; }
   for (const [k, label] of need) if (!String(fd.get(k) || "").trim()) { show("err", label + "을(를) 채워 주세요"); return; }
   if (!playSlots.length) { show("err", "배그 주로 하는 요일과 시간대를 하나 이상씩 골라 주세요"); return; }
   if (!focus.length) { show("err", "가장 고치고 싶은 것을 하나 이상 골라 주세요"); return; }
@@ -551,12 +589,13 @@ form.addEventListener("submit", async (e) => {
   if (dmgRaw && dmg.avgDamage == null) { show("err", "평균 딜량은 0~3000 사이 숫자로 적어 주세요"); return; }
   if (!document.getElementById("agree").checked) { show("err", "개인정보 수집·이용에 동의해 주세요"); return; }
   if (!document.getElementById("agreeStats").checked) { show("err", "전적 수집·활용에 동의해 주세요"); return; }
-  const c = AI.splitContact(fd.get("contact"));
+  const discord = String(fd.get("discord") || "").trim(), phone = String(fd.get("phone") || "").trim();
   const name = String(fd.get("name")).trim();
   const depositor = (String(fd.get("depositor") || "").trim() || name).slice(0, 40);
   const tier = fd.get("tierPick") || "";
   const payload = {
-    name, discord: c.discord, phone: c.phone,
+    name, discord, phone: phone.slice(0, 20),
+    friendRequested: document.getElementById("friendReq").checked,
     applyType: fd.get("applyType"), source: fd.get("source"), trainer: fd.get("trainer") || "",
     platform: fd.get("platform"), nickname: fd.get("nickname"),
     bestTier: tier || null, avgDamage: dmg.avgDamage, damageBasis: dmg.damageBasis,
@@ -575,7 +614,8 @@ form.addEventListener("submit", async (e) => {
       body: JSON.stringify(payload),
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(ERRORS[d.error] || d.error || "전송 실패");
+    // 문구표 → 서버 message(사람 문구) → 기본 문구 순 · 코드 글자는 보이지 않는다(§9.66.2)
+    if (!r.ok) throw new Error(ERRORS[d.error] || (typeof d.message === "string" && d.message.trim() ? d.message.trim().slice(0, 160) : "") || "신청을 보내지 못했어요. 잠시 뒤 다시 눌러 주세요");
     form.querySelectorAll("input,select,textarea,button").forEach(el => el.disabled = true);
     if (window.umami) umami.track("apply_submit", { applyType: payload.applyType, source: payload.source });
     form.hidden = true;
@@ -583,15 +623,18 @@ form.addEventListener("submit", async (e) => {
       startPayment(payload.applyType, payload.name, payload.phone);
     } else {
       startDeposit(payload.applyType, depositor, d.consultNo, d.depositDueAt, d.depositorName);
+      showContact(d.contact);
     }
   } catch (err) {
-    show("err", (err.message || "전송 오류") + " · 안 되면 디스코드나 카카오로 알려 주세요");
+    show("err", (err.message || "신청을 보내지 못했어요") + " · 안 되면 디스코드나 카카오로 알려 주세요");
     submit.disabled = false; submit.textContent = "신청하고 입금 안내 받기";
   }
 });
 // 서버 400 오류 키(§9.64.1) → 화면 문구
 const ERRORS = {
-  contact_required: "디스코드 아이디나 휴대폰 번호를 적어 주세요",
+  discord_required: "디스코드 아이디를 적어 주세요. 수업과 첫 연락이 디스코드에서 열려요",
+  invalid_discord: "디스코드 아이디를 다시 확인해 주세요. 디스코드 설정의 「사용자명」을 그대로 적으면 돼요",
+  contact_required: "디스코드 아이디를 적어 주세요",
   invalid_tier: "티어를 다시 골라 주세요",
   invalid_damage: "평균 딜량을 다시 확인해 주세요",
   invalid_play_slots: "주로 하는 요일과 시간대를 다시 골라 주세요",
@@ -702,6 +745,18 @@ document.getElementById("discountInput").addEventListener("keydown", (e) => { if
 
 // ===== 상담비 입금 안내 (계좌이체) =====
 // 상담비는 할인 대상 아님 — 원가 그대로 안내. (할인은 수강료 자격이며 정식 등록 시 반영)
+// 완료 화면 연락 길(§9.67.2) — 서버 값만 쓴다. 초대 주소가 https 가 아니거나 아이디 모양이 틀리면 칸을 숨긴다
+function showContact(c){
+  const box = document.getElementById("contactBox");
+  const AIx = window.ApplyIntake;
+  const invite = c && AIx.safeHttps(c.discordInvite);
+  const owner = c && typeof c.ownerDiscord === "string" && AIx.validDiscord(c.ownerDiscord) ? c.ownerDiscord.trim() : "";
+  if (!invite || !owner) { box.hidden = true; return; }
+  document.getElementById("joinBtn").href = invite;
+  document.getElementById("ownerId").textContent = owner;
+  document.getElementById("copyOwner").dataset.copy = owner;
+  box.hidden = false;
+}
 function startDeposit(applyType, depositor, consultNo, dueIso, depositorName){
   const fee = consultFee(applyType);
   document.getElementById("depName").textContent = fee.name;
@@ -739,6 +794,7 @@ function fallbackCopy(text, cb){
 document.getElementById("copyAmount").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
 document.getElementById("copyAcct").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
 document.getElementById("copyWho").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
+document.getElementById("copyOwner").addEventListener("click", (e) => copyText(e.currentTarget.dataset.copy, e.currentTarget));
 
 // ── 결제 직행 모드 (?pay=1|lesson / ?pay=lecture) ──
 // 신청서 제출 없이 결제창 바로 노출 — PG 심사 확인용 + "상담비만 먼저 결제" 동선.
