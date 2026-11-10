@@ -293,6 +293,20 @@ a{color:inherit}
 .cols .gd{color:var(--mute);font-size:15px;margin:4px 0 14px}
 .pnotes{margin-top:40px;display:grid;gap:6px;color:var(--mute);font-size:15px;max-width:820px}
 .pnotes b{color:var(--ink)}
+/* 판은 이렇게 써요 — 개인 | 그룹 두 칸(총무 11/7 · 「21판 = 4번 수업?」 오해 막기 · 숫자는 차감 정본 그대로) */
+.pan{margin-top:56px;border-top:1px solid var(--line);padding-top:28px}
+.pan h3{font-size:22px;font-weight:800}
+.pan .gd{color:var(--mute);font-size:15px;margin-top:4px}
+.pan-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;margin-top:22px}
+.pan-c{padding:4px 28px 4px 0;min-width:0}
+.pan-c+.pan-c{padding-left:28px;border-left:1px solid var(--line)}
+.pan-c .who{font-size:14px;font-weight:700;color:var(--mute)}
+.pan-c .how{margin-top:8px;font-size:19px;font-weight:800}
+.pan-c ul{list-style:none;margin-top:10px;display:grid;gap:4px;color:var(--mute);font-size:15px}
+.pan-c ul b{color:var(--ink);font-weight:700}
+.pan-ex{margin-top:22px;padding:14px 18px;background:var(--cell);border-radius:12px;font-size:15px;color:var(--mute)}
+.pan-ex b{color:var(--ink)}
+@media(max-width:560px){.pan-2{grid-template-columns:1fr}.pan-c{padding:16px 0}.pan-c+.pan-c{padding-left:0;border-left:0;border-top:1px solid var(--line)}}
 .vip-door{display:inline-block;margin-top:18px;color:var(--mute);font-size:15px}
 .vip-door span{color:var(--ink);font-weight:700}
 
@@ -590,6 +604,32 @@ html.vr-lock{overflow:hidden}
           <div class="prow"><div class="n">99판<small>33판 × 3 · 한 번에 넉넉히 받고 싶은 분</small></div><span></span><div class="p">420,000<small>원</small></div></div>
         </div>
       </div>
+      <!-- 판은 이렇게 써요 — 판 = 게임 판수(수업 횟수 아님). 개인은 시간, 그룹은 게임마다 차감(총무 11/7 · 오너 「사이트에좀더자세한설명필요한가봐」) -->
+      <div class="pan" id="pan">
+        <h3>판은 이렇게 써요</h3>
+        <p class="gd">판은 게임 판수예요. 수업 횟수가 아니에요</p>
+        <div class="pan-2">
+          <div class="pan-c">
+            <div class="who">개인 레슨</div>
+            <div class="how">시간으로 차감</div>
+            <ul>
+              <li>트레이너와 1:1로 UGC 훈련장 등에서 진행해요</li>
+              <li><b>1시간 5판</b> · 1시간 30분 8판 · 2시간 10판</li>
+              <li>30분 단위 차감은 없어요</li>
+            </ul>
+          </div>
+          <div class="pan-c">
+            <div class="who">그룹 레슨</div>
+            <div class="how">한 게임에 1판 차감</div>
+            <ul>
+              <li>트레이너와 비슷한 시간대 레슨생 3명이 한 스쿼드로 일반 게임과 경쟁전을 해요</li>
+              <li>트레이너 오더를 들으며 실제로 한 게임마다 <b>1판</b>씩 줄어요</li>
+              <li>지인 3명이 같이 신청하면 지인끼리 고정 스쿼드로 할 수 있어요</li>
+            </ul>
+          </div>
+        </div>
+        <p class="pan-ex">예를 들어 <b>21판</b>이면 개인 레슨은 <b>2시간 × 2번(20판) + 1판</b>, 그룹 레슨은 <b>21게임</b>이에요</p>
+      </div>
       <!-- 원장 직강 = 8회 290,000 하나 · 세트 없음(오너 11/2 · 가격 계약 docs/direct-price-unify.md) -->
       <div class="cols">
         <div>
@@ -655,6 +695,10 @@ html.vr-lock{overflow:hidden}
         <details>
           <summary>판수는 어떻게 줄어요?</summary>
           <div class="a"><b>개인 레슨</b>은 시간 기준으로 1시간 5판 · 1시간 30분 8판 · 2시간 10판이에요. <b>그룹 레슨과 관전형</b>은 실제로 한 판 수만큼 줄어요. 남은 판수는 수강생 앱에서 언제든 볼 수 있어요.</div>
+        </details>
+        <details>
+          <summary>21판이면 수업을 21번 받는 건가요?</summary>
+          <div class="a">아니요. 판은 수업 횟수가 아니라 <b>게임 판수</b>예요. 개인 레슨은 시간으로 줄어서 1시간 5판 · 1시간 30분 8판 · 2시간 10판이고 30분 단위는 없어요. 그룹 레슨은 실제로 한 게임마다 1판씩 줄어요. 그래서 21판이면 개인 레슨은 <b>2시간 × 2번(20판) + 1판</b>, 그룹 레슨은 <b>21게임</b>이에요.</div>
         </details>
         <details>
           <summary>여러 명이 같이 들을 수 있나요?</summary>
