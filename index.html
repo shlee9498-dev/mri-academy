@@ -29,7 +29,7 @@
 <meta name="twitter:image" content="https://mriacademy.gg/og-banner.png">
 
 <!-- ───────── PWA ───────── -->
-<meta name="theme-color" content="#0b0b0c">
+<meta name="theme-color" content="#FBF6EF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -88,337 +88,280 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/wanted-sans@1.0.3/fonts/webfonts/variable/split/WantedSansVariable.css">
 <style>
-/* ===== 기록실 (오너 승인 10/3) — 검정 바탕 · 칸은 바탕색 차이로만 · 골드는 간판 숫자 · 달성 티어 · 45,000 · 신청 버튼에만 ===== */
+/* ===== 밝은 톤(10/21 확정 B3 · 크림 바탕 · 주황 포인트 · 빨강 없음 · 오너 11/11 「화사하고 세련된 느낌」) =====
+   제목 = Wanted Sans(비교 캡처 3종 중 채택 — 둥글고 또렷해 첫인상이 부드러움) · 본문 = Pretendard · 숫자 = Saira Condensed */
 :root{
-  --bg:#0b0b0c; --cell:#141416; --cell-2:#1b1b1e; --line:#29292e;
-  --ink:#f3f1ec; --mute:#918d85; --gold:#e2b658; --on-gold:#17140c;
-  --r:22px; --wrap:1200px; --gap:12px;
-  --sans:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic Neo',sans-serif;
-  --num:'Saira Condensed','Pretendard Variable',sans-serif;
-  color-scheme:dark;
+  --bg:#FBF6EF; --bg-2:#F4ECE1; --card:#FFFFFF; --line:#ECE2D5; --line-2:#DCCFBF;
+  --ink:#1A1714; --sub:#544A41; --mute:#776B60; --kick:#A4551C; --kick-soft:#FBE8D7; --hl:#FFE38A;
+  --cta-bg:#C2611C; --cta-ink:#FFFFFF; --dark:#2A2420;
+  --r:24px; --wrap:1180px;
+  --sans:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
+  --head:'Wanted Sans Variable','Wanted Sans','Pretendard Variable',Pretendard,sans-serif;
+  --num:'Saira Condensed','Pretendard Variable',Pretendard,sans-serif;
+  --shadow:0 1px 2px rgba(60,40,20,.04),0 12px 32px rgba(60,40,20,.08);
+  color-scheme:light;
 }
-*{box-sizing:border-box;margin:0;padding:0}
+*,*::before,*::after{box-sizing:border-box}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
-body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.65;word-break:keep-all;overflow-wrap:break-word;-webkit-font-smoothing:antialiased}
-img{display:block;max-width:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.65 var(--sans);word-break:keep-all;overflow-wrap:anywhere;-webkit-font-smoothing:antialiased}
+img{max-width:100%;display:block}
 a{color:inherit}
-:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:4px}
-.wrap{max-width:var(--wrap);margin:0 auto;padding:0 24px}
-.num{font-family:var(--num);font-weight:800;letter-spacing:.005em;font-variant-numeric:tabular-nums}
-.eyebrow{font:700 13px/1.3 var(--num);letter-spacing:.16em;text-transform:uppercase;color:var(--mute)}
-.muted{color:var(--mute)}
-.link{font-weight:600;text-decoration:underline;text-underline-offset:4px;text-decoration-color:var(--line);transition:text-decoration-color .15s}
-.link:hover{text-decoration-color:var(--ink)}
+h1,h2,h3{margin:0;text-wrap:balance;font-family:var(--head)}
+p,ul,ol,dl,dd,figure{margin:0;padding:0}
+ul,ol{list-style:none}
+.num{font-family:var(--num);font-variant-numeric:tabular-nums}
+.wrap{max-width:var(--wrap);margin:0 auto;padding-inline:clamp(16px,4vw,40px)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--kick);outline-offset:2px}
 
-/* 채운 버튼 — 페이지 전체에서 이것 하나 */
-.cta{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:54px;padding:0 26px;border-radius:14px;background:var(--gold);color:var(--on-gold);font-weight:800;font-size:16px;text-decoration:none;white-space:nowrap;transition:filter .15s ease,transform .15s ease}
-.cta:hover{filter:brightness(1.06)}
-.cta:active{transform:translateY(1px)}
-.cta .p{font-family:var(--num);font-weight:800;font-size:17px}
-
-/* 1. 머리 — 한 줄 · 글자만 */
-.top{position:sticky;top:0;z-index:50;background:var(--bg);border-bottom:1px solid var(--line)}
-.top-in{display:flex;align-items:center;gap:32px;height:64px}
-.logo{font:800 20px/1 var(--num);letter-spacing:.08em;text-decoration:none;white-space:nowrap}
-.menu{display:flex;gap:22px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}
-.menu::-webkit-scrollbar{display:none}
-.menu a{flex:none;text-decoration:none;color:var(--mute);font-weight:600;font-size:15px}
+/* 머리 — 신청 버튼은 첫 화면의 하나만 또렷하게, 머리는 조용한 칩 */
+.top{position:sticky;top:0;z-index:20;background:rgba(251,246,239,.94);border-bottom:1px solid var(--line)}
+.top-in{display:flex;align-items:center;gap:20px;min-height:64px}
+.logo{font:800 17px/1 var(--num);letter-spacing:.06em;text-decoration:none}
+.menu{display:flex;gap:22px;margin-left:auto;font-size:15px;color:var(--sub)}
+.menu a{text-decoration:none}
 .menu a:hover{color:var(--ink)}
-.top .cta{min-height:40px;padding:0 18px;font-size:15px;border-radius:10px}
+.top-cta{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;border-radius:999px;border:1.5px solid var(--kick);color:var(--kick);font-weight:800;font-size:14px;text-decoration:none;white-space:nowrap}
 
-/* 1. 소개 영상 — PC 가로 16:9 · 폰 세로 9:16 · 첫 화면 안에 들어가게 높이로 폭을 묶는다 */
-.intro{padding:clamp(20px,3vw,32px) 0 0}
-.intro:not([hidden]) + .hero{padding-top:clamp(32px,4vw,56px)}
-.iv-frame{position:relative;margin:0 auto;aspect-ratio:16/9;width:min(100%,calc((100svh - 200px) * 16 / 9));max-width:100%;border-radius:var(--r);overflow:hidden;background:var(--cell);border:1px solid var(--line)}
-.iv-frame::before{content:'MRI ACADEMY';position:absolute;inset:0;display:grid;place-items:center;font:800 15px/1 var(--num);letter-spacing:.18em;color:var(--mute)}
-.iv{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:transparent}
-.iv-sound{position:absolute;right:14px;top:14px;min-height:40px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(10,10,12,.78);color:var(--ink);font:700 14px/1 var(--sans);cursor:pointer}
-.iv-sound:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
-.iv-sound[hidden]{display:none}
-.iv-acts{display:flex;justify-content:center;margin-top:16px}
-.intro.is-v .iv-frame{aspect-ratio:9/16;width:min(100%,calc((100svh - 190px) * 9 / 16))}
-/* 2. 간판 */
-.hero{padding:clamp(48px,7vw,96px) 0 clamp(32px,4vw,48px)}
-.hero .eyebrow{margin-bottom:clamp(12px,2vw,20px)}
-/* 간판 = 실적 두 줄. 줄마다 「누가 · 기간」 작은 머리 + 「몇 명 · 얼마나」 큰 글자 */
-.sign{display:grid;gap:clamp(18px,2.6vw,32px)}
-.sign .ln{display:block}
-.sign .hd{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;font-size:clamp(16px,1.5vw,20px);font-weight:700;color:var(--mute)}
-.sign .hd b{color:var(--ink);font-weight:800}
-.sign .big{display:block;margin-top:6px;font:800 clamp(38px,6.2vw,88px)/1.02 var(--num);letter-spacing:-.01em;color:var(--ink);text-wrap:balance}
-.sign .big small{font:800 .42em/1 var(--sans);margin:0 .12em 0 .06em}
-.sign .big .sep{color:var(--mute);font-weight:400;margin:0 .14em}
-.hero-row .note{font-size:15px;line-height:1.6;color:var(--mute)}
-.hero-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px 48px;align-items:end;margin-top:clamp(20px,3vw,32px)}
-.hero-row p{font-size:clamp(18px,1.7vw,22px);line-height:1.55;max-width:620px}
-.hero-acts{display:flex;align-items:center;gap:24px}
+/* 버튼 · 링크 */
+.cta{display:inline-flex;align-items:center;justify-content:center;min-height:54px;padding:0 26px;border-radius:999px;background:var(--cta-bg);color:var(--cta-ink);font-weight:800;font-size:16px;text-decoration:none;white-space:nowrap;box-shadow:0 8px 22px rgba(194,97,28,.28)}
+.cta:hover{filter:brightness(1.06)}
+.cta .p{font-family:var(--sans)}
+.link{color:var(--ink);font-weight:700;text-underline-offset:4px}
+.link.soft{display:inline-block;margin-top:18px;color:var(--sub);font-weight:600}
+.chip{display:inline-flex;align-items:center;min-height:38px;padding:0 14px;border-radius:999px;border:1px solid var(--line-2);background:var(--card);font-weight:700;font-size:14px;text-decoration:none}
 
-/* 3. 숫자 한 줄 */
+/* 1. 첫 화면 */
+.hero{padding-block:clamp(24px,4vw,56px) clamp(24px,3vw,40px)}
+.hero-in{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:clamp(24px,4vw,56px);align-items:center}
+.eyebrow{font:700 13px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--kick)}
+.h1{margin-top:14px;font-size:clamp(34px,4.8vw,58px);line-height:1.18;font-weight:800;letter-spacing:-.02em}
+.hl{background:linear-gradient(transparent 62%,var(--hl) 62%)}
+.hero-cta{margin-top:26px;display:grid;gap:10px;justify-items:start}
+.cta-why{font-size:15px;color:var(--sub)}
+.iv-frame{position:relative;border-radius:var(--r);overflow:hidden;background:var(--dark);aspect-ratio:16/9;box-shadow:var(--shadow)}
+.intro.is-v .iv-frame{aspect-ratio:9/16;max-height:72vh;margin-inline:auto}
+.iv{width:100%;height:100%;object-fit:cover;display:block}
+.iv-sound{position:absolute;right:12px;top:12px;min-height:40px;padding:0 16px;border-radius:999px;border:0;background:rgba(255,255,255,.94);color:var(--ink);font:700 14px/1 var(--sans);cursor:pointer}
+.proof{margin-top:clamp(28px,4vw,44px);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.proof>div{padding:18px 20px;border-radius:calc(var(--r) - 6px);background:var(--card);box-shadow:var(--shadow)}
+.proof dt{font-weight:800;font-size:15px}
+.proof dt span{display:block;font-weight:500;font-size:13px;color:var(--mute)}
+.proof dd{margin:8px 0 0;color:var(--sub);font-size:15px}
+.proof dd b{font-size:30px;font-weight:800;color:var(--ink);margin-right:1px}
 
-/* 4. 칸 배치 — 12칸 격자 */
-.hero .grid{margin-top:clamp(28px,4vw,48px)}
-.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:var(--gap)}
-.cell{background:var(--cell);border-radius:var(--r);padding:clamp(22px,2.6vw,36px);min-width:0;position:relative;overflow:hidden}
-.s7{grid-column:span 7}.s5{grid-column:span 5}.s6{grid-column:span 6}.s8{grid-column:span 8}.s4{grid-column:span 4}.s12{grid-column:span 12}
-.cell h2{font-size:clamp(22px,2.2vw,28px);font-weight:800;line-height:1.3;letter-spacing:-.01em;margin-top:8px;text-wrap:balance}
-.cell .lead{margin-top:10px;color:var(--mute);max-width:560px}
+/* 섹션 공통 */
+.sec{padding-block:clamp(52px,7vw,96px)}
+.sec.tint{background:var(--bg-2)}
+.sec-h{margin-top:10px;font-size:clamp(28px,3.8vw,42px);font-weight:800;letter-spacing:-.015em}
+.sec-sub{margin-top:8px;color:var(--sub);font-size:17px}
 
-/* 성장 기록 */
-.feat{margin-top:28px;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:16px;align-items:end}
-.feat .side .k{font-size:13px;color:var(--mute);font-weight:600}
-.feat .side .t{font-size:clamp(20px,2vw,26px);font-weight:800;margin-top:6px;line-height:1.2}
-.feat .side .rp{font:800 clamp(30px,3.4vw,46px)/1 var(--num);margin-top:6px}
-.feat .side .rp small{font:700 14px/1 var(--num);letter-spacing:.08em;margin-left:4px;color:var(--mute)}
-.feat .after .t{color:var(--gold)}
-.feat .arr{font:800 30px/1 var(--num);color:var(--mute);padding-bottom:8px}
-.feat-who{margin-top:16px;color:var(--mute);font-size:15px}
-.feat-who b{color:var(--ink)}
-.list{list-style:none;margin-top:28px;border-top:1px solid var(--line)}
-.list li{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.3fr) auto;gap:12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);font-size:15px}
-.list .nick{font-weight:700}
-.list .where{color:var(--mute)}
-.list .tier{font-weight:800;color:var(--gold);text-align:right}
-.cell .more{display:inline-block;margin-top:20px}
-.state{margin-top:20px;color:var(--mute)}
-.g-fact{margin-top:10px;color:var(--mute);font-size:15px}
-.g-fact b{color:var(--ink);font:800 20px/1 var(--num);margin-right:6px}
-/* 성장 기록 뼈대 — 숫자가 오기 전 자리만 잡는다 */
-.sk{margin-top:20px;display:grid;gap:12px}
-.sk i{display:block;height:18px;border-radius:6px;background:var(--cell-2)}
-.sk-feat{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:8px}
-.sk-feat i{height:56px}
-@media(prefers-reduced-motion:no-preference){.sk i{animation:skp 1.4s ease-in-out infinite}}
-@keyframes skp{50%{opacity:.55}}
-/* 원장에게 바로 신청 한 줄 */
-.ask-strip{display:flex;flex-wrap:wrap;align-items:center;gap:12px 32px;padding-block:clamp(18px,2vw,24px)}
-.ask-strip .ask-h{font-size:16px;font-weight:800}
-.ask-strip dl{display:flex;flex-wrap:wrap;gap:8px 28px;font-size:14px}
-.ask-strip dl div{display:flex;gap:10px;align-items:baseline}
-.ask-strip dt{color:var(--mute)}
-.ask-strip dd{margin:0;color:var(--ink)}
-.ask-strip dd small{color:var(--mute);font-size:13px;margin-left:6px}
-.ask-strip a{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+/* 2. 원장 */
+.lead-card{margin-top:18px;display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:clamp(20px,4vw,48px);align-items:center;padding:clamp(20px,3vw,36px);border-radius:calc(var(--r) + 8px);background:var(--card);box-shadow:var(--shadow)}
+.lead-photo img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--r);background:var(--bg-2)}
+.role{font-size:13px;color:var(--mute);font-weight:700}
+.lead-nm{margin-top:4px;font-size:clamp(32px,4vw,44px);font-weight:800}
+.lead-stat{margin-top:10px;display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px}
+.lead-stat .num{font-size:clamp(40px,5vw,56px);font-weight:800;color:var(--kick);line-height:1}
+.lead-stat small{font-size:15px;color:var(--sub);font-weight:600}
+.lead-one{margin-top:14px;font-size:17px;color:var(--ink);max-width:560px}
+.recs{margin-top:14px;display:grid;gap:6px;font-size:14px;color:var(--sub)}
+.recs li{padding-left:14px;position:relative}
+.recs li::before{content:"";position:absolute;left:0;top:.7em;width:6px;height:6px;border-radius:50%;background:var(--kick)}
+.links{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-top:18px;font-size:14px;color:var(--sub)}
+.links a:not(.chip){text-underline-offset:3px}
+.ask{margin-top:14px;padding:18px 24px;border-radius:var(--r);background:var(--card);border:1px solid var(--line);display:flex;flex-wrap:wrap;align-items:center;gap:12px 32px}
+.ask-h{font-weight:800}
+.ask dl{display:flex;flex-wrap:wrap;gap:8px 28px;font-size:15px}
+.ask dt{font-size:12px;color:var(--mute)}
+.ask dd{margin:0}
+.ask dd small{margin-left:6px;color:var(--mute);font-size:12px}
+.ask a{color:var(--kick);font-weight:700}
 
-/* 원장 */
-.boss{display:flex;flex-direction:column;padding:0}
-.boss .ph{aspect-ratio:4/3.4;background:var(--cell-2)}
-.boss .ph img{width:100%;height:100%;object-fit:cover;object-position:50% 22%}
-.boss .bd{padding:clamp(22px,2.6vw,32px)}
-.boss .nm{display:flex;align-items:baseline;gap:12px;font-size:clamp(28px,3vw,38px);font-weight:800;line-height:1.1}
-.boss .nm .rank{font:800 clamp(28px,3vw,38px)/1 var(--num);color:var(--gold)}
-.boss .one{margin-top:10px;font-size:17px;font-weight:600}
-.boss .sub{margin-top:6px;color:var(--mute);font-size:15px}
-.boss .links{margin-top:16px}
-
-/* 트레이너 */
-.tr{display:grid;grid-template-columns:140px minmax(0,1fr);gap:24px;align-items:start}
-.tr .ph{border-radius:14px;overflow:hidden;aspect-ratio:4/5;background:var(--cell-2)}
-.tr .ph img{width:100%;height:100%;object-fit:cover}
-.tr .role{font-size:13px;color:var(--mute);font-weight:600}
-.tr .nm{font-size:clamp(26px,2.6vw,32px);font-weight:800;line-height:1.15;margin-top:4px}
-.tr .one{margin-top:8px}
-.links{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:14px;font-size:15px}
-.links a{color:var(--mute)}
-.links a:hover{color:var(--ink)}
-.tr .apply{margin-top:16px;display:inline-block}
-
-/* 가르치는 사람 셋 — 같은 크기 칸 · 얼굴은 64px 원 */
-.person{display:flex;flex-direction:column}
+/* 3. 트레이너 */
+.trainers{margin-top:24px;display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:14px;align-items:start}
+.person{padding:24px;border-radius:var(--r);background:var(--card);box-shadow:var(--shadow);min-width:0;display:flex;flex-direction:column;gap:10px}
+.person.wide{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.4fr);gap:24px;align-items:start}
+.p-side{display:flex;flex-direction:column;gap:10px}
 .person .who{display:flex;align-items:center;gap:14px}
-.person .av{width:64px;height:64px;border-radius:50%;object-fit:cover;object-position:50% 20%;background:var(--cell-2);flex:none}
-.person .role{font-size:13px;color:var(--mute);font-weight:600}
-.person .nm{font-size:26px;font-weight:800;line-height:1.15;margin-top:2px}
-.stat2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:22px}
-.stat2 .v{font-size:clamp(40px,4vw,52px);line-height:1;color:var(--gold)}
-.stat2 .k,.stat1 .k{margin-top:6px;font-size:14px;color:var(--mute);display:block}
-.stat1{margin-top:22px}
-.stat1 .v{display:block;font-size:clamp(40px,4vw,52px);line-height:1}
-.stat1 .v{color:var(--gold)}
-.stat2 .v small,.stat1 .v small{font:800 16px/1 var(--num);letter-spacing:.06em;margin-left:4px}
-.recs{list-style:none;margin-top:16px;display:grid;gap:6px;font-size:14px;color:var(--mute)}
-.recs li{padding-left:12px;position:relative}
-.recs li::before{content:'';position:absolute;left:0;top:.7em;width:4px;height:4px;border-radius:50%;background:var(--mute)}
-.person .tot{margin-top:14px;font-size:15px}
-.person .tot b{font-weight:800}
-.person .tot span{color:var(--mute);margin-left:8px;font-size:14px}
-.person .r30{margin-top:2px;font-size:13px;color:var(--mute)}
-.person .one{margin-top:16px}
-.person .fine{margin-top:8px;font-size:13px;line-height:1.6;color:var(--mute)}
-.person .links{margin-top:auto;padding-top:16px}
+.av{width:72px;height:72px;border-radius:50%;object-fit:cover;background:var(--bg-2)}
+.nm{font-family:var(--head);font-size:24px;font-weight:800}
+.stat1 .v{font-size:34px;font-weight:800;color:var(--kick);line-height:1.1}
+.stat1 .v small{font-size:15px;margin-left:3px;color:var(--sub)}
+.stat1 .k{display:block;font-size:14px;color:var(--sub)}
+.tot{font-size:15px;color:var(--sub)}
+.tot b{color:var(--ink)}
+.tot span{display:block;font-size:13px;color:var(--mute)}
+.r30{font-size:14px;color:var(--mute)}
+.vh{font-size:18px;font-weight:800}
+.vgrid{margin-top:12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.yt{min-width:0}
+.yt-play,.yt iframe{all:unset;cursor:pointer;position:relative;display:block;width:100%;aspect-ratio:16/9;border-radius:16px;overflow:hidden;background:var(--dark)}
+.yt iframe{cursor:auto;border:0}
+.yt-play img{width:100%;height:100%;object-fit:cover}
+.yt-btn{position:absolute;left:50%;top:50%;width:62px;height:62px;margin:-31px 0 0 -31px;border-radius:50%;background:rgba(255,255,255,.95);box-shadow:0 6px 18px rgba(0,0,0,.22)}
+.yt-btn::after{content:"";position:absolute;left:24px;top:19px;width:20px;height:24px;background:var(--kick);clip-path:polygon(0 0,100% 50%,0 100%)}
+.yt-play:focus-visible{outline:3px solid var(--kick);outline-offset:2px}
+.yt figcaption{margin-top:10px;font-weight:700;font-size:15px}
+.yt .ep{display:inline-block;margin-right:8px;padding:2px 8px;border-radius:6px;background:var(--kick-soft);color:var(--kick);font-size:12px;font-weight:800}
 
-/* 커리큘럼 */
-.steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:24px;border-top:1px solid var(--line)}
-.step{padding:20px 20px 4px 0}
-.step+.step{padding-left:20px;border-left:1px solid var(--line)}
-.step .n{font:800 15px/1 var(--num);letter-spacing:.12em;color:var(--mute)}
-.step .nm{font-size:22px;font-weight:800;margin-top:10px}
-.step .d{margin-top:6px;color:var(--mute);font-size:15px}
+/* 4. 커리큘럼 */
+.road{margin-top:28px;display:grid;gap:12px}
+.stage{display:grid;grid-template-columns:72px minmax(0,1fr);gap:16px;padding:24px;border-radius:var(--r);background:var(--card);box-shadow:var(--shadow)}
+.st-n span{display:inline-grid;place-items:center;width:56px;height:56px;border-radius:16px;background:var(--kick-soft);color:var(--kick);font-size:22px;font-weight:800}
+.st-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.st-top h3{font-size:21px;font-weight:800}
+.tag{padding:3px 10px;border-radius:999px;background:var(--bg-2);color:var(--sub);font-size:13px;font-weight:700}
+.st-meta{margin-top:12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 24px}
+.st-meta dt{font-size:12px;font-weight:700;color:var(--mute)}
+.st-meta dd{margin:0;font-size:15px}
+.learn{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+.learn li{padding:7px 12px;border-radius:10px;background:var(--bg-2);font-size:14px;font-weight:600}
+.st-sub{margin-top:16px;font-weight:800;font-size:15px}
+.promise{margin-top:8px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.promise li{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-radius:12px;border:1px solid var(--line);font-size:14px;font-weight:600;min-width:0}
+.pn{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--kick-soft);color:var(--kick);font:800 12px/1 var(--num)}
+.pv{margin-left:auto;font-size:13px;color:var(--kick);font-weight:800;text-underline-offset:3px}
+.lock{margin-left:auto;font-size:12px;color:var(--mute);font-weight:600}
+.goal{margin-top:20px;color:var(--sub);font-size:15px}
 
-/* 수업 영상 — 16:9 유지 · 누르면 그 자리에서 재생 */
-.lv-frame{margin-top:24px;position:relative;aspect-ratio:16/9;max-width:100%;border-radius:16px;overflow:hidden;background:var(--cell-2)}
-.lv-play{all:unset;cursor:pointer;position:absolute;inset:0;display:block}
-.lv-play img{width:100%;height:100%;object-fit:cover;display:block}
-.lv-btn{position:absolute;left:50%;top:50%;width:72px;height:72px;margin:-36px 0 0 -36px;border-radius:50%;background:rgba(10,10,12,.72);border:1px solid var(--line)}
-.lv-btn::after{content:'';position:absolute;left:29px;top:22px;border-style:solid;border-width:14px 0 14px 22px;border-color:transparent transparent transparent var(--ink)}
-.lv-play:focus-visible{outline:2px solid var(--ink);outline-offset:-4px}
-.lv-frame iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
-.vid{display:flex;flex-direction:column;padding:0;text-decoration:none}
-.vid .th{flex:1;min-height:200px;background:var(--cell-2);position:relative}
-.vid .th::before{content:'YouTube';position:absolute;inset:0;display:grid;place-items:center;font:800 15px/1 var(--num);letter-spacing:.14em;color:var(--mute)}
-.vid .th img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.vid .bd{padding:clamp(20px,2.4vw,28px)}
-.vid .bd b{display:block;font-size:18px;line-height:1.4;margin-top:8px}
-.vid .bd span{display:block;margin-top:8px;color:var(--mute);font-size:15px}
-.vid:hover .bd b{text-decoration:underline;text-underline-offset:4px}
+/* 5. 성장 기록(서버 값 · 그리는 칸 이름은 스크립트와 같다) */
+.g-card{margin-top:24px;padding:24px;border-radius:var(--r);background:var(--card);box-shadow:var(--shadow)}
+.feat{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:16px;align-items:center}
+.side .k{font-size:13px;color:var(--mute);font-weight:700}
+.side .t{font-family:var(--head);font-size:24px;font-weight:800}
+.side.after .t{color:var(--kick)}
+.side .rp{font:800 26px/1.1 var(--num)}
+.side .rp small{font-size:13px;margin-left:3px;color:var(--mute)}
+.arr{font-size:26px;color:var(--mute)}
+.feat-who{margin-top:14px;color:var(--sub)}
+.feat-who b{color:var(--ink)}
+.g-modes{margin-top:6px;display:grid;gap:2px;font-size:14px;color:var(--sub)}
+.g-modes b{color:var(--ink)}
+#growthBody .list{margin-top:16px;border-top:1px solid var(--line)}
+#growthBody .list li{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr) auto;gap:12px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line)}
+.nick{font-weight:800}.where{color:var(--mute);font-size:14px}.tier{font-weight:800;color:var(--kick)}
+.state{color:var(--mute)}
+.sk i,.sk-feat i{display:block;height:18px;margin-top:10px;border-radius:8px;background:var(--bg-2)}
+.sk-feat{display:grid;grid-template-columns:1fr 1fr;gap:16px}.sk-feat i{height:72px}
+.g-card .more{display:inline-block;margin-top:16px}
 
-/* 5. 가격 — 박스 없음 */
-.sec{padding:clamp(72px,9vw,120px) 0 0}
-.sec-h{font-size:clamp(28px,3.4vw,44px);font-weight:800;line-height:1.2;letter-spacing:-.015em;text-wrap:balance}
-.sec-sub{margin-top:10px;color:var(--mute);max-width:640px}
-.price-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:end;margin-top:36px}
-.big-p .lab{font-weight:700;color:var(--mute)}
-.big-p .lab del{font-family:var(--num);font-weight:700;margin-left:8px}
-.big-p .v{font:800 clamp(96px,13vw,184px)/.9 var(--num);color:var(--gold);margin-top:6px}
-.big-p .v small{font:800 clamp(22px,2.2vw,30px)/1 var(--sans);color:var(--ink);margin-left:6px}
+/* 6. 가격 — 숫자 · 문구는 그대로(토스 심사 대상) · 옷만 바꿈 */
+#plans{background:var(--bg-2)}
+.price-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:stretch;margin-top:28px}
+.big-p{padding:28px;border-radius:var(--r);background:var(--card);box-shadow:var(--shadow);display:flex;flex-direction:column;justify-content:center}
+.big-p .lab{font-weight:800;color:var(--sub)}
+.big-p .v{font:800 clamp(64px,9vw,112px)/.95 var(--num);color:var(--kick);margin-top:8px}
+.big-p .v small{font:800 22px/1 var(--sans);margin-left:4px;color:var(--ink)}
+.price-main>div:last-child,.cols>div{padding:8px 24px;border-radius:var(--r);background:var(--card);box-shadow:var(--shadow)}
 .prow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 18px;align-items:baseline;padding:16px 0;border-bottom:1px solid var(--line)}
-.prow:first-child{border-top:1px solid var(--line)}
-.prow .n{font-weight:700;font-size:17px}
-.prow .n small{display:block;color:var(--mute);font-weight:400;font-size:14px;margin-top:2px}
-.prow del{font:700 15px/1 var(--num);color:var(--mute)}
+.prow:last-child{border-bottom:0}
+.prow .n{font-weight:800;font-size:17px}
+.prow .n small{display:block;color:var(--mute);font-weight:500;font-size:14px;margin-top:2px}
 .prow .p{font:800 28px/1 var(--num);text-align:right;min-width:110px}
 .prow .p small{font:700 14px/1 var(--sans);margin-left:2px}
-.cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:48px;margin-top:56px}
-.cols h3{font-size:22px;font-weight:800}
-.cols .gd{color:var(--mute);font-size:15px;margin:4px 0 14px}
-.pnotes{margin-top:40px;display:grid;gap:6px;color:var(--mute);font-size:15px;max-width:820px}
+.cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:16px}
+.cols h3{font-size:20px;font-weight:800;padding-top:16px}
+.cols .gd{color:var(--mute);font-size:15px;margin:4px 0 6px}
+.pnotes{margin-top:24px;display:grid;gap:6px;color:var(--sub);font-size:15px;max-width:820px}
 .pnotes b{color:var(--ink)}
-.vip-door{display:inline-block;margin-top:18px;color:var(--mute);font-size:15px}
-.vip-door span{color:var(--ink);font-weight:700}
+.pnotes .link{color:var(--kick)}
+.vip-door{display:inline-block;margin-top:14px;color:var(--sub);font-size:15px;font-weight:500}
+.vip-door span{color:var(--ink);font-weight:800}
 
-/* 6. 차감 기준 — 박스 없는 세 칸 */
-.rules{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:36px;border-top:1px solid var(--line)}
-.rule{padding:24px 28px 8px 0}
-.rule+.rule{padding-left:28px;border-left:1px solid var(--line)}
+/* 6-1. 판수 차감 기준 */
+#rules{padding-top:0;background:var(--bg-2)}
+.rules{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:24px}
+.rule{padding:24px;border-radius:var(--r);background:var(--card);box-shadow:var(--shadow)}
 .rule .who{font-size:14px;font-weight:700;color:var(--mute)}
-.rule .v{font:800 clamp(48px,5.4vw,72px)/1 var(--num);margin-top:10px}
-.rule .v small{font:700 18px/1 var(--sans);margin-left:3px}
-.rule ul{list-style:none;margin-top:14px;display:grid;gap:4px;color:var(--mute);font-size:15px}
-.rule p{margin-top:14px;color:var(--mute);font-size:15px}
+.rule .v{font:800 clamp(44px,5vw,64px)/1 var(--num);margin-top:10px;color:var(--kick)}
+.rule .v small{font:700 18px/1 var(--sans);margin-left:3px;color:var(--ink)}
+.rule ul{margin-top:14px;display:grid;gap:4px;color:var(--sub);font-size:15px}
+.rule p{margin-top:14px;color:var(--sub);font-size:15px}
 
-/* 7. 마무리 */
-.end{padding:clamp(80px,10vw,140px) 0 clamp(40px,5vw,64px)}
-.end-h{font-size:clamp(36px,5.6vw,76px);font-weight:800;line-height:1.12;letter-spacing:-.02em;text-wrap:balance}
-.flow{margin-top:20px;color:var(--mute);font-size:17px}
-.flow b{color:var(--ink);font-weight:700}
-.end .acts{margin-top:28px;display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+/* 7. 마무리 · FAQ */
+.end{padding-block:clamp(52px,7vw,96px)}
+.end-h{font-size:clamp(32px,4.6vw,56px);font-weight:800;letter-spacing:-.02em}
+.end>.wrap>.end-h,.end .flow,.end .acts,.end .lt-note{max-width:900px}
+.end .flow{margin-top:14px;color:var(--sub);font-size:17px}
+.end .flow b{color:var(--ink)}
+.end .acts{margin-top:26px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
 .end .lt-note{margin-top:14px;color:var(--mute);font-size:14px}
-.faq{margin-top:clamp(32px,4vw,48px);border-top:1px solid var(--line)}
-.faq h2{font-size:20px;font-weight:800;padding:24px 0 8px}
+.faq{margin-top:clamp(40px,5vw,64px);padding:clamp(20px,3vw,32px);border-radius:var(--r);background:var(--card);box-shadow:var(--shadow)}
+.faq h2{font-size:24px;font-weight:800;padding-bottom:8px}
 .faq details{border-bottom:1px solid var(--line)}
-.faq summary{list-style:none;cursor:pointer;padding:18px 40px 18px 0;font-weight:700;font-size:17px;position:relative}
+.faq details:last-child{border-bottom:0}
+.faq summary{list-style:none;cursor:pointer;padding:18px 40px 18px 0;font-weight:800;font-size:17px;position:relative}
 .faq summary::-webkit-details-marker{display:none}
-.faq summary::after{content:'+';position:absolute;right:4px;top:12px;font:700 26px/1 var(--num);color:var(--mute)}
+.faq summary::after{content:'+';position:absolute;right:4px;top:12px;font:700 26px/1 var(--num);color:var(--kick)}
 .faq details[open] summary::after{content:'−'}
-.faq .a{padding:0 0 22px;color:var(--mute);max-width:820px}
+.faq .a{padding:0 0 22px;color:var(--sub);max-width:820px}
 .faq .a b{color:var(--ink)}
-.faq .a a{color:var(--ink)}
+.faq .a a{color:var(--kick)}
 
-/* 하단 */
-footer{border-top:1px solid var(--line);margin-top:clamp(24px,3vw,40px);padding:48px 0 40px;font-size:14px;color:var(--mute)}
-footer .fl{display:flex;flex-wrap:wrap;gap:8px 18px;margin-bottom:14px}
-footer a{color:var(--mute);text-decoration:none}
+/* 바닥 */
+footer{padding-block:40px 56px;border-top:1px solid var(--line);color:var(--mute);font-size:14px;background:var(--bg)}
+footer .fl{display:flex;flex-wrap:wrap;gap:8px 18px;margin-bottom:12px}
+footer a{text-decoration:none}
 footer a:hover{color:var(--ink)}
-footer .bizinfo{margin-top:18px;font-size:13px;line-height:1.8;color:color-mix(in srgb,var(--ink) 78%,var(--bg))}
-footer .more summary{cursor:pointer;color:var(--mute);list-style:none;width:max-content}
-footer .more summary::-webkit-details-marker{display:none}
-footer .more summary::after{content:' +'}
-footer .more[open] summary::after{content:' −'}
-footer .more{margin-bottom:14px}
-footer .more .fl{margin-top:10px;margin-bottom:0}
-footer p{margin-top:16px;font-size:13px}
+footer .more summary{cursor:pointer;margin-bottom:10px}
+.bizinfo{margin-top:8px;line-height:1.8}
 
-/* 스크롤 등장 — JS 가 있고 움직임 줄이기가 아닐 때만 */
-.js .rise{opacity:0;translate:0 18px;transition:opacity .5s ease,translate .5s cubic-bezier(.2,.8,.2,1)}
-.js .rise.in{opacity:1;translate:0 0}
-
-@media(max-width:1024px){
-  .tr{grid-template-columns:110px minmax(0,1fr);gap:18px}
-  .feat{grid-template-columns:1fr;gap:10px}
-  .feat .arr{display:none}
-}
-@media(max-width:820px){
-  /* 수업 영상 — 폰에선 칸 안쪽 여백을 넘어 화면 좌우 16px 까지 넓힌다 */
-  .lv-frame{max-width:none;margin-left:calc(-1 * clamp(22px,2.6vw,36px));margin-right:calc(-1 * clamp(22px,2.6vw,36px));border-radius:0}
-  .wrap{padding:0 16px}
-  .top-in{gap:16px;height:56px}
-  .top .cta .p,.top .cta .dot{display:none}
-  .menu{display:none}
-  .top-in{justify-content:space-between}
-  .grid{grid-template-columns:minmax(0,1fr)}
-  .s7,.s5,.s6,.s8,.s4,.s12{grid-column:auto}
-  .hero-row{grid-template-columns:1fr}
-  .hero-acts{flex-direction:column-reverse;align-items:stretch;gap:14px}
-  .hero-acts .link{align-self:flex-start}
-  .cta{width:100%}
-  .top .cta{width:auto}
-  .steps{grid-template-columns:1fr 1fr}
-  .step:nth-child(3){padding-left:0;border-left:0}
-  .step:nth-child(n+3){border-top:1px solid var(--line)}
-  .price-main,.cols{grid-template-columns:1fr;gap:28px}
-  .cols{margin-top:40px}
-  .rules{grid-template-columns:1fr}
-  .rule,.rule+.rule{padding:20px 0 8px;border-left:0}
-  .rule+.rule{border-top:1px solid var(--line)}
-  .end .acts{flex-direction:column;align-items:stretch}
-  .end .acts .link{align-self:flex-start}
-}
-@media(max-width:420px){
-  .tr{grid-template-columns:88px minmax(0,1fr);gap:14px}
-  .list li{grid-template-columns:minmax(0,1fr) auto;}
-  .list .where{grid-column:1;grid-row:2;font-size:14px}
-  .list .tier{grid-row:1/3;grid-column:2;align-self:center}
-}
-@media(prefers-reduced-motion:reduce){
-  html{scroll-behavior:auto}
-  .js .rise{opacity:1;translate:none;transition:none}
-  .cta{transition:none}
-}
-.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-
-/* ===== VIP 룸 — 일반 스크롤 밖 · 입구를 눌렀을 때만 열린다 ===== */
-.vroom{--vr-ivory:#ece6d6;--vr-mute:#8c867a;--vr-hair:rgba(236,230,214,.14);
+/* VIP 룸 — 밝은 크림 바탕(검은 화면 없음 · 오너 11/11) */
+.vroom{--vr-ivory:var(--ink);--vr-mute:var(--sub);--vr-hair:var(--line-2);
   width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;
-  background:#050505;color:var(--vr-ivory);overflow-y:auto;overscroll-behavior:contain;word-break:keep-all}
-.vroom::backdrop{background:#000}
-.vroom[open]{animation:vrIn .5s ease both}
+  background:var(--bg);color:var(--ink);overflow-y:auto;overscroll-behavior:contain;word-break:keep-all}
+.vroom::backdrop{background:rgba(42,36,32,.5)}
+.vroom[open]{animation:vrIn .4s ease both}
 @keyframes vrIn{from{opacity:0}to{opacity:1}}
 .vr-wrap{max-width:720px;margin:0 auto;padding:88px 24px 96px;min-height:100%;display:flex;flex-direction:column}
-.vr-close{position:fixed;top:18px;right:18px;width:44px;height:44px;border-radius:50%;background:transparent;border:1px solid var(--vr-hair);color:var(--vr-mute);font-size:20px;line-height:1;cursor:pointer;transition:color .2s,border-color .2s}
-.vr-close:hover,.vr-close:focus-visible{color:var(--vr-ivory);border-color:var(--vr-ivory)}
-.vr-kick{font-family:'Saira Condensed',sans-serif;font-weight:700;letter-spacing:.42em;font-size:11px;color:var(--gold);text-transform:uppercase}
-.vr-title{font-weight:300;font-size:clamp(34px,8vw,56px);line-height:1.15;letter-spacing:-.01em;margin:22px 0 18px;color:var(--vr-ivory)}
-.vr-title b{font-weight:700}
-.vr-lead{font-size:15px;line-height:1.85;color:var(--vr-mute);max-width:520px;font-weight:400}
-.vr-rule{height:1px;background:var(--vr-hair);margin:56px 0 8px;border:0}
-.vr-item{display:grid;grid-template-columns:56px 1fr;gap:8px 20px;padding:36px 0;border-bottom:1px solid var(--vr-hair)}
-.vr-no{font-family:'Saira Condensed',sans-serif;font-size:13px;letter-spacing:.2em;color:var(--vr-mute);padding-top:6px}
-.vr-name{font-size:22px;font-weight:600;color:var(--vr-ivory);letter-spacing:-.005em}
-.vr-en{display:block;font-family:'Saira Condensed',sans-serif;font-weight:700;font-size:11px;letter-spacing:.3em;color:var(--vr-mute);margin-top:6px;text-transform:uppercase}
+.vr-close{position:fixed;top:18px;right:18px;width:44px;height:44px;border-radius:50%;background:var(--card);border:1px solid var(--vr-hair);color:var(--vr-mute);font-size:20px;line-height:1;cursor:pointer}
+.vr-close:hover,.vr-close:focus-visible{color:var(--ink);border-color:var(--ink)}
+.vr-kick{font:700 12px/1 var(--sans);letter-spacing:.3em;color:var(--kick);text-transform:uppercase}
+.vr-title{font-family:var(--head);font-weight:500;font-size:clamp(34px,8vw,56px);line-height:1.15;letter-spacing:-.01em;margin:22px 0 18px}
+.vr-title b{font-weight:800}
+.vr-lead{font-size:15px;line-height:1.85;color:var(--vr-mute);max-width:520px}
+.vr-rule{height:1px;background:var(--vr-hair);margin:48px 0 8px;border:0}
+.vr-item{display:grid;grid-template-columns:56px 1fr;gap:8px 20px;padding:32px 0;border-bottom:1px solid var(--vr-hair)}
+.vr-no{font:700 13px/1 var(--num);letter-spacing:.2em;color:var(--kick);padding-top:6px}
+.vr-name{font-family:var(--head);font-size:22px;font-weight:700}
+.vr-en{display:block;font:700 11px/1 var(--sans);letter-spacing:.24em;color:var(--vr-mute);margin-top:6px;text-transform:uppercase}
 .vr-desc{grid-column:2;font-size:14.5px;line-height:1.85;color:var(--vr-mute);margin-top:8px}
-.vr-desc b{color:var(--vr-ivory);font-weight:600}
-.vr-price{margin:48px 0 0;font-size:13.5px;line-height:1.8;color:var(--vr-mute)}
-.vr-price strong{color:var(--vr-ivory);font-weight:600}
+.vr-desc b{color:var(--ink);font-weight:700}
+.vr-price{margin:40px 0 0;font-size:13.5px;line-height:1.8;color:var(--vr-mute)}
+.vr-price strong{color:var(--ink);font-weight:700}
 .vr-cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}
-.vr-btn{flex:1 1 220px;display:block;text-align:center;padding:16px 18px;font-size:14px;font-weight:700;text-decoration:none;letter-spacing:.02em;transition:background .2s,color .2s,border-color .2s}
-.vr-btn.main{background:var(--vr-ivory);color:#050505}
-.vr-btn.main:hover,.vr-btn.main:focus-visible{background:var(--gold)}
-.vr-btn.sub{border:1px solid var(--vr-hair);color:var(--vr-ivory)}
-.vr-btn.sub:hover,.vr-btn.sub:focus-visible{border-color:var(--vr-ivory)}
-.vr-sign{margin-top:auto;padding-top:64px;font-size:12px;color:var(--vr-mute);letter-spacing:.04em}
-@media(max-width:560px){.vr-wrap{padding:76px 16px 72px}.vr-item{grid-template-columns:1fr}.vr-desc{grid-column:1}.vr-no{padding-top:0}}
-@media(prefers-reduced-motion:reduce){.vroom[open]{animation:none}}
+.vr-btn{flex:1 1 220px;display:block;text-align:center;padding:16px 18px;border-radius:999px;font-size:14px;font-weight:800;text-decoration:none}
+.vr-btn.main{background:var(--cta-bg);color:var(--cta-ink)}
+.vr-btn.sub{border:1px solid var(--line-2);color:var(--ink);background:var(--card)}
+.vr-sign{margin-top:auto;padding-top:56px;font-size:12px;color:var(--vr-mute);letter-spacing:.04em}
 html.vr-lock{overflow:hidden}
+
+/* 움직임 */
+@media(prefers-reduced-motion:no-preference){.rise{opacity:0;translate:0 16px;transition:opacity .5s ease,translate .5s ease}.rise.in{opacity:1;translate:none}}
+@media(prefers-reduced-motion:reduce){.vroom[open]{animation:none}html{scroll-behavior:auto}}
+
+/* 폭 */
+@media(max-width:1024px){.trainers{grid-template-columns:1fr}.person.wide{grid-template-columns:1fr}}
+@media(max-width:820px){
+  .menu{display:none}.top-in{justify-content:space-between}
+  .hero-in{grid-template-columns:1fr}
+  .proof,.rules,.price-main,.cols{grid-template-columns:1fr}
+  .lead-card{grid-template-columns:1fr}
+  .lead-photo img{max-width:220px}
+  .promise,.st-meta{grid-template-columns:1fr}
+}
+@media(max-width:560px){
+  .vgrid{grid-template-columns:1fr}
+  .stage{grid-template-columns:1fr;gap:10px;padding:20px}
+  .st-n span{width:44px;height:44px;font-size:18px;border-radius:12px}
+  .feat{gap:10px}.side .t{font-size:19px}
+  .vr-wrap{padding:76px 16px 72px}.vr-item{grid-template-columns:1fr}.vr-desc{grid-column:1}.vr-no{padding-top:0}
+  .cta{white-space:normal;text-align:center}
+}
 </style>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
 </head>
@@ -428,148 +371,177 @@ html.vr-lock{overflow:hidden}
   <div class="wrap top-in">
     <a class="logo" href="#top" aria-label="MRI ACADEMY 처음으로">MRI ACADEMY</a>
     <nav class="menu" aria-label="주 메뉴">
-      <a href="#growth">성장 기록</a><a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#plans">가격</a><a href="#direct">직강</a>
+      <a href="#lead">원장</a><a href="#trainers">트레이너</a><a href="#curriculum">커리큘럼</a><a href="#plans">가격</a><a href="#faq">자주 묻는 질문</a>
     </nav>
-    <a class="cta" href="#start">레벨 테스트 신청<span class="dot"> · </span><span class="p">20,000원</span></a>
+    <a class="top-cta" href="apply.html?utm_source=site&amp;utm_medium=top">레벨 테스트</a>
   </div>
 </header>
 
 <main id="top">
 
-  <!-- 1. 소개 영상 — 오너 10/18 「들어오자마자 커리큘럼부터 가격까지 설명하는 영상이 가장 먼저 눈에 띄게」.
-       파일 주소는 아래 data-h(PC 가로 16:9) · data-v(폰 세로 9:16) 두 곳에서만 바꾼다. src 속성이 아니라 data 로 둔 까닭:
-       파일이 저장소에 없는 동안 사이트 점검(site-files 시험)이 없는 파일을 부른다고 막지 않게 하려고.
-       영상을 불러오지 못하면(파일 없음 · 형식 오류) 칸 전체가 숨은 채로 남는다 — 깨진 화면이 나가지 않는다.
-       자동재생은 무음 · playsinline · 반복 없음. 「소리 켜고 보기」를 누르면 소리가 켜진다 -->
-  <section class="intro" id="intro" aria-label="MRI ACADEMY 소개 영상" hidden
+  <!-- 1. 첫 화면 — 소개 영상이 맨 위(오너 10/18 · 11/9 「아주 좋아함」). 파일 주소는 data-h(PC 16:9) · data-v(폰 9:16) 두 곳에서만 바꾼다.
+       영상을 불러오지 못하면 칸이 숨는다. 실적 숫자는 10/4 확정 고정 글자(근거는 그때 PR 본문) -->
+  <section class="hero">
+    <div class="wrap hero-in">
+      <div class="intro" id="intro" aria-label="MRI ACADEMY 소개 영상" hidden
            data-h="assets/video/intro_h.mp4"
            data-v="assets/video/intro_v.mp4">
+        <div class="iv-frame">
+          <video class="iv" muted playsinline preload="metadata" aria-label="MRI ACADEMY 소개 영상 · 커리큘럼부터 가격까지 80초"></video>
+          <button type="button" class="iv-sound">소리 켜고 보기</button>
+        </div>
+      </div>
+      <div class="hero-txt">
+        <div class="eyebrow">배틀그라운드 경쟁전 코칭</div>
+        <h1 class="h1">서바이버 트레이너와<br><span class="hl">같은 판</span>에서 배워요</h1>
+        <div class="hero-cta">
+          <a class="cta" href="apply.html?utm_source=site&amp;utm_medium=hero">레벨 테스트 신청 · <span class="p">20,000원</span></a>
+          <!-- 「레벨 테스트가 뭐지」 한 줄(오너 11/11) — 2안 중 고름: ①「내 판 다시보기로 어디서 막혔는지 같이 찾는 60~90분이에요」(채택) ②「원장이나 트레이너가 내 다시보기를 보고 시작 단계를 정해요」 -->
+          <p class="cta-why">내 판 다시보기로 어디서 막혔는지 같이 찾는 60~90분이에요</p>
+        </div>
+        <a class="link soft" href="#plans">가격 먼저 보기</a>
+      </div>
+    </div>
     <div class="wrap">
-      <div class="iv-frame">
-        <video class="iv" muted playsinline preload="metadata" aria-label="MRI ACADEMY 소개 영상 · 커리큘럼부터 가격까지 80초"></video>
-        <button type="button" class="iv-sound">소리 켜고 보기</button>
-      </div>
-      <div class="iv-acts">
-        <a class="cta" href="apply.html?utm_source=site&amp;utm_medium=intro">레벨 테스트 신청</a>
-      </div>
+      <dl class="proof">
+        <div><dt>원장 <span>2023년 9월 ~ 2026년 9월</span></dt><dd><b class="num">101</b>명 · 직강 <b class="num">4,200</b>시간 이상</dd></div>
+        <div><dt>트레이너 <span>2026년 4월 ~ 9월</span></dt><dd><b class="num">78</b>명 · 레슨 약 <b class="num">4,000</b>판</dd></div>
+        <div><dt>레슨으로 <span>마스터 이상 달성</span></dt><dd><b class="num" data-srv="graduatesMasterPlus">5</b>명</dd></div>
+      </dl>
     </div>
   </section>
 
-  <!-- 2. 간판 -->
-  <section class="hero">
+  <!-- 2. 원장 — 트레이너와 같은 틀로 나란히 두지 않는다(10/2 결정). 대표 기록 = 오너 11/11 문장 -->
+  <section class="sec" id="lead" aria-labelledby="muriH">
     <div class="wrap">
-      <div class="eyebrow">배틀그라운드 경쟁전 코칭</div>
-      <!-- 간판 = 실적 두 줄(오너 10/4 확정 숫자 · 고정 글자). 근거는 PR 본문 — 원장 101명 = 관리대장 + 적립 내역 + 전체현황 합친 수강생 ·
-           2023년 9월 = 강의 서버 개설일 · 4,200시간 이상 = 입금 기준 약 1,890시간 + 수업 800회 × 3시간 ·
-           트레이너 78명 = DB 2026-04-01 ~ 09-30 레슨 · 세트 결제자 · 약 4,000판 = 같은 기간 결제 3,795판 · 3월 중순부터 누적 4,000판 -->
-      <h1 class="sign">
-        <span class="ln"><span class="hd"><b>원장</b><span>2023년 9월 ~ 2026년 9월</span></span><span class="big">101<small>명</small><span class="sep">·</span>직강 4,200<small>시간 이상</small></span></span>
-        <span class="ln"><span class="hd"><b>트레이너</b><span>2026년 4월 ~ 9월</span></span><span class="big">78<small>명</small><span class="sep">·</span>레슨 약 4,000<small>판</small></span></span>
-      </h1>
-      <div class="hero-row">
-        <div class="hero-txt">
-          <p class="note">29시즌(2024년 6월) · 수강생 3명과 번갈아 가며 처음부터 끝까지 함께 5,000점 달성</p>
-        </div>
-        <div class="hero-acts">
-          <a class="link" href="#plans">가격 먼저 보기</a>
-          <a class="cta" href="apply.html?utm_source=site&amp;utm_medium=hero">레벨 테스트 신청 · <span class="p">20,000원</span></a>
-        </div>
-      </div>
-
-      <!-- 4. 칸 배치 -->
-      <div class="grid">
-
-        <!-- 성장 기록 — GET /api/progress-public(전적 스냅샷 원장 · 상위 상승 순 · 닉 마스킹 「세**」) -->
-        <article class="cell s7 rise" id="growth" aria-labelledby="growthH">
-          <div class="eyebrow">Growth Record</div>
-          <h2 id="growthH">수강 전 → 달성, 전적 그대로</h2>
-          <!-- 외딴 숫자 칸을 성장 기록 안으로 합침(10/20). 5명은 /api/site-metrics 의 graduatesMasterPlus 가 오면 덮어쓴다 -->
-          <p class="g-fact"><b><span data-srv="graduatesMasterPlus">5</span>명</b> 레슨으로 마스터 이상 달성</p>
-          <!-- 불러오는 동안 뼈대를 보여 주고, 지난번 받은 기록이 있으면 그걸 먼저 그린다 -->
-          <div id="growthBody" aria-busy="true"><div class="sk" aria-hidden="true"><div class="sk-feat"><i></i><i></i></div><i></i><i></i><i></i></div><p class="sr">기록을 불러오고 있어요</p></div>
-          <a class="link more" href="gmi-progress.html">성장 기록 전체 보기</a>
-        </article>
-
-        <!-- 메인 영상 — 준구 트레이너 매드무비(오너 10/3) · 누르면 유튜브로 -->
-        <a class="cell s5 vid rise" href="https://youtu.be/LkHHjpjKQbU" target="_blank" rel="noopener" aria-label="준구 트레이너 매드무비 유튜브에서 보기">
-          <div class="th"><img src="https://i.ytimg.com/vi/LkHHjpjKQbU/hqdefault.jpg" alt="" width="480" height="360" loading="lazy" onerror="this.remove()"></div>
-          <div class="bd">
-            <div class="eyebrow">Mad Movie · YouTube</div>
-            <b>준구 트레이너 매드무비</b>
-            <span>교전 장면 모음</span>
-          </div>
-        </a>
-
-        <!-- 가르치는 사람 셋 — 같은 크기 칸 · 사진은 이름 옆 64px 원
-             기록 · 누적 숫자는 지휘가 장부에서 뽑은 10/3 기준 고정 글자. 최근 30일은 서버 값(byTrainer.students30)이 오면 덮어쓴다 -->
-        <article class="cell s4 person rise" id="trainers" aria-labelledby="muriH">
-          <div class="who"><img class="av" src="img/trainers/mr-lead.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">원장 · 직강</div><div class="nm" id="muriH">이무리</div></div></div>
-          <!-- 첫 화면 간판에서 내려온 29시즌 기록(10/4) -->
-          <div class="stat1"><span class="v num">S29 1위</span><span class="k">카카오 서버 · 5,000 RP</span></div>
-          <p class="one">29시즌 카카오 서버에서 수강생 세 분과 함께 1위를 달성했어요. 그 뒤로 강의 방송을 시작했어요</p>
-          <p class="fine">1위 점수 5,000점은 그때 최고 점수였어요. 36시즌에 서바이버가 생기면서 최고 점수가 9,999점으로 바뀌었어요</p>
+      <div class="eyebrow">Head Coach</div>
+      <article class="lead-card">
+        <div class="lead-photo"><img src="img/trainers/mr-lead.jpg" alt="이무리 원장" width="320" height="320" loading="lazy"></div>
+        <div class="lead-body">
+          <div class="role">원장 · 직강</div>
+          <h2 class="lead-nm" id="muriH">이무리</h2>
+          <div class="lead-stat"><span class="num">S29 1위</span><small>카카오 서버 · 5,000 RP</small></div>
+          <p class="lead-one">29시즌 수강생 세 분과 1위를 달성했어요. 5,000점은 그때 최고 점수였고, 그 뒤로 강의 방송을 시작했어요</p>
           <ul class="recs">
             <li>S29 카카오 1위 · 5,000 RP · 평균 딜량 684</li>
             <li>S36 카카오 1위 · 서바이버 5,002 RP · 평균 딜량 614</li>
             <li>S38 스팀 서바이버 두 계정 · 4,359 RP · 4,370 RP</li>
           </ul>
-          <div class="links"><a href="#plans">원장 직강 보기</a><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a></div>
-        </article>
+          <div class="links"><a class="chip" href="#plans">원장 직강 보기</a><a href="https://ch.sooplive.co.kr/zmdk1373" target="_blank" rel="noopener">SOOP</a><a href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">YouTube</a></div>
+        </div>
+      </article>
+      <!-- 원장에게 바로 신청 — 오너 10/3 지정 창구 그대로 -->
+      <aside class="ask" id="direct" aria-labelledby="askH">
+        <div class="ask-h" id="askH">원장에게 바로 신청</div>
+        <dl>
+          <div><dt>디스코드</dt><dd>e_muri<small>친구 추가 후 메시지</small></dd></div>
+          <div><dt>강의 서버</dt><dd><a href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener">MRI ACADEMY 디스코드</a></dd></div>
+          <div><dt>이메일</dt><dd><a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></dd></div>
+        </dl>
+      </aside>
+    </div>
+  </section>
 
-        <article class="cell s4 person rise" aria-labelledby="htH">
-          <div class="who"><img class="av" src="img/trainers/ht-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너 · 이번 시즌 우수 트레이너</div><div class="nm" id="htH">현태</div></div></div>
-          <div class="stat1"><span class="v num">4,527<small>RP</small></span><span class="k">S41 스팀 서바이버</span></div>
-          <p class="tot">누적 <b>50명</b> · <b>2,496판</b><span>2026년 4월부터</span></p>
-          <p class="r30">최근 30일 <span data-trainer="hyuntae">16</span>명</p>
-          <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae">현태에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_Hye0n" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/gusxo3874" target="_blank" rel="noopener">SOOP</a></div>
-        </article>
-
-        <article class="cell s4 person rise" aria-labelledby="jgH">
-          <div class="who"><img class="av" src="img/trainers/jg-frame.jpg" alt="" width="64" height="64" loading="lazy"><div><div class="role">트레이너</div><div class="nm" id="jgH">준구</div></div></div>
-          <div class="stat1"><span class="v num">S38</span><span class="k">서바이버</span></div>
-          <p class="tot">누적 <b>37명</b> · <b>1,425판</b><span>2026년 3월부터</span></p>
-          <p class="r30">최근 30일 <span data-trainer="jungu">7</span>명</p>
-          <div class="links"><a href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">SOOP</a></div>
-        </article>
-
-        <!-- 원장에게 바로 신청 — 원장 카드 안에 있던 연락처를 한 줄로 뺐다(10/20 · 세 카드 높이 맞춤). 오너 10/3 지정 창구 그대로 -->
-        <aside class="cell s12 ask-strip rise" id="direct" aria-labelledby="askH">
-          <div class="ask-h" id="askH">원장에게 바로 신청</div>
-          <dl>
-            <div><dt>디스코드</dt><dd>e_muri<small>친구 추가 후 메시지</small></dd></div>
-            <div><dt>강의 서버</dt><dd><a href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener">MRI ACADEMY 디스코드</a></dd></div>
-            <div><dt>이메일</dt><dd><a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></dd></div>
-          </dl>
-        </aside>
-
-        <!-- 커리큘럼 — 오너가 설명한 실제 수업 순서(10/4). 단계별 넘어가는 기준은 트레이너 답을 받은 뒤 채운다 -->
-        <article class="cell s12 rise" id="curriculum" aria-labelledby="curH">
-          <!-- 원장 직강 핵심 문구 자리 — 10/20 세 줄은 오너 10/21 지시로 뺐다. 새 문구는 지휘 시안으로 내려온다 -->
-          <div class="eyebrow">Curriculum</div>
-          <h2 id="curH">수업 순서</h2>
-          <p class="lead">처음 오면 레벨 테스트로 시작 단계를 정함</p>
-          <div class="steps">
-            <div class="step"><div class="n">01</div><div class="nm">피지컬 기초</div><div class="d">연습 모드에서 소규모 교전 · 투척물 · 차량 · 라인전 · 피킹</div></div>
-            <div class="step"><div class="n">02</div><div class="nm">일반 게임 운영</div><div class="d">판을 읽는 법, 치킨까지 가 보는 경험</div></div>
-            <div class="step"><div class="n">03</div><div class="nm">경쟁전 레슨</div><div class="d">익숙해진 뒤 경쟁전 실전</div></div>
-            <div class="step"><div class="n">04</div><div class="nm">마스터 · 서바이버</div><div class="d">상위 티어 도달</div></div>
+  <!-- 3. 트레이너 — 기록 · 누적 숫자는 10/3 장부 고정 글자 · 최근 30일은 서버 값(byTrainer.students30)이 오면 덮어쓴다 -->
+  <section class="sec tint" id="trainers" aria-labelledby="trH">
+    <div class="wrap">
+      <div class="eyebrow">Trainers</div>
+      <h2 class="sec-h" id="trH">같이 게임하는 트레이너</h2>
+      <div class="trainers">
+        <article class="person wide" aria-labelledby="htH">
+          <div class="p-side">
+            <div class="who"><img class="av" src="img/trainers/ht-frame.jpg" alt="" width="72" height="72" loading="lazy"><div><div class="role">트레이너 · 이번 시즌 우수 트레이너</div><div class="nm" id="htH">현태</div></div></div>
+            <div class="stat1"><span class="v num">4,527<small>RP</small></span><span class="k">S41 스팀 서바이버</span></div>
+            <p class="tot">누적 <b>50명</b> · 레슨 <b>2,496판</b><span>2026년 4월부터</span></p>
+            <p class="r30">최근 30일 <span data-trainer="hyuntae">16</span>명</p>
+            <div class="links"><a class="chip" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae">현태에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_Hye0n" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/gusxo3874" target="_blank" rel="noopener">SOOP</a></div>
+          </div>
+          <div class="p-vids">
+            <h3 class="vh">현태 트레이너 실제 수업</h3>
+            <div class="vgrid">
+              <figure class="yt" data-yt="F-Z8zsBLkxY">
+                <button type="button" class="yt-play" aria-label="1편 투척은 전부 1층 클리어 재생"><span class="yt-btn" aria-hidden="true"></span></button>
+                <figcaption><span class="ep">1편</span>투척은 전부 1층 클리어</figcaption>
+              </figure>
+              <figure class="yt" data-yt="KpjgYVTKYAQ">
+                <button type="button" class="yt-play" aria-label="2편 연막은 입구 전까지 수비는 1층부터 재생"><span class="yt-btn" aria-hidden="true"></span></button>
+                <figcaption><span class="ep">2편</span>연막은 입구 전까지 · 수비는 1층부터</figcaption>
+              </figure>
+            </div>
           </div>
         </article>
-
-        <!-- 수업 영상 — 영상 주소는 아래 data-yt 한 곳에서만 바꾼다(유튜브 주소 또는 영상 ID).
-             비어 있으면 칸 전체가 화면에 안 나온다. 제목 · 설명 문구도 data-title · data-desc 에서 바꾼다.
-             처음엔 썸네일 + 재생 버튼만 보이고, 누르면 그 자리에서 재생한다(유튜브 플레이어는 누를 때만 불러옴).
-             이 자리에 있던 복기 칸은 오너 10/9 지시로 뺐다 — 되살릴 땐 #501 머지(1a9262f)의 index.html 에서 가져온다 -->
-        <article class="cell s12 rise" id="lessonVideo" aria-labelledby="lvH" hidden
-                 data-yt=""
-                 data-title=""
-                 data-desc="">
-          <div class="eyebrow">Lesson Video</div>
-          <h2 id="lvH"></h2>
-          <p class="lead" id="lvDesc"></p>
-          <div class="lv-frame"><button type="button" class="lv-play" aria-label="수업 영상 재생"><span class="lv-btn" aria-hidden="true"></span></button></div>
+        <article class="person" aria-labelledby="jgH">
+          <div class="who"><img class="av" src="img/trainers/jg-frame.jpg" alt="" width="72" height="72" loading="lazy"><div><div class="role">트레이너</div><div class="nm" id="jgH">준구</div></div></div>
+          <div class="stat1"><span class="v num">S38</span><span class="k">서바이버</span></div>
+          <p class="tot">누적 <b>37명</b> · 레슨 <b>1,425판</b><span>2026년 3월부터</span></p>
+          <p class="r30">최근 30일 <span data-trainer="jungu">7</span>명</p>
+          <div class="links"><a class="chip" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu">준구에게 신청</a><a href="https://dak.gg/pubg/profile/steam/GmI_rabbit" target="_blank" rel="noopener">전적 dak.gg</a><a href="https://ch.sooplive.co.kr/kyupab1122" target="_blank" rel="noopener">SOOP</a><a href="https://youtu.be/LkHHjpjKQbU" target="_blank" rel="noopener">매드무비</a></div>
         </article>
+      </div>
+    </div>
+  </section>
 
+  <!-- 4. 커리큘럼 — 단계마다 이런 분께 · 배우는 것 · 담당. 기간 · 티어 약속은 넣지 않는다.
+       원장 직강 4단계 이름은 사이트에 이미 있던 정본(구조화 데이터 「주도권→우선순위→포지션→강제」) -->
+  <section class="sec" id="curriculum" aria-labelledby="curH">
+    <div class="wrap">
+      <div class="eyebrow">Curriculum</div>
+      <h2 class="sec-h" id="curH">무엇을 배우나요</h2>
+      <p class="sec-sub">레벨 테스트에서 시작 단계를 정하고 아래 순서로 올라가요</p>
+      <ol class="road">
+        <li class="stage">
+          <div class="st-n"><span class="num">00</span></div>
+          <div class="st-body">
+            <div class="st-top"><h3>레벨 테스트</h3><span class="tag">60~90분 · 20,000원</span></div>
+            <dl class="st-meta"><div><dt>이런 분께</dt><dd>처음 오는 모든 분</dd></div><div><dt>담당</dt><dd>원장 또는 트레이너</dd></div></dl>
+            <ul class="learn"><li>다시보기 2개 이상으로 플레이와 습관 보기</li><li>교전 디테일과 자주 무너지는 장면 짚기</li><li>레슨 · 원장 직강 중 시작 단계 정하기</li></ul>
+          </div>
+        </li>
+        <li class="stage">
+          <div class="st-n"><span class="num">01</span></div>
+          <div class="st-body">
+            <div class="st-top"><h3>레슨 · 손 만들기</h3><span class="tag">판 단위</span></div>
+            <dl class="st-meta"><div><dt>이런 분께</dt><dd>다이아 2 · 300딜 이하, 교전에서 먼저 쓰러지는 분</dd></div><div><dt>담당</dt><dd>현태 · 준구 트레이너</dd></div></dl>
+            <ul class="learn"><li>연습 모드 소규모 교전과 피킹</li><li>투척물과 차량</li><li>라인전</li></ul>
+          </div>
+        </li>
+        <li class="stage">
+          <div class="st-n"><span class="num">02</span></div>
+          <div class="st-body">
+            <div class="st-top"><h3>레슨 · 실전(일반 게임 · 경쟁전)</h3><span class="tag">판 단위</span></div>
+            <dl class="st-meta"><div><dt>이런 분께</dt><dd>손은 붙었는데 실전 교전에서 무너지는 분</dd></div><div><dt>담당</dt><dd>트레이너 · 그룹 또는 개인 레슨</dd></div></dl>
+            <p class="st-sub">현태 트레이너의 약속 6개</p>
+            <ol class="promise">
+              <li><span class="pn">1</span>투척은 전부 1층 클리어<a class="pv" href="https://youtu.be/F-Z8zsBLkxY" target="_blank" rel="noopener">영상 보기</a></li>
+              <li><span class="pn">2</span>연막은 입구 전까지 · 수비는 1층부터<a class="pv" href="https://youtu.be/KpjgYVTKYAQ" target="_blank" rel="noopener">영상 보기</a></li>
+              <li><span class="pn">3</span>베란다 집은 계단 먼저<span class="lock">회원 먼저 공개</span></li>
+              <li><span class="pn">4</span>줌 켜고 쏘기<span class="lock">회원 먼저 공개</span></li>
+              <li><span class="pn">5</span>10m는 게이지 세 칸 · 멀리는 던지고 점프<span class="lock">회원 먼저 공개</span></li>
+              <li><span class="pn">6</span>전진할 땐 섬광탄<span class="lock">회원 먼저 공개</span></li>
+            </ol>
+          </div>
+        </li>
+        <li class="stage">
+          <div class="st-n"><span class="num">03</span></div>
+          <div class="st-body">
+            <div class="st-top"><h3>원장 직강</h3><span class="tag">회 단위 · 8회 · 1회 3시간</span></div>
+            <dl class="st-meta"><div><dt>이런 분께</dt><dd>레벨 테스트에 합격했거나 레슨을 마친 분</dd></div><div><dt>담당</dt><dd>이무리 원장 · 같은 실력대 3명</dd></div></dl>
+            <ul class="learn"><li>주도권</li><li>우선순위</li><li>포지션</li><li>강제</li></ul>
+          </div>
+        </li>
+      </ol>
+      <p class="goal">목표는 마스터 · 서바이버예요. 얼마나 걸릴지는 레벨 테스트에서 지금 실력을 보고 같이 정해요</p>
+    </div>
+  </section>
+
+  <!-- 5. 성장 기록 — GET /api/progress-public(전적 스냅샷 원장 · 상위 상승 순 · 닉 마스킹) -->
+  <section class="sec tint" id="growth" aria-labelledby="growthH">
+    <div class="wrap">
+      <div class="eyebrow">Growth Record</div>
+      <h2 class="sec-h" id="growthH">수강 전 → 달성, 전적 그대로</h2>
+      <div class="g-card">
+        <div id="growthBody" aria-busy="true"><div class="sk" aria-hidden="true"><div class="sk-feat"><i></i><i></i></div><i></i><i></i><i></i></div><p class="sr">기록을 불러오고 있어요</p></div>
+        <a class="link more" href="gmi-progress.html">성장 기록 전체 보기</a>
       </div>
     </div>
   </section>
@@ -703,6 +675,7 @@ html.vr-lock{overflow:hidden}
     <p>© 2026 MRI ACADEMY</p>
   </div>
 </footer>
+
 
 <script>
 // 소개 영상 — 폭으로 가로(data-h) · 세로(data-v) 를 고르고, 불러오면 칸을 연다. 못 불러오면 다른 쪽을 한 번 더 시도하고, 그래도 안 되면 숨긴 채 둔다
@@ -930,6 +903,29 @@ html.vr-lock{overflow:hidden}
   window.addEventListener("hashchange", function(){ if (location.hash === "#vip") open(); });
   // 뒤로가기로 #vip 가 빠지면 룸을 닫는다(사이트를 떠나지 않게)
   window.addEventListener("popstate", function(){ if (room.open && location.hash !== "#vip") { pushed = false; room.close(); } });
+})();
+</script>
+<script>
+// 현태 실제 수업 영상 — 썸네일만 먼저, 누르면 그 자리에서 유튜브(nocookie) 재생. ID 는 허용 글자표로 다시 골라 만든다
+(function(){
+  var SAFE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+  document.querySelectorAll(".yt[data-yt]").forEach(function(box){
+    var raw = (box.getAttribute("data-yt") || "").trim(), id = "";
+    for (var i = 0; i < raw.length; i++) { var k = SAFE.indexOf(raw.charAt(i)); if (k < 0) { id = ""; break; } id += SAFE.charAt(k); }
+    if (id.length !== 11) { box.hidden = true; return; }
+    var btn = box.querySelector(".yt-play");
+    var th = document.createElement("img"); th.alt = ""; th.width = 480; th.height = 360; th.loading = "lazy";
+    th.src = "https://i.ytimg.com/vi/" + id + "/hqdefault.jpg"; th.onerror = function(){ th.remove(); };
+    btn.prepend(th);
+    btn.addEventListener("click", function(){
+      var f = document.createElement("iframe");
+      f.src = "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1&rel=0&playsinline=1";
+      f.title = (box.querySelector("figcaption") || {}).textContent || "수업 영상";
+      f.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
+      f.allowFullscreen = true;
+      btn.replaceWith(f);
+    });
+  });
 })();
 </script>
 </body>
