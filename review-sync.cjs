@@ -537,6 +537,13 @@ function createReviewSync(deps) {
     const b = v.since && Number.isFinite(Date.parse(v.since)) ? v.since : a;
     return Date.parse(b) > Date.parse(a) ? b : a;
   }
+  // 시험만(§9.46.14 · 11/11 총무 「운영 채널에는 아무것도 올리지 마」) — { on:true, only:[수강생 번호…] } 이면 그 수강생 복기 · 답만 거울에 태운다.
+  //   운영 수강생 행은 조회 단계에서 빠진다(잡기 · 「-」 표시도 안 함 → 나중에 정식으로 켜도 그대로 대상). only 가 비면 = 전부(정식).
+  async function mirrorOnly() {
+    const v = await opsGet(MIRROR_ON_KEY).catch(() => null);
+    const ids = Array.isArray(v?.only) ? v.only.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
+    return ids.length ? ids : null;
+  }
   async function channelFor(studentId) {
     const mp = await maps();
     const rows = [...mp.byCh.values()].filter((r) => r.kind === "student" && r.confirmed_at && Number(r.student_id) === Number(studentId))
@@ -621,8 +628,15 @@ function createReviewSync(deps) {
       const on = await mirrorSwitch();
       if (!on) return { off: true };
       const since = encodeURIComponent(on);
+      const only = await mirrorOnly();
+      const onlyRev = only ? `&student_id=in.(${only.join(",")})` : "";
+      let onlyFb = "";
+      if (only) {
+        const ids = (await sb.select("lesson_reviews", `select=id&student_id=in.(${only.join(",")})&limit=500`)).map((r) => Number(r.id));
+        onlyFb = `&review_id=in.(${ids.length ? ids.join(",") : "0"})`;
+      }
       const revs = await sb.select("lesson_reviews",
-        `select=id,student_id,title,body,visibility,mirror_msg&source=eq.app&status=eq.published&hidden_at=is.null`
+        `select=id,student_id,title,body,visibility,mirror_msg&source=eq.app&status=eq.published&hidden_at=is.null${onlyRev}`
         + `&visibility=in.(group,students)&published_at=gte.${since}&or=(mirror_msg.is.null,mirror_msg.eq.fail1)&order=id.asc&limit=${MIRROR_BATCH}`);
       for (const r of revs) {
         if ((await mirrorOne("lesson_reviews", r, async () => {
@@ -631,7 +645,7 @@ function createReviewSync(deps) {
         })) === "sent") out.reviews++;
       }
       const fbs = await sb.select("review_feedback",
-        `select=id,review_id,trainer_id,body,mirror_msg&src_msg=is.null&hidden_at=is.null&kind=in.(overall,task)`
+        `select=id,review_id,trainer_id,body,mirror_msg&src_msg=is.null&hidden_at=is.null&kind=in.(overall,task)${onlyFb}`
         + `&created_at=gte.${since}&or=(mirror_msg.is.null,mirror_msg.eq.fail1)&order=id.asc&limit=${MIRROR_BATCH}`);
       for (const f of fbs) {
         if ((await mirrorOne("review_feedback", f, async () => {
