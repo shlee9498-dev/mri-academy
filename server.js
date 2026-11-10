@@ -6074,6 +6074,7 @@ app.post("/api/apply", async (req, res) => {
         { name: "집중 교정", value: clip(b.focus, 100), inline: false },
         { name: "추천 트레이너", value: clip(b.trainer, 30) || "—", inline: true },
         { name: "성별", value: clip(b.gender, 10) || "—", inline: true },   // 생년월일 칸 제거(오너 §28 판정 2026-09-25 — 받지 않는다)
+        ...(b.friendRequested !== undefined ? [{ name: "🤝 e_muri 친구 추가", value: (b.friendRequested === true || b.friendRequested === "true") ? "보냈어요(신청자 체크)" : "아직(신청자 체크 안 함)", inline: true }] : []),   // §9.67 선택 칸
         { name: "💬 디스코드 아이디", value: clip(String(b.discord || "").trim(), 40) || "⚠️ 디스코드 아이디 없음 · 전화로 연락", inline: true },   // §9.66 — 연락처 위
         { name: "📞 연락처", value: clip(b.phone, 20) || "—", inline: true },
         { name: "🎟️ 할인코드", value: discountText, inline: true },
@@ -6186,7 +6187,9 @@ app.post("/api/apply", async (req, res) => {
         }),
       }).catch((e) => console.error("consult_sheet_error", e?.message));
     }
-    res.json(v2p ? { ok: true, depositDueAt: v2p.fields.deposit_due_at, consultNo: savedConsultId, depositorName: depositorCode } : { ok: true });
+    // 완료 화면 연락 길(§9.67) — 디코 초대 · 원장 디코 아이디(친구 추가) · 옛 화면에도 같이 실어 둔다(안 쓰면 무시)
+    res.json(v2p ? { ok: true, depositDueAt: v2p.fields.deposit_due_at, consultNo: savedConsultId, depositorName: depositorCode, contact: levelTestIntakeMod.CONTACT }
+      : { ok: true, contact: levelTestIntakeMod.CONTACT });
   } catch (e) {
     console.error("apply_error", e);
     res.status(500).json({ error: "server_error" });

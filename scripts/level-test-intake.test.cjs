@@ -89,3 +89,8 @@ test("상담을 마친 건(done · done_at)은 기한이 지나도 취소하지 
   assert.deepEqual(patches.map((p) => p.q.split("&")[0]), ["id=eq.9"]);
   assert.match(patches[0].q, /status=neq\.done&done_at=is\.null/);
 });
+
+test("완료 화면 연락 길(§9.67) — 초대 링크 · 원장 디코 아이디", () => {
+  assert.deepEqual(L.CONTACT, { discordInvite: "https://mriacademy.gg/discord", ownerDiscord: "e_muri" });
+  assert.ok(Object.isFrozen(L.CONTACT));
+});

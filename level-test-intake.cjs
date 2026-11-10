@@ -31,6 +31,9 @@ const ERROR_TEXT = {
   invalid_discord: "디스코드 아이디를 다시 확인해 주세요. 디스코드 설정의 「사용자명」을 그대로 적으면 돼요",
 };
 
+// 신청 완료 화면에 실을 연락 길(§9.67 · 오너 11/10 「신청접수할때나한테친추 주시는거까지」) — 값의 정본은 여기 하나(초대 = discord.html 이 현재 초대로 넘긴다)
+const CONTACT = Object.freeze({ discordInvite: "https://mriacademy.gg/discord", ownerDiscord: "e_muri" });
+
 // v2 신청인가 — 화면이 availWindows 를 보내면 v2(옛 화면은 그대로 옛 흐름)
 const isV2 = (b) => Array.isArray(b && b.availWindows);
 
@@ -130,4 +133,4 @@ function createLevelTestIntake(deps) {
   return { tick };
 }
 
-module.exports = { ERROR_TEXT, validDiscord, DUE_MS, TIERS, BLOCKS, isV2, parseV2, windowsText, playText, confirmedLine, createLevelTestIntake };
+module.exports = { CONTACT, ERROR_TEXT, validDiscord, DUE_MS, TIERS, BLOCKS, isV2, parseV2, windowsText, playText, confirmedLine, createLevelTestIntake };
