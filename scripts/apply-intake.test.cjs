@@ -50,13 +50,21 @@ test("티어 칩 값은 서버 8값 안 · 딜은 기준과 함께", () => {
   assert.equal(AI.damage("0", "normal").damageBasis, "normal");
 });
 
-test("연락처 한 칸 — 휴대폰 · 디코 중 하나만 채움 · 둘 다 비면 서버 contact_required", () => {
-  assert.deepEqual(AI.splitContact("010-1234-5678"), { phone: "010-1234-5678", discord: "" });
-  assert.deepEqual(AI.splitContact("mri_test"), { phone: "", discord: "mri_test" });
-  const p = AI.splitContact("01012345678");
-  assert.equal(LT.parseV2(base(p), NOW).error, "discord_required", "휴대폰만이면 §9.66 부터 거절");
-  assert.equal(LT.parseV2(base({ ...p, discord: "mri_test" }), NOW).error, undefined);
-  assert.equal(LT.parseV2(base({ discord: "", phone: "" }), NOW).error, "discord_required");   // §9.66(11/10) — 디코 아이디 필수 · 이 블록의 휴대폰만 칸 갈래는 사이트 주문으로 바뀐다
+test("디스코드 아이디 필수 · 휴대폰 선택 — 화면 판정 = 서버 validDiscord(§9.66)", () => {
+  const cases = ["e_muri", "@e_muri", "mri.test", "Name#1234", "ab", "a", "", "010-1234-5678", "01012345678", "has space", "x".repeat(33), "한글닉", "이름#1234", "a:b"];
+  for (const c of cases) assert.equal(AI.validDiscord(c), LT.validDiscord(c), JSON.stringify(c));
+  assert.equal(LT.parseV2(base({ discord: "", phone: "01012345678" }), NOW).error, "discord_required");
+  assert.equal(LT.parseV2(base({ discord: "01012345678" }), NOW).error, "invalid_discord");
+  assert.equal(LT.parseV2(base({ discord: "mri_test", phone: "" }), NOW).error, undefined);   // 휴대폰은 비워도 됨
+  assert.equal(LT.parseV2(base({ discord: "mri_test", phone: "010-1234-5678" }), NOW).error, undefined);
+});
+
+test("완료 화면 연락 길 — https 초대 주소만 · 서버 CONTACT 값이 화면 판정을 통과", () => {
+  assert.equal(AI.safeHttps(LT.CONTACT.discordInvite), LT.CONTACT.discordInvite);
+  assert.equal(AI.validDiscord(LT.CONTACT.ownerDiscord), true);
+  assert.equal(AI.safeHttps("javascript:alert(1)"), "");
+  assert.equal(AI.safeHttps("http://mriacademy.gg/discord"), "");
+  assert.equal(AI.safeHttps('https://x.y/"onmouseover'), "");
 });
 
 test("요일 · 시간대 키 = 서버 키", () => {
@@ -107,8 +115,8 @@ test("KST 날짜 — UTC 자정 근처에서도 KST 오늘", () => {
 
 test("apply.html 이 v2 칸 이름으로 보내고 서버 오류 키를 다 안다", () => {
   const html = HTML;
-  for (const k of ["bestTier", "avgDamage", "damageBasis", "playSlots", "availWindows", "discord: c.discord", "phone: c.phone"]) assert.ok(html.includes(k), k);
-  for (const k of ["contact_required", "invalid_tier", "invalid_damage", "invalid_play_slots", "invalid_avail"]) assert.ok(html.includes(k + ":"), k);
+  for (const k of ["bestTier", "avgDamage", "damageBasis", "playSlots", "availWindows", "friendRequested", 'name="discord"', 'name="phone"']) assert.ok(html.includes(k), k);
+  for (const k of ["discord_required", "invalid_discord", "invalid_tier", "invalid_damage", "invalid_play_slots", "invalid_avail"]) assert.ok(html.includes(k + ":"), k);
   assert.ok(SRC.length > 1000 && typeof AI.toWindows === "function");
   for (const d of AI.DAYS) assert.ok(html.includes(`name="playDay" value="${d}"`), d);
   for (const t of AI.TIERS) assert.ok(html.includes(`name="tierPick" value="${t}"`), t);
@@ -121,4 +129,10 @@ test("입금자명 = 서버가 준 depositorName 그대로 · 7일 환불 확정
   assert.ok(HTML.includes("신청 뒤 7일 안에 일정을 맞추지 못하면 20,000원을 전액 환불해요"));
   const doc = fs.readFileSync(path.join(ROOT, "docs/trainer-portal-api.md"), "utf8");
   assert.ok(doc.includes("신청 뒤 7일 안에 일정을 맞추지 못하면 20,000원을 전액 환불해요"), "계약 문장과 같다");
+});
+
+test("서버 사람 문구 = 화면 문구표(디코 두 줄) · 모르는 코드는 코드 글자 대신 문구", () => {
+  for (const [k, v] of Object.entries(LT.ERROR_TEXT)) assert.ok(HTML.includes(`${k}: "${v}"`), k);
+  assert.ok(!/ERRORS\[d\.error\] \|\| d\.error/.test(HTML), "코드 글자를 그대로 보여 주는 길이 없다");
+  assert.ok(HTML.includes("d.contact"), "완료 화면이 응답 contact 를 읽는다");
 });
