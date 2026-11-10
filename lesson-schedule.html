@@ -13,13 +13,14 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/wanted-sans@1.0.3/fonts/webfonts/variable/split/WantedSansVariable.css">
 <style>
 /* ── MRI 디자인 시스템 v1 · A "OLED Premium" ── */
 :root{
-  --bg:#0a0a0c; --surface-1:#15151a; --surface-2:#1a1a20;
-  --ink:#f4f4f5; --ink-dim:#c6c6cd; --ink-faint:#9b9ba4;
-  --gold:#f5c518; --gold-deep:#caa00f; --gold-soft:rgba(245,197,24,.3);
-  --line:#27272a;
+  --bg:#FBF6EF; --surface-1:#FFFFFF; --surface-2:#F4ECE1;
+  --ink:#1A1714; --ink-dim:#5A5047; --ink-faint:#776B60;
+  --gold:#A4551C; --gold-deep:#8A4516; --gold-soft:rgba(194,97,28,.42);
+  --line:#E6DACB;
   --display:'Saira Condensed','Pretendard Variable',sans-serif;      /* 영문·숫자 */
   --body:'Pretendard Variable',Pretendard,-apple-system,system-ui,sans-serif; /* 한글 */
 }
@@ -39,7 +40,7 @@ h1{font-size:clamp(26px,6vw,34px);font-weight:800;letter-spacing:-.02em;margin:8
 .tabrow .lbl{font-family:var(--display);font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--ink-faint);text-transform:uppercase;width:44px;flex:0 0 auto}
 .tab{font-family:var(--body);font-weight:700;font-size:13px;padding:8px 15px;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink-dim);cursor:pointer;transition:.15s}
 .tab:hover{border-color:var(--gold-soft);color:var(--ink)}
-.tab[aria-selected="true"]{background:rgba(245,197,24,.1);border-color:var(--gold-soft);color:var(--gold)}
+.tab[aria-selected="true"]{background:rgba(194,97,28,.1);border-color:var(--gold-soft);color:var(--gold)}
 .range{font-family:var(--display);color:var(--ink-faint);font-size:12.5px;font-weight:500;margin:12px 0 22px}
 
 /* 요일 그룹 */
@@ -51,7 +52,7 @@ h1{font-size:clamp(26px,6vw,34px);font-weight:800;letter-spacing:-.02em;margin:8
 
 /* 카드 */
 .card{background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px;transition:border-color .15s,transform .15s}
-.card:hover{border-color:#3a3a40}
+.card:hover{border-color:#DCCFBF}
 .card.recruit{border-color:var(--gold-soft)}
 .c1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .time{font-family:var(--display);font-size:16px;font-weight:700;letter-spacing:.01em}
@@ -67,32 +68,35 @@ h1{font-size:clamp(26px,6vw,34px);font-weight:800;letter-spacing:-.02em;margin:8
 .ask:hover{border-color:var(--gold-soft);color:var(--gold)}
 
 /* 모집중 뱃지 — 이 페이지의 유일한 골드 글로우 */
-.recruiting{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;color:#0a0a0c;background:var(--gold);border-radius:99px;padding:3px 10px}
+.recruiting{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;color:#fff;background:var(--gold);border-radius:99px;padding:3px 10px}
 @media (prefers-reduced-motion: no-preference){
   /* 글로우는 가장 임박한 1건에만 — 모집중이 여러 개여도 한 화면 1개 원칙(DESIGN.md)을 지킨다.
      자동 판정으로 전환하면서 뱃지 개수가 늘어나 이 제한이 필요해졌다. */
   .recruiting.lead{animation:glowpulse 2.6s ease-in-out infinite}
 }
 @keyframes glowpulse{
-  0%,100%{box-shadow:0 0 0 0 rgba(245,197,24,.0)}
-  50%{box-shadow:0 0 14px 1px rgba(245,197,24,.45)} /* impeccable-disable-line dark-glow -- 디자인 계약: 골드 글로우 한 화면 1개 = 모집중 뱃지 */
+  0%,100%{box-shadow:0 0 0 0 rgba(194,97,28,.0)}
+  50%{box-shadow:0 0 14px 1px rgba(194,97,28,.45)} /* impeccable-disable-line dark-glow -- 디자인 계약: 골드 글로우 한 화면 1개 = 모집중 뱃지 */
 }
 
 /* 빈 주 상태 */
 .empty{background:var(--surface-1);border:1px dashed var(--line);border-radius:14px;padding:44px 22px;text-align:center}
 .empty .em{font-size:30px;margin-bottom:12px;opacity:.6}
 .empty p{color:var(--ink-dim);font-size:14px;line-height:1.7;margin-bottom:18px}
-.empty .cta{display:inline-block;font-weight:800;font-size:14px;color:#0a0a0c;background:linear-gradient(135deg,var(--gold),var(--gold-deep));border-radius:9px;padding:12px 22px;text-decoration:none}
+.empty .cta{display:inline-block;font-weight:800;font-size:14px;color:#fff;background:linear-gradient(135deg,var(--gold),var(--gold-deep));border-radius:9px;padding:12px 22px;text-decoration:none}
 
 .note{color:var(--ink-faint);font-size:12px;line-height:1.7;margin-top:26px;text-align:center}
 .back{display:inline-block;margin-top:14px;color:var(--gold);text-decoration:none;font-weight:700;font-size:13.5px}
 
 /* 하단 고정 신청 바 */
-.applybar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(10,10,12,.86);backdrop-filter:saturate(140%) blur(8px);border-top:1px solid var(--line)}
+.applybar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(251,246,239,.94);backdrop-filter:saturate(140%) blur(8px);border-top:1px solid var(--line)}
 .applybar .in{max-width:720px;margin:0 auto;padding:12px 18px calc(12px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:12px}
 .applybar .txt{flex:1;min-width:0;font-size:13px;color:var(--ink-dim)}
 .applybar .txt b{color:var(--ink)}
-.applybar a{flex:0 0 auto;font-weight:800;font-size:14px;color:#0a0a0c;background:linear-gradient(135deg,var(--gold),var(--gold-deep));border-radius:9px;padding:12px 20px;text-decoration:none;white-space:nowrap}
+.applybar a{flex:0 0 auto;font-weight:800;font-size:14px;color:#fff;background:linear-gradient(135deg,var(--gold),var(--gold-deep));border-radius:9px;padding:12px 20px;text-decoration:none;white-space:nowrap}
+/* 밝은 톤(10/21 B3 · 오너 11/11) — 바탕 크림 · 강조 주황 · 제목 Wanted Sans · 검은 바탕 없음 */
+:root{color-scheme:light}
+h1,h2,h3{font-family:'Wanted Sans Variable','Pretendard Variable',Pretendard,sans-serif}
 </style>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
 </head>

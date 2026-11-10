@@ -15,12 +15,13 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" />
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/wanted-sans@1.0.3/fonts/webfonts/variable/split/WantedSansVariable.css">
 <style>
 :root{
-  --bg:#0a0a0c; --bg-card:#1a1a20; --bg-elev:#20202a;
-  --ink:#f4f4f5; --ink-dim:#a1a1aa; --ink-faint:#71717a;
-  --gold:#f5c518; --gold-soft:rgba(245,197,24,.3); --gold-deep:#caa00f;
-  --green:#10b981; --blue:#5ac8fa; --red:#e63946; --line:#27272a;
+  --bg:#FBF6EF; --bg-card:#FFFFFF; --bg-elev:#F4ECE1;
+  --ink:#1A1714; --ink-dim:#5A5047; --ink-faint:#776B60;
+  --gold:#A4551C; --gold-soft:rgba(194,97,28,.42); --gold-deep:#8A4516;
+  --green:#0F7A55; --blue:#1F6FA8; --red:#9A3B12; --line:#E6DACB;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
@@ -32,7 +33,7 @@ body{
 body::before{
   content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
   background:
-    radial-gradient(900px 500px at 50% -10%, rgba(245,197,24,.10), transparent 70%);
+    radial-gradient(900px 500px at 50% -10%, rgba(194,97,28,.10), transparent 70%);
 }
 .wrap{position:relative; z-index:1; max-width:1080px; margin:0 auto; padding:48px 20px 80px}
 .top{text-align:center; margin-bottom:14px}
@@ -57,6 +58,9 @@ h1 .em{color:var(--gold)}
 .back{display:inline-block; margin-top:40px; color:var(--ink-dim); text-decoration:none; font-size:.9rem}
 .back:hover{color:var(--gold)}
 footer{text-align:center; color:var(--ink-faint); font-size:.78rem; margin-top:48px}
+/* 밝은 톤(10/21 B3 · 오너 11/11) — 바탕 크림 · 강조 주황 · 제목 Wanted Sans · 검은 바탕 없음 */
+:root{color-scheme:light}
+h1,h2,h3{font-family:'Wanted Sans Variable','Pretendard Variable',Pretendard,sans-serif}
 </style>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="12a35ed9-1619-4484-8ad7-7fb7b1dfe52d"></script>
 </head>
