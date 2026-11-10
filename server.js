@@ -68,6 +68,7 @@ let killPoster = null; // 킬내기 결과 포스터 — 아래 킬내기 HTTP �
 const payreqIntake = require("./payreq-intake.cjs");
 // 상담 · 레벨 테스트 신청서 「어디서 보고 오셨어요?」 선택지(apply.html 과 한 벌 · 오너 10/19)
 const inflowMod = require("./inflow.cjs");
+const morningDigest = require("./morning-digest.cjs");   // 아침 보고 2종 — 어제와 달라진 것만(11-11)
 const levelTestIntakeMod = require("./level-test-intake.cjs");
 const bankMatchMod = require("./bank-match.cjs");   // 입금자명 번호(§9.64.3)
 const bpiTextMod = require("./bpi-text.cjs");   // 웹 신청 BPI 줄 경쟁전 · 일반 나눔(계약 §9.64.7)   // 레벨 테스트 신청 v2(계약 §9.64)
@@ -8576,35 +8577,17 @@ async function runStatsSnapshot() {
     statsRun.promoDelivery = promoDelivery;
     if (botClient && process.env.MRI_OWNER_ID) {
       try {
-        const owner = await botClient.users.fetch(process.env.MRI_OWNER_ID);
-        const cand = statsRun.candidates.length
-          ? statsRun.candidates.map((c) => `· ${c.student} (${c.trainer || "미배정"} · ${c.cand_label || c.tier})`).join("\n")
-          : "없음";
-        const nick = statsRun.nickChanges.length
-          ? statsRun.nickChanges.map((n) => `· ${n.student}: ${n.from} → ${n.to}`).join("\n")
-          : "없음";
-        const invest = statsRun.needsInvestigation.length
-          ? statsRun.needsInvestigation.map((i) => `· ${i.student} — ${i.reason}`).join("\n")
-          : "없음";
-        // 확정(마스터)과 미확정(서바이버 구간)을 **섹션으로 갈라** 적는다 — 한 줄 안에서
-        // 아이콘으로만 구분하면 훑어볼 때 같은 등급으로 읽힌다(지시 2).
-        const fixed = statsRun.promotions.filter((p) => !p.provisional);
-        const prov  = statsRun.promotions.filter((p) => p.provisional);
-        const pLine = (p) => `· ${p.student} #${p.student_id} · ${p.prev_tier} → ${p.cur_tier}`
-          + ` · DM ${p.dm === "발송" ? `✅ ${p.dm_trainer}` : `❌ ${p.dm || "미발송"}${p.dm_trainer ? ` (${p.dm_trainer})` : ""}`}`;
-        const promo = statsRun.promotions.length
-          ? [fixed.length ? `🎖️ 확정(마스터+)\n${fixed.map(pLine).join("\n")}` : "",
-             prov.length ? `⚡ 서바이버 구간 진입 — 시즌 중·확정 아님\n${prov.map(pLine).join("\n")}` : ""].filter(Boolean).join("\n\n")
-          : "없음";
-        await owner.send(`📊 전적 스냅샷 완료 — 연동 ${rated.length}명 조회${statsRun.insertFails ? `\n⚠️ DB 적재 실패 ${statsRun.insertFails}건 — ${statsRun.insertFailMsg}` : ""}\n`
-          + `마스터+ 달성률: **${statsRun.masterRate}%** (${mp}/${rated.length}) — 연동 ${rated.length}명 기준\n`
-          + `　↳ 전체 지표가 아닙니다(사내 전용 · 사이트·홍보 사용 금지)\n`
-          + `🔗 미연동 active 학생 **${statsRun.unlinkedActive}명** ← 조치 대상 (전체 미연결 ${statsRun.unlinked}명 · 수료·중지 포함)\n\n`
-          + `🆙 승급 감지(직전 대비):\n${promo}`
-          + `${statsRun.promotionsExcluded ? `\n(수료·중지 ${statsRun.promotionsExcluded}명은 승급 판정에서 제외)` : ""}\n\n`
-          + `승급 후보(미등록 마스터+):\n${cand}`
-          + `${statsRun.candidatesExcluded ? `\n(수료·중지 ${statsRun.candidatesExcluded}명 제외 — 달성률 분자에는 그대로 남습니다)` : ""}\n\n`
-          + `🔄 닉변 감지(이력 기록됨):\n${nick}\n\n🔍 수동 조사 필요(dak.gg):\n${invest}\n\n전체 리포트: GET /api/admin/stats/report`);
+        // 「매일 오는 똑같은 전단지」 → 어제와 달라진 것만(총무 11-11). 수집 · 리포트는 그대로 매일 돈다.
+        // 승급 · 닉변 · 새 후보 · 새 수동 조사가 없으면 보내지 않고, 고정 숫자는 월요일 한 줄로만.
+        const prevDigest = await opsStateGet("digest:stats");
+        const dg = morningDigest.statsDigest(statsRun, prevDigest, { monday: morningDigest.kstMonday() });
+        statsRun.digest = { sent: !!dg.text, ...dg.counts };
+        if (dg.text) {
+          const owner = await botClient.users.fetch(process.env.MRI_OWNER_ID);
+          for (const part of morningDigest.chunks(dg.text)) await owner.send(part);
+        } else console.log("[cron] stats: 달라진 것 없음 — 침묵");
+        // 보낸 뒤에 기억한다 — DM 이 실패하면 내일 같은 소식을 다시 낸다.
+        await opsStateSet("digest:stats", { ...dg.state, at: new Date().toISOString() });
       } catch (e) { console.error("stats_owner_dm", e?.message); }
     }
   } catch (e) { console.error("stats_batch", e?.message); statsRun.error = e?.message || "batch_error"; }
@@ -9786,19 +9769,20 @@ async function runDirectStatus() {
       + (db.attendRows === 0 ? `\n\n※ course_attendance 0행 — 강의 진행이 DB에 아직 없어 전원 "미소진"으로 나옵니다. courses 시드는 STEP C로 완료(15행) — STEP D 백필(course_sessions·course_attendance, 오너 추출본 대기)이 끝나야 대조가 맞습니다.` : "")
       + `\n같은 내용은 ${DIRECT_WARN_REPEAT_DAYS}일간 다시 보내지 않습니다.`);
   }
-  const lowLec = lecSuppressed ? []
-    : db.lectures.filter((r) => r.remain >= 0 && r.remain <= DIRECT_LOW).sort((a, b) => a.remain - b.remain);
-  const lowLes = db.lessons.filter((r) => r.remain >= 0 && r.remain <= DIRECT_LOW).sort((a, b) => a.remain - b.remain);
-  if (!lowLec.length && !lowLes.length) { console.log("[cron] direct_status: 발송 대상 없음 — 침묵"); return; }
-  const secLec = lowLec.length
-    ? `\n[강의 잔여회차]\n${lowLec.map((r) => `${r.remain <= 0 ? "⚠️ " : "· "}${r.name} #${r.id}: 잔여 ${r.remain}회 (수강 ${r.used}/${r.total})`).join("\n")}` : "";
-  const secLes = lowLes.length
-    ? `\n[레슨 잔여판수]\n${lowLes.map((r) => `${r.remain <= 0 ? "⚠️ " : "· "}${r.name} #${r.id}: 잔여 ${r.remain}판 (진행 ${r.used}/${r.granted})`).join("\n")}` : "";
-  // 정상 알림도 서명 기반으로 억제한다 — 같은 목록이 매일 오면 읽지 않게 되고, 그때부터
-  // 이 알림은 없는 것과 같다(변화가 있으면 서명이 바뀌어 즉시 다시 나간다).
-  const sent = await warnOnce("direct:low", secLec + secLes,
-    `🎓 잔여 알림 (≤${DIRECT_LOW} · 정본=DB${sheet && !diffs.length ? " · 시트 대조 일치" : ""})${secLec}${secLes}`);
-  console.log(`[cron] direct_status: 강의 ${lowLec.length}·레슨 ${lowLes.length} — ${sent ? "발송" : "중복 억제"}`);
+  // 「전원을 매일」 → 「그날 새로 2판 이하가 된 사람만」(총무 11-11). 어제 본 값은 ops_state digest:remain.
+  // 0판은 0이 된 날 1번만. 월요일에만 전체 목록(재결제 안내용 · 수료·중지는 remainFromDB 가 이미 뺐다).
+  const prevRemain = await opsStateGet("digest:remain");
+  const prevMap = prevRemain && prevRemain.map ? prevRemain.map : null;
+  const rows = [
+    ...(lecSuppressed ? [] : morningDigest.markRepaid(db.lectures.map((r) => ({ ...r, axis: "lec" })))),
+    ...db.lessons.map((r) => ({ ...r, axis: "les" })),
+  ];
+  const dg = morningDigest.remainDigest(rows, prevMap, { monday: morningDigest.kstMonday() });
+  // 강의 축이 시트 불일치로 보류된 날은 어제 기억을 그대로 넘긴다 — 안 그러면 보류가 풀리는 날 전원이 「새로」가 된다.
+  if (lecSuppressed && prevMap) for (const [k, v] of Object.entries(prevMap)) if (k.startsWith("lec:")) dg.state[k] = v;
+  if (dg.text) for (const part of morningDigest.chunks(`${dg.text}\n(정본=DB${sheet && !diffs.length ? " · 시트 대조 일치" : ""}${lecSuppressed ? " · 강의 축 보류 중" : ""})`)) await ownerDM(part);
+  await opsStateSet("digest:remain", { map: dg.state, at: new Date().toISOString() });
+  console.log(`[cron] direct_status: ≤${DIRECT_LOW} ${dg.counts.low}명 · 새로 ${dg.counts.fresh}명 — ${dg.text ? "발송" : (dg.counts.baseline ? "기준선만" : "침묵")}`);
 }
 // 직강 기록 정체 감지 — 잔여가 아니라 "누적 수강회차가 안 늘어난 기간"을 본다.
 // 위 runDirectStatus는 잔여≤2인 사람만 알린다. 그런데 기록이 통째로 멈추면 잔여가
