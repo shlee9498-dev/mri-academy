@@ -70,3 +70,18 @@ test("tick — 입금 확인 → 신청 완료 + DM 한 번 · 48시간 지나�
   assert.equal(exp.body.intake_state, "expired"); assert.equal(exp.body.status, "cancelled");
   assert.ok(!patches.some((p) => p.q.startsWith("id=eq.3")));
 });
+
+test("상담을 마친 건(done · done_at)은 기한이 지나도 취소하지 않는다(§9.64.2 보완)", async () => {
+  const rows = [
+    { id: 7, status: "done", done_at: "2026-11-08T13:00:00Z", paid_status: "unpaid", intake_state: "awaiting_deposit", deposit_due_at: "2026-11-09T00:00:00Z" },
+    { id: 8, status: "scheduled", done_at: "2026-11-08T13:00:00Z", paid_status: "unpaid", intake_state: "awaiting_deposit", deposit_due_at: "2026-11-09T00:00:00Z" },
+    { id: 9, status: "scheduled", done_at: null, paid_status: "unpaid", intake_state: "awaiting_deposit", deposit_due_at: "2026-11-09T00:00:00Z" },
+  ];
+  const patches = [];
+  const t = L.createLevelTestIntake({ now: () => NOW, log: { log() {}, error() {} }, ownerDiscordId: "o",
+    sbSelect: async () => rows, sbInsert: async () => ({}), dm: async () => {},
+    sbPatch: async (tbl, q, body) => { patches.push({ q, body }); return [{}]; } });
+  assert.deepEqual(await t.tick(), { rows: 3, confirmed: 0, expired: 1 });
+  assert.deepEqual(patches.map((p) => p.q.split("&")[0]), ["id=eq.9"]);
+  assert.match(patches[0].q, /status=neq\.done&done_at=is\.null/);
+});
