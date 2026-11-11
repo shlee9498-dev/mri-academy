@@ -396,9 +396,9 @@ test("B — 틱이 DM 을 보내는 사이 버튼 답이 와도 「답함」이 
 });
 
 test("등록 서버 — MRI ACADEMY(GUILD_ID) · GmI(LESSON_GUILD_ID) 둘 다 · 같은 값이면 한 번 · 없으면 뺀다", () => {
-  assert.deepEqual(guildTargets({ GUILD_ID: "111", LESSON_GUILD_ID: "222" }), ["111", "222"]);
+  assert.deepEqual(guildTargets({ GUILD_ID: "111", LESSON_GUILD_ID: "222" }), ["111"]);   // GmI 는 클랜 전용(§9.69.4)
   assert.deepEqual(guildTargets({ GUILD_ID: "111", LESSON_GUILD_ID: "111" }), ["111"]);
-  assert.deepEqual(guildTargets({ LESSON_GUILD_ID: "222" }), ["222"]);
+  assert.deepEqual(guildTargets({ LESSON_GUILD_ID: "222" }), []);
   assert.deepEqual(guildTargets({}), []);
 });
 
