@@ -1503,6 +1503,8 @@ if (process.env.DISCORD_TOKEN) {
   client.on("messageUpdate", (_old, msg) => { if (reviewSync && msg?.guildId) reviewSync.onUpdate(msg); });
   client.on("messageDelete", (msg) => { if (reviewSync && msg?.guildId) reviewSync.onDelete(msg); });
   client.once("clientReady", () => { if (killShot) killShot.checkChannel(client); });
+  // 채널 주소 점검(11/12 트레이너 채널 이전 마무리) — env 가 가리키는 채널을 「#이름 (서버)」로만 로그. 읽기만 · 값은 안 남긴다
+  client.once("clientReady", () => { setTimeout(() => require("./channel-map.cjs").channelMap({ env: process.env, client }).catch((e) => console.error("[channel-map]", e?.message)), 20_000); });
 
   const isStaff = (id) => STAFF_IDS.includes(id);
 
