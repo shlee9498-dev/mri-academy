@@ -8855,6 +8855,14 @@ const siteIntakeMod = require("./site-intake.cjs");
       setInterval(runLt, 60_000).unref?.();
       const runDm = () => intakeDm.tick().catch((e) => console.error("[intake-dm] tick", e?.status || e?.message));
       setInterval(runDm, 60_000).unref?.();
+      // 유비서 복기 DM 2종(§9.72) — 스위치 ops_state 'review_dm:on'(행 없음 = 꺼짐 · only = 시험 수강생만) · 5분마다
+      const reviewDm = require("./review-dm.cjs").createReviewDm({
+        sbSelect, getClient: () => botClient, appUrl: STUDENT_APP_URL, opaqueId: (k, id) => studentPortal.opaqueId(k, id),
+        opsGet: opsStateGet, opsSet: opsStateSet,
+      });
+      if (botClient) botClient.on("interactionCreate", (itx) => reviewDm.handle(itx).catch((e) => console.error("[review-dm] button", e?.status || e?.message)));
+      const runReviewDm = () => reviewDm.tick().catch((e) => console.error("[review-dm] tick", e?.status || e?.message));
+      setInterval(runReviewDm, 5 * 60_000).unref?.();
       if (botClient && process.env.GUILD_ID) {
         botClient.on("guildMemberAdd", (m) => {
           if (String(m.guild?.id) !== String(process.env.GUILD_ID)) return;
