@@ -8,7 +8,7 @@
 // ⚠️ 연락처(phone)는 싣지 않는다. 본명 · 닉은 이 채널(트레이너 채널 · 오너 규칙)에서만 쓴다 — 로그에는 #번호만.
 const crypto = require("crypto");
 
-const CHANNEL_ID = "1499664308454555738";        // 「#상담일정-공유」 · GmI 서버(trainer-bot CONSULT_CARD_CHANNEL_ID 와 같은 값 · #645)
+const CHANNEL_ID = "1570174065690550273";        // 「#상담일정-공유」 · MRI ACADEMY 서버 「트레이너 운영」(11/12 GmI 에서 이전 · trainer-bot CONSULT_CARD_CHANNEL_ID 와 같은 값)
 const MANUAL = "manual";                         // 표식 — 손으로 이미 올린 건(봇이 새로 안 올린다) · channel_msg_id 는 유일 칸이라 「manual:번호」 · calendar_event_id 는 「manual」
 const isManual = (v) => typeof v === "string" && (v === MANUAL || v.startsWith(MANUAL + ":"));
 const POSTING = (id) => `posting:${id}`;           // 올리는 중 표식(유일 칸 · 상담마다 다르게)

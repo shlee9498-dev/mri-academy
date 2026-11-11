@@ -551,7 +551,7 @@ test("한 줄 채널 점검 — 못 찾음 · 권한 부족 이름 · OK", async
 
 test("상담 카드 채널 점검 — 6개 권한 · 스레드 · 링크 첨부 부족 이름 · 「메시지 관리」는 안 봄", async () => {
   const { channelCheck, CONSULT_CARD_CHANNEL_ID, CONSULT_CARD_PERMS } = require("../trainer-bot.cjs");
-  assert.equal(CONSULT_CARD_CHANNEL_ID, "1499664308454555738");
+  assert.equal(CONSULT_CARD_CHANNEL_ID, "1570174065690550273");
   const client = (ch) => ({ options: { intents: { has: () => true } }, channels: { fetch: async () => ch } });
   const mk = (have) => ({ name: "상담일정-공유", guild: { name: "MRI ACADEMY", members: { me: {} } }, permissionsFor: () => ({ has: (k) => have.includes(k) }) });
   const base = ["ViewChannel", "SendMessages", "ReadMessageHistory"];

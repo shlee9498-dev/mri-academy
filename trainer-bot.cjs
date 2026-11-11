@@ -1014,7 +1014,7 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
 const CHANNEL_PERMS = [["ViewChannel", "채널 보기"], ["SendMessages", "메시지 보내기"], ["ReadMessageHistory", "메시지 기록 보기"]];
 // 「#상담일정-공유」 — 상담 일정 카드 게시 채널(계약 trainer-portal-api §9.51.12 · 오너 11/2 「1499664308454555738 채널id임」). 비밀값이 아니라 상수.
 //   카드 = 봇 글 1개를 상태마다 고침(자기 글 고치기는 권한 불필요) · 카드 밑 스레드에 상담 보고 → 아래 6개가 든다. 「메시지 관리」는 필요 없다.
-const CONSULT_CARD_CHANNEL_ID = "1499664308454555738";
+const CONSULT_CARD_CHANNEL_ID = "1570174065690550273";   // 11/12 MRI ACADEMY 서버로 이전(옛 GmI 채널 1499664308454555738 은 읽기 전용)
 const CONSULT_CARD_PERMS = [...CHANNEL_PERMS, ["EmbedLinks", "링크 첨부"], ["CreatePublicThreads", "공개 스레드 만들기"], ["SendMessagesInThreads", "스레드에서 메시지 보내기"]];
 async function channelCheck(client, id, label = "채널 한 줄", need = CHANNEL_PERMS) {
   let ch;

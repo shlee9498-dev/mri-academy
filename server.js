@@ -1443,7 +1443,12 @@ if (process.env.DISCORD_TOKEN) {
       // (유저 옵션은 그 길드 멤버만 고를 수 있다). 권한은 길드가 아니라 staff 명부 기준이라
       // 어느 길드에서 실행해도 같은 규칙이 돈다.
       // /역할군신청(회원) 은 MRI ACADEMY 서버(GUILD_ID) 목록 맨 뒤 — 설계 §2
-      const mainCmds = [...(splitLesson ? cmds : [...cmds, LESSON_CMD, CORRECTION_CMD]), ...LINK_CMDS, roleEvent.APPLY_CMD];
+      // 트레이너 운영 채널이 MRI ACADEMY 서버로 옮겨왔다(총무 11/12 · 오너 「클랜 관련만 GmI」). 수업 계열 4종
+      // (/수업등록 · /판수정정 · /수강생등록 · /결제신청)을 메인 길드에도 둔다. GmI 목록(registerLessonCmd)은
+      // 그대로 — 킬내기 · /등록계가 거기 남고, LESSON_CHANNEL_ID 를 MRI #수업등록으로 바꾸기 전까지 옛 채널도 돈다.
+      const payreqMain = process.env.BOT_PAYREQ === "1" ? [PAYREQ_CMD] : [];
+      const lessonMain = splitLesson ? [LESSON_CMD, CORRECTION_CMD, STUDENT_CMD, ...payreqMain] : [LESSON_CMD, CORRECTION_CMD];
+      const mainCmds = [...cmds, ...lessonMain, ...LINK_CMDS, roleEvent.APPLY_CMD];
       if (process.env.GUILD_ID) await client.application.commands.set(mainCmds, process.env.GUILD_ID);
       else await client.application.commands.set(mainCmds);
       console.log(`slash commands registered (main guild ${process.env.GUILD_ID || "global"}):`, mainCmds.map((c) => c.name).join(", "));
