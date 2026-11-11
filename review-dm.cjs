@@ -2,7 +2,7 @@
 // ═══════════════ 유비서 복기 DM 2종 — 수업 끝 「한 줄 쓸래요?」 · 트레이너 답 「답했어요」 (계약 §9.72 · 2026-11-12 · 총무 주문 · 오너 「추천안대로 진행해」) ═══════════════
 // 스위치 = ops_state 'review_dm:on' { on, only:[수강생 번호] } — 행 없음 = 꺼짐 · only 가 있으면 그 수강생에게만(시험).
 // 상태 = ops_state 'review_dm:state' { students: { sid: { day, passes, restWeek, stop, intro } }, cursor: { session, fb } }
-// 시험 = ops_state 'review_dm:test' { id, sid, kind: "lesson"|"answer" } — 스위치의 only 안 수강생에게만 견본 1통.
+// 시험 = ops_state 'review_dm:test' { id, sid, kind: "lesson"|"answer", to?: "owner" } — 스위치의 only 안 수강생 또는 원장 DM 에만 견본 1통.
 // 판수 · 결제와 무관. 로그에는 번호만(이름 · 디코 id 없음). 수강생 이름은 DM 본문에도 쓰지 않는다.
 const ON_KEY = "review_dm:on";
 const STATE_KEY = "review_dm:state";
@@ -65,7 +65,7 @@ function onButton(st, action, nowMs) {
   return { st: s, reply: TEXT.pass };
 }
 
-// deps: sbSelect · opsGet · opsSet · getClient() · opaqueId(kind,id) · appUrl · now · log
+// deps: sbSelect · opsGet · opsSet · getClient() · opaqueId(kind,id) · appUrl · ownerDiscordId · now · log
 function createReviewDm(deps) {
   const { sbSelect, opsGet, opsSet } = deps;
   const now = deps.now || (() => Date.now());
@@ -143,15 +143,17 @@ function createReviewDm(deps) {
     const done = await opsGet(TEST_DONE_KEY).catch(() => null);
     if (done && done.id === req.id) return;
     const sid = Number(req.sid);
-    const allowed = sw && Array.isArray(sw.only) && sw.only.map(Number).includes(sid);
+    // to: "owner" = 견본을 원장 DM 으로(시험 계정 디코가 MRI 서버 밖이면 봇이 못 보낸다 · 11/12 실측 50278) · 수강생에게는 안 간다
+    const toOwner = req.to === "owner" && !!deps.ownerDiscordId;
+    const allowed = toOwner || (sw && Array.isArray(sw.only) && sw.only.map(Number).includes(sid));
     let ok = false;
     if (allowed) {
-      const dc = await discordOf([sid]);
+      const dc = toOwner ? new Map([[sid, deps.ownerDiscordId]]) : await discordOf([sid]);
       const msg = req.kind === "answer" ? answerMessage({ trainer: "현태", viewUrl: viewUrl(1) }) : lessonMessage({ sid, writeUrl: writeUrl(null), intro: true });
       ok = await send(dc.get(sid), msg);
     }
     await opsSet(TEST_DONE_KEY, { id: req.id, ok, allowed: !!allowed, at: new Date(now()).toISOString() });
-    log.log(`[review-dm] 시험 ${req.kind || "lesson"} #${sid} — ${allowed ? (ok ? "보냄" : "못 보냄") : "only 밖이라 안 보냄"}`);
+    log.log(`[review-dm] 시험 ${req.kind || "lesson"} ${toOwner ? "→ 원장 DM" : `#${sid}`} — ${allowed ? (ok ? "보냄" : "못 보냄") : "only 밖이라 안 보냄"}`);
   }
 
   async function handle(itx) {

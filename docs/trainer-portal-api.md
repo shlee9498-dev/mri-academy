@@ -5434,6 +5434,6 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 ### 9.72.4 스위치 · 기억 · 시험
 - 스위치 = ops_state `review_dm:on` `{ "on": true, "only": [시험 수강생 번호] }` — **행 없음 = 꺼짐**. `only` 가 있으면 그 수강생에게만 간다. **운영 켜기(only 빼기)는 오너가 이 절의 문구를 본 뒤.**
 - 기억 = ops_state `review_dm:state`(수강생별 마지막 날 · 연속 패스 · 쉬는 주 · 그만 · 첫 통 여부 · 읽은 위치). 로그에는 번호만.
-- 시험 = ops_state `review_dm:test` `{ id, sid, kind: "lesson"|"answer" }` → 스위치 `only` 안의 수강생에게만 견본 1통(결과 `review_dm:test_done`).
+- 시험 = ops_state `review_dm:test` `{ id, sid, kind: "lesson"|"answer", to?: "owner" }` → 스위치 `only` 안의 수강생, 또는 `to: "owner"` 면 **원장 DM** 에만 견본 1통(결과 `review_dm:test_done`). 시험 계정 #106 디코는 MRI 서버 밖이라 봇이 못 보낸다(11/12 실측 · 디코 오류 50278) — 문구 확인은 원장 DM 견본으로 한다.
 - 5분마다 돈다. 판수 · 결제 · 정산과 무관하다.
 
