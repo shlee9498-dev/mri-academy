@@ -37,4 +37,19 @@ const hoursLabel = (h) => {
   return `${whole}시간${half ? " 30분" : ""}`;
 };
 
-module.exports = { PERSONAL_LENGTHS, PERSONAL_DURATIONS, GROUP_LENGTHS, LEVEL_TEST_LENGTHS, gamesForMinutes, HOURS_TO_GAMES, hoursLabel };
+// ── 그룹 참여형 시간당 차감(계약 §9.70 · 오너 OK 11/12 「a 올려 수정해」) ──
+//   2시간 묶음마다 새로 센다 — 묶음 안 첫 1시간 3판 · 2시간째(연강) +2판 = 5판.
+//   1시간 3 · 2시간 5 · 3시간 8 · 4시간 10. 시작한 시간을 한 시간으로 센다(30분 3판 · 1시간 30분 5판 — §9.70 확인 필요 ③).
+//   이 날 이후 **연 칸**(trainer_slots.created_at)만 — 이미 잡힌 칸 · 관전형은 옛 규칙(진행한 판 = 판수).
+const GROUP_HOURLY_FROM = "2026-11-13T00:00:00+09:00";
+function groupGamesForMinutes(min) {
+  const m = Number(min);
+  if (!Number.isInteger(m) || m <= 0) return null;
+  const blocks = Math.floor(m / 120), rem = m - blocks * 120;
+  return blocks * 5 + (rem === 0 ? 0 : rem <= 60 ? 3 : 5);
+}
+// 이 칸이 시간당 규칙인가 — 참여형 · 기준 시각 이후에 연 칸
+const isHourlyGroupSlot = (slot) => slot?.lesson_type === "participate"
+  && Number.isFinite(Date.parse(slot?.created_at)) && Date.parse(slot.created_at) >= Date.parse(GROUP_HOURLY_FROM);
+
+module.exports = { GROUP_HOURLY_FROM, groupGamesForMinutes, isHourlyGroupSlot, PERSONAL_LENGTHS, PERSONAL_DURATIONS, GROUP_LENGTHS, LEVEL_TEST_LENGTHS, gamesForMinutes, HOURS_TO_GAMES, hoursLabel };
