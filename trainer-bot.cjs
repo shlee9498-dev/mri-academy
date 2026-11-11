@@ -974,7 +974,7 @@ function attach({ getClient, sbSelect, sbUpsert, sbRpc, portal, port, env = proc
     // 앱 예약 안내판(§9.37.5) — 수강생 채널 글에 답글 한 번 · env 없으면 꺼짐
     const guide = createBookGuide({ env, staffByDiscord: deps.staffByDiscord, log });
     client.on("messageCreate", (msg) => guide.onMessage(msg).catch((e) => log.error("[book-guide] message", e && e.message)));
-    // 등록 서버 — MRI ACADEMY(GUILD_ID · 수강생 · 트레이너가 있는 곳) + GmI(LESSON_GUILD_ID · 트레이너 운영 채널).
+    // 등록 서버 — MRI ACADEMY(GUILD_ID · 수강생 · 트레이너 · 트레이너 운영 채널이 있는 곳)만. GmI 는 클랜 전용(§9.69.4).
     //   두 곳 다 server.js 가 기동 때 commands.set(목록 통째)으로 갈아 끼우므로 15초 뒤 「빠진 것만」 만든다.
     const register = async () => {
       if (!client.application) return;
@@ -1035,9 +1035,9 @@ function commandChanged(cur, def) {
   return cur.description !== def.description || names(cur.options) !== names(def.options);
 }
 
-// /수업잡기 를 둘 서버 — MRI ACADEMY(GUILD_ID) 먼저 · GmI(LESSON_GUILD_ID) · 같은 값이면 한 번
+// /수업잡기 를 둘 서버 — MRI ACADEMY(GUILD_ID)만. GmI(LESSON_GUILD_ID)는 클랜 전용이라 두지 않는다(§9.69.4 · 11/12)
 function guildTargets(env) {
-  return [...new Set([env.GUILD_ID, env.LESSON_GUILD_ID].filter(Boolean).map(String))];
+  return [...new Set([env.GUILD_ID].filter(Boolean).map(String))];
 }
 
 // 벨 대상(읽기만) — 개인 레슨 머리 예약 · booked/pending_review · 시작이 이틀 안 · 트레이너 디스코드 있음

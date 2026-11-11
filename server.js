@@ -1312,12 +1312,12 @@ if (process.env.DISCORD_TOKEN) {
       return;
     }
     try {
-      const payreqCmds = process.env.BOT_PAYREQ === "1" ? [PAYREQ_CMD] : [];
       // set() 은 이 길드 명령을 통째로 바꾼다 — 여기 없는 명령은 사라진다. 로그를 배열에서 뽑아 누락을 부팅 로그로 확인한다.
-      // 킬내기 3종(GmI · 오너 전용)은 맨 뒤에 붙인다.
-      const list = [LESSON_CMD, CORRECTION_CMD, REGISTRY_CMD, STUDENT_CMD, ...LINK_CMDS, ...payreqCmds, ...killrace.COMMANDS, ...killracePoster.COMMANDS];
+      // GmI = 클랜 전용(§9.69.4 · 총무 11/12 「GmI 쪽 버튼만 떼」): /등록계(클랜 등록계 · PWS 출전 자격) + 킬내기만.
+      // 수업 · 결제 · 연결 · 수강생 명령은 메인 길드(MRI ACADEMY)에만 있다 — 이 set() 이 GmI 에 남아 있던 옛 등록을 지운다.
+      const list = [REGISTRY_CMD, ...killrace.COMMANDS, ...killracePoster.COMMANDS];
       await client.application.commands.set(list, guildId);
-      console.log(`${list.map((c) => "/" + c.name).join("·")} registered to LESSON_GUILD_ID(${guildId}) [${ctx}]`);
+      console.log(`${list.map((c) => "/" + c.name).join("·")} registered to LESSON_GUILD_ID(${guildId} · 클랜 전용) [${ctx}]`);
     } catch (e) { console.error("lesson_guild_register_failed", ctx, e?.message); }
   }
   // 계정 연결 3종 추가 등록 — 수강생이 있는 서버가 GUILD_ID·LESSON_GUILD_ID 둘 다 아닐 때만 쓴다
