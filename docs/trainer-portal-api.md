@@ -5437,3 +5437,55 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - 시험 = ops_state `review_dm:test` `{ id, sid, kind: "lesson"|"answer", to?: "owner" }` → 스위치 `only` 안의 수강생, 또는 `to: "owner"` 면 **원장 DM** 에만 견본 1통(결과 `review_dm:test_done`). 시험 계정 #106 디코는 MRI 서버 밖이라 봇이 못 보낸다(11/12 실측 · 디코 오류 50278) — 문구 확인은 원장 DM 견본으로 한다.
 - 5분마다 돈다. 판수 · 결제 · 정산과 무관하다.
 
+## 9.73 상담 티켓을 우리 봇 · 사이트로 직접 받기 — Ticket Tool 대체 (2026-11-12 · 총무 주문 · 오너 09:0x 「상담 티켓을 우리가 직접 만드는 것 … 해줘」) · **계약(이 절) → DDL §106(더하기만) → 서버 · 봇(경비) → 사이트 화면(사이트 세션 · 9.73.4 대로) → 실측 → 그 뒤에 Ticket Tool 내림** · env 없음
+
+왜: 지금 상담 창구는 남의 봇(Ticket Tool)이라 채널을 지우면 상담 기록도 사라진다. 상담 한 건을 **우리 DB 한 행**으로 받고, 채널은 그 행에 붙은 대화방일 뿐이다.
+
+### 9.73.1 한 건 = `consults` 한 행 (새 표 없음)
+레벨 테스트 신청(§9.61 · §9.64)이 이미 `consults` 한 행이라 같은 표에 받는다(`kind = 'consult'` · `consult_type` 그대로). 더하는 칸(§106 · 더하기만 · 스냅샷 → 실행 → 검증 → `notify pgrst`):
+| 칸 | 뜻 |
+|---|---|
+| `ticket_entry` text check in ('site','discord') | 입구 — 사이트 화면 · 디코 「상담 신청」 버튼 |
+| `ticket_channel_id` text | 봇이 연 상담 채널 id(없으면 아직 못 염) |
+| `ticket_answers` jsonb | 질문지 원답 그대로(9.73.2 키) |
+| `ticket_adult` boolean | 성인 여부(미성년이면 보호자 동의 §33 안내) |
+| `ticket_closed_at` timestamptz · `ticket_summary` text | 닫을 때 남기는 대화 요약 |
+- 신청 시각 = `created_at`(KST 표시) · 상태 = 기존 `status` · 담당 = 기존 `handler_id` · 디코 = 기존 `discord_handle` + 신청자 디코 id 는 `ticket_answers.discordId`.
+- 같은 디코 계정 · 같은 사이트 연락처로 **열린 티켓이 이미 있으면 새 행을 만들지 않고** 그 채널을 다시 알려 준다(중복 신청 막기 · §9.66 결).
+
+### 9.73.2 질문지 (lesson-inquiry-intake 질문지 그대로 · 디코 모달 5칸 한도)
+먼저 버튼 두 개로 성인 여부(「성인이에요」 / 「미성년자예요」) → 모달 5칸:
+1. `availability` 배그 접속 가능한 요일 · 시간대 + 상담(테스트) 가능 후보 2~3개
+2. `account` 스팀/카카오 + 인게임 닉
+3. `level` 플레이 기간 · 티어나 평균 딜
+4. `goal` 가장 고치고 싶은 것 · 바라는 것
+5. `extra` 하고 싶은 말(선택)
+사이트 화면도 같은 키로 보낸다(9.73.4).
+
+### 9.73.3 디코 입구
+- MRI 서버 「상담문의」 채널에 봇 글 1개 + 버튼 **「상담 신청」**(글이 없으면 봇이 올리고 · 있으면 그 글을 고친다 · 글 id 는 ops_state).
+- 신청이 끝나면 봇이 **신청자 + 운영진만 보이는 채널**을 「상담」 카테고리에 연다 — 이름 `상담-{번호}` · 권한: @everyone 보기 끔 · 신청자 보기 · 쓰기 · 운영진 역할 보기 · 쓰기 · 봇 보기 · 쓰기 · 채널 관리.
+  첫 글 = 안내문(아래 문구 · 견본은 오너 먼저) + 질문지 답 요약 + 「상담 마치기」 버튼(운영진만).
+  > 신청 고마워요! 담당자가 곧 여기로 와요. 적어 준 가능 시간에 맞춰 상담 시간을 잡아 드릴게요 💬
+- 설정은 env 가 아니라 ops_state `consult_ticket:config` `{ panelChannelId, categoryId, archiveCategoryId, staffRoleIds:[…], opsChannelId }` — 원장이 디코에서 id 를 알려 주면 세션이 넣는다.
+- ⚠️ 봇 권한: 채널을 만들고 권한을 거는 데 **「채널 관리」 · 「권한 관리」**가 든다(지금 봇은 보기 · 쓰기 위주). 디코 서버 설정 → 역할 → 봇 역할에서 오너가 켠다(env 아님).
+
+### 9.73.4 사이트 입구 — `POST /api/consult-tickets` (사이트 세션 화면이 부른다)
+- 본문 `{ name, contact, discordHandle?, adult: boolean, availability, account, level, goal, extra?, privacyVersion }` · 분당 5회(IP) · 개인정보 동의 필수(§9.66 와 같은 줄).
+- 응답 `{ ok: true, ticketNo, discordInvite: "https://mriacademy.gg/discord", channelReady: boolean }`.
+  - 디코 아이디를 적었고 그 사람이 MRI 서버에 있으면 **바로 채널을 연다**(`channelReady: true`).
+  - 아니면 행만 만들고 `channelReady: false` — 화면은 「디스코드에 들어오면 상담 채널이 열려요」 + 초대 주소. 그 사람이 서버에 들어오는 순간(guildMemberAdd · 디코 아이디 일치) 봇이 채널을 연다.
+- 오류: 400 `invalid_body` · 400 `privacy_required` · 409 `already_open`(`{ ticketNo }`) · 429.
+
+### 9.73.5 닫기 · 보관
+- 운영진이 채널의 「상담 마치기」 → 봇이 그 채널 글을 시간순으로 읽어 **대화 요약(사람 글만 · 2,000자 · 첨부는 개수만)**을 `ticket_summary` 에 남기고 `ticket_closed_at` 기록 → 채널을 **보관 카테고리로 옮기고 신청자 쓰기 끔**. **삭제는 자동화하지 않는다**(지우는 건 오너가 디코에서).
+
+### 9.73.6 운영 채널 알림
+- 새 신청마다 MRI 「트레이너-상담보고」(§9.69 `1570174060954914816` · config `opsChannelId`)에 한 줄: 「새 상담 신청 #{번호} · {입구} · {티어 요약} · 채널 <#…>」. 상담 시간이 잡히면 지금처럼 상담 일정 카드(§9.53 · 상담일정-공유)로 이어진다(같은 `consults` 행).
+
+### 9.73.7 순서 · 손대지 않는 것
+1. 이 절 검수 → §106 DDL(더하기만) → 서버 · 봇(스위치 ops_state `consult_ticket:on` · 꺼진 채 배포) → 원장 config · 봇 권한 → 시험(디코 1 · API 1 → 행 2 · 채널 2 · 알림 2 · 일반 계정에서 안 보임) → 오너 「OK」 → 켬.
+2. **Ticket Tool 제거 · 기존 「상담문의」 안내 글 삭제는 새 창구 실측 뒤 총무 보고 → 진행.** 지금 열려 있는 ticket-0157 · 0158 · 0159 는 건드리지 않는다.
+3. 사람에게 나가는 문구(첫 글 안내 · 사이트 완료 문구)는 견본을 오너에게 먼저.
+4. 「GmI 클랜 가입 채널도 마찬가지」(오너 원문)는 GmI(카지노) 트랙 소관이라 이 절 밖 — 같은 모듈을 GmI 길드에 붙일지는 그쪽 주문으로.
+
