@@ -317,7 +317,7 @@ dual-write(마이그레이션 중), 채널 잠금(`LESSON_CHANNEL_ID`)·`TRAINER
 검증 후 오너 승인 예정.
 
 ## 디자인 시스템 B3 (밝은 톤 · 오너 11/11 결정 · #682 index.html에서 확정)
-토큰 `--bg:#FBF6EF / --bg-2:#F4ECE1 / --card:#FFFFFF / --line:#E6DACB / --ink:#1A1714 / --sub:#544A41 /
+토큰 `--bg:#FBF6EF / --bg-2:#F4ECE1 / --card:#FFFFFF / --line:#ECE2D5(보조 페이지는 #E6DACB) / --ink:#1A1714 / --sub:#544A41 /
 --mute:#776B60 / --kick:#A4551C(강조 글자) / --cta-bg:#C2611C(버튼, 흰 글자)` + 주황 단일 강조. 빨강·검은 바탕·골드 없음.
 `color-scheme: light`. 폰트: 제목 = Wanted Sans(Variable), 본문 = Pretendard, 숫자 = Saira Condensed.
 - **외부 의존성(CDN)**: Wanted Sans 는 `https://cdn.jsdelivr.net/npm/wanted-sans@1.0.3/fonts/webfonts/variable/split/WantedSansVariable.css`
