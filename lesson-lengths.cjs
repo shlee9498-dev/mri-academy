@@ -40,7 +40,7 @@ const hoursLabel = (h) => {
 // ── 그룹 참여형 시간당 차감(계약 §9.70 · 오너 OK 11/12 「a 올려 수정해」) ──
 //   2시간 묶음마다 새로 센다 — 묶음 안 첫 1시간 3판 · 2시간째(연강) +2판 = 5판.
 //   1시간 3 · 2시간 5 · 3시간 8 · 4시간 10. 시작한 시간을 한 시간으로 센다(30분 3판 · 1시간 30분 5판 — §9.70 확인 필요 ③).
-//   이 날 이후 **연 칸**(trainer_slots.created_at)만 — 이미 잡힌 칸 · 관전형은 옛 규칙(진행한 판 = 판수).
+//   이 날 이후 **연 칸**(trainer_slots.created_at) + 이 날 이후 **결제분**으로 듣는 수강생만 — 그 밖은 옛 규칙(진행한 판 = 판수).
 const GROUP_HOURLY_FROM = "2026-11-13T00:00:00+09:00";
 function groupGamesForMinutes(min) {
   const m = Number(min);
@@ -48,8 +48,18 @@ function groupGamesForMinutes(min) {
   const blocks = Math.floor(m / 120), rem = m - blocks * 120;
   return blocks * 5 + (rem === 0 ? 0 : rem <= 60 ? 3 : 5);
 }
-// 이 칸이 시간당 규칙인가 — 참여형 · 기준 시각 이후에 연 칸
-const isHourlyGroupSlot = (slot) => slot?.lesson_type === "participate"
+// 이 칸이 시간당 규칙 후보인가 — 그룹(참여형 · 관전형 · 오너 확정 11/12) · 기준 시각 이후에 연 칸
+const isHourlyGroupSlot = (slot) => (slot?.lesson_type === "participate" || slot?.lesson_type === "spectate")
   && Number.isFinite(Date.parse(slot?.created_at)) && Date.parse(slot.created_at) >= Date.parse(GROUP_HOURLY_FROM);
+// 이 수강생이 새 규칙 판수로 듣는가(§9.70.3 · 오너 확정 11/12 「기존 잔여 판수엔 적용하지 않음」).
+//   판수는 먼저 산 것부터 쓴다고 본다 — 그 트레이너 잔여에서 기준 이후 결제분(등록 created_at ≥ 기준)을 빼고도 남으면
+//   아직 옛 판수를 쓰는 중 → 옛 규칙(진행한 판 = 판수). 0 이하면 새 판수 → 시간당.
+//   remaining: 기록 전 그 트레이너 잔여(portal_remaining_for_trainer) · newGranted: 기준 이후 등록 판수 합(+보너스)
+function usesNewGroupRule(remaining, newGranted) {
+  if (remaining == null || remaining === "") return false;   // 잔여를 못 읽으면 옛 규칙(트레이너 입력)
+  const r = Number(remaining), n = Number(newGranted) || 0;
+  if (!Number.isFinite(r) || n <= 0) return false;           // 기준 이후 결제분이 없으면 옛 규칙
+  return r - n <= 0;
+}
 
-module.exports = { GROUP_HOURLY_FROM, groupGamesForMinutes, isHourlyGroupSlot, PERSONAL_LENGTHS, PERSONAL_DURATIONS, GROUP_LENGTHS, LEVEL_TEST_LENGTHS, gamesForMinutes, HOURS_TO_GAMES, hoursLabel };
+module.exports = { GROUP_HOURLY_FROM, groupGamesForMinutes, isHourlyGroupSlot, usesNewGroupRule, PERSONAL_LENGTHS, PERSONAL_DURATIONS, GROUP_LENGTHS, LEVEL_TEST_LENGTHS, gamesForMinutes, HOURS_TO_GAMES, hoursLabel };
