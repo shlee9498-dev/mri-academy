@@ -8857,7 +8857,7 @@ const siteIntakeMod = require("./site-intake.cjs");
       setInterval(runDm, 60_000).unref?.();
       // 유비서 복기 DM 2종(§9.72) — 스위치 ops_state 'review_dm:on'(행 없음 = 꺼짐 · only = 시험 수강생만) · 5분마다
       const reviewDm = require("./review-dm.cjs").createReviewDm({
-        sbSelect, getClient: () => botClient, appUrl: STUDENT_APP_URL, opaqueId: (k, id) => studentPortal.opaqueId(k, id),
+        sbSelect, getClient: () => botClient, appUrl: STUDENT_APP_URL, opaqueId: (k, id) => studentPortal.opaqueId(k, id), ownerDiscordId: process.env.MRI_OWNER_ID,
         opsGet: opsStateGet, opsSet: opsStateSet,
       });
       if (botClient) botClient.on("interactionCreate", (itx) => reviewDm.handle(itx).catch((e) => console.error("[review-dm] button", e?.status || e?.message)));

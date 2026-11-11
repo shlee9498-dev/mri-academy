@@ -59,3 +59,16 @@ test("tick — 기록 10분 뒤 1통 · 이미 쓴 수업은 건너뜀 · 답 �
   const st = ops.get(m.STATE_KEY);
   assert.equal(st.cursor.session, 12); assert.equal(st.students[7].day, "2026-11-12");
 });
+
+test("시험 견본 — to: owner 면 원장 DM 으로만 · only 밖 수강생은 안 보냄", async () => {
+  const ops = new Map([[m.ON_KEY, { on: false }], [m.TEST_KEY, { id: "t2", sid: 106, kind: "answer", to: "owner" }]]);
+  const sent = [];
+  const d = m.createReviewDm({ now: () => T, log: { log() {}, error() {} }, appUrl: "https://app.example", opaqueId: (k, id) => `${k}${id}`, ownerDiscordId: "own",
+    opsGet: async (k) => ops.get(k) || null, opsSet: async (k, v) => { ops.set(k, v); }, sbSelect: async () => [],
+    getClient: () => ({ users: { fetch: async (id) => ({ send: async (msg) => sent.push([id, msg]) }) } }) });
+  await d.tick();
+  assert.equal(sent.length, 1); assert.equal(sent[0][0], "own"); assert.match(sent[0][1].content, /복기에 답했어요/);
+  assert.deepEqual({ ok: ops.get("review_dm:test_done").ok, allowed: ops.get("review_dm:test_done").allowed }, { ok: true, allowed: true });
+  await d.tick(); assert.equal(sent.length, 1);                                    // 같은 id 는 한 번
+  ops.set(m.TEST_KEY, { id: "t3", sid: 7, kind: "lesson" }); await d.tick(); assert.equal(sent.length, 1);   // only 밖 · 원장 아님 → 안 보냄
+});
