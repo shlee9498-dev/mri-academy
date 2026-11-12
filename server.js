@@ -1360,6 +1360,15 @@ if (process.env.DISCORD_TOKEN) {
       });
       setInterval(() => roleDm.poll().catch((e) => console.error("role_dm_poll", e?.status || "", e?.message)), 60_000);
     }
+    // 한 사람 봇 DM(계정 연결 신청자 안내 · 11/12) — ops_state 'direct_dm:request' 를 1분마다 한 번 읽는다(같은 id 한 번 · 재시도 없음)
+    if (hasSupabase()) {
+      const directDm = require("./direct-dm.cjs").createDirectDm({
+        sbSelect, getClient: () => client,
+        opsGet: async (key) => (await sbSelect("ops_state", `select=value&key=eq.${encodeURIComponent(key)}&limit=1`))[0]?.value || null,
+        opsSet: (key, value) => sbUpsert("ops_state", { key, value, updated_at: new Date().toISOString() }, "key"),
+      });
+      setInterval(() => directDm.poll().catch((e) => console.error("direct_dm_poll", e?.status || "", e?.message)), 60_000);
+    }
     // PUBG 경기 조회(읽기 전용 · 롱폼 소재 찾기 · 11/7) — ops_state 'pubg_scan:request' 를 1분마다 한 번 읽는다(컨테이너가 PUBG API 에 못 닿아서)
     if (hasSupabase() && process.env.PUBG_API_KEY) {
       const pubgScan = require("./pubg-scan.cjs").createPubgScan({
