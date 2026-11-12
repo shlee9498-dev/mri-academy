@@ -50,7 +50,7 @@ test("성공 — 사진 바이트가 원본 그대로 · 기본 문안 · 오너
   assert.equal(i.out.find((x) => x[0] === "defer")[1].ephemeral, true);
   const all = w.logs.join("\n");
   assert.match(all, /gift_dm to=0002 result=sent/);
-  assert.ok(!all.includes("cdn.discordapp.com") && !all.includes(WIN) && !all.includes("coupon"));
+  assert.ok(!all.includes(URL_) && !all.includes("ephemeral-attachments") && !all.includes(WIN) && !all.includes("coupon"));
 });
 
 test("한마디로 문안 덮어쓰기 · 멘션 모양 받는사람", async () => {
@@ -77,5 +77,5 @@ test("DM 막힘 · 같은 서버 아님 · 이미지 아님 — 실패로 끝내
   assert.match(c.out.at(-1)[1].content, /이미지/);
   assert.equal(w.sent.length, 0);
   assert.ok(w.logs.some((l) => /result=dm_closed/.test(l)) && w.logs.some((l) => /result=not_member/.test(l)));
-  assert.ok(!w.logs.join("\n").includes("cdn.discordapp.com"));
+  assert.ok(!w.logs.join("\n").includes(URL_) && !w.logs.join("\n").includes("ephemeral-attachments"));
 });
