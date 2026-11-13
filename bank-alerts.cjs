@@ -91,7 +91,8 @@ const MONEY_RE = /(^|[^\d,.:/*-])([+-]?)(\d{1,3}(?:,\d{3})+|\d{1,7})(?![\d,.:/*]
 // 토스뱅크 푸시 말투(「○○님이 n원을 보냈어요」 = 입금 · 「○○님에게 n원을 보냈어요」 = 출금)도 낱말로 본다
 const IN_WORD = /입금|님이\s*\S*\s*(?:보냈|보내)|받았/;
 const OUT_WORD = /출금|님(?:에게|께)\s*\S*\s*(?:보냈|보내)|결제/;
-const NAME_LINE = /^[가-힣A-Za-z][가-힣A-Za-z ()]{0,19}$/;
+// 입금자명 끝 신청 번호(§9.64.3 · 「홍길동48」)도 이름의 일부로 읽는다 — 숫자 1~3자리만(계좌 모양 긴 숫자는 이름이 아니다)
+const NAME_LINE = /^[가-힣A-Za-z][가-힣A-Za-z ()]{0,19}(?:\s?\d{1,3})?$/;
 const NOT_NAME = /입금|출금|잔액|이체|전자금융|체크카드|자동|타행|국민|스타뱅킹|KB|알림|거래|계좌|은행|고객|취소|송금|급여|ATM|FBS|CMS|토스|통장|보냈|받았/i;
 
 // 알림 한 통 → { direction: "in"|"out"|null, amount, balance, occurredAt, counterparty, status: "ok"|"partial"|"unparsed" }
@@ -128,7 +129,7 @@ function parseAlert(rawText, receivedMs) {
   // 입금자 이름(입금만) — 이름만 있는 줄(「[KB] …」 다음 줄 모양) 또는 「○○님」
   if (out.direction === "in") {
     const plain = text.split("\n").find((l) => NAME_LINE.test(l) && !NOT_NAME.test(l));
-    const nim = /([가-힣A-Za-z]{2,20}(?:\([가-힣A-Za-z ]{1,10}\))?)님/.exec(text);
+    const nim = /([가-힣A-Za-z]{2,20}(?:\([가-힣A-Za-z ]{1,10}\))?(?:\s?\d{1,3})?)님/.exec(text);
     const name = plain || (nim && !NOT_NAME.test(nim[1]) ? nim[1] : null);
     if (name) out.counterparty = name.trim().slice(0, NAME_MAX);
   }

@@ -7530,7 +7530,8 @@ async function gmiGuildMember(discordId) {
 }
 // 통장 입출금 알림 받기(§88 · docs/bank-alerts.md) — POST /api/bank-alerts · /hooks/bank-alert · env BANK_ALERT_SECRET 이 없으면 503(닫힘).
 //   계좌 번호는 저장하지 않는다(원문은 「[계좌]」로 가린 뒤) · 같은 알림 두 번이면 한 줄(중복 키) · 분당 30번까지.
-// 입금 알림 → 열린 신청 짝 찾기 · 오너 DM(계약 §9.45 · bank-match.cjs) — toss 통장만. 짝 후보만 만들고 payments · 신청 상태는 바꾸지 않는다.
+// 입금 알림 → 열린 신청 짝 찾기 · 오너 DM(계약 §9.45 · bank-match.cjs) — toss 통장만. payments 는 만들지 않는다.
+//   예외: 번호 + 이름 일치 · 20,000원이면 그 상담만 입금 완료로(§9.45.6 · 오너 OK 11/14).
 const bankMatch = require("./bank-match.cjs").createBankMatch({
   sbSelect, sbPatch, levelTestFee: () => require("./intake-api.cjs").levelTestWon(),
   notifyOwner: async (text) => { const oid = process.env.MRI_OWNER_ID; if (!botClient || !oid) return false; try { const u = await botClient.users.fetch(String(oid)); await u.send(text); return true; } catch (_) { return false; } },
