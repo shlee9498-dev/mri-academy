@@ -4,7 +4,7 @@
 // 상금보다 **검증과 투명성**이 핵심이다 — 추첨은 seed commit/reveal + drand 공개 난수라 누구나 재현할 수 있다(docs/role-event-draw-verify.md).
 //
 // 표: role_event_rounds · role_event_entries · role_event_awards (§85 · 더하기만 · 개인정보 칸 없음)
-// 명령: /역할군신청(회원 · GUILD_ID) · /역할군 회차생성|현황|검증|판정|추첨|지급|수동등록(오너 · 글로벌 + DM 전용)
+// 명령: /역할군신청(회원 · GUILD_ID) · /역할군 회차생성|현황|검증|판정|추첨|지급|상품전달|수동등록(오너 · 글로벌 + DM 전용)
 // 크론: runRoleEventTick 5분 · 상태 전이 기반 멱등(조건부 PATCH — 이미 넘어간 상태면 아무것도 안 한다)
 // env: ROLE_EVENT_ROLE_ID · ROLE_EVENT_ANNOUNCE_CHANNEL_ID · ROLE_EVENT_APPLY_CHANNEL_ID · ROLE_EVENT_PACING_MS · ROLE_EVENT_DISABLED
 //      재사용 = GUILD_ID · MRI_OWNER_ID(오너 DM · 오너 판정) · PUBG_API_KEY · PUBG_CURRENT_SEASON_NUM
@@ -1064,8 +1064,53 @@ function createRoleEvent(deps) {
       ...(disabled() ? ["⏸ ROLE_EVENT_DISABLED=1 — 신청 · 크론 멈춤"] : []),
     ].join("\n");
   }
+  // ═════════ 상품 전달(11/13 오너 「전달해 유비서로」) — 오너가 붙인 쿠폰 사진을 유비서 이름으로 받는 사람에게 DM ═════════
+  // 사진 · 쿠폰 번호 · 첨부 주소는 저장 · 로그에 남기지 않는다(받은 바이트를 그대로 다시 올리고 버린다).
+  // 남기는 것: 「언제(로그 시각) · 누구에게(디코 번호 끝 4자리) · 결과 코드」뿐. DB 쓰기 없음. 실패해도 다시 보내지 않는다.
+  const GIFT_MAX_BYTES = 10 * 1024 * 1024;
+  const fetchFile = deps.fetchFile || ((...a) => fetch(...a));
+  const giftText = (name) => `${name}님, 역할군 이벤트 치킨 당첨 축하해요. 무리가 준비한 쿠폰 대신 전해 드려요`;
+  async function findMember(c, uid) {
+    for (const gid of [env.GUILD_ID, ...[...(c.guilds?.cache?.keys?.() || [])]].filter(Boolean)) {
+      const g = c.guilds?.cache?.get?.(String(gid)); if (!g) continue;
+      const m = await g.members.fetch(String(uid)).catch(() => null);
+      if (m) return m;
+    }
+    return null;
+  }
+  async function sendGift({ uid, attachment, note }) {
+    const c = getClient(); if (!c) return { code: "no_client" };
+    if (!attachment || !/^image\//.test(String(attachment.contentType || ""))) return { code: "not_image" };
+    if (Number(attachment.size || 0) > GIFT_MAX_BYTES) return { code: "too_big" };
+    const member = await findMember(c, uid);
+    if (!member) return { code: "not_member" };
+    let buf;
+    try { const r = await fetchFile(attachment.url); if (!r.ok) throw new Error("http"); buf = Buffer.from(await r.arrayBuffer()); }
+    catch (_) { return { code: "fetch_failed" }; }                       // 오류 글에 첨부 주소가 섞일 수 있어 남기지 않는다
+    const name = member.displayName || member.user?.globalName || member.user?.username || "회원";
+    const content = (note && note.trim()) ? note.trim().slice(0, 1800) : giftText(name);
+    try {
+      await member.user.send({ content, files: [{ attachment: buf, name: String(attachment.name || "coupon.png").replace(/[^\w.\-]/g, "_") }] });
+      return { code: "sent", name };
+    } catch (e) { return { code: e?.code === 50007 ? "dm_closed" : "dm_failed", name }; }
+    finally { buf = null; }
+  }
+  const GIFT_RESULT = { sent: "보냈어", dm_closed: "DM이 막혀 있어서 못 보냈어(다시 안 보내 · 직접 챙겨 줘)", dm_failed: "디스코드가 거절해서 못 보냈어(다시 안 보내)",
+    not_member: "유비서와 같은 서버에 없는 사람이라 DM을 못 보내", not_image: "사진(이미지) 파일만 보낼 수 있어", too_big: "사진이 10MB 넘어",
+    fetch_failed: "첨부를 못 읽었어 · 다시 붙여서 해 줘", no_client: "봇 연결 전이라 못 보냈어" };
+  async function handleGift(itx) {
+    const raw = String(itx.options.getString("받는사람") || "").trim();
+    const uid = (raw.match(/\d{15,22}/) || [])[0];
+    if (!uid) return itx.reply({ content: "받는 사람은 자동완성에서 고르거나 디스코드 번호 · 멘션으로 넣어 줘", ephemeral: true });
+    await itx.deferReply({ ephemeral: true });
+    const r = await sendGift({ uid, attachment: itx.options.getAttachment("사진"), note: itx.options.getString("한마디") });
+    log.log(`[role-event] gift_dm to=${uid.slice(-4)} result=${r.code}`);
+    return itx.editReply({ content: `🎁 ${r.name ? `${r.name}님에게 ` : ""}${GIFT_RESULT[r.code] || r.code}` });
+  }
+
   async function handleOwner(itx) {
     if (!isOwner(itx.user.id)) return itx.reply({ content: "오너 전용 명령이에요", ephemeral: true });
+    if (itx.options.getSubcommand() === "상품전달") return handleGift(itx);       // DB 를 안 쓴다
     if (!env.SUPABASE_URL) return itx.reply({ content: "DB 연결 전이라 아직 못 써", ephemeral: true });
     const sub = itx.options.getSubcommand();
     const o = itx.options;
@@ -1268,7 +1313,7 @@ function createRoleEvent(deps) {
     if (itx.commandName === "역할군") return handleOwner(itx);
   }
 
-  return { handle, tick, runDaily, jobTick, runVerify, createRound, reschedule, resolveSeasonId, publishResults, freeze, draw, announceDraw, processAwards, saveEntry, grantRoles, revokeRoles, statusText, idle: () => Promise.all([...inflight]), _pending: pending, _env: env };
+  return { handle, sendGift, tick, runDaily, jobTick, runVerify, createRound, reschedule, resolveSeasonId, publishResults, freeze, draw, announceDraw, processAwards, saveEntry, grantRoles, revokeRoles, statusText, idle: () => Promise.all([...inflight]), _pending: pending, _env: env };
 }
 
 // ── 명령 정의 (설계 §2) ──
@@ -1322,6 +1367,10 @@ const ADMIN_CMD = {
     { name: "추첨", description: "추첨 실행(버튼 확인 · drand 라운드 시각 이후)", type: 1, options: [ROUND_OPT] },
     { name: "지급", description: "기프티콘 지급 기록", type: 1, options: [
       { name: "대상", description: "당첨자(자동완성 · 디스코드 id · #신청번호)", type: 3, required: true, autocomplete: true }, ROUND_OPT ] },
+    { name: "상품전달", description: "쿠폰 사진을 유비서 이름으로 DM 전달(사진은 저장 안 함 · 실패해도 다시 안 보냄)", type: 1, options: [
+      { name: "받는사람", description: "당첨자(자동완성 · 디스코드 id · 멘션)", type: 3, required: true, autocomplete: true },
+      { name: "사진", description: "쿠폰 사진(이미지 · 10MB 이하)", type: 11, required: true },
+      { name: "한마디", description: "비우면 기본 문안(○○님, 역할군 이벤트 치킨 당첨 축하해요 …)", type: 3, required: false, max_length: 300 } ] },
     { name: "수동등록", description: "조회 실패 신청자 직접 접수(스크린샷 확인 뒤)", type: 1, options: [
       { name: "대상", description: "디스코드 id 또는 멘션", type: 3, required: true },
       { name: "플랫폼", description: "PUBG 플랫폼", type: 3, required: true, choices: PLATFORM_CHOICES },
