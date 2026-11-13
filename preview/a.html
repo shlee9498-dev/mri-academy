@@ -367,7 +367,7 @@ html.vr-lock{overflow:hidden}
 /* ===== 시안 공통(11/14) — 「둥근 흰 카드 + 알약 버튼 + 그림자」를 걷어낸다 =====
    크림 바탕 · 주황 하나 · Wanted Sans 제목(B3)은 지키고, 틀은 가는 선과 여백으로만 나눈다(디자인 기준 v1 §2) */
 :root{--r:6px;--shadow:none;--line:#E4D8C8}
-.top{background:rgba(251,246,239,.96)}
+.top{background:#FBF6EF}
 .top-cta{border-radius:4px;border-width:1px;min-height:38px}
 .cta{border-radius:4px;box-shadow:none;min-height:56px;padding:0 24px;font-size:17px;letter-spacing:-.01em}
 .cta:hover{filter:none;background:#A8521A}
@@ -384,7 +384,7 @@ html.vr-lock{overflow:hidden}
 
 /* 80초 소개 — 첫 화면 바로 아래 · 포스터를 깔아 빈 칸이 없게 */
 .vid{padding-block:clamp(36px,5vw,64px);border-top:1px solid var(--line)}
-.vid-in{display:grid;grid-template-columns:minmax(0,.7fr) minmax(0,1.3fr);gap:clamp(20px,4vw,56px);align-items:end}
+.vid-in{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);gap:clamp(20px,4vw,56px);align-items:start}
 .vid-h{margin-top:10px;font-size:clamp(22px,2.6vw,30px);font-weight:800;line-height:1.3}
 .vid .iv-frame{background:#1A1714}
 
@@ -411,6 +411,12 @@ html.vr-lock{overflow:hidden}
   .vid-in,.lead2{grid-template-columns:1fr}
 }
 .cta .p{margin-left:.3em}
+.vid-list{margin-top:22px;display:grid;border-top:1px solid var(--line)}
+.vid-list li{display:grid;grid-template-columns:36px minmax(0,1fr);gap:8px;padding:14px 0;border-bottom:1px solid var(--line)}
+.vid-list .num{font-size:18px;font-weight:800;color:var(--mute);line-height:1.4}
+.vid-list b{font-size:16px}
+.vid-list p{margin-top:2px;font-size:14px;color:var(--sub)}
+.vid .intro.is-v .iv-frame{aspect-ratio:16/9;max-height:none}
 
 /* ===== 시안 A 「기록판」 — 실제 과녁 두 장이 주인공 · 숫자 줄은 칸 없이 세로선으로 ===== */
 .ha{padding-block:clamp(20px,4vw,56px) 0}
@@ -459,7 +465,7 @@ html.vr-lock{overflow:hidden}
 <main id="top">
 
   <!-- 시안 A 「기록판」 — 주인공 = 실제 수강생 과녁 전후(소개 영상 속 화면 · 실내 사격장 50m · 3/10 → 22분 뒤 7/7) -->
-  <!-- 숫자 출처: 유튜브 = 총무 11/14 06:50 유튜브 스튜디오 조회(최근 28일 10/16~11/12) · 레벨 테스트 = consults 읽기 조회 11/14 06:40(consult_type level_test · 취소 · 무료 후속 제외 · 11/1~11/13 · 18명 = 진행 13 + 예정 5 · 같은 사람 0) -->
+  <!-- 숫자 출처: 유튜브 = 총무 11/14 06:50 유튜브 스튜디오 조회(최근 28일 10/16~11/12) · 신청 = consults 읽기 조회 11/14(만든 날 최근 30일 · 32건에서 취소 6 · 무료 후속 상담 2를 뺀 24건 · 24명 모두 다른 사람 · 레벨 테스트 21 + 사이트 신청 3) -->
   <section class="hero ha" aria-labelledby="heroH">
     <div class="wrap ha-in">
       <div class="ha-txt">
@@ -479,7 +485,7 @@ html.vr-lock{overflow:hidden}
     </div>
     <div class="wrap">
       <dl class="now" aria-label="지금 숫자">
-        <div class="now-main"><dt>11월 레벨 테스트</dt><dd><b class="num">18</b>명</dd><small>11월 1~13일 · 진행 13 · 예정 5</small></div>
+        <div class="now-main"><dt>최근 30일 신청</dt><dd><b class="num">24</b>명</dd><small>레벨 테스트 21 · 사이트 신청 3 · 취소 · 중복 제외</small></div>
         <div><dt>유튜브 조회수</dt><dd><b class="num">18.0</b>만</dd><small>최근 28일</small></div>
         <div><dt>유튜브 구독자</dt><dd><b class="num">2,188</b>명</dd><small>28일 동안 +655</small></div>
         <div><dt>원장 직강</dt><dd><b class="num">101</b>명</dd><small>2023년 9월 ~ 2026년 9월 · 4,200시간 이상</small></div>
@@ -490,10 +496,17 @@ html.vr-lock{overflow:hidden}
   <!-- 80초 소개 — 포스터를 깔아 빈 회색 칸이 보이지 않게 -->
   <section class="vid" aria-labelledby="vidH">
     <div class="wrap vid-in">
-      <div class="vid-txt"><div class="eyebrow">80초 소개</div><h2 class="vid-h" id="vidH">레벨 테스트부터 가격까지 한 번에 봐요</h2></div>
+      <div class="vid-txt">
+        <div class="eyebrow">80초 소개</div>
+        <h2 class="vid-h" id="vidH">레벨 테스트부터 가격까지 한 번에 봐요</h2>
+        <ol class="vid-list">
+          <li><span class="num">01</span><div><b>레벨 테스트 순서</b><p>다시보기와 기초 훈련으로 지금 실력을 보고 시작 단계를 정해요</p></div></li>
+          <li><span class="num">02</span><div><b>수업 방식</b><p>트레이너 레슨은 판 단위, 이무리 직강은 1회 3시간이에요</p></div></li>
+          <li><span class="num">03</span><div><b>가격</b><p>레슨 판 묶음과 직강 가격은 바로 아래 가격 칸에 있어요</p></div></li>
+        </ol>
+      </div>
       <div class="intro" id="intro" aria-label="MRI ACADEMY 소개 영상" hidden
-           data-h="assets/video/intro_h.mp4"
-           data-v="assets/video/intro_v.mp4">
+           data-h="assets/video/intro_h.mp4">
         <div class="iv-frame">
           <video class="iv" muted playsinline preload="metadata" poster="preview/hero/intro-poster.jpg" aria-label="MRI ACADEMY 소개 영상 · 커리큘럼부터 가격까지 80초"></video>
           <button type="button" class="iv-sound">소리 켜고 보기</button>
