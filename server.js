@@ -1457,7 +1457,7 @@ if (process.env.DISCORD_TOKEN) {
       // 그대로 — 킬내기 · /등록계가 거기 남고, LESSON_CHANNEL_ID 를 MRI #수업등록으로 바꾸기 전까지 옛 채널도 돈다.
       const payreqMain = process.env.BOT_PAYREQ === "1" ? [PAYREQ_CMD] : [];
       const lessonMain = splitLesson ? [LESSON_CMD, CORRECTION_CMD, STUDENT_CMD, ...payreqMain] : [LESSON_CMD, CORRECTION_CMD];
-      const mainCmds = [...cmds, ...lessonMain, ...LINK_CMDS, roleEvent.APPLY_CMD];
+      const mainCmds = [...cmds, ...lessonMain, ...LINK_CMDS, roleEvent.APPLY_CMD, appGuideMod.COMMAND];   // /앱길잡이 = 오너 조회(§9.75)
       if (process.env.GUILD_ID) await client.application.commands.set(mainCmds, process.env.GUILD_ID);
       else await client.application.commands.set(mainCmds);
       console.log(`slash commands registered (main guild ${process.env.GUILD_ID || "global"}):`, mainCmds.map((c) => c.name).join(", "));
@@ -8873,6 +8873,15 @@ const siteIntakeMod = require("./site-intake.cjs");
       if (botClient) botClient.on("interactionCreate", (itx) => reviewDm.handle(itx).catch((e) => console.error("[review-dm] button", e?.status || e?.message)));
       const runReviewDm = () => reviewDm.tick().catch((e) => console.error("[review-dm] tick", e?.status || e?.message));
       setInterval(runReviewDm, 5 * 60_000).unref?.();
+      // 유비서 앱 길잡이(§9.75) — 스위치 ops_state 'app_guide:on'(행 없음 = 꺼짐) · 10분마다 · /앱길잡이 = 오너 조회
+      const appGuide = appGuideMod.createAppGuide({ sbSelect, opsGet: opsStateGet, opsSet: opsStateSet, getClient: () => botClient,
+        guildId: process.env.GUILD_ID, ownerDiscordId: process.env.MRI_OWNER_ID });
+      if (botClient) botClient.on("interactionCreate", (itx) => {
+        appGuide.handle(itx).catch((e) => console.error("[app-guide] button", e?.status || e?.message));
+        appGuide.onCommand(itx).catch((e) => console.error("[app-guide] command", e?.status || e?.message));
+      });
+      const runAppGuide = () => appGuide.tick().catch((e) => console.error("[app-guide] tick", e?.status || e?.message));
+      setInterval(runAppGuide, 10 * 60_000).unref?.();
       if (botClient && process.env.GUILD_ID) {
         botClient.on("guildMemberAdd", (m) => {
           if (String(m.guild?.id) !== String(process.env.GUILD_ID)) return;
@@ -8896,7 +8905,11 @@ require("./admin-panel")(app, { getUser, sbSelect, sbInsert, sbPatch, sbDelete, 
 // 앱(mri-student-app)이 x-portal-secret 공유비밀로만 호출한다. 라우트를 server.js에 직접
 // 넣지 않고 별도 파일에 둔 이유: 이 파일은 여러 트랙 코드가 공존해서(CLAUDE.md 경계 규칙)
 // 새 라우트군을 인라인하면 동시 작업 충돌면이 그만큼 넓어진다.
+// 유비서 앱 길잡이(§9.75) — 앱 열림 · 직접 예약 표시(§105 student_app_seen · 표가 없으면 조용히 건너뜀)
+const appGuideMod = require("./app-guide.cjs");
+const appSeen = appGuideMod.createSeenStamp({ sbUpsert, sbPatch });
 const studentPortal = require("./student-portal.cjs")(app, {
+  onSeen: (sid) => { appSeen.seen(sid).catch(() => {}); },
   // sbRpc 는 §41 portal_remaining_by_trainer(트레이너별 잔여) 하나에 쓴다 — 잔여 공식을
   // JS 에 또 베끼지 않으려고 함수를 그대로 부른다.
   sbSelect, sbInsert, sbPatch, sbRpc, limit,
@@ -9073,6 +9086,7 @@ const autoComplete = autoCompleteMod.createAutoComplete({
 });
 require("./booking-api.cjs")(app, {
   sbSelect, sbInsert, sbPatch, sbRpc, limit, discordDM, portal: studentPortal, trainer: trainerPortal,
+  onSelfBooked: (sid) => { appSeen.selfBooked(sid).catch(() => {}); },   // §9.75 — 앱에서 직접 잡은 예약(졸업 판정)
   autoComplete,                                                     // §9.39 [수업 안 함] → hold
   recorder: lessonRecorder,                                         // §9.29 — 취소한 기록만 있는 날의 「완료」를 대신 기록
   onGamesChanged: (studentIds) => gamesShort.check(studentIds),   // §45 — 「완료」 · 예약(선차감) 직후
@@ -9422,6 +9436,8 @@ const REQUIRED_SCHEMA = {
 // 122행을 실DB에서 확인했고 코드가 참조를 시작했다(잔여·환불 파생). settlements는
 // 아직 코드가 안 쓰므로 선택 유지다. 승격 경로는 §18 payment_requests와 같다.
 const SCHEMA_OPTIONAL = {
+  // §105 앱 길잡이(계약 §9.75) — 없으면 앱 열림 · 직접 예약 표시만 건너뛰고 단계는 옛 흔적으로 근사한다
+  student_app_seen: ["student_id", "first_seen_at", "last_seen_at", "first_self_booking_at"],
   // §87 「AI 무리 복기」 리플 저장(replay-api.cjs · 2026-10-21) — 없으면 메모리 캐시로 돈다. 클립 피드백이 정식이 되면 REQUIRED 로 올린다.
   replay_matches: ["platform", "match_id", "team_id", "map_name", "game_mode", "match_type", "played_at", "storage_path", "size_bytes", "parser_version"],
   // settled_period = 정산 귀속월(마감월 정정분을 다음 열린 달로 이월). 부재하면
