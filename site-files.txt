@@ -77,3 +77,4 @@ panel.webmanifest
 # ── 검색 ──
 sitemap.xml
 robots.txt
+go.html
