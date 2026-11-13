@@ -1303,6 +1303,7 @@ function createRoleEvent(deps) {
   }
 
   async function handleAutocomplete(itx) {
+    if (!isOwner(itx.user?.id)) return itx.respond([]);          // 오너가 아니면 신청자 · 당첨자 목록을 보여 주지 않는다(검수 11/13)
     const typedAll = String(itx.options.getFocused() || "").toLowerCase();
     let sub = null; try { sub = itx.options.getSubcommand(); } catch (_) {}
     if (sub === "상품전달") return itx.respond(await giftCandidates(typedAll).catch(() => []));

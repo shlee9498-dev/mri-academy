@@ -108,3 +108,13 @@ test("받는사람 자동완성 — 신청자가 아니라 당첨자(모든 회�
     { name: "17회 1순번 Alpha · 지급함", value: WIN },
   ]);
 });
+
+test("자동완성 — 오너가 아니면 빈 목록(신청자 · 당첨자 닉 · 번호를 흘리지 않음)", async () => {
+  let called = false, got = null;
+  const re = createRoleEvent({ sbSelect: async () => { called = true; return []; }, sbInsert: async () => [], sbPatch: async () => [], sbUpsert: async () => [],
+    env: { MRI_OWNER_ID: OWNER, GUILD_ID: "G", SUPABASE_URL: "x" }, getClient: () => null, log: { log() {}, error() {} } });
+  await re.handle({ isButton: () => false, isAutocomplete: () => true, isChatInputCommand: () => false, commandName: "역할군", user: { id: WIN },
+    options: { getFocused: () => "", getSubcommand: () => "상품전달" }, respond: async (x) => { got = x; } });
+  assert.deepEqual(got, []);
+  assert.equal(called, false);
+});
