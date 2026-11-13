@@ -79,3 +79,32 @@ test("DM 막힘 · 같은 서버 아님 · 이미지 아님 — 실패로 끝내
   assert.ok(w.logs.some((l) => /result=dm_closed/.test(l)) && w.logs.some((l) => /result=not_member/.test(l)));
   assert.ok(!w.logs.join("\n").includes(URL_) && !w.logs.join("\n").includes("ephemeral-attachments"));
 });
+
+test("받는사람 자동완성 — 신청자가 아니라 당첨자(모든 회차 · 최근 순 · 지급 상태)", async () => {
+  const tables = {
+    role_event_awards: [
+      { id: 1, round_id: 1, entry_id: 11, draw_rank: 1, status: "paid" },
+      { id: 2, round_id: 2, entry_id: 21, draw_rank: 1, status: "contacted" },
+      { id: 3, round_id: 2, entry_id: 22, draw_rank: 2, status: "cancelled" },
+    ],
+    role_event_entries: [{ id: 11, discord_id: WIN, pubg_name: "Alpha" }, { id: 21, discord_id: CLOSED, pubg_name: "Bravo" }, { id: 22, discord_id: OUT, pubg_name: "Nope" }],
+    role_event_rounds: [{ id: 1, round_no: 17 }, { id: 2, round_no: 18 }],
+  };
+  const sbSelect = async (t, q) => {
+    let rows = tables[t] || [];
+    const st = /status=in\.\(([^)]+)\)/.exec(q); if (st) rows = rows.filter((r) => st[1].split(",").includes(r.status));
+    const idin = /[&?]?id=in\.\(([^)]+)\)/.exec(q); if (idin && t !== "role_event_awards") rows = rows.filter((r) => idin[1].split(",").map(Number).includes(r.id));
+    if (/order=id\.desc/.test(q)) rows = [...rows].sort((a, b) => b.id - a.id);
+    return rows;
+  };
+  const re = createRoleEvent({ sbSelect, sbInsert: async () => [], sbPatch: async () => [], sbUpsert: async () => [],
+    env: { MRI_OWNER_ID: OWNER, GUILD_ID: "G", SUPABASE_URL: "x" }, getClient: () => null, log: { log() {}, error() {} } });
+  let got = null;
+  const itx = { isButton: () => false, isAutocomplete: () => true, isChatInputCommand: () => false, commandName: "역할군", user: { id: OWNER },
+    options: { getFocused: () => "", getSubcommand: () => "상품전달" }, respond: async (x) => { got = x; } };
+  await re.handle(itx);
+  assert.deepEqual(got, [
+    { name: "18회 1순번 Bravo · 연락됨", value: CLOSED },
+    { name: "17회 1순번 Alpha · 지급함", value: WIN },
+  ]);
+});
