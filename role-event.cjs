@@ -1286,7 +1286,26 @@ function createRoleEvent(deps) {
     return itx.editReply({ content: "모르는 버튼이야" });
   }
 
+  // 상품전달 받는사람 = 당첨자(role_event_awards · 모든 회차 · 최근 순) — 신청자 목록이 아니라(11/13 총무 실전 피드백)
+  const AWARD_LABEL = { won: "당첨", notified: "DM 보냄", contacted: "연락됨", paid: "지급함" };
+  async function giftCandidates(typed) {
+    const awards = await sbSelect(T.A, `select=id,round_id,entry_id,draw_rank,status&status=in.(won,notified,contacted,paid)&order=id.desc&limit=50`);
+    if (!awards.length) return [];
+    const ids = [...new Set(awards.map((a) => a.entry_id))];
+    const rids = [...new Set(awards.map((a) => a.round_id))];
+    const entries = await sbSelect(T.E, `select=id,discord_id,pubg_name&id=in.(${ids.join(",")})`);
+    const rounds = await sbSelect(T.R, `select=id,round_no&id=in.(${rids.join(",")})`);
+    const eBy = new Map(entries.map((e) => [e.id, e])), rBy = new Map(rounds.map((r) => [r.id, r.round_no]));
+    return awards.map((a) => ({ a, e: eBy.get(a.entry_id), no: rBy.get(a.round_id) }))
+      .filter((x) => x.e && x.e.discord_id && (!typed || (x.e.pubg_name || "").toLowerCase().includes(typed) || String(x.no) === typed))
+      .slice(0, 25)
+      .map((x) => ({ name: `${x.no}회 ${x.a.draw_rank}순번 ${x.e.pubg_name || "닉 없음"} · ${AWARD_LABEL[x.a.status] || x.a.status}`.slice(0, 100), value: String(x.e.discord_id) }));
+  }
+
   async function handleAutocomplete(itx) {
+    const typedAll = String(itx.options.getFocused() || "").toLowerCase();
+    let sub = null; try { sub = itx.options.getSubcommand(); } catch (_) {}
+    if (sub === "상품전달") return itx.respond(await giftCandidates(typedAll).catch(() => []));
     const round = await latestRound().catch(() => null);
     if (!round) return itx.respond([]);
     const typed = String(itx.options.getFocused() || "").toLowerCase();
@@ -1368,7 +1387,7 @@ const ADMIN_CMD = {
     { name: "지급", description: "기프티콘 지급 기록", type: 1, options: [
       { name: "대상", description: "당첨자(자동완성 · 디스코드 id · #신청번호)", type: 3, required: true, autocomplete: true }, ROUND_OPT ] },
     { name: "상품전달", description: "쿠폰 사진을 유비서 이름으로 DM 전달(사진은 저장 안 함 · 실패해도 다시 안 보냄)", type: 1, options: [
-      { name: "받는사람", description: "당첨자(자동완성 · 디스코드 id · 멘션)", type: 3, required: true, autocomplete: true },
+      { name: "받는사람", description: "당첨자(자동완성 = 모든 회차 당첨자 · 또는 디스코드 id)", type: 3, required: true, autocomplete: true },
       { name: "사진", description: "쿠폰 사진(이미지 · 10MB 이하)", type: 11, required: true },
       { name: "한마디", description: "비우면 기본 문안(○○님, 역할군 이벤트 치킨 당첨 축하해요 …)", type: 3, required: false, max_length: 300 } ] },
     { name: "수동등록", description: "조회 실패 신청자 직접 접수(스크린샷 확인 뒤)", type: 1, options: [
