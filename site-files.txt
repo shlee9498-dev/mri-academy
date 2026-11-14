@@ -71,6 +71,9 @@ img/trainers/ht-frame.jpg
 img/trainers/jg-frame.jpg
 img/trainers/mr-frame.jpg
 img/trainers/mr-lead.jpg
+img/hero/target-before.jpg
+img/hero/target-after.jpg
+img/hero/intro-poster.jpg
 site.webmanifest
 panel.webmanifest
 
