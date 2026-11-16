@@ -1039,7 +1039,7 @@ let intakeFlow = null;
 let intakeDm = null;     // 웹 신청 첫 연락 봇 DM(§9.57 · intake-dm.cjs) — 아래 상담 일정 카드 블록에서 만들고 /api/apply · DM 중계 · 서버 입장이 쓴다
 // 디스코드 피드백 이관 드라이런(10/1 어플 · 1순위) — 봇이 준비되면 위 ready 에서 한 번 돈다. 결과 = ops_state 'feedback_import:scan'.
 //   token 을 바꾸면 다음 기동에 다시 돈다. LESSON_GUILD_ID(GmI 클랜)는 읽지 않는다.
-const FEEDBACK_SCAN_TOKEN = "2026-10-01a";
+const FEEDBACK_SCAN_TOKEN = "2026-11-16a";   // 11/16 재실측 — 현태 서버 10/3 뒤 글이 어디 있는지(총무 주문 · 읽기만)
 const feedbackScan = require("./feedback-scan.cjs").createFeedbackScan({
   getClient: () => botClient,
   opsStateGet: (k) => opsStateGet(k), opsStateSet: (k, v) => opsStateSet(k, v),
