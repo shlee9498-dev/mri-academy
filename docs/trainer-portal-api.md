@@ -5481,7 +5481,6 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 ```sql
 alter table public.slot_bookings add column if not exists cancel_by text;
 alter table public.slot_bookings add column if not exists cancel_reason text;
-alter table public.slot_bookings drop constraint if exists chk_slot_bookings_cancel_by;  -- 새 제약(처음 만드는 것)
 alter table public.slot_bookings add constraint chk_slot_bookings_cancel_by check (cancel_by is null or cancel_by in ('student','trainer','owner','system'));
 alter table public.slot_bookings add constraint chk_slot_bookings_cancel_reason check (cancel_reason is null or char_length(cancel_reason) <= 200);
 notify pgrst, 'reload schema';
