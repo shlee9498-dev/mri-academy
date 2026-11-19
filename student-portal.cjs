@@ -254,6 +254,7 @@ module.exports = function mountStudentPortal(app, deps) {
     linkMatches(s).then((ok) => {
       if (!ok) return fail(res, 401, "session_expired");
       req.portal = s;
+      if (typeof deps.onSeen === "function") deps.onSeen(s.sub);   // §9.75 앱 열림 표시(30분에 한 번 · 실패해도 요청은 그대로)
       next();
     }).catch((e) => {
       console.error("portal_link_check", e?.message);
