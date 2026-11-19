@@ -43,3 +43,24 @@ test("레벨 테스트 칸 길이 — 60 · 90분 · 그룹 길이표 안(DB 칸
   assert.deepEqual([...L.LEVEL_TEST_LENGTHS], [60, 90]);
   for (const m of L.LEVEL_TEST_LENGTHS) assert.ok(L.GROUP_LENGTHS.includes(m), `${m}분`);
 });
+
+test("그룹 참여형 시간당 차감(§9.70) — 1시간 3 · 2시간 5 · 3시간 8 · 4시간 10 · 2시간마다 새로", () => {
+  const { groupGamesForMinutes: g, isHourlyGroupSlot: h } = require("../lesson-lengths.cjs");
+  assert.equal(g(60), 3); assert.equal(g(120), 5); assert.equal(g(180), 8); assert.equal(g(240), 10);
+  assert.equal(g(30), 3); assert.equal(g(90), 5); assert.equal(g(150), 8);      // 시작한 시간을 센다(확인 필요 ③)
+  assert.equal(g(0), null); assert.equal(g("x"), null);
+  assert.equal(h({ lesson_type: "participate", created_at: "2026-11-13T00:00:00+09:00" }), true);
+  assert.equal(h({ lesson_type: "participate", created_at: "2026-11-12T23:59:59+09:00" }), false);   // 이미 연 칸은 옛 규칙
+  assert.equal(h({ lesson_type: "spectate", created_at: "2026-11-20T10:00:00+09:00" }), true);       // 관전형도 같은 규칙(오너 확정 11/12)
+  assert.equal(h({ lesson_type: "personal", created_at: "2026-11-20T10:00:00+09:00" }), false);
+});
+
+test("그룹 규칙은 결제분별 — 옛 판수가 남아 있으면 옛 규칙 · 새 결제분만 남으면 시간당(§9.70.3)", () => {
+  const { usesNewGroupRule: u } = require("../lesson-lengths.cjs");
+  assert.equal(u(20, 0), false);    // 옛 판수만 → 옛 규칙
+  assert.equal(u(40, 33), false);   // 옛 7판이 먼저 → 옛 규칙
+  assert.equal(u(33, 33), true);    // 옛 판수를 다 썼다 → 새 규칙
+  assert.equal(u(10, 33), true);
+  assert.equal(u(0, 0), false);     // 새로 산 게 없다 → 옛 규칙(새 규칙은 기준 이후 결제분부터)
+  assert.equal(u(null, 33), false); assert.equal(u(undefined, 0), false);   // 잔여를 못 읽으면 옛 규칙
+});

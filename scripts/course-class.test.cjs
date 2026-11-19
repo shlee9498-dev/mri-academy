@@ -362,6 +362,18 @@ test("칸 출석 — 명단 → record_course_attendance(결석 표시) · 응�
   assert.equal((await call(2, `/slots/${SL(900)}/attendance`, "POST", { present: [S(10)] })).status, 403);
 });
 
+test("§9.44.4 지난 칸 — 목록 ended 표시 · 끝난 직강 칸은 출석 뒤 closed · 안 끝난 칸은 그대로", async () => {
+  const past = at(grid(Date.now() - DAY));
+  reset({ trainer_slots: [slot(900, { slot_start: past }), slot(901)] });
+  const r = await call(4, "/slots");
+  assert.deepEqual(r.json.slots.map((s) => [s.status, s.ended]), [["open", true], ["open", false]]);
+  rpcOut.record_course_attendance = { sessionId: 71, heldOn: "2026-10-01", level: "심화반", recorded: [], alreadyRecorded: [], noShow: [] };
+  assert.equal((await call(4, `/slots/${SL(900)}/attendance`, "POST", { present: [] })).status, 200);
+  assert.equal(db.trainer_slots.find((s) => s.id === 900).status, "closed");
+  assert.equal((await call(4, `/slots/${SL(901)}/attendance`, "POST", { present: [] })).status, 200);
+  assert.equal(db.trainer_slots.find((s) => s.id === 901).status, "open");                  // 시작 전 칸은 닫지 않는다
+});
+
 test("칸 없이 출석(원장 수업 기록하기) — 원장만 · 반 · 날짜 31일 · 시작 시각 · 길이 기본 180", async () => {
   reset();
   const today = kst(Date.now());

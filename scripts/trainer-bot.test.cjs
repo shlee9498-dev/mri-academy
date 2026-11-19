@@ -396,9 +396,9 @@ test("B — 틱이 DM 을 보내는 사이 버튼 답이 와도 「답함」이 
 });
 
 test("등록 서버 — MRI ACADEMY(GUILD_ID) · GmI(LESSON_GUILD_ID) 둘 다 · 같은 값이면 한 번 · 없으면 뺀다", () => {
-  assert.deepEqual(guildTargets({ GUILD_ID: "111", LESSON_GUILD_ID: "222" }), ["111", "222"]);
+  assert.deepEqual(guildTargets({ GUILD_ID: "111", LESSON_GUILD_ID: "222" }), ["111"]);   // GmI 는 클랜 전용(§9.69.4)
   assert.deepEqual(guildTargets({ GUILD_ID: "111", LESSON_GUILD_ID: "111" }), ["111"]);
-  assert.deepEqual(guildTargets({ LESSON_GUILD_ID: "222" }), ["222"]);
+  assert.deepEqual(guildTargets({ LESSON_GUILD_ID: "222" }), []);
   assert.deepEqual(guildTargets({}), []);
 });
 
@@ -547,6 +547,18 @@ test("한 줄 채널 점검 — 못 찾음 · 권한 부족 이름 · OK", async
   assert.equal(await channelCheck(client(mk(["ViewChannel"])), "1"), "채널 한 줄 · #수업잡기 (MRI ACADEMY) · 권한 부족: 메시지 보내기 · 메시지 기록 보기 · 메시지 내용 인텐트 OK");
   assert.equal(await channelCheck(client(mk(["ViewChannel", "SendMessages", "ReadMessageHistory"])), "1"), "채널 한 줄 · #수업잡기 (MRI ACADEMY) · 권한 OK · 메시지 내용 인텐트 OK");
   assert.match(await channelCheck(client(mk(["ViewChannel", "SendMessages", "ReadMessageHistory"])), "1", "앱 예약 안내판"), /^앱 예약 안내판 · #수업잡기 /);
+});
+
+test("상담 카드 채널 점검 — 6개 권한 · 스레드 · 링크 첨부 부족 이름 · 「메시지 관리」는 안 봄", async () => {
+  const { channelCheck, CONSULT_CARD_CHANNEL_ID, CONSULT_CARD_PERMS } = require("../trainer-bot.cjs");
+  assert.equal(CONSULT_CARD_CHANNEL_ID, "1570174065690550273");
+  const client = (ch) => ({ options: { intents: { has: () => true } }, channels: { fetch: async () => ch } });
+  const mk = (have) => ({ name: "상담일정-공유", guild: { name: "MRI ACADEMY", members: { me: {} } }, permissionsFor: () => ({ has: (k) => have.includes(k) }) });
+  const base = ["ViewChannel", "SendMessages", "ReadMessageHistory"];
+  assert.equal(await channelCheck(client(mk(base)), CONSULT_CARD_CHANNEL_ID, "상담 카드 채널", CONSULT_CARD_PERMS),
+    "상담 카드 채널 · #상담일정-공유 (MRI ACADEMY) · 권한 부족: 링크 첨부 · 공개 스레드 만들기 · 스레드에서 메시지 보내기 · 메시지 내용 인텐트 OK");
+  assert.match(await channelCheck(client(mk([...base, "EmbedLinks", "CreatePublicThreads", "SendMessagesInThreads"])), CONSULT_CARD_CHANNEL_ID, "상담 카드 채널", CONSULT_CARD_PERMS), / · 권한 OK · /);
+  assert.ok(!CONSULT_CARD_PERMS.some(([k]) => k === "ManageMessages"));
 });
 
 // ── /수업변경 · /수업취소(계약 §9.38) ──

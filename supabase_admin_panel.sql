@@ -1230,10 +1230,11 @@ alter table public.consults drop constraint if exists chk_consults_source;
 alter table public.consults add  constraint chk_consults_source
   check (source is null or source in ('site','discord','kakao','soomgo'));
 
--- 22d-1) [제안 — 오너 승인 시 실행] 폼의 '유입 경로'(유튜브·지인·숨고 등) 전용 컬럼.
---        22d의 source와 이름이 겹치는 다른 개념이라 분리를 제안한다. 이 컬럼이 없으면
---        server.js가 유입 경로를 memo 앞에 「유입: …」로 적어 보존한다(유실은 없고 질의만 불편).
--- alter table public.consults add column if not exists inflow text;
+-- 22d-1) 폼의 「어디서 보고 오셨어요?」 전용 컬럼(오너 「유입경로는 … 일단 ㅇㅋ」 2026-10-19 · 더하기만 · 세션 실행 10/19 · 46 → 47칸).
+--        22d의 source(접수 채널 site|discord|…)와 이름이 겹치는 다른 개념이라 분리했다. 값 = inflow.cjs 7개 화면 이름
+--        (유튜브 쇼츠 · 유튜브 롱폼 · SOOP 방송 · 디스코드 · 지인 소개 · 검색 · 기타) — 목록은 서버가 지키고 칸 제약은 두지 않는다
+--        (목록을 바꿀 때 제약 교체 = 기존 것 바꾸기가 되지 않게). 집계: select inflow, count(*) from consults group by 1;
+alter table public.consults add column if not exists inflow text;
 
 -- 22f) 신청 UTM 3컬럼 (2026-09-17 · 관제탑 UTM 집계 경로 확인) — index.html 트레이너 소개 CTA 가
 --      apply.html?utm_source=site&utm_medium=trainers&utm_content=hyuntae|jungu|muri 로 진입하고 폼이 제출 payload 에
@@ -7817,6 +7818,133 @@ notify pgrst, 'reload schema';
 --         drop function if exists public.trainer_late_charge_(bigint, bigint, timestamptz, text);
 --         drop function if exists public.trainer_close_booking_(bigint, bigint, text);  notify pgrst, 'reload schema';
 
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- §85  역할군 이벤트 봇 — 회차 · 신청/검증 · 당첨/지급 (2026-10-17 · 지휘 주문 「18회 · 43시즌부터」 · 설계 docs/role-event-bot-design.md · 더하기만)
+--   docs/role-event-ddl-draft.sql(9/30 메인3 검토 1~3차 종료분)을 글자 그대로 옮겼다 — 새 표 3개 · 인덱스 3개 · RLS. 기존 표 · 칸 · 제약 무변경.
+--   대상 = MRI ACADEMY 서버(GUILD_ID) 회원. clan_registry(GmI 등록계)와 모집단 · 정책 분리 — 통합 없음.
+--   개인정보 없음 — discord_id · 인게임닉 · PUBG accountId 만. 전화번호 · 실명 · 계좌 칸을 두지 않는다.
+--   seed_secret 은 발표 전까지 비밀이다 — RLS on · 정책 0 이라 service_role(서버)만 읽는다. 앱 공개 키로는 안 보인다.
+--   코드: role-event.cjs · server.js REQUIRED_SCHEMA 에 세 표 등재(미실행이면 기동 점검이 잡는다).
+--   실행: 오너 SQL Editor 단독 · 한 번에 끝까지 · 마지막 줄 notify. 멱등(if not exists) — 두 번 실행해도 같다.
+-- 85-0) 스냅샷(읽기만): select to_regclass('public.role_event_rounds'), to_regclass('public.role_event_entries'), to_regclass('public.role_event_awards');
+--        → 셋 다 null
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+-- 85a) 회차
+create table if not exists public.role_event_rounds (
+  id                     bigint generated always as identity primary key,
+  round_no               int  not null unique,                          -- 18, 19 …
+  season                 int  not null,                                 -- PUBG 시즌 번호(PUBG_CURRENT_SEASON_NUM 과 같은 축 · 43 …)
+  rp_threshold           int  not null default 3400,
+  opens_at               timestamptz not null default now(),
+  closes_at              timestamptz not null,                          -- 신청 마감 · 추첨 입력의 한 축
+  verify_after           timestamptz not null,                          -- 검증 시작 가능 시각 = 시즌 종료 + 동결 여유(G-4 실측 후 기본 규칙 확정)
+  draw_at                timestamptz not null,                          -- 생성 시 입력값. 결과 공지 때 max(입력, results_published_at + 10일) 로 확정
+  --   코드 검증: closes_at < verify_after < draw_at 아니면 생성 거절
+  status                 text not null default 'open'
+                         check (status in ('open','closed','verifying','verified','drawn','announced','done','cancelled')),
+  --   participants_frozen_at 이 있으면 cancelled 전이 거절(코드)
+  -- 추첨 입력
+  seed_secret            text not null,                                 -- server_seed(32바이트 hex). 발표 전까지 service_role 만 읽는다
+  seed_commit            text not null,                                 -- sha256(seed_secret) · 회차 생성 시 공지
+  drand_chain            text not null default '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971',  -- quicknet · 64자 전체
+  drand_round            bigint,                                        -- round(draw_at + 3600) + 1 · round(T)=floor((T−1692803367)/3)+1 · 결과 공지 시 고정
+  drand_round_fixed_at   timestamptz,                                   -- 고정·공지 시각. 이후 변경 금지(코드)
+  drand_randomness       text,                                          -- 라운드 시각 이후 api.drand.sh 에서 받은 randomness(hex64)
+  results_published_at   timestamptz,                                   -- 검증 완료 · 통과자 명단 공지 시각 (10일 유예 기산점)
+  participants_frozen_at timestamptz,                                   -- draw_at 도달 · 참여자 확정 · 판정 명령 거절 시작
+  participants_hash      text,                                          -- sha256(정렬된 참여 account_id 를 ',' 로 결합) · 확정 시 기록·공지
+  draw_input             text,                                          -- seed_secret ':' closes_at(ISO·UTC) ':' participants_hash ':' drand_randomness
+  draw_order             jsonb,                                         -- 셔플 결과 entry_id 배열(전체 순번 · 승계 근거)
+  winners_count          int,                                           -- n≤20 → 2 · ≤50 → 3 · ≤89 → 4 · ≥90 → 5
+  seed_revealed_at       timestamptz,
+  draw_error             text,                                          -- 'drand_unavailable' 만 사용 · 보류 사유(대체 난수 없음)
+  season_ids             jsonb not null default '{}'::jsonb,            -- {kakao: seasonId, steam: seasonId} 검증 시 해석값(감사용)
+  created_by             text,                                          -- 오너 discord_id
+  created_at             timestamptz not null default now(),
+  updated_at             timestamptz not null default now()
+);
+
+-- 85b) 신청·검증
+create table if not exists public.role_event_entries (
+  id              bigint generated always as identity primary key,
+  round_id        bigint not null references public.role_event_rounds(id),
+  discord_id      text not null,
+  discord_name    text,                                                 -- 표시명 캐시(카드용 · 공개 안 함)
+  platform        text not null check (platform in ('kakao','steam')),  -- 검증은 이 샤드로만 조회 · 하드코딩 없음
+  mode            text not null check (mode in ('squad','squad-fpp')),  -- 신청자 선택 TPP|FPP · 이 모드로만 판정
+  pubg_name       text not null,                                        -- findPlayer 가 돌려준 닉(캐시). 정본은 account_id
+  pubg_name_input text,                                                 -- 신청자 원 입력 닉(변형 매칭 시 대조용)
+  name_match      text check (name_match in ('exact','variant_confirmed')),  -- exact = 원 입력과 일치 · variant_confirmed = [맞아요] 확인 후 저장
+  account_id      text not null,                                        -- findPlayer 확정값. 판정·중복·회차 간 비교 전부 이 키
+  status          text not null default 'applied'
+                  check (status in ('applied','verified','unmet','held','excluded','withdrawn')),
+  -- 검증 결과 (ranked 1콜 원문 보존)
+  season_id       text,
+  final_rp        int,                                                  -- currentRankPoint = 시즌 최종값 (판정 축 · 단일 조건)
+  best_rp         int,                                                  -- bestRankPoint (참고 · 플래그용)
+  tier            text,                                                 -- 기록용
+  sub_tier        text,                                                 -- 기록용
+  rounds_played   int,
+  verified_at     timestamptz,
+  verify_error    text,                                                 -- 'rate_limited' · 'no_mode_stats' · 'not_found' · 'upstream' … 코드만
+  verify_attempts int  not null default 0,
+  raw             jsonb,                                                -- rankedGameModeStats[mode] 원문
+  -- 사람 판정 (자동 배제 금지 · 플래그는 표시만)
+  review_flags    jsonb not null default '[]'::jsonb,                   -- [{code, detail}] · account_dup · account_reused · nick_changed · best_gap · few_rounds · draw_excluded_dup
+  reviewed_by     text,
+  reviewed_at     timestamptz,
+  review_note     text,
+  -- 역할 부여·회수 (회차마다 재판정)
+  role_granted_at timestamptz,
+  role_revoked_at timestamptz,                                          -- 다음 회차 검증 완료 시 오너 [회수 실행] 결과(entries 가 있는 경우만)
+  role_error      text,
+  applied_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  unique (round_id, discord_id)                                         -- 1인 1신청 · 재실행 = 닉/플랫폼/모드 갱신
+  -- (round_id, account_id) 유니크는 두지 않는다 — 같은 계정 2인 신청은 review_flags 'account_dup' 로 사람이 판정,
+  -- 추첨일까지 미정리면 확정 시 양쪽 추첨 제외('draw_excluded_dup' · status 불변)
+);
+create index if not exists idx_role_entries_round   on public.role_event_entries (round_id, status);
+create index if not exists idx_role_entries_account on public.role_event_entries (account_id);
+
+-- 85c) 당첨·지급 (당첨자 행만 · 개인정보 없음 · 지급은 디스코드 DM 기준)
+create table if not exists public.role_event_awards (
+  id             bigint generated always as identity primary key,
+  round_id       bigint not null references public.role_event_rounds(id),
+  entry_id       bigint not null references public.role_event_entries(id),
+  draw_rank      int  not null,                                         -- draw_order 상 순번(1..winners_count · 승계 시 그 다음 순번)
+  kind           text not null default 'chicken' check (kind in ('chicken')),
+  status         text not null default 'won'
+                 check (status in ('won','notified','contacted','paid','cancelled')),
+  won_at         timestamptz not null default now(),
+  notified_at    timestamptz,                                           -- 당첨 DM 발송
+  dm_error       text,                                                  -- DM 닫힘 등 · 코드만
+  contacted_at   timestamptz,                                           -- 당첨 DM 버튼(받을게요) 또는 답장
+  paid_at        timestamptz,                                           -- 오너 「지급함」
+  paid_by        text,
+  cancelled_at   timestamptz,
+  cancel_reason  text check (cancel_reason in ('no_contact_48h','declined','excluded')),
+  succeeded_from bigint references public.role_event_awards(id),        -- 승계 원본(취소된 행) · 자동 승계
+  memo           text,
+  unique (round_id, entry_id)
+);
+create index if not exists idx_role_awards_round on public.role_event_awards (round_id, status);
+
+alter table public.role_event_rounds  enable row level security;   -- service_role 만 통과(기존 §12·§20 과 동일)
+alter table public.role_event_entries enable row level security;
+alter table public.role_event_awards  enable row level security;
+
+notify pgrst, 'reload schema';
+
+-- 85 검증(읽기만):
+--   select c.relname, c.relrowsecurity, (select count(*) from information_schema.columns k where k.table_schema='public' and k.table_name=c.relname) as cols,
+--          (select count(*) from pg_policies p where p.tablename=c.relname) as policies
+--     from pg_class c where c.relname in ('role_event_rounds','role_event_entries','role_event_awards') order by 1;
+--   → role_event_awards true 16 0 · role_event_entries true 30 0 · role_event_rounds true 27 0
+--   select indexname from pg_indexes where tablename like 'role_event_%' and indexname like 'idx_role_%' order by 1;
+--   → idx_role_awards_round · idx_role_entries_account · idx_role_entries_round
+-- 되돌림(표가 비어 있을 때만 · 오너 결정): drop table if exists public.role_event_awards, public.role_event_entries, public.role_event_rounds; notify pgrst, 'reload schema';
 
 -- ════════════════════════════════════════════════════════════════════════════════
 -- §86  예약 완료 함수에 출처 인자 — 개인 레슨 자동 완료(2026-10-18 · 오너 OK 「OK — 함수에 출처 칸 추가」 · 계약 §9.39 · 기존 함수 교체 = B 구간)
@@ -8030,3 +8158,447 @@ notify pgrst, 'reload schema';
 --   서버 로그: 「[replay] 리플 API 활성 · 저장 bucket=true matches=true」(실행 뒤 1분 안 · 재시작 없이)
 -- 되돌림(한 블록 · 쌓인 기록도 지워지니 오너 OK 필요): begin; drop table if exists public.replay_matches;
 --   delete from storage.objects where bucket_id = 'replay'; delete from storage.buckets where id = 'replay'; commit; notify pgrst, 'reload schema';
+
+-- ============================================================
+-- §88  통장 입출금 알림 — bank_alerts (2026-10-28 · 지휘 「토스뱅크 입금 알림 → 자동 대조 → 오너 알림」 · 계약 §9.45 · 설계 docs/bank-alerts.md)
+--      종전 초안 §69(#535 · 미실행 · main 에 없음)를 이 번호로 옮기고 칸 6개를 더했다(가린 원문 · 짝 결과 · 알림 보낸 시각).
+--      오너 폰 알림 전달 앱이 POST /api/bank-alerts(· /hooks/bank-alert)로 넘기면 서버가 한 줄씩 쌓는다. **참고 장부**다 —
+--      정본은 통장 거래내역이고, 이 표를 보고 돈 · 판수 · 신청 상태를 바꾸지 않는다. payments · 정산 · 잠금월과 외래 키 · 함수 · 방아쇠로 잇지 않는다.
+--      toss 통장 입금은 열린 신청(결제 신청 · 레벨 테스트 신청 · 상담) 중 짝 후보를 찾아 오너 DM 한 통 — 짝은 번호만 적어 둔다(match_ref · 외래 키 없음).
+--      A 구간(새 표 하나 · 더하기만 · 기존 표 · 칸 · 제약 · 함수를 건드리지 않는다). 코드 PR 은 실행 확인 전까지 Draft.
+--      저장하지 않는 것: 계좌 번호(어느 모양이든 — 원문은 「[계좌]」로 가린 뒤 저장) · 출금 상대 이름 · 비밀 값.
+-- ============================================================
+-- 88-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select to_regclass('public.bank_alerts');                                                   -- 기대 null
+-- 88a) 표 하나
+create table if not exists public.bank_alerts (
+  id               bigint generated always as identity primary key,
+  account_key      text        not null check (account_key ~ '^[a-z][a-z0-9_]{1,23}$'),     -- 통장 이름표(toss · sabi) · 계좌 번호가 아니다
+  direction        text        check (direction in ('in', 'out')),                            -- 못 읽으면 null
+  amount           bigint      check (amount > 0 and amount <= 1000000000),
+  balance          bigint,                                                                     -- 알림에 잔액이 있을 때만
+  occurred_at      timestamptz,                                                                -- 알림 글의 시각(없으면 null · 받은 시각은 received_at)
+  counterparty     text        check (counterparty is null or (char_length(counterparty) between 1 and 20 and direction = 'in')),   -- 입금자 이름 · 입금 줄만
+  parse_status     text        not null check (parse_status in ('ok', 'partial', 'unparsed')),
+  shape            text        check (shape is null or (parse_status <> 'ok' and char_length(shape) <= 300)),   -- 다 못 읽은 줄의 글자 모양
+  dedupe_key       text        not null check (dedupe_key ~ '^[0-9a-f]{64}$'),                -- sha256(통장 이름표 + 알림 글) — 같은 알림 두 번 = 한 줄
+  source_app       text        check (source_app is null or char_length(source_app) <= 60),
+  posted_at        timestamptz,                                                                -- 폰이 알림을 받은 시각(기기 시각 · 앱이 보내 줄 때만)
+  received_at      timestamptz not null default now(),                                         -- 서버가 받은 시각
+  raw_masked       text        check (raw_masked is null or char_length(raw_masked) <= 500),  -- 계좌 모양을 「[계좌]」로 가린 원문
+  match_status     text        check (match_status in ('matched', 'multiple', 'none')),       -- toss 입금만 · 그 밖은 null
+  match_kind       text        check (match_kind in ('payment_request', 'intake', 'consult')),
+  match_ref        bigint,                                                                     -- 짝 신청 번호(외래 키 없음 · 확정은 회계 대조)
+  notified_at      timestamptz,                                                                -- 오너 DM 을 잡은 시각(이 줄 DM 1회 표시)
+  notify_failed_at timestamptz,                                                                -- DM 이 실패한 시각(다시 보내지 않는다)
+  check ((match_kind is null) = (match_ref is null)),
+  check (match_kind is null or match_status = 'matched')
+);
+create unique index if not exists bank_alerts_dedupe_key on public.bank_alerts (dedupe_key);
+create index if not exists idx_bank_alerts_account_received on public.bank_alerts (account_key, received_at desc);
+alter table public.bank_alerts enable row level security;                                      -- 정책 0 = service_role 만
+-- 88b) 88a 뒤 검증(세션 · 읽기만 · 운영 DB 에 시험 줄을 넣지 않는다):
+--   select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'bank_alerts';   -- 기대 19
+--   select count(*) filter (where contype = 'c') c, count(*) filter (where contype = 'p') p
+--     from pg_constraint where conrelid = 'public.bank_alerts'::regclass;                     -- 기대 c 13 · p 1
+--   select indexname from pg_indexes where schemaname = 'public' and tablename = 'bank_alerts' order by 1;
+--     -- 기대 bank_alerts_dedupe_key · bank_alerts_pkey · idx_bank_alerts_account_received
+--   select relrowsecurity from pg_class where oid = 'public.bank_alerts'::regclass;          -- 기대 true
+--   select count(*) from public.bank_alerts;                                                  -- 기대 0
+-- 88c) notify pgrst, 'reload schema';
+--
+-- 되돌림(줄이 있으면 먼저 지휘 확인 · 알림 장부만 사라진다 — 다른 표는 그대로):
+--   drop table if exists public.bank_alerts;
+--   notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §89  레슨 디코 피드백 ↔ 앱 복기 실시간 연동 (2026-10-30 · 총무 주문 · 계약 §9.46 · 소관 MRIacademy)
+--      A 구간(칸 3 · 유일 색인 2 · 더하기만). 기존 칸 · 제약 · 함수 · 행을 건드리지 않는다. 판수 · 금액 무관.
+--      review_feedback.hidden_at = 디코에서 지운 트레이너 답(지우지 않고 숨김 · 앱 읽기는 hidden_at is null 만)
+--      mirror_msg = 앱 복기 · 답을 수강생 디코 채널에 올린 거울 카드 메시지 id
+--        (숫자 = 보낸 카드 · '-' = 채널 없음 · 'pending:<부팅 id>' = 보내는 중 · 'fail1' · 'fail2' = 실패) — 숫자만 유일
+-- ============================================================
+-- 89-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select count(*) from information_schema.columns where table_schema='public' and table_name='review_feedback'
+--     and column_name in ('hidden_at','mirror_msg');                                            -- 기대 0
+--   select count(*) from information_schema.columns where table_schema='public' and table_name='lesson_reviews'
+--     and column_name = 'mirror_msg';                                                          -- 기대 0
+-- 89a) 칸 · 색인
+alter table public.review_feedback add column if not exists hidden_at  timestamptz;
+alter table public.review_feedback add column if not exists mirror_msg text;
+alter table public.lesson_reviews  add column if not exists mirror_msg text;
+create unique index if not exists uq_lr_mirror_msg on public.lesson_reviews  (mirror_msg) where mirror_msg ~ '^[0-9]+$';
+create unique index if not exists uq_rf_mirror_msg on public.review_feedback (mirror_msg) where mirror_msg ~ '^[0-9]+$';
+-- 89b) 89a 뒤 검증(세션 · 읽기만):
+--   칸 수 lesson_reviews 26 · review_feedback 15 · 새 칸은 모두 null · 색인 uq_lr_mirror_msg · uq_rf_mirror_msg 있음
+-- 89c) notify pgrst, 'reload schema';
+--
+-- 되돌림(새 칸에 값이 있으면 먼저 지휘 확인):
+--   drop index if exists public.uq_lr_mirror_msg; drop index if exists public.uq_rf_mirror_msg;
+--   alter table public.lesson_reviews drop column if exists mirror_msg;
+--   alter table public.review_feedback drop column if exists mirror_msg; alter table public.review_feedback drop column if exists hidden_at;
+--   notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §90  영상 QR 신청 /go — go_applications (2026-11-01 · 총무 주문 · 오너 「정말 심플한 신청란 · 구글 로그인필수」 · 계약 §9.48 · 소관 MRIacademy)
+--      A 구간(새 표 하나 · 더하기만). 결제 · payments · consults · intake 와 무관하다. 기존 표 · 행을 건드리지 않는다.
+--      구글 이메일 하나 = 한 행(재신청은 같은 행 갱신 · apply_count +1). first_v = 처음 들어온 영상코드(영상별 전환 집계용).
+--      개인정보(이메일 · 이름 · 연락처)가 담긴다 — RLS on · 정책 0(service_role 만). 공개 화면에 내리지 않는다.
+-- ============================================================
+-- 90-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select to_regclass('public.go_applications');                                   -- 기대 null
+-- 90a) 표
+create table if not exists public.go_applications (
+  id                    bigint generated always as identity primary key,
+  auth_user_id          uuid        not null,                                                       -- Supabase Auth 사용자(구글)
+  email                 text        not null check (char_length(email) between 3 and 254 and email = lower(email)),
+  display_name          text        check (display_name is null or char_length(display_name) <= 80),
+  contact               text        not null check (char_length(contact) between 2 and 60),         -- 「디스코드 아이디 또는 전화번호」 한 칸
+  contact_kind          text        not null check (contact_kind in ('phone', 'discord')),
+  v                     text        check (v is null or v ~ '^[A-Za-z0-9_-]{1,32}$'),                 -- 마지막 신청의 영상코드
+  first_v               text        check (first_v is null or first_v ~ '^[A-Za-z0-9_-]{1,32}$'),     -- 처음 신청의 영상코드
+  utm                   jsonb       not null default '{}'::jsonb check (jsonb_typeof(utm) = 'object'),
+  applied_at            timestamptz not null default now(),                                         -- 마지막 신청 시각(날짜는 KST 로 판정)
+  first_applied_at      timestamptz not null default now(),
+  apply_count           integer     not null default 1 check (apply_count >= 1),
+  status                text        not null default 'waiting' check (status in ('waiting', 'contacted')),   -- 대기 / 연락함
+  contacted_at          timestamptz,
+  contacted_by_staff_id bigint,
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+create unique index if not exists go_applications_email on public.go_applications (email);
+create index if not exists idx_go_applications_first_v on public.go_applications (first_v, first_applied_at desc);
+alter table public.go_applications enable row level security;                                       -- 정책 0 = service_role 만
+-- 90b) 90a 뒤 검증(세션 · 읽기만): 칸 17 · 행 0 · 색인 go_applications_email(유일) · RLS on · 정책 0
+-- 90c) notify pgrst, 'reload schema';
+--
+-- 되돌림(행이 있으면 먼저 지휘 확인 — 신청 기록이 지워진다):
+--   drop table if exists public.go_applications; notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §91  레벨 테스트 접수 자동화 2단계 — go_applications 칸 추가 (2026-11-02 · 총무 주문 · 오너 「100명 신청왔을때 아무것도못함」 · 계약 §9.49 · 소관 MRIacademy)
+--      A 구간(칸 13 · 색인 2 · 더하기만). 기존 칸 · 제약 · 행을 건드리지 않는다. 결제 행은 만들지 않는다(확정 때 §18d 트리거가 만든다).
+--      칸 = trainer_slots(consult) · 예약 = slot_bookings · 상담 = consults · 가확정 = payment_requests(대기) — 새 표 없음.
+-- ============================================================
+-- 91-0) 실행 전 스냅샷(세션 · 읽기만):
+--   select count(*) from information_schema.columns where table_schema='public' and table_name='go_applications';   -- 기대 17
+--   select count(*) from public.go_applications;                                                                     -- 기대 0
+-- 91a) 칸 · 색인
+alter table public.go_applications add column if not exists student_id         bigint references public.students(id);
+alter table public.go_applications add column if not exists consult_id         bigint references public.consults(id);
+alter table public.go_applications add column if not exists booking_id         bigint references public.slot_bookings(id);
+alter table public.go_applications add column if not exists slot_id            bigint references public.trainer_slots(id);
+alter table public.go_applications add column if not exists lt_state           text check (lt_state is null or lt_state in ('waiting', 'claimed', 'confirmed', 'cancelled', 'expired'));
+alter table public.go_applications add column if not exists pay_method         text check (pay_method is null or pay_method in ('transfer', 'card'));
+alter table public.go_applications add column if not exists depositor_name     text check (depositor_name is null or char_length(depositor_name) between 1 and 20);
+alter table public.go_applications add column if not exists payment_request_id bigint references public.payment_requests(id);
+alter table public.go_applications add column if not exists booked_at          timestamptz;
+alter table public.go_applications add column if not exists claimed_at         timestamptz;
+alter table public.go_applications add column if not exists confirmed_at       timestamptz;
+alter table public.go_applications add column if not exists cancelled_at       timestamptz;
+alter table public.go_applications add column if not exists is_test            boolean not null default false;
+create index if not exists idx_go_applications_lt_state on public.go_applications (lt_state) where lt_state in ('waiting', 'claimed');
+create unique index if not exists uq_go_applications_payreq on public.go_applications (payment_request_id) where payment_request_id is not null;
+-- 91b) 91a 뒤 검증(세션 · 읽기만): 칸 30 · 행 0 · 색인 idx_go_applications_lt_state · uq_go_applications_payreq 있음
+-- 91c) notify pgrst, 'reload schema';
+--
+-- 되돌림(새 칸에 값이 있으면 먼저 지휘 확인):
+--   drop index if exists public.uq_go_applications_payreq; drop index if exists public.idx_go_applications_lt_state;
+--   alter table public.go_applications drop column if exists is_test, drop column if exists cancelled_at, drop column if exists confirmed_at,
+--     drop column if exists claimed_at, drop column if exists booked_at, drop column if exists payment_request_id, drop column if exists depositor_name,
+--     drop column if exists pay_method, drop column if exists lt_state, drop column if exists slot_id, drop column if exists booking_id,
+--     drop column if exists consult_id, drop column if exists student_id;
+--   notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §92  /go 쇼츠 표식 · 이벤트 코드 — go_applications 칸 2 + 이벤트 코드 1줄(꺼짐) (2026-11-02 · 총무 주문 · 오너 「정식 등록 10%」 「1주일」 · 계약 §9.48.6 · 소관 MRIacademy)
+--      A 구간(칸 2 · 더하기만 · 이벤트 코드는 §54 표에 새 줄 하나). 결제 · 정산 계산식 무관 — 할인은 정식 등록 결제 때 사람이 확인한다.
+-- ============================================================
+-- 92-0) 실행 전 스냅샷(세션 · 읽기만): 칸 30 · select count(*) from public.event_codes where code='MURI10';  -- 기대 0
+-- 92a) 칸
+alter table public.go_applications add column if not exists src        text check (src is null or src ~ '^[a-z0-9-]{1,32}$');
+alter table public.go_applications add column if not exists event_code text references public.event_codes(code);
+-- 92b) 이벤트 코드 한 줄 — **꺼진 채로**(active false). 쇼츠 올린 날을 총무가 알려 주면 그날부터 7일로 날짜를 고치고 켠다(92d).
+insert into public.event_codes (code, title, discount_pct, target, starts_on, ends_on, pay_within_days, active, memo, created_by)
+values ('MURI10', '상담 쇼츠 · 정식 등록 10%', 10, 'first_payment', '2026-11-02', '2026-11-08', 7, false,
+        '쇼츠 고정 댓글 /go?src=shorts-yjh&code=MURI10 · 정식 등록(레슨 · 직강) 10% · 레벨 테스트비 할인 없음 · 결제 때 사람이 확인(자동 차감 없음) · 오너 11/2', 'session')
+on conflict (code) do nothing;
+-- 92c) 검증: 칸 32 · MURI10 1줄 active false · notify pgrst, 'reload schema';
+-- 92d) 켜기(쇼츠 올린 날 D · 총무 회신 뒤 세션): update public.event_codes set starts_on = D, ends_on = D + 6, active = true where code = 'MURI10';
+-- 되돌림: delete from public.event_codes where code='MURI10' (go_applications.event_code 가 비어 있을 때만) ·
+--   alter table public.go_applications drop column if exists event_code, drop column if exists src; notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §93  상담 일정 카드 · 상담 기록 — consults 칸 3 + consult_cards · consult_digests (2026-11-03 · 영상 세션 주문 · 오너 「트레이너들이 내가 어떻게 일하는지 공유」 · 계약 §9.53 · 소관 MRIacademy)
+--      A 구간(더하기만). 결제 · 판수 · 정산 무관. 봇 상태(글 id · 그린 지문 · 캘린더 id · 알림 시각)는 consult_cards, 사람이 쓰는 상담 기록은 consults.write_up.
+--      ※ PR #643(접수 3 · 4단계 계약)이 적어 둔 「§93」은 이 번호를 쓰지 않는다 — 그 DDL 은 실행 때 §94 로 옮긴다.
+-- ============================================================
+-- 93-0) 실행 전 스냅샷(세션 · 읽기만): consults 칸 47 · to_regclass('public.consult_cards') null · to_regclass('public.consult_digests') null
+-- 93a) 상담 기록 — 항목별(배경 · 피지컬 · 배그력 · 핵심 문제 · 숙제 · 등록 의향 · 후속 · 등록 결과 · 메모) · AI 상담 학습 자료로 키를 고정해 꺼낸다
+alter table public.consults add column if not exists write_up    jsonb check (write_up is null or jsonb_typeof(write_up) = 'object');
+alter table public.consults add column if not exists write_up_at timestamptz;
+alter table public.consults add column if not exists write_up_by text;
+-- 93b) 봇 상태 — 상담 하나에 한 줄
+create table if not exists public.consult_cards (
+  consult_id        bigint primary key references public.consults(id),
+  message_id        text,
+  rendered_hash     text,
+  posted_at         timestamptz,
+  edited_at         timestamptz,
+  deleted_at        timestamptz,
+  calendar_event_id text,
+  calendar_hash     text,
+  reminded_at       timestamptz,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz
+);
+alter table public.consult_cards enable row level security;
+-- 93c) 09시 오늘 상담 요약 — 하루 한 줄(두 번 안 보내기)
+create table if not exists public.consult_digests (
+  day        date primary key,
+  count      integer not null default 0,
+  created_at timestamptz not null default now()
+);
+alter table public.consult_digests enable row level security;
+-- 93d) 검증: consults 칸 50 · 두 표 행 0 · RLS on · 정책 0 → notify pgrst, 'reload schema';
+-- 93e) 손으로 이미 올린 카드 · 캘린더(11/3 오너 · 총무) — 봇이 겹쳐 올리지 않게 표식(세션 · 이 PR 배포 전):
+--      update public.consults set channel_msg_id = 'manual:' || id where id in (23, 27, 28, 29) and channel_msg_id is null;   -- channel_msg_id 는 유일(uq_consults_channel_msg) → 번호를 붙인다
+--      insert into public.consult_cards (consult_id, calendar_event_id) values (23,'manual'),(27,'manual'),(28,'manual'),(29,'manual') on conflict do nothing;
+-- 되돌림(값이 있으면 먼저 지휘 확인): drop table if exists public.consult_digests; drop table if exists public.consult_cards;
+--   alter table public.consults drop column if exists write_up_by, drop column if exists write_up_at, drop column if exists write_up;
+--   notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §94  숨고 메시지 알림 — inbound_alerts (2026-11-03 · 영상 세션 주문 · 오너 「숨고 메시지오면 카카오톡 알림으로 바로오긴함 … 둘 다」 · 계약 §9.54 · 소관 MRIacademy)
+--      A 구간(새 표 하나 · 더하기만). 통장 알림 bank_alerts(§88)와 섞지 않는다. 결제 · 정산 무관.
+--      숨고 알림만 저장(서버가 다시 거른다) · 「누가 · 언제 · 첫 문장」 · 연락처 · 계좌 · 메일 모양은 가린 뒤 저장.
+--      ※ PR #643(접수 3 · 4단계)이 적어 둔 DDL 은 실행 때 §95 로 옮긴다.
+-- ============================================================
+-- 94-0) 실행 전 스냅샷(세션 · 읽기만): to_regclass('public.inbound_alerts') null
+create table if not exists public.inbound_alerts (
+  id            bigint generated always as identity primary key,
+  source        text not null check (source in ('soomgo_kakao', 'soomgo_app')),
+  sender        text check (sender is null or char_length(sender) <= 40),
+  customer_hint text check (customer_hint is null or char_length(customer_hint) <= 20),
+  first_line    text check (first_line is null or char_length(first_line) <= 160),
+  received_at   timestamptz not null default now(),
+  posted_at     timestamptz,
+  dedupe_key    text not null unique,
+  consult_id    bigint references public.consults(id),
+  notified_at   timestamptz,
+  created_at    timestamptz not null default now()
+);
+create index if not exists idx_inbound_alerts_consult on public.inbound_alerts (consult_id, received_at desc) where consult_id is not null;
+alter table public.inbound_alerts enable row level security;
+-- 94a) 검증: 칸 11 · 행 0 · RLS on · 정책 0 → notify pgrst, 'reload schema';
+-- 되돌림(행이 있으면 먼저 지휘 확인): drop table if exists public.inbound_alerts; notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §95  사이트 신청 → 원장 즉시 연락 — consults.discord_handle + consult_cards 알림 칸 5 (2026-11-03 · 영상 세션 주문 · 오너 「입금주셨으니 가장 우선이 돼야함」 · 계약 §9.55 · 소관 MRIacademy)
+--      A 구간(칸 추가만). 결제 · 정산 무관. ※ PR #643(접수 3 · 4단계) DDL 은 실행 때 §96 으로 옮긴다.
+-- ============================================================
+-- 95-0) 실행 전 스냅샷(세션 · 읽기만): consults 칸 50 · consult_cards 칸 11
+alter table public.consults add column if not exists discord_handle text check (discord_handle is null or char_length(discord_handle) <= 40);
+alter table public.consult_cards add column if not exists intake_notified_at timestamptz;
+alter table public.consult_cards add column if not exists deposit_dm_at      timestamptz;
+alter table public.consult_cards add column if not exists intake_nudges      integer not null default 0;
+alter table public.consult_cards add column if not exists intake_nudged_at   timestamptz;
+alter table public.consult_cards add column if not exists welcome_dm_at      timestamptz;
+-- 95a) 검증: consults 칸 51 · consult_cards 칸 16 → notify pgrst, 'reload schema';
+-- 되돌림: alter table public.consult_cards drop column if exists welcome_dm_at, drop column if exists intake_nudged_at, drop column if exists intake_nudges,
+--   drop column if exists deposit_dm_at, drop column if exists intake_notified_at; alter table public.consults drop column if exists discord_handle; notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §96  레슨 피드백 디코 ↔ 앱 복기 양방향 확장 — 그룹 채널 · 거울 따라가기 (2026-11-04 · 지휘 주문 · 오너 「자동으로해도돼 … 내가책임짐」 · 계약 §9.46.8~14 · 소관 MRIacademy)
+--      A 구간(칸 추가만). 판수 · 결제 · 정산 무관. ※ PR #643(접수 3 · 4단계) DDL 은 실행 때 §97 로 옮긴다.
+-- ============================================================
+-- 96-0) 실행 전 스냅샷(세션 · 읽기만): feedback_channel_map 칸 8 · lesson_reviews 26 · review_feedback 15
+alter table public.feedback_channel_map add column if not exists is_group boolean not null default false;   -- 그룹 채널(글쓴이별로 갈라 담기)
+alter table public.lesson_reviews      add column if not exists mirrored_at timestamptz;                   -- 거울 카드를 마지막으로 맞춘 시각
+alter table public.review_feedback     add column if not exists mirrored_at timestamptz;
+-- 96a) 검증: 9 · 27 · 16 (2026-11-04 세션 실행 · 확인) → notify pgrst, 'reload schema';
+-- 유일 색인은 이미 있다(§89): uq_lr_src_msg · uq_rf_src_msg · uq_lr_mirror_msg · uq_rf_mirror_msg
+-- 스위치(DDL 아님 · 세션 SQL): insert into public.ops_state(key, value) values ('review_mirror:on', jsonb_build_object('on', true, 'since', now()))
+--   on conflict (key) do update set value = excluded.value;   -- 끄기: value = '{"on": false}'
+-- 되돌림: alter table public.review_feedback drop column if exists mirrored_at; alter table public.lesson_reviews drop column if exists mirrored_at;
+--   alter table public.feedback_channel_map drop column if exists is_group; notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §97  웹 신청 첫 연락 봇 DM — intake_dms (2026-11-04 · 총무 주문 · 오너 「자동으로 연동해둬 그사람에맞도록 시스템답변짜서」 · 계약 §9.57 · 소관 MRIacademy)
+--      A 구간(새 표만). 판수 · 결제 · 정산 무관. 같은 신청에 DM 한 번 = consult_id 유일. ※ PR #643(접수 3 · 4단계) DDL 은 실행 때 §98 로 옮긴다.
+-- ============================================================
+-- 97-0) 실행 전 스냅샷(세션 · 읽기만): to_regclass('public.intake_dms') is null
+create table if not exists public.intake_dms (
+  consult_id      bigint primary key references public.consults(id) on delete cascade,   -- 신청 1건 = 줄 1개 = DM 최대 1통
+  handle          text not null check (char_length(handle) <= 40),                         -- 신청서의 디코 아이디(짝 찾기용)
+  dm_text         text not null check (char_length(dm_text) <= 2000),                       -- 보낼(보낸) 맞춤 DM 본문 — 틀 + 칸 채우기
+  status          text not null default 'waiting' check (status in ('waiting','sending','sent','blocked','failed','flagged')),
+  discord_id      text,                                                                      -- 찾은 사람(보내기 직전에 적는다)
+  card_msg_id     text,                                                                      -- #웹신청알림 카드 글(웹훅 wait=true)
+  card_channel_id text,
+  thread_id       text,                                                                      -- 답장을 넘기는 카드 스레드
+  sent_at         timestamptz,
+  flagged_at      timestamptz,                                                               -- 48시간 미입장 표시
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+create index if not exists ix_intake_dms_status on public.intake_dms (status, created_at);
+create index if not exists ix_intake_dms_discord on public.intake_dms (discord_id) where discord_id is not null;
+alter table public.intake_dms enable row level security;   -- 정책 없음 = service_role 만
+-- 97a) 검증: 칸 12 · 행 0 · RLS on · 정책 0 (2026-11-04 세션 실행 · 확인) → notify pgrst, 'reload schema';
+-- 스위치(DDL 아님 · 세션 SQL): insert into public.ops_state(key, value) values ('intake_dm:on', jsonb_build_object('on', false, 'test', jsonb_build_array('<시험 아이디>')))
+--   on conflict (key) do update set value = excluded.value;   -- 켜기(오너 문구 OK 뒤): value = '{"on": true}'
+-- 되돌림(행이 있으면 먼저 지휘 확인): drop table if exists public.intake_dms; notify pgrst, 'reload schema';
+-- ============================================================
+
+-- ============================================================
+-- §98  원장 직강 취소 1시간 전 — cancel_booking 교체 (2026-11-05 · 오너 OK 11/5 · 계약 §9.59 · 소관 MRIacademy)
+--      B 구간(기존 함수 교체 · 오너 OK). 판수 · 결제 · 정산 계산 무관 — 취소 가능 시각만 바뀐다(직강 3시간 → 1시간).
+--      ※ PR #643(접수 3 · 4단계) DDL 은 실행 때 §99 로 옮긴다.
+-- ============================================================
+-- 98-0) 실행 전 스냅샷: md5(prosrc) = 48d908adb7cb23e2157fda514434d2bd
+-- 98a)  2026-11-05 세션 실행 · 드라이런(롤백) 직강 2시간 반 전 취소됨 / 그룹 cancel_window_passed
+CREATE OR REPLACE FUNCTION public.cancel_booking(p_student_id bigint, p_booking_id bigint)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_b     slot_bookings%rowtype;
+  v_start timestamptz;
+  v_type  text;
+  v_win   interval;
+  v_ids   bigint[];
+begin
+  select * into v_b from slot_bookings where id = p_booking_id for update;
+  if not found                          then return jsonb_build_object('error','not_found'); end if;
+  if v_b.student_id <> p_student_id     then return jsonb_build_object('error','scope_denied'); end if;
+  if v_b.span_head_id is not null       then return jsonb_build_object('error','not_found'); end if;  -- 꼬리 행은 직접 취소 대상이 아니다
+  if v_b.status <> 'booked'             then return jsonb_build_object('error','not_found'); end if;
+
+  select slot_start, lesson_type into v_start, v_type from trainer_slots where id = v_b.slot_id;
+  -- §98 · 계약 §9.59(오너 11/5): 원장 직강(course)은 1시간 전까지 · 그 밖(레슨 · 그룹 · 레벨 테스트)은 3시간 전까지
+  v_win := (case when v_type = 'course' then interval '1 hour' else interval '3 hours' end);
+  if v_start - now() < v_win then
+    return jsonb_build_object('error','cancel_window_passed');
+  end if;
+
+  select array_agg(slot_id) into v_ids from slot_bookings
+    where id = v_b.id or span_head_id = v_b.id;
+  update slot_bookings set status = 'cancelled', cancelled_at = now(), games_held = 0
+    where id = v_b.id or span_head_id = v_b.id;
+  -- 개인이 닫아둔 칸만 되연다. 그룹 슬롯은 애초에 open 이라 이 update 가 건드리지 않는다.
+  update trainer_slots set status = 'open' where id = any(v_ids) and status = 'closed';
+
+  return jsonb_build_object('cancelled', true, 'gamesRestored', v_b.games_held);
+end;
+$function$;
+-- 되돌림: 위에서 v_type · v_win 두 줄을 빼고 조건을 `if v_start - now() < interval '3 hours' then` 으로(§32 정본) → md5 48d908… 로 돌아온다.
+-- ============================================================
+
+-- ============================================================
+-- §99  수강생 희망 시간 — student_time_prefs (2026-11-05 · 총무 주문 · 오너 「판단대로해」 · 계약 §9.60 · 소관 MRIacademy)
+--      A 구간(새 표만). 판수 · 결제 · 정산 · 예약 무관. ※ PR #643(접수 3 · 4단계) DDL 은 실행 때 §100 으로 옮긴다.
+-- ============================================================
+-- 99-0) 실행 전 스냅샷: to_regclass('public.student_time_prefs') is null
+create table if not exists public.student_time_prefs (
+  id            bigint generated always as identity primary key,
+  student_id    bigint not null references public.students(id) on delete cascade,
+  slots         text[] not null check (cardinality(slots) between 1 and 35 and slots <@ array[
+                  'mon:morning','mon:afternoon','mon:evening','mon:night','mon:late','tue:morning','tue:afternoon','tue:evening','tue:night','tue:late',
+                  'wed:morning','wed:afternoon','wed:evening','wed:night','wed:late','thu:morning','thu:afternoon','thu:evening','thu:night','thu:late',
+                  'fri:morning','fri:afternoon','fri:evening','fri:night','fri:late','sat:morning','sat:afternoon','sat:evening','sat:night','sat:late',
+                  'sun:morning','sun:afternoon','sun:evening','sun:night','sun:late']::text[]),
+  kinds         text[] not null check (cardinality(kinds) between 1 and 3 and kinds <@ array['lesson','course','level_test']::text[]),
+  trainer_id    bigint references public.staff(id),
+  memo          text check (memo is null or char_length(memo) <= 100),
+  active        boolean not null default true,
+  created_at    timestamptz not null default now(),
+  superseded_at timestamptz
+);
+create unique index if not exists uq_student_time_prefs_active on public.student_time_prefs (student_id) where active;
+create index if not exists ix_student_time_prefs_created on public.student_time_prefs (created_at);
+alter table public.student_time_prefs enable row level security;   -- 정책 없음 = service_role 만
+-- 99a) 검증: 칸 9 · 행 0 · RLS on · 정책 0 · 색인 3 (2026-11-05 세션 실행 · 확인) → notify pgrst, 'reload schema';
+-- 되돌림(행이 있으면 먼저 지휘 확인): drop table if exists public.student_time_prefs; notify pgrst, 'reload schema';
+-- ============================================================
+
+-- §101  레벨 테스트 신청 = 입금 먼저 + 7일 가능 시간표 — consults 칸 6 · consult_cards 칸 2 (2026-11-09 · 총무 주문 · 오너 OK 11/9 「무료말고 입금해야 신청하는거로하자」 · 계약 §9.61 · 소관 MRIacademy)
+--      A 구간(칸 · 색인 더하기만 · 기존 행 값 그대로). 판수 · 결제 · 정산 무관. ※ §100 = PR #643(접수 3 · 4단계) 몫.
+alter table public.consults add column if not exists avail_slots       text[];
+alter table public.consults add column if not exists tier_note         text;
+alter table public.consults add column if not exists depositor_name    text;
+alter table public.consults add column if not exists intake_state      text;
+alter table public.consults add column if not exists deposit_due_at    timestamptz;
+alter table public.consults add column if not exists intake_expired_at timestamptz;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_intake_state') then
+    alter table public.consults add constraint chk_consults_intake_state
+      check (intake_state is null or intake_state in ('awaiting_deposit','confirmed','expired'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_tier_note') then
+    alter table public.consults add constraint chk_consults_tier_note check (tier_note is null or char_length(tier_note) <= 40);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_depositor_name') then
+    alter table public.consults add constraint chk_consults_depositor_name check (depositor_name is null or char_length(depositor_name) <= 40);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_avail_slots') then
+    alter table public.consults add constraint chk_consults_avail_slots check (avail_slots is null or cardinality(avail_slots) <= 35);
+  end if;
+end $$;
+create index if not exists ix_consults_awaiting_deposit on public.consults (deposit_due_at) where intake_state = 'awaiting_deposit';
+alter table public.consult_cards add column if not exists confirmed_dm_at     timestamptz;
+alter table public.consult_cards add column if not exists deposit_reminded_at timestamptz;
+-- 101a) 검증: consults 새 칸 6 · 제약 4 · 색인 1 · consult_cards 새 칸 2 · 기존 행 새 칸 전부 null (2026-11-09 세션 실행 · 확인 · consults 38행 · cards 13행 그대로) → notify pgrst, 'reload schema';
+-- 되돌림(새 칸에 값이 있으면 먼저 지휘 확인): drop index if exists public.ix_consults_awaiting_deposit;
+--   alter table public.consults drop constraint if exists chk_consults_intake_state, drop constraint if exists chk_consults_tier_note,
+--     drop constraint if exists chk_consults_depositor_name, drop constraint if exists chk_consults_avail_slots,
+--     drop column if exists avail_slots, drop column if exists tier_note, drop column if exists depositor_name,
+--     drop column if exists intake_state, drop column if exists deposit_due_at, drop column if exists intake_expired_at;
+--   alter table public.consult_cards drop column if exists confirmed_dm_at, drop column if exists deposit_reminded_at; notify pgrst, 'reload schema';
+-- ============================================================
+
+-- §104  레벨 테스트 신청 v2 — consults 칸 5 (2026-11-09 · 총무 주문 · 오너 「레벨테스트 신청란 개선안 적용해서 지금 작업시작해」 · 계약 §9.64 · 소관 MRIacademy)
+--      A 구간(칸 · 제약 더하기만). §101 위에 얹는다(§101 avail_slots 는 §9.64 가 avail_windows 로 대체 · 칸은 남김). ※ §102 · §103 = §9.62 · §9.63 설계 몫(미실행).
+alter table public.consults add column if not exists best_tier     text;
+alter table public.consults add column if not exists avg_damage    integer;
+alter table public.consults add column if not exists damage_basis  text;
+alter table public.consults add column if not exists play_slots    text[];
+alter table public.consults add column if not exists avail_windows jsonb;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_best_tier') then
+    alter table public.consults add constraint chk_consults_best_tier
+      check (best_tier is null or best_tier in ('브론즈','실버','골드','플래티넘','다이아','마스터','서바이버','없음'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_avg_damage') then
+    alter table public.consults add constraint chk_consults_avg_damage check (avg_damage is null or (avg_damage between 0 and 3000));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_damage_basis') then
+    alter table public.consults add constraint chk_consults_damage_basis check (damage_basis is null or damage_basis in ('ranked','normal'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_play_slots') then
+    alter table public.consults add constraint chk_consults_play_slots check (play_slots is null or cardinality(play_slots) <= 35);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_consults_avail_windows') then
+    alter table public.consults add constraint chk_consults_avail_windows
+      check (avail_windows is null or (jsonb_typeof(avail_windows) = 'array' and jsonb_array_length(avail_windows) <= 14));
+  end if;
+end $$;
+-- 104a) 검증: 칸 5 · 제약 5 · consults 40행 그대로 · 새 칸 값 0 (2026-11-09 세션 실행 · 확인) → notify pgrst, 'reload schema';
+-- 되돌림(새 칸에 값이 있으면 먼저 지휘 확인): alter table public.consults drop constraint if exists chk_consults_best_tier,
+--   drop constraint if exists chk_consults_avg_damage, drop constraint if exists chk_consults_damage_basis,
+--   drop constraint if exists chk_consults_play_slots, drop constraint if exists chk_consults_avail_windows,
+--   drop column if exists best_tier, drop column if exists avg_damage, drop column if exists damage_basis,
+--   drop column if exists play_slots, drop column if exists avail_windows; notify pgrst, 'reload schema';
+-- ============================================================

@@ -13,9 +13,9 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
 <style>
 :root{
-  --bg:#0a0a0c;--surface-1:#15151a;--surface-2:#1a1a20;
-  --ink:#f4f4f5;--ink-dim:#a1a1aa;--ink-faint:#71717a;
-  --gold:#f5c518;--line:#27272a;--bad:#f87171;
+  --bg:#FBF6EF;--surface-1:#FFFFFF;--surface-2:#F4ECE1;
+  --ink:#1A1714;--ink-dim:#5A5047;--ink-faint:#776B60;
+  --gold:#A4551C;--line:#E6DACB;--bad:#9A3B12;
   /* 본문은 Pretendard(한글 정본). 헤딩·버튼은 OS UI 산세리프로 대비를 만든다 —
      디자인 시스템 v1 의 Space Grotesk 는 CDN 을 하나 더 늘리고, 이 화면은 보호자
      개인정보를 받으므로 제3자(구글 폰트)로 IP 가 나가지 않게 한다. 새 네트워크 의존 0. */
@@ -51,16 +51,19 @@ details[open] summary{border-bottom:1px solid var(--line)}
 .terms ul{padding-left:18px;margin-bottom:9px}
 button{
   width:100%;margin-top:26px;padding:15px;border:0;border-radius:10px;
-  background:var(--gold);color:#1a1a00;font-family:var(--display);font-size:16px;font-weight:800;cursor:pointer;
+  background:var(--gold);color:#fff;font-family:var(--display);font-size:16px;font-weight:800;cursor:pointer;
 }
 button[disabled]{opacity:.55;cursor:default}
 .msg{margin-top:16px;padding:13px 15px;border-radius:9px;font-size:13.5px;display:none}
-.msg.bad{display:block;background:rgba(248,113,113,.1);border:1px solid var(--bad);color:#fecaca}
+.msg.bad{display:block;background:rgba(154,59,18,.1);border:1px solid var(--bad);color:var(--bad)}
 .done{display:none;text-align:center;padding:44px 0}
 .done h2{font-family:var(--display);color:var(--gold);font-size:19px;margin-bottom:12px}
 .done p{color:var(--ink-dim);font-size:14px;margin-bottom:8px}
 a{color:var(--gold)}
 @media (max-width:420px){.wrap{padding:26px 16px 60px}h1{font-size:21px}}
+/* 밝은 톤(10/21 B3 · 오너 11/11) — 바탕 크림 · 강조 주황 · 검은 바탕 없음.
+   제목 Wanted Sans 는 외부 CDN 이라 이 화면엔 붙이지 않는다(보호자 개인정보 화면 · 새 네트워크 의존 0 유지) */
+:root{color-scheme:light}
 </style>
 </head>
 <body>

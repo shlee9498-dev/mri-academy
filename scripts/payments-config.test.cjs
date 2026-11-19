@@ -27,13 +27,18 @@ test("99판 = 33판 × 3 · 세트 이름 초급 · 중급 · 심화(2026-10-02 
   assert.equal(m.PRICES.lesson99, m.PRICES.lesson33 * 3);           // 33판 값이 바뀌면 99판도 함께 바꾼다
   assert.equal(m.PRICES.lesson99, 420000);
   assert.equal(m.PRODUCT_LABELS.lesson99, "99판 패키지");
-  assert.deepEqual([m.PRODUCT_LABELS.setEntry, m.PRODUCT_LABELS.setLeap, m.PRODUCT_LABELS.setMaster],
-                   ["초급 세트", "중급 세트", "심화 세트"]);
+  // 2026-10-19 원장 직강 290,000 하나 · 세트 폐지(docs/direct-price-unify.md §3)
+  assert.equal(m.PRICES.direct8, 290000);
+  assert.equal(m.PRODUCT_LABELS.direct8, "원장 직강 8회");
+  for (const gone of ["direct8_beginner", "direct8_inter", "direct8_advanced", "setEntry", "setLeap", "setMaster"])
+    assert.equal(m.PRODUCT_KEYS.includes(gone), false, gone);
+  assert.equal(m.SET_COMPONENTS, undefined);
+  assert.equal(m.setListPrice, undefined);
   // 원장 1:1 · VIP DAY PASS 금액 키는 지웠다(2026-10-02 · 가격 미확정 · 판매 0건 · 읽는 코드 0곳)
   for (const gone of ["oneOnOneTrial", "oneOnOne", "vipDayPass"]) assert.equal(m.PRODUCT_KEYS.includes(gone), false, gone);
 });
 
-test("지운 키(consultLesson · consultCourse · oneOnOneTrial · oneOnOne · vipDayPass)를 읽는 코드가 없다 — 주석의 경위 설명만 남는다", () => {
+test("지운 키(consultLesson · consultCourse · oneOnOneTrial · oneOnOne · vipDayPass · 직강 단계 3키 · 세트 3키)를 읽는 코드가 없다 — 주석의 경위 설명만 남는다", () => {
   const skip = new Set(["node_modules", "docs", "scripts", ".git", ".claude"]);
   const hits = [];
   const walk = (dir) => {
@@ -45,7 +50,7 @@ test("지운 키(consultLesson · consultCourse · oneOnOneTrial · oneOnOne · 
       fs.readFileSync(p, "utf8").split("\n").forEach((line, i) => {
         const t = line.trim();
         if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return;
-        if (/\b(consult(Lesson|Course)|oneOnOne(Trial)?|vipDayPass)\b/.test(line)) hits.push(`${path.relative(ROOT, p)}:${i + 1}`);
+        if (/\b(consult(Lesson|Course)|oneOnOne(Trial)?|vipDayPass|direct8_(beginner|inter|advanced)|set(Entry|Leap|Master)|SET_COMPONENTS|setListPrice)\b/.test(line)) hits.push(`${path.relative(ROOT, p)}:${i + 1}`);
       });
     }
   };
