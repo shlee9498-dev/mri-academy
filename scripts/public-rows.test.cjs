@@ -140,3 +140,29 @@ test("성장 기록 닉 — 클랜 태그(GmI_ · Gm + 구분자)를 떼고 가�
   assert.deepEqual(progressPublic(rows).map((s) => [s.alias, s.delta.tierTo]),
     [["ab** A", "Crystal 1"], ["ab** B", "Platinum 1"], ["z**", "Platinum 1"]]);         // 「GmI_zz」 — 남은 두 글자 → 한 글자
 });
+
+test("일반 스쿼드 전적 고르기(§9.52) — TPP 먼저 · 0판이면 FPP · 둘 다 없으면 null", () => {
+  const { normalOf } = require("../public-rows.cjs");
+  assert.deepEqual(normalOf({ squad: { roundsPlayed: 40, damageDealt: 8000, kills: 30 }, "squad-fpp": { roundsPlayed: 5, damageDealt: 100 } }),
+    { mode: "squad", rounds: 40, avgDamage: 200, avgKills: 0.75 });
+  assert.equal(normalOf({ squad: { roundsPlayed: 0 }, "squad-fpp": { roundsPlayed: 3, damageDealt: 301, kills: 1 } }).mode, "squad-fpp");
+  assert.equal(normalOf({ solo: { roundsPlayed: 9 } }), null);
+  assert.equal(normalOf(null), null);
+});
+
+test("성장 기록 두 줄(§9.52) — 경쟁전 · 일반 따로 · 일반 기록이 없으면 null · 응답에 modes", () => {
+  const { modeLines, progressPublic } = require("../public-rows.cjs");
+  const r = (d, o) => ({ student_id: 7, player_name: "GmI_테스트닉", platform: "steam", snapshot_type: "tracking", season_id: "pc-2018-43", created_at: d, ...o });
+  const rows = [
+    r("2026-10-01T00:00:00Z", { tier: "Gold", sub_tier: "1", tier_index: 3, rank_point: 2100, avg_damage: 210, rounds_played: 20 }),
+    r("2026-11-02T00:00:00Z", { tier: "Platinum", sub_tier: "3", tier_index: 4, rank_point: 2600, avg_damage: 267, rounds_played: 61 }),
+    r("2026-11-03T00:00:00Z", { tier: "Platinum", sub_tier: "3", tier_index: 4, rank_point: 2610, avg_damage: 268, rounds_played: 63, normal: { mode: "squad", rounds: 120, avgDamage: 301, avgKills: 1.2 } }),
+  ];
+  assert.deepEqual(modeLines(rows), { ranked: { avgDamage: 268, rounds: 63, dmgDelta: 58 }, normal: { avgDamage: 301, rounds: 120, dmgDelta: null } });
+  assert.equal(modeLines(rows.slice(0, 2)).normal, null);
+  const out = progressPublic(rows);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].modes.ranked.rounds, 63);
+  assert.equal(out[0].modes.normal.avgDamage, 301);
+  assert.equal(out[0].delta.dmgDelta, 58, "기존 칸은 그대로");
+});

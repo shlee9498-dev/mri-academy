@@ -52,6 +52,28 @@ function tierText(r) {
 }
 // 시즌 번호 — season_id 끝 숫자(「division.bro.official.pc-2018-42」 → 42)
 const seasonNum = (id) => { const m = /-(\d+)$/.exec(String(id || "")); return m ? Number(m[1]) : null; };
+// 일반(비경쟁) 시즌 스쿼드 전적 — PUBG /players/{id}/seasons/{seasonId} 의 gameModeStats 에서 고른다(계약 §9.52).
+//   경쟁전(pubgRankedByAccount)과 같은 순서: TPP 스쿼드에 판이 있으면 그것, 없으면 FPP 스쿼드. 둘 다 0판이면 null.
+//   정기 수집(server.js runStatsSnapshot)이 student_snapshots.raw.normal 에 넣는다 — 칸 추가 없음(DDL 없음).
+function normalOf(gameModeStats) {
+  const gm = gameModeStats || {};
+  const pick = ["squad", "squad-fpp"].map((m) => [m, gm[m]]).find(([, x]) => x && Number(x.roundsPlayed) > 0);
+  if (!pick) return null;
+  const [mode, x] = pick, rounds = Number(x.roundsPlayed);
+  return { mode, rounds, avgDamage: Math.round(Number(x.damageDealt || 0) / rounds), avgKills: +(Number(x.kills || 0) / rounds).toFixed(2) };
+}
+// 경쟁전 · 일반 두 줄(§9.52) — 사이트 성장 기록 카드가 모드를 구분해 쓴다. 값이 없으면 null(그 줄을 숨긴다).
+//   경쟁전 = 기존 avg_damage · rounds_played(경쟁전 값만 들어 있다) · 일반 = raw.normal(11/3 수집 시작 · 그 전 행엔 없다).
+//   rounds = 끝 기록의 그 시즌 판수(시즌이 바뀌면 다시 센다) · dmgDelta = 첫 · 끝 기록 평균딜 차이(두 기록이 다 있을 때만).
+function modeLines(rows) {
+  const rk = rows.filter((r) => r.avg_damage != null);
+  const nm = rows.filter((r) => r.normal && r.normal.rounds > 0);
+  const line = (f, l, dmg, rounds) => ({ avgDamage: dmg(l), rounds: rounds(l), dmgDelta: f !== l ? dmg(l) - dmg(f) : null });
+  return {
+    ranked: rk.length ? line(rk[0], rk[rk.length - 1], (r) => Number(r.avg_damage), (r) => r.rounds_played ?? null) : null,
+    normal: nm.length ? line(nm[0], nm[nm.length - 1], (r) => Number(r.normal.avgDamage), (r) => Number(r.normal.rounds)) : null,
+  };
+}
 const pointOf = (r) => ({ date: String(r.created_at).slice(0, 10), tier: tierText(r), rankPoint: r.rank_point ?? null, avgDamage: r.avg_damage ?? null });
 function deltaOf(f, l, months) {
   const sf = seasonNum(f.season_id), sl = seasonNum(l.season_id);
@@ -105,12 +127,12 @@ function progressPublic(rows, max = 20) {
     }
     pts[0] = f; pts[pts.length - 1] = l;                     // 첫 · 끝은 delta 와 같은 기록(하루 버킷이 바꾸지 않게)
     const months = Math.max(1, Math.round((Date.parse(l.created_at) - Date.parse(f.created_at)) / 2592000000));
-    out.push({ key: keyOf(l), alias: maskNick(l.player_name || f.player_name), trajectory: pts.map(pointOf), delta: deltaOf(f, l, months) });
+    out.push({ key: keyOf(l), alias: maskNick(l.player_name || f.player_name), trajectory: pts.map(pointOf), delta: deltaOf(f, l, months), modes: modeLines(arr) });
   }
   for (const [k, p] of pairs) {
     if (!p.base || !p.after) continue;
     out.push({ key: k, alias: maskNick(p.after.player_name || p.base.player_name), trajectory: [pointOf(p.base), pointOf(p.after)],
-      delta: deltaOf(p.base, p.after, null) });
+      delta: deltaOf(p.base, p.after, null), modes: modeLines([p.base, p.after]) });
   }
   const seen = new Set();
   const list = out.filter((s) => isRise(s.delta))
@@ -131,4 +153,4 @@ function progressPublic(rows, max = 20) {
   return list;
 }
 
-module.exports = { communityRow, communityRows, scrubWords, scrubText, maskNick, tierText, seasonNum, progressPublic };
+module.exports = { communityRow, communityRows, scrubWords, scrubText, maskNick, tierText, seasonNum, progressPublic, normalOf, modeLines };

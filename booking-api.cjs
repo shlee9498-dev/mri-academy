@@ -18,7 +18,7 @@
 // 차감표 — lesson-lengths.cjs 한 벌(JS) + §47 book_slot() 의 case 식(DB) · 두 곳이 같이 움직여야 한다.
 // 여기서는 길이 유효성 검사와 앱에 내려주는 길이표에만 쓰고, 판수 산출은 DB 가 한다
 // (게이트와 표시가 갈리면 "화면엔 5판인데 예약은 거부"가 난다). 2026-09-30 오너: 150 · 180분(13 · 15판) 추가.
-const { PERSONAL_LENGTHS, PERSONAL_DURATIONS, GROUP_LENGTHS, LEVEL_TEST_LENGTHS } = require("./lesson-lengths.cjs");
+const { PERSONAL_LENGTHS, PERSONAL_DURATIONS, GROUP_LENGTHS, LEVEL_TEST_LENGTHS, GROUP_HOURLY_FROM, groupGamesForMinutes, isHourlyGroupSlot, usesNewGroupRule } = require("./lesson-lengths.cjs");
 const DURATION_MIN = PERSONAL_DURATIONS;
 const SLOT_MIN = 30;                 // 슬롯 단위. §23 trainer_slots 의 전개 간격과 같다.
 // 슬롯 한 덩어리의 길이(§40 · 계약 §9.3). 그룹·레벨 테스트는 **1행이 이 길이를 통째로** 차지한다 —
@@ -901,6 +901,18 @@ module.exports = function mountBookingApi(app, deps) {
     } catch (e) { console.error("course_slot_close", slotId, e?.status || e?.message); }
   }
 
+  // 그룹 시간당 규칙은 기준 이후 결제분으로 듣는 수강생만(§9.70.3 · usesNewGroupRule). 읽기 실패는 옛 규칙.
+  async function newRulePurchase(studentId, trainerId) {
+    try {
+      const rem = await sbRpc("portal_remaining_for_trainer", { p_student_id: Number(studentId), p_trainer_id: Number(trainerId) });
+      const en = await sbSelect("lesson_enrollments", "select=games_total,bonus_games,status"
+        + `&student_id=eq.${Number(studentId)}&trainer_id=eq.${Number(trainerId)}&created_at=gte.${encodeURIComponent(GROUP_HOURLY_FROM)}`);
+      const fresh = en.filter((e) => !["refunded", "void", "cancelled"].includes(String(e.status || "")))
+        .reduce((n, e) => n + Number(e.games_total || 0) + Number(e.bonus_games || 0), 0);
+      return usesNewGroupRule(rem, fresh);
+    } catch (e) { console.error("group_rule_read", e?.status || e?.message); return false; }
+  }
+
   app.post(`${TRAINER}/bookings/:id/complete`, rateLimit("trainerResolve", 60, 60_000),
     bodyOnly(["games", "playedAt", "level", "sameDayOk"]), requireTrainer, wrap(async (req, res) => {
       const bookingId = readOpaqueId("booking", req.params.id);
@@ -948,20 +960,33 @@ module.exports = function mountBookingApi(app, deps) {
       if (games !== undefined
         && (!Number.isInteger(games) || games < GAMES_MIN || games > GAMES_MAX))
         return fail(res, 400, "invalid_body");
+      // 그룹 시간당 차감(§9.70) — 11/13 이후 연 그룹 칸 + 그 이후 결제분으로 듣는 수강생은 판수를 칸 길이로 정한다(트레이너가 보낸 판수 대신).
+      //   앱이 아직 판수 입력칸을 띄워도 깨지지 않게 받기는 받고, 다르면 로그만 남긴다. 응답 games 가 실제 빠진 판수다.
+      let ruleGames = games;
+      const gt = bk0?.trainer_slots?.lesson_type;
+      const gs = gt === "participate" || gt === "spectate"
+        ? (await sbSelect("trainer_slots", `select=lesson_type,duration_min,created_at&id=eq.${Number(bk0.slot_id)}&limit=1`))[0] : null;
+      if (gs && isHourlyGroupSlot(gs) && await newRulePurchase(bk0.student_id, bk0.trainer_slots.trainer_id)) {
+        const g = groupGamesForMinutes(gs.duration_min);
+        if (g != null) {
+          if (games !== undefined && games !== g) console.log(`[group-hourly] booking ${bookingId} · 보낸 ${games}판 → 규칙 ${g}판`);
+          ruleGames = g;
+        }
+      }
       // 날짜는 **형식**만 위에서 봤다. 슬롯 날짜 ±1일 판정은 §42 함수가 한다 — 슬롯 시각을
       // 아는 쪽이 거기라서, 여기서 또 재면 두 곳이 갈라진다.
       // §37 미실행 배포에서는 PostgREST 가 404 를 주고 sbRpc 가 throw 한다 — wrap 이 500 으로
       // 감싼다. 조용히 「완료됨」으로 답하지 않는다.
       const out = await sbRpc("record_lesson_from_booking", {
         p_trainer_id: req.staff.id, p_booking_id: bookingId,
-        p_games: games ?? null, p_played_at: playedAt ?? null,
+        p_games: ruleGames ?? null, p_played_at: playedAt ?? null,
       });
       if (out?.error) return rpcFail(res, out.error);
       if (out?.already) {
         // §9.29 — 그날 기록이 「취소한 기록」뿐인데 §50 함수가 그걸 기록으로 보고 판수 없이 닫은 경우(함수는 취소를 모른다 ·
         //   함수 교체는 오너 OK 대기). 여기서 같은 기록 함수로 넣어 판수가 0회 빠지지 않게 한다 — 그 밖은 종전 그대로.
         if (out.already === "session" && recorder) {
-          const fixed = await recordOverVoided(bookingId, out.playedAt, games, req.staff);
+          const fixed = await recordOverVoided(bookingId, out.playedAt, ruleGames, req.staff);
           if (fixed) return sendTrainer(res, fixed);
         }
         // already:'session' 은 예약을 닫는 일까지 했지만 판수는 안 넣었다 — 성공으로 답하지 않는다.

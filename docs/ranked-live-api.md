@@ -71,3 +71,83 @@ DB 쓰기 · 새 표 없음. 킬내기 집계 · 리더보드 · 상금 원장 �
 
 `server.js` 의 `rankedLive.createRankedLive(…).mount(app)` 한 덩어리와 `require` 한 줄을 지우면 길이 없어진다(다른 기능과 엮인 곳 없음).
 급하면 Railway 에서 앞 배포로 되돌린다. 허용 목록 설정 줄을 넣었다면 `ops_state` `ranked:live` 한 줄을 지우면 기본값으로 돌아간다.
+
+## §2 방송 점수판 — 방송 화면 · 조작 화면 분리 + 배치 5판 (2026-11-04 · 총무 주문 · 오너 18:03 「좀더 고퀄로 … 오늘 배치 5판 볼거라 그기능도 좀 넣고 … 불편한게 좀 있는데 그건 네가 파악해봐」) · **서버 + 화면(이 PR) · DDL 없음 · 새 env 없음**
+
+### §2.1 왜
+- 지금 OBS 「OBS 점수판」 소스는 저장소 밖 파일(지휘가 만든 로컬 오버레이)이다 — 숫자를 OBS 상호작용 창에서 손으로 고치고 저장해야 하고, 입력판이 방송 화면에 찍혔다(11/4 18:03 화면).
+- 그 파일은 건드리지 않는다. 새 주소 두 개를 따로 만든다 → 오너가 OBS 소스 주소만 바꾸면 된다(안 바꾸면 지금 점수판 그대로).
+
+### §2.2 주소
+| 무엇 | 주소 | 누가 |
+|---|---|---|
+| 방송 화면(OBS 브라우저 소스) | `https://mriacademy.gg/obs-board.html` | 점수 줄만 · 입력판 없음 · 투명 배경 · 1초마다 새로 읽음 |
+| 조작 화면(폰 · 브라우저) | `https://mriacademy.gg/obs-control.html` | 원장 디스코드 로그인(사이트 로그인 `mri_token`)만 · 미리 보기 포함 |
+- 방송 화면 옵션: `?h=64`(줄 높이 px · 40 ~ 120 · 기본 64) · `?pad=0`(바깥 여백 px).
+
+### §2.3 API
+- `GET /api/ranked/board` — 공개 읽기 · `Cache-Control: no-store`. 응답 `{ v, mode: "normal"|"placement", ign, since, placementSince, updatedAt, normal: { startRp, nowRp, delta, rec{w,t,l}, auto{w,t,l}, tier, subTier, mates[] }, placement: { slots[5]: {place, kills, src: "api"|"manual"}|null, summary{played, avgPlace, kills, chickens}, finished, tier: {text, src}|null }, stale, liveAt, undo }`.
+  경쟁전 값은 §1 계산(`live`)을 같이 쓴다 — 60초 기억 · 지나면 뒤에서 새로 받고 그동안 직전 값을 낸다(방송 화면이 1초마다 불러도 배그 호출은 분당 1 ~ 2번 그대로).
+- `POST /api/ranked/board` — 오너만(`Authorization: Bearer <mri_token>` · 아니면 401 `login_required` · 403 `owner_only`). 누르는 즉시 저장 · 응답 = 위와 같은 모양.
+  | op | 본문 | 뜻 |
+  |---|---|---|
+  | `mode` | `mode` | 일반 ↔ 배치(배치 처음이면 지금부터 셈) |
+  | `newBroadcast` | `confirm: true` 필수 | 지금 점수 = 시작 점수 · 승탑패 보정 0 · 지금부터 셈 · 팀원 자동 |
+  | `startRp` | `value`(빈 값 = 지움) | 시작 점수 손 입력 |
+  | `adj` | `key: w|t|l` · `d: ±1` | 승탑패 손 보정(자동 + 보정 · 0 밑으로 안 감) |
+  | `mates` | `mates: [닉…]` 또는 `null`(자동) | 같이 하는 사람(최대 3) |
+  | `placementStart` | `confirm: true` 필수 | 배치 다섯 칸 비우고 지금부터 셈 |
+  | `slot` | `i: 0~4` · `place: 1~100` · `kills: 0~99` 또는 `clear: true` | 배치 칸 손 입력(손 입력이 API 값보다 이김) |
+  | `tier` | `tier`(빈 값 = 자동) | 배치 결과 티어 손 입력 |
+  | `undo` | — | 한 단계 되돌리기(메모리 30단계 · 없으면 409 `nothing_to_undo`) |
+- 상태 = `ops_state 'ranked:board'` 한 줄(서버가 다시 떠도 그대로). 되돌리기 기록은 메모리라 재시작하면 비워진다.
+- 호출 한도(IP 마다 1분): 읽기 240 · 쓰기 60 — 넘으면 429 `rate_limited`.
+
+### §2.4 배치 5판
+- 상단 줄 = `배치 n/5` + 다섯 칸(판마다 `#등수` · `n킬` · 안 한 판은 번호만 · 다음 판 칸에 테두리) + 평균 등수 · 총 킬 · 치킨 수.
+- 칸 색: 1등 금색 · 2 ~ 10등 흰색 · 그 밖 회색.
+- 자동 채움: 배치 시작 뒤 경쟁전 판(§1 `matches`)을 순서대로 다섯 칸에. 손 입력한 칸은 손 값.
+- 5판 다 차면 `배치 끝 · 결과 티어` 칸 — 손 입력 티어가 먼저, 없으면 배그 경쟁전 티어(`Unranked` 면 「확인 중」).
+
+### §2.5 바꾼 불편
+| 전 | 후 |
+|---|---|
+| 입력판이 방송 화면에 찍힘 | 방송 주소 = 점수 줄만 · 조작은 따로 |
+| 저장 버튼을 눌러야 반영 | 칸을 벗어나거나 엔터 · 버튼 한 번 = 바로 저장 → 방송 1초 안 · 「되돌리기」 |
+| 승탑패 손으로 | 경쟁전 판 결과 자동(§1) + 손 보정 ± |
+| 「새 방송 시작」 한 번에 실행 | 두 번 눌러야(4초 안) · 서버도 `confirm` 없으면 거절 |
+| 상단 글자 작고 흐림 | 줄 높이 64px 안에서 숫자 30px · 진한 배경 · 바뀌면 0.5초 세기 애니메이션(움직임 줄이기 설정 존중) |
+
+### §2.6 안 바뀌는 것 · 되돌리는 법
+- §1 응답 · 킬내기 · 다른 API 그대로. DB 표 · 칸 추가 없음. 판수 · 결제 · 정산 무관.
+- 되돌리기: OBS 소스 주소를 원래 파일로 돌리면 끝. 서버는 `server.js` 의 `ranked-board.cjs` 한 덩어리를 지우면 길이 없어진다.
+
+## §3 미션 칸 — 목표 · 남은 시간 · 진행 막대 (2026-11-05 · 총무 주문 · 오너 04:10 「목요일 오후 6시반 ~ 금요일 오후 6시 반까지 노방종으로 서바이버 달성하기 미션 … 배치부터 서바이버까지 … 3700점이 서바이버」) · **서버 + 화면(이 PR) · DDL 없음 · 새 env 없음**
+
+### §3.1 상태 — `ops_state 'ranked:board'` 의 `mission`
+```
+mission = { on, title, target, startAt, endAt, startRp,          // 조작 화면이 정한다
+            autoStartRp, reachedAt, reachedRp, lastRp }          // 서버가 읽을 때 따라 적는다
+```
+- 기본값 = 이번 미션: `on:false` · 「24시간 서바이버 미션」 · 3,700 · 2026-11-05 18:30 ~ 2026-11-06 18:30 KST(`startAt`/`endAt` 은 UTC ISO 로 저장).
+- 점수는 일반 줄과 같은 값(§1 `now.rp`)을 그대로 쓴다 — 새 계산 없음. 같이 하는 사람 칸도 그대로.
+- 시작 점수: 손 입력(`startRp`)이 먼저, 비우면 **배치가 끝난 뒤 처음 본 점수**(`autoStartRp` · 배치 모드가 아니면 시작 시각 뒤 처음 본 점수).
+- 목표 넘김: 시작 ~ 종료 사이에 점수가 목표 이상이면 그때 시각(`reachedAt`)과 점수를 한 번 적고 고정한다(점수 갱신 주기가 60초라 실제보다 최대 1분 늦을 수 있다).
+- 종료 뒤 최종 점수 = 종료 전 마지막으로 본 점수(`lastRp`).
+- 기록 칸은 되돌리기로 지워지지 않는다. 목표 · 시작 · 종료 시각을 바꾸면 새로 잡는다.
+
+### §3.2 API
+- `GET /api/ranked/board` 에 두 칸이 더해진다.
+  - `mission` — 꺼져 있으면 `{ on:false }`. 켜져 있으면 `{ on, title, target, startAt, endAt, serverNow, phase, startRp, startSrc: "manual"|"auto"|null, nowRp, pct(0~1|null), placementPlayed, reachedAt, reachedRp, elapsedMs, finalRp }`.
+  - `phase`: `before`(시작 전) · `placement`(배치 모드에서 5판 전) · `running` · `achieved`(목표 넘김) · `ended`(종료 시각 지남 · 못 넘김).
+  - `missionCfg` — 조작 화면용 설정값(`on · title · target · startAt · endAt · startRp`).
+- `POST /api/ranked/board` `op: "mission"` — `on`(true/false) · `title`(30자) · `target`(1,000 ~ 10,000) · `startAt` · `endAt`(ISO · 종료 > 시작) · `startRp`(빈 값 = 자동) · `reset: true`(기록만 새로) 중 바꿀 것만. 잘못되면 400 `bad_value` · `bad_time`.
+
+### §3.3 방송 화면
+- 미션이 켜져 있으면 줄 맨 앞에 한 칸(일반 · 배치 모드 공통, 한 줄 높이 안):
+  - 위 작은 글씨 = 제목 · 아래 큰 숫자 = 남은 시간 `HH:MM:SS`(서버 시각에 맞춰 0.25초마다 · 시작 전이면 「시작까지」)
+  - 오른쪽 = `현재 / 목표` + 진행 막대(시작 점수 → 목표) · 배치 중이면 막대 대신 `배치 n/5`
+  - 목표 넘김 → `서바이버 달성! ○점` + 걸린 시간 고정 · 종료 → `미션 종료 · 최종 ○점` + `00:00:00`
+
+### §3.4 조작 화면
+- 「미션」 칸: 켜기 · 끄기 · 제목 · 목표 점수 · 시작 점수(비우면 자동) · 시작 · 종료(한국 시각 입력). 칸을 벗어나면 바로 저장.
