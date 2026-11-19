@@ -128,36 +128,42 @@ function createRankedLive(deps) {
     };
   }
 
-  async function get(req, res) {
-    const q = (req && req.query) || {};
-    const ign = String(q.ign || "").trim();
+  // 같은 계산을 다른 모듈(ranked-board.cjs · 점수판 조작)이 부른다 — 응답 대신 { status, body }
+  async function live(ign, sinceRaw) {
+    const name = String(ign || "").trim();
     const list = await allowed();
-    const hit = list.find((x) => x.toLowerCase() === ign.toLowerCase());
-    if (!ign) return res.status(400).json({ error: { code: "need_ign" } });
-    if (!hit) return res.status(403).json({ error: { code: "not_allowed" } });
-    const sp = sinceParam(q.since, now());
-    if (!sp.ok) return res.status(400).json({ error: { code: "bad_since" } });
+    const hit = list.find((x) => x.toLowerCase() === name.toLowerCase());
+    if (!name) return { status: 400, body: { error: { code: "need_ign" } } };
+    if (!hit) return { status: 403, body: { error: { code: "not_allowed" } } };
+    const sp = sinceParam(sinceRaw, now());
+    if (!sp.ok) return { status: 400, body: { error: { code: "bad_since" } } };
     const key = `${hit}|${sp.since}`;
     const c = liveCache.get(key);
-    if (c && now() - c.at < LIVE_TTL) return res.json(c.body);
+    if (c && now() - c.at < LIVE_TTL) return { status: 200, body: c.body };
     try {
       if (!building.has(key)) building.set(key, build(hit, sp.since).finally(() => building.delete(key)));
       const body = await building.get(key);
       if (liveCache.size > 50) liveCache.clear();
       liveCache.set(key, { at: now(), body });
-      return res.json(body);
+      return { status: 200, body };
     } catch (e) {
       const st = e && e.status;
       // 배그가 막히면 직전 값을 「오래된 값」으로 낸다(방송 띠가 비지 않게)
-      if (c) return res.json({ ...c.body, stale: true });
+      if (c) return { status: 200, body: { ...c.body, stale: true } };
       const code = st === 429 ? "rate_limit" : st === 503 ? "pubg_disabled" : st === 404 ? "player_not_found" : "error";
       log.warn("[ranked-live] failed", code, String((e && e.message) || e).slice(0, 80));
-      return res.status(code === "rate_limit" ? 429 : code === "pubg_disabled" ? 503 : code === "player_not_found" ? 404 : 502).json({ error: { code } });
+      return { status: code === "rate_limit" ? 429 : code === "pubg_disabled" ? 503 : code === "player_not_found" ? 404 : 502, body: { error: { code } } };
     }
   }
 
+  async function get(req, res) {
+    const q = (req && req.query) || {};
+    const out = await live(q.ign, q.since);
+    return res.status(out.status).json(out.body);
+  }
+
   function mount(app) { app.get("/api/ranked/live", get); }
-  return { mount, get };
+  return { mount, get, live };
 }
 
 module.exports = { createRankedLive, _test: { todayKst, sinceParam, summarizeMatch, rankedNow, DEFAULT_IGNS, MAX_SCAN } };

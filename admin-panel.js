@@ -1154,34 +1154,9 @@ module.exports = function mountAdminPanel(app, deps) {
     const d = new Date(dateStr + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + days);
     return d.toISOString().slice(0, 10);
   };
-  const filledCount = (p) => p ? String(p).split(/[,，]/).map((s) => s.trim()).filter(Boolean).length : 0;
 
-  // [공개] 주간 일정 — is_public·비취소만, 실명 제외(정원/잔여만)
-  app.get("/api/schedule", async (req, res) => {
-    const { start, end } = kstWeekRange(req.query.week);
-    if (!ready()) return res.json({ week: { start, end }, events: [] });
-    const kind = ["lesson", "direct"].includes(req.query.kind) ? req.query.kind : null;
-    try {
-      let q = `select=id,kind,event_date,start_time,end_time,format,title,capacity,participants,is_recruiting,trainer_id&event_date=gte.${start}&event_date=lt.${end}&is_public=eq.true&status=neq.cancelled&order=event_date.asc,start_time.asc.nullslast`;
-      if (kind) q += `&kind=eq.${kind}`;
-      const rows = await sbSelect("schedule_events", q);
-      const staff = await sbSelect("staff", "select=id,name").catch(() => []);
-      const nameOf = {}; staff.forEach((s) => { nameOf[s.id] = s.name; });
-      const events = rows.map((r) => ({
-        id: r.id, kind: r.kind, event_date: r.event_date, start_time: r.start_time, end_time: r.end_time,
-        format: r.format, title: r.title || null,
-        trainer: r.trainer_id ? (nameOf[r.trainer_id] || null) : null,
-        capacity: r.capacity, filled: filledCount(r.participants),   // 실명 대신 인원수만
-        // 모집중은 정원 대비 자동 판정. 수동 플래그는 트레이너가 체크를 빠뜨리면
-        // 빈 자리가 있어도 뱃지가 안 떠서 신뢰할 수 없었다.
-        // capacity가 없는 형식(자율연습 등)만 수동 플래그를 그대로 쓴다.
-        is_recruiting: r.capacity != null
-          ? filledCount(r.participants) < r.capacity
-          : !!r.is_recruiting,
-      }));
-      res.json({ week: { start, end }, events });
-    } catch (e) { console.error("schedule_public", e); res.json({ week: { start, end }, events: [] }); }
-  });
+  // [공개] 주간 일정 GET /api/schedule 은 server.js → public-schedule.cjs 로 옮겼다(계약 trainer-portal-api §9.47 · 10/30).
+  //   트레이너 앱 칸(trainer_slots)이 정본이고, 이 표(schedule_events)의 공개 행은 거기서 events 로 같이 내려 준다.
 
   // [운영진] 주간 일정 — owner 전체 / 트레이너 본인 것만. 실명 포함.
   app.get("/api/admin/schedule", async (req, res) => {

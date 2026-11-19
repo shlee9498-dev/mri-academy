@@ -639,7 +639,7 @@ module.exports = function mountReviewApi(app, deps) {
   // ── 읽기 헬퍼 ─────────────────────────────────────────────
   const REVIEW_COLS = "id,student_id,anchor_kind,lesson_session_id,course_session_id,course_id,author_role,author_staff_id,"
     + "recipient_trainer_id,source,status,title,body,src_file_name,created_at,updated_at,published_at,hidden_at,visibility,visibility_changed_at,"
-    + "public_at";                                                   // §57 공개 대기(디스코드 이관분 · 그 밖은 null)
+    + "public_at,mirror_msg";                                        // §57 공개 대기(디스코드 이관분 · 그 밖은 null) · mirror_msg = 디코 거울 글(§9.46.10 · 「디코에 올라감」)
   const inList = (ids) => [...new Set(ids.filter((x) => x != null))].join(",");
   async function loadReview(id) {
     if (!id) return null;
@@ -843,6 +843,7 @@ module.exports = function mountReviewApi(app, deps) {
         imagePurgeAt: imagePurgeAt(r, (ic.get(r.id) || 0) > 0),
         visibility: r.visibility,
         source: r.source,                                         // §57 discord = 「디스코드에서 옮겨온 기록」 표시
+        mirrored: !!r.mirror_msg,                                  // §9.46.13 「디코에 올라감」(봇이 디코 채널에 대신 올린 복기)
         publicAt: r.public_at ?? null,                            // §57 이 시각에 「수강생 모두」로 바뀐다(그 전에 고르면 null)
         reactionCounts: reactionSummary(rx.get(r.id), "student", sub).counts,
       };
@@ -894,6 +895,7 @@ module.exports = function mountReviewApi(app, deps) {
     phaseId: f.phase_id ? opaqueId("rphase", f.phase_id) : null, lineOrd: f.line_ord ?? null,
     verdict: f.verdict ?? null, body: f.body ?? null, trainerDisplayName: trainerName || "트레이너",
     dueAt: f.due_at ?? null, createdAt: f.created_at, updatedAt: f.updated_at,
+    imported: !!f.src_msg, mirrored: !!f.mirror_msg,            // §9.46.13 디코에서 온 트레이너 답 · 디코에 올라간 답
     ...(viewerStaffId !== undefined ? { mine: Number(f.trainer_id) === Number(viewerStaffId) } : {}),
   });
 
@@ -910,7 +912,7 @@ module.exports = function mountReviewApi(app, deps) {
       gl ? sbSelect("review_phases",
         `select=id,game_id,ord,phase_from,phase_to,phase_to_end,header_raw,lines,tags,suggested_tags&game_id=in.(${gl})&order=ord.asc`) : [],
       sbSelect("review_images", `select=${IMAGE_COLS}&review_id=eq.${r.id}&${LIVE_IMAGE}&order=ord.asc,id.asc`),
-      sbSelect("review_feedback", `select=id,trainer_id,kind,phase_id,line_ord,verdict,body,due_at,created_at,updated_at&review_id=eq.${r.id}&hidden_at=is.null&order=created_at.asc`),
+      sbSelect("review_feedback", `select=id,trainer_id,kind,phase_id,line_ord,verdict,body,due_at,created_at,updated_at,src_msg,mirror_msg&review_id=eq.${r.id}&hidden_at=is.null&order=created_at.asc`),
       sbSelect("review_reactions", `select=reactor_kind,reactor_id,emoji,created_at&review_id=eq.${r.id}&order=created_at.asc`),
       playedAtMap([r]),
       own && r.status === "published" ? anchorChangesOf(r.id) : [],   // 공유 열람자에게는 빈 배열(세션 id 를 안 싣는 것과 같은 선)
@@ -946,6 +948,7 @@ module.exports = function mountReviewApi(app, deps) {
       body: r.body ?? null,
       status: r.status,
       source: r.source,
+      mirrored: !!r.mirror_msg,                                    // §9.46.13 「디코에 올라감」
       authorRole: r.author_role,
       authorDisplayName,
       recipientDisplayName: own && r.recipient_trainer_id ? tnames[r.recipient_trainer_id] || null : null,
@@ -2101,6 +2104,7 @@ module.exports = function mountReviewApi(app, deps) {
           publishedAt: r.published_at ?? null,
           visibility: r.visibility,
           source: r.source,                                       // §57 discord = 「디스코드에서 옮겨온 기록」
+          mirrored: !!r.mirror_msg,                                // §9.46.13 「디코에 올라감」
           publicAt: r.public_at ?? null,                          // §57 공개 대기(이 시각에 「수강생 모두」)
           reactionCounts: rs.counts,
           myReactions: rs.mine,
