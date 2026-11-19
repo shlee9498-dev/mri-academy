@@ -5447,3 +5447,45 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - 시험 = ops_state `review_dm:test` `{ id, sid, kind: "lesson"|"answer", to?: "owner" }` → 스위치 `only` 안의 수강생, 또는 `to: "owner"` 면 **원장 DM** 에만 견본 1통(결과 `review_dm:test_done`). 시험 계정 #106 디코는 MRI 서버 밖이라 봇이 못 보낸다(11/12 실측 · 디코 오류 50278) — 문구 확인은 원장 DM 견본으로 한다.
 - 5분마다 돈다. 판수 · 결제 · 정산과 무관하다.
 
+
+## 9.77 「원장 사정 취소」 상태 + 유비서함(원장 DM) 버튼 (2026-11-19 · 총무 주문 · 오너 09:5x 「내가 일정 못 지켜서 취소된 거 확인해 두고 … 버튼 ui 추가해 두고」 · 10:0x 「유비서함에 답장해 뒀는데 이렇게 소통하는 게 맞는지」) · **계약(이 절) → 서버(경비) → 화면(반장 · 트레이너 앱 원장 화면)** · env 없음 · 판수 · 지급 계산식은 바꾸지 않는다 · ✅ **오너 OK 11/19 「OK · 판수 안 깎임」** · DDL §107 실행 완료(11/19)
+
+### 9.77.1 「원장 사정 취소」 상태 (트레이너 쪽 사정으로 수업이 안 열린 것)
+- 뜻: 트레이너(원장 포함)가 일정을 못 지켜 수업이 안 열린 예약. 수강생 노쇼(`no_show`)와 반대다.
+- 저장: `slot_bookings.status = 'cancelled'` + `cancelled_at` + **새 칸 없이** 취소 사유를 `cancel_by = 'trainer'` · `cancel_reason`(필수 · 200자 이하)로 남긴다 → 이 두 칸은 더하기만 DDL(§107 · 아래)로 만든다.
+- 판수: **차감 없음** — `cancelled` 는 이미 선차감 합계(`HELD_STATUSES = booked · pending_review · no_show`)에 안 들어간다. 계산식 변경 없음.
+- 직강 회차: 출석 기록(`course_attendance`)을 만들지 않으니 회차도 그대로다.
+- 지급: 수업 기록이 없으니 0원. 지급 계산식 변경 없음.
+- 수강생 앱 문구: 「원장 사정으로 취소됐어요. 다시 잡아 드릴게요」(트레이너가 원장이 아니면 「트레이너 사정으로 …」). 수강생 탓 표시 없음.
+- 보상(회차 추가 등)은 이 상태가 자동으로 주지 않는다. 오너가 따로 정한다(11/18 #110 · #90 노쇼 보상 전례).
+
+### 9.77.2 트레이너 앱 버튼 (반장)
+- 원장 화면 「지난 2주」 예약 줄에 버튼 3개: 「출석 · 완료」 · 「노쇼」 · **「원장 사정 취소」**(신규).
+- 「원장 사정 취소」를 누르면 사유 입력 창(필수) → `POST /api/trainer/bookings/:id/trainer-cancel { reason }`.
+- 서버는 그 예약이 `booked` · `pending_review` 일 때만 받는다. 이미 닫힌(`done` · `no_show` · `cancelled`) 예약은 409 `already_closed`. 같은 슬롯의 다른 수강생 예약은 건드리지 않는다(한 줄씩).
+- 권한: 그 슬롯 트레이너 본인 또는 오너.
+
+### 9.77.3 유비서함 버튼 — 답장 글 대신 버튼으로만 상태가 바뀐다
+- 원장 DM 에 오는 알림 중 행동이 필요한 것에 버튼을 단다. 답장 글은 봇이 읽지 않는다(지금도 안 읽는다 · 11/18 #42 답장이 반영 안 된 이유).
+
+| 알림 | 버튼 | 누르면 |
+|---|---|---|
+| 현금영수증 발급 요청(입금 신청 승인 뒤) | 「발급함」 | `payment_requests.cash_receipt_issued_at = now()` · `cash_receipt_issued_by = 누른 사람` (이미 있으면 「이미 발급 처리돼 있어요」) |
+| 닫지 않은 수업 | 「트레이너 앱 열기」(링크 버튼) | 상태 변경 없음 — 앱에서 9.77.2 버튼으로 닫는다 |
+| 신청자(상담 · 레벨 테스트) | 「확인」 | 알림에 「확인함 · 시각」 표시만. 상담 행 상태는 바꾸지 않는다 |
+
+- 버튼은 오너만 누른다. 다른 사람이면 「오너만 누를 수 있어요」.
+- 누르면 원래 알림 메시지의 버튼을 「처리됨 · 시각」으로 바꾼다(새 메시지를 더 보내지 않는다).
+
+### 9.77.4 DDL §107 (더하기만)
+```sql
+alter table public.slot_bookings add column if not exists cancel_by text;
+alter table public.slot_bookings add column if not exists cancel_reason text;
+alter table public.slot_bookings add constraint chk_slot_bookings_cancel_by check (cancel_by is null or cancel_by in ('student','trainer','owner','system'));
+alter table public.slot_bookings add constraint chk_slot_bookings_cancel_reason check (cancel_reason is null or char_length(cancel_reason) <= 200);
+notify pgrst, 'reload schema';
+```
+- `REQUIRED_SCHEMA` 에 두 칸을 더한다(스키마 3곳 규칙).
+
+### 9.77.5 순서
+계약 → 오너 판단(9.77.1 판수 안 깎임) → DDL §107 → 서버 PR(Draft · DDL 확인 전까지) → 반장 화면 → 견본(원장 DM 버튼 1장) → 켜기. 대회 시간(목 18:30 ~ 금 18:30) 머지 금지.

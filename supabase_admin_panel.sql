@@ -8602,3 +8602,26 @@ end $$;
 --   drop column if exists best_tier, drop column if exists avg_damage, drop column if exists damage_basis,
 --   drop column if exists play_slots, drop column if exists avail_windows; notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §107  원장 사정 취소 — slot_bookings 칸 2 + 체크 2 (2026-11-19 · 총무 주문 · 오너 OK 11/19 「OK · 판수 안 깎임」 · 계약 §9.77 · 소관 MRIacademy)
+--   더하기만. 2026-11-19 세션이 MCP 로 실행(스냅샷 122행 · 칸 없음 → 실행 → 검증 → notify).
+--   cancelled 는 선차감 합계(HELD_STATUSES) 밖이라 판수 · 지급 계산식은 그대로다.
+-- ============================================================
+alter table public.slot_bookings add column if not exists cancel_by text;
+alter table public.slot_bookings add column if not exists cancel_reason text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_slot_bookings_cancel_by') then
+    alter table public.slot_bookings add constraint chk_slot_bookings_cancel_by
+      check (cancel_by is null or cancel_by in ('student','trainer','owner','system'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_slot_bookings_cancel_reason') then
+    alter table public.slot_bookings add constraint chk_slot_bookings_cancel_reason
+      check (cancel_reason is null or char_length(cancel_reason) <= 200);
+  end if;
+end $$;
+notify pgrst, 'reload schema';
+-- 되돌리기(오너 OK 뒤에만):
+--   alter table public.slot_bookings drop constraint if exists chk_slot_bookings_cancel_reason,
+--   drop constraint if exists chk_slot_bookings_cancel_by, drop column if exists cancel_reason, drop column if exists cancel_by;
+--   notify pgrst, 'reload schema';
