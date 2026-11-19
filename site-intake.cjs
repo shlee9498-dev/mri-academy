@@ -16,7 +16,7 @@ const welcomeOn = (env = process.env) => String(env.WELCOME_DM_ON || "").trim().
 const WELCOME_DM_ON = false;                 // 기본값(env 없을 때) — 시험 · 계약 표기용
 const WELCOME_TEXT = (nick) => `${nick}님, 안녕하세요! 👋 MRI ACADEMY예요. 레벨 테스트 신청 잘 받았어요\n`
   + "■ 편한 시간대 2~3개를 이 DM 에 남겨 주세요 — 원장이 맞춰서 잡아 드려요\n"
-  + "■ 최근 다시보기(리플레이) 2~3판도 준비해 주시면 상담 때 바로 같이 볼 수 있어요\n"
+  + "■ 최근 경쟁전 다시보기 2판 이상은 파일로 보내도 되고, 게임 안에서 잠금만 해 둬도 돼요. 잠금만 했으면 수업 때 화면 공유로 같이 봐요\n"
   + "막히는 게 있으면 편하게 물어보세요 💬";
 
 // 이름은 consult_type 기준 — general · clan 을 「레벨 테스트」라고 부르지 않는다(11/9 오너 지적 · 후속 상담 #38 오발송)
