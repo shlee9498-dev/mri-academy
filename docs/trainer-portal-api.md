@@ -5447,3 +5447,67 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - 시험 = ops_state `review_dm:test` `{ id, sid, kind: "lesson"|"answer", to?: "owner" }` → 스위치 `only` 안의 수강생, 또는 `to: "owner"` 면 **원장 DM** 에만 견본 1통(결과 `review_dm:test_done`). 시험 계정 #106 디코는 MRI 서버 밖이라 봇이 못 보낸다(11/12 실측 · 디코 오류 50278) — 문구 확인은 원장 DM 견본으로 한다.
 - 5분마다 돈다. 판수 · 결제 · 정산과 무관하다.
 
+
+## 9.79 유튜브 MRI회원 할인 · 100판 정식 상품 · 그룹 차감 (2026-11-25 · 총무 주문 · **초안 · 구현 없음 · DB 쓰기 없음**) · 계약(이 절) → 오너 확정(9.79.6) → 서버 · 정산(경비 · **정산 계산식 변경 = 오너 OK 필요**) → 앱(반장) · 사이트 가격 문구(결제 트랙 · 토스 심사 — 오너 확인 먼저) · env 있음(그로블 링크 · 오너)
+
+> 오너 원문(11/25): 「매달 1번 트레이너몸은 그대로 주고 내 순수익에서 감해야지 99판 -> 100판으로 바꾸고 정식으로 올리자 그룹레슨 1시간 3판 1시간더 연강하면 2시간에 5판차감으로 바뀐 거 생각해 그렇다보니 판수라는 단어보다 더 효율적인 거로 찾아봐야할거같아 시스템을 갈아야할듯」
+
+### 9.79.1 MRI회원 10% 할인 — 할인분은 아카데미 몫에서만 빠진다
+- 대상: 이무리 유튜브 채널 멤버십 **MRI회원(월 9,900원)** 이 **33판 · 100판**을 결제할 때. 10판 · 21판 · 레벨 테스트 · 직강은 대상이 아니다.
+- 금액: 정가 × 0.90(원 단위 반올림 규칙은 9.79.6 확인). 예: 33판 140,000 → 126,000.
+- 횟수: 오너 원문 「매달 1번」 — **회원 한 사람이 한 달에 한 번** 할인 결제를 쓸 수 있다고 읽었다(9.79.6 확인).
+- **트레이너 지급 = 정가 기준.** 판당 단가를 정가로 계산해 그대로 × 요율(0.70). 할인 10%는 전부 아카데미 순수익에서 빠진다.
+  - 예: 33판 회원가 126,000 · 계좌이체(수수료 0) → 트레이너 판당 = 140,000 ÷ 33 × 0.70(정가 기준). 아카데미 몫 = 126,000 − 트레이너 지급 합.
+- 빵다 수수료(직원 급여 6% · `computeStaffSalary`)는 **실제로 받은 돈(회원가)** 기준 — 순매출이 회원가라서다(9.79.6 확인).
+- 기존 결제는 소급하지 않는다. 적용 시작일은 오너 확정 뒤 정한다(`MEMBER_DISCOUNT_FROM`). 잠긴 달(07~10월)은 손대지 않는다.
+
+### 9.79.2 장부 표시 — 결제 한 줄에 「정가와의 차이」를 남긴다 (DDL 초안 · 실행 안 함)
+- `payments.member_discount int not null default 0` (원 · 정가 − 실결제) — 더하기만 DDL. 0 = 할인 없음(기존 행 전부).
+  - 대안 `payments.list_amount`(정가 자체)도 있으나, 기존 행을 채우지 않아도 되는 **차액 칸**이 더 단순하다.
+- 통장 1줄 = payments 1행 원칙은 그대로다. `amount` 는 실제 받은 돈(회원가)이다.
+- `via_youtube` 는 **할인 표시가 아니다**(빵다 유입 수수료 15% / 5% 구분 · `supabase_admin_panel.sql:47`). 섞어 쓰지 않는다.
+- 회원 확인 방법은 아직 없다 — 유튜브 멤버십 명단을 DB 가 모른다. 9.79.6 에서 정한다(예: 디스코드 회원 역할 · 스크린샷 · 오너 수동 표시).
+
+### 9.79.3 99판 → 100판 정식 상품
+- 상품 키 `lesson100`(100판) 을 새로 만든다. **가격은 오너 미정 — 칸만 만들고 비워 둔다.** 가격이 없으면 사이트 · 앱 · 입금 신청 목록에 안 보이게 한다(지금 그로블 링크가 없으면 카드를 숨기는 방식과 같다).
+- `lesson99` 는 새로 팔지 않는다. 이미 산 99판(남은 판 · 지급 단가)은 그대로 둔다 — 소급 없음.
+- 99판은 「33판 × 3」 으로 정의돼 있다(`config/payments.js:64` · 테스트 `payments-config.test.cjs:27` 이 `lesson99 = lesson33 × 3` 을 검사). 100판은 33의 배수가 아니라 이 연결을 끊는다.
+- 수량 한도 1(지금 99판과 같게 · `payreq-intake.cjs:7`).
+- 그로블 카드 결제 링크 `GROBLE_LINK_LESSON100` 은 env 다 — 이름만 정하고 넣는 건 오너가 한다. 회원가 카드 결제가 필요하면 회원가 링크도 따로 필요하다(그로블 상품은 금액이 고정).
+
+### 9.79.4 그룹 레슨 차감 — **이미 계약 · 구현돼 있다(§9.70)**
+- 1시간 3판 · 연강 2시간 5판 · 2시간마다 새로 센다(3시간 8 · 4시간 10). §9.70.2 확정(11/12 오너) · `groupGamesForMinutes`.
+- 적용: 2026-11-13 00:00 KST 이후에 연 그룹 칸 + 그 뒤 결제분으로 듣는 수강생(§9.70.3). 이 절은 규칙을 바꾸지 않는다.
+- 남은 확인 1건은 §9.70.5 그대로 — 30분 단위 그룹 칸(30분 3판 · 1시간 30분 5판).
+
+### 9.79.5 바뀌는 곳 (구현 때 · 이 PR 은 손대지 않음)
+| 곳 | 지금 | 바뀐 뒤 | 구분 |
+|---|---|---|---|
+| `admin-panel.js` `payBase`(89행) · `computeStudent` 판당 단가(251~253행) | 순액 ÷ 판수 | (순액 + `member_discount`) ÷ 판수 = 정가 기준 단가 | **정산 계산식 — 오너 OK** |
+| `admin-panel.js` `computeStaffSalary`(빵다 6%) | 순매출 | 그대로(회원가 = 실제 매출) — 9.79.6 확인 | 정산 |
+| `config/payments.js` `PRICES` · `PRODUCT_LABELS` · 상품 목록(39행) | `lesson99` 420,000 | `lesson100` 추가(가격 빈칸) · `lesson99` 판매 목록에서 뺌 · 회원가 표 | 결제 트랙 협의 |
+| `payreq-intake.cjs` 상품 판정 · 수량 한도 · 금액 대조 · 99판 풀이(`unitOf`) | 정가만 맞으면 통과 | 회원가(정가 × 0.9)도 통과 + 할인 표시 · 월 1회 검사 | 서버 |
+| `payment-received.cjs` · `bank-match.cjs` 통장 금액 → 상품 맞추기 | 45,000 · 90,000 · 140,000 · 420,000 · 20,000 | 회원가 126,000 · 100판 가격 · 100판 회원가 추가 | 서버 |
+| `price-book.cjs` 챗봇 가격 안내(28행) | 99판 420,000(33판 × 3) | 100판 · 회원 할인 문구 | 사이트 문구 = 오너 확인 |
+| `student-portal.cjs` 입금 신청 상품 · `quantityMax`(411행) | 99판 1 | 100판 1 · 회원가 선택 | 앱(반장) |
+| 그로블 링크 env | `GROBLE_LINK_LESSON99` | `GROBLE_LINK_LESSON100`(+ 회원가 링크) | env = 오너 |
+| `index.html` · `apply.html` · `terms.html` 가격 · 환불 문구 | 99판 | 100판 · 회원 할인 | **토스 심사 대상 — 결제 트랙 · 오너 확인 먼저** |
+| 테스트 `payments-config` · `payreq-intake` · `payment-received` | 99판 = 33판 × 3 | 100판 · 회원가 케이스 | 서버 |
+| `supabase_admin_panel.sql` · `server.js REQUIRED_SCHEMA` | — | `payments.member_discount` (§109 초안 · 더하기만) | DDL |
+
+### 9.79.6 오너 확인 (구현 전에)
+1. 「매달 1번」 = 회원 1인 월 1회 할인 결제가 맞는가.
+2. 100판 가격(정가) · 회원가 원 단위 규칙(예: 천 원 단위 내림).
+3. 회원 확인 방법(디스코드 역할 · 스크린샷 · 오너 수동 표시 중).
+4. 빵다 6% 를 회원가(실매출)로 볼지 정가로 볼지.
+5. 적용 시작일(`MEMBER_DISCOUNT_FROM`) · 100판 판매 시작일.
+
+### 9.79.7 「판수」 쓰는 곳 — 단위를 갈 때의 지도 (바꾸지 않음 · 목록만)
+오너: 그룹이 1시간 3판 · 개인이 1시간 5판이 되면서 「판」이 실제 게임 판이 아니라 **수업 시간의 값**이 됐다. 단위를 바꾸려면 아래를 한꺼번에 봐야 한다.
+- **DB 칸**: `payments.games` · `lesson_enrollments.games_total` · `lesson_enrollments.bonus_games` · `lesson_sessions.games` · `payment_requests.games`(+ `quantity`) · `slot_bookings.games_held`(선차감) · `students.carry_games`(7/20 이전 이월 · 동결) · `settlements.games` · 뷰 `v_panel_roster`(`games_granted` · `games_bonus` · `games_used` · `games_left`) · `games_adjust_requests.remaining_delta`(정정 · 보상 · 늦은 취소 3 · 노쇼 5).
+  - 직강은 이미 다른 단위다: `courses.units_total` · `courses.confirmed_units` · `course_attendance.units`(회차).
+- **DB 함수**: `portal_remaining_games` · `portal_remaining_for_trainer` · `portal_remaining_by_trainer` · `book_slot`(개인 길이별 5 · 8 · 10 · 13 · 15 선차감) · `book_slot_trainer` · `book_course_slot` · `decide_games_adjustment` · `revert_games_adjustment` · `record_games_exemption`.
+- **계산**: `lesson-lengths.cjs`(`PERSONAL_LENGTHS` · `groupGamesForMinutes`) · `admin-panel.js`(`computeStudent` 판당 단가 · FIFO · `computeTrainer` · 판수 × 요율) · `booking-api.cjs`(예약 · 완료 차감) · `lesson-record.cjs` · `auto-complete.cjs` · `unclosed-lessons.cjs` · `ledger-reconcile.cjs`.
+- **결제 판정**: `config/payments.js`(10 · 21 · 33 · 99판) · `payreq-intake.cjs` · `payment-received.cjs` · `bank-match.cjs` · `price-book.cjs` · `server.js` `/결제신청`(구분 「판수」).
+- **화면 · 봇**: `student-portal.cjs`(남은 판 · `remainingByTrainer`) · `trainer-portal.cjs` · `trainer-lessons.cjs` · `games-view.cjs` · `games-short.cjs` · `morning-digest.cjs` · `payreq-monitor.cjs` · `welcome-guide.cjs` · `book-guide.cjs` · `staff-panel.html` · `index.html` · `terms.html`(약관 — 늦은 취소 3판 · 노쇼 5판) · 수강생 앱 · 트레이너 앱(반장 저장소).
+- **판단 메모(제안 · 확정 아님)**: 저장 단위는 그대로 두고(정수 · 계산 · 정산이 전부 이 숫자에 묶여 있다) **화면 이름만** 바꾸는 길이 가장 싸다 — 예: 「판」 → 「크레딧」 · 「회」. 저장 단위까지 시간(분)으로 바꾸면 위 목록 전부 + 잠긴 달 기록과의 대조가 깨진다. 이름을 정하면 별도 절로 쓴다.
