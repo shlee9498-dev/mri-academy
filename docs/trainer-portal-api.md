@@ -5673,6 +5673,27 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
    - `GET /trainer/pending-bookings` 의 `kind` = `"personal"` | `"group_join"` | `"group_watch"` | `"course"`.
    - `weekday` = **0 = 일요일** ~ 6 = 토요일(JS `getDay()` · KST 기준) — §9.83 · §9.84 · §9.84.1 모두 같다.
    - `GET /trainer/voice-drafts` 에서 **null 이 될 수 있는 칸**: `joinedAt` · `leftAt` · `voiceMinutes` · `draftGames`(`state` 가 `none` · `pending` 일 때) · `lateChoice` · `lateSuggest` · `studentLateMin`(수강생 지각 없음) · `autoAt`(`done` 일 때). **null 이 아닌 칸**: `draftId` · `studentLabel` · `startAt` · `endAt` · `bookedMinutes` · `kind` · `state` · `trainerLateMin`(없으면 0) · `lateWaiveGames`(없으면 0) · `rule`(없으면 빈 글자).
+
+## 9.85 사칭 결제 사기 막기 — MRI ACADEMY 서버 봇 몫 (2026-11-27 · 총무 주문 · 무리 지시 「유비서 앱인 것처럼 낚시로 결제 유도하는 사기꾼들」 · GmI 몫은 클랜CODE) · 서버(경비 · `anti-scam.cjs` · DDL · env 없음)
+
+**스위치는 전부 `ops_state` 행이다. 행이 없으면 꺼져 있다.** 켜고 끄기는 더하기만 하는 데이터 쓰기라 경비가 MCP 로 한다(돈 · 판수 무관).
+
+| 키 | 값 | 뜻 |
+|---|---|---|
+| `anti_scam:dm_guard` | `{ mode: "off"\|"warn"\|"block", footer: true\|false }` | 봇이 보내는 **모든 DM**(DMChannel.send)을 보내기 전에 본다. 허용 밖 링크 · 계좌번호 꼴이면 `warn` = 보내고 알림 · `block` = 안 보내고 알림. `footer` = DM 끝에 「유비서는 DM으로 결제 · 입금을 요청하지 않아요」 한 줄 |
+| `anti_scam:impostor` | `{ mode: "off"\|"on" }` | 이름 · 별명이 유비서 · 운영진 흉내면 알림(추방 · 차단 없음). 들어올 때 · 이름 바꿀 때 · 켜진 채로 기동할 때 전원 1회 |
+| `anti_scam:spam` | `{ mode: "off"\|"warn"\|"act" }` | 새 계정(가입 14일 미만 또는 서버 입장 24시간 미만)이 10분에 3개 채널 이상 허용 밖 링크, 또는 누구든 「입금 · 계좌 · 결제하기 · 쿠폰」 말 + 허용 밖 링크 → `act` = 글 지움 + 새 계정이면 채팅 1시간 막음 + 알림 |
+| `anti_scam:alert_channel` | `{ id: "채널 id" }` | 알림 받을 운영진 채널. 없으면 오너 DM |
+
+1. **DM 허용 목록** = `mriacademy.gg` · `app.mriacademy.gg` · `discord.gg` · `discord.com`(하위 도메인 포함) + 공식 그로블 카드 링크(env `GROBLE_LINK_*` 값과 **정확히 같은 주소만**) + 공식 계좌(env `PAY_BANK_ACCOUNT` · 숫자만 비교). 휴대폰 번호 꼴(01x) · 20으로 시작하는 날짜 숫자는 계좌로 세지 않는다.
+2. **충돌 — 결정 필요(무리)**: 지금 봇은 레벨 테스트 안내(§intake-cards DM ② · go-level-test)에서 **공식 계좌와 그로블 카드 링크를 DM 으로 보낸다.** 「유비서는 DM으로 결제 · 입금을 요청하지 않아요」와 부딪친다.
+   - (가) 지금처럼 공식 계좌 · 링크만 통과시키고 고정 한 줄은 「공식 계좌는 mriacademy.gg 에 적힌 것 하나뿐이에요」로 바꾼다
+   - (나) DM 에서 계좌 · 링크를 빼고 「mriacademy.gg 에서 직접」으로 바꾼다(신청 흐름 문구 수정 PR 따로 · 결제 트랙 협의)
+   - 결정 전에는 `footer: false` 로 둔다.
+3. **사칭 이름 판정**: NFKC → 소문자 → 흉내 글자(0→o · 1→l · 키릴 а→a 등) → 글자 · 한글만 남김. 센 말(유비서 · yubiseo · 관리자 · 운영자 · 운영진 · admin · staff · support · 모더 · moderator · 고객센터)은 있기만 해도, 약한 말(mri · mriacademy · 엠알아이 · gmi)은 「봇 · 공식 · 운영 · 관리 · 결제 · 상담 · 센터」와 함께일 때만. 유비서 · yubiseo 는 한 글자 다름 · 이웃 글자 뒤바꿈까지. 봇 자신 · `STAFF_DISCORD_IDS` · 오너 · 관리자 권한(Administrator · ManageGuild)은 빼고 본다.
+4. **오너 명령(MRI ACADEMY 서버)**: `/사칭신고판` = 지금 채널에 「사칭 신고하기」 버튼 글 → 누르면 창(보낸 계정 · 받은 내용) → 알림 채널로 + 신고자에게 화면 안내 + DM 「확인했어요 … 절대 입금하지 마세요」 · 30분 안에 그 DM 에 올린 스크린샷은 알림 채널로 넘긴다. `/공식계정안내` = 지금 채널에 공식 봇 · 결제 창구 안내 글(고정은 무리 손).
+5. **무리 손**: 서버 설정 → 개인정보 보호(「서버 멤버의 DM 허용」 기본값 끄기) · 서버 설정 → 자동 관리(AutoMod) 「입금 · 계좌 · 결제하기 · 할인 쿠폰」 + 링크 규칙(공식 도메인 예외) · 안내 글 고정. 봇에 「멤버 타임아웃 · 메시지 관리」 권한이 없으면 `act` 는 알림만 남는다(알림에 「막기 실패」로 보인다).
+6. **켜는 순서**: 알림 채널 id → `impostor: on` + `spam: warn` + `dm_guard: warn` 로 하루 → 오탐 없으면 `spam: act` · `dm_guard: block`.
 ## 9.79 단위 이름 「판수」 → 「포인트(P)」 · MRI회원 할인 · 100P 정식 상품 · 그룹 차감 (2026-11-25 · 총무 주문 · **초안 · 구현 없음 · DB 쓰기 없음**) · 계약(이 절) → 오너 확정(9.79.7) → 서버 · 정산(경비 · **정산 계산식 변경 = 오너 OK 필요**) → 앱(반장) · 사이트 · 약관 문구(결제 트랙 · 토스 심사 — 오너 확인 먼저) · env 있음(그로블 링크 · 오너)
 
 > 오너 원문(11/25): 「매달 1번 트레이너몸은 그대로 주고 내 순수익에서 감해야지 99판 -> 100판으로 바꾸고 정식으로 올리자 그룹레슨 1시간 3판 1시간더 연강하면 2시간에 5판차감으로 바뀐 거 생각해 그렇다보니 판수라는 단어보다 더 효율적인 거로 찾아봐야할거같아 시스템을 갈아야할듯」 · 「포인트로하자」
