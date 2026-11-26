@@ -49,3 +49,31 @@ test("조회 실패는 미달이 아니다 — eligible null · check_failed", a
   await routes["/api/direct/eligibility"]({ query: {} }, res);
   assert.equal(code, 429); assert.equal(body.eligible, null); assert.equal(body.reason, "check_failed"); assert.equal(body.retryAfterSec, 60);
 });
+
+test("검수-3 — 명부에 계정 없음 + 이름 조회로 기준 충족이어도 생략 불가(account_unverified)", async () => {
+  const routes = {};
+  const app = { get: (p, h) => { routes[p] = h; } };
+  const good = resp({ squad: { roundsPlayed: 80, damageDealt: 80 * 300, bestTier: { tier: "Diamond" }, bestRankPoint: 3000 } });
+  D.mountDirectEligibility(app, {
+    getUser: () => ({ id: "u2" }), sbSelect: async () => [],
+    findPlayer: async () => ({ id: "someone-else" }), recentSeasonIds: async () => ["s2", "s1"], pubgGet: async () => good, tierIndex,
+  });
+  let body = null;
+  const res = { status() { return this; }, json(b) { body = b; return this; } };
+  await routes["/api/direct/eligibility"]({ query: { platform: "steam", name: "고수닉" } }, res);
+  assert.equal(body.eligible, null); assert.equal(body.reason, "account_unverified"); assert.equal(body.source, "name");
+  assert.equal(body.preview.meets, true);
+});
+test("명부 계정이면 같은 기록으로 생략 가능(eligible true)", async () => {
+  const routes = {};
+  const app = { get: (p, h) => { routes[p] = h; } };
+  const good = resp({ squad: { roundsPlayed: 80, damageDealt: 80 * 300, bestTier: { tier: "Diamond" }, bestRankPoint: 3000 } });
+  D.mountDirectEligibility(app, {
+    getUser: () => ({ id: "u3" }), sbSelect: async () => [{ pubg_platform: "steam", pubg_account_id: "mine" }],
+    findPlayer: async () => { throw new Error("no"); }, recentSeasonIds: async () => ["s2"], pubgGet: async () => good, tierIndex,
+  });
+  let body = null;
+  const res = { status() { return this; }, json(b) { body = b; return this; } };
+  await routes["/api/direct/eligibility"]({ query: {} }, res);
+  assert.equal(body.eligible, true); assert.equal(body.source, "roster");
+});
