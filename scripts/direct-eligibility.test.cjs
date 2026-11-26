@@ -35,3 +35,17 @@ test("미달 — 경계값 바로 아래", () => {
 test("경쟁전 기록 없음", () => {
   assert.deepEqual(D.judge([{ seasonId: "a", rows: [] }]), { eligible: false, via: null, reason: "no_ranked" });
 });
+
+test("조회 실패는 미달이 아니다 — eligible null · check_failed", async () => {
+  const routes = {};
+  const app = { get: (p, h) => { routes[p] = h; } };
+  const busy = () => { const e = new Error("rl"); e.status = 429; throw e; };
+  D.mountDirectEligibility(app, {
+    getUser: () => ({ id: "u1" }), sbSelect: async () => [{ pubg_platform: "steam", pubg_account_id: "acc" }],
+    findPlayer: async () => ({ id: "acc" }), recentSeasonIds: async () => ["s2", "s1"], pubgGet: async () => busy(), tierIndex,
+  });
+  let code = 0, body = null;
+  const res = { status(c) { code = c; return this; }, json(b) { body = b; if (!code) code = 200; return this; } };
+  await routes["/api/direct/eligibility"]({ query: {} }, res);
+  assert.equal(code, 429); assert.equal(body.eligible, null); assert.equal(body.reason, "check_failed"); assert.equal(body.retryAfterSec, 60);
+});

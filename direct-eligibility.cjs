@@ -68,7 +68,10 @@ function mountDirectEligibility(app, deps) {
       res.json({ ...result, platform, source, checkedAt: new Date().toISOString(), rule: RULE });
     } catch (e) {
       const status = e?.status === 404 ? 404 : e?.status === 429 ? 429 : 502;
-      res.status(status).json({ error: status === 404 ? "player_not_found" : status === 429 ? "pubg_busy" : "pubg_error", rule: RULE });
+      // 조회 실패는 「미달」이 아니다(검수-2 ① · GmI #154 429 → 「기록 없음」 오독 재발 방지) — eligible: null · reason: check_failed.
+      //   429 는 잠시 쉬고 다시(retryAfterSec). 404(닉 없음)만 판정 불가가 아니라 계정 문제로 따로 준다.
+      if (status === 404) return res.status(404).json({ eligible: null, reason: "player_not_found", error: "player_not_found", rule: RULE });
+      res.status(status).json({ eligible: null, reason: "check_failed", error: status === 429 ? "pubg_busy" : "pubg_error", status: e?.status || 502, retryAfterSec: status === 429 ? 60 : undefined, rule: RULE });
     }
   });
 }
