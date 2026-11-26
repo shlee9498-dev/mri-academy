@@ -9115,7 +9115,14 @@ if (process.env.DISCORD_TOKEN) {
 // MRI 서버 정리 도우미(주문함 [24] · 무리 11/27) — 사칭 신고 패널 게시(anti_scam:panel) · 서버 전수 조사(server_audit:run). 행 없음 = 아무것도 안 함.
 if (process.env.DISCORD_TOKEN) {
   const serverOps = require("./server-ops.cjs").mountServerOps({ opsGet: opsStateGet, opsSet: opsStateSet, env: process.env,
-    ownerIds: [...new Set([process.env.MRI_OWNER_ID, ...OWNER_IDS_T].filter(Boolean))] });
+    ownerIds: [...new Set([process.env.MRI_OWNER_ID, ...OWNER_IDS_T].filter(Boolean))],
+    // 사칭 신고 패널 공식 계정 목록 — 원장(MRI_OWNER_ID) + 트레이너(TRAINER_MAP JSON 디코ID→이름 · /수업등록과 같은 env)
+    officialAccounts: () => {
+      let tm = {}; try { tm = JSON.parse(process.env.TRAINER_MAP || "{}"); } catch { tm = {}; }
+      const out = process.env.MRI_OWNER_ID ? [{ label: "원장 이무리", id: process.env.MRI_OWNER_ID }] : [];
+      for (const [id, name] of Object.entries(tm)) if (id !== process.env.MRI_OWNER_ID) out.push({ label: `트레이너 ${name}`, id });
+      return out;
+    } });
   const t3 = setInterval(() => { if (botClient) { clearInterval(t3); serverOps.attach(botClient, require("discord.js")); } }, 3000);
   t3.unref?.();
 }
