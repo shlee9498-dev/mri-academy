@@ -140,3 +140,6 @@ test("잘못된 입력은 멈춘다", () => {
   assert.throws(() => R.parseTelemetry([{ _T: "LogPhaseChange", _D: "2026-10-01T10:00:00Z" }], { accountId: "a" }), /LogMatchStart/);
   assert.throws(() => R.parseTelemetry(mini(), { accountId: "nobody" }), /없다/);
 });
+
+// 「배그 사주」 엔진 시험(saju-core · saju-card · 문구 표)도 이 실행에 묶는다 — package.json check 한 줄을 PR마다 고치면 충돌이 나서(docs/saju.md)
+require("./saju.test.cjs");

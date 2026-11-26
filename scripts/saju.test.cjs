@@ -153,3 +153,8 @@ test("감독 게임용 — 카드 능력치 6개 0~100 · 판이 쌓이면 흔�
   for (let i = 1; i < z.length; i++) assert.ok(z[i].r < z[i - 1].r && z[i].t > z[i - 1].t, "원은 줄고 시간은 늘어난다");
   assert.deepEqual(Object.keys(z[0]).sort(), ["phase", "r", "t", "x", "y"], "자기장 패턴에 사람 정보 없음");
 });
+
+test("고정 자료 만드는 스크립트 — 구문만 확인(실행하지 않음)", () => {
+  const fs = require("node:fs"), vm = require("node:vm"), Module = require("node:module");
+  assert.doesNotThrow(() => new vm.Script(Module.wrap(fs.readFileSync(path.join(__dirname, "saju-fixture.cjs"), "utf8"))));
+});
