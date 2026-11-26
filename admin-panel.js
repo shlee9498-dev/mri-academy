@@ -253,6 +253,25 @@ module.exports = function mountAdminPanel(app, deps) {
     const unit = games > 0 ? amount / games : 0;              // 판당 결제단가(총결제금액/총결제판수)
     const firstGames = lessonPays.length ? (lessonPays[0].games || 0) : 0; // 1차 결제판수 = FIFO 경계
 
+    // 묶음별 단가(계약 §9.82.3 · 주문함 [19] (가) · 오너 OK 2026-11-27 「1~3 그렇게해」) — BUNDLE_UNIT_FROM 이후 수업분은
+    // 섞은 단가(unit)가 아니라 **그 판이 속한 결제 묶음의 단가**(그 결제 기준액 ÷ 그 결제 판수)로 잰다. 묶음은 먼저 산 것부터
+    // 쓴다(FIFO · 위치 = 이월 포함 누적 진행판수 · 아래 pos 와 같은 자). 환불식(남은 판 × 그 묶음 단가)과 같은 자다.
+    // 결제 판수를 넘어 진행한 판(초과)은 마지막 묶음 단가 · 결제가 없으면 0. 경계 이전 수업분은 종전 섞은 단가 그대로(소급 없음).
+    const bundles = []; { let at = 0; for (const p of lessonPays) { const g = Number(p.games || 0); bundles.push({ from: at, to: at + g, unit: g > 0 ? payBase(p) / g : 0 }); at += g; } }
+    const bundleAmt = (start, g) => {                         // 위치 start 부터 g 판의 결제 기준액 합
+      if (!(g > 0) || !bundles.length) return 0;
+      let amt = 0, at = start, left = g;
+      for (const b of bundles) {
+        if (left <= 0) break;
+        if (at >= b.to) continue;
+        const take = Math.min(left, b.to - Math.max(at, b.from));
+        amt += take * b.unit; at += take; left -= take;
+      }
+      if (left > 0) amt += left * bundles[bundles.length - 1].unit;   // 결제 판수 초과 진행분
+      return amt;
+    };
+    const useBundle = (playedAt) => String(playedAt || "") >= BUNDLE_UNIT_FROM;
+
     // 7/20 경계로 진행판수 분리
     const carrySnap = Number(s.carry_games || 0);            // 이월 진행판수 스냅(7/20 이전·동결)
     const preSess = sum(sess.filter((x) => String(x.played_at || "") < CUTOVER), (x) => x.games);
@@ -292,9 +311,11 @@ module.exports = function mountAdminPanel(app, deps) {
         if (!x.settled_period) {
           const tid = x.trainer_id != null ? x.trainer_id : s.trainer_id;
           const r = isFlatRate(x.played_at) ? RATE_FLAT : trainerBaseRateAt(gradsOf(tid), x.played_at);
-          accrual += g * unit * r;                                // g<0 → 차감
+          // 묶음별 구간이면 되돌린 판수는 직전에 쓴 판(위치 pos 바로 앞)의 묶음 단가로 뺀다
+          const negAmt = useBundle(x.played_at) ? -bundleAmt(Math.max(0, pos + g), -g) : g * unit;
+          accrual += negAmt * r;                                  // g<0 → 차감
           if (tid != null) {
-            accByTrainer[tid] = (accByTrainer[tid] || 0) + g * unit * r;
+            accByTrainer[tid] = (accByTrainer[tid] || 0) + negAmt * r;
             gamesByTrainer[tid] = (gamesByTrainer[tid] || 0) + g;
           }
         }
@@ -309,9 +330,13 @@ module.exports = function mountAdminPanel(app, deps) {
         // 요율은 **진행한 트레이너**의 승급 기준이다 — 경계 이전 회차에만 쓰인다.
         const r = flat ? RATE_FLAT : trainerBaseRateAt(gradsOf(tid), x.played_at);
         const rRepeat = flat ? RATE_FLAT : r + REPEAT_BONUS;
-        accrual += baseG * unit * r + bonusG * unit * rRepeat;
+        const bundled = useBundle(x.played_at);
+        const add = bundled
+          ? bundleAmt(pos, baseG) * r + bundleAmt(pos + baseG, bonusG) * rRepeat
+          : baseG * unit * r + bonusG * unit * rRepeat;
+        accrual += add;
         if (tid != null) {
-          accByTrainer[tid] = (accByTrainer[tid] || 0) + baseG * unit * r + bonusG * unit * rRepeat;
+          accByTrainer[tid] = (accByTrainer[tid] || 0) + add;
           gamesByTrainer[tid] = (gamesByTrainer[tid] || 0) + g;
         }
       }
@@ -457,6 +482,8 @@ module.exports = function mountAdminPanel(app, deps) {
   //    SALARY_START·LESSON_ONLY_START와 같은 방식으로 시행월을 그어 과거를 건드리지 않는다.
   //    played_at 기준이다(결제일이 아니라 수업일) — 오너 지시 「9월 수업분 포함」.
   const RATE_FLAT_FROM = "2026-09-01";
+  // 묶음별 단가 시행 경계(§9.82.3 · [19] (가)) — played_at 기준. 11월 이전 수업분은 섞은 단가 그대로(잠금월 · 소급 없음).
+  const BUNDLE_UNIT_FROM = "2026-12-01";
   const RATE_FLAT = 0.70;
   const isFlatRate = (playedAt) => String(playedAt || "") >= RATE_FLAT_FROM;
 
@@ -483,7 +510,7 @@ module.exports = function mountAdminPanel(app, deps) {
   // 지급액이 바뀌는 코드라 실DB 없이 고정할 수 있어야 한다. 라우트·권한은 내보내지 않는다.
   module.exports._engine = {
     computeStudent, computeTrainer, computeStaffSalary, aggregateConsults,
-    trainerBaseRateAt, floor100, RATE_FLAT, RATE_FLAT_FROM, LEVELTEST_START, BONUS_CONDITION_START,
+    trainerBaseRateAt, floor100, RATE_FLAT, RATE_FLAT_FROM, BUNDLE_UNIT_FROM, LEVELTEST_START, BONUS_CONDITION_START,
   };
 
   // ── 대시보드: 정산 전체 현황 ───────────────────────────
