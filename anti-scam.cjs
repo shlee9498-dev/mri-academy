@@ -307,6 +307,8 @@ function mountAntiScam(deps) {
       setTimeout(async () => {
         try {
           if (!guildId || !client.application) return;
+          // 레슨 음성 서버 초대용 최소 권한 링크(채널 보기 1024 만 · 주문함 [18]) — 봇 id 는 로그인 뒤에만 알 수 있어 로그로 남긴다
+          log.log(`[invite] lesson-voice https://discord.com/oauth2/authorize?client_id=${client.application.id}&scope=bot&permissions=1024`);
           const have = await client.application.commands.fetch({ guildId });
           for (const c of COMMANDS) if (![...have.values()].some((x) => x.name === c.name)) await client.application.commands.create(c, guildId);
           const v = await cfg();
