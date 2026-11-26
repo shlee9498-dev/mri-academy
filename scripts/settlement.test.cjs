@@ -212,3 +212,36 @@ test("빵다 성과급 조건(§64 · 오너 10/2) — 9월분부터 업로드 �
   assert.deepEqual([plain.suggest_commission, plain.bonus_condition, plain.note], [0, null, "기본급만"]);
   assert.equal(E.BONUS_CONDITION_START, "2026-09");
 });
+
+// ── 묶음별 단가(§9.82.3 · 주문함 [19] (가) · 오너 OK 2026-11-27) ──────────────
+// 옛 33판 120,000 + 새 33판 140,000. 첫 묶음을 11월에 다 쓰고 12/2 에 10판 → 새 묶음 단가로 잰다.
+// 주문함 [19] 예시: 섞은 단가면 27,500 · 묶음별이면 29,600(+2,100).
+test("묶음별 단가 — 12/1 이후 수업분은 그 판이 속한 결제 묶음 단가(FIFO)", () => {
+  assert.equal(E.BUNDLE_UNIT_FROM, "2026-12-01");
+  const s = { id: 9001, trainer_id: 5, carry_games: 0, status: "active" };
+  const pays = [
+    { student_id: 9001, kind: "lesson", games: 33, amount: 120000, paid_at: "2026-10-01" },
+    { student_id: 9001, kind: "lesson", games: 33, amount: 140000, paid_at: "2026-11-10" },
+  ];
+  const old = { student_id: 9001, trainer_id: 5, games: 33, played_at: "2026-11-20", settled_period: "2026-11" };
+  const dec = { student_id: 9001, trainer_id: 5, games: 10, played_at: "2026-12-02" };
+  assert.equal(E.computeStudent(s, pays, [old, dec], {}).payable, 29600);
+  // 같은 10판이 11월이면 종전 섞은 단가(260,000 ÷ 66) 그대로 — 소급 없음
+  const nov = { ...dec, played_at: "2026-11-28" };
+  assert.equal(E.computeStudent(s, pays, [old, nov], {}).payable, 27500);
+});
+test("묶음별 단가 — 묶음 경계를 넘는 세션은 나눠 잰다 · 초과분은 마지막 묶음 단가", () => {
+  const s = { id: 9002, trainer_id: 5, carry_games: 0, status: "active" };
+  const pays = [
+    { student_id: 9002, kind: "lesson", games: 10, amount: 45000, paid_at: "2026-11-01" },   // 4,500/판
+    { student_id: 9002, kind: "lesson", games: 10, amount: 60000, paid_at: "2026-11-02" },   // 6,000/판
+  ];
+  const a = { student_id: 9002, trainer_id: 5, games: 5, played_at: "2026-11-20", settled_period: "2026-11" };
+  const b = { student_id: 9002, trainer_id: 5, games: 10, played_at: "2026-12-03" };        // 5판 × 4,500 + 5판 × 6,000
+  assert.equal(E.computeStudent(s, pays, [a, b], {}).payable, Math.floor((5 * 4500 + 5 * 6000) * 0.7 / 100) * 100);
+  const c = { student_id: 9002, trainer_id: 5, games: 8, played_at: "2026-12-05" };         // 5판 6,000 + 초과 3판 6,000
+  assert.equal(E.computeStudent(s, pays, [a, b, c], {}).payable, Math.floor((5 * 4500 + 13 * 6000) * 0.7 / 100) * 100);
+  // 12월 정정 −2판 → 직전에 쓴 판(새 묶음)의 단가로 뺀다
+  const d = { student_id: 9002, trainer_id: 5, games: -2, played_at: "2026-12-06" };
+  assert.equal(E.computeStudent(s, pays, [a, b, d], {}).payable, Math.floor((5 * 4500 + 3 * 6000) * 0.7 / 100) * 100);
+});
