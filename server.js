@@ -9111,6 +9111,18 @@ require("./trainer-lessons.cjs")(app, {
 // 트레이너봇(계약 §9.37.1 · §9.37.2) — /수업잡기 한 줄 예약 · 끝났나요 벨. 쓰기는 위 트레이너 앱 라우트를 같은 프로세스에서 부른다.
 //   TRAINER_BOOK_CHANNEL_ID(선택) 가 있으면 그 채널 한 줄도 받는다.
 if (process.env.DISCORD_TOKEN) require("./trainer-bot.cjs")({ getClient: () => botClient, sbSelect, sbUpsert, sbRpc, portal: studentPortal, port: PORT });
+// 사칭 결제 사기 막기(계약 §9.85 · 2026-11-27) — 봇 DM 발송 검사 · 사칭 이름 알림 · 새 계정 링크 뿌리기 · /사칭신고판 · /공식계정안내.
+//   스위치는 전부 ops_state(anti_scam:*) — 행이 없으면 꺼짐. 공식 계좌(PAY_BANK_ACCOUNT)와 그로블 카드 링크(GROBLE_LINK_*)는 DM 검사에서 통과시킨다.
+if (process.env.DISCORD_TOKEN) {
+  const antiScam = require("./anti-scam.cjs").mountAntiScam({
+    getClient: () => botClient, opsGet: opsStateGet, env: process.env,
+    staffIds: STAFF_IDS, ownerIds: [...new Set([process.env.MRI_OWNER_ID, ...OWNER_IDS_T].filter(Boolean))],
+    officialAccount: () => process.env.PAY_BANK_ACCOUNT || "",
+    allowUrls: () => Object.keys(process.env).filter((k) => k.startsWith("GROBLE_LINK_")).map((k) => process.env[k]),
+  });
+  const t = setInterval(() => { if (botClient) { clearInterval(t); antiScam.attach(botClient, require("discord.js")); } }, 3000);
+  t.unref?.();
+}
 // 공지 · 전달문(계약 §9.30 · 2026-10-04) — 초안함 → 미리보기 → 보내기 · 앱 알림함 + 봇 DM. §65 미실행이면 이 라우트군만 503.
 // TRAINER_APP_URL = 트레이너 전달문 DM 끝의 앱 링크(트레이너 앱은 다른 저장소 · 이 저장소에 주소가 없다 — 오너가 주면 적는다 ·
 //   비어 있으면 링크 줄 없이 나간다). 수강생 공지 링크는 STUDENT_APP_URL/notices/{id}.
