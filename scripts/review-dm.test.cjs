@@ -8,7 +8,7 @@ const T = Date.parse("2026-11-12T12:00:00+09:00");   // 목요일
 
 test("문구 — 유비서 말투 · 한 줄 쓰기(링크) · 오늘은 패스 · DM 그만 · 첫 통엔 유튜브 한 줄", () => {
   const a = m.lessonMessage({ sid: 7, writeUrl: "https://app.example/reviews/quick?sessionId=x", intro: true });
-  assert.match(a.content, /한 줄만 남겨/); assert.match(a.content, /유튜브에서 성장 이야기/);
+  assert.match(a.content, /^오늘 수업, 한 줄로 남겨 둘래요\? ✍️\n나중에 티어 올린 날 다시 펼쳐 보면/); assert.match(a.content, /「이렇게 늘었어요」 성장 이야기/);
   const btn = a.components[0].components;
   assert.deepEqual(btn.map((b) => b.label), ["한 줄 쓰기", "오늘은 패스", "DM 그만"]);
   assert.equal(btn[0].style, 5); assert.equal(btn[1].custom_id, "rvdm:pass:7");

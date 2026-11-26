@@ -289,7 +289,8 @@ function e2e({ tables = {}, dmOk = true, levelFee = 20000 } = {}) {
   };
   const sbPatch = async (table, filter, patch) => {
     const id = Number(/id=eq\.(\d+)/.exec(filter)[1]);
-    const hit = db[table].filter((r) => r.id === id && (!/notified_at=is\.null/.test(filter) || r.notified_at == null));
+    const hit = db[table].filter((r) => r.id === id && (!/notified_at=is\.null/.test(filter) || r.notified_at == null)
+      && (!/paid_status=eq\.unpaid/.test(filter) || r.paid_status === "unpaid") && (!/status=neq\.cancelled/.test(filter) || r.status !== "cancelled"));
     hit.forEach((r) => Object.assign(r, patch));
     return hit.map((r) => ({ ...r }));
   };
@@ -393,4 +394,50 @@ test("입금자명 끝 신청 번호 두 자리(§9.64.3) — 이름 + 번호면
   assert.equal(bm.decide(alert("홍길동42"), two).pick.id, 42, "번호로 가른다");
   assert.equal(bm.decide(alert("홍길동"), two).status, "multiple", "번호 없으면 사람이 확인");
   assert.equal(bm.codeScore("김철수42", two[1]), 0, "번호만 맞고 이름 다름");
+});
+
+test("§9.45.6 입금자명 끝 번호도 이름으로 읽는다 — 「홍길동48님」 · 「홍길동 48님」 · 이름 줄 「홍길동48」 · 긴 숫자는 이름이 아니다", () => {
+  const p = (t) => b.parseAlert(t, NOW);
+  assert.deepEqual([p("토스뱅크\n홍길동48님이 20,000원을 보냈어요").counterparty, p("토스뱅크\n홍길동48님이 20,000원을 보냈어요").amount], ["홍길동48", 20000]);
+  assert.equal(p("토스뱅크\n홍길동 48님이 20,000원을 보냈어요").counterparty, "홍길동 48");
+  assert.equal(p("입금 20,000원\n홍길동48").counterparty, "홍길동48");
+  assert.equal(p("입금 20,000원\n홍길동12345").counterparty, null);
+  assert.equal(p(ALERTS.tossIn).counterparty, "홍길동", "번호 없는 이름은 그대로");
+});
+
+test("§9.45.6 자동 입금 완료 — 번호 + 이름 + 20,000원이면 상담 paid · confirmed + DM 에 적음 · 이름만 맞으면 그대로 · 취소된 신청은 그대로", async () => {
+  const bm = require("../bank-match.cjs");
+  const site = (o) => ({ id: 48, paid_status: "unpaid", fee: 0, source: "site", kind: "consult", status: "pending", intake_state: "awaiting_deposit",
+    student_name: "홍길동", depositor_name: "홍길동", created_at: ago(2), ...o });
+  // ① 번호 + 이름 + 20,000원 → 자동
+  let h = e2e({ tables: { consults: [site()] } });
+  let r = await h.send("토스뱅크\n홍길동48님이 20,000원을 보냈어요");
+  assert.equal(r.body.match, "matched");
+  assert.deepEqual([h.db.consults[0].paid_status, h.db.consults[0].intake_state], ["paid", "confirmed"]);
+  assert.equal(h.dms.length, 1);
+  assert.match(h.dms[0], /상담 신청 #48 입금 완료로 바꿨어요\(번호 · 이름 · 20,000원 일치\)/);
+  // 같은 알림이 다시 와도 두 번 바꾸지 않는다(저장 단계에서 끝)
+  assert.equal((await h.send("토스뱅크\n홍길동48님이 20,000원을 보냈어요")).body.duplicate, true);
+  assert.equal(h.dms.length, 1);
+  // ② 번호 없이 이름만 → 후보 알림만 · 상태 그대로
+  h = e2e({ tables: { consults: [site()] } });
+  await h.send("토스뱅크\n홍길동님이 20,000원을 보냈어요");
+  assert.deepEqual([h.db.consults[0].paid_status, h.db.consults[0].intake_state], ["unpaid", "awaiting_deposit"]);
+  assert.match(h.dms[0], /짝: 상담 신청 #48/);
+  assert.doesNotMatch(h.dms[0], /입금 완료로 바꿨어요/);
+  // ③ 번호는 맞는데 이름이 다름 → 짝 없음 · 그대로
+  h = e2e({ tables: { consults: [site()] } });
+  await h.send("토스뱅크\n김철수48님이 20,000원을 보냈어요");
+  assert.equal(h.db.consults[0].paid_status, "unpaid");
+  // ④ 취소된 신청 → 바꾸지 않고 「직접 확인」
+  h = e2e({ tables: { consults: [site({ status: "cancelled", intake_state: "expired" })] } });
+  await h.send("토스뱅크\n홍길동48님이 20,000원을 보냈어요");
+  assert.deepEqual([h.db.consults[0].paid_status, h.db.consults[0].status], ["unpaid", "cancelled"]);
+  assert.match(h.dms[0], /이미 입금 완료이거나 취소된 신청이라 그대로 뒀어요/);
+  // ⑤ 20,000원이 아닌 금액은 번호 + 이름이 맞아도 자동 아님(규칙 함수)
+  const pick = { kind: "consult", id: 48, score: 3 };
+  assert.equal(bm.autoConfirmable({ amount: 45000 }, { status: "matched", pick }), false);
+  assert.equal(bm.autoConfirmable({ amount: 20000 }, { status: "matched", pick }), true);
+  assert.equal(bm.autoConfirmable({ amount: 20000 }, { status: "matched", pick: { ...pick, kind: "payment_request" } }), false);
+  assert.equal(bm.autoConfirmable({ amount: 20000 }, { status: "matched", pick: { ...pick, score: 2 } }), false);
 });
