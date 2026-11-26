@@ -5479,7 +5479,7 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - `slot_bookings.voice_minutes int` · `slot_bookings.voice_draft_games int` (null = 초안 없음) — 칸마다 계산 결과.
 - `REQUIRED_SCHEMA` 에 같이 넣는다(3곳 규칙).
 
-### 9.80.5 API (반장)
+### 9.80.5 API (반장) — ⚠️ **폐기 · 정본은 9.80.8**(11/27 반장 확인). 아래 두 줄은 옛 초안이라 구현하지 않는다
 - `GET /trainer/lessons/today` 의 예약 항목에 `voiceMinutes` · `draftGames` · `voiceState`(`none`|`pending`|`ready`) 추가.
 - `POST /bookings/:id/complete` 에 `{ "useDraft": true }` 허용 — 서버가 `draftGames` 로 기록. `games` 를 함께 보내면 [고치기]로 본다.
 
@@ -5619,3 +5619,8 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - 수강생: 지금 예약 목록에 정기 칸이 「매주 화 20시 · 3/4명」처럼 보이고 신청 · 취소는 **지금 예약 API 그대로**(`POST /bookings` · `DELETE /bookings/:id`). 남은 P 5 미만이면 막힘(§9.78).
 - 오류: `409 full`(정원 참) · `409 insufficient_games` · `409 overlap`(같은 트레이너 다른 칸과 겹침 · 못 하는 시간 §9.83 포함) · `422 bad_range`.
 - 정원은 그룹 4명(오너 11/12 「관전형 최대 4명」과 같다).
+
+### 9.84.1 수강생 앱 응답 키 (반장 · §9.83 가예약 · §9.84 정기 칸 · 11/27)
+- 예약 목록(`GET /me/bookings` · 지금 응답 항목)에 더한다: `confirmState: "pending"|"confirmed"|"auto"|null`(null = 옛 방식 확정) · `autoConfirmAt`(pending 일 때만) → 앱 표시 「확인 기다리는 중 · {autoConfirmAt}까지 자동 확정」.
+- 예약 가능 칸(`GET /slots` · 지금 응답 항목)에 더한다: `scheduleId: number|null` · `recurring: { weekday: 0~6, startMin, durationMin } | null` · `capacity` · `joined` → 앱 표시 「매주 화 20시 · 3/4명」(요일 · 시각 글자는 앱이 만든다 · 숫자는 서버 값).
+- 신청 · 취소는 지금 API 그대로(`POST /bookings` · `DELETE /bookings/:id`). 정원 찬 칸은 `409 full`.
