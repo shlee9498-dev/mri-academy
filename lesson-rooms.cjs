@@ -75,7 +75,17 @@ function mountLessonRooms(deps) {
   }
 
   function attach(client, discord) {
-    const go = () => setTimeout(() => run(client, discord).catch((e) => log.error("[lesson-rooms]", e?.message)), 30_000).unref?.();
+    // 기동 30초 뒤 한 번 + 2분마다 「만들기 행은 있는데 결과가 아직 없음」이면 다시 — 행을 넣고 재기동을 기다리지 않게 한다
+    const tick = async () => {
+      const plan = await deps.opsGet("lesson_rooms:create").catch(() => null);
+      if (!plan || !plan.go) return;
+      const done = await deps.opsGet("lesson_rooms:result").catch(() => null);
+      if (!done) await run(client, discord);
+    };
+    const go = () => {
+      setTimeout(() => run(client, discord).catch((e) => log.error("[lesson-rooms]", e?.message)), 30_000).unref?.();
+      setInterval(() => tick().catch((e) => log.error("[lesson-rooms] tick", e?.message)), 120_000).unref?.();
+    };
     if (typeof client.isReady === "function" && client.isReady()) go(); else client.once("clientReady", go);
   }
   return { attach, run };
