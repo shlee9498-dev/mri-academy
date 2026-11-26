@@ -5541,6 +5541,15 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 
 **저장 · API 추가(§110 · 더하기만)** — `slot_bookings.voice_rule text`(적용 규칙 한 줄) · `slot_bookings.late_choice text`(`booked`|`extend`) · `slot_bookings.waived_by text` · `slot_bookings.dispute_at timestamptz`. 수강생 앱 `GET /me/lessons` 항목에 `joinedAt` · `leftAt` · `draftGames` · `rule` · `disputeUntil`, `POST /bookings/:id/dispute`.
 
+### 9.80.8 API 정본 (반장 · 트레이너 앱 · 반장-4 ① 답 · 11/27)
+- `GET /trainer/voice-drafts?date=YYYY-MM-DD` → `[{ draftId: 예약 id, studentLabel: "#번호 표시명", startAt, endAt, joinedAt, leftAt, voiceMinutes, bookedMinutes, kind: "personal"|"group_join"|"group_watch", draftGames, rule: "초과 15분 · +1P", trainerLateMin, lateWaiveGames, studentLateMin, lateChoice: null|"booked"|"extend", lateSuggest: "booked"|"extend"|null, state: "pending"|"ready"|"done"|"none", autoAt }]` — 그 트레이너 것만 · `none` = 음성 기록 없음.
+- `POST /trainer/voice-drafts/:draftId/accept` → `{ ok, games, sessionId }` (기록 = `record_lesson_from_booking` · source `voice`).
+- `POST /trainer/voice-drafts/:draftId/fix` body `{ games: 정수 0~15, reason?: 100자 }` → `{ ok, games, sessionId }`. 트레이너 지각 감면은 서버가 이 값에서 다시 뺀다(9.80.7).
+- `POST /trainer/voice-drafts/:draftId/late-choice` body `{ choice: "booked"|"extend" }` → 바뀐 초안 한 줄.
+- `POST /trainer/voice-drafts/:draftId/waive` (노쇼 · 늦은 취소 면제) → `{ ok, games: 0 }`.
+- 오류: `404 not_found` · `403 not_yours` · `409 already_recorded` · `409 locked_month` · `422 bad_games` · `409 not_ready`(수업이 아직 안 끝남).
+- 판수 · P · 금액은 전부 서버 값이다. 앱은 계산하지 않는다.
+
 ## 9.81 재결제 안내 자동 — 남은 P 5 이하면 유비서 DM (2026-11-27 · 총무 주문 · **오너 OK 11/27 「다 허락할게 시작해」**) · 계약(이 절) → 서버(경비) · 문구 = 총무 · env 없음 · DDL 없음
 
 - 대상: 남은 P(`portal_remaining_games` · 지갑 · §9.78) **1 ~ 5** 인 active 수강생. 0 이하는 §9.8 부족 안내가 맡는다(겹쳐 보내지 않는다).
@@ -5582,3 +5591,30 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 ### 9.82.5 남은 확인
 - 회원 확인 방법 · 회원가 원 단위 규칙.
 - 레벨 테스트 차감이 회원 할인과 겹칠 때 순서(제안: 할인 먼저 → 레벨 테스트 차감).
+
+### 9.82.6 사이트 [10] 보충 (11/27 · 사이트 #715 대조용)
+- **레벨 테스트비 차감(확정 문장)**: 「테스트 후 48시간 안에 레슨 P를 등록하면 20,000원을 레슨 금액에서 전액 빼 드려요」 — apply.html 입금 안내의 정본 문장. 기준 = 테스트 **진행 시각**(상담 `done_at` · 없으면 `scheduled_at`) + 48시간(KST) 안의 첫 레슨 결제. 차감은 결제 금액에서 뺀다(9.82.2).
+- **환불**: 남은 P × (그 묶음에 **실제 낸 금액** ÷ 그 묶음 P). 레벨 테스트비로 뺀 20,000 은 환불 때 다시 빼지 않는다(실제 낸 금액 기준이라 이미 반영됨). 서비스 P 는 환불 대상이 아니다(11/27 총무 · #66 건).
+- **MRI회원 할인 1회 기록**: `students.member_discount_used_at timestamptz` · `students.member_verified_by text`(§110 · 더하기만). 확인 방식(임시 · 사이트안 채택) = **레벨 테스트 때 유튜브 회원 화면을 보여 주고 트레이너가 확인** → 트레이너 앱 [회원 확인] 버튼이 `member_verified_by` 를 남긴다. 회원가 = 30P 135,000 · 100P 432,000. 레벨 테스트비 차감과 **같이 쓸 수 있다**(순서: 회원 할인 → 테스트비 차감).
+- **옛 가격 1회**: 옛 묶음(10판 45,000 · 21판 90,000 · 33판 140,000) 그대로 **판(= P)** 으로 판다. 99판 420,000 은 판매 종료라 옛 가격 1회에도 없다(사이트 [9-2] 3번 답).
+- **관전형 그룹**: 참여형과 같은 1시간 3P · 연강 2시간 5P(§9.70.2 확정 11/12) — 사이트 차감표에 다시 넣는다(사이트 [9-2] 1번 답).
+- **이미 판수를 가진 수강생의 그룹 레슨**: §9.70.3 그대로 — 11/13 이전 결제분으로 듣는 그룹은 옛 기준(진행한 판 = 판수), 그 뒤 결제분부터 시간당(사이트 [9-2] 2번 답).
+- **수강생 앱 표기**: 12/1 부터 「남은 P」(반장 · §9.79.8 A · 사이트 [9-2] 4번 답).
+
+## 9.83 예약 확인 · 못 하는 시간 API — §9.65 구현 키 (2026-11-27 · 반장-4 ② 답 · §9.65 확정 규칙 그대로 · **새 규칙 없음**) · 서버(경비) → 트레이너 · 원장 앱(반장)
+
+- 방식 정본 = §9.65 「**못 하는 시간만 막기**」(운영 시간 전부 열림). 「빈 시간을 한 번 올리기」 방식은 쓰지 않는다.
+- 못 하는 시간: `GET /trainer/unavailability?from&to` → `[{ id, kind: "once"|"weekly", onDate, weekday, startMin, endMin, validFrom, validTo, memo, overlaps: 겹치는 수업 수 }]` · `POST /trainer/unavailability` body `{ kind, onDate | weekday, startMin, endMin, validFrom?, validTo?, memo? }`(30분 단위 · 0~1440) → `{ id, overlaps }` · `DELETE /trainer/unavailability/:id` → `{ ok }`(지우지 않고 `cancelled_at`). 원장은 `?staffId=` 로 남의 것도 본다.
+- 확인 기다리는 신청: `GET /trainer/pending-bookings` → `[{ bookingId, studentLabel, startAt, durationMin, kind, autoConfirmAt, joined: 현재 인원 }]`.
+- `POST /trainer/bookings/:id/confirm` → `{ ok, confirmState: "confirmed" }` · `POST /trainer/bookings/:id/decline` body `{ reason?: 100자 }` → `{ ok, refundedGames }`(지금 트레이너 취소와 같은 길 · 옮기기 제안 DM).
+- 오류: `404 not_found` · `403 not_yours` · `409 already_confirmed` · `409 already_cancelled` · `422 bad_range`(30분 단위 아님 · 끝 ≤ 시작).
+- DDL = §105(이미 정본 · 실행은 서버 PR 에서 스냅샷 → 실행 → 검증 · 더하기만).
+
+## 9.84 그룹 정기 시간표 — 정원 4명 · 등록 · 신청 (2026-11-27 · 반장-4 ③ 답 · 오너 OK 11/27 「다 허락할게 시작해」 · 차감은 §9.70 · §9.80.7 그대로) · 서버(경비 · DDL §111 더하기만) → 트레이너 · 수강생 앱(반장)
+
+- 정기 시간표 = 매주 같은 요일 · 시각에 열리는 그룹 수업. 한 줄이 매주 칸(`trainer_slots`, origin `recurring`)을 **2주 앞까지** 자동으로 만든다(1시간 점검). 칸은 지금 그룹 칸과 같아서 차감 · 정산 코드가 그대로 읽는다.
+- 새 표 `group_schedules`(id · staff_id · weekday 0~6 · start_min · duration_min(60 · 120) · kind `group_join|group_watch` · capacity int default 4 · valid_from · valid_to · memo · created_by · created_at · cancelled_at) · `trainer_slots.schedule_id bigint`(어느 정기 줄에서 왔나).
+- 트레이너 · 원장: `GET /trainer/group-schedules` · `POST /trainer/group-schedules` body `{ weekday, startMin, durationMin, kind, capacity?: 1~4, validFrom, validTo?, memo? }` → `{ id, nextSlots: [날짜…] }` · `DELETE /trainer/group-schedules/:id`(앞으로 만들 칸만 멈춤 · 이미 예약 있는 칸은 그대로).
+- 수강생: 지금 예약 목록에 정기 칸이 「매주 화 20시 · 3/4명」처럼 보이고 신청 · 취소는 **지금 예약 API 그대로**(`POST /bookings` · `DELETE /bookings/:id`). 남은 P 5 미만이면 막힘(§9.78).
+- 오류: `409 full`(정원 참) · `409 insufficient_games` · `409 overlap`(같은 트레이너 다른 칸과 겹침 · 못 하는 시간 §9.83 포함) · `422 bad_range`.
+- 정원은 그룹 4명(오너 11/12 「관전형 최대 4명」과 같다).
