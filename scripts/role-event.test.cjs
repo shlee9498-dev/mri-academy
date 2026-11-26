@@ -90,11 +90,11 @@ test("서버 식 = 공개 재현 스크립트 식 (여러 크기)", () => {
     assert.equal(s.drawInput, `${seed}:${closes}:${s.participantsHash}:${rand}`);
   }
 });
-test("명령 정의 — 신청은 길드 · 관리는 글로벌 DM 전용 · 하위 명령 12개", () => {
+test("명령 정의 — 신청은 길드 · 관리는 글로벌 DM 전용 · 하위 명령 13개", () => {
   assert.equal(APPLY_CMD.name, "역할군신청");
   assert.deepEqual(APPLY_CMD.options.map((o) => o.name), ["닉네임", "플랫폼", "모드"]);
   assert.deepEqual(ADMIN_CMD.contexts, [1]);
-  assert.deepEqual(ADMIN_CMD.options.map((o) => o.name), ["회차생성", "일정", "채널읽기", "현황", "공지", "매일검사", "티어확인", "검증", "판정", "추첨", "지급", "수동등록"]);
+  assert.deepEqual(ADMIN_CMD.options.map((o) => o.name), ["회차생성", "일정", "채널읽기", "현황", "공지", "매일검사", "티어확인", "검증", "판정", "추첨", "지급", "상품전달", "수동등록"]);
   // 명령 · 옵션 이름만(선택지 choices 의 name 은 표시 글자라 규칙 밖)
   const names = [];
   const walk = (o) => { names.push(o.name); for (const c of o.options || []) walk(c); };
