@@ -97,6 +97,31 @@ function mountServerOps(deps) {
     return { at: new Date().toISOString(), guild: g.name, channels: rows, ownerPosts, categories: [...cats.values()] };
   }
 
+  // 3) 보관 칸으로 옮기기 — ops_state `server_ops:archive` { go: true, category: "🗄️ 보관", channels: [id…] }.
+  //    카테고리가 없으면 만든다. 채널은 옮기기만 하고(지우지 않음) @everyone 쓰기를 막아 읽기만 남긴다 — 보기 권한은 채널 원래 값 그대로.
+  //    결과 = `server_ops:archive_result` { categoryId, moved: [{ id, name, from }], failed: [{ id, error }], at }.
+  async function archive(client, discord, plan) {
+    const { ChannelType, PermissionFlagsBits: F } = discord;
+    const g = client.guilds.cache.get(guildId);
+    if (!g) return { error: "guild_missing" };
+    const name = String(plan.category || "🗄️ 보관").slice(0, 90);
+    const all = [...(await g.channels.fetch()).values()].filter(Boolean);
+    let cat = all.find((c) => c.type === ChannelType.GuildCategory && c.name === name);
+    if (!cat) cat = await g.channels.create({ name, type: ChannelType.GuildCategory, reason: "보관 칸(주문함 [24] · 무리 11/27)" });
+    const moved = [], failed = [];
+    for (const id of (plan.channels || []).map(String)) {
+      const c = all.find((x) => x.id === id);
+      if (!c) { failed.push({ id, error: "not_found" }); continue; }
+      try {
+        const from = all.find((x) => x.id === c.parentId)?.name || null;
+        await c.setParent(cat.id, { lockPermissions: false, reason: "보관 칸으로(주문함 [24])" });
+        await c.permissionOverwrites.edit(g.id, { SendMessages: false, AddReactions: false, CreatePublicThreads: false }, { reason: "보관 · 읽기만" });
+        moved.push({ id, name: c.name, from });
+      } catch (e) { failed.push({ id, error: String(e?.code || e?.message).slice(0, 80) }); }
+    }
+    return { categoryId: cat.id, moved, failed, at: new Date().toISOString() };
+  }
+
   async function tick(client, discord) {
     if (busy) return; busy = true;
     try {
@@ -105,6 +130,12 @@ function mountServerOps(deps) {
         const r = await postPanel(client, discord).catch((e) => ({ error: String(e?.code || e?.message).slice(0, 120) }));
         await deps.opsSet("anti_scam:panel_result", r);
         log.log(`[server-ops] 사칭 신고 패널 ${r.error ? `실패 ${r.error}` : `올림 · 채널 ${r.channelId}`}`);
+      }
+      const ar = await deps.opsGet("server_ops:archive").catch(() => null);
+      if (ar && ar.go && !(await deps.opsGet("server_ops:archive_result").catch(() => null))) {
+        const r = await archive(client, discord, ar).catch((e) => ({ error: String(e?.code || e?.message).slice(0, 120) }));
+        await deps.opsSet("server_ops:archive_result", r);
+        log.log(`[server-ops] 보관 칸 ${r.error ? `실패 ${r.error}` : `옮김 ${r.moved.length} · 실패 ${r.failed.length}`}`);
       }
       const a = await deps.opsGet("server_audit:run").catch(() => null);
       if (a && a.go && !(await deps.opsGet("server_audit:result").catch(() => null))) {
