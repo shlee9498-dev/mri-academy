@@ -9123,6 +9123,13 @@ if (process.env.DISCORD_TOKEN) {
   const t = setInterval(() => { if (botClient) { clearInterval(t); antiScam.attach(botClient, require("discord.js")); } }, 3000);
   t.unref?.();
 }
+// 레슨방(주문함 [18] 변경 · 오너 11/27) — MRI ACADEMY 서버 「레슨방」 카테고리 + 트레이너별 음성방. 기동 30초 뒤 권한 · 역할 점검 로그,
+//   ops_state lesson_rooms:create { go: true, … } 가 있을 때만 만든다(행 없음 = 점검만).
+if (process.env.DISCORD_TOKEN) {
+  const lessonRooms = require("./lesson-rooms.cjs").mountLessonRooms({ opsGet: opsStateGet, opsSet: opsStateSet, env: process.env });
+  const t2 = setInterval(() => { if (botClient) { clearInterval(t2); lessonRooms.attach(botClient, require("discord.js")); } }, 3000);
+  t2.unref?.();
+}
 // 공지 · 전달문(계약 §9.30 · 2026-10-04) — 초안함 → 미리보기 → 보내기 · 앱 알림함 + 봇 DM. §65 미실행이면 이 라우트군만 503.
 // TRAINER_APP_URL = 트레이너 전달문 DM 끝의 앱 링크(트레이너 앱은 다른 저장소 · 이 저장소에 주소가 없다 — 오너가 주면 적는다 ·
 //   비어 있으면 링크 줄 없이 나간다). 수강생 공지 링크는 STUDENT_APP_URL/notices/{id}.
