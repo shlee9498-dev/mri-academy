@@ -5738,6 +5738,7 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - **1번을 채우면 레벨 테스트를 건너뛴다.** 9/28 「신규는 전부 레벨 테스트부터」는 **이무리 직강에 한해** 이 절이 대신한다(트레이너 레슨은 9/28 규칙 그대로).
 - **확인 방법 = 등록 계정 PUBG API 자동 판정** — 말 · 캡처만으로 인정하지 않는다. 서버가 등록된 계정(`students.pubg_id` · 플랫폼 steam/kakao 따로)으로 `pubgRankedByAccount` 를 시즌 2개 조회한다(10 RPM 페이싱 · `pubgGet` 캐시). 계정이 등록 안 돼 있으면 「계정 등록 먼저」.
 - **미달이면** 레벨 테스트로 안내 → 레벨 테스트 불합격이면 트레이너 레슨으로 안내(신청은 받지 않는다 · 돈 받기 전 판정).
+- **구현 정본(경비 · `direct-eligibility.cjs`)**: 티어 = 그 시즌 **최고 티어**(`bestTier` · 없으면 현재 티어 · 서바이버 포함). 모드는 TPP 스쿼드 · FPP 스쿼드를 **각각** 본다(한 모드 안에서 셋을 채워야 한다 · 모드를 섞지 않는다). 계정 = 명부(`students.discord_id` → `pubg_platform` · `pubg_account_id`) · 명부에 없으면 `?platform=steam|kakao&name=닉`(신청 화면에 적은 닉을 API 로 해석). 응답 `{ eligible, via: "ranked"|null, seasonId, mode, tier, avgDamage, games }` 또는 `{ eligible: false, reason: "below_rule"|"no_ranked", closest }` + `platform` · `source: "roster"|"name"` · `checkedAt` · `rule`. 오류 `401 login_required` · `400 account_required` · `404 player_not_found` · `429 pubg_busy` · `502 pubg_error`.
 - 판정 결과는 신청 행에 남긴다: `{ eligible: true|false, via: "ranked"|"level_test", season, tier, avgDamage, games, checkedAt }` — 화면에는 「크리스탈 · 평균 231딜 · 64판(43시즌) 충족」처럼 숫자로.
 - **서버가 할 일(구현 PR 따로)**: `GET /api/direct/eligibility`(로그인 수강생 본인) → 위 판정 JSON. 사이트 직강 신청 화면 · 유비서 안내 · 사용설명서가 이 값을 받아 쓴다(기준 숫자를 화면에 복제하지 않는다 — 응답에 `rule: { minTier: "Crystal", minAvgDamage: 220, minGames: 50, seasons: 2 }` 를 같이 준다).
 - 사이트 · 안내문 · 사용설명서 문구는 각 담당이 같은 PR 묶음에서 고친다(규칙을 바꾸는 코드는 설명 화면도 같이 고친다).
