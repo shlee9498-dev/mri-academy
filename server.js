@@ -8909,6 +8909,9 @@ const studentPortal = require("./student-portal.cjs")(app, {
   discordDM,
 });
 
+// 이무리 직강 신청 자격(계약 §9.86.5 · 오너 OK 11/27) — GET /api/direct/eligibility · 최근 2시즌 크리스탈 · 220딜 · 50판(같은 시즌 · 같은 모드)
+require("./direct-eligibility.cjs").mountDirectEligibility(app, { getUser, sbSelect, findPlayer, recentSeasonIds, pubgGet, tierIndex });
+
 // ── 신청 창구 공개 API(docs/intake-design.md · §54 · §55) — /api/events/:code · /api/applications{,/options,/me} ──
 // start.html 이 부른다(공유비밀 게이트 밖 · 로그인은 /api/auth/login?intent=apply 토큰). 불투명 id 는 포털과 같은 함수.
 // 카드 · DM 은 intakeApi.hooks.onSubmitted 에 붙인다(PR-2). findPlayer · pubgRankedByAccount = 배그 닉 · 티어 조회(실패해도 신청은 받는다).
