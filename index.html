@@ -257,6 +257,8 @@ ul,ol{list-style:none}
 .big-p .v{font:800 clamp(64px,9vw,112px)/.95 var(--num);color:var(--kick);margin-top:8px}
 .big-p .v small{font:800 22px/1 var(--sans);margin-left:4px;color:var(--ink)}
 .big-p .big-sub{margin-top:10px;font-weight:700;color:var(--sub)}
+.big-p .big-gh{margin-top:10px;font-size:17px;font-weight:800;color:var(--ink)}
+.prow .p .gh{display:block;margin-top:6px;font:600 13px/1.2 var(--sans);color:var(--sub);white-space:nowrap}
 .free-lt{margin-top:16px;padding:12px 14px;border-radius:var(--r);background:var(--bg-2);color:var(--sub);font-size:15px}
 .free-lt b{display:block;color:var(--kick);font-size:18px;font-weight:800;margin-bottom:2px}
 .price-main>div:last-child,.cols>div{padding:8px 24px;border-radius:var(--r);background:var(--card);box-shadow:var(--shadow)}
@@ -487,9 +489,9 @@ html.vr-lock{overflow:hidden}
     </div>
     <div class="wrap">
       <dl class="now" aria-label="지금 숫자">
-        <div class="now-main"><dt>최근 30일 신청</dt><dd><b class="num">24</b>명</dd><small>레벨 테스트 21 · 사이트 신청 3 · 취소 · 중복 제외</small></div>
-        <div><dt>유튜브 조회수</dt><dd><b class="num">18.0</b>만</dd><small>최근 28일</small></div>
-        <div><dt>유튜브 구독자</dt><dd><b class="num">2,188</b>명</dd><small>28일 동안 +655</small></div>
+        <div class="now-main"><dt>최근 30일 신청</dt><dd><b class="num">24</b>명</dd><small>11월 14일 기준 · 레벨 테스트 21 · 사이트 신청 3 · 취소 · 중복 제외</small></div>
+        <div><dt>유튜브 조회수</dt><dd><b class="num">18.0</b>만</dd><small>10월 16일 ~ 11월 12일 · 유튜브 스튜디오</small></div>
+        <div><dt>유튜브 구독자</dt><dd><b class="num">2,188</b>명</dd><small>11월 12일 기준 · 28일 동안 +655</small></div>
         <div><dt>누적 수강생</dt><dd><b class="num">160</b>명 이상</dd><small>원장 직강 105명 · 트레이너 레슨 95명</small><small>직강 수강 1,200회 이상 · 2023년 10월부터</small></div>
       </dl>
     </div>
@@ -666,30 +668,31 @@ html.vr-lock{overflow:hidden}
   <section class="sec" id="plans">
     <div class="wrap">
       <div class="eyebrow">Price</div>
-      <!-- 레슨 가격표 P(포인트) 개편 — 오너 OK 11/27(「10p 5만원 20p 9만 5천원」「14만원어때?」「레벨테스트 포함된 걸 처음에띄워두고 2번째는 추가결제시로」「테스트 무료 포함」) · 가격 정정 11/27(「네판단대로계산해봐」 그룹 시간당 15,000 · 개인 25,000 = 1P 5,000원) · 12/1 신규 결제분부터 · 토스 심사 대상 -->
+      <!-- 레슨 가격표 P(포인트) 개편 — 오너 OK 11/27(「10p 5만원 20p 9만 5천원」「14만원어때?」「레벨테스트 포함된 걸 처음에띄워두고 2번째는 추가결제시로」「테스트 무료 포함」) · 그룹 레슨 시간 환산 11/27(「그룹레슨 4시간(2시간 10p)에 55000원임을 표기해둬」 → 2시간 연강 5P 기준 · 시간당 금액은 쓰지 않음) · 가격 정정 11/27(「네판단대로계산해봐」 그룹 시간당 15,000 · 개인 25,000 = 1P 5,000원) · 12/1 신규 결제분부터 · 토스 심사 대상 -->
       <h2 class="sec-h">레벨 테스트 포함, 10P 55,000원</h2>
       <p class="sec-sub">레슨은 포인트(P)로 사요. 처음 등록하면 레벨 테스트비는 0원이에요</p>
       <div class="price-main">
         <div class="big-p">
           <div class="lab">처음 등록 · 레벨 테스트 무료 포함</div>
           <div class="v">55,000<small>원</small></div>
+          <div class="big-gh">그룹 레슨 4시간(2시간 × 2번)</div>
           <div class="big-sub">레슨 10P · 1P 5,500원</div>
           <p class="free-lt"><b>레벨 테스트비 0원</b> 테스트 후 48시간 안에 등록하면 먼저 낸 20,000원을 전액 빼 드려요. 10P면 35,000원만 더 내요</p>
         </div>
         <div>
-          <div class="prow"><div class="n">20P<small>1P 5,250원</small></div><span></span><div class="p">105,000<small>원</small></div></div>
-          <div class="prow"><div class="n">30P<small>1P 5,000원 · 유튜브 MRI회원 첫 결제 135,000원</small></div><span></span><div class="p">150,000<small>원</small></div></div>
-          <div class="prow"><div class="n">100P<small>1P 4,800원 · 유튜브 MRI회원 첫 결제 432,000원</small></div><span></span><div class="p">480,000<small>원</small></div></div>
+          <div class="prow"><div class="n">20P<small>1P 5,250원</small></div><span></span><div class="p">105,000<small>원</small><span class="gh">그룹 레슨 8시간</span></div></div>
+          <div class="prow"><div class="n">30P<small>1P 5,000원 · 유튜브 MRI회원 첫 결제 135,000원</small></div><span></span><div class="p">150,000<small>원</small><span class="gh">그룹 레슨 12시간</span></div></div>
+          <div class="prow"><div class="n">100P<small>1P 4,800원 · 유튜브 MRI회원 첫 결제 432,000원</small></div><span></span><div class="p">480,000<small>원</small><span class="gh">그룹 레슨 40시간</span></div></div>
         </div>
       </div>
       <!-- 원장 직강 = 8회 290,000 하나 · 세트 없음(오너 11/2 · 가격 계약 docs/direct-price-unify.md) -->
       <div class="cols">
         <div>
           <h3>추가 결제</h3><p class="gd">이미 듣고 있는 분 · 레벨 테스트 없이 같은 가격</p>
-          <div class="prow"><div class="n">10P</div><span></span><div class="p">55,000<small>원</small></div></div>
-          <div class="prow"><div class="n">20P</div><span></span><div class="p">105,000<small>원</small></div></div>
-          <div class="prow"><div class="n">30P<small>유튜브 MRI회원 첫 결제 135,000원</small></div><span></span><div class="p">150,000<small>원</small></div></div>
-          <div class="prow"><div class="n">100P<small>유튜브 MRI회원 첫 결제 432,000원</small></div><span></span><div class="p">480,000<small>원</small></div></div>
+          <div class="prow"><div class="n">10P</div><span></span><div class="p">55,000<small>원</small><span class="gh">그룹 레슨 4시간</span></div></div>
+          <div class="prow"><div class="n">20P</div><span></span><div class="p">105,000<small>원</small><span class="gh">그룹 레슨 8시간</span></div></div>
+          <div class="prow"><div class="n">30P<small>유튜브 MRI회원 첫 결제 135,000원</small></div><span></span><div class="p">150,000<small>원</small><span class="gh">그룹 레슨 12시간</span></div></div>
+          <div class="prow"><div class="n">100P<small>유튜브 MRI회원 첫 결제 432,000원</small></div><span></span><div class="p">480,000<small>원</small><span class="gh">그룹 레슨 40시간</span></div></div>
         </div>
         <div>
           <h3>원장 직강</h3><p class="gd">회 단위 · 8회 과정 · 회당 3시간</p>
