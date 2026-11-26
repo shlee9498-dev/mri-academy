@@ -63,12 +63,12 @@
       "name": "PUBG 레슨",
       "serviceType": "게임 코칭",
       "provider": { "@id": "https://mriacademy.gg/#org" },
-      "description": "서바이버 트레이너진과 진행하는 판수 기준 레슨. 레벨 테스트부터 시작.",
+      "description": "서바이버 트레이너진과 진행하는 포인트(P) 기준 레슨. 레벨 테스트부터 시작하고, 테스트 후 48시간 안에 등록하면 테스트비를 전액 차감.",
       "offers": [
-        { "@type": "Offer", "name": "10판 패키지", "price": "45000", "priceCurrency": "KRW" },
-        { "@type": "Offer", "name": "21판 패키지", "price": "90000", "priceCurrency": "KRW" },
-        { "@type": "Offer", "name": "33판 패키지", "price": "140000", "priceCurrency": "KRW" },
-        { "@type": "Offer", "name": "99판 패키지", "price": "420000", "priceCurrency": "KRW" }
+        { "@type": "Offer", "name": "레슨 10P", "price": "55000", "priceCurrency": "KRW" },
+        { "@type": "Offer", "name": "레슨 20P", "price": "105000", "priceCurrency": "KRW" },
+        { "@type": "Offer", "name": "레슨 30P", "price": "150000", "priceCurrency": "KRW" },
+        { "@type": "Offer", "name": "레슨 100P", "price": "480000", "priceCurrency": "KRW" }
       ]
     },
     {
@@ -256,6 +256,9 @@ ul,ol{list-style:none}
 .big-p .lab{font-weight:800;color:var(--sub)}
 .big-p .v{font:800 clamp(64px,9vw,112px)/.95 var(--num);color:var(--kick);margin-top:8px}
 .big-p .v small{font:800 22px/1 var(--sans);margin-left:4px;color:var(--ink)}
+.big-p .big-sub{margin-top:10px;font-weight:700;color:var(--sub)}
+.free-lt{margin-top:16px;padding:12px 14px;border-radius:var(--r);background:var(--bg-2);color:var(--sub);font-size:15px}
+.free-lt b{display:block;color:var(--kick);font-size:18px;font-weight:800;margin-bottom:2px}
 .price-main>div:last-child,.cols>div{padding:8px 24px;border-radius:var(--r);background:var(--card);box-shadow:var(--shadow)}
 .prow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 18px;align-items:baseline;padding:16px 0;border-bottom:1px solid var(--line)}
 .prow:last-child{border-bottom:0}
@@ -500,8 +503,8 @@ html.vr-lock{overflow:hidden}
         <h2 class="vid-h" id="vidH">레벨 테스트부터 가격까지 한 번에 봐요</h2>
         <ol class="vid-list">
           <li><span class="num">01</span><div><b>레벨 테스트 순서</b><p>다시보기와 기초 훈련으로 지금 실력을 보고 시작 단계를 정해요</p></div></li>
-          <li><span class="num">02</span><div><b>수업 방식</b><p>트레이너 레슨은 판 단위, 이무리 직강은 1회 3시간이에요</p></div></li>
-          <li><span class="num">03</span><div><b>가격</b><p>레슨 판 묶음과 직강 가격은 바로 아래 가격 칸에 있어요</p></div></li>
+          <li><span class="num">02</span><div><b>수업 방식</b><p>트레이너 레슨은 P(포인트) 단위, 이무리 직강은 1회 3시간이에요</p></div></li>
+          <li><span class="num">03</span><div><b>가격</b><p>레슨 P 묶음과 직강 가격은 바로 아래 가격 칸에 있어요</p></div></li>
         </ol>
       </div>
       <div class="intro" id="intro" aria-label="MRI ACADEMY 소개 영상" hidden
@@ -613,7 +616,7 @@ html.vr-lock{overflow:hidden}
         <li class="stage">
           <div class="st-n"><span class="num">01</span></div>
           <div class="st-body">
-            <div class="st-top"><h3>레슨 · 손 만들기</h3><span class="tag">판 단위</span></div>
+            <div class="st-top"><h3>레슨 · 손 만들기</h3><span class="tag">P 단위</span></div>
             <dl class="st-meta"><div><dt>이런 분께</dt><dd>다이아 2 · 300딜 이하, 교전에서 먼저 쓰러지는 분</dd></div><div><dt>담당</dt><dd>현태 · 준구 트레이너</dd></div></dl>
             <ul class="learn"><li>연습 모드 소규모 교전과 피킹</li><li>투척물과 차량</li><li>라인전</li></ul>
           </div>
@@ -621,7 +624,7 @@ html.vr-lock{overflow:hidden}
         <li class="stage">
           <div class="st-n"><span class="num">02</span></div>
           <div class="st-body">
-            <div class="st-top"><h3>레슨 · 실전(일반 게임 · 경쟁전)</h3><span class="tag">판 단위</span></div>
+            <div class="st-top"><h3>레슨 · 실전(일반 게임 · 경쟁전)</h3><span class="tag">P 단위</span></div>
             <dl class="st-meta"><div><dt>이런 분께</dt><dd>손은 붙었는데 실전 교전에서 무너지는 분</dd></div><div><dt>담당</dt><dd>트레이너 · 그룹 또는 개인 레슨</dd></div></dl>
             <p class="st-sub">현태 트레이너의 약속 6개</p>
             <ol class="promise">
@@ -663,49 +666,64 @@ html.vr-lock{overflow:hidden}
   <section class="sec" id="plans">
     <div class="wrap">
       <div class="eyebrow">Price</div>
-      <h2 class="sec-h">레슨 10판, 판당 4,500원</h2>
+      <!-- 레슨 가격표 P(포인트) 개편 — 오너 OK 11/27(「10p 5만원 20p 9만 5천원」「14만원어때?」「레벨테스트 포함된 걸 처음에띄워두고 2번째는 추가결제시로」「테스트 무료 포함」) · 가격 정정 11/27(「네판단대로계산해봐」 그룹 시간당 15,000 · 개인 25,000 = 1P 5,000원) · 12/1 신규 결제분부터 · 토스 심사 대상 -->
+      <h2 class="sec-h">레벨 테스트 포함, 10P 55,000원</h2>
+      <p class="sec-sub">레슨은 포인트(P)로 사요. 처음 등록하면 레벨 테스트비는 0원이에요</p>
       <div class="price-main">
         <div class="big-p">
-          <div class="lab">레슨 10판</div>
-          <div class="v">45,000<small>원</small></div>
+          <div class="lab">처음 등록 · 레벨 테스트 무료 포함</div>
+          <div class="v">55,000<small>원</small></div>
+          <div class="big-sub">레슨 10P · 1P 5,500원</div>
+          <p class="free-lt"><b>레벨 테스트비 0원</b> 테스트 후 48시간 안에 등록하면 먼저 낸 20,000원을 전액 빼 드려요. 10P면 35,000원만 더 내요</p>
         </div>
         <div>
-          <div class="prow"><div class="n">21판<small>판당 4,286원</small></div><span></span><div class="p">90,000<small>원</small></div></div>
-          <div class="prow"><div class="n">33판<small>판당 4,242원</small></div><span></span><div class="p">140,000<small>원</small></div></div>
-          <div class="prow"><div class="n">99판<small>33판 × 3 · 한 번에 넉넉히 받고 싶은 분</small></div><span></span><div class="p">420,000<small>원</small></div></div>
+          <div class="prow"><div class="n">20P<small>1P 5,250원</small></div><span></span><div class="p">105,000<small>원</small></div></div>
+          <div class="prow"><div class="n">30P<small>1P 5,000원 · 유튜브 MRI회원 135,000원</small></div><span></span><div class="p">150,000<small>원</small></div></div>
+          <div class="prow"><div class="n">100P<small>1P 4,800원 · 유튜브 MRI회원 432,000원</small></div><span></span><div class="p">480,000<small>원</small></div></div>
         </div>
       </div>
       <!-- 원장 직강 = 8회 290,000 하나 · 세트 없음(오너 11/2 · 가격 계약 docs/direct-price-unify.md) -->
       <div class="cols">
         <div>
+          <h3>추가 결제</h3><p class="gd">이미 듣고 있는 분 · 레벨 테스트 없이 같은 가격</p>
+          <div class="prow"><div class="n">10P</div><span></span><div class="p">55,000<small>원</small></div></div>
+          <div class="prow"><div class="n">20P</div><span></span><div class="p">105,000<small>원</small></div></div>
+          <div class="prow"><div class="n">30P<small>유튜브 MRI회원 135,000원</small></div><span></span><div class="p">150,000<small>원</small></div></div>
+          <div class="prow"><div class="n">100P<small>유튜브 MRI회원 432,000원</small></div><span></span><div class="p">480,000<small>원</small></div></div>
+        </div>
+        <div>
           <h3>원장 직강</h3><p class="gd">회 단위 · 8회 과정 · 회당 3시간</p>
           <div class="prow"><div class="n">원장 직강 8회<small>1회 3시간 · 총 24시간</small></div><span></span><div class="p">290,000<small>원</small></div></div>
+          <h3>레벨 테스트만</h3><p class="gd">60~90분 · 예약 3시간 전까지 취소하면 전액 환불</p>
+          <div class="prow"><div class="n">레벨 테스트<small>48시간 안에 레슨을 등록하면 전액 차감</small></div><span></span><div class="p">20,000<small>원</small></div></div>
         </div>
       </div>
       <div class="pnotes">
         <p>핵이나 버그로 터진 게임은 무효로 처리해요</p>
-        <p>환불은 남은 판수 × 판당 단가(강의는 남은 회차 × 회당 단가)이고 위약금은 없어요. 자세한 기준은 <a class="link" href="terms.html">이용약관 제7조</a>에 있어요</p>
+        <p>이무리 유튜브 MRI회원은 30P와 100P를 10% 할인받아요</p>
+        <p>새 가격은 12월 1일 결제분부터예요. 이미 산 판수와 P는 그대로 쓰고, 기존 수강생은 12월 31일까지 옛 가격으로 한 번 더 결제할 수 있어요</p>
+        <p>환불은 남은 P × 1P당 단가(그 묶음 기준)이고 위약금은 없어요. 레벨 테스트비를 빼 드렸다면 20,000원은 환불액에서 다시 빼요. 강의는 남은 회차 × 회당 단가예요. 자세한 기준은 <a class="link" href="terms.html">이용약관 제7조</a>에 있어요</p>
       </div>
       <a class="vip-door link" href="#vip" data-vip-open>정해진 구성 말고 원장과 1:1로 맞추고 싶다면 <span>VIP 룸</span></a>
     </div>
   </section>
 
-  <!-- 6. 차감 기준 — 레슨은 판, 원장 직강은 회 -->
+  <!-- 6. 차감 기준 — 레슨은 P, 원장 직강은 회(그룹 1시간 3P · 2시간 연강 5P = 11/25 결정 · 개인은 기존 판수와 같은 숫자) -->
   <section class="sec" id="rules">
     <div class="wrap">
       <div class="eyebrow">Count Rule</div>
-      <h2 class="sec-h">판수 차감 기준</h2>
-      <p class="sec-sub">레슨은 판 단위, 원장 직강은 회 단위</p>
+      <h2 class="sec-h">P 차감 기준</h2>
+      <p class="sec-sub">레슨은 P 단위, 원장 직강은 회 단위</p>
       <div class="rules">
         <div class="rule">
           <div class="who">개인 레슨 · 1시간</div>
-          <div class="v">5<small>판</small></div>
-          <ul><li>1시간 30분 8판</li><li>2시간 10판</li></ul>
+          <div class="v">5<small>P</small></div>
+          <ul><li>1시간 30분 8P</li><li>2시간 10P</li></ul>
         </div>
         <div class="rule">
-          <div class="who">그룹 레슨(참여형 · 관전형)</div>
-          <div class="v">1판 = 1<small>판</small></div>
-          <p>시간과 상관없이 실제로 한 판 수만큼 줄어요. 그룹으로 잡았으면 1명만 와도 같은 기준이에요</p>
+          <div class="who">그룹 레슨 · 1시간</div>
+          <div class="v">3<small>P</small></div>
+          <ul><li>2시간 연강 5P</li></ul>
         </div>
         <div class="rule">
           <div class="who">원장 직강</div>
@@ -731,15 +749,15 @@ html.vr-lock{overflow:hidden}
         <h2>자주 묻는 질문</h2>
         <details>
           <summary>레슨이랑 원장 강의는 뭐가 달라요?</summary>
-          <div class="a"><b>레슨</b>은 판수 기준으로 서바이버 트레이너와 같이 게임하며 배워요. <b>원장 강의</b>는 예약한 1회 3시간 동안 이무리 원장이 직접 가르치는 8회 과정이고, 레벨 테스트에 합격했거나 레슨을 마친 분이 들을 수 있어요.</div>
+          <div class="a"><b>레슨</b>은 포인트(P) 기준으로 서바이버 트레이너와 같이 게임하며 배워요. <b>원장 강의</b>는 예약한 1회 3시간 동안 이무리 원장이 직접 가르치는 8회 과정이고, 레벨 테스트에 합격했거나 레슨을 마친 분이 들을 수 있어요.</div>
         </details>
         <details>
           <summary>처음인데 뭐부터 하면 돼요?</summary>
           <div class="a">레벨 테스트부터 해요. 다시보기 2개 이상으로 플레이와 습관, 교전 디테일을 60~90분 동안 보고 방향을 잡아요. 다시보기는 파일로 보내도 되고, 게임 안에서 잠금만 해 두면 수업 때 화면 공유로 같이 봐요. <b>다이아 2 · 300딜 이하</b>라면 레슨부터 권해요.</div>
         </details>
         <details>
-          <summary>판수는 어떻게 줄어요?</summary>
-          <div class="a"><b>개인 레슨</b>은 시간 기준으로 1시간 5판 · 1시간 30분 8판 · 2시간 10판이에요. <b>그룹 레슨과 관전형</b>은 실제로 한 판 수만큼 줄어요. 남은 판수는 수강생 앱에서 언제든 볼 수 있어요.</div>
+          <summary>P는 어떻게 줄어요?</summary>
+          <div class="a"><b>개인 레슨</b>은 1시간 5P · 1시간 30분 8P · 2시간 10P예요. <b>그룹 레슨</b>은 1시간 3P, 2시간 연강 5P예요. 남은 P는 수강생 앱에서 언제든 볼 수 있어요.</div>
         </details>
         <details>
           <summary>여러 명이 같이 들을 수 있나요?</summary>
@@ -751,11 +769,11 @@ html.vr-lock{overflow:hidden}
         </details>
         <details>
           <summary>환불이 되나요?</summary>
-          <div class="a">수강 시작 전이면 전액 돌려드려요. 시작한 뒤에는 <b>남은 판수 × 판당 단가</b>(강의는 남은 회차 × 회당 단가)로 돌려드리고 위약금은 없어요. 무료로 받은 보너스 판은 먼저 쓴 것으로 보고, 결제한 판수 중 남은 만큼만 계산해요. 레벨 테스트는 예약 3시간 전까지 취소하면 전액 환불이고, 그 뒤 취소와 불참은 환불되지 않아요. 자세한 기준은 <a href="terms.html">이용약관 제7조</a>에 있어요.</div>
+          <div class="a">수강 시작 전이면 전액 돌려드려요. 시작한 뒤에는 <b>남은 P × 1P당 단가</b>(그 묶음 결제 금액 ÷ 결제한 P)로 돌려드리고 위약금은 없어요. 레벨 테스트비 20,000원을 레슨 결제에서 빼 드렸다면 그 금액은 환불액에서 다시 빼요. 강의는 남은 회차 × 회당 단가예요. 레벨 테스트만 신청했다면 예약 3시간 전까지 취소하면 전액 환불이고, 그 뒤 취소와 불참은 환불되지 않아요. 자세한 기준은 <a href="terms.html">이용약관 제7조</a>에 있어요.</div>
         </details>
         <details>
           <summary>기존 수강생인데 가격이 바뀌었어요. 저도 새 가격인가요?</summary>
-          <div class="a">아니요. <b>기존 수강생은 등록 당시 조건이 그대로 유지</b>돼요(기존 등록 기준 2시간 = 1회 포함). 새 가격표는 신규 등록부터 적용하고, 재등록할 때 안내해요.</div>
+          <div class="a">새 가격은 <b>12월 1일 결제분부터</b>예요. 이미 산 판수와 P는 등록 당시 조건 그대로 쓰면 돼요(기존 등록 기준 2시간 = 1회 포함). 기존 수강생은 <b>12월 31일까지 옛 가격으로 한 번</b> 더 결제할 수 있어요.</div>
         </details>
       </div>
     </div>
