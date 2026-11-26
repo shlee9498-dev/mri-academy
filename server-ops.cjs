@@ -11,16 +11,23 @@
 const PANEL_CHANNEL = "🛡️│공식계정-사칭신고";
 const DAY = 86400_000;
 
-function panelInfoText(botId) {
+// accounts = [{ label: "원장 이무리", id }] — 공식 계정 목록(멘션으로 보이되 알림은 안 감)
+function panelInfoText(botId, accounts = []) {
+  const list = accounts.filter((a) => a && a.id).map((a) => `· ${a.label}: <@${a.id}>`);
   return [
     "**공식 계정 · 결제 안내**",
-    `· 공식 봇은 ${botId ? `<@${botId}>` : "유비서"} 하나예요. 이름 옆에 「앱」 표시가 있어요`,
-    "· 결제 · 입금 신청은 mriacademy.gg · app.mriacademy.gg 에서만 해요",
-    "· 유비서와 운영진은 DM으로 결제 링크나 계좌를 따로 보내지 않아요",
-    "· 유비서 · 운영진 이름을 흉내 낸 계정이 DM을 보내면 사기예요. 링크를 누르지 말고 아래 버튼으로 알려 주세요",
+    `· 공식 봇: ${botId ? `<@${botId}>` : "유비서"} (이름 옆에 「앱」 표시가 있어요)`,
+    ...list,
+    "",
+    "이무리와 트레이너는 공식 계정 말고 다른 계정(부계정)으로 절대 연락하거나 결제를 요청하지 않아요",
+    "결제는 mriacademy.gg 에서만 받아요",
+    "입금 계좌는 사이트 결제 화면에 안내된 MRI ACADEMY 계좌 하나뿐이에요. 다른 계좌로 보내 달라고 하면 전부 사기예요",
+    "공식 경로가 아닌 곳에서 생긴 피해는 아카데미에서 보상해 드릴 수 없어요",
+    "의심되면 아래 「🚨 사칭 신고」를 눌러 주세요",
   ].join("\n");
 }
 const PANEL_BUTTON_TEXT = "**이상한 DM을 받았나요?**\n입금은 절대 하지 마세요. 아래 버튼을 누르면 운영진에게 바로 알려져요";
+const PANEL_BUTTON_LABEL = "🚨 사칭 신고";
 
 function mountServerOps(deps) {
   const log = deps.log || console;
@@ -44,8 +51,8 @@ function mountServerOps(deps) {
         ],
       });
     }
-    const info = await ch.send({ content: panelInfoText(client.user.id), allowedMentions: { parse: [] } });
-    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("antiscam:report").setLabel("사칭 신고하기").setStyle(ButtonStyle.Danger));
+    const info = await ch.send({ content: panelInfoText(client.user.id, deps.officialAccounts ? deps.officialAccounts() : []), allowedMentions: { parse: [] } });
+    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("antiscam:report").setLabel(PANEL_BUTTON_LABEL).setStyle(ButtonStyle.Danger));
     const btn = await ch.send({ content: PANEL_BUTTON_TEXT, components: [row] });
     for (const m of [info, btn]) { try { await m.pin(); } catch (e) { log.warn("[server-ops] pin", e?.code || e?.message); } }
     return { channelId: ch.id, infoId: info.id, buttonId: btn.id, at: new Date().toISOString() };
@@ -97,18 +104,77 @@ function mountServerOps(deps) {
     return { at: new Date().toISOString(), guild: g.name, channels: rows, ownerPosts, categories: [...cats.values()] };
   }
 
+  // 3) 보관 칸으로 옮기기 — ops_state `server_ops:archive` { go: true, category: "🗄️ 보관", channels: [id…] }.
+  //    카테고리가 없으면 만든다. 채널은 옮기기만 하고(지우지 않음) @everyone 쓰기를 막아 읽기만 남긴다 — 보기 권한은 채널 원래 값 그대로.
+  //    결과 = `server_ops:archive_result` { categoryId, moved: [{ id, name, from }], failed: [{ id, error }], at }.
+  async function archive(client, discord, plan) {
+    const { ChannelType, PermissionFlagsBits: F } = discord;
+    const g = client.guilds.cache.get(guildId);
+    if (!g) return { error: "guild_missing" };
+    const name = String(plan.category || "🗄️ 보관").slice(0, 90);
+    const all = [...(await g.channels.fetch()).values()].filter(Boolean);
+    let cat = all.find((c) => c.type === ChannelType.GuildCategory && c.name === name);
+    if (!cat) cat = await g.channels.create({ name, type: ChannelType.GuildCategory, reason: "보관 칸(주문함 [24] · 무리 11/27)" });
+    const moved = [], failed = [];
+    for (const id of (plan.channels || []).map(String)) {
+      const c = all.find((x) => x.id === id);
+      if (!c) { failed.push({ id, error: "not_found" }); continue; }
+      try {
+        const from = all.find((x) => x.id === c.parentId)?.name || null;
+        await c.setParent(cat.id, { lockPermissions: false, reason: "보관 칸으로(주문함 [24])" });
+        await c.permissionOverwrites.edit(g.id, { SendMessages: false, AddReactions: false, CreatePublicThreads: false }, { reason: "보관 · 읽기만" });
+        moved.push({ id, name: c.name, from });
+      } catch (e) { failed.push({ id, error: String(e?.code || e?.message).slice(0, 80) }); }
+    }
+    return { categoryId: cat.id, moved, failed, at: new Date().toISOString() };
+  }
+
+  // 4) 패널 글 고치기 — ops_state `anti_scam:panel_edit` { go: true, v: 숫자 } · 결과 `anti_scam:panel_edit_result` { v, at }.
+  //    v 가 결과와 다를 때만 한 번 고친다(문구 · 공식 계정 목록 · 버튼 이름을 지금 코드 값으로).
+  async function editPanel(client, discord) {
+    const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = discord;
+    const r = await deps.opsGet("anti_scam:panel_result").catch(() => null);
+    if (!r || !r.channelId) return { error: "no_panel" };
+    const ch = await client.channels.fetch(String(r.channelId));
+    const info = await ch.messages.fetch(String(r.infoId));
+    await info.edit({ content: panelInfoText(client.user.id, deps.officialAccounts ? deps.officialAccounts() : []), allowedMentions: { parse: [] } });
+    const btn = await ch.messages.fetch(String(r.buttonId));
+    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("antiscam:report").setLabel(PANEL_BUTTON_LABEL).setStyle(ButtonStyle.Danger));
+    await btn.edit({ content: PANEL_BUTTON_TEXT, components: [row] });
+    return { ok: true };
+  }
+
   async function tick(client, discord) {
     if (busy) return; busy = true;
     try {
       const p = await deps.opsGet("anti_scam:panel").catch(() => null);
       if (p && p.go && !(await deps.opsGet("anti_scam:panel_result").catch(() => null))) {
+        await deps.opsSet("anti_scam:panel_result", { running: true, at: new Date().toISOString() });
         const r = await postPanel(client, discord).catch((e) => ({ error: String(e?.code || e?.message).slice(0, 120) }));
         await deps.opsSet("anti_scam:panel_result", r);
         log.log(`[server-ops] 사칭 신고 패널 ${r.error ? `실패 ${r.error}` : `올림 · 채널 ${r.channelId}`}`);
       }
+      const pe = await deps.opsGet("anti_scam:panel_edit").catch(() => null);
+      if (pe && pe.go) {
+        const done = await deps.opsGet("anti_scam:panel_edit_result").catch(() => null);
+        if (!done || done.v !== pe.v) {
+          await deps.opsSet("anti_scam:panel_edit_result", { v: pe.v, running: true, at: new Date().toISOString() });
+          const r = await editPanel(client, discord).catch((e) => ({ error: String(e?.code || e?.message).slice(0, 120) }));
+          await deps.opsSet("anti_scam:panel_edit_result", { v: pe.v, ...r, at: new Date().toISOString() });
+          log.log(`[server-ops] 사칭 신고 패널 고침 v${pe.v} ${r.error ? `실패 ${r.error}` : "끝"}`);
+        }
+      }
+      const ar = await deps.opsGet("server_ops:archive").catch(() => null);
+      if (ar && ar.go && !(await deps.opsGet("server_ops:archive_result").catch(() => null))) {
+        await deps.opsSet("server_ops:archive_result", { running: true, at: new Date().toISOString() });
+        const r = await archive(client, discord, ar).catch((e) => ({ error: String(e?.code || e?.message).slice(0, 120) }));
+        await deps.opsSet("server_ops:archive_result", r);
+        log.log(`[server-ops] 보관 칸 ${r.error ? `실패 ${r.error}` : `옮김 ${r.moved.length} · 실패 ${r.failed.length}`}`);
+      }
       const a = await deps.opsGet("server_audit:run").catch(() => null);
       if (a && a.go && !(await deps.opsGet("server_audit:result").catch(() => null))) {
         log.log("[server-ops] 서버 전수 조사 시작");
+        await deps.opsSet("server_audit:result", { running: true, at: new Date().toISOString() });   // 검수 권장 — 저장 실패해도 2분마다 다시 돌지 않게 먼저 찍는다
         const r = await audit(client, discord).catch((e) => ({ error: String(e?.code || e?.message).slice(0, 120) }));
         await deps.opsSet("server_audit:result", r);
         log.log(`[server-ops] 서버 전수 조사 ${r.error ? `실패 ${r.error}` : `끝 · 채널 ${r.channels.length} · 오너 글 ${r.ownerPosts.length}`}`);
@@ -126,4 +192,4 @@ function mountServerOps(deps) {
   return { attach, tick };
 }
 
-module.exports = { mountServerOps, panelInfoText, PANEL_CHANNEL, PANEL_BUTTON_TEXT };
+module.exports = { mountServerOps, panelInfoText, PANEL_CHANNEL, PANEL_BUTTON_TEXT, PANEL_BUTTON_LABEL };
