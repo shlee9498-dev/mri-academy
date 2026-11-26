@@ -2,6 +2,7 @@
 // ═══════════════ 이무리 직강 신청 자격 판정 (계약 trainer-portal-api §9.86.5 · 오너 OK 11/27 「응」) ═══════════════
 // GET /api/direct/eligibility — 로그인(Discord JWT) 본인 기준.
 //   계정 찾는 순서: 명부(students.discord_id → pubg_platform · pubg_account_id) → 없으면 ?platform=&name= (신청 화면에 적은 닉 · API 로 해석).
+//   ⚠️ 레벨 테스트 생략(eligible: true)은 명부 계정만 — 이름 경로는 eligible: null · account_unverified + preview(검수-3).
 //   판정: 최근 2시즌 중 한 시즌 · 한 모드(TPP 스쿼드 · FPP 스쿼드)에서 [최고 티어 Crystal 이상 · 평균 딜 220 이상 · 50판 이상] 셋 다.
 //   레벨 테스트 합격은 이 API 가 정하지 않는다(via: "level_test" 는 레벨 테스트 기록 쪽이 채운다) — 여기선 경쟁전 기준만 본다.
 // 응답 숫자 기준(rule)을 같이 준다 — 화면은 숫자를 복제하지 않는다.
@@ -65,6 +66,13 @@ function mountDirectEligibility(app, deps) {
         seasons.push({ seasonId: sid, rows: resp ? seasonRows(resp, tierIndex) : [] });
       }
       const result = judge(seasons);
+      // 검수-3(11/27) — 이름으로 찾은 계정은 본인 계정인지 모른다(잘하는 남의 닉으로 레벨 테스트를 건너뛸 수 있다).
+      //   레벨 테스트 생략(eligible: true)은 **명부에 연결된 계정(source roster)만**. 이름 경로는 결과를 미리보기로만 주고
+      //   eligible: null · reason: account_unverified 「계정 등록 먼저」.
+      if (source !== "roster") {
+        const { eligible, via, ...preview } = result;
+        return res.json({ eligible: null, via: null, reason: "account_unverified", preview: { meets: eligible === true, ...preview }, platform, source, checkedAt: new Date().toISOString(), rule: RULE });
+      }
       res.json({ ...result, platform, source, checkedAt: new Date().toISOString(), rule: RULE });
     } catch (e) {
       const status = e?.status === 404 ? 404 : e?.status === 429 ? 429 : 502;

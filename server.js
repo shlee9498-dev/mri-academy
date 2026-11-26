@@ -9112,6 +9112,13 @@ if (process.env.DISCORD_TOKEN) {
   const t = setInterval(() => { if (botClient) { clearInterval(t); antiScam.attach(botClient, require("discord.js")); } }, 3000);
   t.unref?.();
 }
+// MRI 서버 정리 도우미(주문함 [24] · 무리 11/27) — 사칭 신고 패널 게시(anti_scam:panel) · 서버 전수 조사(server_audit:run). 행 없음 = 아무것도 안 함.
+if (process.env.DISCORD_TOKEN) {
+  const serverOps = require("./server-ops.cjs").mountServerOps({ opsGet: opsStateGet, opsSet: opsStateSet, env: process.env,
+    ownerIds: [...new Set([process.env.MRI_OWNER_ID, ...OWNER_IDS_T].filter(Boolean))] });
+  const t3 = setInterval(() => { if (botClient) { clearInterval(t3); serverOps.attach(botClient, require("discord.js")); } }, 3000);
+  t3.unref?.();
+}
 // 레슨방(주문함 [18] 변경 · 오너 11/27) — MRI ACADEMY 서버 「레슨방」 카테고리 + 트레이너별 음성방. 기동 30초 뒤 권한 · 역할 점검 로그,
 //   ops_state lesson_rooms:create { go: true, … } 가 있을 때만 만든다(행 없음 = 점검만).
 if (process.env.DISCORD_TOKEN) {
