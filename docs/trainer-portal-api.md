@@ -5632,13 +5632,16 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - 새 표 `group_schedules`(id · staff_id · weekday 0~6 · start_min · duration_min(60 · 120) · kind `group_join|group_watch` · capacity int default 4 · valid_from · valid_to · memo · created_by · created_at · cancelled_at) · `trainer_slots.schedule_id bigint`(어느 정기 줄에서 왔나).
 - 트레이너 · 원장: `GET /trainer/group-schedules` · `POST /trainer/group-schedules` body `{ weekday, startMin, durationMin, kind, capacity?: 1~4, validFrom, validTo?, memo? }` → `{ id, nextSlots: [날짜…] }` · `DELETE /trainer/group-schedules/:id`(앞으로 만들 칸만 멈춤 · 이미 예약 있는 칸은 그대로).
 - 수강생: 지금 예약 목록에 정기 칸이 「매주 화 20시 · 3/4명」처럼 보이고 신청 · 취소는 **지금 예약 API 그대로**(`POST /bookings` · `DELETE /bookings/:id`). 남은 P 5 미만이면 막힘(§9.78).
-- 오류: `409 full`(정원 참) · `409 insufficient_games` · `409 overlap`(같은 트레이너 다른 칸과 겹침 · 못 하는 시간 §9.83 포함) · `422 bad_range`.
+- 오류: `409 slot_full`(정원 참 · 지금 코드) · `409 insufficient_games` · `409 overlap`(같은 트레이너 다른 칸과 겹침 · 못 하는 시간 §9.83 포함) · `422 bad_range`.
 - 정원은 그룹 4명(오너 11/12 「관전형 최대 4명」과 같다).
 
-### 9.84.1 수강생 앱 응답 키 (반장 · §9.83 가예약 · §9.84 정기 칸 · 11/27)
-- 예약 목록(`GET /me/bookings` · 지금 응답 항목)에 더한다: `confirmState: "pending"|"confirmed"|"auto"|null`(null = 옛 방식 확정) · `autoConfirmAt`(pending 일 때만) → 앱 표시 「확인 기다리는 중 · {autoConfirmAt}까지 자동 확정」.
-- 예약 가능 칸(`GET /slots` · 지금 응답 항목)에 더한다: `scheduleId: number|null` · `recurring: { weekday: 0~6, startMin, durationMin } | null` · `capacity` · `joined` → 앱 표시 「매주 화 20시 · 3/4명」(요일 · 시각 글자는 앱이 만든다 · 숫자는 서버 값).
-- 신청 · 취소는 지금 API 그대로(`POST /bookings` · `DELETE /bookings/:id`). 정원 찬 칸은 `409 full`.
+### 9.84.1 수강생 앱 응답 키 (반장 · §9.83 가예약 · §9.84 정기 칸 · 11/27 · 반장-5 실측으로 정정)
+- 수강생 앱 예약 화면 = **`GET /availability?days=N` 하나**(지금 그대로). `/slots` · `/me/bookings` 는 수강생 앱 경로가 아니다(앞 판 정정).
+- `slots[]` 항목에 더한다:
+  - `confirmState: "pending"|"confirmed"|"auto"|null` · `autoConfirmAt: ISO|null` — **`bookedByMe = true` 인 항목에만** 값이 있고 나머지는 null. null = 옛 방식 확정. 앱 표시 「확인 기다리는 중 · {autoConfirmAt}까지 자동 확정」.
+  - `scheduleId: number|null` · `recurring: { weekday: 0~6(0 = 일요일), startMin, durationMin } | null` — 모든 항목. 앱 표시 「매주 화 20시 · 3/4명」.
+- 인원은 **새 키를 만들지 않는다** — 지금 있는 `capacity` · `takenCount` · `seatsLeft`(§9.3)로 보여 준다(「3/4명」 = takenCount/capacity). `joined` 는 쓰지 않는다.
+- 신청 · 취소는 지금 API 그대로(`POST /bookings` · `DELETE /bookings/:id`). 정원 찬 칸은 **지금 오류 코드 `slot_full`**(새 `full` 코드는 만들지 않는다 · §9.84 · §9.84.2 도 같다).
 
 ### 9.82.7 트레이너 월 200만 원 설계표 (현태 · 11/27 · 9.82.3 기준 갱신)
 1P당 트레이너 몫 = 1P당 실결제 단가 × 0.70. 월 2,000,000 원에 필요한 진행 P · 시간:
@@ -5654,3 +5657,11 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - 그룹 4명 정원(§9.84)이 시간당 몫이 가장 크다 — 같은 1시간에 개인 5P · 그룹 12P(4명 × 3P).
 - 트레이너 지각 감면(§9.80.7)은 이 표에서 빠진다(감면만큼 덜 받는다).
 - 레벨 테스트 차감은 9.82.3-4 로 트레이너 몫에 영향이 없다.
+
+### 9.84.2 계약 확인 3건 답 (반장-6 · 트레이너 앱 Draft #69 · 11/27)
+1. **`memo` 는 트레이너 앱 응답에 싣지 않는다** — 응답 가드(`scrubTrainer` 규칙)가 막는 키라서. `GET /trainer/unavailability` 항목은 `{ id, kind, onDate, weekday, startMin, endMin, validFrom, validTo, overlaps }` 뿐이다. `POST` 의 `memo` 도 받지 않는다(원장 화면에서만 쓴다 · 앱은 보내지 않는다).
+2. **`GET /trainer/group-schedules`** → `[{ id, weekday, startMin, durationMin, kind: "group_join"|"group_watch", capacity, validFrom, validTo: 날짜|null, nextSlots: [YYYY-MM-DD…], cancelledAt: null }]`(cancelled 된 줄은 목록에서 뺀다 · `memo` 없음) · **`DELETE /trainer/group-schedules/:id`** → `{ ok: true, id, keptSlots: 이미 예약 있어 남긴 칸 수 }`. 오류: `404 not_found` · `403 not_yours`.
+3. 값 목록:
+   - `GET /trainer/pending-bookings` 의 `kind` = `"personal"` | `"group_join"` | `"group_watch"` | `"course"`.
+   - `weekday` = **0 = 일요일** ~ 6 = 토요일(JS `getDay()` · KST 기준) — §9.83 · §9.84 · §9.84.1 모두 같다.
+   - `GET /trainer/voice-drafts` 에서 **null 이 될 수 있는 칸**: `joinedAt` · `leftAt` · `voiceMinutes` · `draftGames`(`state` 가 `none` · `pending` 일 때) · `lateChoice` · `lateSuggest` · `studentLateMin`(수강생 지각 없음) · `autoAt`(`done` 일 때). **null 이 아닌 칸**: `draftId` · `studentLabel` · `startAt` · `endAt` · `bookedMinutes` · `kind` · `state` · `trainerLateMin`(없으면 0) · `lateWaiveGames`(없으면 0) · `rule`(없으면 빈 글자).
