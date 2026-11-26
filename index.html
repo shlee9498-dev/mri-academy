@@ -158,6 +158,8 @@ nav{display:flex;align-items:center;justify-content:space-between;min-height:64p
 .badges{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .bd{display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.08);border-radius:16px;padding:10px 12px;min-width:0}
 .gem{width:34px;height:34px;flex:none}
+.emb{width:54px;height:54px;flex:none;filter:drop-shadow(0 4px 8px rgba(0,0,0,.35))}
+.tr .emb{width:48px;height:48px;filter:drop-shadow(0 3px 6px rgba(60,30,120,.25))}
 .bd b{display:block;font-weight:800;font-size:15px;color:#fff;font-variant-numeric:tabular-nums}
 .bd span{font-size:12px;color:#C9C3DD;line-height:1.3;display:block}
 .nums{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;border-top:1px solid rgba(255,255,255,.12);padding-top:12px}
@@ -311,7 +313,7 @@ footer p{margin:10px 0 0}
 .vr-sign{margin-top:auto;padding-top:56px;font-size:12px;color:var(--vr-mute);letter-spacing:.04em}
 html.vr-lock{overflow:hidden}
 @media (prefers-reduced-motion:reduce){.vroom[open]{animation:none}html{scroll-behavior:auto}.btn,.pick,.tr{transition:none}}
-@media (max-width:899px){.shot .rec{position:static;margin:12px 0 0;display:inline-flex}.shot .yb{position:static;margin:12px 0 0}.hero-cap{margin-top:12px}.bd .gem{display:none}.bd b{font-size:14px}
+@media (max-width:899px){.shot .rec{position:static;margin:12px 0 0;display:inline-flex}.shot .yb{position:static;margin:12px 0 0}.hero-cap{margin-top:12px}.badges{grid-template-columns:1fr}.bd .emb{width:48px;height:48px}
  .vr-wrap{padding:76px 16px 72px}.vr-item{grid-template-columns:1fr}.vr-desc{grid-column:1}.vr-no{padding-top:0}}
 @media (min-width:900px){
  section{padding-block:72px}
@@ -346,6 +348,31 @@ html.vr-lock{overflow:hidden}
 <linearGradient id="gD" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E3F0FF"/><stop offset="1" stop-color="#5A8CF0"/></linearGradient>
 <linearGradient id="gG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFF6CC"/><stop offset="1" stop-color="#E0A93A"/></linearGradient>
 <linearGradient id="gP" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E4FBFF"/><stop offset="1" stop-color="#3FB8C8"/></linearGradient>
+<linearGradient id="mGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFF3C4"/><stop offset=".45" stop-color="#F4C84A"/><stop offset="1" stop-color="#B07418"/></linearGradient>
+<linearGradient id="mGold2" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE38A"/><stop offset="1" stop-color="#D99A26"/></linearGradient>
+<linearGradient id="mLeaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE9A6"/><stop offset="1" stop-color="#C98B22"/></linearGradient>
+<linearGradient id="cWing" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#B9B0DE"/></linearGradient>
+<linearGradient id="cPlum" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6A47D9"/><stop offset="1" stop-color="#2B1C5C"/></linearGradient>
+<symbol id="medal" viewBox="0 0 64 64">
+<path d="M22 46 17 62l7-3 4 5 4-15z" fill="#5B3FD6"/><path d="M42 46l5 16-7-3-4 5-4-15z" fill="#4527B8"/>
+<g fill="url(#mLeaf)"><ellipse cx="27.8" cy="55.1" rx="2.6" ry="6" transform="rotate(215 27.8 55.1)"/><ellipse cx="20.0" cy="52.2" rx="2.6" ry="6" transform="rotate(235 20.0 52.2)"/><ellipse cx="13.6" cy="46.7" rx="2.6" ry="6" transform="rotate(255 13.6 46.7)"/><ellipse cx="9.4" cy="39.4" rx="2.6" ry="6" transform="rotate(275 9.4 39.4)"/><ellipse cx="8.0" cy="31.0" rx="2.6" ry="6" transform="rotate(295 8.0 31.0)"/><ellipse cx="9.4" cy="22.6" rx="2.6" ry="6" transform="rotate(315 9.4 22.6)"/><ellipse cx="13.6" cy="15.3" rx="2.6" ry="6" transform="rotate(335 13.6 15.3)"/><ellipse cx="36.2" cy="55.1" rx="2.6" ry="6" transform="rotate(-35 36.2 55.1)"/><ellipse cx="44.0" cy="52.2" rx="2.6" ry="6" transform="rotate(-55 44.0 52.2)"/><ellipse cx="50.4" cy="46.7" rx="2.6" ry="6" transform="rotate(-75 50.4 46.7)"/><ellipse cx="54.6" cy="39.4" rx="2.6" ry="6" transform="rotate(-95 54.6 39.4)"/><ellipse cx="56.0" cy="31.0" rx="2.6" ry="6" transform="rotate(-115 56.0 31.0)"/><ellipse cx="54.6" cy="22.6" rx="2.6" ry="6" transform="rotate(-135 54.6 22.6)"/><ellipse cx="50.4" cy="15.3" rx="2.6" ry="6" transform="rotate(-155 50.4 15.3)"/></g>
+<circle cx="32" cy="29" r="18.5" fill="url(#mGold)"/>
+<circle cx="32" cy="29" r="18.5" fill="none" stroke="#8A5A12" stroke-width="1.2"/>
+<circle cx="32" cy="29" r="14.5" fill="url(#mGold2)" stroke="#FFF4C7" stroke-width="1.4"/>
+<path d="M21 20a14 14 0 0 1 16-5" fill="none" stroke="#FFFBEA" stroke-width="2" stroke-linecap="round" opacity=".8"/>
+<text x="32" y="36.5" text-anchor="middle" font-family="Pretendard Variable,Pretendard,sans-serif" font-weight="900" font-size="20" fill="#6B4410">1</text>
+</symbol>
+<symbol id="crest" viewBox="0 0 64 64">
+<g fill="url(#cWing)" stroke="#7E74A8" stroke-width=".8">
+<path d="M26 24C17 22 8 16 3 9c3 9 7 16 14 21-4 0-8-1-12-3 4 6 10 9 17 10-3 1-7 1-10 0 5 4 11 5 16 4z"/>
+<path d="M38 24c9-2 18-8 23-15-3 9-7 16-14 21 4 0 8-1 12-3-4 6-10 9-17 10 3 1 7 1 10 0-5 4-11 5-16 4z"/>
+</g>
+<path d="M32 10l13 6v14c0 10-6 17-13 22-7-5-13-12-13-22V16z" fill="url(#cPlum)" stroke="url(#mGold)" stroke-width="2.6" stroke-linejoin="round"/>
+<path d="M24 10l3-5 5 4 5-4 3 5" fill="none" stroke="url(#mGold)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M32 19l2.6 5.6 6 .6-4.5 4 1.3 6-5.4-3.1-5.4 3.1 1.3-6-4.5-4 6-.6z" fill="url(#mGold)"/>
+<path d="M27 42h10" stroke="#FFE9A6" stroke-width="1.6" stroke-linecap="round" opacity=".7"/>
+</symbol>
+<symbol id="mic" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="url(#cPlum)" stroke="url(#mGold)" stroke-width="2"/><rect x="26" y="16" width="12" height="20" rx="6" fill="#F4EEFF"/><path d="M21 31a11 11 0 0 0 22 0M32 42v6M26 48h12" fill="none" stroke="#F4EEFF" stroke-width="2.6" stroke-linecap="round"/></symbol>
 <symbol id="gem" viewBox="0 0 40 40"><path d="M20 2 36 11v18L20 38 4 29V11z"/><path d="M20 2v36M4 11l32 18M36 11 4 29" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1.2"/></symbol>
 </defs>
 </svg>
@@ -376,24 +403,24 @@ html.vr-lock{overflow:hidden}
 </div>
 </div>
 
-<!-- 2 원장 · 트레이너 — 전적 · 숫자는 지금 사이트 정본 그대로(원장 기록 = 오너 11/11 · 누적 = 회계 11/13 · 신청 = 11/14 조회 · 유튜브 = 11/12 스튜디오) -->
+<!-- 2 원장 · 트레이너 — 휘장 = 디자인-6(무리 11/27 「1위 육각형 퀄리티 · 서바이버 마크」 · 공식 티어 마크 대신 자체 SVG) · S38 줄 = 무리 dak.gg 캡처 「두 계정 모두 · 평균 583 / 664딜」 · 전적 · 숫자는 지금 사이트 정본 그대로(원장 기록 = 오너 11/11 · 누적 = 회계 11/13 · 신청 = 11/14 조회 · 유튜브 = 11/12 스튜디오) -->
 <section id="lead" aria-labelledby="leadH"><div class="wrap">
 <div class="proof">
 <h2 id="leadH">원장 이무리 전적<small>2023년 10월부터 직강 · 이무리 유튜브 운영</small></h2>
 <div class="badges">
-<div class="bd"><svg class="gem" fill="url(#gG)" aria-hidden="true"><use href="#gem"/></svg><div><b>S29 카카오 1위</b><span>5,000 RP · 평균 딜량 684</span></div></div>
-<div class="bd"><svg class="gem" fill="url(#gG)" aria-hidden="true"><use href="#gem"/></svg><div><b>S36 카카오 1위</b><span>서바이버 5,002 RP · 평균 딜량 614</span></div></div>
-<div class="bd"><svg class="gem" fill="url(#gP)" aria-hidden="true"><use href="#gem"/></svg><div><b>S38 스팀 서바이버</b><span>두 계정 4,359 · 4,370 RP</span></div></div>
-<div class="bd"><svg class="gem" fill="url(#gS)" aria-hidden="true"><use href="#gem"/></svg><div><b>직강 1,200회 이상</b><span>원장 직강 105명</span></div></div>
+<div class="bd"><svg class="emb" aria-hidden="true"><use href="#medal"/></svg><div><b>S29 카카오 1위</b><span>5,000 RP · 평균 딜량 684</span></div></div>
+<div class="bd"><svg class="emb" aria-hidden="true"><use href="#medal"/></svg><div><b>S36 카카오 1위</b><span>서바이버 5,002 RP · 평균 딜량 614</span></div></div>
+<div class="bd"><svg class="emb" aria-hidden="true"><use href="#crest"/></svg><div><b>S38 스팀 서바이버</b><span>두 계정 모두 · 평균 583 / 664딜</span></div></div>
+<div class="bd"><svg class="emb" aria-hidden="true"><use href="#mic"/></svg><div><b>직강 1,200회 이상</b><span>원장 직강 105명</span></div></div>
 </div>
 <div class="nums"><div><b>160명 이상</b><span>누적 수강생</span></div><div><b>24명</b><span>최근 30일 신청</span></div><div><b>2,188명</b><span>유튜브 구독자</span></div></div>
 <p class="src">누적 수강생 11월 13일 · 신청 11월 14일 기준(취소 · 중복 제외) · 구독자 11월 12일 유튜브 스튜디오 기준</p>
 <a class="link yt-go" href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">이무리 유튜브</a>
 </div>
 <div class="trs" id="trainers" style="margin-top:12px">
-<a class="tr" href="#plans"><svg class="gem" fill="url(#gG)" aria-hidden="true"><use href="#gem"/></svg><div><b>이무리 · 원장</b><span>직강 1회 3시간 · 8회 과정</span><em>원장 직강 보기</em></div></a>
-<a class="tr" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae"><svg class="gem" fill="url(#gP)" aria-hidden="true"><use href="#gem"/></svg><div><b>현태 · 트레이너</b><span>S41 스팀 서바이버 4,527 RP · 레슨 2,496판</span><em>현태에게 신청</em></div></a>
-<a class="tr" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu"><svg class="gem" fill="url(#gP)" aria-hidden="true"><use href="#gem"/></svg><div><b>준구 · 트레이너</b><span>S38 서바이버 · 레슨 1,425판</span><em>준구에게 신청</em></div></a>
+<a class="tr" href="#plans"><svg class="emb" aria-hidden="true"><use href="#medal"/></svg><div><b>이무리 · 원장</b><span>직강 1회 3시간 · 8회 과정</span><em>원장 직강 보기</em></div></a>
+<a class="tr" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae"><svg class="emb" aria-hidden="true"><use href="#crest"/></svg><div><b>현태 · 트레이너</b><span>S41 스팀 서바이버 4,527 RP · 레슨 2,496판</span><em>현태에게 신청</em></div></a>
+<a class="tr" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu"><svg class="emb" aria-hidden="true"><use href="#crest"/></svg><div><b>준구 · 트레이너</b><span>S38 서바이버 · 레슨 1,425판</span><em>준구에게 신청</em></div></a>
 </div>
 <!-- 원장에게 바로 신청 — 오너 10/3 지정 창구 그대로 -->
 <div class="direct" id="direct"><b>원장에게 바로 신청</b><span>디스코드 e_muri(친구 추가 후 메시지)</span><a href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener">MRI ACADEMY 디스코드</a><a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></div>
