@@ -1039,7 +1039,7 @@ let intakeFlow = null;
 let intakeDm = null;     // 웹 신청 첫 연락 봇 DM(§9.57 · intake-dm.cjs) — 아래 상담 일정 카드 블록에서 만들고 /api/apply · DM 중계 · 서버 입장이 쓴다
 // 디스코드 피드백 이관 드라이런(10/1 어플 · 1순위) — 봇이 준비되면 위 ready 에서 한 번 돈다. 결과 = ops_state 'feedback_import:scan'.
 //   token 을 바꾸면 다음 기동에 다시 돈다. LESSON_GUILD_ID(GmI 클랜)는 읽지 않는다.
-const FEEDBACK_SCAN_TOKEN = "2026-10-01a";
+const FEEDBACK_SCAN_TOKEN = "2026-11-16a";   // 11/16 재실측 — 현태 서버 10/3 뒤 글이 어디 있는지(총무 주문 · 읽기만)
 const feedbackScan = require("./feedback-scan.cjs").createFeedbackScan({
   getClient: () => botClient,
   opsStateGet: (k) => opsStateGet(k), opsStateSet: (k, v) => opsStateSet(k, v),
@@ -7530,7 +7530,8 @@ async function gmiGuildMember(discordId) {
 }
 // 통장 입출금 알림 받기(§88 · docs/bank-alerts.md) — POST /api/bank-alerts · /hooks/bank-alert · env BANK_ALERT_SECRET 이 없으면 503(닫힘).
 //   계좌 번호는 저장하지 않는다(원문은 「[계좌]」로 가린 뒤) · 같은 알림 두 번이면 한 줄(중복 키) · 분당 30번까지.
-// 입금 알림 → 열린 신청 짝 찾기 · 오너 DM(계약 §9.45 · bank-match.cjs) — toss 통장만. 짝 후보만 만들고 payments · 신청 상태는 바꾸지 않는다.
+// 입금 알림 → 열린 신청 짝 찾기 · 오너 DM(계약 §9.45 · bank-match.cjs) — toss 통장만. payments 는 만들지 않는다.
+//   예외: 번호 + 이름 일치 · 20,000원이면 그 상담만 입금 완료로(§9.45.6 · 오너 OK 11/14).
 const bankMatch = require("./bank-match.cjs").createBankMatch({
   sbSelect, sbPatch, levelTestFee: () => require("./intake-api.cjs").levelTestWon(),
   notifyOwner: async (text) => { const oid = process.env.MRI_OWNER_ID; if (!botClient || !oid) return false; try { const u = await botClient.users.fetch(String(oid)); await u.send(text); return true; } catch (_) { return false; } },
