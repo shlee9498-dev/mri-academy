@@ -75,7 +75,7 @@
       "@type": "Course",
       "name": "이무리 클랜장 직강 강의",
       "provider": { "@id": "https://mriacademy.gg/#org" },
-      "description": "이무리 원장 직강 8회 · 16회. 최근 2시즌 중 크리스탈 이상 · 평균 220딜 · 50판이면 레벨 테스트 없이, 아니면 레벨 테스트 합격 후 수강. 주도권→우선순위→포지션→강제 4단계 커리큘럼.",
+      "description": "이무리 원장 직강 8회 · 16회. 신청 기준: 최근 2시즌 중 크리스탈 이상 · 평균 220딜 · 50판 이상, 또는 레벨 테스트 합격. 주도권→우선순위→포지션→강제 4단계 커리큘럼.",
       "offers": [
         { "@type": "Offer", "name": "원장 직강 8회", "price": "290000", "priceCurrency": "KRW" },
         { "@type": "Offer", "name": "원장 직강 16회", "price": "550000", "priceCurrency": "KRW" },
@@ -236,6 +236,14 @@ nav{display:flex;align-items:center;justify-content:space-between;min-height:64p
 .ptabs button[aria-selected="true"]{background:#fff;color:var(--ink);box-shadow:0 2px 8px rgba(60,30,120,.12)}
 .ptabs button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 .dcta{margin-top:14px;max-width:420px}
+.tpanel{scroll-margin-top:170px}
+.btn.ghost{background:var(--card);color:var(--pri);box-shadow:inset 0 0 0 2px var(--pri)}
+.ptabs{display:flex;width:max-content;max-width:100%}
+.ptabs button{white-space:nowrap}
+.tapply{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+.tapply .btn{flex:1 1 180px}
+.bridge{display:inline-block;margin-top:12px}
+@media(max-width:420px){.ptabs{width:100%}.ptabs button{flex:1;padding:0 10px;font-size:14px}}
 .box{background:#fff;border-radius:20px;padding:16px 18px;border:2px solid var(--line)}
 .box h3{font-family:var(--sans);font-weight:800;font-size:16px;margin-bottom:8px}
 .row{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:15px;color:var(--ink)}
@@ -430,12 +438,12 @@ html.vr-lock{overflow:hidden}
 <a class="link yt-go" href="https://www.youtube.com/@mriacademy-w6v" target="_blank" rel="noopener">이무리 유튜브</a>
 </div>
 <div class="trs" id="trainers" style="margin-top:12px">
-<a class="tr" href="#plans" data-tab-open="direct"><svg class="emb" aria-hidden="true"><use href="#medal"/></svg><div><b>이무리 · 원장</b><span>직강 8회 · 16회 · 주말 자유반</span><em>원장 직강 보기</em></div></a>
+<a class="tr" href="#direct" data-tab-open="direct"><svg class="emb" aria-hidden="true"><use href="#medal"/></svg><div><b>이무리 · 원장</b><span>직강 8회 · 16회 · 주말 자유반</span><em>원장 직강 보기</em></div></a>
 <a class="tr" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=hyuntae"><svg class="emb" aria-hidden="true"><use href="#crest"/></svg><div><b>현태 · 트레이너</b><span>S41 스팀 서바이버 4,527 RP · 레슨 2,496판</span><em>현태에게 신청</em></div></a>
 <a class="tr" href="apply.html?utm_source=site&amp;utm_medium=trainers&amp;utm_content=jungu"><svg class="emb" aria-hidden="true"><use href="#crest"/></svg><div><b>준구 · 트레이너</b><span>S38 서바이버 · 레슨 1,425판</span><em>준구에게 신청</em></div></a>
 </div>
 <!-- 원장에게 바로 신청 — 오너 10/3 지정 창구 그대로 -->
-<div class="direct" id="direct"><b>원장에게 바로 신청</b><span>디스코드 e_muri(친구 추가 후 메시지)</span><a href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener">MRI ACADEMY 디스코드</a><a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></div>
+<div class="direct" id="ask"><b>원장에게 바로 신청</b><span>디스코드 e_muri(친구 추가 후 메시지)</span><a href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener">MRI ACADEMY 디스코드</a><a href="mailto:shlee9498@gmail.com">shlee9498@gmail.com</a></div>
 </div></section>
 
 <!-- 3 나한테 맞는 건 — 기준 문구는 기존 사이트 그대로(다이아 2 · 300딜 이하 → 레슨). 최종 결정은 레벨 테스트 -->
@@ -450,8 +458,8 @@ html.vr-lock{overflow:hidden}
 </div>
 <p class="fit-msg" id="fitMsg" aria-live="polite">다이아 2 · 300딜 이하라면 레슨부터 권해요</p>
 <div class="picks">
-<div class="pick on" data-card="lesson"><span class="k">레벨 테스트 뒤 트레이너 레슨</span><h3>트레이너 레슨 (P)</h3><p>서바이버 트레이너와 같이 게임하며 기초부터 하나씩 배워요</p><div class="meta"><span>1:1 또는 그룹</span><span>개인 1시간 5P</span><span>그룹 1시간 3P</span></div><a class="link" href="#plans" data-tab-open="lesson">레슨 가격 보기</a></div>
-<div class="pick" data-card="direct"><span class="k">크리스탈 · 220딜 · 50판이면 테스트 없이</span><h3>원장 직강</h3><p>이무리 원장과 같은 팀으로 들어가 직접 오더하며 실시간으로 피드백을 받아요</p><div class="meta"><span>8회 · 16회</span><span>주말 자유반</span><span>같은 실력대 3명</span></div><a class="link" href="#plans" data-tab-open="direct">직강 가격 보기</a></div>
+<div class="pick on" data-card="lesson"><span class="k">레벨 테스트 뒤 트레이너 레슨</span><h3>트레이너 레슨 (P)</h3><p>서바이버 트레이너와 같이 게임하며 기초부터 하나씩 배워요</p><div class="meta"><span>1:1 또는 그룹</span><span>개인 1시간 5P</span><span>그룹 1시간 3P</span></div><a class="link" href="#lesson" data-tab-open="lesson">레슨 가격 보기</a></div>
+<div class="pick" data-card="direct"><span class="k">크리스탈 · 220딜 · 50판 또는 레벨 테스트 합격</span><h3>원장 직강</h3><p>이무리 원장과 같은 팀으로 들어가 직접 오더하며 실시간으로 피드백을 받아요</p><div class="meta"><span>8회 · 16회</span><span>주말 자유반</span><span>같은 실력대 3명</span></div><a class="link" href="#direct" data-tab-open="direct">직강 가격 보기</a></div>
 <div class="pick clan" data-card="clan"><span class="k">같이 할 사람이 필요하면</span><h3>GmI 클랜</h3><p>레슨 밖에서 같이 돌 사람과 클랜 대회는 GmI에서 찾아요</p><div class="meta"><span>클랜컵</span><span>디스코드</span></div><a class="link" href="https://shlee9498-dev.github.io/gmi-clancup/" target="_blank" rel="noopener">GmI 클랜 보기</a></div>
 </div>
 </div></section>
@@ -470,8 +478,8 @@ html.vr-lock{overflow:hidden}
 
 <!-- 5 가격 — 오너 OK 11/27 · #715 · 계약 §9.82 그대로(11/27 결제분부터 · 총무 11/27 「12/1 예약 취소 → 오늘 반영」 · 토스 심사 대상) · 원장 직강 = 오너 OK 11/27(8회 29만 · 16회 55만 · 주말 자유반 · 통합반 · 세트는 화면에서 내림). 숫자 · 조건을 다듬지 않는다 -->
 <section id="plans" style="padding-top:8px" aria-label="가격"><div class="wrap">
-<div class="ptabs" role="tablist" aria-label="가격 종류"><button type="button" role="tab" id="tabLesson" aria-controls="panelLesson" aria-selected="true" data-tab="lesson">레슨</button><button type="button" role="tab" id="tabDirect" aria-controls="panelDirect" aria-selected="false" data-tab="direct" tabindex="-1">원장 직강</button></div>
-<div class="tpanel" id="panelLesson" role="tabpanel" aria-labelledby="tabLesson">
+<div class="ptabs" role="tablist" aria-label="가격 종류"><button type="button" role="tab" id="tabLesson" aria-controls="lesson" aria-selected="true" data-tab="lesson">트레이너 레슨</button><button type="button" role="tab" id="tabDirect" aria-controls="direct" aria-selected="false" data-tab="direct" tabindex="-1">이무리 직강</button></div>
+<div class="tpanel" id="lesson" role="tabpanel" aria-labelledby="tabLesson">
 <div class="price-top">
 <div><span class="eyebrow">레슨 가격</span><h2 class="sec-t" id="planH">레벨 테스트 포함, 10P 55,000원</h2><p class="sec-s" style="margin:0">레슨은 포인트(P)로 사요. 처음 등록하면 레벨 테스트비는 0원이에요</p></div>
 <div class="rule">개인 레슨 1시간 = <b>5P</b><span>1시간 30분 8P · 2시간 10P</span></div>
@@ -495,8 +503,10 @@ html.vr-lock{overflow:hidden}
 <p>환불은 남은 P × 1P당 단가(그 묶음에 실제로 낸 금액 기준)이고 위약금은 없어요. 강의는 남은 회차 × 회당 단가예요. 자세한 기준은 <a href="terms.html">이용약관 제7조</a>에 있어요</p>
 <p>남은 P는 <a href="https://app.mriacademy.gg/" rel="noopener">수강생 앱</a>에서 언제든 볼 수 있어요</p>
 </div>
+<div class="tapply"><a class="btn" href="apply.html?utm_source=site&amp;utm_medium=plans&amp;utm_content=hyuntae">현태에게 신청</a><a class="btn ghost" href="apply.html?utm_source=site&amp;utm_medium=plans&amp;utm_content=jungu">준구에게 신청</a></div>
+<a class="bridge link" href="#direct" data-tab-open="direct">크리스탈 · 평균 220딜을 넘었거나 레벨 테스트를 합격했다면 이무리 직강 보기</a>
 </div>
-<div class="tpanel" id="panelDirect" role="tabpanel" aria-labelledby="tabDirect" hidden>
+<div class="tpanel" id="direct" role="tabpanel" aria-labelledby="tabDirect" hidden>
 <div class="price-top">
 <div><span class="eyebrow">원장 직강</span><h2 class="sec-t">이무리 원장과 같은 팀으로 경쟁전</h2><p class="sec-s" style="margin:0">원장이 직접 오더하고 그 판 안에서 바로 짚어요. 같은 실력대로 팀을 꾸려요</p></div>
 <div class="rule">직강 시간<span>주말 07~12시 또는 18시 이후 · 평일 저녁</span></div>
@@ -509,10 +519,10 @@ html.vr-lock{overflow:hidden}
 </div>
 <p class="again">주말 자유반은 초급 · 중급 · 심화 모두 같은 시간에 경쟁전으로 수업해요</p>
 <div class="side dside">
-<div class="box"><h3>신청 기준</h3><p style="color:var(--ink);font-size:14.5px">최근 2시즌 중 크리스탈 이상 · 평균 220딜 · 50판이면 레벨 테스트 없이 신청해요. 아니면 레벨 테스트에 합격하면 들을 수 있어요</p></div>
+<div class="box"><h3>신청 기준</h3><p style="color:var(--ink);font-size:14.5px">최근 2시즌 중 크리스탈 이상 · 평균 220딜 · 50판 이상, 또는 레벨 테스트 합격이면 신청할 수 있어요</p><a class="bridge link" href="#lesson" data-tab-open="lesson">아직 기준 전이라면 레벨 테스트나 트레이너 레슨부터</a></div>
 <div class="box"><h3>규칙</h3><div class="row">노쇼 2회<b>예약 우선순위가 내려가요</b></div><div class="row">환불<b>남은 회차 비례</b></div><div class="row">녹화<b>신청할 때 동의해요</b></div></div>
 </div>
-<div class="dcta"><a class="btn" href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener">디스코드로 신청</a></div>
+<div class="dcta"><a class="btn" href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener">원장에게 디스코드로 신청</a></div>
 <div class="pnotes">
 <p>예전에 세트(직강 + 레슨)를 산 분은 산 그대로 이용할 수 있어요</p>
 <p>환불은 남은 회차 × 회당 단가예요. 자세한 기준은 <a href="terms.html">이용약관 제7조</a>에 있어요</p>
@@ -548,7 +558,7 @@ html.vr-lock{overflow:hidden}
 <div class="faqwrap">
 <div class="faq">
 <details open><summary>처음인데 뭐부터 하면 돼요?</summary><div class="a">레벨 테스트부터 해요. 다시보기 2개 이상으로 플레이와 습관, 교전 디테일을 60~90분 동안 보고 방향을 잡아요. 다시보기는 파일로 보내도 되고, 게임 안에서 잠금만 해 두면 수업 때 화면 공유로 같이 봐요. <b>다이아 2 · 300딜 이하</b>라면 레슨부터 권해요.</div></details>
-<details><summary>레슨이랑 원장 강의는 뭐가 달라요?</summary><div class="a"><b>레슨</b>은 포인트(P) 기준으로 서바이버 트레이너와 같이 게임하며 배워요. <b>원장 강의</b>는 이무리 원장이 같은 팀으로 들어가 직접 가르치는 8회 · 16회 과정이에요. 최근 2시즌 중 크리스탈 이상 · 평균 220딜 · 50판이면 레벨 테스트 없이, 아니면 레벨 테스트에 합격하면 들을 수 있어요.</div></details>
+<details><summary>레슨이랑 원장 강의는 뭐가 달라요?</summary><div class="a"><b>레슨</b>은 포인트(P) 기준으로 서바이버 트레이너와 같이 게임하며 배워요. <b>원장 강의</b>는 이무리 원장이 같은 팀으로 들어가 직접 가르치는 8회 · 16회 과정이에요. 신청 기준은 최근 2시즌 중 크리스탈 이상 · 평균 220딜 · 50판 이상, 또는 레벨 테스트 합격이에요.</div></details>
 <details><summary>P는 어떻게 줄어요?</summary><div class="a"><b>개인 레슨</b>은 1시간 5P · 1시간 30분 8P · 2시간 10P예요. <b>그룹 레슨과 관전형</b>은 1시간 3P, 2시간 연강 5P예요. 11월 13일 이전에 결제한 판으로 듣는 그룹 · 관전형 레슨은 예전처럼 한 게임에 1판씩 줄어요. 남은 P는 수강생 앱에서 언제든 볼 수 있어요.</div></details>
 <details><summary>여러 명이 같이 들을 수 있나요?</summary><div class="a">네. 레슨은 <b>그룹 레슨(수강생 3명 + 트레이너 1명)</b>이나 <b>관전형(최대 4명)</b>으로 들을 수 있어요. 원장 강의도 같은 실력대 <b>3명</b>으로 편성돼요.</div></details>
 <details><summary>새벽이나 심야에도 수업이 돼요?</summary><div class="a">돼요. <b>연중무휴 24시간</b> 운영하고, 1주일 전에만 맞춰 주시면 어떤 시간대든 잡아요.</div></details>
@@ -588,7 +598,7 @@ html.vr-lock{overflow:hidden}
 </div></footer>
 
 <script>
-// 가격 탭 — 레슨 / 원장 직강. data-tab-open 링크는 해당 탭을 열고 가격 칸으로 간다. 
+// 가격 탭 — 트레이너 레슨 / 이무리 직강. 하나를 열면 다른 쪽 패널은 통째로 숨긴다. data-tab-open 링크는 해당 탭을 열고 가격 칸으로 간다. 
 (function(){
   var tabs = document.querySelectorAll(".ptabs [data-tab]");
   function show(name){
@@ -610,6 +620,17 @@ html.vr-lock{overflow:hidden}
   document.querySelectorAll("[data-tab-open]").forEach(function(a){
     a.addEventListener("click", function(){ show(a.getAttribute("data-tab-open")); });
   });
+  // 주소 #lesson · #direct 로 들어오면 그 탭을 열고 그 자리로 간다
+  function fromHash(){
+    var h = location.hash.slice(1);
+    if (h !== "lesson" && h !== "direct") return;
+    show(h);
+    var el = document.getElementById("plans");
+    if (el) el.scrollIntoView();
+  }
+  window.addEventListener("hashchange", fromHash);
+  window.addEventListener("load", fromHash);
+  fromHash();
 })();
 // 나한테 맞는 건 — 티어 칩을 누르면 맞는 카드에 테두리, 한 줄 안내를 바꾼다. 최종 결정은 레벨 테스트
 (function(){
