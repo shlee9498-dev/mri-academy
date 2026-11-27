@@ -254,3 +254,5 @@ account=sabi
   결과는 `bank_alerts:channel_result`(channelId). 다시 만들려면 결과 줄을 지운다(무리 손).
 - 매크로 주소 형식(IBK 하나 더 만들 때): §10과 같고 첫 두 줄만 바꾼다 —
   `POST https://mri-academy-production.up.railway.app/hooks/bank-alert` · 본문 `key=(비밀 값)` / `account=ibk` / `---` / 알림 제목 / 알림 내용.
+- **키 불일치 알림(11/27 · 키 교체 뒤)** — `/hooks/bank-alert` · `/hooks/inbound-alert`(숨고) 에 키가 틀린 요청이 오면 「💰│입금알림」에 `⚠ 키 불일치 · 최근 10분 통장 알림 N건 · 숨고 알림 N건` 한 줄. 첫 건은 바로, 그 뒤는 10분에 한 줄로 묶는다(주소를 아는 누구나 두드릴 수 있어 도배 방지). 본문 · 키 · IP 는 남기지 않는다. 응답은 401 그대로.
+- **같은 비밀 값을 쓰는 곳(코드 실측)** — ① 통장 알림 매크로(`account=toss` · `ibk` · `sabi` 각각) ② 숨고 메시지 알림 매크로(`/hooks/inbound-alert` · §9.54). 키를 바꾸면 **폰 매크로 둘 다** `key=` 줄을 새 값으로 바꾼다. 서버 쪽 다른 송신자는 없다.
