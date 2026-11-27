@@ -7536,7 +7536,11 @@ const bankMatch = require("./bank-match.cjs").createBankMatch({
   sbSelect, sbPatch, levelTestFee: () => require("./intake-api.cjs").levelTestWon(),
   notifyOwner: async (text) => { const oid = process.env.MRI_OWNER_ID; if (!botClient || !oid) return false; try { const u = await botClient.users.fetch(String(oid)); await u.send(text); return true; } catch (_) { return false; } },
 });
-bankAlerts.createBankAlerts({ insert: (row) => sbInsert("bank_alerts", row), afterSave: (row) => bankMatch.onSaved(row) })
+// 통장 알림 채널 한 줄(주문함 11/27 「입금알림 연동」 · bank-channel.cjs) — 봇 쪽에서 붙인다(아래 lesson-rooms 옆). 없으면 조용히 넘어간다.
+let bankChannel = null;
+bankAlerts.createBankAlerts({ insert: (row) => sbInsert("bank_alerts", row), afterSave: (row) => bankMatch.onSaved(row),
+  onSaved: (row) => (bankChannel ? bankChannel.onSaved(row) : null),
+  onTest: (row) => (bankChannel ? bankChannel.onSaved({ ...row, received_at: new Date().toISOString() }, { test: true }) : null) })
   .mount(app, { express, limiter: limit("bankAlerts", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
 // 숨고 메시지 알림 받기(§94 · 계약 §9.54) — POST /hooks/inbound-alert · 통장 알림과 같은 비밀 값(BANK_ALERT_SECRET) · 숨고 외 알림은 저장 · 로그 없음
 require("./inbound-alerts.cjs").createInboundAlerts({ sbInsert, sbSelect, sbPatch, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID })
@@ -8909,6 +8913,9 @@ const studentPortal = require("./student-portal.cjs")(app, {
   discordDM,
 });
 
+// 이무리 직강 신청 자격(계약 §9.86.5 · 오너 OK 11/27) — GET /api/direct/eligibility · 최근 2시즌 크리스탈 · 220딜 · 50판(같은 시즌 · 같은 모드)
+require("./direct-eligibility.cjs").mountDirectEligibility(app, { getUser, sbSelect, findPlayer, recentSeasonIds, pubgGet, tierIndex });
+
 // ── 신청 창구 공개 API(docs/intake-design.md · §54 · §55) — /api/events/:code · /api/applications{,/options,/me} ──
 // start.html 이 부른다(공유비밀 게이트 밖 · 로그인은 /api/auth/login?intent=apply 토큰). 불투명 id 는 포털과 같은 함수.
 // 카드 · DM 은 intakeApi.hooks.onSubmitted 에 붙인다(PR-2). findPlayer · pubgRankedByAccount = 배그 닉 · 티어 조회(실패해도 신청은 받는다).
@@ -9097,6 +9104,44 @@ require("./trainer-lessons.cjs")(app, {
 // 트레이너봇(계약 §9.37.1 · §9.37.2) — /수업잡기 한 줄 예약 · 끝났나요 벨. 쓰기는 위 트레이너 앱 라우트를 같은 프로세스에서 부른다.
 //   TRAINER_BOOK_CHANNEL_ID(선택) 가 있으면 그 채널 한 줄도 받는다.
 if (process.env.DISCORD_TOKEN) require("./trainer-bot.cjs")({ getClient: () => botClient, sbSelect, sbUpsert, sbRpc, portal: studentPortal, port: PORT });
+// 사칭 결제 사기 막기(계약 §9.85 · 2026-11-27) — 봇 DM 발송 검사 · 사칭 이름 알림 · 새 계정 링크 뿌리기 · /사칭신고판 · /공식계정안내.
+//   스위치는 전부 ops_state(anti_scam:*) — 행이 없으면 꺼짐. 공식 계좌(PAY_BANK_ACCOUNT)와 그로블 카드 링크(GROBLE_LINK_*)는 DM 검사에서 통과시킨다.
+if (process.env.DISCORD_TOKEN) {
+  const antiScam = require("./anti-scam.cjs").mountAntiScam({
+    getClient: () => botClient, opsGet: opsStateGet, env: process.env,
+    staffIds: STAFF_IDS, ownerIds: [...new Set([process.env.MRI_OWNER_ID, ...OWNER_IDS_T].filter(Boolean))],
+    officialAccount: () => process.env.PAY_BANK_ACCOUNT || "",
+    allowUrls: () => Object.keys(process.env).filter((k) => k.startsWith("GROBLE_LINK_")).map((k) => process.env[k]),
+  });
+  const t = setInterval(() => { if (botClient) { clearInterval(t); antiScam.attach(botClient, require("discord.js")); } }, 3000);
+  t.unref?.();
+}
+// MRI 서버 정리 도우미(주문함 [24] · 무리 11/27) — 사칭 신고 패널 게시(anti_scam:panel) · 서버 전수 조사(server_audit:run). 행 없음 = 아무것도 안 함.
+if (process.env.DISCORD_TOKEN) {
+  const serverOps = require("./server-ops.cjs").mountServerOps({ opsGet: opsStateGet, opsSet: opsStateSet, env: process.env,
+    ownerIds: [...new Set([process.env.MRI_OWNER_ID, ...OWNER_IDS_T].filter(Boolean))],
+    // 사칭 신고 패널 공식 계정 목록 — 원장(MRI_OWNER_ID) + 트레이너(TRAINER_MAP JSON 디코ID→이름 · /수업등록과 같은 env)
+    officialAccounts: () => {
+      let tm = {}; try { tm = JSON.parse(process.env.TRAINER_MAP || "{}"); } catch { tm = {}; }
+      const out = process.env.MRI_OWNER_ID ? [{ label: "원장 이무리", id: process.env.MRI_OWNER_ID }] : [];
+      for (const [id, name] of Object.entries(tm)) if (id !== process.env.MRI_OWNER_ID) out.push({ label: `트레이너 ${name}`, id });
+      return out;
+    } });
+  const t3 = setInterval(() => { if (botClient) { clearInterval(t3); serverOps.attach(botClient, require("discord.js")); } }, 3000);
+  t3.unref?.();
+}
+// 레슨방(주문함 [18] 변경 · 오너 11/27) — MRI ACADEMY 서버 「레슨방」 카테고리 + 트레이너별 음성방. 기동 30초 뒤 권한 · 역할 점검 로그,
+//   ops_state lesson_rooms:create { go: true, … } 가 있을 때만 만든다(행 없음 = 점검만).
+if (process.env.DISCORD_TOKEN) {
+  const lessonRooms = require("./lesson-rooms.cjs").mountLessonRooms({ opsGet: opsStateGet, opsSet: opsStateSet, env: process.env });
+  const t2 = setInterval(() => { if (botClient) { clearInterval(t2); lessonRooms.attach(botClient, require("discord.js")); } }, 3000);
+  t2.unref?.();
+  // 통장 알림 채널(주문함 11/27 · 무리 「가」) — ops_state 'bank_alerts:channel' { go: true, test?: true } 이면 「💰│입금알림」(무리 · 봇만 보기)을 한 번 만든다
+  bankChannel = require("./bank-channel.cjs").mountBankChannel({ opsGet: opsStateGet, opsSet: opsStateSet, sbSelect, env: process.env,
+    ownerIds: [...new Set([process.env.MRI_OWNER_ID, ...OWNER_IDS_T].filter(Boolean))] });
+  const t3 = setInterval(() => { if (botClient) { clearInterval(t3); bankChannel.attach(botClient, require("discord.js")); } }, 3000);
+  t3.unref?.();
+}
 // 공지 · 전달문(계약 §9.30 · 2026-10-04) — 초안함 → 미리보기 → 보내기 · 앱 알림함 + 봇 DM. §65 미실행이면 이 라우트군만 503.
 // TRAINER_APP_URL = 트레이너 전달문 DM 끝의 앱 링크(트레이너 앱은 다른 저장소 · 이 저장소에 주소가 없다 — 오너가 주면 적는다 ·
 //   비어 있으면 링크 줄 없이 나간다). 수강생 공지 링크는 STUDENT_APP_URL/notices/{id}.
