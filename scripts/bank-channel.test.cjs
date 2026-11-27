@@ -79,3 +79,15 @@ test("키 불일치 — 첫 건은 바로 한 줄 · 10분 안 추가분은 묶�
   let st; await h.handle({ headers: {}, body: `key=wrong-key-000000000000000\naccount=toss\n---\n글` }, { status(s) { st = s; return this; }, json() { return this; } });
   assert.equal(st, 401); assert.deepEqual(kinds, ["bank-alert"]);
 });
+
+test("금액 없는 알림 — 채널에 안 올린다 · 시험 줄은 올린다", async () => {
+  const sent = [];
+  const ch = { send: async (m) => { sent.push(m.content); } };
+  const m = c.mountBankChannel({ log: { log() {}, error() {} }, env: {}, opsGet: async () => ({ channelId: "1" }), opsSet: async () => {} });
+  m.attach({ channels: { fetch: async () => ch }, isReady: () => false, once() {} }, {});
+  assert.equal(await m.onSaved({ account_key: "toss", parse_status: "unparsed", amount: null, raw_masked: "안내" }), false);
+  assert.equal(sent.length, 0);
+  assert.equal(await m.onSaved({ account_key: "toss", parse_status: "unparsed", amount: null, raw_masked: "안내" }, { test: true }), true);
+  assert.equal(await m.onSaved({ account_key: "toss", parse_status: "ok", direction: "in", amount: 1000, occurred_at: "2026-11-27T08:00:00Z" }), true);
+  assert.equal(sent.length, 2);
+});
