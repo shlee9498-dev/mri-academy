@@ -5762,6 +5762,64 @@ POST /api/trainer-portal/bookings/:id/move     { "startAt": "ISO", "durationMin"
 - **경비 제안(무리 확인 전 · 9.86.4 확인 4)**: 16회 환불 = 남은 회차 × (550,000 ÷ 16) · 위약금 없음(직강 환불식 그대로 · 원 단위 버림). 회차 기록(`course_sessions`)은 1~16회로 이어서 만든다. 16회 기간(8주 · 같은 칸)도 확인 대상.
 - **판수 · 결제 · 정산 계산 코드가 바뀌는 구현은 별도 PR**(CLAUDE.md B-1 · 오너 OK 위 원문). 이 절은 계약만 바꾼다. 상품표 정본은 9.86.3 의 한 곳 · 사이트 · 앱은 받아 쓴다(복제 금지).
 - 가격 문구는 토스 심사 대상 — 사이트 반영은 이 절 머지 뒤 사이트 PR 에서(대회 · 행사 시간 금 18:30 뒤 머지 금지).
+
+## 9.87 배린이반 — 월 99,000원 구독반 · 선착순 10명 (2026-11-27 · 총무 주문 · **오너 OK 11/27** 원문 「ㅇㅋ 그렇게하자 선착순 10명만 받아서 키설정부터 리플레이, 훈련법 숙제검사를 그룹적으로도 개인디엠으로도 해드리는거로 -> 2달 수강하게되면 GmI 클랜 테스트생기회」) · 계약(이 절) → 서버(경비 · DDL §112 더하기만) → 사이트(약관 · 상품 카드) · 수강생 앱(반장)
+
+> 판수(P)가 없는 **첫 월 단위 상품**이다. 판수 · 정산 계산식(`computeStudent` · `computeTrainer` · `computeStaffSalary`)은 바꾸지 않는다.
+
+### 9.87.1 상품
+| 키 | 이름 | 가격 | 단위 | 정원 | 담당 |
+|---|---|---|---|---|---|
+| `beginner_monthly` | 배린이반 | **99,000원 / 월** | 1달 = 결제일부터 4주(28일) | **선착순 10명** (그 달 수강 중인 사람 기준) | 원장 이무리 |
+- 하는 일: 키 설정부터 · 리플레이 · 훈련법 · **숙제 검사**(그룹 채널 + 개인 DM 둘 다).
+- **레벨 테스트 없이 시작**한다(§9.82.2 · 9/28 「신규는 레벨 테스트부터」의 예외 — 이 상품에 한해).
+- **판수 차감 없음** · 지갑(§9.78)에 P 를 넣지 않는다 · 예약 슬롯(`slot_bookings`)을 쓰지 않는다.
+- **트레이너 지급 없음**(원장 직강 · 트레이너 지급율 0.70 계열 해당 없음).
+- 정원: 그 날짜에 수강 중(9.87.4 `status='active'` 이고 기간 안)인 사람이 10명이면 11번째 결제 신청은 받지 않고 「대기」로 안내한다(돈 받기 전 판정). 순서 = 결제 확인 시각.
+
+### 9.87.2 환불 (방문판매법 계속거래 — 중도 해지 가능) · **사이트 약관 제7조에 아래 문구를 그대로 쓴다**
+> 배린이반은 매달 새로 결제하는 계속 거래 상품이며, 언제든 해지할 수 있습니다. 수강 시작 전에 해지하면 그 달 결제 금액 전액을 돌려드립니다. 수강 시작 후 해지하면 그 달 4주 중 남은 주 수만큼 비례해 돌려드리며(99,000원 × 남은 주 ÷ 4, 원 단위 버림), 위약금은 받지 않습니다. 해지 신청은 디스코드 문의 또는 원장 DM으로 받으며, 해지한 다음 달부터는 결제가 청구되지 않습니다.
+- 「시작」 = 그 달 첫 숙제 · 수업 안내가 나간 시각(없으면 결제일 + 1일 00:00 KST).
+- **남은 주** = 4 − (시작일부터 해지 신청일까지 지난 날 ÷ 7, 올림) · 0 아래면 0. 예: 시작 3일째 해지 → 지난 주 1 → 남은 3주 → 74,250원. (경비 제안 — 진행 중인 주는 쓴 주로 센다. 무리 확인 1)
+- 자동 결제는 없다 — 매달 수강생이 결제해야 다음 달이 열린다(「청구되지 않습니다」는 다음 달 안내 DM 을 보내지 않는다는 뜻).
+- 환불 실행은 기존처럼 오너 손(결제 · 환불은 Level 0). 서버는 금액 계산만 보여 준다.
+
+### 9.87.3 결제 기록 — `payments` (설계 · 칸 추가 없음)
+- 한 달 결제 = `payments` **한 줄**: `kind='course'` · `games=0` · `course_id=null` · `lesson_enrollment_id=null` · `amount=99000`(실제 받은 돈) · `pay_channel` 그대로(groble · transfer …) · `memo='배린이반 N개월째'`.
+- `kind='course'` 를 쓰는 이유: 레슨 · 세트 필터(`["lesson","set"]`)에 걸리지 않아 판수 · 트레이너 정산에 섞이지 않고, 빵다 6%(kind='lesson' 한정)에도 들어가지 않는다 — §9.86.2-6 과 같은 규칙. **`payments_kind_check` 는 바꾸지 않는다.**
+- 패널 결제 목록에서 `course_id` 없는 course 결제는 「unlinked」로 보이므로, 구현 PR 에서 9.87.4 의 `payment_id` 로 이어진 줄은 「배린이반」으로 표시한다.
+- 환불하면 기존 방식 그대로 `kind='refund'` 줄 + 9.87.4 의 그 달 줄 `status='refunded'` · `refunded_amount`.
+
+### 9.87.4 수강 개월 수 — 새 표 `membership_months` (DDL §112 · 더하기만 · 실행은 구현 PR 에서 스냅샷 → 실행 → 검증 → `notify pgrst`)
+```sql
+create table if not exists public.membership_months (
+  id bigint generated always as identity primary key,
+  student_id bigint not null references public.students(id),
+  product text not null check (product in ('beginner_monthly')),
+  month_no int not null check (month_no >= 1),          -- 그 사람의 몇 번째 달
+  starts_on date not null,
+  ends_on date not null,                                -- starts_on + 27일
+  payment_id bigint unique references public.payments(id),
+  status text not null default 'active' check (status in ('active','done','refunded','cancelled')),
+  refunded_amount int check (refunded_amount is null or refunded_amount >= 0),
+  created_at timestamptz not null default now(),
+  unique (student_id, product, month_no)
+);
+alter table public.membership_months enable row level security;   -- service_role 만
+```
+- **수강 개월 수** = 그 수강생의 `status in ('active','done')` 이고 `ends_on < 오늘(KST)` 인 줄 수(끝까지 들은 달만). 환불 · 취소한 달은 세지 않는다. 연속이 아니어도 누적으로 센다(경비 제안 · 무리 확인 2).
+- 정원 판정 = `product='beginner_monthly' and status='active' and 오늘 between starts_on and ends_on` 인 줄 수 < 10.
+- 3곳 동시 수정 규칙: `supabase_admin_panel.sql` §112 · `server.js` `SCHEMA_OPTIONAL`(쓰기 경로가 생기면 `REQUIRED_SCHEMA`) · 실제 DB.
+
+### 9.87.5 2달 → GmI 클랜 테스트생 기회
+- 조건 = 9.87.4 수강 개월 수 **2 이상**. 서버는 `GET /api/me` 에 `beginnerMonths` · `clanTestEligible`(boolean)을 붙여 준다(구현 PR).
+- 테스트생 **등록 자체는 GmI 소관**(클랜CODE · `clan_registry` 아님 · v1 은 오너 · 클랜장 손). 이 절은 「조건을 채웠다」까지만 알려 주고 역할 · 채널을 건드리지 않는다.
+- 화면 문구는 「2달 수강하면 GmI 클랜 테스트생에 도전할 수 있어요」 — 합격 보장처럼 쓰지 않는다.
+
+### 9.87.6 확인 필요 (총무 → 무리)
+1. 환불의 「진행 중인 주」를 쓴 주로 셀지(경비 제안) · 남은 주로 셀지.
+2. 클랜 테스트생 조건 2달은 연속이어야 하는지 · 누적이면 되는지(경비 제안 = 누적).
+3. 정원 10명은 「그 달 동시 수강 10명」인지 · 「상품 전체 누적 10명」인지(경비 제안 = 동시 10명 · 빈자리 나면 다음 사람).
 ## 9.78 남은 판 = 수강생 지갑 — 아무 트레이너나 예약 · 5판 미만 예약 막기 (2026-11-21 · 총무 주문 · 오너 05:15 「수강생분들이 신청하는것도 남은판수들도 자유롭게 어떤 트레이너들이든 원하는 트레이너 신청할 수 있도록 하고 5판 미만일 땐 예약 못하도록 설정해줘 추가입금하고 가능하도록」) · **계약(이 절) → 서버(경비 · DB 함수 교체 = 기존 함수 변경이라 실행은 대회 시간 밖) → 앱(반장 · 수강생 앱 · 트레이너 앱)** · env 없음 · 테이블 · 칸 추가 없음 · 지급 계산식 변경 없음
 
 > 지금(§41 · 2026-09): 예약 게이트가 **그 칸 트레이너에게 산 판수**만 본다(`portal_remaining_for_trainer`). 준구에게 산 판으로 현태 수업을 못 잡는다. 이 절은 그 규칙을 거둔다.
