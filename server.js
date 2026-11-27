@@ -7536,7 +7536,11 @@ const bankMatch = require("./bank-match.cjs").createBankMatch({
   sbSelect, sbPatch, levelTestFee: () => require("./intake-api.cjs").levelTestWon(),
   notifyOwner: async (text) => { const oid = process.env.MRI_OWNER_ID; if (!botClient || !oid) return false; try { const u = await botClient.users.fetch(String(oid)); await u.send(text); return true; } catch (_) { return false; } },
 });
-bankAlerts.createBankAlerts({ insert: (row) => sbInsert("bank_alerts", row), afterSave: (row) => bankMatch.onSaved(row) })
+// 통장 알림 채널 한 줄(주문함 11/27 「입금알림 연동」 · bank-channel.cjs) — 봇 쪽에서 붙인다(아래 lesson-rooms 옆). 없으면 조용히 넘어간다.
+let bankChannel = null;
+bankAlerts.createBankAlerts({ insert: (row) => sbInsert("bank_alerts", row), afterSave: (row) => bankMatch.onSaved(row),
+  onSaved: (row) => (bankChannel ? bankChannel.onSaved(row) : null),
+  onTest: (row) => (bankChannel ? bankChannel.onSaved({ ...row, received_at: new Date().toISOString() }, { test: true }) : null) })
   .mount(app, { express, limiter: limit("bankAlerts", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
 // 숨고 메시지 알림 받기(§94 · 계약 §9.54) — POST /hooks/inbound-alert · 통장 알림과 같은 비밀 값(BANK_ALERT_SECRET) · 숨고 외 알림은 저장 · 로그 없음
 require("./inbound-alerts.cjs").createInboundAlerts({ sbInsert, sbSelect, sbPatch, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID })
@@ -9146,6 +9150,11 @@ if (process.env.DISCORD_TOKEN) {
   const lessonRooms = require("./lesson-rooms.cjs").mountLessonRooms({ opsGet: opsStateGet, opsSet: opsStateSet, env: process.env });
   const t2 = setInterval(() => { if (botClient) { clearInterval(t2); lessonRooms.attach(botClient, require("discord.js")); } }, 3000);
   t2.unref?.();
+  // 통장 알림 채널(주문함 11/27 · 무리 「가」) — ops_state 'bank_alerts:channel' { go: true, test?: true } 이면 「💰│입금알림」(무리 · 봇만 보기)을 한 번 만든다
+  bankChannel = require("./bank-channel.cjs").mountBankChannel({ opsGet: opsStateGet, opsSet: opsStateSet, sbSelect, env: process.env,
+    ownerIds: [...new Set([process.env.MRI_OWNER_ID, ...OWNER_IDS_T].filter(Boolean))] });
+  const t3 = setInterval(() => { if (botClient) { clearInterval(t3); bankChannel.attach(botClient, require("discord.js")); } }, 3000);
+  t3.unref?.();
 }
 // 공지 · 전달문(계약 §9.30 · 2026-10-04) — 초안함 → 미리보기 → 보내기 · 앱 알림함 + 봇 DM. §65 미실행이면 이 라우트군만 503.
 // TRAINER_APP_URL = 트레이너 전달문 DM 끝의 앱 링크(트레이너 앱은 다른 저장소 · 이 저장소에 주소가 없다 — 오너가 주면 적는다 ·
