@@ -9395,7 +9395,8 @@ const REQUIRED_SCHEMA = {
                      "source","ip","user_agent","created_at"],
   slot_bookings: ["id","slot_id","student_id","games_held","duration_min","status",
                   "booked_at","cancelled_at","span_head_id",
-                  "course_id"],                              // §59 직강 반 수업 칸 예약의 강의(2026-10-01 · 세션 실행 확인)
+                  "course_id",                               // §59 직강 반 수업 칸 예약의 강의(2026-10-01 · 세션 실행 확인)
+                  "cancel_by","cancel_reason"],              // §107 원장 사정 취소(계약 §9.77 · 2026-11-19 세션 실행 · 검증 완료)
   // §29 수업 복기 11표(2026-09-25 오너 운영 실행 · 실DB 지문 9항 = 정본 해시 일치 확인). 읽고 쓰는 코드는 PR-1(review-api.cjs)부터지만
   // 3곳 동기(정본 SQL §29 · 이 목록 · 실DB) 규칙대로 먼저 올린다 — 부팅 [schema] OK 줄이 notify pgrst 뒤 PostgREST 가
   // 새 표·컬럼을 보는지까지 확인해 준다. 컬럼 목록은 docs/lesson-review-server-design.md §6 과 글자 단위로 같다.
