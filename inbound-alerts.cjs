@@ -96,7 +96,7 @@ function createInboundAlerts(deps) {
       if (secret.length < MIN_SECRET) return fail(res, 503, "not_configured");
       const b = readBody(req.body);
       if (!b) return fail(res, 400, "bad_body");
-      if (!keyOk((req.headers && req.headers["x-bank-alert-key"]) || b.key, secret)) return fail(res, 401, "bad_key");
+      if (!keyOk((req.headers && req.headers["x-bank-alert-key"]) || b.key, secret)) { if (deps.onBadKey) { try { deps.onBadKey("inbound-alert"); } catch (_) {} } return fail(res, 401, "bad_key"); }
       if (!Object.prototype.hasOwnProperty.call(SOURCES, b.source)) return fail(res, 400, "bad_source");
       if (b.test) { log.log(`[inbound-alert] test ok source=${b.source}`); return res.json({ ok: true, test: true }); }
       // 숨고가 아니면 여기서 끝 — 저장 · 로그 없음
