@@ -92,6 +92,8 @@ function mountBankChannel(deps) {
   // bank-alerts 가 새 줄을 저장한 뒤 부른다(중복 알림은 여기 오지 않는다)
   async function onSaved(row, { test = false } = {}) {
     try {
+      // 금액을 못 읽은 알림(은행 일반 안내 · 점검 공지 등)은 저장만 하고 채널에는 올리지 않는다(주문함 11/27 17:1x 총무 「② 서버 쪽」)
+      if (!test && !(Number(row.amount) > 0)) { log.log(`[bank-channel] skip(no amount) account=${row.account_key}`); return false; }
       const moved = test ? false : await movedOf(row);
       const ok = await post(lineOf(row, { moved, test }));
       log.log(`[bank-channel] ${ok ? "posted" : "skip(no channel)"} account=${row.account_key}`);   // 금액 · 이름은 로그에 없다

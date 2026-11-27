@@ -145,7 +145,7 @@ nav{display:flex;align-items:center;justify-content:space-between;min-height:64p
 .cta-col .link{justify-self:center}
 .shot{position:relative;border-radius:28px;background:var(--lav);padding:12px}
 .shot .ph{border-radius:20px;overflow:hidden;position:relative;aspect-ratio:16/10;background:var(--game)}
-.shot .ph img{width:100%;height:100%;object-fit:cover}
+.shot .ph img,.shot .ph video{width:100%;height:100%;object-fit:cover;display:block}
 .shot .tag{position:absolute;left:24px;top:24px;background:rgba(30,27,43,.82);color:#fff;font-weight:700;font-size:12.5px;border-radius:999px;padding:5px 11px}
 .rec{position:absolute;right:22px;bottom:-18px;display:flex;align-items:center;gap:8px;background:#fff;border-radius:18px;padding:10px 14px;box-shadow:0 10px 26px rgba(60,30,120,.16)}
 .rec .n{font:800 26px var(--sans);color:var(--ink);letter-spacing:-.02em;font-variant-numeric:tabular-nums}
@@ -429,7 +429,7 @@ html.vr-lock{overflow:hidden}
 </div>
 <div>
 <div class="shot">
-<div class="ph"><img src="img/a/range_target.jpg" alt="실내 사격장 50m 표적 화면" width="648" height="615" fetchpriority="high"></div>
+<div class="ph"><video id="rangeVid" muted loop playsinline preload="metadata" poster="img/a/range_target.jpg" width="648" height="614" aria-label="실내 사격장 50m 표적 화면 · 처음 3/10에서 22분 뒤 7/7"><source src="img/a/range_target.webm" type="video/webm"><source src="img/a/range_target.mp4" type="video/mp4"></video></div>
 <span class="tag">수강생 기록 · 실내 사격장 50m</span>
 <div class="rec"><div><span>처음 상담</span><b class="n a">3/10</b></div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-5-5 5 5-5 5"/></svg><div><span>22분 뒤</span><b class="n b">7/7</b></div></div>
 <div class="yb"><img src="img/a/yb_face.png" alt="" width="70" height="70"><p><b>유비서</b>처음이면 여기부터 봐요</p></div>
@@ -624,6 +624,16 @@ html.vr-lock{overflow:hidden}
 </div></footer>
 
 <script>
+// 첫 화면 수강생 기록 영상 — 소리 없이 반복. 움직임 줄이기 설정이면 재생하지 않고 포스터 사진만 둔다
+(function(){
+  var v = document.getElementById("rangeVid");
+  if (!v) return;
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) return;
+  v.muted = true;
+  var p = v.play();
+  if (p && p.catch) p.catch(function(){});
+})();
 // 가격 탭 — 트레이너 레슨 / 이무리 직강. 하나를 열면 다른 쪽 패널은 통째로 숨긴다. data-tab-open 링크는 해당 탭을 열고 가격 칸으로 간다. 
 (function(){
   var tabs = document.querySelectorAll(".ptabs [data-tab]");
