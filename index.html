@@ -251,7 +251,8 @@ nav{display:flex;align-items:center;justify-content:space-between;min-height:64p
 .bgn-steps li::before{content:counter(b);grid-row:span 2;width:26px;height:26px;border-radius:50%;background:var(--lav);color:var(--pri);font-weight:800;display:grid;place-items:center;font-size:13px}
 .bgn-steps b{color:var(--ink);font-size:15px}
 .bgn-note{margin:0;font-size:13.5px;color:var(--sub)}
-.bgn .btn{max-width:320px}
+.bgn-cta{display:grid;gap:8px;max-width:320px}
+.btn.sm{min-height:46px;font-size:15px;box-shadow:inset 0 0 0 1.5px var(--pri)}
 .btn.ghost{background:var(--card);color:var(--pri);box-shadow:inset 0 0 0 2px var(--pri)}
 .ptabs{display:flex;width:max-content;max-width:100%}
 .ptabs button{white-space:nowrap}
@@ -501,7 +502,9 @@ html.vr-lock{overflow:hidden}
 <ol class="bgn-steps"><li><b>키 설정부터</b>감도 · 키 배치를 같이 맞춰요</li><li><b>리플레이 보기</b>내 판을 다시 보며 뭘 고칠지 찾아요</li><li><b>훈련법 숙제</b>그룹 채널과 개인 DM으로 원장이 숙제를 검사해요</li></ol>
 <p class="bgn-note">레벨 테스트 없이 바로 시작해요(첫 숙제가 테스트를 대신해요). 2달 들으면 GmI 클랜 테스트생 기회가 있어요</p>
 <p class="bgn-note">같이 게임하는 수업은 아니에요. 같이 게임하며 배우려면 아래 트레이너 레슨으로 와요</p>
-<a class="btn ghost" href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener">원장 디스코드로 신청</a>
+<div class="bgn-cta"><a class="btn" href="https://discord.gg/szFa7teEJs" target="_blank" rel="noopener">원장에게 디스코드로 신청</a>
+<p class="bgn-note">카드 결제만 가능하신 분은 아래 링크로</p>
+<a class="btn ghost sm" href="https://groble.im/products/saMB9R" target="_blank" rel="noopener">카드로 결제하기</a></div>
 </div>
 <div class="price-top">
 <div><span class="eyebrow">레슨 가격</span><h2 class="sec-t" id="planH">레벨 테스트 포함, 10P 55,000원</h2><p class="sec-s" style="margin:0">레슨은 포인트(P)로 사요. 처음 등록하면 레벨 테스트비는 0원이에요</p></div>
