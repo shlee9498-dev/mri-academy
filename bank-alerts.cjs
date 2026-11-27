@@ -11,7 +11,7 @@ const crypto = require("crypto");
 
 // 통장 이름표 — 보증금 통장이 생기면 여기 한 줄 더한다(계좌 번호는 적지 않는다 · 폰 쪽 매크로가 통장마다 이름표를 붙여 보낸다)
 //   toss = MRI 아카데미 입금 받는 토스뱅크 통장(계약 §9.45 · 지휘 10/28) — 입금은 열린 신청과 짝을 찾아 오너 DM(bank-match.cjs)
-const ACCOUNTS = Object.freeze({ sabi: "사비 방지턱 통장", toss: "토스뱅크 통장" });
+const ACCOUNTS = Object.freeze({ sabi: "사비 방지턱 통장", toss: "토스뱅크 통장", ibk: "개인 IBK 통장" });   // ibk = 주문함 11/27 「입금알림 연동」(쌓기 · 채널 한 줄만)
 const MATCH_ACCOUNTS = Object.freeze(["toss"]);   // 짝 찾기 · 오너 DM 을 하는 통장(킬내기 sabi 는 쌓기만)
 const MIN_SECRET = 24;
 const MAX_TEXT = 1000;       // 알림 글을 이 길이까지만 읽는다
@@ -201,6 +201,8 @@ function createBankAlerts(deps = {}) {
   const now = deps.now || (() => Date.now());
   const log = deps.log || console;
   const afterSave = deps.afterSave || null;   // (저장된 줄) → 짝 찾기 결과 — bank-match.cjs onSaved
+  const onSaved = deps.onSaved || null;       // (저장된 줄) → 통장 알림 채널 한 줄 — 모든 통장 · 기다리지 않는다(bank-channel.cjs)
+  const onTest = deps.onTest || null;         // (저장 안 한 시험 줄) → 채널에 [시험] 한 줄 — test=1 에 글이 있을 때만
   const fail = (res, status, code) => res.status(status).json({ error: { code } });
   const isDup = (e) => e && (e.status === 409 || /23505/.test(str(e.body || e.message)));
   const isMissing = (e) => e && (e.status === 404 || /PGRST205|42P01/.test(str(e.body || e.message)));
@@ -214,7 +216,12 @@ function createBankAlerts(deps = {}) {
       const given = (req.headers && req.headers["x-bank-alert-key"]) || b.key;
       if (!keyOk(given, secret)) { log.warn("[bank-alert] bad_key"); return fail(res, 401, "bad_key"); }
       if (!Object.prototype.hasOwnProperty.call(ACCOUNTS, b.account)) return fail(res, 400, "bad_account");
-      if (b.test) { log.log(`[bank-alert] test ok account=${b.account}`); return res.json({ ok: true, test: true }); }
+      if (b.test) {
+        log.log(`[bank-alert] test ok account=${b.account}`);
+        const tc = normText(b.content);
+        if (onTest && tc) Promise.resolve().then(() => onTest(rowOf(b.account, tc, parseAlert(tc, now()), b))).catch(() => {});
+        return res.json({ ok: true, test: true });
+      }
       const content = normText(b.content);
       if (!content) return fail(res, 400, "empty_text");
       const parsed = parseAlert(content, now());
@@ -234,6 +241,7 @@ function createBankAlerts(deps = {}) {
         try { match = await afterSave({ ...row, ...(one || {}) }); }
         catch (e) { log.error("[bank-alert] match failed", e && e.message ? "error" : e); }
       }
+      if (onSaved) { const one = Array.isArray(saved) ? saved[0] : saved; Promise.resolve().then(() => onSaved({ ...row, ...(one || {}) })).catch(() => {}); }
       return res.json({ ok: true, saved: true, parse: parsed.status, ...(match && match.match_status ? { match: match.match_status } : {}) });
     } catch (e) {
       log.error("[bank-alert] failed", e && e.status ? e.status : "error");
