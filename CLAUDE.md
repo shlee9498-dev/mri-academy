@@ -64,7 +64,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   대기 항목을 해소 처리**하고, **무엇을 근거로 고쳤는지**를 한 줄 남긴다. 근거 없이 말만으로 완료 처리 금지.
 
 # MRI ACADEMY 작업 규칙
-- 브랜드: 밝은 톤 B3(오너 11/11 결정) — 크림 바탕 #FBF6EF + 주황 강조(버튼 #C2611C · 글자 #A4551C). 강조색은 주황 하나만, 빨강·검은 바탕 없음. 상세는 아래 「디자인 시스템 B3」.
+- 브랜드: **메인 페이지(index.html)는 디자인 A**(오너 11/27 「결과물 보고 수정」 · #729) — 파스텔 바탕 #FFF9F3 + 보라 강조(#6847E8) · 제목 Jua · 본문 Pretendard. 토큰은 index.html `:root` 가 정본. 다른 페이지는 아직 B3(아래) — 옮길 때 index 토큰을 따른다.
+- (종전) 밝은 톤 B3(오너 11/11 결정) — 크림 바탕 #FBF6EF + 주황 강조(버튼 #C2611C · 글자 #A4551C). 상세는 아래 「디자인 시스템 B3」.
 - TOSS_SECRET_KEY, PUBG_API_KEY 등 모든 키는 절대 HTML/JS/커밋에 넣지 않는다 (Railway env 전용).
 - apply.html의 TOSS_CLIENT_KEY는 현재 테스트키(test_gck). 심사 통과 전 임의 변경 금지.
 - canonical/og:url은 항상 https://mriacademy.gg (github.io 주소 금지).
@@ -317,6 +318,7 @@ dual-write(마이그레이션 중), 채널 잠금(`LESSON_CHANNEL_ID`)·`TRAINER
 검증 후 오너 승인 예정.
 
 ## 디자인 시스템 B3 (밝은 톤 · 오너 11/11 결정 · #682 index.html에서 확정)
+> ⚠️ 2026-11-27 메인 페이지는 디자인 A(파스텔 · 보라 · Jua)로 바뀜(오너 지시 · #729). 이 절은 아직 옮기지 않은 보조 페이지 기준이다.
 토큰 `--bg:#FBF6EF / --bg-2:#F4ECE1 / --card:#FFFFFF / --line:#ECE2D5(보조 페이지는 #E6DACB) / --ink:#1A1714 / --sub:#544A41 /
 --mute:#776B60 / --kick:#A4551C(강조 글자) / --cta-bg:#C2611C(버튼, 흰 글자)` + 주황 단일 강조. 빨강·검은 바탕·골드 없음.
 `color-scheme: light`. 폰트: 제목 = Wanted Sans(Variable), 본문 = Pretendard, 숫자 = Saira Condensed.
