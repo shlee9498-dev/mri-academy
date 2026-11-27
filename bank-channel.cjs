@@ -13,6 +13,7 @@ const PREFIX = Object.freeze({ toss: "[사업]", ibk: "[개인]", sabi: "[방지
 const PAIR = Object.freeze({ toss: "sabi", sabi: "toss" });     // 「이동」을 찾는 짝 통장
 const MOVE_WINDOW_MS = 15 * 60_000;
 const RAW_SHOW = 120;
+const BADKEY_EVERY_MS = 10 * 60_000;   // 「⚠ 키 불일치」는 10분에 한 줄 · 건수만 묶는다(주소를 아는 누구나 두드릴 수 있어 매번 찍으면 도배)
 
 const str = (v) => (v == null ? "" : String(v));
 const won = (n) => `${Number(n).toLocaleString("en-US")}원`;
@@ -45,6 +46,12 @@ function lineOf(row, { moved = false, test = false } = {}) {
   let line = `${head} ${parts.join(" · ")}`.trim();
   if (row.parse_status !== "ok") line += `\n> ${maskLong(str(row.raw_masked).replace(/\n/g, " ")).slice(0, RAW_SHOW) || "(글 없음)"}`;
   return line.slice(0, 1800);
+}
+
+// 키 불일치 묶음 줄(순수 함수) — 본문 · 키 · IP 는 넣지 않는다
+function badKeyLine(counts) {
+  const parts = Object.entries(counts).filter(([, n]) => n > 0).map(([k, n]) => `${k === "inbound-alert" ? "숨고 알림" : "통장 알림"} ${n}건`);
+  return parts.length ? `⚠ 키 불일치 · 최근 10분 ${parts.join(" · ")} — 매크로 key= 값을 새 비밀 값으로 바꿨는지 확인해 주세요` : "";
 }
 
 // 가짜 알림(시험) — 계좌 번호 모양 숫자가 가려지는지 채널에서 눈으로 본다
@@ -92,6 +99,20 @@ function mountBankChannel(deps) {
     } catch (e) { log.error("[bank-channel] post failed", e?.code || e?.message); return false; }
   }
 
+  let bad = {}, badAt = 0;
+  async function flushBadKey(force = false) {
+    if (!force && Date.now() - badAt < BADKEY_EVERY_MS) return false;
+    const line = badKeyLine(bad);
+    if (!line) return false;
+    bad = {}; badAt = Date.now();
+    try { return await post(line); } catch (e) { log.error("[bank-channel] badkey post failed", e?.code || e?.message); return false; }
+  }
+  // 키가 틀린 요청 하나 — 세고, 마지막 줄에서 10분이 지났으면 한 줄로 올린다(남은 건수는 2분 확인 때 올린다)
+  function onBadKey(kind) {
+    bad[kind] = (bad[kind] || 0) + 1;
+    flushBadKey().catch(() => {});
+  }
+
   async function createChannel() {
     const { ChannelType, PermissionFlagsBits: F } = discord;
     const g = client.guilds.cache.get(guildId);
@@ -114,6 +135,7 @@ function mountBankChannel(deps) {
   async function tick() {
     if (busy || !client) return; busy = true;
     try {
+      await flushBadKey();
       const plan = await deps.opsGet("bank_alerts:channel").catch(() => null);
       if (!plan || !plan.go || (await deps.opsGet("bank_alerts:channel_result").catch(() => null))) return;
       await deps.opsSet("bank_alerts:channel_result", { running: true, at: new Date().toISOString() }).catch(() => {});
@@ -140,7 +162,7 @@ function mountBankChannel(deps) {
     };
     if (typeof c.isReady === "function" && c.isReady()) go(); else c.once("clientReady", go);
   }
-  return { attach, onSaved, tick, lineOf };
+  return { attach, onSaved, onBadKey, flushBadKey, tick, lineOf };
 }
 
-module.exports = { mountBankChannel, lineOf, maskLong, PREFIX, CHANNEL_NAME, TEST_TEXT };
+module.exports = { mountBankChannel, lineOf, badKeyLine, maskLong, PREFIX, CHANNEL_NAME, TEST_TEXT };

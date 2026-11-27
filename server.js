@@ -7540,10 +7540,12 @@ const bankMatch = require("./bank-match.cjs").createBankMatch({
 let bankChannel = null;
 bankAlerts.createBankAlerts({ insert: (row) => sbInsert("bank_alerts", row), afterSave: (row) => bankMatch.onSaved(row),
   onSaved: (row) => (bankChannel ? bankChannel.onSaved(row) : null),
-  onTest: (row) => (bankChannel ? bankChannel.onSaved({ ...row, received_at: new Date().toISOString() }, { test: true }) : null) })
+  onTest: (row) => (bankChannel ? bankChannel.onSaved({ ...row, received_at: new Date().toISOString() }, { test: true }) : null),
+  onBadKey: (kind) => { if (bankChannel) bankChannel.onBadKey(kind); } })
   .mount(app, { express, limiter: limit("bankAlerts", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
 // 숨고 메시지 알림 받기(§94 · 계약 §9.54) — POST /hooks/inbound-alert · 통장 알림과 같은 비밀 값(BANK_ALERT_SECRET) · 숨고 외 알림은 저장 · 로그 없음
-require("./inbound-alerts.cjs").createInboundAlerts({ sbInsert, sbSelect, sbPatch, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID })
+require("./inbound-alerts.cjs").createInboundAlerts({ sbInsert, sbSelect, sbPatch, dm: discordDM, ownerDiscordId: process.env.MRI_OWNER_ID,
+  onBadKey: (kind) => { if (bankChannel) bankChannel.onBadKey(kind); } })
   .mount(app, { express, limiter: limit("inboundAlerts", 30, 60_000, (res) => res.status(429).json({ error: { code: "rate_limited" } })) });
 // 운영진용 전체 명단 (연락처/계좌 포함) — ?season 주면 시즌별, 없으면 전체
 // ── 운영 응답용 members 정제 ──
