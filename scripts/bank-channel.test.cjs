@@ -52,3 +52,30 @@ test("받기 → 채널 — 새 줄 onSaved 한 번 · 중복은 안 부름 · t
   assert.deepEqual(tests, ["toss"]);
   assert.equal(saved.length, 1);
 });
+
+test("키 불일치 — 묶음 줄 · 건수만 · 0건이면 빈 줄", () => {
+  assert.equal(c.badKeyLine({}), "");
+  assert.equal(c.badKeyLine({ "bank-alert": 0 }), "");
+  const l = c.badKeyLine({ "bank-alert": 3, "inbound-alert": 1 });
+  assert.match(l, /^⚠ 키 불일치 · 최근 10분 통장 알림 3건 · 숨고 알림 1건/);
+});
+
+test("키 불일치 — 첫 건은 바로 한 줄 · 10분 안 추가분은 묶어 두고 강제 비우기 때 한 줄 · 받기 쪽은 401 그대로", async () => {
+  const sent = [];
+  const ch = { send: async (m) => { sent.push(m.content); } };
+  const m = c.mountBankChannel({ log: { log() {}, error() {} }, env: {}, opsGet: async () => ({ channelId: "1" }), opsSet: async () => {} });
+  m.attach({ channels: { fetch: async () => ch }, isReady: () => false, once() {} }, {});
+  m.onBadKey("bank-alert");
+  await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+  assert.equal(sent.length, 1);
+  m.onBadKey("bank-alert"); m.onBadKey("inbound-alert");
+  await new Promise((r) => setImmediate(r));
+  assert.equal(sent.length, 1);
+  await m.flushBadKey(true);
+  assert.equal(sent.length, 2);
+  assert.match(sent[1], /통장 알림 1건 · 숨고 알림 1건/);
+  const SECRET = "x".repeat(16) + "-test-secret-0001"; const kinds = [];
+  const h = b.createBankAlerts({ secret: () => SECRET, log: { log() {}, warn() {}, error() {} }, insert: async () => [], onBadKey: (k) => kinds.push(k) });
+  let st; await h.handle({ headers: {}, body: `key=wrong-key-000000000000000\naccount=toss\n---\n글` }, { status(s) { st = s; return this; }, json() { return this; } });
+  assert.equal(st, 401); assert.deepEqual(kinds, ["bank-alert"]);
+});

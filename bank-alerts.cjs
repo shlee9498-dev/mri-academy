@@ -203,6 +203,7 @@ function createBankAlerts(deps = {}) {
   const afterSave = deps.afterSave || null;   // (저장된 줄) → 짝 찾기 결과 — bank-match.cjs onSaved
   const onSaved = deps.onSaved || null;       // (저장된 줄) → 통장 알림 채널 한 줄 — 모든 통장 · 기다리지 않는다(bank-channel.cjs)
   const onTest = deps.onTest || null;         // (저장 안 한 시험 줄) → 채널에 [시험] 한 줄 — test=1 에 글이 있을 때만
+  const onBadKey = deps.onBadKey || null;     // 키가 틀린 요청 → 채널 「⚠ 키 불일치」 묶음 줄(본문 · 키는 넘기지 않는다)
   const fail = (res, status, code) => res.status(status).json({ error: { code } });
   const isDup = (e) => e && (e.status === 409 || /23505/.test(str(e.body || e.message)));
   const isMissing = (e) => e && (e.status === 404 || /PGRST205|42P01/.test(str(e.body || e.message)));
@@ -214,7 +215,7 @@ function createBankAlerts(deps = {}) {
       const b = readBody(req.body);
       if (!b) return fail(res, 400, "bad_body");
       const given = (req.headers && req.headers["x-bank-alert-key"]) || b.key;
-      if (!keyOk(given, secret)) { log.warn("[bank-alert] bad_key"); return fail(res, 401, "bad_key"); }
+      if (!keyOk(given, secret)) { log.warn("[bank-alert] bad_key"); if (onBadKey) { try { onBadKey("bank-alert"); } catch (_) {} } return fail(res, 401, "bad_key"); }
       if (!Object.prototype.hasOwnProperty.call(ACCOUNTS, b.account)) return fail(res, 400, "bad_account");
       if (b.test) {
         log.log(`[bank-alert] test ok account=${b.account}`);
