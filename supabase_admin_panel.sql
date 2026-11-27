@@ -8602,3 +8602,19 @@ end $$;
 --   drop column if exists best_tier, drop column if exists avg_damage, drop column if exists damage_basis,
 --   drop column if exists play_slots, drop column if exists avail_windows; notify pgrst, 'reload schema';
 -- ============================================================
+
+-- ============================================================
+-- §105  앱 길잡이 — 앱 열림 · 직접 예약 표시 student_app_seen (2026-11-14 · 총무 주문 · 계약 §9.75 · 소관 MRIacademy)
+--      A 구간(새 표 하나 · 더하기만). 판수 · 결제 · 정산 · 예약 무관 — 앱 요청 때 서버가 자기 표에만 적는다.
+--      없을 때: 앱 길잡이 단계 1 · 2 는 옛 흔적(승인된 연결 신청 · 본인 복기 · 일기)으로 · 3 은 예약 줄 유무로 근사한다.
+-- ============================================================
+create table if not exists public.student_app_seen (
+  student_id            bigint primary key references public.students(id),
+  first_seen_at         timestamptz not null default now(),   -- 앱(포털 API)을 처음 연 때
+  last_seen_at          timestamptz not null default now(),   -- 마지막으로 연 때(30분에 한 번만 적는다)
+  first_self_booking_at timestamptz                           -- 앱에서 직접 잡은 첫 예약(트레이너 대리 예약은 안 적힌다)
+);
+alter table public.student_app_seen enable row level security;   -- 정책 없음 = service_role 만
+-- 105a) 검증: select count(*) from public.student_app_seen;  -- 0 · 칸 4 · RLS true → notify pgrst, 'reload schema';
+-- 되돌림(줄이 있어도 다른 표가 읽지 않는다 · 앱 길잡이가 근사로 돌아갈 뿐): drop table if exists public.student_app_seen; notify pgrst, 'reload schema';
+-- ============================================================

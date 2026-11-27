@@ -381,6 +381,7 @@ module.exports = function mountBookingApi(app, deps) {
         const out = await sbRpc("book_course_slot", { p_student_id: req.portal.sub, p_slot_id: slotId, p_by_staff: null });
         if (out?.error) return rpcFail(res, out.error);
         notifyBooking(slotId, req.portal.sub, "booked", 0).catch(() => {});
+        if (typeof deps.onSelfBooked === "function") deps.onSelfBooked(req.portal.sub);   // §9.75 앱에서 직접 예약
         return send(res, { bookingId: opaqueId("booking", out.bookingId), gamesHeld: 0, unitsLeft: unitsOf(out.unitsLeft) });
       }
 
@@ -391,6 +392,7 @@ module.exports = function mountBookingApi(app, deps) {
       if (out?.error) return rpcFail(res, out.error);
 
       notifyBooking(slotId, req.portal.sub, "booked", out.gamesHeld).catch(() => {});
+      if (typeof deps.onSelfBooked === "function") deps.onSelfBooked(req.portal.sub);   // §9.75 앱에서 직접 예약
       if (out.gamesHeld > 0) onGamesChanged?.([req.portal.sub]);     // §45 — 선차감으로 트레이너별 잔여가 음수가 됐는지
       send(res, { bookingId: opaqueId("booking", out.bookingId), gamesHeld: out.gamesHeld });
     }));
